@@ -531,7 +531,7 @@ const lineOptions = computed(() => ({
 
 // Model chart data
 const modelChartData = computed(() => {
-  if (!modelStats.value.length) return null
+  if (!modelStats.value?.length) return null
 
   const colors = [
     '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
@@ -550,7 +550,7 @@ const modelChartData = computed(() => {
 
 // Trend chart data
 const trendChartData = computed(() => {
-  if (!trendData.value.length) return null
+  if (!trendData.value?.length) return null
 
   return {
     labels: trendData.value.map(d => d.date),
@@ -688,8 +688,9 @@ const loadChartData = async () => {
       usageAPI.getDashboardModels({ start_date: startDate.value, end_date: endDate.value }),
     ])
 
-    trendData.value = trendResponse.trend
-    modelStats.value = modelResponse.models
+    // Ensure we always have arrays, even if API returns null
+    trendData.value = trendResponse.trend || []
+    modelStats.value = modelResponse.models || []
   } catch (error) {
     console.error('Error loading chart data:', error)
   }
