@@ -227,10 +227,10 @@ func registerRoutes(r *gin.Engine, h *handler.Handlers, s *service.Services, rep
 			authenticated.GET("/auth/me", h.Auth.GetCurrentUser)
 
 			// 用户接口
-			user := authenticated.Group("/user")
+			user := authenticated.Group("/users/me")
 			{
-				user.GET("/profile", h.User.GetProfile)
-				user.PUT("/password", h.User.ChangePassword)
+				user.GET("", h.User.GetProfile)
+				user.POST("/password", h.User.ChangePassword)
 			}
 
 			// API Key管理
