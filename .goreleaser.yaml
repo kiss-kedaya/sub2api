@@ -56,14 +56,12 @@ release:
     name: sub2api
   draft: false
   prerelease: auto
-  name_template: "v{{.Version}}"
-  # 完全使用 tag 消息作为 release 内容
+  name_template: "Sub2API {{.Version}}"
+  # 完全使用 tag 消息作为 release 内容（通过环境变量传入）
   header: |
-    ## Sub2API {{.Version}}
-
     > AI API Gateway Platform - 将 AI 订阅配额分发和管理
 
-    {{ .TagBody }}
+    {{ .Env.TAG_MESSAGE }}
 
   footer: |
 
