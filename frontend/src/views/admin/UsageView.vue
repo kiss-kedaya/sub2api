@@ -292,7 +292,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
@@ -303,7 +303,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import Select from '@/components/common/Select.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import type { UsageLog } from '@/types'
-import type { Column } from '@/components/common/DataTable.vue'
+import type { Column } from '@/components/common/types'
 import type { SimpleUser, SimpleApiKey, AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
 
 const { t } = useI18n()

@@ -641,7 +641,7 @@ const { t } = useI18n()
 import { adminAPI } from '@/api/admin'
 import type { User, ApiKey, Group } from '@/types'
 import type { BatchUserUsageStats } from '@/api/admin/dashboard'
-import type { Column } from '@/components/common/DataTable.vue'
+import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'

@@ -152,6 +152,12 @@ export interface UserStats {
 
 // ==================== API Response Types ====================
 
+export interface ApiResponse<T = unknown> {
+  code: number;
+  message: string;
+  data: T;
+}
+
 export interface ApiError {
   detail: string;
   code?: string;
@@ -357,6 +363,7 @@ export interface CreateAccountRequest {
 
 export interface UpdateAccountRequest {
   name?: string;
+  type?: AccountType;
   credentials?: Record<string, unknown>;
   extra?: Record<string, string>;
   proxy_id?: number | null;

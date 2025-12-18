@@ -86,15 +86,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { Column } from './types'
 
 const { t } = useI18n()
-
-export interface Column {
-  key: string
-  label: string
-  sortable?: boolean
-  formatter?: (value: any, row: any) => string
-}
 
 interface Props {
   columns: Column[]

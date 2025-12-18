@@ -10,4 +10,4 @@ export { default as EmptyState } from './EmptyState.vue'
 export { default as LocaleSwitcher } from './LocaleSwitcher.vue'
 
 // Export types
-export type { Column } from './DataTable.vue'
+export type { Column } from './types'

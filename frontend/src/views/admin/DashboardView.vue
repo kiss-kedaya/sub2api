@@ -398,7 +398,7 @@ const lineOptions = computed(() => ({
         font: {
           size: 10,
         },
-        callback: (value: number) => formatTokens(value),
+        callback: (value: string | number) => formatTokens(Number(value)),
       },
     },
   },

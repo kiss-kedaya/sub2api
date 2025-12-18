@@ -121,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import subscriptionsAPI from '@/api/subscriptions';
 import type { UserSubscription } from '@/types';

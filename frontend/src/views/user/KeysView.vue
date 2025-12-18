@@ -217,17 +217,17 @@
             <template #selected="{ option }">
               <GroupBadge
                 v-if="option"
-                :name="option.label"
-                :subscription-type="option.subscriptionType"
-                :rate-multiplier="option.rate"
+                :name="(option as unknown as GroupOption).label"
+                :subscription-type="(option as unknown as GroupOption).subscriptionType"
+                :rate-multiplier="(option as unknown as GroupOption).rate"
               />
               <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
             </template>
             <template #option="{ option }">
               <GroupBadge
-                :name="option.label"
-                :subscription-type="option.subscriptionType"
-                :rate-multiplier="option.rate"
+                :name="(option as unknown as GroupOption).label"
+                :subscription-type="(option as unknown as GroupOption).subscriptionType"
+                :rate-multiplier="(option as unknown as GroupOption).rate"
               />
             </template>
           </Select>
@@ -366,7 +366,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 
@@ -382,8 +382,15 @@ import Select from '@/components/common/Select.vue'
 import UseKeyModal from '@/components/keys/UseKeyModal.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import type { ApiKey, Group, PublicSettings, SubscriptionType } from '@/types'
-import type { Column } from '@/components/common/DataTable.vue'
+import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
+
+interface GroupOption {
+  value: number
+  label: string
+  rate: number
+  subscriptionType: SubscriptionType
+}
 
 const appStore = useAppStore()
 
@@ -428,8 +435,8 @@ const selectedKeyForGroup = computed(() => {
   return apiKeys.value.find(k => k.id === groupSelectorKeyId.value) || null
 })
 
-const setGroupButtonRef = (keyId: number, el: HTMLElement | null) => {
-  if (el) {
+const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance | null) => {
+  if (el instanceof HTMLElement) {
     groupButtonRefs.value.set(keyId, el)
   } else {
     groupButtonRefs.value.delete(keyId)
@@ -562,7 +569,9 @@ const editKey = (key: ApiKey) => {
   formData.value = {
     name: key.name,
     group_id: key.group_id,
-    status: key.status
+    status: key.status,
+    use_custom_key: false,
+    custom_key: ''
   }
   showEditModal.value = true
 }
