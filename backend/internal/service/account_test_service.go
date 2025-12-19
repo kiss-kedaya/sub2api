@@ -92,9 +92,9 @@ func createTestPayload() map[string]interface{} {
 		"metadata": map[string]string{
 			"user_id": generateSessionString(),
 		},
-		"max_tokens": 1024,
+		"max_tokens":  1024,
 		"temperature": 1,
-		"stream":     true,
+		"stream":      true,
 	}
 }
 
@@ -310,5 +310,5 @@ func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
 func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) error {
 	log.Printf("Account test error: %s", errorMsg)
 	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
-	return fmt.Errorf(errorMsg)
+	return fmt.Errorf("%s", errorMsg)
 }
