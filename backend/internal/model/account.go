@@ -263,3 +263,17 @@ func (a *Account) ShouldHandleErrorCode(statusCode int) bool {
 	}
 	return false
 }
+
+// IsInterceptWarmupEnabled 检查是否启用预热请求拦截
+// 启用后，标题生成、Warmup等预热请求将返回mock响应，不消耗上游token
+func (a *Account) IsInterceptWarmupEnabled() bool {
+	if a.Credentials == nil {
+		return false
+	}
+	if v, ok := a.Credentials["intercept_warmup_requests"]; ok {
+		if enabled, ok := v.(bool); ok {
+			return enabled
+		}
+	}
+	return false
+}

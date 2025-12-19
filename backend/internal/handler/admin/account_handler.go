@@ -241,15 +241,19 @@ func (h *AccountHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	// Update account credentials
-	newCredentials := map[string]interface{}{
-		"access_token":  tokenInfo.AccessToken,
-		"token_type":    tokenInfo.TokenType,
-		"expires_in":    tokenInfo.ExpiresIn,
-		"expires_at":    tokenInfo.ExpiresAt,
-		"refresh_token": tokenInfo.RefreshToken,
-		"scope":         tokenInfo.Scope,
+	// Copy existing credentials to preserve non-token settings (e.g., intercept_warmup_requests)
+	newCredentials := make(map[string]interface{})
+	for k, v := range account.Credentials {
+		newCredentials[k] = v
 	}
+
+	// Update token-related fields
+	newCredentials["access_token"] = tokenInfo.AccessToken
+	newCredentials["token_type"] = tokenInfo.TokenType
+	newCredentials["expires_in"] = tokenInfo.ExpiresIn
+	newCredentials["expires_at"] = tokenInfo.ExpiresAt
+	newCredentials["refresh_token"] = tokenInfo.RefreshToken
+	newCredentials["scope"] = tokenInfo.Scope
 
 	updatedAccount, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
 		Credentials: newCredentials,
