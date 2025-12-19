@@ -36,6 +36,23 @@
         </span>
       </div>
 
+      <!-- Model Selection -->
+      <div class="space-y-1.5">
+        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+          {{ t('admin.accounts.selectTestModel') }}
+        </label>
+        <select
+          v-model="selectedModelId"
+          :disabled="loadingModels || status === 'connecting'"
+          class="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-dark-500 bg-white dark:bg-dark-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <option v-if="loadingModels" value="">{{ t('common.loading') }}...</option>
+          <option v-for="model in availableModels" :key="model.id" :value="model.id">
+            {{ model.display_name }} ({{ model.id }})
+          </option>
+        </select>
+      </div>
+
       <!-- Terminal Output -->
       <div class="relative group">
         <div
@@ -125,10 +142,10 @@
         </button>
         <button
           @click="startTest"
-          :disabled="status === 'connecting'"
+          :disabled="status === 'connecting' || !selectedModelId"
           :class="[
             'px-4 py-2 text-sm font-medium rounded-lg transition-all flex items-center gap-2',
-            status === 'connecting'
+            status === 'connecting' || !selectedModelId
               ? 'bg-primary-400 text-white cursor-not-allowed'
               : status === 'success'
                 ? 'bg-green-500 hover:bg-green-600 text-white'
@@ -161,7 +178,8 @@
 import { ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Modal from '@/components/common/Modal.vue'
-import type { Account } from '@/types'
+import { adminAPI } from '@/api/admin'
+import type { Account, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
 
@@ -184,16 +202,43 @@ const status = ref<'idle' | 'connecting' | 'success' | 'error'>('idle')
 const outputLines = ref<OutputLine[]>([])
 const streamingContent = ref('')
 const errorMessage = ref('')
+const availableModels = ref<ClaudeModel[]>([])
+const selectedModelId = ref('')
+const loadingModels = ref(false)
 let eventSource: EventSource | null = null
 
-// Reset state when modal opens
-watch(() => props.show, (newVal) => {
-  if (newVal) {
+// Load available models when modal opens
+watch(() => props.show, async (newVal) => {
+  if (newVal && props.account) {
     resetState()
+    await loadAvailableModels()
   } else {
     closeEventSource()
   }
 })
+
+const loadAvailableModels = async () => {
+  if (!props.account) return
+
+  loadingModels.value = true
+  selectedModelId.value = '' // Reset selection before loading
+  try {
+    availableModels.value = await adminAPI.accounts.getAvailableModels(props.account.id)
+    // Default to first model (usually Sonnet)
+    if (availableModels.value.length > 0) {
+      // Try to select Sonnet as default, otherwise use first model
+      const sonnetModel = availableModels.value.find(m => m.id.includes('sonnet'))
+      selectedModelId.value = sonnetModel?.id || availableModels.value[0].id
+    }
+  } catch (error) {
+    console.error('Failed to load available models:', error)
+    // Fallback to empty list
+    availableModels.value = []
+    selectedModelId.value = ''
+  } finally {
+    loadingModels.value = false
+  }
+}
 
 const resetState = () => {
   status.value = 'idle'
@@ -227,7 +272,7 @@ const scrollToBottom = async () => {
 }
 
 const startTest = async () => {
-  if (!props.account) return
+  if (!props.account || !selectedModelId.value) return
 
   resetState()
   status.value = 'connecting'
@@ -247,7 +292,8 @@ const startTest = async () => {
       headers: {
         'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
         'Content-Type': 'application/json'
-      }
+      },
+      body: JSON.stringify({ model_id: selectedModelId.value })
     })
 
     if (!response.ok) {
