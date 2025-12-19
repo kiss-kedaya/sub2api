@@ -207,7 +207,7 @@ const pageDescription = computed(() => {
 });
 
 function toggleMobileSidebar() {
-  appStore.toggleSidebar();
+  appStore.toggleMobileSidebar();
 }
 
 function toggleDropdown() {
