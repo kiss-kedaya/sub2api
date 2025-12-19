@@ -156,7 +156,6 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAppStore, useAuthStore } from '@/stores';
-import { authAPI } from '@/api';
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue';
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue';
 
@@ -169,7 +168,7 @@ const authStore = useAuthStore();
 const user = computed(() => authStore.user);
 const dropdownOpen = ref(false);
 const dropdownRef = ref<HTMLElement | null>(null);
-const contactInfo = ref('');
+const contactInfo = computed(() => appStore.contactInfo);
 
 const userInitials = computed(() => {
   if (!user.value) return '';
@@ -230,14 +229,8 @@ function handleClickOutside(event: MouseEvent) {
   }
 }
 
-onMounted(async () => {
+onMounted(() => {
   document.addEventListener('click', handleClickOutside);
-  try {
-    const settings = await authAPI.getPublicSettings();
-    contactInfo.value = settings.contact_info || '';
-  } catch (error) {
-    console.error('Failed to load contact info:', error);
-  }
 });
 
 onBeforeUnmount(() => {
