@@ -90,7 +90,7 @@ func Paginated(c *gin.Context, items interface{}, total int64, page, pageSize in
 	})
 }
 
-// PaginationResult 分页结果（与repository.PaginationResult兼容）
+// PaginationResult 分页结果（与pagination.PaginationResult兼容）
 type PaginationResult struct {
 	Total    int64
 	Page     int
