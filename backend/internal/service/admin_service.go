@@ -13,7 +13,8 @@ import (
 	"time"
 
 	"sub2api/internal/model"
-	"sub2api/internal/repository"
+	"sub2api/internal/pkg/pagination"
+	"sub2api/internal/service/ports"
 
 	"golang.org/x/net/proxy"
 	"gorm.io/gorm"
@@ -179,35 +180,45 @@ type ProxyTestResult struct {
 
 // adminServiceImpl implements AdminService
 type adminServiceImpl struct {
-	userRepo            *repository.UserRepository
-	groupRepo           *repository.GroupRepository
-	accountRepo         *repository.AccountRepository
-	proxyRepo           *repository.ProxyRepository
-	apiKeyRepo          *repository.ApiKeyRepository
-	redeemCodeRepo      *repository.RedeemCodeRepository
-	usageLogRepo        *repository.UsageLogRepository
-	userSubRepo         *repository.UserSubscriptionRepository
+	userRepo            ports.UserRepository
+	groupRepo           ports.GroupRepository
+	accountRepo         ports.AccountRepository
+	proxyRepo           ports.ProxyRepository
+	apiKeyRepo          ports.ApiKeyRepository
+	redeemCodeRepo      ports.RedeemCodeRepository
+	usageLogRepo        ports.UsageLogRepository
+	userSubRepo         ports.UserSubscriptionRepository
 	billingCacheService *BillingCacheService
 }
 
 // NewAdminService creates a new AdminService
-func NewAdminService(repos *repository.Repositories, billingCacheService *BillingCacheService) AdminService {
+func NewAdminService(
+	userRepo ports.UserRepository,
+	groupRepo ports.GroupRepository,
+	accountRepo ports.AccountRepository,
+	proxyRepo ports.ProxyRepository,
+	apiKeyRepo ports.ApiKeyRepository,
+	redeemCodeRepo ports.RedeemCodeRepository,
+	usageLogRepo ports.UsageLogRepository,
+	userSubRepo ports.UserSubscriptionRepository,
+	billingCacheService *BillingCacheService,
+) AdminService {
 	return &adminServiceImpl{
-		userRepo:            repos.User,
-		groupRepo:           repos.Group,
-		accountRepo:         repos.Account,
-		proxyRepo:           repos.Proxy,
-		apiKeyRepo:          repos.ApiKey,
-		redeemCodeRepo:      repos.RedeemCode,
-		usageLogRepo:        repos.UsageLog,
-		userSubRepo:         repos.UserSubscription,
+		userRepo:            userRepo,
+		groupRepo:           groupRepo,
+		accountRepo:         accountRepo,
+		proxyRepo:           proxyRepo,
+		apiKeyRepo:          apiKeyRepo,
+		redeemCodeRepo:      redeemCodeRepo,
+		usageLogRepo:        usageLogRepo,
+		userSubRepo:         userSubRepo,
 		billingCacheService: billingCacheService,
 	}
 }
 
 // User management implementations
 func (s *adminServiceImpl) ListUsers(ctx context.Context, page, pageSize int, status, role, search string) ([]model.User, int64, error) {
-	params := repository.PaginationParams{Page: page, PageSize: pageSize}
+	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	users, result, err := s.userRepo.ListWithFilters(ctx, params, status, role, search)
 	if err != nil {
 		return nil, 0, err
@@ -376,7 +387,7 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 }
 
 func (s *adminServiceImpl) GetUserAPIKeys(ctx context.Context, userID int64, page, pageSize int) ([]model.ApiKey, int64, error) {
-	params := repository.PaginationParams{Page: page, PageSize: pageSize}
+	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	keys, result, err := s.apiKeyRepo.ListByUserID(ctx, userID, params)
 	if err != nil {
 		return nil, 0, err
@@ -397,7 +408,7 @@ func (s *adminServiceImpl) GetUserUsageStats(ctx context.Context, userID int64, 
 
 // Group management implementations
 func (s *adminServiceImpl) ListGroups(ctx context.Context, page, pageSize int, platform, status string, isExclusive *bool) ([]model.Group, int64, error) {
-	params := repository.PaginationParams{Page: page, PageSize: pageSize}
+	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	groups, result, err := s.groupRepo.ListWithFilters(ctx, params, platform, status, isExclusive)
 	if err != nil {
 		return nil, 0, err
@@ -568,7 +579,7 @@ func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
 }
 
 func (s *adminServiceImpl) GetGroupAPIKeys(ctx context.Context, groupID int64, page, pageSize int) ([]model.ApiKey, int64, error) {
-	params := repository.PaginationParams{Page: page, PageSize: pageSize}
+	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	keys, result, err := s.apiKeyRepo.ListByGroupID(ctx, groupID, params)
 	if err != nil {
 		return nil, 0, err
@@ -578,7 +589,7 @@ func (s *adminServiceImpl) GetGroupAPIKeys(ctx context.Context, groupID int64, p
 
 // Account management implementations
 func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string) ([]model.Account, int64, error) {
-	params := repository.PaginationParams{Page: page, PageSize: pageSize}
+	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	accounts, result, err := s.accountRepo.ListWithFilters(ctx, params, platform, accountType, status, search)
 	if err != nil {
 		return nil, 0, err
@@ -696,7 +707,7 @@ func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, 
 
 // Proxy management implementations
 func (s *adminServiceImpl) ListProxies(ctx context.Context, page, pageSize int, protocol, status, search string) ([]model.Proxy, int64, error) {
-	params := repository.PaginationParams{Page: page, PageSize: pageSize}
+	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	proxies, result, err := s.proxyRepo.ListWithFilters(ctx, params, protocol, status, search)
 	if err != nil {
 		return nil, 0, err
@@ -781,7 +792,7 @@ func (s *adminServiceImpl) CheckProxyExists(ctx context.Context, host string, po
 
 // Redeem code management implementations
 func (s *adminServiceImpl) ListRedeemCodes(ctx context.Context, page, pageSize int, codeType, status, search string) ([]model.RedeemCode, int64, error) {
-	params := repository.PaginationParams{Page: page, PageSize: pageSize}
+	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	codes, result, err := s.redeemCodeRepo.ListWithFilters(ctx, params, codeType, status, search)
 	if err != nil {
 		return nil, 0, err

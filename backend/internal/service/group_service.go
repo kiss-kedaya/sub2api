@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"sub2api/internal/model"
-	"sub2api/internal/repository"
+	"sub2api/internal/pkg/pagination"
+	"sub2api/internal/service/ports"
 
 	"gorm.io/gorm"
 )
@@ -34,11 +35,11 @@ type UpdateGroupRequest struct {
 
 // GroupService 分组管理服务
 type GroupService struct {
-	groupRepo *repository.GroupRepository
+	groupRepo ports.GroupRepository
 }
 
 // NewGroupService 创建分组服务实例
-func NewGroupService(groupRepo *repository.GroupRepository) *GroupService {
+func NewGroupService(groupRepo ports.GroupRepository) *GroupService {
 	return &GroupService{
 		groupRepo: groupRepo,
 	}
@@ -84,7 +85,7 @@ func (s *GroupService) GetByID(ctx context.Context, id int64) (*model.Group, err
 }
 
 // List 获取分组列表
-func (s *GroupService) List(ctx context.Context, params repository.PaginationParams) ([]model.Group, *repository.PaginationResult, error) {
+func (s *GroupService) List(ctx context.Context, params pagination.PaginationParams) ([]model.Group, *pagination.PaginationResult, error) {
 	groups, pagination, err := s.groupRepo.List(ctx, params)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list groups: %w", err)

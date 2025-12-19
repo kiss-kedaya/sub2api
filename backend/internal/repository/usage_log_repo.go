@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"sub2api/internal/model"
+	"sub2api/internal/pkg/pagination"
 	"sub2api/internal/pkg/timezone"
+	"sub2api/internal/pkg/usagestats"
 	"time"
 
 	"gorm.io/gorm"
@@ -30,7 +32,7 @@ func (r *UsageLogRepository) GetByID(ctx context.Context, id int64) (*model.Usag
 	return &log, nil
 }
 
-func (r *UsageLogRepository) ListByUser(ctx context.Context, userID int64, params PaginationParams) ([]model.UsageLog, *PaginationResult, error) {
+func (r *UsageLogRepository) ListByUser(ctx context.Context, userID int64, params pagination.PaginationParams) ([]model.UsageLog, *pagination.PaginationResult, error) {
 	var logs []model.UsageLog
 	var total int64
 
@@ -49,7 +51,7 @@ func (r *UsageLogRepository) ListByUser(ctx context.Context, userID int64, param
 		pages++
 	}
 
-	return logs, &PaginationResult{
+	return logs, &pagination.PaginationResult{
 		Total:    total,
 		Page:     params.Page,
 		PageSize: params.Limit(),
@@ -57,7 +59,7 @@ func (r *UsageLogRepository) ListByUser(ctx context.Context, userID int64, param
 	}, nil
 }
 
-func (r *UsageLogRepository) ListByApiKey(ctx context.Context, apiKeyID int64, params PaginationParams) ([]model.UsageLog, *PaginationResult, error) {
+func (r *UsageLogRepository) ListByApiKey(ctx context.Context, apiKeyID int64, params pagination.PaginationParams) ([]model.UsageLog, *pagination.PaginationResult, error) {
 	var logs []model.UsageLog
 	var total int64
 
@@ -76,7 +78,7 @@ func (r *UsageLogRepository) ListByApiKey(ctx context.Context, apiKeyID int64, p
 		pages++
 	}
 
-	return logs, &PaginationResult{
+	return logs, &pagination.PaginationResult{
 		Total:    total,
 		Page:     params.Page,
 		PageSize: params.Limit(),
@@ -270,7 +272,7 @@ func (r *UsageLogRepository) GetDashboardStats(ctx context.Context) (*DashboardS
 	return &stats, nil
 }
 
-func (r *UsageLogRepository) ListByAccount(ctx context.Context, accountID int64, params PaginationParams) ([]model.UsageLog, *PaginationResult, error) {
+func (r *UsageLogRepository) ListByAccount(ctx context.Context, accountID int64, params pagination.PaginationParams) ([]model.UsageLog, *pagination.PaginationResult, error) {
 	var logs []model.UsageLog
 	var total int64
 
@@ -289,7 +291,7 @@ func (r *UsageLogRepository) ListByAccount(ctx context.Context, accountID int64,
 		pages++
 	}
 
-	return logs, &PaginationResult{
+	return logs, &pagination.PaginationResult{
 		Total:    total,
 		Page:     params.Page,
 		PageSize: params.Limit(),
@@ -297,7 +299,7 @@ func (r *UsageLogRepository) ListByAccount(ctx context.Context, accountID int64,
 	}, nil
 }
 
-func (r *UsageLogRepository) ListByUserAndTimeRange(ctx context.Context, userID int64, startTime, endTime time.Time) ([]model.UsageLog, *PaginationResult, error) {
+func (r *UsageLogRepository) ListByUserAndTimeRange(ctx context.Context, userID int64, startTime, endTime time.Time) ([]model.UsageLog, *pagination.PaginationResult, error) {
 	var logs []model.UsageLog
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND created_at >= ? AND created_at < ?", userID, startTime, endTime).
@@ -306,7 +308,7 @@ func (r *UsageLogRepository) ListByUserAndTimeRange(ctx context.Context, userID 
 	return logs, nil, err
 }
 
-func (r *UsageLogRepository) ListByApiKeyAndTimeRange(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) ([]model.UsageLog, *PaginationResult, error) {
+func (r *UsageLogRepository) ListByApiKeyAndTimeRange(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) ([]model.UsageLog, *pagination.PaginationResult, error) {
 	var logs []model.UsageLog
 	err := r.db.WithContext(ctx).
 		Where("api_key_id = ? AND created_at >= ? AND created_at < ?", apiKeyID, startTime, endTime).
@@ -315,7 +317,7 @@ func (r *UsageLogRepository) ListByApiKeyAndTimeRange(ctx context.Context, apiKe
 	return logs, nil, err
 }
 
-func (r *UsageLogRepository) ListByAccountAndTimeRange(ctx context.Context, accountID int64, startTime, endTime time.Time) ([]model.UsageLog, *PaginationResult, error) {
+func (r *UsageLogRepository) ListByAccountAndTimeRange(ctx context.Context, accountID int64, startTime, endTime time.Time) ([]model.UsageLog, *pagination.PaginationResult, error) {
 	var logs []model.UsageLog
 	err := r.db.WithContext(ctx).
 		Where("account_id = ? AND created_at >= ? AND created_at < ?", accountID, startTime, endTime).
@@ -324,7 +326,7 @@ func (r *UsageLogRepository) ListByAccountAndTimeRange(ctx context.Context, acco
 	return logs, nil, err
 }
 
-func (r *UsageLogRepository) ListByModelAndTimeRange(ctx context.Context, modelName string, startTime, endTime time.Time) ([]model.UsageLog, *PaginationResult, error) {
+func (r *UsageLogRepository) ListByModelAndTimeRange(ctx context.Context, modelName string, startTime, endTime time.Time) ([]model.UsageLog, *pagination.PaginationResult, error) {
 	var logs []model.UsageLog
 	err := r.db.WithContext(ctx).
 		Where("model = ? AND created_at >= ? AND created_at < ?", modelName, startTime, endTime).
@@ -337,15 +339,8 @@ func (r *UsageLogRepository) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Delete(&model.UsageLog{}, id).Error
 }
 
-// AccountStats 账号使用统计
-type AccountStats struct {
-	Requests int64   `json:"requests"`
-	Tokens   int64   `json:"tokens"`
-	Cost     float64 `json:"cost"`
-}
-
 // GetAccountTodayStats 获取账号今日统计
-func (r *UsageLogRepository) GetAccountTodayStats(ctx context.Context, accountID int64) (*AccountStats, error) {
+func (r *UsageLogRepository) GetAccountTodayStats(ctx context.Context, accountID int64) (*usagestats.AccountStats, error) {
 	today := timezone.Today()
 
 	var stats struct {
@@ -367,7 +362,7 @@ func (r *UsageLogRepository) GetAccountTodayStats(ctx context.Context, accountID
 		return nil, err
 	}
 
-	return &AccountStats{
+	return &usagestats.AccountStats{
 		Requests: stats.Requests,
 		Tokens:   stats.Tokens,
 		Cost:     stats.Cost,
@@ -375,7 +370,7 @@ func (r *UsageLogRepository) GetAccountTodayStats(ctx context.Context, accountID
 }
 
 // GetAccountWindowStats 获取账号时间窗口内的统计
-func (r *UsageLogRepository) GetAccountWindowStats(ctx context.Context, accountID int64, startTime time.Time) (*AccountStats, error) {
+func (r *UsageLogRepository) GetAccountWindowStats(ctx context.Context, accountID int64, startTime time.Time) (*usagestats.AccountStats, error) {
 	var stats struct {
 		Requests int64   `gorm:"column:requests"`
 		Tokens   int64   `gorm:"column:tokens"`
@@ -395,7 +390,7 @@ func (r *UsageLogRepository) GetAccountWindowStats(ctx context.Context, accountI
 		return nil, err
 	}
 
-	return &AccountStats{
+	return &usagestats.AccountStats{
 		Requests: stats.Requests,
 		Tokens:   stats.Tokens,
 		Cost:     stats.Cost,
@@ -500,11 +495,11 @@ func (r *UsageLogRepository) GetModelStats(ctx context.Context, startTime, endTi
 
 // ApiKeyUsageTrendPoint represents API key usage trend data point
 type ApiKeyUsageTrendPoint struct {
-	Date      string `json:"date"`
-	ApiKeyID  int64  `json:"api_key_id"`
-	KeyName   string `json:"key_name"`
-	Requests  int64  `json:"requests"`
-	Tokens    int64  `json:"tokens"`
+	Date     string `json:"date"`
+	ApiKeyID int64  `json:"api_key_id"`
+	KeyName  string `json:"key_name"`
+	Requests int64  `json:"requests"`
+	Tokens   int64  `json:"tokens"`
 }
 
 // GetApiKeyUsageTrend returns usage trend data grouped by API key and date
@@ -780,7 +775,7 @@ type UsageLogFilters struct {
 }
 
 // ListWithFilters lists usage logs with optional filters (for admin)
-func (r *UsageLogRepository) ListWithFilters(ctx context.Context, params PaginationParams, filters UsageLogFilters) ([]model.UsageLog, *PaginationResult, error) {
+func (r *UsageLogRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters UsageLogFilters) ([]model.UsageLog, *pagination.PaginationResult, error) {
 	var logs []model.UsageLog
 	var total int64
 
@@ -816,7 +811,7 @@ func (r *UsageLogRepository) ListWithFilters(ctx context.Context, params Paginat
 		pages++
 	}
 
-	return logs, &PaginationResult{
+	return logs, &pagination.PaginationResult{
 		Total:    total,
 		Page:     params.Page,
 		PageSize: params.Limit(),
@@ -838,7 +833,7 @@ type UsageStats struct {
 
 // BatchUserUsageStats represents usage stats for a single user
 type BatchUserUsageStats struct {
-	UserID         int64   `json:"user_id"`
+	UserID          int64   `json:"user_id"`
 	TodayActualCost float64 `json:"today_actual_cost"`
 	TotalActualCost float64 `json:"total_actual_cost"`
 }
