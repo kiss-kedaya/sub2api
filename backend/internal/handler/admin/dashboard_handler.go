@@ -127,12 +127,25 @@ func (h *DashboardHandler) GetRealtimeMetrics(c *gin.Context) {
 
 // GetUsageTrend handles getting usage trend data
 // GET /api/v1/admin/dashboard/trend
-// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour)
+// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), user_id, api_key_id
 func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
 	granularity := c.DefaultQuery("granularity", "day")
 
-	trend, err := h.usageRepo.GetUsageTrend(c.Request.Context(), startTime, endTime, granularity)
+	// Parse optional filter params
+	var userID, apiKeyID int64
+	if userIDStr := c.Query("user_id"); userIDStr != "" {
+		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
+			userID = id
+		}
+	}
+	if apiKeyIDStr := c.Query("api_key_id"); apiKeyIDStr != "" {
+		if id, err := strconv.ParseInt(apiKeyIDStr, 10, 64); err == nil {
+			apiKeyID = id
+		}
+	}
+
+	trend, err := h.usageRepo.GetUsageTrendWithFilters(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID)
 	if err != nil {
 		response.Error(c, 500, "Failed to get usage trend")
 		return
@@ -148,11 +161,24 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 
 // GetModelStats handles getting model usage statistics
 // GET /api/v1/admin/dashboard/models
-// Query params: start_date, end_date (YYYY-MM-DD)
+// Query params: start_date, end_date (YYYY-MM-DD), user_id, api_key_id
 func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
 
-	stats, err := h.usageRepo.GetModelStats(c.Request.Context(), startTime, endTime)
+	// Parse optional filter params
+	var userID, apiKeyID int64
+	if userIDStr := c.Query("user_id"); userIDStr != "" {
+		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
+			userID = id
+		}
+	}
+	if apiKeyIDStr := c.Query("api_key_id"); apiKeyIDStr != "" {
+		if id, err := strconv.ParseInt(apiKeyIDStr, 10, 64); err == nil {
+			apiKeyID = id
+		}
+	}
+
+	stats, err := h.usageRepo.GetModelStatsWithFilters(c.Request.Context(), startTime, endTime, userID, apiKeyID)
 	if err != nil {
 		response.Error(c, 500, "Failed to get model statistics")
 		return
