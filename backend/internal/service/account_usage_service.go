@@ -2,12 +2,8 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
@@ -65,23 +61,26 @@ type ClaudeUsageResponse struct {
 	} `json:"seven_day_sonnet"`
 }
 
+// ClaudeUsageFetcher fetches usage data from Anthropic OAuth API
+type ClaudeUsageFetcher interface {
+	FetchUsage(ctx context.Context, accessToken, proxyURL string) (*ClaudeUsageResponse, error)
+}
+
 // AccountUsageService 账号使用量查询服务
 type AccountUsageService struct {
 	accountRepo  ports.AccountRepository
 	usageLogRepo ports.UsageLogRepository
 	oauthService *OAuthService
-	httpClient   *http.Client
+	usageFetcher ClaudeUsageFetcher
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
-func NewAccountUsageService(accountRepo ports.AccountRepository, usageLogRepo ports.UsageLogRepository, oauthService *OAuthService) *AccountUsageService {
+func NewAccountUsageService(accountRepo ports.AccountRepository, usageLogRepo ports.UsageLogRepository, oauthService *OAuthService, usageFetcher ClaudeUsageFetcher) *AccountUsageService {
 	return &AccountUsageService{
 		accountRepo:  accountRepo,
 		usageLogRepo: usageLogRepo,
 		oauthService: oauthService,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		usageFetcher: usageFetcher,
 	}
 }
 
@@ -179,58 +178,23 @@ func (s *AccountUsageService) GetTodayStats(ctx context.Context, accountID int64
 
 // fetchOAuthUsage 从Anthropic API获取OAuth账号的使用量
 func (s *AccountUsageService) fetchOAuthUsage(ctx context.Context, account *model.Account) (*UsageInfo, error) {
-	// 获取access token（从credentials中获取）
 	accessToken := account.GetCredential("access_token")
 	if accessToken == "" {
 		return nil, fmt.Errorf("no access token available")
 	}
 
-	// 获取代理配置
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	var proxyURL string
 	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL := account.Proxy.URL()
-		if proxyURL != "" {
-			if parsedURL, err := url.Parse(proxyURL); err == nil {
-				transport.Proxy = http.ProxyURL(parsedURL)
-			}
-		}
+		proxyURL = account.Proxy.URL()
 	}
 
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-	}
-
-	// 构建请求
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.anthropic.com/api/oauth/usage", nil)
+	usageResp, err := s.usageFetcher.FetchUsage(ctx, accessToken, proxyURL)
 	if err != nil {
-		return nil, fmt.Errorf("create request failed: %w", err)
+		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
-
-	// 发送请求
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// 解析响应
-	var usageResp ClaudeUsageResponse
-	if err := json.NewDecoder(resp.Body).Decode(&usageResp); err != nil {
-		return nil, fmt.Errorf("decode response failed: %w", err)
-	}
-
-	// 转换为UsageInfo
 	now := time.Now()
-	return s.buildUsageInfo(&usageResp, &now), nil
+	return s.buildUsageInfo(usageResp, &now), nil
 }
 
 // parseTime 尝试多种格式解析时间
