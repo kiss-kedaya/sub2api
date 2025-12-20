@@ -40,6 +40,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		// 服务器层 ProviderSet
 		server.ProviderSet,
 
+		// BuildInfo provider
+		provideServiceBuildInfo,
+
 		// 清理函数提供者
 		provideCleanup,
 
@@ -47,6 +50,13 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		wire.Struct(new(Application), "Server", "Cleanup"),
 	)
 	return nil, nil
+}
+
+func provideServiceBuildInfo(buildInfo handler.BuildInfo) service.BuildInfo {
+	return service.BuildInfo{
+		Version:   buildInfo.Version,
+		BuildType: buildInfo.BuildType,
+	}
 }
 
 func provideCleanup(
