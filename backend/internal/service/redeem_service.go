@@ -359,12 +359,12 @@ func (s *RedeemService) Delete(ctx context.Context, id int64) error {
 }
 
 // GetStats 获取兑换码统计信息
-func (s *RedeemService) GetStats(ctx context.Context) (map[string]interface{}, error) {
+func (s *RedeemService) GetStats(ctx context.Context) (map[string]any, error) {
 	// TODO: 实现统计逻辑
 	// 统计未使用、已使用的兑换码数量
 	// 统计总面值等
 
-	stats := map[string]interface{}{
+	stats := map[string]any{
 		"total_codes":  0,
 		"unused_codes": 0,
 		"used_codes":   0,

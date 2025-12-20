@@ -358,7 +358,7 @@ func (h *UsageHandler) DashboardApiKeysUsage(c *gin.Context) {
 	}
 
 	if len(req.ApiKeyIDs) == 0 {
-		response.Success(c, gin.H{"stats": map[string]interface{}{}})
+		response.Success(c, gin.H{"stats": map[string]any{}})
 		return
 	}
 
@@ -383,7 +383,7 @@ func (h *UsageHandler) DashboardApiKeysUsage(c *gin.Context) {
 	}
 
 	if len(validApiKeyIDs) == 0 {
-		response.Success(c, gin.H{"stats": map[string]interface{}{}})
+		response.Success(c, gin.H{"stats": map[string]any{}})
 		return
 	}
 

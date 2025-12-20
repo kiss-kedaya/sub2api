@@ -259,11 +259,11 @@ func (s *BillingService) GetEstimatedCost(model string, estimatedInputTokens, es
 }
 
 // GetPricingServiceStatus 获取价格服务状态
-func (s *BillingService) GetPricingServiceStatus() map[string]interface{} {
+func (s *BillingService) GetPricingServiceStatus() map[string]any {
 	if s.pricingService != nil {
 		return s.pricingService.GetStatus()
 	}
-	return map[string]interface{}{
+	return map[string]any{
 		"model_count":  len(s.fallbackPrices),
 		"last_updated": "using fallback",
 		"local_hash":   "N/A",

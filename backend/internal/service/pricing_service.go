@@ -515,11 +515,11 @@ func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 }
 
 // GetStatus 获取服务状态
-func (s *PricingService) GetStatus() map[string]interface{} {
+func (s *PricingService) GetStatus() map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"model_count":  len(s.pricingData),
 		"last_updated": s.lastUpdated,
 		"local_hash":   s.localHash[:min(8, len(s.localHash))],

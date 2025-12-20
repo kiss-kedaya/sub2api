@@ -193,7 +193,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 func (h *UsageHandler) SearchUsers(c *gin.Context) {
 	keyword := c.Query("q")
 	if keyword == "" {
-		response.Success(c, []interface{}{})
+		response.Success(c, []any{})
 		return
 	}
 

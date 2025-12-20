@@ -10,7 +10,7 @@ import (
 )
 
 // JSONB 用于存储JSONB数据
-type JSONB map[string]interface{}
+type JSONB map[string]any
 
 func (j JSONB) Value() (driver.Value, error) {
 	if j == nil {
@@ -19,7 +19,7 @@ func (j JSONB) Value() (driver.Value, error) {
 	return json.Marshal(j)
 }
 
-func (j *JSONB) Scan(value interface{}) error {
+func (j *JSONB) Scan(value any) error {
 	if value == nil {
 		*j = nil
 		return nil
@@ -145,7 +145,7 @@ func (a *Account) GetModelMapping() map[string]string {
 		return nil
 	}
 	// 处理map[string]interface{}类型
-	if m, ok := raw.(map[string]interface{}); ok {
+	if m, ok := raw.(map[string]any); ok {
 		result := make(map[string]string)
 		for k, v := range m {
 			if s, ok := v.(string); ok {
@@ -231,7 +231,7 @@ func (a *Account) GetCustomErrorCodes() []int {
 		return nil
 	}
 	// 处理 []interface{} 类型（JSON反序列化后的格式）
-	if arr, ok := raw.([]interface{}); ok {
+	if arr, ok := raw.([]any); ok {
 		result := make([]int, 0, len(arr))
 		for _, v := range arr {
 			// JSON 数字默认解析为 float64

@@ -122,13 +122,13 @@ func NewGatewayService(
 
 // GenerateSessionHash 从请求体计算粘性会话hash
 func (s *GatewayService) GenerateSessionHash(body []byte) string {
-	var req map[string]interface{}
+	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return ""
 	}
 
 	// 1. 最高优先级：从metadata.user_id提取session_xxx
-	if metadata, ok := req["metadata"].(map[string]interface{}); ok {
+	if metadata, ok := req["metadata"].(map[string]any); ok {
 		if userID, ok := metadata["user_id"].(string); ok {
 			re := regexp.MustCompile(`session_([a-f0-9-]{36})`)
 			if match := re.FindStringSubmatch(userID); len(match) > 1 {
@@ -152,8 +152,8 @@ func (s *GatewayService) GenerateSessionHash(body []byte) string {
 	}
 
 	// 4. 最后fallback: 使用第一条消息
-	if messages, ok := req["messages"].([]interface{}); ok && len(messages) > 0 {
-		if firstMsg, ok := messages[0].(map[string]interface{}); ok {
+	if messages, ok := req["messages"].([]any); ok && len(messages) > 0 {
+		if firstMsg, ok := messages[0].(map[string]any); ok {
 			msgText := s.extractTextFromContent(firstMsg["content"])
 			if msgText != "" {
 				return s.hashContent(msgText)
@@ -164,14 +164,14 @@ func (s *GatewayService) GenerateSessionHash(body []byte) string {
 	return ""
 }
 
-func (s *GatewayService) extractCacheableContent(req map[string]interface{}) string {
+func (s *GatewayService) extractCacheableContent(req map[string]any) string {
 	var content string
 
 	// 检查system中的cacheable内容
-	if system, ok := req["system"].([]interface{}); ok {
+	if system, ok := req["system"].([]any); ok {
 		for _, part := range system {
-			if partMap, ok := part.(map[string]interface{}); ok {
-				if cc, ok := partMap["cache_control"].(map[string]interface{}); ok {
+			if partMap, ok := part.(map[string]any); ok {
+				if cc, ok := partMap["cache_control"].(map[string]any); ok {
 					if cc["type"] == "ephemeral" {
 						if text, ok := partMap["text"].(string); ok {
 							content += text
@@ -183,13 +183,13 @@ func (s *GatewayService) extractCacheableContent(req map[string]interface{}) str
 	}
 
 	// 检查messages中的cacheable内容
-	if messages, ok := req["messages"].([]interface{}); ok {
+	if messages, ok := req["messages"].([]any); ok {
 		for _, msg := range messages {
-			if msgMap, ok := msg.(map[string]interface{}); ok {
-				if msgContent, ok := msgMap["content"].([]interface{}); ok {
+			if msgMap, ok := msg.(map[string]any); ok {
+				if msgContent, ok := msgMap["content"].([]any); ok {
 					for _, part := range msgContent {
-						if partMap, ok := part.(map[string]interface{}); ok {
-							if cc, ok := partMap["cache_control"].(map[string]interface{}); ok {
+						if partMap, ok := part.(map[string]any); ok {
+							if cc, ok := partMap["cache_control"].(map[string]any); ok {
 								if cc["type"] == "ephemeral" {
 									// 找到cacheable内容，提取第一条消息的文本
 									return s.extractTextFromContent(msgMap["content"])
@@ -205,14 +205,14 @@ func (s *GatewayService) extractCacheableContent(req map[string]interface{}) str
 	return content
 }
 
-func (s *GatewayService) extractTextFromSystem(system interface{}) string {
+func (s *GatewayService) extractTextFromSystem(system any) string {
 	switch v := system.(type) {
 	case string:
 		return v
-	case []interface{}:
+	case []any:
 		var texts []string
 		for _, part := range v {
-			if partMap, ok := part.(map[string]interface{}); ok {
+			if partMap, ok := part.(map[string]any); ok {
 				if text, ok := partMap["text"].(string); ok {
 					texts = append(texts, text)
 				}
@@ -223,14 +223,14 @@ func (s *GatewayService) extractTextFromSystem(system interface{}) string {
 	return ""
 }
 
-func (s *GatewayService) extractTextFromContent(content interface{}) string {
+func (s *GatewayService) extractTextFromContent(content any) string {
 	switch v := content.(type) {
 	case string:
 		return v
-	case []interface{}:
+	case []any:
 		var texts []string
 		for _, part := range v {
-			if partMap, ok := part.(map[string]interface{}); ok {
+			if partMap, ok := part.(map[string]any); ok {
 				if partMap["type"] == "text" {
 					if text, ok := partMap["text"].(string); ok {
 						texts = append(texts, text)
@@ -250,7 +250,7 @@ func (s *GatewayService) hashContent(content string) string {
 
 // replaceModelInBody 替换请求体中的model字段
 func (s *GatewayService) replaceModelInBody(body []byte, newModel string) []byte {
-	var req map[string]interface{}
+	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body
 	}
@@ -558,7 +558,7 @@ func (s *GatewayService) getBetaHeader(body []byte, clientBetaHeader string) str
 
 	// 客户端没传，根据模型生成
 	var modelID string
-	var reqMap map[string]interface{}
+	var reqMap map[string]any
 	if json.Unmarshal(body, &reqMap) == nil {
 		if m, ok := reqMap["model"].(string); ok {
 			modelID = m
@@ -710,7 +710,7 @@ func (s *GatewayService) replaceModelInSSELine(line, fromModel, toModel string) 
 		return line
 	}
 
-	var event map[string]interface{}
+	var event map[string]any
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
 		return line
 	}
@@ -720,7 +720,7 @@ func (s *GatewayService) replaceModelInSSELine(line, fromModel, toModel string) 
 		return line
 	}
 
-	msg, ok := event["message"].(map[string]interface{})
+	msg, ok := event["message"].(map[string]any)
 	if !ok {
 		return line
 	}
@@ -802,7 +802,7 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 
 // replaceModelInResponseBody 替换响应体中的model字段
 func (s *GatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
-	var resp map[string]interface{}
+	var resp map[string]any
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return body
 	}

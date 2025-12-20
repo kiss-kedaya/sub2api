@@ -19,7 +19,7 @@ type TokenRefresher interface {
 
 	// Refresh 执行token刷新，返回更新后的credentials
 	// 注意：返回的map应该保留原有credentials中的所有字段，只更新token相关字段
-	Refresh(ctx context.Context, account *model.Account) (map[string]interface{}, error)
+	Refresh(ctx context.Context, account *model.Account) (map[string]any, error)
 }
 
 // ClaudeTokenRefresher 处理Anthropic/Claude OAuth token刷新
@@ -61,14 +61,14 @@ func (r *ClaudeTokenRefresher) NeedsRefresh(account *model.Account, refreshWindo
 
 // Refresh 执行token刷新
 // 保留原有credentials中的所有字段，只更新token相关字段
-func (r *ClaudeTokenRefresher) Refresh(ctx context.Context, account *model.Account) (map[string]interface{}, error) {
+func (r *ClaudeTokenRefresher) Refresh(ctx context.Context, account *model.Account) (map[string]any, error) {
 	tokenInfo, err := r.oauthService.RefreshAccountToken(ctx, account)
 	if err != nil {
 		return nil, err
 	}
 
 	// 保留现有credentials中的所有字段
-	newCredentials := make(map[string]interface{})
+	newCredentials := make(map[string]any)
 	for k, v := range account.Credentials {
 		newCredentials[k] = v
 	}

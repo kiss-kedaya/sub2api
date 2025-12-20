@@ -195,7 +195,7 @@ func (s *UsageService) GetStatsByModel(ctx context.Context, modelName string, st
 }
 
 // GetDailyStats 获取每日使用统计（最近N天）
-func (s *UsageService) GetDailyStats(ctx context.Context, userID int64, days int) ([]map[string]interface{}, error) {
+func (s *UsageService) GetDailyStats(ctx context.Context, userID int64, days int) ([]map[string]any, error) {
 	endTime := time.Now()
 	startTime := endTime.AddDate(0, 0, -days)
 
@@ -227,13 +227,13 @@ func (s *UsageService) GetDailyStats(ctx context.Context, userID int64, days int
 	}
 
 	// 计算平均值并转换为数组
-	result := make([]map[string]interface{}, 0, len(dailyStats))
+	result := make([]map[string]any, 0, len(dailyStats))
 	for date, stats := range dailyStats {
 		if stats.TotalRequests > 0 {
 			stats.AverageDurationMs /= float64(stats.TotalRequests)
 		}
 
-		result = append(result, map[string]interface{}{
+		result = append(result, map[string]any{
 			"date":                date,
 			"total_requests":      stats.TotalRequests,
 			"total_input_tokens":  stats.TotalInputTokens,
