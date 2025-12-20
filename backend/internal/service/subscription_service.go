@@ -354,45 +354,61 @@ func (s *SubscriptionService) List(ctx context.Context, page, pageSize int, user
 	return s.userSubRepo.List(ctx, params, userID, groupID, status)
 }
 
+// startOfDay 返回给定时间所在日期的零点（保持原时区）
+func startOfDay(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
 // CheckAndActivateWindow 检查并激活窗口（首次使用时）
 func (s *SubscriptionService) CheckAndActivateWindow(ctx context.Context, sub *model.UserSubscription) error {
 	if sub.IsWindowActivated() {
 		return nil
 	}
 
-	now := time.Now()
-	return s.userSubRepo.ActivateWindows(ctx, sub.ID, now)
+	// 使用当天零点作为窗口起始时间
+	windowStart := startOfDay(time.Now())
+	return s.userSubRepo.ActivateWindows(ctx, sub.ID, windowStart)
 }
 
 // CheckAndResetWindows 检查并重置过期的窗口
 func (s *SubscriptionService) CheckAndResetWindows(ctx context.Context, sub *model.UserSubscription) error {
-	now := time.Now()
+	// 使用当天零点作为新窗口起始时间
+	windowStart := startOfDay(time.Now())
+	needsInvalidateCache := false
 
 	// 日窗口重置（24小时）
 	if sub.NeedsDailyReset() {
-		if err := s.userSubRepo.ResetDailyUsage(ctx, sub.ID, now); err != nil {
+		if err := s.userSubRepo.ResetDailyUsage(ctx, sub.ID, windowStart); err != nil {
 			return err
 		}
-		sub.DailyWindowStart = &now
+		sub.DailyWindowStart = &windowStart
 		sub.DailyUsageUSD = 0
+		needsInvalidateCache = true
 	}
 
 	// 周窗口重置（7天）
 	if sub.NeedsWeeklyReset() {
-		if err := s.userSubRepo.ResetWeeklyUsage(ctx, sub.ID, now); err != nil {
+		if err := s.userSubRepo.ResetWeeklyUsage(ctx, sub.ID, windowStart); err != nil {
 			return err
 		}
-		sub.WeeklyWindowStart = &now
+		sub.WeeklyWindowStart = &windowStart
 		sub.WeeklyUsageUSD = 0
+		needsInvalidateCache = true
 	}
 
 	// 月窗口重置（30天）
 	if sub.NeedsMonthlyReset() {
-		if err := s.userSubRepo.ResetMonthlyUsage(ctx, sub.ID, now); err != nil {
+		if err := s.userSubRepo.ResetMonthlyUsage(ctx, sub.ID, windowStart); err != nil {
 			return err
 		}
-		sub.MonthlyWindowStart = &now
+		sub.MonthlyWindowStart = &windowStart
 		sub.MonthlyUsageUSD = 0
+		needsInvalidateCache = true
+	}
+
+	// 如果有窗口被重置，失效 Redis 缓存以保持一致性
+	if needsInvalidateCache && s.billingCacheService != nil {
+		_ = s.billingCacheService.InvalidateSubscription(ctx, sub.UserID, sub.GroupID)
 	}
 
 	return nil
