@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -13,8 +12,6 @@ import (
 	"sub2api/internal/model"
 	"sub2api/internal/service/ports"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -25,18 +22,10 @@ var (
 )
 
 const (
-	verifyCodeKeyPrefix   = "email_verify:"
 	verifyCodeTTL         = 15 * time.Minute
 	verifyCodeCooldown    = 1 * time.Minute
 	maxVerifyCodeAttempts = 5
 )
-
-// verifyCodeData Redis 中存储的验证码数据
-type verifyCodeData struct {
-	Code      string    `json:"code"`
-	Attempts  int       `json:"attempts"`
-	CreatedAt time.Time `json:"created_at"`
-}
 
 // SmtpConfig SMTP配置
 type SmtpConfig struct {
@@ -52,14 +41,14 @@ type SmtpConfig struct {
 // EmailService 邮件服务
 type EmailService struct {
 	settingRepo ports.SettingRepository
-	rdb         *redis.Client
+	cache       ports.EmailCache
 }
 
 // NewEmailService 创建邮件服务实例
-func NewEmailService(settingRepo ports.SettingRepository, rdb *redis.Client) *EmailService {
+func NewEmailService(settingRepo ports.SettingRepository, cache ports.EmailCache) *EmailService {
 	return &EmailService{
 		settingRepo: settingRepo,
-		rdb:         rdb,
+		cache:       cache,
 	}
 }
 
@@ -201,10 +190,8 @@ func (s *EmailService) GenerateVerifyCode() (string, error) {
 
 // SendVerifyCode 发送验证码邮件
 func (s *EmailService) SendVerifyCode(ctx context.Context, email, siteName string) error {
-	key := verifyCodeKeyPrefix + email
-
 	// 检查是否在冷却期内
-	existing, err := s.getVerifyCodeData(ctx, key)
+	existing, err := s.cache.GetVerificationCode(ctx, email)
 	if err == nil && existing != nil {
 		if time.Since(existing.CreatedAt) < verifyCodeCooldown {
 			return ErrVerifyCodeTooFrequent
@@ -218,12 +205,12 @@ func (s *EmailService) SendVerifyCode(ctx context.Context, email, siteName strin
 	}
 
 	// 保存验证码到 Redis
-	data := &verifyCodeData{
+	data := &ports.VerificationCodeData{
 		Code:      code,
 		Attempts:  0,
 		CreatedAt: time.Now(),
 	}
-	if err := s.setVerifyCodeData(ctx, key, data); err != nil {
+	if err := s.cache.SetVerificationCode(ctx, email, data, verifyCodeTTL); err != nil {
 		return fmt.Errorf("save verify code: %w", err)
 	}
 
@@ -241,9 +228,7 @@ func (s *EmailService) SendVerifyCode(ctx context.Context, email, siteName strin
 
 // VerifyCode 验证验证码
 func (s *EmailService) VerifyCode(ctx context.Context, email, code string) error {
-	key := verifyCodeKeyPrefix + email
-
-	data, err := s.getVerifyCodeData(ctx, key)
+	data, err := s.cache.GetVerificationCode(ctx, email)
 	if err != nil || data == nil {
 		return ErrInvalidVerifyCode
 	}
@@ -256,7 +241,7 @@ func (s *EmailService) VerifyCode(ctx context.Context, email, code string) error
 	// 验证码不匹配
 	if data.Code != code {
 		data.Attempts++
-		_ = s.setVerifyCodeData(ctx, key, data)
+		_ = s.cache.SetVerificationCode(ctx, email, data, verifyCodeTTL)
 		if data.Attempts >= maxVerifyCodeAttempts {
 			return ErrVerifyCodeMaxAttempts
 		}
@@ -264,30 +249,8 @@ func (s *EmailService) VerifyCode(ctx context.Context, email, code string) error
 	}
 
 	// 验证成功，删除验证码
-	s.rdb.Del(ctx, key)
+	_ = s.cache.DeleteVerificationCode(ctx, email)
 	return nil
-}
-
-// getVerifyCodeData 从 Redis 获取验证码数据
-func (s *EmailService) getVerifyCodeData(ctx context.Context, key string) (*verifyCodeData, error) {
-	val, err := s.rdb.Get(ctx, key).Result()
-	if err != nil {
-		return nil, err
-	}
-	var data verifyCodeData
-	if err := json.Unmarshal([]byte(val), &data); err != nil {
-		return nil, err
-	}
-	return &data, nil
-}
-
-// setVerifyCodeData 保存验证码数据到 Redis
-func (s *EmailService) setVerifyCodeData(ctx context.Context, key string, data *verifyCodeData) error {
-	val, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	return s.rdb.Set(ctx, key, val, verifyCodeTTL).Err()
 }
 
 // buildVerifyCodeEmailBody 构建验证码邮件HTML内容
