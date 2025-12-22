@@ -500,14 +500,14 @@ const exclusiveOptions = computed(() => [
 ])
 
 const platformOptions = computed(() => [
-  { value: 'anthropic', label: 'Anthropic' }
-  // Future: { value: 'openai', label: 'OpenAI' },
-  // Future: { value: 'gemini', label: 'Gemini' }
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'openai', label: 'OpenAI' }
 ])
 
 const platformFilterOptions = computed(() => [
   { value: '', label: t('admin.groups.allPlatforms') },
-  { value: 'anthropic', label: 'Anthropic' }
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'openai', label: 'OpenAI' }
 ])
 
 const editStatusOptions = computed(() => [
