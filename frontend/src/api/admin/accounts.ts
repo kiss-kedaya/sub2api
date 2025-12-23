@@ -12,6 +12,7 @@ import type {
   AccountUsageInfo,
   WindowStats,
   ClaudeModel,
+  AccountUsageStatsResponse,
 } from '@/types';
 
 /**
@@ -126,27 +127,12 @@ export async function refreshCredentials(id: number): Promise<Account> {
 /**
  * Get account usage statistics
  * @param id - Account ID
- * @param period - Time period
- * @returns Account usage statistics
+ * @param days - Number of days (default: 30)
+ * @returns Account usage statistics with history, summary, and models
  */
-export async function getStats(
-  id: number,
-  period: string = 'month'
-): Promise<{
-  total_requests: number;
-  successful_requests: number;
-  failed_requests: number;
-  total_tokens: number;
-  average_response_time: number;
-}> {
-  const { data } = await apiClient.get<{
-    total_requests: number;
-    successful_requests: number;
-    failed_requests: number;
-    total_tokens: number;
-    average_response_time: number;
-  }>(`/admin/accounts/${id}/stats`, {
-    params: { period },
+export async function getStats(id: number, days: number = 30): Promise<AccountUsageStatsResponse> {
+  const { data } = await apiClient.get<AccountUsageStatsResponse>(`/admin/accounts/${id}/stats`, {
+    params: { days },
   });
   return data;
 }
