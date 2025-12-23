@@ -582,6 +582,7 @@ export default {
       monthly: 'Monthly',
       noLimits: 'No limits configured',
       resetNow: 'Resetting soon',
+      windowNotActive: 'Window not active',
       resetInMinutes: 'Resets in {minutes}m',
       resetInHoursMinutes: 'Resets in {hours}h {minutes}m',
       resetInDaysHours: 'Resets in {days}d {hours}h',
@@ -1121,6 +1122,7 @@ export default {
     daysRemaining: '{days} days remaining',
     expiresOn: 'Expires on {date}',
     resetIn: 'Resets in {time}',
+    windowNotActive: 'Awaiting first use',
     usageOf: '{used} of {limit}',
   },
 }
