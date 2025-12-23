@@ -638,6 +638,10 @@ export default {
       weekly: '每周',
       monthly: '每月',
       noLimits: '未配置限额',
+      resetNow: '即将重置',
+      resetInMinutes: '{minutes} 分钟后重置',
+      resetInHoursMinutes: '{hours} 小时 {minutes} 分钟后重置',
+      resetInDaysHours: '{days} 天 {hours} 小时后重置',
       daysRemaining: '天剩余',
       noExpiration: '无过期时间',
       status: {
