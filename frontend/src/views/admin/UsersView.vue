@@ -73,6 +73,27 @@
             </div>
           </template>
 
+          <template #cell-username="{ value }">
+            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value || '-' }}</span>
+          </template>
+
+          <template #cell-wechat="{ value }">
+            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value || '-' }}</span>
+          </template>
+
+          <template #cell-notes="{ value }">
+            <div class="max-w-xs">
+              <span
+                v-if="value"
+                :title="value.length > 30 ? value : undefined"
+                class="text-sm text-gray-600 dark:text-gray-400 block truncate"
+              >
+                {{ value.length > 30 ? value.substring(0, 25) + '...' : value }}
+              </span>
+              <span v-else class="text-sm text-gray-400">-</span>
+            </div>
+          </template>
+
           <template #cell-role="{ value }">
             <span
               :class="[
@@ -293,6 +314,34 @@
             </button>
           </div>
         </div>
+        <div>
+          <label class="input-label">{{ t('admin.users.username') }}</label>
+          <input
+            v-model="createForm.username"
+            type="text"
+            class="input"
+            :placeholder="t('admin.users.enterUsername')"
+          />
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.users.wechat') }}</label>
+          <input
+            v-model="createForm.wechat"
+            type="text"
+            class="input"
+            :placeholder="t('admin.users.enterWechat')"
+          />
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.users.notes') }}</label>
+          <textarea
+            v-model="createForm.notes"
+            rows="3"
+            class="input"
+            :placeholder="t('admin.users.enterNotes')"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.users.notesHint') }}</p>
+        </div>
         <div class="grid grid-cols-2 gap-4">
           <div>
             <label class="input-label">{{ t('admin.users.columns.balance') }}</label>
@@ -398,6 +447,34 @@
               </svg>
             </button>
           </div>
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.users.username') }}</label>
+          <input
+            v-model="editForm.username"
+            type="text"
+            class="input"
+            :placeholder="t('admin.users.enterUsername')"
+          />
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.users.wechat') }}</label>
+          <input
+            v-model="editForm.wechat"
+            type="text"
+            class="input"
+            :placeholder="t('admin.users.enterWechat')"
+          />
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.users.notes') }}</label>
+          <textarea
+            v-model="editForm.notes"
+            rows="3"
+            class="input"
+            :placeholder="t('admin.users.enterNotes')"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.users.notesHint') }}</p>
         </div>
         <div class="grid grid-cols-2 gap-4">
           <div>
@@ -689,6 +766,9 @@ const appStore = useAppStore()
 
 const columns = computed<Column[]>(() => [
   { key: 'email', label: t('admin.users.columns.user'), sortable: true },
+  { key: 'username', label: t('admin.users.columns.username'), sortable: true },
+  { key: 'wechat', label: t('admin.users.columns.wechat'), sortable: false },
+  { key: 'notes', label: t('admin.users.columns.notes'), sortable: false },
   { key: 'role', label: t('admin.users.columns.role'), sortable: true },
   { key: 'subscriptions', label: t('admin.users.columns.subscriptions'), sortable: false },
   { key: 'balance', label: t('admin.users.columns.balance'), sortable: true },
@@ -751,6 +831,9 @@ const savingAllowedGroups = ref(false)
 const createForm = reactive({
   email: '',
   password: '',
+  username: '',
+  wechat: '',
+  notes: '',
   balance: 0,
   concurrency: 1
 })
@@ -758,6 +841,9 @@ const createForm = reactive({
 const editForm = reactive({
   email: '',
   password: '',
+  username: '',
+  wechat: '',
+  notes: '',
   balance: 0,
   concurrency: 1
 })
@@ -881,6 +967,9 @@ const closeCreateModal = () => {
   showCreateModal.value = false
   createForm.email = ''
   createForm.password = ''
+  createForm.username = ''
+  createForm.wechat = ''
+  createForm.notes = ''
   createForm.balance = 0
   createForm.concurrency = 1
   passwordCopied.value = false
@@ -905,6 +994,9 @@ const handleEdit = (user: User) => {
   editingUser.value = user
   editForm.email = user.email
   editForm.password = ''
+  editForm.username = user.username || ''
+  editForm.wechat = user.wechat || ''
+  editForm.notes = user.notes || ''
   editForm.balance = user.balance
   editForm.concurrency = user.concurrency
   editPasswordCopied.value = false
@@ -926,6 +1018,9 @@ const handleUpdateUser = async () => {
     // Build update data - only include password if not empty
     const updateData: Record<string, any> = {
       email: editForm.email,
+      username: editForm.username,
+      wechat: editForm.wechat,
+      notes: editForm.notes,
       balance: editForm.balance,
       concurrency: editForm.concurrency
     }
