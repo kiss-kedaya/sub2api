@@ -449,6 +449,7 @@ export default {
       columns: {
         user: 'User',
         role: 'Role',
+        subscriptions: 'Subscriptions',
         balance: 'Balance',
         usage: 'Usage',
         concurrency: 'Concurrency',
@@ -458,6 +459,9 @@ export default {
       },
       today: 'Today',
       total: 'Total',
+      noSubscription: 'No subscription',
+      daysRemaining: '{days}d',
+      expired: 'Expired',
       disableUser: 'Disable User',
       enableUser: 'Enable User',
       viewApiKeys: 'View API Keys',
