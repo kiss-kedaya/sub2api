@@ -179,20 +179,22 @@ func (s *OpenAIGatewayService) SelectAccountForModel(ctx context.Context, groupI
 
 // GetAccessToken gets the access token for an OpenAI account
 func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *model.Account) (string, string, error) {
-	if account.Type == model.AccountTypeOAuth {
+	switch account.Type {
+	case model.AccountTypeOAuth:
 		accessToken := account.GetOpenAIAccessToken()
 		if accessToken == "" {
 			return "", "", errors.New("access_token not found in credentials")
 		}
 		return accessToken, "oauth", nil
-	} else if account.Type == model.AccountTypeApiKey {
+	case model.AccountTypeApiKey:
 		apiKey := account.GetOpenAIApiKey()
 		if apiKey == "" {
 			return "", "", errors.New("api_key not found in credentials")
 		}
 		return apiKey, "apikey", nil
+	default:
+		return "", "", fmt.Errorf("unsupported account type: %s", account.Type)
 	}
-	return "", "", fmt.Errorf("unsupported account type: %s", account.Type)
 }
 
 // Forward forwards request to OpenAI API
@@ -295,10 +297,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *model.Account, body []byte, token string, isStream bool) (*http.Request, error) {
 	// Determine target URL based on account type
 	var targetURL string
-	if account.Type == model.AccountTypeOAuth {
+	switch account.Type {
+	case model.AccountTypeOAuth:
 		// OAuth accounts use ChatGPT internal API
 		targetURL = chatgptCodexURL
-	} else if account.Type == model.AccountTypeApiKey {
+	case model.AccountTypeApiKey:
 		// API Key accounts use Platform API or custom base URL
 		baseURL := account.GetOpenAIBaseURL()
 		if baseURL != "" {
@@ -306,7 +309,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		} else {
 			targetURL = openaiPlatformAPIURL
 		}
-	} else {
+	default:
 		targetURL = openaiPlatformAPIURL
 	}
 
