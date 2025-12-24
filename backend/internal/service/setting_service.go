@@ -54,6 +54,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*model.PublicSe
 		model.SettingKeySiteSubtitle,
 		model.SettingKeyApiBaseUrl,
 		model.SettingKeyContactInfo,
+		model.SettingKeyDocUrl,
 	}
 
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
@@ -71,6 +72,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*model.PublicSe
 		SiteSubtitle:        s.getStringOrDefault(settings, model.SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
 		ApiBaseUrl:          settings[model.SettingKeyApiBaseUrl],
 		ContactInfo:         settings[model.SettingKeyContactInfo],
+		DocUrl:              settings[model.SettingKeyDocUrl],
 	}, nil
 }
 
@@ -106,6 +108,7 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *model.Sys
 	updates[model.SettingKeySiteSubtitle] = settings.SiteSubtitle
 	updates[model.SettingKeyApiBaseUrl] = settings.ApiBaseUrl
 	updates[model.SettingKeyContactInfo] = settings.ContactInfo
+	updates[model.SettingKeyDocUrl] = settings.DocUrl
 
 	// 默认配置
 	updates[model.SettingKeyDefaultConcurrency] = strconv.Itoa(settings.DefaultConcurrency)
@@ -210,6 +213,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *model.System
 		SiteSubtitle:        s.getStringOrDefault(settings, model.SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
 		ApiBaseUrl:          settings[model.SettingKeyApiBaseUrl],
 		ContactInfo:         settings[model.SettingKeyContactInfo],
+		DocUrl:              settings[model.SettingKeyDocUrl],
 	}
 
 	// 解析整数类型
