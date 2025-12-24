@@ -34,10 +34,20 @@ type AccountHandler struct {
 	accountUsageService *service.AccountUsageService
 	accountTestService  *service.AccountTestService
 	concurrencyService  *service.ConcurrencyService
+	crsSyncService      *service.CRSSyncService
 }
 
 // NewAccountHandler creates a new admin account handler
-func NewAccountHandler(adminService service.AdminService, oauthService *service.OAuthService, openaiOAuthService *service.OpenAIOAuthService, rateLimitService *service.RateLimitService, accountUsageService *service.AccountUsageService, accountTestService *service.AccountTestService, concurrencyService *service.ConcurrencyService) *AccountHandler {
+func NewAccountHandler(
+	adminService service.AdminService,
+	oauthService *service.OAuthService,
+	openaiOAuthService *service.OpenAIOAuthService,
+	rateLimitService *service.RateLimitService,
+	accountUsageService *service.AccountUsageService,
+	accountTestService *service.AccountTestService,
+	concurrencyService *service.ConcurrencyService,
+	crsSyncService *service.CRSSyncService,
+) *AccountHandler {
 	return &AccountHandler{
 		adminService:        adminService,
 		oauthService:        oauthService,
@@ -46,6 +56,7 @@ func NewAccountHandler(adminService service.AdminService, oauthService *service.
 		accountUsageService: accountUsageService,
 		accountTestService:  accountTestService,
 		concurrencyService:  concurrencyService,
+		crsSyncService:      crsSyncService,
 	}
 }
 
@@ -224,6 +235,13 @@ type TestAccountRequest struct {
 	ModelID string `json:"model_id"`
 }
 
+type SyncFromCRSRequest struct {
+	BaseURL     string `json:"base_url" binding:"required"`
+	Username    string `json:"username" binding:"required"`
+	Password    string `json:"password" binding:"required"`
+	SyncProxies *bool  `json:"sync_proxies"`
+}
+
 // Test handles testing account connectivity with SSE streaming
 // POST /api/v1/admin/accounts/:id/test
 func (h *AccountHandler) Test(c *gin.Context) {
@@ -242,6 +260,35 @@ func (h *AccountHandler) Test(c *gin.Context) {
 		// Error already sent via SSE, just log
 		return
 	}
+}
+
+// SyncFromCRS handles syncing accounts from claude-relay-service (CRS)
+// POST /api/v1/admin/accounts/sync/crs
+func (h *AccountHandler) SyncFromCRS(c *gin.Context) {
+	var req SyncFromCRSRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	// Default to syncing proxies (can be disabled by explicitly setting false)
+	syncProxies := true
+	if req.SyncProxies != nil {
+		syncProxies = *req.SyncProxies
+	}
+
+	result, err := h.crsSyncService.SyncFromCRS(c.Request.Context(), service.SyncFromCRSInput{
+		BaseURL:     req.BaseURL,
+		Username:    req.Username,
+		Password:    req.Password,
+		SyncProxies: syncProxies,
+	})
+	if err != nil {
+		response.BadRequest(c, "Sync failed: "+err.Error())
+		return
+	}
+
+	response.Success(c, result)
 }
 
 // Refresh handles refreshing account credentials
