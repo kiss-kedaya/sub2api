@@ -19,6 +19,29 @@ func NewUsageLogRepository(db *gorm.DB) *UsageLogRepository {
 	return &UsageLogRepository{db: db}
 }
 
+// getPerformanceStats 获取 RPM 和 TPM（可选按用户过滤）
+func (r *UsageLogRepository) getPerformanceStats(ctx context.Context, userID int64) (rpm, tpm int64) {
+	oneMinuteAgo := time.Now().Add(-1 * time.Minute)
+	var perfStats struct {
+		RequestCount int64 `gorm:"column:request_count"`
+		TokenCount   int64 `gorm:"column:token_count"`
+	}
+
+	db := r.db.WithContext(ctx).Model(&model.UsageLog{}).
+		Select(`
+			COUNT(*) as request_count,
+			COALESCE(SUM(input_tokens + output_tokens), 0) as token_count
+		`).
+		Where("created_at >= ?", oneMinuteAgo)
+
+	if userID > 0 {
+		db = db.Where("user_id = ?", userID)
+	}
+
+	db.Scan(&perfStats)
+	return perfStats.RequestCount, perfStats.TokenCount
+}
+
 func (r *UsageLogRepository) Create(ctx context.Context, log *model.UsageLog) error {
 	return r.db.WithContext(ctx).Create(log).Error
 }
@@ -229,6 +252,9 @@ func (r *UsageLogRepository) GetDashboardStats(ctx context.Context) (*DashboardS
 	stats.TodayTokens = stats.TodayInputTokens + stats.TodayOutputTokens + stats.TodayCacheCreationTokens + stats.TodayCacheReadTokens
 	stats.TodayCost = todayStats.TodayCost
 	stats.TodayActualCost = todayStats.TodayActualCost
+
+	// 性能指标：RPM 和 TPM（最近1分钟，全局）
+	stats.Rpm, stats.Tpm = r.getPerformanceStats(ctx, 0)
 
 	return &stats, nil
 }
@@ -543,6 +569,9 @@ func (r *UsageLogRepository) GetUserDashboardStats(ctx context.Context, userID i
 	stats.TodayTokens = stats.TodayInputTokens + stats.TodayOutputTokens + stats.TodayCacheCreationTokens + stats.TodayCacheReadTokens
 	stats.TodayCost = todayStats.TodayCost
 	stats.TodayActualCost = todayStats.TodayActualCost
+
+	// 性能指标：RPM 和 TPM（最近1分钟，仅统计该用户的请求）
+	stats.Rpm, stats.Tpm = r.getPerformanceStats(ctx, userID)
 
 	return &stats, nil
 }
