@@ -3,8 +3,8 @@
  * Handles user management for administrators
  */
 
-import { apiClient } from '../client';
-import type { User, UpdateUserRequest, PaginatedResponse } from '@/types';
+import { apiClient } from '../client'
+import type { User, UpdateUserRequest, PaginatedResponse } from '@/types'
 
 /**
  * List all users with pagination
@@ -17,19 +17,19 @@ export async function list(
   page: number = 1,
   pageSize: number = 20,
   filters?: {
-    status?: 'active' | 'disabled';
-    role?: 'admin' | 'user';
-    search?: string;
+    status?: 'active' | 'disabled'
+    role?: 'admin' | 'user'
+    search?: string
   }
 ): Promise<PaginatedResponse<User>> {
   const { data } = await apiClient.get<PaginatedResponse<User>>('/admin/users', {
     params: {
       page,
       page_size: pageSize,
-      ...filters,
-    },
-  });
-  return data;
+      ...filters
+    }
+  })
+  return data
 }
 
 /**
@@ -38,8 +38,8 @@ export async function list(
  * @returns User details
  */
 export async function getById(id: number): Promise<User> {
-  const { data } = await apiClient.get<User>(`/admin/users/${id}`);
-  return data;
+  const { data } = await apiClient.get<User>(`/admin/users/${id}`)
+  return data
 }
 
 /**
@@ -48,14 +48,14 @@ export async function getById(id: number): Promise<User> {
  * @returns Created user
  */
 export async function create(userData: {
-  email: string;
-  password: string;
-  balance?: number;
-  concurrency?: number;
-  allowed_groups?: number[] | null;
+  email: string
+  password: string
+  balance?: number
+  concurrency?: number
+  allowed_groups?: number[] | null
 }): Promise<User> {
-  const { data } = await apiClient.post<User>('/admin/users', userData);
-  return data;
+  const { data } = await apiClient.post<User>('/admin/users', userData)
+  return data
 }
 
 /**
@@ -65,8 +65,8 @@ export async function create(userData: {
  * @returns Updated user
  */
 export async function update(id: number, updates: UpdateUserRequest): Promise<User> {
-  const { data } = await apiClient.put<User>(`/admin/users/${id}`, updates);
-  return data;
+  const { data } = await apiClient.put<User>(`/admin/users/${id}`, updates)
+  return data
 }
 
 /**
@@ -75,8 +75,8 @@ export async function update(id: number, updates: UpdateUserRequest): Promise<Us
  * @returns Success confirmation
  */
 export async function deleteUser(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>(`/admin/users/${id}`);
-  return data;
+  const { data } = await apiClient.delete<{ message: string }>(`/admin/users/${id}`)
+  return data
 }
 
 /**
@@ -96,9 +96,9 @@ export async function updateBalance(
   const { data } = await apiClient.post<User>(`/admin/users/${id}/balance`, {
     balance,
     operation,
-    notes: notes || '',
-  });
-  return data;
+    notes: notes || ''
+  })
+  return data
 }
 
 /**
@@ -108,7 +108,7 @@ export async function updateBalance(
  * @returns Updated user
  */
 export async function updateConcurrency(id: number, concurrency: number): Promise<User> {
-  return update(id, { concurrency });
+  return update(id, { concurrency })
 }
 
 /**
@@ -118,7 +118,7 @@ export async function updateConcurrency(id: number, concurrency: number): Promis
  * @returns Updated user
  */
 export async function toggleStatus(id: number, status: 'active' | 'disabled'): Promise<User> {
-  return update(id, { status });
+  return update(id, { status })
 }
 
 /**
@@ -127,8 +127,8 @@ export async function toggleStatus(id: number, status: 'active' | 'disabled'): P
  * @returns List of user's API keys
  */
 export async function getUserApiKeys(id: number): Promise<PaginatedResponse<any>> {
-  const { data } = await apiClient.get<PaginatedResponse<any>>(`/admin/users/${id}/api-keys`);
-  return data;
+  const { data } = await apiClient.get<PaginatedResponse<any>>(`/admin/users/${id}/api-keys`)
+  return data
 }
 
 /**
@@ -141,18 +141,18 @@ export async function getUserUsageStats(
   id: number,
   period: string = 'month'
 ): Promise<{
-  total_requests: number;
-  total_cost: number;
-  total_tokens: number;
+  total_requests: number
+  total_cost: number
+  total_tokens: number
 }> {
   const { data } = await apiClient.get<{
-    total_requests: number;
-    total_cost: number;
-    total_tokens: number;
+    total_requests: number
+    total_cost: number
+    total_tokens: number
   }>(`/admin/users/${id}/usage`, {
-    params: { period },
-  });
-  return data;
+    params: { period }
+  })
+  return data
 }
 
 export const usersAPI = {
@@ -165,7 +165,7 @@ export const usersAPI = {
   updateConcurrency,
   toggleStatus,
   getUserApiKeys,
-  getUserUsageStats,
-};
+  getUserUsageStats
+}
 
-export default usersAPI;
+export default usersAPI

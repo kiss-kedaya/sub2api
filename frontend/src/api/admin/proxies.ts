@@ -3,13 +3,8 @@
  * Handles proxy server management for administrators
  */
 
-import { apiClient } from '../client';
-import type {
-  Proxy,
-  CreateProxyRequest,
-  UpdateProxyRequest,
-  PaginatedResponse,
-} from '@/types';
+import { apiClient } from '../client'
+import type { Proxy, CreateProxyRequest, UpdateProxyRequest, PaginatedResponse } from '@/types'
 
 /**
  * List all proxies with pagination
@@ -22,19 +17,19 @@ export async function list(
   page: number = 1,
   pageSize: number = 20,
   filters?: {
-    protocol?: string;
-    status?: 'active' | 'inactive';
-    search?: string;
+    protocol?: string
+    status?: 'active' | 'inactive'
+    search?: string
   }
 ): Promise<PaginatedResponse<Proxy>> {
   const { data } = await apiClient.get<PaginatedResponse<Proxy>>('/admin/proxies', {
     params: {
       page,
       page_size: pageSize,
-      ...filters,
-    },
-  });
-  return data;
+      ...filters
+    }
+  })
+  return data
 }
 
 /**
@@ -42,8 +37,8 @@ export async function list(
  * @returns List of all active proxies
  */
 export async function getAll(): Promise<Proxy[]> {
-  const { data } = await apiClient.get<Proxy[]>('/admin/proxies/all');
-  return data;
+  const { data } = await apiClient.get<Proxy[]>('/admin/proxies/all')
+  return data
 }
 
 /**
@@ -52,9 +47,9 @@ export async function getAll(): Promise<Proxy[]> {
  */
 export async function getAllWithCount(): Promise<Proxy[]> {
   const { data } = await apiClient.get<Proxy[]>('/admin/proxies/all', {
-    params: { with_count: 'true' },
-  });
-  return data;
+    params: { with_count: 'true' }
+  })
+  return data
 }
 
 /**
@@ -63,8 +58,8 @@ export async function getAllWithCount(): Promise<Proxy[]> {
  * @returns Proxy details
  */
 export async function getById(id: number): Promise<Proxy> {
-  const { data } = await apiClient.get<Proxy>(`/admin/proxies/${id}`);
-  return data;
+  const { data } = await apiClient.get<Proxy>(`/admin/proxies/${id}`)
+  return data
 }
 
 /**
@@ -73,8 +68,8 @@ export async function getById(id: number): Promise<Proxy> {
  * @returns Created proxy
  */
 export async function create(proxyData: CreateProxyRequest): Promise<Proxy> {
-  const { data } = await apiClient.post<Proxy>('/admin/proxies', proxyData);
-  return data;
+  const { data } = await apiClient.post<Proxy>('/admin/proxies', proxyData)
+  return data
 }
 
 /**
@@ -84,8 +79,8 @@ export async function create(proxyData: CreateProxyRequest): Promise<Proxy> {
  * @returns Updated proxy
  */
 export async function update(id: number, updates: UpdateProxyRequest): Promise<Proxy> {
-  const { data } = await apiClient.put<Proxy>(`/admin/proxies/${id}`, updates);
-  return data;
+  const { data } = await apiClient.put<Proxy>(`/admin/proxies/${id}`, updates)
+  return data
 }
 
 /**
@@ -94,8 +89,8 @@ export async function update(id: number, updates: UpdateProxyRequest): Promise<P
  * @returns Success confirmation
  */
 export async function deleteProxy(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>(`/admin/proxies/${id}`);
-  return data;
+  const { data } = await apiClient.delete<{ message: string }>(`/admin/proxies/${id}`)
+  return data
 }
 
 /**
@@ -104,11 +99,8 @@ export async function deleteProxy(id: number): Promise<{ message: string }> {
  * @param status - New status
  * @returns Updated proxy
  */
-export async function toggleStatus(
-  id: number,
-  status: 'active' | 'inactive'
-): Promise<Proxy> {
-  return update(id, { status });
+export async function toggleStatus(id: number, status: 'active' | 'inactive'): Promise<Proxy> {
+  return update(id, { status })
 }
 
 /**
@@ -117,24 +109,24 @@ export async function toggleStatus(
  * @returns Test result with IP info
  */
 export async function testProxy(id: number): Promise<{
-  success: boolean;
-  message: string;
-  latency_ms?: number;
-  ip_address?: string;
-  city?: string;
-  region?: string;
-  country?: string;
+  success: boolean
+  message: string
+  latency_ms?: number
+  ip_address?: string
+  city?: string
+  region?: string
+  country?: string
 }> {
   const { data } = await apiClient.post<{
-    success: boolean;
-    message: string;
-    latency_ms?: number;
-    ip_address?: string;
-    city?: string;
-    region?: string;
-    country?: string;
-  }>(`/admin/proxies/${id}/test`);
-  return data;
+    success: boolean
+    message: string
+    latency_ms?: number
+    ip_address?: string
+    city?: string
+    region?: string
+    country?: string
+  }>(`/admin/proxies/${id}/test`)
+  return data
 }
 
 /**
@@ -143,20 +135,20 @@ export async function testProxy(id: number): Promise<{
  * @returns Proxy usage statistics
  */
 export async function getStats(id: number): Promise<{
-  total_accounts: number;
-  active_accounts: number;
-  total_requests: number;
-  success_rate: number;
-  average_latency: number;
+  total_accounts: number
+  active_accounts: number
+  total_requests: number
+  success_rate: number
+  average_latency: number
 }> {
   const { data } = await apiClient.get<{
-    total_accounts: number;
-    active_accounts: number;
-    total_requests: number;
-    success_rate: number;
-    average_latency: number;
-  }>(`/admin/proxies/${id}/stats`);
-  return data;
+    total_accounts: number
+    active_accounts: number
+    total_requests: number
+    success_rate: number
+    average_latency: number
+  }>(`/admin/proxies/${id}/stats`)
+  return data
 }
 
 /**
@@ -165,10 +157,8 @@ export async function getStats(id: number): Promise<{
  * @returns List of accounts using the proxy
  */
 export async function getProxyAccounts(id: number): Promise<PaginatedResponse<any>> {
-  const { data } = await apiClient.get<PaginatedResponse<any>>(
-    `/admin/proxies/${id}/accounts`
-  );
-  return data;
+  const { data } = await apiClient.get<PaginatedResponse<any>>(`/admin/proxies/${id}/accounts`)
+  return data
 }
 
 /**
@@ -176,21 +166,23 @@ export async function getProxyAccounts(id: number): Promise<PaginatedResponse<an
  * @param proxies - Array of proxy data to create
  * @returns Creation result with count of created and skipped
  */
-export async function batchCreate(proxies: Array<{
-  protocol: string;
-  host: string;
-  port: number;
-  username?: string;
-  password?: string;
-}>): Promise<{
-  created: number;
-  skipped: number;
+export async function batchCreate(
+  proxies: Array<{
+    protocol: string
+    host: string
+    port: number
+    username?: string
+    password?: string
+  }>
+): Promise<{
+  created: number
+  skipped: number
 }> {
   const { data } = await apiClient.post<{
-    created: number;
-    skipped: number;
-  }>('/admin/proxies/batch', { proxies });
-  return data;
+    created: number
+    skipped: number
+  }>('/admin/proxies/batch', { proxies })
+  return data
 }
 
 export const proxiesAPI = {
@@ -205,7 +197,7 @@ export const proxiesAPI = {
   testProxy,
   getStats,
   getProxyAccounts,
-  batchCreate,
-};
+  batchCreate
+}
 
-export default proxiesAPI;
+export default proxiesAPI

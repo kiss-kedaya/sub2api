@@ -3,24 +3,24 @@
  * Handles redeem code redemption for users
  */
 
-import { apiClient } from './client';
-import type { RedeemCodeRequest } from '@/types';
+import { apiClient } from './client'
+import type { RedeemCodeRequest } from '@/types'
 
 export interface RedeemHistoryItem {
-  id: number;
-  code: string;
-  type: string;
-  value: number;
-  status: string;
-  used_at: string;
-  created_at: string;
+  id: number
+  code: string
+  type: string
+  value: number
+  status: string
+  used_at: string
+  created_at: string
   // 订阅类型专用字段
-  group_id?: number;
-  validity_days?: number;
+  group_id?: number
+  validity_days?: number
   group?: {
-    id: number;
-    name: string;
-  };
+    id: number
+    name: string
+  }
 }
 
 /**
@@ -29,23 +29,23 @@ export interface RedeemHistoryItem {
  * @returns Redemption result with updated balance or concurrency
  */
 export async function redeem(code: string): Promise<{
-  message: string;
-  type: string;
-  value: number;
-  new_balance?: number;
-  new_concurrency?: number;
+  message: string
+  type: string
+  value: number
+  new_balance?: number
+  new_concurrency?: number
 }> {
-  const payload: RedeemCodeRequest = { code };
+  const payload: RedeemCodeRequest = { code }
 
   const { data } = await apiClient.post<{
-    message: string;
-    type: string;
-    value: number;
-    new_balance?: number;
-    new_concurrency?: number;
-  }>('/redeem', payload);
+    message: string
+    type: string
+    value: number
+    new_balance?: number
+    new_concurrency?: number
+  }>('/redeem', payload)
 
-  return data;
+  return data
 }
 
 /**
@@ -53,13 +53,13 @@ export async function redeem(code: string): Promise<{
  * @returns List of redeemed codes
  */
 export async function getHistory(): Promise<RedeemHistoryItem[]> {
-  const { data } = await apiClient.get<RedeemHistoryItem[]>('/redeem/history');
-  return data;
+  const { data } = await apiClient.get<RedeemHistoryItem[]>('/redeem/history')
+  return data
 }
 
 export const redeemAPI = {
   redeem,
-  getHistory,
-};
+  getHistory
+}
 
-export default redeemAPI;
+export default redeemAPI
