@@ -26,17 +26,25 @@ function updateFavicon(logoUrl: string) {
 }
 
 // Watch for site settings changes and update favicon/title
-watch(() => appStore.siteLogo, (newLogo) => {
-  if (newLogo) {
-    updateFavicon(newLogo)
-  }
-}, { immediate: true })
+watch(
+  () => appStore.siteLogo,
+  (newLogo) => {
+    if (newLogo) {
+      updateFavicon(newLogo)
+    }
+  },
+  { immediate: true }
+)
 
-watch(() => appStore.siteName, (newName) => {
-  if (newName) {
-    document.title = `${newName} - AI API Gateway`
-  }
-}, { immediate: true })
+watch(
+  () => appStore.siteName,
+  (newName) => {
+    if (newName) {
+      document.title = `${newName} - AI API Gateway`
+    }
+  },
+  { immediate: true }
+)
 
 onMounted(async () => {
   // Check if setup is needed
