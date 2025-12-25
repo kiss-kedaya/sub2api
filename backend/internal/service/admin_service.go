@@ -638,6 +638,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	if input.ProxyID != nil {
 		account.ProxyID = input.ProxyID
+		account.Proxy = nil // 清除关联对象，防止 GORM Save 时根据 Proxy.ID 覆盖 ProxyID
 	}
 	// 只在指针非 nil 时更新 Concurrency（支持设置为 0）
 	if input.Concurrency != nil {
@@ -662,7 +663,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 	}
 
-	return account, nil
+	// 重新查询以确保返回完整数据（包括正确的 Proxy 关联对象）
+	return s.accountRepo.GetByID(ctx, id)
 }
 
 // BulkUpdateAccounts updates multiple accounts in one request.
