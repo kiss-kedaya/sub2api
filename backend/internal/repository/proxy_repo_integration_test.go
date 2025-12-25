@@ -17,13 +17,13 @@ type ProxyRepoSuite struct {
 	suite.Suite
 	ctx  context.Context
 	db   *gorm.DB
-	repo *ProxyRepository
+	repo *proxyRepository
 }
 
 func (s *ProxyRepoSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.db = testTx(s.T())
-	s.repo = NewProxyRepository(s.db)
+	s.repo = NewProxyRepository(s.db).(*proxyRepository)
 }
 
 func TestProxyRepoSuite(t *testing.T) {

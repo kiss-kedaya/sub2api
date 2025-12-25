@@ -64,7 +64,7 @@ func (h *UserHandler) List(c *gin.Context) {
 
 	users, total, err := h.adminService.ListUsers(c.Request.Context(), page, pageSize, status, role, search)
 	if err != nil {
-		response.InternalError(c, "Failed to list users: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -82,7 +82,7 @@ func (h *UserHandler) GetByID(c *gin.Context) {
 
 	user, err := h.adminService.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		response.NotFound(c, "User not found")
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -109,7 +109,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		AllowedGroups: req.AllowedGroups,
 	})
 	if err != nil {
-		response.BadRequest(c, "Failed to create user: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -144,7 +144,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		AllowedGroups: req.AllowedGroups,
 	})
 	if err != nil {
-		response.InternalError(c, "Failed to update user: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -162,7 +162,7 @@ func (h *UserHandler) Delete(c *gin.Context) {
 
 	err = h.adminService.DeleteUser(c.Request.Context(), userID)
 	if err != nil {
-		response.InternalError(c, "Failed to delete user: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -186,7 +186,7 @@ func (h *UserHandler) UpdateBalance(c *gin.Context) {
 
 	user, err := h.adminService.UpdateUserBalance(c.Request.Context(), userID, req.Balance, req.Operation, req.Notes)
 	if err != nil {
-		response.InternalError(c, "Failed to update balance: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -206,7 +206,7 @@ func (h *UserHandler) GetUserAPIKeys(c *gin.Context) {
 
 	keys, total, err := h.adminService.GetUserAPIKeys(c.Request.Context(), userID, page, pageSize)
 	if err != nil {
-		response.InternalError(c, "Failed to get user API keys: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -226,7 +226,7 @@ func (h *UserHandler) GetUserUsage(c *gin.Context) {
 
 	stats, err := h.adminService.GetUserUsageStats(c.Request.Context(), userID, period)
 	if err != nil {
-		response.InternalError(c, "Failed to get user usage: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 

@@ -9,7 +9,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"gorm.io/gorm"
 )
 
 // AdminService interface defines admin management operations
@@ -550,61 +549,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 }
 
 func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
-	// 先获取分组信息，检查是否存在
-	group, err := s.groupRepo.GetByID(ctx, id)
-	if err != nil {
-		return fmt.Errorf("group not found: %w", err)
-	}
-
-	// 订阅类型分组：先获取受影响的用户ID列表（用于事务后失效缓存）
-	var affectedUserIDs []int64
-	if group.IsSubscriptionType() && s.billingCacheService != nil {
-		var subscriptions []model.UserSubscription
-		if err := s.groupRepo.DB().WithContext(ctx).
-			Where("group_id = ?", id).
-			Select("user_id").
-			Find(&subscriptions).Error; err == nil {
-			for _, sub := range subscriptions {
-				affectedUserIDs = append(affectedUserIDs, sub.UserID)
-			}
-		}
-	}
-
-	// 使用事务处理所有级联删除
-	db := s.groupRepo.DB()
-	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. 如果是订阅类型分组，删除 user_subscriptions 中的相关记录
-		if group.IsSubscriptionType() {
-			if err := tx.Where("group_id = ?", id).Delete(&model.UserSubscription{}).Error; err != nil {
-				return fmt.Errorf("delete user subscriptions: %w", err)
-			}
-		}
-
-		// 2. 将 api_keys 中绑定该分组的 group_id 设为 nil（任何类型的分组都需要）
-		if err := tx.Model(&model.ApiKey{}).Where("group_id = ?", id).Update("group_id", nil).Error; err != nil {
-			return fmt.Errorf("clear api key group_id: %w", err)
-		}
-
-		// 3. 从 users.allowed_groups 数组中移除该分组 ID
-		if err := tx.Model(&model.User{}).
-			Where("? = ANY(allowed_groups)", id).
-			Update("allowed_groups", gorm.Expr("array_remove(allowed_groups, ?)", id)).Error; err != nil {
-			return fmt.Errorf("remove from allowed_groups: %w", err)
-		}
-
-		// 4. 删除 account_groups 中间表的数据
-		if err := tx.Where("group_id = ?", id).Delete(&model.AccountGroup{}).Error; err != nil {
-			return fmt.Errorf("delete account groups: %w", err)
-		}
-
-		// 5. 删除分组本身
-		if err := tx.Delete(&model.Group{}, id).Error; err != nil {
-			return fmt.Errorf("delete group: %w", err)
-		}
-
-		return nil
-	})
-
+	affectedUserIDs, err := s.groupRepo.DeleteCascade(ctx, id)
 	if err != nil {
 		return err
 	}

@@ -66,14 +66,14 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	// Turnstile 验证（当提供了邮箱验证码时跳过，因为发送验证码时已验证过）
 	if req.VerifyCode == "" {
 		if err := h.authService.VerifyTurnstile(c.Request.Context(), req.TurnstileToken, c.ClientIP()); err != nil {
-			response.BadRequest(c, "Turnstile verification failed: "+err.Error())
+			response.ErrorFrom(c, err)
 			return
 		}
 	}
 
 	token, user, err := h.authService.RegisterWithVerification(c.Request.Context(), req.Email, req.Password, req.VerifyCode)
 	if err != nil {
-		response.BadRequest(c, "Registration failed: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -95,13 +95,13 @@ func (h *AuthHandler) SendVerifyCode(c *gin.Context) {
 
 	// Turnstile 验证
 	if err := h.authService.VerifyTurnstile(c.Request.Context(), req.TurnstileToken, c.ClientIP()); err != nil {
-		response.BadRequest(c, "Turnstile verification failed: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
 	result, err := h.authService.SendVerifyCodeAsync(c.Request.Context(), req.Email)
 	if err != nil {
-		response.BadRequest(c, "Failed to send verification code: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -122,13 +122,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// Turnstile 验证
 	if err := h.authService.VerifyTurnstile(c.Request.Context(), req.TurnstileToken, c.ClientIP()); err != nil {
-		response.BadRequest(c, "Turnstile verification failed: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
 	token, user, err := h.authService.Login(c.Request.Context(), req.Email, req.Password)
 	if err != nil {
-		response.Unauthorized(c, "Login failed: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 

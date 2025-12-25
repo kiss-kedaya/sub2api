@@ -55,7 +55,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		// [Security Fix] Verify API Key ownership to prevent horizontal privilege escalation
 		apiKey, err := h.apiKeyService.GetByID(c.Request.Context(), id)
 		if err != nil {
-			response.NotFound(c, "API key not found")
+			response.ErrorFrom(c, err)
 			return
 		}
 		if apiKey.UserID != user.ID {
@@ -77,7 +77,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		records, result, err = h.usageService.ListByUser(c.Request.Context(), user.ID, params)
 	}
 	if err != nil {
-		response.InternalError(c, "Failed to list usage records: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -107,7 +107,7 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 
 	record, err := h.usageService.GetByID(c.Request.Context(), usageID)
 	if err != nil {
-		response.NotFound(c, "Usage record not found")
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -204,7 +204,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		stats, err = h.usageService.GetStatsByUser(c.Request.Context(), user.ID, startTime, endTime)
 	}
 	if err != nil {
-		response.InternalError(c, "Failed to get usage statistics: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -259,7 +259,7 @@ func (h *UsageHandler) DashboardStats(c *gin.Context) {
 
 	stats, err := h.usageService.GetUserDashboardStats(c.Request.Context(), user.ID)
 	if err != nil {
-		response.InternalError(c, "Failed to get dashboard statistics")
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -286,7 +286,7 @@ func (h *UsageHandler) DashboardTrend(c *gin.Context) {
 
 	trend, err := h.usageService.GetUserUsageTrendByUserID(c.Request.Context(), user.ID, startTime, endTime, granularity)
 	if err != nil {
-		response.InternalError(c, "Failed to get usage trend")
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -317,7 +317,7 @@ func (h *UsageHandler) DashboardModels(c *gin.Context) {
 
 	stats, err := h.usageService.GetUserModelStats(c.Request.Context(), user.ID, startTime, endTime)
 	if err != nil {
-		response.InternalError(c, "Failed to get model statistics")
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -362,7 +362,7 @@ func (h *UsageHandler) DashboardApiKeysUsage(c *gin.Context) {
 	// Verify ownership of all requested API keys
 	userApiKeys, _, err := h.apiKeyService.List(c.Request.Context(), user.ID, pagination.PaginationParams{Page: 1, PageSize: 1000})
 	if err != nil {
-		response.InternalError(c, "Failed to verify API key ownership")
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -386,7 +386,7 @@ func (h *UsageHandler) DashboardApiKeysUsage(c *gin.Context) {
 
 	stats, err := h.usageService.GetBatchApiKeyUsageStats(c.Request.Context(), validApiKeyIDs)
 	if err != nil {
-		response.InternalError(c, "Failed to get API key usage stats")
+		response.ErrorFrom(c, err)
 		return
 	}
 

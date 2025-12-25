@@ -2,16 +2,15 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/infrastructure/errors"
 	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"gorm.io/gorm"
 )
 
 var (
-	ErrProxyNotFound = errors.New("proxy not found")
+	ErrProxyNotFound = infraerrors.NotFound("PROXY_NOT_FOUND", "proxy not found")
 )
 
 type ProxyRepository interface {
@@ -86,9 +85,6 @@ func (s *ProxyService) Create(ctx context.Context, req CreateProxyRequest) (*mod
 func (s *ProxyService) GetByID(ctx context.Context, id int64) (*model.Proxy, error) {
 	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrProxyNotFound
-		}
 		return nil, fmt.Errorf("get proxy: %w", err)
 	}
 	return proxy, nil
@@ -116,9 +112,6 @@ func (s *ProxyService) ListActive(ctx context.Context) ([]model.Proxy, error) {
 func (s *ProxyService) Update(ctx context.Context, id int64, req UpdateProxyRequest) (*model.Proxy, error) {
 	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrProxyNotFound
-		}
 		return nil, fmt.Errorf("get proxy: %w", err)
 	}
 
@@ -163,9 +156,6 @@ func (s *ProxyService) Delete(ctx context.Context, id int64) error {
 	// 检查代理是否存在
 	_, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrProxyNotFound
-		}
 		return fmt.Errorf("get proxy: %w", err)
 	}
 
@@ -180,9 +170,6 @@ func (s *ProxyService) Delete(ctx context.Context, id int64) error {
 func (s *ProxyService) TestConnection(ctx context.Context, id int64) error {
 	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrProxyNotFound
-		}
 		return fmt.Errorf("get proxy: %w", err)
 	}
 
@@ -197,9 +184,6 @@ func (s *ProxyService) TestConnection(ctx context.Context, id int64) error {
 func (s *ProxyService) GetURL(ctx context.Context, id int64) (string, error) {
 	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", ErrProxyNotFound
-		}
 		return "", fmt.Errorf("get proxy: %w", err)
 	}
 

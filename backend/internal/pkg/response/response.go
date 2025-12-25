@@ -4,14 +4,17 @@ import (
 	"math"
 	"net/http"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/infrastructure/errors"
 	"github.com/gin-gonic/gin"
 )
 
 // Response 标准API响应格式
 type Response struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    any    `json:"data,omitempty"`
+	Code     int               `json:"code"`
+	Message  string            `json:"message"`
+	Reason   string            `json:"reason,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+	Data     any               `json:"data,omitempty"`
 }
 
 // PaginatedData 分页数据格式（匹配前端期望）
@@ -44,9 +47,34 @@ func Created(c *gin.Context, data any) {
 // Error 返回错误响应
 func Error(c *gin.Context, statusCode int, message string) {
 	c.JSON(statusCode, Response{
-		Code:    statusCode,
-		Message: message,
+		Code:     statusCode,
+		Message:  message,
+		Reason:   "",
+		Metadata: nil,
 	})
+}
+
+// ErrorWithDetails returns an error response compatible with the existing envelope while
+// optionally providing structured error fields (reason/metadata).
+func ErrorWithDetails(c *gin.Context, statusCode int, message, reason string, metadata map[string]string) {
+	c.JSON(statusCode, Response{
+		Code:     statusCode,
+		Message:  message,
+		Reason:   reason,
+		Metadata: metadata,
+	})
+}
+
+// ErrorFrom converts an ApplicationError (or any error) into the envelope-compatible error response.
+// It returns true if an error was written.
+func ErrorFrom(c *gin.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+
+	statusCode, status := infraerrors.ToHTTP(err)
+	ErrorWithDetails(c, statusCode, status.Message, status.Reason, status.Metadata)
+	return true
 }
 
 // BadRequest 返回400错误

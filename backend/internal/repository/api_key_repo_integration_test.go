@@ -16,13 +16,13 @@ type ApiKeyRepoSuite struct {
 	suite.Suite
 	ctx  context.Context
 	db   *gorm.DB
-	repo *ApiKeyRepository
+	repo *apiKeyRepository
 }
 
 func (s *ApiKeyRepoSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.db = testTx(s.T())
-	s.repo = NewApiKeyRepository(s.db)
+	s.repo = NewApiKeyRepository(s.db).(*apiKeyRepository)
 }
 
 func TestApiKeyRepoSuite(t *testing.T) {
