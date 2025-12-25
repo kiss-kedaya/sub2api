@@ -9,7 +9,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"github.com/Wei-Shaw/sub2api/internal/service/ports"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/suite"
 	"gorm.io/gorm"
 )
@@ -513,7 +513,7 @@ func (s *AccountRepoSuite) TestBulkUpdate() {
 	a2 := mustCreateAccount(s.T(), s.db, &model.Account{Name: "bulk2", Priority: 1})
 
 	newPriority := 99
-	affected, err := s.repo.BulkUpdate(s.ctx, []int64{a1.ID, a2.ID}, ports.AccountBulkUpdate{
+	affected, err := s.repo.BulkUpdate(s.ctx, []int64{a1.ID, a2.ID}, service.AccountBulkUpdate{
 		Priority: &newPriority,
 	})
 	s.Require().NoError(err)
@@ -531,7 +531,7 @@ func (s *AccountRepoSuite) TestBulkUpdate_MergeCredentials() {
 		Credentials: model.JSONB{"existing": "value"},
 	})
 
-	_, err := s.repo.BulkUpdate(s.ctx, []int64{a1.ID}, ports.AccountBulkUpdate{
+	_, err := s.repo.BulkUpdate(s.ctx, []int64{a1.ID}, service.AccountBulkUpdate{
 		Credentials: model.JSONB{"new_key": "new_value"},
 	})
 	s.Require().NoError(err)
@@ -547,7 +547,7 @@ func (s *AccountRepoSuite) TestBulkUpdate_MergeExtra() {
 		Extra: model.JSONB{"existing": "val"},
 	})
 
-	_, err := s.repo.BulkUpdate(s.ctx, []int64{a1.ID}, ports.AccountBulkUpdate{
+	_, err := s.repo.BulkUpdate(s.ctx, []int64{a1.ID}, service.AccountBulkUpdate{
 		Extra: model.JSONB{"new_key": "new_val"},
 	})
 	s.Require().NoError(err)
@@ -558,7 +558,7 @@ func (s *AccountRepoSuite) TestBulkUpdate_MergeExtra() {
 }
 
 func (s *AccountRepoSuite) TestBulkUpdate_EmptyIDs() {
-	affected, err := s.repo.BulkUpdate(s.ctx, []int64{}, ports.AccountBulkUpdate{})
+	affected, err := s.repo.BulkUpdate(s.ctx, []int64{}, service.AccountBulkUpdate{})
 	s.Require().NoError(err)
 	s.Require().Zero(affected)
 }
@@ -566,7 +566,7 @@ func (s *AccountRepoSuite) TestBulkUpdate_EmptyIDs() {
 func (s *AccountRepoSuite) TestBulkUpdate_EmptyUpdates() {
 	a1 := mustCreateAccount(s.T(), s.db, &model.Account{Name: "bulk-empty"})
 
-	affected, err := s.repo.BulkUpdate(s.ctx, []int64{a1.ID}, ports.AccountBulkUpdate{})
+	affected, err := s.repo.BulkUpdate(s.ctx, []int64{a1.ID}, service.AccountBulkUpdate{})
 	s.Require().NoError(err)
 	s.Require().Zero(affected)
 }
