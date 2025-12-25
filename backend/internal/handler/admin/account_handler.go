@@ -434,6 +434,94 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 	})
 }
 
+// BatchUpdateCredentialsRequest represents batch credentials update request
+type BatchUpdateCredentialsRequest struct {
+	AccountIDs []int64 `json:"account_ids" binding:"required,min=1"`
+	Field      string  `json:"field" binding:"required,oneof=account_uuid org_uuid intercept_warmup_requests"`
+	Value      any     `json:"value"`
+}
+
+// BatchUpdateCredentials handles batch updating credentials fields
+// POST /api/v1/admin/accounts/batch-update-credentials
+func (h *AccountHandler) BatchUpdateCredentials(c *gin.Context) {
+	var req BatchUpdateCredentialsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	// Validate value type based on field
+	if req.Field == "intercept_warmup_requests" {
+		// Must be boolean
+		if _, ok := req.Value.(bool); !ok {
+			response.BadRequest(c, "intercept_warmup_requests must be boolean")
+			return
+		}
+	} else {
+		// account_uuid and org_uuid can be string or null
+		if req.Value != nil {
+			if _, ok := req.Value.(string); !ok {
+				response.BadRequest(c, req.Field+" must be string or null")
+				return
+			}
+		}
+	}
+
+	ctx := c.Request.Context()
+	success := 0
+	failed := 0
+	results := []gin.H{}
+
+	for _, accountID := range req.AccountIDs {
+		// Get account
+		account, err := h.adminService.GetAccount(ctx, accountID)
+		if err != nil {
+			failed++
+			results = append(results, gin.H{
+				"account_id": accountID,
+				"success":    false,
+				"error":      "Account not found",
+			})
+			continue
+		}
+
+		// Update credentials field
+		if account.Credentials == nil {
+			account.Credentials = make(map[string]any)
+		}
+
+		account.Credentials[req.Field] = req.Value
+
+		// Update account
+		updateInput := &service.UpdateAccountInput{
+			Credentials: account.Credentials,
+		}
+
+		_, err = h.adminService.UpdateAccount(ctx, accountID, updateInput)
+		if err != nil {
+			failed++
+			results = append(results, gin.H{
+				"account_id": accountID,
+				"success":    false,
+				"error":      err.Error(),
+			})
+			continue
+		}
+
+		success++
+		results = append(results, gin.H{
+			"account_id": accountID,
+			"success":    true,
+		})
+	}
+
+	response.Success(c, gin.H{
+		"success": success,
+		"failed":  failed,
+		"results": results,
+	})
+}
+
 // ========== OAuth Handlers ==========
 
 // GenerateAuthURLRequest represents the request for generating auth URL

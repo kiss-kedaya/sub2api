@@ -214,6 +214,53 @@ export async function batchCreate(accounts: CreateAccountRequest[]): Promise<{
 }
 
 /**
+ * Batch update credentials fields for multiple accounts
+ * @param request - Batch update request containing account IDs, field name, and value
+ * @returns Results of batch update
+ */
+export async function batchUpdateCredentials(request: {
+  account_ids: number[];
+  field: string;
+  value: any;
+}): Promise<{
+  success: number;
+  failed: number;
+  results: Array<{ account_id: number; success: boolean; error?: string }>;
+}> {
+  const { data} = await apiClient.post<{
+    success: number;
+    failed: number;
+    results: Array<{ account_id: number; success: boolean; error?: string }>;
+  }>('/admin/accounts/batch-update-credentials', request);
+  return data;
+}
+
+/**
+ * Bulk update multiple accounts
+ * @param accountIds - Array of account IDs
+ * @param updates - Fields to update
+ * @returns Success confirmation
+ */
+export async function bulkUpdate(
+  accountIds: number[],
+  updates: Record<string, unknown>
+): Promise<{
+  success: number;
+  failed: number;
+  results: Array<{ account_id: number; success: boolean; error?: string }>;
+}> {
+  const { data } = await apiClient.post<{
+    success: number;
+    failed: number;
+    results: Array<{ account_id: number; success: boolean; error?: string }>;
+  }>('/admin/accounts/bulk-update', {
+    account_ids: accountIds,
+    updates
+  });
+  return data;
+}
+
+/**
  * Get account today statistics
  * @param id - Account ID
  * @returns Today's stats (requests, tokens, cost)
@@ -285,6 +332,8 @@ export const accountsAPI = {
   generateAuthUrl,
   exchangeCode,
   batchCreate,
+  batchUpdateCredentials,
+  bulkUpdate,
   syncFromCrs,
 };
 

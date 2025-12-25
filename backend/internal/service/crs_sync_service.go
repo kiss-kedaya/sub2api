@@ -93,6 +93,7 @@ type crsClaudeAccount struct {
 	Status      string         `json:"status"`
 	Proxy       *crsProxy      `json:"proxy"`
 	Credentials map[string]any `json:"credentials"`
+	Extra       map[string]any `json:"extra"`
 }
 
 type crsConsoleAccount struct {
@@ -137,6 +138,7 @@ type crsOpenAIOAuthAccount struct {
 	Status      string         `json:"status"`
 	Proxy       *crsProxy      `json:"proxy"`
 	Credentials map[string]any `json:"credentials"`
+	Extra       map[string]any `json:"extra"`
 }
 
 func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput) (*SyncFromCRSResult, error) {
@@ -214,15 +216,28 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		credentials := sanitizeCredentialsMap(src.Credentials)
+		// 🔧 Remove /v1 suffix from base_url for Claude accounts
+		cleanBaseURL(credentials, "/v1")
+		// 🔧 Convert expires_at from ISO string to Unix timestamp
+		if expiresAtStr, ok := credentials["expires_at"].(string); ok && expiresAtStr != "" {
+			if t, err := time.Parse(time.RFC3339, expiresAtStr); err == nil {
+				credentials["expires_at"] = t.Unix()
+			}
+		}
+		// 🔧 Add intercept_warmup_requests if not present (defaults to false)
+		if _, exists := credentials["intercept_warmup_requests"]; !exists {
+			credentials["intercept_warmup_requests"] = false
+		}
 		priority := clampPriority(src.Priority)
 		concurrency := 3
 		status := mapCRSStatus(src.IsActive, src.Status)
 
-		extra := map[string]any{
-			"crs_account_id": src.ID,
-			"crs_kind":       src.Kind,
-			"crs_synced_at":  now,
+		// 🔧 Use CRS extra data directly, add sync metadata
+		extra := src.Extra
+		if extra == nil {
+			extra = make(map[string]any)
 		}
+		extra["crs_synced_at"] = now
 
 		existing, err := s.accountRepo.GetByCRSAccountID(ctx, src.ID)
 		if err != nil {
@@ -260,17 +275,14 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		// Update existing
-		if existing.Extra == nil {
-			existing.Extra = make(model.JSONB)
-		}
-		for k, v := range extra {
-			existing.Extra[k] = v
-		}
+		existing.Extra = mergeJSONB(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = model.PlatformAnthropic
 		existing.Type = targetType
-		existing.Credentials = model.JSONB(credentials)
-		existing.ProxyID = proxyID
+		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
+		if proxyID != nil {
+			existing.ProxyID = proxyID
+		}
 		existing.Concurrency = concurrency
 		existing.Priority = priority
 		existing.Status = status
@@ -364,17 +376,14 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
-		if existing.Extra == nil {
-			existing.Extra = make(model.JSONB)
-		}
-		for k, v := range extra {
-			existing.Extra[k] = v
-		}
+		existing.Extra = mergeJSONB(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = model.PlatformAnthropic
 		existing.Type = model.AccountTypeApiKey
-		existing.Credentials = model.JSONB(credentials)
-		existing.ProxyID = proxyID
+		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
+		if proxyID != nil {
+			existing.ProxyID = proxyID
+		}
 		existing.Concurrency = concurrency
 		existing.Priority = priority
 		existing.Status = status
@@ -430,15 +439,22 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		if v, ok := credentials["token_type"].(string); !ok || strings.TrimSpace(v) == "" {
 			credentials["token_type"] = "Bearer"
 		}
+		// 🔧 Convert expires_at from ISO string to Unix timestamp
+		if expiresAtStr, ok := credentials["expires_at"].(string); ok && expiresAtStr != "" {
+			if t, err := time.Parse(time.RFC3339, expiresAtStr); err == nil {
+				credentials["expires_at"] = t.Unix()
+			}
+		}
 		priority := clampPriority(src.Priority)
 		concurrency := 3
 		status := mapCRSStatus(src.IsActive, src.Status)
 
-		extra := map[string]any{
-			"crs_account_id": src.ID,
-			"crs_kind":       src.Kind,
-			"crs_synced_at":  now,
+		// 🔧 Use CRS extra data directly, add sync metadata
+		extra := src.Extra
+		if extra == nil {
+			extra = make(map[string]any)
 		}
+		extra["crs_synced_at"] = now
 
 		existing, err := s.accountRepo.GetByCRSAccountID(ctx, src.ID)
 		if err != nil {
@@ -475,17 +491,14 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
-		if existing.Extra == nil {
-			existing.Extra = make(model.JSONB)
-		}
-		for k, v := range extra {
-			existing.Extra[k] = v
-		}
+		existing.Extra = mergeJSONB(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = model.PlatformOpenAI
 		existing.Type = model.AccountTypeOAuth
-		existing.Credentials = model.JSONB(credentials)
-		existing.ProxyID = proxyID
+		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
+		if proxyID != nil {
+			existing.ProxyID = proxyID
+		}
 		existing.Concurrency = concurrency
 		existing.Priority = priority
 		existing.Status = status
@@ -524,6 +537,8 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		if baseURL, ok := src.Credentials["base_url"].(string); !ok || strings.TrimSpace(baseURL) == "" {
 			src.Credentials["base_url"] = "https://api.openai.com"
 		}
+		// 🔧 Remove /v1 suffix from base_url for OpenAI accounts
+		cleanBaseURL(src.Credentials, "/v1")
 
 		proxyID, err := s.mapOrCreateProxy(
 			ctx,
@@ -586,17 +601,14 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
-		if existing.Extra == nil {
-			existing.Extra = make(model.JSONB)
-		}
-		for k, v := range extra {
-			existing.Extra[k] = v
-		}
+		existing.Extra = mergeJSONB(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = model.PlatformOpenAI
 		existing.Type = model.AccountTypeApiKey
-		existing.Credentials = model.JSONB(credentials)
-		existing.ProxyID = proxyID
+		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
+		if proxyID != nil {
+			existing.ProxyID = proxyID
+		}
 		existing.Concurrency = concurrency
 		existing.Priority = priority
 		existing.Status = status
@@ -616,6 +628,18 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 	}
 
 	return result, nil
+}
+
+// mergeJSONB merges two JSONB maps without removing keys that are absent in updates.
+func mergeJSONB(existing model.JSONB, updates map[string]any) model.JSONB {
+	out := make(model.JSONB)
+	for k, v := range existing {
+		out[k] = v
+	}
+	for k, v := range updates {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *CRSSyncService) mapOrCreateProxy(ctx context.Context, enabled bool, cached *[]model.Proxy, src *crsProxy, defaultName string) (*int64, error) {
@@ -729,6 +753,17 @@ func normalizeBaseURL(raw string) (string, error) {
 	}
 	u.Path = strings.TrimRight(u.Path, "/")
 	return strings.TrimRight(u.String(), "/"), nil
+}
+
+// cleanBaseURL removes trailing suffix from base_url in credentials
+// Used for both Claude and OpenAI accounts to remove /v1
+func cleanBaseURL(credentials map[string]any, suffixToRemove string) {
+	if baseURL, ok := credentials["base_url"].(string); ok && baseURL != "" {
+		trimmed := strings.TrimSpace(baseURL)
+		if strings.HasSuffix(trimmed, suffixToRemove) {
+			credentials["base_url"] = strings.TrimSuffix(trimmed, suffixToRemove)
+		}
+	}
 }
 
 func crsLogin(ctx context.Context, client *http.Client, baseURL, username, password string) (string, error) {
