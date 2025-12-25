@@ -443,7 +443,7 @@ import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
-import type { Proxy, Group, Account } from '@/types'
+import type { Proxy, Group } from '@/types'
 import Modal from '@/components/common/Modal.vue'
 import Select from '@/components/common/Select.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -496,7 +496,6 @@ const concurrency = ref(1)
 const priority = ref(1)
 const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
-const accountCache = ref<Record<number, Account>>({})
 
 // All models list (combined Anthropic + OpenAI)
 const allModels = [
@@ -613,22 +612,10 @@ const buildModelMappingObject = (): Record<string, string> | null => {
   return Object.keys(mapping).length > 0 ? mapping : null
 }
 
-const getDefaultBaseUrl = (platform: string) => {
-  return platform === 'openai' ? 'https://api.openai.com' : 'https://api.anthropic.com'
-}
-
-const getAccountDetails = async (accountId: number): Promise<Account> => {
-  if (accountCache.value[accountId]) return accountCache.value[accountId]
-  const account = await adminAPI.accounts.getById(accountId)
-  accountCache.value[accountId] = account
-  return account
-}
-
-const buildUpdatePayload = (account: Account): Record<string, unknown> | null => {
+const buildUpdatePayload = (): Record<string, unknown> | null => {
   const updates: Record<string, unknown> = {}
-  let credentials: Record<string, unknown> | null = null
+  const credentials: Record<string, unknown> = {}
   let credentialsChanged = false
-  const isAnthropic = account.platform === 'anthropic'
 
   if (enableProxy.value) {
     updates.proxy_id = proxyId.value
@@ -650,47 +637,34 @@ const buildUpdatePayload = (account: Account): Record<string, unknown> | null =>
     updates.group_ids = groupIds.value
   }
 
-  if (account.type === 'apikey') {
-    const baseCredentials = (account.credentials || {}) as Record<string, unknown>
-    credentials = { ...baseCredentials }
-
-    if (enableBaseUrl.value) {
-      credentials.base_url = baseUrl.value.trim() || getDefaultBaseUrl(account.platform)
+  if (enableBaseUrl.value) {
+    const baseUrlValue = baseUrl.value.trim()
+    if (baseUrlValue) {
+      credentials.base_url = baseUrlValue
       credentialsChanged = true
     }
+  }
 
-    if (enableModelRestriction.value) {
-      const modelMapping = buildModelMappingObject()
-      if (modelMapping) {
-        credentials.model_mapping = modelMapping
-      } else {
-        delete credentials.model_mapping
-      }
+  if (enableModelRestriction.value) {
+    const modelMapping = buildModelMappingObject()
+    if (modelMapping) {
+      credentials.model_mapping = modelMapping
       credentialsChanged = true
     }
+  }
 
-    if (enableCustomErrorCodes.value) {
-      credentials.custom_error_codes_enabled = true
-      credentials.custom_error_codes = [...selectedErrorCodes.value]
-      credentialsChanged = true
-    }
-
-    if (enableInterceptWarmup.value && isAnthropic) {
-      credentials.intercept_warmup_requests = interceptWarmupRequests.value
-      credentialsChanged = true
-    }
-  } else if (enableInterceptWarmup.value && isAnthropic) {
-    const baseCredentials = (account.credentials || {}) as Record<string, unknown>
-    credentials = { ...baseCredentials }
-    if (interceptWarmupRequests.value) {
-      credentials.intercept_warmup_requests = true
-    } else {
-      delete credentials.intercept_warmup_requests
-    }
+  if (enableCustomErrorCodes.value) {
+    credentials.custom_error_codes_enabled = true
+    credentials.custom_error_codes = [...selectedErrorCodes.value]
     credentialsChanged = true
   }
 
-  if (credentials && credentialsChanged) {
+  if (enableInterceptWarmup.value) {
+    credentials.intercept_warmup_requests = interceptWarmupRequests.value
+    credentialsChanged = true
+  }
+
+  if (credentialsChanged) {
     updates.credentials = credentials
   }
 
@@ -722,39 +696,37 @@ const handleSubmit = async () => {
     return
   }
 
+  const updates = buildUpdatePayload()
+  if (!updates) {
+    appStore.showError(t('admin.accounts.bulkEdit.noFieldsSelected'))
+    return
+  }
+
   submitting.value = true
-  let success = 0
-  let failed = 0
 
-  for (const accountId of props.accountIds) {
-    try {
-      const account = await getAccountDetails(accountId)
-      const updates = buildUpdatePayload(account)
-      if (!updates) {
-        continue
-      }
-      await adminAPI.accounts.update(accountId, updates)
-      success++
-    } catch (error: any) {
-      failed++
-      console.error(`Error bulk updating account ${accountId}:`, error)
+  try {
+    const res = await adminAPI.accounts.bulkUpdate(props.accountIds, updates)
+    const success = res.success || 0
+    const failed = res.failed || 0
+
+    if (success > 0 && failed === 0) {
+      appStore.showSuccess(t('admin.accounts.bulkEdit.success', { count: success }))
+    } else if (success > 0) {
+      appStore.showError(t('admin.accounts.bulkEdit.partialSuccess', { success, failed }))
+    } else {
+      appStore.showError(t('admin.accounts.bulkEdit.failed'))
     }
-  }
 
-  if (success > 0 && failed === 0) {
-    appStore.showSuccess(t('admin.accounts.bulkEdit.success', { count: success }))
-  } else if (success > 0) {
-    appStore.showError(t('admin.accounts.bulkEdit.partialSuccess', { success, failed }))
-  } else {
-    appStore.showError(t('admin.accounts.bulkEdit.failed'))
+    if (success > 0) {
+      emit('updated')
+      handleClose()
+    }
+  } catch (error: any) {
+    appStore.showError(error.response?.data?.detail || t('admin.accounts.bulkEdit.failed'))
+    console.error('Error bulk updating accounts:', error)
+  } finally {
+    submitting.value = false
   }
-
-  if (success > 0) {
-    emit('updated')
-    handleClose()
-  }
-
-  submitting.value = false
 }
 
 // Reset form when modal closes
@@ -784,7 +756,6 @@ watch(() => props.show, (newShow) => {
     priority.value = 1
     status.value = 'active'
     groupIds.value = []
-    accountCache.value = {}
   }
 })
 </script>

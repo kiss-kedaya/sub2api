@@ -255,7 +255,7 @@ export async function bulkUpdate(
     results: Array<{ account_id: number; success: boolean; error?: string }>;
   }>('/admin/accounts/bulk-update', {
     account_ids: accountIds,
-    updates
+    ...updates
   });
   return data;
 }
