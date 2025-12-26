@@ -6,6 +6,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
@@ -872,6 +873,44 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 					Object:      "model",
 					Type:        "model",
 					DisplayName: requestedModel,
+				})
+			}
+		}
+		response.Success(c, models)
+		return
+	}
+
+	// Handle Gemini accounts
+	if account.IsGemini() {
+		// For OAuth accounts: return default Gemini models
+		if account.IsOAuth() {
+			response.Success(c, geminicli.DefaultModels)
+			return
+		}
+
+		// For API Key accounts: return models based on model_mapping
+		mapping := account.GetModelMapping()
+		if len(mapping) == 0 {
+			response.Success(c, geminicli.DefaultModels)
+			return
+		}
+
+		var models []geminicli.Model
+		for requestedModel := range mapping {
+			var found bool
+			for _, dm := range geminicli.DefaultModels {
+				if dm.ID == requestedModel {
+					models = append(models, dm)
+					found = true
+					break
+				}
+			}
+			if !found {
+				models = append(models, geminicli.Model{
+					ID:          requestedModel,
+					Type:        "model",
+					DisplayName: requestedModel,
+					CreatedAt:   "",
 				})
 			}
 		}
