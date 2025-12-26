@@ -6,21 +6,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
-func mustCreateUser(t *testing.T, db *gorm.DB, u *model.User) *model.User {
+func mustCreateUser(t *testing.T, db *gorm.DB, u *userModel) *userModel {
 	t.Helper()
 	if u.PasswordHash == "" {
 		u.PasswordHash = "test-password-hash"
 	}
 	if u.Role == "" {
-		u.Role = model.RoleUser
+		u.Role = service.RoleUser
 	}
 	if u.Status == "" {
-		u.Status = model.StatusActive
+		u.Status = service.StatusActive
+	}
+	if u.Concurrency == 0 {
+		u.Concurrency = 5
 	}
 	if u.CreatedAt.IsZero() {
 		u.CreatedAt = time.Now()
@@ -32,16 +36,16 @@ func mustCreateUser(t *testing.T, db *gorm.DB, u *model.User) *model.User {
 	return u
 }
 
-func mustCreateGroup(t *testing.T, db *gorm.DB, g *model.Group) *model.Group {
+func mustCreateGroup(t *testing.T, db *gorm.DB, g *groupModel) *groupModel {
 	t.Helper()
 	if g.Platform == "" {
-		g.Platform = model.PlatformAnthropic
+		g.Platform = service.PlatformAnthropic
 	}
 	if g.Status == "" {
-		g.Status = model.StatusActive
+		g.Status = service.StatusActive
 	}
 	if g.SubscriptionType == "" {
-		g.SubscriptionType = model.SubscriptionTypeStandard
+		g.SubscriptionType = service.SubscriptionTypeStandard
 	}
 	if g.CreatedAt.IsZero() {
 		g.CreatedAt = time.Now()
@@ -53,7 +57,7 @@ func mustCreateGroup(t *testing.T, db *gorm.DB, g *model.Group) *model.Group {
 	return g
 }
 
-func mustCreateProxy(t *testing.T, db *gorm.DB, p *model.Proxy) *model.Proxy {
+func mustCreateProxy(t *testing.T, db *gorm.DB, p *proxyModel) *proxyModel {
 	t.Helper()
 	if p.Protocol == "" {
 		p.Protocol = "http"
@@ -65,7 +69,7 @@ func mustCreateProxy(t *testing.T, db *gorm.DB, p *model.Proxy) *model.Proxy {
 		p.Port = 8080
 	}
 	if p.Status == "" {
-		p.Status = model.StatusActive
+		p.Status = service.StatusActive
 	}
 	if p.CreatedAt.IsZero() {
 		p.CreatedAt = time.Now()
@@ -77,25 +81,25 @@ func mustCreateProxy(t *testing.T, db *gorm.DB, p *model.Proxy) *model.Proxy {
 	return p
 }
 
-func mustCreateAccount(t *testing.T, db *gorm.DB, a *model.Account) *model.Account {
+func mustCreateAccount(t *testing.T, db *gorm.DB, a *accountModel) *accountModel {
 	t.Helper()
 	if a.Platform == "" {
-		a.Platform = model.PlatformAnthropic
+		a.Platform = service.PlatformAnthropic
 	}
 	if a.Type == "" {
-		a.Type = model.AccountTypeOAuth
+		a.Type = service.AccountTypeOAuth
 	}
 	if a.Status == "" {
-		a.Status = model.StatusActive
+		a.Status = service.StatusActive
 	}
 	if !a.Schedulable {
 		a.Schedulable = true
 	}
 	if a.Credentials == nil {
-		a.Credentials = model.JSONB{}
+		a.Credentials = datatypes.JSONMap{}
 	}
 	if a.Extra == nil {
-		a.Extra = model.JSONB{}
+		a.Extra = datatypes.JSONMap{}
 	}
 	if a.CreatedAt.IsZero() {
 		a.CreatedAt = time.Now()
@@ -107,10 +111,10 @@ func mustCreateAccount(t *testing.T, db *gorm.DB, a *model.Account) *model.Accou
 	return a
 }
 
-func mustCreateApiKey(t *testing.T, db *gorm.DB, k *model.ApiKey) *model.ApiKey {
+func mustCreateApiKey(t *testing.T, db *gorm.DB, k *apiKeyModel) *apiKeyModel {
 	t.Helper()
 	if k.Status == "" {
-		k.Status = model.StatusActive
+		k.Status = service.StatusActive
 	}
 	if k.CreatedAt.IsZero() {
 		k.CreatedAt = time.Now()
@@ -122,13 +126,13 @@ func mustCreateApiKey(t *testing.T, db *gorm.DB, k *model.ApiKey) *model.ApiKey 
 	return k
 }
 
-func mustCreateRedeemCode(t *testing.T, db *gorm.DB, c *model.RedeemCode) *model.RedeemCode {
+func mustCreateRedeemCode(t *testing.T, db *gorm.DB, c *redeemCodeModel) *redeemCodeModel {
 	t.Helper()
 	if c.Status == "" {
-		c.Status = model.StatusUnused
+		c.Status = service.StatusUnused
 	}
 	if c.Type == "" {
-		c.Type = model.RedeemTypeBalance
+		c.Type = service.RedeemTypeBalance
 	}
 	if c.CreatedAt.IsZero() {
 		c.CreatedAt = time.Now()
@@ -137,10 +141,10 @@ func mustCreateRedeemCode(t *testing.T, db *gorm.DB, c *model.RedeemCode) *model
 	return c
 }
 
-func mustCreateSubscription(t *testing.T, db *gorm.DB, s *model.UserSubscription) *model.UserSubscription {
+func mustCreateSubscription(t *testing.T, db *gorm.DB, s *userSubscriptionModel) *userSubscriptionModel {
 	t.Helper()
 	if s.Status == "" {
-		s.Status = model.SubscriptionStatusActive
+		s.Status = service.SubscriptionStatusActive
 	}
 	now := time.Now()
 	if s.StartsAt.IsZero() {
@@ -164,9 +168,10 @@ func mustCreateSubscription(t *testing.T, db *gorm.DB, s *model.UserSubscription
 
 func mustBindAccountToGroup(t *testing.T, db *gorm.DB, accountID, groupID int64, priority int) {
 	t.Helper()
-	require.NoError(t, db.Create(&model.AccountGroup{
+	require.NoError(t, db.Create(&accountGroupModel{
 		AccountID: accountID,
 		GroupID:   groupID,
 		Priority:  priority,
+		CreatedAt: time.Now(),
 	}).Error, "create account_group")
 }

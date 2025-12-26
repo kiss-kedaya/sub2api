@@ -4,10 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/service"
-
-	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"gorm.io/gorm"
 )
@@ -20,48 +18,61 @@ func NewRedeemCodeRepository(db *gorm.DB) service.RedeemCodeRepository {
 	return &redeemCodeRepository{db: db}
 }
 
-func (r *redeemCodeRepository) Create(ctx context.Context, code *model.RedeemCode) error {
-	return r.db.WithContext(ctx).Create(code).Error
+func (r *redeemCodeRepository) Create(ctx context.Context, code *service.RedeemCode) error {
+	m := redeemCodeModelFromService(code)
+	err := r.db.WithContext(ctx).Create(m).Error
+	if err == nil {
+		applyRedeemCodeModelToService(code, m)
+	}
+	return err
 }
 
-func (r *redeemCodeRepository) CreateBatch(ctx context.Context, codes []model.RedeemCode) error {
-	return r.db.WithContext(ctx).Create(&codes).Error
+func (r *redeemCodeRepository) CreateBatch(ctx context.Context, codes []service.RedeemCode) error {
+	if len(codes) == 0 {
+		return nil
+	}
+	models := make([]redeemCodeModel, 0, len(codes))
+	for i := range codes {
+		m := redeemCodeModelFromService(&codes[i])
+		if m != nil {
+			models = append(models, *m)
+		}
+	}
+	return r.db.WithContext(ctx).Create(&models).Error
 }
 
-func (r *redeemCodeRepository) GetByID(ctx context.Context, id int64) (*model.RedeemCode, error) {
-	var code model.RedeemCode
-	err := r.db.WithContext(ctx).First(&code, id).Error
+func (r *redeemCodeRepository) GetByID(ctx context.Context, id int64) (*service.RedeemCode, error) {
+	var m redeemCodeModel
+	err := r.db.WithContext(ctx).First(&m, id).Error
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrRedeemCodeNotFound, nil)
 	}
-	return &code, nil
+	return redeemCodeModelToService(&m), nil
 }
 
-func (r *redeemCodeRepository) GetByCode(ctx context.Context, code string) (*model.RedeemCode, error) {
-	var redeemCode model.RedeemCode
-	err := r.db.WithContext(ctx).Where("code = ?", code).First(&redeemCode).Error
+func (r *redeemCodeRepository) GetByCode(ctx context.Context, code string) (*service.RedeemCode, error) {
+	var m redeemCodeModel
+	err := r.db.WithContext(ctx).Where("code = ?", code).First(&m).Error
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrRedeemCodeNotFound, nil)
 	}
-	return &redeemCode, nil
+	return redeemCodeModelToService(&m), nil
 }
 
 func (r *redeemCodeRepository) Delete(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Delete(&model.RedeemCode{}, id).Error
+	return r.db.WithContext(ctx).Delete(&redeemCodeModel{}, id).Error
 }
 
-func (r *redeemCodeRepository) List(ctx context.Context, params pagination.PaginationParams) ([]model.RedeemCode, *pagination.PaginationResult, error) {
+func (r *redeemCodeRepository) List(ctx context.Context, params pagination.PaginationParams) ([]service.RedeemCode, *pagination.PaginationResult, error) {
 	return r.ListWithFilters(ctx, params, "", "", "")
 }
 
-// ListWithFilters lists redeem codes with optional filtering by type, status, and search query
-func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, codeType, status, search string) ([]model.RedeemCode, *pagination.PaginationResult, error) {
-	var codes []model.RedeemCode
+func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, codeType, status, search string) ([]service.RedeemCode, *pagination.PaginationResult, error) {
+	var codes []redeemCodeModel
 	var total int64
 
-	db := r.db.WithContext(ctx).Model(&model.RedeemCode{})
+	db := r.db.WithContext(ctx).Model(&redeemCodeModel{})
 
-	// Apply filters
 	if codeType != "" {
 		db = db.Where("type = ?", codeType)
 	}
@@ -81,29 +92,29 @@ func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagin
 		return nil, nil, err
 	}
 
-	pages := int(total) / params.Limit()
-	if int(total)%params.Limit() > 0 {
-		pages++
+	outCodes := make([]service.RedeemCode, 0, len(codes))
+	for i := range codes {
+		outCodes = append(outCodes, *redeemCodeModelToService(&codes[i]))
 	}
 
-	return codes, &pagination.PaginationResult{
-		Total:    total,
-		Page:     params.Page,
-		PageSize: params.Limit(),
-		Pages:    pages,
-	}, nil
+	return outCodes, paginationResultFromTotal(total, params), nil
 }
 
-func (r *redeemCodeRepository) Update(ctx context.Context, code *model.RedeemCode) error {
-	return r.db.WithContext(ctx).Save(code).Error
+func (r *redeemCodeRepository) Update(ctx context.Context, code *service.RedeemCode) error {
+	m := redeemCodeModelFromService(code)
+	err := r.db.WithContext(ctx).Save(m).Error
+	if err == nil {
+		applyRedeemCodeModelToService(code, m)
+	}
+	return err
 }
 
 func (r *redeemCodeRepository) Use(ctx context.Context, id, userID int64) error {
 	now := time.Now()
-	result := r.db.WithContext(ctx).Model(&model.RedeemCode{}).
-		Where("id = ? AND status = ?", id, model.StatusUnused).
+	result := r.db.WithContext(ctx).Model(&redeemCodeModel{}).
+		Where("id = ? AND status = ?", id, service.StatusUnused).
 		Updates(map[string]any{
-			"status":  model.StatusUsed,
+			"status":  service.StatusUsed,
 			"used_by": userID,
 			"used_at": now,
 		})
@@ -116,22 +127,93 @@ func (r *redeemCodeRepository) Use(ctx context.Context, id, userID int64) error 
 	return nil
 }
 
-// ListByUser returns all redeem codes used by a specific user
-func (r *redeemCodeRepository) ListByUser(ctx context.Context, userID int64, limit int) ([]model.RedeemCode, error) {
-	var codes []model.RedeemCode
+func (r *redeemCodeRepository) ListByUser(ctx context.Context, userID int64, limit int) ([]service.RedeemCode, error) {
 	if limit <= 0 {
 		limit = 10
 	}
 
+	var codes []redeemCodeModel
 	err := r.db.WithContext(ctx).
 		Preload("Group").
 		Where("used_by = ?", userID).
 		Order("used_at DESC").
 		Limit(limit).
 		Find(&codes).Error
-
 	if err != nil {
 		return nil, err
 	}
-	return codes, nil
+
+	outCodes := make([]service.RedeemCode, 0, len(codes))
+	for i := range codes {
+		outCodes = append(outCodes, *redeemCodeModelToService(&codes[i]))
+	}
+	return outCodes, nil
+}
+
+type redeemCodeModel struct {
+	ID        int64   `gorm:"primaryKey"`
+	Code      string  `gorm:"uniqueIndex;size:32;not null"`
+	Type      string  `gorm:"size:20;default:balance;not null"`
+	Value     float64 `gorm:"type:decimal(20,8);not null"`
+	Status    string  `gorm:"size:20;default:unused;not null"`
+	UsedBy    *int64  `gorm:"index"`
+	UsedAt    *time.Time
+	Notes     string    `gorm:"type:text"`
+	CreatedAt time.Time `gorm:"not null"`
+
+	GroupID      *int64 `gorm:"index"`
+	ValidityDays int    `gorm:"default:30"`
+
+	User  *userModel  `gorm:"foreignKey:UsedBy"`
+	Group *groupModel `gorm:"foreignKey:GroupID"`
+}
+
+func (redeemCodeModel) TableName() string { return "redeem_codes" }
+
+func redeemCodeModelToService(m *redeemCodeModel) *service.RedeemCode {
+	if m == nil {
+		return nil
+	}
+	return &service.RedeemCode{
+		ID:           m.ID,
+		Code:         m.Code,
+		Type:         m.Type,
+		Value:        m.Value,
+		Status:       m.Status,
+		UsedBy:       m.UsedBy,
+		UsedAt:       m.UsedAt,
+		Notes:        m.Notes,
+		CreatedAt:    m.CreatedAt,
+		GroupID:      m.GroupID,
+		ValidityDays: m.ValidityDays,
+		User:         userModelToService(m.User),
+		Group:        groupModelToService(m.Group),
+	}
+}
+
+func redeemCodeModelFromService(r *service.RedeemCode) *redeemCodeModel {
+	if r == nil {
+		return nil
+	}
+	return &redeemCodeModel{
+		ID:           r.ID,
+		Code:         r.Code,
+		Type:         r.Type,
+		Value:        r.Value,
+		Status:       r.Status,
+		UsedBy:       r.UsedBy,
+		UsedAt:       r.UsedAt,
+		Notes:        r.Notes,
+		CreatedAt:    r.CreatedAt,
+		GroupID:      r.GroupID,
+		ValidityDays: r.ValidityDays,
+	}
+}
+
+func applyRedeemCodeModelToService(code *service.RedeemCode, m *redeemCodeModel) {
+	if code == nil || m == nil {
+		return
+	}
+	code.ID = m.ID
+	code.CreatedAt = m.CreatedAt
 }
