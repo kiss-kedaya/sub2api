@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -93,6 +94,40 @@ func (p *GeminiTokenProvider) GetAccessToken(ctx context.Context, account *model
 	accessToken := account.GetCredential("access_token")
 	if strings.TrimSpace(accessToken) == "" {
 		return "", errors.New("access_token not found in credentials")
+	}
+
+	// project_id is optional now:
+	// - If present: will use Code Assist API (requires project_id)
+	// - If absent: will use AI Studio API with OAuth token (like regular API key mode)
+	// Auto-detect project_id only if explicitly enabled via a credential flag
+	projectID := strings.TrimSpace(account.GetCredential("project_id"))
+	autoDetectProjectID := account.GetCredential("auto_detect_project_id") == "true"
+
+	if projectID == "" && autoDetectProjectID {
+		if p.geminiOAuthService == nil {
+			return accessToken, nil // Fallback to AI Studio API mode
+		}
+
+		var proxyURL string
+		if account.ProxyID != nil && p.geminiOAuthService.proxyRepo != nil {
+			if proxy, err := p.geminiOAuthService.proxyRepo.GetByID(ctx, *account.ProxyID); err == nil && proxy != nil {
+				proxyURL = proxy.URL()
+			}
+		}
+
+		detected, err := p.geminiOAuthService.fetchProjectID(ctx, accessToken, proxyURL)
+		if err != nil {
+			log.Printf("[GeminiTokenProvider] Auto-detect project_id failed: %v, fallback to AI Studio API mode", err)
+			return accessToken, nil
+		}
+		detected = strings.TrimSpace(detected)
+		if detected != "" {
+			if account.Credentials == nil {
+				account.Credentials = model.JSONB{}
+			}
+			account.Credentials["project_id"] = detected
+			_ = p.accountRepo.Update(ctx, account)
+		}
 	}
 
 	// 3) Populate cache with TTL.
