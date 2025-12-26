@@ -445,13 +445,11 @@ func (s *PricingService) buildModelLookupCandidates(modelLower string) []string 
 		normalizeModelNameForPricing(modelLower),
 		modelLower,
 	}
-	for _, cand := range []string{
+	candidates = append(candidates,
 		strings.TrimPrefix(modelLower, "models/"),
 		lastSegment(modelLower),
 		lastSegment(strings.TrimPrefix(modelLower, "models/")),
-	} {
-		candidates = append(candidates, cand)
-	}
+	)
 
 	seen := make(map[string]struct{}, len(candidates))
 	out := make([]string, 0, len(candidates))
@@ -479,13 +477,8 @@ func normalizeModelNameForPricing(model string) string {
 	// - projects/.../locations/.../publishers/google/models/gemini-1.5-pro
 	model = strings.TrimSpace(model)
 	model = strings.TrimLeft(model, "/")
-
-	if strings.HasPrefix(model, "models/") {
-		model = strings.TrimPrefix(model, "models/")
-	}
-	if strings.HasPrefix(model, "publishers/google/models/") {
-		model = strings.TrimPrefix(model, "publishers/google/models/")
-	}
+	model = strings.TrimPrefix(model, "models/")
+	model = strings.TrimPrefix(model, "publishers/google/models/")
 
 	if idx := strings.LastIndex(model, "/publishers/google/models/"); idx != -1 {
 		model = model[idx+len("/publishers/google/models/"):]

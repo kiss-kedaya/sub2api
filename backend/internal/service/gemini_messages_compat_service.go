@@ -365,10 +365,6 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		return nil, fmt.Errorf("unsupported account type: %s", account.Type)
 	}
 
-	if buildReq == nil {
-		return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Gemini upstream not configured")
-	}
-
 	var resp *http.Response
 	for attempt := 1; attempt <= geminiMaxRetries; attempt++ {
 		upstreamReq, idHeader, err := buildReq(ctx)
@@ -1128,7 +1124,6 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 						"index": openToolIndex,
 					})
 					openToolIndex = -1
-					openToolID = ""
 					openToolName = ""
 					seenToolJSON = ""
 				}
@@ -2069,7 +2064,7 @@ func extractClaudeContentText(v any) string {
 			}
 			if pm["type"] == "text" {
 				if text, ok := pm["text"].(string); ok {
-					sb.WriteString(text)
+					_, _ = sb.WriteString(text)
 				}
 			}
 		}

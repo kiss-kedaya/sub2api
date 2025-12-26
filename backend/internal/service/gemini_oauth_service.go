@@ -436,7 +436,7 @@ func fetchProjectIDFromResourceManager(ctx context.Context, accessToken, proxyUR
 	if err != nil {
 		return "", fmt.Errorf("resource manager request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
