@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/suite"
 	"gorm.io/gorm"
 )
@@ -32,8 +32,8 @@ func TestUsageLogRepoSuite(t *testing.T) {
 	suite.Run(t, new(UsageLogRepoSuite))
 }
 
-func (s *UsageLogRepoSuite) createUsageLog(user *model.User, apiKey *model.ApiKey, account *model.Account, inputTokens, outputTokens int, cost float64, createdAt time.Time) *model.UsageLog {
-	log := &model.UsageLog{
+func (s *UsageLogRepoSuite) createUsageLog(user *userModel, apiKey *apiKeyModel, account *accountModel, inputTokens, outputTokens int, cost float64, createdAt time.Time) *service.UsageLog {
+	log := &service.UsageLog{
 		UserID:       user.ID,
 		ApiKeyID:     apiKey.ID,
 		AccountID:    account.ID,
@@ -51,11 +51,11 @@ func (s *UsageLogRepoSuite) createUsageLog(user *model.User, apiKey *model.ApiKe
 // --- Create / GetByID ---
 
 func (s *UsageLogRepoSuite) TestCreate() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "create@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-create", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-create"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "create@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-create", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-create"})
 
-	log := &model.UsageLog{
+	log := &service.UsageLog{
 		UserID:       user.ID,
 		ApiKeyID:     apiKey.ID,
 		AccountID:    account.ID,
@@ -72,9 +72,9 @@ func (s *UsageLogRepoSuite) TestCreate() {
 }
 
 func (s *UsageLogRepoSuite) TestGetByID() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "getbyid@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-getbyid", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-getbyid"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "getbyid@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-getbyid", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-getbyid"})
 
 	log := s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 
@@ -92,9 +92,9 @@ func (s *UsageLogRepoSuite) TestGetByID_NotFound() {
 // --- Delete ---
 
 func (s *UsageLogRepoSuite) TestDelete() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "delete@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-delete", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-delete"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "delete@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-delete", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-delete"})
 
 	log := s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 
@@ -108,9 +108,9 @@ func (s *UsageLogRepoSuite) TestDelete() {
 // --- ListByUser ---
 
 func (s *UsageLogRepoSuite) TestListByUser() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "listbyuser@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-listbyuser", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-listbyuser"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "listbyuser@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-listbyuser", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-listbyuser"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 	s.createUsageLog(user, apiKey, account, 15, 25, 0.6, time.Now())
@@ -124,9 +124,9 @@ func (s *UsageLogRepoSuite) TestListByUser() {
 // --- ListByApiKey ---
 
 func (s *UsageLogRepoSuite) TestListByApiKey() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "listbyapikey@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-listbyapikey", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-listbyapikey"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "listbyapikey@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-listbyapikey", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-listbyapikey"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 	s.createUsageLog(user, apiKey, account, 15, 25, 0.6, time.Now())
@@ -140,9 +140,9 @@ func (s *UsageLogRepoSuite) TestListByApiKey() {
 // --- ListByAccount ---
 
 func (s *UsageLogRepoSuite) TestListByAccount() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "listbyaccount@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-listbyaccount", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-listbyaccount"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "listbyaccount@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-listbyaccount", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-listbyaccount"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 
@@ -155,9 +155,9 @@ func (s *UsageLogRepoSuite) TestListByAccount() {
 // --- GetUserStats ---
 
 func (s *UsageLogRepoSuite) TestGetUserStats() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "userstats@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-userstats", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-userstats"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "userstats@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-userstats", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-userstats"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, base)
@@ -175,9 +175,9 @@ func (s *UsageLogRepoSuite) TestGetUserStats() {
 // --- ListWithFilters ---
 
 func (s *UsageLogRepoSuite) TestListWithFilters() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "filters@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-filters", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-filters"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "filters@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-filters", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-filters"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 
@@ -194,29 +194,29 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 	now := time.Now()
 	todayStart := timezone.Today()
 
-	userToday := mustCreateUser(s.T(), s.db, &model.User{
+	userToday := mustCreateUser(s.T(), s.db, &userModel{
 		Email:     "today@example.com",
 		CreatedAt: maxTime(todayStart.Add(10*time.Second), now.Add(-10*time.Second)),
 		UpdatedAt: now,
 	})
-	userOld := mustCreateUser(s.T(), s.db, &model.User{
+	userOld := mustCreateUser(s.T(), s.db, &userModel{
 		Email:     "old@example.com",
 		CreatedAt: todayStart.Add(-24 * time.Hour),
 		UpdatedAt: todayStart.Add(-24 * time.Hour),
 	})
 
-	group := mustCreateGroup(s.T(), s.db, &model.Group{Name: "g-ul"})
-	apiKey1 := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: userToday.ID, Key: "sk-ul-1", Name: "ul1"})
-	mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: userOld.ID, Key: "sk-ul-2", Name: "ul2", Status: model.StatusDisabled})
+	group := mustCreateGroup(s.T(), s.db, &groupModel{Name: "g-ul"})
+	apiKey1 := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: userToday.ID, Key: "sk-ul-1", Name: "ul1"})
+	mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: userOld.ID, Key: "sk-ul-2", Name: "ul2", Status: service.StatusDisabled})
 
 	resetAt := now.Add(10 * time.Minute)
-	accNormal := mustCreateAccount(s.T(), s.db, &model.Account{Name: "a-normal", Schedulable: true})
-	mustCreateAccount(s.T(), s.db, &model.Account{Name: "a-error", Status: model.StatusError, Schedulable: true})
-	mustCreateAccount(s.T(), s.db, &model.Account{Name: "a-rl", RateLimitedAt: &now, RateLimitResetAt: &resetAt, Schedulable: true})
-	mustCreateAccount(s.T(), s.db, &model.Account{Name: "a-ov", OverloadUntil: &resetAt, Schedulable: true})
+	accNormal := mustCreateAccount(s.T(), s.db, &accountModel{Name: "a-normal", Schedulable: true})
+	mustCreateAccount(s.T(), s.db, &accountModel{Name: "a-error", Status: service.StatusError, Schedulable: true})
+	mustCreateAccount(s.T(), s.db, &accountModel{Name: "a-rl", RateLimitedAt: &now, RateLimitResetAt: &resetAt, Schedulable: true})
+	mustCreateAccount(s.T(), s.db, &accountModel{Name: "a-ov", OverloadUntil: &resetAt, Schedulable: true})
 
 	d1, d2, d3 := 100, 200, 300
-	logToday := &model.UsageLog{
+	logToday := &service.UsageLog{
 		UserID:              userToday.ID,
 		ApiKeyID:            apiKey1.ID,
 		AccountID:           accNormal.ID,
@@ -233,7 +233,7 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, logToday), "Create logToday")
 
-	logOld := &model.UsageLog{
+	logOld := &service.UsageLog{
 		UserID:       userOld.ID,
 		ApiKeyID:     apiKey1.ID,
 		AccountID:    accNormal.ID,
@@ -247,7 +247,7 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, logOld), "Create logOld")
 
-	logPerf := &model.UsageLog{
+	logPerf := &service.UsageLog{
 		UserID:       userToday.ID,
 		ApiKeyID:     apiKey1.ID,
 		AccountID:    accNormal.ID,
@@ -293,9 +293,9 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 // --- GetUserDashboardStats ---
 
 func (s *UsageLogRepoSuite) TestGetUserDashboardStats() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "userdash@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-userdash", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-userdash"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "userdash@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-userdash", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-userdash"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 
@@ -308,9 +308,9 @@ func (s *UsageLogRepoSuite) TestGetUserDashboardStats() {
 // --- GetAccountTodayStats ---
 
 func (s *UsageLogRepoSuite) TestGetAccountTodayStats() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "acctoday@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-acctoday", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-today"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "acctoday@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-acctoday", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-today"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 
@@ -323,11 +323,11 @@ func (s *UsageLogRepoSuite) TestGetAccountTodayStats() {
 // --- GetBatchUserUsageStats ---
 
 func (s *UsageLogRepoSuite) TestGetBatchUserUsageStats() {
-	user1 := mustCreateUser(s.T(), s.db, &model.User{Email: "batch1@test.com"})
-	user2 := mustCreateUser(s.T(), s.db, &model.User{Email: "batch2@test.com"})
-	apiKey1 := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user1.ID, Key: "sk-batch1", Name: "k"})
-	apiKey2 := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user2.ID, Key: "sk-batch2", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-batch"})
+	user1 := mustCreateUser(s.T(), s.db, &userModel{Email: "batch1@test.com"})
+	user2 := mustCreateUser(s.T(), s.db, &userModel{Email: "batch2@test.com"})
+	apiKey1 := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user1.ID, Key: "sk-batch1", Name: "k"})
+	apiKey2 := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user2.ID, Key: "sk-batch2", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-batch"})
 
 	s.createUsageLog(user1, apiKey1, account, 10, 20, 0.5, time.Now())
 	s.createUsageLog(user2, apiKey2, account, 15, 25, 0.6, time.Now())
@@ -348,10 +348,10 @@ func (s *UsageLogRepoSuite) TestGetBatchUserUsageStats_Empty() {
 // --- GetBatchApiKeyUsageStats ---
 
 func (s *UsageLogRepoSuite) TestGetBatchApiKeyUsageStats() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "batchkey@test.com"})
-	apiKey1 := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-batchkey1", Name: "k1"})
-	apiKey2 := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-batchkey2", Name: "k2"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-batchkey"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "batchkey@test.com"})
+	apiKey1 := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-batchkey1", Name: "k1"})
+	apiKey2 := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-batchkey2", Name: "k2"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-batchkey"})
 
 	s.createUsageLog(user, apiKey1, account, 10, 20, 0.5, time.Now())
 	s.createUsageLog(user, apiKey2, account, 15, 25, 0.6, time.Now())
@@ -370,9 +370,9 @@ func (s *UsageLogRepoSuite) TestGetBatchApiKeyUsageStats_Empty() {
 // --- GetGlobalStats ---
 
 func (s *UsageLogRepoSuite) TestGetGlobalStats() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "global@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-global", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-global"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "global@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-global", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-global"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, base)
@@ -395,9 +395,9 @@ func maxTime(a, b time.Time) time.Time {
 // --- ListByUserAndTimeRange ---
 
 func (s *UsageLogRepoSuite) TestListByUserAndTimeRange() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "timerange@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-timerange", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-timerange"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "timerange@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-timerange", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-timerange"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, base)
@@ -414,9 +414,9 @@ func (s *UsageLogRepoSuite) TestListByUserAndTimeRange() {
 // --- ListByApiKeyAndTimeRange ---
 
 func (s *UsageLogRepoSuite) TestListByApiKeyAndTimeRange() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "keytimerange@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-keytimerange", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-keytimerange"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "keytimerange@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-keytimerange", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-keytimerange"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, base)
@@ -433,9 +433,9 @@ func (s *UsageLogRepoSuite) TestListByApiKeyAndTimeRange() {
 // --- ListByAccountAndTimeRange ---
 
 func (s *UsageLogRepoSuite) TestListByAccountAndTimeRange() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "acctimerange@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-acctimerange", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-acctimerange"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "acctimerange@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-acctimerange", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-acctimerange"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, base)
@@ -452,14 +452,14 @@ func (s *UsageLogRepoSuite) TestListByAccountAndTimeRange() {
 // --- ListByModelAndTimeRange ---
 
 func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "modeltimerange@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-modeltimerange", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-modeltimerange"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "modeltimerange@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-modeltimerange", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-modeltimerange"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 
 	// Create logs with different models
-	log1 := &model.UsageLog{
+	log1 := &service.UsageLog{
 		UserID:       user.ID,
 		ApiKeyID:     apiKey.ID,
 		AccountID:    account.ID,
@@ -472,7 +472,7 @@ func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, log1))
 
-	log2 := &model.UsageLog{
+	log2 := &service.UsageLog{
 		UserID:       user.ID,
 		ApiKeyID:     apiKey.ID,
 		AccountID:    account.ID,
@@ -485,7 +485,7 @@ func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, log2))
 
-	log3 := &model.UsageLog{
+	log3 := &service.UsageLog{
 		UserID:       user.ID,
 		ApiKeyID:     apiKey.ID,
 		AccountID:    account.ID,
@@ -508,9 +508,9 @@ func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 // --- GetAccountWindowStats ---
 
 func (s *UsageLogRepoSuite) TestGetAccountWindowStats() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "windowstats@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-windowstats", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-windowstats"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "windowstats@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-windowstats", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-windowstats"})
 
 	now := time.Now()
 	windowStart := now.Add(-10 * time.Minute)
@@ -528,9 +528,9 @@ func (s *UsageLogRepoSuite) TestGetAccountWindowStats() {
 // --- GetUserUsageTrendByUserID ---
 
 func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "usertrend@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-usertrend", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-usertrend"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "usertrend@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-usertrend", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-usertrend"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, base)
@@ -545,9 +545,9 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID() {
 }
 
 func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID_HourlyGranularity() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "usertrendhourly@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-usertrendhourly", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-usertrendhourly"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "usertrendhourly@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-usertrendhourly", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-usertrendhourly"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, base)
@@ -564,14 +564,14 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID_HourlyGranularity() {
 // --- GetUserModelStats ---
 
 func (s *UsageLogRepoSuite) TestGetUserModelStats() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "modelstats@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-modelstats", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-modelstats"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "modelstats@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-modelstats", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-modelstats"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 
 	// Create logs with different models
-	log1 := &model.UsageLog{
+	log1 := &service.UsageLog{
 		UserID:       user.ID,
 		ApiKeyID:     apiKey.ID,
 		AccountID:    account.ID,
@@ -584,7 +584,7 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, log1))
 
-	log2 := &model.UsageLog{
+	log2 := &service.UsageLog{
 		UserID:       user.ID,
 		ApiKeyID:     apiKey.ID,
 		AccountID:    account.ID,
@@ -611,9 +611,9 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 // --- GetUsageTrendWithFilters ---
 
 func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "trendfilters@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-trendfilters", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-trendfilters"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "trendfilters@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-trendfilters", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-trendfilters"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, base)
@@ -639,9 +639,9 @@ func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters() {
 }
 
 func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters_HourlyGranularity() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "trendfilters-h@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-trendfilters-h", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-trendfilters-h"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "trendfilters-h@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-trendfilters-h", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-trendfilters-h"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, base)
@@ -658,13 +658,13 @@ func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters_HourlyGranularity() {
 // --- GetModelStatsWithFilters ---
 
 func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "modelfilters@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-modelfilters", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-modelfilters"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "modelfilters@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-modelfilters", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-modelfilters"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 
-	log1 := &model.UsageLog{
+	log1 := &service.UsageLog{
 		UserID:       user.ID,
 		ApiKeyID:     apiKey.ID,
 		AccountID:    account.ID,
@@ -677,7 +677,7 @@ func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, log1))
 
-	log2 := &model.UsageLog{
+	log2 := &service.UsageLog{
 		UserID:       user.ID,
 		ApiKeyID:     apiKey.ID,
 		AccountID:    account.ID,
@@ -712,14 +712,14 @@ func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {
 // --- GetAccountUsageStats ---
 
 func (s *UsageLogRepoSuite) TestGetAccountUsageStats() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "accstats@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-accstats", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-accstats"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "accstats@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-accstats", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-accstats"})
 
 	base := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
 
 	// Create logs on different days
-	log1 := &model.UsageLog{
+	log1 := &service.UsageLog{
 		UserID:       user.ID,
 		ApiKeyID:     apiKey.ID,
 		AccountID:    account.ID,
@@ -732,7 +732,7 @@ func (s *UsageLogRepoSuite) TestGetAccountUsageStats() {
 	}
 	s.Require().NoError(s.repo.Create(s.ctx, log1))
 
-	log2 := &model.UsageLog{
+	log2 := &service.UsageLog{
 		UserID:       user.ID,
 		ApiKeyID:     apiKey.ID,
 		AccountID:    account.ID,
@@ -758,7 +758,7 @@ func (s *UsageLogRepoSuite) TestGetAccountUsageStats() {
 }
 
 func (s *UsageLogRepoSuite) TestGetAccountUsageStats_EmptyRange() {
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-emptystats"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-emptystats"})
 
 	base := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
 	startTime := base
@@ -774,11 +774,11 @@ func (s *UsageLogRepoSuite) TestGetAccountUsageStats_EmptyRange() {
 // --- GetUserUsageTrend ---
 
 func (s *UsageLogRepoSuite) TestGetUserUsageTrend() {
-	user1 := mustCreateUser(s.T(), s.db, &model.User{Email: "usertrend1@test.com"})
-	user2 := mustCreateUser(s.T(), s.db, &model.User{Email: "usertrend2@test.com"})
-	apiKey1 := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user1.ID, Key: "sk-usertrend1", Name: "k1"})
-	apiKey2 := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user2.ID, Key: "sk-usertrend2", Name: "k2"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-usertrends"})
+	user1 := mustCreateUser(s.T(), s.db, &userModel{Email: "usertrend1@test.com"})
+	user2 := mustCreateUser(s.T(), s.db, &userModel{Email: "usertrend2@test.com"})
+	apiKey1 := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user1.ID, Key: "sk-usertrend1", Name: "k1"})
+	apiKey2 := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user2.ID, Key: "sk-usertrend2", Name: "k2"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-usertrends"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user1, apiKey1, account, 100, 200, 1.0, base)
@@ -796,10 +796,10 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrend() {
 // --- GetApiKeyUsageTrend ---
 
 func (s *UsageLogRepoSuite) TestGetApiKeyUsageTrend() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "keytrend@test.com"})
-	apiKey1 := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-keytrend1", Name: "k1"})
-	apiKey2 := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-keytrend2", Name: "k2"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-keytrends"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "keytrend@test.com"})
+	apiKey1 := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-keytrend1", Name: "k1"})
+	apiKey2 := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-keytrend2", Name: "k2"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-keytrends"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey1, account, 100, 200, 1.0, base)
@@ -815,9 +815,9 @@ func (s *UsageLogRepoSuite) TestGetApiKeyUsageTrend() {
 }
 
 func (s *UsageLogRepoSuite) TestGetApiKeyUsageTrend_HourlyGranularity() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "keytrendh@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-keytrendh", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-keytrendh"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "keytrendh@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-keytrendh", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-keytrendh"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 100, 200, 1.0, base)
@@ -834,9 +834,9 @@ func (s *UsageLogRepoSuite) TestGetApiKeyUsageTrend_HourlyGranularity() {
 // --- ListWithFilters (additional filter tests) ---
 
 func (s *UsageLogRepoSuite) TestListWithFilters_ApiKeyFilter() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "filterskey@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-filterskey", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-filterskey"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "filterskey@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-filterskey", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-filterskey"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 
@@ -848,9 +848,9 @@ func (s *UsageLogRepoSuite) TestListWithFilters_ApiKeyFilter() {
 }
 
 func (s *UsageLogRepoSuite) TestListWithFilters_TimeRange() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "filterstime@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-filterstime", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-filterstime"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "filterstime@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-filterstime", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-filterstime"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, base)
@@ -867,9 +867,9 @@ func (s *UsageLogRepoSuite) TestListWithFilters_TimeRange() {
 }
 
 func (s *UsageLogRepoSuite) TestListWithFilters_CombinedFilters() {
-	user := mustCreateUser(s.T(), s.db, &model.User{Email: "filterscombined@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.db, &model.ApiKey{UserID: user.ID, Key: "sk-filterscombined", Name: "k"})
-	account := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-filterscombined"})
+	user := mustCreateUser(s.T(), s.db, &userModel{Email: "filterscombined@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.db, &apiKeyModel{UserID: user.ID, Key: "sk-filterscombined", Name: "k"})
+	account := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-filterscombined"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, base)

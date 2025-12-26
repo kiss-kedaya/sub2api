@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -14,6 +15,11 @@ const (
 	apiKeyRateLimitDuration  = 24 * time.Hour
 )
 
+// apiKeyRateLimitKey generates the Redis key for API key creation rate limiting.
+func apiKeyRateLimitKey(userID int64) string {
+	return fmt.Sprintf("%s%d", apiKeyRateLimitKeyPrefix, userID)
+}
+
 type apiKeyCache struct {
 	rdb *redis.Client
 }
@@ -23,12 +29,16 @@ func NewApiKeyCache(rdb *redis.Client) service.ApiKeyCache {
 }
 
 func (c *apiKeyCache) GetCreateAttemptCount(ctx context.Context, userID int64) (int, error) {
-	key := fmt.Sprintf("%s%d", apiKeyRateLimitKeyPrefix, userID)
-	return c.rdb.Get(ctx, key).Int()
+	key := apiKeyRateLimitKey(userID)
+	count, err := c.rdb.Get(ctx, key).Int()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	return count, err
 }
 
 func (c *apiKeyCache) IncrementCreateAttemptCount(ctx context.Context, userID int64) error {
-	key := fmt.Sprintf("%s%d", apiKeyRateLimitKeyPrefix, userID)
+	key := apiKeyRateLimitKey(userID)
 	pipe := c.rdb.Pipeline()
 	pipe.Incr(ctx, key)
 	pipe.Expire(ctx, key, apiKeyRateLimitDuration)
@@ -37,7 +47,7 @@ func (c *apiKeyCache) IncrementCreateAttemptCount(ctx context.Context, userID in
 }
 
 func (c *apiKeyCache) DeleteCreateAttemptCount(ctx context.Context, userID int64) error {
-	key := fmt.Sprintf("%s%d", apiKeyRateLimitKeyPrefix, userID)
+	key := apiKeyRateLimitKey(userID)
 	return c.rdb.Del(ctx, key).Err()
 }
 

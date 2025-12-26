@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/Wei-Shaw/sub2api/internal/model"
 )
 
 type CRSSyncService struct {
@@ -217,7 +215,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		),
 	}
 
-	var proxies []model.Proxy
+	var proxies []Proxy
 	if input.SyncProxies {
 		proxies, _ = s.proxyRepo.ListActive(ctx)
 	}
@@ -234,7 +232,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		if targetType == "" {
 			targetType = "oauth"
 		}
-		if targetType != model.AccountTypeOAuth && targetType != model.AccountTypeSetupToken {
+		if targetType != AccountTypeOAuth && targetType != AccountTypeSetupToken {
 			item.Action = "skipped"
 			item.Error = "unsupported authType: " + targetType
 			result.Skipped++
@@ -305,12 +303,12 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		if existing == nil {
-			account := &model.Account{
+			account := &Account{
 				Name:        defaultName(src.Name, src.ID),
-				Platform:    model.PlatformAnthropic,
+				Platform:    PlatformAnthropic,
 				Type:        targetType,
-				Credentials: model.JSONB(credentials),
-				Extra:       model.JSONB(extra),
+				Credentials: credentials,
+				Extra:       extra,
 				ProxyID:     proxyID,
 				Concurrency: concurrency,
 				Priority:    priority,
@@ -325,7 +323,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 				continue
 			}
 			// 🔄 Refresh OAuth token after creation
-			if targetType == model.AccountTypeOAuth {
+			if targetType == AccountTypeOAuth {
 				if refreshedCreds := s.refreshOAuthToken(ctx, account); refreshedCreds != nil {
 					account.Credentials = refreshedCreds
 					_ = s.accountRepo.Update(ctx, account)
@@ -338,11 +336,11 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		// Update existing
-		existing.Extra = mergeJSONB(existing.Extra, extra)
+		existing.Extra = mergeMap(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
-		existing.Platform = model.PlatformAnthropic
+		existing.Platform = PlatformAnthropic
 		existing.Type = targetType
-		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
+		existing.Credentials = mergeMap(existing.Credentials, credentials)
 		if proxyID != nil {
 			existing.ProxyID = proxyID
 		}
@@ -360,7 +358,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		// 🔄 Refresh OAuth token after update
-		if targetType == model.AccountTypeOAuth {
+		if targetType == AccountTypeOAuth {
 			if refreshedCreds := s.refreshOAuthToken(ctx, existing); refreshedCreds != nil {
 				existing.Credentials = refreshedCreds
 				_ = s.accountRepo.Update(ctx, existing)
@@ -422,12 +420,12 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		if existing == nil {
-			account := &model.Account{
+			account := &Account{
 				Name:        defaultName(src.Name, src.ID),
-				Platform:    model.PlatformAnthropic,
-				Type:        model.AccountTypeApiKey,
-				Credentials: model.JSONB(credentials),
-				Extra:       model.JSONB(extra),
+				Platform:    PlatformAnthropic,
+				Type:        AccountTypeApiKey,
+				Credentials: credentials,
+				Extra:       extra,
 				ProxyID:     proxyID,
 				Concurrency: concurrency,
 				Priority:    priority,
@@ -447,11 +445,11 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
-		existing.Extra = mergeJSONB(existing.Extra, extra)
+		existing.Extra = mergeMap(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
-		existing.Platform = model.PlatformAnthropic
-		existing.Type = model.AccountTypeApiKey
-		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
+		existing.Platform = PlatformAnthropic
+		existing.Type = AccountTypeApiKey
+		existing.Credentials = mergeMap(existing.Credentials, credentials)
 		if proxyID != nil {
 			existing.ProxyID = proxyID
 		}
@@ -545,12 +543,12 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		if existing == nil {
-			account := &model.Account{
+			account := &Account{
 				Name:        defaultName(src.Name, src.ID),
-				Platform:    model.PlatformOpenAI,
-				Type:        model.AccountTypeOAuth,
-				Credentials: model.JSONB(credentials),
-				Extra:       model.JSONB(extra),
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Credentials: credentials,
+				Extra:       extra,
 				ProxyID:     proxyID,
 				Concurrency: concurrency,
 				Priority:    priority,
@@ -575,11 +573,11 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
-		existing.Extra = mergeJSONB(existing.Extra, extra)
+		existing.Extra = mergeMap(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
-		existing.Platform = model.PlatformOpenAI
-		existing.Type = model.AccountTypeOAuth
-		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
+		existing.Platform = PlatformOpenAI
+		existing.Type = AccountTypeOAuth
+		existing.Credentials = mergeMap(existing.Credentials, credentials)
 		if proxyID != nil {
 			existing.ProxyID = proxyID
 		}
@@ -666,12 +664,12 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		if existing == nil {
-			account := &model.Account{
+			account := &Account{
 				Name:        defaultName(src.Name, src.ID),
-				Platform:    model.PlatformOpenAI,
-				Type:        model.AccountTypeApiKey,
-				Credentials: model.JSONB(credentials),
-				Extra:       model.JSONB(extra),
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeApiKey,
+				Credentials: credentials,
+				Extra:       extra,
 				ProxyID:     proxyID,
 				Concurrency: concurrency,
 				Priority:    priority,
@@ -691,11 +689,11 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
-		existing.Extra = mergeJSONB(existing.Extra, extra)
+		existing.Extra = mergeMap(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
-		existing.Platform = model.PlatformOpenAI
-		existing.Type = model.AccountTypeApiKey
-		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
+		existing.Platform = PlatformOpenAI
+		existing.Type = AccountTypeApiKey
+		existing.Credentials = mergeMap(existing.Credentials, credentials)
 		if proxyID != nil {
 			existing.ProxyID = proxyID
 		}
@@ -939,9 +937,8 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 	return result, nil
 }
 
-// mergeJSONB merges two JSONB maps without removing keys that are absent in updates.
-func mergeJSONB(existing model.JSONB, updates map[string]any) model.JSONB {
-	out := make(model.JSONB)
+func mergeMap(existing map[string]any, updates map[string]any) map[string]any {
+	out := make(map[string]any, len(existing)+len(updates))
 	for k, v := range existing {
 		out[k] = v
 	}
@@ -951,7 +948,7 @@ func mergeJSONB(existing model.JSONB, updates map[string]any) model.JSONB {
 	return out
 }
 
-func (s *CRSSyncService) mapOrCreateProxy(ctx context.Context, enabled bool, cached *[]model.Proxy, src *crsProxy, defaultName string) (*int64, error) {
+func (s *CRSSyncService) mapOrCreateProxy(ctx context.Context, enabled bool, cached *[]Proxy, src *crsProxy, defaultName string) (*int64, error) {
 	if !enabled || src == nil {
 		return nil, nil
 	}
@@ -987,14 +984,14 @@ func (s *CRSSyncService) mapOrCreateProxy(ctx context.Context, enabled bool, cac
 	}
 
 	// Create new proxy
-	proxy := &model.Proxy{
+	proxy := &Proxy{
 		Name:     defaultProxyName(defaultName, protocol, host, port),
 		Protocol: protocol,
 		Host:     host,
 		Port:     port,
 		Username: username,
 		Password: password,
-		Status:   model.StatusActive,
+		Status:   StatusActive,
 	}
 	if err := s.proxyRepo.Create(ctx, proxy); err != nil {
 		return nil, err
@@ -1153,8 +1150,8 @@ func crsExportAccounts(ctx context.Context, client *http.Client, baseURL, adminT
 
 // refreshOAuthToken attempts to refresh OAuth token for a synced account
 // Returns updated credentials or nil if refresh failed/not applicable
-func (s *CRSSyncService) refreshOAuthToken(ctx context.Context, account *model.Account) model.JSONB {
-	if account.Type != model.AccountTypeOAuth {
+func (s *CRSSyncService) refreshOAuthToken(ctx context.Context, account *Account) map[string]any {
+	if account.Type != AccountTypeOAuth {
 		return nil
 	}
 
@@ -1162,7 +1159,7 @@ func (s *CRSSyncService) refreshOAuthToken(ctx context.Context, account *model.A
 	var err error
 
 	switch account.Platform {
-	case model.PlatformAnthropic:
+	case PlatformAnthropic:
 		if s.oauthService == nil {
 			return nil
 		}
@@ -1187,7 +1184,7 @@ func (s *CRSSyncService) refreshOAuthToken(ctx context.Context, account *model.A
 				newCredentials["scope"] = tokenInfo.Scope
 			}
 		}
-	case model.PlatformOpenAI:
+	case PlatformOpenAI:
 		if s.openaiOAuthService == nil {
 			return nil
 		}
@@ -1227,5 +1224,5 @@ func (s *CRSSyncService) refreshOAuthToken(ctx context.Context, account *model.A
 		return nil
 	}
 
-	return model.JSONB(newCredentials)
+	return newCredentials
 }
