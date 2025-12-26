@@ -40,4 +40,3 @@ func FallbackModel(model string) Model {
 	}
 	return Model{Name: "models/" + model, SupportedGenerationMethods: methods}
 }
-
