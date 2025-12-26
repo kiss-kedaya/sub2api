@@ -11,6 +11,11 @@ export interface GeminiAuthUrlResponse {
   state: string
 }
 
+export interface GeminiOAuthCapabilities {
+  ai_studio_oauth_enabled: boolean
+  required_redirect_uris: string[]
+}
+
 export interface GeminiAuthUrlRequest {
   proxy_id?: number
   project_id?: string
@@ -45,4 +50,9 @@ export async function exchangeCode(payload: GeminiExchangeCodeRequest): Promise<
   return data
 }
 
-export default { generateAuthUrl, exchangeCode }
+export async function getCapabilities(): Promise<GeminiOAuthCapabilities> {
+  const { data } = await apiClient.get<GeminiOAuthCapabilities>('/admin/gemini/oauth/capabilities')
+  return data
+}
+
+export default { generateAuthUrl, exchangeCode, getCapabilities }
