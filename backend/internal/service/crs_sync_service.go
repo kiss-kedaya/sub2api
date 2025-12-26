@@ -772,12 +772,12 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		if existing == nil {
-			account := &model.Account{
+			account := &Account{
 				Name:        defaultName(src.Name, src.ID),
-				Platform:    model.PlatformGemini,
-				Type:        model.AccountTypeOAuth,
-				Credentials: model.JSONB(credentials),
-				Extra:       model.JSONB(extra),
+				Platform:    PlatformGemini,
+				Type:        AccountTypeOAuth,
+				Credentials: credentials,
+				Extra:       extra,
 				ProxyID:     proxyID,
 				Concurrency: 3,
 				Priority:    clampPriority(src.Priority),
@@ -803,8 +803,8 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 
 		existing.Extra = mergeJSONB(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
-		existing.Platform = model.PlatformGemini
-		existing.Type = model.AccountTypeOAuth
+		existing.Platform = PlatformGemini
+		existing.Type = AccountTypeOAuth
 		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
 		if proxyID != nil {
 			existing.ProxyID = proxyID
@@ -883,12 +883,12 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		if existing == nil {
-			account := &model.Account{
+			account := &Account{
 				Name:        defaultName(src.Name, src.ID),
-				Platform:    model.PlatformGemini,
-				Type:        model.AccountTypeApiKey,
-				Credentials: model.JSONB(credentials),
-				Extra:       model.JSONB(extra),
+				Platform:    PlatformGemini,
+				Type:        AccountTypeApiKey,
+				Credentials: credentials,
+				Extra:       extra,
 				ProxyID:     proxyID,
 				Concurrency: 3,
 				Priority:    clampPriority(src.Priority),
@@ -910,8 +910,8 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 
 		existing.Extra = mergeJSONB(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
-		existing.Platform = model.PlatformGemini
-		existing.Type = model.AccountTypeApiKey
+		existing.Platform = PlatformGemini
+		existing.Type = AccountTypeApiKey
 		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
 		if proxyID != nil {
 			existing.ProxyID = proxyID
@@ -1200,7 +1200,7 @@ func (s *CRSSyncService) refreshOAuthToken(ctx context.Context, account *Account
 				}
 			}
 		}
-	case model.PlatformGemini:
+	case PlatformGemini:
 		if s.geminiOAuthService == nil {
 			return nil
 		}

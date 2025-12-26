@@ -350,7 +350,7 @@ func (h *AccountHandler) Refresh(c *gin.Context) {
 				newCredentials[k] = v
 			}
 		}
-	} else if account.Platform == model.PlatformGemini {
+	} else if account.Platform == service.PlatformGemini {
 		tokenInfo, err := h.geminiOAuthService.RefreshAccountToken(c.Request.Context(), account)
 		if err != nil {
 			response.InternalError(c, "Failed to refresh credentials: "+err.Error())

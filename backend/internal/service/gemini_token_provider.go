@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
 )
 
 const (
@@ -34,11 +33,11 @@ func NewGeminiTokenProvider(
 	}
 }
 
-func (p *GeminiTokenProvider) GetAccessToken(ctx context.Context, account *model.Account) (string, error) {
+func (p *GeminiTokenProvider) GetAccessToken(ctx context.Context, account *Account) (string, error) {
 	if account == nil {
 		return "", errors.New("account is nil")
 	}
-	if account.Platform != model.PlatformGemini || account.Type != model.AccountTypeOAuth {
+	if account.Platform != PlatformGemini || account.Type != AccountTypeOAuth {
 		return "", errors.New("not a gemini oauth account")
 	}
 
@@ -83,7 +82,7 @@ func (p *GeminiTokenProvider) GetAccessToken(ctx context.Context, account *model
 						newCredentials[k] = v
 					}
 				}
-				account.Credentials = model.JSONB(newCredentials)
+				account.Credentials = newCredentials
 				_ = p.accountRepo.Update(ctx, account)
 				expiresAt = parseExpiresAt(account)
 			}
@@ -122,7 +121,7 @@ func (p *GeminiTokenProvider) GetAccessToken(ctx context.Context, account *model
 		detected = strings.TrimSpace(detected)
 		if detected != "" {
 			if account.Credentials == nil {
-				account.Credentials = model.JSONB{}
+				account.Credentials = make(map[string]any)
 			}
 			account.Credentials["project_id"] = detected
 			_ = p.accountRepo.Update(ctx, account)
@@ -149,7 +148,7 @@ func (p *GeminiTokenProvider) GetAccessToken(ctx context.Context, account *model
 	return accessToken, nil
 }
 
-func geminiTokenCacheKey(account *model.Account) string {
+func geminiTokenCacheKey(account *Account) string {
 	projectID := strings.TrimSpace(account.GetCredential("project_id"))
 	if projectID != "" {
 		return projectID
@@ -157,7 +156,7 @@ func geminiTokenCacheKey(account *model.Account) string {
 	return "account:" + strconv.FormatInt(account.ID, 10)
 }
 
-func parseExpiresAt(account *model.Account) *time.Time {
+func parseExpiresAt(account *Account) *time.Time {
 	raw := strings.TrimSpace(account.GetCredential("expires_at"))
 	if raw == "" {
 		return nil
