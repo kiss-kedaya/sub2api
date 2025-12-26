@@ -177,7 +177,7 @@ func (h *SubscriptionHandler) BulkAssign(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, result)
+	response.Success(c, dto.BulkAssignResultFromService(result))
 }
 
 // Extend handles extending a subscription

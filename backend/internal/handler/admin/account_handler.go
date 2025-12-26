@@ -376,7 +376,7 @@ func (h *AccountHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, updatedAccount)
+	response.Success(c, dto.AccountFromService(updatedAccount))
 }
 
 // GetStats handles getting account statistics

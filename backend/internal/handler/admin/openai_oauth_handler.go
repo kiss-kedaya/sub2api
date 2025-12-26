@@ -3,6 +3,7 @@ package admin
 import (
 	"strconv"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -163,7 +164,7 @@ func (h *OpenAIOAuthHandler) RefreshAccountToken(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, updatedAccount)
+	response.Success(c, dto.AccountFromService(updatedAccount))
 }
 
 // CreateAccountFromOAuth creates a new OpenAI OAuth account from token info
@@ -224,5 +225,5 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, account)
+	response.Success(c, dto.AccountFromService(account))
 }
