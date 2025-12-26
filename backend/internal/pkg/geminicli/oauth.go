@@ -23,6 +23,8 @@ type OAuthSession struct {
 	CodeVerifier string    `json:"code_verifier"`
 	ProxyURL     string    `json:"proxy_url,omitempty"`
 	RedirectURI  string    `json:"redirect_uri"`
+	ProjectID    string    `json:"project_id,omitempty"`
+	OAuthType    string    `json:"oauth_type"` // "code_assist" 或 "ai_studio"
 	CreatedAt    time.Time `json:"created_at"`
 }
 
@@ -137,31 +139,59 @@ func base64URLEncode(data []byte) string {
 	return strings.TrimRight(base64.URLEncoding.EncodeToString(data), "=")
 }
 
-func BuildAuthorizationURL(cfg OAuthConfig, state, codeChallenge, redirectURI string) (string, error) {
-	if strings.TrimSpace(cfg.ClientID) == "" {
-		return "", fmt.Errorf("gemini oauth client_id is empty")
+// EffectiveOAuthConfig returns the effective OAuth configuration.
+// oauthType: "code_assist" or "ai_studio" (defaults to "code_assist" if empty)
+// Returns error if ClientID or ClientSecret is not configured.
+// Configure via GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET environment variables.
+func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error) {
+	effective := OAuthConfig{
+		ClientID:     strings.TrimSpace(cfg.ClientID),
+		ClientSecret: strings.TrimSpace(cfg.ClientSecret),
+		Scopes:       strings.TrimSpace(cfg.Scopes),
+	}
+
+	// Require OAuth credentials to be configured
+	if effective.ClientID == "" || effective.ClientSecret == "" {
+		return OAuthConfig{}, fmt.Errorf("Gemini OAuth credentials not configured. Set GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET environment variables")
+	}
+
+	if effective.Scopes == "" {
+		// Use different default scopes based on OAuth type
+		if oauthType == "ai_studio" {
+			effective.Scopes = DefaultAIStudioScopes
+		} else {
+			// Default to Code Assist scopes
+			effective.Scopes = DefaultCodeAssistScopes
+		}
+	}
+
+	return effective, nil
+}
+
+func BuildAuthorizationURL(cfg OAuthConfig, state, codeChallenge, redirectURI, projectID, oauthType string) (string, error) {
+	effectiveCfg, err := EffectiveOAuthConfig(cfg, oauthType)
+	if err != nil {
+		return "", err
 	}
 	redirectURI = strings.TrimSpace(redirectURI)
 	if redirectURI == "" {
 		return "", fmt.Errorf("redirect_uri is required")
 	}
 
-	scopes := strings.TrimSpace(cfg.Scopes)
-	if scopes == "" {
-		scopes = DefaultScopes
-	}
-
 	params := url.Values{}
 	params.Set("response_type", "code")
-	params.Set("client_id", cfg.ClientID)
+	params.Set("client_id", effectiveCfg.ClientID)
 	params.Set("redirect_uri", redirectURI)
-	params.Set("scope", scopes)
+	params.Set("scope", effectiveCfg.Scopes)
 	params.Set("state", state)
 	params.Set("code_challenge", codeChallenge)
 	params.Set("code_challenge_method", "S256")
 	params.Set("access_type", "offline")
 	params.Set("prompt", "consent")
 	params.Set("include_granted_scopes", "true")
+	if strings.TrimSpace(projectID) != "" {
+		params.Set("project_id", strings.TrimSpace(projectID))
+	}
 
 	return fmt.Sprintf("%s?%s", AuthorizeURL, params.Encode()), nil
 }
