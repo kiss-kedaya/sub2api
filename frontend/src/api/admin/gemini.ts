@@ -12,16 +12,17 @@ export interface GeminiAuthUrlResponse {
 }
 
 export interface GeminiAuthUrlRequest {
-  redirect_uri: string
   proxy_id?: number
+  project_id?: string
+  oauth_type?: 'code_assist' | 'ai_studio'
 }
 
 export interface GeminiExchangeCodeRequest {
   session_id: string
   state: string
   code: string
-  redirect_uri: string
   proxy_id?: number
+  oauth_type?: 'code_assist' | 'ai_studio'
 }
 
 export type GeminiTokenInfo = Record<string, unknown>
