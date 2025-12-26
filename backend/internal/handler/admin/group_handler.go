@@ -3,7 +3,7 @@ package admin
 import (
 	"strconv"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -69,7 +69,11 @@ func (h *GroupHandler) List(c *gin.Context) {
 		return
 	}
 
-	response.Paginated(c, groups, total, page, pageSize)
+	outGroups := make([]dto.Group, 0, len(groups))
+	for i := range groups {
+		outGroups = append(outGroups, *dto.GroupFromService(&groups[i]))
+	}
+	response.Paginated(c, outGroups, total, page, pageSize)
 }
 
 // GetAll handles getting all active groups without pagination
@@ -77,7 +81,7 @@ func (h *GroupHandler) List(c *gin.Context) {
 func (h *GroupHandler) GetAll(c *gin.Context) {
 	platform := c.Query("platform")
 
-	var groups []model.Group
+	var groups []service.Group
 	var err error
 
 	if platform != "" {
@@ -91,7 +95,11 @@ func (h *GroupHandler) GetAll(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, groups)
+	outGroups := make([]dto.Group, 0, len(groups))
+	for i := range groups {
+		outGroups = append(outGroups, *dto.GroupFromService(&groups[i]))
+	}
+	response.Success(c, outGroups)
 }
 
 // GetByID handles getting a group by ID
@@ -109,7 +117,7 @@ func (h *GroupHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, group)
+	response.Success(c, dto.GroupFromService(group))
 }
 
 // Create handles creating a new group
@@ -137,7 +145,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, group)
+	response.Success(c, dto.GroupFromService(group))
 }
 
 // Update handles updating a group
@@ -172,7 +180,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, group)
+	response.Success(c, dto.GroupFromService(group))
 }
 
 // Delete handles deleting a group
@@ -229,5 +237,9 @@ func (h *GroupHandler) GetGroupAPIKeys(c *gin.Context) {
 		return
 	}
 
-	response.Paginated(c, keys, total, page, pageSize)
+	outKeys := make([]dto.ApiKey, 0, len(keys))
+	for i := range keys {
+		outKeys = append(outKeys, *dto.ApiKeyFromService(&keys[i]))
+	}
+	response.Paginated(c, outKeys, total, page, pageSize)
 }

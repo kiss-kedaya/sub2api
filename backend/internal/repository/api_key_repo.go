@@ -2,10 +2,10 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 
 	"gorm.io/gorm"
@@ -19,42 +19,51 @@ func NewApiKeyRepository(db *gorm.DB) service.ApiKeyRepository {
 	return &apiKeyRepository{db: db}
 }
 
-func (r *apiKeyRepository) Create(ctx context.Context, key *model.ApiKey) error {
-	err := r.db.WithContext(ctx).Create(key).Error
+func (r *apiKeyRepository) Create(ctx context.Context, key *service.ApiKey) error {
+	m := apiKeyModelFromService(key)
+	err := r.db.WithContext(ctx).Create(m).Error
+	if err == nil {
+		applyApiKeyModelToService(key, m)
+	}
 	return translatePersistenceError(err, nil, service.ErrApiKeyExists)
 }
 
-func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*model.ApiKey, error) {
-	var key model.ApiKey
-	err := r.db.WithContext(ctx).Preload("User").Preload("Group").First(&key, id).Error
+func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*service.ApiKey, error) {
+	var m apiKeyModel
+	err := r.db.WithContext(ctx).Preload("User").Preload("Group").First(&m, id).Error
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrApiKeyNotFound, nil)
 	}
-	return &key, nil
+	return apiKeyModelToService(&m), nil
 }
 
-func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*model.ApiKey, error) {
-	var apiKey model.ApiKey
-	err := r.db.WithContext(ctx).Preload("User").Preload("Group").Where("key = ?", key).First(&apiKey).Error
+func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.ApiKey, error) {
+	var m apiKeyModel
+	err := r.db.WithContext(ctx).Preload("User").Preload("Group").Where("key = ?", key).First(&m).Error
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrApiKeyNotFound, nil)
 	}
-	return &apiKey, nil
+	return apiKeyModelToService(&m), nil
 }
 
-func (r *apiKeyRepository) Update(ctx context.Context, key *model.ApiKey) error {
-	return r.db.WithContext(ctx).Model(key).Select("name", "group_id", "status", "updated_at").Updates(key).Error
+func (r *apiKeyRepository) Update(ctx context.Context, key *service.ApiKey) error {
+	m := apiKeyModelFromService(key)
+	err := r.db.WithContext(ctx).Model(m).Select("name", "group_id", "status", "updated_at").Updates(m).Error
+	if err == nil {
+		applyApiKeyModelToService(key, m)
+	}
+	return err
 }
 
 func (r *apiKeyRepository) Delete(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Delete(&model.ApiKey{}, id).Error
+	return r.db.WithContext(ctx).Delete(&apiKeyModel{}, id).Error
 }
 
-func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, params pagination.PaginationParams) ([]model.ApiKey, *pagination.PaginationResult, error) {
-	var keys []model.ApiKey
+func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, params pagination.PaginationParams) ([]service.ApiKey, *pagination.PaginationResult, error) {
+	var keys []apiKeyModel
 	var total int64
 
-	db := r.db.WithContext(ctx).Model(&model.ApiKey{}).Where("user_id = ?", userID)
+	db := r.db.WithContext(ctx).Model(&apiKeyModel{}).Where("user_id = ?", userID)
 
 	if err := db.Count(&total).Error; err != nil {
 		return nil, nil, err
@@ -64,36 +73,31 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, param
 		return nil, nil, err
 	}
 
-	pages := int(total) / params.Limit()
-	if int(total)%params.Limit() > 0 {
-		pages++
+	outKeys := make([]service.ApiKey, 0, len(keys))
+	for i := range keys {
+		outKeys = append(outKeys, *apiKeyModelToService(&keys[i]))
 	}
 
-	return keys, &pagination.PaginationResult{
-		Total:    total,
-		Page:     params.Page,
-		PageSize: params.Limit(),
-		Pages:    pages,
-	}, nil
+	return outKeys, paginationResultFromTotal(total, params), nil
 }
 
 func (r *apiKeyRepository) CountByUserID(ctx context.Context, userID int64) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&model.ApiKey{}).Where("user_id = ?", userID).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&apiKeyModel{}).Where("user_id = ?", userID).Count(&count).Error
 	return count, err
 }
 
 func (r *apiKeyRepository) ExistsByKey(ctx context.Context, key string) (bool, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&model.ApiKey{}).Where("key = ?", key).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&apiKeyModel{}).Where("key = ?", key).Count(&count).Error
 	return count > 0, err
 }
 
-func (r *apiKeyRepository) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]model.ApiKey, *pagination.PaginationResult, error) {
-	var keys []model.ApiKey
+func (r *apiKeyRepository) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]service.ApiKey, *pagination.PaginationResult, error) {
+	var keys []apiKeyModel
 	var total int64
 
-	db := r.db.WithContext(ctx).Model(&model.ApiKey{}).Where("group_id = ?", groupID)
+	db := r.db.WithContext(ctx).Model(&apiKeyModel{}).Where("group_id = ?", groupID)
 
 	if err := db.Count(&total).Error; err != nil {
 		return nil, nil, err
@@ -103,24 +107,19 @@ func (r *apiKeyRepository) ListByGroupID(ctx context.Context, groupID int64, par
 		return nil, nil, err
 	}
 
-	pages := int(total) / params.Limit()
-	if int(total)%params.Limit() > 0 {
-		pages++
+	outKeys := make([]service.ApiKey, 0, len(keys))
+	for i := range keys {
+		outKeys = append(outKeys, *apiKeyModelToService(&keys[i]))
 	}
 
-	return keys, &pagination.PaginationResult{
-		Total:    total,
-		Page:     params.Page,
-		PageSize: params.Limit(),
-		Pages:    pages,
-	}, nil
+	return outKeys, paginationResultFromTotal(total, params), nil
 }
 
 // SearchApiKeys searches API keys by user ID and/or keyword (name)
-func (r *apiKeyRepository) SearchApiKeys(ctx context.Context, userID int64, keyword string, limit int) ([]model.ApiKey, error) {
-	var keys []model.ApiKey
+func (r *apiKeyRepository) SearchApiKeys(ctx context.Context, userID int64, keyword string, limit int) ([]service.ApiKey, error) {
+	var keys []apiKeyModel
 
-	db := r.db.WithContext(ctx).Model(&model.ApiKey{})
+	db := r.db.WithContext(ctx).Model(&apiKeyModel{})
 
 	if userID > 0 {
 		db = db.Where("user_id = ?", userID)
@@ -135,12 +134,16 @@ func (r *apiKeyRepository) SearchApiKeys(ctx context.Context, userID int64, keyw
 		return nil, err
 	}
 
-	return keys, nil
+	outKeys := make([]service.ApiKey, 0, len(keys))
+	for i := range keys {
+		outKeys = append(outKeys, *apiKeyModelToService(&keys[i]))
+	}
+	return outKeys, nil
 }
 
 // ClearGroupIDByGroupID 将指定分组的所有 API Key 的 group_id 设为 nil
 func (r *apiKeyRepository) ClearGroupIDByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	result := r.db.WithContext(ctx).Model(&model.ApiKey{}).
+	result := r.db.WithContext(ctx).Model(&apiKeyModel{}).
 		Where("group_id = ?", groupID).
 		Update("group_id", nil)
 	return result.RowsAffected, result.Error
@@ -149,6 +152,66 @@ func (r *apiKeyRepository) ClearGroupIDByGroupID(ctx context.Context, groupID in
 // CountByGroupID 获取分组的 API Key 数量
 func (r *apiKeyRepository) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&model.ApiKey{}).Where("group_id = ?", groupID).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&apiKeyModel{}).Where("group_id = ?", groupID).Count(&count).Error
 	return count, err
+}
+
+type apiKeyModel struct {
+	ID        int64          `gorm:"primaryKey"`
+	UserID    int64          `gorm:"index;not null"`
+	Key       string         `gorm:"uniqueIndex;size:128;not null"`
+	Name      string         `gorm:"size:100;not null"`
+	GroupID   *int64         `gorm:"index"`
+	Status    string         `gorm:"size:20;default:active;not null"`
+	CreatedAt time.Time      `gorm:"not null"`
+	UpdatedAt time.Time      `gorm:"not null"`
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+
+	User  *userModel  `gorm:"foreignKey:UserID"`
+	Group *groupModel `gorm:"foreignKey:GroupID"`
+}
+
+func (apiKeyModel) TableName() string { return "api_keys" }
+
+func apiKeyModelToService(m *apiKeyModel) *service.ApiKey {
+	if m == nil {
+		return nil
+	}
+	return &service.ApiKey{
+		ID:        m.ID,
+		UserID:    m.UserID,
+		Key:       m.Key,
+		Name:      m.Name,
+		GroupID:   m.GroupID,
+		Status:    m.Status,
+		CreatedAt: m.CreatedAt,
+		UpdatedAt: m.UpdatedAt,
+		User:      userModelToService(m.User),
+		Group:     groupModelToService(m.Group),
+	}
+}
+
+func apiKeyModelFromService(k *service.ApiKey) *apiKeyModel {
+	if k == nil {
+		return nil
+	}
+	return &apiKeyModel{
+		ID:        k.ID,
+		UserID:    k.UserID,
+		Key:       k.Key,
+		Name:      k.Name,
+		GroupID:   k.GroupID,
+		Status:    k.Status,
+		CreatedAt: k.CreatedAt,
+		UpdatedAt: k.UpdatedAt,
+	}
+}
+
+func applyApiKeyModelToService(key *service.ApiKey, m *apiKeyModel) {
+	if key == nil || m == nil {
+		return
+	}
+	key.ID = m.ID
+	key.CreatedAt = m.CreatedAt
+	key.UpdatedAt = m.UpdatedAt
 }

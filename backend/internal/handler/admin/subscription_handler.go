@@ -3,9 +3,10 @@ package admin
 import (
 	"strconv"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -82,7 +83,11 @@ func (h *SubscriptionHandler) List(c *gin.Context) {
 		return
 	}
 
-	response.PaginatedWithResult(c, subscriptions, toResponsePagination(pagination))
+	out := make([]dto.UserSubscription, 0, len(subscriptions))
+	for i := range subscriptions {
+		out = append(out, *dto.UserSubscriptionFromService(&subscriptions[i]))
+	}
+	response.PaginatedWithResult(c, out, toResponsePagination(pagination))
 }
 
 // GetByID handles getting a subscription by ID
@@ -100,7 +105,7 @@ func (h *SubscriptionHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, subscription)
+	response.Success(c, dto.UserSubscriptionFromService(subscription))
 }
 
 // GetProgress handles getting subscription usage progress
@@ -145,7 +150,7 @@ func (h *SubscriptionHandler) Assign(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, subscription)
+	response.Success(c, dto.UserSubscriptionFromService(subscription))
 }
 
 // BulkAssign handles bulk assigning subscriptions to multiple users
@@ -196,7 +201,7 @@ func (h *SubscriptionHandler) Extend(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, subscription)
+	response.Success(c, dto.UserSubscriptionFromService(subscription))
 }
 
 // Revoke handles revoking a subscription
@@ -234,7 +239,11 @@ func (h *SubscriptionHandler) ListByGroup(c *gin.Context) {
 		return
 	}
 
-	response.PaginatedWithResult(c, subscriptions, toResponsePagination(pagination))
+	out := make([]dto.UserSubscription, 0, len(subscriptions))
+	for i := range subscriptions {
+		out = append(out, *dto.UserSubscriptionFromService(&subscriptions[i]))
+	}
+	response.PaginatedWithResult(c, out, toResponsePagination(pagination))
 }
 
 // ListByUser handles listing subscriptions for a specific user
@@ -252,15 +261,18 @@ func (h *SubscriptionHandler) ListByUser(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, subscriptions)
+	out := make([]dto.UserSubscription, 0, len(subscriptions))
+	for i := range subscriptions {
+		out = append(out, *dto.UserSubscriptionFromService(&subscriptions[i]))
+	}
+	response.Success(c, out)
 }
 
 // Helper function to get admin ID from context
 func getAdminIDFromContext(c *gin.Context) int64 {
-	if user, exists := c.Get("user"); exists {
-		if u, ok := user.(*model.User); ok && u != nil {
-			return u.ID
-		}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		return 0
 	}
-	return 0
+	return subject.UserID
 }

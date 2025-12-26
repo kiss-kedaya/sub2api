@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -84,7 +83,11 @@ func validateAdminApiKey(
 		return false
 	}
 
-	c.Set(string(ContextKeyUser), admin)
+	c.Set(string(ContextKeyUser), AuthSubject{
+		UserID:      admin.ID,
+		Concurrency: admin.Concurrency,
+	})
+	c.Set(string(ContextKeyUserRole), admin.Role)
 	c.Set("auth_method", "admin_api_key")
 	return true
 }
@@ -121,12 +124,16 @@ func validateJWTForAdmin(
 	}
 
 	// 检查管理员权限
-	if user.Role != model.RoleAdmin {
+	if !user.IsAdmin() {
 		AbortWithError(c, 403, "FORBIDDEN", "Admin access required")
 		return false
 	}
 
-	c.Set(string(ContextKeyUser), user)
+	c.Set(string(ContextKeyUser), AuthSubject{
+		UserID:      user.ID,
+		Concurrency: user.Concurrency,
+	})
+	c.Set(string(ContextKeyUserRole), user.Role)
 	c.Set("auth_method", "jwt")
 
 	return true

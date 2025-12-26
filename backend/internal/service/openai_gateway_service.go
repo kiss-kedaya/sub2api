@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/gin-gonic/gin"
 )
 
@@ -119,12 +118,12 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context) string {
 }
 
 // SelectAccount selects an OpenAI account with sticky session support
-func (s *OpenAIGatewayService) SelectAccount(ctx context.Context, groupID *int64, sessionHash string) (*model.Account, error) {
+func (s *OpenAIGatewayService) SelectAccount(ctx context.Context, groupID *int64, sessionHash string) (*Account, error) {
 	return s.SelectAccountForModel(ctx, groupID, sessionHash, "")
 }
 
 // SelectAccountForModel selects an account supporting the requested model
-func (s *OpenAIGatewayService) SelectAccountForModel(ctx context.Context, groupID *int64, sessionHash string, requestedModel string) (*model.Account, error) {
+func (s *OpenAIGatewayService) SelectAccountForModel(ctx context.Context, groupID *int64, sessionHash string, requestedModel string) (*Account, error) {
 	// 1. Check sticky session
 	if sessionHash != "" {
 		accountID, err := s.cache.GetSessionAccountID(ctx, "openai:"+sessionHash)
@@ -139,19 +138,19 @@ func (s *OpenAIGatewayService) SelectAccountForModel(ctx context.Context, groupI
 	}
 
 	// 2. Get schedulable OpenAI accounts
-	var accounts []model.Account
+	var accounts []Account
 	var err error
 	if groupID != nil {
-		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, model.PlatformOpenAI)
+		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, PlatformOpenAI)
 	} else {
-		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, model.PlatformOpenAI)
+		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, PlatformOpenAI)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
 
 	// 3. Select by priority + LRU
-	var selected *model.Account
+	var selected *Account
 	for i := range accounts {
 		acc := &accounts[i]
 		// Check model support
@@ -189,15 +188,15 @@ func (s *OpenAIGatewayService) SelectAccountForModel(ctx context.Context, groupI
 }
 
 // GetAccessToken gets the access token for an OpenAI account
-func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *model.Account) (string, string, error) {
+func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Account) (string, string, error) {
 	switch account.Type {
-	case model.AccountTypeOAuth:
+	case AccountTypeOAuth:
 		accessToken := account.GetOpenAIAccessToken()
 		if accessToken == "" {
 			return "", "", errors.New("access_token not found in credentials")
 		}
 		return accessToken, "oauth", nil
-	case model.AccountTypeApiKey:
+	case AccountTypeApiKey:
 		apiKey := account.GetOpenAIApiKey()
 		if apiKey == "" {
 			return "", "", errors.New("api_key not found in credentials")
@@ -209,7 +208,7 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *mode
 }
 
 // Forward forwards request to OpenAI API
-func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *model.Account, body []byte) (*OpenAIForwardResult, error) {
+func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
 
 	// Parse request body once (avoid multiple parse/serialize cycles)
@@ -234,7 +233,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	// For OAuth accounts using ChatGPT internal API, add store: false
-	if account.Type == model.AccountTypeOAuth {
+	if account.Type == AccountTypeOAuth {
 		reqBody["store"] = false
 		bodyModified = true
 	}
@@ -296,7 +295,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	// Extract and save Codex usage snapshot from response headers (for OAuth accounts)
-	if account.Type == model.AccountTypeOAuth {
+	if account.Type == AccountTypeOAuth {
 		if snapshot := extractCodexUsageHeaders(resp.Header); snapshot != nil {
 			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
 		}
@@ -312,14 +311,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}, nil
 }
 
-func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *model.Account, body []byte, token string, isStream bool) (*http.Request, error) {
+func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool) (*http.Request, error) {
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
-	case model.AccountTypeOAuth:
+	case AccountTypeOAuth:
 		// OAuth accounts use ChatGPT internal API
 		targetURL = chatgptCodexURL
-	case model.AccountTypeApiKey:
+	case AccountTypeApiKey:
 		// API Key accounts use Platform API or custom base URL
 		baseURL := account.GetOpenAIBaseURL()
 		if baseURL != "" {
@@ -340,7 +339,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	req.Header.Set("authorization", "Bearer "+token)
 
 	// Set headers specific to OAuth accounts (ChatGPT internal API)
-	if account.Type == model.AccountTypeOAuth {
+	if account.Type == AccountTypeOAuth {
 		// Required: set Host for ChatGPT API (must use req.Host, not Header.Set)
 		req.Host = "chatgpt.com"
 		// Required: set chatgpt-account-id header
@@ -380,7 +379,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	return req, nil
 }
 
-func (s *OpenAIGatewayService) handleErrorResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *model.Account) (*OpenAIForwardResult, error) {
+func (s *OpenAIGatewayService) handleErrorResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account) (*OpenAIForwardResult, error) {
 	body, _ := io.ReadAll(resp.Body)
 
 	// Check custom error codes
@@ -436,7 +435,7 @@ type openaiStreamingResult struct {
 	firstTokenMs *int
 }
 
-func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *model.Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
+func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
 	// Set SSE response headers
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -552,7 +551,7 @@ func (s *OpenAIGatewayService) parseSSEUsage(data string, usage *OpenAIUsage) {
 	}
 }
 
-func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *model.Account, originalModel, mappedModel string) (*OpenAIUsage, error) {
+func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*OpenAIUsage, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -618,10 +617,10 @@ func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel
 // OpenAIRecordUsageInput input for recording usage
 type OpenAIRecordUsageInput struct {
 	Result       *OpenAIForwardResult
-	ApiKey       *model.ApiKey
-	User         *model.User
-	Account      *model.Account
-	Subscription *model.UserSubscription
+	ApiKey       *ApiKey
+	User         *User
+	Account      *Account
+	Subscription *UserSubscription
 }
 
 // RecordUsage records usage and deducts balance
@@ -660,14 +659,14 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// Determine billing type
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
-	billingType := model.BillingTypeBalance
+	billingType := BillingTypeBalance
 	if isSubscriptionBilling {
-		billingType = model.BillingTypeSubscription
+		billingType = BillingTypeSubscription
 	}
 
 	// Create usage log
 	durationMs := int(result.Duration.Milliseconds())
-	usageLog := &model.UsageLog{
+	usageLog := &UsageLog{
 		UserID:              user.ID,
 		ApiKeyID:            apiKey.ID,
 		AccountID:           account.ID,

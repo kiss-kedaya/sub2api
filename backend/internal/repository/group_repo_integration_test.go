@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/suite"
 	"gorm.io/gorm"
 )
@@ -32,10 +32,10 @@ func TestGroupRepoSuite(t *testing.T) {
 // --- Create / GetByID / Update / Delete ---
 
 func (s *GroupRepoSuite) TestCreate() {
-	group := &model.Group{
+	group := &service.Group{
 		Name:     "test-create",
-		Platform: model.PlatformAnthropic,
-		Status:   model.StatusActive,
+		Platform: service.PlatformAnthropic,
+		Status:   service.StatusActive,
 	}
 
 	err := s.repo.Create(s.ctx, group)
@@ -53,7 +53,7 @@ func (s *GroupRepoSuite) TestGetByID_NotFound() {
 }
 
 func (s *GroupRepoSuite) TestUpdate() {
-	group := mustCreateGroup(s.T(), s.db, &model.Group{Name: "original"})
+	group := groupModelToService(mustCreateGroup(s.T(), s.db, &groupModel{Name: "original"}))
 
 	group.Name = "updated"
 	err := s.repo.Update(s.ctx, group)
@@ -65,7 +65,7 @@ func (s *GroupRepoSuite) TestUpdate() {
 }
 
 func (s *GroupRepoSuite) TestDelete() {
-	group := mustCreateGroup(s.T(), s.db, &model.Group{Name: "to-delete"})
+	group := mustCreateGroup(s.T(), s.db, &groupModel{Name: "to-delete"})
 
 	err := s.repo.Delete(s.ctx, group.ID)
 	s.Require().NoError(err, "Delete")
@@ -77,8 +77,8 @@ func (s *GroupRepoSuite) TestDelete() {
 // --- List / ListWithFilters ---
 
 func (s *GroupRepoSuite) TestList() {
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "g1"})
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "g2"})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "g1"})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "g2"})
 
 	groups, page, err := s.repo.List(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10})
 	s.Require().NoError(err, "List")
@@ -87,28 +87,28 @@ func (s *GroupRepoSuite) TestList() {
 }
 
 func (s *GroupRepoSuite) TestListWithFilters_Platform() {
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "g1", Platform: model.PlatformAnthropic})
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "g2", Platform: model.PlatformOpenAI})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "g1", Platform: service.PlatformAnthropic})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "g2", Platform: service.PlatformOpenAI})
 
-	groups, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, model.PlatformOpenAI, "", nil)
+	groups, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, service.PlatformOpenAI, "", nil)
 	s.Require().NoError(err)
 	s.Require().Len(groups, 1)
-	s.Require().Equal(model.PlatformOpenAI, groups[0].Platform)
+	s.Require().Equal(service.PlatformOpenAI, groups[0].Platform)
 }
 
 func (s *GroupRepoSuite) TestListWithFilters_Status() {
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "g1", Status: model.StatusActive})
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "g2", Status: model.StatusDisabled})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "g1", Status: service.StatusActive})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "g2", Status: service.StatusDisabled})
 
-	groups, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", model.StatusDisabled, nil)
+	groups, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", service.StatusDisabled, nil)
 	s.Require().NoError(err)
 	s.Require().Len(groups, 1)
-	s.Require().Equal(model.StatusDisabled, groups[0].Status)
+	s.Require().Equal(service.StatusDisabled, groups[0].Status)
 }
 
 func (s *GroupRepoSuite) TestListWithFilters_IsExclusive() {
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "g1", IsExclusive: false})
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "g2", IsExclusive: true})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "g1", IsExclusive: false})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "g2", IsExclusive: true})
 
 	isExclusive := true
 	groups, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", "", &isExclusive)
@@ -118,24 +118,24 @@ func (s *GroupRepoSuite) TestListWithFilters_IsExclusive() {
 }
 
 func (s *GroupRepoSuite) TestListWithFilters_AccountCount() {
-	g1 := mustCreateGroup(s.T(), s.db, &model.Group{
+	g1 := mustCreateGroup(s.T(), s.db, &groupModel{
 		Name:     "g1",
-		Platform: model.PlatformAnthropic,
-		Status:   model.StatusActive,
+		Platform: service.PlatformAnthropic,
+		Status:   service.StatusActive,
 	})
-	g2 := mustCreateGroup(s.T(), s.db, &model.Group{
+	g2 := mustCreateGroup(s.T(), s.db, &groupModel{
 		Name:        "g2",
-		Platform:    model.PlatformAnthropic,
-		Status:      model.StatusActive,
+		Platform:    service.PlatformAnthropic,
+		Status:      service.StatusActive,
 		IsExclusive: true,
 	})
 
-	a := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc1"})
+	a := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc1"})
 	mustBindAccountToGroup(s.T(), s.db, a.ID, g1.ID, 1)
 	mustBindAccountToGroup(s.T(), s.db, a.ID, g2.ID, 1)
 
 	isExclusive := true
-	groups, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, model.PlatformAnthropic, model.StatusActive, &isExclusive)
+	groups, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, service.PlatformAnthropic, service.StatusActive, &isExclusive)
 	s.Require().NoError(err, "ListWithFilters")
 	s.Require().Equal(int64(1), page.Total)
 	s.Require().Len(groups, 1)
@@ -146,8 +146,8 @@ func (s *GroupRepoSuite) TestListWithFilters_AccountCount() {
 // --- ListActive / ListActiveByPlatform ---
 
 func (s *GroupRepoSuite) TestListActive() {
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "active1", Status: model.StatusActive})
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "inactive1", Status: model.StatusDisabled})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "active1", Status: service.StatusActive})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "inactive1", Status: service.StatusDisabled})
 
 	groups, err := s.repo.ListActive(s.ctx)
 	s.Require().NoError(err, "ListActive")
@@ -156,11 +156,11 @@ func (s *GroupRepoSuite) TestListActive() {
 }
 
 func (s *GroupRepoSuite) TestListActiveByPlatform() {
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "g1", Platform: model.PlatformAnthropic, Status: model.StatusActive})
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "g2", Platform: model.PlatformOpenAI, Status: model.StatusActive})
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "g3", Platform: model.PlatformAnthropic, Status: model.StatusDisabled})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "g1", Platform: service.PlatformAnthropic, Status: service.StatusActive})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "g2", Platform: service.PlatformOpenAI, Status: service.StatusActive})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "g3", Platform: service.PlatformAnthropic, Status: service.StatusDisabled})
 
-	groups, err := s.repo.ListActiveByPlatform(s.ctx, model.PlatformAnthropic)
+	groups, err := s.repo.ListActiveByPlatform(s.ctx, service.PlatformAnthropic)
 	s.Require().NoError(err, "ListActiveByPlatform")
 	s.Require().Len(groups, 1)
 	s.Require().Equal("g1", groups[0].Name)
@@ -169,7 +169,7 @@ func (s *GroupRepoSuite) TestListActiveByPlatform() {
 // --- ExistsByName ---
 
 func (s *GroupRepoSuite) TestExistsByName() {
-	mustCreateGroup(s.T(), s.db, &model.Group{Name: "existing-group"})
+	mustCreateGroup(s.T(), s.db, &groupModel{Name: "existing-group"})
 
 	exists, err := s.repo.ExistsByName(s.ctx, "existing-group")
 	s.Require().NoError(err, "ExistsByName")
@@ -183,9 +183,9 @@ func (s *GroupRepoSuite) TestExistsByName() {
 // --- GetAccountCount ---
 
 func (s *GroupRepoSuite) TestGetAccountCount() {
-	group := mustCreateGroup(s.T(), s.db, &model.Group{Name: "g-count"})
-	a1 := mustCreateAccount(s.T(), s.db, &model.Account{Name: "a1"})
-	a2 := mustCreateAccount(s.T(), s.db, &model.Account{Name: "a2"})
+	group := mustCreateGroup(s.T(), s.db, &groupModel{Name: "g-count"})
+	a1 := mustCreateAccount(s.T(), s.db, &accountModel{Name: "a1"})
+	a2 := mustCreateAccount(s.T(), s.db, &accountModel{Name: "a2"})
 	mustBindAccountToGroup(s.T(), s.db, a1.ID, group.ID, 1)
 	mustBindAccountToGroup(s.T(), s.db, a2.ID, group.ID, 2)
 
@@ -195,7 +195,7 @@ func (s *GroupRepoSuite) TestGetAccountCount() {
 }
 
 func (s *GroupRepoSuite) TestGetAccountCount_Empty() {
-	group := mustCreateGroup(s.T(), s.db, &model.Group{Name: "g-empty"})
+	group := mustCreateGroup(s.T(), s.db, &groupModel{Name: "g-empty"})
 
 	count, err := s.repo.GetAccountCount(s.ctx, group.ID)
 	s.Require().NoError(err)
@@ -205,8 +205,8 @@ func (s *GroupRepoSuite) TestGetAccountCount_Empty() {
 // --- DeleteAccountGroupsByGroupID ---
 
 func (s *GroupRepoSuite) TestDeleteAccountGroupsByGroupID() {
-	g := mustCreateGroup(s.T(), s.db, &model.Group{Name: "g-del"})
-	a := mustCreateAccount(s.T(), s.db, &model.Account{Name: "acc-del"})
+	g := mustCreateGroup(s.T(), s.db, &groupModel{Name: "g-del"})
+	a := mustCreateAccount(s.T(), s.db, &accountModel{Name: "acc-del"})
 	mustBindAccountToGroup(s.T(), s.db, a.ID, g.ID, 1)
 
 	affected, err := s.repo.DeleteAccountGroupsByGroupID(s.ctx, g.ID)
@@ -219,10 +219,10 @@ func (s *GroupRepoSuite) TestDeleteAccountGroupsByGroupID() {
 }
 
 func (s *GroupRepoSuite) TestDeleteAccountGroupsByGroupID_MultipleAccounts() {
-	g := mustCreateGroup(s.T(), s.db, &model.Group{Name: "g-multi"})
-	a1 := mustCreateAccount(s.T(), s.db, &model.Account{Name: "a1"})
-	a2 := mustCreateAccount(s.T(), s.db, &model.Account{Name: "a2"})
-	a3 := mustCreateAccount(s.T(), s.db, &model.Account{Name: "a3"})
+	g := mustCreateGroup(s.T(), s.db, &groupModel{Name: "g-multi"})
+	a1 := mustCreateAccount(s.T(), s.db, &accountModel{Name: "a1"})
+	a2 := mustCreateAccount(s.T(), s.db, &accountModel{Name: "a2"})
+	a3 := mustCreateAccount(s.T(), s.db, &accountModel{Name: "a3"})
 	mustBindAccountToGroup(s.T(), s.db, a1.ID, g.ID, 1)
 	mustBindAccountToGroup(s.T(), s.db, a2.ID, g.ID, 2)
 	mustBindAccountToGroup(s.T(), s.db, a3.ID, g.ID, 3)

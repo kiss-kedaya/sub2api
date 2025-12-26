@@ -3,7 +3,7 @@ package admin
 import (
 	"strconv"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -102,7 +102,7 @@ type BulkUpdateAccountsRequest struct {
 
 // AccountWithConcurrency extends Account with real-time concurrency info
 type AccountWithConcurrency struct {
-	*model.Account
+	*dto.Account
 	CurrentConcurrency int `json:"current_concurrency"`
 }
 
@@ -137,7 +137,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 	result := make([]AccountWithConcurrency, len(accounts))
 	for i := range accounts {
 		result[i] = AccountWithConcurrency{
-			Account:            &accounts[i],
+			Account:            dto.AccountFromService(&accounts[i]),
 			CurrentConcurrency: concurrencyCounts[accounts[i].ID],
 		}
 	}
@@ -160,7 +160,7 @@ func (h *AccountHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, account)
+	response.Success(c, dto.AccountFromService(account))
 }
 
 // Create handles creating a new account
@@ -188,7 +188,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, account)
+	response.Success(c, dto.AccountFromService(account))
 }
 
 // Update handles updating an account
@@ -222,7 +222,7 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, account)
+	response.Success(c, dto.AccountFromService(account))
 }
 
 // Delete handles deleting an account
@@ -425,7 +425,7 @@ func (h *AccountHandler) ClearError(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, account)
+	response.Success(c, dto.AccountFromService(account))
 }
 
 // BatchCreate handles batch creating accounts
@@ -801,7 +801,7 @@ func (h *AccountHandler) SetSchedulable(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, account)
+	response.Success(c, dto.AccountFromService(account))
 }
 
 // GetAvailableModels handles getting available models for an account
