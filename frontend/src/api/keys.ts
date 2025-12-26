@@ -3,13 +3,8 @@
  * Handles CRUD operations for user API keys
  */
 
-import { apiClient } from './client';
-import type {
-  ApiKey,
-  CreateApiKeyRequest,
-  UpdateApiKeyRequest,
-  PaginatedResponse,
-} from '@/types';
+import { apiClient } from './client'
+import type { ApiKey, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
 
 /**
  * List all API keys for current user
@@ -17,11 +12,14 @@ import type {
  * @param pageSize - Items per page (default: 10)
  * @returns Paginated list of API keys
  */
-export async function list(page: number = 1, pageSize: number = 10): Promise<PaginatedResponse<ApiKey>> {
+export async function list(
+  page: number = 1,
+  pageSize: number = 10
+): Promise<PaginatedResponse<ApiKey>> {
   const { data } = await apiClient.get<PaginatedResponse<ApiKey>>('/keys', {
-    params: { page, page_size: pageSize },
-  });
-  return data;
+    params: { page, page_size: pageSize }
+  })
+  return data
 }
 
 /**
@@ -30,8 +28,8 @@ export async function list(page: number = 1, pageSize: number = 10): Promise<Pag
  * @returns API key details
  */
 export async function getById(id: number): Promise<ApiKey> {
-  const { data } = await apiClient.get<ApiKey>(`/keys/${id}`);
-  return data;
+  const { data } = await apiClient.get<ApiKey>(`/keys/${id}`)
+  return data
 }
 
 /**
@@ -41,17 +39,21 @@ export async function getById(id: number): Promise<ApiKey> {
  * @param customKey - Optional custom key value
  * @returns Created API key
  */
-export async function create(name: string, groupId?: number | null, customKey?: string): Promise<ApiKey> {
-  const payload: CreateApiKeyRequest = { name };
+export async function create(
+  name: string,
+  groupId?: number | null,
+  customKey?: string
+): Promise<ApiKey> {
+  const payload: CreateApiKeyRequest = { name }
   if (groupId !== undefined) {
-    payload.group_id = groupId;
+    payload.group_id = groupId
   }
   if (customKey) {
-    payload.custom_key = customKey;
+    payload.custom_key = customKey
   }
 
-  const { data } = await apiClient.post<ApiKey>('/keys', payload);
-  return data;
+  const { data } = await apiClient.post<ApiKey>('/keys', payload)
+  return data
 }
 
 /**
@@ -61,8 +63,8 @@ export async function create(name: string, groupId?: number | null, customKey?: 
  * @returns Updated API key
  */
 export async function update(id: number, updates: UpdateApiKeyRequest): Promise<ApiKey> {
-  const { data } = await apiClient.put<ApiKey>(`/keys/${id}`, updates);
-  return data;
+  const { data } = await apiClient.put<ApiKey>(`/keys/${id}`, updates)
+  return data
 }
 
 /**
@@ -71,8 +73,8 @@ export async function update(id: number, updates: UpdateApiKeyRequest): Promise<
  * @returns Success confirmation
  */
 export async function deleteKey(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.delete<{ message: string }>(`/keys/${id}`);
-  return data;
+  const { data } = await apiClient.delete<{ message: string }>(`/keys/${id}`)
+  return data
 }
 
 /**
@@ -81,11 +83,8 @@ export async function deleteKey(id: number): Promise<{ message: string }> {
  * @param status - New status
  * @returns Updated API key
  */
-export async function toggleStatus(
-  id: number,
-  status: 'active' | 'inactive'
-): Promise<ApiKey> {
-  return update(id, { status });
+export async function toggleStatus(id: number, status: 'active' | 'inactive'): Promise<ApiKey> {
+  return update(id, { status })
 }
 
 export const keysAPI = {
@@ -94,7 +93,7 @@ export const keysAPI = {
   create,
   update,
   delete: deleteKey,
-  toggleStatus,
-};
+  toggleStatus
+}
 
-export default keysAPI;
+export default keysAPI

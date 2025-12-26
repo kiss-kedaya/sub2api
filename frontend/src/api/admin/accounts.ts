@@ -12,7 +12,7 @@ import type {
   AccountUsageInfo,
   WindowStats,
   ClaudeModel,
-  AccountUsageStatsResponse,
+  AccountUsageStatsResponse
 } from '@/types'
 
 /**
@@ -36,8 +36,8 @@ export async function list(
     params: {
       page,
       page_size: pageSize,
-      ...filters,
-    },
+      ...filters
+    }
   })
   return data
 }
@@ -129,7 +129,7 @@ export async function refreshCredentials(id: number): Promise<Account> {
  */
 export async function getStats(id: number, days: number = 30): Promise<AccountUsageStatsResponse> {
   const { data } = await apiClient.get<AccountUsageStatsResponse>(`/admin/accounts/${id}/stats`, {
-    params: { days },
+    params: { days }
   })
   return data
 }
@@ -254,7 +254,7 @@ export async function bulkUpdate(
     results: Array<{ account_id: number; success: boolean; error?: string }>
   }>('/admin/accounts/bulk-update', {
     account_ids: accountIds,
-    ...updates,
+    ...updates
   })
   return data
 }
@@ -277,7 +277,7 @@ export async function getTodayStats(id: number): Promise<WindowStats> {
  */
 export async function setSchedulable(id: number, schedulable: boolean): Promise<Account> {
   const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/schedulable`, {
-    schedulable,
+    schedulable
   })
   return data
 }
@@ -335,7 +335,7 @@ export const accountsAPI = {
   batchCreate,
   batchUpdateCredentials,
   bulkUpdate,
-  syncFromCrs,
+  syncFromCrs
 }
 
 export default accountsAPI

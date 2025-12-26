@@ -3,39 +3,35 @@
  * Handles admin-level usage logs and statistics retrieval
  */
 
-import { apiClient } from '../client';
-import type {
-  UsageLog,
-  UsageQueryParams,
-  PaginatedResponse,
-} from '@/types';
+import { apiClient } from '../client'
+import type { UsageLog, UsageQueryParams, PaginatedResponse } from '@/types'
 
 // ==================== Types ====================
 
 export interface AdminUsageStatsResponse {
-  total_requests: number;
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_cache_tokens: number;
-  total_tokens: number;
-  total_cost: number;
-  total_actual_cost: number;
-  average_duration_ms: number;
+  total_requests: number
+  total_input_tokens: number
+  total_output_tokens: number
+  total_cache_tokens: number
+  total_tokens: number
+  total_cost: number
+  total_actual_cost: number
+  average_duration_ms: number
 }
 
 export interface SimpleUser {
-  id: number;
-  email: string;
+  id: number
+  email: string
 }
 
 export interface SimpleApiKey {
-  id: number;
-  name: string;
-  user_id: number;
+  id: number
+  name: string
+  user_id: number
 }
 
 export interface AdminUsageQueryParams extends UsageQueryParams {
-  user_id?: number;
+  user_id?: number
 }
 
 // ==================== API Functions ====================
@@ -47,9 +43,9 @@ export interface AdminUsageQueryParams extends UsageQueryParams {
  */
 export async function list(params: AdminUsageQueryParams): Promise<PaginatedResponse<UsageLog>> {
   const { data } = await apiClient.get<PaginatedResponse<UsageLog>>('/admin/usage', {
-    params,
-  });
-  return data;
+    params
+  })
+  return data
 }
 
 /**
@@ -58,16 +54,16 @@ export async function list(params: AdminUsageQueryParams): Promise<PaginatedResp
  * @returns Usage statistics
  */
 export async function getStats(params: {
-  user_id?: number;
-  api_key_id?: number;
-  period?: string;
-  start_date?: string;
-  end_date?: string;
+  user_id?: number
+  api_key_id?: number
+  period?: string
+  start_date?: string
+  end_date?: string
 }): Promise<AdminUsageStatsResponse> {
   const { data } = await apiClient.get<AdminUsageStatsResponse>('/admin/usage/stats', {
-    params,
-  });
-  return data;
+    params
+  })
+  return data
 }
 
 /**
@@ -77,9 +73,9 @@ export async function getStats(params: {
  */
 export async function searchUsers(keyword: string): Promise<SimpleUser[]> {
   const { data } = await apiClient.get<SimpleUser[]>('/admin/usage/search-users', {
-    params: { q: keyword },
-  });
-  return data;
+    params: { q: keyword }
+  })
+  return data
 }
 
 /**
@@ -89,24 +85,24 @@ export async function searchUsers(keyword: string): Promise<SimpleUser[]> {
  * @returns List of matching API keys (max 30)
  */
 export async function searchApiKeys(userId?: number, keyword?: string): Promise<SimpleApiKey[]> {
-  const params: Record<string, unknown> = {};
+  const params: Record<string, unknown> = {}
   if (userId !== undefined) {
-    params.user_id = userId;
+    params.user_id = userId
   }
   if (keyword) {
-    params.q = keyword;
+    params.q = keyword
   }
   const { data } = await apiClient.get<SimpleApiKey[]>('/admin/usage/search-api-keys', {
-    params,
-  });
-  return data;
+    params
+  })
+  return data
 }
 
 export const adminUsageAPI = {
   list,
   getStats,
   searchUsers,
-  searchApiKeys,
-};
+  searchApiKeys
+}
 
-export default adminUsageAPI;
+export default adminUsageAPI
