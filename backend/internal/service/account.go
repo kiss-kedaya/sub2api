@@ -326,17 +326,3 @@ func (a *Account) IsOpenAITokenExpired() bool {
 	}
 	return time.Now().Add(60 * time.Second).After(*expiresAt)
 }
-
-// mergeJSONB merges source map into target map (for preserving extra fields during account sync)
-func mergeJSONB(target, source map[string]any) map[string]any {
-	if target == nil {
-		target = make(map[string]any)
-	}
-	if source == nil {
-		return target
-	}
-	for k, v := range source {
-		target[k] = v
-	}
-	return target
-}

@@ -801,11 +801,11 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
-		existing.Extra = mergeJSONB(existing.Extra, extra)
+		existing.Extra = mergeMap(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = PlatformGemini
 		existing.Type = AccountTypeOAuth
-		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
+		existing.Credentials = mergeMap(existing.Credentials, credentials)
 		if proxyID != nil {
 			existing.ProxyID = proxyID
 		}
@@ -908,11 +908,11 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
-		existing.Extra = mergeJSONB(existing.Extra, extra)
+		existing.Extra = mergeMap(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = PlatformGemini
 		existing.Type = AccountTypeApiKey
-		existing.Credentials = mergeJSONB(existing.Credentials, credentials)
+		existing.Credentials = mergeMap(existing.Credentials, credentials)
 		if proxyID != nil {
 			existing.ProxyID = proxyID
 		}
