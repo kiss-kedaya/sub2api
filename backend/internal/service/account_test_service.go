@@ -592,7 +592,12 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 			continue
 		}
 
-		// Extract text from candidates[0].content.parts[].text
+		// Support two Gemini response formats:
+		// - AI Studio: {"candidates": [...]}
+		// - Gemini CLI: {"response": {"candidates": [...]}}
+		if resp, ok := data["response"].(map[string]any); ok && resp != nil {
+			data = resp
+		}
 		if candidates, ok := data["candidates"].([]any); ok && len(candidates) > 0 {
 			if candidate, ok := candidates[0].(map[string]any); ok {
 				// Check for completion
