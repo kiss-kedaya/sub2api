@@ -129,56 +129,80 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 
 	if platform == service.PlatformGemini {
-		account, err := h.geminiCompatService.SelectAccountForModel(c.Request.Context(), apiKey.GroupID, sessionHash, req.Model)
-		if err != nil {
-			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
-			return
-		}
+		const maxAccountSwitches = 3
+		switchCount := 0
+		failedAccountIDs := make(map[int64]struct{})
+		lastFailoverStatus := 0
 
-		// 检查预热请求拦截（在账号选择后、转发前检查）
-		if account.IsInterceptWarmupEnabled() && isWarmupRequest(body) {
-			if req.Stream {
-				sendMockWarmupStream(c, req.Model)
-			} else {
-				sendMockWarmupResponse(c, req.Model)
+		for {
+			account, err := h.geminiCompatService.SelectAccountForModelWithExclusions(c.Request.Context(), apiKey.GroupID, sessionHash, req.Model, failedAccountIDs)
+			if err != nil {
+				if len(failedAccountIDs) == 0 {
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
+					return
+				}
+				h.handleFailoverExhausted(c, lastFailoverStatus, streamStarted)
+				return
 			}
-			return
-		}
 
-		// 3. 获取账号并发槽位
-		accountReleaseFunc, err := h.concurrencyHelper.AcquireAccountSlotWithWait(c, account.ID, account.Concurrency, req.Stream, &streamStarted)
-		if err != nil {
-			log.Printf("Account concurrency acquire failed: %v", err)
-			h.handleConcurrencyError(c, err, "account", streamStarted)
-			return
-		}
-		if accountReleaseFunc != nil {
-			defer accountReleaseFunc()
-		}
-
-		// 转发请求
-		result, err := h.geminiCompatService.Forward(c.Request.Context(), c, account, body)
-		if err != nil {
-			// 错误响应已在Forward中处理，这里只记录日志
-			log.Printf("Forward request failed: %v", err)
-			return
-		}
-
-		// 异步记录使用量（subscription已在函数开头获取）
-		go func(result *service.ForwardResult, usedAccount *service.Account) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-				Result:       result,
-				ApiKey:       apiKey,
-				User:         apiKey.User,
-				Account:      usedAccount,
-				Subscription: subscription,
-			}); err != nil {
-				log.Printf("Record usage failed: %v", err)
+			// 检查预热请求拦截（在账号选择后、转发前检查）
+			if account.IsInterceptWarmupEnabled() && isWarmupRequest(body) {
+				if req.Stream {
+					sendMockWarmupStream(c, req.Model)
+				} else {
+					sendMockWarmupResponse(c, req.Model)
+				}
+				return
 			}
-		}(result, account)
-		return
+
+			// 3. 获取账号并发槽位
+			accountReleaseFunc, err := h.concurrencyHelper.AcquireAccountSlotWithWait(c, account.ID, account.Concurrency, req.Stream, &streamStarted)
+			if err != nil {
+				log.Printf("Account concurrency acquire failed: %v", err)
+				h.handleConcurrencyError(c, err, "account", streamStarted)
+				return
+			}
+
+			// 转发请求
+			result, err := h.geminiCompatService.Forward(c.Request.Context(), c, account, body)
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			if err != nil {
+				var failoverErr *service.UpstreamFailoverError
+				if errors.As(err, &failoverErr) {
+					failedAccountIDs[account.ID] = struct{}{}
+					if switchCount >= maxAccountSwitches {
+						lastFailoverStatus = failoverErr.StatusCode
+						h.handleFailoverExhausted(c, lastFailoverStatus, streamStarted)
+						return
+					}
+					lastFailoverStatus = failoverErr.StatusCode
+					switchCount++
+					log.Printf("Account %d: upstream error %d, switching account %d/%d", account.ID, failoverErr.StatusCode, switchCount, maxAccountSwitches)
+					continue
+				}
+				// 错误响应已在Forward中处理，这里只记录日志
+				log.Printf("Forward request failed: %v", err)
+				return
+			}
+
+			// 异步记录使用量（subscription已在函数开头获取）
+			go func(result *service.ForwardResult, usedAccount *service.Account) {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+					Result:       result,
+					ApiKey:       apiKey,
+					User:         apiKey.User,
+					Account:      usedAccount,
+					Subscription: subscription,
+				}); err != nil {
+					log.Printf("Record usage failed: %v", err)
+				}
+			}(result, account)
+			return
+		}
 	}
 
 	const maxAccountSwitches = 3
