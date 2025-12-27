@@ -145,7 +145,7 @@ func (s *claudeOAuthService) GetAuthorizationCode(ctx context.Context, sessionKe
 	return fullCode, nil
 }
 
-func (s *claudeOAuthService) ExchangeCodeForToken(ctx context.Context, code, codeVerifier, state, proxyURL string) (*oauth.TokenResponse, error) {
+func (s *claudeOAuthService) ExchangeCodeForToken(ctx context.Context, code, codeVerifier, state, proxyURL string, isSetupToken bool) (*oauth.TokenResponse, error) {
 	client := s.clientFactory(proxyURL)
 
 	// Parse code which may contain state in format "authCode#state"
@@ -166,6 +166,11 @@ func (s *claudeOAuthService) ExchangeCodeForToken(ctx context.Context, code, cod
 
 	if codeState != "" {
 		reqBody["state"] = codeState
+	}
+
+	// Setup token requires longer expiration (1 year)
+	if isSetupToken {
+		reqBody["expires_in"] = 31536000 // 365 * 24 * 60 * 60 seconds
 	}
 
 	reqBodyJSON, _ := json.Marshal(reqBody)
