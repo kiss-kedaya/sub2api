@@ -1,12 +1,12 @@
 <template>
-  <Modal
+  <BaseDialog
     :show="show"
     :title="t('admin.accounts.syncFromCrsTitle')"
-    size="lg"
+    width="normal"
     close-on-click-outside
     @close="handleClose"
   >
-    <div class="space-y-4">
+    <form id="sync-from-crs-form" class="space-y-4" @submit.prevent="handleSync">
       <div class="text-sm text-gray-600 dark:text-dark-300">
         {{ t('admin.accounts.syncFromCrsDesc') }}
       </div>
@@ -84,25 +84,30 @@
           </div>
         </div>
       </div>
-    </div>
+    </form>
 
     <template #footer>
       <div class="flex justify-end gap-3">
-        <button class="btn btn-secondary" :disabled="syncing" @click="handleClose">
+        <button class="btn btn-secondary" type="button" :disabled="syncing" @click="handleClose">
           {{ t('common.cancel') }}
         </button>
-        <button class="btn btn-primary" :disabled="syncing" @click="handleSync">
+        <button
+          class="btn btn-primary"
+          type="submit"
+          form="sync-from-crs-form"
+          :disabled="syncing"
+        >
           {{ syncing ? t('admin.accounts.syncing') : t('admin.accounts.syncNow') }}
         </button>
       </div>
     </template>
-  </Modal>
+  </BaseDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Modal from '@/components/common/Modal.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 

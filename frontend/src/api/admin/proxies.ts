@@ -20,6 +20,9 @@ export async function list(
     protocol?: string
     status?: 'active' | 'inactive'
     search?: string
+  },
+  options?: {
+    signal?: AbortSignal
   }
 ): Promise<PaginatedResponse<Proxy>> {
   const { data } = await apiClient.get<PaginatedResponse<Proxy>>('/admin/proxies', {
@@ -27,7 +30,8 @@ export async function list(
       page,
       page_size: pageSize,
       ...filters
-    }
+    },
+    signal: options?.signal
   })
   return data
 }

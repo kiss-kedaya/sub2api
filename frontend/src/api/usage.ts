@@ -90,8 +90,12 @@ export async function list(
  * @param params - Query parameters for filtering and pagination
  * @returns Paginated list of usage logs
  */
-export async function query(params: UsageQueryParams): Promise<PaginatedResponse<UsageLog>> {
+export async function query(
+  params: UsageQueryParams,
+  config: { signal?: AbortSignal } = {}
+): Promise<PaginatedResponse<UsageLog>> {
   const { data } = await apiClient.get<PaginatedResponse<UsageLog>>('/usage', {
+    ...config,
     params
   })
   return data
@@ -232,15 +236,22 @@ export interface BatchApiKeysUsageResponse {
 /**
  * Get batch usage stats for user's own API keys
  * @param apiKeyIds - Array of API key IDs
+ * @param options - Optional request options
  * @returns Usage stats map keyed by API key ID
  */
 export async function getDashboardApiKeysUsage(
-  apiKeyIds: number[]
+  apiKeyIds: number[],
+  options?: {
+    signal?: AbortSignal
+  }
 ): Promise<BatchApiKeysUsageResponse> {
   const { data } = await apiClient.post<BatchApiKeysUsageResponse>(
     '/usage/dashboard/api-keys-usage',
     {
       api_key_ids: apiKeyIds
+    },
+    {
+      signal: options?.signal
     }
   )
   return data
