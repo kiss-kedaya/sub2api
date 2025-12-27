@@ -788,6 +788,25 @@ func (r *stubApiKeyRepo) ListByUserID(ctx context.Context, userID int64, params 
 	}, nil
 }
 
+func (r *stubApiKeyRepo) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
+	if len(apiKeyIDs) == 0 {
+		return []int64{}, nil
+	}
+	seen := make(map[int64]struct{}, len(apiKeyIDs))
+	out := make([]int64, 0, len(apiKeyIDs))
+	for _, id := range apiKeyIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		key, ok := r.byID[id]
+		if ok && key.UserID == userID {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
 func (r *stubApiKeyRepo) CountByUserID(ctx context.Context, userID int64) (int64, error) {
 	var count int64
 	for _, key := range r.byID {

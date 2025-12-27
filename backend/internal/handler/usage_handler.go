@@ -371,24 +371,16 @@ func (h *UsageHandler) DashboardApiKeysUsage(c *gin.Context) {
 		return
 	}
 
-	// Verify ownership of all requested API keys
-	userApiKeys, _, err := h.apiKeyService.List(c.Request.Context(), subject.UserID, pagination.PaginationParams{Page: 1, PageSize: 1000})
-	if err != nil {
-		response.ErrorFrom(c, err)
+	// Limit the number of API key IDs to prevent SQL parameter overflow
+	if len(req.ApiKeyIDs) > 100 {
+		response.BadRequest(c, "Too many API key IDs (maximum 100 allowed)")
 		return
 	}
 
-	userApiKeyIDs := make(map[int64]bool)
-	for _, key := range userApiKeys {
-		userApiKeyIDs[key.ID] = true
-	}
-
-	// Filter to only include user's own API keys
-	validApiKeyIDs := make([]int64, 0)
-	for _, id := range req.ApiKeyIDs {
-		if userApiKeyIDs[id] {
-			validApiKeyIDs = append(validApiKeyIDs, id)
-		}
+	validApiKeyIDs, err := h.apiKeyService.VerifyOwnership(c.Request.Context(), subject.UserID, req.ApiKeyIDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
 	}
 
 	if len(validApiKeyIDs) == 0 {
