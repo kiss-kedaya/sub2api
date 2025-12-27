@@ -81,6 +81,22 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, param
 	return outKeys, paginationResultFromTotal(total, params), nil
 }
 
+func (r *apiKeyRepository) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
+	if len(apiKeyIDs) == 0 {
+		return []int64{}, nil
+	}
+
+	ids := make([]int64, 0, len(apiKeyIDs))
+	err := r.db.WithContext(ctx).
+		Model(&apiKeyModel{}).
+		Where("user_id = ? AND id IN ?", userID, apiKeyIDs).
+		Pluck("id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 func (r *apiKeyRepository) CountByUserID(ctx context.Context, userID int64) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&apiKeyModel{}).Where("user_id = ?", userID).Count(&count).Error
