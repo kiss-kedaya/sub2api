@@ -25,7 +25,7 @@
 
     <!-- Title -->
     <h3 class="empty-state-title">
-      {{ title }}
+      {{ displayTitle }}
     </h3>
 
     <!-- Description -->
@@ -61,7 +61,11 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
+
+const { t } = useI18n()
 
 interface Props {
   icon?: Component | string
@@ -73,11 +77,12 @@ interface Props {
   message?: string
 }
 
-withDefaults(defineProps<Props>(), {
-  title: 'No data found',
+const props = withDefaults(defineProps<Props>(), {
   description: '',
   actionIcon: true
 })
+
+const displayTitle = computed(() => props.title || t('common.noData'))
 
 defineEmits(['action'])
 </script>

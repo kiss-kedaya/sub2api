@@ -788,6 +788,25 @@ func (r *stubApiKeyRepo) ListByUserID(ctx context.Context, userID int64, params 
 	}, nil
 }
 
+func (r *stubApiKeyRepo) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
+	if len(apiKeyIDs) == 0 {
+		return []int64{}, nil
+	}
+	seen := make(map[int64]struct{}, len(apiKeyIDs))
+	out := make([]int64, 0, len(apiKeyIDs))
+	for _, id := range apiKeyIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		key, ok := r.byID[id]
+		if ok && key.UserID == userID {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
 func (r *stubApiKeyRepo) CountByUserID(ctx context.Context, userID int64) (int64, error) {
 	var count int64
 	for _, key := range r.byID {
@@ -900,6 +919,55 @@ func (r *stubUsageLogRepo) GetApiKeyUsageTrend(ctx context.Context, startTime, e
 }
 
 func (r *stubUsageLogRepo) GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.UserUsageTrendPoint, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *stubUsageLogRepo) GetUserStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
+	logs := r.userLogs[userID]
+	if len(logs) == 0 {
+		return &usagestats.UsageStats{}, nil
+	}
+
+	var totalRequests int64
+	var totalInputTokens int64
+	var totalOutputTokens int64
+	var totalCacheTokens int64
+	var totalCost float64
+	var totalActualCost float64
+	var totalDuration int64
+	var durationCount int64
+
+	for _, log := range logs {
+		totalRequests++
+		totalInputTokens += int64(log.InputTokens)
+		totalOutputTokens += int64(log.OutputTokens)
+		totalCacheTokens += int64(log.CacheCreationTokens + log.CacheReadTokens)
+		totalCost += log.TotalCost
+		totalActualCost += log.ActualCost
+		if log.DurationMs != nil {
+			totalDuration += int64(*log.DurationMs)
+			durationCount++
+		}
+	}
+
+	var avgDuration float64
+	if durationCount > 0 {
+		avgDuration = float64(totalDuration) / float64(durationCount)
+	}
+
+	return &usagestats.UsageStats{
+		TotalRequests:     totalRequests,
+		TotalInputTokens:  totalInputTokens,
+		TotalOutputTokens: totalOutputTokens,
+		TotalCacheTokens:  totalCacheTokens,
+		TotalTokens:       totalInputTokens + totalOutputTokens + totalCacheTokens,
+		TotalCost:         totalCost,
+		TotalActualCost:   totalActualCost,
+		AverageDurationMs: avgDuration,
+	}, nil
+}
+
+func (r *stubUsageLogRepo) GetApiKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
 	return nil, errors.New("not implemented")
 }
 
