@@ -220,7 +220,7 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini'
+export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
 
 export type SubscriptionType = 'standard' | 'subscription'
 
@@ -256,7 +256,7 @@ export interface ApiKey {
 export interface CreateApiKeyRequest {
   name: string
   group_id?: number | null
-  custom_key?: string // 可选的自定义API Key
+  custom_key?: string // Optional custom API Key
 }
 
 export interface UpdateApiKeyRequest {
@@ -284,7 +284,7 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini'
+export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5'
