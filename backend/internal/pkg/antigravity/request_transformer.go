@@ -139,8 +139,12 @@ func buildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 				}
 			}
 			if !hasThoughtPart && len(parts) > 0 {
-				// 在开头添加 dummy thinking block
-				parts = append([]GeminiPart{{Text: "Thinking...", Thought: true}}, parts...)
+				// 在开头添加 dummy thinking block（需要 signature）
+				parts = append([]GeminiPart{{
+					Text:             "Thinking...",
+					Thought:          true,
+					ThoughtSignature: dummyThoughtSignature,
+				}}, parts...)
 			}
 		}
 
@@ -192,8 +196,10 @@ func buildParts(content json.RawMessage, toolIDToName map[string]string, isThink
 				Text:    block.Thinking,
 				Thought: true,
 			}
-			if block.Signature != "" {
-				part.ThoughtSignature = block.Signature
+			// 历史 thinking block 的 signature 可能已过期，统一使用 dummy signature
+			// 参考: https://ai.google.dev/gemini-api/docs/thought-signatures
+			if isThinkingEnabled {
+				part.ThoughtSignature = dummyThoughtSignature
 			}
 			parts = append(parts, part)
 
@@ -213,18 +219,14 @@ func buildParts(content json.RawMessage, toolIDToName map[string]string, isThink
 				toolIDToName[block.ID] = block.Name
 			}
 
+			// 与 proxycast 保持一致：function_call 无条件添加 thought_signature
 			part := GeminiPart{
 				FunctionCall: &GeminiFunctionCall{
 					Name: block.Name,
 					Args: block.Input,
 					ID:   block.ID,
 				},
-			}
-			// Gemini 3 要求 thinking 模式下 functionCall 必须有 thought_signature
-			if block.Signature != "" {
-				part.ThoughtSignature = block.Signature
-			} else if isThinkingEnabled {
-				part.ThoughtSignature = dummyThoughtSignature
+				ThoughtSignature: dummyThoughtSignature,
 			}
 			parts = append(parts, part)
 
