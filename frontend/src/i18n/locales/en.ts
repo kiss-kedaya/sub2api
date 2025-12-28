@@ -1162,6 +1162,11 @@ export default {
         gemini3Flash: 'G3F',
         gemini3Image: 'G3I',
         claude45: 'C4.5'
+      },
+      tier: {
+        free: 'Free',
+        pro: 'Pro',
+        ultra: 'Ultra'
       }
     },
 
