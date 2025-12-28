@@ -145,8 +145,15 @@ func (r *AntigravityQuotaRefresher) refreshAccountQuota(ctx context.Context, acc
 		}
 	}
 
-	// 调用 API 获取配额
 	client := antigravity.NewClient(proxyURL)
+
+	// 获取账户类型（tier）
+	loadResp, _ := client.LoadCodeAssist(ctx, accessToken)
+	if loadResp != nil {
+		r.updateAccountTier(account, loadResp)
+	}
+
+	// 调用 API 获取配额
 	modelsResp, err := client.FetchAvailableModels(ctx, accessToken, projectID)
 	if err != nil {
 		return err
@@ -168,6 +175,18 @@ func (r *AntigravityQuotaRefresher) isTokenExpired(account *Account) bool {
 
 	// 提前 5 分钟认为过期
 	return time.Now().Add(5 * time.Minute).After(*expiresAt)
+}
+
+// updateAccountTier 更新账户类型信息
+func (r *AntigravityQuotaRefresher) updateAccountTier(account *Account, loadResp *antigravity.LoadCodeAssistResponse) {
+	if account.Extra == nil {
+		account.Extra = make(map[string]any)
+	}
+
+	tier := loadResp.GetTier()
+	if tier != "" {
+		account.Extra["tier"] = tier
+	}
 }
 
 // updateAccountQuota 更新账户的配额信息
