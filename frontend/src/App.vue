@@ -2,12 +2,14 @@
 import { RouterView, useRouter, useRoute } from 'vue-router'
 import { onMounted, watch } from 'vue'
 import Toast from '@/components/common/Toast.vue'
-import { useAppStore } from '@/stores'
+import { useAppStore, useAuthStore, useSubscriptionStore } from '@/stores'
 import { getSetupStatus } from '@/api/setup'
 
 const router = useRouter()
 const route = useRoute()
 const appStore = useAppStore()
+const authStore = useAuthStore()
+const subscriptionStore = useSubscriptionStore()
 
 /**
  * Update favicon dynamically
@@ -41,6 +43,24 @@ watch(
   (newName) => {
     if (newName) {
       document.title = `${newName} - AI API Gateway`
+    }
+  },
+  { immediate: true }
+)
+
+// Watch for authentication state and manage subscription data
+watch(
+  () => authStore.isAuthenticated,
+  (isAuthenticated) => {
+    if (isAuthenticated) {
+      // User logged in: preload subscriptions and start polling
+      subscriptionStore.fetchActiveSubscriptions().catch((error) => {
+        console.error('Failed to preload subscriptions:', error)
+      })
+      subscriptionStore.startPolling()
+    } else {
+      // User logged out: clear data and stop polling
+      subscriptionStore.clear()
     }
   },
   { immediate: true }

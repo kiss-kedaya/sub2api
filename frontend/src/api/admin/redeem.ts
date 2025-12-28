@@ -25,6 +25,9 @@ export async function list(
     type?: RedeemCodeType
     status?: 'active' | 'used' | 'expired' | 'unused'
     search?: string
+  },
+  options?: {
+    signal?: AbortSignal
   }
 ): Promise<PaginatedResponse<RedeemCode>> {
   const { data } = await apiClient.get<PaginatedResponse<RedeemCode>>('/admin/redeem-codes', {
@@ -32,7 +35,8 @@ export async function list(
       page,
       page_size: pageSize,
       ...filters
-    }
+    },
+    signal: options?.signal
   })
   return data
 }

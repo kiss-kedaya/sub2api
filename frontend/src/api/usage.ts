@@ -90,8 +90,12 @@ export async function list(
  * @param params - Query parameters for filtering and pagination
  * @returns Paginated list of usage logs
  */
-export async function query(params: UsageQueryParams): Promise<PaginatedResponse<UsageLog>> {
+export async function query(
+  params: UsageQueryParams,
+  config: { signal?: AbortSignal } = {}
+): Promise<PaginatedResponse<UsageLog>> {
   const { data } = await apiClient.get<PaginatedResponse<UsageLog>>('/usage', {
+    ...config,
     params
   })
   return data
@@ -148,8 +152,8 @@ export async function getStatsByDateRange(
 
 /**
  * Get usage by date range
- * @param startDate - Start date (ISO format)
- * @param endDate - End date (ISO format)
+ * @param startDate - Start date (YYYY-MM-DD format)
+ * @param endDate - End date (YYYY-MM-DD format)
  * @param apiKeyId - Optional API key ID filter
  * @returns Usage logs within date range
  */
@@ -232,15 +236,22 @@ export interface BatchApiKeysUsageResponse {
 /**
  * Get batch usage stats for user's own API keys
  * @param apiKeyIds - Array of API key IDs
+ * @param options - Optional request options
  * @returns Usage stats map keyed by API key ID
  */
 export async function getDashboardApiKeysUsage(
-  apiKeyIds: number[]
+  apiKeyIds: number[],
+  options?: {
+    signal?: AbortSignal
+  }
 ): Promise<BatchApiKeysUsageResponse> {
   const { data } = await apiClient.post<BatchApiKeysUsageResponse>(
     '/usage/dashboard/api-keys-usage',
     {
       api_key_ids: apiKeyIds
+    },
+    {
+      signal: options?.signal
     }
   )
   return data
