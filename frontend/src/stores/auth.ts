@@ -101,16 +101,22 @@ export const useAuthStore = defineStore('auth', () => {
 
       // Store token and user
       token.value = response.access_token
-      user.value = response.user
+
+      // Extract run_mode if present
+      if (response.user.run_mode) {
+        runMode.value = response.user.run_mode
+      }
+      const { run_mode, ...userData } = response.user
+      user.value = userData
 
       // Persist to localStorage
       localStorage.setItem(AUTH_TOKEN_KEY, response.access_token)
-      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(response.user))
+      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
 
       // Start auto-refresh interval
       startAutoRefresh()
 
-      return response.user
+      return userData
     } catch (error) {
       // Clear any partial state on error
       clearAuth()
@@ -130,16 +136,22 @@ export const useAuthStore = defineStore('auth', () => {
 
       // Store token and user
       token.value = response.access_token
-      user.value = response.user
+
+      // Extract run_mode if present
+      if (response.user.run_mode) {
+        runMode.value = response.user.run_mode
+      }
+      const { run_mode, ...userDataWithoutRunMode } = response.user
+      user.value = userDataWithoutRunMode
 
       // Persist to localStorage
       localStorage.setItem(AUTH_TOKEN_KEY, response.access_token)
-      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(response.user))
+      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userDataWithoutRunMode))
 
       // Start auto-refresh interval
       startAutoRefresh()
 
-      return response.user
+      return userDataWithoutRunMode
     } catch (error) {
       // Clear any partial state on error
       clearAuth()
