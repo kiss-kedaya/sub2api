@@ -30,6 +30,9 @@ export async function list(
     type?: string
     status?: string
     search?: string
+  },
+  options?: {
+    signal?: AbortSignal
   }
 ): Promise<PaginatedResponse<Account>> {
   const { data } = await apiClient.get<PaginatedResponse<Account>>('/admin/accounts', {
@@ -37,7 +40,8 @@ export async function list(
       page,
       page_size: pageSize,
       ...filters
-    }
+    },
+    signal: options?.signal
   })
   return data
 }

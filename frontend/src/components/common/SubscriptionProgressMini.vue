@@ -178,17 +178,19 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import subscriptionsAPI from '@/api/subscriptions'
+import { useSubscriptionStore } from '@/stores'
 import type { UserSubscription } from '@/types'
 
 const { t } = useI18n()
 
+const subscriptionStore = useSubscriptionStore()
+
 const containerRef = ref<HTMLElement | null>(null)
 const tooltipOpen = ref(false)
-const activeSubscriptions = ref<UserSubscription[]>([])
-const loading = ref(false)
 
-const hasActiveSubscriptions = computed(() => activeSubscriptions.value.length > 0)
+// Use store data instead of local state
+const activeSubscriptions = computed(() => subscriptionStore.activeSubscriptions)
+const hasActiveSubscriptions = computed(() => subscriptionStore.hasActiveSubscriptions)
 
 const displaySubscriptions = computed(() => {
   // Sort by most usage (highest percentage first)
@@ -275,36 +277,17 @@ function handleClickOutside(event: MouseEvent) {
   }
 }
 
-async function loadSubscriptions() {
-  try {
-    loading.value = true
-    activeSubscriptions.value = await subscriptionsAPI.getActiveSubscriptions()
-  } catch (error) {
-    console.error('Failed to load subscriptions:', error)
-    activeSubscriptions.value = []
-  } finally {
-    loading.value = false
-  }
-}
-
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
-  loadSubscriptions()
+  // Trigger initial fetch if not already loaded
+  // The actual data loading is handled by App.vue globally
+  subscriptionStore.fetchActiveSubscriptions().catch((error) => {
+    console.error('Failed to load subscriptions in SubscriptionProgressMini:', error)
+  })
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
-})
-
-// Refresh subscriptions periodically (every 5 minutes)
-let refreshInterval: ReturnType<typeof setInterval> | null = null
-onMounted(() => {
-  refreshInterval = setInterval(loadSubscriptions, 5 * 60 * 1000)
-})
-onBeforeUnmount(() => {
-  if (refreshInterval) {
-    clearInterval(refreshInterval)
-  }
 })
 </script>
 
