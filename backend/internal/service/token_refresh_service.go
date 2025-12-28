@@ -106,6 +106,9 @@ func (s *TokenRefreshService) processRefresh() {
 		return
 	}
 
+	totalAccounts := len(accounts)
+	oauthAccounts := 0 // 可刷新的OAuth账号数
+	needsRefresh := 0  // 需要刷新的账号数
 	refreshed, failed := 0, 0
 
 	for i := range accounts {
@@ -117,10 +120,14 @@ func (s *TokenRefreshService) processRefresh() {
 				continue
 			}
 
+			oauthAccounts++
+
 			// 检查是否需要刷新
 			if !refresher.NeedsRefresh(account, refreshWindow) {
-				continue
+				break // 不需要刷新，跳过
 			}
+
+			needsRefresh++
 
 			// 执行刷新
 			if err := s.refreshWithRetry(ctx, account, refresher); err != nil {
@@ -136,9 +143,9 @@ func (s *TokenRefreshService) processRefresh() {
 		}
 	}
 
-	if refreshed > 0 || failed > 0 {
-		log.Printf("[TokenRefresh] Cycle complete: %d refreshed, %d failed", refreshed, failed)
-	}
+	// 始终打印周期日志，便于跟踪服务运行状态
+	log.Printf("[TokenRefresh] Cycle complete: total=%d, oauth=%d, needs_refresh=%d, refreshed=%d, failed=%d",
+		totalAccounts, oauthAccounts, needsRefresh, refreshed, failed)
 }
 
 // listActiveAccounts 获取所有active状态的账号
