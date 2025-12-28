@@ -32,7 +32,7 @@
                   : 'https://api.anthropic.com'
             "
           />
-          <p class="input-hint">{{ t('admin.accounts.baseUrlHint') }}</p>
+          <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKey') }}</label>
@@ -535,6 +535,14 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
+
+// Platform-specific hint for Base URL
+const baseUrlHint = computed(() => {
+  if (!props.account) return t('admin.accounts.baseUrlHint')
+  if (props.account.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
+  if (props.account.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
+  return t('admin.accounts.baseUrlHint')
+})
 
 // Model mapping type
 interface ModelMapping {
