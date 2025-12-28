@@ -313,7 +313,10 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 	// 2. 获取可调度账号列表（排除限流和过载的账号，仅限 Anthropic 平台）
 	var accounts []Account
 	var err error
-	if groupID != nil {
+	if s.cfg.RunMode == config.RunModeSimple {
+		// 简易模式：忽略 groupID，查询所有可用账号
+		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, PlatformAnthropic)
+	} else if groupID != nil {
 		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, PlatformAnthropic)
 	} else {
 		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, PlatformAnthropic)
@@ -1063,6 +1066,12 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 
 	if err := s.usageLogRepo.Create(ctx, usageLog); err != nil {
 		log.Printf("Create usage log failed: %v", err)
+	}
+
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		log.Printf("[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
+		s.deferredService.ScheduleLastUsedUpdate(account.ID)
+		return nil
 	}
 
 	// 根据计费类型执行扣费

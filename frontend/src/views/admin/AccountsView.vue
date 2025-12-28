@@ -494,6 +494,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import type { Account, Proxy, Group } from '@/types'
 import type { Column } from '@/components/common/types'
@@ -522,22 +523,34 @@ import { formatRelativeTime } from '@/utils/format'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const authStore = useAuthStore()
 
 // Table columns
-const columns = computed<Column[]>(() => [
-  { key: 'select', label: '', sortable: false },
-  { key: 'name', label: t('admin.accounts.columns.name'), sortable: true },
-  { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false },
-  { key: 'concurrency', label: t('admin.accounts.columns.concurrencyStatus'), sortable: false },
-  { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
-  { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
-  { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false },
-  { key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false },
-  { key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false },
-  { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
-  { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },
-  { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false }
-])
+const columns = computed<Column[]>(() => {
+  const cols: Column[] = [
+    { key: 'select', label: '', sortable: false },
+    { key: 'name', label: t('admin.accounts.columns.name'), sortable: true },
+    { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false },
+    { key: 'concurrency', label: t('admin.accounts.columns.concurrencyStatus'), sortable: false },
+    { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
+    { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
+    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false }
+  ]
+
+  // 简易模式下不显示分组列
+  if (!authStore.isSimpleMode) {
+    cols.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false })
+  }
+
+  cols.push(
+    { key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false },
+    { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
+    { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },
+    { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false }
+  )
+
+  return cols
+})
 
 // Filter options
 const platformOptions = computed(() => [

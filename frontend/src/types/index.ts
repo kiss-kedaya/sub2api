@@ -64,6 +64,10 @@ export interface AuthResponse {
   user: User
 }
 
+export interface CurrentUserResponse extends User {
+  run_mode?: 'standard' | 'simple'
+}
+
 // ==================== Subscription Types ====================
 
 export interface Subscription {
