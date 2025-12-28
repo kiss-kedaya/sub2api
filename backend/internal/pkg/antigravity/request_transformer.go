@@ -124,7 +124,7 @@ func buildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 			role = "model"
 		}
 
-		parts, err := buildParts(msg.Content, toolIDToName)
+		parts, err := buildParts(msg.Content, toolIDToName, isThinkingEnabled)
 		if err != nil {
 			return nil, fmt.Errorf("build parts for message %d: %w", i, err)
 		}
@@ -157,8 +157,12 @@ func buildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 	return contents, nil
 }
 
+// dummyThoughtSignature 用于跳过 Gemini 3 thought_signature 验证
+// 参考: https://ai.google.dev/gemini-api/docs/thought-signatures
+const dummyThoughtSignature = "skip_thought_signature_validator"
+
 // buildParts 构建消息的 parts
-func buildParts(content json.RawMessage, toolIDToName map[string]string) ([]GeminiPart, error) {
+func buildParts(content json.RawMessage, toolIDToName map[string]string, isThinkingEnabled bool) ([]GeminiPart, error) {
 	var parts []GeminiPart
 
 	// 尝试解析为字符串
@@ -216,8 +220,11 @@ func buildParts(content json.RawMessage, toolIDToName map[string]string) ([]Gemi
 					ID:   block.ID,
 				},
 			}
+			// Gemini 3 要求 thinking 模式下 functionCall 必须有 thought_signature
 			if block.Signature != "" {
 				part.ThoughtSignature = block.Signature
+			} else if isThinkingEnabled {
+				part.ThoughtSignature = dummyThoughtSignature
 			}
 			parts = append(parts, part)
 
@@ -380,57 +387,128 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
 	}}
 }
 
-// cleanJSONSchema 清理 JSON Schema，移除 Gemini 不支持的字段
+// cleanJSONSchema 清理 JSON Schema，移除 Antigravity/Gemini 不支持的字段
+// 参考 proxycast 的实现，确保 schema 符合 JSON Schema draft 2020-12
 func cleanJSONSchema(schema map[string]interface{}) map[string]interface{} {
 	if schema == nil {
 		return nil
 	}
-
-	result := make(map[string]interface{})
-	for k, v := range schema {
-		// 移除不支持的字段
-		switch k {
-		case "$schema", "additionalProperties", "minLength", "maxLength",
-			"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
-			"pattern", "format", "default":
-			continue
-		}
-
-		// 递归处理嵌套对象
-		if nested, ok := v.(map[string]interface{}); ok {
-			result[k] = cleanJSONSchema(nested)
-		} else if k == "type" {
-			// 处理类型字段，转换为大写
-			if typeStr, ok := v.(string); ok {
-				result[k] = strings.ToUpper(typeStr)
-			} else if typeArr, ok := v.([]interface{}); ok {
-				// 处理联合类型 ["string", "null"] -> "STRING"
-				for _, t := range typeArr {
-					if ts, ok := t.(string); ok && ts != "null" {
-						result[k] = strings.ToUpper(ts)
-						break
-					}
-				}
-			} else {
-				result[k] = v
-			}
-		} else {
-			result[k] = v
-		}
+	cleaned := cleanSchemaValue(schema)
+	result, ok := cleaned.(map[string]interface{})
+	if !ok {
+		return nil
 	}
 
-	// 递归处理 properties
-	if props, ok := result["properties"].(map[string]interface{}); ok {
-		cleanedProps := make(map[string]interface{})
-		for name, prop := range props {
-			if propMap, ok := prop.(map[string]interface{}); ok {
-				cleanedProps[name] = cleanJSONSchema(propMap)
+	// 确保有 type 字段（默认 OBJECT）
+	if _, hasType := result["type"]; !hasType {
+		result["type"] = "OBJECT"
+	}
+
+	// 确保有 properties 字段（默认空对象）
+	if _, hasProps := result["properties"]; !hasProps {
+		result["properties"] = make(map[string]interface{})
+	}
+
+	// 验证 required 中的字段都存在于 properties 中
+	if required, ok := result["required"].([]interface{}); ok {
+		if props, ok := result["properties"].(map[string]interface{}); ok {
+			validRequired := make([]interface{}, 0, len(required))
+			for _, r := range required {
+				if reqName, ok := r.(string); ok {
+					if _, exists := props[reqName]; exists {
+						validRequired = append(validRequired, r)
+					}
+				}
+			}
+			if len(validRequired) > 0 {
+				result["required"] = validRequired
 			} else {
-				cleanedProps[name] = prop
+				delete(result, "required")
 			}
 		}
-		result["properties"] = cleanedProps
 	}
 
 	return result
+}
+
+// excludedSchemaKeys 不支持的 schema 字段
+var excludedSchemaKeys = map[string]bool{
+	"$schema":              true,
+	"$id":                  true,
+	"$ref":                 true,
+	"additionalProperties": true,
+	"minLength":            true,
+	"maxLength":            true,
+	"minItems":             true,
+	"maxItems":             true,
+	"uniqueItems":          true,
+	"minimum":              true,
+	"maximum":              true,
+	"exclusiveMinimum":     true,
+	"exclusiveMaximum":     true,
+	"pattern":              true,
+	"format":               true,
+	"default":              true,
+	"strict":               true,
+	"const":                true,
+	"examples":             true,
+	"deprecated":           true,
+	"readOnly":             true,
+	"writeOnly":            true,
+	"contentMediaType":     true,
+	"contentEncoding":      true,
+}
+
+// cleanSchemaValue 递归清理 schema 值
+func cleanSchemaValue(value interface{}) interface{} {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		result := make(map[string]interface{})
+		for k, val := range v {
+			// 跳过不支持的字段
+			if excludedSchemaKeys[k] {
+				continue
+			}
+
+			// 特殊处理 type 字段
+			if k == "type" {
+				result[k] = cleanTypeValue(val)
+				continue
+			}
+
+			// 递归清理所有值
+			result[k] = cleanSchemaValue(val)
+		}
+		return result
+
+	case []interface{}:
+		// 递归处理数组中的每个元素
+		cleaned := make([]interface{}, 0, len(v))
+		for _, item := range v {
+			cleaned = append(cleaned, cleanSchemaValue(item))
+		}
+		return cleaned
+
+	default:
+		return value
+	}
+}
+
+// cleanTypeValue 处理 type 字段，转换为大写
+func cleanTypeValue(value interface{}) interface{} {
+	switch v := value.(type) {
+	case string:
+		return strings.ToUpper(v)
+	case []interface{}:
+		// 联合类型 ["string", "null"] -> 取第一个非 null 类型
+		for _, t := range v {
+			if ts, ok := t.(string); ok && ts != "null" {
+				return strings.ToUpper(ts)
+			}
+		}
+		// 如果只有 null，返回 STRING
+		return "STRING"
+	default:
+		return value
+	}
 }
