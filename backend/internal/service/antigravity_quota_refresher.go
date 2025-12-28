@@ -131,15 +131,9 @@ func (r *AntigravityQuotaRefresher) refreshAccountQuota(ctx context.Context, acc
 		return nil // 没有有效凭证，跳过
 	}
 
-	// 检查 token 是否过期，过期则刷新
+	// token 过期则跳过，由 TokenRefreshService 负责刷新
 	if r.isTokenExpired(account) {
-		tokenInfo, err := r.oauthSvc.RefreshAccountToken(ctx, account)
-		if err != nil {
-			return err
-		}
-		accessToken = tokenInfo.AccessToken
-		// 更新凭证
-		account.Credentials = r.oauthSvc.BuildAccountCredentials(tokenInfo)
+		return nil
 	}
 
 	// 获取代理 URL
