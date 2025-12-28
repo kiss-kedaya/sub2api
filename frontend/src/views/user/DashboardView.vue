@@ -336,6 +336,7 @@
                 <div class="h-48 w-48">
                   <Doughnut
                     v-if="modelChartData"
+                    ref="modelChartRef"
                     :data="modelChartData"
                     :options="doughnutOptions"
                   />
@@ -400,7 +401,12 @@
                 {{ t('dashboard.tokenUsageTrend') }}
               </h3>
               <div class="h-48">
-                <Line v-if="trendChartData" :data="trendChartData" :options="lineOptions" />
+                <Line
+                  v-if="trendChartData"
+                  ref="trendChartRef"
+                  :data="trendChartData"
+                  :options="lineOptions"
+                />
                 <div
                   v-else
                   class="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400"
@@ -657,7 +663,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
@@ -710,9 +716,13 @@ const loading = ref(false)
 const loadingUsage = ref(false)
 const loadingCharts = ref(false)
 
+type ChartComponentRef = { chart?: ChartJS }
+
 // Chart data
 const trendData = ref<TrendDataPoint[]>([])
 const modelStats = ref<ModelStat[]>([])
+const modelChartRef = ref<ChartComponentRef | null>(null)
+const trendChartRef = ref<ChartComponentRef | null>(null)
 
 // Recent usage
 const recentUsage = ref<UsageLog[]>([])
@@ -1036,7 +1046,10 @@ onMounted(async () => {
 
 // Watch for dark mode changes
 watch(isDarkMode, () => {
-  // Force chart re-render on theme change
+  nextTick(() => {
+    modelChartRef.value?.chart?.update()
+    trendChartRef.value?.chart?.update()
+  })
 })
 </script>
 
