@@ -214,3 +214,64 @@ func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadC
 
 	return &loadResp, nil
 }
+
+// ModelQuotaInfo 模型配额信息
+type ModelQuotaInfo struct {
+	RemainingFraction float64 `json:"remainingFraction"`
+	ResetTime         string  `json:"resetTime,omitempty"`
+}
+
+// ModelInfo 模型信息
+type ModelInfo struct {
+	QuotaInfo *ModelQuotaInfo `json:"quotaInfo,omitempty"`
+}
+
+// FetchAvailableModelsRequest fetchAvailableModels 请求
+type FetchAvailableModelsRequest struct {
+	Project string `json:"project"`
+}
+
+// FetchAvailableModelsResponse fetchAvailableModels 响应
+type FetchAvailableModelsResponse struct {
+	Models map[string]ModelInfo `json:"models"`
+}
+
+// FetchAvailableModels 获取可用模型和配额信息
+func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectID string) (*FetchAvailableModelsResponse, error) {
+	reqBody := FetchAvailableModelsRequest{Project: projectID}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("序列化请求失败: %w", err)
+	}
+
+	apiURL := BaseURL + "/v1internal:fetchAvailableModels"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetchAvailableModels 请求失败: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetchAvailableModels 失败 (HTTP %d): %s", resp.StatusCode, string(respBodyBytes))
+	}
+
+	var modelsResp FetchAvailableModelsResponse
+	if err := json.Unmarshal(respBodyBytes, &modelsResp); err != nil {
+		return nil, fmt.Errorf("响应解析失败: %w", err)
+	}
+
+	return &modelsResp, nil
+}
