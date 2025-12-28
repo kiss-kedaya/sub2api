@@ -730,3 +730,104 @@ func testClaudeWithNoSignature(t *testing.T, model string) {
 	}
 	t.Logf("✅ 无 signature thinking 处理测试通过, id=%v", result["id"])
 }
+
+// TestClaudeMessagesWithClaudeSignature 测试历史 thinking block 带有 Claude signature 的场景
+// 验证：Claude 的 signature 格式与 Gemini 不兼容，发送到 Gemini 模型时应忽略（不传递）
+func TestClaudeMessagesWithClaudeSignature(t *testing.T) {
+	models := []string{
+		"claude-haiku-4-5-20251001", // 映射到 gemini-3-flash
+	}
+	for i, model := range models {
+		if i > 0 {
+			time.Sleep(testInterval)
+		}
+		t.Run(model+"_带Claude_signature", func(t *testing.T) {
+			testClaudeWithClaudeSignature(t, model)
+		})
+	}
+}
+
+func testClaudeWithClaudeSignature(t *testing.T, model string) {
+	url := baseURL + "/v1/messages"
+
+	// 模拟历史对话包含 thinking block 且带有 Claude 格式的 signature
+	// 这个 signature 是 Claude API 返回的格式，对 Gemini 无效
+	payload := map[string]any{
+		"model":      model,
+		"max_tokens": 200,
+		"stream":     false,
+		// 开启 thinking 模式
+		"thinking": map[string]any{
+			"type":          "enabled",
+			"budget_tokens": 1024,
+		},
+		"messages": []any{
+			map[string]any{
+				"role":    "user",
+				"content": "What is 2+2?",
+			},
+			// assistant 消息包含 thinking block 和 Claude 格式的 signature
+			map[string]any{
+				"role": "assistant",
+				"content": []map[string]any{
+					{
+						"type":     "thinking",
+						"thinking": "Let me calculate 2+2. This is a simple arithmetic problem.",
+						// Claude API 返回的 signature 格式（base64 编码的加密数据）
+						"signature": "zbbJDG5qqgNXD/BVLwwxxT3gVaAY2hQ6CcB+hVLZWPi8r6vvlRBQKMfFPE3x5...",
+					},
+					{
+						"type": "text",
+						"text": "2+2 equals 4.",
+					},
+				},
+			},
+			map[string]any{
+				"role":    "user",
+				"content": "What is 3+3?",
+			},
+		},
+	}
+	body, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+claudeAPIKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	// 400 错误说明 signature 未被正确忽略
+	if resp.StatusCode == 400 {
+		t.Fatalf("Claude signature 未被正确忽略，收到 400 错误: %s", string(respBody))
+	}
+
+	if resp.StatusCode == 503 {
+		t.Skipf("账号暂时不可用 (503): %s", string(respBody))
+	}
+
+	if resp.StatusCode == 429 {
+		t.Skipf("请求被限流 (429): %s", string(respBody))
+	}
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+
+	if result["type"] != "message" {
+		t.Errorf("期望 type=message, 得到 %v", result["type"])
+	}
+	t.Logf("✅ Claude signature 忽略测试通过, id=%v", result["id"])
+}
