@@ -22,8 +22,8 @@ type UserSubscriptionRepoSuite struct {
 
 func (s *UserSubscriptionRepoSuite) SetupTest() {
 	s.ctx = context.Background()
-	client, _ := testEntSQLTx(s.T())
-	s.client = client
+	tx := testEntTx(s.T())
+	s.client = tx.Client()
 	s.repo = NewUserSubscriptionRepository(s.client).(*userSubscriptionRepository)
 }
 
@@ -66,8 +66,8 @@ func (s *UserSubscriptionRepoSuite) mustCreateSubscription(userID, groupID int64
 	create := s.client.UserSubscription.Create().
 		SetUserID(userID).
 		SetGroupID(groupID).
-		SetStartsAt(now.Add(-1*time.Hour)).
-		SetExpiresAt(now.Add(24*time.Hour)).
+		SetStartsAt(now.Add(-1 * time.Hour)).
+		SetExpiresAt(now.Add(24 * time.Hour)).
 		SetStatus(service.SubscriptionStatusActive).
 		SetAssignedAt(now).
 		SetNotes("")
@@ -631,4 +631,3 @@ func (s *UserSubscriptionRepoSuite) TestActiveExpiredBoundaries_UsageAndReset_Ba
 	s.Require().NoError(err, "GetByID expired")
 	s.Require().Equal(service.SubscriptionStatusExpired, updated.Status, "expected status expired")
 }
-
