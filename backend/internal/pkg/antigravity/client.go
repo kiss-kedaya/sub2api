@@ -74,7 +74,6 @@ func (r *LoadCodeAssistResponse) GetTier() string {
 // Client Antigravity API 客户端
 type Client struct {
 	httpClient *http.Client
-	proxyURL   string
 }
 
 func NewClient(proxyURL string) *Client {
@@ -92,7 +91,6 @@ func NewClient(proxyURL string) *Client {
 
 	return &Client{
 		httpClient: client,
-		proxyURL:   proxyURL,
 	}
 }
 
