@@ -1,0 +1,182 @@
+//go:build unit
+
+package service
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/stretchr/testify/require"
+)
+
+type settingRepoStub struct {
+	values map[string]string
+	err    error
+}
+
+func (s *settingRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
+	panic("unexpected Get call")
+}
+
+func (s *settingRepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	if v, ok := s.values[key]; ok {
+		return v, nil
+	}
+	return "", ErrSettingNotFound
+}
+
+func (s *settingRepoStub) Set(ctx context.Context, key, value string) error {
+	panic("unexpected Set call")
+}
+
+func (s *settingRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	panic("unexpected GetMultiple call")
+}
+
+func (s *settingRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
+	panic("unexpected SetMultiple call")
+}
+
+func (s *settingRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
+	panic("unexpected GetAll call")
+}
+
+func (s *settingRepoStub) Delete(ctx context.Context, key string) error {
+	panic("unexpected Delete call")
+}
+
+type emailCacheStub struct {
+	data *VerificationCodeData
+	err  error
+}
+
+func (s *emailCacheStub) GetVerificationCode(ctx context.Context, email string) (*VerificationCodeData, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.data, nil
+}
+
+func (s *emailCacheStub) SetVerificationCode(ctx context.Context, email string, data *VerificationCodeData, ttl time.Duration) error {
+	return nil
+}
+
+func (s *emailCacheStub) DeleteVerificationCode(ctx context.Context, email string) error {
+	return nil
+}
+
+func newAuthService(repo *userRepoStub, settings map[string]string, emailCache EmailCache) *AuthService {
+	cfg := &config.Config{
+		JWT: config.JWTConfig{
+			Secret:     "test-secret",
+			ExpireHour: 1,
+		},
+		Default: config.DefaultConfig{
+			UserBalance:     3.5,
+			UserConcurrency: 2,
+		},
+	}
+
+	var settingService *SettingService
+	if settings != nil {
+		settingService = NewSettingService(&settingRepoStub{values: settings}, cfg)
+	}
+
+	var emailService *EmailService
+	if emailCache != nil {
+		emailService = NewEmailService(&settingRepoStub{values: settings}, emailCache)
+	}
+
+	return NewAuthService(
+		repo,
+		cfg,
+		settingService,
+		emailService,
+		nil,
+		nil,
+	)
+}
+
+func TestAuthService_Register_Disabled(t *testing.T) {
+	repo := &userRepoStub{}
+	service := newAuthService(repo, map[string]string{
+		SettingKeyRegistrationEnabled: "false",
+	}, nil)
+
+	_, _, err := service.Register(context.Background(), "user@test.com", "password")
+	require.ErrorIs(t, err, ErrRegDisabled)
+}
+
+func TestAuthService_Register_EmailVerifyRequired(t *testing.T) {
+	repo := &userRepoStub{}
+	service := newAuthService(repo, map[string]string{
+		SettingKeyRegistrationEnabled: "true",
+		SettingKeyEmailVerifyEnabled:  "true",
+	}, nil)
+
+	_, _, err := service.RegisterWithVerification(context.Background(), "user@test.com", "password", "")
+	require.ErrorIs(t, err, ErrEmailVerifyRequired)
+}
+
+func TestAuthService_Register_EmailVerifyInvalid(t *testing.T) {
+	repo := &userRepoStub{}
+	cache := &emailCacheStub{
+		data: &VerificationCodeData{Code: "expected", Attempts: 0},
+	}
+	service := newAuthService(repo, map[string]string{
+		SettingKeyRegistrationEnabled: "true",
+		SettingKeyEmailVerifyEnabled:  "true",
+	}, cache)
+
+	_, _, err := service.RegisterWithVerification(context.Background(), "user@test.com", "password", "wrong")
+	require.ErrorIs(t, err, ErrInvalidVerifyCode)
+	require.ErrorContains(t, err, "verify code")
+}
+
+func TestAuthService_Register_EmailExists(t *testing.T) {
+	repo := &userRepoStub{exists: true}
+	service := newAuthService(repo, nil, nil)
+
+	_, _, err := service.Register(context.Background(), "user@test.com", "password")
+	require.ErrorIs(t, err, ErrEmailExists)
+}
+
+func TestAuthService_Register_CheckEmailError(t *testing.T) {
+	repo := &userRepoStub{existsErr: errors.New("db down")}
+	service := newAuthService(repo, nil, nil)
+
+	_, _, err := service.Register(context.Background(), "user@test.com", "password")
+	require.ErrorIs(t, err, ErrServiceUnavailable)
+}
+
+func TestAuthService_Register_CreateError(t *testing.T) {
+	repo := &userRepoStub{createErr: errors.New("create failed")}
+	service := newAuthService(repo, nil, nil)
+
+	_, _, err := service.Register(context.Background(), "user@test.com", "password")
+	require.ErrorIs(t, err, ErrServiceUnavailable)
+}
+
+func TestAuthService_Register_Success(t *testing.T) {
+	repo := &userRepoStub{nextID: 5}
+	service := newAuthService(repo, nil, nil)
+
+	token, user, err := service.Register(context.Background(), "user@test.com", "password")
+	require.NoError(t, err)
+	require.NotEmpty(t, token)
+	require.NotNil(t, user)
+	require.Equal(t, int64(5), user.ID)
+	require.Equal(t, "user@test.com", user.Email)
+	require.Equal(t, RoleUser, user.Role)
+	require.Equal(t, StatusActive, user.Status)
+	require.Equal(t, 3.5, user.Balance)
+	require.Equal(t, 2, user.Concurrency)
+	require.Len(t, repo.created, 1)
+	require.True(t, user.CheckPassword("password"))
+}
