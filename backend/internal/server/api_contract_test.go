@@ -281,7 +281,6 @@ func TestAPIContracts(t *testing.T) {
 
 					service.SettingKeyDefaultConcurrency: "5",
 					service.SettingKeyDefaultBalance:     "1.25",
-					service.SettingKeySimpleMode:         "false",
 				})
 			},
 			method:     http.MethodGet,
@@ -310,8 +309,7 @@ func TestAPIContracts(t *testing.T) {
 					"contact_info": "support",
 					"doc_url": "https://docs.example.com",
 					"default_concurrency": 5,
-					"default_balance": 1.25,
-					"simple_mode": false
+					"default_balance": 1.25
 				}
 			}`,
 		},
@@ -387,7 +385,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	authHandler := handler.NewAuthHandler(cfg, nil, userService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	usageHandler := handler.NewUsageHandler(usageService, apiKeyService)
-	adminSettingHandler := adminhandler.NewSettingHandler(settingService, nil, nil)
+	adminSettingHandler := adminhandler.NewSettingHandler(settingService, nil)
 
 	jwtAuth := func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{
