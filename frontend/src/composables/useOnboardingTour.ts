@@ -138,10 +138,9 @@ export function useOnboardingTour(options: OnboardingOptions) {
         driverInstance?.movePrevious()
       },
       onCloseClick: () => {
-        if (confirm(t('onboarding.confirmExit'))) {
-          driverInstance?.destroy()
-          onboardingStore.setDriverInstance(null)
-        }
+        markAsSeen()
+        driverInstance?.destroy()
+        onboardingStore.setDriverInstance(null)
       },
 
       // 渲染时重组 Footer 布局
@@ -164,34 +163,6 @@ export function useOnboardingTour(options: OnboardingOptions) {
           if (!titleEl || !footerEl) {
             console.warn('Onboarding: Missing popover elements')
             return
-          }
-
-          // 1. 顶部：添加 "不再提示" 按钮
-          if (!titleEl.querySelector(`.${CLASS_SKIP_BTN}`)) {
-            const titleText = titleEl.innerText
-            if (!titleEl.querySelector(`.${CLASS_TITLE_TEXT}`)) {
-              const titleSpan = document.createElement('span')
-              titleSpan.className = CLASS_TITLE_TEXT
-              titleSpan.textContent = titleText
-              titleEl.textContent = ''
-              titleEl.appendChild(titleSpan)
-            }
-
-            const skipBtn = document.createElement('button')
-            skipBtn.className = CLASS_SKIP_BTN
-            skipBtn.innerText = t('onboarding.dontShowAgain')
-            skipBtn.title = t('onboarding.dontShowAgainTitle')
-            skipBtn.type = 'button'
-            skipBtn.setAttribute('aria-label', t('onboarding.dontShowAgain'))
-            skipBtn.onclick = (e) => {
-              e.stopPropagation()
-              if (confirm(t('onboarding.confirmDontShow'))) {
-                markAsSeen()
-                driverInstance?.destroy()
-                onboardingStore.setDriverInstance(null)
-              }
-            }
-            titleEl.appendChild(skipBtn)
           }
 
           // 1.5 交互式步骤提示
@@ -489,10 +460,9 @@ export function useOnboardingTour(options: OnboardingOptions) {
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
-        if (confirm(t('onboarding.confirmExit'))) {
-          driverInstance.destroy()
-          onboardingStore.setDriverInstance(null)
-        }
+        markAsSeen()
+        driverInstance.destroy()
+        onboardingStore.setDriverInstance(null)
         return
       }
 
