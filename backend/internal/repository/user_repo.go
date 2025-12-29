@@ -169,8 +169,14 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User) error
 }
 
 func (r *userRepository) Delete(ctx context.Context, id int64) error {
-	_, err := r.client.User.Delete().Where(dbuser.IDEQ(id)).Exec(ctx)
-	return err
+	affected, err := r.client.User.Delete().Where(dbuser.IDEQ(id)).Exec(ctx)
+	if err != nil {
+		return translatePersistenceError(err, service.ErrUserNotFound, nil)
+	}
+	if affected == 0 {
+		return service.ErrUserNotFound
+	}
+	return nil
 }
 
 func (r *userRepository) List(ctx context.Context, params pagination.PaginationParams) ([]service.User, *pagination.PaginationResult, error) {
