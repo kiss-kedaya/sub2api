@@ -135,18 +135,18 @@ func (p *StreamingProcessor) emitMessageStart(v1Resp *V1InternalResponse) []byte
 		responseID = "msg_" + generateRandomID()
 	}
 
-	message := map[string]interface{}{
+	message := map[string]any{
 		"id":            responseID,
 		"type":          "message",
 		"role":          "assistant",
-		"content":       []interface{}{},
+		"content":       []any{},
 		"model":         p.originalModel,
 		"stop_reason":   nil,
 		"stop_sequence": nil,
 		"usage":         usage,
 	}
 
-	event := map[string]interface{}{
+	event := map[string]any{
 		"type":    "message_start",
 		"message": message,
 	}
@@ -205,14 +205,14 @@ func (p *StreamingProcessor) processThinking(text, signature string) []byte {
 
 	// 开始或继续 thinking 块
 	if p.blockType != BlockTypeThinking {
-		_, _ = result.Write(p.startBlock(BlockTypeThinking, map[string]interface{}{
+		_, _ = result.Write(p.startBlock(BlockTypeThinking, map[string]any{
 			"type":     "thinking",
 			"thinking": "",
 		}))
 	}
 
 	if text != "" {
-		_, _ = result.Write(p.emitDelta("thinking_delta", map[string]interface{}{
+		_, _ = result.Write(p.emitDelta("thinking_delta", map[string]any{
 			"thinking": text,
 		}))
 	}
@@ -246,11 +246,11 @@ func (p *StreamingProcessor) processText(text, signature string) []byte {
 
 	// 非空 text 带签名 - 特殊处理
 	if signature != "" {
-		_, _ = result.Write(p.startBlock(BlockTypeText, map[string]interface{}{
+		_, _ = result.Write(p.startBlock(BlockTypeText, map[string]any{
 			"type": "text",
 			"text": "",
 		}))
-		_, _ = result.Write(p.emitDelta("text_delta", map[string]interface{}{
+		_, _ = result.Write(p.emitDelta("text_delta", map[string]any{
 			"text": text,
 		}))
 		_, _ = result.Write(p.endBlock())
@@ -260,13 +260,13 @@ func (p *StreamingProcessor) processText(text, signature string) []byte {
 
 	// 普通 text (无签名)
 	if p.blockType != BlockTypeText {
-		_, _ = result.Write(p.startBlock(BlockTypeText, map[string]interface{}{
+		_, _ = result.Write(p.startBlock(BlockTypeText, map[string]any{
 			"type": "text",
 			"text": "",
 		}))
 	}
 
-	_, _ = result.Write(p.emitDelta("text_delta", map[string]interface{}{
+	_, _ = result.Write(p.emitDelta("text_delta", map[string]any{
 		"text": text,
 	}))
 
@@ -284,11 +284,11 @@ func (p *StreamingProcessor) processFunctionCall(fc *GeminiFunctionCall, signatu
 		toolID = fmt.Sprintf("%s-%s", fc.Name, generateRandomID())
 	}
 
-	toolUse := map[string]interface{}{
+	toolUse := map[string]any{
 		"type":  "tool_use",
 		"id":    toolID,
 		"name":  fc.Name,
-		"input": map[string]interface{}{}, // 必须为空，参数通过 delta 发送
+		"input": map[string]any{},
 	}
 
 	if signature != "" {
@@ -300,7 +300,7 @@ func (p *StreamingProcessor) processFunctionCall(fc *GeminiFunctionCall, signatu
 	// 发送 input_json_delta
 	if fc.Args != nil {
 		argsJSON, _ := json.Marshal(fc.Args)
-		_, _ = result.Write(p.emitDelta("input_json_delta", map[string]interface{}{
+		_, _ = result.Write(p.emitDelta("input_json_delta", map[string]any{
 			"partial_json": string(argsJSON),
 		}))
 	}
@@ -311,14 +311,14 @@ func (p *StreamingProcessor) processFunctionCall(fc *GeminiFunctionCall, signatu
 }
 
 // startBlock 开始新的内容块
-func (p *StreamingProcessor) startBlock(blockType BlockType, contentBlock map[string]interface{}) []byte {
+func (p *StreamingProcessor) startBlock(blockType BlockType, contentBlock map[string]any) []byte {
 	var result bytes.Buffer
 
 	if p.blockType != BlockTypeNone {
 		_, _ = result.Write(p.endBlock())
 	}
 
-	event := map[string]interface{}{
+	event := map[string]any{
 		"type":          "content_block_start",
 		"index":         p.blockIndex,
 		"content_block": contentBlock,
@@ -340,13 +340,13 @@ func (p *StreamingProcessor) endBlock() []byte {
 
 	// Thinking 块结束时发送暂存的签名
 	if p.blockType == BlockTypeThinking && p.pendingSignature != "" {
-		_, _ = result.Write(p.emitDelta("signature_delta", map[string]interface{}{
+		_, _ = result.Write(p.emitDelta("signature_delta", map[string]any{
 			"signature": p.pendingSignature,
 		}))
 		p.pendingSignature = ""
 	}
 
-	event := map[string]interface{}{
+	event := map[string]any{
 		"type":  "content_block_stop",
 		"index": p.blockIndex,
 	}
@@ -360,15 +360,15 @@ func (p *StreamingProcessor) endBlock() []byte {
 }
 
 // emitDelta 发送 delta 事件
-func (p *StreamingProcessor) emitDelta(deltaType string, deltaContent map[string]interface{}) []byte {
-	delta := map[string]interface{}{
+func (p *StreamingProcessor) emitDelta(deltaType string, deltaContent map[string]any) []byte {
+	delta := map[string]any{
 		"type": deltaType,
 	}
 	for k, v := range deltaContent {
 		delta[k] = v
 	}
 
-	event := map[string]interface{}{
+	event := map[string]any{
 		"type":  "content_block_delta",
 		"index": p.blockIndex,
 		"delta": delta,
@@ -381,14 +381,14 @@ func (p *StreamingProcessor) emitDelta(deltaType string, deltaContent map[string
 func (p *StreamingProcessor) emitEmptyThinkingWithSignature(signature string) []byte {
 	var result bytes.Buffer
 
-	_, _ = result.Write(p.startBlock(BlockTypeThinking, map[string]interface{}{
+	_, _ = result.Write(p.startBlock(BlockTypeThinking, map[string]any{
 		"type":     "thinking",
 		"thinking": "",
 	}))
-	_, _ = result.Write(p.emitDelta("thinking_delta", map[string]interface{}{
+	_, _ = result.Write(p.emitDelta("thinking_delta", map[string]any{
 		"thinking": "",
 	}))
-	_, _ = result.Write(p.emitDelta("signature_delta", map[string]interface{}{
+	_, _ = result.Write(p.emitDelta("signature_delta", map[string]any{
 		"signature": signature,
 	}))
 	_, _ = result.Write(p.endBlock())
@@ -422,9 +422,9 @@ func (p *StreamingProcessor) emitFinish(finishReason string) []byte {
 		OutputTokens: p.outputTokens,
 	}
 
-	deltaEvent := map[string]interface{}{
+	deltaEvent := map[string]any{
 		"type": "message_delta",
-		"delta": map[string]interface{}{
+		"delta": map[string]any{
 			"stop_reason":   stopReason,
 			"stop_sequence": nil,
 		},
@@ -434,7 +434,7 @@ func (p *StreamingProcessor) emitFinish(finishReason string) []byte {
 	_, _ = result.Write(p.formatSSE("message_delta", deltaEvent))
 
 	if !p.messageStopSent {
-		stopEvent := map[string]interface{}{
+		stopEvent := map[string]any{
 			"type": "message_stop",
 		}
 		_, _ = result.Write(p.formatSSE("message_stop", stopEvent))
@@ -445,7 +445,7 @@ func (p *StreamingProcessor) emitFinish(finishReason string) []byte {
 }
 
 // formatSSE 格式化 SSE 事件
-func (p *StreamingProcessor) formatSSE(eventType string, data interface{}) []byte {
+func (p *StreamingProcessor) formatSSE(eventType string, data any) []byte {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return nil

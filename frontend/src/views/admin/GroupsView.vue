@@ -23,7 +23,11 @@
               />
             </svg>
           </button>
-          <button @click="showCreateModal = true" class="btn btn-primary">
+          <button
+            @click="showCreateModal = true"
+            class="btn btn-primary"
+            data-tour="groups-create-btn"
+          >
             <svg
               class="mr-2 h-5 w-5"
               fill="none"
@@ -254,6 +258,7 @@
             required
             class="input"
             :placeholder="t('admin.groups.enterGroupName')"
+            data-tour="group-form-name"
           />
         </div>
         <div>
@@ -267,7 +272,11 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.groups.form.platform') }}</label>
-          <Select v-model="createForm.platform" :options="platformOptions" />
+          <Select
+            v-model="createForm.platform"
+            :options="platformOptions"
+            data-tour="group-form-platform"
+          />
           <p class="input-hint">{{ t('admin.groups.platformHint') }}</p>
         </div>
         <div v-if="createForm.subscription_type !== 'subscription'">
@@ -279,10 +288,11 @@
             min="0.001"
             required
             class="input"
+            data-tour="group-form-multiplier"
           />
           <p class="input-hint">{{ t('admin.groups.rateMultiplierHint') }}</p>
         </div>
-        <div v-if="createForm.subscription_type !== 'subscription'">
+        <div v-if="createForm.subscription_type !== 'subscription'" data-tour="group-form-exclusive">
           <div class="mb-1.5 flex items-center gap-1">
             <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
               {{ t('admin.groups.form.exclusive') }}
@@ -400,6 +410,7 @@
             form="create-group-form"
             :disabled="submitting"
             class="btn btn-primary"
+            data-tour="group-form-submit"
           >
             <svg
               v-if="submitting"
@@ -442,7 +453,13 @@
       >
         <div>
           <label class="input-label">{{ t('admin.groups.form.name') }}</label>
-          <input v-model="editForm.name" type="text" required class="input" />
+          <input
+            v-model="editForm.name"
+            type="text"
+            required
+            class="input"
+            data-tour="edit-group-form-name"
+          />
         </div>
         <div>
           <label class="input-label">{{ t('admin.groups.form.description') }}</label>
@@ -450,7 +467,12 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.groups.form.platform') }}</label>
-          <Select v-model="editForm.platform" :options="platformOptions" :disabled="true" />
+          <Select
+            v-model="editForm.platform"
+            :options="platformOptions"
+            :disabled="true"
+            data-tour="group-form-platform"
+          />
           <p class="input-hint">{{ t('admin.groups.platformNotEditable') }}</p>
         </div>
         <div v-if="editForm.subscription_type !== 'subscription'">
@@ -462,6 +484,7 @@
             min="0.001"
             required
             class="input"
+            data-tour="group-form-multiplier"
           />
         </div>
         <div v-if="editForm.subscription_type !== 'subscription'">
@@ -590,6 +613,7 @@
             form="edit-group-form"
             :disabled="submitting"
             class="btn btn-primary"
+            data-tour="group-form-submit"
           >
             <svg
               v-if="submitting"
@@ -635,6 +659,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { useOnboardingStore } from '@/stores/onboarding'
 import { adminAPI } from '@/api/admin'
 import type { Group, GroupPlatform, SubscriptionType } from '@/types'
 import type { Column } from '@/components/common/types'
@@ -650,6 +675,7 @@ import PlatformIcon from '@/components/common/PlatformIcon.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const onboardingStore = useOnboardingStore()
 
 const columns = computed<Column[]>(() => [
   { key: 'name', label: t('admin.groups.columns.name'), sortable: true },
@@ -821,9 +847,14 @@ const handleCreateGroup = async () => {
     appStore.showSuccess(t('admin.groups.groupCreated'))
     closeCreateModal()
     loadGroups()
+    // Only advance tour if active, on submit step, and creation succeeded
+    if (onboardingStore.isCurrentStep('[data-tour="group-form-submit"]')) {
+      onboardingStore.nextStep(500)
+    }
   } catch (error: any) {
     appStore.showError(error.response?.data?.detail || t('admin.groups.failedToCreate'))
     console.error('Error creating group:', error)
+    // Don't advance tour on error
   } finally {
     submitting.value = false
   }

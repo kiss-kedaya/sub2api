@@ -186,7 +186,7 @@ func (r *accountRepository) BatchUpdateLastUsed(ctx context.Context, updates map
 		ids = append(ids, id)
 	}
 
-	caseSql += " END WHERE id IN ?"
+	caseSql += " END WHERE id IN ? AND deleted_at IS NULL"
 	args = append(args, ids)
 
 	return r.db.WithContext(ctx).Exec(caseSql, args...).Error

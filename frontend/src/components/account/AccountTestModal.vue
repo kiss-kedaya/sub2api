@@ -362,6 +362,10 @@ const resetState = () => {
 }
 
 const handleClose = () => {
+  // 防止在连接测试进行中关闭对话框
+  if (status.value === 'connecting') {
+    return
+  }
   closeEventSource()
   emit('close')
 }

@@ -36,7 +36,16 @@
             class="sidebar-link mb-1"
             :class="{ 'sidebar-link-active': isActive(item.path) }"
             :title="sidebarCollapsed ? item.label : undefined"
-            @click="handleMenuItemClick"
+            :id="
+              item.path === '/admin/accounts'
+                ? 'sidebar-channel-manage'
+                : item.path === '/admin/groups'
+                  ? 'sidebar-group-manage'
+                  : item.path === '/admin/redeem'
+                    ? 'sidebar-wallet'
+                    : undefined
+            "
+            @click="handleMenuItemClick(item.path)"
           >
             <component :is="item.icon" class="h-5 w-5 flex-shrink-0" />
             <transition name="fade">
@@ -59,7 +68,8 @@
             class="sidebar-link mb-1"
             :class="{ 'sidebar-link-active': isActive(item.path) }"
             :title="sidebarCollapsed ? item.label : undefined"
-            @click="handleMenuItemClick"
+            :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
+            @click="handleMenuItemClick(item.path)"
           >
             <component :is="item.icon" class="h-5 w-5 flex-shrink-0" />
             <transition name="fade">
@@ -79,7 +89,8 @@
             class="sidebar-link mb-1"
             :class="{ 'sidebar-link-active': isActive(item.path) }"
             :title="sidebarCollapsed ? item.label : undefined"
-            @click="handleMenuItemClick"
+            :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
+            @click="handleMenuItemClick(item.path)"
           >
             <component :is="item.icon" class="h-5 w-5 flex-shrink-0" />
             <transition name="fade">
@@ -136,7 +147,7 @@
 import { computed, h, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useAppStore, useAuthStore } from '@/stores'
+import { useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 
 const { t } = useI18n()
@@ -144,6 +155,7 @@ const { t } = useI18n()
 const route = useRoute()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const onboardingStore = useOnboardingStore()
 
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
@@ -465,11 +477,23 @@ function closeMobile() {
   appStore.setMobileOpen(false)
 }
 
-function handleMenuItemClick() {
+function handleMenuItemClick(itemPath: string) {
   if (mobileOpen.value) {
     setTimeout(() => {
       appStore.setMobileOpen(false)
     }, 150)
+  }
+
+  // Map paths to tour selectors
+  const pathToSelector: Record<string, string> = {
+    '/admin/groups': '#sidebar-group-manage',
+    '/admin/accounts': '#sidebar-channel-manage',
+    '/keys': '[data-tour="sidebar-my-keys"]'
+  }
+
+  const selector = pathToSelector[itemPath]
+  if (selector && onboardingStore.isCurrentStep(selector)) {
+    onboardingStore.nextStep(500)
   }
 }
 
