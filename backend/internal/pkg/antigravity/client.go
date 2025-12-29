@@ -114,7 +114,7 @@ func (c *Client) ExchangeCode(ctx context.Context, code, codeVerifier string) (*
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Token 交换请求失败: %w", err)
+		return nil, fmt.Errorf("token 交换请求失败: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -124,12 +124,12 @@ func (c *Client) ExchangeCode(ctx context.Context, code, codeVerifier string) (*
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Token 交换失败 (HTTP %d): %s", resp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("token 交换失败 (HTTP %d): %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(bodyBytes, &tokenResp); err != nil {
-		return nil, fmt.Errorf("Token 解析失败: %w", err)
+		return nil, fmt.Errorf("token 解析失败: %w", err)
 	}
 
 	return &tokenResp, nil
@@ -151,7 +151,7 @@ func (c *Client) RefreshToken(ctx context.Context, refreshToken string) (*TokenR
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Token 刷新请求失败: %w", err)
+		return nil, fmt.Errorf("token 刷新请求失败: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -161,12 +161,12 @@ func (c *Client) RefreshToken(ctx context.Context, refreshToken string) (*TokenR
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Token 刷新失败 (HTTP %d): %s", resp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("token 刷新失败 (HTTP %d): %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(bodyBytes, &tokenResp); err != nil {
-		return nil, fmt.Errorf("Token 解析失败: %w", err)
+		return nil, fmt.Errorf("token 解析失败: %w", err)
 	}
 
 	return &tokenResp, nil

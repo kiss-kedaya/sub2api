@@ -8,9 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
+
+// testConfig 返回一个用于测试的默认配置
+func testConfig() *config.Config {
+	return &config.Config{RunMode: config.RunModeStandard}
+}
 
 // mockAccountRepoForPlatform 单平台测试用的 mock
 type mockAccountRepoForPlatform struct {
@@ -177,6 +183,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_Anthropic(t *testing.T
 	svc := &GatewayService{
 		accountRepo: repo,
 		cache:       cache,
+		cfg:         testConfig(),
 	}
 
 	acc, err := svc.selectAccountForModelWithPlatform(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
@@ -206,6 +213,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_Antigravity(t *testing
 	svc := &GatewayService{
 		accountRepo: repo,
 		cache:       cache,
+		cfg:         testConfig(),
 	}
 
 	acc, err := svc.selectAccountForModelWithPlatform(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, PlatformAntigravity)
@@ -236,6 +244,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_PriorityAndLastUsed(t 
 	svc := &GatewayService{
 		accountRepo: repo,
 		cache:       cache,
+		cfg:         testConfig(),
 	}
 
 	acc, err := svc.selectAccountForModelWithPlatform(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
@@ -258,6 +267,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_NoAvailableAccounts(t 
 	svc := &GatewayService{
 		accountRepo: repo,
 		cache:       cache,
+		cfg:         testConfig(),
 	}
 
 	acc, err := svc.selectAccountForModelWithPlatform(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
@@ -286,6 +296,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_AllExcluded(t *testing
 	svc := &GatewayService{
 		accountRepo: repo,
 		cache:       cache,
+		cfg:         testConfig(),
 	}
 
 	excludedIDs := map[int64]struct{}{1: {}, 2: {}}
@@ -361,6 +372,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_Schedulability(t *test
 			svc := &GatewayService{
 				accountRepo: repo,
 				cache:       cache,
+				cfg:         testConfig(),
 			}
 
 			acc, err := svc.selectAccountForModelWithPlatform(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
@@ -394,6 +406,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_StickySession(t *testi
 		svc := &GatewayService{
 			accountRepo: repo,
 			cache:       cache,
+			cfg:         testConfig(),
 		}
 
 		acc, err := svc.selectAccountForModelWithPlatform(ctx, nil, "session-123", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
@@ -421,6 +434,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_StickySession(t *testi
 		svc := &GatewayService{
 			accountRepo: repo,
 			cache:       cache,
+			cfg:         testConfig(),
 		}
 
 		// 请求 anthropic 平台，但粘性会话绑定的是 antigravity 账户
@@ -450,6 +464,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_StickySession(t *testi
 		svc := &GatewayService{
 			accountRepo: repo,
 			cache:       cache,
+			cfg:         testConfig(),
 		}
 
 		excludedIDs := map[int64]struct{}{1: {}}
@@ -478,6 +493,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_StickySession(t *testi
 		svc := &GatewayService{
 			accountRepo: repo,
 			cache:       cache,
+			cfg:         testConfig(),
 		}
 
 		acc, err := svc.selectAccountForModelWithPlatform(ctx, nil, "session-123", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
@@ -569,6 +585,7 @@ func TestGatewayService_selectAccountWithMixedScheduling(t *testing.T) {
 		svc := &GatewayService{
 			accountRepo: repo,
 			cache:       cache,
+			cfg:         testConfig(),
 		}
 
 		acc, err := svc.selectAccountWithMixedScheduling(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
@@ -594,6 +611,7 @@ func TestGatewayService_selectAccountWithMixedScheduling(t *testing.T) {
 		svc := &GatewayService{
 			accountRepo: repo,
 			cache:       cache,
+			cfg:         testConfig(),
 		}
 
 		acc, err := svc.selectAccountWithMixedScheduling(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
@@ -622,6 +640,7 @@ func TestGatewayService_selectAccountWithMixedScheduling(t *testing.T) {
 		svc := &GatewayService{
 			accountRepo: repo,
 			cache:       cache,
+			cfg:         testConfig(),
 		}
 
 		acc, err := svc.selectAccountWithMixedScheduling(ctx, nil, "session-123", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
@@ -649,6 +668,7 @@ func TestGatewayService_selectAccountWithMixedScheduling(t *testing.T) {
 		svc := &GatewayService{
 			accountRepo: repo,
 			cache:       cache,
+			cfg:         testConfig(),
 		}
 
 		acc, err := svc.selectAccountWithMixedScheduling(ctx, nil, "session-123", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
@@ -673,6 +693,7 @@ func TestGatewayService_selectAccountWithMixedScheduling(t *testing.T) {
 		svc := &GatewayService{
 			accountRepo: repo,
 			cache:       cache,
+			cfg:         testConfig(),
 		}
 
 		acc, err := svc.selectAccountWithMixedScheduling(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
@@ -698,6 +719,7 @@ func TestGatewayService_selectAccountWithMixedScheduling(t *testing.T) {
 		svc := &GatewayService{
 			accountRepo: repo,
 			cache:       cache,
+			cfg:         testConfig(),
 		}
 
 		acc, err := svc.selectAccountWithMixedScheduling(ctx, nil, "", "claude-3-5-sonnet-20241022", nil, PlatformAnthropic)
