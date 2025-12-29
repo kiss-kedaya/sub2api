@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -11,13 +12,15 @@ import (
 
 // AuthHandler handles authentication-related requests
 type AuthHandler struct {
+	cfg         *config.Config
 	authService *service.AuthService
 	userService *service.UserService
 }
 
 // NewAuthHandler creates a new AuthHandler
-func NewAuthHandler(authService *service.AuthService, userService *service.UserService) *AuthHandler {
+func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userService *service.UserService) *AuthHandler {
 	return &AuthHandler{
+		cfg:         cfg,
 		authService: authService,
 		userService: userService,
 	}
@@ -157,5 +160,15 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, dto.UserFromService(user))
+	type UserResponse struct {
+		*dto.User
+		RunMode string `json:"run_mode"`
+	}
+
+	runMode := config.RunModeStandard
+	if h.cfg != nil {
+		runMode = h.cfg.RunMode
+	}
+
+	response.Success(c, UserResponse{User: dto.UserFromService(user), RunMode: runMode})
 }

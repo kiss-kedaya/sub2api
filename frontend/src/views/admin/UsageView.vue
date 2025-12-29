@@ -224,7 +224,7 @@
                 v-model="filters.api_key_id"
                 :options="apiKeyOptions"
                 :placeholder="t('usage.allApiKeys')"
-                :disabled="!selectedUser && apiKeys.length === 0"
+                searchable
                 @change="applyFilters"
               />
             </div>
@@ -236,6 +236,7 @@
                 v-model="filters.model"
                 :options="modelOptions"
                 :placeholder="t('admin.usage.allModels')"
+                searchable
                 @change="applyFilters"
               />
             </div>
@@ -534,6 +535,7 @@
         :total="pagination.total"
         :page-size="pagination.page_size"
         @update:page="handlePageChange"
+        @update:pageSize="handlePageSizeChange"
       />
     </div>
   </AppLayout>
@@ -666,6 +668,7 @@ const models = ref<string[]>([])
 const accounts = ref<any[]>([])
 const groups = ref<any[]>([])
 const loading = ref(false)
+let abortController: AbortController | null = null
 
 // User search state
 const userSearchKeyword = ref('')
@@ -675,7 +678,7 @@ const showUserDropdown = ref(false)
 const selectedUser = ref<SimpleUser | null>(null)
 let searchTimeout: ReturnType<typeof setTimeout> | null = null
 
-// API Key options computed from selected user's keys
+// API Key options computed from loaded keys
 const apiKeyOptions = computed(() => {
   return [
     { value: null, label: t('usage.allApiKeys') },
@@ -733,9 +736,19 @@ const groupOptions = computed(() => {
   ]
 })
 
+// Helper function to format date in local timezone
+const formatLocalDate = (date: Date): string => {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+// Initialize date range immediately
+const now = new Date()
+const weekAgo = new Date(now)
+weekAgo.setDate(weekAgo.getDate() - 6)
+
 // Date range state
-const startDate = ref('')
-const endDate = ref('')
+const startDate = ref(formatLocalDate(weekAgo))
+const endDate = ref(formatLocalDate(now))
 
 const filters = ref<AdminUsageQueryParams>({
   user_id: undefined,
@@ -749,18 +762,9 @@ const filters = ref<AdminUsageQueryParams>({
   end_date: undefined
 })
 
-// Initialize default date range (last 7 days)
-const initializeDateRange = () => {
-  const now = new Date()
-  const today = now.toISOString().split('T')[0]
-  const weekAgo = new Date(now)
-  weekAgo.setDate(weekAgo.getDate() - 6)
-
-  startDate.value = weekAgo.toISOString().split('T')[0]
-  endDate.value = today
-  filters.value.start_date = startDate.value
-  filters.value.end_date = endDate.value
-}
+// Initialize filters with date range
+filters.value.start_date = startDate.value
+filters.value.end_date = endDate.value
 
 // User search with debounce
 const debounceSearchUsers = () => {
@@ -796,7 +800,7 @@ const selectUser = async (user: SimpleUser) => {
   filters.value.api_key_id = undefined
 
   // Load API keys for selected user
-  await loadApiKeysForUser(user.id)
+  await loadApiKeys(user.id)
   applyFilters()
 }
 
@@ -807,10 +811,11 @@ const clearUserFilter = () => {
   filters.value.user_id = undefined
   filters.value.api_key_id = undefined
   apiKeys.value = []
+  loadApiKeys()
   applyFilters()
 }
 
-const loadApiKeysForUser = async (userId: number) => {
+const loadApiKeys = async (userId?: number) => {
   try {
     apiKeys.value = await adminAPI.usage.searchApiKeys(userId)
   } catch (error) {
@@ -863,7 +868,24 @@ const formatCacheTokens = (value: number): string => {
   return value.toLocaleString()
 }
 
+const isAbortError = (error: unknown): boolean => {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return true
+  }
+  if (typeof error === 'object' && error !== null) {
+    const maybeError = error as { code?: string; name?: string }
+    return maybeError.code === 'ERR_CANCELED' || maybeError.name === 'CanceledError'
+  }
+  return false
+}
+
 const loadUsageLogs = async () => {
+  if (abortController) {
+    abortController.abort()
+  }
+  const controller = new AbortController()
+  abortController = controller
+  const { signal } = controller
   loading.value = true
   try {
     const params: AdminUsageQueryParams = {
@@ -872,17 +894,23 @@ const loadUsageLogs = async () => {
       ...filters.value
     }
 
-    const response = await adminAPI.usage.list(params)
+    const response = await adminAPI.usage.list(params, { signal })
+    if (signal.aborted) {
+      return
+    }
     usageLogs.value = response.items
     pagination.value.total = response.total
     pagination.value.pages = response.pages
 
-    // Extract models from loaded logs for filter options
-    extractModelsFromLogs()
   } catch (error) {
+    if (signal.aborted || isAbortError(error)) {
+      return
+    }
     appStore.showError(t('usage.failedToLoad'))
   } finally {
-    loading.value = false
+    if (!signal.aborted && abortController === controller) {
+      loading.value = false
+    }
   }
 }
 
@@ -944,27 +972,40 @@ const applyFilters = () => {
 // Load filter options
 const loadFilterOptions = async () => {
   try {
-    // Load accounts
-    const accountsResponse = await adminAPI.accounts.list(1, 1000)
+    const [accountsResponse, groupsResponse] = await Promise.all([
+      adminAPI.accounts.list(1, 1000),
+      adminAPI.groups.list(1, 1000)
+    ])
     accounts.value = accountsResponse.items || []
-
-    // Load groups
-    const groupsResponse = await adminAPI.groups.list(1, 1000)
     groups.value = groupsResponse.items || []
   } catch (error) {
     console.error('Failed to load filter options:', error)
   }
+  await loadModelOptions()
 }
 
-// Extract unique models from usage logs
-const extractModelsFromLogs = () => {
-  const uniqueModels = new Set<string>()
-  usageLogs.value.forEach(log => {
-    if (log.model) {
-      uniqueModels.add(log.model)
-    }
-  })
-  models.value = Array.from(uniqueModels).sort()
+const loadModelOptions = async () => {
+  try {
+    const endDate = new Date()
+    const startDateRange = new Date(endDate)
+    startDateRange.setDate(startDateRange.getDate() - 29)
+    // Use local timezone instead of UTC
+    const endDateStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`
+    const startDateStr = `${startDateRange.getFullYear()}-${String(startDateRange.getMonth() + 1).padStart(2, '0')}-${String(startDateRange.getDate()).padStart(2, '0')}`
+    const response = await adminAPI.dashboard.getModelStats({
+      start_date: startDateStr,
+      end_date: endDateStr
+    })
+    const uniqueModels = new Set<string>()
+    response.models?.forEach((stat) => {
+      if (stat.model) {
+        uniqueModels.add(stat.model)
+      }
+    })
+    models.value = Array.from(uniqueModels).sort()
+  } catch (error) {
+    console.error('Failed to load model options:', error)
+  }
 }
 
 const resetFilters = () => {
@@ -985,8 +1026,15 @@ const resetFilters = () => {
   }
   granularity.value = 'day'
   // Reset date range to default (last 7 days)
-  initializeDateRange()
+  const now = new Date()
+  const weekAgo = new Date(now)
+  weekAgo.setDate(weekAgo.getDate() - 6)
+  startDate.value = formatLocalDate(weekAgo)
+  endDate.value = formatLocalDate(now)
+  filters.value.start_date = startDate.value
+  filters.value.end_date = endDate.value
   pagination.value.page = 1
+  loadApiKeys()
   loadUsageLogs()
   loadUsageStats()
   loadChartData()
@@ -994,6 +1042,12 @@ const resetFilters = () => {
 
 const handlePageChange = (page: number) => {
   pagination.value.page = page
+  loadUsageLogs()
+}
+
+const handlePageSizeChange = (pageSize: number) => {
+  pagination.value.page_size = pageSize
+  pagination.value.page = 1
   loadUsageLogs()
 }
 
@@ -1070,8 +1124,8 @@ const hideTooltip = () => {
 }
 
 onMounted(() => {
-  initializeDateRange()
   loadFilterOptions()
+  loadApiKeys()
   loadUsageLogs()
   loadUsageStats()
   loadChartData()
@@ -1082,6 +1136,9 @@ onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
   if (searchTimeout) {
     clearTimeout(searchTimeout)
+  }
+  if (abortController) {
+    abortController.abort()
   }
 })
 </script>

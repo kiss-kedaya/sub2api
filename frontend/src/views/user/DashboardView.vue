@@ -10,7 +10,7 @@
         <!-- Row 1: Core Stats -->
         <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <!-- Balance -->
-          <div class="card p-4">
+          <div v-if="!authStore.isSimpleMode" class="card p-4">
             <div class="flex items-center gap-3">
               <div class="rounded-lg bg-emerald-100 p-2 dark:bg-emerald-900/30">
                 <svg
@@ -322,7 +322,13 @@
           <!-- Charts Grid -->
           <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <!-- Model Distribution Chart -->
-            <div class="card p-4">
+            <div class="card relative overflow-hidden p-4">
+              <div
+                v-if="loadingCharts"
+                class="absolute inset-0 z-10 flex items-center justify-center bg-white/50 backdrop-blur-sm dark:bg-dark-800/50"
+              >
+                <LoadingSpinner size="md" />
+              </div>
               <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
                 {{ t('dashboard.modelDistribution') }}
               </h3>
@@ -330,6 +336,7 @@
                 <div class="h-48 w-48">
                   <Doughnut
                     v-if="modelChartData"
+                    ref="modelChartRef"
                     :data="modelChartData"
                     :options="doughnutOptions"
                   />
@@ -383,12 +390,23 @@
             </div>
 
             <!-- Token Usage Trend Chart -->
-            <div class="card p-4">
+            <div class="card relative overflow-hidden p-4">
+              <div
+                v-if="loadingCharts"
+                class="absolute inset-0 z-10 flex items-center justify-center bg-white/50 backdrop-blur-sm dark:bg-dark-800/50"
+              >
+                <LoadingSpinner size="md" />
+              </div>
               <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
                 {{ t('dashboard.tokenUsageTrend') }}
               </h3>
               <div class="h-48">
-                <Line v-if="trendChartData" :data="trendChartData" :options="lineOptions" />
+                <Line
+                  v-if="trendChartData"
+                  ref="trendChartRef"
+                  :data="trendChartData"
+                  :options="lineOptions"
+                />
                 <div
                   v-else
                   class="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400"
@@ -645,10 +663,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
+import { useSubscriptionStore } from '@/stores/subscriptions'
 import { formatDateTime } from '@/utils/format'
 
 const { t } = useI18n()
@@ -689,23 +708,39 @@ ChartJS.register(
 
 const router = useRouter()
 const authStore = useAuthStore()
+const subscriptionStore = useSubscriptionStore()
 
 const user = computed(() => authStore.user)
 const stats = ref<UserDashboardStats | null>(null)
 const loading = ref(false)
 const loadingUsage = ref(false)
+const loadingCharts = ref(false)
+
+type ChartComponentRef = { chart?: ChartJS }
 
 // Chart data
 const trendData = ref<TrendDataPoint[]>([])
 const modelStats = ref<ModelStat[]>([])
+const modelChartRef = ref<ChartComponentRef | null>(null)
+const trendChartRef = ref<ChartComponentRef | null>(null)
 
 // Recent usage
 const recentUsage = ref<UsageLog[]>([])
 
+// Helper function to format date in local timezone
+const formatLocalDate = (date: Date): string => {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+// Initialize date range immediately (not in onMounted)
+const now = new Date()
+const weekAgo = new Date(now)
+weekAgo.setDate(weekAgo.getDate() - 6)
+
 // Date range
 const granularity = ref<'day' | 'hour'>('day')
-const startDate = ref('')
-const endDate = ref('')
+const startDate = ref(formatLocalDate(weekAgo))
+const endDate = ref(formatLocalDate(now))
 
 // Granularity options for Select component
 const granularityOptions = computed(() => [
@@ -938,18 +973,6 @@ const onDateRangeChange = (range: {
   loadChartData()
 }
 
-// Initialize default date range
-const initializeDateRange = () => {
-  const now = new Date()
-  const today = now.toISOString().split('T')[0]
-  const weekAgo = new Date(now)
-  weekAgo.setDate(weekAgo.getDate() - 6)
-
-  startDate.value = weekAgo.toISOString().split('T')[0]
-  endDate.value = today
-  granularity.value = 'day'
-}
-
 // Load data
 const loadDashboardStats = async () => {
   loading.value = true
@@ -964,6 +987,7 @@ const loadDashboardStats = async () => {
 }
 
 const loadChartData = async () => {
+  loadingCharts.value = true
   try {
     const params = {
       start_date: startDate.value,
@@ -981,19 +1005,19 @@ const loadChartData = async () => {
     modelStats.value = modelResponse.models || []
   } catch (error) {
     console.error('Error loading chart data:', error)
+  } finally {
+    loadingCharts.value = false
   }
 }
 
 const loadRecentUsage = async () => {
   loadingUsage.value = true
   try {
-    // 后端 /usage 查询参数 start_date/end_date 仅接受 YYYY-MM-DD（见 backend usage handler 的校验逻辑）。
-    // 同时后端会将 end_date 自动扩展到当天 23:59:59.999...，因此前端只需要传「日期」即可。
-    // 注意：toISOString() 生成的是 UTC 日期字符串；如果需要按本地/服务端时区对齐统计口径，
-    // 请改用时区感知的日期格式化方法（例如 Intl.DateTimeFormat 指定 timeZone）。
+    // Use local timezone instead of UTC
     const now = new Date()
-    const endDate = now.toISOString().split('T')[0]
-    const startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    const endDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    const startDate = `${weekAgo.getFullYear()}-${String(weekAgo.getMonth() + 1).padStart(2, '0')}-${String(weekAgo.getDate()).padStart(2, '0')}`
     const usageResponse = await usageAPI.getByDateRange(startDate, endDate)
     recentUsage.value = usageResponse.items.slice(0, 5)
   } catch (error) {
@@ -1003,16 +1027,27 @@ const loadRecentUsage = async () => {
   }
 }
 
-onMounted(() => {
-  loadDashboardStats()
-  initializeDateRange()
-  loadChartData()
-  loadRecentUsage()
+onMounted(async () => {
+  // Load critical data first
+  await loadDashboardStats()
+
+  // Force refresh subscription status when entering dashboard (bypass cache)
+  subscriptionStore.fetchActiveSubscriptions(true).catch((error) => {
+    console.error('Failed to refresh subscription status:', error)
+  })
+
+  // Load chart data and recent usage in parallel (non-critical)
+  Promise.all([loadChartData(), loadRecentUsage()]).catch((error) => {
+    console.error('Error loading secondary data:', error)
+  })
 })
 
 // Watch for dark mode changes
 watch(isDarkMode, () => {
-  // Force chart re-render on theme change
+  nextTick(() => {
+    modelChartRef.value?.chart?.update()
+    trendChartRef.value?.chart?.update()
+  })
 })
 </script>
 
