@@ -585,7 +585,7 @@
                   : 'https://api.anthropic.com'
             "
           />
-          <p class="input-hint">{{ t('admin.accounts.baseUrlHint') }}</p>
+          <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
@@ -602,13 +602,7 @@
                   : 'sk-ant-...'
             "
           />
-          <p class="input-hint">
-            {{
-              form.platform === 'gemini'
-                ? t('admin.accounts.gemini.apiKeyHint')
-                : t('admin.accounts.apiKeyHint')
-            }}
-          </p>
+          <p class="input-hint">{{ apiKeyHint }}</p>
         </div>
 
         <!-- Model Restriction Section (不适用于 Gemini) -->
@@ -1055,8 +1049,9 @@
         </div>
       </div>
 
-      <!-- Group Selection -->
+      <!-- Group Selection - 仅标准模式显示 -->
       <GroupSelector
+        v-if="!authStore.isSimpleMode"
         v-model="form.group_ids"
         :groups="groups"
         :platform="form.platform"
@@ -1172,6 +1167,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import {
   useAccountOAuth,
@@ -1199,12 +1195,26 @@ interface OAuthFlowExposed {
 }
 
 const { t } = useI18n()
+const authStore = useAuthStore()
 
 const oauthStepTitle = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.oauth.openai.title')
   if (form.platform === 'gemini') return t('admin.accounts.oauth.gemini.title')
   if (form.platform === 'antigravity') return t('admin.accounts.oauth.antigravity.title')
   return t('admin.accounts.oauth.title')
+})
+
+// Platform-specific hints for API Key type
+const baseUrlHint = computed(() => {
+  if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
+  if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
+  return t('admin.accounts.baseUrlHint')
+})
+
+const apiKeyHint = computed(() => {
+  if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
+  if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
+  return t('admin.accounts.apiKeyHint')
 })
 
 interface Props {

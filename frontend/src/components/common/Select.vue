@@ -297,7 +297,7 @@ onUnmounted(() => {
 }
 
 .select-dropdown {
-  @apply absolute z-[100] mt-2 w-full;
+  @apply absolute left-0 z-[100] mt-2 min-w-full w-max max-w-[300px];
   @apply bg-white dark:bg-dark-800;
   @apply rounded-xl;
   @apply border border-gray-200 dark:border-dark-700;
@@ -339,7 +339,7 @@ onUnmounted(() => {
 }
 
 .select-option-label {
-  @apply truncate;
+  @apply flex-1 min-w-0 truncate text-left;
 }
 
 .select-empty {

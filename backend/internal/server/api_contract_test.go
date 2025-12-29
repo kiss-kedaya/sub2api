@@ -59,7 +59,8 @@ func TestAPIContracts(t *testing.T) {
 					"status": "active",
 					"allowed_groups": null,
 					"created_at": "2025-01-02T03:04:05Z",
-					"updated_at": "2025-01-02T03:04:05Z"
+					"updated_at": "2025-01-02T03:04:05Z",
+					"run_mode": "standard"
 				}
 			}`,
 		},
@@ -369,6 +370,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 		Default: config.DefaultConfig{
 			ApiKeyPrefix: "sk-",
 		},
+		RunMode: config.RunModeStandard,
 	}
 
 	userService := service.NewUserService(userRepo)
@@ -380,7 +382,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	settingRepo := newStubSettingRepo()
 	settingService := service.NewSettingService(settingRepo, cfg)
 
-	authHandler := handler.NewAuthHandler(nil, userService)
+	authHandler := handler.NewAuthHandler(cfg, nil, userService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	usageHandler := handler.NewUsageHandler(usageService, apiKeyService)
 	adminSettingHandler := adminhandler.NewSettingHandler(settingService, nil)
