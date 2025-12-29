@@ -55,7 +55,6 @@ export interface PublicSettings {
   contact_info: string
   doc_url: string
   version: string
-  simple_mode: boolean
 }
 
 export interface AuthResponse {

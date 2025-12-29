@@ -43,6 +43,5 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		ContactInfo:         settings.ContactInfo,
 		DocUrl:              settings.DocUrl,
 		Version:             h.version,
-		SimpleMode:          settings.SimpleMode,
 	})
 }

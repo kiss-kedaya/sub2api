@@ -99,7 +99,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	geminiOAuthHandler := admin.NewGeminiOAuthHandler(geminiOAuthService)
 	proxyHandler := admin.NewProxyHandler(adminService)
 	adminRedeemHandler := admin.NewRedeemHandler(adminService)
-	settingHandler := admin.NewSettingHandler(settingService, emailService, userService)
+	settingHandler := admin.NewSettingHandler(settingService, emailService)
 	updateCache := repository.NewUpdateCache(client)
 	gitHubReleaseClient := repository.NewGitHubReleaseClient()
 	serviceBuildInfo := provideServiceBuildInfo(buildInfo)
