@@ -1883,7 +1883,7 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 	if statusCode != 429 {
 		return
 	}
-	resetAt := parseGeminiRateLimitResetTime(body)
+	resetAt := ParseGeminiRateLimitResetTime(body)
 	if resetAt == nil {
 		ra := time.Now().Add(5 * time.Minute)
 		_ = s.accountRepo.SetRateLimited(ctx, account.ID, ra)
@@ -1892,7 +1892,8 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 	_ = s.accountRepo.SetRateLimited(ctx, account.ID, time.Unix(*resetAt, 0))
 }
 
-func parseGeminiRateLimitResetTime(body []byte) *int64 {
+// ParseGeminiRateLimitResetTime 解析 Gemini 格式的 429 响应，返回重置时间的 Unix 时间戳
+func ParseGeminiRateLimitResetTime(body []byte) *int64 {
 	// Try to parse metadata.quotaResetDelay like "12.345s"
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err == nil {
