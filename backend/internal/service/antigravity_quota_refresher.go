@@ -14,7 +14,6 @@ import (
 type AntigravityQuotaRefresher struct {
 	accountRepo AccountRepository
 	proxyRepo   ProxyRepository
-	oauthSvc    *AntigravityOAuthService
 	cfg         *config.TokenRefreshConfig
 
 	stopCh chan struct{}
@@ -25,13 +24,12 @@ type AntigravityQuotaRefresher struct {
 func NewAntigravityQuotaRefresher(
 	accountRepo AccountRepository,
 	proxyRepo ProxyRepository,
-	oauthSvc *AntigravityOAuthService,
+	_ *AntigravityOAuthService,
 	cfg *config.Config,
 ) *AntigravityQuotaRefresher {
 	return &AntigravityQuotaRefresher{
 		accountRepo: accountRepo,
 		proxyRepo:   proxyRepo,
-		oauthSvc:    oauthSvc,
 		cfg:         &cfg.TokenRefresh,
 		stopCh:      make(chan struct{}),
 	}
