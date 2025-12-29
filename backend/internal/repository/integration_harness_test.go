@@ -15,16 +15,19 @@ import (
 	"testing"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
+	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
+	"github.com/Wei-Shaw/sub2api/internal/infrastructure"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+	_ "github.com/lib/pq"
 	redisclient "github.com/redis/go-redis/v9"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
-	gormpostgres "gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 const (
@@ -33,7 +36,7 @@ const (
 )
 
 var (
-	integrationDB    *gorm.DB
+	integrationDB    *sql.DB
 	integrationRedis *redisclient.Client
 
 	redisNamespaceSeq uint64
@@ -88,13 +91,13 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	integrationDB, err = openGormWithRetry(ctx, dsn, 30*time.Second)
+	integrationDB, err = openSQLWithRetry(ctx, dsn, 30*time.Second)
 	if err != nil {
-		log.Printf("failed to open gorm db: %v", err)
+		log.Printf("failed to open sql db: %v", err)
 		os.Exit(1)
 	}
-	if err := AutoMigrate(integrationDB); err != nil {
-		log.Printf("failed to automigrate db: %v", err)
+	if err := infrastructure.ApplyMigrations(ctx, integrationDB); err != nil {
+		log.Printf("failed to apply db migrations: %v", err)
 		os.Exit(1)
 	}
 
@@ -121,6 +124,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	_ = integrationRedis.Close()
+	_ = integrationDB.Close()
 
 	os.Exit(code)
 }
@@ -147,29 +151,21 @@ func dockerImageExists(ctx context.Context, image string) bool {
 	return cmd.Run() == nil
 }
 
-func openGormWithRetry(ctx context.Context, dsn string, timeout time.Duration) (*gorm.DB, error) {
+func openSQLWithRetry(ctx context.Context, dsn string, timeout time.Duration) (*sql.DB, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 
 	for time.Now().Before(deadline) {
-		db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{
-			Logger: logger.Default.LogMode(logger.Silent),
-		})
+		db, err := sql.Open("postgres", dsn)
 		if err != nil {
 			lastErr = err
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
 
-		sqlDB, err := db.DB()
-		if err != nil {
+		if err := pingWithTimeout(ctx, db, 2*time.Second); err != nil {
 			lastErr = err
-			time.Sleep(250 * time.Millisecond)
-			continue
-		}
-
-		if err := pingWithTimeout(ctx, sqlDB, 2*time.Second); err != nil {
-			lastErr = err
+			_ = db.Close()
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
@@ -186,15 +182,29 @@ func pingWithTimeout(ctx context.Context, db *sql.DB, timeout time.Duration) err
 	return db.PingContext(pingCtx)
 }
 
-func testTx(t *testing.T) *gorm.DB {
+func testTx(t *testing.T) *sql.Tx {
 	t.Helper()
 
-	tx := integrationDB.Begin()
-	require.NoError(t, tx.Error, "begin tx")
+	tx, err := integrationDB.BeginTx(context.Background(), nil)
+	require.NoError(t, err, "begin tx")
 	t.Cleanup(func() {
-		_ = tx.Rollback().Error
+		_ = tx.Rollback()
 	})
 	return tx
+}
+
+func testEntSQLTx(t *testing.T) (*dbent.Client, *sql.Tx) {
+	t.Helper()
+
+	tx := testTx(t)
+	drv := entsql.NewDriver(dialect.Postgres, entsql.Conn{ExecQuerier: tx})
+	client := dbent.NewClient(dbent.Driver(drv))
+
+	t.Cleanup(func() {
+		_ = client.Close()
+	})
+
+	return client, tx
 }
 
 func testRedis(t *testing.T) *redisclient.Client {
@@ -347,18 +357,19 @@ func (s *IntegrationRedisSuite) AssertTTLWithin(ttl, min, max time.Duration) {
 	assertTTLWithin(s.T(), ttl, min, max)
 }
 
-// IntegrationDBSuite provides a base suite for DB (Gorm) integration tests.
-// Embedding suites should call SetupTest to initialize ctx and db.
+// IntegrationDBSuite provides a base suite for DB integration tests.
+// Embedding suites should call SetupTest to initialize ctx and client.
 type IntegrationDBSuite struct {
 	suite.Suite
-	ctx context.Context
-	db  *gorm.DB
+	ctx    context.Context
+	client *dbent.Client
+	tx     *sql.Tx
 }
 
-// SetupTest initializes ctx and db for each test method.
+// SetupTest initializes ctx and client for each test method.
 func (s *IntegrationDBSuite) SetupTest() {
 	s.ctx = context.Background()
-	s.db = testTx(s.T())
+	s.client, s.tx = testEntSQLTx(s.T())
 }
 
 // RequireNoError is a convenience method wrapping require.NoError with s.T().
