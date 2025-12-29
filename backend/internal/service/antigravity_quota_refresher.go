@@ -187,6 +187,17 @@ func (r *AntigravityQuotaRefresher) updateAccountTier(account *Account, loadResp
 	if tier != "" {
 		account.Extra["tier"] = tier
 	}
+
+	// 保存不符合条件的原因（如 INELIGIBLE_ACCOUNT）
+	if len(loadResp.IneligibleTiers) > 0 && loadResp.IneligibleTiers[0] != nil {
+		ineligible := loadResp.IneligibleTiers[0]
+		if ineligible.ReasonCode != "" {
+			account.Extra["ineligible_reason_code"] = ineligible.ReasonCode
+		}
+		if ineligible.ReasonMessage != "" {
+			account.Extra["ineligible_reason_message"] = ineligible.ReasonMessage
+		}
+	}
 }
 
 // updateAccountQuota 更新账户的配额信息
