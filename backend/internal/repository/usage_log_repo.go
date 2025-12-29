@@ -70,9 +70,6 @@ func (r *usageLogRepository) Create(ctx context.Context, log *service.UsageLog) 
 	}
 
 	rateMultiplier := log.RateMultiplier
-	if rateMultiplier == 0 {
-		rateMultiplier = 1
-	}
 
 	query := `
 		INSERT INTO usage_logs (
