@@ -60,7 +60,11 @@ export interface PublicSettings {
 export interface AuthResponse {
   access_token: string
   token_type: string
-  user: User
+  user: User & { run_mode?: 'standard' | 'simple' }
+}
+
+export interface CurrentUserResponse extends User {
+  run_mode?: 'standard' | 'simple'
 }
 
 // ==================== Subscription Types ====================

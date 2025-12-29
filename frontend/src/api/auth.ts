@@ -8,7 +8,7 @@ import type {
   LoginRequest,
   RegisterRequest,
   AuthResponse,
-  User,
+  CurrentUserResponse,
   SendVerifyCodeRequest,
   SendVerifyCodeResponse,
   PublicSettings
@@ -70,9 +70,8 @@ export async function register(userData: RegisterRequest): Promise<AuthResponse>
  * Get current authenticated user
  * @returns User profile data
  */
-export async function getCurrentUser(): Promise<User> {
-  const { data } = await apiClient.get<User>('/auth/me')
-  return data
+export async function getCurrentUser() {
+  return apiClient.get<CurrentUserResponse>('/auth/me')
 }
 
 /**
