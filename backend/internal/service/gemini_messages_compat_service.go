@@ -33,16 +33,18 @@ const (
 )
 
 type GeminiMessagesCompatService struct {
-	accountRepo              AccountRepository
-	cache                    GatewayCache
-	tokenProvider            *GeminiTokenProvider
-	rateLimitService         *RateLimitService
-	httpUpstream             HTTPUpstream
+	accountRepo               AccountRepository
+	groupRepo                 GroupRepository
+	cache                     GatewayCache
+	tokenProvider             *GeminiTokenProvider
+	rateLimitService          *RateLimitService
+	httpUpstream              HTTPUpstream
 	antigravityGatewayService *AntigravityGatewayService
 }
 
 func NewGeminiMessagesCompatService(
 	accountRepo AccountRepository,
+	groupRepo GroupRepository,
 	cache GatewayCache,
 	tokenProvider *GeminiTokenProvider,
 	rateLimitService *RateLimitService,
@@ -50,11 +52,12 @@ func NewGeminiMessagesCompatService(
 	antigravityGatewayService *AntigravityGatewayService,
 ) *GeminiMessagesCompatService {
 	return &GeminiMessagesCompatService{
-		accountRepo:              accountRepo,
-		cache:                    cache,
-		tokenProvider:            tokenProvider,
-		rateLimitService:         rateLimitService,
-		httpUpstream:             httpUpstream,
+		accountRepo:               accountRepo,
+		groupRepo:                 groupRepo,
+		cache:                     cache,
+		tokenProvider:             tokenProvider,
+		rateLimitService:          rateLimitService,
+		httpUpstream:              httpUpstream,
 		antigravityGatewayService: antigravityGatewayService,
 	}
 }
@@ -69,30 +72,59 @@ func (s *GeminiMessagesCompatService) SelectAccountForModel(ctx context.Context,
 }
 
 func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	// 根据分组 platform 决定查询哪种账号
+	var platform string
+	if groupID != nil {
+		group, err := s.groupRepo.GetByID(ctx, *groupID)
+		if err != nil {
+			return nil, fmt.Errorf("get group failed: %w", err)
+		}
+		platform = group.Platform
+	} else {
+		// 无分组时只使用原生 gemini 平台
+		platform = PlatformGemini
+	}
+
+	// gemini 分组支持混合调度（包含启用了 mixed_scheduling 的 antigravity 账户）
+	useMixedScheduling := platform == PlatformGemini
+	var queryPlatforms []string
+	if useMixedScheduling {
+		queryPlatforms = []string{PlatformGemini, PlatformAntigravity}
+	} else {
+		queryPlatforms = []string{platform}
+	}
+
 	cacheKey := "gemini:" + sessionHash
-	platforms := []string{PlatformGemini, PlatformAntigravity}
 
 	if sessionHash != "" {
 		accountID, err := s.cache.GetSessionAccountID(ctx, cacheKey)
 		if err == nil && accountID > 0 {
 			if _, excluded := excludedIDs[accountID]; !excluded {
 				account, err := s.accountRepo.GetByID(ctx, accountID)
-				// 支持 gemini 和 antigravity 平台的粘性会话
-				if err == nil && account.IsSchedulable() && (account.Platform == PlatformGemini || account.Platform == PlatformAntigravity) && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) {
-					_ = s.cache.RefreshSessionTTL(ctx, cacheKey, geminiStickySessionTTL)
-					return account, nil
+				// 检查账号是否有效：原生平台直接匹配，antigravity 需要启用混合调度
+				if err == nil && account.IsSchedulable() && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) {
+					valid := false
+					if account.Platform == platform {
+						valid = true
+					} else if useMixedScheduling && account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled() {
+						valid = true
+					}
+					if valid {
+						_ = s.cache.RefreshSessionTTL(ctx, cacheKey, geminiStickySessionTTL)
+						return account, nil
+					}
 				}
 			}
 		}
 	}
 
-	// 同时查询 gemini 和 antigravity 平台的可调度账户
+	// 查询可调度账户
 	var accounts []Account
 	var err error
 	if groupID != nil {
-		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, platforms)
+		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, queryPlatforms)
 	} else {
-		accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, platforms)
+		accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, queryPlatforms)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
@@ -104,7 +136,11 @@ func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx co
 		if _, excluded := excludedIDs[acc.ID]; excluded {
 			continue
 		}
-		// 根据平台类型分别检查模型支持
+		// 混合调度模式下：原生平台直接通过，antigravity 需要启用 mixed_scheduling
+		// 非混合调度模式（antigravity 分组）：不需要过滤
+		if useMixedScheduling && acc.Platform == PlatformAntigravity && !acc.IsMixedSchedulingEnabled() {
+			continue
+		}
 		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
 			continue
 		}
@@ -135,9 +171,9 @@ func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx co
 
 	if selected == nil {
 		if requestedModel != "" {
-			return nil, fmt.Errorf("no available Gemini/Antigravity accounts supporting model: %s", requestedModel)
+			return nil, fmt.Errorf("no available Gemini accounts supporting model: %s", requestedModel)
 		}
-		return nil, errors.New("no available Gemini/Antigravity accounts")
+		return nil, errors.New("no available Gemini accounts")
 	}
 
 	if sessionHash != "" {
