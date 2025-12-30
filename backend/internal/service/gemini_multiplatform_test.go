@@ -25,6 +25,14 @@ func (m *mockAccountRepoForGemini) GetByID(ctx context.Context, id int64) (*Acco
 	return nil, errors.New("account not found")
 }
 
+func (m *mockAccountRepoForGemini) ExistsByID(ctx context.Context, id int64) (bool, error) {
+	if m.accountsByID == nil {
+		return false, nil
+	}
+	_, ok := m.accountsByID[id]
+	return ok, nil
+}
+
 func (m *mockAccountRepoForGemini) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
 	var result []Account
 	for _, acc := range m.accounts {
