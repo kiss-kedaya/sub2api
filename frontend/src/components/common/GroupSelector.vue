@@ -50,6 +50,7 @@ interface Props {
   modelValue: number[]
   groups: Group[]
   platform?: GroupPlatform // Optional platform filter
+  mixedScheduling?: boolean // For antigravity accounts: allow anthropic/gemini groups
 }
 
 const props = defineProps<Props>()
@@ -62,6 +63,13 @@ const filteredGroups = computed(() => {
   if (!props.platform) {
     return props.groups
   }
+  // antigravity 账户启用混合调度后，可选择 anthropic/gemini 分组
+  if (props.platform === 'antigravity' && props.mixedScheduling) {
+    return props.groups.filter(
+      (g) => g.platform === 'antigravity' || g.platform === 'anthropic' || g.platform === 'gemini'
+    )
+  }
+  // 默认：只能选择同 platform 的分组
   return props.groups.filter((g) => g.platform === props.platform)
 })
 
