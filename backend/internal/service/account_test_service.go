@@ -335,7 +335,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if baseURL == "" {
 			baseURL = "https://api.openai.com"
 		}
-		apiURL = strings.TrimSuffix(baseURL, "/") + "/v1/responses"
+		apiURL = strings.TrimSuffix(baseURL, "/") + "/responses"
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
