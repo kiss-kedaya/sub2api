@@ -44,11 +44,12 @@ type TestEvent struct {
 
 // AccountTestService handles account testing operations
 type AccountTestService struct {
-	accountRepo         AccountRepository
-	oauthService        *OAuthService
-	openaiOAuthService  *OpenAIOAuthService
-	geminiTokenProvider *GeminiTokenProvider
-	httpUpstream        HTTPUpstream
+	accountRepo               AccountRepository
+	oauthService              *OAuthService
+	openaiOAuthService        *OpenAIOAuthService
+	geminiTokenProvider       *GeminiTokenProvider
+	antigravityGatewayService *AntigravityGatewayService
+	httpUpstream              HTTPUpstream
 }
 
 // NewAccountTestService creates a new AccountTestService
@@ -57,14 +58,16 @@ func NewAccountTestService(
 	oauthService *OAuthService,
 	openaiOAuthService *OpenAIOAuthService,
 	geminiTokenProvider *GeminiTokenProvider,
+	antigravityGatewayService *AntigravityGatewayService,
 	httpUpstream HTTPUpstream,
 ) *AccountTestService {
 	return &AccountTestService{
-		accountRepo:         accountRepo,
-		oauthService:        oauthService,
-		openaiOAuthService:  openaiOAuthService,
-		geminiTokenProvider: geminiTokenProvider,
-		httpUpstream:        httpUpstream,
+		accountRepo:               accountRepo,
+		oauthService:              oauthService,
+		openaiOAuthService:        openaiOAuthService,
+		geminiTokenProvider:       geminiTokenProvider,
+		antigravityGatewayService: antigravityGatewayService,
+		httpUpstream:              httpUpstream,
 	}
 }
 
@@ -139,6 +142,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 
 	if account.IsGemini() {
 		return s.testGeminiAccountConnection(c, account, modelID)
+	}
+
+	if account.Platform == PlatformAntigravity {
+		return s.testAntigravityAccountConnection(c, account, modelID)
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)
@@ -457,6 +464,46 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 	return s.processGeminiStream(c, resp.Body)
 }
 
+// testAntigravityAccountConnection tests an Antigravity account's connection
+// 支持 Claude 和 Gemini 两种协议，使用非流式请求
+func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, account *Account, modelID string) error {
+	ctx := c.Request.Context()
+
+	// 默认模型：Claude 使用 claude-sonnet-4-5，Gemini 使用 gemini-3-pro-preview
+	testModelID := modelID
+	if testModelID == "" {
+		testModelID = "claude-sonnet-4-5"
+	}
+
+	if s.antigravityGatewayService == nil {
+		return s.sendErrorAndEnd(c, "Antigravity gateway service not configured")
+	}
+
+	// Set SSE headers
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	// Send test_start event
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+
+	// 调用 AntigravityGatewayService.TestConnection（复用协议转换逻辑）
+	result, err := s.antigravityGatewayService.TestConnection(ctx, account, testModelID)
+	if err != nil {
+		return s.sendErrorAndEnd(c, err.Error())
+	}
+
+	// 发送响应内容
+	if result.Text != "" {
+		s.sendEvent(c, TestEvent{Type: "content", Text: result.Text})
+	}
+
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
+}
+
 // buildGeminiAPIKeyRequest builds request for Gemini API Key accounts
 func (s *AccountTestService) buildGeminiAPIKeyRequest(ctx context.Context, account *Account, modelID string, payload []byte) (*http.Request, error) {
 	apiKey := account.GetCredential("api_key")
@@ -514,7 +561,12 @@ func (s *AccountTestService) buildGeminiOAuthRequest(ctx context.Context, accoun
 		return req, nil
 	}
 
-	// Wrap payload in Code Assist format
+	// Code Assist mode (with project_id)
+	return s.buildCodeAssistRequest(ctx, accessToken, projectID, modelID, payload)
+}
+
+// buildCodeAssistRequest builds request for Google Code Assist API (used by Gemini CLI and Antigravity)
+func (s *AccountTestService) buildCodeAssistRequest(ctx context.Context, accessToken, projectID, modelID string, payload []byte) (*http.Request, error) {
 	var inner map[string]any
 	if err := json.Unmarshal(payload, &inner); err != nil {
 		return nil, err

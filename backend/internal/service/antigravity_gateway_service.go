@@ -130,6 +130,165 @@ func (s *AntigravityGatewayService) IsModelSupported(requestedModel string) bool
 	return false
 }
 
+// TestConnectionResult 测试连接结果
+type TestConnectionResult struct {
+	Text        string // 响应文本
+	MappedModel string // 实际使用的模型
+}
+
+// TestConnection 测试 Antigravity 账号连接（非流式，无重试、无计费）
+// 支持 Claude 和 Gemini 两种协议，根据 modelID 前缀自动选择
+func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account *Account, modelID string) (*TestConnectionResult, error) {
+	// 获取 token
+	if s.tokenProvider == nil {
+		return nil, errors.New("antigravity token provider not configured")
+	}
+	accessToken, err := s.tokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		return nil, fmt.Errorf("获取 access_token 失败: %w", err)
+	}
+
+	// 获取 project_id
+	projectID := strings.TrimSpace(account.GetCredential("project_id"))
+	if projectID == "" {
+		return nil, errors.New("project_id not found in credentials")
+	}
+
+	// 模型映射
+	mappedModel := s.getMappedModel(account, modelID)
+
+	// 构建请求体
+	var requestBody []byte
+	if strings.HasPrefix(modelID, "gemini-") {
+		// Gemini 模型：直接使用 Gemini 格式
+		requestBody, err = s.buildGeminiTestRequest(projectID, mappedModel)
+	} else {
+		// Claude 模型：使用协议转换
+		requestBody, err = s.buildClaudeTestRequest(projectID, mappedModel)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("构建请求失败: %w", err)
+	}
+
+	// 构建 HTTP 请求（非流式）
+	fullURL := fmt.Sprintf("%s/v1internal:generateContent", antigravity.BaseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(requestBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("User-Agent", antigravity.UserAgent)
+
+	// 代理 URL
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	// 发送请求
+	resp, err := s.httpUpstream.Do(req, proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// 读取响应
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("API 返回 %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// 解包 v1internal 响应
+	unwrapped, err := s.unwrapV1InternalResponse(respBody)
+	if err != nil {
+		return nil, fmt.Errorf("解包响应失败: %w", err)
+	}
+
+	// 提取响应文本
+	text := extractGeminiResponseText(unwrapped)
+
+	return &TestConnectionResult{
+		Text:        text,
+		MappedModel: mappedModel,
+	}, nil
+}
+
+// buildGeminiTestRequest 构建 Gemini 格式测试请求
+func (s *AntigravityGatewayService) buildGeminiTestRequest(projectID, model string) ([]byte, error) {
+	payload := map[string]any{
+		"contents": []map[string]any{
+			{
+				"role": "user",
+				"parts": []map[string]any{
+					{"text": "hi"},
+				},
+			},
+		},
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	return s.wrapV1InternalRequest(projectID, model, payloadBytes)
+}
+
+// buildClaudeTestRequest 构建 Claude 格式测试请求并转换为 Gemini 格式
+func (s *AntigravityGatewayService) buildClaudeTestRequest(projectID, mappedModel string) ([]byte, error) {
+	claudeReq := &antigravity.ClaudeRequest{
+		Model: mappedModel,
+		Messages: []antigravity.ClaudeMessage{
+			{
+				Role:    "user",
+				Content: json.RawMessage(`"hi"`),
+			},
+		},
+		MaxTokens: 1024,
+		Stream:    false,
+	}
+	return antigravity.TransformClaudeToGemini(claudeReq, projectID, mappedModel)
+}
+
+// extractGeminiResponseText 从 Gemini 响应中提取文本
+func extractGeminiResponseText(respBody []byte) string {
+	var resp map[string]any
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return ""
+	}
+
+	candidates, ok := resp["candidates"].([]any)
+	if !ok || len(candidates) == 0 {
+		return ""
+	}
+
+	candidate, ok := candidates[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+
+	content, ok := candidate["content"].(map[string]any)
+	if !ok {
+		return ""
+	}
+
+	parts, ok := content["parts"].([]any)
+	if !ok {
+		return ""
+	}
+
+	var texts []string
+	for _, part := range parts {
+		if partMap, ok := part.(map[string]any); ok {
+			if text, ok := partMap["text"].(string); ok && text != "" {
+				texts = append(texts, text)
+			}
+		}
+	}
+
+	return strings.Join(texts, "")
+}
+
 // wrapV1InternalRequest 包装请求为 v1internal 格式
 func (s *AntigravityGatewayService) wrapV1InternalRequest(projectID, model string, originalBody []byte) ([]byte, error) {
 	var request any

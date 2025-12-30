@@ -918,6 +918,37 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	// Handle Antigravity accounts: return Claude + Gemini models
+	if account.Platform == service.PlatformAntigravity {
+		// Antigravity 支持 Claude 和部分 Gemini 模型
+		type UnifiedModel struct {
+			ID          string `json:"id"`
+			Type        string `json:"type"`
+			DisplayName string `json:"display_name"`
+		}
+
+		var models []UnifiedModel
+
+		// 添加 Claude 模型
+		for _, m := range claude.DefaultModels {
+			models = append(models, UnifiedModel{
+				ID:          m.ID,
+				Type:        m.Type,
+				DisplayName: m.DisplayName,
+			})
+		}
+
+		// 添加 Gemini 3 系列模型用于测试
+		geminiTestModels := []UnifiedModel{
+			{ID: "gemini-3-flash", Type: "model", DisplayName: "Gemini 3 Flash"},
+			{ID: "gemini-3-pro-preview", Type: "model", DisplayName: "Gemini 3 Pro Preview"},
+		}
+		models = append(models, geminiTestModels...)
+
+		response.Success(c, models)
+		return
+	}
+
 	// Handle Claude/Anthropic accounts
 	// For OAuth and Setup-Token accounts: return default models
 	if account.IsOAuth() {
