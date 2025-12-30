@@ -3,17 +3,22 @@
 package repository
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
-	"gorm.io/datatypes"
-	"gorm.io/gorm"
 )
 
-func mustCreateUser(t *testing.T, db *gorm.DB, u *userModel) *userModel {
+func mustCreateUser(t *testing.T, client *dbent.Client, u *service.User) *service.User {
 	t.Helper()
+	ctx := context.Background()
+
+	if u.Email == "" {
+		u.Email = "user-" + time.Now().Format(time.RFC3339Nano) + "@example.com"
+	}
 	if u.PasswordHash == "" {
 		u.PasswordHash = "test-password-hash"
 	}
@@ -26,18 +31,48 @@ func mustCreateUser(t *testing.T, db *gorm.DB, u *userModel) *userModel {
 	if u.Concurrency == 0 {
 		u.Concurrency = 5
 	}
-	if u.CreatedAt.IsZero() {
-		u.CreatedAt = time.Now()
+
+	create := client.User.Create().
+		SetEmail(u.Email).
+		SetPasswordHash(u.PasswordHash).
+		SetRole(u.Role).
+		SetStatus(u.Status).
+		SetBalance(u.Balance).
+		SetConcurrency(u.Concurrency).
+		SetUsername(u.Username).
+		SetWechat(u.Wechat).
+		SetNotes(u.Notes)
+	if !u.CreatedAt.IsZero() {
+		create.SetCreatedAt(u.CreatedAt)
 	}
-	if u.UpdatedAt.IsZero() {
-		u.UpdatedAt = u.CreatedAt
+	if !u.UpdatedAt.IsZero() {
+		create.SetUpdatedAt(u.UpdatedAt)
 	}
-	require.NoError(t, db.Create(u).Error, "create user")
+
+	created, err := create.Save(ctx)
+	require.NoError(t, err, "create user")
+
+	u.ID = created.ID
+	u.CreatedAt = created.CreatedAt
+	u.UpdatedAt = created.UpdatedAt
+
+	if len(u.AllowedGroups) > 0 {
+		for _, groupID := range u.AllowedGroups {
+			_, err := client.UserAllowedGroup.Create().
+				SetUserID(u.ID).
+				SetGroupID(groupID).
+				Save(ctx)
+			require.NoError(t, err, "create user_allowed_groups row")
+		}
+	}
+
 	return u
 }
 
-func mustCreateGroup(t *testing.T, db *gorm.DB, g *groupModel) *groupModel {
+func mustCreateGroup(t *testing.T, client *dbent.Client, g *service.Group) *service.Group {
 	t.Helper()
+	ctx := context.Background()
+
 	if g.Platform == "" {
 		g.Platform = service.PlatformAnthropic
 	}
@@ -47,18 +82,46 @@ func mustCreateGroup(t *testing.T, db *gorm.DB, g *groupModel) *groupModel {
 	if g.SubscriptionType == "" {
 		g.SubscriptionType = service.SubscriptionTypeStandard
 	}
-	if g.CreatedAt.IsZero() {
-		g.CreatedAt = time.Now()
+
+	create := client.Group.Create().
+		SetName(g.Name).
+		SetPlatform(g.Platform).
+		SetStatus(g.Status).
+		SetSubscriptionType(g.SubscriptionType).
+		SetRateMultiplier(g.RateMultiplier).
+		SetIsExclusive(g.IsExclusive)
+	if g.Description != "" {
+		create.SetDescription(g.Description)
 	}
-	if g.UpdatedAt.IsZero() {
-		g.UpdatedAt = g.CreatedAt
+	if g.DailyLimitUSD != nil {
+		create.SetDailyLimitUsd(*g.DailyLimitUSD)
 	}
-	require.NoError(t, db.Create(g).Error, "create group")
+	if g.WeeklyLimitUSD != nil {
+		create.SetWeeklyLimitUsd(*g.WeeklyLimitUSD)
+	}
+	if g.MonthlyLimitUSD != nil {
+		create.SetMonthlyLimitUsd(*g.MonthlyLimitUSD)
+	}
+	if !g.CreatedAt.IsZero() {
+		create.SetCreatedAt(g.CreatedAt)
+	}
+	if !g.UpdatedAt.IsZero() {
+		create.SetUpdatedAt(g.UpdatedAt)
+	}
+
+	created, err := create.Save(ctx)
+	require.NoError(t, err, "create group")
+
+	g.ID = created.ID
+	g.CreatedAt = created.CreatedAt
+	g.UpdatedAt = created.UpdatedAt
 	return g
 }
 
-func mustCreateProxy(t *testing.T, db *gorm.DB, p *proxyModel) *proxyModel {
+func mustCreateProxy(t *testing.T, client *dbent.Client, p *service.Proxy) *service.Proxy {
 	t.Helper()
+	ctx := context.Background()
+
 	if p.Protocol == "" {
 		p.Protocol = "http"
 	}
@@ -71,18 +134,39 @@ func mustCreateProxy(t *testing.T, db *gorm.DB, p *proxyModel) *proxyModel {
 	if p.Status == "" {
 		p.Status = service.StatusActive
 	}
-	if p.CreatedAt.IsZero() {
-		p.CreatedAt = time.Now()
+
+	create := client.Proxy.Create().
+		SetName(p.Name).
+		SetProtocol(p.Protocol).
+		SetHost(p.Host).
+		SetPort(p.Port).
+		SetStatus(p.Status)
+	if p.Username != "" {
+		create.SetUsername(p.Username)
 	}
-	if p.UpdatedAt.IsZero() {
-		p.UpdatedAt = p.CreatedAt
+	if p.Password != "" {
+		create.SetPassword(p.Password)
 	}
-	require.NoError(t, db.Create(p).Error, "create proxy")
+	if !p.CreatedAt.IsZero() {
+		create.SetCreatedAt(p.CreatedAt)
+	}
+	if !p.UpdatedAt.IsZero() {
+		create.SetUpdatedAt(p.UpdatedAt)
+	}
+
+	created, err := create.Save(ctx)
+	require.NoError(t, err, "create proxy")
+
+	p.ID = created.ID
+	p.CreatedAt = created.CreatedAt
+	p.UpdatedAt = created.UpdatedAt
 	return p
 }
 
-func mustCreateAccount(t *testing.T, db *gorm.DB, a *accountModel) *accountModel {
+func mustCreateAccount(t *testing.T, client *dbent.Client, a *service.Account) *service.Account {
 	t.Helper()
+	ctx := context.Background()
+
 	if a.Platform == "" {
 		a.Platform = service.PlatformAnthropic
 	}
@@ -92,57 +176,158 @@ func mustCreateAccount(t *testing.T, db *gorm.DB, a *accountModel) *accountModel
 	if a.Status == "" {
 		a.Status = service.StatusActive
 	}
+	if a.Concurrency == 0 {
+		a.Concurrency = 3
+	}
+	if a.Priority == 0 {
+		a.Priority = 50
+	}
 	if !a.Schedulable {
 		a.Schedulable = true
 	}
 	if a.Credentials == nil {
-		a.Credentials = datatypes.JSONMap{}
+		a.Credentials = map[string]any{}
 	}
 	if a.Extra == nil {
-		a.Extra = datatypes.JSONMap{}
+		a.Extra = map[string]any{}
 	}
-	if a.CreatedAt.IsZero() {
-		a.CreatedAt = time.Now()
+
+	create := client.Account.Create().
+		SetName(a.Name).
+		SetPlatform(a.Platform).
+		SetType(a.Type).
+		SetCredentials(a.Credentials).
+		SetExtra(a.Extra).
+		SetConcurrency(a.Concurrency).
+		SetPriority(a.Priority).
+		SetStatus(a.Status).
+		SetSchedulable(a.Schedulable).
+		SetErrorMessage(a.ErrorMessage)
+
+	if a.ProxyID != nil {
+		create.SetProxyID(*a.ProxyID)
 	}
-	if a.UpdatedAt.IsZero() {
-		a.UpdatedAt = a.CreatedAt
+	if a.LastUsedAt != nil {
+		create.SetLastUsedAt(*a.LastUsedAt)
 	}
-	require.NoError(t, db.Create(a).Error, "create account")
+	if a.RateLimitedAt != nil {
+		create.SetRateLimitedAt(*a.RateLimitedAt)
+	}
+	if a.RateLimitResetAt != nil {
+		create.SetRateLimitResetAt(*a.RateLimitResetAt)
+	}
+	if a.OverloadUntil != nil {
+		create.SetOverloadUntil(*a.OverloadUntil)
+	}
+	if a.SessionWindowStart != nil {
+		create.SetSessionWindowStart(*a.SessionWindowStart)
+	}
+	if a.SessionWindowEnd != nil {
+		create.SetSessionWindowEnd(*a.SessionWindowEnd)
+	}
+	if a.SessionWindowStatus != "" {
+		create.SetSessionWindowStatus(a.SessionWindowStatus)
+	}
+	if !a.CreatedAt.IsZero() {
+		create.SetCreatedAt(a.CreatedAt)
+	}
+	if !a.UpdatedAt.IsZero() {
+		create.SetUpdatedAt(a.UpdatedAt)
+	}
+
+	created, err := create.Save(ctx)
+	require.NoError(t, err, "create account")
+
+	a.ID = created.ID
+	a.CreatedAt = created.CreatedAt
+	a.UpdatedAt = created.UpdatedAt
 	return a
 }
 
-func mustCreateApiKey(t *testing.T, db *gorm.DB, k *apiKeyModel) *apiKeyModel {
+func mustCreateApiKey(t *testing.T, client *dbent.Client, k *service.ApiKey) *service.ApiKey {
 	t.Helper()
+	ctx := context.Background()
+
 	if k.Status == "" {
 		k.Status = service.StatusActive
 	}
-	if k.CreatedAt.IsZero() {
-		k.CreatedAt = time.Now()
+	if k.Key == "" {
+		k.Key = "sk-" + time.Now().Format("150405.000000")
 	}
-	if k.UpdatedAt.IsZero() {
-		k.UpdatedAt = k.CreatedAt
+	if k.Name == "" {
+		k.Name = "default"
 	}
-	require.NoError(t, db.Create(k).Error, "create api key")
+
+	create := client.ApiKey.Create().
+		SetUserID(k.UserID).
+		SetKey(k.Key).
+		SetName(k.Name).
+		SetStatus(k.Status)
+	if k.GroupID != nil {
+		create.SetGroupID(*k.GroupID)
+	}
+	if !k.CreatedAt.IsZero() {
+		create.SetCreatedAt(k.CreatedAt)
+	}
+	if !k.UpdatedAt.IsZero() {
+		create.SetUpdatedAt(k.UpdatedAt)
+	}
+
+	created, err := create.Save(ctx)
+	require.NoError(t, err, "create api key")
+
+	k.ID = created.ID
+	k.CreatedAt = created.CreatedAt
+	k.UpdatedAt = created.UpdatedAt
 	return k
 }
 
-func mustCreateRedeemCode(t *testing.T, db *gorm.DB, c *redeemCodeModel) *redeemCodeModel {
+func mustCreateRedeemCode(t *testing.T, client *dbent.Client, c *service.RedeemCode) *service.RedeemCode {
 	t.Helper()
+	ctx := context.Background()
+
 	if c.Status == "" {
 		c.Status = service.StatusUnused
 	}
 	if c.Type == "" {
 		c.Type = service.RedeemTypeBalance
 	}
-	if c.CreatedAt.IsZero() {
-		c.CreatedAt = time.Now()
+	if c.Code == "" {
+		c.Code = "rc-" + time.Now().Format("150405.000000")
 	}
-	require.NoError(t, db.Create(c).Error, "create redeem code")
+
+	create := client.RedeemCode.Create().
+		SetCode(c.Code).
+		SetType(c.Type).
+		SetValue(c.Value).
+		SetStatus(c.Status).
+		SetNotes(c.Notes).
+		SetValidityDays(c.ValidityDays)
+	if c.UsedBy != nil {
+		create.SetUsedBy(*c.UsedBy)
+	}
+	if c.UsedAt != nil {
+		create.SetUsedAt(*c.UsedAt)
+	}
+	if c.GroupID != nil {
+		create.SetGroupID(*c.GroupID)
+	}
+	if !c.CreatedAt.IsZero() {
+		create.SetCreatedAt(c.CreatedAt)
+	}
+
+	created, err := create.Save(ctx)
+	require.NoError(t, err, "create redeem code")
+
+	c.ID = created.ID
+	c.CreatedAt = created.CreatedAt
 	return c
 }
 
-func mustCreateSubscription(t *testing.T, db *gorm.DB, s *userSubscriptionModel) *userSubscriptionModel {
+func mustCreateSubscription(t *testing.T, client *dbent.Client, s *service.UserSubscription) *service.UserSubscription {
 	t.Helper()
+	ctx := context.Background()
+
 	if s.Status == "" {
 		s.Status = service.SubscriptionStatusActive
 	}
@@ -162,16 +347,46 @@ func mustCreateSubscription(t *testing.T, db *gorm.DB, s *userSubscriptionModel)
 	if s.UpdatedAt.IsZero() {
 		s.UpdatedAt = now
 	}
-	require.NoError(t, db.Create(s).Error, "create user subscription")
+
+	create := client.UserSubscription.Create().
+		SetUserID(s.UserID).
+		SetGroupID(s.GroupID).
+		SetStartsAt(s.StartsAt).
+		SetExpiresAt(s.ExpiresAt).
+		SetStatus(s.Status).
+		SetAssignedAt(s.AssignedAt).
+		SetNotes(s.Notes).
+		SetDailyUsageUsd(s.DailyUsageUSD).
+		SetWeeklyUsageUsd(s.WeeklyUsageUSD).
+		SetMonthlyUsageUsd(s.MonthlyUsageUSD)
+
+	if s.AssignedBy != nil {
+		create.SetAssignedBy(*s.AssignedBy)
+	}
+	if !s.CreatedAt.IsZero() {
+		create.SetCreatedAt(s.CreatedAt)
+	}
+	if !s.UpdatedAt.IsZero() {
+		create.SetUpdatedAt(s.UpdatedAt)
+	}
+
+	created, err := create.Save(ctx)
+	require.NoError(t, err, "create user subscription")
+
+	s.ID = created.ID
+	s.CreatedAt = created.CreatedAt
+	s.UpdatedAt = created.UpdatedAt
 	return s
 }
 
-func mustBindAccountToGroup(t *testing.T, db *gorm.DB, accountID, groupID int64, priority int) {
+func mustBindAccountToGroup(t *testing.T, client *dbent.Client, accountID, groupID int64, priority int) {
 	t.Helper()
-	require.NoError(t, db.Create(&accountGroupModel{
-		AccountID: accountID,
-		GroupID:   groupID,
-		Priority:  priority,
-		CreatedAt: time.Now(),
-	}).Error, "create account_group")
+	ctx := context.Background()
+
+	_, err := client.AccountGroup.Create().
+		SetAccountID(accountID).
+		SetGroupID(groupID).
+		SetPriority(priority).
+		Save(ctx)
+	require.NoError(t, err, "create account_group")
 }
