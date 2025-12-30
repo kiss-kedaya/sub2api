@@ -235,9 +235,8 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 		defer func() { _ = tx.Rollback() }()
 		exec = tx.Client()
 		txClient = exec
-	} else {
-		// 已处于外部事务中（ErrTxStarted），复用当前 client 参与同一事务。
 	}
+	// err 为 dbent.ErrTxStarted 时，复用当前 client 参与同一事务。
 
 	// Lock the group row to avoid concurrent writes while we cascade.
 	// 这里使用 exec.QueryContext 手动扫描，确保同一事务内加锁并能区分“未找到”与其他错误。
@@ -330,8 +329,8 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 	return affectedUserIDs, nil
 }
 
-func (r *groupRepository) loadAccountCounts(ctx context.Context, groupIDs []int64) (map[int64]int64, error) {
-	counts := make(map[int64]int64, len(groupIDs))
+func (r *groupRepository) loadAccountCounts(ctx context.Context, groupIDs []int64) (counts map[int64]int64, err error) {
+	counts = make(map[int64]int64, len(groupIDs))
 	if len(groupIDs) == 0 {
 		return counts, nil
 	}
@@ -344,23 +343,24 @@ func (r *groupRepository) loadAccountCounts(ctx context.Context, groupIDs []int6
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+			counts = nil
+		}
+	}()
 
 	for rows.Next() {
 		var groupID int64
 		var count int64
-		if err := rows.Scan(&groupID, &count); err != nil {
+		if err = rows.Scan(&groupID, &count); err != nil {
 			return nil, err
 		}
 		counts[groupID] = count
 	}
-	if err := rows.Err(); err != nil {
+	if err = rows.Err(); err != nil {
 		return nil, err
 	}
 
 	return counts, nil
-}
-
-func errorsIsNoRows(err error) bool {
-	return err == sql.ErrNoRows
 }

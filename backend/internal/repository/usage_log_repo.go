@@ -154,7 +154,7 @@ func (r *usageLogRepository) GetByID(ctx context.Context, id int64) (*service.Us
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
 			return nil, err
@@ -568,7 +568,7 @@ func (r *usageLogRepository) GetApiKeyUsageTrend(ctx context.Context, startTime,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	results := make([]ApiKeyUsageTrendPoint, 0)
 	for rows.Next() {
@@ -621,7 +621,7 @@ func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, e
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	results := make([]UserUsageTrendPoint, 0)
 	for rows.Next() {
@@ -766,7 +766,7 @@ func (r *usageLogRepository) GetUserUsageTrendByUserID(ctx context.Context, user
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanTrendRows(rows)
 }
@@ -792,7 +792,7 @@ func (r *usageLogRepository) GetUserModelStats(ctx context.Context, userID int64
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanModelStatsRows(rows)
 }
@@ -1029,7 +1029,7 @@ func (r *usageLogRepository) GetUsageTrendWithFilters(ctx context.Context, start
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanTrendRows(rows)
 }
@@ -1068,7 +1068,7 @@ func (r *usageLogRepository) GetModelStatsWithFilters(ctx context.Context, start
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanModelStatsRows(rows)
 }
@@ -1141,7 +1141,7 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	history := make([]AccountUsageHistory, 0)
 	for rows.Next() {
@@ -1291,7 +1291,7 @@ func (r *usageLogRepository) queryUsageLogs(ctx context.Context, query string, a
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	logs := make([]service.UsageLog, 0)
 	for rows.Next() {

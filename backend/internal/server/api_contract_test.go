@@ -717,6 +717,14 @@ func (r *stubApiKeyRepo) GetByID(ctx context.Context, id int64) (*service.ApiKey
 	return &clone, nil
 }
 
+func (r *stubApiKeyRepo) GetOwnerID(ctx context.Context, id int64) (int64, error) {
+	key, ok := r.byID[id]
+	if !ok {
+		return 0, service.ErrApiKeyNotFound
+	}
+	return key.UserID, nil
+}
+
 func (r *stubApiKeyRepo) GetByKey(ctx context.Context, key string) (*service.ApiKey, error) {
 	found, ok := r.byKey[key]
 	if !ok {
