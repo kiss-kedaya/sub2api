@@ -271,7 +271,9 @@ func initializeDatabase(cfg *SetupConfig) error {
 		}
 	}()
 
-	return repository.AutoMigrate(db)
+	// setup 阶段使用 standard 模式（不创建默认分组）
+	// 默认分组将在正常启动时根据实际 runMode 决定是否创建
+	return repository.AutoMigrate(db, "standard")
 }
 
 func createAdminUser(cfg *SetupConfig) error {
