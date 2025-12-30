@@ -390,4 +390,3 @@ func mustBindAccountToGroup(t *testing.T, client *dbent.Client, accountID, group
 		Save(ctx)
 	require.NoError(t, err, "create account_group")
 }
-
