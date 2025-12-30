@@ -177,3 +177,24 @@ func BuildAuthorizationURL(state, codeChallenge string) string {
 
 	return fmt.Sprintf("%s?%s", AuthorizeURL, params.Encode())
 }
+
+// GenerateMockProjectID 生成随机 project_id（当 API 不返回时使用）
+// 格式：{形容词}-{名词}-{5位随机字符}
+func GenerateMockProjectID() string {
+	adjectives := []string{"useful", "bright", "swift", "calm", "bold"}
+	nouns := []string{"fuze", "wave", "spark", "flow", "core"}
+
+	randBytes, _ := GenerateRandomBytes(7)
+
+	adj := adjectives[int(randBytes[0])%len(adjectives)]
+	noun := nouns[int(randBytes[1])%len(nouns)]
+
+	// 生成 5 位随机字符（a-z0-9）
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	suffix := make([]byte, 5)
+	for i := 0; i < 5; i++ {
+		suffix[i] = charset[int(randBytes[i+2])%len(charset)]
+	}
+
+	return fmt.Sprintf("%s-%s-%s", adj, noun, string(suffix))
+}
