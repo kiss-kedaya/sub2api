@@ -148,11 +148,8 @@ func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account 
 		return nil, fmt.Errorf("获取 access_token 失败: %w", err)
 	}
 
-	// 获取 project_id
+	// 获取 project_id（部分账户类型可能没有）
 	projectID := strings.TrimSpace(account.GetCredential("project_id"))
-	if projectID == "" {
-		return nil, errors.New("project_id not found in credentials")
-	}
 
 	// 模型映射
 	mappedModel := s.getMappedModel(account, modelID)
@@ -171,14 +168,10 @@ func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account 
 	}
 
 	// 构建 HTTP 请求（非流式）
-	fullURL := fmt.Sprintf("%s/v1internal:generateContent", antigravity.BaseURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(requestBody))
+	req, err := antigravity.NewAPIRequest(ctx, "generateContent", accessToken, requestBody)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("User-Agent", antigravity.UserAgent)
 
 	// 代理 URL
 	proxyURL := ""
@@ -350,11 +343,8 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		return nil, fmt.Errorf("获取 access_token 失败: %w", err)
 	}
 
-	// 获取 project_id
+	// 获取 project_id（部分账户类型可能没有）
 	projectID := strings.TrimSpace(account.GetCredential("project_id"))
-	if projectID == "" {
-		return nil, errors.New("project_id not found in credentials")
-	}
 
 	// 代理 URL
 	proxyURL := ""
@@ -368,26 +358,19 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		return nil, fmt.Errorf("transform request: %w", err)
 	}
 
-	// 构建上游 URL
+	// 构建上游 action
 	action := "generateContent"
 	if claudeReq.Stream {
-		action = "streamGenerateContent"
-	}
-	fullURL := fmt.Sprintf("%s/v1internal:%s", antigravity.BaseURL, action)
-	if claudeReq.Stream {
-		fullURL += "?alt=sse"
+		action = "streamGenerateContent?alt=sse"
 	}
 
 	// 重试循环
 	var resp *http.Response
 	for attempt := 1; attempt <= antigravityMaxRetries; attempt++ {
-		upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(geminiBody))
+		upstreamReq, err := antigravity.NewAPIRequest(ctx, action, accessToken, geminiBody)
 		if err != nil {
 			return nil, err
 		}
-		upstreamReq.Header.Set("Content-Type", "application/json")
-		upstreamReq.Header.Set("Authorization", "Bearer "+accessToken)
-		upstreamReq.Header.Set("User-Agent", antigravity.UserAgent)
 
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL)
 		if err != nil {
@@ -500,11 +483,8 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		return nil, fmt.Errorf("获取 access_token 失败: %w", err)
 	}
 
-	// 获取 project_id
+	// 获取 project_id（部分账户类型可能没有）
 	projectID := strings.TrimSpace(account.GetCredential("project_id"))
-	if projectID == "" {
-		return nil, errors.New("project_id not found in credentials")
-	}
 
 	// 代理 URL
 	proxyURL := ""
@@ -518,26 +498,22 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		return nil, err
 	}
 
-	// 构建上游 URL
+	// 构建上游 action
 	upstreamAction := action
 	if action == "generateContent" && stream {
 		upstreamAction = "streamGenerateContent"
 	}
-	fullURL := fmt.Sprintf("%s/v1internal:%s", antigravity.BaseURL, upstreamAction)
 	if stream || upstreamAction == "streamGenerateContent" {
-		fullURL += "?alt=sse"
+		upstreamAction += "?alt=sse"
 	}
 
 	// 重试循环
 	var resp *http.Response
 	for attempt := 1; attempt <= antigravityMaxRetries; attempt++ {
-		upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(wrappedBody))
+		upstreamReq, err := antigravity.NewAPIRequest(ctx, upstreamAction, accessToken, wrappedBody)
 		if err != nil {
 			return nil, err
 		}
-		upstreamReq.Header.Set("Content-Type", "application/json")
-		upstreamReq.Header.Set("Authorization", "Bearer "+accessToken)
-		upstreamReq.Header.Set("User-Agent", antigravity.UserAgent)
 
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL)
 		if err != nil {
