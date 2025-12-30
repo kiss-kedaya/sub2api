@@ -142,7 +142,7 @@ func (s *AntigravityOAuthService) ExchangeCode(ctx context.Context, input *Antig
 	}
 
 	// 获取 project_id（部分账户类型可能没有）
-	loadResp, err := client.LoadCodeAssist(ctx, tokenResp.AccessToken)
+	loadResp, _, err := client.LoadCodeAssist(ctx, tokenResp.AccessToken)
 	if err != nil {
 		fmt.Printf("[AntigravityOAuth] 警告: 获取 project_id 失败: %v\n", err)
 	} else if loadResp != nil && loadResp.CloudAICompanionProject != "" {

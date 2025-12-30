@@ -215,20 +215,20 @@ func (c *Client) GetUserInfo(ctx context.Context, accessToken string) (*UserInfo
 	return &userInfo, nil
 }
 
-// LoadCodeAssist 获取 project_id
-func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadCodeAssistResponse, error) {
+// LoadCodeAssist 获取账户信息，返回解析后的结构体和原始 JSON
+func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadCodeAssistResponse, map[string]any, error) {
 	reqBody := LoadCodeAssistRequest{}
 	reqBody.Metadata.IDEType = "ANTIGRAVITY"
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("序列化请求失败: %w", err)
+		return nil, nil, fmt.Errorf("序列化请求失败: %w", err)
 	}
 
 	url := BaseURL + "/v1internal:loadCodeAssist"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
 	if err != nil {
-		return nil, fmt.Errorf("创建请求失败: %w", err)
+		return nil, nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
@@ -236,25 +236,29 @@ func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadC
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("loadCodeAssist 请求失败: %w", err)
+		return nil, nil, fmt.Errorf("loadCodeAssist 请求失败: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("读取响应失败: %w", err)
+		return nil, nil, fmt.Errorf("读取响应失败: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("loadCodeAssist 失败 (HTTP %d): %s", resp.StatusCode, string(respBodyBytes))
+		return nil, nil, fmt.Errorf("loadCodeAssist 失败 (HTTP %d): %s", resp.StatusCode, string(respBodyBytes))
 	}
 
 	var loadResp LoadCodeAssistResponse
 	if err := json.Unmarshal(respBodyBytes, &loadResp); err != nil {
-		return nil, fmt.Errorf("响应解析失败: %w", err)
+		return nil, nil, fmt.Errorf("响应解析失败: %w", err)
 	}
 
-	return &loadResp, nil
+	// 解析原始 JSON 为 map
+	var rawResp map[string]any
+	_ = json.Unmarshal(respBodyBytes, &rawResp)
+
+	return &loadResp, rawResp, nil
 }
 
 // ModelQuotaInfo 模型配额信息
@@ -278,18 +282,18 @@ type FetchAvailableModelsResponse struct {
 	Models map[string]ModelInfo `json:"models"`
 }
 
-// FetchAvailableModels 获取可用模型和配额信息
-func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectID string) (*FetchAvailableModelsResponse, error) {
+// FetchAvailableModels 获取可用模型和配额信息，返回解析后的结构体和原始 JSON
+func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectID string) (*FetchAvailableModelsResponse, map[string]any, error) {
 	reqBody := FetchAvailableModelsRequest{Project: projectID}
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("序列化请求失败: %w", err)
+		return nil, nil, fmt.Errorf("序列化请求失败: %w", err)
 	}
 
 	apiURL := BaseURL + "/v1internal:fetchAvailableModels"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, strings.NewReader(string(bodyBytes)))
 	if err != nil {
-		return nil, fmt.Errorf("创建请求失败: %w", err)
+		return nil, nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
@@ -297,23 +301,27 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetchAvailableModels 请求失败: %w", err)
+		return nil, nil, fmt.Errorf("fetchAvailableModels 请求失败: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("读取响应失败: %w", err)
+		return nil, nil, fmt.Errorf("读取响应失败: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetchAvailableModels 失败 (HTTP %d): %s", resp.StatusCode, string(respBodyBytes))
+		return nil, nil, fmt.Errorf("fetchAvailableModels 失败 (HTTP %d): %s", resp.StatusCode, string(respBodyBytes))
 	}
 
 	var modelsResp FetchAvailableModelsResponse
 	if err := json.Unmarshal(respBodyBytes, &modelsResp); err != nil {
-		return nil, fmt.Errorf("响应解析失败: %w", err)
+		return nil, nil, fmt.Errorf("响应解析失败: %w", err)
 	}
 
-	return &modelsResp, nil
+	// 解析原始 JSON 为 map
+	var rawResp map[string]any
+	_ = json.Unmarshal(respBodyBytes, &rawResp)
+
+	return &modelsResp, rawResp, nil
 }
