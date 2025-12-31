@@ -191,7 +191,7 @@ func (r *AntigravityQuotaRefresher) refreshAccountQuota(ctx context.Context, acc
 
 // isTokenExpired 检查 token 是否过期
 func (r *AntigravityQuotaRefresher) isTokenExpired(account *Account) bool {
-	expiresAt := parseAntigravityExpiresAt(account)
+	expiresAt := account.GetCredentialAsTime("expires_at")
 	if expiresAt == nil {
 		return false
 	}
