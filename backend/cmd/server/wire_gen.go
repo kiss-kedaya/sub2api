@@ -109,7 +109,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	antigravityOAuthHandler := admin.NewAntigravityOAuthHandler(antigravityOAuthService)
 	proxyHandler := admin.NewProxyHandler(adminService)
 	adminRedeemHandler := admin.NewRedeemHandler(adminService)
-	settingHandler := admin.NewSettingHandler(settingService, emailService)
+	settingHandler := admin.NewSettingHandler(settingService, emailService, turnstileService)
 	updateCache := repository.NewUpdateCache(redisClient)
 	gitHubReleaseClient := repository.NewGitHubReleaseClient()
 	serviceBuildInfo := provideServiceBuildInfo(buildInfo)
