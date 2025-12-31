@@ -233,15 +233,11 @@ func (s *claudeOAuthService) RefreshToken(ctx context.Context, refreshToken, pro
 }
 
 func createReqClient(proxyURL string) *req.Client {
-	client := req.C().
-		ImpersonateChrome().
-		SetTimeout(60 * time.Second)
-
-	if proxyURL != "" {
-		client.SetProxyURL(proxyURL)
-	}
-
-	return client
+	return getSharedReqClient(reqClientOptions{
+		ProxyURL:    proxyURL,
+		Timeout:     60 * time.Second,
+		Impersonate: true,
+	})
 }
 
 func prefix(s string, n int) string {

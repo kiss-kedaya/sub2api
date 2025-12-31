@@ -109,9 +109,8 @@ func (c *geminiOAuthClient) RefreshToken(ctx context.Context, oauthType, refresh
 }
 
 func createGeminiReqClient(proxyURL string) *req.Client {
-	client := req.C().SetTimeout(60 * time.Second)
-	if proxyURL != "" {
-		client.SetProxyURL(proxyURL)
-	}
-	return client
+	return getSharedReqClient(reqClientOptions{
+		ProxyURL: proxyURL,
+		Timeout:  60 * time.Second,
+	})
 }
