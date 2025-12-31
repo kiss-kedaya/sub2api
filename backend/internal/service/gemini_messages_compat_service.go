@@ -1919,12 +1919,12 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 		var ra time.Time
 		if isCodeAssist {
 			// Code Assist: fallback cooldown by tier
-				cooldown := geminiCooldownForTier(tierID)
-				if s.rateLimitService != nil {
-					cooldown = s.rateLimitService.GeminiCooldown(ctx, account)
-				}
+			cooldown := geminiCooldownForTier(tierID)
+			if s.rateLimitService != nil {
+				cooldown = s.rateLimitService.GeminiCooldown(ctx, account)
+			}
 			ra = time.Now().Add(cooldown)
-			log.Printf("[Gemini 429] Account %d (Code Assist, tier=%s, project=%s) rate limited, cooldown=%v", account.ID, tierID, projectID, ra.Sub(time.Now()).Truncate(time.Second))
+			log.Printf("[Gemini 429] Account %d (Code Assist, tier=%s, project=%s) rate limited, cooldown=%v", account.ID, tierID, projectID, time.Until(ra).Truncate(time.Second))
 		} else {
 			// API Key / AI Studio OAuth: PST 午夜
 			if ts := nextGeminiDailyResetUnix(); ts != nil {
