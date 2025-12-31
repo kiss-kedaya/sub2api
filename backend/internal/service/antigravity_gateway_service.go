@@ -230,7 +230,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		upstreamReq.Header.Set("Authorization", "Bearer "+accessToken)
 		upstreamReq.Header.Set("User-Agent", antigravity.UserAgent)
 
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL)
+		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
 			if attempt < antigravityMaxRetries {
 				log.Printf("Antigravity account %d: upstream request failed, retry %d/%d: %v", account.ID, attempt, antigravityMaxRetries, err)
@@ -380,7 +380,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		upstreamReq.Header.Set("Authorization", "Bearer "+accessToken)
 		upstreamReq.Header.Set("User-Agent", antigravity.UserAgent)
 
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL)
+		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
 			if attempt < antigravityMaxRetries {
 				log.Printf("Antigravity account %d: upstream request failed, retry %d/%d: %v", account.ID, attempt, antigravityMaxRetries, err)
