@@ -88,6 +88,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
 
+	// 验证 model 必填
+	if reqModel == "" {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
+		return
+	}
+
 	// Track if we've started streaming (for error handling)
 	streamStarted := false
 
@@ -514,6 +520,12 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	parsedReq, err := service.ParseGatewayRequest(body)
 	if err != nil {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return
+	}
+
+	// 验证 model 必填
+	if parsedReq.Model == "" {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
 
