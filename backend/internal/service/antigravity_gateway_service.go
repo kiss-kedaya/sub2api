@@ -51,7 +51,7 @@ var antigravityPrefixMapping = []struct {
 	{"claude-sonnet-4-5", "claude-sonnet-4-5"},   // claude-sonnet-4-5-xxx
 	{"claude-haiku-4-5", "gemini-3-flash"},       // claude-haiku-4-5-xxx
 	{"claude-opus-4-5", "claude-opus-4-5-thinking"},
-	{"claude-3-haiku", "gemini-3-flash"},   // 旧版 claude-3-haiku-xxx
+	{"claude-3-haiku", "gemini-3-flash"}, // 旧版 claude-3-haiku-xxx
 	{"claude-sonnet-4", "claude-sonnet-4-5"},
 	{"claude-haiku-4", "gemini-3-flash"},
 	{"claude-opus-4", "claude-opus-4-5-thinking"},
