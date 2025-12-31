@@ -2271,6 +2271,14 @@ func convertClaudeToolsToGeminiTools(tools any) []any {
 			continue
 		}
 
+		// 为 nil params 提供默认值
+		if params == nil {
+			params = map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			}
+		}
+
 		funcDecls = append(funcDecls, map[string]any{
 			"name":        name,
 			"description": desc,
