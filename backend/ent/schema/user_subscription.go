@@ -29,6 +29,7 @@ func (UserSubscription) Annotations() []schema.Annotation {
 func (UserSubscription) Mixin() []ent.Mixin {
 	return []ent.Mixin{
 		mixins.TimeMixin{},
+		mixins.SoftDeleteMixin{},
 	}
 }
 
@@ -97,6 +98,7 @@ func (UserSubscription) Edges() []ent.Edge {
 			Ref("assigned_subscriptions").
 			Field("assigned_by").
 			Unique(),
+		edge.To("usage_logs", UsageLog.Type),
 	}
 }
 
@@ -108,5 +110,6 @@ func (UserSubscription) Indexes() []ent.Index {
 		index.Fields("expires_at"),
 		index.Fields("assigned_by"),
 		index.Fields("user_id", "group_id").Unique(),
+		index.Fields("deleted_at"),
 	}
 }

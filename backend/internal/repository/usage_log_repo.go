@@ -1109,6 +1109,9 @@ func (r *usageLogRepository) GetBatchUserUsageStats(ctx context.Context, userIDs
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	today := timezone.Today()
 	todayQuery := `
@@ -1133,6 +1136,9 @@ func (r *usageLogRepository) GetBatchUserUsageStats(ctx context.Context, userIDs
 		}
 	}
 	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -1177,6 +1183,9 @@ func (r *usageLogRepository) GetBatchApiKeyUsageStats(ctx context.Context, apiKe
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	today := timezone.Today()
 	todayQuery := `
@@ -1201,6 +1210,9 @@ func (r *usageLogRepository) GetBatchApiKeyUsageStats(ctx context.Context, apiKe
 		}
 	}
 	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 

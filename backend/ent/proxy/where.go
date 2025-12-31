@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 )
 
@@ -682,6 +683,29 @@ func StatusEqualFold(v string) predicate.Proxy {
 // StatusContainsFold applies the ContainsFold predicate on the "status" field.
 func StatusContainsFold(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldContainsFold(FieldStatus, v))
+}
+
+// HasAccounts applies the HasEdge predicate on the "accounts" edge.
+func HasAccounts() predicate.Proxy {
+	return predicate.Proxy(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, true, AccountsTable, AccountsColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasAccountsWith applies the HasEdge predicate on the "accounts" edge with a given conditions (other predicates).
+func HasAccountsWith(preds ...predicate.Account) predicate.Proxy {
+	return predicate.Proxy(func(s *sql.Selector) {
+		step := newAccountsStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
 }
 
 // And groups predicates with the AND operator between them.

@@ -14,6 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
@@ -56,7 +57,7 @@ func newAccountRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *accoun
 
 func (r *accountRepository) Create(ctx context.Context, account *service.Account) error {
 	if account == nil {
-		return nil
+		return service.ErrAccountNilInput
 	}
 
 	builder := r.client.Account.Create().
@@ -98,7 +99,7 @@ func (r *accountRepository) Create(ctx context.Context, account *service.Account
 
 	created, err := builder.Save(ctx)
 	if err != nil {
-		return err
+		return translatePersistenceError(err, service.ErrAccountNotFound, nil)
 	}
 
 	account.ID = created.ID
@@ -231,11 +232,32 @@ func (r *accountRepository) Update(ctx context.Context, account *service.Account
 }
 
 func (r *accountRepository) Delete(ctx context.Context, id int64) error {
-	if _, err := r.client.AccountGroup.Delete().Where(dbaccountgroup.AccountIDEQ(id)).Exec(ctx); err != nil {
+	// 使用事务保证账号与关联分组的删除原子性
+	tx, err := r.client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
 		return err
 	}
-	_, err := r.client.Account.Delete().Where(dbaccount.IDEQ(id)).Exec(ctx)
-	return err
+
+	var txClient *dbent.Client
+	if err == nil {
+		defer func() { _ = tx.Rollback() }()
+		txClient = tx.Client()
+	} else {
+		// 已处于外部事务中（ErrTxStarted），复用当前 client
+		txClient = r.client
+	}
+
+	if _, err := txClient.AccountGroup.Delete().Where(dbaccountgroup.AccountIDEQ(id)).Exec(ctx); err != nil {
+		return err
+	}
+	if _, err := txClient.Account.Delete().Where(dbaccount.IDEQ(id)).Exec(ctx); err != nil {
+		return err
+	}
+
+	if tx != nil {
+		return tx.Commit()
+	}
+	return nil
 }
 
 func (r *accountRepository) List(ctx context.Context, params pagination.PaginationParams) ([]service.Account, *pagination.PaginationResult, error) {
@@ -393,25 +415,49 @@ func (r *accountRepository) GetGroups(ctx context.Context, accountID int64) ([]s
 }
 
 func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, groupIDs []int64) error {
-	if _, err := r.client.AccountGroup.Delete().Where(dbaccountgroup.AccountIDEQ(accountID)).Exec(ctx); err != nil {
+	// 使用事务保证删除旧绑定与创建新绑定的原子性
+	tx, err := r.client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+		return err
+	}
+
+	var txClient *dbent.Client
+	if err == nil {
+		defer func() { _ = tx.Rollback() }()
+		txClient = tx.Client()
+	} else {
+		// 已处于外部事务中（ErrTxStarted），复用当前 client
+		txClient = r.client
+	}
+
+	if _, err := txClient.AccountGroup.Delete().Where(dbaccountgroup.AccountIDEQ(accountID)).Exec(ctx); err != nil {
 		return err
 	}
 
 	if len(groupIDs) == 0 {
+		if tx != nil {
+			return tx.Commit()
+		}
 		return nil
 	}
 
 	builders := make([]*dbent.AccountGroupCreate, 0, len(groupIDs))
 	for i, groupID := range groupIDs {
-		builders = append(builders, r.client.AccountGroup.Create().
+		builders = append(builders, txClient.AccountGroup.Create().
 			SetAccountID(accountID).
 			SetGroupID(groupID).
 			SetPriority(i+1),
 		)
 	}
 
-	_, err := r.client.AccountGroup.CreateBulk(builders...).Save(ctx)
-	return err
+	if _, err := txClient.AccountGroup.CreateBulk(builders...).Save(ctx); err != nil {
+		return err
+	}
+
+	if tx != nil {
+		return tx.Commit()
+	}
+	return nil
 }
 
 func (r *accountRepository) ListSchedulable(ctx context.Context) ([]service.Account, error) {
@@ -555,24 +601,30 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 		return nil
 	}
 
-	accountExtra, err := r.client.Account.Query().
-		Where(dbaccount.IDEQ(id)).
-		Select(dbaccount.FieldExtra).
-		Only(ctx)
+	// 使用 JSONB 合并操作实现原子更新，避免读-改-写的并发丢失更新问题
+	payload, err := json.Marshal(updates)
 	if err != nil {
-		return translatePersistenceError(err, service.ErrAccountNotFound, nil)
+		return err
 	}
 
-	extra := normalizeJSONMap(accountExtra.Extra)
-	for k, v := range updates {
-		extra[k] = v
+	client := clientFromContext(ctx, r.client)
+	result, err := client.ExecContext(
+		ctx,
+		"UPDATE accounts SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL",
+		payload, id,
+	)
+	if err != nil {
+		return err
 	}
 
-	_, err = r.client.Account.Update().
-		Where(dbaccount.IDEQ(id)).
-		SetExtra(extra).
-		Save(ctx)
-	return err
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return service.ErrAccountNotFound
+	}
+	return nil
 }
 
 func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates service.AccountBulkUpdate) (int64, error) {

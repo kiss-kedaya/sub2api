@@ -59,11 +59,13 @@ type UserEdges struct {
 	AssignedSubscriptions []*UserSubscription `json:"assigned_subscriptions,omitempty"`
 	// AllowedGroups holds the value of the allowed_groups edge.
 	AllowedGroups []*Group `json:"allowed_groups,omitempty"`
+	// UsageLogs holds the value of the usage_logs edge.
+	UsageLogs []*UsageLog `json:"usage_logs,omitempty"`
 	// UserAllowedGroups holds the value of the user_allowed_groups edge.
 	UserAllowedGroups []*UserAllowedGroup `json:"user_allowed_groups,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [6]bool
+	loadedTypes [7]bool
 }
 
 // APIKeysOrErr returns the APIKeys value or an error if the edge
@@ -111,10 +113,19 @@ func (e UserEdges) AllowedGroupsOrErr() ([]*Group, error) {
 	return nil, &NotLoadedError{edge: "allowed_groups"}
 }
 
+// UsageLogsOrErr returns the UsageLogs value or an error if the edge
+// was not loaded in eager-loading.
+func (e UserEdges) UsageLogsOrErr() ([]*UsageLog, error) {
+	if e.loadedTypes[5] {
+		return e.UsageLogs, nil
+	}
+	return nil, &NotLoadedError{edge: "usage_logs"}
+}
+
 // UserAllowedGroupsOrErr returns the UserAllowedGroups value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) UserAllowedGroupsOrErr() ([]*UserAllowedGroup, error) {
-	if e.loadedTypes[5] {
+	if e.loadedTypes[6] {
 		return e.UserAllowedGroups, nil
 	}
 	return nil, &NotLoadedError{edge: "user_allowed_groups"}
@@ -263,6 +274,11 @@ func (_m *User) QueryAssignedSubscriptions() *UserSubscriptionQuery {
 // QueryAllowedGroups queries the "allowed_groups" edge of the User entity.
 func (_m *User) QueryAllowedGroups() *GroupQuery {
 	return NewUserClient(_m.config).QueryAllowedGroups(_m)
+}
+
+// QueryUsageLogs queries the "usage_logs" edge of the User entity.
+func (_m *User) QueryUsageLogs() *UsageLogQuery {
+	return NewUserClient(_m.config).QueryUsageLogs(_m)
 }
 
 // QueryUserAllowedGroups queries the "user_allowed_groups" edge of the User entity.
