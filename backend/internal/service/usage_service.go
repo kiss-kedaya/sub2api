@@ -235,32 +235,6 @@ func (s *UsageService) GetDailyStats(ctx context.Context, userID int64, days int
 	return stats, nil
 }
 
-// calculateStats 计算统计数据
-func (s *UsageService) calculateStats(logs []UsageLog) *UsageStats {
-	stats := &UsageStats{}
-
-	for _, log := range logs {
-		stats.TotalRequests++
-		stats.TotalInputTokens += int64(log.InputTokens)
-		stats.TotalOutputTokens += int64(log.OutputTokens)
-		stats.TotalCacheTokens += int64(log.CacheCreationTokens + log.CacheReadTokens)
-		stats.TotalTokens += int64(log.TotalTokens())
-		stats.TotalCost += log.TotalCost
-		stats.TotalActualCost += log.ActualCost
-
-		if log.DurationMs != nil {
-			stats.AverageDurationMs += float64(*log.DurationMs)
-		}
-	}
-
-	// 计算平均持续时间
-	if stats.TotalRequests > 0 {
-		stats.AverageDurationMs /= float64(stats.TotalRequests)
-	}
-
-	return stats
-}
-
 // Delete 删除使用日志（管理员功能，谨慎使用）
 func (s *UsageService) Delete(ctx context.Context, id int64) error {
 	if err := s.usageRepo.Delete(ctx, id); err != nil {

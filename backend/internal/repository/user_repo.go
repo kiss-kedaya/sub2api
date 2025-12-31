@@ -16,15 +16,14 @@ import (
 
 type userRepository struct {
 	client *dbent.Client
-	sql    sqlExecutor
 }
 
 func NewUserRepository(client *dbent.Client, sqlDB *sql.DB) service.UserRepository {
 	return newUserRepositoryWithSQL(client, sqlDB)
 }
 
-func newUserRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *userRepository {
-	return &userRepository{client: client, sql: sqlq}
+func newUserRepositoryWithSQL(client *dbent.Client, _ sqlExecutor) *userRepository {
+	return &userRepository{client: client}
 }
 
 func (r *userRepository) Create(ctx context.Context, userIn *service.User) error {
