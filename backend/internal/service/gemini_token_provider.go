@@ -118,6 +118,7 @@ func (p *GeminiTokenProvider) GetAccessToken(ctx context.Context, account *Accou
 			return accessToken, nil
 		}
 		detected = strings.TrimSpace(detected)
+		tierID = strings.TrimSpace(tierID)
 		if detected != "" {
 			if account.Credentials == nil {
 				account.Credentials = make(map[string]any)
