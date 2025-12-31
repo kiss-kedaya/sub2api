@@ -515,24 +515,10 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 }
 
 // IsAntigravityModelSupported 检查 Antigravity 平台是否支持指定模型
+// 所有 claude- 和 gemini- 前缀的模型都能通过映射或透传支持
 func IsAntigravityModelSupported(requestedModel string) bool {
-	// 直接支持的模型
-	if antigravitySupportedModels[requestedModel] {
-		return true
-	}
-	// 可映射的模型
-	if _, ok := antigravityModelMapping[requestedModel]; ok {
-		return true
-	}
-	// Gemini 前缀透传
-	if strings.HasPrefix(requestedModel, "gemini-") {
-		return true
-	}
-	// Claude 模型支持（通过默认映射到 claude-sonnet-4-5）
-	if strings.HasPrefix(requestedModel, "claude-") {
-		return true
-	}
-	return false
+	return strings.HasPrefix(requestedModel, "claude-") ||
+		strings.HasPrefix(requestedModel, "gemini-")
 }
 
 // GetAccessToken 获取账号凭证
