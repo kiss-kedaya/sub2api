@@ -681,12 +681,6 @@ func (s *GatewayService) tryAcquireAccountSlot(ctx context.Context, accountID in
 	return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
 }
 
-func sortAccountsByPriority(accounts []*Account) {
-	sort.SliceStable(accounts, func(i, j int) bool {
-		return accounts[i].Priority < accounts[j].Priority
-	})
-}
-
 func sortAccountsByPriorityAndLastUsed(accounts []*Account, preferOAuth bool) {
 	sort.SliceStable(accounts, func(i, j int) bool {
 		a, b := accounts[i], accounts[j]

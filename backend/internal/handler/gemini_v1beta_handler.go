@@ -233,9 +233,11 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				log.Printf("Account wait queue full: account=%d", account.ID)
 				googleError(c, http.StatusTooManyRequests, "Too many pending requests, please retry later")
 				return
-			}
-			accountWaitRelease = func() {
-				geminiConcurrency.DecrementAccountWaitCount(c.Request.Context(), account.ID)
+			} else {
+				// Only set release function if increment succeeded
+				accountWaitRelease = func() {
+					geminiConcurrency.DecrementAccountWaitCount(c.Request.Context(), account.ID)
+				}
 			}
 
 			accountReleaseFunc, err = geminiConcurrency.AcquireAccountSlotWithWaitTimeout(
