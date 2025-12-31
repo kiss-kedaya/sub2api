@@ -69,94 +69,108 @@
               </span>
             </div>
 
-            <!-- Progress bars -->
+            <!-- Progress bars or Unlimited badge -->
             <div class="space-y-1.5">
-              <div v-if="subscription.group?.daily_limit_usd" class="flex items-center gap-2">
-                <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
-                  t('subscriptionProgress.daily')
-                }}</span>
-                <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div
-                    class="h-1.5 rounded-full transition-all"
-                    :class="
-                      getProgressBarClass(
-                        subscription.daily_usage_usd,
-                        subscription.group?.daily_limit_usd
-                      )
-                    "
-                    :style="{
-                      width: getProgressWidth(
-                        subscription.daily_usage_usd,
-                        subscription.group?.daily_limit_usd
-                      )
-                    }"
-                  ></div>
-                </div>
-                <span class="w-24 flex-shrink-0 text-right text-[10px] text-gray-500">
-                  {{
-                    formatUsage(subscription.daily_usage_usd, subscription.group?.daily_limit_usd)
-                  }}
+              <!-- Unlimited subscription badge -->
+              <div
+                v-if="isUnlimited(subscription)"
+                class="flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-50 to-teal-50 px-2.5 py-1.5 dark:from-emerald-900/20 dark:to-teal-900/20"
+              >
+                <span class="text-lg text-emerald-600 dark:text-emerald-400">∞</span>
+                <span class="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                  {{ t('subscriptionProgress.unlimited') }}
                 </span>
               </div>
 
-              <div v-if="subscription.group?.weekly_limit_usd" class="flex items-center gap-2">
-                <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
-                  t('subscriptionProgress.weekly')
-                }}</span>
-                <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div
-                    class="h-1.5 rounded-full transition-all"
-                    :class="
-                      getProgressBarClass(
-                        subscription.weekly_usage_usd,
-                        subscription.group?.weekly_limit_usd
-                      )
-                    "
-                    :style="{
-                      width: getProgressWidth(
-                        subscription.weekly_usage_usd,
-                        subscription.group?.weekly_limit_usd
-                      )
-                    }"
-                  ></div>
+              <!-- Progress bars for limited subscriptions -->
+              <template v-else>
+                <div v-if="subscription.group?.daily_limit_usd" class="flex items-center gap-2">
+                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
+                    t('subscriptionProgress.daily')
+                  }}</span>
+                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
+                    <div
+                      class="h-1.5 rounded-full transition-all"
+                      :class="
+                        getProgressBarClass(
+                          subscription.daily_usage_usd,
+                          subscription.group?.daily_limit_usd
+                        )
+                      "
+                      :style="{
+                        width: getProgressWidth(
+                          subscription.daily_usage_usd,
+                          subscription.group?.daily_limit_usd
+                        )
+                      }"
+                    ></div>
+                  </div>
+                  <span class="w-24 flex-shrink-0 text-right text-[10px] text-gray-500">
+                    {{
+                      formatUsage(subscription.daily_usage_usd, subscription.group?.daily_limit_usd)
+                    }}
+                  </span>
                 </div>
-                <span class="w-24 flex-shrink-0 text-right text-[10px] text-gray-500">
-                  {{
-                    formatUsage(subscription.weekly_usage_usd, subscription.group?.weekly_limit_usd)
-                  }}
-                </span>
-              </div>
 
-              <div v-if="subscription.group?.monthly_limit_usd" class="flex items-center gap-2">
-                <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
-                  t('subscriptionProgress.monthly')
-                }}</span>
-                <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div
-                    class="h-1.5 rounded-full transition-all"
-                    :class="
-                      getProgressBarClass(
-                        subscription.monthly_usage_usd,
-                        subscription.group?.monthly_limit_usd
-                      )
-                    "
-                    :style="{
-                      width: getProgressWidth(
-                        subscription.monthly_usage_usd,
-                        subscription.group?.monthly_limit_usd
-                      )
-                    }"
-                  ></div>
+                <div v-if="subscription.group?.weekly_limit_usd" class="flex items-center gap-2">
+                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
+                    t('subscriptionProgress.weekly')
+                  }}</span>
+                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
+                    <div
+                      class="h-1.5 rounded-full transition-all"
+                      :class="
+                        getProgressBarClass(
+                          subscription.weekly_usage_usd,
+                          subscription.group?.weekly_limit_usd
+                        )
+                      "
+                      :style="{
+                        width: getProgressWidth(
+                          subscription.weekly_usage_usd,
+                          subscription.group?.weekly_limit_usd
+                        )
+                      }"
+                    ></div>
+                  </div>
+                  <span class="w-24 flex-shrink-0 text-right text-[10px] text-gray-500">
+                    {{
+                      formatUsage(subscription.weekly_usage_usd, subscription.group?.weekly_limit_usd)
+                    }}
+                  </span>
                 </div>
-                <span class="w-24 flex-shrink-0 text-right text-[10px] text-gray-500">
-                  {{
-                    formatUsage(
-                      subscription.monthly_usage_usd,
-                      subscription.group?.monthly_limit_usd
-                    )
-                  }}
-                </span>
-              </div>
+
+                <div v-if="subscription.group?.monthly_limit_usd" class="flex items-center gap-2">
+                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
+                    t('subscriptionProgress.monthly')
+                  }}</span>
+                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
+                    <div
+                      class="h-1.5 rounded-full transition-all"
+                      :class="
+                        getProgressBarClass(
+                          subscription.monthly_usage_usd,
+                          subscription.group?.monthly_limit_usd
+                        )
+                      "
+                      :style="{
+                        width: getProgressWidth(
+                          subscription.monthly_usage_usd,
+                          subscription.group?.monthly_limit_usd
+                        )
+                      }"
+                    ></div>
+                  </div>
+                  <span class="w-24 flex-shrink-0 text-right text-[10px] text-gray-500">
+                    {{
+                      formatUsage(
+                        subscription.monthly_usage_usd,
+                        subscription.group?.monthly_limit_usd
+                      )
+                    }}
+                  </span>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -215,7 +229,19 @@ function getMaxUsagePercentage(sub: UserSubscription): number {
   return percentages.length > 0 ? Math.max(...percentages) : 0
 }
 
+function isUnlimited(sub: UserSubscription): boolean {
+  return (
+    !sub.group?.daily_limit_usd &&
+    !sub.group?.weekly_limit_usd &&
+    !sub.group?.monthly_limit_usd
+  )
+}
+
 function getProgressDotClass(sub: UserSubscription): string {
+  // Unlimited subscriptions get a special color
+  if (isUnlimited(sub)) {
+    return 'bg-emerald-500'
+  }
   const maxPercentage = getMaxUsagePercentage(sub)
   if (maxPercentage >= 90) return 'bg-red-500'
   if (maxPercentage >= 70) return 'bg-orange-500'
