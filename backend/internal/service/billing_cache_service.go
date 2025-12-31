@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -27,6 +28,45 @@ type subscriptionCacheData struct {
 	Version      int64
 }
 
+// 缓存写入任务类型
+type cacheWriteKind int
+
+const (
+	cacheWriteSetBalance cacheWriteKind = iota
+	cacheWriteSetSubscription
+	cacheWriteUpdateSubscriptionUsage
+	cacheWriteDeductBalance
+)
+
+// 异步缓存写入工作池配置
+//
+// 性能优化说明：
+// 原实现在请求热路径中使用 goroutine 异步更新缓存，存在以下问题：
+// 1. 每次请求创建新 goroutine，高并发下产生大量短生命周期 goroutine
+// 2. 无法控制并发数量，可能导致 Redis 连接耗尽
+// 3. goroutine 创建/销毁带来额外开销
+//
+// 新实现使用固定大小的工作池：
+// 1. 预创建 10 个 worker goroutine，避免频繁创建销毁
+// 2. 使用带缓冲的 channel（1000）作为任务队列，平滑写入峰值
+// 3. 非阻塞写入，队列满时丢弃任务（缓存最终一致性可接受）
+// 4. 统一超时控制，避免慢操作阻塞工作池
+const (
+	cacheWriteWorkerCount = 10              // 工作协程数量
+	cacheWriteBufferSize  = 1000            // 任务队列缓冲大小
+	cacheWriteTimeout     = 2 * time.Second // 单个写入操作超时
+)
+
+// cacheWriteTask 缓存写入任务
+type cacheWriteTask struct {
+	kind             cacheWriteKind
+	userID           int64
+	groupID          int64
+	balance          float64
+	amount           float64
+	subscriptionData *subscriptionCacheData
+}
+
 // BillingCacheService 计费缓存服务
 // 负责余额和订阅数据的缓存管理，提供高性能的计费资格检查
 type BillingCacheService struct {
@@ -34,15 +74,80 @@ type BillingCacheService struct {
 	userRepo UserRepository
 	subRepo  UserSubscriptionRepository
 	cfg      *config.Config
+
+	cacheWriteChan     chan cacheWriteTask
+	cacheWriteWg       sync.WaitGroup
+	cacheWriteStopOnce sync.Once
 }
 
 // NewBillingCacheService 创建计费缓存服务
 func NewBillingCacheService(cache BillingCache, userRepo UserRepository, subRepo UserSubscriptionRepository, cfg *config.Config) *BillingCacheService {
-	return &BillingCacheService{
+	svc := &BillingCacheService{
 		cache:    cache,
 		userRepo: userRepo,
 		subRepo:  subRepo,
 		cfg:      cfg,
+	}
+	svc.startCacheWriteWorkers()
+	return svc
+}
+
+// Stop 关闭缓存写入工作池
+func (s *BillingCacheService) Stop() {
+	s.cacheWriteStopOnce.Do(func() {
+		if s.cacheWriteChan == nil {
+			return
+		}
+		close(s.cacheWriteChan)
+		s.cacheWriteWg.Wait()
+		s.cacheWriteChan = nil
+	})
+}
+
+func (s *BillingCacheService) startCacheWriteWorkers() {
+	s.cacheWriteChan = make(chan cacheWriteTask, cacheWriteBufferSize)
+	for i := 0; i < cacheWriteWorkerCount; i++ {
+		s.cacheWriteWg.Add(1)
+		go s.cacheWriteWorker()
+	}
+}
+
+func (s *BillingCacheService) enqueueCacheWrite(task cacheWriteTask) {
+	if s.cacheWriteChan == nil {
+		return
+	}
+	defer func() {
+		_ = recover()
+	}()
+	select {
+	case s.cacheWriteChan <- task:
+	default:
+	}
+}
+
+func (s *BillingCacheService) cacheWriteWorker() {
+	defer s.cacheWriteWg.Done()
+	for task := range s.cacheWriteChan {
+		ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
+		switch task.kind {
+		case cacheWriteSetBalance:
+			s.setBalanceCache(ctx, task.userID, task.balance)
+		case cacheWriteSetSubscription:
+			s.setSubscriptionCache(ctx, task.userID, task.groupID, task.subscriptionData)
+		case cacheWriteUpdateSubscriptionUsage:
+			if s.cache != nil {
+				if err := s.cache.UpdateSubscriptionUsage(ctx, task.userID, task.groupID, task.amount); err != nil {
+					log.Printf("Warning: update subscription cache failed for user %d group %d: %v", task.userID, task.groupID, err)
+				}
+			}
+		case cacheWriteDeductBalance:
+			if s.cache != nil {
+				if err := s.cache.DeductUserBalance(ctx, task.userID, task.amount); err != nil {
+					log.Printf("Warning: deduct balance cache failed for user %d: %v", task.userID, err)
+				}
+			}
+		}
+		cancel()
 	}
 }
 
@@ -70,11 +175,11 @@ func (s *BillingCacheService) GetUserBalance(ctx context.Context, userID int64) 
 	}
 
 	// 异步建立缓存
-	go func() {
-		cacheCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		s.setBalanceCache(cacheCtx, userID, balance)
-	}()
+	s.enqueueCacheWrite(cacheWriteTask{
+		kind:    cacheWriteSetBalance,
+		userID:  userID,
+		balance: balance,
+	})
 
 	return balance, nil
 }
@@ -98,12 +203,21 @@ func (s *BillingCacheService) setBalanceCache(ctx context.Context, userID int64,
 	}
 }
 
-// DeductBalanceCache 扣减余额缓存（异步调用，用于扣费后更新缓存）
+// DeductBalanceCache 扣减余额缓存（同步调用）
 func (s *BillingCacheService) DeductBalanceCache(ctx context.Context, userID int64, amount float64) error {
 	if s.cache == nil {
 		return nil
 	}
 	return s.cache.DeductUserBalance(ctx, userID, amount)
+}
+
+// QueueDeductBalance 异步扣减余额缓存
+func (s *BillingCacheService) QueueDeductBalance(userID int64, amount float64) {
+	s.enqueueCacheWrite(cacheWriteTask{
+		kind:   cacheWriteDeductBalance,
+		userID: userID,
+		amount: amount,
+	})
 }
 
 // InvalidateUserBalance 失效用户余额缓存
@@ -141,11 +255,12 @@ func (s *BillingCacheService) GetSubscriptionStatus(ctx context.Context, userID,
 	}
 
 	// 异步建立缓存
-	go func() {
-		cacheCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		s.setSubscriptionCache(cacheCtx, userID, groupID, data)
-	}()
+	s.enqueueCacheWrite(cacheWriteTask{
+		kind:             cacheWriteSetSubscription,
+		userID:           userID,
+		groupID:          groupID,
+		subscriptionData: data,
+	})
 
 	return data, nil
 }
@@ -199,12 +314,22 @@ func (s *BillingCacheService) setSubscriptionCache(ctx context.Context, userID, 
 	}
 }
 
-// UpdateSubscriptionUsage 更新订阅用量缓存（异步调用，用于扣费后更新缓存）
+// UpdateSubscriptionUsage 更新订阅用量缓存（同步调用）
 func (s *BillingCacheService) UpdateSubscriptionUsage(ctx context.Context, userID, groupID int64, costUSD float64) error {
 	if s.cache == nil {
 		return nil
 	}
 	return s.cache.UpdateSubscriptionUsage(ctx, userID, groupID, costUSD)
+}
+
+// QueueUpdateSubscriptionUsage 异步更新订阅用量缓存
+func (s *BillingCacheService) QueueUpdateSubscriptionUsage(userID, groupID int64, costUSD float64) {
+	s.enqueueCacheWrite(cacheWriteTask{
+		kind:    cacheWriteUpdateSubscriptionUsage,
+		userID:  userID,
+		groupID: groupID,
+		amount:  costUSD,
+	})
 }
 
 // InvalidateSubscription 失效指定订阅缓存
