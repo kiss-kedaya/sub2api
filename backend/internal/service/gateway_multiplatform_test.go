@@ -32,6 +32,16 @@ func (m *mockAccountRepoForPlatform) GetByID(ctx context.Context, id int64) (*Ac
 	return nil, errors.New("account not found")
 }
 
+func (m *mockAccountRepoForPlatform) GetByIDs(ctx context.Context, ids []int64) ([]*Account, error) {
+	var result []*Account
+	for _, id := range ids {
+		if acc, ok := m.accountsByID[id]; ok {
+			result = append(result, acc)
+		}
+	}
+	return result, nil
+}
+
 func (m *mockAccountRepoForPlatform) ExistsByID(ctx context.Context, id int64) (bool, error) {
 	if m.accountsByID == nil {
 		return false, nil
