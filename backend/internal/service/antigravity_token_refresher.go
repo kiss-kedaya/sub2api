@@ -2,7 +2,7 @@ package service
 
 import (
 	"context"
-	"strconv"
+	"fmt"
 	"time"
 )
 
@@ -29,21 +29,22 @@ func (r *AntigravityTokenRefresher) CanRefresh(account *Account) bool {
 }
 
 // NeedsRefresh 检查账户是否需要刷新
-// Antigravity 使用固定的10分钟刷新窗口，忽略全局配置
+// Antigravity 使用固定的15分钟刷新窗口，忽略全局配置
 func (r *AntigravityTokenRefresher) NeedsRefresh(account *Account, _ time.Duration) bool {
 	if !r.CanRefresh(account) {
 		return false
 	}
-	expiresAtStr := account.GetCredential("expires_at")
-	if expiresAtStr == "" {
+	expiresAt := account.GetCredentialAsTime("expires_at")
+	if expiresAt == nil {
 		return false
 	}
-	expiresAt, err := strconv.ParseInt(expiresAtStr, 10, 64)
-	if err != nil {
-		return false
+	timeUntilExpiry := time.Until(*expiresAt)
+	needsRefresh := timeUntilExpiry < antigravityRefreshWindow
+	if needsRefresh {
+		fmt.Printf("[AntigravityTokenRefresher] Account %d needs refresh: expires_at=%s, time_until_expiry=%v, window=%v\n",
+			account.ID, expiresAt.Format("2006-01-02 15:04:05"), timeUntilExpiry, antigravityRefreshWindow)
 	}
-	expiryTime := time.Unix(expiresAt, 0)
-	return time.Until(expiryTime) < antigravityRefreshWindow
+	return needsRefresh
 }
 
 // Refresh 执行 token 刷新
