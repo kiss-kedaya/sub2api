@@ -129,6 +129,30 @@ func (f UserAllowedGroupFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.V
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.UserAllowedGroupMutation", m)
 }
 
+// The UserAttributeDefinitionFunc type is an adapter to allow the use of ordinary
+// function as UserAttributeDefinition mutator.
+type UserAttributeDefinitionFunc func(context.Context, *ent.UserAttributeDefinitionMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f UserAttributeDefinitionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.UserAttributeDefinitionMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.UserAttributeDefinitionMutation", m)
+}
+
+// The UserAttributeValueFunc type is an adapter to allow the use of ordinary
+// function as UserAttributeValue mutator.
+type UserAttributeValueFunc func(context.Context, *ent.UserAttributeValueMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f UserAttributeValueFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.UserAttributeValueMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.UserAttributeValueMutation", m)
+}
+
 // The UserSubscriptionFunc type is an adapter to allow the use of ordinary
 // function as UserSubscription mutator.
 type UserSubscriptionFunc func(context.Context, *ent.UserSubscriptionMutation) (ent.Value, error)

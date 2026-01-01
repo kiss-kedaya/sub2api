@@ -22,7 +22,6 @@ export async function getProfile(): Promise<User> {
  */
 export async function updateProfile(profile: {
   username?: string
-  wechat?: string
 }): Promise<User> {
   const { data } = await apiClient.put<User>('/user', profile)
   return data
