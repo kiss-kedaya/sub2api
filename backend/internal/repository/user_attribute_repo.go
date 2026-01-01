@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/userattributedefinition"
@@ -150,12 +149,11 @@ func (r *userAttributeDefinitionRepository) ExistsByKey(ctx context.Context, key
 // UserAttributeValueRepository implementation
 type userAttributeValueRepository struct {
 	client *dbent.Client
-	sql    *sql.DB
 }
 
 // NewUserAttributeValueRepository creates a new repository instance
-func NewUserAttributeValueRepository(client *dbent.Client, sqlDB *sql.DB) service.UserAttributeValueRepository {
-	return &userAttributeValueRepository{client: client, sql: sqlDB}
+func NewUserAttributeValueRepository(client *dbent.Client) service.UserAttributeValueRepository {
+	return &userAttributeValueRepository{client: client}
 }
 
 func (r *userAttributeValueRepository) GetByUserID(ctx context.Context, userID int64) ([]service.UserAttributeValue, error) {
