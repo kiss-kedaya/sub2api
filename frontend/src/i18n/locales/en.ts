@@ -1208,6 +1208,11 @@ export default {
               limitsPaid: 'RPD unlimited; RPM 1000+ (project quota)'
             }
           }
+        },
+        rateLimit: {
+          ok: 'Not rate limited',
+          limited: 'Rate limited {time}',
+          now: 'now'
         }
       },
       // Re-Auth Modal
@@ -1275,8 +1280,8 @@ export default {
       usageWindow: {
         statsTitle: '5-Hour Window Usage Statistics',
         statsTitleDaily: 'Daily Usage Statistics',
-        geminiProDaily: 'RPD Pro',
-        geminiFlashDaily: 'RPD Flash',
+        geminiProDaily: 'Pro',
+        geminiFlashDaily: 'Flash',
         gemini3Pro: 'G3P',
         gemini3Flash: 'G3F',
         gemini3Image: 'G3I',
