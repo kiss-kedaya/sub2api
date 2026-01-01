@@ -49,4 +49,3 @@ func TestInferGoogleOneTier(t *testing.T) {
 		})
 	}
 }
-

@@ -16,4 +16,3 @@ func TestDriveStorageInfo(t *testing.T) {
 		t.Errorf("Expected usage 50GB, got %d", info.Usage)
 	}
 }
-
