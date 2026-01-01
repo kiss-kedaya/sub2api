@@ -1099,12 +1099,8 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 	g.SetLimit(maxConcurrency)
 
 	var mu sync.Mutex
-	results := gin.H{
-		"total":   len(accounts),
-		"success": 0,
-		"failed":  0,
-		"errors":  []gin.H{},
-	}
+	var successCount, failedCount int
+	var errors []gin.H
 
 	for _, account := range accounts {
 		acc := account // 闭包捕获
@@ -1112,8 +1108,8 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 			_, extra, creds, err := h.geminiOAuthService.RefreshAccountGoogleOneTier(gctx, acc)
 			if err != nil {
 				mu.Lock()
-				results["failed"] = results["failed"].(int) + 1
-				results["errors"] = append(results["errors"].([]gin.H), gin.H{
+				failedCount++
+				errors = append(errors, gin.H{
 					"account_id": acc.ID,
 					"error":      err.Error(),
 				})
@@ -1128,13 +1124,13 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 
 			mu.Lock()
 			if updateErr != nil {
-				results["failed"] = results["failed"].(int) + 1
-				results["errors"] = append(results["errors"].([]gin.H), gin.H{
+				failedCount++
+				errors = append(errors, gin.H{
 					"account_id": acc.ID,
 					"error":      updateErr.Error(),
 				})
 			} else {
-				results["success"] = results["success"].(int) + 1
+				successCount++
 			}
 			mu.Unlock()
 
@@ -1145,6 +1141,13 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 	if err := g.Wait(); err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+
+	results := gin.H{
+		"total":   len(accounts),
+		"success": successCount,
+		"failed":  failedCount,
+		"errors":  errors,
 	}
 
 	response.Success(c, results)
