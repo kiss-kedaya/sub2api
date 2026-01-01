@@ -12,20 +12,18 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
-	"github.com/lib/pq"
 )
 
 type userRepository struct {
 	client *dbent.Client
-	sql    sqlExecutor
 }
 
 func NewUserRepository(client *dbent.Client, sqlDB *sql.DB) service.UserRepository {
 	return newUserRepositoryWithSQL(client, sqlDB)
 }
 
-func newUserRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *userRepository {
-	return &userRepository{client: client, sql: sqlq}
+func newUserRepositoryWithSQL(client *dbent.Client, _ sqlExecutor) *userRepository {
+	return &userRepository{client: client}
 }
 
 func (r *userRepository) Create(ctx context.Context, userIn *service.User) error {
@@ -86,10 +84,11 @@ func (r *userRepository) GetByID(ctx context.Context, id int64) (*service.User, 
 
 	out := userEntityToService(m)
 	groups, err := r.loadAllowedGroups(ctx, []int64{id})
-	if err == nil {
-		if v, ok := groups[id]; ok {
-			out.AllowedGroups = v
-		}
+	if err != nil {
+		return nil, err
+	}
+	if v, ok := groups[id]; ok {
+		out.AllowedGroups = v
 	}
 	return out, nil
 }
@@ -102,10 +101,11 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*service
 
 	out := userEntityToService(m)
 	groups, err := r.loadAllowedGroups(ctx, []int64{m.ID})
-	if err == nil {
-		if v, ok := groups[m.ID]; ok {
-			out.AllowedGroups = v
-		}
+	if err != nil {
+		return nil, err
+	}
+	if v, ok := groups[m.ID]; ok {
+		out.AllowedGroups = v
 	}
 	return out, nil
 }
@@ -240,11 +240,12 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 	}
 
 	allowedGroupsByUser, err := r.loadAllowedGroups(ctx, userIDs)
-	if err == nil {
-		for id, u := range userMap {
-			if groups, ok := allowedGroupsByUser[id]; ok {
-				u.AllowedGroups = groups
-			}
+	if err != nil {
+		return nil, nil, err
+	}
+	for id, u := range userMap {
+		if groups, ok := allowedGroupsByUser[id]; ok {
+			u.AllowedGroups = groups
 		}
 	}
 
@@ -252,12 +253,20 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 }
 
 func (r *userRepository) UpdateBalance(ctx context.Context, id int64, amount float64) error {
-	_, err := r.client.User.Update().Where(dbuser.IDEQ(id)).AddBalance(amount).Save(ctx)
-	return err
+	client := clientFromContext(ctx, r.client)
+	n, err := client.User.Update().Where(dbuser.IDEQ(id)).AddBalance(amount).Save(ctx)
+	if err != nil {
+		return translatePersistenceError(err, service.ErrUserNotFound, nil)
+	}
+	if n == 0 {
+		return service.ErrUserNotFound
+	}
+	return nil
 }
 
 func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount float64) error {
-	n, err := r.client.User.Update().
+	client := clientFromContext(ctx, r.client)
+	n, err := client.User.Update().
 		Where(dbuser.IDEQ(id), dbuser.BalanceGTE(amount)).
 		AddBalance(-amount).
 		Save(ctx)
@@ -271,8 +280,15 @@ func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount flo
 }
 
 func (r *userRepository) UpdateConcurrency(ctx context.Context, id int64, amount int) error {
-	_, err := r.client.User.Update().Where(dbuser.IDEQ(id)).AddConcurrency(amount).Save(ctx)
-	return err
+	client := clientFromContext(ctx, r.client)
+	n, err := client.User.Update().Where(dbuser.IDEQ(id)).AddConcurrency(amount).Save(ctx)
+	if err != nil {
+		return translatePersistenceError(err, service.ErrUserNotFound, nil)
+	}
+	if n == 0 {
+		return service.ErrUserNotFound
+	}
+	return nil
 }
 
 func (r *userRepository) ExistsByEmail(ctx context.Context, email string) (bool, error) {
@@ -280,33 +296,14 @@ func (r *userRepository) ExistsByEmail(ctx context.Context, email string) (bool,
 }
 
 func (r *userRepository) RemoveGroupFromAllowedGroups(ctx context.Context, groupID int64) (int64, error) {
-	exec := r.sql
-	if exec == nil {
-		// 未注入 sqlExecutor 时，退回到 ent client 的 ExecContext（支持事务）。
-		exec = r.client
-	}
-
-	joinAffected, err := r.client.UserAllowedGroup.Delete().
+	// 仅操作 user_allowed_groups 联接表，legacy users.allowed_groups 列已弃用。
+	affected, err := r.client.UserAllowedGroup.Delete().
 		Where(userallowedgroup.GroupIDEQ(groupID)).
 		Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
-
-	arrayRes, err := exec.ExecContext(
-		ctx,
-		"UPDATE users SET allowed_groups = array_remove(allowed_groups, $1), updated_at = NOW() WHERE $1 = ANY(allowed_groups)",
-		groupID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	arrayAffected, _ := arrayRes.RowsAffected()
-
-	if int64(joinAffected) > arrayAffected {
-		return int64(joinAffected), nil
-	}
-	return arrayAffected, nil
+	return int64(affected), nil
 }
 
 func (r *userRepository) GetFirstAdmin(ctx context.Context) (*service.User, error) {
@@ -323,10 +320,11 @@ func (r *userRepository) GetFirstAdmin(ctx context.Context) (*service.User, erro
 
 	out := userEntityToService(m)
 	groups, err := r.loadAllowedGroups(ctx, []int64{m.ID})
-	if err == nil {
-		if v, ok := groups[m.ID]; ok {
-			out.AllowedGroups = v
-		}
+	if err != nil {
+		return nil, err
+	}
+	if v, ok := groups[m.ID]; ok {
+		out.AllowedGroups = v
 	}
 	return out, nil
 }
@@ -356,8 +354,7 @@ func (r *userRepository) loadAllowedGroups(ctx context.Context, userIDs []int64)
 }
 
 // syncUserAllowedGroupsWithClient 在 ent client/事务内同步用户允许分组：
-// 1) 以 user_allowed_groups 为读写源，确保新旧逻辑一致；
-// 2) 额外更新 users.allowed_groups（历史字段）以保持兼容。
+// 仅操作 user_allowed_groups 联接表，legacy users.allowed_groups 列已弃用。
 func (r *userRepository) syncUserAllowedGroupsWithClient(ctx context.Context, client *dbent.Client, userID int64, groupIDs []int64) error {
 	if client == nil {
 		return nil
@@ -376,12 +373,10 @@ func (r *userRepository) syncUserAllowedGroupsWithClient(ctx context.Context, cl
 		unique[id] = struct{}{}
 	}
 
-	legacyGroups := make([]int64, 0, len(unique))
 	if len(unique) > 0 {
 		creates := make([]*dbent.UserAllowedGroupCreate, 0, len(unique))
 		for groupID := range unique {
 			creates = append(creates, client.UserAllowedGroup.Create().SetUserID(userID).SetGroupID(groupID))
-			legacyGroups = append(legacyGroups, groupID)
 		}
 		if err := client.UserAllowedGroup.
 			CreateBulk(creates...).
@@ -390,16 +385,6 @@ func (r *userRepository) syncUserAllowedGroupsWithClient(ctx context.Context, cl
 			Exec(ctx); err != nil {
 			return err
 		}
-	}
-
-	// Phase 1 兼容：保持 users.allowed_groups（数组字段）同步，避免旧查询路径读取到过期数据。
-	var legacy any
-	if len(legacyGroups) > 0 {
-		sort.Slice(legacyGroups, func(i, j int) bool { return legacyGroups[i] < legacyGroups[j] })
-		legacy = pq.Array(legacyGroups)
-	}
-	if _, err := client.ExecContext(ctx, "UPDATE users SET allowed_groups = $1::bigint[] WHERE id = $2", legacy, userID); err != nil {
-		return err
 	}
 
 	return nil

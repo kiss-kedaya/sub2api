@@ -488,6 +488,11 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		subscriptionType = SubscriptionTypeStandard
 	}
 
+	// 限额字段：0 和 nil 都表示"无限制"
+	dailyLimit := normalizeLimit(input.DailyLimitUSD)
+	weeklyLimit := normalizeLimit(input.WeeklyLimitUSD)
+	monthlyLimit := normalizeLimit(input.MonthlyLimitUSD)
+
 	group := &Group{
 		Name:             input.Name,
 		Description:      input.Description,
@@ -496,14 +501,22 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		IsExclusive:      input.IsExclusive,
 		Status:           StatusActive,
 		SubscriptionType: subscriptionType,
-		DailyLimitUSD:    input.DailyLimitUSD,
-		WeeklyLimitUSD:   input.WeeklyLimitUSD,
-		MonthlyLimitUSD:  input.MonthlyLimitUSD,
+		DailyLimitUSD:    dailyLimit,
+		WeeklyLimitUSD:   weeklyLimit,
+		MonthlyLimitUSD:  monthlyLimit,
 	}
 	if err := s.groupRepo.Create(ctx, group); err != nil {
 		return nil, err
 	}
 	return group, nil
+}
+
+// normalizeLimit 将 0 或负数转换为 nil（表示无限制）
+func normalizeLimit(limit *float64) *float64 {
+	if limit == nil || *limit <= 0 {
+		return nil
+	}
+	return limit
 }
 
 func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*Group, error) {
@@ -535,15 +548,15 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.SubscriptionType != "" {
 		group.SubscriptionType = input.SubscriptionType
 	}
-	// 限额字段支持设置为nil（清除限额）或具体值
+	// 限额字段：0 和 nil 都表示"无限制"，正数表示具体限额
 	if input.DailyLimitUSD != nil {
-		group.DailyLimitUSD = input.DailyLimitUSD
+		group.DailyLimitUSD = normalizeLimit(input.DailyLimitUSD)
 	}
 	if input.WeeklyLimitUSD != nil {
-		group.WeeklyLimitUSD = input.WeeklyLimitUSD
+		group.WeeklyLimitUSD = normalizeLimit(input.WeeklyLimitUSD)
 	}
 	if input.MonthlyLimitUSD != nil {
-		group.MonthlyLimitUSD = input.MonthlyLimitUSD
+		group.MonthlyLimitUSD = normalizeLimit(input.MonthlyLimitUSD)
 	}
 
 	if err := s.groupRepo.Update(ctx, group); err != nil {
