@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -17,7 +18,17 @@ type RateLimitService struct {
 	usageRepo          UsageLogRepository
 	cfg                *config.Config
 	geminiQuotaService *GeminiQuotaService
+	usageCacheMu       sync.Mutex
+	usageCache         map[int64]*geminiUsageCacheEntry
 }
+
+type geminiUsageCacheEntry struct {
+	windowStart time.Time
+	cachedAt    time.Time
+	totals      GeminiUsageTotals
+}
+
+const geminiPrecheckCacheTTL = time.Minute
 
 // NewRateLimitService 创建RateLimitService实例
 func NewRateLimitService(accountRepo AccountRepository, usageRepo UsageLogRepository, cfg *config.Config, geminiQuotaService *GeminiQuotaService) *RateLimitService {
@@ -26,6 +37,7 @@ func NewRateLimitService(accountRepo AccountRepository, usageRepo UsageLogReposi
 		usageRepo:          usageRepo,
 		cfg:                cfg,
 		geminiQuotaService: geminiQuotaService,
+		usageCache:         make(map[int64]*geminiUsageCacheEntry),
 	}
 }
 
@@ -73,7 +85,7 @@ func (s *RateLimitService) PreCheckUsage(ctx context.Context, account *Account, 
 	if account == nil || !account.IsGeminiCodeAssist() || strings.TrimSpace(requestedModel) == "" {
 		return true, nil
 	}
-	if s.usageRepo == nil {
+	if s.usageRepo == nil || s.geminiQuotaService == nil {
 		return true, nil
 	}
 
@@ -95,11 +107,15 @@ func (s *RateLimitService) PreCheckUsage(ctx context.Context, account *Account, 
 
 	now := time.Now()
 	start := geminiDailyWindowStart(now)
-	stats, err := s.usageRepo.GetModelStatsWithFilters(ctx, start, now, 0, 0, account.ID)
-	if err != nil {
-		return true, err
+	totals, ok := s.getGeminiUsageTotals(account.ID, start, now)
+	if !ok {
+		stats, err := s.usageRepo.GetModelStatsWithFilters(ctx, start, now, 0, 0, account.ID)
+		if err != nil {
+			return true, err
+		}
+		totals = geminiAggregateUsage(stats)
+		s.setGeminiUsageTotals(account.ID, start, now, totals)
 	}
-	totals := geminiAggregateUsage(stats)
 
 	var used int64
 	switch geminiModelClassFromName(requestedModel) {
@@ -119,6 +135,40 @@ func (s *RateLimitService) PreCheckUsage(ctx context.Context, account *Account, 
 	}
 
 	return true, nil
+}
+
+func (s *RateLimitService) getGeminiUsageTotals(accountID int64, windowStart, now time.Time) (GeminiUsageTotals, bool) {
+	s.usageCacheMu.Lock()
+	defer s.usageCacheMu.Unlock()
+
+	if s.usageCache == nil {
+		return GeminiUsageTotals{}, false
+	}
+
+	entry, ok := s.usageCache[accountID]
+	if !ok || entry == nil {
+		return GeminiUsageTotals{}, false
+	}
+	if !entry.windowStart.Equal(windowStart) {
+		return GeminiUsageTotals{}, false
+	}
+	if now.Sub(entry.cachedAt) >= geminiPrecheckCacheTTL {
+		return GeminiUsageTotals{}, false
+	}
+	return entry.totals, true
+}
+
+func (s *RateLimitService) setGeminiUsageTotals(accountID int64, windowStart, now time.Time, totals GeminiUsageTotals) {
+	s.usageCacheMu.Lock()
+	defer s.usageCacheMu.Unlock()
+	if s.usageCache == nil {
+		s.usageCache = make(map[int64]*geminiUsageCacheEntry)
+	}
+	s.usageCache[accountID] = &geminiUsageCacheEntry{
+		windowStart: windowStart,
+		cachedAt:    now,
+		totals:      totals,
+	}
 }
 
 // GeminiCooldown returns the fallback cooldown duration for Gemini 429s based on tier.
