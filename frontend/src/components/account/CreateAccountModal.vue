@@ -880,47 +880,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <div class="mb-3 rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
-              <p class="text-xs text-blue-700 dark:text-blue-400">
-                <svg
-                  class="mr-1 inline h-4 w-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-                {{ t('admin.accounts.selectAllowedModels') }}
-              </p>
-            </div>
-
-            <!-- Model Checkbox List -->
-            <div class="mb-3 grid grid-cols-2 gap-2">
-              <label
-                v-for="model in commonModels"
-                :key="model.value"
-                class="flex cursor-pointer items-center rounded-lg border p-3 transition-all hover:bg-gray-50 dark:border-dark-600 dark:hover:bg-dark-700"
-                :class="
-                  allowedModels.includes(model.value)
-                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                    : 'border-gray-200'
-                "
-              >
-                <input
-                  type="checkbox"
-                  :value="model.value"
-                  v-model="allowedModels"
-                  class="mr-2 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                />
-                <span class="text-sm text-gray-700 dark:text-gray-300">{{ model.label }}</span>
-              </label>
-            </div>
-
+            <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0">{{
@@ -1549,6 +1509,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { claudeModels, getPresetMappingsByPlatform, getModelsByPlatform, commonErrorCodes, buildModelMappingObject } from '@/composables/useModelWhitelist'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import {
@@ -1563,6 +1524,7 @@ import type { Proxy, Group, AccountPlatform, AccountType } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
+import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import OAuthAuthorizationFlow from './OAuthAuthorizationFlow.vue'
 
 // Type for exposed OAuthAuthorizationFlow component
@@ -1676,37 +1638,6 @@ const geminiOAuthType = ref<'code_assist' | 'google_one' | 'ai_studio'>('google_
 const geminiAIStudioOAuthEnabled = ref(false)
 const showAdvancedOAuth = ref(false)
 
-// Common models for whitelist - Anthropic
-const anthropicModels = [
-  { value: 'claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
-  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
-  { value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
-  { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' },
-  { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-  { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
-  { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
-  { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' }
-]
-
-// Common models for whitelist - OpenAI
-const openaiModels = [
-  { value: 'gpt-5.2-2025-12-11', label: 'GPT-5.2' },
-  { value: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
-  { value: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },
-  { value: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },
-  { value: 'gpt-5.1-2025-11-13', label: 'GPT-5.1' },
-  { value: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini' },
-  { value: 'gpt-5-2025-08-07', label: 'GPT-5' }
-]
-
-// Common models for whitelist - Gemini
-const geminiModels = [
-  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
-  { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite' },
-  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
-  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' }
-]
-
 const geminiQuotaDocs = {
   codeAssist: 'https://developers.google.com/gemini-code-assist/resources/quotas',
   aiStudio: 'https://ai.google.dev/pricing',
@@ -1721,147 +1652,8 @@ const geminiHelpLinks = {
   countryCheck: 'https://policies.google.com/country-association-form'
 }
 
-// Computed: current models based on platform
-const commonModels = computed(() => {
-  if (form.platform === 'openai') return openaiModels
-  if (form.platform === 'gemini') return geminiModels
-  return anthropicModels
-})
-
-// Preset mappings for quick add - Anthropic
-const anthropicPresetMappings = [
-  {
-    label: 'Sonnet 4',
-    from: 'claude-sonnet-4-20250514',
-    to: 'claude-sonnet-4-20250514',
-    color: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400'
-  },
-  {
-    label: 'Sonnet 4.5',
-    from: 'claude-sonnet-4-5-20250929',
-    to: 'claude-sonnet-4-5-20250929',
-    color:
-      'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400'
-  },
-  {
-    label: 'Opus 4.5',
-    from: 'claude-opus-4-5-20251101',
-    to: 'claude-opus-4-5-20251101',
-    color:
-      'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400'
-  },
-  {
-    label: 'Haiku 3.5',
-    from: 'claude-3-5-haiku-20241022',
-    to: 'claude-3-5-haiku-20241022',
-    color: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400'
-  },
-  {
-    label: 'Haiku 4.5',
-    from: 'claude-haiku-4-5-20251001',
-    to: 'claude-haiku-4-5-20251001',
-    color:
-      'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400'
-  },
-  {
-    label: 'Opus->Sonnet',
-    from: 'claude-opus-4-5-20251101',
-    to: 'claude-sonnet-4-5-20250929',
-    color: 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400'
-  }
-]
-
-// Preset mappings for quick add - OpenAI
-const openaiPresetMappings = [
-  {
-    label: 'GPT-5.2',
-    from: 'gpt-5.2-2025-12-11',
-    to: 'gpt-5.2-2025-12-11',
-    color: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400'
-  },
-  {
-    label: 'GPT-5.2 Codex',
-    from: 'gpt-5.2-codex',
-    to: 'gpt-5.2-codex',
-    color: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400'
-  },
-  {
-    label: 'GPT-5.1 Codex',
-    from: 'gpt-5.1-codex',
-    to: 'gpt-5.1-codex',
-    color:
-      'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400'
-  },
-  {
-    label: 'Codex Max',
-    from: 'gpt-5.1-codex-max',
-    to: 'gpt-5.1-codex-max',
-    color:
-      'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400'
-  },
-  {
-    label: 'Codex Mini',
-    from: 'gpt-5.1-codex-mini',
-    to: 'gpt-5.1-codex-mini',
-    color:
-      'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400'
-  },
-  {
-    label: 'Max->Codex',
-    from: 'gpt-5.1-codex-max',
-    to: 'gpt-5.1-codex',
-    color: 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400'
-  }
-]
-
-// Preset mappings for quick add - Gemini
-const geminiPresetMappings = [
-  {
-    label: 'Flash',
-    from: 'gemini-2.0-flash',
-    to: 'gemini-2.0-flash',
-    color: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400'
-  },
-  {
-    label: 'Flash Lite',
-    from: 'gemini-2.0-flash-lite',
-    to: 'gemini-2.0-flash-lite',
-    color:
-      'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400'
-  },
-  {
-    label: '1.5 Pro',
-    from: 'gemini-1.5-pro',
-    to: 'gemini-1.5-pro',
-    color:
-      'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400'
-  },
-  {
-    label: '1.5 Flash',
-    from: 'gemini-1.5-flash',
-    to: 'gemini-1.5-flash',
-    color:
-      'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400'
-  }
-]
-
 // Computed: current preset mappings based on platform
-const presetMappings = computed(() => {
-  if (form.platform === 'openai') return openaiPresetMappings
-  if (form.platform === 'gemini') return geminiPresetMappings
-  return anthropicPresetMappings
-})
-
-// Common HTTP error codes for quick selection
-const commonErrorCodes = [
-  { value: 401, label: 'Unauthorized' },
-  { value: 403, label: 'Forbidden' },
-  { value: 429, label: 'Rate Limit' },
-  { value: 500, label: 'Server Error' },
-  { value: 502, label: 'Bad Gateway' },
-  { value: 503, label: 'Unavailable' },
-  { value: 529, label: 'Overloaded' }
-]
+const presetMappings = computed(() => getPresetMappingsByPlatform(form.platform))
 
 const form = reactive({
   name: '',
@@ -1899,7 +1691,10 @@ const canExchangeCode = computed(() => {
 watch(
   () => props.show,
   (newVal) => {
-    if (!newVal) {
+    if (newVal) {
+      // Modal opened - fill related models
+      allowedModels.value = [...getModelsByPlatform(form.platform)]
+    } else {
       resetForm()
     }
   }
@@ -1973,6 +1768,16 @@ const handleSelectGeminiOAuthType = (oauthType: 'code_assist' | 'google_one' | '
   geminiOAuthType.value = oauthType
 }
 
+// Auto-fill related models when switching to whitelist mode or changing platform
+watch(
+  [modelRestrictionMode, () => form.platform],
+  ([newMode]) => {
+    if (newMode === 'whitelist') {
+      allowedModels.value = [...getModelsByPlatform(form.platform)]
+    }
+  }
+)
+
 // Model mapping helpers
 const addModelMapping = () => {
   modelMappings.value.push({ from: '', to: '' })
@@ -1983,9 +1788,7 @@ const removeModelMapping = (index: number) => {
 }
 
 const addPresetMapping = (from: string, to: string) => {
-  // Check if mapping already exists
-  const exists = modelMappings.value.some((m) => m.from === from)
-  if (exists) {
+  if (modelMappings.value.some((m) => m.from === from)) {
     appStore.showInfo(t('admin.accounts.mappingExists', { model: from }))
     return
   }
@@ -2025,28 +1828,6 @@ const removeErrorCode = (code: number) => {
   }
 }
 
-const buildModelMappingObject = (): Record<string, string> | null => {
-  const mapping: Record<string, string> = {}
-
-  if (modelRestrictionMode.value === 'whitelist') {
-    // Whitelist mode: map model to itself
-    for (const model of allowedModels.value) {
-      mapping[model] = model
-    }
-  } else {
-    // Mapping mode: use custom mappings
-    for (const m of modelMappings.value) {
-      const from = m.from.trim()
-      const to = m.to.trim()
-      if (from && to) {
-        mapping[from] = to
-      }
-    }
-  }
-
-  return Object.keys(mapping).length > 0 ? mapping : null
-}
-
 // Methods
 const resetForm = () => {
   step.value = 1
@@ -2064,7 +1845,7 @@ const resetForm = () => {
   apiKeyValue.value = ''
   modelMappings.value = []
   modelRestrictionMode.value = 'whitelist'
-  allowedModels.value = []
+  allowedModels.value = [...claudeModels] // Default fill related models
   customErrorCodesEnabled.value = false
   selectedErrorCodes.value = []
   customErrorCodeInput.value = null
@@ -2113,7 +1894,7 @@ const handleSubmit = async () => {
   }
 
   // Add model mapping if configured
-  const modelMapping = buildModelMappingObject()
+  const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
   if (modelMapping) {
     credentials.model_mapping = modelMapping
   }

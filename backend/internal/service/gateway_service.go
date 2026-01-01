@@ -1925,3 +1925,58 @@ func (s *GatewayService) countTokensError(c *gin.Context, status int, errType, m
 		},
 	})
 }
+
+// GetAvailableModels returns the list of models available for a group
+// It aggregates model_mapping keys from all schedulable accounts in the group
+func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64, platform string) []string {
+	var accounts []Account
+	var err error
+
+	if groupID != nil {
+		accounts, err = s.accountRepo.ListSchedulableByGroupID(ctx, *groupID)
+	} else {
+		accounts, err = s.accountRepo.ListSchedulable(ctx)
+	}
+
+	if err != nil || len(accounts) == 0 {
+		return nil
+	}
+
+	// Filter by platform if specified
+	if platform != "" {
+		filtered := make([]Account, 0)
+		for _, acc := range accounts {
+			if acc.Platform == platform {
+				filtered = append(filtered, acc)
+			}
+		}
+		accounts = filtered
+	}
+
+	// Collect unique models from all accounts
+	modelSet := make(map[string]struct{})
+	hasAnyMapping := false
+
+	for _, acc := range accounts {
+		mapping := acc.GetModelMapping()
+		if len(mapping) > 0 {
+			hasAnyMapping = true
+			for model := range mapping {
+				modelSet[model] = struct{}{}
+			}
+		}
+	}
+
+	// If no account has model_mapping, return nil (use default)
+	if !hasAnyMapping {
+		return nil
+	}
+
+	// Convert to slice
+	models := make([]string, 0, len(modelSet))
+	for model := range modelSet {
+		models = append(models, model)
+	}
+
+	return models
+}
