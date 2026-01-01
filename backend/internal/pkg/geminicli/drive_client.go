@@ -22,17 +22,11 @@ type DriveClient interface {
 	GetStorageQuota(ctx context.Context, accessToken, proxyURL string) (*DriveStorageInfo, error)
 }
 
-type driveClient struct {
-	httpClient *http.Client
-}
+type driveClient struct{}
 
 // NewDriveClient creates a new Drive API client
 func NewDriveClient() DriveClient {
-	return &driveClient{
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-	}
+	return &driveClient{}
 }
 
 // GetStorageQuota fetches storage quota from Google Drive API
@@ -71,7 +65,7 @@ func (c *driveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL
 
 		// Rate limit - retry with exponential backoff
 		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRetries-1 {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			backoff := time.Duration(1<<uint(attempt)) * time.Second // 1s, 2s, 4s
 			time.Sleep(backoff)
 			continue
@@ -79,11 +73,11 @@ func (c *driveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL
 
 		// Other errors - return immediately
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return nil, fmt.Errorf("Drive API error (status %d): %s", resp.StatusCode, string(body))
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("drive API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Parse response
 	var result struct {
@@ -100,10 +94,10 @@ func (c *driveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL
 	// Parse limit and usage (handle both string and number formats)
 	var limit, usage int64
 	if result.StorageQuota.Limit != "" {
-		fmt.Sscanf(result.StorageQuota.Limit, "%d", &limit)
+		_, _ = fmt.Sscanf(result.StorageQuota.Limit, "%d", &limit)
 	}
 	if result.StorageQuota.Usage != "" {
-		fmt.Sscanf(result.StorageQuota.Usage, "%d", &usage)
+		_, _ = fmt.Sscanf(result.StorageQuota.Usage, "%d", &usage)
 	}
 
 	return &DriveStorageInfo{
