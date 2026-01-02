@@ -251,7 +251,7 @@ func inferGoogleOneTier(storageBytes int64) string {
 	return TierGoogleOneUnknown
 }
 
-// fetchGoogleOneTier fetches Google One tier from Drive API
+// FetchGoogleOneTier fetches Google One tier from Drive API
 func (s *GeminiOAuthService) FetchGoogleOneTier(ctx context.Context, accessToken, proxyURL string) (string, *geminicli.DriveStorageInfo, error) {
 	driveClient := geminicli.NewDriveClient()
 

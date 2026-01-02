@@ -17,22 +17,22 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/user"
 )
 
-// ApiKeyCreate is the builder for creating a ApiKey entity.
-type ApiKeyCreate struct {
+// APIKeyCreate is the builder for creating a APIKey entity.
+type APIKeyCreate struct {
 	config
-	mutation *ApiKeyMutation
+	mutation *APIKeyMutation
 	hooks    []Hook
 	conflict []sql.ConflictOption
 }
 
 // SetCreatedAt sets the "created_at" field.
-func (_c *ApiKeyCreate) SetCreatedAt(v time.Time) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetCreatedAt(v time.Time) *APIKeyCreate {
 	_c.mutation.SetCreatedAt(v)
 	return _c
 }
 
 // SetNillableCreatedAt sets the "created_at" field if the given value is not nil.
-func (_c *ApiKeyCreate) SetNillableCreatedAt(v *time.Time) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetNillableCreatedAt(v *time.Time) *APIKeyCreate {
 	if v != nil {
 		_c.SetCreatedAt(*v)
 	}
@@ -40,13 +40,13 @@ func (_c *ApiKeyCreate) SetNillableCreatedAt(v *time.Time) *ApiKeyCreate {
 }
 
 // SetUpdatedAt sets the "updated_at" field.
-func (_c *ApiKeyCreate) SetUpdatedAt(v time.Time) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetUpdatedAt(v time.Time) *APIKeyCreate {
 	_c.mutation.SetUpdatedAt(v)
 	return _c
 }
 
 // SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (_c *ApiKeyCreate) SetNillableUpdatedAt(v *time.Time) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetNillableUpdatedAt(v *time.Time) *APIKeyCreate {
 	if v != nil {
 		_c.SetUpdatedAt(*v)
 	}
@@ -54,13 +54,13 @@ func (_c *ApiKeyCreate) SetNillableUpdatedAt(v *time.Time) *ApiKeyCreate {
 }
 
 // SetDeletedAt sets the "deleted_at" field.
-func (_c *ApiKeyCreate) SetDeletedAt(v time.Time) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetDeletedAt(v time.Time) *APIKeyCreate {
 	_c.mutation.SetDeletedAt(v)
 	return _c
 }
 
 // SetNillableDeletedAt sets the "deleted_at" field if the given value is not nil.
-func (_c *ApiKeyCreate) SetNillableDeletedAt(v *time.Time) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetNillableDeletedAt(v *time.Time) *APIKeyCreate {
 	if v != nil {
 		_c.SetDeletedAt(*v)
 	}
@@ -68,31 +68,31 @@ func (_c *ApiKeyCreate) SetNillableDeletedAt(v *time.Time) *ApiKeyCreate {
 }
 
 // SetUserID sets the "user_id" field.
-func (_c *ApiKeyCreate) SetUserID(v int64) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetUserID(v int64) *APIKeyCreate {
 	_c.mutation.SetUserID(v)
 	return _c
 }
 
 // SetKey sets the "key" field.
-func (_c *ApiKeyCreate) SetKey(v string) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetKey(v string) *APIKeyCreate {
 	_c.mutation.SetKey(v)
 	return _c
 }
 
 // SetName sets the "name" field.
-func (_c *ApiKeyCreate) SetName(v string) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetName(v string) *APIKeyCreate {
 	_c.mutation.SetName(v)
 	return _c
 }
 
 // SetGroupID sets the "group_id" field.
-func (_c *ApiKeyCreate) SetGroupID(v int64) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetGroupID(v int64) *APIKeyCreate {
 	_c.mutation.SetGroupID(v)
 	return _c
 }
 
 // SetNillableGroupID sets the "group_id" field if the given value is not nil.
-func (_c *ApiKeyCreate) SetNillableGroupID(v *int64) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetNillableGroupID(v *int64) *APIKeyCreate {
 	if v != nil {
 		_c.SetGroupID(*v)
 	}
@@ -100,13 +100,13 @@ func (_c *ApiKeyCreate) SetNillableGroupID(v *int64) *ApiKeyCreate {
 }
 
 // SetStatus sets the "status" field.
-func (_c *ApiKeyCreate) SetStatus(v string) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetStatus(v string) *APIKeyCreate {
 	_c.mutation.SetStatus(v)
 	return _c
 }
 
 // SetNillableStatus sets the "status" field if the given value is not nil.
-func (_c *ApiKeyCreate) SetNillableStatus(v *string) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetNillableStatus(v *string) *APIKeyCreate {
 	if v != nil {
 		_c.SetStatus(*v)
 	}
@@ -114,23 +114,23 @@ func (_c *ApiKeyCreate) SetNillableStatus(v *string) *ApiKeyCreate {
 }
 
 // SetUser sets the "user" edge to the User entity.
-func (_c *ApiKeyCreate) SetUser(v *User) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetUser(v *User) *APIKeyCreate {
 	return _c.SetUserID(v.ID)
 }
 
 // SetGroup sets the "group" edge to the Group entity.
-func (_c *ApiKeyCreate) SetGroup(v *Group) *ApiKeyCreate {
+func (_c *APIKeyCreate) SetGroup(v *Group) *APIKeyCreate {
 	return _c.SetGroupID(v.ID)
 }
 
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
-func (_c *ApiKeyCreate) AddUsageLogIDs(ids ...int64) *ApiKeyCreate {
+func (_c *APIKeyCreate) AddUsageLogIDs(ids ...int64) *APIKeyCreate {
 	_c.mutation.AddUsageLogIDs(ids...)
 	return _c
 }
 
 // AddUsageLogs adds the "usage_logs" edges to the UsageLog entity.
-func (_c *ApiKeyCreate) AddUsageLogs(v ...*UsageLog) *ApiKeyCreate {
+func (_c *APIKeyCreate) AddUsageLogs(v ...*UsageLog) *APIKeyCreate {
 	ids := make([]int64, len(v))
 	for i := range v {
 		ids[i] = v[i].ID
@@ -138,13 +138,13 @@ func (_c *ApiKeyCreate) AddUsageLogs(v ...*UsageLog) *ApiKeyCreate {
 	return _c.AddUsageLogIDs(ids...)
 }
 
-// Mutation returns the ApiKeyMutation object of the builder.
-func (_c *ApiKeyCreate) Mutation() *ApiKeyMutation {
+// Mutation returns the APIKeyMutation object of the builder.
+func (_c *APIKeyCreate) Mutation() *APIKeyMutation {
 	return _c.mutation
 }
 
-// Save creates the ApiKey in the database.
-func (_c *ApiKeyCreate) Save(ctx context.Context) (*ApiKey, error) {
+// Save creates the APIKey in the database.
+func (_c *APIKeyCreate) Save(ctx context.Context) (*APIKey, error) {
 	if err := _c.defaults(); err != nil {
 		return nil, err
 	}
@@ -152,7 +152,7 @@ func (_c *ApiKeyCreate) Save(ctx context.Context) (*ApiKey, error) {
 }
 
 // SaveX calls Save and panics if Save returns an error.
-func (_c *ApiKeyCreate) SaveX(ctx context.Context) *ApiKey {
+func (_c *APIKeyCreate) SaveX(ctx context.Context) *APIKey {
 	v, err := _c.Save(ctx)
 	if err != nil {
 		panic(err)
@@ -161,20 +161,20 @@ func (_c *ApiKeyCreate) SaveX(ctx context.Context) *ApiKey {
 }
 
 // Exec executes the query.
-func (_c *ApiKeyCreate) Exec(ctx context.Context) error {
+func (_c *APIKeyCreate) Exec(ctx context.Context) error {
 	_, err := _c.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_c *ApiKeyCreate) ExecX(ctx context.Context) {
+func (_c *APIKeyCreate) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
 // defaults sets the default values of the builder before save.
-func (_c *ApiKeyCreate) defaults() error {
+func (_c *APIKeyCreate) defaults() error {
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		if apikey.DefaultCreatedAt == nil {
 			return fmt.Errorf("ent: uninitialized apikey.DefaultCreatedAt (forgotten import ent/runtime?)")
@@ -197,47 +197,47 @@ func (_c *ApiKeyCreate) defaults() error {
 }
 
 // check runs all checks and user-defined validators on the builder.
-func (_c *ApiKeyCreate) check() error {
+func (_c *APIKeyCreate) check() error {
 	if _, ok := _c.mutation.CreatedAt(); !ok {
-		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "ApiKey.created_at"`)}
+		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "APIKey.created_at"`)}
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
-		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "ApiKey.updated_at"`)}
+		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "APIKey.updated_at"`)}
 	}
 	if _, ok := _c.mutation.UserID(); !ok {
-		return &ValidationError{Name: "user_id", err: errors.New(`ent: missing required field "ApiKey.user_id"`)}
+		return &ValidationError{Name: "user_id", err: errors.New(`ent: missing required field "APIKey.user_id"`)}
 	}
 	if _, ok := _c.mutation.Key(); !ok {
-		return &ValidationError{Name: "key", err: errors.New(`ent: missing required field "ApiKey.key"`)}
+		return &ValidationError{Name: "key", err: errors.New(`ent: missing required field "APIKey.key"`)}
 	}
 	if v, ok := _c.mutation.Key(); ok {
 		if err := apikey.KeyValidator(v); err != nil {
-			return &ValidationError{Name: "key", err: fmt.Errorf(`ent: validator failed for field "ApiKey.key": %w`, err)}
+			return &ValidationError{Name: "key", err: fmt.Errorf(`ent: validator failed for field "APIKey.key": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.Name(); !ok {
-		return &ValidationError{Name: "name", err: errors.New(`ent: missing required field "ApiKey.name"`)}
+		return &ValidationError{Name: "name", err: errors.New(`ent: missing required field "APIKey.name"`)}
 	}
 	if v, ok := _c.mutation.Name(); ok {
 		if err := apikey.NameValidator(v); err != nil {
-			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "ApiKey.name": %w`, err)}
+			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "APIKey.name": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.Status(); !ok {
-		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "ApiKey.status"`)}
+		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "APIKey.status"`)}
 	}
 	if v, ok := _c.mutation.Status(); ok {
 		if err := apikey.StatusValidator(v); err != nil {
-			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "ApiKey.status": %w`, err)}
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
 		}
 	}
 	if len(_c.mutation.UserIDs()) == 0 {
-		return &ValidationError{Name: "user", err: errors.New(`ent: missing required edge "ApiKey.user"`)}
+		return &ValidationError{Name: "user", err: errors.New(`ent: missing required edge "APIKey.user"`)}
 	}
 	return nil
 }
 
-func (_c *ApiKeyCreate) sqlSave(ctx context.Context) (*ApiKey, error) {
+func (_c *APIKeyCreate) sqlSave(ctx context.Context) (*APIKey, error) {
 	if err := _c.check(); err != nil {
 		return nil, err
 	}
@@ -255,9 +255,9 @@ func (_c *ApiKeyCreate) sqlSave(ctx context.Context) (*ApiKey, error) {
 	return _node, nil
 }
 
-func (_c *ApiKeyCreate) createSpec() (*ApiKey, *sqlgraph.CreateSpec) {
+func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	var (
-		_node = &ApiKey{config: _c.config}
+		_node = &APIKey{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(apikey.Table, sqlgraph.NewFieldSpec(apikey.FieldID, field.TypeInt64))
 	)
 	_spec.OnConflict = _c.conflict
@@ -341,7 +341,7 @@ func (_c *ApiKeyCreate) createSpec() (*ApiKey, *sqlgraph.CreateSpec) {
 // OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
 // of the `INSERT` statement. For example:
 //
-//	client.ApiKey.Create().
+//	client.APIKey.Create().
 //		SetCreatedAt(v).
 //		OnConflict(
 //			// Update the row with the new values
@@ -350,13 +350,13 @@ func (_c *ApiKeyCreate) createSpec() (*ApiKey, *sqlgraph.CreateSpec) {
 //		).
 //		// Override some of the fields with custom
 //		// update values.
-//		Update(func(u *ent.ApiKeyUpsert) {
+//		Update(func(u *ent.APIKeyUpsert) {
 //			SetCreatedAt(v+v).
 //		}).
 //		Exec(ctx)
-func (_c *ApiKeyCreate) OnConflict(opts ...sql.ConflictOption) *ApiKeyUpsertOne {
+func (_c *APIKeyCreate) OnConflict(opts ...sql.ConflictOption) *APIKeyUpsertOne {
 	_c.conflict = opts
-	return &ApiKeyUpsertOne{
+	return &APIKeyUpsertOne{
 		create: _c,
 	}
 }
@@ -364,121 +364,121 @@ func (_c *ApiKeyCreate) OnConflict(opts ...sql.ConflictOption) *ApiKeyUpsertOne 
 // OnConflictColumns calls `OnConflict` and configures the columns
 // as conflict target. Using this option is equivalent to using:
 //
-//	client.ApiKey.Create().
+//	client.APIKey.Create().
 //		OnConflict(sql.ConflictColumns(columns...)).
 //		Exec(ctx)
-func (_c *ApiKeyCreate) OnConflictColumns(columns ...string) *ApiKeyUpsertOne {
+func (_c *APIKeyCreate) OnConflictColumns(columns ...string) *APIKeyUpsertOne {
 	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
-	return &ApiKeyUpsertOne{
+	return &APIKeyUpsertOne{
 		create: _c,
 	}
 }
 
 type (
-	// ApiKeyUpsertOne is the builder for "upsert"-ing
-	//  one ApiKey node.
-	ApiKeyUpsertOne struct {
-		create *ApiKeyCreate
+	// APIKeyUpsertOne is the builder for "upsert"-ing
+	//  one APIKey node.
+	APIKeyUpsertOne struct {
+		create *APIKeyCreate
 	}
 
-	// ApiKeyUpsert is the "OnConflict" setter.
-	ApiKeyUpsert struct {
+	// APIKeyUpsert is the "OnConflict" setter.
+	APIKeyUpsert struct {
 		*sql.UpdateSet
 	}
 )
 
 // SetUpdatedAt sets the "updated_at" field.
-func (u *ApiKeyUpsert) SetUpdatedAt(v time.Time) *ApiKeyUpsert {
+func (u *APIKeyUpsert) SetUpdatedAt(v time.Time) *APIKeyUpsert {
 	u.Set(apikey.FieldUpdatedAt, v)
 	return u
 }
 
 // UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
-func (u *ApiKeyUpsert) UpdateUpdatedAt() *ApiKeyUpsert {
+func (u *APIKeyUpsert) UpdateUpdatedAt() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldUpdatedAt)
 	return u
 }
 
 // SetDeletedAt sets the "deleted_at" field.
-func (u *ApiKeyUpsert) SetDeletedAt(v time.Time) *ApiKeyUpsert {
+func (u *APIKeyUpsert) SetDeletedAt(v time.Time) *APIKeyUpsert {
 	u.Set(apikey.FieldDeletedAt, v)
 	return u
 }
 
 // UpdateDeletedAt sets the "deleted_at" field to the value that was provided on create.
-func (u *ApiKeyUpsert) UpdateDeletedAt() *ApiKeyUpsert {
+func (u *APIKeyUpsert) UpdateDeletedAt() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldDeletedAt)
 	return u
 }
 
 // ClearDeletedAt clears the value of the "deleted_at" field.
-func (u *ApiKeyUpsert) ClearDeletedAt() *ApiKeyUpsert {
+func (u *APIKeyUpsert) ClearDeletedAt() *APIKeyUpsert {
 	u.SetNull(apikey.FieldDeletedAt)
 	return u
 }
 
 // SetUserID sets the "user_id" field.
-func (u *ApiKeyUpsert) SetUserID(v int64) *ApiKeyUpsert {
+func (u *APIKeyUpsert) SetUserID(v int64) *APIKeyUpsert {
 	u.Set(apikey.FieldUserID, v)
 	return u
 }
 
 // UpdateUserID sets the "user_id" field to the value that was provided on create.
-func (u *ApiKeyUpsert) UpdateUserID() *ApiKeyUpsert {
+func (u *APIKeyUpsert) UpdateUserID() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldUserID)
 	return u
 }
 
 // SetKey sets the "key" field.
-func (u *ApiKeyUpsert) SetKey(v string) *ApiKeyUpsert {
+func (u *APIKeyUpsert) SetKey(v string) *APIKeyUpsert {
 	u.Set(apikey.FieldKey, v)
 	return u
 }
 
 // UpdateKey sets the "key" field to the value that was provided on create.
-func (u *ApiKeyUpsert) UpdateKey() *ApiKeyUpsert {
+func (u *APIKeyUpsert) UpdateKey() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldKey)
 	return u
 }
 
 // SetName sets the "name" field.
-func (u *ApiKeyUpsert) SetName(v string) *ApiKeyUpsert {
+func (u *APIKeyUpsert) SetName(v string) *APIKeyUpsert {
 	u.Set(apikey.FieldName, v)
 	return u
 }
 
 // UpdateName sets the "name" field to the value that was provided on create.
-func (u *ApiKeyUpsert) UpdateName() *ApiKeyUpsert {
+func (u *APIKeyUpsert) UpdateName() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldName)
 	return u
 }
 
 // SetGroupID sets the "group_id" field.
-func (u *ApiKeyUpsert) SetGroupID(v int64) *ApiKeyUpsert {
+func (u *APIKeyUpsert) SetGroupID(v int64) *APIKeyUpsert {
 	u.Set(apikey.FieldGroupID, v)
 	return u
 }
 
 // UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *ApiKeyUpsert) UpdateGroupID() *ApiKeyUpsert {
+func (u *APIKeyUpsert) UpdateGroupID() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldGroupID)
 	return u
 }
 
 // ClearGroupID clears the value of the "group_id" field.
-func (u *ApiKeyUpsert) ClearGroupID() *ApiKeyUpsert {
+func (u *APIKeyUpsert) ClearGroupID() *APIKeyUpsert {
 	u.SetNull(apikey.FieldGroupID)
 	return u
 }
 
 // SetStatus sets the "status" field.
-func (u *ApiKeyUpsert) SetStatus(v string) *ApiKeyUpsert {
+func (u *APIKeyUpsert) SetStatus(v string) *APIKeyUpsert {
 	u.Set(apikey.FieldStatus, v)
 	return u
 }
 
 // UpdateStatus sets the "status" field to the value that was provided on create.
-func (u *ApiKeyUpsert) UpdateStatus() *ApiKeyUpsert {
+func (u *APIKeyUpsert) UpdateStatus() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldStatus)
 	return u
 }
@@ -486,12 +486,12 @@ func (u *ApiKeyUpsert) UpdateStatus() *ApiKeyUpsert {
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
-//	client.ApiKey.Create().
+//	client.APIKey.Create().
 //		OnConflict(
 //			sql.ResolveWithNewValues(),
 //		).
 //		Exec(ctx)
-func (u *ApiKeyUpsertOne) UpdateNewValues() *ApiKeyUpsertOne {
+func (u *APIKeyUpsertOne) UpdateNewValues() *APIKeyUpsertOne {
 	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
 	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
 		if _, exists := u.create.mutation.CreatedAt(); exists {
@@ -504,159 +504,159 @@ func (u *ApiKeyUpsertOne) UpdateNewValues() *ApiKeyUpsertOne {
 // Ignore sets each column to itself in case of conflict.
 // Using this option is equivalent to using:
 //
-//	client.ApiKey.Create().
+//	client.APIKey.Create().
 //	    OnConflict(sql.ResolveWithIgnore()).
 //	    Exec(ctx)
-func (u *ApiKeyUpsertOne) Ignore() *ApiKeyUpsertOne {
+func (u *APIKeyUpsertOne) Ignore() *APIKeyUpsertOne {
 	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
 	return u
 }
 
 // DoNothing configures the conflict_action to `DO NOTHING`.
 // Supported only by SQLite and PostgreSQL.
-func (u *ApiKeyUpsertOne) DoNothing() *ApiKeyUpsertOne {
+func (u *APIKeyUpsertOne) DoNothing() *APIKeyUpsertOne {
 	u.create.conflict = append(u.create.conflict, sql.DoNothing())
 	return u
 }
 
-// Update allows overriding fields `UPDATE` values. See the ApiKeyCreate.OnConflict
+// Update allows overriding fields `UPDATE` values. See the APIKeyCreate.OnConflict
 // documentation for more info.
-func (u *ApiKeyUpsertOne) Update(set func(*ApiKeyUpsert)) *ApiKeyUpsertOne {
+func (u *APIKeyUpsertOne) Update(set func(*APIKeyUpsert)) *APIKeyUpsertOne {
 	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
-		set(&ApiKeyUpsert{UpdateSet: update})
+		set(&APIKeyUpsert{UpdateSet: update})
 	}))
 	return u
 }
 
 // SetUpdatedAt sets the "updated_at" field.
-func (u *ApiKeyUpsertOne) SetUpdatedAt(v time.Time) *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) SetUpdatedAt(v time.Time) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetUpdatedAt(v)
 	})
 }
 
 // UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
-func (u *ApiKeyUpsertOne) UpdateUpdatedAt() *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) UpdateUpdatedAt() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateUpdatedAt()
 	})
 }
 
 // SetDeletedAt sets the "deleted_at" field.
-func (u *ApiKeyUpsertOne) SetDeletedAt(v time.Time) *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) SetDeletedAt(v time.Time) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetDeletedAt(v)
 	})
 }
 
 // UpdateDeletedAt sets the "deleted_at" field to the value that was provided on create.
-func (u *ApiKeyUpsertOne) UpdateDeletedAt() *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) UpdateDeletedAt() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateDeletedAt()
 	})
 }
 
 // ClearDeletedAt clears the value of the "deleted_at" field.
-func (u *ApiKeyUpsertOne) ClearDeletedAt() *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) ClearDeletedAt() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearDeletedAt()
 	})
 }
 
 // SetUserID sets the "user_id" field.
-func (u *ApiKeyUpsertOne) SetUserID(v int64) *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) SetUserID(v int64) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetUserID(v)
 	})
 }
 
 // UpdateUserID sets the "user_id" field to the value that was provided on create.
-func (u *ApiKeyUpsertOne) UpdateUserID() *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) UpdateUserID() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateUserID()
 	})
 }
 
 // SetKey sets the "key" field.
-func (u *ApiKeyUpsertOne) SetKey(v string) *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) SetKey(v string) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetKey(v)
 	})
 }
 
 // UpdateKey sets the "key" field to the value that was provided on create.
-func (u *ApiKeyUpsertOne) UpdateKey() *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) UpdateKey() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateKey()
 	})
 }
 
 // SetName sets the "name" field.
-func (u *ApiKeyUpsertOne) SetName(v string) *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) SetName(v string) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetName(v)
 	})
 }
 
 // UpdateName sets the "name" field to the value that was provided on create.
-func (u *ApiKeyUpsertOne) UpdateName() *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) UpdateName() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateName()
 	})
 }
 
 // SetGroupID sets the "group_id" field.
-func (u *ApiKeyUpsertOne) SetGroupID(v int64) *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) SetGroupID(v int64) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetGroupID(v)
 	})
 }
 
 // UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *ApiKeyUpsertOne) UpdateGroupID() *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) UpdateGroupID() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateGroupID()
 	})
 }
 
 // ClearGroupID clears the value of the "group_id" field.
-func (u *ApiKeyUpsertOne) ClearGroupID() *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) ClearGroupID() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearGroupID()
 	})
 }
 
 // SetStatus sets the "status" field.
-func (u *ApiKeyUpsertOne) SetStatus(v string) *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) SetStatus(v string) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetStatus(v)
 	})
 }
 
 // UpdateStatus sets the "status" field to the value that was provided on create.
-func (u *ApiKeyUpsertOne) UpdateStatus() *ApiKeyUpsertOne {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertOne) UpdateStatus() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateStatus()
 	})
 }
 
 // Exec executes the query.
-func (u *ApiKeyUpsertOne) Exec(ctx context.Context) error {
+func (u *APIKeyUpsertOne) Exec(ctx context.Context) error {
 	if len(u.create.conflict) == 0 {
-		return errors.New("ent: missing options for ApiKeyCreate.OnConflict")
+		return errors.New("ent: missing options for APIKeyCreate.OnConflict")
 	}
 	return u.create.Exec(ctx)
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (u *ApiKeyUpsertOne) ExecX(ctx context.Context) {
+func (u *APIKeyUpsertOne) ExecX(ctx context.Context) {
 	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
 
 // Exec executes the UPSERT query and returns the inserted/updated ID.
-func (u *ApiKeyUpsertOne) ID(ctx context.Context) (id int64, err error) {
+func (u *APIKeyUpsertOne) ID(ctx context.Context) (id int64, err error) {
 	node, err := u.create.Save(ctx)
 	if err != nil {
 		return id, err
@@ -665,7 +665,7 @@ func (u *ApiKeyUpsertOne) ID(ctx context.Context) (id int64, err error) {
 }
 
 // IDX is like ID, but panics if an error occurs.
-func (u *ApiKeyUpsertOne) IDX(ctx context.Context) int64 {
+func (u *APIKeyUpsertOne) IDX(ctx context.Context) int64 {
 	id, err := u.ID(ctx)
 	if err != nil {
 		panic(err)
@@ -673,28 +673,28 @@ func (u *ApiKeyUpsertOne) IDX(ctx context.Context) int64 {
 	return id
 }
 
-// ApiKeyCreateBulk is the builder for creating many ApiKey entities in bulk.
-type ApiKeyCreateBulk struct {
+// APIKeyCreateBulk is the builder for creating many APIKey entities in bulk.
+type APIKeyCreateBulk struct {
 	config
 	err      error
-	builders []*ApiKeyCreate
+	builders []*APIKeyCreate
 	conflict []sql.ConflictOption
 }
 
-// Save creates the ApiKey entities in the database.
-func (_c *ApiKeyCreateBulk) Save(ctx context.Context) ([]*ApiKey, error) {
+// Save creates the APIKey entities in the database.
+func (_c *APIKeyCreateBulk) Save(ctx context.Context) ([]*APIKey, error) {
 	if _c.err != nil {
 		return nil, _c.err
 	}
 	specs := make([]*sqlgraph.CreateSpec, len(_c.builders))
-	nodes := make([]*ApiKey, len(_c.builders))
+	nodes := make([]*APIKey, len(_c.builders))
 	mutators := make([]Mutator, len(_c.builders))
 	for i := range _c.builders {
 		func(i int, root context.Context) {
 			builder := _c.builders[i]
 			builder.defaults()
 			var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
-				mutation, ok := m.(*ApiKeyMutation)
+				mutation, ok := m.(*APIKeyMutation)
 				if !ok {
 					return nil, fmt.Errorf("unexpected mutation type %T", m)
 				}
@@ -742,7 +742,7 @@ func (_c *ApiKeyCreateBulk) Save(ctx context.Context) ([]*ApiKey, error) {
 }
 
 // SaveX is like Save, but panics if an error occurs.
-func (_c *ApiKeyCreateBulk) SaveX(ctx context.Context) []*ApiKey {
+func (_c *APIKeyCreateBulk) SaveX(ctx context.Context) []*APIKey {
 	v, err := _c.Save(ctx)
 	if err != nil {
 		panic(err)
@@ -751,13 +751,13 @@ func (_c *ApiKeyCreateBulk) SaveX(ctx context.Context) []*ApiKey {
 }
 
 // Exec executes the query.
-func (_c *ApiKeyCreateBulk) Exec(ctx context.Context) error {
+func (_c *APIKeyCreateBulk) Exec(ctx context.Context) error {
 	_, err := _c.Save(ctx)
 	return err
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (_c *ApiKeyCreateBulk) ExecX(ctx context.Context) {
+func (_c *APIKeyCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
 		panic(err)
 	}
@@ -766,7 +766,7 @@ func (_c *ApiKeyCreateBulk) ExecX(ctx context.Context) {
 // OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
 // of the `INSERT` statement. For example:
 //
-//	client.ApiKey.CreateBulk(builders...).
+//	client.APIKey.CreateBulk(builders...).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -774,13 +774,13 @@ func (_c *ApiKeyCreateBulk) ExecX(ctx context.Context) {
 //		).
 //		// Override some of the fields with custom
 //		// update values.
-//		Update(func(u *ent.ApiKeyUpsert) {
+//		Update(func(u *ent.APIKeyUpsert) {
 //			SetCreatedAt(v+v).
 //		}).
 //		Exec(ctx)
-func (_c *ApiKeyCreateBulk) OnConflict(opts ...sql.ConflictOption) *ApiKeyUpsertBulk {
+func (_c *APIKeyCreateBulk) OnConflict(opts ...sql.ConflictOption) *APIKeyUpsertBulk {
 	_c.conflict = opts
-	return &ApiKeyUpsertBulk{
+	return &APIKeyUpsertBulk{
 		create: _c,
 	}
 }
@@ -788,31 +788,31 @@ func (_c *ApiKeyCreateBulk) OnConflict(opts ...sql.ConflictOption) *ApiKeyUpsert
 // OnConflictColumns calls `OnConflict` and configures the columns
 // as conflict target. Using this option is equivalent to using:
 //
-//	client.ApiKey.Create().
+//	client.APIKey.Create().
 //		OnConflict(sql.ConflictColumns(columns...)).
 //		Exec(ctx)
-func (_c *ApiKeyCreateBulk) OnConflictColumns(columns ...string) *ApiKeyUpsertBulk {
+func (_c *APIKeyCreateBulk) OnConflictColumns(columns ...string) *APIKeyUpsertBulk {
 	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
-	return &ApiKeyUpsertBulk{
+	return &APIKeyUpsertBulk{
 		create: _c,
 	}
 }
 
-// ApiKeyUpsertBulk is the builder for "upsert"-ing
-// a bulk of ApiKey nodes.
-type ApiKeyUpsertBulk struct {
-	create *ApiKeyCreateBulk
+// APIKeyUpsertBulk is the builder for "upsert"-ing
+// a bulk of APIKey nodes.
+type APIKeyUpsertBulk struct {
+	create *APIKeyCreateBulk
 }
 
 // UpdateNewValues updates the mutable fields using the new values that
 // were set on create. Using this option is equivalent to using:
 //
-//	client.ApiKey.Create().
+//	client.APIKey.Create().
 //		OnConflict(
 //			sql.ResolveWithNewValues(),
 //		).
 //		Exec(ctx)
-func (u *ApiKeyUpsertBulk) UpdateNewValues() *ApiKeyUpsertBulk {
+func (u *APIKeyUpsertBulk) UpdateNewValues() *APIKeyUpsertBulk {
 	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
 	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
 		for _, b := range u.create.builders {
@@ -827,160 +827,160 @@ func (u *ApiKeyUpsertBulk) UpdateNewValues() *ApiKeyUpsertBulk {
 // Ignore sets each column to itself in case of conflict.
 // Using this option is equivalent to using:
 //
-//	client.ApiKey.Create().
+//	client.APIKey.Create().
 //		OnConflict(sql.ResolveWithIgnore()).
 //		Exec(ctx)
-func (u *ApiKeyUpsertBulk) Ignore() *ApiKeyUpsertBulk {
+func (u *APIKeyUpsertBulk) Ignore() *APIKeyUpsertBulk {
 	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
 	return u
 }
 
 // DoNothing configures the conflict_action to `DO NOTHING`.
 // Supported only by SQLite and PostgreSQL.
-func (u *ApiKeyUpsertBulk) DoNothing() *ApiKeyUpsertBulk {
+func (u *APIKeyUpsertBulk) DoNothing() *APIKeyUpsertBulk {
 	u.create.conflict = append(u.create.conflict, sql.DoNothing())
 	return u
 }
 
-// Update allows overriding fields `UPDATE` values. See the ApiKeyCreateBulk.OnConflict
+// Update allows overriding fields `UPDATE` values. See the APIKeyCreateBulk.OnConflict
 // documentation for more info.
-func (u *ApiKeyUpsertBulk) Update(set func(*ApiKeyUpsert)) *ApiKeyUpsertBulk {
+func (u *APIKeyUpsertBulk) Update(set func(*APIKeyUpsert)) *APIKeyUpsertBulk {
 	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
-		set(&ApiKeyUpsert{UpdateSet: update})
+		set(&APIKeyUpsert{UpdateSet: update})
 	}))
 	return u
 }
 
 // SetUpdatedAt sets the "updated_at" field.
-func (u *ApiKeyUpsertBulk) SetUpdatedAt(v time.Time) *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) SetUpdatedAt(v time.Time) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetUpdatedAt(v)
 	})
 }
 
 // UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
-func (u *ApiKeyUpsertBulk) UpdateUpdatedAt() *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) UpdateUpdatedAt() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateUpdatedAt()
 	})
 }
 
 // SetDeletedAt sets the "deleted_at" field.
-func (u *ApiKeyUpsertBulk) SetDeletedAt(v time.Time) *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) SetDeletedAt(v time.Time) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetDeletedAt(v)
 	})
 }
 
 // UpdateDeletedAt sets the "deleted_at" field to the value that was provided on create.
-func (u *ApiKeyUpsertBulk) UpdateDeletedAt() *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) UpdateDeletedAt() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateDeletedAt()
 	})
 }
 
 // ClearDeletedAt clears the value of the "deleted_at" field.
-func (u *ApiKeyUpsertBulk) ClearDeletedAt() *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) ClearDeletedAt() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearDeletedAt()
 	})
 }
 
 // SetUserID sets the "user_id" field.
-func (u *ApiKeyUpsertBulk) SetUserID(v int64) *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) SetUserID(v int64) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetUserID(v)
 	})
 }
 
 // UpdateUserID sets the "user_id" field to the value that was provided on create.
-func (u *ApiKeyUpsertBulk) UpdateUserID() *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) UpdateUserID() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateUserID()
 	})
 }
 
 // SetKey sets the "key" field.
-func (u *ApiKeyUpsertBulk) SetKey(v string) *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) SetKey(v string) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetKey(v)
 	})
 }
 
 // UpdateKey sets the "key" field to the value that was provided on create.
-func (u *ApiKeyUpsertBulk) UpdateKey() *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) UpdateKey() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateKey()
 	})
 }
 
 // SetName sets the "name" field.
-func (u *ApiKeyUpsertBulk) SetName(v string) *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) SetName(v string) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetName(v)
 	})
 }
 
 // UpdateName sets the "name" field to the value that was provided on create.
-func (u *ApiKeyUpsertBulk) UpdateName() *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) UpdateName() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateName()
 	})
 }
 
 // SetGroupID sets the "group_id" field.
-func (u *ApiKeyUpsertBulk) SetGroupID(v int64) *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) SetGroupID(v int64) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetGroupID(v)
 	})
 }
 
 // UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *ApiKeyUpsertBulk) UpdateGroupID() *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) UpdateGroupID() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateGroupID()
 	})
 }
 
 // ClearGroupID clears the value of the "group_id" field.
-func (u *ApiKeyUpsertBulk) ClearGroupID() *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) ClearGroupID() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearGroupID()
 	})
 }
 
 // SetStatus sets the "status" field.
-func (u *ApiKeyUpsertBulk) SetStatus(v string) *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) SetStatus(v string) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.SetStatus(v)
 	})
 }
 
 // UpdateStatus sets the "status" field to the value that was provided on create.
-func (u *ApiKeyUpsertBulk) UpdateStatus() *ApiKeyUpsertBulk {
-	return u.Update(func(s *ApiKeyUpsert) {
+func (u *APIKeyUpsertBulk) UpdateStatus() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateStatus()
 	})
 }
 
 // Exec executes the query.
-func (u *ApiKeyUpsertBulk) Exec(ctx context.Context) error {
+func (u *APIKeyUpsertBulk) Exec(ctx context.Context) error {
 	if u.create.err != nil {
 		return u.create.err
 	}
 	for i, b := range u.create.builders {
 		if len(b.conflict) != 0 {
-			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the ApiKeyCreateBulk instead", i)
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the APIKeyCreateBulk instead", i)
 		}
 	}
 	if len(u.create.conflict) == 0 {
-		return errors.New("ent: missing options for ApiKeyCreateBulk.OnConflict")
+		return errors.New("ent: missing options for APIKeyCreateBulk.OnConflict")
 	}
 	return u.create.Exec(ctx)
 }
 
 // ExecX is like Exec, but panics if an error occurs.
-func (u *ApiKeyUpsertBulk) ExecX(ctx context.Context) {
+func (u *APIKeyUpsertBulk) ExecX(ctx context.Context) {
 	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}

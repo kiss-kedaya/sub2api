@@ -20,7 +20,7 @@ import (
 // GeminiV1BetaListModels proxies:
 // GET /v1beta/models
 func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
-	apiKey, ok := middleware.GetApiKeyFromContext(c)
+	apiKey, ok := middleware.GetAPIKeyFromContext(c)
 	if !ok || apiKey == nil {
 		googleError(c, http.StatusUnauthorized, "Invalid API key")
 		return
@@ -66,7 +66,7 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 // GeminiV1BetaGetModel proxies:
 // GET /v1beta/models/{model}
 func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
-	apiKey, ok := middleware.GetApiKeyFromContext(c)
+	apiKey, ok := middleware.GetAPIKeyFromContext(c)
 	if !ok || apiKey == nil {
 		googleError(c, http.StatusUnauthorized, "Invalid API key")
 		return
@@ -119,7 +119,7 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 // POST /v1beta/models/{model}:generateContent
 // POST /v1beta/models/{model}:streamGenerateContent?alt=sse
 func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
-	apiKey, ok := middleware.GetApiKeyFromContext(c)
+	apiKey, ok := middleware.GetAPIKeyFromContext(c)
 	if !ok || apiKey == nil {
 		googleError(c, http.StatusUnauthorized, "Invalid API key")
 		return
@@ -298,7 +298,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			defer cancel()
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:       result,
-				ApiKey:       apiKey,
+				APIKey:       apiKey,
 				User:         apiKey.User,
 				Account:      usedAccount,
 				Subscription: subscription,

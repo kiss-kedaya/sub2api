@@ -117,7 +117,7 @@ func (r *usageLogRepository) Create(ctx context.Context, log *service.UsageLog) 
 
 	args := []any{
 		log.UserID,
-		log.ApiKeyID,
+		log.APIKeyID,
 		log.AccountID,
 		log.RequestID,
 		log.Model,
@@ -183,7 +183,7 @@ func (r *usageLogRepository) ListByUser(ctx context.Context, userID int64, param
 	return r.listUsageLogsWithPagination(ctx, "WHERE user_id = $1", []any{userID}, params)
 }
 
-func (r *usageLogRepository) ListByApiKey(ctx context.Context, apiKeyID int64, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {
+func (r *usageLogRepository) ListByAPIKey(ctx context.Context, apiKeyID int64, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {
 	return r.listUsageLogsWithPagination(ctx, "WHERE api_key_id = $1", []any{apiKeyID}, params)
 }
 
@@ -270,8 +270,8 @@ func (r *usageLogRepository) GetDashboardStats(ctx context.Context) (*DashboardS
 		r.sql,
 		apiKeyStatsQuery,
 		[]any{service.StatusActive},
-		&stats.TotalApiKeys,
-		&stats.ActiveApiKeys,
+		&stats.TotalAPIKeys,
+		&stats.ActiveAPIKeys,
 	); err != nil {
 		return nil, err
 	}
@@ -418,8 +418,8 @@ func (r *usageLogRepository) GetUserStatsAggregated(ctx context.Context, userID 
 	return &stats, nil
 }
 
-// GetApiKeyStatsAggregated returns aggregated usage statistics for an API key using database-level aggregation
-func (r *usageLogRepository) GetApiKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
+// GetAPIKeyStatsAggregated returns aggregated usage statistics for an API key using database-level aggregation
+func (r *usageLogRepository) GetAPIKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
 	query := `
 		SELECT
 			COUNT(*) as total_requests,
@@ -623,7 +623,7 @@ func resolveUsageStatsTimezone() string {
 	return "UTC"
 }
 
-func (r *usageLogRepository) ListByApiKeyAndTimeRange(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) ([]service.UsageLog, *pagination.PaginationResult, error) {
+func (r *usageLogRepository) ListByAPIKeyAndTimeRange(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) ([]service.UsageLog, *pagination.PaginationResult, error) {
 	query := "SELECT " + usageLogSelectColumns + " FROM usage_logs WHERE api_key_id = $1 AND created_at >= $2 AND created_at < $3 ORDER BY id DESC"
 	logs, err := r.queryUsageLogs(ctx, query, apiKeyID, startTime, endTime)
 	return logs, nil, err
@@ -709,11 +709,11 @@ type ModelStat = usagestats.ModelStat
 // UserUsageTrendPoint represents user usage trend data point
 type UserUsageTrendPoint = usagestats.UserUsageTrendPoint
 
-// ApiKeyUsageTrendPoint represents API key usage trend data point
-type ApiKeyUsageTrendPoint = usagestats.ApiKeyUsageTrendPoint
+// APIKeyUsageTrendPoint represents API key usage trend data point
+type APIKeyUsageTrendPoint = usagestats.APIKeyUsageTrendPoint
 
-// GetApiKeyUsageTrend returns usage trend data grouped by API key and date
-func (r *usageLogRepository) GetApiKeyUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) (results []ApiKeyUsageTrendPoint, err error) {
+// GetAPIKeyUsageTrend returns usage trend data grouped by API key and date
+func (r *usageLogRepository) GetAPIKeyUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) (results []APIKeyUsageTrendPoint, err error) {
 	dateFormat := "YYYY-MM-DD"
 	if granularity == "hour" {
 		dateFormat = "YYYY-MM-DD HH24:00"
@@ -755,10 +755,10 @@ func (r *usageLogRepository) GetApiKeyUsageTrend(ctx context.Context, startTime,
 		}
 	}()
 
-	results = make([]ApiKeyUsageTrendPoint, 0)
+	results = make([]APIKeyUsageTrendPoint, 0)
 	for rows.Next() {
-		var row ApiKeyUsageTrendPoint
-		if err = rows.Scan(&row.Date, &row.ApiKeyID, &row.KeyName, &row.Requests, &row.Tokens); err != nil {
+		var row APIKeyUsageTrendPoint
+		if err = rows.Scan(&row.Date, &row.APIKeyID, &row.KeyName, &row.Requests, &row.Tokens); err != nil {
 			return nil, err
 		}
 		results = append(results, row)
@@ -844,7 +844,7 @@ func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID i
 		r.sql,
 		"SELECT COUNT(*) FROM api_keys WHERE user_id = $1 AND deleted_at IS NULL",
 		[]any{userID},
-		&stats.TotalApiKeys,
+		&stats.TotalAPIKeys,
 	); err != nil {
 		return nil, err
 	}
@@ -853,7 +853,7 @@ func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID i
 		r.sql,
 		"SELECT COUNT(*) FROM api_keys WHERE user_id = $1 AND status = $2 AND deleted_at IS NULL",
 		[]any{userID, service.StatusActive},
-		&stats.ActiveApiKeys,
+		&stats.ActiveAPIKeys,
 	); err != nil {
 		return nil, err
 	}
@@ -1023,9 +1023,9 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		conditions = append(conditions, fmt.Sprintf("user_id = $%d", len(args)+1))
 		args = append(args, filters.UserID)
 	}
-	if filters.ApiKeyID > 0 {
+	if filters.APIKeyID > 0 {
 		conditions = append(conditions, fmt.Sprintf("api_key_id = $%d", len(args)+1))
-		args = append(args, filters.ApiKeyID)
+		args = append(args, filters.APIKeyID)
 	}
 	if filters.AccountID > 0 {
 		conditions = append(conditions, fmt.Sprintf("account_id = $%d", len(args)+1))
@@ -1145,18 +1145,18 @@ func (r *usageLogRepository) GetBatchUserUsageStats(ctx context.Context, userIDs
 	return result, nil
 }
 
-// BatchApiKeyUsageStats represents usage stats for a single API key
-type BatchApiKeyUsageStats = usagestats.BatchApiKeyUsageStats
+// BatchAPIKeyUsageStats represents usage stats for a single API key
+type BatchAPIKeyUsageStats = usagestats.BatchAPIKeyUsageStats
 
-// GetBatchApiKeyUsageStats gets today and total actual_cost for multiple API keys
-func (r *usageLogRepository) GetBatchApiKeyUsageStats(ctx context.Context, apiKeyIDs []int64) (map[int64]*BatchApiKeyUsageStats, error) {
-	result := make(map[int64]*BatchApiKeyUsageStats)
+// GetBatchAPIKeyUsageStats gets today and total actual_cost for multiple API keys
+func (r *usageLogRepository) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64) (map[int64]*BatchAPIKeyUsageStats, error) {
+	result := make(map[int64]*BatchAPIKeyUsageStats)
 	if len(apiKeyIDs) == 0 {
 		return result, nil
 	}
 
 	for _, id := range apiKeyIDs {
-		result[id] = &BatchApiKeyUsageStats{ApiKeyID: id}
+		result[id] = &BatchAPIKeyUsageStats{APIKeyID: id}
 	}
 
 	query := `
@@ -1582,7 +1582,7 @@ func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, lo
 	if err != nil {
 		return err
 	}
-	apiKeys, err := r.loadApiKeys(ctx, ids.apiKeyIDs)
+	apiKeys, err := r.loadAPIKeys(ctx, ids.apiKeyIDs)
 	if err != nil {
 		return err
 	}
@@ -1603,8 +1603,8 @@ func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, lo
 		if user, ok := users[logs[i].UserID]; ok {
 			logs[i].User = user
 		}
-		if key, ok := apiKeys[logs[i].ApiKeyID]; ok {
-			logs[i].ApiKey = key
+		if key, ok := apiKeys[logs[i].APIKeyID]; ok {
+			logs[i].APIKey = key
 		}
 		if acc, ok := accounts[logs[i].AccountID]; ok {
 			logs[i].Account = acc
@@ -1642,7 +1642,7 @@ func collectUsageLogIDs(logs []service.UsageLog) usageLogIDs {
 
 	for i := range logs {
 		userIDs[logs[i].UserID] = struct{}{}
-		apiKeyIDs[logs[i].ApiKeyID] = struct{}{}
+		apiKeyIDs[logs[i].APIKeyID] = struct{}{}
 		accountIDs[logs[i].AccountID] = struct{}{}
 		if logs[i].GroupID != nil {
 			groupIDs[*logs[i].GroupID] = struct{}{}
@@ -1676,12 +1676,12 @@ func (r *usageLogRepository) loadUsers(ctx context.Context, ids []int64) (map[in
 	return out, nil
 }
 
-func (r *usageLogRepository) loadApiKeys(ctx context.Context, ids []int64) (map[int64]*service.ApiKey, error) {
-	out := make(map[int64]*service.ApiKey)
+func (r *usageLogRepository) loadAPIKeys(ctx context.Context, ids []int64) (map[int64]*service.APIKey, error) {
+	out := make(map[int64]*service.APIKey)
 	if len(ids) == 0 {
 		return out, nil
 	}
-	models, err := r.client.ApiKey.Query().Where(dbapikey.IDIn(ids...)).All(ctx)
+	models, err := r.client.APIKey.Query().Where(dbapikey.IDIn(ids...)).All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1800,7 +1800,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 	log := &service.UsageLog{
 		ID:                    id,
 		UserID:                userID,
-		ApiKeyID:              apiKeyID,
+		APIKeyID:              apiKeyID,
 		AccountID:             accountID,
 		Model:                 model,
 		InputTokens:           inputTokens,
