@@ -1,8 +1,12 @@
 package admin
 
 import (
+	"log"
+	"time"
+
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -37,13 +41,13 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		SmtpHost:            settings.SmtpHost,
 		SmtpPort:            settings.SmtpPort,
 		SmtpUsername:        settings.SmtpUsername,
-		SmtpPassword:        settings.SmtpPassword,
+		SmtpPasswordConfigured: settings.SmtpPasswordConfigured,
 		SmtpFrom:            settings.SmtpFrom,
 		SmtpFromName:        settings.SmtpFromName,
 		SmtpUseTLS:          settings.SmtpUseTLS,
 		TurnstileEnabled:    settings.TurnstileEnabled,
 		TurnstileSiteKey:    settings.TurnstileSiteKey,
-		TurnstileSecretKey:  settings.TurnstileSecretKey,
+		TurnstileSecretKeyConfigured: settings.TurnstileSecretKeyConfigured,
 		SiteName:            settings.SiteName,
 		SiteLogo:            settings.SiteLogo,
 		SiteSubtitle:        settings.SiteSubtitle,
@@ -97,6 +101,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
+	previousSettings, err := h.settingService.GetAllSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
 	// 验证参数
 	if req.DefaultConcurrency < 1 {
 		req.DefaultConcurrency = 1
@@ -136,6 +146,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
+	h.auditSettingsUpdate(c, previousSettings, settings, req)
+
 	// 重新获取设置返回
 	updatedSettings, err := h.settingService.GetAllSettings(c.Request.Context())
 	if err != nil {
@@ -149,13 +161,13 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		SmtpHost:            updatedSettings.SmtpHost,
 		SmtpPort:            updatedSettings.SmtpPort,
 		SmtpUsername:        updatedSettings.SmtpUsername,
-		SmtpPassword:        updatedSettings.SmtpPassword,
+		SmtpPasswordConfigured: updatedSettings.SmtpPasswordConfigured,
 		SmtpFrom:            updatedSettings.SmtpFrom,
 		SmtpFromName:        updatedSettings.SmtpFromName,
 		SmtpUseTLS:          updatedSettings.SmtpUseTLS,
 		TurnstileEnabled:    updatedSettings.TurnstileEnabled,
 		TurnstileSiteKey:    updatedSettings.TurnstileSiteKey,
-		TurnstileSecretKey:  updatedSettings.TurnstileSecretKey,
+		TurnstileSecretKeyConfigured: updatedSettings.TurnstileSecretKeyConfigured,
 		SiteName:            updatedSettings.SiteName,
 		SiteLogo:            updatedSettings.SiteLogo,
 		SiteSubtitle:        updatedSettings.SiteSubtitle,
@@ -165,6 +177,91 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		DefaultConcurrency:  updatedSettings.DefaultConcurrency,
 		DefaultBalance:      updatedSettings.DefaultBalance,
 	})
+}
+
+func (h *SettingHandler) auditSettingsUpdate(c *gin.Context, before *service.SystemSettings, after *service.SystemSettings, req UpdateSettingsRequest) {
+	if before == nil || after == nil {
+		return
+	}
+
+	changed := diffSettings(before, after, req)
+	if len(changed) == 0 {
+		return
+	}
+
+	subject, _ := middleware.GetAuthSubjectFromContext(c)
+	role, _ := middleware.GetUserRoleFromContext(c)
+	log.Printf("AUDIT: settings updated at=%s user_id=%d role=%s changed=%v",
+		time.Now().UTC().Format(time.RFC3339),
+		subject.UserID,
+		role,
+		changed,
+	)
+}
+
+func diffSettings(before *service.SystemSettings, after *service.SystemSettings, req UpdateSettingsRequest) []string {
+	changed := make([]string, 0, 16)
+	if before.RegistrationEnabled != after.RegistrationEnabled {
+		changed = append(changed, "registration_enabled")
+	}
+	if before.EmailVerifyEnabled != after.EmailVerifyEnabled {
+		changed = append(changed, "email_verify_enabled")
+	}
+	if before.SmtpHost != after.SmtpHost {
+		changed = append(changed, "smtp_host")
+	}
+	if before.SmtpPort != after.SmtpPort {
+		changed = append(changed, "smtp_port")
+	}
+	if before.SmtpUsername != after.SmtpUsername {
+		changed = append(changed, "smtp_username")
+	}
+	if req.SmtpPassword != "" {
+		changed = append(changed, "smtp_password")
+	}
+	if before.SmtpFrom != after.SmtpFrom {
+		changed = append(changed, "smtp_from_email")
+	}
+	if before.SmtpFromName != after.SmtpFromName {
+		changed = append(changed, "smtp_from_name")
+	}
+	if before.SmtpUseTLS != after.SmtpUseTLS {
+		changed = append(changed, "smtp_use_tls")
+	}
+	if before.TurnstileEnabled != after.TurnstileEnabled {
+		changed = append(changed, "turnstile_enabled")
+	}
+	if before.TurnstileSiteKey != after.TurnstileSiteKey {
+		changed = append(changed, "turnstile_site_key")
+	}
+	if req.TurnstileSecretKey != "" {
+		changed = append(changed, "turnstile_secret_key")
+	}
+	if before.SiteName != after.SiteName {
+		changed = append(changed, "site_name")
+	}
+	if before.SiteLogo != after.SiteLogo {
+		changed = append(changed, "site_logo")
+	}
+	if before.SiteSubtitle != after.SiteSubtitle {
+		changed = append(changed, "site_subtitle")
+	}
+	if before.ApiBaseUrl != after.ApiBaseUrl {
+		changed = append(changed, "api_base_url")
+	}
+	if before.ContactInfo != after.ContactInfo {
+		changed = append(changed, "contact_info")
+	}
+	if before.DocUrl != after.DocUrl {
+		changed = append(changed, "doc_url")
+	}
+	if before.DefaultConcurrency != after.DefaultConcurrency {
+		changed = append(changed, "default_concurrency")
+	}
+	if before.DefaultBalance != after.DefaultBalance {
+		changed = append(changed, "default_balance")
+	}
+	return changed
 }
 
 // TestSmtpRequest 测试SMTP连接请求
