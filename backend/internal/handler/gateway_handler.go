@@ -402,17 +402,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 func (h *GatewayHandler) Models(c *gin.Context) {
 	apiKey, _ := middleware2.GetApiKeyFromContext(c)
 
-	// 优先检查强制平台（/antigravity 路由）
-	if forcePlatform, ok := middleware2.GetForcePlatformFromContext(c); ok {
-		if forcePlatform == service.PlatformAntigravity {
-			c.JSON(http.StatusOK, gin.H{
-				"object": "list",
-				"data":   antigravity.DefaultModels(),
-			})
-			return
-		}
-	}
-
 	var groupID *int64
 	var platform string
 
