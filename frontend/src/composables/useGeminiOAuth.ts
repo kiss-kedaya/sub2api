@@ -93,7 +93,13 @@ export function useGeminiOAuth() {
       const tokenInfo = await adminAPI.gemini.exchangeCode(payload as any)
       return tokenInfo as GeminiTokenInfo
     } catch (err: any) {
-      error.value = err.response?.data?.detail || t('admin.accounts.oauth.gemini.failedToExchangeCode')
+      // Check for specific missing project_id error
+      const errorMessage = err.message || err.response?.data?.message || ''
+      if (errorMessage.includes('missing project_id')) {
+        error.value = t('admin.accounts.oauth.gemini.missingProjectId')
+      } else {
+        error.value = errorMessage || t('admin.accounts.oauth.gemini.failedToExchangeCode')
+      }
       appStore.showError(error.value)
       return null
     } finally {
