@@ -13,11 +13,11 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type ApiKeyCacheSuite struct {
+type APIKeyCacheSuite struct {
 	IntegrationRedisSuite
 }
 
-func (s *ApiKeyCacheSuite) TestCreateAttemptCount() {
+func (s *APIKeyCacheSuite) TestCreateAttemptCount() {
 	tests := []struct {
 		name string
 		fn   func(ctx context.Context, rdb *redis.Client, cache *apiKeyCache)
@@ -78,7 +78,7 @@ func (s *ApiKeyCacheSuite) TestCreateAttemptCount() {
 	}
 }
 
-func (s *ApiKeyCacheSuite) TestDailyUsage() {
+func (s *APIKeyCacheSuite) TestDailyUsage() {
 	tests := []struct {
 		name string
 		fn   func(ctx context.Context, rdb *redis.Client, cache *apiKeyCache)
@@ -122,6 +122,6 @@ func (s *ApiKeyCacheSuite) TestDailyUsage() {
 	}
 }
 
-func TestApiKeyCacheSuite(t *testing.T) {
-	suite.Run(t, new(ApiKeyCacheSuite))
+func TestAPIKeyCacheSuite(t *testing.T) {
+	suite.Run(t, new(APIKeyCacheSuite))
 }

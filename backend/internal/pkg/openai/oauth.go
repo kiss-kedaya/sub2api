@@ -327,7 +327,7 @@ func ParseIDToken(idToken string) (*IDTokenClaims, error) {
 	return &claims, nil
 }
 
-// ExtractUserInfo extracts user information from ID Token claims
+// UserInfo extracts user information from ID Token claims
 type UserInfo struct {
 	Email            string
 	ChatGPTAccountID string
