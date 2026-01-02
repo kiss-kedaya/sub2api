@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -308,9 +309,20 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 // Models handles listing available models
 // GET /v1/models
-// Returns different model lists based on the API key's group platform
+// Returns different model lists based on the API key's group platform or forced platform
 func (h *GatewayHandler) Models(c *gin.Context) {
 	apiKey, _ := middleware2.GetApiKeyFromContext(c)
+
+	// 优先检查强制平台（/antigravity 路由）
+	if forcePlatform, ok := middleware2.GetForcePlatformFromContext(c); ok {
+		if forcePlatform == service.PlatformAntigravity {
+			c.JSON(http.StatusOK, gin.H{
+				"object": "list",
+				"data":   antigravity.DefaultModels(),
+			})
+			return
+		}
+	}
 
 	// Return OpenAI models for OpenAI platform groups
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.Platform == "openai" {
@@ -325,6 +337,15 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
 		"data":   claude.DefaultModels,
+	})
+}
+
+// AntigravityModels 返回 Antigravity 支持的全部模型
+// GET /antigravity/models
+func (h *GatewayHandler) AntigravityModels(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"object": "list",
+		"data":   antigravity.DefaultModels(),
 	})
 }
 
