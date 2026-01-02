@@ -8,11 +8,11 @@ import (
 // TestBuildParts_ThinkingBlockWithoutSignature 测试thinking block无signature时的处理
 func TestBuildParts_ThinkingBlockWithoutSignature(t *testing.T) {
 	tests := []struct {
-		name              string
-		content           string
-		allowDummyThought bool
-		expectedParts     int
-		description       string
+		name          string
+		content       string
+		thoughtMode   thoughtSignatureMode
+		expectedParts int
+		description   string
 	}{
 		{
 			name: "Claude model - skip thinking block without signature",
@@ -21,20 +21,20 @@ func TestBuildParts_ThinkingBlockWithoutSignature(t *testing.T) {
 				{"type": "thinking", "thinking": "Let me think...", "signature": ""},
 				{"type": "text", "text": "World"}
 			]`,
-			allowDummyThought: false,
-			expectedParts:     2, // 只有两个text block
-			description:       "Claude模型应该跳过无signature的thinking block",
+			thoughtMode:   thoughtSignatureModePreserve,
+			expectedParts: 2, // 只有两个text block
+			description:   "Claude模型应该跳过无signature的thinking block",
 		},
 		{
-			name: "Claude model - keep thinking block with signature",
+			name: "Claude model - preserve thinking block with signature",
 			content: `[
 				{"type": "text", "text": "Hello"},
-				{"type": "thinking", "thinking": "Let me think...", "signature": "valid_sig"},
+				{"type": "thinking", "thinking": "Let me think...", "signature": "sig_real_123"},
 				{"type": "text", "text": "World"}
 			]`,
-			allowDummyThought: false,
-			expectedParts:     3, // 三个block都保留
-			description:       "Claude模型应该保留有signature的thinking block",
+			thoughtMode:   thoughtSignatureModePreserve,
+			expectedParts: 3,
+			description:   "Claude模型应透传带 signature 的 thinking block（用于 Vertex 签名链路）",
 		},
 		{
 			name: "Gemini model - use dummy signature",
@@ -43,16 +43,27 @@ func TestBuildParts_ThinkingBlockWithoutSignature(t *testing.T) {
 				{"type": "thinking", "thinking": "Let me think...", "signature": ""},
 				{"type": "text", "text": "World"}
 			]`,
-			allowDummyThought: true,
-			expectedParts:     3, // 三个block都保留，thinking使用dummy signature
-			description:       "Gemini模型应该为无signature的thinking block使用dummy signature",
+			thoughtMode:   thoughtSignatureModeDummy,
+			expectedParts: 3, // 三个block都保留，thinking使用dummy signature
+			description:   "Gemini模型应该为无signature的thinking block使用dummy signature",
+		},
+		{
+			name: "Claude model - signature-only thinking block becomes signature-only part",
+			content: `[
+				{"type": "text", "text": "Hello"},
+				{"type": "thinking", "thinking": "", "signature": "sig_only_456"},
+				{"type": "text", "text": "World"}
+			]`,
+			thoughtMode:   thoughtSignatureModePreserve,
+			expectedParts: 3,
+			description:   "Claude模型应将空 thinking + signature 映射为 signature-only part，便于 roundtrip",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			toolIDToName := make(map[string]string)
-			parts, err := buildParts(json.RawMessage(tt.content), toolIDToName, tt.allowDummyThought)
+			parts, err := buildParts(json.RawMessage(tt.content), toolIDToName, tt.thoughtMode)
 
 			if err != nil {
 				t.Fatalf("buildParts() error = %v", err)
@@ -61,8 +72,69 @@ func TestBuildParts_ThinkingBlockWithoutSignature(t *testing.T) {
 			if len(parts) != tt.expectedParts {
 				t.Errorf("%s: got %d parts, want %d parts", tt.description, len(parts), tt.expectedParts)
 			}
+
+			switch tt.name {
+			case "Claude model - preserve thinking block with signature":
+				if len(parts) != 3 {
+					t.Fatalf("expected 3 parts, got %d", len(parts))
+				}
+				if !parts[1].Thought || parts[1].ThoughtSignature != "sig_real_123" {
+					t.Fatalf("expected thought part with signature sig_real_123, got thought=%v signature=%q",
+						parts[1].Thought, parts[1].ThoughtSignature)
+				}
+			case "Claude model - signature-only thinking block becomes signature-only part":
+				if len(parts) != 3 {
+					t.Fatalf("expected 3 parts, got %d", len(parts))
+				}
+				if parts[1].Thought || parts[1].Text != "" || parts[1].ThoughtSignature != "sig_only_456" {
+					t.Fatalf("expected signature-only part, got thought=%v text=%q signature=%q",
+						parts[1].Thought, parts[1].Text, parts[1].ThoughtSignature)
+				}
+			case "Gemini model - use dummy signature":
+				if len(parts) != 3 {
+					t.Fatalf("expected 3 parts, got %d", len(parts))
+				}
+				if !parts[1].Thought || parts[1].ThoughtSignature != dummyThoughtSignature {
+					t.Fatalf("expected dummy thought signature, got thought=%v signature=%q",
+						parts[1].Thought, parts[1].ThoughtSignature)
+				}
+			}
 		})
 	}
+}
+
+func TestBuildParts_ToolUseSignatureHandling(t *testing.T) {
+	content := `[
+		{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}, "signature": "sig_tool_abc"}
+	]`
+
+	t.Run("Claude preserve tool_use signature", func(t *testing.T) {
+		toolIDToName := make(map[string]string)
+		parts, err := buildParts(json.RawMessage(content), toolIDToName, thoughtSignatureModePreserve)
+		if err != nil {
+			t.Fatalf("buildParts() error = %v", err)
+		}
+		if len(parts) != 1 || parts[0].FunctionCall == nil {
+			t.Fatalf("expected 1 functionCall part, got %+v", parts)
+		}
+		if parts[0].ThoughtSignature != "sig_tool_abc" {
+			t.Fatalf("expected tool signature sig_tool_abc, got %q", parts[0].ThoughtSignature)
+		}
+	})
+
+	t.Run("Gemini uses dummy tool_use signature", func(t *testing.T) {
+		toolIDToName := make(map[string]string)
+		parts, err := buildParts(json.RawMessage(content), toolIDToName, thoughtSignatureModeDummy)
+		if err != nil {
+			t.Fatalf("buildParts() error = %v", err)
+		}
+		if len(parts) != 1 || parts[0].FunctionCall == nil {
+			t.Fatalf("expected 1 functionCall part, got %+v", parts)
+		}
+		if parts[0].ThoughtSignature != dummyThoughtSignature {
+			t.Fatalf("expected dummy tool signature %q, got %q", dummyThoughtSignature, parts[0].ThoughtSignature)
+		}
+	})
 }
 
 // TestBuildTools_CustomTypeTools 测试custom类型工具转换
