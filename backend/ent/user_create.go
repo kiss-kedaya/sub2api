@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 )
 
@@ -151,20 +152,6 @@ func (_c *UserCreate) SetNillableUsername(v *string) *UserCreate {
 	return _c
 }
 
-// SetWechat sets the "wechat" field.
-func (_c *UserCreate) SetWechat(v string) *UserCreate {
-	_c.mutation.SetWechat(v)
-	return _c
-}
-
-// SetNillableWechat sets the "wechat" field if the given value is not nil.
-func (_c *UserCreate) SetNillableWechat(v *string) *UserCreate {
-	if v != nil {
-		_c.SetWechat(*v)
-	}
-	return _c
-}
-
 // SetNotes sets the "notes" field.
 func (_c *UserCreate) SetNotes(v string) *UserCreate {
 	_c.mutation.SetNotes(v)
@@ -269,6 +256,21 @@ func (_c *UserCreate) AddUsageLogs(v ...*UsageLog) *UserCreate {
 	return _c.AddUsageLogIDs(ids...)
 }
 
+// AddAttributeValueIDs adds the "attribute_values" edge to the UserAttributeValue entity by IDs.
+func (_c *UserCreate) AddAttributeValueIDs(ids ...int64) *UserCreate {
+	_c.mutation.AddAttributeValueIDs(ids...)
+	return _c
+}
+
+// AddAttributeValues adds the "attribute_values" edges to the UserAttributeValue entity.
+func (_c *UserCreate) AddAttributeValues(v ...*UserAttributeValue) *UserCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddAttributeValueIDs(ids...)
+}
+
 // Mutation returns the UserMutation object of the builder.
 func (_c *UserCreate) Mutation() *UserMutation {
 	return _c.mutation
@@ -340,10 +342,6 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultUsername
 		_c.mutation.SetUsername(v)
 	}
-	if _, ok := _c.mutation.Wechat(); !ok {
-		v := user.DefaultWechat
-		_c.mutation.SetWechat(v)
-	}
 	if _, ok := _c.mutation.Notes(); !ok {
 		v := user.DefaultNotes
 		_c.mutation.SetNotes(v)
@@ -403,14 +401,6 @@ func (_c *UserCreate) check() error {
 	if v, ok := _c.mutation.Username(); ok {
 		if err := user.UsernameValidator(v); err != nil {
 			return &ValidationError{Name: "username", err: fmt.Errorf(`ent: validator failed for field "User.username": %w`, err)}
-		}
-	}
-	if _, ok := _c.mutation.Wechat(); !ok {
-		return &ValidationError{Name: "wechat", err: errors.New(`ent: missing required field "User.wechat"`)}
-	}
-	if v, ok := _c.mutation.Wechat(); ok {
-		if err := user.WechatValidator(v); err != nil {
-			return &ValidationError{Name: "wechat", err: fmt.Errorf(`ent: validator failed for field "User.wechat": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.Notes(); !ok {
@@ -482,10 +472,6 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Username(); ok {
 		_spec.SetField(user.FieldUsername, field.TypeString, value)
 		_node.Username = value
-	}
-	if value, ok := _c.mutation.Wechat(); ok {
-		_spec.SetField(user.FieldWechat, field.TypeString, value)
-		_node.Wechat = value
 	}
 	if value, ok := _c.mutation.Notes(); ok {
 		_spec.SetField(user.FieldNotes, field.TypeString, value)
@@ -584,6 +570,22 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(usagelog.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.AttributeValuesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.AttributeValuesTable,
+			Columns: []string{user.AttributeValuesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userattributevalue.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -766,18 +768,6 @@ func (u *UserUpsert) SetUsername(v string) *UserUpsert {
 // UpdateUsername sets the "username" field to the value that was provided on create.
 func (u *UserUpsert) UpdateUsername() *UserUpsert {
 	u.SetExcluded(user.FieldUsername)
-	return u
-}
-
-// SetWechat sets the "wechat" field.
-func (u *UserUpsert) SetWechat(v string) *UserUpsert {
-	u.Set(user.FieldWechat, v)
-	return u
-}
-
-// UpdateWechat sets the "wechat" field to the value that was provided on create.
-func (u *UserUpsert) UpdateWechat() *UserUpsert {
-	u.SetExcluded(user.FieldWechat)
 	return u
 }
 
@@ -982,20 +972,6 @@ func (u *UserUpsertOne) SetUsername(v string) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateUsername() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateUsername()
-	})
-}
-
-// SetWechat sets the "wechat" field.
-func (u *UserUpsertOne) SetWechat(v string) *UserUpsertOne {
-	return u.Update(func(s *UserUpsert) {
-		s.SetWechat(v)
-	})
-}
-
-// UpdateWechat sets the "wechat" field to the value that was provided on create.
-func (u *UserUpsertOne) UpdateWechat() *UserUpsertOne {
-	return u.Update(func(s *UserUpsert) {
-		s.UpdateWechat()
 	})
 }
 
@@ -1368,20 +1344,6 @@ func (u *UserUpsertBulk) SetUsername(v string) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateUsername() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateUsername()
-	})
-}
-
-// SetWechat sets the "wechat" field.
-func (u *UserUpsertBulk) SetWechat(v string) *UserUpsertBulk {
-	return u.Update(func(s *UserUpsert) {
-		s.SetWechat(v)
-	})
-}
-
-// UpdateWechat sets the "wechat" field to the value that was provided on create.
-func (u *UserUpsertBulk) UpdateWechat() *UserUpsertBulk {
-	return u.Update(func(s *UserUpsert) {
-		s.UpdateWechat()
 	})
 }
 
