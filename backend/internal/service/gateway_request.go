@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -69,4 +70,86 @@ func ParseGatewayRequest(body []byte) (*ParsedRequest, error) {
 	}
 
 	return parsed, nil
+}
+
+// FilterThinkingBlocks removes thinking blocks from request body
+// Returns filtered body or original body if filtering fails (fail-safe)
+// This prevents 400 errors from invalid thinking block signatures
+func FilterThinkingBlocks(body []byte) []byte {
+	// Fast path: if body doesn't contain "thinking", skip parsing
+	if !bytes.Contains(body, []byte("thinking")) {
+		return body
+	}
+
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body // Return original on parse error
+	}
+
+	messages, ok := req["messages"].([]any)
+	if !ok {
+		return body // No messages array
+	}
+
+	filtered := false
+	for _, msg := range messages {
+		msgMap, ok := msg.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		content, ok := msgMap["content"].([]any)
+		if !ok {
+			continue
+		}
+
+		// Filter thinking blocks from content array
+		newContent := make([]any, 0, len(content))
+		filteredThisMessage := false
+		for _, block := range content {
+			blockMap, ok := block.(map[string]any)
+			if !ok {
+				newContent = append(newContent, block)
+				continue
+			}
+
+			blockType, _ := blockMap["type"].(string)
+			// Explicit Anthropic-style thinking block: {"type":"thinking", ...}
+			if blockType == "thinking" {
+				filtered = true
+				filteredThisMessage = true
+				continue // Skip thinking blocks
+			}
+
+			// Some clients send the "thinking" object without a "type" discriminator.
+			// Vertex/Claude still expects a signature for any thinking block, so we drop it.
+			// We intentionally do not drop other typed blocks (e.g. tool_use) that might
+			// legitimately contain a "thinking" key inside their payload.
+			if blockType == "" {
+				if _, hasThinking := blockMap["thinking"]; hasThinking {
+					filtered = true
+					filteredThisMessage = true
+					continue // Skip thinking blocks
+				}
+			}
+
+			newContent = append(newContent, block)
+		}
+
+		if filteredThisMessage {
+			msgMap["content"] = newContent
+		}
+	}
+
+	if !filtered {
+		return body // No changes needed
+	}
+
+	// Re-serialize
+	newBody, err := json.Marshal(req)
+	if err != nil {
+		return body // Return original on marshal error
+	}
+
+	return newBody
 }

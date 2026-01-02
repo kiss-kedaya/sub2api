@@ -307,6 +307,74 @@ func (s *AntigravityGatewayService) unwrapV1InternalResponse(body []byte) ([]byt
 	return body, nil
 }
 
+// isSignatureRelatedError 检测是否为 signature 相关的 400 错误
+func isSignatureRelatedError(statusCode int, body []byte) bool {
+	if statusCode != 400 {
+		return false
+	}
+
+	bodyStr := strings.ToLower(string(body))
+	keywords := []string{
+		"signature",
+		"thought_signature",
+		"thoughtsignature",
+		"thinking",
+		"invalid signature",
+		"signature validation",
+	}
+
+	for _, keyword := range keywords {
+		if strings.Contains(bodyStr, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripThinkingFromClaudeRequest 从 Claude 请求中移除所有 thinking 相关内容
+func stripThinkingFromClaudeRequest(req *antigravity.ClaudeRequest) *antigravity.ClaudeRequest {
+	// 创建副本
+	stripped := *req
+
+	// 移除 thinking 配置
+	stripped.Thinking = nil
+
+	// 移除消息中的 thinking 块
+	if len(stripped.Messages) > 0 {
+		newMessages := make([]antigravity.ClaudeMessage, 0, len(stripped.Messages))
+		for _, msg := range stripped.Messages {
+			newMsg := msg
+
+			// 如果 content 是数组，过滤 thinking 块
+			var blocks []map[string]any
+			if err := json.Unmarshal(msg.Content, &blocks); err == nil {
+				filtered := make([]map[string]any, 0, len(blocks))
+				for _, block := range blocks {
+					// 跳过有 type="thinking" 的块
+					if blockType, ok := block["type"].(string); ok && blockType == "thinking" {
+						continue
+					}
+					// 跳过没有 type 但有 thinking 字段的块（untyped thinking blocks）
+					if _, hasType := block["type"]; !hasType {
+						if _, hasThinking := block["thinking"]; hasThinking {
+							continue
+						}
+					}
+					filtered = append(filtered, block)
+				}
+				if newContent, err := json.Marshal(filtered); err == nil {
+					newMsg.Content = newContent
+				}
+			}
+
+			newMessages = append(newMessages, newMsg)
+		}
+		stripped.Messages = newMessages
+	}
+
+	return &stripped
+}
+
 // Forward 转发 Claude 协议请求（Claude → Gemini 转换）
 func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*ForwardResult, error) {
 	startTime := time.Now()
@@ -414,11 +482,70 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		s.handleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 
-		if s.shouldFailoverUpstreamError(resp.StatusCode) {
-			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode}
+		// Auto 模式：检测 signature 错误并自动降级重试
+		if isSignatureRelatedError(resp.StatusCode, respBody) && claudeReq.Thinking != nil {
+			log.Printf("[Antigravity] Detected signature-related error, retrying without thinking blocks (account: %s, model: %s)", account.Name, mappedModel)
+
+			// 关闭原始响应，释放连接（respBody 已读取到内存）
+			_ = resp.Body.Close()
+
+			// 移除 thinking 块并重试一次
+			strippedReq := stripThinkingFromClaudeRequest(&claudeReq)
+			strippedBody, err := antigravity.TransformClaudeToGemini(strippedReq, projectID, mappedModel)
+			if err != nil {
+				log.Printf("[Antigravity] Failed to transform stripped request: %v", err)
+				// 降级失败，返回原始错误
+				if s.shouldFailoverUpstreamError(resp.StatusCode) {
+					return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode}
+				}
+				return nil, s.writeMappedClaudeError(c, resp.StatusCode, respBody)
+			}
+
+			// 发送降级请求
+			retryReq, err := antigravity.NewAPIRequest(ctx, action, accessToken, strippedBody)
+			if err != nil {
+				log.Printf("[Antigravity] Failed to create retry request: %v", err)
+				if s.shouldFailoverUpstreamError(resp.StatusCode) {
+					return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode}
+				}
+				return nil, s.writeMappedClaudeError(c, resp.StatusCode, respBody)
+			}
+
+			retryResp, err := s.httpUpstream.Do(retryReq, proxyURL, account.ID, account.Concurrency)
+			if err != nil {
+				log.Printf("[Antigravity] Retry request failed: %v", err)
+				if s.shouldFailoverUpstreamError(resp.StatusCode) {
+					return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode}
+				}
+				return nil, s.writeMappedClaudeError(c, resp.StatusCode, respBody)
+			}
+
+			// 如果重试成功，使用重试的响应（不要 return，让后面的代码处理响应）
+			if retryResp.StatusCode < 400 {
+				log.Printf("[Antigravity] Retry succeeded after stripping thinking blocks (account: %s, model: %s)", account.Name, mappedModel)
+				resp = retryResp
+			} else {
+				// 重试也失败，返回重试的错误
+				retryRespBody, _ := io.ReadAll(io.LimitReader(retryResp.Body, 2<<20))
+				_ = retryResp.Body.Close()
+				log.Printf("[Antigravity] Retry also failed with status %d: %s", retryResp.StatusCode, string(retryRespBody))
+				s.handleUpstreamError(ctx, account, retryResp.StatusCode, retryResp.Header, retryRespBody)
+
+				if s.shouldFailoverUpstreamError(retryResp.StatusCode) {
+					return nil, &UpstreamFailoverError{StatusCode: retryResp.StatusCode}
+				}
+				return nil, s.writeMappedClaudeError(c, retryResp.StatusCode, retryRespBody)
+			}
 		}
 
-		return nil, s.writeMappedClaudeError(c, resp.StatusCode, respBody)
+		// 不是 signature 错误，或者已经没有 thinking 块，直接返回错误
+		if resp.StatusCode >= 400 {
+			if s.shouldFailoverUpstreamError(resp.StatusCode) {
+				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode}
+			}
+
+			return nil, s.writeMappedClaudeError(c, resp.StatusCode, respBody)
+		}
 	}
 
 	requestID := resp.Header.Get("x-request-id")
