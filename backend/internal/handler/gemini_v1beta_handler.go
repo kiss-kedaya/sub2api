@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/gemini"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -20,7 +21,7 @@ import (
 // GeminiV1BetaListModels proxies:
 // GET /v1beta/models
 func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
-	apiKey, ok := middleware.GetAPIKeyFromContext(c)
+	apiKey, ok := middleware.GetApiKeyFromContext(c)
 	if !ok || apiKey == nil {
 		googleError(c, http.StatusUnauthorized, "Invalid API key")
 		return
@@ -32,9 +33,9 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		return
 	}
 
-	// 强制 antigravity 模式：直接返回静态模型列表
+	// 强制 antigravity 模式：返回 antigravity 支持的模型列表
 	if forcePlatform == service.PlatformAntigravity {
-		c.JSON(http.StatusOK, gemini.FallbackModelsList())
+		c.JSON(http.StatusOK, antigravity.FallbackGeminiModelsList())
 		return
 	}
 
@@ -66,7 +67,7 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 // GeminiV1BetaGetModel proxies:
 // GET /v1beta/models/{model}
 func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
-	apiKey, ok := middleware.GetAPIKeyFromContext(c)
+	apiKey, ok := middleware.GetApiKeyFromContext(c)
 	if !ok || apiKey == nil {
 		googleError(c, http.StatusUnauthorized, "Invalid API key")
 		return
@@ -84,9 +85,9 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 		return
 	}
 
-	// 强制 antigravity 模式：直接返回静态模型信息
+	// 强制 antigravity 模式：返回 antigravity 模型信息
 	if forcePlatform == service.PlatformAntigravity {
-		c.JSON(http.StatusOK, gemini.FallbackModel(modelName))
+		c.JSON(http.StatusOK, antigravity.FallbackGeminiModel(modelName))
 		return
 	}
 
@@ -119,7 +120,7 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 // POST /v1beta/models/{model}:generateContent
 // POST /v1beta/models/{model}:streamGenerateContent?alt=sse
 func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
-	apiKey, ok := middleware.GetAPIKeyFromContext(c)
+	apiKey, ok := middleware.GetApiKeyFromContext(c)
 	if !ok || apiKey == nil {
 		googleError(c, http.StatusUnauthorized, "Invalid API key")
 		return
@@ -298,7 +299,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			defer cancel()
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:       result,
-				APIKey:       apiKey,
+				ApiKey:       apiKey,
 				User:         apiKey.User,
 				Account:      usedAccount,
 				Subscription: subscription,
