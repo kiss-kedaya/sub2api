@@ -81,11 +81,7 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去
 	if geminiResp.UsageMetadata != nil {
 		cached := geminiResp.UsageMetadata.CachedContentTokenCount
-		prompt := geminiResp.UsageMetadata.PromptTokenCount
-		if cached > prompt {
-			cached = prompt
-		}
-		p.inputTokens = prompt - cached
+		p.inputTokens = geminiResp.UsageMetadata.PromptTokenCount - cached
 		p.outputTokens = geminiResp.UsageMetadata.CandidatesTokenCount
 		p.cacheReadTokens = cached
 	}
@@ -134,11 +130,7 @@ func (p *StreamingProcessor) emitMessageStart(v1Resp *V1InternalResponse) []byte
 	usage := ClaudeUsage{}
 	if v1Resp.Response.UsageMetadata != nil {
 		cached := v1Resp.Response.UsageMetadata.CachedContentTokenCount
-		prompt := v1Resp.Response.UsageMetadata.PromptTokenCount
-		if cached > prompt {
-			cached = prompt
-		}
-		usage.InputTokens = prompt - cached
+		usage.InputTokens = v1Resp.Response.UsageMetadata.PromptTokenCount - cached
 		usage.OutputTokens = v1Resp.Response.UsageMetadata.CandidatesTokenCount
 		usage.CacheReadInputTokens = cached
 	}

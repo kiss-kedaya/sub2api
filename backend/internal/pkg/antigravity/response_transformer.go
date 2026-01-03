@@ -237,11 +237,7 @@ func (p *NonStreamingProcessor) buildResponse(geminiResp *GeminiResponse, respon
 	usage := ClaudeUsage{}
 	if geminiResp.UsageMetadata != nil {
 		cached := geminiResp.UsageMetadata.CachedContentTokenCount
-		prompt := geminiResp.UsageMetadata.PromptTokenCount
-		if cached > prompt {
-			cached = prompt
-		}
-		usage.InputTokens = prompt - cached
+		usage.InputTokens = geminiResp.UsageMetadata.PromptTokenCount - cached
 		usage.OutputTokens = geminiResp.UsageMetadata.CandidatesTokenCount
 		usage.CacheReadInputTokens = cached
 	}
