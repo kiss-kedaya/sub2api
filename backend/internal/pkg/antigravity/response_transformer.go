@@ -232,10 +232,18 @@ func (p *NonStreamingProcessor) buildResponse(geminiResp *GeminiResponse, respon
 		stopReason = "max_tokens"
 	}
 
+	// 注意：Gemini 的 promptTokenCount 包含 cachedContentTokenCount，
+	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去
 	usage := ClaudeUsage{}
 	if geminiResp.UsageMetadata != nil {
-		usage.InputTokens = geminiResp.UsageMetadata.PromptTokenCount
+		cached := geminiResp.UsageMetadata.CachedContentTokenCount
+		prompt := geminiResp.UsageMetadata.PromptTokenCount
+		if cached > prompt {
+			cached = prompt
+		}
+		usage.InputTokens = prompt - cached
 		usage.OutputTokens = geminiResp.UsageMetadata.CandidatesTokenCount
+		usage.CacheReadInputTokens = cached
 	}
 
 	// 生成响应 ID
