@@ -10,7 +10,6 @@ func UserFromServiceShallow(u *service.User) *User {
 		ID:            u.ID,
 		Email:         u.Email,
 		Username:      u.Username,
-		Wechat:        u.Wechat,
 		Notes:         u.Notes,
 		Role:          u.Role,
 		Balance:       u.Balance,

@@ -40,7 +40,6 @@ func mustCreateUser(t *testing.T, client *dbent.Client, u *service.User) *servic
 		SetBalance(u.Balance).
 		SetConcurrency(u.Concurrency).
 		SetUsername(u.Username).
-		SetWechat(u.Wechat).
 		SetNotes(u.Notes)
 	if !u.CreatedAt.IsZero() {
 		create.SetCreatedAt(u.CreatedAt)

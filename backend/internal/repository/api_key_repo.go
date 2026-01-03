@@ -294,7 +294,6 @@ func userEntityToService(u *dbent.User) *service.User {
 		ID:           u.ID,
 		Email:        u.Email,
 		Username:     u.Username,
-		Wechat:       u.Wechat,
 		Notes:        u.Notes,
 		PasswordHash: u.PasswordHash,
 		Role:         u.Role,

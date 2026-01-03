@@ -112,17 +112,21 @@ func (p *GeminiTokenProvider) GetAccessToken(ctx context.Context, account *Accou
 			}
 		}
 
-		detected, err := p.geminiOAuthService.fetchProjectID(ctx, accessToken, proxyURL)
+		detected, tierID, err := p.geminiOAuthService.fetchProjectID(ctx, accessToken, proxyURL)
 		if err != nil {
 			log.Printf("[GeminiTokenProvider] Auto-detect project_id failed: %v, fallback to AI Studio API mode", err)
 			return accessToken, nil
 		}
 		detected = strings.TrimSpace(detected)
+		tierID = strings.TrimSpace(tierID)
 		if detected != "" {
 			if account.Credentials == nil {
 				account.Credentials = make(map[string]any)
 			}
 			account.Credentials["project_id"] = detected
+			if tierID != "" {
+				account.Credentials["tier_id"] = tierID
+			}
 			_ = p.accountRepo.Update(ctx, account)
 		}
 	}

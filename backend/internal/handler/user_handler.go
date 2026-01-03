@@ -30,7 +30,6 @@ type ChangePasswordRequest struct {
 // UpdateProfileRequest represents the update profile request payload
 type UpdateProfileRequest struct {
 	Username *string `json:"username"`
-	Wechat   *string `json:"wechat"`
 }
 
 // GetProfile handles getting user profile
@@ -99,7 +98,6 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 
 	svcReq := service.UpdateProfileRequest{
 		Username: req.Username,
-		Wechat:   req.Wechat,
 	}
 	updatedUser, err := h.userService.UpdateProfile(c.Request.Context(), subject.UserID, svcReq)
 	if err != nil {
