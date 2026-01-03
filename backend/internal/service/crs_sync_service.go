@@ -82,7 +82,7 @@ type crsExportResponse struct {
 		OpenAIOAuthAccounts     []crsOpenAIOAuthAccount     `json:"openaiOAuthAccounts"`
 		OpenAIResponsesAccounts []crsOpenAIResponsesAccount `json:"openaiResponsesAccounts"`
 		GeminiOAuthAccounts     []crsGeminiOAuthAccount     `json:"geminiOAuthAccounts"`
-		GeminiAPIKeyAccounts    []crsGeminiAPIKeyAccount    `json:"geminiAPIKeyAccounts"`
+		GeminiAPIKeyAccounts    []crsGeminiAPIKeyAccount    `json:"geminiApiKeyAccounts"`
 	} `json:"data"`
 }
 
@@ -430,7 +430,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			account := &Account{
 				Name:        defaultName(src.Name, src.ID),
 				Platform:    PlatformAnthropic,
-				Type:        AccountTypeAPIKey,
+				Type:        AccountTypeApiKey,
 				Credentials: credentials,
 				Extra:       extra,
 				ProxyID:     proxyID,
@@ -455,7 +455,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		existing.Extra = mergeMap(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = PlatformAnthropic
-		existing.Type = AccountTypeAPIKey
+		existing.Type = AccountTypeApiKey
 		existing.Credentials = mergeMap(existing.Credentials, credentials)
 		if proxyID != nil {
 			existing.ProxyID = proxyID
@@ -674,7 +674,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			account := &Account{
 				Name:        defaultName(src.Name, src.ID),
 				Platform:    PlatformOpenAI,
-				Type:        AccountTypeAPIKey,
+				Type:        AccountTypeApiKey,
 				Credentials: credentials,
 				Extra:       extra,
 				ProxyID:     proxyID,
@@ -699,7 +699,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		existing.Extra = mergeMap(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = PlatformOpenAI
-		existing.Type = AccountTypeAPIKey
+		existing.Type = AccountTypeApiKey
 		existing.Credentials = mergeMap(existing.Credentials, credentials)
 		if proxyID != nil {
 			existing.ProxyID = proxyID
@@ -893,7 +893,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			account := &Account{
 				Name:        defaultName(src.Name, src.ID),
 				Platform:    PlatformGemini,
-				Type:        AccountTypeAPIKey,
+				Type:        AccountTypeApiKey,
 				Credentials: credentials,
 				Extra:       extra,
 				ProxyID:     proxyID,
@@ -918,7 +918,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		existing.Extra = mergeMap(existing.Extra, extra)
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = PlatformGemini
-		existing.Type = AccountTypeAPIKey
+		existing.Type = AccountTypeApiKey
 		existing.Credentials = mergeMap(existing.Credentials, credentials)
 		if proxyID != nil {
 			existing.ProxyID = proxyID

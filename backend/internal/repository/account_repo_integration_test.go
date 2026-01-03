@@ -135,12 +135,12 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 			name: "filter_by_type",
 			setup: func(client *dbent.Client) {
 				mustCreateAccount(s.T(), client, &service.Account{Name: "t1", Type: service.AccountTypeOAuth})
-				mustCreateAccount(s.T(), client, &service.Account{Name: "t2", Type: service.AccountTypeAPIKey})
+				mustCreateAccount(s.T(), client, &service.Account{Name: "t2", Type: service.AccountTypeApiKey})
 			},
-			accType:   service.AccountTypeAPIKey,
+			accType:   service.AccountTypeApiKey,
 			wantCount: 1,
 			validate: func(accounts []service.Account) {
-				s.Require().Equal(service.AccountTypeAPIKey, accounts[0].Type)
+				s.Require().Equal(service.AccountTypeApiKey, accounts[0].Type)
 			},
 		},
 		{
