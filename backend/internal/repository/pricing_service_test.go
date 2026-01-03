@@ -32,7 +32,7 @@ func (s *PricingServiceSuite) TearDownTest() {
 }
 
 func (s *PricingServiceSuite) setupServer(handler http.HandlerFunc) {
-	s.srv = httptest.NewServer(handler)
+	s.srv = newLocalTestServer(s.T(), handler)
 }
 
 func (s *PricingServiceSuite) TestFetchPricingJSON_Success() {
