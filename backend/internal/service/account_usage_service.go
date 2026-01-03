@@ -93,10 +93,12 @@ type UsageProgress struct {
 
 // UsageInfo 账号使用量信息
 type UsageInfo struct {
-	UpdatedAt      *time.Time     `json:"updated_at,omitempty"`       // 更新时间
-	FiveHour       *UsageProgress `json:"five_hour"`                  // 5小时窗口
-	SevenDay       *UsageProgress `json:"seven_day,omitempty"`        // 7天窗口
-	SevenDaySonnet *UsageProgress `json:"seven_day_sonnet,omitempty"` // 7天Sonnet窗口
+	UpdatedAt        *time.Time     `json:"updated_at,omitempty"`         // 更新时间
+	FiveHour         *UsageProgress `json:"five_hour"`                    // 5小时窗口
+	SevenDay         *UsageProgress `json:"seven_day,omitempty"`          // 7天窗口
+	SevenDaySonnet   *UsageProgress `json:"seven_day_sonnet,omitempty"`   // 7天Sonnet窗口
+	GeminiProDaily   *UsageProgress `json:"gemini_pro_daily,omitempty"`   // Gemini Pro 日配额
+	GeminiFlashDaily *UsageProgress `json:"gemini_flash_daily,omitempty"` // Gemini Flash 日配额
 }
 
 // ClaudeUsageResponse Anthropic API返回的usage结构
@@ -122,17 +124,19 @@ type ClaudeUsageFetcher interface {
 
 // AccountUsageService 账号使用量查询服务
 type AccountUsageService struct {
-	accountRepo  AccountRepository
-	usageLogRepo UsageLogRepository
-	usageFetcher ClaudeUsageFetcher
+	accountRepo        AccountRepository
+	usageLogRepo       UsageLogRepository
+	usageFetcher       ClaudeUsageFetcher
+	geminiQuotaService *GeminiQuotaService
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
-func NewAccountUsageService(accountRepo AccountRepository, usageLogRepo UsageLogRepository, usageFetcher ClaudeUsageFetcher) *AccountUsageService {
+func NewAccountUsageService(accountRepo AccountRepository, usageLogRepo UsageLogRepository, usageFetcher ClaudeUsageFetcher, geminiQuotaService *GeminiQuotaService) *AccountUsageService {
 	return &AccountUsageService{
-		accountRepo:  accountRepo,
-		usageLogRepo: usageLogRepo,
-		usageFetcher: usageFetcher,
+		accountRepo:        accountRepo,
+		usageLogRepo:       usageLogRepo,
+		usageFetcher:       usageFetcher,
+		geminiQuotaService: geminiQuotaService,
 	}
 }
 
@@ -144,6 +148,10 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64) (*U
 	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("get account failed: %w", err)
+	}
+
+	if account.Platform == PlatformGemini {
+		return s.getGeminiUsage(ctx, account)
 	}
 
 	// 只有oauth类型账号可以通过API获取usage（有profile scope）
@@ -190,6 +198,36 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64) (*U
 
 	// API Key账号不支持usage查询
 	return nil, fmt.Errorf("account type %s does not support usage query", account.Type)
+}
+
+func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+	now := time.Now()
+	usage := &UsageInfo{
+		UpdatedAt: &now,
+	}
+
+	if s.geminiQuotaService == nil || s.usageLogRepo == nil {
+		return usage, nil
+	}
+
+	quota, ok := s.geminiQuotaService.QuotaForAccount(ctx, account)
+	if !ok {
+		return usage, nil
+	}
+
+	start := geminiDailyWindowStart(now)
+	stats, err := s.usageLogRepo.GetModelStatsWithFilters(ctx, start, now, 0, 0, account.ID)
+	if err != nil {
+		return nil, fmt.Errorf("get gemini usage stats failed: %w", err)
+	}
+
+	totals := geminiAggregateUsage(stats)
+	resetAt := geminiDailyResetTime(now)
+
+	usage.GeminiProDaily = buildGeminiUsageProgress(totals.ProRequests, quota.ProRPD, resetAt, totals.ProTokens, totals.ProCost, now)
+	usage.GeminiFlashDaily = buildGeminiUsageProgress(totals.FlashRequests, quota.FlashRPD, resetAt, totals.FlashTokens, totals.FlashCost, now)
+
+	return usage, nil
 }
 
 // addWindowStats 为 usage 数据添加窗口期统计
@@ -387,4 +425,26 @@ func (s *AccountUsageService) estimateSetupTokenUsage(account *Account) *UsageIn
 
 	// Setup Token无法获取7d数据
 	return info
+}
+
+func buildGeminiUsageProgress(used, limit int64, resetAt time.Time, tokens int64, cost float64, now time.Time) *UsageProgress {
+	if limit <= 0 {
+		return nil
+	}
+	utilization := (float64(used) / float64(limit)) * 100
+	remainingSeconds := int(resetAt.Sub(now).Seconds())
+	if remainingSeconds < 0 {
+		remainingSeconds = 0
+	}
+	resetCopy := resetAt
+	return &UsageProgress{
+		Utilization:      utilization,
+		ResetsAt:         &resetCopy,
+		RemainingSeconds: remainingSeconds,
+		WindowStats: &WindowStats{
+			Requests: used,
+			Tokens:   tokens,
+			Cost:     cost,
+		},
+	}
 }

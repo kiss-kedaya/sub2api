@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/gemini"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -32,9 +33,9 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		return
 	}
 
-	// 强制 antigravity 模式：直接返回静态模型列表
+	// 强制 antigravity 模式：返回 antigravity 支持的模型列表
 	if forcePlatform == service.PlatformAntigravity {
-		c.JSON(http.StatusOK, gemini.FallbackModelsList())
+		c.JSON(http.StatusOK, antigravity.FallbackGeminiModelsList())
 		return
 	}
 
@@ -84,9 +85,9 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 		return
 	}
 
-	// 强制 antigravity 模式：直接返回静态模型信息
+	// 强制 antigravity 模式：返回 antigravity 模型信息
 	if forcePlatform == service.PlatformAntigravity {
-		c.JSON(http.StatusOK, gemini.FallbackModel(modelName))
+		c.JSON(http.StatusOK, antigravity.FallbackGeminiModel(modelName))
 		return
 	}
 
@@ -198,13 +199,17 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	// 3) select account (sticky session based on request body)
 	parsedReq, _ := service.ParseGatewayRequest(body)
 	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
+	sessionKey := sessionHash
+	if sessionHash != "" {
+		sessionKey = "gemini:" + sessionHash
+	}
 	const maxAccountSwitches = 3
 	switchCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	lastFailoverStatus := 0
 
 	for {
-		account, err := h.geminiCompatService.SelectAccountForModelWithExclusions(c.Request.Context(), apiKey.GroupID, sessionHash, modelName, failedAccountIDs)
+		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, modelName, failedAccountIDs)
 		if err != nil {
 			if len(failedAccountIDs) == 0 {
 				googleError(c, http.StatusServiceUnavailable, "No available Gemini accounts: "+err.Error())
@@ -213,12 +218,48 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			handleGeminiFailoverExhausted(c, lastFailoverStatus)
 			return
 		}
+		account := selection.Account
 
 		// 4) account concurrency slot
-		accountReleaseFunc, err := geminiConcurrency.AcquireAccountSlotWithWait(c, account.ID, account.Concurrency, stream, &streamStarted)
-		if err != nil {
-			googleError(c, http.StatusTooManyRequests, err.Error())
-			return
+		accountReleaseFunc := selection.ReleaseFunc
+		var accountWaitRelease func()
+		if !selection.Acquired {
+			if selection.WaitPlan == nil {
+				googleError(c, http.StatusServiceUnavailable, "No available Gemini accounts")
+				return
+			}
+			canWait, err := geminiConcurrency.IncrementAccountWaitCount(c.Request.Context(), account.ID, selection.WaitPlan.MaxWaiting)
+			if err != nil {
+				log.Printf("Increment account wait count failed: %v", err)
+			} else if !canWait {
+				log.Printf("Account wait queue full: account=%d", account.ID)
+				googleError(c, http.StatusTooManyRequests, "Too many pending requests, please retry later")
+				return
+			} else {
+				// Only set release function if increment succeeded
+				accountWaitRelease = func() {
+					geminiConcurrency.DecrementAccountWaitCount(c.Request.Context(), account.ID)
+				}
+			}
+
+			accountReleaseFunc, err = geminiConcurrency.AcquireAccountSlotWithWaitTimeout(
+				c,
+				account.ID,
+				selection.WaitPlan.MaxConcurrency,
+				selection.WaitPlan.Timeout,
+				stream,
+				&streamStarted,
+			)
+			if err != nil {
+				if accountWaitRelease != nil {
+					accountWaitRelease()
+				}
+				googleError(c, http.StatusTooManyRequests, err.Error())
+				return
+			}
+			if err := h.gatewayService.BindStickySession(c.Request.Context(), sessionKey, account.ID); err != nil {
+				log.Printf("Bind sticky session failed: %v", err)
+			}
 		}
 
 		// 5) forward (根据平台分流)
@@ -230,6 +271,9 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
+		}
+		if accountWaitRelease != nil {
+			accountWaitRelease()
 		}
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError

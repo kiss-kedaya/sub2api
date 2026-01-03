@@ -3,6 +3,7 @@ package admin
 import (
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
@@ -13,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/errgroup"
 )
 
 // OAuthHandler handles OAuth-related operations for accounts
@@ -988,4 +990,165 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	}
 
 	response.Success(c, models)
+}
+
+// RefreshTier handles refreshing Google One tier for a single account
+// POST /api/v1/admin/accounts/:id/refresh-tier
+func (h *AccountHandler) RefreshTier(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+
+	ctx := c.Request.Context()
+	account, err := h.adminService.GetAccount(ctx, accountID)
+	if err != nil {
+		response.NotFound(c, "Account not found")
+		return
+	}
+
+	if account.Platform != service.PlatformGemini || account.Type != service.AccountTypeOAuth {
+		response.BadRequest(c, "Only Gemini OAuth accounts support tier refresh")
+		return
+	}
+
+	oauthType, _ := account.Credentials["oauth_type"].(string)
+	if oauthType != "google_one" {
+		response.BadRequest(c, "Only google_one OAuth accounts support tier refresh")
+		return
+	}
+
+	tierID, extra, creds, err := h.geminiOAuthService.RefreshAccountGoogleOneTier(ctx, account)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	_, updateErr := h.adminService.UpdateAccount(ctx, accountID, &service.UpdateAccountInput{
+		Credentials: creds,
+		Extra:       extra,
+	})
+	if updateErr != nil {
+		response.ErrorFrom(c, updateErr)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"tier_id":             tierID,
+		"storage_info":        extra,
+		"drive_storage_limit": extra["drive_storage_limit"],
+		"drive_storage_usage": extra["drive_storage_usage"],
+		"updated_at":          extra["drive_tier_updated_at"],
+	})
+}
+
+// BatchRefreshTierRequest represents batch tier refresh request
+type BatchRefreshTierRequest struct {
+	AccountIDs []int64 `json:"account_ids"`
+}
+
+// BatchRefreshTier handles batch refreshing Google One tier
+// POST /api/v1/admin/accounts/batch-refresh-tier
+func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
+	var req BatchRefreshTierRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req = BatchRefreshTierRequest{}
+	}
+
+	ctx := c.Request.Context()
+	accounts := make([]*service.Account, 0)
+
+	if len(req.AccountIDs) == 0 {
+		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "")
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		for i := range allAccounts {
+			acc := &allAccounts[i]
+			oauthType, _ := acc.Credentials["oauth_type"].(string)
+			if oauthType == "google_one" {
+				accounts = append(accounts, acc)
+			}
+		}
+	} else {
+		fetched, err := h.adminService.GetAccountsByIDs(ctx, req.AccountIDs)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+
+		for _, acc := range fetched {
+			if acc == nil {
+				continue
+			}
+			if acc.Platform != service.PlatformGemini || acc.Type != service.AccountTypeOAuth {
+				continue
+			}
+			oauthType, _ := acc.Credentials["oauth_type"].(string)
+			if oauthType != "google_one" {
+				continue
+			}
+			accounts = append(accounts, acc)
+		}
+	}
+
+	const maxConcurrency = 10
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrency)
+
+	var mu sync.Mutex
+	var successCount, failedCount int
+	var errors []gin.H
+
+	for _, account := range accounts {
+		acc := account // 闭包捕获
+		g.Go(func() error {
+			_, extra, creds, err := h.geminiOAuthService.RefreshAccountGoogleOneTier(gctx, acc)
+			if err != nil {
+				mu.Lock()
+				failedCount++
+				errors = append(errors, gin.H{
+					"account_id": acc.ID,
+					"error":      err.Error(),
+				})
+				mu.Unlock()
+				return nil
+			}
+
+			_, updateErr := h.adminService.UpdateAccount(gctx, acc.ID, &service.UpdateAccountInput{
+				Credentials: creds,
+				Extra:       extra,
+			})
+
+			mu.Lock()
+			if updateErr != nil {
+				failedCount++
+				errors = append(errors, gin.H{
+					"account_id": acc.ID,
+					"error":      updateErr.Error(),
+				})
+			} else {
+				successCount++
+			}
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	results := gin.H{
+		"total":   len(accounts),
+		"success": successCount,
+		"failed":  failedCount,
+		"errors":  errors,
+	}
+
+	response.Success(c, results)
 }
