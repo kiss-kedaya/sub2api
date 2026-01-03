@@ -8,7 +8,7 @@ import type {
   DashboardStats,
   TrendDataPoint,
   ModelStat,
-  APIKeyUsageTrendPoint,
+  ApiKeyUsageTrendPoint,
   UserUsageTrendPoint
 } from '@/types'
 
@@ -93,7 +93,7 @@ export interface ApiKeyTrendParams extends TrendParams {
 }
 
 export interface ApiKeyTrendResponse {
-  trend: APIKeyUsageTrendPoint[]
+  trend: ApiKeyUsageTrendPoint[]
   start_date: string
   end_date: string
   granularity: string

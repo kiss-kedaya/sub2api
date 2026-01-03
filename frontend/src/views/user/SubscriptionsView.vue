@@ -279,7 +279,7 @@ async function loadSubscriptions() {
     subscriptions.value = await subscriptionsAPI.getMySubscriptions()
   } catch (error) {
     console.error('Failed to load subscriptions:', error)
-    appStore.showError('Failed to load subscriptions')
+    appStore.showError(t('userSubscriptions.failedToLoad'))
   } finally {
     loading.value = false
   }
