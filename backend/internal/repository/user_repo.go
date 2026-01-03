@@ -301,7 +301,7 @@ func (r *userRepository) filterUsersByAttributes(ctx context.Context, attrs map[
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make([]int64, 0)
 	for rows.Next() {
