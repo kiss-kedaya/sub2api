@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
@@ -17,11 +19,11 @@ type UsageLogRepository interface {
 	Delete(ctx context.Context, id int64) error
 
 	ListByUser(ctx context.Context, userID int64, params pagination.PaginationParams) ([]UsageLog, *pagination.PaginationResult, error)
-	ListByAPIKey(ctx context.Context, apiKeyID int64, params pagination.PaginationParams) ([]UsageLog, *pagination.PaginationResult, error)
+	ListByApiKey(ctx context.Context, apiKeyID int64, params pagination.PaginationParams) ([]UsageLog, *pagination.PaginationResult, error)
 	ListByAccount(ctx context.Context, accountID int64, params pagination.PaginationParams) ([]UsageLog, *pagination.PaginationResult, error)
 
 	ListByUserAndTimeRange(ctx context.Context, userID int64, startTime, endTime time.Time) ([]UsageLog, *pagination.PaginationResult, error)
-	ListByAPIKeyAndTimeRange(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) ([]UsageLog, *pagination.PaginationResult, error)
+	ListByApiKeyAndTimeRange(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) ([]UsageLog, *pagination.PaginationResult, error)
 	ListByAccountAndTimeRange(ctx context.Context, accountID int64, startTime, endTime time.Time) ([]UsageLog, *pagination.PaginationResult, error)
 	ListByModelAndTimeRange(ctx context.Context, modelName string, startTime, endTime time.Time) ([]UsageLog, *pagination.PaginationResult, error)
 
@@ -32,10 +34,10 @@ type UsageLogRepository interface {
 	GetDashboardStats(ctx context.Context) (*usagestats.DashboardStats, error)
 	GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID int64) ([]usagestats.TrendDataPoint, error)
 	GetModelStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID int64) ([]usagestats.ModelStat, error)
-	GetAPIKeyUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.APIKeyUsageTrendPoint, error)
+	GetApiKeyUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.ApiKeyUsageTrendPoint, error)
 	GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.UserUsageTrendPoint, error)
 	GetBatchUserUsageStats(ctx context.Context, userIDs []int64) (map[int64]*usagestats.BatchUserUsageStats, error)
-	GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64) (map[int64]*usagestats.BatchAPIKeyUsageStats, error)
+	GetBatchApiKeyUsageStats(ctx context.Context, apiKeyIDs []int64) (map[int64]*usagestats.BatchApiKeyUsageStats, error)
 
 	// User dashboard stats
 	GetUserDashboardStats(ctx context.Context, userID int64) (*usagestats.UserDashboardStats, error)
@@ -51,7 +53,7 @@ type UsageLogRepository interface {
 
 	// Aggregated stats (optimized)
 	GetUserStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error)
-	GetAPIKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error)
+	GetApiKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetAccountStatsAggregated(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetModelStatsAggregated(ctx context.Context, modelName string, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetDailyStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) ([]map[string]any, error)
@@ -69,12 +71,32 @@ type windowStatsCache struct {
 	timestamp time.Time
 }
 
-var (
-	apiCacheMap         = sync.Map{} // 缓存 API 响应
-	windowStatsCacheMap = sync.Map{} // 缓存窗口统计
+// antigravityUsageCache 缓存 Antigravity 额度数据
+type antigravityUsageCache struct {
+	usageInfo *UsageInfo
+	timestamp time.Time
+}
+
+const (
 	apiCacheTTL         = 10 * time.Minute
 	windowStatsCacheTTL = 1 * time.Minute
 )
+
+// UsageCache 封装账户使用量相关的缓存
+type UsageCache struct {
+	apiCache         *sync.Map // accountID -> *apiUsageCache
+	windowStatsCache *sync.Map // accountID -> *windowStatsCache
+	antigravityCache *sync.Map // accountID -> *antigravityUsageCache
+}
+
+// NewUsageCache 创建 UsageCache 实例
+func NewUsageCache() *UsageCache {
+	return &UsageCache{
+		apiCache:         &sync.Map{},
+		antigravityCache: &sync.Map{},
+		windowStatsCache: &sync.Map{},
+	}
+}
 
 // WindowStats 窗口期统计
 type WindowStats struct {
@@ -91,6 +113,12 @@ type UsageProgress struct {
 	WindowStats      *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
 }
 
+// AntigravityModelQuota Antigravity 单个模型的配额信息
+type AntigravityModelQuota struct {
+	Utilization int    `json:"utilization"` // 使用率 0-100
+	ResetTime   string `json:"reset_time"`  // 重置时间 ISO8601
+}
+
 // UsageInfo 账号使用量信息
 type UsageInfo struct {
 	UpdatedAt        *time.Time     `json:"updated_at,omitempty"`         // 更新时间
@@ -99,6 +127,9 @@ type UsageInfo struct {
 	SevenDaySonnet   *UsageProgress `json:"seven_day_sonnet,omitempty"`   // 7天Sonnet窗口
 	GeminiProDaily   *UsageProgress `json:"gemini_pro_daily,omitempty"`   // Gemini Pro 日配额
 	GeminiFlashDaily *UsageProgress `json:"gemini_flash_daily,omitempty"` // Gemini Flash 日配额
+
+	// Antigravity 多模型配额
+	AntigravityQuota map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
 }
 
 // ClaudeUsageResponse Anthropic API返回的usage结构
@@ -124,19 +155,51 @@ type ClaudeUsageFetcher interface {
 
 // AccountUsageService 账号使用量查询服务
 type AccountUsageService struct {
-	accountRepo        AccountRepository
-	usageLogRepo       UsageLogRepository
-	usageFetcher       ClaudeUsageFetcher
-	geminiQuotaService *GeminiQuotaService
+	accountRepo             AccountRepository
+	usageLogRepo            UsageLogRepository
+	usageFetcher            ClaudeUsageFetcher
+	geminiQuotaService      *GeminiQuotaService
+	antigravityQuotaFetcher QuotaFetcher
+	cache                   *UsageCache
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
-func NewAccountUsageService(accountRepo AccountRepository, usageLogRepo UsageLogRepository, usageFetcher ClaudeUsageFetcher, geminiQuotaService *GeminiQuotaService) *AccountUsageService {
+func NewAccountUsageService(
+	accountRepo AccountRepository,
+	usageLogRepo UsageLogRepository,
+	usageFetcher ClaudeUsageFetcher,
+	geminiQuotaService *GeminiQuotaService,
+	antigravityQuotaFetcher *AntigravityQuotaFetcher,
+	cache *UsageCache,
+) *AccountUsageService {
+	if cache == nil {
+		cache = &UsageCache{
+			apiCache:         &sync.Map{},
+			antigravityCache: &sync.Map{},
+			windowStatsCache: &sync.Map{},
+		}
+	}
+	if cache.apiCache == nil {
+		cache.apiCache = &sync.Map{}
+	}
+	if cache.antigravityCache == nil {
+		cache.antigravityCache = &sync.Map{}
+	}
+	if cache.windowStatsCache == nil {
+		cache.windowStatsCache = &sync.Map{}
+	}
+
+	var quotaFetcher QuotaFetcher
+	if antigravityQuotaFetcher != nil {
+		quotaFetcher = antigravityQuotaFetcher
+	}
 	return &AccountUsageService{
-		accountRepo:        accountRepo,
-		usageLogRepo:       usageLogRepo,
-		usageFetcher:       usageFetcher,
-		geminiQuotaService: geminiQuotaService,
+		accountRepo:             accountRepo,
+		usageLogRepo:            usageLogRepo,
+		usageFetcher:            usageFetcher,
+		geminiQuotaService:      geminiQuotaService,
+		antigravityQuotaFetcher: quotaFetcher,
+		cache:                   cache,
 	}
 }
 
@@ -154,12 +217,17 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64) (*U
 		return s.getGeminiUsage(ctx, account)
 	}
 
+	// Antigravity 平台：使用 AntigravityQuotaFetcher 获取额度
+	if account.Platform == PlatformAntigravity {
+		return s.getAntigravityUsage(ctx, account)
+	}
+
 	// 只有oauth类型账号可以通过API获取usage（有profile scope）
 	if account.CanGetUsage() {
 		var apiResp *ClaudeUsageResponse
 
 		// 1. 检查 API 缓存（10 分钟）
-		if cached, ok := apiCacheMap.Load(accountID); ok {
+		if cached, ok := s.cache.apiCache.Load(accountID); ok {
 			if cache, ok := cached.(*apiUsageCache); ok && time.Since(cache.timestamp) < apiCacheTTL {
 				apiResp = cache.response
 			}
@@ -172,7 +240,7 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64) (*U
 				return nil, err
 			}
 			// 缓存 API 响应
-			apiCacheMap.Store(accountID, &apiUsageCache{
+			s.cache.apiCache.Store(accountID, &apiUsageCache{
 				response:  apiResp,
 				timestamp: time.Now(),
 			})
@@ -224,10 +292,68 @@ func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Accou
 	totals := geminiAggregateUsage(stats)
 	resetAt := geminiDailyResetTime(now)
 
-	usage.GeminiProDaily = buildGeminiUsageProgress(totals.ProRequests, quota.ProRPD, resetAt, totals.ProTokens, totals.ProCost, now)
-	usage.GeminiFlashDaily = buildGeminiUsageProgress(totals.FlashRequests, quota.FlashRPD, resetAt, totals.FlashTokens, totals.FlashCost, now)
+	usage.GeminiProDaily = buildGeminiUsageProgress(totals.ProRequests, quota.ProRPD, resetAt, totals.ProTokens, totals.ProCost)
+	usage.GeminiFlashDaily = buildGeminiUsageProgress(totals.FlashRequests, quota.FlashRPD, resetAt, totals.FlashTokens, totals.FlashCost)
 
 	return usage, nil
+}
+
+// getAntigravityUsage 获取 Antigravity 账户额度
+func (s *AccountUsageService) getAntigravityUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+	if s.antigravityQuotaFetcher == nil || !s.antigravityQuotaFetcher.CanFetch(account) {
+		now := time.Now()
+		return &UsageInfo{UpdatedAt: &now}, nil
+	}
+
+	// Ensure project_id is stable for quota queries.
+	if strings.TrimSpace(account.GetCredential("project_id")) == "" {
+		projectID := antigravity.GenerateMockProjectID()
+		if account.Credentials == nil {
+			account.Credentials = map[string]any{}
+		}
+		account.Credentials["project_id"] = projectID
+		if s.accountRepo != nil {
+			_, err := s.accountRepo.BulkUpdate(ctx, []int64{account.ID}, AccountBulkUpdate{
+				Credentials: map[string]any{"project_id": projectID},
+			})
+			if err != nil {
+				log.Printf("Failed to persist antigravity project_id for account %d: %v", account.ID, err)
+			}
+		}
+	}
+
+	// 1. 检查缓存（10 分钟）
+	if cached, ok := s.cache.antigravityCache.Load(account.ID); ok {
+		if cache, ok := cached.(*antigravityUsageCache); ok && time.Since(cache.timestamp) < apiCacheTTL {
+			// 重新计算 RemainingSeconds
+			usage := cloneUsageInfo(cache.usageInfo)
+			if usage.FiveHour != nil && usage.FiveHour.ResetsAt != nil {
+				usage.FiveHour.RemainingSeconds = remainingSecondsUntil(*usage.FiveHour.ResetsAt)
+			}
+			return usage, nil
+		}
+	}
+
+	// 2. 获取代理 URL
+	proxyURL, err := s.antigravityQuotaFetcher.GetProxyURL(ctx, account)
+	if err != nil {
+		log.Printf("Failed to get proxy URL for account %d: %v", account.ID, err)
+		proxyURL = ""
+	}
+
+	// 3. 调用 API 获取额度
+	result, err := s.antigravityQuotaFetcher.FetchQuota(ctx, account, proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("fetch antigravity quota failed: %w", err)
+	}
+
+	// 4. 缓存结果
+	s.cache.antigravityCache.Store(account.ID, &antigravityUsageCache{
+		usageInfo: result.UsageInfo,
+		timestamp: time.Now(),
+	})
+
+	return result.UsageInfo, nil
 }
 
 // addWindowStats 为 usage 数据添加窗口期统计
@@ -241,7 +367,7 @@ func (s *AccountUsageService) addWindowStats(ctx context.Context, account *Accou
 
 	// 检查窗口统计缓存（1 分钟）
 	var windowStats *WindowStats
-	if cached, ok := windowStatsCacheMap.Load(account.ID); ok {
+	if cached, ok := s.cache.windowStatsCache.Load(account.ID); ok {
 		if cache, ok := cached.(*windowStatsCache); ok && time.Since(cache.timestamp) < windowStatsCacheTTL {
 			windowStats = cache.stats
 		}
@@ -269,7 +395,7 @@ func (s *AccountUsageService) addWindowStats(ctx context.Context, account *Accou
 		}
 
 		// 缓存窗口统计（1 分钟）
-		windowStatsCacheMap.Store(account.ID, &windowStatsCache{
+		s.cache.windowStatsCache.Store(account.ID, &windowStatsCache{
 			stats:     windowStats,
 			timestamp: time.Now(),
 		})
@@ -342,12 +468,12 @@ func (s *AccountUsageService) buildUsageInfo(resp *ClaudeUsageResponse, updatedA
 
 	// 5小时窗口 - 始终创建对象（即使 ResetsAt 为空）
 	info.FiveHour = &UsageProgress{
-		Utilization: resp.FiveHour.Utilization,
+		Utilization: clampFloat64(resp.FiveHour.Utilization, 0, 100),
 	}
 	if resp.FiveHour.ResetsAt != "" {
 		if fiveHourReset, err := parseTime(resp.FiveHour.ResetsAt); err == nil {
 			info.FiveHour.ResetsAt = &fiveHourReset
-			info.FiveHour.RemainingSeconds = int(time.Until(fiveHourReset).Seconds())
+			info.FiveHour.RemainingSeconds = remainingSecondsUntil(fiveHourReset)
 		} else {
 			log.Printf("Failed to parse FiveHour.ResetsAt: %s, error: %v", resp.FiveHour.ResetsAt, err)
 		}
@@ -357,14 +483,14 @@ func (s *AccountUsageService) buildUsageInfo(resp *ClaudeUsageResponse, updatedA
 	if resp.SevenDay.ResetsAt != "" {
 		if sevenDayReset, err := parseTime(resp.SevenDay.ResetsAt); err == nil {
 			info.SevenDay = &UsageProgress{
-				Utilization:      resp.SevenDay.Utilization,
+				Utilization:      clampFloat64(resp.SevenDay.Utilization, 0, 100),
 				ResetsAt:         &sevenDayReset,
-				RemainingSeconds: int(time.Until(sevenDayReset).Seconds()),
+				RemainingSeconds: remainingSecondsUntil(sevenDayReset),
 			}
 		} else {
 			log.Printf("Failed to parse SevenDay.ResetsAt: %s, error: %v", resp.SevenDay.ResetsAt, err)
 			info.SevenDay = &UsageProgress{
-				Utilization: resp.SevenDay.Utilization,
+				Utilization: clampFloat64(resp.SevenDay.Utilization, 0, 100),
 			}
 		}
 	}
@@ -373,14 +499,14 @@ func (s *AccountUsageService) buildUsageInfo(resp *ClaudeUsageResponse, updatedA
 	if resp.SevenDaySonnet.ResetsAt != "" {
 		if sonnetReset, err := parseTime(resp.SevenDaySonnet.ResetsAt); err == nil {
 			info.SevenDaySonnet = &UsageProgress{
-				Utilization:      resp.SevenDaySonnet.Utilization,
+				Utilization:      clampFloat64(resp.SevenDaySonnet.Utilization, 0, 100),
 				ResetsAt:         &sonnetReset,
-				RemainingSeconds: int(time.Until(sonnetReset).Seconds()),
+				RemainingSeconds: remainingSecondsUntil(sonnetReset),
 			}
 		} else {
 			log.Printf("Failed to parse SevenDaySonnet.ResetsAt: %s, error: %v", resp.SevenDaySonnet.ResetsAt, err)
 			info.SevenDaySonnet = &UsageProgress{
-				Utilization: resp.SevenDaySonnet.Utilization,
+				Utilization: clampFloat64(resp.SevenDaySonnet.Utilization, 0, 100),
 			}
 		}
 	}
@@ -394,10 +520,7 @@ func (s *AccountUsageService) estimateSetupTokenUsage(account *Account) *UsageIn
 
 	// 如果有session_window信息
 	if account.SessionWindowEnd != nil {
-		remaining := int(time.Until(*account.SessionWindowEnd).Seconds())
-		if remaining < 0 {
-			remaining = 0
-		}
+		remaining := remainingSecondsUntil(*account.SessionWindowEnd)
 
 		// 根据状态估算使用率 (百分比形式，100 = 100%)
 		var utilization float64
@@ -409,6 +532,7 @@ func (s *AccountUsageService) estimateSetupTokenUsage(account *Account) *UsageIn
 		default:
 			utilization = 0.0
 		}
+		utilization = clampFloat64(utilization, 0, 100)
 
 		info.FiveHour = &UsageProgress{
 			Utilization:      utilization,
@@ -427,15 +551,12 @@ func (s *AccountUsageService) estimateSetupTokenUsage(account *Account) *UsageIn
 	return info
 }
 
-func buildGeminiUsageProgress(used, limit int64, resetAt time.Time, tokens int64, cost float64, now time.Time) *UsageProgress {
+func buildGeminiUsageProgress(used, limit int64, resetAt time.Time, tokens int64, cost float64) *UsageProgress {
 	if limit <= 0 {
 		return nil
 	}
-	utilization := (float64(used) / float64(limit)) * 100
-	remainingSeconds := int(resetAt.Sub(now).Seconds())
-	if remainingSeconds < 0 {
-		remainingSeconds = 0
-	}
+	utilization := clampFloat64((float64(used)/float64(limit))*100, 0, 100)
+	remainingSeconds := remainingSecondsUntil(resetAt)
 	resetCopy := resetAt
 	return &UsageProgress{
 		Utilization:      utilization,
@@ -447,4 +568,48 @@ func buildGeminiUsageProgress(used, limit int64, resetAt time.Time, tokens int64
 			Cost:     cost,
 		},
 	}
+}
+
+func cloneUsageInfo(src *UsageInfo) *UsageInfo {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	if src.UpdatedAt != nil {
+		t := *src.UpdatedAt
+		dst.UpdatedAt = &t
+	}
+	dst.FiveHour = cloneUsageProgress(src.FiveHour)
+	dst.SevenDay = cloneUsageProgress(src.SevenDay)
+	dst.SevenDaySonnet = cloneUsageProgress(src.SevenDaySonnet)
+	dst.GeminiProDaily = cloneUsageProgress(src.GeminiProDaily)
+	dst.GeminiFlashDaily = cloneUsageProgress(src.GeminiFlashDaily)
+	if src.AntigravityQuota != nil {
+		dst.AntigravityQuota = make(map[string]*AntigravityModelQuota, len(src.AntigravityQuota))
+		for k, v := range src.AntigravityQuota {
+			if v == nil {
+				dst.AntigravityQuota[k] = nil
+				continue
+			}
+			copyVal := *v
+			dst.AntigravityQuota[k] = &copyVal
+		}
+	}
+	return &dst
+}
+
+func cloneUsageProgress(src *UsageProgress) *UsageProgress {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	if src.ResetsAt != nil {
+		t := *src.ResetsAt
+		dst.ResetsAt = &t
+	}
+	if src.WindowStats != nil {
+		statsCopy := *src.WindowStats
+		dst.WindowStats = &statsCopy
+	}
+	return &dst
 }
