@@ -586,8 +586,20 @@ func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, e
 		// Stream already started, send error as SSE event then close
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
-			// Send error event in SSE format
-			errorEvent := fmt.Sprintf(`data: {"type": "error", "error": {"type": "%s", "message": "%s"}}`+"\n\n", errType, message)
+			// Send error event in SSE format with proper JSON marshaling
+			errorData := map[string]any{
+				"type": "error",
+				"error": map[string]string{
+					"type":    errType,
+					"message": message,
+				},
+			}
+			jsonBytes, err := json.Marshal(errorData)
+			if err != nil {
+				_ = c.Error(err)
+				return
+			}
+			errorEvent := fmt.Sprintf("data: %s\n\n", string(jsonBytes))
 			if _, err := fmt.Fprint(c.Writer, errorEvent); err != nil {
 				_ = c.Error(err)
 			}
@@ -737,8 +749,27 @@ func sendMockWarmupStream(c *gin.Context, model string) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
+	// Build message_start event with proper JSON marshaling
+	messageStart := map[string]any{
+		"type": "message_start",
+		"message": map[string]any{
+			"id":            "msg_mock_warmup",
+			"type":          "message",
+			"role":          "assistant",
+			"model":         model,
+			"content":       []any{},
+			"stop_reason":   nil,
+			"stop_sequence": nil,
+			"usage": map[string]int{
+				"input_tokens":  10,
+				"output_tokens": 0,
+			},
+		},
+	}
+	messageStartJSON, _ := json.Marshal(messageStart)
+
 	events := []string{
-		`event: message_start` + "\n" + `data: {"message":{"content":[],"id":"msg_mock_warmup","model":"` + model + `","role":"assistant","stop_reason":null,"stop_sequence":null,"type":"message","usage":{"input_tokens":10,"output_tokens":0}},"type":"message_start"}`,
+		`event: message_start` + "\n" + `data: ` + string(messageStartJSON),
 		`event: content_block_start` + "\n" + `data: {"content_block":{"text":"","type":"text"},"index":0,"type":"content_block_start"}`,
 		`event: content_block_delta` + "\n" + `data: {"delta":{"text":"New","type":"text_delta"},"index":0,"type":"content_block_delta"}`,
 		`event: content_block_delta` + "\n" + `data: {"delta":{"text":" Conversation","type":"text_delta"},"index":0,"type":"content_block_delta"}`,
