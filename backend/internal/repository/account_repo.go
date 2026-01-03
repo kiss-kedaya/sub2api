@@ -975,7 +975,7 @@ func (r *accountRepository) loadTempUnschedStates(ctx context.Context, accountID
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var id int64
