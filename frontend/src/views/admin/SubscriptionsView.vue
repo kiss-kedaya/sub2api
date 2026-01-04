@@ -72,7 +72,7 @@
                 </span>
               </div>
               <span class="font-medium text-gray-900 dark:text-white">{{
-                row.user?.email || `User #${row.user_id}`
+                row.user?.email || t('admin.redeem.userPrefix', { id: row.user_id })
               }}</span>
             </div>
           </template>
