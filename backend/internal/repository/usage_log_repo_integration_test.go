@@ -73,7 +73,7 @@ func (s *UsageLogRepoSuite) TestCreate() {
 		ActualCost:   0.4,
 	}
 
-	_, err = s.repo.Create(s.ctx, log)
+	_, err := s.repo.Create(s.ctx, log)
 	s.Require().NoError(err, "Create")
 	s.Require().NotZero(log.ID)
 }
@@ -240,7 +240,7 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 		DurationMs:          &d1,
 		CreatedAt:           maxTime(todayStart.Add(2*time.Minute), now.Add(-2*time.Minute)),
 	}
-	_, err = s.repo.Create(s.ctx, logToday)
+	_, err := s.repo.Create(s.ctx, logToday)
 	s.Require().NoError(err, "Create logToday")
 
 	logOld := &service.UsageLog{
@@ -483,7 +483,7 @@ func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 		ActualCost:   0.5,
 		CreatedAt:    base,
 	}
-	_, err = s.repo.Create(s.ctx, log1)
+	_, err := s.repo.Create(s.ctx, log1)
 	s.Require().NoError(err)
 
 	log2 := &service.UsageLog{
@@ -598,7 +598,7 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 		ActualCost:   0.5,
 		CreatedAt:    base,
 	}
-	_, err = s.repo.Create(s.ctx, log1)
+	_, err := s.repo.Create(s.ctx, log1)
 	s.Require().NoError(err)
 
 	log2 := &service.UsageLog{
@@ -693,7 +693,7 @@ func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {
 		ActualCost:   0.5,
 		CreatedAt:    base,
 	}
-	_, err = s.repo.Create(s.ctx, log1)
+	_, err := s.repo.Create(s.ctx, log1)
 	s.Require().NoError(err)
 
 	log2 := &service.UsageLog{
@@ -750,7 +750,7 @@ func (s *UsageLogRepoSuite) TestGetAccountUsageStats() {
 		ActualCost:   0.4,
 		CreatedAt:    base.Add(12 * time.Hour),
 	}
-	_, err = s.repo.Create(s.ctx, log1)
+	_, err := s.repo.Create(s.ctx, log1)
 	s.Require().NoError(err)
 
 	log2 := &service.UsageLog{
