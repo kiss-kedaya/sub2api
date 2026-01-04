@@ -1,28 +1,29 @@
 <template>
-  <div v-if="shouldShowQuota" class="flex items-center gap-2">
-    <!-- Tier Badge -->
-    <span :class="['badge text-xs px-2 py-0.5 rounded font-medium', tierBadgeClass]">
-      {{ tierLabel }}
-    </span>
+  <div v-if="shouldShowQuota">
+    <!-- First line: Platform + Tier Badge -->
+    <div class="mb-1 flex items-center gap-1">
+      <span :class="['badge text-xs px-2 py-0.5 rounded font-medium', tierBadgeClass]">
+        {{ tierLabel }}
+      </span>
+    </div>
 
-    <!-- 限流状态 -->
-    <span
-      v-if="!isRateLimited"
-      class="text-xs text-gray-400 dark:text-gray-500"
-    >
-      {{ t('admin.accounts.gemini.rateLimit.ok') }}
-    </span>
-    <span
-      v-else
-      :class="[
-        'text-xs font-medium',
-        isUrgent
-          ? 'text-red-600 dark:text-red-400 animate-pulse'
-          : 'text-amber-600 dark:text-amber-400'
-      ]"
-    >
-      {{ t('admin.accounts.gemini.rateLimit.limited', { time: resetCountdown }) }}
-    </span>
+    <!-- Usage status: unlimited flow or rate limit -->
+    <div class="text-xs text-gray-400 dark:text-gray-500">
+      <span v-if="!isRateLimited">
+        {{ t('admin.accounts.gemini.rateLimit.unlimited') }}
+      </span>
+      <span
+        v-else
+        :class="[
+          'font-medium',
+          isUrgent
+            ? 'text-red-600 dark:text-red-400 animate-pulse'
+            : 'text-amber-600 dark:text-amber-400'
+        ]"
+      >
+        {{ t('admin.accounts.gemini.rateLimit.limited', { time: resetCountdown }) }}
+      </span>
+    </div>
   </div>
 </template>
 
