@@ -107,7 +107,10 @@
                 </button>
               </div>
               <!-- Code Content -->
-              <pre class="p-4 text-sm font-mono text-gray-100 overflow-x-auto"><code v-html="file.highlighted"></code></pre>
+              <pre class="p-4 text-sm font-mono text-gray-100 overflow-x-auto">
+                <code v-if="file.highlighted" v-html="file.highlighted"></code>
+                <code v-else v-text="file.content"></code>
+              </pre>
             </div>
           </div>
         </div>
@@ -164,8 +167,8 @@ interface TabConfig {
 interface FileConfig {
   path: string
   content: string
-  highlighted: string
   hint?: string  // Optional hint message for this file
+  highlighted?: string
 }
 
 const props = defineProps<Props>()
@@ -311,14 +314,23 @@ const platformNote = computed(() => {
   }
 })
 
-// Syntax highlighting helpers
-const keyword = (text: string) => `<span class="text-purple-400">${text}</span>`
-const variable = (text: string) => `<span class="text-cyan-400">${text}</span>`
-const string = (text: string) => `<span class="text-green-400">${text}</span>`
-const operator = (text: string) => `<span class="text-yellow-400">${text}</span>`
-const comment = (text: string) => `<span class="text-gray-500">${text}</span>`
-const key = (text: string) => `<span class="text-blue-400">${text}</span>`
+const escapeHtml = (value: string) => value
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;')
 
+const wrapToken = (className: string, value: string) =>
+  `<span class="${className}">${escapeHtml(value)}</span>`
+
+const keyword = (value: string) => wrapToken('text-emerald-300', value)
+const variable = (value: string) => wrapToken('text-sky-200', value)
+const operator = (value: string) => wrapToken('text-slate-400', value)
+const string = (value: string) => wrapToken('text-amber-200', value)
+const comment = (value: string) => wrapToken('text-slate-500', value)
+
+// Syntax highlighting helpers
 // Generate file configs based on platform and active tab
 const currentFiles = computed((): FileConfig[] => {
   const baseUrl = props.baseUrl || window.location.origin
@@ -343,37 +355,29 @@ const currentFiles = computed((): FileConfig[] => {
 function generateAnthropicFiles(baseUrl: string, apiKey: string): FileConfig[] {
   let path: string
   let content: string
-  let highlighted: string
 
   switch (activeTab.value) {
     case 'unix':
       path = 'Terminal'
       content = `export ANTHROPIC_BASE_URL="${baseUrl}"
 export ANTHROPIC_AUTH_TOKEN="${apiKey}"`
-      highlighted = `${keyword('export')} ${variable('ANTHROPIC_BASE_URL')}${operator('=')}${string(`"${baseUrl}"`)}
-${keyword('export')} ${variable('ANTHROPIC_AUTH_TOKEN')}${operator('=')}${string(`"${apiKey}"`)}`
       break
     case 'cmd':
       path = 'Command Prompt'
       content = `set ANTHROPIC_BASE_URL=${baseUrl}
 set ANTHROPIC_AUTH_TOKEN=${apiKey}`
-      highlighted = `${keyword('set')} ${variable('ANTHROPIC_BASE_URL')}${operator('=')}${baseUrl}
-${keyword('set')} ${variable('ANTHROPIC_AUTH_TOKEN')}${operator('=')}${apiKey}`
       break
     case 'powershell':
       path = 'PowerShell'
       content = `$env:ANTHROPIC_BASE_URL="${baseUrl}"
 $env:ANTHROPIC_AUTH_TOKEN="${apiKey}"`
-      highlighted = `${keyword('$env:')}${variable('ANTHROPIC_BASE_URL')}${operator('=')}${string(`"${baseUrl}"`)}
-${keyword('$env:')}${variable('ANTHROPIC_AUTH_TOKEN')}${operator('=')}${string(`"${apiKey}"`)}`
       break
     default:
       path = 'Terminal'
       content = ''
-      highlighted = ''
   }
 
-  return [{ path, content, highlighted }]
+  return [{ path, content }]
 }
 
 function generateGeminiCliContent(baseUrl: string, apiKey: string): FileConfig {
@@ -398,9 +402,9 @@ ${keyword('export')} ${variable('GEMINI_MODEL')}${operator('=')}${string(`"${mod
       content = `set GOOGLE_GEMINI_BASE_URL=${baseUrl}
 set GEMINI_API_KEY=${apiKey}
 set GEMINI_MODEL=${model}`
-      highlighted = `${keyword('set')} ${variable('GOOGLE_GEMINI_BASE_URL')}${operator('=')}${baseUrl}
-${keyword('set')} ${variable('GEMINI_API_KEY')}${operator('=')}${apiKey}
-${keyword('set')} ${variable('GEMINI_MODEL')}${operator('=')}${model}
+      highlighted = `${keyword('set')} ${variable('GOOGLE_GEMINI_BASE_URL')}${operator('=')}${string(baseUrl)}
+${keyword('set')} ${variable('GEMINI_API_KEY')}${operator('=')}${string(apiKey)}
+${keyword('set')} ${variable('GEMINI_MODEL')}${operator('=')}${string(model)}
 ${comment(`REM ${modelComment}`)}`
       break
     case 'powershell':
@@ -440,40 +444,20 @@ base_url = "${baseUrl}"
 wire_api = "responses"
 requires_openai_auth = true`
 
-  const configHighlighted = `${key('model_provider')} ${operator('=')} ${string('"sub2api"')}
-${key('model')} ${operator('=')} ${string('"gpt-5.2-codex"')}
-${key('model_reasoning_effort')} ${operator('=')} ${string('"high"')}
-${key('network_access')} ${operator('=')} ${string('"enabled"')}
-${key('disable_response_storage')} ${operator('=')} ${keyword('true')}
-${key('windows_wsl_setup_acknowledged')} ${operator('=')} ${keyword('true')}
-${key('model_verbosity')} ${operator('=')} ${string('"high"')}
-
-${comment('[model_providers.sub2api]')}
-${key('name')} ${operator('=')} ${string('"sub2api"')}
-${key('base_url')} ${operator('=')} ${string(`"${baseUrl}"`)}
-${key('wire_api')} ${operator('=')} ${string('"responses"')}
-${key('requires_openai_auth')} ${operator('=')} ${keyword('true')}`
-
   // auth.json content
   const authContent = `{
   "OPENAI_API_KEY": "${apiKey}"
-}`
-
-  const authHighlighted = `{
-  ${key('"OPENAI_API_KEY"')}: ${string(`"${apiKey}"`)}
 }`
 
   return [
     {
       path: `${configDir}/config.toml`,
       content: configContent,
-      highlighted: configHighlighted,
       hint: t('keys.useKeyModal.openai.configTomlHint')
     },
     {
       path: `${configDir}/auth.json`,
-      content: authContent,
-      highlighted: authHighlighted
+      content: authContent
     }
   ]
 }
