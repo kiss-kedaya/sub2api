@@ -441,13 +441,13 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 								_ = resp.Body.Close()
 								resp = retryResp
 								respBody = nil
+							} else {
+								// Retry still errored: replace error context with retry response.
+								retryBody, _ := io.ReadAll(io.LimitReader(retryResp.Body, 2<<20))
+								_ = retryResp.Body.Close()
+								respBody = retryBody
+								resp = retryResp
 							}
-
-							// Retry still errored: replace error context with retry response.
-							retryBody, _ := io.ReadAll(io.LimitReader(retryResp.Body, 2<<20))
-							_ = retryResp.Body.Close()
-							respBody = retryBody
-							resp = retryResp
 						} else {
 							log.Printf("Antigravity account %d: signature retry request failed: %v", account.ID, retryErr)
 						}
