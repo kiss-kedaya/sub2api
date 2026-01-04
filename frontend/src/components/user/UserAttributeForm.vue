@@ -93,12 +93,9 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
-import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { UserAttributeDefinition, UserAttributeValuesMap } from '@/types'
 import Select from '@/components/common/Select.vue'
-
-const { t } = useI18n()
 
 interface Props {
   userId?: number
