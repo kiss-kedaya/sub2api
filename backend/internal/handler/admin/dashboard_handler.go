@@ -75,8 +75,8 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 		"active_users":    stats.ActiveUsers,
 
 		// API Key 统计
-		"total_api_keys":  stats.TotalApiKeys,
-		"active_api_keys": stats.ActiveApiKeys,
+		"total_api_keys":  stats.TotalAPIKeys,
+		"active_api_keys": stats.ActiveAPIKeys,
 
 		// 账户统计
 		"total_accounts":     stats.TotalAccounts,
@@ -193,10 +193,10 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 	})
 }
 
-// GetApiKeyUsageTrend handles getting API key usage trend data
+// GetAPIKeyUsageTrend handles getting API key usage trend data
 // GET /api/v1/admin/dashboard/api-keys-trend
 // Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 5)
-func (h *DashboardHandler) GetApiKeyUsageTrend(c *gin.Context) {
+func (h *DashboardHandler) GetAPIKeyUsageTrend(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
 	granularity := c.DefaultQuery("granularity", "day")
 	limitStr := c.DefaultQuery("limit", "5")
@@ -205,7 +205,7 @@ func (h *DashboardHandler) GetApiKeyUsageTrend(c *gin.Context) {
 		limit = 5
 	}
 
-	trend, err := h.dashboardService.GetApiKeyUsageTrend(c.Request.Context(), startTime, endTime, granularity, limit)
+	trend, err := h.dashboardService.GetAPIKeyUsageTrend(c.Request.Context(), startTime, endTime, granularity, limit)
 	if err != nil {
 		response.Error(c, 500, "Failed to get API key usage trend")
 		return
@@ -273,26 +273,26 @@ func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 	response.Success(c, gin.H{"stats": stats})
 }
 
-// BatchApiKeysUsageRequest represents the request body for batch api key usage stats
-type BatchApiKeysUsageRequest struct {
-	ApiKeyIDs []int64 `json:"api_key_ids" binding:"required"`
+// BatchAPIKeysUsageRequest represents the request body for batch api key usage stats
+type BatchAPIKeysUsageRequest struct {
+	APIKeyIDs []int64 `json:"api_key_ids" binding:"required"`
 }
 
-// GetBatchApiKeysUsage handles getting usage stats for multiple API keys
+// GetBatchAPIKeysUsage handles getting usage stats for multiple API keys
 // POST /api/v1/admin/dashboard/api-keys-usage
-func (h *DashboardHandler) GetBatchApiKeysUsage(c *gin.Context) {
-	var req BatchApiKeysUsageRequest
+func (h *DashboardHandler) GetBatchAPIKeysUsage(c *gin.Context) {
+	var req BatchAPIKeysUsageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
 
-	if len(req.ApiKeyIDs) == 0 {
+	if len(req.APIKeyIDs) == 0 {
 		response.Success(c, gin.H{"stats": map[string]any{}})
 		return
 	}
 
-	stats, err := h.dashboardService.GetBatchApiKeyUsageStats(c.Request.Context(), req.ApiKeyIDs)
+	stats, err := h.dashboardService.GetBatchAPIKeyUsageStats(c.Request.Context(), req.APIKeyIDs)
 	if err != nil {
 		response.Error(c, 500, "Failed to get API key usage stats")
 		return
