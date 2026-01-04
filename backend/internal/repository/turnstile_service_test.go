@@ -3,9 +3,9 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -18,7 +18,6 @@ import (
 type TurnstileServiceSuite struct {
 	suite.Suite
 	ctx      context.Context
-	srv      *httptest.Server
 	verifier *turnstileVerifier
 	received chan url.Values
 }
@@ -31,20 +30,15 @@ func (s *TurnstileServiceSuite) SetupTest() {
 	s.verifier = verifier
 }
 
-func (s *TurnstileServiceSuite) TearDownTest() {
-	if s.srv != nil {
-		s.srv.Close()
-		s.srv = nil
+func (s *TurnstileServiceSuite) setupTransport(handler http.HandlerFunc) {
+	s.verifier.verifyURL = "http://in-process/turnstile"
+	s.verifier.httpClient = &http.Client{
+		Transport: newInProcessTransport(handler, nil),
 	}
 }
 
-func (s *TurnstileServiceSuite) setupServer(handler http.HandlerFunc) {
-	s.srv = httptest.NewServer(handler)
-	s.verifier.verifyURL = s.srv.URL
-}
-
 func (s *TurnstileServiceSuite) TestVerifyToken_SendsFormAndDecodesJSON() {
-	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.setupTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Capture form data in main goroutine context later
 		body, _ := io.ReadAll(r.Body)
 		values, _ := url.ParseQuery(string(body))
@@ -72,7 +66,7 @@ func (s *TurnstileServiceSuite) TestVerifyToken_SendsFormAndDecodesJSON() {
 
 func (s *TurnstileServiceSuite) TestVerifyToken_ContentType() {
 	var contentType string
-	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.setupTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		contentType = r.Header.Get("Content-Type")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(service.TurnstileVerifyResponse{Success: true})
@@ -84,7 +78,7 @@ func (s *TurnstileServiceSuite) TestVerifyToken_ContentType() {
 }
 
 func (s *TurnstileServiceSuite) TestVerifyToken_EmptyRemoteIP_NotSent() {
-	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.setupTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		values, _ := url.ParseQuery(string(body))
 		s.received <- values
@@ -105,15 +99,19 @@ func (s *TurnstileServiceSuite) TestVerifyToken_EmptyRemoteIP_NotSent() {
 }
 
 func (s *TurnstileServiceSuite) TestVerifyToken_RequestError() {
-	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	s.srv.Close()
+	s.verifier.verifyURL = "http://in-process/turnstile"
+	s.verifier.httpClient = &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("dial failed")
+		}),
+	}
 
 	_, err := s.verifier.VerifyToken(s.ctx, "sk", "token", "1.1.1.1")
 	require.Error(s.T(), err, "expected error when server is closed")
 }
 
 func (s *TurnstileServiceSuite) TestVerifyToken_InvalidJSON() {
-	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.setupTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, "not-valid-json")
 	}))
@@ -123,7 +121,7 @@ func (s *TurnstileServiceSuite) TestVerifyToken_InvalidJSON() {
 }
 
 func (s *TurnstileServiceSuite) TestVerifyToken_SuccessFalse() {
-	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.setupTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(service.TurnstileVerifyResponse{
 			Success:    false,

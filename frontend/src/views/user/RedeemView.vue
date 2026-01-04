@@ -500,7 +500,7 @@ const getHistoryItemTitle = (item: RedeemHistoryItem) => {
   } else if (item.type === 'subscription') {
     return t('redeem.subscriptionAssigned')
   }
-  return 'Unknown'
+  return t('common.unknown')
 }
 
 const formatHistoryValue = (item: RedeemHistoryItem) => {

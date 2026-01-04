@@ -1,7 +1,16 @@
 <template>
   <div class="flex items-center gap-2">
     <!-- Main Status Badge -->
-    <span :class="['badge text-xs', statusClass]">
+    <button
+      v-if="isTempUnschedulable"
+      type="button"
+      :class="['badge text-xs', statusClass, 'cursor-pointer']"
+      :title="t('admin.accounts.status.viewTempUnschedDetails')"
+      @click="handleTempUnschedClick"
+    >
+      {{ statusText }}
+    </button>
+    <span v-else :class="['badge text-xs', statusClass]">
       {{ statusText }}
     </span>
 
@@ -52,7 +61,7 @@
       <div
         class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-900 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-gray-700"
       >
-        {{ t('admin.accounts.statuses.rateLimitedUntil', { time: formatTime(account.rate_limit_reset_at) }) }}
+        {{ t('admin.accounts.status.rateLimitedUntil', { time: formatTime(account.rate_limit_reset_at) }) }}
         <div
           class="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-900 dark:border-t-gray-700"
         ></div>
@@ -77,20 +86,12 @@
       <div
         class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-900 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-gray-700"
       >
-        {{ t('admin.accounts.statuses.overloadedUntil', { time: formatTime(account.overload_until) }) }}
+        {{ t('admin.accounts.status.overloadedUntil', { time: formatTime(account.overload_until) }) }}
         <div
           class="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-900 dark:border-t-gray-700"
         ></div>
       </div>
     </div>
-
-    <!-- Tier Indicator -->
-    <span
-      v-if="tierDisplay"
-      class="inline-flex items-center rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-    >
-      {{ tierDisplay }}
-    </span>
   </div>
 </template>
 
@@ -106,6 +107,10 @@ const props = defineProps<{
   account: Account
 }>()
 
+const emit = defineEmits<{
+  (e: 'show-temp-unsched', account: Account): void
+}>()
+
 // Computed: is rate limited (429)
 const isRateLimited = computed(() => {
   if (!props.account.rate_limit_reset_at) return false
@@ -118,6 +123,12 @@ const isOverloaded = computed(() => {
   return new Date(props.account.overload_until) > new Date()
 })
 
+// Computed: is temp unschedulable
+const isTempUnschedulable = computed(() => {
+  if (!props.account.temp_unschedulable_until) return false
+  return new Date(props.account.temp_unschedulable_until) > new Date()
+})
+
 // Computed: has error status
 const hasError = computed(() => {
   return props.account.status === 'error'
@@ -125,6 +136,12 @@ const hasError = computed(() => {
 
 // Computed: status badge class
 const statusClass = computed(() => {
+  if (hasError.value) {
+    return 'badge-danger'
+  }
+  if (isTempUnschedulable.value) {
+    return 'badge-warning'
+  }
   if (!props.account.schedulable || isRateLimited.value || isOverloaded.value) {
     return 'badge-gray'
   }
@@ -142,32 +159,24 @@ const statusClass = computed(() => {
 
 // Computed: status text
 const statusText = computed(() => {
+  if (hasError.value) {
+    return t('admin.accounts.status.error')
+  }
+  if (isTempUnschedulable.value) {
+    return t('admin.accounts.status.tempUnschedulable')
+  }
   if (!props.account.schedulable) {
-    return t('admin.accounts.statuses.paused')
+    return t('admin.accounts.status.paused')
   }
   if (isRateLimited.value || isOverloaded.value) {
-    return t('admin.accounts.statuses.limited')
+    return t('admin.accounts.status.limited')
   }
-  return t(`admin.accounts.statuses.${props.account.status}`)
+  return t(`admin.accounts.status.${props.account.status}`)
 })
 
-// Computed: tier display
-const tierDisplay = computed(() => {
-  const credentials = props.account.credentials as Record<string, any> | undefined
-  const tierId = credentials?.tier_id
-  if (!tierId || tierId === 'unknown') return null
-
-  const tierMap: Record<string, string> = {
-    'free': 'Free',
-    'payg': 'Pay-as-you-go',
-    'pay-as-you-go': 'Pay-as-you-go',
-    'enterprise': 'Enterprise',
-    'LEGACY': 'Legacy',
-    'PRO': 'Pro',
-    'ULTRA': 'Ultra'
-  }
-
-  return tierMap[tierId] || tierId
-})
+const handleTempUnschedClick = () => {
+  if (!isTempUnschedulable.value) return
+  emit('show-temp-unsched', props.account)
+}
 
 </script>
