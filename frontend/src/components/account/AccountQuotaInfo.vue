@@ -90,8 +90,8 @@ const tierLabel = computed(() => {
     return tierMap[creds?.tier_id || ''] || 'Personal'
   }
 
-  // AI Studio 或其他
-  return 'Gemini'
+  // API Key: 显示 Client
+  return 'Client'
 })
 
 // Tier Badge 样式
