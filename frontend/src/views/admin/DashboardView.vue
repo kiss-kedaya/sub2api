@@ -652,16 +652,4 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* Compact Select styling for dashboard */
-:deep(.select-trigger) {
-  @apply rounded-lg px-3 py-1.5 text-sm;
-}
-
-:deep(.select-dropdown) {
-  @apply rounded-lg;
-}
-
-:deep(.select-option) {
-  @apply px-3 py-2 text-sm;
-}
 </style>
