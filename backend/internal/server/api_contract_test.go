@@ -380,7 +380,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	apiKeyService := service.NewApiKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, apiKeyCache, cfg)
 
 	usageRepo := newStubUsageLogRepo()
-	usageService := service.NewUsageService(usageRepo, userRepo, client)
+	usageService := service.NewUsageService(usageRepo, userRepo, nil)
 
 	settingRepo := newStubSettingRepo()
 	settingService := service.NewSettingService(settingRepo, cfg)
@@ -863,8 +863,8 @@ func (r *stubUsageLogRepo) SetUserLogs(userID int64, logs []service.UsageLog) {
 	r.userLogs[userID] = logs
 }
 
-func (r *stubUsageLogRepo) Create(ctx context.Context, log *service.UsageLog) error {
-	return errors.New("not implemented")
+func (r *stubUsageLogRepo) Create(ctx context.Context, log *service.UsageLog) (bool, error) {
+	return false, errors.New("not implemented")
 }
 
 func (r *stubUsageLogRepo) GetByID(ctx context.Context, id int64) (*service.UsageLog, error) {
