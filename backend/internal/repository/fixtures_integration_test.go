@@ -243,7 +243,7 @@ func mustCreateAccount(t *testing.T, client *dbent.Client, a *service.Account) *
 	return a
 }
 
-func mustCreateApiKey(t *testing.T, client *dbent.Client, k *service.ApiKey) *service.ApiKey {
+func mustCreateApiKey(t *testing.T, client *dbent.Client, k *service.APIKey) *service.APIKey {
 	t.Helper()
 	ctx := context.Background()
 
@@ -257,7 +257,7 @@ func mustCreateApiKey(t *testing.T, client *dbent.Client, k *service.ApiKey) *se
 		k.Name = "default"
 	}
 
-	create := client.ApiKey.Create().
+	create := client.APIKey.Create().
 		SetUserID(k.UserID).
 		SetKey(k.Key).
 		SetName(k.Name).

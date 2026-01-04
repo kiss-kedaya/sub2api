@@ -60,7 +60,7 @@ func NewGatewayHandler(
 // POST /v1/messages
 func (h *GatewayHandler) Messages(c *gin.Context) {
 	// 从context获取apiKey和user（ApiKeyAuth中间件已设置）
-	apiKey, ok := middleware2.GetApiKeyFromContext(c)
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
@@ -272,7 +272,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				defer cancel()
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 					Result:       result,
-					ApiKey:       apiKey,
+					APIKey:       apiKey,
 					User:         apiKey.User,
 					Account:      usedAccount,
 					Subscription: subscription,
@@ -399,7 +399,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			defer cancel()
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:       result,
-				ApiKey:       apiKey,
+				APIKey:       apiKey,
 				User:         apiKey.User,
 				Account:      usedAccount,
 				Subscription: subscription,
@@ -416,7 +416,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 // Returns models based on account configurations (model_mapping whitelist)
 // Falls back to default models if no whitelist is configured
 func (h *GatewayHandler) Models(c *gin.Context) {
-	apiKey, _ := middleware2.GetApiKeyFromContext(c)
+	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
 
 	var groupID *int64
 	var platform string
@@ -474,7 +474,7 @@ func (h *GatewayHandler) AntigravityModels(c *gin.Context) {
 // Usage handles getting account balance for CC Switch integration
 // GET /v1/usage
 func (h *GatewayHandler) Usage(c *gin.Context) {
-	apiKey, ok := middleware2.GetApiKeyFromContext(c)
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
@@ -644,7 +644,7 @@ func (h *GatewayHandler) errorResponse(c *gin.Context, status int, errType, mess
 // 特点：校验订阅/余额，但不计算并发、不记录使用量
 func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	// 从context获取apiKey和user（ApiKeyAuth中间件已设置）
-	apiKey, ok := middleware2.GetApiKeyFromContext(c)
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return

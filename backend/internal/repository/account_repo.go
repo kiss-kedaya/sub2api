@@ -43,6 +43,11 @@ type accountRepository struct {
 	sql    sqlExecutor   // 原生 SQL 执行接口
 }
 
+type tempUnschedSnapshot struct {
+	until  *time.Time
+	reason string
+}
+
 // NewAccountRepository 创建账户仓储实例。
 // 这是对外暴露的构造函数，返回接口类型以便于依赖注入。
 func NewAccountRepository(client *dbent.Client, sqlDB *sql.DB) service.AccountRepository {
@@ -165,6 +170,11 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 		accountIDs = append(accountIDs, acc.ID)
 	}
 
+	tempUnschedMap, err := r.loadTempUnschedStates(ctx, accountIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	groupsByAccount, groupIDsByAccount, accountGroupsByAccount, err := r.loadAccountGroups(ctx, accountIDs)
 	if err != nil {
 		return nil, err
@@ -190,6 +200,10 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 		}
 		if ags, ok := accountGroupsByAccount[entAcc.ID]; ok {
 			out.AccountGroups = ags
+		}
+		if snap, ok := tempUnschedMap[entAcc.ID]; ok {
+			out.TempUnschedulableUntil = snap.until
+			out.TempUnschedulableReason = snap.reason
 		}
 		outByID[entAcc.ID] = out
 	}
@@ -550,6 +564,7 @@ func (r *accountRepository) ListSchedulable(ctx context.Context) ([]service.Acco
 		Where(
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
+			tempUnschedulablePredicate(),
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
 		).
@@ -575,6 +590,7 @@ func (r *accountRepository) ListSchedulableByPlatform(ctx context.Context, platf
 			dbaccount.PlatformEQ(platform),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
+			tempUnschedulablePredicate(),
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
 		).
@@ -607,6 +623,7 @@ func (r *accountRepository) ListSchedulableByPlatforms(ctx context.Context, plat
 			dbaccount.PlatformIn(platforms...),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
+			tempUnschedulablePredicate(),
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
 		).
@@ -645,6 +662,31 @@ func (r *accountRepository) SetOverloaded(ctx context.Context, id int64, until t
 		Where(dbaccount.IDEQ(id)).
 		SetOverloadUntil(until).
 		Save(ctx)
+	return err
+}
+
+func (r *accountRepository) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
+	_, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts
+		SET temp_unschedulable_until = $1,
+			temp_unschedulable_reason = $2,
+			updated_at = NOW()
+		WHERE id = $3
+			AND deleted_at IS NULL
+			AND (temp_unschedulable_until IS NULL OR temp_unschedulable_until < $1)
+	`, until, reason, id)
+	return err
+}
+
+func (r *accountRepository) ClearTempUnschedulable(ctx context.Context, id int64) error {
+	_, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts
+		SET temp_unschedulable_until = NULL,
+			temp_unschedulable_reason = NULL,
+			updated_at = NOW()
+		WHERE id = $1
+			AND deleted_at IS NULL
+	`, id)
 	return err
 }
 
@@ -808,6 +850,7 @@ func (r *accountRepository) queryAccountsByGroup(ctx context.Context, groupID in
 		now := time.Now()
 		preds = append(preds,
 			dbaccount.SchedulableEQ(true),
+			tempUnschedulablePredicate(),
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
 		)
@@ -869,6 +912,10 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 	if err != nil {
 		return nil, err
 	}
+	tempUnschedMap, err := r.loadTempUnschedStates(ctx, accountIDs)
+	if err != nil {
+		return nil, err
+	}
 	groupsByAccount, groupIDsByAccount, accountGroupsByAccount, err := r.loadAccountGroups(ctx, accountIDs)
 	if err != nil {
 		return nil, err
@@ -894,10 +941,66 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 		if ags, ok := accountGroupsByAccount[acc.ID]; ok {
 			out.AccountGroups = ags
 		}
+		if snap, ok := tempUnschedMap[acc.ID]; ok {
+			out.TempUnschedulableUntil = snap.until
+			out.TempUnschedulableReason = snap.reason
+		}
 		outAccounts = append(outAccounts, *out)
 	}
 
 	return outAccounts, nil
+}
+
+func tempUnschedulablePredicate() dbpredicate.Account {
+	return dbpredicate.Account(func(s *entsql.Selector) {
+		col := s.C("temp_unschedulable_until")
+		s.Where(entsql.Or(
+			entsql.IsNull(col),
+			entsql.LTE(col, entsql.Expr("NOW()")),
+		))
+	})
+}
+
+func (r *accountRepository) loadTempUnschedStates(ctx context.Context, accountIDs []int64) (map[int64]tempUnschedSnapshot, error) {
+	out := make(map[int64]tempUnschedSnapshot)
+	if len(accountIDs) == 0 {
+		return out, nil
+	}
+
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT id, temp_unschedulable_until, temp_unschedulable_reason
+		FROM accounts
+		WHERE id = ANY($1)
+	`, pq.Array(accountIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var id int64
+		var until sql.NullTime
+		var reason sql.NullString
+		if err := rows.Scan(&id, &until, &reason); err != nil {
+			return nil, err
+		}
+		var untilPtr *time.Time
+		if until.Valid {
+			tmp := until.Time
+			untilPtr = &tmp
+		}
+		if reason.Valid {
+			out[id] = tempUnschedSnapshot{until: untilPtr, reason: reason.String}
+		} else {
+			out[id] = tempUnschedSnapshot{until: untilPtr, reason: ""}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }
 
 func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64) (map[int64]*service.Proxy, error) {
