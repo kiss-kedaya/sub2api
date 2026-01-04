@@ -229,57 +229,81 @@ func extractTierIDFromAllowedTiers(allowedTiers []geminicli.AllowedTier) string 
 
 // inferGoogleOneTier infers Google One tier from Drive storage limit
 func inferGoogleOneTier(storageBytes int64) string {
+	log.Printf("[GeminiOAuth] inferGoogleOneTier - input: %d bytes (%.2f TB)", storageBytes, float64(storageBytes)/float64(TB))
+
 	if storageBytes <= 0 {
+		log.Printf("[GeminiOAuth] inferGoogleOneTier - storageBytes <= 0, returning UNKNOWN")
 		return TierGoogleOneUnknown
 	}
 
 	if storageBytes > StorageTierUnlimited {
+		log.Printf("[GeminiOAuth] inferGoogleOneTier - > %d bytes (100TB), returning UNLIMITED", StorageTierUnlimited)
 		return TierGoogleOneUnlimited
 	}
 	if storageBytes >= StorageTierAIPremium {
+		log.Printf("[GeminiOAuth] inferGoogleOneTier - >= %d bytes (2TB), returning AI_PREMIUM", StorageTierAIPremium)
 		return TierAIPremium
 	}
 	if storageBytes >= StorageTierStandard {
+		log.Printf("[GeminiOAuth] inferGoogleOneTier - >= %d bytes (200GB), returning STANDARD", StorageTierStandard)
 		return TierGoogleOneStandard
 	}
 	if storageBytes >= StorageTierBasic {
+		log.Printf("[GeminiOAuth] inferGoogleOneTier - >= %d bytes (100GB), returning BASIC", StorageTierBasic)
 		return TierGoogleOneBasic
 	}
 	if storageBytes >= StorageTierFree {
+		log.Printf("[GeminiOAuth] inferGoogleOneTier - >= %d bytes (15GB), returning FREE", StorageTierFree)
 		return TierFree
 	}
+
+	log.Printf("[GeminiOAuth] inferGoogleOneTier - < %d bytes (15GB), returning UNKNOWN", StorageTierFree)
 	return TierGoogleOneUnknown
 }
 
 // fetchGoogleOneTier fetches Google One tier from Drive API or LoadCodeAssist API
 func (s *GeminiOAuthService) FetchGoogleOneTier(ctx context.Context, accessToken, proxyURL string) (string, *geminicli.DriveStorageInfo, error) {
+	log.Printf("[GeminiOAuth] Starting FetchGoogleOneTier")
+
 	// First try LoadCodeAssist API (works for accounts with GCP projects)
 	if s.codeAssist != nil {
+		log.Printf("[GeminiOAuth] Trying LoadCodeAssist API...")
 		loadResp, err := s.codeAssist.LoadCodeAssist(ctx, accessToken, proxyURL, nil)
-		if err == nil && loadResp != nil {
+		if err != nil {
+			log.Printf("[GeminiOAuth] LoadCodeAssist failed: %v", err)
+		} else if loadResp != nil {
 			if tier := loadResp.GetTier(); tier != "" {
-				fmt.Printf("[GeminiOAuth] Got tier from LoadCodeAssist: %s\n", tier)
+				log.Printf("[GeminiOAuth] Got tier from LoadCodeAssist: %s (skipping Drive API)", tier)
 				return tier, nil, nil
+			} else {
+				log.Printf("[GeminiOAuth] LoadCodeAssist returned no tier, falling back to Drive API")
 			}
 		}
 	}
 
 	// Fallback to Drive API (requires drive.readonly scope)
+	log.Printf("[GeminiOAuth] Calling Drive API for storage quota...")
 	driveClient := geminicli.NewDriveClient()
 
 	storageInfo, err := driveClient.GetStorageQuota(ctx, accessToken, proxyURL)
 	if err != nil {
 		// Check if it's a 403 (scope not granted)
 		if strings.Contains(err.Error(), "status 403") {
-			fmt.Printf("[GeminiOAuth] Drive API scope not available: %v\n", err)
+			log.Printf("[GeminiOAuth] Drive API scope not available (403): %v", err)
 			return TierGoogleOneUnknown, nil, err
 		}
 		// Other errors
-		fmt.Printf("[GeminiOAuth] Failed to fetch Drive storage: %v\n", err)
+		log.Printf("[GeminiOAuth] Failed to fetch Drive storage: %v", err)
 		return TierGoogleOneUnknown, nil, err
 	}
 
+	log.Printf("[GeminiOAuth] Drive API response - Limit: %d bytes (%.2f TB), Usage: %d bytes (%.2f GB)",
+		storageInfo.Limit, float64(storageInfo.Limit)/float64(TB),
+		storageInfo.Usage, float64(storageInfo.Usage)/float64(GB))
+
 	tierID := inferGoogleOneTier(storageInfo.Limit)
+	log.Printf("[GeminiOAuth] Inferred tier from storage: %s", tierID)
+
 	return tierID, storageInfo, nil
 }
 
