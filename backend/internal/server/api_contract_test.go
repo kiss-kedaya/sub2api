@@ -91,7 +91,7 @@ func TestAPIContracts(t *testing.T) {
 			name: "GET /api/v1/keys (paginated)",
 			setup: func(t *testing.T, deps *contractDeps) {
 				t.Helper()
-				deps.apiKeyRepo.MustSeed(&service.ApiKey{
+				deps.apiKeyRepo.MustSeed(&service.APIKey{
 					ID:        100,
 					UserID:    1,
 					Key:       "sk_custom_1234567890",
@@ -135,7 +135,7 @@ func TestAPIContracts(t *testing.T) {
 					{
 						ID:                  1,
 						UserID:              1,
-						ApiKeyID:            100,
+						APIKeyID:            100,
 						AccountID:           200,
 						Model:               "claude-3",
 						InputTokens:         10,
@@ -150,7 +150,7 @@ func TestAPIContracts(t *testing.T) {
 					{
 						ID:           2,
 						UserID:       1,
-						ApiKeyID:     100,
+						APIKeyID:     100,
 						AccountID:    200,
 						Model:        "claude-3",
 						InputTokens:  5,
@@ -188,7 +188,7 @@ func TestAPIContracts(t *testing.T) {
 					{
 						ID:                  1,
 						UserID:              1,
-						ApiKeyID:            100,
+						APIKeyID:            100,
 						AccountID:           200,
 						RequestID:           "req_123",
 						Model:               "claude-3",
@@ -259,13 +259,13 @@ func TestAPIContracts(t *testing.T) {
 					service.SettingKeyRegistrationEnabled: "true",
 					service.SettingKeyEmailVerifyEnabled:  "false",
 
-					service.SettingKeySmtpHost:     "smtp.example.com",
-					service.SettingKeySmtpPort:     "587",
-					service.SettingKeySmtpUsername: "user",
-					service.SettingKeySmtpPassword: "secret",
-					service.SettingKeySmtpFrom:     "no-reply@example.com",
-					service.SettingKeySmtpFromName: "Sub2API",
-					service.SettingKeySmtpUseTLS:   "true",
+					service.SettingKeySMTPHost:     "smtp.example.com",
+					service.SettingKeySMTPPort:     "587",
+					service.SettingKeySMTPUsername: "user",
+					service.SettingKeySMTPPassword: "secret",
+					service.SettingKeySMTPFrom:     "no-reply@example.com",
+					service.SettingKeySMTPFromName: "Sub2API",
+					service.SettingKeySMTPUseTLS:   "true",
 
 					service.SettingKeyTurnstileEnabled:   "true",
 					service.SettingKeyTurnstileSiteKey:   "site-key",
@@ -274,9 +274,9 @@ func TestAPIContracts(t *testing.T) {
 					service.SettingKeySiteName:     "Sub2API",
 					service.SettingKeySiteLogo:     "",
 					service.SettingKeySiteSubtitle: "Subtitle",
-					service.SettingKeyApiBaseUrl:   "https://api.example.com",
+					service.SettingKeyAPIBaseURL:   "https://api.example.com",
 					service.SettingKeyContactInfo:  "support",
-					service.SettingKeyDocUrl:       "https://docs.example.com",
+					service.SettingKeyDocURL:       "https://docs.example.com",
 
 					service.SettingKeyDefaultConcurrency: "5",
 					service.SettingKeyDefaultBalance:     "1.25",
@@ -308,7 +308,12 @@ func TestAPIContracts(t *testing.T) {
 					"contact_info": "support",
 					"doc_url": "https://docs.example.com",
 					"default_concurrency": 5,
-					"default_balance": 1.25
+					"default_balance": 1.25,
+					"enable_model_fallback": false,
+					"fallback_model_anthropic": "claude-3-5-sonnet-20241022",
+					"fallback_model_antigravity": "gemini-2.5-pro",
+					"fallback_model_gemini": "gemini-2.5-pro",
+					"fallback_model_openai": "gpt-4o"
 				}
 			}`,
 		},
@@ -366,16 +371,16 @@ func newContractDeps(t *testing.T) *contractDeps {
 
 	cfg := &config.Config{
 		Default: config.DefaultConfig{
-			ApiKeyPrefix: "sk-",
+			APIKeyPrefix: "sk-",
 		},
 		RunMode: config.RunModeStandard,
 	}
 
 	userService := service.NewUserService(userRepo)
-	apiKeyService := service.NewApiKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, apiKeyCache, cfg)
+	apiKeyService := service.NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, apiKeyCache, cfg)
 
 	usageRepo := newStubUsageLogRepo()
-	usageService := service.NewUsageService(usageRepo, userRepo)
+	usageService := service.NewUsageService(usageRepo, userRepo, nil)
 
 	settingRepo := newStubSettingRepo()
 	settingService := service.NewSettingService(settingRepo, cfg)
@@ -664,20 +669,20 @@ type stubApiKeyRepo struct {
 	now time.Time
 
 	nextID int64
-	byID   map[int64]*service.ApiKey
-	byKey  map[string]*service.ApiKey
+	byID   map[int64]*service.APIKey
+	byKey  map[string]*service.APIKey
 }
 
 func newStubApiKeyRepo(now time.Time) *stubApiKeyRepo {
 	return &stubApiKeyRepo{
 		now:    now,
 		nextID: 100,
-		byID:   make(map[int64]*service.ApiKey),
-		byKey:  make(map[string]*service.ApiKey),
+		byID:   make(map[int64]*service.APIKey),
+		byKey:  make(map[string]*service.APIKey),
 	}
 }
 
-func (r *stubApiKeyRepo) MustSeed(key *service.ApiKey) {
+func (r *stubApiKeyRepo) MustSeed(key *service.APIKey) {
 	if key == nil {
 		return
 	}
@@ -686,7 +691,7 @@ func (r *stubApiKeyRepo) MustSeed(key *service.ApiKey) {
 	r.byKey[clone.Key] = &clone
 }
 
-func (r *stubApiKeyRepo) Create(ctx context.Context, key *service.ApiKey) error {
+func (r *stubApiKeyRepo) Create(ctx context.Context, key *service.APIKey) error {
 	if key == nil {
 		return errors.New("nil key")
 	}
@@ -706,10 +711,10 @@ func (r *stubApiKeyRepo) Create(ctx context.Context, key *service.ApiKey) error 
 	return nil
 }
 
-func (r *stubApiKeyRepo) GetByID(ctx context.Context, id int64) (*service.ApiKey, error) {
+func (r *stubApiKeyRepo) GetByID(ctx context.Context, id int64) (*service.APIKey, error) {
 	key, ok := r.byID[id]
 	if !ok {
-		return nil, service.ErrApiKeyNotFound
+		return nil, service.ErrAPIKeyNotFound
 	}
 	clone := *key
 	return &clone, nil
@@ -718,26 +723,26 @@ func (r *stubApiKeyRepo) GetByID(ctx context.Context, id int64) (*service.ApiKey
 func (r *stubApiKeyRepo) GetOwnerID(ctx context.Context, id int64) (int64, error) {
 	key, ok := r.byID[id]
 	if !ok {
-		return 0, service.ErrApiKeyNotFound
+		return 0, service.ErrAPIKeyNotFound
 	}
 	return key.UserID, nil
 }
 
-func (r *stubApiKeyRepo) GetByKey(ctx context.Context, key string) (*service.ApiKey, error) {
+func (r *stubApiKeyRepo) GetByKey(ctx context.Context, key string) (*service.APIKey, error) {
 	found, ok := r.byKey[key]
 	if !ok {
-		return nil, service.ErrApiKeyNotFound
+		return nil, service.ErrAPIKeyNotFound
 	}
 	clone := *found
 	return &clone, nil
 }
 
-func (r *stubApiKeyRepo) Update(ctx context.Context, key *service.ApiKey) error {
+func (r *stubApiKeyRepo) Update(ctx context.Context, key *service.APIKey) error {
 	if key == nil {
 		return errors.New("nil key")
 	}
 	if _, ok := r.byID[key.ID]; !ok {
-		return service.ErrApiKeyNotFound
+		return service.ErrAPIKeyNotFound
 	}
 	if key.UpdatedAt.IsZero() {
 		key.UpdatedAt = r.now
@@ -751,14 +756,14 @@ func (r *stubApiKeyRepo) Update(ctx context.Context, key *service.ApiKey) error 
 func (r *stubApiKeyRepo) Delete(ctx context.Context, id int64) error {
 	key, ok := r.byID[id]
 	if !ok {
-		return service.ErrApiKeyNotFound
+		return service.ErrAPIKeyNotFound
 	}
 	delete(r.byID, id)
 	delete(r.byKey, key.Key)
 	return nil
 }
 
-func (r *stubApiKeyRepo) ListByUserID(ctx context.Context, userID int64, params pagination.PaginationParams) ([]service.ApiKey, *pagination.PaginationResult, error) {
+func (r *stubApiKeyRepo) ListByUserID(ctx context.Context, userID int64, params pagination.PaginationParams) ([]service.APIKey, *pagination.PaginationResult, error) {
 	ids := make([]int64, 0, len(r.byID))
 	for id := range r.byID {
 		if r.byID[id].UserID == userID {
@@ -776,7 +781,7 @@ func (r *stubApiKeyRepo) ListByUserID(ctx context.Context, userID int64, params 
 		end = len(ids)
 	}
 
-	out := make([]service.ApiKey, 0, end-start)
+	out := make([]service.APIKey, 0, end-start)
 	for _, id := range ids[start:end] {
 		clone := *r.byID[id]
 		out = append(out, clone)
@@ -830,11 +835,11 @@ func (r *stubApiKeyRepo) ExistsByKey(ctx context.Context, key string) (bool, err
 	return ok, nil
 }
 
-func (r *stubApiKeyRepo) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]service.ApiKey, *pagination.PaginationResult, error) {
+func (r *stubApiKeyRepo) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]service.APIKey, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
-func (r *stubApiKeyRepo) SearchApiKeys(ctx context.Context, userID int64, keyword string, limit int) ([]service.ApiKey, error) {
+func (r *stubApiKeyRepo) SearchAPIKeys(ctx context.Context, userID int64, keyword string, limit int) ([]service.APIKey, error) {
 	return nil, errors.New("not implemented")
 }
 
@@ -858,8 +863,8 @@ func (r *stubUsageLogRepo) SetUserLogs(userID int64, logs []service.UsageLog) {
 	r.userLogs[userID] = logs
 }
 
-func (r *stubUsageLogRepo) Create(ctx context.Context, log *service.UsageLog) error {
-	return errors.New("not implemented")
+func (r *stubUsageLogRepo) Create(ctx context.Context, log *service.UsageLog) (bool, error) {
+	return false, errors.New("not implemented")
 }
 
 func (r *stubUsageLogRepo) GetByID(ctx context.Context, id int64) (*service.UsageLog, error) {
@@ -877,7 +882,7 @@ func (r *stubUsageLogRepo) ListByUser(ctx context.Context, userID int64, params 
 	return out, paginationResult(total, params), nil
 }
 
-func (r *stubUsageLogRepo) ListByApiKey(ctx context.Context, apiKeyID int64, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {
+func (r *stubUsageLogRepo) ListByAPIKey(ctx context.Context, apiKeyID int64, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
@@ -890,7 +895,7 @@ func (r *stubUsageLogRepo) ListByUserAndTimeRange(ctx context.Context, userID in
 	return logs, paginationResult(int64(len(logs)), pagination.PaginationParams{Page: 1, PageSize: 100}), nil
 }
 
-func (r *stubUsageLogRepo) ListByApiKeyAndTimeRange(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) ([]service.UsageLog, *pagination.PaginationResult, error) {
+func (r *stubUsageLogRepo) ListByAPIKeyAndTimeRange(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) ([]service.UsageLog, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
@@ -922,7 +927,7 @@ func (r *stubUsageLogRepo) GetModelStatsWithFilters(ctx context.Context, startTi
 	return nil, errors.New("not implemented")
 }
 
-func (r *stubUsageLogRepo) GetApiKeyUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.ApiKeyUsageTrendPoint, error) {
+func (r *stubUsageLogRepo) GetAPIKeyUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.APIKeyUsageTrendPoint, error) {
 	return nil, errors.New("not implemented")
 }
 
@@ -975,7 +980,7 @@ func (r *stubUsageLogRepo) GetUserStatsAggregated(ctx context.Context, userID in
 	}, nil
 }
 
-func (r *stubUsageLogRepo) GetApiKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
+func (r *stubUsageLogRepo) GetAPIKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
 	return nil, errors.New("not implemented")
 }
 
@@ -995,7 +1000,7 @@ func (r *stubUsageLogRepo) GetBatchUserUsageStats(ctx context.Context, userIDs [
 	return nil, errors.New("not implemented")
 }
 
-func (r *stubUsageLogRepo) GetBatchApiKeyUsageStats(ctx context.Context, apiKeyIDs []int64) (map[int64]*usagestats.BatchApiKeyUsageStats, error) {
+func (r *stubUsageLogRepo) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64) (map[int64]*usagestats.BatchAPIKeyUsageStats, error) {
 	return nil, errors.New("not implemented")
 }
 
@@ -1017,8 +1022,8 @@ func (r *stubUsageLogRepo) ListWithFilters(ctx context.Context, params paginatio
 	// Apply filters
 	var filtered []service.UsageLog
 	for _, log := range logs {
-		// Apply ApiKeyID filter
-		if filters.ApiKeyID > 0 && log.ApiKeyID != filters.ApiKeyID {
+		// Apply APIKeyID filter
+		if filters.APIKeyID > 0 && log.APIKeyID != filters.APIKeyID {
 			continue
 		}
 		// Apply Model filter
@@ -1151,8 +1156,8 @@ func paginationResult(total int64, params pagination.PaginationParams) *paginati
 // Ensure compile-time interface compliance.
 var (
 	_ service.UserRepository             = (*stubUserRepo)(nil)
-	_ service.ApiKeyRepository           = (*stubApiKeyRepo)(nil)
-	_ service.ApiKeyCache                = (*stubApiKeyCache)(nil)
+	_ service.APIKeyRepository           = (*stubApiKeyRepo)(nil)
+	_ service.APIKeyCache                = (*stubApiKeyCache)(nil)
 	_ service.GroupRepository            = (*stubGroupRepo)(nil)
 	_ service.UserSubscriptionRepository = (*stubUserSubscriptionRepo)(nil)
 	_ service.UsageLogRepository         = (*stubUsageLogRepo)(nil)

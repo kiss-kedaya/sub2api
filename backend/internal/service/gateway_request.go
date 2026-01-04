@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -69,4 +70,225 @@ func ParseGatewayRequest(body []byte) (*ParsedRequest, error) {
 	}
 
 	return parsed, nil
+}
+
+// FilterThinkingBlocks removes thinking blocks from request body
+// Returns filtered body or original body if filtering fails (fail-safe)
+// This prevents 400 errors from invalid thinking block signatures
+//
+// Strategy:
+//   - When thinking.type != "enabled": Remove all thinking blocks
+//   - When thinking.type == "enabled": Only remove thinking blocks without valid signatures
+//     (blocks with missing/empty/dummy signatures that would cause 400 errors)
+func FilterThinkingBlocks(body []byte) []byte {
+	return filterThinkingBlocksInternal(body, false)
+}
+
+// FilterThinkingBlocksForRetry removes thinking blocks from HISTORICAL messages for retry scenarios.
+// This is used when upstream returns signature-related 400 errors.
+//
+// Key insight:
+//   - User's thinking.type = "enabled" should be PRESERVED (user's intent)
+//   - Only HISTORICAL assistant messages have thinking blocks with signatures
+//   - These signatures may be invalid when switching accounts/platforms
+//   - New responses will generate fresh thinking blocks without signature issues
+//
+// Strategy:
+//   - Keep thinking.type = "enabled" (preserve user intent)
+//   - Remove thinking/redacted_thinking blocks from historical assistant messages
+//   - Ensure no message has empty content after filtering
+func FilterThinkingBlocksForRetry(body []byte) []byte {
+	// Fast path: check for presence of thinking-related keys in messages
+	if !bytes.Contains(body, []byte(`"type":"thinking"`)) &&
+		!bytes.Contains(body, []byte(`"type": "thinking"`)) &&
+		!bytes.Contains(body, []byte(`"type":"redacted_thinking"`)) &&
+		!bytes.Contains(body, []byte(`"type": "redacted_thinking"`)) {
+		return body
+	}
+
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body
+	}
+
+	// DO NOT modify thinking.type - preserve user's intent to use thinking mode
+	// The issue is with historical message signatures, not the thinking mode itself
+
+	messages, ok := req["messages"].([]any)
+	if !ok {
+		return body
+	}
+
+	modified := false
+	newMessages := make([]any, 0, len(messages))
+
+	for _, msg := range messages {
+		msgMap, ok := msg.(map[string]any)
+		if !ok {
+			newMessages = append(newMessages, msg)
+			continue
+		}
+
+		role, _ := msgMap["role"].(string)
+		content, ok := msgMap["content"].([]any)
+		if !ok {
+			// String content or other format - keep as is
+			newMessages = append(newMessages, msg)
+			continue
+		}
+
+		newContent := make([]any, 0, len(content))
+		modifiedThisMsg := false
+
+		for _, block := range content {
+			blockMap, ok := block.(map[string]any)
+			if !ok {
+				newContent = append(newContent, block)
+				continue
+			}
+
+			blockType, _ := blockMap["type"].(string)
+
+			// Remove thinking/redacted_thinking blocks from historical messages
+			// These have signatures that may be invalid across different accounts
+			if blockType == "thinking" || blockType == "redacted_thinking" {
+				modifiedThisMsg = true
+				continue
+			}
+
+			newContent = append(newContent, block)
+		}
+
+		if modifiedThisMsg {
+			modified = true
+			// Handle empty content after filtering
+			if len(newContent) == 0 {
+				// For assistant messages, skip entirely (remove from conversation)
+				// For user messages, add placeholder to avoid empty content error
+				if role == "user" {
+					newContent = append(newContent, map[string]any{
+						"type": "text",
+						"text": "(content removed)",
+					})
+					msgMap["content"] = newContent
+					newMessages = append(newMessages, msgMap)
+				}
+				// Skip assistant messages with empty content (don't append)
+				continue
+			}
+			msgMap["content"] = newContent
+		}
+		newMessages = append(newMessages, msgMap)
+	}
+
+	if modified {
+		req["messages"] = newMessages
+	}
+
+	newBody, err := json.Marshal(req)
+	if err != nil {
+		return body
+	}
+	return newBody
+}
+
+// filterThinkingBlocksInternal removes invalid thinking blocks from request
+// Strategy:
+//   - When thinking.type != "enabled": Remove all thinking blocks
+//   - When thinking.type == "enabled": Only remove thinking blocks without valid signatures
+func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
+	// Fast path: if body doesn't contain "thinking", skip parsing
+	if !bytes.Contains(body, []byte(`"type":"thinking"`)) &&
+		!bytes.Contains(body, []byte(`"type": "thinking"`)) &&
+		!bytes.Contains(body, []byte(`"type":"redacted_thinking"`)) &&
+		!bytes.Contains(body, []byte(`"type": "redacted_thinking"`)) &&
+		!bytes.Contains(body, []byte(`"thinking":`)) &&
+		!bytes.Contains(body, []byte(`"thinking" :`)) {
+		return body
+	}
+
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body
+	}
+
+	// Check if thinking is enabled
+	thinkingEnabled := false
+	if thinking, ok := req["thinking"].(map[string]any); ok {
+		if thinkType, ok := thinking["type"].(string); ok && thinkType == "enabled" {
+			thinkingEnabled = true
+		}
+	}
+
+	messages, ok := req["messages"].([]any)
+	if !ok {
+		return body
+	}
+
+	filtered := false
+	for _, msg := range messages {
+		msgMap, ok := msg.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		role, _ := msgMap["role"].(string)
+		content, ok := msgMap["content"].([]any)
+		if !ok {
+			continue
+		}
+
+		newContent := make([]any, 0, len(content))
+		filteredThisMessage := false
+
+		for _, block := range content {
+			blockMap, ok := block.(map[string]any)
+			if !ok {
+				newContent = append(newContent, block)
+				continue
+			}
+
+			blockType, _ := blockMap["type"].(string)
+
+			if blockType == "thinking" || blockType == "redacted_thinking" {
+				// When thinking is enabled and this is an assistant message,
+				// only keep thinking blocks with valid signatures
+				if thinkingEnabled && role == "assistant" {
+					signature, _ := blockMap["signature"].(string)
+					if signature != "" && signature != "skip_thought_signature_validator" {
+						newContent = append(newContent, block)
+						continue
+					}
+				}
+				filtered = true
+				filteredThisMessage = true
+				continue
+			}
+
+			// Handle blocks without type discriminator but with "thinking" key
+			if blockType == "" {
+				if _, hasThinking := blockMap["thinking"]; hasThinking {
+					filtered = true
+					filteredThisMessage = true
+					continue
+				}
+			}
+
+			newContent = append(newContent, block)
+		}
+
+		if filteredThisMessage {
+			msgMap["content"] = newContent
+		}
+	}
+
+	if !filtered {
+		return body
+	}
+
+	newBody, err := json.Marshal(req)
+	if err != nil {
+		return body
+	}
+	return newBody
 }
