@@ -59,6 +59,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		FallbackModelOpenAI:      settings.FallbackModelOpenAI,
 		FallbackModelGemini:      settings.FallbackModelGemini,
 		FallbackModelAntigravity: settings.FallbackModelAntigravity,
+		EnableIdentityPatch:      settings.EnableIdentityPatch,
+		IdentityPatchPrompt:      settings.IdentityPatchPrompt,
 	})
 }
 
@@ -100,6 +102,10 @@ type UpdateSettingsRequest struct {
 	FallbackModelOpenAI      string `json:"fallback_model_openai"`
 	FallbackModelGemini      string `json:"fallback_model_gemini"`
 	FallbackModelAntigravity string `json:"fallback_model_antigravity"`
+
+	// Identity patch configuration (Claude -> Gemini)
+	EnableIdentityPatch bool   `json:"enable_identity_patch"`
+	IdentityPatchPrompt string `json:"identity_patch_prompt"`
 }
 
 // UpdateSettings 更新系统设置
@@ -178,6 +184,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		FallbackModelOpenAI:      req.FallbackModelOpenAI,
 		FallbackModelGemini:      req.FallbackModelGemini,
 		FallbackModelAntigravity: req.FallbackModelAntigravity,
+		EnableIdentityPatch:      req.EnableIdentityPatch,
+		IdentityPatchPrompt:      req.IdentityPatchPrompt,
 	}
 
 	if err := h.settingService.UpdateSettings(c.Request.Context(), settings); err != nil {
@@ -218,6 +226,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		FallbackModelOpenAI:      updatedSettings.FallbackModelOpenAI,
 		FallbackModelGemini:      updatedSettings.FallbackModelGemini,
 		FallbackModelAntigravity: updatedSettings.FallbackModelAntigravity,
+		EnableIdentityPatch:      updatedSettings.EnableIdentityPatch,
+		IdentityPatchPrompt:      updatedSettings.IdentityPatchPrompt,
 	})
 }
 
