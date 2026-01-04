@@ -210,7 +210,7 @@ const loadStatus = async () => {
   try {
     status.value = await adminAPI.accounts.getTempUnschedulableStatus(props.account.id)
   } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.accounts.tempUnschedulable.failedToLoad'))
+    appStore.showError(error?.message || t('admin.accounts.tempUnschedulable.failedToLoad'))
     status.value = null
   } finally {
     loading.value = false
@@ -230,7 +230,7 @@ const handleReset = async () => {
     emit('reset')
     handleClose()
   } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.accounts.tempUnschedulable.resetFailed'))
+    appStore.showError(error?.message || t('admin.accounts.tempUnschedulable.resetFailed'))
   } finally {
     resetting.value = false
   }
