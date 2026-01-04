@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -786,7 +787,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		err  error
 	}
 	// 独立 goroutine 读取上游，避免读取阻塞影响 keepalive/超时处理
-	events := make(chan scanEvent, 1)
+	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
 	sendEvent := func(ev scanEvent) bool {
 		select {
@@ -796,9 +797,12 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			return false
 		}
 	}
+	var lastReadAt int64
+	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 	go func() {
 		defer close(events)
 		for scanner.Scan() {
+			atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 			if !sendEvent(scanEvent{line: scanner.Text()}) {
 				return
 			}
@@ -813,15 +817,15 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
 		streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
 	}
-	// 仅监控上游数据间隔超时，不被下游 keepalive 影响
-	var intervalTimer *time.Timer
+	// 仅监控上游数据间隔超时，不被下游写入阻塞影响
+	var intervalTicker *time.Ticker
 	if streamInterval > 0 {
-		intervalTimer = time.NewTimer(streamInterval)
-		defer intervalTimer.Stop()
+		intervalTicker = time.NewTicker(streamInterval)
+		defer intervalTicker.Stop()
 	}
 	var intervalCh <-chan time.Time
-	if intervalTimer != nil {
-		intervalCh = intervalTimer.C
+	if intervalTicker != nil {
+		intervalCh = intervalTicker.C
 	}
 
 	keepaliveInterval := time.Duration(0)
@@ -872,9 +876,6 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 
 			line := ev.line
 			lastDataAt = time.Now()
-			if intervalTimer != nil {
-				resetTimer(intervalTimer, streamInterval)
-			}
 
 			// Extract data from SSE line (supports both "data: " and "data:" formats)
 			if openaiSSEDataRe.MatchString(line) {
@@ -908,6 +909,10 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			}
 
 		case <-intervalCh:
+			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
+			if time.Since(lastRead) < streamInterval {
+				continue
+			}
 			log.Printf("Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
 			sendErrorEvent("stream_timeout")
 			return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
