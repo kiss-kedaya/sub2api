@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
@@ -35,11 +37,12 @@ func TestUsageLogRepoSuite(t *testing.T) {
 	suite.Run(t, new(UsageLogRepoSuite))
 }
 
-func (s *UsageLogRepoSuite) createUsageLog(user *service.User, apiKey *service.ApiKey, account *service.Account, inputTokens, outputTokens int, cost float64, createdAt time.Time) *service.UsageLog {
+func (s *UsageLogRepoSuite) createUsageLog(user *service.User, apiKey *service.APIKey, account *service.Account, inputTokens, outputTokens int, cost float64, createdAt time.Time) *service.UsageLog {
 	log := &service.UsageLog{
 		UserID:       user.ID,
-		ApiKeyID:     apiKey.ID,
+		APIKeyID:     apiKey.ID,
 		AccountID:    account.ID,
+		RequestID:    uuid.New().String(), // Generate unique RequestID for each log
 		Model:        "claude-3",
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
@@ -47,7 +50,8 @@ func (s *UsageLogRepoSuite) createUsageLog(user *service.User, apiKey *service.A
 		ActualCost:   cost,
 		CreatedAt:    createdAt,
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, log))
+	_, err := s.repo.Create(s.ctx, log)
+	s.Require().NoError(err)
 	return log
 }
 
@@ -55,12 +59,12 @@ func (s *UsageLogRepoSuite) createUsageLog(user *service.User, apiKey *service.A
 
 func (s *UsageLogRepoSuite) TestCreate() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "create@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-create", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-create", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-create"})
 
 	log := &service.UsageLog{
 		UserID:       user.ID,
-		ApiKeyID:     apiKey.ID,
+		APIKeyID:     apiKey.ID,
 		AccountID:    account.ID,
 		Model:        "claude-3",
 		InputTokens:  10,
@@ -69,14 +73,14 @@ func (s *UsageLogRepoSuite) TestCreate() {
 		ActualCost:   0.4,
 	}
 
-	err := s.repo.Create(s.ctx, log)
+	_, err := s.repo.Create(s.ctx, log)
 	s.Require().NoError(err, "Create")
 	s.Require().NotZero(log.ID)
 }
 
 func (s *UsageLogRepoSuite) TestGetByID() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "getbyid@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-getbyid", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-getbyid", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-getbyid"})
 
 	log := s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
@@ -96,7 +100,7 @@ func (s *UsageLogRepoSuite) TestGetByID_NotFound() {
 
 func (s *UsageLogRepoSuite) TestDelete() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "delete@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-delete", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-delete", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-delete"})
 
 	log := s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
@@ -112,7 +116,7 @@ func (s *UsageLogRepoSuite) TestDelete() {
 
 func (s *UsageLogRepoSuite) TestListByUser() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "listbyuser@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-listbyuser", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-listbyuser", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-listbyuser"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
@@ -124,18 +128,18 @@ func (s *UsageLogRepoSuite) TestListByUser() {
 	s.Require().Equal(int64(2), page.Total)
 }
 
-// --- ListByApiKey ---
+// --- ListByAPIKey ---
 
-func (s *UsageLogRepoSuite) TestListByApiKey() {
+func (s *UsageLogRepoSuite) TestListByAPIKey() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "listbyapikey@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-listbyapikey", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-listbyapikey", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-listbyapikey"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 	s.createUsageLog(user, apiKey, account, 15, 25, 0.6, time.Now())
 
-	logs, page, err := s.repo.ListByApiKey(s.ctx, apiKey.ID, pagination.PaginationParams{Page: 1, PageSize: 10})
-	s.Require().NoError(err, "ListByApiKey")
+	logs, page, err := s.repo.ListByAPIKey(s.ctx, apiKey.ID, pagination.PaginationParams{Page: 1, PageSize: 10})
+	s.Require().NoError(err, "ListByAPIKey")
 	s.Require().Len(logs, 2)
 	s.Require().Equal(int64(2), page.Total)
 }
@@ -144,7 +148,7 @@ func (s *UsageLogRepoSuite) TestListByApiKey() {
 
 func (s *UsageLogRepoSuite) TestListByAccount() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "listbyaccount@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-listbyaccount", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-listbyaccount", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-listbyaccount"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
@@ -159,7 +163,7 @@ func (s *UsageLogRepoSuite) TestListByAccount() {
 
 func (s *UsageLogRepoSuite) TestGetUserStats() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "userstats@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-userstats", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-userstats", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-userstats"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -179,7 +183,7 @@ func (s *UsageLogRepoSuite) TestGetUserStats() {
 
 func (s *UsageLogRepoSuite) TestListWithFilters() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "filters@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-filters", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-filters", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-filters"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
@@ -211,8 +215,8 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 	})
 
 	group := mustCreateGroup(s.T(), s.client, &service.Group{Name: "g-ul"})
-	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: userToday.ID, Key: "sk-ul-1", Name: "ul1"})
-	mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: userOld.ID, Key: "sk-ul-2", Name: "ul2", Status: service.StatusDisabled})
+	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: userToday.ID, Key: "sk-ul-1", Name: "ul1"})
+	mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: userOld.ID, Key: "sk-ul-2", Name: "ul2", Status: service.StatusDisabled})
 
 	resetAt := now.Add(10 * time.Minute)
 	accNormal := mustCreateAccount(s.T(), s.client, &service.Account{Name: "a-normal", Schedulable: true})
@@ -223,7 +227,7 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 	d1, d2, d3 := 100, 200, 300
 	logToday := &service.UsageLog{
 		UserID:              userToday.ID,
-		ApiKeyID:            apiKey1.ID,
+		APIKeyID:            apiKey1.ID,
 		AccountID:           accNormal.ID,
 		Model:               "claude-3",
 		GroupID:             &group.ID,
@@ -236,11 +240,12 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 		DurationMs:          &d1,
 		CreatedAt:           maxTime(todayStart.Add(2*time.Minute), now.Add(-2*time.Minute)),
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, logToday), "Create logToday")
+	_, err = s.repo.Create(s.ctx, logToday)
+	s.Require().NoError(err, "Create logToday")
 
 	logOld := &service.UsageLog{
 		UserID:       userOld.ID,
-		ApiKeyID:     apiKey1.ID,
+		APIKeyID:     apiKey1.ID,
 		AccountID:    accNormal.ID,
 		Model:        "claude-3",
 		InputTokens:  5,
@@ -250,11 +255,12 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 		DurationMs:   &d2,
 		CreatedAt:    todayStart.Add(-1 * time.Hour),
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, logOld), "Create logOld")
+	_, err = s.repo.Create(s.ctx, logOld)
+	s.Require().NoError(err, "Create logOld")
 
 	logPerf := &service.UsageLog{
 		UserID:       userToday.ID,
-		ApiKeyID:     apiKey1.ID,
+		APIKeyID:     apiKey1.ID,
 		AccountID:    accNormal.ID,
 		Model:        "claude-3",
 		InputTokens:  1,
@@ -264,7 +270,8 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 		DurationMs:   &d3,
 		CreatedAt:    now.Add(-30 * time.Second),
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, logPerf), "Create logPerf")
+	_, err = s.repo.Create(s.ctx, logPerf)
+	s.Require().NoError(err, "Create logPerf")
 
 	stats, err := s.repo.GetDashboardStats(s.ctx)
 	s.Require().NoError(err, "GetDashboardStats")
@@ -272,8 +279,8 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 	s.Require().Equal(baseStats.TotalUsers+2, stats.TotalUsers, "TotalUsers mismatch")
 	s.Require().Equal(baseStats.TodayNewUsers+1, stats.TodayNewUsers, "TodayNewUsers mismatch")
 	s.Require().Equal(baseStats.ActiveUsers+1, stats.ActiveUsers, "ActiveUsers mismatch")
-	s.Require().Equal(baseStats.TotalApiKeys+2, stats.TotalApiKeys, "TotalApiKeys mismatch")
-	s.Require().Equal(baseStats.ActiveApiKeys+1, stats.ActiveApiKeys, "ActiveApiKeys mismatch")
+	s.Require().Equal(baseStats.TotalAPIKeys+2, stats.TotalAPIKeys, "TotalAPIKeys mismatch")
+	s.Require().Equal(baseStats.ActiveAPIKeys+1, stats.ActiveAPIKeys, "ActiveAPIKeys mismatch")
 	s.Require().Equal(baseStats.TotalAccounts+4, stats.TotalAccounts, "TotalAccounts mismatch")
 	s.Require().Equal(baseStats.ErrorAccounts+1, stats.ErrorAccounts, "ErrorAccounts mismatch")
 	s.Require().Equal(baseStats.RateLimitAccounts+1, stats.RateLimitAccounts, "RateLimitAccounts mismatch")
@@ -300,14 +307,14 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 
 func (s *UsageLogRepoSuite) TestGetUserDashboardStats() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "userdash@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-userdash", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-userdash", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-userdash"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 
 	stats, err := s.repo.GetUserDashboardStats(s.ctx, user.ID)
 	s.Require().NoError(err, "GetUserDashboardStats")
-	s.Require().Equal(int64(1), stats.TotalApiKeys)
+	s.Require().Equal(int64(1), stats.TotalAPIKeys)
 	s.Require().Equal(int64(1), stats.TotalRequests)
 }
 
@@ -315,7 +322,7 @@ func (s *UsageLogRepoSuite) TestGetUserDashboardStats() {
 
 func (s *UsageLogRepoSuite) TestGetAccountTodayStats() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "acctoday@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-acctoday", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-acctoday", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-today"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
@@ -331,8 +338,8 @@ func (s *UsageLogRepoSuite) TestGetAccountTodayStats() {
 func (s *UsageLogRepoSuite) TestGetBatchUserUsageStats() {
 	user1 := mustCreateUser(s.T(), s.client, &service.User{Email: "batch1@test.com"})
 	user2 := mustCreateUser(s.T(), s.client, &service.User{Email: "batch2@test.com"})
-	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user1.ID, Key: "sk-batch1", Name: "k"})
-	apiKey2 := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user2.ID, Key: "sk-batch2", Name: "k"})
+	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user1.ID, Key: "sk-batch1", Name: "k"})
+	apiKey2 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user2.ID, Key: "sk-batch2", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-batch"})
 
 	s.createUsageLog(user1, apiKey1, account, 10, 20, 0.5, time.Now())
@@ -351,24 +358,24 @@ func (s *UsageLogRepoSuite) TestGetBatchUserUsageStats_Empty() {
 	s.Require().Empty(stats)
 }
 
-// --- GetBatchApiKeyUsageStats ---
+// --- GetBatchAPIKeyUsageStats ---
 
 func (s *UsageLogRepoSuite) TestGetBatchApiKeyUsageStats() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "batchkey@test.com"})
-	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-batchkey1", Name: "k1"})
-	apiKey2 := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-batchkey2", Name: "k2"})
+	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-batchkey1", Name: "k1"})
+	apiKey2 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-batchkey2", Name: "k2"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-batchkey"})
 
 	s.createUsageLog(user, apiKey1, account, 10, 20, 0.5, time.Now())
 	s.createUsageLog(user, apiKey2, account, 15, 25, 0.6, time.Now())
 
-	stats, err := s.repo.GetBatchApiKeyUsageStats(s.ctx, []int64{apiKey1.ID, apiKey2.ID})
-	s.Require().NoError(err, "GetBatchApiKeyUsageStats")
+	stats, err := s.repo.GetBatchAPIKeyUsageStats(s.ctx, []int64{apiKey1.ID, apiKey2.ID})
+	s.Require().NoError(err, "GetBatchAPIKeyUsageStats")
 	s.Require().Len(stats, 2)
 }
 
 func (s *UsageLogRepoSuite) TestGetBatchApiKeyUsageStats_Empty() {
-	stats, err := s.repo.GetBatchApiKeyUsageStats(s.ctx, []int64{})
+	stats, err := s.repo.GetBatchAPIKeyUsageStats(s.ctx, []int64{})
 	s.Require().NoError(err)
 	s.Require().Empty(stats)
 }
@@ -377,7 +384,7 @@ func (s *UsageLogRepoSuite) TestGetBatchApiKeyUsageStats_Empty() {
 
 func (s *UsageLogRepoSuite) TestGetGlobalStats() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "global@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-global", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-global", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-global"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -402,7 +409,7 @@ func maxTime(a, b time.Time) time.Time {
 
 func (s *UsageLogRepoSuite) TestListByUserAndTimeRange() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "timerange@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-timerange", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-timerange", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-timerange"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -417,11 +424,11 @@ func (s *UsageLogRepoSuite) TestListByUserAndTimeRange() {
 	s.Require().Len(logs, 2)
 }
 
-// --- ListByApiKeyAndTimeRange ---
+// --- ListByAPIKeyAndTimeRange ---
 
-func (s *UsageLogRepoSuite) TestListByApiKeyAndTimeRange() {
+func (s *UsageLogRepoSuite) TestListByAPIKeyAndTimeRange() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "keytimerange@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-keytimerange", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-keytimerange", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-keytimerange"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -431,8 +438,8 @@ func (s *UsageLogRepoSuite) TestListByApiKeyAndTimeRange() {
 
 	startTime := base.Add(-1 * time.Hour)
 	endTime := base.Add(2 * time.Hour)
-	logs, _, err := s.repo.ListByApiKeyAndTimeRange(s.ctx, apiKey.ID, startTime, endTime)
-	s.Require().NoError(err, "ListByApiKeyAndTimeRange")
+	logs, _, err := s.repo.ListByAPIKeyAndTimeRange(s.ctx, apiKey.ID, startTime, endTime)
+	s.Require().NoError(err, "ListByAPIKeyAndTimeRange")
 	s.Require().Len(logs, 2)
 }
 
@@ -440,7 +447,7 @@ func (s *UsageLogRepoSuite) TestListByApiKeyAndTimeRange() {
 
 func (s *UsageLogRepoSuite) TestListByAccountAndTimeRange() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "acctimerange@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-acctimerange", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-acctimerange", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-acctimerange"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -459,7 +466,7 @@ func (s *UsageLogRepoSuite) TestListByAccountAndTimeRange() {
 
 func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "modeltimerange@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-modeltimerange", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-modeltimerange", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-modeltimerange"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -467,7 +474,7 @@ func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 	// Create logs with different models
 	log1 := &service.UsageLog{
 		UserID:       user.ID,
-		ApiKeyID:     apiKey.ID,
+		APIKeyID:     apiKey.ID,
 		AccountID:    account.ID,
 		Model:        "claude-3-opus",
 		InputTokens:  10,
@@ -476,11 +483,12 @@ func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 		ActualCost:   0.5,
 		CreatedAt:    base,
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, log1))
+	_, err := s.repo.Create(s.ctx, log1)
+	s.Require().NoError(err)
 
 	log2 := &service.UsageLog{
 		UserID:       user.ID,
-		ApiKeyID:     apiKey.ID,
+		APIKeyID:     apiKey.ID,
 		AccountID:    account.ID,
 		Model:        "claude-3-opus",
 		InputTokens:  15,
@@ -489,11 +497,12 @@ func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 		ActualCost:   0.6,
 		CreatedAt:    base.Add(30 * time.Minute),
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, log2))
+	_, err = s.repo.Create(s.ctx, log2)
+	s.Require().NoError(err)
 
 	log3 := &service.UsageLog{
 		UserID:       user.ID,
-		ApiKeyID:     apiKey.ID,
+		APIKeyID:     apiKey.ID,
 		AccountID:    account.ID,
 		Model:        "claude-3-sonnet",
 		InputTokens:  20,
@@ -502,7 +511,8 @@ func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 		ActualCost:   0.7,
 		CreatedAt:    base.Add(1 * time.Hour),
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, log3))
+	_, err = s.repo.Create(s.ctx, log3)
+	s.Require().NoError(err)
 
 	startTime := base.Add(-1 * time.Hour)
 	endTime := base.Add(2 * time.Hour)
@@ -515,7 +525,7 @@ func (s *UsageLogRepoSuite) TestListByModelAndTimeRange() {
 
 func (s *UsageLogRepoSuite) TestGetAccountWindowStats() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "windowstats@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-windowstats", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-windowstats", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-windowstats"})
 
 	now := time.Now()
@@ -535,7 +545,7 @@ func (s *UsageLogRepoSuite) TestGetAccountWindowStats() {
 
 func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "usertrend@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-usertrend", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-usertrend", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-usertrend"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -552,7 +562,7 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID() {
 
 func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID_HourlyGranularity() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "usertrendhourly@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-usertrendhourly", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-usertrendhourly", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-usertrendhourly"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -571,7 +581,7 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrendByUserID_HourlyGranularity() {
 
 func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "modelstats@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-modelstats", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-modelstats", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-modelstats"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -579,7 +589,7 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 	// Create logs with different models
 	log1 := &service.UsageLog{
 		UserID:       user.ID,
-		ApiKeyID:     apiKey.ID,
+		APIKeyID:     apiKey.ID,
 		AccountID:    account.ID,
 		Model:        "claude-3-opus",
 		InputTokens:  100,
@@ -588,11 +598,12 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 		ActualCost:   0.5,
 		CreatedAt:    base,
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, log1))
+	_, err := s.repo.Create(s.ctx, log1)
+	s.Require().NoError(err)
 
 	log2 := &service.UsageLog{
 		UserID:       user.ID,
-		ApiKeyID:     apiKey.ID,
+		APIKeyID:     apiKey.ID,
 		AccountID:    account.ID,
 		Model:        "claude-3-sonnet",
 		InputTokens:  50,
@@ -601,7 +612,8 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 		ActualCost:   0.2,
 		CreatedAt:    base.Add(1 * time.Hour),
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, log2))
+	_, err = s.repo.Create(s.ctx, log2)
+	s.Require().NoError(err)
 
 	startTime := base.Add(-1 * time.Hour)
 	endTime := base.Add(2 * time.Hour)
@@ -618,7 +630,7 @@ func (s *UsageLogRepoSuite) TestGetUserModelStats() {
 
 func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "trendfilters@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-trendfilters", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-trendfilters", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-trendfilters"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -646,7 +658,7 @@ func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters() {
 
 func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters_HourlyGranularity() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "trendfilters-h@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-trendfilters-h", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-trendfilters-h", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-trendfilters-h"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -665,14 +677,14 @@ func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters_HourlyGranularity() {
 
 func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "modelfilters@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-modelfilters", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-modelfilters", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-modelfilters"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 
 	log1 := &service.UsageLog{
 		UserID:       user.ID,
-		ApiKeyID:     apiKey.ID,
+		APIKeyID:     apiKey.ID,
 		AccountID:    account.ID,
 		Model:        "claude-3-opus",
 		InputTokens:  100,
@@ -681,11 +693,12 @@ func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {
 		ActualCost:   0.5,
 		CreatedAt:    base,
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, log1))
+	_, err := s.repo.Create(s.ctx, log1)
+	s.Require().NoError(err)
 
 	log2 := &service.UsageLog{
 		UserID:       user.ID,
-		ApiKeyID:     apiKey.ID,
+		APIKeyID:     apiKey.ID,
 		AccountID:    account.ID,
 		Model:        "claude-3-sonnet",
 		InputTokens:  50,
@@ -694,7 +707,8 @@ func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {
 		ActualCost:   0.2,
 		CreatedAt:    base.Add(1 * time.Hour),
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, log2))
+	_, err = s.repo.Create(s.ctx, log2)
+	s.Require().NoError(err)
 
 	startTime := base.Add(-1 * time.Hour)
 	endTime := base.Add(2 * time.Hour)
@@ -719,7 +733,7 @@ func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {
 
 func (s *UsageLogRepoSuite) TestGetAccountUsageStats() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "accstats@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-accstats", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-accstats", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-accstats"})
 
 	base := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
@@ -727,7 +741,7 @@ func (s *UsageLogRepoSuite) TestGetAccountUsageStats() {
 	// Create logs on different days
 	log1 := &service.UsageLog{
 		UserID:       user.ID,
-		ApiKeyID:     apiKey.ID,
+		APIKeyID:     apiKey.ID,
 		AccountID:    account.ID,
 		Model:        "claude-3-opus",
 		InputTokens:  100,
@@ -736,11 +750,12 @@ func (s *UsageLogRepoSuite) TestGetAccountUsageStats() {
 		ActualCost:   0.4,
 		CreatedAt:    base.Add(12 * time.Hour),
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, log1))
+	_, err := s.repo.Create(s.ctx, log1)
+	s.Require().NoError(err)
 
 	log2 := &service.UsageLog{
 		UserID:       user.ID,
-		ApiKeyID:     apiKey.ID,
+		APIKeyID:     apiKey.ID,
 		AccountID:    account.ID,
 		Model:        "claude-3-sonnet",
 		InputTokens:  50,
@@ -749,7 +764,8 @@ func (s *UsageLogRepoSuite) TestGetAccountUsageStats() {
 		ActualCost:   0.15,
 		CreatedAt:    base.Add(36 * time.Hour), // next day
 	}
-	s.Require().NoError(s.repo.Create(s.ctx, log2))
+	_, err = s.repo.Create(s.ctx, log2)
+	s.Require().NoError(err)
 
 	startTime := base
 	endTime := base.Add(72 * time.Hour)
@@ -782,8 +798,8 @@ func (s *UsageLogRepoSuite) TestGetAccountUsageStats_EmptyRange() {
 func (s *UsageLogRepoSuite) TestGetUserUsageTrend() {
 	user1 := mustCreateUser(s.T(), s.client, &service.User{Email: "usertrend1@test.com"})
 	user2 := mustCreateUser(s.T(), s.client, &service.User{Email: "usertrend2@test.com"})
-	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user1.ID, Key: "sk-usertrend1", Name: "k1"})
-	apiKey2 := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user2.ID, Key: "sk-usertrend2", Name: "k2"})
+	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user1.ID, Key: "sk-usertrend1", Name: "k1"})
+	apiKey2 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user2.ID, Key: "sk-usertrend2", Name: "k2"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-usertrends"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -799,12 +815,12 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrend() {
 	s.Require().GreaterOrEqual(len(trend), 2)
 }
 
-// --- GetApiKeyUsageTrend ---
+// --- GetAPIKeyUsageTrend ---
 
-func (s *UsageLogRepoSuite) TestGetApiKeyUsageTrend() {
+func (s *UsageLogRepoSuite) TestGetAPIKeyUsageTrend() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "keytrend@test.com"})
-	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-keytrend1", Name: "k1"})
-	apiKey2 := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-keytrend2", Name: "k2"})
+	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-keytrend1", Name: "k1"})
+	apiKey2 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-keytrend2", Name: "k2"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-keytrends"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -815,14 +831,14 @@ func (s *UsageLogRepoSuite) TestGetApiKeyUsageTrend() {
 	startTime := base.Add(-1 * time.Hour)
 	endTime := base.Add(48 * time.Hour)
 
-	trend, err := s.repo.GetApiKeyUsageTrend(s.ctx, startTime, endTime, "day", 10)
-	s.Require().NoError(err, "GetApiKeyUsageTrend")
+	trend, err := s.repo.GetAPIKeyUsageTrend(s.ctx, startTime, endTime, "day", 10)
+	s.Require().NoError(err, "GetAPIKeyUsageTrend")
 	s.Require().GreaterOrEqual(len(trend), 2)
 }
 
-func (s *UsageLogRepoSuite) TestGetApiKeyUsageTrend_HourlyGranularity() {
+func (s *UsageLogRepoSuite) TestGetAPIKeyUsageTrend_HourlyGranularity() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "keytrendh@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-keytrendh", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-keytrendh", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-keytrendh"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -832,8 +848,8 @@ func (s *UsageLogRepoSuite) TestGetApiKeyUsageTrend_HourlyGranularity() {
 	startTime := base.Add(-1 * time.Hour)
 	endTime := base.Add(3 * time.Hour)
 
-	trend, err := s.repo.GetApiKeyUsageTrend(s.ctx, startTime, endTime, "hour", 10)
-	s.Require().NoError(err, "GetApiKeyUsageTrend hourly")
+	trend, err := s.repo.GetAPIKeyUsageTrend(s.ctx, startTime, endTime, "hour", 10)
+	s.Require().NoError(err, "GetAPIKeyUsageTrend hourly")
 	s.Require().Len(trend, 2)
 }
 
@@ -841,12 +857,12 @@ func (s *UsageLogRepoSuite) TestGetApiKeyUsageTrend_HourlyGranularity() {
 
 func (s *UsageLogRepoSuite) TestListWithFilters_ApiKeyFilter() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "filterskey@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-filterskey", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-filterskey", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-filterskey"})
 
 	s.createUsageLog(user, apiKey, account, 10, 20, 0.5, time.Now())
 
-	filters := usagestats.UsageLogFilters{ApiKeyID: apiKey.ID}
+	filters := usagestats.UsageLogFilters{APIKeyID: apiKey.ID}
 	logs, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, filters)
 	s.Require().NoError(err, "ListWithFilters apiKey")
 	s.Require().Len(logs, 1)
@@ -855,7 +871,7 @@ func (s *UsageLogRepoSuite) TestListWithFilters_ApiKeyFilter() {
 
 func (s *UsageLogRepoSuite) TestListWithFilters_TimeRange() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "filterstime@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-filterstime", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-filterstime", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-filterstime"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -874,7 +890,7 @@ func (s *UsageLogRepoSuite) TestListWithFilters_TimeRange() {
 
 func (s *UsageLogRepoSuite) TestListWithFilters_CombinedFilters() {
 	user := mustCreateUser(s.T(), s.client, &service.User{Email: "filterscombined@test.com"})
-	apiKey := mustCreateApiKey(s.T(), s.client, &service.ApiKey{UserID: user.ID, Key: "sk-filterscombined", Name: "k"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-filterscombined", Name: "k"})
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-filterscombined"})
 
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -885,7 +901,7 @@ func (s *UsageLogRepoSuite) TestListWithFilters_CombinedFilters() {
 	endTime := base.Add(2 * time.Hour)
 	filters := usagestats.UsageLogFilters{
 		UserID:    user.ID,
-		ApiKeyID:  apiKey.ID,
+		APIKeyID:  apiKey.ID,
 		StartTime: &startTime,
 		EndTime:   &endTime,
 	}

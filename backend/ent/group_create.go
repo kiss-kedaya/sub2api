@@ -216,14 +216,14 @@ func (_c *GroupCreate) SetNillableDefaultValidityDays(v *int) *GroupCreate {
 	return _c
 }
 
-// AddAPIKeyIDs adds the "api_keys" edge to the ApiKey entity by IDs.
+// AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *GroupCreate) AddAPIKeyIDs(ids ...int64) *GroupCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
 	return _c
 }
 
-// AddAPIKeys adds the "api_keys" edges to the ApiKey entity.
-func (_c *GroupCreate) AddAPIKeys(v ...*ApiKey) *GroupCreate {
+// AddAPIKeys adds the "api_keys" edges to the APIKey entity.
+func (_c *GroupCreate) AddAPIKeys(v ...*APIKey) *GroupCreate {
 	ids := make([]int64, len(v))
 	for i := range v {
 		ids[i] = v[i].ID

@@ -56,6 +56,10 @@ func (s *UserAttributeService) CreateDefinition(ctx context.Context, input Creat
 		Enabled:     input.Enabled,
 	}
 
+	if err := validateDefinitionPattern(def); err != nil {
+		return nil, err
+	}
+
 	if err := s.defRepo.Create(ctx, def); err != nil {
 		return nil, fmt.Errorf("create definition: %w", err)
 	}
@@ -106,6 +110,10 @@ func (s *UserAttributeService) UpdateDefinition(ctx context.Context, id int64, i
 	}
 	if input.Enabled != nil {
 		def.Enabled = *input.Enabled
+	}
+
+	if err := validateDefinitionPattern(def); err != nil {
+		return nil, err
 	}
 
 	if err := s.defRepo.Update(ctx, def); err != nil {
@@ -231,7 +239,10 @@ func (s *UserAttributeService) validateValue(def *UserAttributeDefinition, value
 	// Pattern validation
 	if v.Pattern != nil && *v.Pattern != "" && value != "" {
 		re, err := regexp.Compile(*v.Pattern)
-		if err == nil && !re.MatchString(value) {
+		if err != nil {
+			return validationError(def.Name + " has an invalid pattern")
+		}
+		if !re.MatchString(value) {
 			msg := def.Name + " format is invalid"
 			if v.Message != nil && *v.Message != "" {
 				msg = *v.Message
@@ -292,4 +303,21 @@ func isValidAttributeType(t UserAttributeType) bool {
 		return true
 	}
 	return false
+}
+
+func validateDefinitionPattern(def *UserAttributeDefinition) error {
+	if def == nil {
+		return nil
+	}
+	if def.Validation.Pattern == nil {
+		return nil
+	}
+	pattern := strings.TrimSpace(*def.Validation.Pattern)
+	if pattern == "" {
+		return nil
+	}
+	if _, err := regexp.Compile(pattern); err != nil {
+		return infraerrors.BadRequest("INVALID_ATTRIBUTE_PATTERN", fmt.Sprintf("invalid pattern for %s: %v", def.Name, err))
+	}
+	return nil
 }

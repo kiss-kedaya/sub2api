@@ -1,3 +1,4 @@
+// Package handler provides HTTP request handlers for the application.
 package handler
 
 import (
@@ -14,11 +15,11 @@ import (
 
 // APIKeyHandler handles API key-related requests
 type APIKeyHandler struct {
-	apiKeyService *service.ApiKeyService
+	apiKeyService *service.APIKeyService
 }
 
 // NewAPIKeyHandler creates a new APIKeyHandler
-func NewAPIKeyHandler(apiKeyService *service.ApiKeyService) *APIKeyHandler {
+func NewAPIKeyHandler(apiKeyService *service.APIKeyService) *APIKeyHandler {
 	return &APIKeyHandler{
 		apiKeyService: apiKeyService,
 	}
@@ -56,9 +57,9 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 		return
 	}
 
-	out := make([]dto.ApiKey, 0, len(keys))
+	out := make([]dto.APIKey, 0, len(keys))
 	for i := range keys {
-		out = append(out, *dto.ApiKeyFromService(&keys[i]))
+		out = append(out, *dto.APIKeyFromService(&keys[i]))
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
@@ -90,7 +91,7 @@ func (h *APIKeyHandler) GetByID(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, dto.ApiKeyFromService(key))
+	response.Success(c, dto.APIKeyFromService(key))
 }
 
 // Create handles creating a new API key
@@ -108,7 +109,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		return
 	}
 
-	svcReq := service.CreateApiKeyRequest{
+	svcReq := service.CreateAPIKeyRequest{
 		Name:      req.Name,
 		GroupID:   req.GroupID,
 		CustomKey: req.CustomKey,
@@ -119,7 +120,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, dto.ApiKeyFromService(key))
+	response.Success(c, dto.APIKeyFromService(key))
 }
 
 // Update handles updating an API key
@@ -143,7 +144,7 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		return
 	}
 
-	svcReq := service.UpdateApiKeyRequest{}
+	svcReq := service.UpdateAPIKeyRequest{}
 	if req.Name != "" {
 		svcReq.Name = &req.Name
 	}
@@ -158,7 +159,7 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, dto.ApiKeyFromService(key))
+	response.Success(c, dto.APIKeyFromService(key))
 }
 
 // Delete handles deleting an API key
