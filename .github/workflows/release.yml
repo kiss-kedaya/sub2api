@@ -4,6 +4,22 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v1.0.0)'
+        required: true
+        type: string
+      simple_release:
+        description: 'Simple release: only x86_64 GHCR image, skip other artifacts'
+        required: false
+        type: boolean
+        default: false
+
+# 环境变量：合并 workflow_dispatch 输入和 repository variable
+# tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
+env:
+  SIMPLE_RELEASE: ${{ github.event.inputs.simple_release == 'true' || vars.SIMPLE_RELEASE == 'true' }}
 
 permissions:
   contents: write
@@ -19,7 +35,12 @@ jobs:
 
       - name: Update VERSION file
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION=${{ github.event.inputs.tag }}
+            VERSION=${VERSION#v}
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+          fi
           echo "$VERSION" > backend/cmd/server/VERSION
           echo "Updated VERSION file to: $VERSION"
 
@@ -66,6 +87,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Download VERSION artifact
         uses: actions/download-artifact@v4
@@ -93,7 +115,10 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to DockerHub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
         uses: docker/login-action@v3
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -113,7 +138,11 @@ jobs:
       - name: Get tag message
         id: tag_message
         run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME=${{ github.event.inputs.tag }}
+          else
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+          fi
           echo "Processing tag: $TAG_NAME"
 
           # 获取完整的 tag message（跳过第一行标题）
@@ -137,18 +166,21 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           version: '~> v2'
-          args: release --clean --skip=validate
+          args: release --clean --skip=validate ${{ env.SIMPLE_RELEASE == 'true' && '--config=.goreleaser.simple.yaml' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_MESSAGE: ${{ steps.tag_message.outputs.message }}
           GITHUB_REPO_OWNER: ${{ github.repository_owner }}
           GITHUB_REPO_OWNER_LOWER: ${{ steps.lowercase.outputs.owner }}
           GITHUB_REPO_NAME: ${{ github.event.repository.name }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || 'skip' }}
 
       # Update DockerHub description
       - name: Update DockerHub description
+        if: ${{ env.SIMPLE_RELEASE != 'true' && env.DOCKERHUB_USERNAME != '' }}
         uses: peter-evans/dockerhub-description@v4
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -158,9 +190,11 @@ jobs:
 
       # Send Telegram notification
       - name: Send Telegram Notification
+        if: ${{ env.SIMPLE_RELEASE != 'true' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         continue-on-error: true
         run: |
           # 检查必要的环境变量
@@ -169,10 +203,13 @@ jobs:
             exit 0
           fi
 
-          TAG_NAME=${GITHUB_REF#refs/tags/}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME=${{ github.event.inputs.tag }}
+          else
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+          fi
           VERSION=${TAG_NAME#v}
           REPO="${{ github.repository }}"
-          DOCKER_IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/sub2api"
           GHCR_IMAGE="ghcr.io/${REPO,,}"  # ${,,} converts to lowercase
 
           # 获取 tag message 内容
@@ -194,14 +231,20 @@ jobs:
 
           MESSAGE+="🐳 *Docker 部署:*"$'\n'
           MESSAGE+="\`\`\`bash"$'\n'
-          MESSAGE+="# Docker Hub"$'\n'
-          MESSAGE+="docker pull ${DOCKER_IMAGE}:${TAG_NAME}"$'\n'
-          MESSAGE+="# GitHub Container Registry"$'\n'
+          # 根据是否配置 DockerHub 动态生成
+          if [ -n "$DOCKERHUB_USERNAME" ]; then
+            DOCKER_IMAGE="${DOCKERHUB_USERNAME}/sub2api"
+            MESSAGE+="# Docker Hub"$'\n'
+            MESSAGE+="docker pull ${DOCKER_IMAGE}:${TAG_NAME}"$'\n'
+            MESSAGE+="# GitHub Container Registry"$'\n'
+          fi
           MESSAGE+="docker pull ${GHCR_IMAGE}:${TAG_NAME}"$'\n'
           MESSAGE+="\`\`\`"$'\n'$'\n'
           MESSAGE+="🔗 *相关链接:*"$'\n'
           MESSAGE+="• [GitHub Release](https://github.com/${REPO}/releases/tag/${TAG_NAME})"$'\n'
-          MESSAGE+="• [Docker Hub](https://hub.docker.com/r/${DOCKER_IMAGE})"$'\n'
+          if [ -n "$DOCKERHUB_USERNAME" ]; then
+            MESSAGE+="• [Docker Hub](https://hub.docker.com/r/${DOCKER_IMAGE})"$'\n'
+          fi
           MESSAGE+="• [GitHub Packages](https://github.com/${REPO}/pkgs/container/sub2api)"$'\n'$'\n'
           MESSAGE+="#Sub2API #Release #${TAG_NAME//./_}"
 
