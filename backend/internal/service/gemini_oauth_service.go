@@ -1000,8 +1000,9 @@ func fetchProjectIDFromResourceManager(ctx context.Context, accessToken, proxyUR
 	req.Header.Set("User-Agent", geminicli.GeminiCLIUserAgent)
 
 	client, err := httpclient.GetClient(httpclient.Options{
-		ProxyURL: strings.TrimSpace(proxyURL),
-		Timeout:  30 * time.Second,
+		ProxyURL:           strings.TrimSpace(proxyURL),
+		Timeout:            30 * time.Second,
+		ValidateResolvedIP: true,
 	})
 	if err != nil {
 		client = &http.Client{Timeout: 30 * time.Second}

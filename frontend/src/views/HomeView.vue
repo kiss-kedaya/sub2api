@@ -493,6 +493,7 @@ import { useI18n } from 'vue-i18n'
 import { getPublicSettings } from '@/api/auth'
 import { useAuthStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
+import { sanitizeUrl } from '@/utils/url'
 
 const { t } = useI18n()
 
@@ -549,9 +550,9 @@ onMounted(async () => {
   try {
     const settings = await getPublicSettings()
     siteName.value = settings.site_name || 'Sub2API'
-    siteLogo.value = settings.site_logo || ''
+    siteLogo.value = sanitizeUrl(settings.site_logo || '', { allowRelative: true })
     siteSubtitle.value = settings.site_subtitle || 'AI API Gateway Platform'
-    docUrl.value = settings.doc_url || ''
+    docUrl.value = sanitizeUrl(settings.doc_url || '', { allowRelative: true })
   } catch (error) {
     console.error('Failed to load public settings:', error)
   }

@@ -63,6 +63,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { getPublicSettings } from '@/api/auth'
+import { sanitizeUrl } from '@/utils/url'
 
 const siteName = ref('Sub2API')
 const siteLogo = ref('')
@@ -74,7 +75,7 @@ onMounted(async () => {
   try {
     const settings = await getPublicSettings()
     siteName.value = settings.site_name || 'Sub2API'
-    siteLogo.value = settings.site_logo || ''
+    siteLogo.value = sanitizeUrl(settings.site_logo || '', { allowRelative: true })
     siteSubtitle.value = settings.site_subtitle || 'Subscription to API Conversion Platform'
   } catch (error) {
     console.error('Failed to load public settings:', error)
