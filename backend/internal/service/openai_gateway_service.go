@@ -934,7 +934,6 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		}
 	}
 
-	return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
 }
 
 func (s *OpenAIGatewayService) replaceModelInSSELine(line, fromModel, toModel string) string {

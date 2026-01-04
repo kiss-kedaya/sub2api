@@ -1731,7 +1731,6 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 	}
 
-	return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
 }
 
 // replaceModelInSSELine 替换SSE数据行中的model字段
