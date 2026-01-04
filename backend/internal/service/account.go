@@ -105,10 +105,7 @@ func (a *Account) GeminiOAuthType() string {
 
 func (a *Account) GeminiTierID() string {
 	tierID := strings.TrimSpace(a.GetCredential("tier_id"))
-	if tierID == "" {
-		return ""
-	}
-	return strings.ToUpper(tierID)
+	return tierID
 }
 
 func (a *Account) IsGeminiCodeAssist() bool {
