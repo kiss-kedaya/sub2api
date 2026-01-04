@@ -140,7 +140,7 @@
                     : 'badge-danger'
               ]"
             >
-              {{ t('admin.redeem.statuses.' + value) }}
+              {{ t('admin.redeem.status.' + value) }}
             </span>
           </template>
 

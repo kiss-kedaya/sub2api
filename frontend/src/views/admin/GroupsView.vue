@@ -164,7 +164,7 @@
 
           <template #cell-status="{ value }">
             <span :class="['badge', value === 'active' ? 'badge-success' : 'badge-danger']">
-              {{ t('admin.groups.statuses.' + value) }}
+              {{ t('admin.accounts.status.' + value) }}
             </span>
           </template>
 
@@ -683,8 +683,8 @@ const columns = computed<Column[]>(() => [
 // Filter options
 const statusOptions = computed(() => [
   { value: '', label: t('admin.groups.allStatus') },
-  { value: 'active', label: t('common.active') },
-  { value: 'inactive', label: t('common.inactive') }
+  { value: 'active', label: t('admin.accounts.status.active') },
+  { value: 'inactive', label: t('admin.accounts.status.inactive') }
 ])
 
 const exclusiveOptions = computed(() => [
@@ -709,8 +709,8 @@ const platformFilterOptions = computed(() => [
 ])
 
 const editStatusOptions = computed(() => [
-  { value: 'active', label: t('common.active') },
-  { value: 'inactive', label: t('common.inactive') }
+  { value: 'active', label: t('admin.accounts.status.active') },
+  { value: 'inactive', label: t('admin.accounts.status.inactive') }
 ])
 
 const subscriptionTypeOptions = computed(() => [
