@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -26,8 +27,8 @@ import (
 const (
 	// maxConcurrencyWait 等待并发槽位的最大时间
 	maxConcurrencyWait = 30 * time.Second
-	// pingInterval 流式响应等待时发送 ping 的间隔
-	pingInterval = 15 * time.Second
+	// defaultPingInterval 流式响应等待时发送 ping 的默认间隔
+	defaultPingInterval = 10 * time.Second
 	// initialBackoff 初始退避时间
 	initialBackoff = 100 * time.Millisecond
 	// backoffMultiplier 退避时间乘数（指数退避）
@@ -44,6 +45,8 @@ const (
 	SSEPingFormatClaude SSEPingFormat = "data: {\"type\": \"ping\"}\n\n"
 	// SSEPingFormatNone indicates no ping should be sent (e.g., OpenAI has no ping spec)
 	SSEPingFormatNone SSEPingFormat = ""
+	// SSEPingFormatComment is an SSE comment ping for OpenAI/Codex CLI clients
+	SSEPingFormatComment SSEPingFormat = ":\n\n"
 )
 
 // ConcurrencyError represents a concurrency limit error with context
@@ -63,14 +66,36 @@ func (e *ConcurrencyError) Error() string {
 type ConcurrencyHelper struct {
 	concurrencyService *service.ConcurrencyService
 	pingFormat         SSEPingFormat
+	pingInterval       time.Duration
 }
 
 // NewConcurrencyHelper creates a new ConcurrencyHelper
-func NewConcurrencyHelper(concurrencyService *service.ConcurrencyService, pingFormat SSEPingFormat) *ConcurrencyHelper {
+func NewConcurrencyHelper(concurrencyService *service.ConcurrencyService, pingFormat SSEPingFormat, pingInterval time.Duration) *ConcurrencyHelper {
+	if pingInterval <= 0 {
+		pingInterval = defaultPingInterval
+	}
 	return &ConcurrencyHelper{
 		concurrencyService: concurrencyService,
 		pingFormat:         pingFormat,
+		pingInterval:       pingInterval,
 	}
+}
+
+// wrapReleaseOnDone ensures release runs at most once and still triggers on context cancellation.
+// 用于避免客户端断开或上游超时导致的并发槽位泄漏。
+func wrapReleaseOnDone(ctx context.Context, releaseFunc func()) func() {
+	if releaseFunc == nil {
+		return nil
+	}
+	var once sync.Once
+	wrapped := func() {
+		once.Do(releaseFunc)
+	}
+	go func() {
+		<-ctx.Done()
+		wrapped()
+	}()
+	return wrapped
 }
 
 // IncrementWaitCount increments the wait count for a user
@@ -174,7 +199,7 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 	// Only create ping ticker if ping is needed
 	var pingCh <-chan time.Time
 	if needPing {
-		pingTicker := time.NewTicker(pingInterval)
+		pingTicker := time.NewTicker(h.pingInterval)
 		defer pingTicker.Stop()
 		pingCh = pingTicker.C
 	}
