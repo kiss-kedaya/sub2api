@@ -151,3 +151,125 @@ func TestFilterThinkingBlocks(t *testing.T) {
 		})
 	}
 }
+
+func TestFilterThinkingBlocksForRetry_DisablesThinkingAndPreservesAsText(t *testing.T) {
+	input := []byte(`{
+		"model":"claude-3-5-sonnet-20241022",
+		"thinking":{"type":"enabled","budget_tokens":1024},
+		"messages":[
+			{"role":"user","content":[{"type":"text","text":"Hi"}]},
+			{"role":"assistant","content":[
+				{"type":"thinking","thinking":"Let me think...","signature":"bad_sig"},
+				{"type":"text","text":"Answer"}
+			]}
+		]
+	}`)
+
+	out := FilterThinkingBlocksForRetry(input)
+
+	var req map[string]any
+	require.NoError(t, json.Unmarshal(out, &req))
+	_, hasThinking := req["thinking"]
+	require.False(t, hasThinking)
+
+	msgs, ok := req["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, msgs, 2)
+
+	assistant := msgs[1].(map[string]any)
+	content := assistant["content"].([]any)
+	require.Len(t, content, 2)
+
+	first := content[0].(map[string]any)
+	require.Equal(t, "text", first["type"])
+	require.Equal(t, "Let me think...", first["text"])
+}
+
+func TestFilterThinkingBlocksForRetry_DisablesThinkingEvenWithoutThinkingBlocks(t *testing.T) {
+	input := []byte(`{
+		"model":"claude-3-5-sonnet-20241022",
+		"thinking":{"type":"enabled","budget_tokens":1024},
+		"messages":[
+			{"role":"user","content":[{"type":"text","text":"Hi"}]},
+			{"role":"assistant","content":[{"type":"text","text":"Prefill"}]}
+		]
+	}`)
+
+	out := FilterThinkingBlocksForRetry(input)
+
+	var req map[string]any
+	require.NoError(t, json.Unmarshal(out, &req))
+	_, hasThinking := req["thinking"]
+	require.False(t, hasThinking)
+}
+
+func TestFilterThinkingBlocksForRetry_RemovesRedactedThinkingAndKeepsValidContent(t *testing.T) {
+	input := []byte(`{
+		"thinking":{"type":"enabled","budget_tokens":1024},
+		"messages":[
+			{"role":"assistant","content":[
+				{"type":"redacted_thinking","data":"..."},
+				{"type":"text","text":"Visible"}
+			]}
+		]
+	}`)
+
+	out := FilterThinkingBlocksForRetry(input)
+
+	var req map[string]any
+	require.NoError(t, json.Unmarshal(out, &req))
+	_, hasThinking := req["thinking"]
+	require.False(t, hasThinking)
+
+	msgs := req["messages"].([]any)
+	content := msgs[0].(map[string]any)["content"].([]any)
+	require.Len(t, content, 1)
+	require.Equal(t, "text", content[0].(map[string]any)["type"])
+	require.Equal(t, "Visible", content[0].(map[string]any)["text"])
+}
+
+func TestFilterThinkingBlocksForRetry_EmptyContentGetsPlaceholder(t *testing.T) {
+	input := []byte(`{
+		"thinking":{"type":"enabled"},
+		"messages":[
+			{"role":"assistant","content":[{"type":"redacted_thinking","data":"..."}]}
+		]
+	}`)
+
+	out := FilterThinkingBlocksForRetry(input)
+
+	var req map[string]any
+	require.NoError(t, json.Unmarshal(out, &req))
+	msgs := req["messages"].([]any)
+	content := msgs[0].(map[string]any)["content"].([]any)
+	require.Len(t, content, 1)
+	require.Equal(t, "text", content[0].(map[string]any)["type"])
+	require.NotEmpty(t, content[0].(map[string]any)["text"])
+}
+
+func TestFilterSignatureSensitiveBlocksForRetry_DowngradesTools(t *testing.T) {
+	input := []byte(`{
+		"thinking":{"type":"enabled","budget_tokens":1024},
+		"messages":[
+			{"role":"assistant","content":[
+				{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}},
+				{"type":"tool_result","tool_use_id":"t1","content":"ok","is_error":false}
+			]}
+		]
+	}`)
+
+	out := FilterSignatureSensitiveBlocksForRetry(input)
+
+	var req map[string]any
+	require.NoError(t, json.Unmarshal(out, &req))
+	_, hasThinking := req["thinking"]
+	require.False(t, hasThinking)
+
+	msgs := req["messages"].([]any)
+	content := msgs[0].(map[string]any)["content"].([]any)
+	require.Len(t, content, 2)
+	require.Equal(t, "text", content[0].(map[string]any)["type"])
+	require.Equal(t, "text", content[1].(map[string]any)["type"])
+	require.Contains(t, content[0].(map[string]any)["text"], "tool_use")
+	require.Contains(t, content[1].(map[string]any)["text"], "tool_result")
+}
