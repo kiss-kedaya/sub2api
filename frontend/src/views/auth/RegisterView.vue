@@ -340,12 +340,12 @@ function onTurnstileVerify(token: string): void {
 
 function onTurnstileExpire(): void {
   turnstileToken.value = ''
-  errors.turnstile = 'Verification expired, please try again'
+  errors.turnstile = t('auth.turnstileExpired')
 }
 
 function onTurnstileError(): void {
   turnstileToken.value = ''
-  errors.turnstile = 'Verification failed, please try again'
+  errors.turnstile = t('auth.turnstileFailed')
 }
 
 // ==================== Validation ====================
@@ -365,25 +365,25 @@ function validateForm(): boolean {
 
   // Email validation
   if (!formData.email.trim()) {
-    errors.email = 'Email is required'
+    errors.email = t('auth.emailRequired')
     isValid = false
   } else if (!validateEmail(formData.email)) {
-    errors.email = 'Please enter a valid email address'
+    errors.email = t('auth.invalidEmail')
     isValid = false
   }
 
   // Password validation
   if (!formData.password) {
-    errors.password = 'Password is required'
+    errors.password = t('auth.passwordRequired')
     isValid = false
   } else if (formData.password.length < 6) {
-    errors.password = 'Password must be at least 6 characters'
+    errors.password = t('auth.passwordMinLength')
     isValid = false
   }
 
   // Turnstile validation
   if (turnstileEnabled.value && !turnstileToken.value) {
-    errors.turnstile = 'Please complete the verification'
+    errors.turnstile = t('auth.completeVerification')
     isValid = false
   }
 
@@ -429,7 +429,7 @@ async function handleRegister(): Promise<void> {
     })
 
     // Show success toast
-    appStore.showSuccess('Account created successfully! Welcome to ' + siteName.value + '.')
+    appStore.showSuccess(t('auth.accountCreatedSuccess', { siteName: siteName.value }))
 
     // Redirect to dashboard
     await router.push('/dashboard')
@@ -448,7 +448,7 @@ async function handleRegister(): Promise<void> {
     } else if (err.message) {
       errorMessage.value = err.message
     } else {
-      errorMessage.value = 'Registration failed. Please try again.'
+      errorMessage.value = t('auth.registrationFailed')
     }
 
     // Also show error toast
