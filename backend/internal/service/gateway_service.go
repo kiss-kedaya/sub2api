@@ -32,6 +32,7 @@ const (
 	claudeAPIURL            = "https://api.anthropic.com/v1/messages?beta=true"
 	claudeAPICountTokensURL = "https://api.anthropic.com/v1/messages/count_tokens?beta=true"
 	stickySessionTTL        = time.Hour // 粘性会话TTL
+	defaultMaxLineSize      = 10 * 1024 * 1024
 )
 
 // sseDataRe matches SSE data lines with optional whitespace after colon.
@@ -1448,51 +1449,141 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	var firstTokenMs *int
 	scanner := bufio.NewScanner(resp.Body)
 	// 设置更大的buffer以处理长行
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	maxLineSize := defaultMaxLineSize
+	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+		maxLineSize = s.cfg.Gateway.MaxLineSize
+	}
+	scanner.Buffer(make([]byte, 64*1024), maxLineSize)
+
+	type scanEvent struct {
+		line string
+		err  error
+	}
+	// 独立 goroutine 读取上游，避免读取阻塞导致超时/keepalive无法处理
+	events := make(chan scanEvent, 1)
+	done := make(chan struct{})
+	sendEvent := func(ev scanEvent) bool {
+		select {
+		case events <- ev:
+			return true
+		case <-done:
+			return false
+		}
+	}
+	go func() {
+		defer close(events)
+		for scanner.Scan() {
+			if !sendEvent(scanEvent{line: scanner.Text()}) {
+				return
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			_ = sendEvent(scanEvent{err: err})
+		}
+	}()
+	defer close(done)
+
+	streamInterval := time.Duration(0)
+	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	}
+	// 仅监控上游数据间隔超时，避免上游挂起占用资源
+	var intervalTimer *time.Timer
+	if streamInterval > 0 {
+		intervalTimer = time.NewTimer(streamInterval)
+		defer intervalTimer.Stop()
+	}
+
+	// 仅发送一次错误事件，避免多次写入导致协议混乱（写失败时尽力通知客户端）
+	errorEventSent := false
+	sendErrorEvent := func(reason string) {
+		if errorEventSent {
+			return
+		}
+		errorEventSent = true
+		_, _ = fmt.Fprintf(w, "event: error\ndata: {\"error\":\"%s\"}\n\n", reason)
+		flusher.Flush()
+	}
 
 	needModelReplace := originalModel != mappedModel
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "event: error" {
-			return nil, errors.New("have error in stream")
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
+			}
+			if ev.err != nil {
+				if errors.Is(ev.err, bufio.ErrTooLong) {
+					log.Printf("SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
+					sendErrorEvent("response_too_large")
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, ev.err
+				}
+				sendErrorEvent("stream_read_error")
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
+			}
+			line := ev.line
+			if intervalTimer != nil {
+				resetTimer(intervalTimer, streamInterval)
+			}
+			if line == "event: error" {
+				return nil, errors.New("have error in stream")
+			}
+
+			// Extract data from SSE line (supports both "data: " and "data:" formats)
+			if sseDataRe.MatchString(line) {
+				data := sseDataRe.ReplaceAllString(line, "")
+
+				// 如果有模型映射，替换响应中的model字段
+				if needModelReplace {
+					line = s.replaceModelInSSELine(line, mappedModel, originalModel)
+				}
+
+				// 转发行
+				if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+					sendErrorEvent("write_failed")
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, err
+				}
+				flusher.Flush()
+
+				// 记录首字时间：第一个有效的 content_block_delta 或 message_start
+				if firstTokenMs == nil && data != "" && data != "[DONE]" {
+					ms := int(time.Since(startTime).Milliseconds())
+					firstTokenMs = &ms
+				}
+				s.parseSSEUsage(data, usage)
+			} else {
+				// 非 data 行直接转发
+				if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+					sendErrorEvent("write_failed")
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, err
+				}
+				flusher.Flush()
+			}
+
+		case <-func() <-chan time.Time {
+			if intervalTimer != nil {
+				return intervalTimer.C
+			}
+			return nil
+		}():
+			log.Printf("Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
+			sendErrorEvent("stream_timeout")
+			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
 		}
-
-		// Extract data from SSE line (supports both "data: " and "data:" formats)
-		if sseDataRe.MatchString(line) {
-			data := sseDataRe.ReplaceAllString(line, "")
-
-			// 如果有模型映射，替换响应中的model字段
-			if needModelReplace {
-				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
-			}
-
-			// 转发行
-			if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, err
-			}
-			flusher.Flush()
-
-			// 记录首字时间：第一个有效的 content_block_delta 或 message_start
-			if firstTokenMs == nil && data != "" && data != "[DONE]" {
-				ms := int(time.Since(startTime).Milliseconds())
-				firstTokenMs = &ms
-			}
-			s.parseSSEUsage(data, usage)
-		} else {
-			// 非 data 行直接转发
-			if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, err
-			}
-			flusher.Flush()
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", err)
 	}
 
 	return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
+}
+
+func resetTimer(timer *time.Timer, interval time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(interval)
 }
 
 // replaceModelInSSELine 替换SSE数据行中的model字段

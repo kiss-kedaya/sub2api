@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -64,6 +65,7 @@ type AntigravityGatewayService struct {
 	tokenProvider    *AntigravityTokenProvider
 	rateLimitService *RateLimitService
 	httpUpstream     HTTPUpstream
+	cfg              *config.Config
 }
 
 func NewAntigravityGatewayService(
@@ -72,12 +74,14 @@ func NewAntigravityGatewayService(
 	tokenProvider *AntigravityTokenProvider,
 	rateLimitService *RateLimitService,
 	httpUpstream HTTPUpstream,
+	cfg *config.Config,
 ) *AntigravityGatewayService {
 	return &AntigravityGatewayService{
 		accountRepo:      accountRepo,
 		tokenProvider:    tokenProvider,
 		rateLimitService: rateLimitService,
 		httpUpstream:     httpUpstream,
+		cfg:              cfg,
 	}
 }
 
@@ -674,57 +678,147 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 		return nil, errors.New("streaming not supported")
 	}
 
-	reader := bufio.NewReader(resp.Body)
+	// 使用 Scanner 并限制单行大小，避免 ReadString 无上限导致 OOM
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), defaultMaxLineSize)
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 
+	type scanEvent struct {
+		line string
+		err  error
+	}
+	// 独立 goroutine 读取上游，避免读取阻塞影响超时处理
+	events := make(chan scanEvent, 1)
+	done := make(chan struct{})
+	sendEvent := func(ev scanEvent) bool {
+		select {
+		case events <- ev:
+			return true
+		case <-done:
+			return false
+		}
+	}
+	go func() {
+		defer close(events)
+		for scanner.Scan() {
+			if !sendEvent(scanEvent{line: scanner.Text()}) {
+				return
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			_ = sendEvent(scanEvent{err: err})
+		}
+	}()
+	defer close(done)
+
+	// 上游数据间隔超时保护（防止上游挂起长期占用连接）
+	streamInterval := time.Duration(0)
+	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	}
+	var intervalTimer *time.Timer
+	if streamInterval > 0 {
+		intervalTimer = time.NewTimer(streamInterval)
+		defer intervalTimer.Stop()
+	}
+	var intervalCh <-chan time.Time
+	if intervalTimer != nil {
+		intervalCh = intervalTimer.C
+	}
+	resetInterval := func() {
+		if intervalTimer == nil {
+			return
+		}
+		if !intervalTimer.Stop() {
+			select {
+			case <-intervalTimer.C:
+			default:
+			}
+		}
+		intervalTimer.Reset(streamInterval)
+	}
+
+	// 仅发送一次错误事件，避免多次写入导致协议混乱
+	errorEventSent := false
+	sendErrorEvent := func(reason string) {
+		if errorEventSent {
+			return
+		}
+		errorEventSent = true
+		_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: {\"error\":\"%s\"}\n\n", reason)
+		flusher.Flush()
+	}
+
 	for {
-		line, err := reader.ReadString('\n')
-		if len(line) > 0 {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil
+			}
+			if ev.err != nil {
+				if errors.Is(ev.err, bufio.ErrTooLong) {
+					log.Printf("SSE line too long (antigravity): max_size=%d error=%v", defaultMaxLineSize, ev.err)
+					sendErrorEvent("response_too_large")
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, ev.err
+				}
+				sendErrorEvent("stream_read_error")
+				return nil, ev.err
+			}
+
+			resetInterval()
+			line := ev.line
 			trimmed := strings.TrimRight(line, "\r\n")
 			if strings.HasPrefix(trimmed, "data:") {
 				payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
 				if payload == "" || payload == "[DONE]" {
-					_, _ = io.WriteString(c.Writer, line)
+					if _, err := fmt.Fprintf(c.Writer, "%s\n", line); err != nil {
+						sendErrorEvent("write_failed")
+						return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, err
+					}
 					flusher.Flush()
-				} else {
-					// 解包 v1internal 响应
-					inner, parseErr := s.unwrapV1InternalResponse([]byte(payload))
-					if parseErr == nil && inner != nil {
-						payload = string(inner)
-					}
-
-					// 解析 usage
-					var parsed map[string]any
-					if json.Unmarshal(inner, &parsed) == nil {
-						if u := extractGeminiUsage(parsed); u != nil {
-							usage = u
-						}
-					}
-
-					if firstTokenMs == nil {
-						ms := int(time.Since(startTime).Milliseconds())
-						firstTokenMs = &ms
-					}
-
-					_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", payload)
-					flusher.Flush()
+					continue
 				}
-			} else {
-				_, _ = io.WriteString(c.Writer, line)
-				flusher.Flush()
-			}
-		}
 
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, err
+				// 解包 v1internal 响应
+				inner, parseErr := s.unwrapV1InternalResponse([]byte(payload))
+				if parseErr == nil && inner != nil {
+					payload = string(inner)
+				}
+
+				// 解析 usage
+				var parsed map[string]any
+				if json.Unmarshal(inner, &parsed) == nil {
+					if u := extractGeminiUsage(parsed); u != nil {
+						usage = u
+					}
+				}
+
+				if firstTokenMs == nil {
+					ms := int(time.Since(startTime).Milliseconds())
+					firstTokenMs = &ms
+				}
+
+				if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", payload); err != nil {
+					sendErrorEvent("write_failed")
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, err
+				}
+				flusher.Flush()
+				continue
+			}
+
+			if _, err := fmt.Fprintf(c.Writer, "%s\n", line); err != nil {
+				sendErrorEvent("write_failed")
+				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, err
+			}
+			flusher.Flush()
+
+		case <-intervalCh:
+			log.Printf("Stream data interval timeout (antigravity)")
+			sendErrorEvent("stream_timeout")
+			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
 		}
 	}
-
-	return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil
 }
 
 func (s *AntigravityGatewayService) handleGeminiNonStreamingResponse(c *gin.Context, resp *http.Response) (*ClaudeUsage, error) {
@@ -863,7 +957,9 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 
 	processor := antigravity.NewStreamingProcessor(originalModel)
 	var firstTokenMs *int
-	reader := bufio.NewReader(resp.Body)
+	// 使用 Scanner 并限制单行大小，避免 ReadString 无上限导致 OOM
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), defaultMaxLineSize)
 
 	// 辅助函数：转换 antigravity.ClaudeUsage 到 service.ClaudeUsage
 	convertUsage := func(agUsage *antigravity.ClaudeUsage) *ClaudeUsage {
@@ -878,13 +974,95 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 		}
 	}
 
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("stream read error: %w", err)
+	type scanEvent struct {
+		line string
+		err  error
+	}
+	// 独立 goroutine 读取上游，避免读取阻塞影响超时处理
+	events := make(chan scanEvent, 1)
+	done := make(chan struct{})
+	sendEvent := func(ev scanEvent) bool {
+		select {
+		case events <- ev:
+			return true
+		case <-done:
+			return false
 		}
+	}
+	go func() {
+		defer close(events)
+		for scanner.Scan() {
+			if !sendEvent(scanEvent{line: scanner.Text()}) {
+				return
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			_ = sendEvent(scanEvent{err: err})
+		}
+	}()
+	defer close(done)
 
-		if len(line) > 0 {
+	streamInterval := time.Duration(0)
+	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	}
+	var intervalTimer *time.Timer
+	if streamInterval > 0 {
+		intervalTimer = time.NewTimer(streamInterval)
+		defer intervalTimer.Stop()
+	}
+	var intervalCh <-chan time.Time
+	if intervalTimer != nil {
+		intervalCh = intervalTimer.C
+	}
+	resetInterval := func() {
+		if intervalTimer == nil {
+			return
+		}
+		if !intervalTimer.Stop() {
+			select {
+			case <-intervalTimer.C:
+			default:
+			}
+		}
+		intervalTimer.Reset(streamInterval)
+	}
+
+	// 仅发送一次错误事件，避免多次写入导致协议混乱
+	errorEventSent := false
+	sendErrorEvent := func(reason string) {
+		if errorEventSent {
+			return
+		}
+		errorEventSent = true
+		_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: {\"error\":\"%s\"}\n\n", reason)
+		flusher.Flush()
+	}
+
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				// 发送结束事件
+				finalEvents, agUsage := processor.Finish()
+				if len(finalEvents) > 0 {
+					_, _ = c.Writer.Write(finalEvents)
+					flusher.Flush()
+				}
+				return &antigravityStreamResult{usage: convertUsage(agUsage), firstTokenMs: firstTokenMs}, nil
+			}
+			if ev.err != nil {
+				if errors.Is(ev.err, bufio.ErrTooLong) {
+					log.Printf("SSE line too long (antigravity): max_size=%d error=%v", defaultMaxLineSize, ev.err)
+					sendErrorEvent("response_too_large")
+					return &antigravityStreamResult{usage: convertUsage(nil), firstTokenMs: firstTokenMs}, ev.err
+				}
+				sendErrorEvent("stream_read_error")
+				return nil, fmt.Errorf("stream read error: %w", ev.err)
+			}
+
+			resetInterval()
+			line := ev.line
 			// 处理 SSE 行，转换为 Claude 格式
 			claudeEvents := processor.ProcessLine(strings.TrimRight(line, "\r\n"))
 
@@ -899,23 +1077,17 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 					if len(finalEvents) > 0 {
 						_, _ = c.Writer.Write(finalEvents)
 					}
+					sendErrorEvent("write_failed")
 					return &antigravityStreamResult{usage: convertUsage(agUsage), firstTokenMs: firstTokenMs}, writeErr
 				}
 				flusher.Flush()
 			}
-		}
 
-		if errors.Is(err, io.EOF) {
-			break
+		case <-intervalCh:
+			log.Printf("Stream data interval timeout (antigravity)")
+			sendErrorEvent("stream_timeout")
+			return &antigravityStreamResult{usage: convertUsage(nil), firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
 		}
 	}
 
-	// 发送结束事件
-	finalEvents, agUsage := processor.Finish()
-	if len(finalEvents) > 0 {
-		_, _ = c.Writer.Write(finalEvents)
-		flusher.Flush()
-	}
-
-	return &antigravityStreamResult{usage: convertUsage(agUsage), firstTokenMs: firstTokenMs}, nil
 }

@@ -775,45 +775,152 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	usage := &OpenAIUsage{}
 	var firstTokenMs *int
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	maxLineSize := defaultMaxLineSize
+	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+		maxLineSize = s.cfg.Gateway.MaxLineSize
+	}
+	scanner.Buffer(make([]byte, 64*1024), maxLineSize)
+
+	type scanEvent struct {
+		line string
+		err  error
+	}
+	// 独立 goroutine 读取上游，避免读取阻塞影响 keepalive/超时处理
+	events := make(chan scanEvent, 1)
+	done := make(chan struct{})
+	sendEvent := func(ev scanEvent) bool {
+		select {
+		case events <- ev:
+			return true
+		case <-done:
+			return false
+		}
+	}
+	go func() {
+		defer close(events)
+		for scanner.Scan() {
+			if !sendEvent(scanEvent{line: scanner.Text()}) {
+				return
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			_ = sendEvent(scanEvent{err: err})
+		}
+	}()
+	defer close(done)
+
+	streamInterval := time.Duration(0)
+	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	}
+	// 仅监控上游数据间隔超时，不被下游 keepalive 影响
+	var intervalTimer *time.Timer
+	if streamInterval > 0 {
+		intervalTimer = time.NewTimer(streamInterval)
+		defer intervalTimer.Stop()
+	}
+	var intervalCh <-chan time.Time
+	if intervalTimer != nil {
+		intervalCh = intervalTimer.C
+	}
+
+	keepaliveInterval := time.Duration(0)
+	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
+		keepaliveInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
+	}
+	// 下游 keepalive 仅用于防止代理空闲断开
+	var keepaliveTicker *time.Ticker
+	if keepaliveInterval > 0 {
+		keepaliveTicker = time.NewTicker(keepaliveInterval)
+		defer keepaliveTicker.Stop()
+	}
+	var keepaliveCh <-chan time.Time
+	if keepaliveTicker != nil {
+		keepaliveCh = keepaliveTicker.C
+	}
+	// 记录上次收到上游数据的时间，用于控制 keepalive 发送频率
+	lastDataAt := time.Now()
+
+	// 仅发送一次错误事件，避免多次写入导致协议混乱（写失败时尽力通知客户端）
+	errorEventSent := false
+	sendErrorEvent := func(reason string) {
+		if errorEventSent {
+			return
+		}
+		errorEventSent = true
+		_, _ = fmt.Fprintf(w, "event: error\ndata: {\"error\":\"%s\"}\n\n", reason)
+		flusher.Flush()
+	}
 
 	needModelReplace := originalModel != mappedModel
 
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Extract data from SSE line (supports both "data: " and "data:" formats)
-		if openaiSSEDataRe.MatchString(line) {
-			data := openaiSSEDataRe.ReplaceAllString(line, "")
-
-			// Replace model in response if needed
-			if needModelReplace {
-				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
+			}
+			if ev.err != nil {
+				if errors.Is(ev.err, bufio.ErrTooLong) {
+					log.Printf("SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
+					sendErrorEvent("response_too_large")
+					return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, ev.err
+				}
+				sendErrorEvent("stream_read_error")
+				return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
 			}
 
-			// Forward line
-			if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
-				return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, err
+			line := ev.line
+			lastDataAt = time.Now()
+			if intervalTimer != nil {
+				resetTimer(intervalTimer, streamInterval)
 			}
-			flusher.Flush()
 
-			// Record first token time
-			if firstTokenMs == nil && data != "" && data != "[DONE]" {
-				ms := int(time.Since(startTime).Milliseconds())
-				firstTokenMs = &ms
+			// Extract data from SSE line (supports both "data: " and "data:" formats)
+			if openaiSSEDataRe.MatchString(line) {
+				data := openaiSSEDataRe.ReplaceAllString(line, "")
+
+				// Replace model in response if needed
+				if needModelReplace {
+					line = s.replaceModelInSSELine(line, mappedModel, originalModel)
+				}
+
+				// Forward line
+				if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+					sendErrorEvent("write_failed")
+					return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, err
+				}
+				flusher.Flush()
+
+				// Record first token time
+				if firstTokenMs == nil && data != "" && data != "[DONE]" {
+					ms := int(time.Since(startTime).Milliseconds())
+					firstTokenMs = &ms
+				}
+				s.parseSSEUsage(data, usage)
+			} else {
+				// Forward non-data lines as-is
+				if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+					sendErrorEvent("write_failed")
+					return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, err
+				}
+				flusher.Flush()
 			}
-			s.parseSSEUsage(data, usage)
-		} else {
-			// Forward non-data lines as-is
-			if _, err := fmt.Fprintf(w, "%s\n", line); err != nil {
+
+		case <-intervalCh:
+			log.Printf("Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
+			sendErrorEvent("stream_timeout")
+			return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
+
+		case <-keepaliveCh:
+			if time.Since(lastDataAt) < keepaliveInterval {
+				continue
+			}
+			if _, err := fmt.Fprint(w, ":\n\n"); err != nil {
 				return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, err
 			}
 			flusher.Flush()
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", err)
 	}
 
 	return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs}, nil
