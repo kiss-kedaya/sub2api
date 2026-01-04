@@ -296,84 +296,62 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 	}
 
-	// Determine authentication method and API URL
-	var authToken string
-	var apiURL string
-	var isOAuth bool
-	var chatgptAccountID string
-
-	if account.IsOAuth() {
-		isOAuth = true
-		// OAuth - use Bearer token with ChatGPT internal API
-		authToken = account.GetOpenAIAccessToken()
-		if authToken == "" {
-			return s.sendErrorAndEnd(c, "No access token available")
-		}
-
-		// Check if token is expired and refresh if needed
-		if account.IsOpenAITokenExpired() && s.openaiOAuthService != nil {
-			tokenInfo, err := s.openaiOAuthService.RefreshAccountToken(ctx, account)
-			if err != nil {
-				return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to refresh token: %s", err.Error()))
-			}
-			authToken = tokenInfo.AccessToken
-		}
-
-		// OAuth uses ChatGPT internal API
-		apiURL = chatgptCodexAPIURL
-		chatgptAccountID = account.GetChatGPTAccountID()
-	} else if account.Type == "apikey" {
-		// API Key - use Platform API
-		authToken = account.GetOpenAIApiKey()
-		if authToken == "" {
-			return s.sendErrorAndEnd(c, "No API key available")
-		}
-
-		baseURL := account.GetOpenAIBaseURL()
-		if baseURL == "" {
-			baseURL = "https://api.openai.com"
-		}
-		apiURL = strings.TrimSuffix(baseURL, "/") + "/responses"
-	} else {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
-	}
-
-	// Set SSE headers
+	// Set SSE headers early
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
-	// Create OpenAI Responses API payload
-	payload := createOpenAITestPayload(testModelID, isOAuth)
-	payloadBytes, _ := json.Marshal(payload)
-
 	// Send test_start event
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
-
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return s.sendErrorAndEnd(c, "Failed to create request")
-	}
-
-	// Set common headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+authToken)
-
-	// Set OAuth-specific headers for ChatGPT internal API
-	if isOAuth {
-		req.Host = "chatgpt.com"
-		req.Header.Set("accept", "text/event-stream")
-		if chatgptAccountID != "" {
-			req.Header.Set("chatgpt-account-id", chatgptAccountID)
-		}
-	}
 
 	// Get proxy URL
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
+	}
+
+	if account.IsOAuth() {
+		// OAuth - use ChatGPT internal API (Responses API)
+		return s.testOpenAIOAuthAccount(c, ctx, account, testModelID, proxyURL)
+	}
+
+	// API Key - try Chat Completions API first, fallback to Responses API
+	return s.testOpenAIApiKeyAccount(c, ctx, account, testModelID, proxyURL)
+}
+
+// testOpenAIOAuthAccount tests OAuth account using ChatGPT internal API
+func (s *AccountTestService) testOpenAIOAuthAccount(c *gin.Context, ctx context.Context, account *Account, testModelID, proxyURL string) error {
+	authToken := account.GetOpenAIAccessToken()
+	if authToken == "" {
+		return s.sendErrorAndEnd(c, "No access token available")
+	}
+
+	// Check if token is expired and refresh if needed
+	if account.IsOpenAITokenExpired() && s.openaiOAuthService != nil {
+		tokenInfo, err := s.openaiOAuthService.RefreshAccountToken(ctx, account)
+		if err != nil {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to refresh token: %s", err.Error()))
+		}
+		authToken = tokenInfo.AccessToken
+	}
+
+	// Create Responses API payload
+	payload := createOpenAITestPayload(testModelID, true)
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", chatgptCodexAPIURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create request")
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken)
+	req.Host = "chatgpt.com"
+	req.Header.Set("accept", "text/event-stream")
+	if chatgptAccountID := account.GetChatGPTAccountID(); chatgptAccountID != "" {
+		req.Header.Set("chatgpt-account-id", chatgptAccountID)
 	}
 
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
@@ -387,8 +365,151 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	// Process SSE stream
 	return s.processOpenAIStream(c, resp.Body)
+}
+
+// testOpenAIApiKeyAccount tests API Key account, trying Chat Completions first, then Responses API
+func (s *AccountTestService) testOpenAIApiKeyAccount(c *gin.Context, ctx context.Context, account *Account, testModelID, proxyURL string) error {
+	authToken := account.GetOpenAIApiKey()
+	if authToken == "" {
+		return s.sendErrorAndEnd(c, "No API key available")
+	}
+
+	baseURL := account.GetOpenAIBaseURL()
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+	baseURL = strings.TrimSuffix(baseURL, "/")
+
+	// Try Chat Completions API first (more compatible with third-party proxies)
+	chatCompletionsURL := baseURL + "/v1/chat/completions"
+	chatPayload := createOpenAIChatCompletionsPayload(testModelID)
+	chatPayloadBytes, _ := json.Marshal(chatPayload)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", chatCompletionsURL, bytes.NewReader(chatPayloadBytes))
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	if err != nil {
+		// Network error, try Responses API
+		s.sendEvent(c, TestEvent{Type: "info", Text: "Chat Completions API failed, trying Responses API..."})
+		return s.tryOpenAIResponsesAPI(c, ctx, account, testModelID, baseURL, authToken, proxyURL)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusOK {
+		// Chat Completions API succeeded
+		return s.processOpenAIChatCompletionsStream(c, resp.Body)
+	}
+
+	// Chat Completions API failed, try Responses API
+	_ = resp.Body.Close()
+	s.sendEvent(c, TestEvent{Type: "info", Text: "Chat Completions API failed, trying Responses API..."})
+	return s.tryOpenAIResponsesAPI(c, ctx, account, testModelID, baseURL, authToken, proxyURL)
+}
+
+// tryOpenAIResponsesAPI tries the OpenAI Responses API as fallback
+func (s *AccountTestService) tryOpenAIResponsesAPI(c *gin.Context, ctx context.Context, account *Account, testModelID, baseURL, authToken, proxyURL string) error {
+	responsesURL := baseURL + "/v1/responses"
+	payload := createOpenAITestPayload(testModelID, false)
+	payloadBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", responsesURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
+	}
+
+	return s.processOpenAIStream(c, resp.Body)
+}
+
+// createOpenAIChatCompletionsPayload creates a test payload for OpenAI Chat Completions API
+func createOpenAIChatCompletionsPayload(modelID string) map[string]any {
+	return map[string]any{
+		"model": modelID,
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": "hi",
+			},
+		},
+		"stream":     true,
+		"max_tokens": 100,
+	}
+}
+
+// processOpenAIChatCompletionsStream processes the SSE stream from OpenAI Chat Completions API
+func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader) error {
+	reader := bufio.NewReader(body)
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+				return nil
+			}
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Stream read error: %s", err.Error()))
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" || !sseDataPrefix.MatchString(line) {
+			continue
+		}
+
+		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
+		if jsonStr == "[DONE]" {
+			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+			return nil
+		}
+
+		var data map[string]any
+		if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+			continue
+		}
+
+		// Handle Chat Completions format: choices[0].delta.content
+		if choices, ok := data["choices"].([]any); ok && len(choices) > 0 {
+			if choice, ok := choices[0].(map[string]any); ok {
+				// Check finish_reason
+				if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {
+					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+					return nil
+				}
+				// Extract content from delta
+				if delta, ok := choice["delta"].(map[string]any); ok {
+					if content, ok := delta["content"].(string); ok && content != "" {
+						s.sendEvent(c, TestEvent{Type: "content", Text: content})
+					}
+				}
+			}
+		}
+
+		// Handle error
+		if errData, ok := data["error"].(map[string]any); ok {
+			errorMsg := "Unknown error"
+			if msg, ok := errData["message"].(string); ok {
+				errorMsg = msg
+			}
+			return s.sendErrorAndEnd(c, errorMsg)
+		}
+	}
 }
 
 // testGeminiAccountConnection tests a Gemini account's connection
@@ -627,11 +748,11 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 		}
 
 		line = strings.TrimSpace(line)
-		if line == "" || !strings.HasPrefix(line, "data: ") {
+		if line == "" || !sseDataPrefix.MatchString(line) {
 			continue
 		}
 
-		jsonStr := strings.TrimPrefix(line, "data: ")
+		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 		if jsonStr == "[DONE]" {
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
@@ -650,13 +771,7 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 		}
 		if candidates, ok := data["candidates"].([]any); ok && len(candidates) > 0 {
 			if candidate, ok := candidates[0].(map[string]any); ok {
-				// Check for completion
-				if finishReason, ok := candidate["finishReason"].(string); ok && finishReason != "" {
-					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-					return nil
-				}
-
-				// Extract content
+				// Extract content first (before checking finishReason)
 				if content, ok := candidate["content"].(map[string]any); ok {
 					if parts, ok := content["parts"].([]any); ok {
 						for _, part := range parts {
@@ -667,6 +782,12 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 							}
 						}
 					}
+				}
+
+				// Check for completion after extracting content
+				if finishReason, ok := candidate["finishReason"].(string); ok && finishReason != "" {
+					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+					return nil
 				}
 			}
 		}
