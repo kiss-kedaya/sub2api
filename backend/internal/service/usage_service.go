@@ -78,7 +78,7 @@ func (s *UsageService) Create(ctx context.Context, req CreateUsageLogRequest) (*
 
 	txCtx := ctx
 	if err == nil {
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 		txCtx = dbent.NewTxContext(ctx, tx)
 	}
 
