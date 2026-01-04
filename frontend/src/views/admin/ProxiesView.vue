@@ -90,7 +90,7 @@
           <template #cell-protocol="{ value }">
             <span
               v-if="value"
-              :class="['badge', value === 'socks5' ? 'badge-primary' : 'badge-gray']"
+              :class="['badge', value.startsWith('socks5') ? 'badge-primary' : 'badge-gray']"
             >
               {{ value.toUpperCase() }}
             </span>
@@ -628,7 +628,8 @@ const protocolOptions = computed(() => [
   { value: '', label: t('admin.proxies.allProtocols') },
   { value: 'http', label: 'HTTP' },
   { value: 'https', label: 'HTTPS' },
-  { value: 'socks5', label: 'SOCKS5' }
+  { value: 'socks5', label: 'SOCKS5' },
+  { value: 'socks5h', label: 'SOCKS5H' }
 ])
 
 const statusOptions = computed(() => [
@@ -641,7 +642,8 @@ const statusOptions = computed(() => [
 const protocolSelectOptions = [
   { value: 'http', label: 'HTTP' },
   { value: 'https', label: 'HTTPS' },
-  { value: 'socks5', label: 'SOCKS5' }
+  { value: 'socks5', label: 'SOCKS5' },
+  { value: 'socks5h', label: 'SOCKS5H (服务端解析DNS)' }
 ]
 
 const editStatusOptions = computed(() => [
@@ -798,8 +800,8 @@ const parseProxyUrl = (
   const trimmed = line.trim()
   if (!trimmed) return null
 
-  // Regex to parse proxy URL
-  const regex = /^(https?|socks5):\/\/(?:([^:@]+):([^@]+)@)?([^:]+):(\d+)$/i
+  // Regex to parse proxy URL (supports http, https, socks5, socks5h)
+  const regex = /^(https?|socks5h?):\/\/(?:([^:@]+):([^@]+)@)?([^:]+):(\d+)$/i
   const match = trimmed.match(regex)
 
   if (!match) return null
