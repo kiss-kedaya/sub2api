@@ -344,6 +344,18 @@ const removeOption = (index: number) => {
 }
 
 const handleSave = async () => {
+  if (!form.key.trim()) {
+    appStore.showError(t('admin.users.attributes.keyRequired'))
+    return
+  }
+  if (!form.name.trim()) {
+    appStore.showError(t('admin.users.attributes.nameRequired'))
+    return
+  }
+  if ((form.type === 'select' || form.type === 'multi_select') && form.options.length === 0) {
+    appStore.showError(t('admin.users.attributes.optionsRequired'))
+    return
+  }
   saving.value = true
   try {
     const data = {

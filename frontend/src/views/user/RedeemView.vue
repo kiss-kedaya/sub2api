@@ -531,6 +531,7 @@ const fetchHistory = async () => {
 
 const handleRedeem = async () => {
   if (!redeemCode.value.trim()) {
+    appStore.showError(t('redeem.pleaseEnterCode'))
     return
   }
 
