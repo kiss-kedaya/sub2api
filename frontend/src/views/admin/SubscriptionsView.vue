@@ -869,7 +869,14 @@ const closeAssignModal = () => {
 }
 
 const handleAssignSubscription = async () => {
-  if (!assignForm.user_id || !assignForm.group_id) return
+  if (!assignForm.user_id) {
+    appStore.showError(t('admin.subscriptions.pleaseSelectUser'))
+    return
+  }
+  if (!assignForm.group_id) {
+    appStore.showError(t('admin.subscriptions.pleaseSelectGroup'))
+    return
+  }
 
   submitting.value = true
   try {
