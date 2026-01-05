@@ -154,6 +154,9 @@ func (s *httpUpstreamService) shouldValidateResolvedIP() bool {
 	if s.cfg == nil {
 		return false
 	}
+	if !s.cfg.Security.URLAllowlist.Enabled {
+		return false
+	}
 	return !s.cfg.Security.URLAllowlist.AllowPrivateHosts
 }
 

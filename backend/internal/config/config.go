@@ -126,6 +126,7 @@ type SecurityConfig struct {
 }
 
 type URLAllowlistConfig struct {
+	Enabled           bool     `mapstructure:"enabled"`
 	UpstreamHosts     []string `mapstructure:"upstream_hosts"`
 	PricingHosts      []string `mapstructure:"pricing_hosts"`
 	CRSHosts          []string `mapstructure:"crs_hosts"`
@@ -133,6 +134,7 @@ type URLAllowlistConfig struct {
 }
 
 type ResponseHeaderConfig struct {
+	Enabled           bool     `mapstructure:"enabled"`
 	AdditionalAllowed []string `mapstructure:"additional_allowed"`
 	ForceRemove       []string `mapstructure:"force_remove"`
 }
@@ -381,6 +383,13 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("validate config error: %w", err)
 	}
 
+	if !cfg.Security.URLAllowlist.Enabled {
+		log.Println("Warning: security.url_allowlist.enabled=false; URL validation is disabled.")
+	}
+	if !cfg.Security.ResponseHeaders.Enabled {
+		log.Println("Warning: security.response_headers.enabled=false; response header filtering is disabled.")
+	}
+
 	if cfg.Server.Mode != "release" && cfg.JWT.Secret != "" && isWeakJWTSecret(cfg.JWT.Secret) {
 		log.Println("Warning: JWT secret appears weak; use a 32+ character random secret in production.")
 	}
@@ -410,6 +419,7 @@ func setDefaults() {
 	viper.SetDefault("cors.allow_credentials", true)
 
 	// Security
+	viper.SetDefault("security.url_allowlist.enabled", false)
 	viper.SetDefault("security.url_allowlist.upstream_hosts", []string{
 		"api.openai.com",
 		"api.anthropic.com",
@@ -425,6 +435,7 @@ func setDefaults() {
 	})
 	viper.SetDefault("security.url_allowlist.crs_hosts", []string{})
 	viper.SetDefault("security.url_allowlist.allow_private_hosts", false)
+	viper.SetDefault("security.response_headers.enabled", false)
 	viper.SetDefault("security.response_headers.additional_allowed", []string{})
 	viper.SetDefault("security.response_headers.force_remove", []string{})
 	viper.SetDefault("security.csp.enabled", true)
