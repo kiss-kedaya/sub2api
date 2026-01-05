@@ -71,6 +71,26 @@ func (_u *AccountUpdate) SetNillableName(v *string) *AccountUpdate {
 	return _u
 }
 
+// SetNotes sets the "notes" field.
+func (_u *AccountUpdate) SetNotes(v string) *AccountUpdate {
+	_u.mutation.SetNotes(v)
+	return _u
+}
+
+// SetNillableNotes sets the "notes" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableNotes(v *string) *AccountUpdate {
+	if v != nil {
+		_u.SetNotes(*v)
+	}
+	return _u
+}
+
+// ClearNotes clears the value of the "notes" field.
+func (_u *AccountUpdate) ClearNotes() *AccountUpdate {
+	_u.mutation.ClearNotes()
+	return _u
+}
+
 // SetPlatform sets the "platform" field.
 func (_u *AccountUpdate) SetPlatform(v string) *AccountUpdate {
 	_u.mutation.SetPlatform(v)
@@ -545,6 +565,12 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(account.FieldName, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.Notes(); ok {
+		_spec.SetField(account.FieldNotes, field.TypeString, value)
+	}
+	if _u.mutation.NotesCleared() {
+		_spec.ClearField(account.FieldNotes, field.TypeString)
+	}
 	if value, ok := _u.mutation.Platform(); ok {
 		_spec.SetField(account.FieldPlatform, field.TypeString, value)
 	}
@@ -811,6 +837,26 @@ func (_u *AccountUpdateOne) SetNillableName(v *string) *AccountUpdateOne {
 	if v != nil {
 		_u.SetName(*v)
 	}
+	return _u
+}
+
+// SetNotes sets the "notes" field.
+func (_u *AccountUpdateOne) SetNotes(v string) *AccountUpdateOne {
+	_u.mutation.SetNotes(v)
+	return _u
+}
+
+// SetNillableNotes sets the "notes" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableNotes(v *string) *AccountUpdateOne {
+	if v != nil {
+		_u.SetNotes(*v)
+	}
+	return _u
+}
+
+// ClearNotes clears the value of the "notes" field.
+func (_u *AccountUpdateOne) ClearNotes() *AccountUpdateOne {
+	_u.mutation.ClearNotes()
 	return _u
 }
 
@@ -1317,6 +1363,12 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(account.FieldName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Notes(); ok {
+		_spec.SetField(account.FieldNotes, field.TypeString, value)
+	}
+	if _u.mutation.NotesCleared() {
+		_spec.ClearField(account.FieldNotes, field.TypeString)
 	}
 	if value, ok := _u.mutation.Platform(); ok {
 		_spec.SetField(account.FieldPlatform, field.TypeString, value)
