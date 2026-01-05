@@ -72,6 +72,7 @@ type AccountBulkUpdate struct {
 // CreateAccountRequest 创建账号请求
 type CreateAccountRequest struct {
 	Name        string         `json:"name"`
+	Notes       *string        `json:"notes"`
 	Platform    string         `json:"platform"`
 	Type        string         `json:"type"`
 	Credentials map[string]any `json:"credentials"`
@@ -85,6 +86,7 @@ type CreateAccountRequest struct {
 // UpdateAccountRequest 更新账号请求
 type UpdateAccountRequest struct {
 	Name        *string         `json:"name"`
+	Notes       *string         `json:"notes"`
 	Credentials *map[string]any `json:"credentials"`
 	Extra       *map[string]any `json:"extra"`
 	ProxyID     *int64          `json:"proxy_id"`
@@ -123,6 +125,7 @@ func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (
 	// 创建账号
 	account := &Account{
 		Name:        req.Name,
+		Notes:       normalizeAccountNotes(req.Notes),
 		Platform:    req.Platform,
 		Type:        req.Type,
 		Credentials: req.Credentials,
@@ -193,6 +196,9 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 	// 更新字段
 	if req.Name != nil {
 		account.Name = *req.Name
+	}
+	if req.Notes != nil {
+		account.Notes = normalizeAccountNotes(req.Notes)
 	}
 
 	if req.Credentials != nil {
