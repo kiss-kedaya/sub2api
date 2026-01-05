@@ -201,6 +201,12 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			return nil, err
 		}
 		baseURL = normalized
+	} else {
+		normalized, err := urlvalidator.ValidateURLFormat(baseURL, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
+		if err != nil {
+			return nil, fmt.Errorf("invalid base_url: %w", err)
+		}
+		baseURL = normalized
 	}
 	if strings.TrimSpace(input.Username) == "" || strings.TrimSpace(input.Password) == "" {
 		return nil, errors.New("username and password are required")

@@ -73,7 +73,7 @@ func (s *AccountTestService) validateUpstreamBaseURL(raw string) (string, error)
 		return "", errors.New("config is not available")
 	}
 	if !s.cfg.Security.URLAllowlist.Enabled {
-		return strings.TrimSpace(raw), nil
+		return urlvalidator.ValidateURLFormat(raw, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
 	}
 	normalized, err := urlvalidator.ValidateHTTPSURL(raw, urlvalidator.ValidationOptions{
 		AllowedHosts:     s.cfg.Security.URLAllowlist.UpstreamHosts,
