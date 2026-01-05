@@ -11,6 +11,7 @@ import (
 type Account struct {
 	ID           int64
 	Name         string
+	Notes        *string
 	Platform     string
 	Type         string
 	Credentials  map[string]any
@@ -260,6 +261,17 @@ func parseTempUnschedStrings(value any) []string {
 		}
 	}
 	return out
+}
+
+func normalizeAccountNotes(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func parseTempUnschedInt(value any) int {

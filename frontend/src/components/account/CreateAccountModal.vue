@@ -56,6 +56,16 @@
           data-tour="account-form-name"
         />
       </div>
+      <div>
+        <label class="input-label">{{ t('admin.accounts.notes') }}</label>
+        <textarea
+          v-model="form.notes"
+          rows="3"
+          class="input"
+          :placeholder="t('admin.accounts.notesPlaceholder')"
+        ></textarea>
+        <p class="input-hint">{{ t('admin.accounts.notesHint') }}</p>
+      </div>
 
       <!-- Platform Selection - Segmented Control Style -->
       <div>
@@ -1917,6 +1927,7 @@ const tempUnschedPresets = computed(() => [
 
 const form = reactive({
   name: '',
+  notes: '',
   platform: 'anthropic' as AccountPlatform,
   type: 'oauth' as AccountType, // Will be 'oauth', 'setup-token', or 'apikey'
   credentials: {} as Record<string, unknown>,
@@ -2175,6 +2186,7 @@ const splitTempUnschedKeywords = (value: string) => {
 const resetForm = () => {
   step.value = 1
   form.name = ''
+  form.notes = ''
   form.platform = 'anthropic'
   form.type = 'oauth'
   form.credentials = {}
@@ -2321,6 +2333,7 @@ const createAccountAndFinish = async (
   }
   await adminAPI.accounts.create({
     name: form.name,
+    notes: form.notes,
     platform,
     type,
     credentials,

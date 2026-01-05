@@ -385,6 +385,7 @@ export interface TempUnschedulableStatus {
 export interface Account {
   id: number
   name: string
+  notes?: string | null
   platform: AccountPlatform
   type: AccountType
   credentials?: Record<string, unknown>
@@ -477,6 +478,7 @@ export interface CodexUsageSnapshot {
 
 export interface CreateAccountRequest {
   name: string
+  notes?: string | null
   platform: AccountPlatform
   type: AccountType
   credentials: Record<string, unknown>
@@ -490,6 +492,7 @@ export interface CreateAccountRequest {
 
 export interface UpdateAccountRequest {
   name?: string
+  notes?: string | null
   type?: AccountType
   credentials?: Record<string, unknown>
   extra?: Record<string, unknown>
