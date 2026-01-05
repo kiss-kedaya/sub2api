@@ -42,28 +42,31 @@ var hopByHopHeaders = map[string]struct{}{
 }
 
 func FilterHeaders(src http.Header, cfg config.ResponseHeaderConfig) http.Header {
-	if !cfg.Enabled {
-		return passThroughHeaders(src)
-	}
 	allowed := make(map[string]struct{}, len(defaultAllowed)+len(cfg.AdditionalAllowed))
 	for key := range defaultAllowed {
 		allowed[key] = struct{}{}
 	}
-	for _, key := range cfg.AdditionalAllowed {
-		normalized := strings.ToLower(strings.TrimSpace(key))
-		if normalized == "" {
-			continue
+	// 关闭时只使用默认白名单，additional/force_remove 不生效
+	if cfg.Enabled {
+		for _, key := range cfg.AdditionalAllowed {
+			normalized := strings.ToLower(strings.TrimSpace(key))
+			if normalized == "" {
+				continue
+			}
+			allowed[normalized] = struct{}{}
 		}
-		allowed[normalized] = struct{}{}
 	}
 
-	forceRemove := make(map[string]struct{}, len(cfg.ForceRemove))
-	for _, key := range cfg.ForceRemove {
-		normalized := strings.ToLower(strings.TrimSpace(key))
-		if normalized == "" {
-			continue
+	forceRemove := map[string]struct{}{}
+	if cfg.Enabled {
+		forceRemove = make(map[string]struct{}, len(cfg.ForceRemove))
+		for _, key := range cfg.ForceRemove {
+			normalized := strings.ToLower(strings.TrimSpace(key))
+			if normalized == "" {
+				continue
+			}
+			forceRemove[normalized] = struct{}{}
 		}
-		forceRemove[normalized] = struct{}{}
 	}
 
 	filtered := make(http.Header, len(src))
@@ -93,18 +96,4 @@ func WriteFilteredHeaders(dst http.Header, src http.Header, cfg config.ResponseH
 			dst.Add(key, value)
 		}
 	}
-}
-
-func passThroughHeaders(src http.Header) http.Header {
-	filtered := make(http.Header, len(src))
-	for key, values := range src {
-		lower := strings.ToLower(key)
-		if _, isHopByHop := hopByHopHeaders[lower]; isHopByHop {
-			continue
-		}
-		for _, value := range values {
-			filtered.Add(key, value)
-		}
-	}
-	return filtered
 }
