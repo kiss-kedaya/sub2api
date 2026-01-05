@@ -115,6 +115,7 @@ type UpdateGroupInput struct {
 
 type CreateAccountInput struct {
 	Name        string
+	Notes       *string
 	Platform    string
 	Type        string
 	Credentials map[string]any
@@ -130,6 +131,7 @@ type CreateAccountInput struct {
 
 type UpdateAccountInput struct {
 	Name                  string
+	Notes                 *string
 	Type                  string // Account type: oauth, setup-token, apikey
 	Credentials           map[string]any
 	Extra                 map[string]any
@@ -653,6 +655,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 
 	account := &Account{
 		Name:        input.Name,
+		Notes:       normalizeAccountNotes(input.Notes),
 		Platform:    input.Platform,
 		Type:        input.Type,
 		Credentials: input.Credentials,
@@ -688,6 +691,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	if input.Type != "" {
 		account.Type = input.Type
+	}
+	if input.Notes != nil {
+		account.Notes = normalizeAccountNotes(input.Notes)
 	}
 	if len(input.Credentials) > 0 {
 		account.Credentials = input.Credentials
