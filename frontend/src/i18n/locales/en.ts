@@ -914,6 +914,7 @@ export default {
       failedToRevoke: 'Failed to revoke subscription',
       pleaseSelectUser: 'Please select a user',
       pleaseSelectGroup: 'Please select a group',
+      validityDaysRequired: 'Please enter a valid number of days (at least 1)',
       revokeConfirm:
         "Are you sure you want to revoke the subscription for '{user}'? This action cannot be undone."
     },
@@ -1652,6 +1653,11 @@ export default {
       failedToDelete: 'Failed to delete code',
       failedToDeleteUnused: 'Failed to delete unused codes',
       failedToCopy: 'Failed to copy codes',
+      types: {
+        balance: 'Balance',
+        concurrency: 'Concurrency',
+        subscription: 'Subscription'
+      },
       selectGroup: 'Select Group',
       selectGroupPlaceholder: 'Choose a subscription group',
       validityDays: 'Validity Days',
