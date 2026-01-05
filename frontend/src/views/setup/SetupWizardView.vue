@@ -87,7 +87,7 @@
               {{ t('setup.database.title') }}
             </h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-              Connect to your PostgreSQL database
+              {{ t('setup.database.description') }}
             </p>
           </div>
 
@@ -145,12 +145,15 @@
             </div>
             <div>
               <label class="input-label">{{ t('setup.database.sslMode') }}</label>
-              <select v-model="formData.database.sslmode" class="input">
-                <option value="disable">{{ t('setup.database.ssl.disable') }}</option>
-                <option value="require">{{ t('setup.database.ssl.require') }}</option>
-                <option value="verify-ca">{{ t('setup.database.ssl.verifyCa') }}</option>
-                <option value="verify-full">{{ t('setup.database.ssl.verifyFull') }}</option>
-              </select>
+              <Select
+                v-model="formData.database.sslmode"
+                :options="[
+                  { value: 'disable', label: t('setup.database.ssl.disable') },
+                  { value: 'require', label: t('setup.database.ssl.require') },
+                  { value: 'verify-ca', label: t('setup.database.ssl.verifyCa') },
+                  { value: 'verify-full', label: t('setup.database.ssl.verifyFull') }
+                ]"
+              />
             </div>
           </div>
 
@@ -190,7 +193,11 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
             </svg>
             {{
-              testingDb ? 'Testing...' : dbConnected ? 'Connection Successful' : 'Test Connection'
+              testingDb
+                ? t('setup.status.testing')
+                : dbConnected
+                  ? t('setup.status.success')
+                  : t('setup.status.testConnection')
             }}
           </button>
         </div>
@@ -202,7 +209,7 @@
               {{ t('setup.redis.title') }}
             </h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-              Connect to your Redis server
+              {{ t('setup.redis.description') }}
             </p>
           </div>
 
@@ -285,10 +292,10 @@
             </svg>
             {{
               testingRedis
-                ? 'Testing...'
+                ? t('setup.status.testing')
                 : redisConnected
-                  ? 'Connection Successful'
-                  : 'Test Connection'
+                  ? t('setup.status.success')
+                  : t('setup.status.testConnection')
             }}
           </button>
         </div>
@@ -300,7 +307,7 @@
               {{ t('setup.admin.title') }}
             </h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-              Create your administrator account
+              {{ t('setup.admin.description') }}
             </p>
           </div>
 
@@ -348,7 +355,7 @@
               {{ t('setup.ready.title') }}
             </h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-              Review your configuration and complete setup
+              {{ t('setup.ready.description') }}
             </p>
           </div>
 
@@ -447,13 +454,13 @@
             </svg>
             <div>
               <p class="text-sm font-medium text-green-700 dark:text-green-400">
-                Installation completed!
+                {{ t('setup.status.completed') }}
               </p>
               <p class="mt-1 text-sm text-green-600 dark:text-green-500">
                 {{
                   serviceReady
-                    ? 'Redirecting to login page...'
-                    : 'Service is restarting, please wait...'
+                    ? t('setup.status.redirecting')
+                    : t('setup.status.restarting')
                 }}
               </p>
             </div>
@@ -480,7 +487,7 @@
                 d="M15.75 19.5L8.25 12l7.5-7.5"
               />
             </svg>
-            Previous
+            {{ t('common.back') }}
           </button>
           <div v-else></div>
 
@@ -490,7 +497,7 @@
             :disabled="!canProceed"
             class="btn btn-primary"
           >
-            Next
+            {{ t('common.next') }}
             <svg
               class="ml-2 h-4 w-4"
               fill="none"
@@ -528,7 +535,7 @@
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
               ></path>
             </svg>
-            {{ installing ? 'Installing...' : 'Complete Installation' }}
+            {{ installing ? t('setup.status.installing') : t('setup.status.completeInstallation') }}
           </button>
         </div>
       </div>
@@ -540,15 +547,16 @@
 import { ref, reactive, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { testDatabase, testRedis, install, type InstallRequest } from '@/api/setup'
+import Select from '@/components/common/Select.vue'
 
 const { t } = useI18n()
 
-const steps = [
-  { id: 'database', title: 'Database' },
-  { id: 'redis', title: 'Redis' },
-  { id: 'admin', title: 'Admin' },
-  { id: 'complete', title: 'Complete' }
-]
+const steps = computed(() => [
+  { id: 'database', title: t('setup.database.title') },
+  { id: 'redis', title: t('setup.redis.title') },
+  { id: 'admin', title: t('setup.admin.title') },
+  { id: 'complete', title: t('setup.ready.title') }
+])
 
 const currentStep = ref(0)
 const errorMessage = ref('')
@@ -710,7 +718,6 @@ async function waitForServiceRestart() {
 
   // If we reach here, service didn't restart in time
   // Show a message to refresh manually
-  errorMessage.value =
-    'Service restart is taking longer than expected. Please refresh the page manually.'
+  errorMessage.value = t('setup.status.timeout')
 }
 </script>
