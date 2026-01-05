@@ -67,6 +67,7 @@ func (r *accountRepository) Create(ctx context.Context, account *service.Account
 
 	builder := r.client.Account.Create().
 		SetName(account.Name).
+		SetNillableNotes(account.Notes).
 		SetPlatform(account.Platform).
 		SetType(account.Type).
 		SetCredentials(normalizeJSONMap(account.Credentials)).
@@ -270,6 +271,7 @@ func (r *accountRepository) Update(ctx context.Context, account *service.Account
 
 	builder := r.client.Account.UpdateOneID(account.ID).
 		SetName(account.Name).
+		SetNillableNotes(account.Notes).
 		SetPlatform(account.Platform).
 		SetType(account.Type).
 		SetCredentials(normalizeJSONMap(account.Credentials)).
@@ -319,6 +321,9 @@ func (r *accountRepository) Update(ctx context.Context, account *service.Account
 		builder.SetSessionWindowStatus(account.SessionWindowStatus)
 	} else {
 		builder.ClearSessionWindowStatus()
+	}
+	if account.Notes == nil {
+		builder.ClearNotes()
 	}
 
 	updated, err := builder.Save(ctx)
@@ -1065,6 +1070,7 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 	return &service.Account{
 		ID:                  m.ID,
 		Name:                m.Name,
+		Notes:               m.Notes,
 		Platform:            m.Platform,
 		Type:                m.Type,
 		Credentials:         copyJSONMap(m.Credentials),
