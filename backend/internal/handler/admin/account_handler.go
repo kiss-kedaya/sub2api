@@ -354,7 +354,8 @@ func (h *AccountHandler) SyncFromCRS(c *gin.Context) {
 		SyncProxies: syncProxies,
 	})
 	if err != nil {
-		response.ErrorFrom(c, err)
+		// Provide detailed error message for CRS sync failures
+		response.InternalError(c, "CRS sync failed: "+err.Error())
 		return
 	}
 
