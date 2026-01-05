@@ -574,7 +574,17 @@ func isSignatureRelatedError(respBody []byte) bool {
 	}
 
 	// Keep this intentionally broad: different upstreams may use "signature" or "thought_signature".
-	return strings.Contains(msg, "thought_signature") || strings.Contains(msg, "signature")
+	if strings.Contains(msg, "thought_signature") || strings.Contains(msg, "signature") {
+		return true
+	}
+
+	// Also detect thinking block structural errors:
+	// "Expected `thinking` or `redacted_thinking`, but found `text`"
+	if strings.Contains(msg, "expected") && (strings.Contains(msg, "thinking") || strings.Contains(msg, "redacted_thinking")) {
+		return true
+	}
+
+	return false
 }
 
 func extractAntigravityErrorMessage(body []byte) string {
