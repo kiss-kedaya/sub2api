@@ -994,6 +994,7 @@ type AccountMutation struct {
 	updated_at            *time.Time
 	deleted_at            *time.Time
 	name                  *string
+	notes                 *string
 	platform              *string
 	_type                 *string
 	credentials           *map[string]interface{}
@@ -1279,6 +1280,55 @@ func (m *AccountMutation) OldName(ctx context.Context) (v string, err error) {
 // ResetName resets all changes to the "name" field.
 func (m *AccountMutation) ResetName() {
 	m.name = nil
+}
+
+// SetNotes sets the "notes" field.
+func (m *AccountMutation) SetNotes(s string) {
+	m.notes = &s
+}
+
+// Notes returns the value of the "notes" field in the mutation.
+func (m *AccountMutation) Notes() (r string, exists bool) {
+	v := m.notes
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNotes returns the old "notes" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldNotes(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNotes is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNotes requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNotes: %w", err)
+	}
+	return oldValue.Notes, nil
+}
+
+// ClearNotes clears the value of the "notes" field.
+func (m *AccountMutation) ClearNotes() {
+	m.notes = nil
+	m.clearedFields[account.FieldNotes] = struct{}{}
+}
+
+// NotesCleared returns if the "notes" field was cleared in this mutation.
+func (m *AccountMutation) NotesCleared() bool {
+	_, ok := m.clearedFields[account.FieldNotes]
+	return ok
+}
+
+// ResetNotes resets all changes to the "notes" field.
+func (m *AccountMutation) ResetNotes() {
+	m.notes = nil
+	delete(m.clearedFields, account.FieldNotes)
 }
 
 // SetPlatform sets the "platform" field.
@@ -2219,7 +2269,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 21)
+	fields := make([]string, 0, 22)
 	if m.created_at != nil {
 		fields = append(fields, account.FieldCreatedAt)
 	}
@@ -2231,6 +2281,9 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.name != nil {
 		fields = append(fields, account.FieldName)
+	}
+	if m.notes != nil {
+		fields = append(fields, account.FieldNotes)
 	}
 	if m.platform != nil {
 		fields = append(fields, account.FieldPlatform)
@@ -2299,6 +2352,8 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.DeletedAt()
 	case account.FieldName:
 		return m.Name()
+	case account.FieldNotes:
+		return m.Notes()
 	case account.FieldPlatform:
 		return m.Platform()
 	case account.FieldType:
@@ -2350,6 +2405,8 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldDeletedAt(ctx)
 	case account.FieldName:
 		return m.OldName(ctx)
+	case account.FieldNotes:
+		return m.OldNotes(ctx)
 	case account.FieldPlatform:
 		return m.OldPlatform(ctx)
 	case account.FieldType:
@@ -2420,6 +2477,13 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetName(v)
+		return nil
+	case account.FieldNotes:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNotes(v)
 		return nil
 	case account.FieldPlatform:
 		v, ok := value.(string)
@@ -2600,6 +2664,9 @@ func (m *AccountMutation) ClearedFields() []string {
 	if m.FieldCleared(account.FieldDeletedAt) {
 		fields = append(fields, account.FieldDeletedAt)
 	}
+	if m.FieldCleared(account.FieldNotes) {
+		fields = append(fields, account.FieldNotes)
+	}
 	if m.FieldCleared(account.FieldProxyID) {
 		fields = append(fields, account.FieldProxyID)
 	}
@@ -2643,6 +2710,9 @@ func (m *AccountMutation) ClearField(name string) error {
 	switch name {
 	case account.FieldDeletedAt:
 		m.ClearDeletedAt()
+		return nil
+	case account.FieldNotes:
+		m.ClearNotes()
 		return nil
 	case account.FieldProxyID:
 		m.ClearProxyID()
@@ -2690,6 +2760,9 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldName:
 		m.ResetName()
+		return nil
+	case account.FieldNotes:
+		m.ResetNotes()
 		return nil
 	case account.FieldPlatform:
 		m.ResetPlatform()
