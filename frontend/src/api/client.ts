@@ -5,6 +5,7 @@
 
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios'
 import type { ApiResponse } from '@/types'
+import { getLocale } from '@/i18n'
 
 // ==================== Axios Instance Configuration ====================
 
@@ -27,6 +28,12 @@ apiClient.interceptors.request.use(
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`
     }
+
+    // Attach locale for backend translations
+    if (config.headers) {
+      config.headers['Accept-Language'] = getLocale()
+    }
+
     return config
   },
   (error) => {
