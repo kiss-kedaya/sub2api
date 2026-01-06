@@ -5,6 +5,7 @@
 
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios'
 import type { ApiResponse } from '@/types'
+import { getLocale } from '@/i18n'
 
 // ==================== Axios Instance Configuration ====================
 
@@ -27,6 +28,12 @@ apiClient.interceptors.request.use(
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`
     }
+
+    // Attach locale for backend translations
+    if (config.headers) {
+      config.headers['Accept-Language'] = getLocale()
+    }
+
     return config
   },
   (error) => {
@@ -62,8 +69,24 @@ apiClient.interceptors.response.use(
 
       // 401: Unauthorized - clear token and redirect to login
       if (status === 401) {
+        const hasToken = !!localStorage.getItem('auth_token')
+        const url = error.config?.url || ''
+        const isAuthEndpoint =
+          url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/refresh')
+        const headers = error.config?.headers as Record<string, unknown> | undefined
+        const authHeader = headers?.Authorization ?? headers?.authorization
+        const sentAuth =
+          typeof authHeader === 'string'
+            ? authHeader.trim() !== ''
+            : Array.isArray(authHeader)
+            ? authHeader.length > 0
+            : !!authHeader
+
         localStorage.removeItem('auth_token')
         localStorage.removeItem('auth_user')
+        if ((hasToken || sentAuth) && !isAuthEndpoint) {
+          sessionStorage.setItem('auth_expired', '1')
+        }
         // Only redirect if not already on login page
         if (!window.location.pathname.includes('/login')) {
           window.location.href = '/login'

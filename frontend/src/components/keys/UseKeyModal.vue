@@ -81,9 +81,7 @@
           >
             <!-- File Hint (if exists) -->
             <p v-if="file.hint" class="text-xs text-amber-600 dark:text-amber-400 mb-1.5 flex items-center gap-1">
-              <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-              </svg>
+              <Icon name="exclamationCircle" size="sm" class="flex-shrink-0" />
               {{ file.hint }}
             </p>
             <div class="bg-gray-900 dark:bg-dark-900 rounded-xl overflow-hidden">
@@ -107,16 +105,17 @@
                 </button>
               </div>
               <!-- Code Content -->
-              <pre class="p-4 text-sm font-mono text-gray-100 overflow-x-auto"><code v-html="file.highlighted"></code></pre>
+              <pre class="p-4 text-sm font-mono text-gray-100 overflow-x-auto">
+                <code v-if="file.highlighted" v-html="file.highlighted"></code>
+                <code v-else v-text="file.content"></code>
+              </pre>
             </div>
           </div>
         </div>
 
         <!-- Usage Note -->
         <div class="flex items-start gap-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800">
-          <svg class="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
-          </svg>
+          <Icon name="infoCircle" size="md" class="text-blue-500 flex-shrink-0 mt-0.5" />
           <p class="text-sm text-blue-700 dark:text-blue-300">
             {{ platformNote }}
           </p>
@@ -141,6 +140,7 @@
 import { ref, computed, h, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import type { GroupPlatform } from '@/types'
 
@@ -164,8 +164,8 @@ interface TabConfig {
 interface FileConfig {
   path: string
   content: string
-  highlighted: string
   hint?: string  // Optional hint message for this file
+  highlighted?: string
 }
 
 const props = defineProps<Props>()
@@ -311,14 +311,23 @@ const platformNote = computed(() => {
   }
 })
 
-// Syntax highlighting helpers
-const keyword = (text: string) => `<span class="text-purple-400">${text}</span>`
-const variable = (text: string) => `<span class="text-cyan-400">${text}</span>`
-const string = (text: string) => `<span class="text-green-400">${text}</span>`
-const operator = (text: string) => `<span class="text-yellow-400">${text}</span>`
-const comment = (text: string) => `<span class="text-gray-500">${text}</span>`
-const key = (text: string) => `<span class="text-blue-400">${text}</span>`
+const escapeHtml = (value: string) => value
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;')
 
+const wrapToken = (className: string, value: string) =>
+  `<span class="${className}">${escapeHtml(value)}</span>`
+
+const keyword = (value: string) => wrapToken('text-emerald-300', value)
+const variable = (value: string) => wrapToken('text-sky-200', value)
+const operator = (value: string) => wrapToken('text-slate-400', value)
+const string = (value: string) => wrapToken('text-amber-200', value)
+const comment = (value: string) => wrapToken('text-slate-500', value)
+
+// Syntax highlighting helpers
 // Generate file configs based on platform and active tab
 const currentFiles = computed((): FileConfig[] => {
   const baseUrl = props.baseUrl || window.location.origin
@@ -343,37 +352,29 @@ const currentFiles = computed((): FileConfig[] => {
 function generateAnthropicFiles(baseUrl: string, apiKey: string): FileConfig[] {
   let path: string
   let content: string
-  let highlighted: string
 
   switch (activeTab.value) {
     case 'unix':
       path = 'Terminal'
       content = `export ANTHROPIC_BASE_URL="${baseUrl}"
 export ANTHROPIC_AUTH_TOKEN="${apiKey}"`
-      highlighted = `${keyword('export')} ${variable('ANTHROPIC_BASE_URL')}${operator('=')}${string(`"${baseUrl}"`)}
-${keyword('export')} ${variable('ANTHROPIC_AUTH_TOKEN')}${operator('=')}${string(`"${apiKey}"`)}`
       break
     case 'cmd':
       path = 'Command Prompt'
       content = `set ANTHROPIC_BASE_URL=${baseUrl}
 set ANTHROPIC_AUTH_TOKEN=${apiKey}`
-      highlighted = `${keyword('set')} ${variable('ANTHROPIC_BASE_URL')}${operator('=')}${baseUrl}
-${keyword('set')} ${variable('ANTHROPIC_AUTH_TOKEN')}${operator('=')}${apiKey}`
       break
     case 'powershell':
       path = 'PowerShell'
       content = `$env:ANTHROPIC_BASE_URL="${baseUrl}"
 $env:ANTHROPIC_AUTH_TOKEN="${apiKey}"`
-      highlighted = `${keyword('$env:')}${variable('ANTHROPIC_BASE_URL')}${operator('=')}${string(`"${baseUrl}"`)}
-${keyword('$env:')}${variable('ANTHROPIC_AUTH_TOKEN')}${operator('=')}${string(`"${apiKey}"`)}`
       break
     default:
       path = 'Terminal'
       content = ''
-      highlighted = ''
   }
 
-  return [{ path, content, highlighted }]
+  return [{ path, content }]
 }
 
 function generateGeminiCliContent(baseUrl: string, apiKey: string): FileConfig {
@@ -398,9 +399,9 @@ ${keyword('export')} ${variable('GEMINI_MODEL')}${operator('=')}${string(`"${mod
       content = `set GOOGLE_GEMINI_BASE_URL=${baseUrl}
 set GEMINI_API_KEY=${apiKey}
 set GEMINI_MODEL=${model}`
-      highlighted = `${keyword('set')} ${variable('GOOGLE_GEMINI_BASE_URL')}${operator('=')}${baseUrl}
-${keyword('set')} ${variable('GEMINI_API_KEY')}${operator('=')}${apiKey}
-${keyword('set')} ${variable('GEMINI_MODEL')}${operator('=')}${model}
+      highlighted = `${keyword('set')} ${variable('GOOGLE_GEMINI_BASE_URL')}${operator('=')}${string(baseUrl)}
+${keyword('set')} ${variable('GEMINI_API_KEY')}${operator('=')}${string(apiKey)}
+${keyword('set')} ${variable('GEMINI_MODEL')}${operator('=')}${string(model)}
 ${comment(`REM ${modelComment}`)}`
       break
     case 'powershell':
@@ -440,40 +441,20 @@ base_url = "${baseUrl}"
 wire_api = "responses"
 requires_openai_auth = true`
 
-  const configHighlighted = `${key('model_provider')} ${operator('=')} ${string('"sub2api"')}
-${key('model')} ${operator('=')} ${string('"gpt-5.2-codex"')}
-${key('model_reasoning_effort')} ${operator('=')} ${string('"high"')}
-${key('network_access')} ${operator('=')} ${string('"enabled"')}
-${key('disable_response_storage')} ${operator('=')} ${keyword('true')}
-${key('windows_wsl_setup_acknowledged')} ${operator('=')} ${keyword('true')}
-${key('model_verbosity')} ${operator('=')} ${string('"high"')}
-
-${comment('[model_providers.sub2api]')}
-${key('name')} ${operator('=')} ${string('"sub2api"')}
-${key('base_url')} ${operator('=')} ${string(`"${baseUrl}"`)}
-${key('wire_api')} ${operator('=')} ${string('"responses"')}
-${key('requires_openai_auth')} ${operator('=')} ${keyword('true')}`
-
   // auth.json content
   const authContent = `{
   "OPENAI_API_KEY": "${apiKey}"
-}`
-
-  const authHighlighted = `{
-  ${key('"OPENAI_API_KEY"')}: ${string(`"${apiKey}"`)}
 }`
 
   return [
     {
       path: `${configDir}/config.toml`,
       content: configContent,
-      highlighted: configHighlighted,
       hint: t('keys.useKeyModal.openai.configTomlHint')
     },
     {
       path: `${configDir}/auth.json`,
-      content: authContent,
-      highlighted: authHighlighted
+      content: authContent
     }
   ]
 }
