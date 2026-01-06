@@ -73,6 +73,20 @@ func (_c *AccountCreate) SetName(v string) *AccountCreate {
 	return _c
 }
 
+// SetNotes sets the "notes" field.
+func (_c *AccountCreate) SetNotes(v string) *AccountCreate {
+	_c.mutation.SetNotes(v)
+	return _c
+}
+
+// SetNillableNotes sets the "notes" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableNotes(v *string) *AccountCreate {
+	if v != nil {
+		_c.SetNotes(*v)
+	}
+	return _c
+}
+
 // SetPlatform sets the "platform" field.
 func (_c *AccountCreate) SetPlatform(v string) *AccountCreate {
 	_c.mutation.SetPlatform(v)
@@ -501,6 +515,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 		_spec.SetField(account.FieldName, field.TypeString, value)
 		_node.Name = value
 	}
+	if value, ok := _c.mutation.Notes(); ok {
+		_spec.SetField(account.FieldNotes, field.TypeString, value)
+		_node.Notes = &value
+	}
 	if value, ok := _c.mutation.Platform(); ok {
 		_spec.SetField(account.FieldPlatform, field.TypeString, value)
 		_node.Platform = value
@@ -709,6 +727,24 @@ func (u *AccountUpsert) SetName(v string) *AccountUpsert {
 // UpdateName sets the "name" field to the value that was provided on create.
 func (u *AccountUpsert) UpdateName() *AccountUpsert {
 	u.SetExcluded(account.FieldName)
+	return u
+}
+
+// SetNotes sets the "notes" field.
+func (u *AccountUpsert) SetNotes(v string) *AccountUpsert {
+	u.Set(account.FieldNotes, v)
+	return u
+}
+
+// UpdateNotes sets the "notes" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateNotes() *AccountUpsert {
+	u.SetExcluded(account.FieldNotes)
+	return u
+}
+
+// ClearNotes clears the value of the "notes" field.
+func (u *AccountUpsert) ClearNotes() *AccountUpsert {
+	u.SetNull(account.FieldNotes)
 	return u
 }
 
@@ -1073,6 +1109,27 @@ func (u *AccountUpsertOne) SetName(v string) *AccountUpsertOne {
 func (u *AccountUpsertOne) UpdateName() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateName()
+	})
+}
+
+// SetNotes sets the "notes" field.
+func (u *AccountUpsertOne) SetNotes(v string) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetNotes(v)
+	})
+}
+
+// UpdateNotes sets the "notes" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateNotes() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateNotes()
+	})
+}
+
+// ClearNotes clears the value of the "notes" field.
+func (u *AccountUpsertOne) ClearNotes() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearNotes()
 	})
 }
 
@@ -1648,6 +1705,27 @@ func (u *AccountUpsertBulk) SetName(v string) *AccountUpsertBulk {
 func (u *AccountUpsertBulk) UpdateName() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateName()
+	})
+}
+
+// SetNotes sets the "notes" field.
+func (u *AccountUpsertBulk) SetNotes(v string) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetNotes(v)
+	})
+}
+
+// UpdateNotes sets the "notes" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateNotes() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateNotes()
+	})
+}
+
+// ClearNotes clears the value of the "notes" field.
+func (u *AccountUpsertBulk) ClearNotes() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearNotes()
 	})
 }
 

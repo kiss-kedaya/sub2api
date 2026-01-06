@@ -165,7 +165,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	subscription, _ := middleware.GetSubscriptionFromContext(c)
 
 	// For Gemini native API, do not send Claude-style ping frames.
-	geminiConcurrency := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone)
+	geminiConcurrency := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone, 0)
 
 	// 0) wait queue check
 	maxWait := service.CalculateMaxWait(authSubject.Concurrency)
@@ -185,13 +185,16 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		googleError(c, http.StatusTooManyRequests, err.Error())
 		return
 	}
+	// 确保请求取消时也会释放槽位，避免长连接被动中断造成泄漏
+	userReleaseFunc = wrapReleaseOnDone(c.Request.Context(), userReleaseFunc)
 	if userReleaseFunc != nil {
 		defer userReleaseFunc()
 	}
 
 	// 2) billing eligibility check (after wait)
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription); err != nil {
-		googleError(c, http.StatusForbidden, err.Error())
+		status, _, message := billingErrorDetails(err)
+		googleError(c, status, message)
 		return
 	}
 
@@ -260,6 +263,9 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				log.Printf("Bind sticky session failed: %v", err)
 			}
 		}
+		// 账号槽位/等待计数需要在超时或断开时安全回收
+		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
+		accountWaitRelease = wrapReleaseOnDone(c.Request.Context(), accountWaitRelease)
 
 		// 5) forward (根据平台分流)
 		var result *service.ForwardResult
