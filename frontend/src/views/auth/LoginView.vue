@@ -72,9 +72,19 @@
               <Icon v-else name="eye" size="md" />
             </button>
           </div>
-          <p v-if="errors.password" class="input-error-text">
-            {{ errors.password }}
-          </p>
+          <div class="mt-1 flex items-center justify-between">
+            <p v-if="errors.password" class="input-error-text">
+              {{ errors.password }}
+            </p>
+            <span v-else></span>
+            <router-link
+              v-if="passwordResetEnabled"
+              to="/forgot-password"
+              class="text-sm font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+            >
+              {{ t('auth.forgotPassword') }}
+            </router-link>
+          </div>
         </div>
 
         <!-- Turnstile Widget -->
@@ -184,6 +194,7 @@ const showPassword = ref<boolean>(false)
 const turnstileEnabled = ref<boolean>(false)
 const turnstileSiteKey = ref<string>('')
 const linuxdoOAuthEnabled = ref<boolean>(false)
+const passwordResetEnabled = ref<boolean>(false)
 
 // Turnstile
 const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
@@ -216,6 +227,7 @@ onMounted(async () => {
     turnstileEnabled.value = settings.turnstile_enabled
     turnstileSiteKey.value = settings.turnstile_site_key || ''
     linuxdoOAuthEnabled.value = settings.linuxdo_oauth_enabled
+    passwordResetEnabled.value = settings.password_reset_enabled
   } catch (error) {
     console.error('Failed to load public settings:', error)
   }
