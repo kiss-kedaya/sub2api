@@ -18,15 +18,26 @@
 
       <div>
         <label class="input-label">{{ t('admin.accounts.dataImportFile') }}</label>
+        <div
+          class="flex items-center justify-between gap-3 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-3 dark:border-dark-600 dark:bg-dark-800"
+        >
+          <div class="min-w-0">
+            <div class="truncate text-sm text-gray-700 dark:text-dark-200">
+              {{ fileName || t('admin.accounts.dataImportSelectFile') }}
+            </div>
+            <div class="text-xs text-gray-500 dark:text-dark-400">JSON (.json)</div>
+          </div>
+          <button type="button" class="btn btn-secondary shrink-0" @click="openFilePicker">
+            {{ t('common.chooseFile') }}
+          </button>
+        </div>
         <input
+          ref="fileInput"
           type="file"
-          class="input"
+          class="hidden"
           accept="application/json,.json"
           @change="handleFileChange"
         />
-        <p v-if="fileName" class="mt-2 text-xs text-gray-500 dark:text-dark-400">
-          {{ fileName }}
-        </p>
       </div>
 
       <div
@@ -100,6 +111,7 @@ const importing = ref(false)
 const file = ref<File | null>(null)
 const result = ref<AdminDataImportResult | null>(null)
 
+const fileInput = ref<HTMLInputElement | null>(null)
 const fileName = computed(() => file.value?.name || '')
 
 const errorItems = computed(() => result.value?.errors || [])
@@ -110,9 +122,16 @@ watch(
     if (open) {
       file.value = null
       result.value = null
+      if (fileInput.value) {
+        fileInput.value.value = ''
+      }
     }
   }
 )
+
+const openFilePicker = () => {
+  fileInput.value?.click()
+}
 
 const handleFileChange = (event: Event) => {
   const target = event.target as HTMLInputElement
