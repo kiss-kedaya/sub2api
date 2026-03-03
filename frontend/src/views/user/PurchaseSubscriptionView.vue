@@ -74,16 +74,11 @@ import { useAppStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { buildEmbeddedUrl, detectTheme } from '@/utils/embedded-url'
 
 const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
-
-const PURCHASE_USER_ID_QUERY_KEY = 'user_id'
-const PURCHASE_AUTH_TOKEN_QUERY_KEY = 'token'
-const PURCHASE_THEME_QUERY_KEY = 'theme'
-const PURCHASE_UI_MODE_QUERY_KEY = 'ui_mode'
-const PURCHASE_UI_MODE_EMBEDDED = 'embedded'
 
 const loading = ref(false)
 const purchaseTheme = ref<'light' | 'dark'>('light')
@@ -93,37 +88,9 @@ const purchaseEnabled = computed(() => {
   return appStore.cachedPublicSettings?.purchase_subscription_enabled ?? false
 })
 
-function detectTheme(): 'light' | 'dark' {
-  if (typeof document === 'undefined') return 'light'
-  return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
-}
-
-function buildPurchaseUrl(
-  baseUrl: string,
-  userId?: number,
-  authToken?: string | null,
-  theme: 'light' | 'dark' = 'light',
-): string {
-  if (!baseUrl) return baseUrl
-  try {
-    const url = new URL(baseUrl)
-    if (userId) {
-      url.searchParams.set(PURCHASE_USER_ID_QUERY_KEY, String(userId))
-    }
-    if (authToken) {
-      url.searchParams.set(PURCHASE_AUTH_TOKEN_QUERY_KEY, authToken)
-    }
-    url.searchParams.set(PURCHASE_THEME_QUERY_KEY, theme)
-    url.searchParams.set(PURCHASE_UI_MODE_QUERY_KEY, PURCHASE_UI_MODE_EMBEDDED)
-    return url.toString()
-  } catch {
-    return baseUrl
-  }
-}
-
 const purchaseUrl = computed(() => {
   const baseUrl = (appStore.cachedPublicSettings?.purchase_subscription_url || '').trim()
-  return buildPurchaseUrl(baseUrl, authStore.user?.id, authStore.token, purchaseTheme.value)
+  return buildEmbeddedUrl(baseUrl, authStore.user?.id, authStore.token, purchaseTheme.value)
 })
 
 const isValidUrl = computed(() => {
