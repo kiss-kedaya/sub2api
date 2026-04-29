@@ -71,6 +71,8 @@ func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProt
 			return openAIWSHTTPDecision("account_mode_off")
 		case OpenAIWSIngressModeCtxPool, OpenAIWSIngressModePassthrough:
 			// continue
+		case OpenAIWSIngressModeHTTPBridge:
+			return openAIWSHTTPDecision("ws_v2_mode_http_bridge")
 		case OpenAIWSIngressModeShared, OpenAIWSIngressModeDedicated:
 			// 历史值兼容：按 ctx_pool 处理。
 			mode = OpenAIWSIngressModeCtxPool
