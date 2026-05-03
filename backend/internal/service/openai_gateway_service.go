@@ -2601,7 +2601,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	httpInvalidEncryptedContentRetryTried := false
 	for {
 		// Build upstream request
-		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
+		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
 		releaseUpstreamCtx()
 		if err != nil {
@@ -2852,7 +2852,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		return nil, err
 	}
 
-	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
+	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
 	releaseUpstreamCtx()
 	if err != nil {
