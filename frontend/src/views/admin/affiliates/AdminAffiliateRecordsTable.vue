@@ -83,17 +83,17 @@
           <template #cell-amount="{ row }">
             <AmountText :value="row.amount" strong />
           </template>
-          <template #cell-current_balance="{ row }">
-            <AmountText :value="row.current_balance" />
+          <template #cell-balance_after="{ row }">
+            <NullableAmountText :value="row.balance_after" />
           </template>
-          <template #cell-remaining_quota="{ row }">
-            <AmountText :value="row.remaining_quota" />
+          <template #cell-available_quota_after="{ row }">
+            <NullableAmountText :value="row.available_quota_after" />
           </template>
-          <template #cell-frozen_quota="{ row }">
-            <AmountText :value="row.frozen_quota" />
+          <template #cell-frozen_quota_after="{ row }">
+            <NullableAmountText :value="row.frozen_quota_after" />
           </template>
-          <template #cell-history_quota="{ row }">
-            <AmountText :value="row.history_quota" />
+          <template #cell-history_quota_after="{ row }">
+            <NullableAmountText :value="row.history_quota_after" />
           </template>
           <template #cell-created_at="{ row }">
             <span class="text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(row.created_at) }}</span>
@@ -142,7 +142,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
+import { computed, defineComponent, h, onMounted, reactive, ref, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -202,10 +202,10 @@ const columns = computed<Column[]>(() => {
   return [
     { key: 'user', label: t('admin.affiliates.records.user'), sortable: true },
     { key: 'amount', label: t('admin.affiliates.records.transferAmount'), sortable: true },
-    { key: 'current_balance', label: t('admin.affiliates.records.currentBalance'), sortable: true },
-    { key: 'remaining_quota', label: t('admin.affiliates.records.remainingQuota'), sortable: true },
-    { key: 'frozen_quota', label: t('admin.affiliates.records.frozenQuota'), sortable: true },
-    { key: 'history_quota', label: t('admin.affiliates.records.historyQuota'), sortable: true },
+    { key: 'balance_after', label: t('admin.affiliates.records.balanceAfter'), sortable: true },
+    { key: 'available_quota_after', label: t('admin.affiliates.records.availableQuotaAfter'), sortable: true },
+    { key: 'frozen_quota_after', label: t('admin.affiliates.records.frozenQuotaAfter'), sortable: true },
+    { key: 'history_quota_after', label: t('admin.affiliates.records.historyQuotaAfter'), sortable: true },
     { key: 'created_at', label: t('admin.affiliates.records.transferredAt'), sortable: true },
   ]
 })
@@ -365,6 +365,21 @@ const AmountText = defineComponent({
         ? 'text-sm font-semibold text-emerald-600 dark:text-emerald-400'
         : 'text-sm text-gray-900 dark:text-white',
     }, `$${formatAmount(amountProps.value)}`)
+  },
+})
+
+const NullableAmountText = defineComponent({
+  props: {
+    value: { type: Number as PropType<number | null | undefined>, default: null },
+  },
+  setup(amountProps) {
+    return () => {
+      const value = amountProps.value
+      if (value === null || value === undefined) {
+        return h('span', { class: 'text-sm text-gray-400 dark:text-dark-500' }, '-')
+      }
+      return h(AmountText, { value })
+    }
   },
 })
 
