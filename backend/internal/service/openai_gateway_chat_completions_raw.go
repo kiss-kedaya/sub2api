@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
 
@@ -97,6 +98,13 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		return nil, policyErr
 	}
 	upstreamBody = updatedBody
+	if clientStream {
+		var usageErr error
+		upstreamBody, usageErr = ensureOpenAIChatStreamUsage(upstreamBody)
+		if usageErr != nil {
+			return nil, fmt.Errorf("enable stream usage: %w", usageErr)
+		}
+	}
 
 	logger.L().Debug("openai chat_completions raw: forwarding without protocol conversion",
 		zap.Int64("account_id", account.ID),
@@ -121,7 +129,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	}
 	targetURL := buildOpenAIChatCompletionsURL(validatedURL)
 
-	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(upstreamBody))
+	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(upstreamBody))
+	releaseUpstreamCtx()
 	if err != nil {
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
@@ -219,8 +229,8 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 // 末尾 [DONE] 之前的 chunk 中的 usage 字段，按 OpenAI CC 协议）。
 //
 // usage 字段仅在客户端请求 stream_options.include_usage=true 时出现于上游响应中。
-// 本函数不检查客户端的请求 flag——上游会自行处理，我们仅在上游响应
-// chunk 中出现 usage 时提取。
+// 网关会对上游强制打开 include_usage 以保证计费完整，并原样向下游透传 usage，
+// 让级联代理或下游计费系统也能拿到完整用量。
 func (s *OpenAIGatewayService) streamRawChatCompletions(
 	c *gin.Context,
 	resp *http.Response,
@@ -251,36 +261,41 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 	var usage OpenAIUsage
 	var firstTokenMs *int
+	clientDisconnected := false
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		// Direct passthrough: write each line + blank line separator
-		if _, werr := c.Writer.WriteString(line + "\n"); werr != nil {
-			logger.L().Debug("openai chat_completions raw: client write failed",
-				zap.Error(werr),
-				zap.String("request_id", requestID),
-			)
-			break
+		if payload, ok := extractOpenAISSEDataLine(line); ok {
+			trimmedPayload := strings.TrimSpace(payload)
+			if trimmedPayload != "[DONE]" {
+				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
+				if u := extractCCStreamUsage(payload); u != nil {
+					usage = *u
+				}
+				if firstTokenMs == nil && !usageOnlyChunk {
+					elapsed := int(time.Since(startTime).Milliseconds())
+					firstTokenMs = &elapsed
+				}
+			}
+		}
+
+		if !clientDisconnected {
+			if _, werr := c.Writer.WriteString(line + "\n"); werr != nil {
+				clientDisconnected = true
+				logger.L().Debug("openai chat_completions raw: client disconnected, continuing to drain upstream for billing",
+					zap.Error(werr),
+					zap.String("request_id", requestID),
+				)
+			}
 		}
 		if line == "" {
-			c.Writer.Flush()
+			if !clientDisconnected {
+				c.Writer.Flush()
+			}
 			continue
 		}
-		c.Writer.Flush()
-
-		// Track first token timing on first non-empty data line
-		if firstTokenMs == nil && strings.HasPrefix(line, "data: ") && line != "data: [DONE]" {
-			elapsed := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &elapsed
-		}
-
-		// Extract usage from any chunk that carries it (CC streams typically put
-		// usage in the final chunk before [DONE], but may also appear elsewhere).
-		if strings.HasPrefix(line, "data: ") && line != "data: [DONE]" {
-			payload := line[6:]
-			if u := extractCCStreamUsage(payload); u != nil {
-				usage = *u
-			}
+		if !clientDisconnected {
+			c.Writer.Flush()
 		}
 	}
 
@@ -307,6 +322,45 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	}, nil
 }
 
+// ensureOpenAIChatStreamUsage 确保 raw Chat Completions 流式请求会让上游返回 usage。
+// usage 也会继续向下游透传，支持级联代理和下游计费系统。
+func ensureOpenAIChatStreamUsage(body []byte) ([]byte, error) {
+	updated, err := sjson.SetBytes(body, "stream_options.include_usage", true)
+	if err != nil {
+		return body, err
+	}
+	return updated, nil
+}
+
+func isOpenAIChatUsageOnlyStreamChunk(payload string) bool {
+	if strings.TrimSpace(payload) == "" {
+		return false
+	}
+	if !gjson.Get(payload, "usage").Exists() {
+		return false
+	}
+	choices := gjson.Get(payload, "choices")
+	return choices.Exists() && choices.IsArray() && len(choices.Array()) == 0
+}
+
+// extractCCStreamUsage 从单个 CC 流式 chunk 的 payload 中提取 usage 字段。
+// CC 协议中 usage 仅出现在末尾 chunk（且仅当 include_usage 生效时），
+// 但上游可能在多个 chunk 中重复——总是用最新值。
+func extractCCStreamUsage(payload string) *OpenAIUsage {
+	usageResult := gjson.Get(payload, "usage")
+	if !usageResult.Exists() || !usageResult.IsObject() {
+		return nil
+	}
+	u := OpenAIUsage{
+		InputTokens:  int(gjson.Get(payload, "usage.prompt_tokens").Int()),
+		OutputTokens: int(gjson.Get(payload, "usage.completion_tokens").Int()),
+	}
+	if cached := gjson.Get(payload, "usage.prompt_tokens_details.cached_tokens"); cached.Exists() {
+		u.CacheReadInputTokens = int(cached.Int())
+	}
+	return &u
+}
+
 // bufferRawChatCompletions 透传上游 CC 非流式 JSON 响应。
 func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	c *gin.Context,
@@ -320,9 +374,11 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
-		writeChatCompletionsError(c, http.StatusBadGateway, "api_error", "Failed to read upstream response")
+		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
+			writeChatCompletionsError(c, http.StatusBadGateway, "api_error", "Failed to read upstream response")
+		}
 		return nil, fmt.Errorf("read upstream body: %w", err)
 	}
 
@@ -360,24 +416,6 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		Stream:          false,
 		Duration:        time.Since(startTime),
 	}, nil
-}
-
-// extractCCStreamUsage 从单个 CC 流式 chunk 的 payload 中提取 usage 字段。
-// CC 协议中 usage 仅出现在末尾 chunk（且仅当客户端请求 stream_options.include_usage
-// 时），但上游可能在多个 chunk 中重复——总是用最新值。
-func extractCCStreamUsage(payload string) *OpenAIUsage {
-	usageResult := gjson.Get(payload, "usage")
-	if !usageResult.Exists() || !usageResult.IsObject() {
-		return nil
-	}
-	u := OpenAIUsage{
-		InputTokens:  int(gjson.Get(payload, "usage.prompt_tokens").Int()),
-		OutputTokens: int(gjson.Get(payload, "usage.completion_tokens").Int()),
-	}
-	if cached := gjson.Get(payload, "usage.prompt_tokens_details.cached_tokens"); cached.Exists() {
-		u.CacheReadInputTokens = int(cached.Int())
-	}
-	return &u
 }
 
 // buildOpenAIChatCompletionsURL 拼接上游 Chat Completions 端点 URL。
