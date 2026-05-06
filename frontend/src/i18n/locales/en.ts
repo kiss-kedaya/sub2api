@@ -472,6 +472,9 @@ export default {
       completing: 'Completing registration…',
       completeRegistrationFailed: 'Registration failed. Please check your invitation code and try again.'
     },
+    emailOAuth: {
+      signIn: 'Continue with {providerName}'
+    },
     oidc: {
       signIn: 'Continue with {providerName}',
       callbackTitle: 'Signing you in with {providerName}',
@@ -531,6 +534,8 @@ export default {
     oauth: {
       callbackTitle: 'OAuth Callback',
       callbackHint: 'Copy the code and state back to the admin authorization flow when needed.',
+      invalidCallbackTitle: 'Invalid sign-in callback',
+      invalidCallbackHint: 'This page does not contain a valid authorization result. Return to the login page and start quick sign-in again.',
       code: 'Code',
       state: 'State',
       fullUrl: 'Full URL'
