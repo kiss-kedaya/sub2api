@@ -84,6 +84,30 @@ func TestApplyToolNameRewriteToBody_RenamesToolsAndToolChoice(t *testing.T) {
 	require.Equal(t, "tool", gjson.GetBytes(out, "tool_choice.type").String())
 }
 
+
+func TestApplyToolNameRewriteToBody_RenamesToolUseInMessages(t *testing.T) {
+	// sessions_list -> cc_sess_list (static prefix: sessions_ -> sessions_)
+	// web_search is a server tool (type != ""), not rewritten
+	// messages tool_use names must be rewritten to match tools[]
+	body := []byte(`{"tools":[{"name":"sessions_list","input_schema":{}},{"name":"web_search","type":"web_search_20250305"}],"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]},{"role":"assistant","content":[{"type":"tool_use","id":"tu_01","name":"sessions_list","input":{}},{"type":"text","text":"thinking"}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_01","content":"ok"}]}]}`)
+	rw := buildToolNameRewriteFromBody(body)
+	require.NotNil(t, rw)
+	require.Equal(t, "cc_sess_list", rw.Forward["sessions_list"])
+
+	out := applyToolNameRewriteToBody(body, rw)
+
+	// tools[0].name rewritten
+	require.Equal(t, "cc_sess_list", gjson.GetBytes(out, "tools.0.name").String())
+	// tools[1].name untouched (server tool)
+	require.Equal(t, "web_search", gjson.GetBytes(out, "tools.1.name").String())
+	// messages[1].content[0].name (tool_use) also rewritten to match tools
+	require.Equal(t, "cc_sess_list", gjson.GetBytes(out, "messages.1.content.0.name").String())
+	// messages[1].content[1] (text) untouched
+	require.Equal(t, "thinking", gjson.GetBytes(out, "messages.1.content.1.text").String())
+	// messages[2].content[0] (tool_result) untouched — no name field in tool_result
+	require.Equal(t, "ok", gjson.GetBytes(out, "messages.2.content.0.content").String())
+}
+
 func TestApplyToolsLastCacheBreakpoint_InjectsDefault(t *testing.T) {
 	body := []byte(`{"tools":[{"name":"a","input_schema":{}},{"name":"b","input_schema":{}}]}`)
 	out := applyToolsLastCacheBreakpoint(body)
