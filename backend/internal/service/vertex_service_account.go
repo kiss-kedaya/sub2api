@@ -202,7 +202,11 @@ func newVertexServiceAccountHTTPClient(proxyURL string) (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("unexpected default transport type %T", http.DefaultTransport)
+	}
+	transport := defaultTransport.Clone()
 	transport.Proxy = nil
 	if err := proxyutil.ConfigureTransportProxy(transport, parsedProxy); err != nil {
 		return nil, err
