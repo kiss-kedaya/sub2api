@@ -4065,11 +4065,6 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 	}
 }
 
-// extractImageSize 从 Gemini 请求中提取 image_size 参数
-func (s *AntigravityGatewayService) extractImageSize(body []byte) string {
-	return normalizeOpenAIImageSizeTier(s.extractImageInputSize(body))
-}
-
 func (s *AntigravityGatewayService) extractImageInputSize(body []byte) string {
 	var req antigravity.GeminiRequest
 	if err := json.Unmarshal(body, &req); err != nil {
