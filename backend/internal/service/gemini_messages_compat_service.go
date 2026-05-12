@@ -3434,11 +3434,6 @@ func convertClaudeGenerationConfig(req map[string]any) map[string]any {
 	return out
 }
 
-// extractImageSize 从 Gemini 请求中提取 image_size 参数
-func (s *GeminiMessagesCompatService) extractImageSize(body []byte) string {
-	return normalizeOpenAIImageSizeTier(s.extractImageInputSize(body))
-}
-
 func (s *GeminiMessagesCompatService) extractImageInputSize(body []byte) string {
 	var req struct {
 		GenerationConfig *struct {
