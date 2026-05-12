@@ -228,14 +228,19 @@ type OpenAIForwardResult struct {
 	ServiceTier *string
 	// ReasoningEffort is extracted from request body (reasoning.effort) or derived from model suffix.
 	// Stored for usage records display; nil means not provided / not applicable.
-	ReasoningEffort *string
-	Stream          bool
-	OpenAIWSMode    bool
-	ResponseHeaders http.Header
-	Duration        time.Duration
-	FirstTokenMs    *int
-	ImageCount      int
-	ImageSize       string
+	ReasoningEffort    *string
+	Stream             bool
+	OpenAIWSMode       bool
+	ResponseHeaders    http.Header
+	Duration           time.Duration
+	FirstTokenMs       *int
+	ImageCount         int
+	ImageSize          string
+	ImageInputSize     string
+	ImageOutputSize    string
+	ImageOutputSizes   []string
+	ImageSizeSource    string
+	ImageSizeBreakdown map[string]int
 }
 
 type OpenAIWSRetryMetricsSnapshot struct {
@@ -2416,9 +2421,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	imageBillingModel := ""
 	imageSizeTier := ""
+	imageInputSize := ""
 	if IsImageGenerationIntentMap(openAIResponsesEndpoint, reqModel, reqBody) {
 		var imageCfgErr error
-		imageBillingModel, imageSizeTier, imageCfgErr = resolveOpenAIResponsesImageBillingConfig(reqBody, billingModel)
+		imageCfg, imageCfgErr := resolveOpenAIResponsesImageBillingConfigDetailed(reqBody, billingModel)
 		if imageCfgErr != nil {
 			setOpsUpstreamError(c, http.StatusBadRequest, imageCfgErr.Error(), "")
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -2430,6 +2436,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			})
 			return nil, imageCfgErr
 		}
+		imageBillingModel = imageCfg.Model
+		imageSizeTier = imageCfg.SizeTier
+		imageInputSize = imageCfg.InputSize
 	}
 
 	// Re-serialize body only if modified
@@ -2671,6 +2680,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			wsResult.UpstreamModel = upstreamModel
 			if wsResult.ImageCount > 0 {
 				wsResult.ImageSize = imageSizeTier
+				wsResult.ImageInputSize = imageInputSize
 				wsResult.BillingModel = imageBillingModel
 			}
 			return wsResult, nil
@@ -2777,6 +2787,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		var usage *OpenAIUsage
 		var firstTokenMs *int
 		imageCount := 0
+		var imageOutputSizes []string
 		if reqStream {
 			streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, upstreamModel)
 			if err != nil {
@@ -2785,6 +2796,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			usage = streamResult.usage
 			firstTokenMs = streamResult.firstTokenMs
 			imageCount = streamResult.imageCount
+			imageOutputSizes = streamResult.imageOutputSizes
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
@@ -2792,6 +2804,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			usage = nonStreamResult.usage
 			imageCount = nonStreamResult.imageCount
+			imageOutputSizes = nonStreamResult.imageOutputSizes
 		}
 
 		// Extract and save Codex usage snapshot from response headers (for OAuth accounts)
@@ -2823,6 +2836,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if imageCount > 0 {
 			forwardResult.ImageCount = imageCount
 			forwardResult.ImageSize = imageSizeTier
+			forwardResult.ImageInputSize = imageInputSize
+			forwardResult.ImageOutputSizes = imageOutputSizes
 			forwardResult.BillingModel = imageBillingModel
 		}
 		return forwardResult, nil
@@ -2927,9 +2942,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 	imageBillingModel := ""
 	imageSizeTier := ""
+	imageInputSize := ""
 	if IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body) {
 		var imageCfgErr error
-		imageBillingModel, imageSizeTier, imageCfgErr = resolveOpenAIResponsesImageBillingConfigFromBody(body, reqModel)
+		imageCfg, imageCfgErr := resolveOpenAIResponsesImageBillingConfigDetailedFromBody(body, reqModel)
 		if imageCfgErr != nil {
 			setOpsUpstreamError(c, http.StatusBadRequest, imageCfgErr.Error(), "")
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -2941,6 +2957,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			})
 			return nil, imageCfgErr
 		}
+		imageBillingModel = imageCfg.Model
+		imageSizeTier = imageCfg.SizeTier
+		imageInputSize = imageCfg.InputSize
 	}
 
 	logger.LegacyPrintf("service.openai_gateway",
@@ -3026,6 +3045,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	var usage *OpenAIUsage
 	var firstTokenMs *int
 	imageCount := 0
+	var imageOutputSizes []string
 	if reqStream {
 		result, err := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel)
 		if err != nil {
@@ -3034,6 +3054,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		usage = result.usage
 		firstTokenMs = result.firstTokenMs
 		imageCount = result.imageCount
+		imageOutputSizes = result.imageOutputSizes
 	} else {
 		result, err := s.handleNonStreamingResponsePassthrough(ctx, resp, c, reqModel, upstreamPassthroughModel)
 		if err != nil {
@@ -3041,6 +3062,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		usage = result.usage
 		imageCount = result.imageCount
+		imageOutputSizes = result.imageOutputSizes
 	}
 
 	if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
@@ -3066,6 +3088,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	if imageCount > 0 {
 		forwardResult.ImageCount = imageCount
 		forwardResult.ImageSize = imageSizeTier
+		forwardResult.ImageInputSize = imageInputSize
+		forwardResult.ImageOutputSizes = imageOutputSizes
 		forwardResult.BillingModel = imageBillingModel
 	}
 	return forwardResult, nil
@@ -3361,15 +3385,17 @@ func collectOpenAIPassthroughTimeoutHeaders(h http.Header) []string {
 }
 
 type openaiStreamingResultPassthrough struct {
-	usage        *OpenAIUsage
-	firstTokenMs *int
-	imageCount   int
+	usage            *OpenAIUsage
+	firstTokenMs     *int
+	imageCount       int
+	imageOutputSizes []string
 }
 
 type openaiNonStreamingResultPassthrough struct {
 	*OpenAIUsage
-	usage      *OpenAIUsage
-	imageCount int
+	usage            *OpenAIUsage
+	imageCount       int
+	imageOutputSizes []string
 }
 
 func openAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
@@ -3539,7 +3565,12 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
-		return &openaiStreamingResultPassthrough{usage: usage, firstTokenMs: firstTokenMs, imageCount: imageCounter.Count()}
+		return &openaiStreamingResultPassthrough{
+			usage:            usage,
+			firstTokenMs:     firstTokenMs,
+			imageCount:       imageCounter.Count(),
+			imageOutputSizes: imageCounter.Sizes(),
+		}
 	}
 
 	for scanner.Scan() {
@@ -3696,9 +3727,10 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	}
 	c.Data(resp.StatusCode, contentType, body)
 	return &openaiNonStreamingResultPassthrough{
-		OpenAIUsage: usage,
-		usage:       usage,
-		imageCount:  countOpenAIResponseImageOutputsFromJSONBytes(body),
+		OpenAIUsage:      usage,
+		usage:            usage,
+		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
+		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
 	}, nil
 }
 
@@ -3758,9 +3790,10 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 	c.Data(resp.StatusCode, contentType, body)
 
 	return &openaiNonStreamingResultPassthrough{
-		OpenAIUsage: usage,
-		usage:       usage,
-		imageCount:  countOpenAIImageOutputsFromSSEBody(bodyText),
+		OpenAIUsage:      usage,
+		usage:            usage,
+		imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
+		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
 	}, nil
 }
 
@@ -4182,15 +4215,17 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 
 // openaiStreamingResult streaming response result
 type openaiStreamingResult struct {
-	usage        *OpenAIUsage
-	firstTokenMs *int
-	imageCount   int
+	usage            *OpenAIUsage
+	firstTokenMs     *int
+	imageCount       int
+	imageOutputSizes []string
 }
 
 type openaiNonStreamingResult struct {
 	*OpenAIUsage
-	usage      *OpenAIUsage
-	imageCount int
+	usage            *OpenAIUsage
+	imageCount       int
+	imageOutputSizes []string
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
@@ -4303,7 +4338,12 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 
 	needModelReplace := originalModel != mappedModel
 	resultWithUsage := func() *openaiStreamingResult {
-		return &openaiStreamingResult{usage: usage, firstTokenMs: firstTokenMs, imageCount: imageCounter.Count()}
+		return &openaiStreamingResult{
+			usage:            usage,
+			firstTokenMs:     firstTokenMs,
+			imageCount:       imageCounter.Count(),
+			imageOutputSizes: imageCounter.Sizes(),
+		}
 	}
 	finalizeStream := func() (*openaiStreamingResult, error) {
 		if !sawTerminalEvent {
@@ -4711,9 +4751,10 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	c.Data(resp.StatusCode, contentType, body)
 
 	return &openaiNonStreamingResult{
-		OpenAIUsage: usage,
-		usage:       usage,
-		imageCount:  countOpenAIResponseImageOutputsFromJSONBytes(body),
+		OpenAIUsage:      usage,
+		usage:            usage,
+		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
+		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
 	}, nil
 }
 
@@ -4775,9 +4816,10 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 	c.Data(resp.StatusCode, contentType, body)
 
 	return &openaiNonStreamingResult{
-		OpenAIUsage: usage,
-		usage:       usage,
-		imageCount:  countOpenAIImageOutputsFromSSEBody(bodyText),
+		OpenAIUsage:      usage,
+		usage:            usage,
+		imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
+		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
 	}, nil
 }
 
@@ -5216,6 +5258,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	user := input.User
 	account := input.Account
 	subscription := input.Subscription
+	ApplyOpenAIImageBillingResolution(result)
 
 	// 计算实际的新输入token（减去缓存读取的token）
 	// 因为 input_tokens 包含了 cache_read_tokens，而缓存读取的token不应按输入价格计费
@@ -5325,6 +5368,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		ImageOutputTokens:   result.Usage.ImageOutputTokens,
 		ImageCount:          result.ImageCount,
 		ImageSize:           optionalTrimmedStringPtr(result.ImageSize),
+		ImageInputSize:      optionalTrimmedStringPtr(result.ImageInputSize),
+		ImageOutputSize:     optionalTrimmedStringPtr(result.ImageOutputSize),
+		ImageSizeSource:     optionalTrimmedStringPtr(result.ImageSizeSource),
+		ImageSizeBreakdown:  result.ImageSizeBreakdown,
 	}
 	if cost != nil {
 		usageLog.InputCost = cost.InputCost
@@ -5493,6 +5540,7 @@ func (s *OpenAIGatewayService) calculateOpenAIImageCost(
 	result *OpenAIForwardResult,
 	multiplier float64,
 ) *CostBreakdown {
+	sizeTier := NormalizeImageBillingTierOrDefault(result.ImageSize)
 	if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved != nil &&
 		(resolved.Mode == BillingModePerRequest || resolved.Mode == BillingModeImage) {
 		gid := apiKey.Group.ID
@@ -5501,7 +5549,7 @@ func (s *OpenAIGatewayService) calculateOpenAIImageCost(
 			Model:          billingModel,
 			GroupID:        &gid,
 			RequestCount:   result.ImageCount,
-			SizeTier:       result.ImageSize,
+			SizeTier:       sizeTier,
 			RateMultiplier: multiplier,
 			Resolver:       s.resolver,
 			Resolved:       resolved,
@@ -5520,7 +5568,7 @@ func (s *OpenAIGatewayService) calculateOpenAIImageCost(
 			Price4K: apiKey.Group.ImagePrice4K,
 		}
 	}
-	return s.billingService.CalculateImageCost(billingModel, result.ImageSize, result.ImageCount, groupConfig, multiplier)
+	return s.billingService.CalculateImageCost(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier)
 }
 
 func (s *OpenAIGatewayService) resolveOpenAIChannelPricing(ctx context.Context, billingModel string, apiKey *APIKey) *ResolvedPricing {
