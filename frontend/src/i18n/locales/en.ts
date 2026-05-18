@@ -2670,6 +2670,9 @@ export default {
       resetInMinutes: 'Resets in {minutes}m',
       resetInHoursMinutes: 'Resets in {hours}h {minutes}m',
       resetInDaysHours: 'Resets in {days}d {hours}h',
+      quotaEndsInMinutes: 'Quota ends in {minutes}m',
+      quotaEndsInHoursMinutes: 'Quota ends in {hours}h {minutes}m',
+      quotaEndsInDaysHours: 'Quota ends in {days}d {hours}h',
       daysRemaining: 'days remaining',
       remainingDays: 'Remaining days',
       noExpiration: 'No expiration',
@@ -6253,6 +6256,7 @@ export default {
     daysRemaining: '{days} days remaining',
     expiresOn: 'Expires on {date}',
     resetIn: 'Resets in {time}',
+    quotaEndsIn: 'Quota ends in {time}',
     windowNotActive: 'Awaiting first use',
     usageOf: '{used} of {limit}'
   },
