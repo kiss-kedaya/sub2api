@@ -379,6 +379,34 @@ func TestChatCompletionsToResponses_AssistantThinkingTagPreserved(t *testing.T) 
 	assert.Contains(t, parts[0].Text, "final answer")
 }
 
+func TestChatCompletionsToResponses_AssistantReasoningContentPreserved(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model: "gpt-4o",
+		Messages: []ChatMessage{
+			{Role: "user", Content: json.RawMessage(`"Hi"`)},
+			{
+				Role:             "assistant",
+				ReasoningContent: "internal plan",
+				Content:          json.RawMessage(`"final answer"`),
+			},
+		},
+	}
+
+	resp, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+
+	var items []ResponsesInputItem
+	require.NoError(t, json.Unmarshal(resp.Input, &items))
+	require.Len(t, items, 2)
+
+	var parts []ResponsesContentPart
+	require.NoError(t, json.Unmarshal(items[1].Content, &parts))
+	require.Len(t, parts, 1)
+	assert.Equal(t, "output_text", parts[0].Type)
+	assert.Contains(t, parts[0].Text, "<thinking>internal plan</thinking>")
+	assert.Contains(t, parts[0].Text, "final answer")
+}
+
 // ---------------------------------------------------------------------------
 // ResponsesToChatCompletions tests
 // ---------------------------------------------------------------------------
