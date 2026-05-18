@@ -349,6 +349,10 @@ func (s *stubAdminService) UpdateAccount(ctx context.Context, id int64, input *s
 	return &account, nil
 }
 
+func (s *stubAdminService) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
+	return nil
+}
+
 func (s *stubAdminService) DeleteAccount(ctx context.Context, id int64) error {
 	return nil
 }
