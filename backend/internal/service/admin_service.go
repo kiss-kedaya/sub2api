@@ -2472,7 +2472,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		account.Notes = normalizeAccountNotes(input.Notes)
 	}
 	if len(input.Credentials) > 0 {
-		account.Credentials = input.Credentials
+		// 敏感子键采用"incoming 没提供就保留"的合并语义：前端响应已脱敏，
+		// 全对象 PUT 编辑时不会再带回 token，避免覆盖时清空已有凭证。
+		account.Credentials = MergePreservingSensitiveCreds(account.Credentials, input.Credentials)
 	}
 	// Extra 使用 map：需要区分“未提供(nil)”与“显式清空({})”。
 	// 关闭配额限制时前端会删除 quota_* 键并提交 extra:{}，此时也必须落库。
