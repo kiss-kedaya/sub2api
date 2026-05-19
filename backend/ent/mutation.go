@@ -28602,6 +28602,7 @@ type RedeemCodeMutation struct {
 	used_at          *time.Time
 	notes            *string
 	created_at       *time.Time
+	expires_at       *time.Time
 	validity_days    *int
 	addvalidity_days *int
 	clearedFields    map[string]struct{}
@@ -29059,6 +29060,55 @@ func (m *RedeemCodeMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
+// SetExpiresAt sets the "expires_at" field.
+func (m *RedeemCodeMutation) SetExpiresAt(t time.Time) {
+	m.expires_at = &t
+}
+
+// ExpiresAt returns the value of the "expires_at" field in the mutation.
+func (m *RedeemCodeMutation) ExpiresAt() (r time.Time, exists bool) {
+	v := m.expires_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldExpiresAt returns the old "expires_at" field's value of the RedeemCode entity.
+// If the RedeemCode object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RedeemCodeMutation) OldExpiresAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldExpiresAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldExpiresAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldExpiresAt: %w", err)
+	}
+	return oldValue.ExpiresAt, nil
+}
+
+// ClearExpiresAt clears the value of the "expires_at" field.
+func (m *RedeemCodeMutation) ClearExpiresAt() {
+	m.expires_at = nil
+	m.clearedFields[redeemcode.FieldExpiresAt] = struct{}{}
+}
+
+// ExpiresAtCleared returns if the "expires_at" field was cleared in this mutation.
+func (m *RedeemCodeMutation) ExpiresAtCleared() bool {
+	_, ok := m.clearedFields[redeemcode.FieldExpiresAt]
+	return ok
+}
+
+// ResetExpiresAt resets all changes to the "expires_at" field.
+func (m *RedeemCodeMutation) ResetExpiresAt() {
+	m.expires_at = nil
+	delete(m.clearedFields, redeemcode.FieldExpiresAt)
+}
+
 // SetGroupID sets the "group_id" field.
 func (m *RedeemCodeMutation) SetGroupID(i int64) {
 	m.group = &i
@@ -29265,7 +29315,7 @@ func (m *RedeemCodeMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *RedeemCodeMutation) Fields() []string {
-	fields := make([]string, 0, 10)
+	fields := make([]string, 0, 11)
 	if m.code != nil {
 		fields = append(fields, redeemcode.FieldCode)
 	}
@@ -29289,6 +29339,9 @@ func (m *RedeemCodeMutation) Fields() []string {
 	}
 	if m.created_at != nil {
 		fields = append(fields, redeemcode.FieldCreatedAt)
+	}
+	if m.expires_at != nil {
+		fields = append(fields, redeemcode.FieldExpiresAt)
 	}
 	if m.group != nil {
 		fields = append(fields, redeemcode.FieldGroupID)
@@ -29320,6 +29373,8 @@ func (m *RedeemCodeMutation) Field(name string) (ent.Value, bool) {
 		return m.Notes()
 	case redeemcode.FieldCreatedAt:
 		return m.CreatedAt()
+	case redeemcode.FieldExpiresAt:
+		return m.ExpiresAt()
 	case redeemcode.FieldGroupID:
 		return m.GroupID()
 	case redeemcode.FieldValidityDays:
@@ -29349,6 +29404,8 @@ func (m *RedeemCodeMutation) OldField(ctx context.Context, name string) (ent.Val
 		return m.OldNotes(ctx)
 	case redeemcode.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
+	case redeemcode.FieldExpiresAt:
+		return m.OldExpiresAt(ctx)
 	case redeemcode.FieldGroupID:
 		return m.OldGroupID(ctx)
 	case redeemcode.FieldValidityDays:
@@ -29417,6 +29474,13 @@ func (m *RedeemCodeMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
+		return nil
+	case redeemcode.FieldExpiresAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetExpiresAt(v)
 		return nil
 	case redeemcode.FieldGroupID:
 		v, ok := value.(int64)
@@ -29498,6 +29562,9 @@ func (m *RedeemCodeMutation) ClearedFields() []string {
 	if m.FieldCleared(redeemcode.FieldNotes) {
 		fields = append(fields, redeemcode.FieldNotes)
 	}
+	if m.FieldCleared(redeemcode.FieldExpiresAt) {
+		fields = append(fields, redeemcode.FieldExpiresAt)
+	}
 	if m.FieldCleared(redeemcode.FieldGroupID) {
 		fields = append(fields, redeemcode.FieldGroupID)
 	}
@@ -29523,6 +29590,9 @@ func (m *RedeemCodeMutation) ClearField(name string) error {
 		return nil
 	case redeemcode.FieldNotes:
 		m.ClearNotes()
+		return nil
+	case redeemcode.FieldExpiresAt:
+		m.ClearExpiresAt()
 		return nil
 	case redeemcode.FieldGroupID:
 		m.ClearGroupID()
@@ -29558,6 +29628,9 @@ func (m *RedeemCodeMutation) ResetField(name string) error {
 		return nil
 	case redeemcode.FieldCreatedAt:
 		m.ResetCreatedAt()
+		return nil
+	case redeemcode.FieldExpiresAt:
+		m.ResetExpiresAt()
 		return nil
 	case redeemcode.FieldGroupID:
 		m.ResetGroupID()
