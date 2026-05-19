@@ -4115,6 +4115,7 @@ export default {
         status: 'Status',
         usedBy: 'Used By',
         usedAt: 'Used At',
+        expiresAt: 'Expires At',
         actions: 'Actions'
       },
       userPrefix: 'User #{id}',
@@ -4160,6 +4161,12 @@ export default {
       selectGroup: 'Select Group',
       selectGroupPlaceholder: 'Choose a subscription group',
       validityDays: 'Validity Days',
+      codeExpiry: 'Code Expiry',
+      neverExpires: 'Never expires',
+      expiryPresetDays: '{days} days',
+      customExpiry: 'Custom',
+      customExpiryDays: 'Custom days',
+      expiryDaysRequired: 'Please enter a valid expiry day count',
       groupRequired: 'Please select a subscription group',
       days: ' days',
       status: {
