@@ -82,7 +82,7 @@ type relayState struct {
 	terminalEventType string
 	firstTokenMs      *int
 	turnTimingByID    map[string]*relayTurnTiming
-	activeTurn *relayTurnTiming
+	activeTurn        *relayTurnTiming
 }
 
 type relayExitSignal struct {
