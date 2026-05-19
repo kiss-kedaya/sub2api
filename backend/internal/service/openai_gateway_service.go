@@ -1113,6 +1113,9 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 		if strings.Contains(lower, "an error occurred while processing your request") {
 			return true
 		}
+		if strings.Contains(lower, "selected model is at capacity") {
+			return true
+		}
 		return strings.Contains(lower, "you can retry your request") &&
 			strings.Contains(lower, "help.openai.com") &&
 			strings.Contains(lower, "request id")
@@ -3400,6 +3403,9 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 }
 
 func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool {
+	if isOpenAITransientProcessingError(http.StatusBadRequest, message, payload) {
+		return true
+	}
 	code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.code").String()))
 	if code == "" {
 		code = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.code").String()))
@@ -4578,6 +4584,76 @@ func extractOpenAISSEDataLine(line string) (string, bool) {
 	return line[start:], true
 }
 
+func extractOpenAISSEEventLine(line string) (string, bool) {
+	if !strings.HasPrefix(line, "event:") {
+		return "", false
+	}
+	start := len("event:")
+	for start < len(line) {
+		if line[start] != ' ' && line[start] != '	' {
+			break
+		}
+		start++
+	}
+	return strings.TrimSpace(line[start:]), true
+}
+
+type openAICompatSSEFrame struct {
+	EventType string
+	Data      string
+}
+
+type openAICompatSSEFrameParser struct {
+	eventType string
+	dataLines []string
+}
+
+func (p *openAICompatSSEFrameParser) AddLine(line string) (openAICompatSSEFrame, bool) {
+	if line == "" {
+		return p.dispatch()
+	}
+	if strings.HasPrefix(line, ":") {
+		return openAICompatSSEFrame{}, false
+	}
+	if eventType, ok := extractOpenAISSEEventLine(line); ok {
+		p.eventType = eventType
+		return openAICompatSSEFrame{}, false
+	}
+	if data, ok := extractOpenAISSEDataLine(line); ok {
+		p.dataLines = append(p.dataLines, data)
+	}
+	return openAICompatSSEFrame{}, false
+}
+
+func (p *openAICompatSSEFrameParser) Finish() (openAICompatSSEFrame, bool) {
+	return p.dispatch()
+}
+
+func (p *openAICompatSSEFrameParser) dispatch() (openAICompatSSEFrame, bool) {
+	frame := openAICompatSSEFrame{
+		EventType: p.eventType,
+		Data:      strings.Join(p.dataLines, "\n"),
+	}
+	p.eventType = ""
+	p.dataLines = nil
+	return frame, frame.Data != ""
+}
+
+func openAICompatPayloadWithEventType(payload, eventType string) string {
+	eventType = strings.TrimSpace(eventType)
+	if eventType == "" || strings.TrimSpace(payload) == "" || strings.TrimSpace(payload) == "[DONE]" {
+		return payload
+	}
+	if gjson.Get(payload, "type").Exists() {
+		return payload
+	}
+	patched, err := sjson.Set(payload, "type", eventType)
+	if err != nil {
+		return payload
+	}
+	return patched
+}
+
 func (s *OpenAIGatewayService) replaceModelInSSELine(line, fromModel, toModel string) string {
 	data, ok := extractOpenAISSEDataLine(line)
 	if !ok {
@@ -4639,28 +4715,47 @@ func (s *OpenAIGatewayService) parseSSEUsageBytes(data []byte, usage *OpenAIUsag
 		return
 	}
 
-	usage.InputTokens = int(gjson.GetBytes(data, "response.usage.input_tokens").Int())
-	usage.OutputTokens = int(gjson.GetBytes(data, "response.usage.output_tokens").Int())
-	usage.CacheReadInputTokens = int(gjson.GetBytes(data, "response.usage.input_tokens_details.cached_tokens").Int())
-	usage.ImageOutputTokens = int(gjson.GetBytes(data, "response.usage.output_tokens_details.image_tokens").Int())
+	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(data); ok {
+		*usage = parsedUsage
+	}
 }
 
 func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return OpenAIUsage{}, false
 	}
-	values := gjson.GetManyBytes(
-		body,
-		"usage.input_tokens",
-		"usage.output_tokens",
-		"usage.input_tokens_details.cached_tokens",
-		"usage.output_tokens_details.image_tokens",
-	)
+	if usage, ok := openAIUsageFromGJSON(gjson.GetBytes(body, "usage")); ok {
+		return usage, true
+	}
+	return openAIUsageFromGJSON(gjson.GetBytes(body, "response.usage"))
+}
+
+func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
+	if !value.Exists() || !value.IsObject() {
+		return OpenAIUsage{}, false
+	}
+	inputTokens := value.Get("input_tokens").Int()
+	if inputTokens == 0 {
+		inputTokens = value.Get("prompt_tokens").Int()
+	}
+	outputTokens := value.Get("output_tokens").Int()
+	if outputTokens == 0 {
+		outputTokens = value.Get("completion_tokens").Int()
+	}
+	cacheReadTokens := value.Get("input_tokens_details.cached_tokens").Int()
+	if cacheReadTokens == 0 {
+		cacheReadTokens = value.Get("prompt_tokens_details.cached_tokens").Int()
+	}
+	imageOutputTokens := value.Get("output_tokens_details.image_tokens").Int()
+	if imageOutputTokens == 0 {
+		imageOutputTokens = value.Get("completion_tokens_details.image_tokens").Int()
+	}
 	return OpenAIUsage{
-		InputTokens:          int(values[0].Int()),
-		OutputTokens:         int(values[1].Int()),
-		CacheReadInputTokens: int(values[2].Int()),
-		ImageOutputTokens:    int(values[3].Int()),
+		InputTokens:              int(inputTokens),
+		OutputTokens:             int(outputTokens),
+		CacheCreationInputTokens: int(value.Get("cache_creation_input_tokens").Int()),
+		CacheReadInputTokens:     int(cacheReadTokens),
+		ImageOutputTokens:        int(imageOutputTokens),
 	}, true
 }
 
