@@ -580,7 +580,29 @@ type SecurityConfig struct {
 	ProxyFallback                    ProxyFallbackConfig  `mapstructure:"proxy_fallback"`
 	ProxyProbe                       ProxyProbeConfig     `mapstructure:"proxy_probe"`
 	TrustForwardedIPForAPIKeyACL     bool                 `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
-	TrustForwardedIPForAPIKeyACLLive atomic.Bool          `mapstructure:"-"`
+	trustForwardedIPForAPIKeyACLLive *atomic.Bool         `mapstructure:"-"`
+}
+
+func (c *Config) TrustForwardedIPForAPIKeyACL() bool {
+	if c == nil {
+		return false
+	}
+	live := c.Security.trustForwardedIPForAPIKeyACLLive
+	if live == nil {
+		return c.Security.TrustForwardedIPForAPIKeyACL
+	}
+	return live.Load()
+}
+
+func (c *Config) SetTrustForwardedIPForAPIKeyACL(enabled bool) {
+	if c == nil {
+		return
+	}
+	c.Security.TrustForwardedIPForAPIKeyACL = enabled
+	if c.Security.trustForwardedIPForAPIKeyACLLive == nil {
+		c.Security.trustForwardedIPForAPIKeyACLLive = &atomic.Bool{}
+	}
+	c.Security.trustForwardedIPForAPIKeyACLLive.Store(enabled)
 }
 
 type URLAllowlistConfig struct {
@@ -1366,7 +1388,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	cfg.Security.ResponseHeaders.AdditionalAllowed = normalizeStringSlice(cfg.Security.ResponseHeaders.AdditionalAllowed)
 	cfg.Security.ResponseHeaders.ForceRemove = normalizeStringSlice(cfg.Security.ResponseHeaders.ForceRemove)
 	cfg.Security.CSP.Policy = strings.TrimSpace(cfg.Security.CSP.Policy)
-	cfg.Security.TrustForwardedIPForAPIKeyACLLive.Store(cfg.Security.TrustForwardedIPForAPIKeyACL)
+	cfg.SetTrustForwardedIPForAPIKeyACL(cfg.Security.TrustForwardedIPForAPIKeyACL)
 	cfg.Log.Level = strings.ToLower(strings.TrimSpace(cfg.Log.Level))
 	cfg.Log.Format = strings.ToLower(strings.TrimSpace(cfg.Log.Format))
 	cfg.Log.ServiceName = strings.TrimSpace(cfg.Log.ServiceName)

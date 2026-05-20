@@ -604,14 +604,13 @@ func (s *SettingService) LoadAPIKeyACLTrustForwardedIPSetting(ctx context.Contex
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyAPIKeyACLTrustForwardedIP)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
-			s.cfg.Security.TrustForwardedIPForAPIKeyACLLive.Store(s.cfg.Security.TrustForwardedIPForAPIKeyACL)
+			s.cfg.SetTrustForwardedIPForAPIKeyACL(s.cfg.Security.TrustForwardedIPForAPIKeyACL)
 			return nil
 		}
 		return fmt.Errorf("get api key acl forwarded ip setting: %w", err)
 	}
 	enabled := value == "true"
-	s.cfg.Security.TrustForwardedIPForAPIKeyACL = enabled
-	s.cfg.Security.TrustForwardedIPForAPIKeyACLLive.Store(enabled)
+	s.cfg.SetTrustForwardedIPForAPIKeyACL(enabled)
 	return nil
 }
 
@@ -1888,8 +1887,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		expiresAt: time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
 	})
 	if s.cfg != nil {
-		s.cfg.Security.TrustForwardedIPForAPIKeyACL = settings.APIKeyACLTrustForwardedIP
-		s.cfg.Security.TrustForwardedIPForAPIKeyACLLive.Store(settings.APIKeyACLTrustForwardedIP)
+		s.cfg.SetTrustForwardedIPForAPIKeyACL(settings.APIKeyACLTrustForwardedIP)
 	}
 	if s.onUpdate != nil {
 		s.onUpdate() // Invalidate cache after settings update
