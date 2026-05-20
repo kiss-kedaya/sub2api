@@ -208,14 +208,18 @@ import type {
 import { useAppStore } from "@/stores";
 import { extractApiErrorMessage } from "@/utils/apiError";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const appStore = useAppStore();
 
 const fallbackPlaceholders = [
   "{{site_name}}",
   "{{recipient_name}}",
   "{{recipient_email}}",
+  "{{verification_code}}",
+  "{{expires_in_minutes}}",
+  "{{reset_url}}",
   "{{subscription_group}}",
+  "{{subscription_days}}",
   "{{expiry_time}}",
   "{{days_remaining}}",
   "{{current_balance}}",
@@ -224,6 +228,33 @@ const fallbackPlaceholders = [
   "{{recharge_amount}}",
   "{{order_id}}",
   "{{unsubscribe_url}}",
+  "{{account_id}}",
+  "{{account_name}}",
+  "{{platform}}",
+  "{{quota_dimension}}",
+  "{{quota_used}}",
+  "{{quota_limit}}",
+  "{{quota_remaining}}",
+  "{{quota_threshold}}",
+  "{{triggered_at}}",
+  "{{group_name}}",
+  "{{moderation_category}}",
+  "{{moderation_score}}",
+  "{{violation_count}}",
+  "{{ban_threshold}}",
+  "{{rule_name}}",
+  "{{severity}}",
+  "{{alert_status}}",
+  "{{metric_type}}",
+  "{{operator}}",
+  "{{metric_value}}",
+  "{{threshold_value}}",
+  "{{alert_description}}",
+  "{{report_name}}",
+  "{{report_type}}",
+  "{{report_start_time}}",
+  "{{report_end_time}}",
+  "{{report_html}}",
 ];
 
 const loadingList = ref(true);
@@ -297,6 +328,22 @@ function formatLocale(locale: string): string {
   return locale;
 }
 
+function selectInitialLocale(locales: string[]): string {
+  const currentLocale = locale.value.toLowerCase();
+  const exactMatch = locales.find(
+    (availableLocale) => availableLocale.toLowerCase() === currentLocale,
+  );
+  if (exactMatch) return exactMatch;
+
+  const currentLanguage = currentLocale.split("-")[0];
+  const languageMatch = locales.find(
+    (availableLocale) => availableLocale.toLowerCase().split("-")[0] === currentLanguage,
+  );
+  if (languageMatch) return languageMatch;
+
+  return locales[0] || "";
+}
+
 function applyTemplate(template: {
   subject: string;
   html: string;
@@ -306,9 +353,7 @@ function applyTemplate(template: {
   subject.value = template.subject;
   html.value = template.html;
   isCustomTemplate.value = template.is_custom === true;
-  if (template.placeholders?.length) {
-    placeholders.value = template.placeholders;
-  }
+  placeholders.value = template.placeholders || [];
 }
 
 async function loadTemplate() {
@@ -337,7 +382,7 @@ async function loadTemplateList() {
     placeholders.value = response.placeholders || [];
     initializingSelection.value = true;
     selectedEvent.value = eventOptions.value[0]?.value || "";
-    selectedLocale.value = response.locales[0] || "";
+    selectedLocale.value = selectInitialLocale(response.locales);
     await loadTemplate();
     initializingSelection.value = false;
   } catch (err: unknown) {
