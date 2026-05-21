@@ -23,6 +23,7 @@ type AccountRepoSuite struct {
 
 type schedulerCacheRecorder struct {
 	setAccounts []*service.Account
+	deleteIDs   []int64
 	accounts    map[int64]*service.Account
 }
 
@@ -53,6 +54,10 @@ func (s *schedulerCacheRecorder) SetAccount(ctx context.Context, account *servic
 }
 
 func (s *schedulerCacheRecorder) DeleteAccount(ctx context.Context, accountID int64) error {
+	s.deleteIDs = append(s.deleteIDs, accountID)
+	if s.accounts != nil {
+		delete(s.accounts, accountID)
+	}
 	return nil
 }
 
@@ -183,6 +188,27 @@ func (s *AccountRepoSuite) TestDelete() {
 
 	_, err = s.repo.GetByID(s.ctx, account.ID)
 	s.Require().Error(err, "expected error after delete")
+}
+
+func (s *AccountRepoSuite) TestDelete_RemovesSchedulerAccountSnapshot() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "to-delete-cache"})
+	cacheRecorder := &schedulerCacheRecorder{
+		accounts: map[int64]*service.Account{
+			account.ID: {
+				ID:          account.ID,
+				Name:        account.Name,
+				Status:      service.StatusActive,
+				Schedulable: true,
+			},
+		},
+	}
+	s.repo.schedulerCache = cacheRecorder
+
+	err := s.repo.Delete(s.ctx, account.ID)
+	s.Require().NoError(err, "Delete")
+
+	s.Require().Equal([]int64{account.ID}, cacheRecorder.deleteIDs)
+	s.Require().NotContains(cacheRecorder.accounts, account.ID)
 }
 
 func (s *AccountRepoSuite) TestDelete_WithGroupBindings() {
