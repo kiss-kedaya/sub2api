@@ -926,6 +926,123 @@ func TestCompleteOIDCOAuthRegistrationRejectsIdentityOwnershipConflictBeforeUser
 	require.Nil(t, storedSession.ConsumedAt)
 }
 
+func TestTryOIDCVerifiedEmailFastPathCreatesUserAndIdentity(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandler(t, false)
+	t.Cleanup(func() { _ = client.Close() })
+
+	ctx := context.Background()
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/oidc/callback", nil)
+
+	identity := service.PendingAuthIdentityKey{
+		ProviderType:    "oidc",
+		ProviderKey:     "https://issuer.example.com",
+		ProviderSubject: "fast-path-subject",
+	}
+	completed := handler.tryOIDCVerifiedEmailFastPath(
+		c,
+		"/auth/oidc/callback",
+		"/dashboard",
+		identity,
+		"fastpath@example.com",
+		"fastpath_user",
+		map[string]any{
+			"suggested_display_name": "Fast Path",
+			"suggested_avatar_url":   "",
+		},
+	)
+	require.True(t, completed)
+	require.Equal(t, http.StatusFound, recorder.Code)
+
+	location := recorder.Header().Get("Location")
+	require.Contains(t, location, "/auth/oidc/callback")
+	require.Contains(t, location, "access_token=")
+	require.Contains(t, location, "refresh_token=")
+	require.Contains(t, location, "token_type=Bearer")
+
+	user, err := client.User.Query().Where(dbuser.EmailEQ("fastpath@example.com")).Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "fastpath_user", user.Username)
+	require.Equal(t, "oidc", user.SignupSource)
+
+	identityCount, err := client.AuthIdentity.Query().Where(
+		authidentity.ProviderTypeEQ("oidc"),
+		authidentity.ProviderKeyEQ("https://issuer.example.com"),
+		authidentity.ProviderSubjectEQ("fast-path-subject"),
+		authidentity.UserIDEQ(user.ID),
+	).Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, identityCount)
+
+	pendingCount, err := client.PendingAuthSession.Query().Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, pendingCount)
+}
+
+func TestTryOIDCVerifiedEmailFastPathSkippedWhenInvitationCodeRequired(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandler(t, true)
+	t.Cleanup(func() { _ = client.Close() })
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/oidc/callback", nil)
+
+	identity := service.PendingAuthIdentityKey{
+		ProviderType:    "oidc",
+		ProviderKey:     "https://issuer.example.com",
+		ProviderSubject: "fast-path-skipped-invitation",
+	}
+	completed := handler.tryOIDCVerifiedEmailFastPath(
+		c,
+		"/auth/oidc/callback",
+		"/dashboard",
+		identity,
+		"invite-only@example.com",
+		"invite_only_user",
+		map[string]any{},
+	)
+	require.False(t, completed)
+	require.NotEqual(t, http.StatusFound, recorder.Code)
+
+	userCount, err := client.User.Query().Where(dbuser.EmailEQ("invite-only@example.com")).Count(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, userCount)
+}
+
+func TestTryOIDCVerifiedEmailFastPathSkippedWhenForceEmailEnabled(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		settingValues: map[string]string{
+			service.SettingKeyForceEmailOnThirdPartySignup: "true",
+		},
+	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/oidc/callback", nil)
+
+	identity := service.PendingAuthIdentityKey{
+		ProviderType:    "oidc",
+		ProviderKey:     "https://issuer.example.com",
+		ProviderSubject: "fast-path-skipped-force-email",
+	}
+	completed := handler.tryOIDCVerifiedEmailFastPath(
+		c,
+		"/auth/oidc/callback",
+		"/dashboard",
+		identity,
+		"force-email@example.com",
+		"force_email_user",
+		map[string]any{},
+	)
+	require.False(t, completed)
+
+	userCount, err := client.User.Query().Where(dbuser.EmailEQ("force-email@example.com")).Count(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, userCount)
+}
+
 type oidcProviderFixture struct {
 	Subject           string
 	PreferredUsername string
