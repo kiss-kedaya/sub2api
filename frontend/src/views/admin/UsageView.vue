@@ -194,7 +194,7 @@ const breakdownFilters = computed(() => {
 
 const handleUserClick = async (userId: number) => {
   try {
-    const user = await adminAPI.users.getById(userId)
+    const user = await adminAPI.users.getById(userId, true)
     balanceHistoryUser.value = user
     showBalanceHistoryModal.value = true
   } catch {
