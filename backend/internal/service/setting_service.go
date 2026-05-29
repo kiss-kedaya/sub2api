@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -137,6 +138,11 @@ type cachedOpenAICodexUserAgent struct {
 	expiresAt int64 // unix nano
 }
 
+type cachedOpenAIQuotaAutoPauseSettings struct {
+	settings  OpsOpenAIAccountQuotaAutoPauseSettings
+	expiresAt int64
+}
+
 const openAICodexUserAgentCacheTTL = 60 * time.Second
 const openAICodexUserAgentErrorTTL = 5 * time.Second
 const openAICodexUserAgentDBTimeout = 5 * time.Second
@@ -151,6 +157,33 @@ type cachedOpenAIAllowCodexPlugin struct {
 const openAIAllowCodexPluginCacheTTL = 60 * time.Second
 const openAIAllowCodexPluginErrorTTL = 5 * time.Second
 const openAIAllowCodexPluginDBTimeout = 5 * time.Second
+
+const openAIQuotaAutoPauseSettingsCacheTTL = 60 * time.Second
+const openAIQuotaAutoPauseSettingsErrorTTL = 5 * time.Second
+const openAIQuotaAutoPauseSettingsDBTimeout = 5 * time.Second
+
+var openAIQuotaAutoPauseSettingsCache sync.Map // map[string]*cachedOpenAIQuotaAutoPauseSettings
+var openAIQuotaAutoPauseSettingsSF singleflight.Group
+
+func openAIQuotaAutoPauseSettingsCacheKey(repo SettingRepository) string {
+	if repo == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("%T:%p", repo, repo)
+}
+
+func loadOpenAIQuotaAutoPauseSettingsCache(repo SettingRepository) (*cachedOpenAIQuotaAutoPauseSettings, bool) {
+	value, ok := openAIQuotaAutoPauseSettingsCache.Load(openAIQuotaAutoPauseSettingsCacheKey(repo))
+	if !ok || value == nil {
+		return nil, false
+	}
+	cached, ok := value.(*cachedOpenAIQuotaAutoPauseSettings)
+	return cached, ok && cached != nil
+}
+
+func storeOpenAIQuotaAutoPauseSettingsCache(repo SettingRepository, cached *cachedOpenAIQuotaAutoPauseSettings) {
+	openAIQuotaAutoPauseSettingsCache.Store(openAIQuotaAutoPauseSettingsCacheKey(repo), cached)
+}
 
 // DefaultSubscriptionGroupReader validates group references used by default subscriptions.
 type DefaultSubscriptionGroupReader interface {
@@ -2027,6 +2060,9 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		enabled:   settings.OpenAIAdvancedSchedulerEnabled,
 		expiresAt: time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
 	})
+	cacheKey := openAIQuotaAutoPauseSettingsCacheKey(s.settingRepo)
+	openAIQuotaAutoPauseSettingsSF.Forget(cacheKey)
+	openAIQuotaAutoPauseSettingsCache.Delete(cacheKey)
 	if s.cfg != nil {
 		s.cfg.SetTrustForwardedIPForAPIKeyACL(settings.APIKeyACLTrustForwardedIP)
 	}
@@ -4446,6 +4482,51 @@ func (s *SettingService) GetClaudeCodeVersionBounds(ctx context.Context) (min, m
 		return "", ""
 	}
 	return b.min, b.max
+}
+
+func (s *SettingService) GetOpenAIQuotaAutoPauseSettings(ctx context.Context) OpsOpenAIAccountQuotaAutoPauseSettings {
+	if cached, ok := loadOpenAIQuotaAutoPauseSettingsCache(s.settingRepo); ok {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.settings
+		}
+	}
+
+	cacheKey := openAIQuotaAutoPauseSettingsCacheKey(s.settingRepo)
+	result, _, _ := openAIQuotaAutoPauseSettingsSF.Do(cacheKey, func() (any, error) {
+		if cached, ok := loadOpenAIQuotaAutoPauseSettingsCache(s.settingRepo); ok {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.settings, nil
+			}
+		}
+
+		settings := OpsOpenAIAccountQuotaAutoPauseSettings{}
+		ttl := openAIQuotaAutoPauseSettingsCacheTTL
+		if s != nil && s.settingRepo != nil {
+			dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAIQuotaAutoPauseSettingsDBTimeout)
+			defer cancel()
+			raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpsAdvancedSettings)
+			if err == nil {
+				cfg := defaultOpsAdvancedSettings()
+				if strings.TrimSpace(raw) != "" {
+					if jsonErr := json.Unmarshal([]byte(raw), cfg); jsonErr == nil {
+						normalizeOpsAdvancedSettings(cfg)
+					}
+				}
+				settings = cfg.OpenAIAccountQuotaAutoPause
+			} else {
+				ttl = openAIQuotaAutoPauseSettingsErrorTTL
+			}
+		}
+
+		storeOpenAIQuotaAutoPauseSettingsCache(s.settingRepo, &cachedOpenAIQuotaAutoPauseSettings{
+			settings:  settings,
+			expiresAt: time.Now().Add(ttl).UnixNano(),
+		})
+		return settings, nil
+	})
+
+	settings, _ := result.(OpsOpenAIAccountQuotaAutoPauseSettings)
+	return settings
 }
 
 // GetRectifierSettings 获取请求整流器配置
