@@ -1198,7 +1198,7 @@ func TestGenerateSessionHash_GeminiMultiTurnHashNotSticky(t *testing.T) {
 
 	hashes := make([]string, 3)
 	for i, body := range [][]byte{round1Body, round2Body, round3Body} {
-		parsed, err := ParseGatewayRequest(body, "gemini")
+		parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), "gemini")
 		require.NoError(t, err)
 		parsed.SessionContext = ctx
 		hashes[i] = svc.GenerateSessionHash(parsed)
@@ -1211,7 +1211,7 @@ func TestGenerateSessionHash_GeminiMultiTurnHashNotSticky(t *testing.T) {
 	require.NotEqual(t, hashes[0], hashes[2], "round 1 vs 3 hash should differ")
 
 	// 同一轮重试应产生相同 hash
-	parsed1Again, err := ParseGatewayRequest(round2Body, "gemini")
+	parsed1Again, err := ParseGatewayRequest(NewRequestBodyRef(round2Body), "gemini")
 	require.NoError(t, err)
 	parsed1Again.SessionContext = ctx
 	h2Again := svc.GenerateSessionHash(parsed1Again)
@@ -1234,7 +1234,7 @@ func TestGenerateSessionHash_GeminiEndToEnd(t *testing.T) {
 		]
 	}`)
 
-	parsed, err := ParseGatewayRequest(body, "gemini")
+	parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), "gemini")
 	require.NoError(t, err)
 	parsed.SessionContext = &SessionContext{
 		ClientIP:  "10.0.0.1",
@@ -1246,7 +1246,7 @@ func TestGenerateSessionHash_GeminiEndToEnd(t *testing.T) {
 	require.NotEmpty(t, h, "end-to-end Gemini flow should produce a hash")
 
 	// 同一请求再次解析应产生相同 hash
-	parsed2, err := ParseGatewayRequest(body, "gemini")
+	parsed2, err := ParseGatewayRequest(NewRequestBodyRef(body), "gemini")
 	require.NoError(t, err)
 	parsed2.SessionContext = &SessionContext{
 		ClientIP:  "10.0.0.1",
@@ -1258,7 +1258,7 @@ func TestGenerateSessionHash_GeminiEndToEnd(t *testing.T) {
 	require.Equal(t, h, h2, "same request should produce same hash")
 
 	// 不同用户发送相同请求应产生不同 hash
-	parsed3, err := ParseGatewayRequest(body, "gemini")
+	parsed3, err := ParseGatewayRequest(NewRequestBodyRef(body), "gemini")
 	require.NoError(t, err)
 	parsed3.SessionContext = &SessionContext{
 		ClientIP:  "10.0.0.2",
