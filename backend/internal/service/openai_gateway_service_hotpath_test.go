@@ -112,7 +112,7 @@ func TestGetOpenAIRequestBodyMap_UsesContextCache(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 
 	cached := map[string]any{"model": "cached-model", "stream": true}
-	c.Set(OpenAIParsedRequestBodyKey, cached)
+	CacheOpenAIParsedRequestBody(c, []byte(`{invalid-json`), cached)
 
 	got, err := getOpenAIRequestBodyMap(c, []byte(`{invalid-json`))
 	require.NoError(t, err)
@@ -134,11 +134,19 @@ func TestGetOpenAIRequestBodyMap_WriteBackContextCache(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "gpt-5", got["model"])
 
-	cached, ok := c.Get(OpenAIParsedRequestBodyKey)
-	require.True(t, ok)
-	cachedMap, ok := cached.(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, got, cachedMap)
+	require.Equal(t, got, CachedOpenAIParsedRequestBody(c))
+}
+
+func TestGetOpenAIRequestBodyMap_IgnoresCacheForDifferentBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	CacheOpenAIParsedRequestBody(c, []byte(`{"model":"cached-model"}`), map[string]any{"model": "cached-model"})
+
+	got, err := getOpenAIRequestBodyMap(c, []byte(`{"model":"forward-model"}`))
+	require.NoError(t, err)
+	require.Equal(t, "forward-model", got["model"])
 }
 
 func TestSanitizeEmptyBase64InputImagesInOpenAIRequestBodyMap(t *testing.T) {
