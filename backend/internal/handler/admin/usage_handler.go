@@ -325,10 +325,24 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		EndTime:     &endTime,
 	}
 
-	stats, err := h.usageService.GetStatsWithFilters(c.Request.Context(), filters)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
+	var stats *usagestats.UsageStats
+	// nocache: 绕过缓存直接回源,刷新者本人拿最新;不回写缓存(管理台"我刷新我自己拿最新"语义,非全局失效)。
+	if parseBoolQueryWithDefault(c.Query("nocache"), false) {
+		s, err := h.usageService.GetStatsWithFilters(c.Request.Context(), filters)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		stats = s
+		c.Header("X-Usage-Stats-Cache", "bypass")
+	} else {
+		s, hit, err := h.getStatsCached(c.Request.Context(), filters)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		stats = s
+		c.Header("X-Usage-Stats-Cache", cacheStatusValue(hit))
 	}
 
 	response.Success(c, stats)
