@@ -229,16 +229,16 @@ func benchmarkBodySizes() []struct {
 
 func buildSystemCacheableRequest(parts int) *ParsedRequest {
 	var builder strings.Builder
-	builder.WriteString(`{"system":[`)
+	_, _ = builder.WriteString(`{"system":[`)
 	for i := 0; i < parts; i++ {
 		if i > 0 {
-			builder.WriteByte(',')
+			_ = builder.WriteByte(',')
 		}
-		builder.WriteString(`{"text":"system_part_`)
-		builder.WriteString(strconv.Itoa(i))
-		builder.WriteString(`","cache_control":{"type":"ephemeral"}}`)
+		_, _ = builder.WriteString(`{"text":"system_part_`)
+		_, _ = builder.WriteString(strconv.Itoa(i))
+		_, _ = builder.WriteString(`","cache_control":{"type":"ephemeral"}}`)
 	}
-	builder.WriteString(`]}`)
+	_, _ = builder.WriteString(`]}`)
 	parsed, err := ParseGatewayRequest(NewRequestBodyRef([]byte(builder.String())), "")
 	if err != nil {
 		panic(err)
@@ -249,93 +249,93 @@ func buildSystemCacheableRequest(parts int) *ParsedRequest {
 func buildLargeAnthropicMessagesBody(targetBytes int, includeCacheControl bool) []byte {
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)
-	builder.WriteString(`{"model":"claude-sonnet-4-5","stream":true,"system":[{"type":"text","text":"system seed"}],"messages":[`)
+	_, _ = builder.WriteString(`{"model":"claude-sonnet-4-5","stream":true,"system":[{"type":"text","text":"system seed"}],"messages":[`)
 	for i := 0; builder.Len() < targetBytes; i++ {
 		if i > 0 {
-			builder.WriteByte(',')
+			_ = builder.WriteByte(',')
 		}
-		builder.WriteString(`{"role":"user","content":[{"type":"text","text":"`)
-		builder.WriteString(strings.Repeat("anthropic payload ", 64))
-		builder.WriteString(strconv.Itoa(i))
-		builder.WriteByte('"')
+		_, _ = builder.WriteString(`{"role":"user","content":[{"type":"text","text":"`)
+		_, _ = builder.WriteString(strings.Repeat("anthropic payload ", 64))
+		_, _ = builder.WriteString(strconv.Itoa(i))
+		_ = builder.WriteByte('"')
 		if includeCacheControl && i%32 == 0 {
-			builder.WriteString(`,"cache_control":{"type":"ephemeral"}`)
+			_, _ = builder.WriteString(`,"cache_control":{"type":"ephemeral"}`)
 		}
-		builder.WriteString(`}]}`)
+		_, _ = builder.WriteString(`}]}`)
 	}
-	builder.WriteString(`]}`)
+	_, _ = builder.WriteString(`]}`)
 	return []byte(builder.String())
 }
 
 func buildLargeGeminiContentsBody(targetBytes int) []byte {
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)
-	builder.WriteString(`{"model":"gemini-2.5-pro","systemInstruction":{"parts":[{"text":"system seed"}]},"contents":[`)
+	_, _ = builder.WriteString(`{"model":"gemini-2.5-pro","systemInstruction":{"parts":[{"text":"system seed"}]},"contents":[`)
 	for i := 0; builder.Len() < targetBytes; i++ {
 		if i > 0 {
-			builder.WriteByte(',')
+			_ = builder.WriteByte(',')
 		}
-		builder.WriteString(`{"role":"user","parts":[{"text":"`)
-		builder.WriteString(strings.Repeat("gemini payload ", 64))
-		builder.WriteString(strconv.Itoa(i))
-		builder.WriteString(`"}]}`)
+		_, _ = builder.WriteString(`{"role":"user","parts":[{"text":"`)
+		_, _ = builder.WriteString(strings.Repeat("gemini payload ", 64))
+		_, _ = builder.WriteString(strconv.Itoa(i))
+		_, _ = builder.WriteString(`"}]}`)
 	}
-	builder.WriteString(`]}`)
+	_, _ = builder.WriteString(`]}`)
 	return []byte(builder.String())
 }
 
 func buildLargeOpenAIResponsesBody(targetBytes int) []byte {
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)
-	builder.WriteString(`{"model":"gpt-5.4","stream":true,"prompt_cache_key":"session-benchmark","input":[`)
+	_, _ = builder.WriteString(`{"model":"gpt-5.4","stream":true,"prompt_cache_key":"session-benchmark","input":[`)
 	for i := 0; builder.Len() < targetBytes; i++ {
 		if i > 0 {
-			builder.WriteByte(',')
+			_ = builder.WriteByte(',')
 		}
-		builder.WriteString(`{"type":"message","role":"user","content":[{"type":"input_text","text":"`)
-		builder.WriteString(strings.Repeat("openai responses payload ", 48))
-		builder.WriteString(strconv.Itoa(i))
-		builder.WriteString(`"}]}`)
+		_, _ = builder.WriteString(`{"type":"message","role":"user","content":[{"type":"input_text","text":"`)
+		_, _ = builder.WriteString(strings.Repeat("openai responses payload ", 48))
+		_, _ = builder.WriteString(strconv.Itoa(i))
+		_, _ = builder.WriteString(`"}]}`)
 	}
-	builder.WriteString(`],"tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"query":{"type":"string"}}}}]}`)
+	_, _ = builder.WriteString(`],"tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"query":{"type":"string"}}}}]}`)
 	return []byte(builder.String())
 }
 
 func buildLargeOpenAIResponsesToolContinuationBody(targetBytes int) []byte {
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)
-	builder.WriteString(`{"model":"gpt-5.4","stream":true,"previous_response_id":"resp_benchmark","input":[`)
+	_, _ = builder.WriteString(`{"model":"gpt-5.4","stream":true,"previous_response_id":"resp_benchmark","input":[`)
 	for i := 0; builder.Len() < targetBytes; i++ {
 		if i > 0 {
-			builder.WriteByte(',')
+			_ = builder.WriteByte(',')
 		}
 		callID := "call_" + strconv.Itoa(i)
-		builder.WriteString(`{"type":"item_reference","id":"`)
-		builder.WriteString(callID)
-		builder.WriteString(`"},{"type":"function_call_output","call_id":"`)
-		builder.WriteString(callID)
-		builder.WriteString(`","output":"`)
-		builder.WriteString(strings.Repeat("tool output payload ", 48))
-		builder.WriteString(strconv.Itoa(i))
-		builder.WriteString(`"}`)
+		_, _ = builder.WriteString(`{"type":"item_reference","id":"`)
+		_, _ = builder.WriteString(callID)
+		_, _ = builder.WriteString(`"},{"type":"function_call_output","call_id":"`)
+		_, _ = builder.WriteString(callID)
+		_, _ = builder.WriteString(`","output":"`)
+		_, _ = builder.WriteString(strings.Repeat("tool output payload ", 48))
+		_, _ = builder.WriteString(strconv.Itoa(i))
+		_, _ = builder.WriteString(`"}`)
 	}
-	builder.WriteString(`]}`)
+	_, _ = builder.WriteString(`]}`)
 	return []byte(builder.String())
 }
 
 func buildLargeOpenAIResponsesImageToolBody(targetBytes int) []byte {
 	var builder strings.Builder
 	builder.Grow(targetBytes + 1024)
-	builder.WriteString(`{"model":"gpt-5.4","stream":false,"tools":[{"type":"image_generation","model":"gpt-image-2","size":"2048x1152"}],"input":[`)
+	_, _ = builder.WriteString(`{"model":"gpt-5.4","stream":false,"tools":[{"type":"image_generation","model":"gpt-image-2","size":"2048x1152"}],"input":[`)
 	for i := 0; builder.Len() < targetBytes; i++ {
 		if i > 0 {
-			builder.WriteByte(',')
+			_ = builder.WriteByte(',')
 		}
-		builder.WriteString(`{"type":"message","role":"user","content":[{"type":"input_text","text":"`)
-		builder.WriteString(strings.Repeat("openai image billing payload ", 48))
-		builder.WriteString(strconv.Itoa(i))
-		builder.WriteString(`"}]}`)
+		_, _ = builder.WriteString(`{"type":"message","role":"user","content":[{"type":"input_text","text":"`)
+		_, _ = builder.WriteString(strings.Repeat("openai image billing payload ", 48))
+		_, _ = builder.WriteString(strconv.Itoa(i))
+		_, _ = builder.WriteString(`"}]}`)
 	}
-	builder.WriteString(`]}`)
+	_, _ = builder.WriteString(`]}`)
 	return []byte(builder.String())
 }

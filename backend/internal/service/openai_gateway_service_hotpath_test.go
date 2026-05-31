@@ -46,6 +46,15 @@ func TestOpenAIRequestView_ApplyPatches(t *testing.T) {
 	require.JSONEq(t, `{"model":"gpt-5.1","reasoning":{"effort":"none"},"input":[{"type":"message","content":"hi"}]}`, string(patched))
 }
 
+func TestOpenAIRequestView_RejectsEscapedPatchPath(t *testing.T) {
+	view := newOpenAIRequestView([]byte(`{"metadata":{"user.id":"old"}}`))
+	view.MarkPatchSet(`metadata.user\.id`, "new")
+
+	require.False(t, view.HasPatches())
+	_, err := view.ApplyPatches()
+	require.Error(t, err)
+}
+
 func TestOpenAIRequestView_ApplyPatchesDisabled(t *testing.T) {
 	view := newOpenAIRequestView([]byte(`{"model":"gpt-5"}`))
 	view.MarkPatchSet("model", "gpt-5.1")
@@ -258,6 +267,42 @@ func TestOpenAIGatewayService_Forward_ImageToolBillingDoesNotForceFullDecode(t *
 	require.Equal(t, 1, result.ImageCount)
 	require.Equal(t, "2K", result.ImageSize)
 	require.Equal(t, "gpt-image-2", result.BillingModel)
+}
+
+func TestOpenAIGatewayService_Forward_ImageToolWithImageOnlyModelIsNormalized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"usage":{"input_tokens":1,"output_tokens":2}}`)),
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
+	account := &Account{
+		ID:          11,
+		Name:        "openai-apikey",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://example.com",
+		},
+		Extra: map[string]any{"use_responses_api": true},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+
+	body := []byte(`{"model":"gpt-image-2","stream":false,"tools":[{"type":"image_generation","model":"gpt-image-2"}],"input":"draw"}`)
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, openAIImagesResponsesMainModel, gjson.GetBytes(upstream.lastBody, "model").String())
 }
 
 func TestOpenAIGatewayService_Forward_HTTPRetryRecoveryDoesNotDecodeBeforeError(t *testing.T) {

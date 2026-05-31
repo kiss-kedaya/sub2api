@@ -2544,6 +2544,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Added Codex image_generation bridge instructions")
 		}
 	} else if imageGenerationAllowed && imageIntent && openAIRequestBodyHasImageGenerationTool(body) {
+		// 完整 image_generation tool 只做 raw 计费读取，校验/桥接/旧字段迁移命中时才展开大 input map。
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] /responses image_generation request inbound_model=%s mapped_model=%s account_type=%s", requestView.Model, upstreamModel, account.Type)
 	}
 
@@ -6215,7 +6216,7 @@ func (v *openAIRequestView) MarkPatchSet(path string, value any) {
 		return
 	}
 	path = strings.TrimSpace(path)
-	if path == "" {
+	if !isSimpleOpenAIRequestPatchPath(path) {
 		v.DisablePatches()
 		return
 	}
@@ -6227,11 +6228,23 @@ func (v *openAIRequestView) MarkPatchDelete(path string) {
 		return
 	}
 	path = strings.TrimSpace(path)
-	if path == "" {
+	if !isSimpleOpenAIRequestPatchPath(path) {
 		v.DisablePatches()
 		return
 	}
 	v.patches = append(v.patches, openAIRequestPatch{path: path, delete: true})
+}
+
+func isSimpleOpenAIRequestPatchPath(path string) bool {
+	if path == "" || strings.ContainsRune(path, '\\') {
+		return false
+	}
+	for _, part := range strings.Split(path, ".") {
+		if strings.TrimSpace(part) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (v *openAIRequestView) DisablePatches() {
@@ -6772,7 +6785,7 @@ func openAIRequestBodyMayContainImageInput(body []byte) bool {
 		return false
 	}
 	input := gjson.GetBytes(body, "input")
-	messages := gjson.GetBytes(body, "messages")
+	messages := gjson.GetBytes(body, "messages.#-1")
 	return openAIJSONValueMayContainImageInput(input) || openAIJSONValueMayContainImageInput(messages)
 }
 
