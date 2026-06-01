@@ -34,14 +34,14 @@ func NewUserHandler(adminService service.AdminService, concurrencyService *servi
 
 // CreateUserRequest represents admin create user request
 type CreateUserRequest struct {
-	Email         string  `json:"email" binding:"required,email"`
-	Password      string  `json:"password" binding:"required,min=6"`
-	Username      string  `json:"username"`
-	Notes         string  `json:"notes"`
-	Balance       float64 `json:"balance"`
-	Concurrency   int     `json:"concurrency"`
-	RPMLimit      int     `json:"rpm_limit"`
-	AllowedGroups []int64 `json:"allowed_groups"`
+	Email         string   `json:"email" binding:"required,email"`
+	Password      string   `json:"password" binding:"required,min=6"`
+	Username      string   `json:"username"`
+	Notes         string   `json:"notes"`
+	Balance       *float64 `json:"balance"`
+	Concurrency   int      `json:"concurrency"`
+	RPMLimit      int      `json:"rpm_limit"`
+	AllowedGroups []int64  `json:"allowed_groups"`
 }
 
 // UpdateUserRequest represents admin update user request
