@@ -5707,6 +5707,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	durationMs := int(result.Duration.Milliseconds())
 	accountRateMultiplier := account.BillingRateMultiplier()
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
+	if result.OpenAIWSMode {
+		if upstreamRequestID := strings.TrimSpace(result.RequestID); upstreamRequestID != "" {
+			requestID = upstreamRequestID
+		}
+	}
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model
