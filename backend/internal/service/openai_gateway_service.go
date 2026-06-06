@@ -42,7 +42,10 @@ const (
 	// OpenAI Platform API for API Key accounts (fallback)
 	openaiPlatformAPIURL   = "https://api.openai.com/v1/responses"
 	openaiStickySessionTTL = time.Hour // 粘性会话TTL
-	codexCLIUserAgent      = "codex_cli_rs/0.125.0"
+	// 与真实 Codex CLI 的 User-Agent 结构对齐：
+	// {originator}/{version} ({OS} {OS_version}; {arch}) {terminal}
+	// 旧值 "codex_cli_rs/0.125.0" 缺少 OS/架构/终端后缀，易被上游指纹识别为非官方客户端。
+	codexCLIUserAgent      = "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
@@ -2499,7 +2502,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	instructions := gjson.GetBytes(body, "instructions")
 	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
 	if instructionsEmpty && !compatMessagesBridge {
-		markPatchSet("instructions", "You are a helpful coding assistant.")
+		markPatchSet("instructions", defaultCodexSynthInstructions(reqModel))
 	}
 
 	billingModel := account.GetMappedModel(reqModel)
@@ -2609,6 +2612,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			codexResult = applyCodexOAuthTransform(decoded, isCodexCLI, isCompactRequest)
 		}
 		if codexResult.Modified {
+			markDecodedModified()
+		}
+		// 带真实 device_id 时补齐 client_metadata 安装标识，与真实 Codex 对齐（compact 形态不同，跳过）。
+		if !isCompactRequest && applyCodexClientMetadata(decoded, account) {
 			markDecodedModified()
 		}
 		if codexResult.NormalizedModel != "" {
