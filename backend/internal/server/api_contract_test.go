@@ -506,6 +506,8 @@ func TestAPIContracts(t *testing.T) {
 					"total_input_tokens": 15,
 					"total_output_tokens": 35,
 					"total_cache_tokens": 3,
+					"total_cache_creation_tokens": 1,
+					"total_cache_read_tokens": 2,
 					"total_tokens": 53,
 					"total_cost": 0.75,
 					"total_actual_cost": 0.75,
@@ -2364,6 +2366,8 @@ func (r *stubUsageLogRepo) GetUserStatsAggregated(ctx context.Context, userID in
 	var totalInputTokens int64
 	var totalOutputTokens int64
 	var totalCacheTokens int64
+	var totalCacheCreationTokens int64
+	var totalCacheReadTokens int64
 	var totalCost float64
 	var totalActualCost float64
 	var totalDuration int64
@@ -2374,6 +2378,8 @@ func (r *stubUsageLogRepo) GetUserStatsAggregated(ctx context.Context, userID in
 		totalInputTokens += int64(log.InputTokens)
 		totalOutputTokens += int64(log.OutputTokens)
 		totalCacheTokens += int64(log.CacheCreationTokens + log.CacheReadTokens)
+		totalCacheCreationTokens += int64(log.CacheCreationTokens)
+		totalCacheReadTokens += int64(log.CacheReadTokens)
 		totalCost += log.TotalCost
 		totalActualCost += log.ActualCost
 		if log.DurationMs != nil {
@@ -2388,14 +2394,16 @@ func (r *stubUsageLogRepo) GetUserStatsAggregated(ctx context.Context, userID in
 	}
 
 	return &usagestats.UsageStats{
-		TotalRequests:     totalRequests,
-		TotalInputTokens:  totalInputTokens,
-		TotalOutputTokens: totalOutputTokens,
-		TotalCacheTokens:  totalCacheTokens,
-		TotalTokens:       totalInputTokens + totalOutputTokens + totalCacheTokens,
-		TotalCost:         totalCost,
-		TotalActualCost:   totalActualCost,
-		AverageDurationMs: avgDuration,
+		TotalRequests:            totalRequests,
+		TotalInputTokens:         totalInputTokens,
+		TotalOutputTokens:        totalOutputTokens,
+		TotalCacheTokens:         totalCacheTokens,
+		TotalCacheCreationTokens: totalCacheCreationTokens,
+		TotalCacheReadTokens:     totalCacheReadTokens,
+		TotalTokens:              totalInputTokens + totalOutputTokens + totalCacheTokens,
+		TotalCost:                totalCost,
+		TotalActualCost:          totalActualCost,
+		AverageDurationMs:        avgDuration,
 	}, nil
 }
 
