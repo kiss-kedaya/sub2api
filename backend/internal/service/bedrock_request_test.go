@@ -175,6 +175,7 @@ func TestIsBedrockClaude45OrNewer(t *testing.T) {
 	}{
 		{"us.anthropic.claude-opus-4-6-v1", true},
 		{"us.anthropic.claude-opus-4-8-v1", true},
+		{"anthropic.claude-fable-5", true},
 		{"us.anthropic.claude-sonnet-4-6", true},
 		{"us.anthropic.claude-sonnet-4-5-20250929-v1:0", true},
 		{"us.anthropic.claude-opus-4-5-20251101-v1:0", true},
@@ -526,6 +527,20 @@ func TestResolveBedrockModelID(t *testing.T) {
 		assert.Equal(t, "eu.anthropic.claude-opus-4-8-v1", modelID)
 	})
 
+	t.Run("默认 Fable 5 映射使用官方 Bedrock 模型 ID", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformAnthropic,
+			Type:     AccountTypeBedrock,
+			Credentials: map[string]any{
+				"aws_region": "eu-west-1",
+			},
+		}
+
+		modelID, ok := ResolveBedrockModelID(account, "claude-fable-5")
+		require.True(t, ok)
+		assert.Equal(t, "anthropic.claude-fable-5", modelID)
+	})
+
 	t.Run("force global rewrites anthropic regional model id", func(t *testing.T) {
 		account := &Account{
 			Platform: PlatformAnthropic,
@@ -750,6 +765,20 @@ func TestIsBedrockOpus47OrNewer(t *testing.T) {
 }
 
 func TestSanitizeBedrockThinking(t *testing.T) {
+	t.Run("Fable 5 将 enabled 转换为 adaptive 并移除预算", func(t *testing.T) {
+		input := `{"thinking":{"type":"enabled","budget_tokens":10000},"messages":[]}`
+		result := sanitizeBedrockThinking([]byte(input), "anthropic.claude-fable-5")
+		assert.Equal(t, "adaptive", gjson.GetBytes(result, "thinking.type").String())
+		assert.False(t, gjson.GetBytes(result, "thinking.budget_tokens").Exists())
+	})
+
+	t.Run("Fable 5 adaptive 移除预算", func(t *testing.T) {
+		input := `{"thinking":{"type":"adaptive","budget_tokens":10000},"messages":[]}`
+		result := sanitizeBedrockThinking([]byte(input), "claude-fable-5")
+		assert.Equal(t, "adaptive", gjson.GetBytes(result, "thinking.type").String())
+		assert.False(t, gjson.GetBytes(result, "thinking.budget_tokens").Exists())
+	})
+
 	t.Run("opus 4.7 converts enabled to adaptive", func(t *testing.T) {
 		input := `{"thinking":{"type":"enabled","budget_tokens":10000},"messages":[]}`
 		result := sanitizeBedrockThinking([]byte(input), "us.anthropic.claude-opus-4-7-v1")
