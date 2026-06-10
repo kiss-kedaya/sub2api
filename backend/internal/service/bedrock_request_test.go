@@ -412,7 +412,7 @@ func TestPrepareBedrockRequestBodyWithTokens_ContextManagementRequiresSupportedB
 		assert.Equal(t, int64(100), gjson.GetBytes(result, "max_tokens").Int())
 	})
 
-	t.Run("filters explicit unsupported context-management beta and strips field", func(t *testing.T) {
+	t.Run("keeps supported context-management beta and retains field", func(t *testing.T) {
 		input := `{
 			"messages":[{"role":"user","content":"hi"}],
 			"max_tokens":100,
@@ -427,8 +427,8 @@ func TestPrepareBedrockRequestBodyWithTokens_ContextManagementRequiresSupportedB
 		)
 		require.NoError(t, err)
 
-		assert.False(t, gjson.GetBytes(result, "context_management").Exists())
-		assert.Equal(t, []string{"context-1m-2025-08-07"}, bedrockAnthropicBetaNames(result))
+		assert.True(t, gjson.GetBytes(result, "context_management").Exists())
+		assert.Equal(t, []string{bedrockContextManagementBetaToken, "context-1m-2025-08-07"}, bedrockAnthropicBetaNames(result))
 	})
 }
 
