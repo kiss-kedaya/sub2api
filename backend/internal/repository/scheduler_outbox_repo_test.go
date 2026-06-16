@@ -20,6 +20,7 @@ func TestSchedulerOutboxRepositoryDeleteConsumedUpToUsesBoundedCTE(t *testing.T)
 			SELECT id
 			FROM scheduler_outbox
 			WHERE id <= $1
+				AND created_at < NOW() - INTERVAL '10 seconds'
 			ORDER BY id ASC
 			LIMIT $2
 		)
