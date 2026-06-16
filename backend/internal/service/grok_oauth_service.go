@@ -108,6 +108,7 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 	if !ok {
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_SESSION_NOT_FOUND", "session not found or expired")
 	}
+	defer s.sessionStore.Delete(input.SessionID)
 
 	parsed := xai.ParseAuthorizationInput(input.Code)
 	code := strings.TrimSpace(parsed.Code)
@@ -117,6 +118,9 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 	state := strings.TrimSpace(input.State)
 	if state == "" {
 		state = strings.TrimSpace(parsed.State)
+	}
+	if parsed.RequiresState && state == "" {
+		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_STATE_REQUIRED", "oauth state is required for callback URLs")
 	}
 	if state != "" && subtle.ConstantTimeCompare([]byte(state), []byte(session.State)) != 1 {
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_INVALID_STATE", "invalid oauth state")
@@ -139,7 +143,6 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 	if err != nil {
 		return nil, err
 	}
-	s.sessionStore.Delete(input.SessionID)
 	return s.tokenInfoFromResponse(tokenResp, session.ClientID, nil), nil
 }
 
