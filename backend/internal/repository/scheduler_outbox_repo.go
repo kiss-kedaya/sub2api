@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -15,6 +16,12 @@ import (
 type schedulerOutboxRepository struct {
 	db *sql.DB
 }
+
+type schedulerOutboxCleanupLease struct {
+	conn *sql.Conn
+}
+
+const schedulerOutboxDefaultCleanSize = 5000
 
 func NewSchedulerOutboxRepository(db *sql.DB) service.SchedulerOutboxRepository {
 	return &schedulerOutboxRepository{db: db}
@@ -92,6 +99,60 @@ func (r *schedulerOutboxRepository) MaxID(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return maxID, nil
+}
+
+func (r *schedulerOutboxRepository) DeleteConsumedUpTo(ctx context.Context, watermark int64, limit int) (int64, error) {
+	if watermark <= 0 {
+		return 0, nil
+	}
+	if limit <= 0 {
+		limit = schedulerOutboxDefaultCleanSize
+	}
+	result, err := r.db.ExecContext(ctx, `
+		WITH doomed AS (
+			SELECT id
+			FROM scheduler_outbox
+			WHERE id <= $1
+			ORDER BY id ASC
+			LIMIT $2
+		)
+		DELETE FROM scheduler_outbox o
+		USING doomed d
+		WHERE o.id = d.id
+	`, watermark, limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (r *schedulerOutboxRepository) TryAcquireCleanupLock(ctx context.Context) (service.SchedulerOutboxCleanupLease, bool, error) {
+	conn, err := r.db.Conn(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	var acquired bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(hashtext('scheduler_outbox_cleanup'))").Scan(&acquired); err != nil {
+		_ = conn.Close()
+		return nil, false, err
+	}
+	if !acquired {
+		_ = conn.Close()
+		return nil, false, nil
+	}
+	return &schedulerOutboxCleanupLease{conn: conn}, true, nil
+}
+
+func (l *schedulerOutboxCleanupLease) Release() {
+	if l == nil || l.conn == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, _ = l.conn.ExecContext(ctx, "SELECT pg_advisory_unlock(hashtext('scheduler_outbox_cleanup'))")
+	_ = l.conn.Close()
+	l.conn = nil
 }
 
 func enqueueSchedulerOutbox(ctx context.Context, exec sqlExecutor, eventType string, accountID *int64, groupID *int64, payload any) error {
