@@ -152,7 +152,11 @@ func (s *GrokOAuthService) RefreshToken(ctx context.Context, refreshToken, proxy
 	if err != nil {
 		return nil, err
 	}
-	return s.tokenInfoFromResponse(tokenResp, clientID, nil), nil
+	tokenInfo := s.tokenInfoFromResponse(tokenResp, clientID, nil)
+	if tokenInfo.RefreshToken == "" {
+		tokenInfo.RefreshToken = refreshToken
+	}
+	return tokenInfo, nil
 }
 
 func (s *GrokOAuthService) ValidateRefreshToken(ctx context.Context, refreshToken string, proxyID *int64) (*GrokTokenInfo, error) {
