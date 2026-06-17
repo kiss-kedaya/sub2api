@@ -156,6 +156,14 @@ func TestShouldAutoPauseGrokAccountByQuota(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "retry after expired",
+			snapshot: xai.QuotaSnapshot{
+				RetryAfterSeconds: &retryAfter,
+				UpdatedAt:         time.Now().Add(-time.Duration(retryAfter+1) * time.Second).UTC().Format(time.RFC3339),
+			},
+			want: false,
+		},
+		{
 			name: "stale snapshot ignored",
 			snapshot: xai.QuotaSnapshot{
 				Requests:  &xai.QuotaWindow{Limit: &limit, Remaining: &zero, ResetUnix: &resetFuture},
