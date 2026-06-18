@@ -67,8 +67,10 @@ func TestBuildAuthorizationURLIncludesHermesCompatibleParameters(t *testing.T) {
 	t.Setenv(EnvAuthorizeURL, "https://auth.example.test/oauth2/authorize")
 	t.Setenv(EnvClientID, "client-id")
 	t.Setenv(EnvScope, "openid profile offline_access api:access")
+	t.Setenv(EnvAllowUnsafeURLOverrides, "true")
 
-	authURL := BuildAuthorizationURL("state", "challenge", "http://127.0.0.1:56121/callback", "nonce")
+	authURL, err := BuildAuthorizationURL("state", "challenge", "http://127.0.0.1:56121/callback", "nonce")
+	require.NoError(t, err)
 	parsed, err := url.Parse(authURL)
 	require.NoError(t, err)
 
@@ -138,6 +140,46 @@ func TestValidateXAIURLsAllowUnsafeDevOverride(t *testing.T) {
 	baseURL, err := ValidateBaseURL("http://127.0.0.1:8080/v1/")
 	require.NoError(t, err)
 	require.Equal(t, "http://127.0.0.1:8080/v1", baseURL)
+}
+
+func TestRuntimeSanityReportsSafeDefaults(t *testing.T) {
+	t.Setenv(EnvBaseURL, "")
+	t.Setenv(EnvAuthorizeURL, "")
+	t.Setenv(EnvTokenURL, "")
+	t.Setenv(EnvRedirectURI, "")
+	t.Setenv(EnvAllowUnsafeURLOverrides, "")
+	t.Setenv(EnvUnsafeAllowHighConcurrency, "")
+
+	report := RuntimeSanity()
+	require.True(t, report.BaseURL.Valid)
+	require.Equal(t, DefaultBaseURL, report.BaseURL.Value)
+	require.True(t, report.BaseURL.IsDefault)
+	require.True(t, report.OAuthAuthorizeURL.Valid)
+	require.True(t, report.OAuthTokenURL.Valid)
+	require.True(t, report.OAuthRedirectURI.Valid)
+	require.False(t, report.UnsafeURLOverrides)
+	require.False(t, report.UnsafeHighConcurrency)
+	require.Equal(t, "responses_only", report.PublicGatewayScope)
+	require.Contains(t, report.ProxyPolicy, "account_proxy_optional")
+}
+
+func TestRuntimeSanityReportsInvalidOverridesWithoutSecrets(t *testing.T) {
+	t.Setenv(EnvBaseURL, "http://127.0.0.1:8080/v1?access_token=secret")
+	t.Setenv(EnvAuthorizeURL, "https://auth.example.test/oauth2/authorize")
+	t.Setenv(EnvTokenURL, "https://auth.example.test/oauth2/token")
+	t.Setenv(EnvRedirectURI, "not a url")
+	t.Setenv(EnvClientID, "client-secret-like-value")
+	t.Setenv(EnvAllowUnsafeURLOverrides, "")
+
+	report := RuntimeSanity()
+	require.False(t, report.BaseURL.Valid)
+	require.False(t, report.BaseURL.IsDefault)
+	require.Contains(t, report.BaseURL.Error, "invalid url")
+	require.NotContains(t, report.BaseURL.Value, "secret")
+	require.False(t, report.OAuthAuthorizeURL.Valid)
+	require.False(t, report.OAuthTokenURL.Valid)
+	require.False(t, report.OAuthRedirectURI.Valid)
+	require.NotContains(t, report.ProxyPolicy, "client-secret-like-value")
 }
 
 func TestDefaultModelMappingIncludesGrokAliases(t *testing.T) {

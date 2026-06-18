@@ -22,7 +22,24 @@ type QuotaSnapshot struct {
 	EntitlementStatus string            `json:"entitlement_status,omitempty"`
 	StatusCode        int               `json:"status_code,omitempty"`
 	Headers           map[string]string `json:"headers,omitempty"`
+	HeadersObserved   bool              `json:"headers_observed"`
+	ObservationSource string            `json:"observation_source,omitempty"`
+	LastProbeAt       string            `json:"last_probe_at,omitempty"`
+	LastHeadersSeenAt string            `json:"last_headers_seen_at,omitempty"`
 	UpdatedAt         string            `json:"updated_at"`
+}
+
+func (s *QuotaSnapshot) HasObservedHeaders() bool {
+	if s == nil {
+		return false
+	}
+	return s.HeadersObserved ||
+		s.Requests != nil ||
+		s.Tokens != nil ||
+		s.RetryAfterSeconds != nil ||
+		s.SubscriptionTier != "" ||
+		s.EntitlementStatus != "" ||
+		len(s.Headers) > 0
 }
 
 var quotaHeaderAllowlist = []string{
@@ -40,16 +57,28 @@ var quotaHeaderAllowlist = []string{
 }
 
 func ParseQuotaHeaders(headers http.Header, statusCode int) *QuotaSnapshot {
-	if headers == nil {
+	return parseQuotaHeaders(headers, statusCode, "", false)
+}
+
+func ObserveQuotaHeaders(headers http.Header, statusCode int, source string) *QuotaSnapshot {
+	return parseQuotaHeaders(headers, statusCode, source, true)
+}
+
+func parseQuotaHeaders(headers http.Header, statusCode int, source string, keepEmpty bool) *QuotaSnapshot {
+	if headers == nil && !keepEmpty {
 		return nil
 	}
-
+	now := time.Now().UTC().Format(time.RFC3339)
 	snapshot := &QuotaSnapshot{
-		Requests:   parseQuotaWindow(headers, "requests"),
-		Tokens:     parseQuotaWindow(headers, "tokens"),
-		StatusCode: statusCode,
-		Headers:    make(map[string]string),
-		UpdatedAt:  time.Now().UTC().Format(time.RFC3339),
+		Requests:          parseQuotaWindow(headers, "requests"),
+		Tokens:            parseQuotaWindow(headers, "tokens"),
+		StatusCode:        statusCode,
+		Headers:           make(map[string]string),
+		ObservationSource: strings.TrimSpace(source),
+		UpdatedAt:         now,
+	}
+	if snapshot.ObservationSource == "active_probe" {
+		snapshot.LastProbeAt = now
 	}
 	if retryAfter := parseRetryAfter(headers.Get("retry-after")); retryAfter != nil {
 		snapshot.RetryAfterSeconds = retryAfter
@@ -69,8 +98,13 @@ func ParseQuotaHeaders(headers http.Header, statusCode int) *QuotaSnapshot {
 		snapshot.SubscriptionTier == "" &&
 		snapshot.EntitlementStatus == "" &&
 		len(snapshot.Headers) == 0 {
+		if keepEmpty {
+			return snapshot
+		}
 		return nil
 	}
+	snapshot.HeadersObserved = true
+	snapshot.LastHeadersSeenAt = now
 	return snapshot
 }
 
