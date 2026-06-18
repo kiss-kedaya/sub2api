@@ -85,18 +85,16 @@ func (s *GrokQuotaService) ProbeUsage(ctx context.Context, accountID int64) (*Gr
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	snapshot := xai.ParseQuotaHeaders(resp.Header, resp.StatusCode)
-	if snapshot != nil {
-		_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
-			grokQuotaSnapshotExtraKey: snapshot,
-		})
-	}
+	snapshot := xai.ObserveQuotaHeaders(resp.Header, resp.StatusCode, "active_probe")
+	_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
+		grokQuotaSnapshotExtraKey: snapshot,
+	})
 
 	result := &GrokQuotaProbeResult{
 		Source:          "active_probe",
 		Snapshot:        snapshot,
 		StatusCode:      resp.StatusCode,
-		HeadersObserved: snapshot != nil,
+		HeadersObserved: snapshot.HeadersObserved,
 		ResetSupported:  false,
 		FetchedAt:       time.Now().Unix(),
 	}
