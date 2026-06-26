@@ -793,6 +793,70 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(paymentHelpImageUpload?.attributes("data-upload-label")).toBe("上传图片");
     expect(paymentHelpImageUpload?.attributes("data-remove-label")).toBe("移除");
   });
+
+  it("normalizes null supported_types from API so provider card stays visible", async () => {
+    // Backend returns null for supported_types when the list is empty
+    // (Go nil slice → JSON null). Without normalization, ProviderCard's
+    // isSelected() throws TypeError on null.includes(), causing the card
+    // to vanish from the list.
+    const providerWithNullTypes = {
+      id: 42,
+      provider_key: "easypay",
+      name: "EasyPay",
+      config: {},
+      supported_types: null as unknown as string[],
+      enabled: true,
+      payment_mode: "",
+      refund_enabled: false,
+      allow_user_refund: false,
+      limits: "",
+      sort_order: 0,
+    };
+    getProviders.mockReset();
+    getProviders.mockResolvedValue({ data: [providerWithNullTypes] });
+
+    let receivedProviders: Array<Record<string, unknown>> = [];
+    const PaymentProviderListCapture = defineComponent({
+      props: {
+        providers: {
+          type: Array,
+          default: () => [],
+        },
+      },
+      setup(props) {
+        receivedProviders = props.providers as Array<Record<string, unknown>>;
+        return () => h("div", { class: "provider-list-capture" });
+      },
+    });
+
+    const wrapper = mount(SettingsView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          Select: SelectStub,
+          Toggle: ToggleStub,
+          Icon: true,
+          ConfirmDialog: true,
+          PaymentProviderList: PaymentProviderListCapture,
+          PaymentProviderDialog: true,
+          GroupBadge: true,
+          GroupOptionItem: true,
+          ProxySelector: true,
+          ImageUpload: ImageUploadStub,
+          BackupSettings: true,
+        },
+      },
+    });
+
+    await flushPromises();
+    await openPaymentTab(wrapper);
+
+    // The provider should still be in the list
+    expect(receivedProviders.length).toBe(1);
+    // supported_types should be normalized to an empty array, not null
+    expect(Array.isArray(receivedProviders[0].supported_types)).toBe(true);
+    expect(receivedProviders[0].supported_types).toEqual([]);
+  });
 });
 
 describe("admin SettingsView wechat connect controls", () => {
