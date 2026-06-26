@@ -2573,8 +2573,13 @@ func (s *adminServiceImpl) GetAccountsByIDs(ctx context.Context, ids []int64) ([
 }
 
 func normalizeAccountConcurrency(platform, accountType string, concurrency int) int {
-	if platform == PlatformGrok && accountType == AccountTypeOAuth && concurrency <= 0 {
-		return 1
+	if platform == PlatformGrok && accountType == AccountTypeOAuth {
+		if concurrency <= 0 {
+			return 1
+		}
+		if concurrency > 1 && !xai.AllowUnsafeHighConcurrency() {
+			return 1
+		}
 	}
 	return concurrency
 }
