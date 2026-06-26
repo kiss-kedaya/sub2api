@@ -40,6 +40,17 @@ func (r *grokQuotaAccountRepo) SetTempUnschedulable(_ context.Context, id int64,
 	return nil
 }
 
+type grokQuotaProxyRepo struct {
+	proxyRepoStub
+	proxies map[int64]*Proxy
+	calls   int
+}
+
+func (r *grokQuotaProxyRepo) GetByID(_ context.Context, id int64) (*Proxy, error) {
+	r.calls++
+	return r.proxies[id], nil
+}
+
 func TestGrokQuotaServiceProbeUsageStoresHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -69,7 +80,7 @@ func TestGrokQuotaServiceProbeUsageStoresHeaders(t *testing.T) {
 		},
 		Body: io.NopCloser(strings.NewReader(`{"id":"resp_probe"}`)),
 	}}
-	svc := NewGrokQuotaService(repo, NewGrokTokenProvider(repo, nil, nil), upstream)
+	svc := NewGrokQuotaService(repo, nil, NewGrokTokenProvider(repo, nil), upstream)
 
 	result, err := svc.ProbeUsage(context.Background(), 42)
 	require.NoError(t, err)
@@ -88,6 +99,49 @@ func TestGrokQuotaServiceProbeUsageStoresHeaders(t *testing.T) {
 	require.Contains(t, string(upstream.lastBody), `"max_output_tokens":1`)
 	require.Contains(t, string(upstream.lastBody), `"store":false`)
 	require.NotNil(t, repo.updates[42][grokQuotaSnapshotExtraKey])
+}
+
+func TestGrokQuotaServiceProbeUsageLoadsProxyWhenAccountEdgeMissing(t *testing.T) {
+	t.Parallel()
+
+	proxyID := int64(7)
+	account := &Account{
+		ID:          46,
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		ProxyID:     &proxyID,
+		Credentials: map[string]any{
+			"access_token": "access-token",
+			"expires_at":   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		},
+	}
+	repo := &grokQuotaAccountRepo{
+		mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
+			accountsByID: map[int64]*Account{46: account},
+		},
+	}
+	proxyRepo := &grokQuotaProxyRepo{
+		proxies: map[int64]*Proxy{
+			proxyID: {
+				ID:       proxyID,
+				Protocol: "http",
+				Host:     "proxy.test",
+				Port:     3128,
+			},
+		},
+	}
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_probe"}`)),
+	}}
+	svc := NewGrokQuotaService(repo, proxyRepo, NewGrokTokenProvider(repo, nil), upstream)
+
+	_, err := svc.ProbeUsage(context.Background(), 46)
+	require.NoError(t, err)
+	require.Equal(t, 1, proxyRepo.calls)
+	require.Equal(t, "http://proxy.test:3128", upstream.lastProxyURL)
 }
 
 func TestGrokQuotaServiceProbeUsageStoresNoHeadersState(t *testing.T) {
@@ -113,7 +167,7 @@ func TestGrokQuotaServiceProbeUsageStoresNoHeadersState(t *testing.T) {
 		Header:     http.Header{},
 		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_probe"}`)),
 	}}
-	svc := NewGrokQuotaService(repo, NewGrokTokenProvider(repo, nil, nil), upstream)
+	svc := NewGrokQuotaService(repo, nil, NewGrokTokenProvider(repo, nil), upstream)
 
 	result, err := svc.ProbeUsage(context.Background(), 45)
 	require.NoError(t, err)
@@ -153,7 +207,7 @@ func TestGrokQuotaServiceProbeUsageReturnsRateLimitedSnapshot(t *testing.T) {
 		Header:     http.Header{"Retry-After": []string{"45"}},
 		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
 	}}
-	svc := NewGrokQuotaService(repo, NewGrokTokenProvider(repo, nil, nil), upstream)
+	svc := NewGrokQuotaService(repo, nil, NewGrokTokenProvider(repo, nil), upstream)
 
 	result, err := svc.ProbeUsage(context.Background(), 43)
 	require.NoError(t, err)
@@ -176,7 +230,7 @@ func TestGrokQuotaServiceResetQuotaUnsupported(t *testing.T) {
 			accountsByID: map[int64]*Account{44: account},
 		},
 	}
-	svc := NewGrokQuotaService(repo, nil, nil)
+	svc := NewGrokQuotaService(repo, nil, nil, nil)
 
 	_, err := svc.ResetQuota(context.Background(), 44)
 	require.Error(t, err)

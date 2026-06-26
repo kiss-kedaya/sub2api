@@ -118,7 +118,7 @@ func TestForwardAsChatCompletionsForGrokUsesXAIChatCompletionsAndSnapshots(t *te
 	}}
 	svc := &OpenAIGatewayService{
 		httpUpstream:      upstream,
-		grokTokenProvider: NewGrokTokenProvider(repo, nil, nil),
+		grokTokenProvider: NewGrokTokenProvider(repo, nil),
 		accountRepo:       repo,
 	}
 
@@ -182,7 +182,7 @@ func TestForwardGrokResponsesStreamingUsesXAIResponsesAndSnapshots(t *testing.T)
 	}}
 	svc := &OpenAIGatewayService{
 		httpUpstream:      upstream,
-		grokTokenProvider: NewGrokTokenProvider(repo, nil, nil),
+		grokTokenProvider: NewGrokTokenProvider(repo, nil),
 		accountRepo:       repo,
 	}
 
@@ -251,7 +251,7 @@ func TestForwardAsChatCompletionsForGrokStreamingUsesRawXAIChatCompletions(t *te
 	svc := &OpenAIGatewayService{
 		cfg:               rawChatCompletionsTestConfig(),
 		httpUpstream:      upstream,
-		grokTokenProvider: NewGrokTokenProvider(repo, nil, nil),
+		grokTokenProvider: NewGrokTokenProvider(repo, nil),
 		accountRepo:       repo,
 	}
 
