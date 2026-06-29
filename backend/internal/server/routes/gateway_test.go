@@ -83,7 +83,7 @@ func TestGatewayRoutesOpenAIImagesPathsAreRegistered(t *testing.T) {
 	}
 }
 
-func TestGatewayRoutesGrokOnlyAllowsResponsesHTTP(t *testing.T) {
+func TestGatewayRoutesGrokAllowsCLICompatibilityEntrypoints(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformGrok)
 
 	for _, tc := range []struct {
@@ -102,8 +102,8 @@ func TestGatewayRoutesGrokOnlyAllowsResponsesHTTP(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
-		require.Equal(t, http.StatusNotFound, w.Code, "method=%s path=%s", tc.method, tc.path)
-		require.Contains(t, w.Body.String(), "not supported for Grok groups")
+		require.NotEqual(t, http.StatusNotFound, w.Code, "method=%s path=%s", tc.method, tc.path)
+		require.NotContains(t, w.Body.String(), "not supported for Grok groups")
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", strings.NewReader(`{"model":"grok","messages":[{"role":"user","content":"hi"}]}`))
