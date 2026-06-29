@@ -104,6 +104,16 @@ func openAICompatibleRequestPlatform(apiKey *service.APIKey) string {
 	return service.PlatformOpenAI
 }
 
+func allowOpenAICompatibleMessagesDispatch(apiKey *service.APIKey) bool {
+	if apiKey == nil || apiKey.Group == nil {
+		return true
+	}
+	if apiKey.Group.Platform == service.PlatformGrok {
+		return true
+	}
+	return apiKey.Group.AllowMessagesDispatch
+}
+
 // NewOpenAIGatewayHandler creates a new OpenAIGatewayHandler
 func NewOpenAIGatewayHandler(
 	gatewayService *service.OpenAIGatewayService,
@@ -660,7 +670,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	)
 
 	// 检查分组是否允许 /v1/messages 调度
-	if apiKey.Group != nil && !apiKey.Group.AllowMessagesDispatch {
+	if !allowOpenAICompatibleMessagesDispatch(apiKey) {
 		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error",
 			"This group does not allow /v1/messages dispatch")
 		return
