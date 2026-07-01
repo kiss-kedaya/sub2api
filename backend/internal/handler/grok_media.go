@@ -294,7 +294,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
-		recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+		if shouldRecordGrokMediaUsage(endpoint, requestModel) {
+			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+		}
 		reqLog.Debug("grok_media.request_completed",
 			zap.Int64("account_id", account.ID),
 			zap.Int("switch_count", switchCount),
@@ -308,6 +310,10 @@ func grokMediaModerationBody(body []byte) []byte {
 		return body
 	}
 	return nil
+}
+
+func shouldRecordGrokMediaUsage(endpoint service.GrokMediaEndpoint, requestModel string) bool {
+	return endpoint.IsGenerationRequest() && strings.TrimSpace(requestModel) != ""
 }
 
 func recordGrokMediaUsage(
