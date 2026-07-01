@@ -177,7 +177,7 @@ func forwardLLMTesterRequest(c *gin.Context, req llmTesterProxyRequest, method, 
 		response.Error(c, http.StatusBadGateway, fmt.Sprintf("upstream request failed: %s", err.Error()))
 		return
 	}
-	defer upstreamResp.Body.Close()
+	defer func() { _ = upstreamResp.Body.Close() }()
 
 	payload, err := readLLMTesterResponseBody(upstreamResp.Body)
 	if err != nil {
