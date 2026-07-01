@@ -46,12 +46,16 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 		ctx = s.withGroupContext(ctx, group)
 		platform = group.Platform
 		if group != nil && group.Platform == PlatformComposite {
-			targetPlatform, ok := resolveCompositeTargetPlatform(ctx, group, requestedModel)
+			decision, ok, err := s.resolveCompositeRouteDecision(ctx, group, requestedModel, CompositeRouteEndpointAny)
+			if err != nil {
+				return nil, err
+			}
 			if !ok {
 				return nil, fmt.Errorf("%w supporting model: %s (composite target platform unknown)", ErrNoAvailableAccounts, requestedModel)
 			}
-			platform = targetPlatform
-			ctx = WithResolvedTargetPlatform(ctx, targetPlatform)
+			platform = decision.TargetPlatform
+			requestedModel = decision.UpstreamModel
+			ctx = WithCompositeRouteDecision(ctx, decision)
 		}
 	} else {
 		// 无分组时只使用原生 anthropic 平台
@@ -908,11 +912,14 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, gr
 	}
 	if group != nil {
 		if group.Platform == PlatformComposite {
-			targetPlatform, ok := resolveCompositeTargetPlatform(ctx, group, requestedModel)
+			decision, ok, err := s.resolveCompositeRouteDecision(ctx, group, requestedModel, CompositeRouteEndpointAny)
+			if err != nil {
+				return "", false, err
+			}
 			if !ok {
 				return "", false, fmt.Errorf("%w supporting model: %s (composite target platform unknown)", ErrNoAvailableAccounts, requestedModel)
 			}
-			return targetPlatform, false, nil
+			return decision.TargetPlatform, false, nil
 		}
 		return group.Platform, false, nil
 	}
@@ -922,11 +929,14 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, gr
 			return "", false, err
 		}
 		if group.Platform == PlatformComposite {
-			targetPlatform, ok := resolveCompositeTargetPlatform(ctx, group, requestedModel)
+			decision, ok, err := s.resolveCompositeRouteDecision(ctx, group, requestedModel, CompositeRouteEndpointAny)
+			if err != nil {
+				return "", false, err
+			}
 			if !ok {
 				return "", false, fmt.Errorf("%w supporting model: %s (composite target platform unknown)", ErrNoAvailableAccounts, requestedModel)
 			}
-			return targetPlatform, false, nil
+			return decision.TargetPlatform, false, nil
 		}
 		return group.Platform, false, nil
 	}
