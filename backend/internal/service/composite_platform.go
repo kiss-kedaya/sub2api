@@ -31,6 +31,59 @@ func ResolvedTargetPlatformFromContext(ctx context.Context) (string, bool) {
 	return platform, true
 }
 
+func WithCompositeRouteDecision(ctx context.Context, decision CompositeRouteDecision) context.Context {
+	if ctx == nil || !decision.Matched {
+		return ctx
+	}
+	ctx = WithResolvedTargetPlatform(ctx, decision.TargetPlatform)
+	if model := strings.TrimSpace(decision.UpstreamModel); model != "" {
+		ctx = context.WithValue(ctx, ctxkey.ResolvedUpstreamModel, model)
+	}
+	if model := strings.TrimSpace(decision.PublicModel); model != "" {
+		ctx = context.WithValue(ctx, ctxkey.RequestedPublicModel, model)
+	}
+	if source := strings.TrimSpace(decision.Source); source != "" {
+		ctx = context.WithValue(ctx, ctxkey.CompositeRouteSource, source)
+	}
+	return ctx
+}
+
+func ResolvedUpstreamModelFromContext(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	model, ok := ctx.Value(ctxkey.ResolvedUpstreamModel).(string)
+	model = strings.TrimSpace(model)
+	if !ok || model == "" {
+		return "", false
+	}
+	return model, true
+}
+
+func RequestedPublicModelFromContext(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	model, ok := ctx.Value(ctxkey.RequestedPublicModel).(string)
+	model = strings.TrimSpace(model)
+	if !ok || model == "" {
+		return "", false
+	}
+	return model, true
+}
+
+func CompositeRouteSourceFromContext(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	source, ok := ctx.Value(ctxkey.CompositeRouteSource).(string)
+	source = strings.TrimSpace(source)
+	if !ok || source == "" {
+		return "", false
+	}
+	return source, true
+}
+
 // DetectModelPlatform maps common public model IDs to the concrete provider
 // platform used by sub2api. It intentionally returns false for ambiguous model
 // names so composite groups fail closed instead of guessing.
@@ -92,6 +145,36 @@ func hasOpenAISeriesPrefix(model string) bool {
 		}
 	}
 	return false
+}
+
+func (s *GatewayService) resolveCompositeRouteDecision(ctx context.Context, group *Group, requestedModel, endpoint string) (CompositeRouteDecision, bool, error) {
+	if group == nil || group.Platform != PlatformComposite {
+		return CompositeRouteDecision{}, false, nil
+	}
+	if platform, ok := ResolvedTargetPlatformFromContext(ctx); ok {
+		upstreamModel := requestedModel
+		if resolvedModel, modelOK := ResolvedUpstreamModelFromContext(ctx); modelOK {
+			upstreamModel = resolvedModel
+		}
+		source := CompositeRouteSourceDetector
+		if resolvedSource, sourceOK := CompositeRouteSourceFromContext(ctx); sourceOK {
+			source = resolvedSource
+		}
+		return CompositeRouteDecision{
+			Matched:        true,
+			Source:         source,
+			GroupID:        group.ID,
+			PublicModel:    requestedModel,
+			TargetPlatform: platform,
+			UpstreamModel:  upstreamModel,
+			Endpoint:       normalizeCompositeRouteEndpoint(endpoint),
+		}, true, nil
+	}
+	decision, err := s.compositeResolver.Resolve(ctx, group.ID, requestedModel, endpoint)
+	if err != nil {
+		return decision, false, err
+	}
+	return decision, decision.Matched, nil
 }
 
 func resolveCompositeTargetPlatform(ctx context.Context, group *Group, requestedModel string) (string, bool) {
