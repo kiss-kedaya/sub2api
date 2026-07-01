@@ -78,7 +78,11 @@ func (s *adminServiceImpl) GetGroupModelsListCandidates(ctx context.Context, id 
 		seen[model] = struct{}{}
 	}
 	for _, acc := range accounts {
-		if acc.Platform != platform {
+		if platform == PlatformComposite {
+			if !isConcreteRequestPlatform(acc.Platform) {
+				continue
+			}
+		} else if acc.Platform != platform {
 			continue
 		}
 		for model := range acc.GetModelMapping() {
@@ -116,7 +120,7 @@ func defaultModelsListCandidateIDs(platform string) []string {
 	case PlatformGrok:
 		return xai.DefaultModelIDs()
 	case PlatformComposite:
-		return nil
+		return compositeDefaultModelsListCandidateIDs()
 	default:
 		ids := make([]string, 0, len(claude.DefaultModels))
 		for _, model := range claude.DefaultModels {
@@ -130,6 +134,21 @@ func defaultAllowImageGenerationForPlatform(platform string) bool {
 	// Grok image and video generation routes share the legacy image-generation gate.
 	// Older clients send the false zero value, so Grok groups must default enabled.
 	return platform == PlatformGrok
+}
+
+func compositeDefaultModelsListCandidateIDs() []string {
+	seen := make(map[string]struct{})
+	ids := make([]string, 0)
+	for _, platform := range []string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok} {
+		for _, id := range defaultModelsListCandidateIDs(platform) {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func canCopyAccountsFromGroupPlatform(targetPlatform, sourcePlatform string) bool {

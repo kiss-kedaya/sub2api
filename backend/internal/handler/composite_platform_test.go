@@ -40,3 +40,23 @@ func TestCompositeTargetPlatformAllowedRejectsWrongOrUnknownModel(t *testing.T) 
 		})
 	}
 }
+
+func TestCompositeTargetPlatformResolvedRejectsUnknownModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+	apiKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformComposite}}
+
+	require.False(t, compositeTargetPlatformResolved(c, apiKey, "llama-4-maverick"))
+	_, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context())
+	require.False(t, ok)
+}
+
+func TestCompositeTargetPlatformResolvedAllowsConcreteGroupWithoutResolution(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+	apiKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformAnthropic}}
+
+	require.True(t, compositeTargetPlatformResolved(c, apiKey, "llama-4-maverick"))
+}
