@@ -177,16 +177,6 @@ func (s *GatewayService) resolveCompositeRouteDecision(ctx context.Context, grou
 	return decision, decision.Matched, nil
 }
 
-func resolveCompositeTargetPlatform(ctx context.Context, group *Group, requestedModel string) (string, bool) {
-	if platform, ok := ResolvedTargetPlatformFromContext(ctx); ok {
-		return platform, true
-	}
-	if group == nil || group.Platform != PlatformComposite {
-		return "", false
-	}
-	return DetectModelPlatform(requestedModel)
-}
-
 func isConcreteRequestPlatform(platform string) bool {
 	switch platform {
 	case PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity, PlatformGrok:
