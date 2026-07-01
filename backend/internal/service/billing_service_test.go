@@ -1377,7 +1377,7 @@ func TestComputeTokenBreakdown_ExplicitZeroImagePrice_NoFallback(t *testing.T) {
 		OutputTokens:      200,
 		ImageOutputTokens: 50,
 	}
-	bd := svc.computeTokenBreakdown(pricing, tokens, 1.0, "", false)
+	bd := svc.computeTokenBreakdown(pricing, tokens, 1.0, 0, false, "", false)
 
 	// ImageOutputTokens should NOT fall back to outputPrice
 	require.Equal(t, 0.0, bd.ImageOutputCost)
@@ -1399,7 +1399,7 @@ func TestComputeTokenBreakdown_NonExplicitZeroImagePrice_FallsBackToOutput(t *te
 		OutputTokens:      200,
 		ImageOutputTokens: 50,
 	}
-	bd := svc.computeTokenBreakdown(pricing, tokens, 1.0, "", false)
+	bd := svc.computeTokenBreakdown(pricing, tokens, 1.0, 0, false, "", false)
 
 	// Should fall back to outputPrice since not explicit
 	require.InDelta(t, 50*15e-6, bd.ImageOutputCost, 1e-12)
