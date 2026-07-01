@@ -36,18 +36,18 @@ type httpUpstreamRecorder struct {
 	err       error
 }
 
-type errReadCloser struct {
+type passthroughErrReadCloser struct {
 	err error
 }
 
-func (r errReadCloser) Read(_ []byte) (int, error) {
+func (r passthroughErrReadCloser) Read(_ []byte) (int, error) {
 	if r.err != nil {
 		return 0, r.err
 	}
 	return 0, io.ErrUnexpectedEOF
 }
 
-func (r errReadCloser) Close() error {
+func (r passthroughErrReadCloser) Close() error {
 	return nil
 }
 
@@ -463,7 +463,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreami
 
 	require.False(t, gjson.GetBytes(upstream.lastBody, "store").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "stream").Exists())
-	require.Equal(t, defaultOpenAICompactModel, gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Equal(t, "gpt-5.4", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Equal(t, "compact me", gjson.GetBytes(upstream.lastBody, "input.0.text").String())
 	require.Equal(t, "local-test-instructions", strings.TrimSpace(gjson.GetBytes(upstream.lastBody, "instructions").String()))
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
@@ -1000,7 +1000,7 @@ func TestOpenAIGatewayService_OpenAIPassthrough_CompactNetworkErrorsTriggerFailo
 			resp: &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-compact"}},
-				Body:       errReadCloser{err: io.ErrUnexpectedEOF},
+				Body:       passthroughErrReadCloser{err: io.ErrUnexpectedEOF},
 			},
 		},
 	}
