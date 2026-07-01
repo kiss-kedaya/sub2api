@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -387,7 +389,7 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 			return
 		}
 
-		model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+		model := compositeRequestModelFromBody(c.GetHeader("Content-Type"), body)
 		if model != "" {
 			decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, compositeRouteEndpointForPath(c.Request.URL.Path))
 			if err != nil {
@@ -406,6 +408,42 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 		}
 		resetRequestBody(c, body)
 		c.Next()
+	}
+}
+
+func compositeRequestModelFromBody(contentType string, body []byte) string {
+	if model := strings.TrimSpace(gjson.GetBytes(body, "model").String()); model != "" {
+		return model
+	}
+	return compositeMultipartModelFromBody(contentType, body)
+}
+
+func compositeMultipartModelFromBody(contentType string, body []byte) string {
+	mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil || !strings.EqualFold(mediaType, "multipart/form-data") {
+		return ""
+	}
+	boundary := strings.TrimSpace(params["boundary"])
+	if boundary == "" {
+		return ""
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			return ""
+		}
+		if err != nil {
+			return ""
+		}
+		if part.FormName() != "model" || part.FileName() != "" {
+			continue
+		}
+		data, err := io.ReadAll(part)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(data))
 	}
 }
 
