@@ -146,6 +146,25 @@ func TestBuildGrokResponsesRequestRejectsUnsafeAccountBaseURL(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid base url")
 }
 
+func TestGrokMediaGenerationGateCoversImagesAndVideo(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint GrokMediaEndpoint
+		want     bool
+	}{
+		{name: "image generation", endpoint: GrokMediaEndpointImagesGenerations, want: true},
+		{name: "image edit", endpoint: GrokMediaEndpointImagesEdits, want: true},
+		{name: "video generation", endpoint: GrokMediaEndpointVideosGenerations, want: true},
+		{name: "video status", endpoint: GrokMediaEndpointVideoStatus, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, tt.endpoint.IsGenerationRequest())
+		})
+	}
+}
+
 func TestExtractGrokMediaModelSupportsJSONAndMultipart(t *testing.T) {
 	require.Equal(t, "grok-imagine", ExtractGrokMediaModel("application/json", []byte(`{"model":"grok-imagine"}`)))
 
