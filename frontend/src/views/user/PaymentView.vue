@@ -262,6 +262,7 @@ import { useAppStore } from '@/stores'
 import { paymentAPI } from '@/api/payment'
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import { isMobileDevice } from '@/utils/device'
+import { hasPeakRate, formatPeakRateWindow, serverTimezoneLabel, type PeakRateFields } from '@/utils/peak-rate'
 import type { SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderType } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AmountInput from '@/components/payment/AmountInput.vue'
@@ -304,14 +305,12 @@ function getDaysRemaining(expiresAt: string): number {
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
 }
 
-function subscriptionHasPeakRate(sub: { group?: { peak_rate_enabled?: boolean; peak_start?: string; peak_end?: string } | null }): boolean {
-  const group = sub.group
-  return Boolean(group?.peak_rate_enabled && group.peak_start && group.peak_end)
+function subscriptionHasPeakRate(sub: { group?: PeakRateFields | null }): boolean {
+  return hasPeakRate(sub.group)
 }
 
-function subscriptionPeakRateLabel(sub: { group?: { peak_start?: string; peak_end?: string; peak_rate_multiplier?: number } | null }): string {
-  const group = sub.group
-  return `${group?.peak_start}-${group?.peak_end} ×${group?.peak_rate_multiplier ?? 1}`
+function subscriptionPeakRateLabel(sub: { group?: PeakRateFields | null }): string {
+  return formatPeakRateWindow(sub.group, serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset))
 }
 
 const loading = ref(true)
@@ -713,11 +712,11 @@ const planValiditySuffix = computed(() => {
 })
 
 function planHasPeakRate(plan: SubscriptionPlan): boolean {
-  return Boolean(plan.peak_rate_enabled && plan.peak_start && plan.peak_end)
+  return hasPeakRate(plan)
 }
 
 function planPeakRateLabel(plan: SubscriptionPlan): string {
-  return `${plan.peak_start}-${plan.peak_end} ×${plan.peak_rate_multiplier ?? 1}`
+  return formatPeakRateWindow(plan, serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset))
 }
 
 function selectPlan(plan: SubscriptionPlan) {

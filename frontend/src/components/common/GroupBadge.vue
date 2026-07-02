@@ -30,6 +30,8 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SubscriptionType, GroupPlatform } from '@/types'
+import { useAppStore } from '@/stores/app'
+import { formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
 import PlatformIcon from './PlatformIcon.vue'
 
 interface Props {
@@ -75,16 +77,26 @@ const hasCustomRate = computed(() => {
   )
 })
 
+const appStore = useAppStore()
+
 const hasPeakRate = computed(() => {
   return Boolean(props.showRate && props.peakRateEnabled && props.peakStart && props.peakEnd)
 })
 
 const peakRateText = computed(() => {
-  return `${props.peakStart}-${props.peakEnd} ×${props.peakRateMultiplier ?? 1}`
+  return formatPeakRateWindow(
+    {
+      peak_rate_enabled: props.peakRateEnabled,
+      peak_start: props.peakStart,
+      peak_end: props.peakEnd,
+      peak_rate_multiplier: props.peakRateMultiplier
+    },
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
+  )
 })
 
 const peakRateTitle = computed(() => {
-  return `高峰倍率：${peakRateText.value}`
+  return t('common.peakRateTooltip', { window: peakRateText.value })
 })
 
 // 是否显示右侧标签
