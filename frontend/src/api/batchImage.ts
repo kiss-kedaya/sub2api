@@ -15,6 +15,16 @@ export type BatchImageStatus =
 export interface BatchImageSubmitItem {
   custom_id: string
   prompt: string
+  output_count?: number
+  reference_images?: BatchImageReferenceImage[]
+}
+
+export interface BatchImageReferenceImage {
+  id?: string
+  type?: string
+  mime_type: string
+  data?: string
+  file_uri?: string
 }
 
 export interface BatchImageSubmitRequest {
