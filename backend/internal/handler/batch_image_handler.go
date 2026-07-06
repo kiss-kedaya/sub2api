@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -49,6 +50,43 @@ func (h *BatchImageHandler) Get(c *gin.Context) {
 		return
 	}
 	got, err := h.service.Get(c.Request.Context(), owner, c.Param("id"))
+	if err != nil {
+		batchImageError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, got)
+}
+
+func (h *BatchImageHandler) List(c *gin.Context) {
+	owner, ok := batchImageOwnerFromContext(c)
+	if !ok {
+		batchImageError(c, infraerrors.New(http.StatusUnauthorized, "API_KEY_REQUIRED", "API key is required"))
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	got, err := h.service.List(c.Request.Context(), owner, service.BatchImageJobsQuery{
+		Status:     c.Query("status"),
+		TaskName:   c.Query("task_name"),
+		Downloaded: c.Query("downloaded"),
+		From:       c.Query("from"),
+		To:         c.Query("to"),
+		Limit:      limit,
+		Cursor:     c.Query("cursor"),
+	})
+	if err != nil {
+		batchImageError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, got)
+}
+
+func (h *BatchImageHandler) Models(c *gin.Context) {
+	owner, ok := batchImageOwnerFromContext(c)
+	if !ok {
+		batchImageError(c, infraerrors.New(http.StatusUnauthorized, "API_KEY_REQUIRED", "API key is required"))
+		return
+	}
+	got, err := h.service.ListModels(c.Request.Context(), owner)
 	if err != nil {
 		batchImageError(c, err)
 		return
@@ -122,6 +160,7 @@ func (h *BatchImageHandler) ItemContent(c *gin.Context) {
 	if _, err := io.Copy(c.Writer, stream.Reader); err != nil {
 		return
 	}
+	_ = h.service.MarkDownloaded(c.Request.Context(), owner, c.Param("id"))
 }
 
 func (h *BatchImageHandler) Download(c *gin.Context) {
@@ -147,6 +186,20 @@ func (h *BatchImageHandler) Download(c *gin.Context) {
 		}
 		return
 	}
+	_ = h.service.MarkDownloaded(c.Request.Context(), owner, c.Param("id"))
+}
+
+func (h *BatchImageHandler) DeleteRecord(c *gin.Context) {
+	owner, ok := batchImageOwnerFromContext(c)
+	if !ok {
+		batchImageError(c, infraerrors.New(http.StatusUnauthorized, "API_KEY_REQUIRED", "API key is required"))
+		return
+	}
+	if err := h.service.DeleteRecord(c.Request.Context(), owner, c.Param("id")); err != nil {
+		batchImageError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *BatchImageHandler) DeleteOutputs(c *gin.Context) {
@@ -184,7 +237,7 @@ func batchImageError(c *gin.Context, err error) {
 		code = "INTERNAL_ERROR"
 		message = "internal error"
 	}
-	if status == 0 || status == http.StatusInternalServerError {
+	if status == 0 || (status == http.StatusInternalServerError && strings.TrimSpace(code) == "") {
 		status = http.StatusInternalServerError
 		code = "INTERNAL_ERROR"
 		message = "internal error"

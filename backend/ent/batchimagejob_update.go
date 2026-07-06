@@ -131,6 +131,20 @@ func (_u *BatchImageJobUpdate) SetNillableModel(v *string) *BatchImageJobUpdate 
 	return _u
 }
 
+// SetTaskName sets the "task_name" field.
+func (_u *BatchImageJobUpdate) SetTaskName(v string) *BatchImageJobUpdate {
+	_u.mutation.SetTaskName(v)
+	return _u
+}
+
+// SetNillableTaskName sets the "task_name" field if the given value is not nil.
+func (_u *BatchImageJobUpdate) SetNillableTaskName(v *string) *BatchImageJobUpdate {
+	if v != nil {
+		_u.SetTaskName(*v)
+	}
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *BatchImageJobUpdate) SetStatus(v string) *BatchImageJobUpdate {
 	_u.mutation.SetStatus(v)
@@ -600,6 +614,46 @@ func (_u *BatchImageJobUpdate) ClearOutputDeletedAt() *BatchImageJobUpdate {
 	return _u
 }
 
+// SetDownloadedAt sets the "downloaded_at" field.
+func (_u *BatchImageJobUpdate) SetDownloadedAt(v time.Time) *BatchImageJobUpdate {
+	_u.mutation.SetDownloadedAt(v)
+	return _u
+}
+
+// SetNillableDownloadedAt sets the "downloaded_at" field if the given value is not nil.
+func (_u *BatchImageJobUpdate) SetNillableDownloadedAt(v *time.Time) *BatchImageJobUpdate {
+	if v != nil {
+		_u.SetDownloadedAt(*v)
+	}
+	return _u
+}
+
+// ClearDownloadedAt clears the value of the "downloaded_at" field.
+func (_u *BatchImageJobUpdate) ClearDownloadedAt() *BatchImageJobUpdate {
+	_u.mutation.ClearDownloadedAt()
+	return _u
+}
+
+// SetUserDeletedAt sets the "user_deleted_at" field.
+func (_u *BatchImageJobUpdate) SetUserDeletedAt(v time.Time) *BatchImageJobUpdate {
+	_u.mutation.SetUserDeletedAt(v)
+	return _u
+}
+
+// SetNillableUserDeletedAt sets the "user_deleted_at" field if the given value is not nil.
+func (_u *BatchImageJobUpdate) SetNillableUserDeletedAt(v *time.Time) *BatchImageJobUpdate {
+	if v != nil {
+		_u.SetUserDeletedAt(*v)
+	}
+	return _u
+}
+
+// ClearUserDeletedAt clears the value of the "user_deleted_at" field.
+func (_u *BatchImageJobUpdate) ClearUserDeletedAt() *BatchImageJobUpdate {
+	_u.mutation.ClearUserDeletedAt()
+	return _u
+}
+
 // SetLastErrorCode sets the "last_error_code" field.
 func (_u *BatchImageJobUpdate) SetLastErrorCode(v string) *BatchImageJobUpdate {
 	_u.mutation.SetLastErrorCode(v)
@@ -779,6 +833,11 @@ func (_u *BatchImageJobUpdate) check() error {
 			return &ValidationError{Name: "model", err: fmt.Errorf(`ent: validator failed for field "BatchImageJob.model": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.TaskName(); ok {
+		if err := batchimagejob.TaskNameValidator(v); err != nil {
+			return &ValidationError{Name: "task_name", err: fmt.Errorf(`ent: validator failed for field "BatchImageJob.task_name": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := batchimagejob.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "BatchImageJob.status": %w`, err)}
@@ -883,6 +942,9 @@ func (_u *BatchImageJobUpdate) sqlSave(ctx context.Context) (_node int, err erro
 	}
 	if value, ok := _u.mutation.Model(); ok {
 		_spec.SetField(batchimagejob.FieldModel, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.TaskName(); ok {
+		_spec.SetField(batchimagejob.FieldTaskName, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(batchimagejob.FieldStatus, field.TypeString, value)
@@ -1021,6 +1083,18 @@ func (_u *BatchImageJobUpdate) sqlSave(ctx context.Context) (_node int, err erro
 	}
 	if _u.mutation.OutputDeletedAtCleared() {
 		_spec.ClearField(batchimagejob.FieldOutputDeletedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.DownloadedAt(); ok {
+		_spec.SetField(batchimagejob.FieldDownloadedAt, field.TypeTime, value)
+	}
+	if _u.mutation.DownloadedAtCleared() {
+		_spec.ClearField(batchimagejob.FieldDownloadedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.UserDeletedAt(); ok {
+		_spec.SetField(batchimagejob.FieldUserDeletedAt, field.TypeTime, value)
+	}
+	if _u.mutation.UserDeletedAtCleared() {
+		_spec.ClearField(batchimagejob.FieldUserDeletedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.LastErrorCode(); ok {
 		_spec.SetField(batchimagejob.FieldLastErrorCode, field.TypeString, value)
@@ -1180,6 +1254,20 @@ func (_u *BatchImageJobUpdateOne) SetModel(v string) *BatchImageJobUpdateOne {
 func (_u *BatchImageJobUpdateOne) SetNillableModel(v *string) *BatchImageJobUpdateOne {
 	if v != nil {
 		_u.SetModel(*v)
+	}
+	return _u
+}
+
+// SetTaskName sets the "task_name" field.
+func (_u *BatchImageJobUpdateOne) SetTaskName(v string) *BatchImageJobUpdateOne {
+	_u.mutation.SetTaskName(v)
+	return _u
+}
+
+// SetNillableTaskName sets the "task_name" field if the given value is not nil.
+func (_u *BatchImageJobUpdateOne) SetNillableTaskName(v *string) *BatchImageJobUpdateOne {
+	if v != nil {
+		_u.SetTaskName(*v)
 	}
 	return _u
 }
@@ -1653,6 +1741,46 @@ func (_u *BatchImageJobUpdateOne) ClearOutputDeletedAt() *BatchImageJobUpdateOne
 	return _u
 }
 
+// SetDownloadedAt sets the "downloaded_at" field.
+func (_u *BatchImageJobUpdateOne) SetDownloadedAt(v time.Time) *BatchImageJobUpdateOne {
+	_u.mutation.SetDownloadedAt(v)
+	return _u
+}
+
+// SetNillableDownloadedAt sets the "downloaded_at" field if the given value is not nil.
+func (_u *BatchImageJobUpdateOne) SetNillableDownloadedAt(v *time.Time) *BatchImageJobUpdateOne {
+	if v != nil {
+		_u.SetDownloadedAt(*v)
+	}
+	return _u
+}
+
+// ClearDownloadedAt clears the value of the "downloaded_at" field.
+func (_u *BatchImageJobUpdateOne) ClearDownloadedAt() *BatchImageJobUpdateOne {
+	_u.mutation.ClearDownloadedAt()
+	return _u
+}
+
+// SetUserDeletedAt sets the "user_deleted_at" field.
+func (_u *BatchImageJobUpdateOne) SetUserDeletedAt(v time.Time) *BatchImageJobUpdateOne {
+	_u.mutation.SetUserDeletedAt(v)
+	return _u
+}
+
+// SetNillableUserDeletedAt sets the "user_deleted_at" field if the given value is not nil.
+func (_u *BatchImageJobUpdateOne) SetNillableUserDeletedAt(v *time.Time) *BatchImageJobUpdateOne {
+	if v != nil {
+		_u.SetUserDeletedAt(*v)
+	}
+	return _u
+}
+
+// ClearUserDeletedAt clears the value of the "user_deleted_at" field.
+func (_u *BatchImageJobUpdateOne) ClearUserDeletedAt() *BatchImageJobUpdateOne {
+	_u.mutation.ClearUserDeletedAt()
+	return _u
+}
+
 // SetLastErrorCode sets the "last_error_code" field.
 func (_u *BatchImageJobUpdateOne) SetLastErrorCode(v string) *BatchImageJobUpdateOne {
 	_u.mutation.SetLastErrorCode(v)
@@ -1845,6 +1973,11 @@ func (_u *BatchImageJobUpdateOne) check() error {
 			return &ValidationError{Name: "model", err: fmt.Errorf(`ent: validator failed for field "BatchImageJob.model": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.TaskName(); ok {
+		if err := batchimagejob.TaskNameValidator(v); err != nil {
+			return &ValidationError{Name: "task_name", err: fmt.Errorf(`ent: validator failed for field "BatchImageJob.task_name": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := batchimagejob.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "BatchImageJob.status": %w`, err)}
@@ -1966,6 +2099,9 @@ func (_u *BatchImageJobUpdateOne) sqlSave(ctx context.Context) (_node *BatchImag
 	}
 	if value, ok := _u.mutation.Model(); ok {
 		_spec.SetField(batchimagejob.FieldModel, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.TaskName(); ok {
+		_spec.SetField(batchimagejob.FieldTaskName, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(batchimagejob.FieldStatus, field.TypeString, value)
@@ -2104,6 +2240,18 @@ func (_u *BatchImageJobUpdateOne) sqlSave(ctx context.Context) (_node *BatchImag
 	}
 	if _u.mutation.OutputDeletedAtCleared() {
 		_spec.ClearField(batchimagejob.FieldOutputDeletedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.DownloadedAt(); ok {
+		_spec.SetField(batchimagejob.FieldDownloadedAt, field.TypeTime, value)
+	}
+	if _u.mutation.DownloadedAtCleared() {
+		_spec.ClearField(batchimagejob.FieldDownloadedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.UserDeletedAt(); ok {
+		_spec.SetField(batchimagejob.FieldUserDeletedAt, field.TypeTime, value)
+	}
+	if _u.mutation.UserDeletedAtCleared() {
+		_spec.ClearField(batchimagejob.FieldUserDeletedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.LastErrorCode(); ok {
 		_spec.SetField(batchimagejob.FieldLastErrorCode, field.TypeString, value)
