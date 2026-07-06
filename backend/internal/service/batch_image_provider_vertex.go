@@ -626,7 +626,7 @@ func mapVertexClientError(err error) error {
 			return vertexProviderError("VERTEX_INVALID_RESPONSE", "Vertex API request failed", nil)
 		}
 	}
-	return vertexProviderError("VERTEX_INVALID_RESPONSE", "Vertex API request failed", nil)
+	return vertexProviderError("VERTEX_INVALID_RESPONSE", "Vertex API request failed", err)
 }
 
 type vertexCombinedJSONLReadCloser struct {
