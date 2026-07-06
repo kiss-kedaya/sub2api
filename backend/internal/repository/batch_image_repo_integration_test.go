@@ -287,8 +287,9 @@ func TestBatchImageRepository_SetBatchImageJobSettlementFailed(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = repo.SetBatchImageJobSettlementFailed(ctx, batchID, "SETTLEMENT_BILLING_FAILED", "temporary")
+	retryCount, err := repo.SetBatchImageJobSettlementFailed(ctx, batchID, "SETTLEMENT_BILLING_FAILED", "temporary")
 	require.NoError(t, err)
+	require.Equal(t, 1, retryCount)
 
 	job, err := repo.GetBatchImageJobByBatchID(ctx, batchID)
 	require.NoError(t, err)
