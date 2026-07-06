@@ -26,23 +26,52 @@ func TestNormalizeInboundEndpoint(t *testing.T) {
 		{"/v1/chat/completions", EndpointChatCompletions},
 		{"/v1/embeddings", EndpointEmbeddings},
 		{"/v1/responses", EndpointResponses},
+		{"/v1/responses/compact", EndpointResponsesCompact},
+		{"/v1/responses/compact/detail", EndpointResponsesCompact},
 		{"/v1/images/generations", EndpointImagesGenerations},
 		{"/v1/images/edits", EndpointImagesEdits},
 		{"/v1/videos/generations", EndpointVideosGenerations},
 		{"/v1/videos/req_123", EndpointVideos},
 		{"/v1beta/models", EndpointGeminiModels},
 
-		// Prefixed paths (antigravity, openai).
+		// Prefixed paths (antigravity, openai) — root Responses.
 		{"/antigravity/v1/messages", EndpointMessages},
 		{"/openai/v1/responses", EndpointResponses},
-		{"/openai/v1/responses/compact", EndpointResponses},
 		{"/openai/v1/images/generations", EndpointImagesGenerations},
 		{"/openai/v1/images/edits", EndpointImagesEdits},
 		{"/antigravity/v1beta/models/gemini:generateContent", EndpointGeminiModels},
 
-		// Gin route patterns with wildcards.
+		// Prefixed paths — "/responses/compact" is its OWN distinct
+		// inbound endpoint, not folded into the root Responses endpoint.
+		{"/openai/v1/responses/compact", EndpointResponsesCompact},
+		{"/openai/v1/responses/compact/detail", EndpointResponsesCompact},
+
+		// Bare top-level alias route "/responses" — root vs. compact.
+		{"/responses", EndpointResponses},
+		{"/responses/compact", EndpointResponsesCompact},
+		{"/responses/compact/detail", EndpointResponsesCompact},
+
+		// Bare Codex direct alias route — root vs. compact.
+		{"/backend-api/codex/responses", EndpointResponses},
+		{"/backend-api/codex/responses/compact", EndpointResponsesCompact},
+		{"/backend-api/codex/responses/compact/detail", EndpointResponsesCompact},
+
+		// Must NOT generalize to arbitrary paths merely ending in
+		// "/responses" (or "/responses/compact") that are unrelated to
+		// the two known bare alias roots, unless they already carry a
+		// supported "/v1/responses..." prefix form.
+		{"/foo/responses", "/foo/responses"},
+		{"/foo/responses/compact", "/foo/responses/compact"},
+
+		// Gin route patterns with wildcards. The literal wildcard token
+		// ("*subpath") is not the "compact" segment itself, so these
+		// generic FullPath patterns normalize to the root Responses
+		// endpoint; only a concrete "compact" path segment (tested above)
+		// resolves to EndpointResponsesCompact.
 		{"/v1beta/models/*modelAction", EndpointGeminiModels},
 		{"/v1/responses/*subpath", EndpointResponses},
+		{"/responses/*subpath", EndpointResponses},
+		{"/backend-api/codex/responses/*subpath", EndpointResponses},
 
 		// Unknown path is returned as-is.
 		{"/v1/embeddings", "/v1/embeddings"},
@@ -74,10 +103,29 @@ func TestDeriveUpstreamEndpoint(t *testing.T) {
 		// Gemini.
 		{"gemini models", EndpointGeminiModels, "/v1beta/models/gemini:gen", service.PlatformGemini, EndpointGeminiModels},
 
-		// OpenAI — always /v1/responses.
+		// OpenAI — root Responses.
 		{"openai responses root", EndpointResponses, "/v1/responses", service.PlatformOpenAI, EndpointResponses},
-		{"openai responses compact", EndpointResponses, "/openai/v1/responses/compact", service.PlatformOpenAI, "/v1/responses/compact"},
-		{"openai responses nested", EndpointResponses, "/openai/v1/responses/compact/detail", service.PlatformOpenAI, "/v1/responses/compact/detail"},
+
+		// OpenAI — compact, raw path carries the derivable "/compact"
+		// (or nested) suffix, which must be preserved on the upstream
+		// endpoint.
+		{"openai responses compact", EndpointResponsesCompact, "/openai/v1/responses/compact", service.PlatformOpenAI, "/v1/responses/compact"},
+		{"openai responses nested", EndpointResponsesCompact, "/openai/v1/responses/compact/detail", service.PlatformOpenAI, "/v1/responses/compact/detail"},
+		{"openai bare responses compact", EndpointResponsesCompact, "/responses/compact", service.PlatformOpenAI, "/v1/responses/compact"},
+		{"openai bare responses compact detail", EndpointResponsesCompact, "/responses/compact/detail", service.PlatformOpenAI, "/v1/responses/compact/detail"},
+		{"openai codex direct responses compact", EndpointResponsesCompact, "/backend-api/codex/responses/compact", service.PlatformOpenAI, "/v1/responses/compact"},
+		{"openai codex direct responses compact detail", EndpointResponsesCompact, "/backend-api/codex/responses/compact/detail", service.PlatformOpenAI, "/v1/responses/compact/detail"},
+
+		// OpenAI — bare root alias routes normalize to root Responses.
+		{"openai bare responses", EndpointResponses, "/responses", service.PlatformOpenAI, EndpointResponses},
+		{"openai codex direct responses", EndpointResponses, "/backend-api/codex/responses", service.PlatformOpenAI, EndpointResponses},
+
+		// OpenAI — inbound is already the canonical compact endpoint but
+		// the raw path carries no derivable "/responses..." suffix (e.g.
+		// it was already normalized upstream). Must not silently fall
+		// back to the root Responses endpoint.
+		{"openai responses compact inbound only, unrelated raw path", EndpointResponsesCompact, "/v1/messages", service.PlatformOpenAI, EndpointResponsesCompact},
+
 		{"openai from messages", EndpointMessages, "/v1/messages", service.PlatformOpenAI, EndpointResponses},
 		{"openai from completions", EndpointChatCompletions, "/v1/chat/completions", service.PlatformOpenAI, EndpointResponses},
 		{"openai embeddings", EndpointEmbeddings, "/v1/embeddings", service.PlatformOpenAI, EndpointEmbeddings},
@@ -113,6 +161,12 @@ func TestResponsesSubpathSuffix(t *testing.T) {
 		{"/v1/responses/", ""},
 		{"/v1/responses/compact", "/compact"},
 		{"/openai/v1/responses/compact/detail", "/compact/detail"},
+		{"/responses", ""},
+		{"/responses/compact", "/compact"},
+		{"/responses/compact/detail", "/compact/detail"},
+		{"/backend-api/codex/responses", ""},
+		{"/backend-api/codex/responses/compact", "/compact"},
+		{"/backend-api/codex/responses/compact/detail", "/compact/detail"},
 		{"/v1/messages", ""},
 		{"", ""},
 	}
