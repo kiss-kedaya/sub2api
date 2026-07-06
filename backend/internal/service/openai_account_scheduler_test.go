@@ -529,6 +529,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_Embeddi
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
 		false,
+		false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -571,6 +572,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_AllowsG
 		nil,
 		OpenAIUpstreamTransportAny,
 		OpenAIEndpointCapabilityChatCompletions,
+		false,
 		false,
 		PlatformGrok,
 	)
@@ -774,6 +776,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedPreviousR
 		OpenAIUpstreamTransportAny,
 		OpenAIEndpointCapabilityChatCompletions,
 		false,
+		false,
 		PlatformOpenAI,
 	)
 	require.NoError(t, err)
@@ -796,8 +799,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedPreviousR
 		OpenAIUpstreamTransportAny,
 		OpenAIEndpointCapabilityChatCompletions,
 		false,
+		true,
 		PlatformOpenAI,
-		"previous_response_can_move",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -938,6 +941,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
 		false,
+		false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)
@@ -1010,6 +1014,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 		nil,
 		OpenAIUpstreamTransportHTTPSSE,
 		OpenAIEndpointCapabilityEmbeddings,
+		false,
 		false,
 	)
 	require.NoError(t, err)
@@ -2934,4 +2939,142 @@ func TestDefaultOpenAIAccountScheduler_IsAccountTransportCompatible_Branches(t *
 
 func int64PtrForTest(v int64) *int64 {
 	return &v
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedFallbackSkipsOutOfGroupStickyAccount(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(101081)
+	otherGroupID := int64(101082)
+	accounts := []Account{
+		{
+			ID:          38001,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    10,
+			GroupIDs:    []int64{groupID},
+		},
+		{
+			// 会话粘连绑定指向的账号已被移出请求分组（绑定 TTL 内账号改组的场景）。
+			ID:          38002,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			GroupIDs:    []int64{otherGroupID},
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.LBTopK = 2
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Load = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Queue = 0.7
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate = 0.8
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT = 0.5
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.SessionSticky = 3
+	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{
+		"openai:session_weighted_out_of_group": 38002,
+	}}
+	concurrencyCache := schedulerTestConcurrencyCache{
+		acquireResults: map[int64]bool{38001: false, 38002: true},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerGroupAwareOpenAIAccountRepo{schedulerTestOpenAIAccountRepo{accounts: accounts}},
+		cache:              cache,
+		cfg:                cfg,
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true", "true"),
+		concurrencyService: NewConcurrencyService(concurrencyCache),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"session_weighted_out_of_group",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	// 组内唯一候选 38001 满并发：必须返回其等待计划，绝不能把请求泄漏到组外的粘连账号 38002。
+	require.Equal(t, int64(38001), selection.Account.ID)
+	require.False(t, selection.Acquired)
+	require.NotNil(t, selection.WaitPlan)
+	require.Equal(t, int64(38001), selection.WaitPlan.AccountID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	// 失效的粘连绑定应被清理，避免后续请求反复走同一条泄漏路径。
+	require.Positive(t, cache.deletedSessions["openai:session_weighted_out_of_group"])
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_SubscriptionPriorityWaitsOnBusySubscriptionWhenRegularUnusable(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(101091)
+	accounts := []Account{
+		{
+			// 订阅账号：支持 compact，但并发已满（busy-but-waitable）。
+			ID:          38011,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"plan_type": "team"},
+			Extra:       map[string]any{"openai_compact_supported": true},
+		},
+		{
+			// 常规账号：明确不支持 compact，无法服务本次请求。
+			ID:          38012,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    9,
+			GroupIDs:    []int64{groupID},
+			Extra:       map[string]any{"openai_compact_supported": false},
+		},
+	}
+	concurrencyCache := schedulerTestConcurrencyCache{
+		acquireResults: map[int64]bool{38011: false, 38012: true},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: accounts},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                newSchedulerTestSubscriptionPriorityConfig(),
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true", "", "true"),
+		concurrencyService: NewConcurrencyService(concurrencyCache),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"session_subscription_wait",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+		true,
+	)
+	// 常规池无可用候选时，忙碌的订阅账号应产生等待计划，而不是直接返回 no available accounts。
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(38011), selection.Account.ID)
+	require.False(t, selection.Acquired)
+	require.NotNil(t, selection.WaitPlan)
+	require.Equal(t, int64(38011), selection.WaitPlan.AccountID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }
