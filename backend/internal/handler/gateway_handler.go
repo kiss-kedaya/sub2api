@@ -1085,8 +1085,15 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 	}
 	seen := make(map[string]struct{})
 	models := make([]string, 0)
+	schedulablePlatforms := h.gatewayService.GetSchedulablePlatforms(ctx, groupID)
 	for _, platform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok} {
-		for _, model := range h.gatewayService.GetAvailableModels(ctx, groupID, platform) {
+		platformModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
+		if len(platformModels) == 0 {
+			if _, ok := schedulablePlatforms[platform]; ok {
+				platformModels = defaultModelIDsForPlatform(platform)
+			}
+		}
+		for _, model := range platformModels {
 			model = strings.TrimSpace(model)
 			if model == "" {
 				continue
