@@ -872,6 +872,9 @@ func (s *BatchImagePublicService) ensureGroupAllowsBatchImage(ctx context.Contex
 	if !group.AllowBatchImageGeneration {
 		return ErrBatchImageGroupDisabled
 	}
+	if group.Platform != PlatformGemini {
+		return ErrBatchImageGroupDisabled
+	}
 	return nil
 }
 
