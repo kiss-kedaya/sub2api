@@ -108,9 +108,11 @@ func TestGetHeaderOverrides(t *testing.T) {
 	defensive := headerOverrideTestAccount(PlatformOpenAI, AccountTypeAPIKey, map[string]any{
 		credKeyHeaderOverrideEnabled: true,
 		credKeyHeaderOverrides: map[string]any{
-			"x-big":             oversizedValue,
-			"sec-websocket-key": "forged",
-			"x-ok":              "ok",
+			"x-big":                    oversizedValue,
+			"sec-websocket-key":        "forged",
+			"content-type":             "application/json", // 名单扩充前落库的数据也要被拦截
+			"x-claude-code-session-id": "pinned-session",
+			"x-ok":                     "ok",
 		},
 	})
 	require.Equal(t, map[string]string{"x-ok": "ok"}, defensive.GetHeaderOverrides())
@@ -278,6 +280,8 @@ func TestNormalizeHeaderOverrideCredentials(t *testing.T) {
 			"Authorization", "x-api-key", "Host", "content-length", "Transfer-Encoding",
 			"connection", "accept-encoding", "Sec-WebSocket-Key", "session_id",
 			"conversation_id", "x-codex-turn-state", "chatgpt-account-id",
+			"Content-Type", "Cookie", "x-goog-api-key",
+			"X-Claude-Code-Session-Id", "x-client-request-id",
 		} {
 			err := NormalizeHeaderOverrideCredentials(map[string]any{
 				credKeyHeaderOverrides: map[string]any{name: "v"},
