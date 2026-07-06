@@ -600,6 +600,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if isOAuth {
 		req.Host = "chatgpt.com"
 		req.Header.Set("accept", "text/event-stream")
+		req.Header.Set("OpenAI-Beta", "responses=experimental")
+		req.Header.Set("Originator", "codex_cli_rs")
+		req.Header.Set("User-Agent", codexCLIUserAgent)
 		setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
 	}
 
