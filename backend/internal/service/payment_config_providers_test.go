@@ -147,6 +147,18 @@ func TestValidateEasyPayCustomMethods(t *testing.T) {
 			wantErr:        "duplicate customMethods type",
 		},
 		{
+			name:           "custom type must already be lowercase",
+			config:         map[string]string{"customMethods": `[{"type":"LDC","upstreamType":"epay"}]`},
+			supportedTypes: "alipay,wxpay,ldc",
+			wantErr:        "customMethods type may only contain lowercase letters",
+		},
+		{
+			name:           "upstream type must already be lowercase",
+			config:         map[string]string{"customMethods": `[{"type":"ldc","upstreamType":"ALIPAY"}]`},
+			supportedTypes: "alipay,wxpay,ldc",
+			wantErr:        "customMethods upstreamType may only contain lowercase letters",
+		},
+		{
 			name:           "custom type uses alipay prefix",
 			config:         map[string]string{"customMethods": `[{"type":"alipay_hk","upstreamType":"hkpay"}]`},
 			supportedTypes: "alipay,wxpay,alipay_hk",
@@ -163,6 +175,12 @@ func TestValidateEasyPayCustomMethods(t *testing.T) {
 			config:         map[string]string{"customMethods": `[{"type":"ldc","upstreamType":"epay"}]`},
 			supportedTypes: "alipay,wxpay,ldc,usdt_trc20",
 			wantErr:        "supported EasyPay custom type usdt_trc20 has no customMethods mapping",
+		},
+		{
+			name:           "supported custom type must already be lowercase",
+			config:         map[string]string{"customMethods": `[{"type":"ldc","upstreamType":"epay"}]`},
+			supportedTypes: "alipay,wxpay,LDC",
+			wantErr:        "supported EasyPay custom type LDC may only contain lowercase letters",
 		},
 	}
 
