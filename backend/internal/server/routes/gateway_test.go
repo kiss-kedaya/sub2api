@@ -208,6 +208,23 @@ func TestGatewayRoutesCompositeMessagesWithGrokModelUsesOpenAIGateway(t *testing
 	require.NotContains(t, w.Body.String(), "composite groups")
 }
 
+func TestGatewayRoutesCompositeChatCompletionsWithGrokModelUsesOpenAIGateway(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformComposite)
+
+	for _, path := range []string{"/v1/chat/completions", "/chat/completions"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"grok-4.3","messages":[{"role":"user","content":"hi"}]}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s", path)
+		require.NotContains(t, w.Body.String(), "not supported")
+		require.NotContains(t, w.Body.String(), "OpenAI-compatible endpoint")
+		require.NotContains(t, w.Body.String(), "composite groups")
+	}
+}
+
 func TestGatewayRoutesNonGrokVideosAreRejectedAtPlatformGate(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformOpenAI)
 
