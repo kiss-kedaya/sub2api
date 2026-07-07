@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -188,6 +189,11 @@ func (p *BatchImageProviderProcessor) indexAndSettle(ctx context.Context, job *B
 		if errors.Is(err, ErrBatchImageIndexOutputMissing) {
 			return BatchImageProcessResult{}, err
 		}
+		// job 状态已被并发方推进（如已进入 settling/终态）：不是索引数据问题，
+		// 短延迟 requeue 让下一轮按最新状态处理，不能误转 failed。
+		if errors.Is(err, ErrBatchImageIndexStateConflict) {
+			return BatchImageProcessResult{RequeueAfter: time.Millisecond}, nil
+		}
 		code := "INDEX_PARSE_FAILED"
 		if errors.Is(err, ErrBatchImageDuplicateCustomID) {
 			code = "DUPLICATE_CUSTOM_ID_IN_OUTPUT"
@@ -281,6 +287,11 @@ func (i *BatchImageResultIndexer) Index(ctx context.Context, job *BatchImageJob,
 	if i == nil || i.Repo == nil || job == nil || provider == nil {
 		return nil, ErrBatchImageIndexOutputMissing
 	}
+	expected, err := i.listExpectedCustomIDs(ctx, job.BatchID)
+	if err != nil {
+		return nil, err
+	}
+
 	r, _, err := provider.OpenResult(ctx, job, account)
 	if err != nil {
 		return nil, ErrBatchImageIndexOutputMissing.WithCause(err)
@@ -291,6 +302,7 @@ func (i *BatchImageResultIndexer) Index(ctx context.Context, job *BatchImageJob,
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 
 	seen := make(map[string]int)
+	unknownCount := 0
 	var items []CreateBatchImageItemParams
 	result := &BatchImageIndexResult{}
 	lineNumber := 0
@@ -309,6 +321,14 @@ func (i *BatchImageResultIndexer) Index(ctx context.Context, job *BatchImageJob,
 		parsed, err := ParseBatchImageResultLine([]byte(line), lineNumber)
 		if err != nil {
 			return nil, err
+		}
+		// 与提交时的 custom_id 集对账：provider 输出中未知/多余的行不能进入 item 表，
+		// 否则 success+fail > item_count 会让结算永远校验失败。
+		if len(expected) > 0 {
+			if _, ok := expected[parsed.CustomID]; !ok {
+				unknownCount++
+				continue
+			}
 		}
 		if firstLine, ok := seen[parsed.CustomID]; ok {
 			return nil, ErrBatchImageDuplicateCustomID.WithCause(fmt.Errorf("custom id %q duplicated at lines %d and %d", parsed.CustomID, firstLine, lineNumber))
@@ -344,8 +364,51 @@ func (i *BatchImageResultIndexer) Index(ctx context.Context, job *BatchImageJob,
 		}
 		return nil, err
 	}
+	// 输出中漏掉的已提交项必须补失败记录，而不是静默消失：
+	// 否则用户看不到该项，且只按成功数计费会掩盖 provider 的丢单。
+	missingCount := 0
+	if len(expected) > 0 {
+		missingIDs := make([]string, 0)
+		for customID := range expected {
+			if _, ok := seen[customID]; !ok {
+				missingIDs = append(missingIDs, customID)
+			}
+		}
+		sort.Strings(missingIDs)
+		for _, customID := range missingIDs {
+			items = append(items, CreateBatchImageItemParams{
+				JobID:                job.BatchID,
+				CustomID:             customID,
+				Status:               BatchImageItemStatusFailed,
+				ProviderSourceObject: batchImageOptionalStringPtr(sourceObject),
+				ErrorCode:            batchImageStringPtr("PROVIDER_RESULT_MISSING"),
+				ErrorMessage:         batchImageStringPtr("provider output did not include a result for this item"),
+				IndexedAt:            &now,
+			})
+			result.FailCount++
+			result.TotalCount++
+		}
+		missingCount = len(missingIDs)
+	}
 	if result.TotalCount == 0 {
 		return nil, ErrBatchImageIndexNoResultLines
+	}
+	if unknownCount > 0 || missingCount > 0 {
+		logger.L().Warn("batch_image.index_reconciled",
+			zap.String("batch_id", job.BatchID),
+			zap.Int("unknown_custom_ids", unknownCount),
+			zap.Int("missing_custom_ids", missingCount),
+		)
+		if err := i.Repo.AppendBatchImageEvent(ctx, job.BatchID, "index_reconciled", map[string]any{
+			"batch_id":           job.BatchID,
+			"unknown_custom_ids": unknownCount,
+			"missing_custom_ids": missingCount,
+		}); err != nil {
+			logger.L().Warn("batch_image.index_reconcile_event_failed",
+				zap.String("batch_id", job.BatchID),
+				zap.Error(err),
+			)
+		}
 	}
 	if err := i.Repo.ReplaceBatchImageItemsForJob(ctx, job.BatchID, items, BatchImageCounts{
 		SuccessCount: result.SuccessCount,
@@ -354,6 +417,29 @@ func (i *BatchImageResultIndexer) Index(ctx context.Context, job *BatchImageJob,
 		return nil, err
 	}
 	return result, nil
+}
+
+// listExpectedCustomIDs 返回该 job 当前 item 表中的全部 custom_id 集合，
+// 即提交时预创建（或上一轮索引重建）的完整条目清单，用于与 provider 输出对账。
+func (i *BatchImageResultIndexer) listExpectedCustomIDs(ctx context.Context, batchID string) (map[string]struct{}, error) {
+	const pageSize = 500
+	expected := make(map[string]struct{})
+	offset := 0
+	for {
+		page, err := i.Repo.ListBatchImageItems(ctx, batchID, BatchImageItemFilter{Limit: pageSize, Offset: offset})
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range page {
+			if item != nil {
+				expected[item.CustomID] = struct{}{}
+			}
+		}
+		if len(page) < pageSize {
+			return expected, nil
+		}
+		offset += len(page)
+	}
 }
 
 type ParsedBatchImageResult struct {
