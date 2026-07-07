@@ -86,6 +86,23 @@ func (e ResponsesStreamEvent) MarshalJSON() ([]byte, error) {
 		}
 		return json.Marshal(m)
 
+	case "response.custom_tool_call_input.delta", "response.custom_tool_call_input.done":
+		m := e.wireBase()
+		e.putItemID(m)
+		m["output_index"] = e.OutputIndex
+		if e.CallID != "" {
+			m["call_id"] = e.CallID
+		}
+		if e.Name != "" {
+			m["name"] = e.Name
+		}
+		if e.Type == "response.custom_tool_call_input.done" {
+			m["input"] = e.Input
+		} else {
+			m["delta"] = e.Delta
+		}
+		return json.Marshal(m)
+
 	default:
 		// response.created / completed / done / failed / incomplete and any
 		// event type not shaped above keep the default struct marshalling.
@@ -173,6 +190,12 @@ func responsesItemWire(item *ResponsesOutput) map[string]any {
 		m["call_id"] = item.CallID
 		m["name"] = item.Name
 		m["input"] = item.Input
+	case "tool_search_call":
+		// tool_search 调用还原项：execution 必须为 "client"（否则 codex 忽略该
+		// 调用），arguments 在线上是 JSON 对象而非字符串。
+		m["call_id"] = item.CallID
+		m["execution"] = "client"
+		m["arguments"] = toolSearchCallArgumentsJSON(item.Arguments)
 	}
 	return m
 }
