@@ -54,8 +54,10 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
 	serviceTier := extractOpenAIServiceTierFromBody(body)
 	// custom 工具（如 codex 的 exec）降级为 function 工具转发，回程需按名字还原为
-	// custom_tool_call 项，先记下名字集合。
+	// custom_tool_call 项，先记下名字集合；tool_search 工具同理，回程还原为
+	// tool_search_call 项。
 	customTools := apicompat.CustomToolNames(responsesReq.Tools)
+	toolSearch := apicompat.HasToolSearchTool(responsesReq.Tools)
 
 	chatReq, err := apicompat.ResponsesToChatCompletionsRequest(&responsesReq)
 	if err != nil {
@@ -194,9 +196,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	}
 
 	if clientStream {
-		return s.streamChatCompletionsAsResponses(c, resp, originalModel, customTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+		return s.streamChatCompletionsAsResponses(c, resp, originalModel, customTools, toolSearch, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
-	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, customTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, customTools, toolSearch, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 }
 
 func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
@@ -204,6 +206,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	resp *http.Response,
 	originalModel string,
 	customTools map[string]bool,
+	toolSearch bool,
 	billingModel string,
 	upstreamModel string,
 	reasoningEffort *string,
@@ -234,7 +237,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 		})
 		return nil, fmt.Errorf("parse chat completions response: %w", err)
 	}
-	responsesResp := apicompat.ChatCompletionsResponseToResponses(&ccResp, originalModel, customTools)
+	responsesResp := apicompat.ChatCompletionsResponseToResponses(&ccResp, originalModel, customTools, toolSearch)
 
 	usage := OpenAIUsage{}
 	if parsed, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {
@@ -264,6 +267,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	resp *http.Response,
 	originalModel string,
 	customTools map[string]bool,
+	toolSearch bool,
 	billingModel string,
 	upstreamModel string,
 	reasoningEffort *string,
@@ -289,6 +293,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 
 	state := apicompat.NewChatCompletionsToResponsesStreamState(originalModel)
 	state.CustomTools = customTools
+	state.ToolSearchDeclared = toolSearch
 	var usage OpenAIUsage
 	var firstTokenMs *int
 	clientDisconnected := false
