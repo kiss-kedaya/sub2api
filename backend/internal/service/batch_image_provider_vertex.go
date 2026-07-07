@@ -736,7 +736,7 @@ type VertexBatchHTTPClient struct {
 
 func NewVertexBatchHTTPClient(baseURL string, client *http.Client) *VertexBatchHTTPClient {
 	if client == nil {
-		client = http.DefaultClient
+		client = batchImageDefaultHTTPClient()
 	}
 	return &VertexBatchHTTPClient{baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), client: client}
 }
@@ -794,7 +794,7 @@ type VertexGCSObjectStore struct {
 
 func NewVertexGCSObjectStore(baseURL string, client *http.Client) *VertexGCSObjectStore {
 	if client == nil {
-		client = http.DefaultClient
+		client = batchImageDefaultHTTPClient()
 	}
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
