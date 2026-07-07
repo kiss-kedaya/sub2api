@@ -25,10 +25,6 @@ func NewBatchImageRepository(db *sql.DB) service.BatchImageRepository {
 	return &batchImageRepository{db: db, sql: db}
 }
 
-func newBatchImageRepositoryWithSQL(sqlq batchImageSQLExecutor) *batchImageRepository {
-	return &batchImageRepository{sql: sqlq}
-}
-
 func (r *batchImageRepository) CreateBatchImageJob(ctx context.Context, params service.CreateBatchImageJobParams) (*service.BatchImageJob, error) {
 	if !service.IsSupportedBatchImageProvider(params.Provider) {
 		return nil, service.ErrBatchImageInvalidProvider
@@ -125,7 +121,7 @@ func (r *batchImageRepository) ListBatchImageJobsForOwner(ctx context.Context, u
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanBatchImageJobs(rows)
 }
 
@@ -449,7 +445,7 @@ func (r *batchImageRepository) batchImageItemPromptPreviews(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make(map[string]string)
 	for rows.Next() {
 		var customID string
@@ -486,7 +482,7 @@ func (r *batchImageRepository) ListBatchImageItems(ctx context.Context, batchID 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var items []*service.BatchImageItem
 	for rows.Next() {
@@ -540,7 +536,7 @@ func (r *batchImageRepository) ListBatchImageJobsDueForInputCleanup(ctx context.
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanBatchImageJobs(rows)
 }
 
@@ -559,7 +555,7 @@ func (r *batchImageRepository) ListBatchImageJobsDueForOutputCleanup(ctx context
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanBatchImageJobs(rows)
 }
 
@@ -577,7 +573,7 @@ func (r *batchImageRepository) ListStaleUnsubmittedBatchImageJobs(ctx context.Co
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanBatchImageJobs(rows)
 }
 

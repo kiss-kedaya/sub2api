@@ -4,13 +4,21 @@ package repository
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+func newBatchImageRepositoryWithSQL(sqlq batchImageSQLExecutor) *batchImageRepository {
+	return &batchImageRepository{sql: sqlq}
+}
 
 func TestBatchImageRepository_CreateJobAndDuplicates(t *testing.T) {
 	ctx := context.Background()
@@ -325,7 +333,26 @@ func TestBatchImageRepository_AppendEvent(t *testing.T) {
 
 func batchImageTestID(t *testing.T, prefix string) string {
 	t.Helper()
-	return "imgbatch_" + uniqueTestValue(t, prefix)
+	safePrefix := batchImageSafeTestIDSegment(prefix, 20)
+	sum := sha1.Sum([]byte(t.Name()))
+	return "imgbatch_" + safePrefix + "_" + hex.EncodeToString(sum[:])[:16]
+}
+
+func batchImageSafeTestIDSegment(v string, maxLen int) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	v = regexp.MustCompile(`[^a-z0-9_-]+`).ReplaceAllString(v, "-")
+	v = strings.Trim(v, "-_")
+	if v == "" {
+		v = "job"
+	}
+	if len(v) > maxLen {
+		v = v[:maxLen]
+		v = strings.Trim(v, "-_")
+	}
+	if v == "" {
+		return "job"
+	}
+	return v
 }
 
 func batchImageTestStringPtr(v string) *string {

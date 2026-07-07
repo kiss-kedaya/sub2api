@@ -147,7 +147,7 @@ func (h *BatchImageHandler) ItemContent(c *gin.Context) {
 		batchImageError(c, err)
 		return
 	}
-	defer stream.Reader.Close()
+	defer func() { _ = stream.Reader.Close() }()
 
 	c.Header("Content-Type", stream.ContentType)
 	c.Header("Content-Disposition", service.BatchImageContentDispositionAttachment(stream.Filename))
@@ -181,7 +181,7 @@ func (h *BatchImageHandler) Download(c *gin.Context) {
 		IncludeManifest: true,
 	}, c.Writer)
 	if err != nil {
-		if result == nil || c.Writer.Written() == false {
+		if result == nil || !c.Writer.Written() {
 			batchImageError(c, err)
 		}
 		return

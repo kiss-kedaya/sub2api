@@ -285,7 +285,7 @@ func (i *BatchImageResultIndexer) Index(ctx context.Context, job *BatchImageJob,
 	if err != nil {
 		return nil, ErrBatchImageIndexOutputMissing.WithCause(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
