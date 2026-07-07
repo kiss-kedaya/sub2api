@@ -1,0 +1,414 @@
+package apicompat
+
+// custom/freeform 工具（如 Codex 0.14x 的 exec）在 responses→chat 桥上的双向转换。
+// 背景：Codex 的核心命令执行工具 exec 是 type=custom（输入为自由文本），此前被
+// responsesToolsToChatTools 丢弃，导致模型工具列表中没有 exec、无法执行任何命令。
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestResponsesToChatCompletionsRequest_CustomToolBecomesFunctionTool(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "glm-5.2",
+		Input: json.RawMessage(`"run dir"`),
+		Tools: []ResponsesTool{
+			{Type: "custom", Name: "exec", Description: "Run JavaScript code"},
+			{Type: "function", Name: "wait", Parameters: json.RawMessage(`{"type":"object","properties":{}}`)},
+		},
+	}
+
+	out, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.Len(t, out.Tools, 2)
+
+	assert.Equal(t, "function", out.Tools[0].Type)
+	assert.Equal(t, "exec", out.Tools[0].Function.Name)
+	assert.Equal(t, "Run JavaScript code", out.Tools[0].Function.Description)
+	assert.JSONEq(t, customToolInputSchema, string(out.Tools[0].Function.Parameters))
+
+	assert.Equal(t, "wait", out.Tools[1].Function.Name)
+}
+
+func TestResponsesToChatCompletionsRequest_DropsToolChoiceWhenNoConvertibleTools(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "glm-5.2",
+		Input: json.RawMessage(`"hi"`),
+		Tools: []ResponsesTool{
+			{Type: "web_search"},
+			{Type: "image_generation"},
+		},
+		ToolChoice: json.RawMessage(`"auto"`),
+	}
+
+	out, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+
+	assert.Empty(t, out.Tools)
+	assert.Empty(t, out.ToolChoice, "tools 为空时转发 tool_choice 会被上游 400 拒绝")
+}
+
+func TestResponsesToChatCompletionsRequest_CustomToolChoiceMapsToFunctionChoice(t *testing.T) {
+	req := &ResponsesRequest{
+		Model:      "glm-5.2",
+		Input:      json.RawMessage(`"run dir"`),
+		Tools:      []ResponsesTool{{Type: "custom", Name: "exec"}},
+		ToolChoice: json.RawMessage(`{"type":"custom","name":"exec"}`),
+	}
+
+	out, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{"type":"function","function":{"name":"exec"}}`, string(out.ToolChoice))
+}
+
+func TestResponsesInputToChatMessages_CustomToolCallHistory(t *testing.T) {
+	input := json.RawMessage(`[
+		{"role":"user","content":"list files"},
+		{"type":"custom_tool_call","call_id":"call_1","name":"exec","input":"dir"},
+		{"type":"custom_tool_call_output","call_id":"call_1","output":"main.go"}
+	]`)
+
+	messages, err := responsesInputToChatMessages("", input)
+	require.NoError(t, err)
+	require.Len(t, messages, 3)
+
+	assert.Equal(t, []string{"user", "assistant", "tool"}, chatMessageRoles(messages))
+
+	require.Len(t, messages[1].ToolCalls, 1)
+	toolCall := messages[1].ToolCalls[0]
+	assert.Equal(t, "call_1", toolCall.ID)
+	assert.Equal(t, "exec", toolCall.Function.Name)
+	assert.JSONEq(t, `{"input":"dir"}`, toolCall.Function.Arguments)
+
+	assert.Equal(t, "call_1", messages[2].ToolCallID)
+	assert.JSONEq(t, `"main.go"`, string(messages[2].Content))
+}
+
+func TestChatCompletionsResponseToResponses_CustomToolCallOutputItem(t *testing.T) {
+	resp := &ChatCompletionsResponse{
+		ID: "cc-1",
+		Choices: []ChatChoice{{
+			Message: ChatMessage{
+				Role: "assistant",
+				ToolCalls: []ChatToolCall{
+					{ID: "call_1", Function: ChatFunctionCall{Name: "exec", Arguments: `{"input": "dir"}`}},
+					{ID: "call_2", Function: ChatFunctionCall{Name: "wait", Arguments: `{"cell_id": 3}`}},
+				},
+			},
+		}},
+	}
+
+	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", map[string]bool{"exec": true})
+	require.Len(t, out.Output, 2)
+
+	assert.Equal(t, "custom_tool_call", out.Output[0].Type)
+	assert.Equal(t, "call_1", out.Output[0].CallID)
+	assert.Equal(t, "exec", out.Output[0].Name)
+	assert.Equal(t, "dir", out.Output[0].Input)
+	assert.Empty(t, out.Output[0].Arguments)
+
+	assert.Equal(t, "function_call", out.Output[1].Type)
+	assert.Equal(t, "wait", out.Output[1].Name)
+	assert.Equal(t, `{"cell_id": 3}`, out.Output[1].Arguments)
+}
+
+func TestExtractCustomToolCallInput_FallsBackToRawArguments(t *testing.T) {
+	assert.Equal(t, "dir", extractCustomToolCallInput(`{"input": "dir"}`))
+	assert.Equal(t, "console.log(1)", extractCustomToolCallInput(`console.log(1)`))
+	assert.Equal(t, `{"other": "x"}`, extractCustomToolCallInput(`{"other": "x"}`))
+	assert.Equal(t, "", extractCustomToolCallInput(`{}`))
+	assert.Equal(t, "", extractCustomToolCallInput(""))
+}
+
+func TestChatCompletionsChunkToResponsesEvents_CustomToolCallStream(t *testing.T) {
+	state := NewChatCompletionsToResponsesStreamState("glm-5.2")
+	state.CustomTools = map[string]bool{"exec": true}
+
+	idx := 0
+	chunk := &ChatCompletionsChunk{
+		ID: "cc-1",
+		Choices: []ChatChunkChoice{{
+			Delta: ChatDelta{
+				ToolCalls: []ChatToolCall{{
+					Index:    &idx,
+					ID:       "call_1",
+					Function: ChatFunctionCall{Name: "exec", Arguments: `{"input": "dir"}`},
+				}},
+			},
+		}},
+	}
+
+	events := ChatCompletionsChunkToResponsesEvents(chunk, state)
+	events = append(events, FinalizeChatCompletionsResponsesStream(state)...)
+
+	var added, inputDone, itemDone *ResponsesStreamEvent
+	for i := range events {
+		evt := &events[i]
+		switch evt.Type {
+		case "response.output_item.added":
+			if evt.Item != nil && evt.Item.Type != "message" && evt.Item.Type != "reasoning" {
+				added = evt
+			}
+		case "response.custom_tool_call_input.done":
+			inputDone = evt
+		case "response.output_item.done":
+			if evt.Item != nil && evt.Item.Type == "custom_tool_call" {
+				itemDone = evt
+			}
+		case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+			t.Fatalf("custom 工具调用不应产出 function_call 参数事件: %s", evt.Type)
+		}
+	}
+
+	require.NotNil(t, added, "缺少 custom_tool_call 的 output_item.added")
+	assert.Equal(t, "custom_tool_call", added.Item.Type)
+	assert.Equal(t, "exec", added.Item.Name)
+
+	require.NotNil(t, inputDone, "缺少 response.custom_tool_call_input.done")
+	assert.Equal(t, "dir", inputDone.Input)
+	assert.Equal(t, "call_1", inputDone.CallID)
+
+	require.NotNil(t, itemDone, "缺少 custom_tool_call 的 output_item.done")
+	assert.Equal(t, "call_1", itemDone.Item.CallID)
+	assert.Equal(t, "exec", itemDone.Item.Name)
+	assert.Equal(t, "dir", itemDone.Item.Input)
+	assert.Empty(t, itemDone.Item.Arguments)
+
+	// response.completed 的 output 数组同样携带 custom_tool_call 项。
+	final := events[len(events)-1]
+	require.Equal(t, "response.completed", final.Type)
+	require.NotNil(t, final.Response)
+	foundCustom := false
+	for _, item := range final.Response.Output {
+		if item.Type == "custom_tool_call" {
+			foundCustom = true
+			assert.Equal(t, "exec", item.Name)
+			assert.Equal(t, "dir", item.Input)
+		}
+	}
+	assert.True(t, foundCustom, "response.completed 缺少 custom_tool_call 输出项")
+}
+
+func TestResponsesToChatCompletionsRequest_ToolSearchToolBecomesProxyFunction(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "glm-5.2",
+		Input: json.RawMessage(`"hi"`),
+		Tools: []ResponsesTool{{Type: "tool_search"}},
+	}
+
+	out, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.Len(t, out.Tools, 1)
+
+	assert.Equal(t, "function", out.Tools[0].Type)
+	assert.Equal(t, "tool_search", out.Tools[0].Function.Name)
+	assert.Contains(t, string(out.Tools[0].Function.Parameters), `"query"`)
+}
+
+func TestResponsesToChatCompletionsRequest_NamespaceToolFlattensChildren(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "glm-5.2",
+		Input: json.RawMessage(`"hi"`),
+		Tools: []ResponsesTool{{
+			Type: "namespace",
+			Name: "gmail",
+			Tools: []ResponsesTool{
+				{Type: "function", Name: "send", Description: "Send mail", Parameters: json.RawMessage(`{"type":"object","properties":{}}`)},
+				{Type: "custom", Name: "ignored_child"},
+			},
+		}},
+	}
+
+	out, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.Len(t, out.Tools, 1, "namespace 子工具中仅 function 类型被摊平")
+
+	assert.Equal(t, "gmail__send", out.Tools[0].Function.Name)
+	assert.Equal(t, "Send mail", out.Tools[0].Function.Description)
+}
+
+func TestResponsesToolsParsing_StringToolBecomesCustom(t *testing.T) {
+	var req ResponsesRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"model":"glm-5.2","input":"hi","tools":["exec",{"type":"function","name":"wait"}]}`), &req))
+
+	require.Len(t, req.Tools, 2)
+	assert.Equal(t, "custom", req.Tools[0].Type)
+	assert.Equal(t, "exec", req.Tools[0].Name)
+	assert.Equal(t, "function", req.Tools[1].Type)
+
+	assert.True(t, CustomToolNames(req.Tools)["exec"])
+}
+
+func TestFlattenNamespaceToolName_CapsAt64WithHashSuffix(t *testing.T) {
+	assert.Equal(t, "gmail__send", flattenNamespaceToolName("gmail", "send"))
+
+	long := flattenNamespaceToolName("very_long_namespace_prefix_for_testing_purposes", "and_a_rather_long_tool_name_too")
+	assert.LessOrEqual(t, len(long), 64)
+	assert.Contains(t, long, "__")
+	// 同输入结果稳定
+	assert.Equal(t, long, flattenNamespaceToolName("very_long_namespace_prefix_for_testing_purposes", "and_a_rather_long_tool_name_too"))
+}
+
+func TestResponsesInputToChatMessages_ToolSearchCallHistory(t *testing.T) {
+	input := json.RawMessage(`[
+		{"role":"user","content":"find tools"},
+		{"type":"tool_search_call","call_id":"call_s","arguments":{"query":"gmail"}},
+		{"type":"tool_search_output","call_id":"call_s","output":{"groups":["gmail"]}}
+	]`)
+
+	messages, err := responsesInputToChatMessages("", input)
+	require.NoError(t, err)
+	require.Len(t, messages, 3)
+
+	require.Len(t, messages[1].ToolCalls, 1)
+	assert.Equal(t, "tool_search", messages[1].ToolCalls[0].Function.Name)
+	assert.JSONEq(t, `{"query":"gmail"}`, messages[1].ToolCalls[0].Function.Arguments)
+
+	assert.Equal(t, "tool", messages[2].Role)
+	assert.Equal(t, "call_s", messages[2].ToolCallID)
+	assert.JSONEq(t, `"{\"groups\":[\"gmail\"]}"`, string(messages[2].Content))
+}
+
+func TestResponsesInputToChatMessages_NamespacedFunctionCallHistory(t *testing.T) {
+	input := json.RawMessage(`[
+		{"type":"function_call","call_id":"call_n","name":"send","namespace":"gmail","arguments":"{\"to\":\"a\"}"},
+		{"type":"function_call_output","call_id":"call_n","output":"ok"}
+	]`)
+
+	messages, err := responsesInputToChatMessages("", input)
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+
+	require.Len(t, messages[0].ToolCalls, 1)
+	assert.Equal(t, "gmail__send", messages[0].ToolCalls[0].Function.Name)
+}
+
+func TestChatCompletionsChunkToResponsesEvents_CustomToolNameArrivesLate(t *testing.T) {
+	state := NewChatCompletionsToResponsesStreamState("glm-5.2")
+	state.CustomTools = map[string]bool{"exec": true}
+
+	idx := 0
+	chunk1 := &ChatCompletionsChunk{Choices: []ChatChunkChoice{{Delta: ChatDelta{
+		ToolCalls: []ChatToolCall{{Index: &idx, ID: "call_1", Function: ChatFunctionCall{Arguments: `{"inp`}}},
+	}}}}
+	chunk2 := &ChatCompletionsChunk{Choices: []ChatChunkChoice{{Delta: ChatDelta{
+		ToolCalls: []ChatToolCall{{Index: &idx, Function: ChatFunctionCall{Name: "exec", Arguments: `ut": "dir"}`}}},
+	}}}}
+
+	var events []ResponsesStreamEvent
+	events = append(events, ChatCompletionsChunkToResponsesEvents(chunk1, state)...)
+	events = append(events, ChatCompletionsChunkToResponsesEvents(chunk2, state)...)
+	events = append(events, FinalizeChatCompletionsResponsesStream(state)...)
+
+	addedCount := 0
+	for _, evt := range events {
+		switch evt.Type {
+		case "response.output_item.added":
+			if evt.Item != nil && evt.Item.Type != "reasoning" && evt.Item.Type != "message" {
+				addedCount++
+				assert.Equal(t, "custom_tool_call", evt.Item.Type, "迟到的名字命中 custom 工具时按 custom_tool_call 宣告")
+				assert.Equal(t, "exec", evt.Item.Name)
+			}
+		case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+			t.Fatalf("custom 调用不应产出 function 参数事件: %s", evt.Type)
+		case "response.custom_tool_call_input.done":
+			assert.Equal(t, "dir", evt.Input)
+		}
+	}
+	assert.Equal(t, 1, addedCount, "工具调用只宣告一次")
+}
+
+func TestChatCompletionsChunkToResponsesEvents_FunctionToolNameArrivesLate(t *testing.T) {
+	state := NewChatCompletionsToResponsesStreamState("glm-5.2")
+	state.CustomTools = map[string]bool{"exec": true}
+
+	idx := 0
+	chunk1 := &ChatCompletionsChunk{Choices: []ChatChunkChoice{{Delta: ChatDelta{
+		ToolCalls: []ChatToolCall{{Index: &idx, ID: "call_9", Function: ChatFunctionCall{Arguments: `{"cell`}}},
+	}}}}
+	chunk2 := &ChatCompletionsChunk{Choices: []ChatChunkChoice{{Delta: ChatDelta{
+		ToolCalls: []ChatToolCall{{Index: &idx, Function: ChatFunctionCall{Name: "wait", Arguments: `_id": 3}`}}},
+	}}}}
+
+	var events []ResponsesStreamEvent
+	events = append(events, ChatCompletionsChunkToResponsesEvents(chunk1, state)...)
+	events = append(events, ChatCompletionsChunkToResponsesEvents(chunk2, state)...)
+	events = append(events, FinalizeChatCompletionsResponsesStream(state)...)
+
+	deltas := ""
+	argsDone := ""
+	for _, evt := range events {
+		switch evt.Type {
+		case "response.function_call_arguments.delta":
+			deltas += evt.Delta
+		case "response.function_call_arguments.done":
+			argsDone = evt.Arguments
+		case "response.custom_tool_call_input.done":
+			t.Fatal("function 调用不应产出 custom 事件")
+		}
+	}
+	assert.Equal(t, `{"cell_id": 3}`, deltas, "宣告前累积的参数需在宣告时补发")
+	assert.Equal(t, `{"cell_id": 3}`, argsDone)
+}
+
+// 序列化层（MarshalJSON → responsesItemWire）单独走白名单重组，事件结构体上的字段
+// 齐全不代表落到 SSE 线上的 JSON 齐全，必须在 wire 层再断言一次。
+func TestResponsesEventToSSE_CustomToolCallItemCarriesAllFields(t *testing.T) {
+	evt := ResponsesStreamEvent{
+		Type:        "response.output_item.done",
+		OutputIndex: 1,
+		Item: &ResponsesOutput{
+			Type:   "custom_tool_call",
+			ID:     "item_1",
+			CallID: "call_1",
+			Name:   "exec",
+			Input:  "dir",
+			Status: "completed",
+		},
+	}
+
+	sse, err := ResponsesEventToSSE(evt)
+	require.NoError(t, err)
+
+	assert.Contains(t, sse, `"call_id":"call_1"`)
+	assert.Contains(t, sse, `"name":"exec"`)
+	assert.Contains(t, sse, `"input":"dir"`)
+	assert.Contains(t, sse, `"type":"custom_tool_call"`)
+}
+
+func TestChatCompletionsChunkToResponsesEvents_FunctionToolStreamUnaffected(t *testing.T) {
+	state := NewChatCompletionsToResponsesStreamState("glm-5.2")
+	state.CustomTools = map[string]bool{"exec": true}
+
+	idx := 0
+	chunk := &ChatCompletionsChunk{
+		Choices: []ChatChunkChoice{{
+			Delta: ChatDelta{
+				ToolCalls: []ChatToolCall{{
+					Index:    &idx,
+					ID:       "call_9",
+					Function: ChatFunctionCall{Name: "wait", Arguments: `{"cell_id": 3}`},
+				}},
+			},
+		}},
+	}
+
+	events := ChatCompletionsChunkToResponsesEvents(chunk, state)
+	events = append(events, FinalizeChatCompletionsResponsesStream(state)...)
+
+	sawArgsDelta := false
+	for _, evt := range events {
+		if evt.Type == "response.function_call_arguments.delta" {
+			sawArgsDelta = true
+		}
+		if evt.Type == "response.custom_tool_call_input.done" {
+			t.Fatal("function 工具不应产出 custom_tool_call 事件")
+		}
+	}
+	assert.True(t, sawArgsDelta, "function 工具应保持原有参数增量事件")
+}
