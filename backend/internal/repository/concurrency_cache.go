@@ -453,7 +453,7 @@ func (c *concurrencyCache) removeActiveIndexMembers(ctx context.Context, indexKe
 	if len(members) == 0 {
 		return
 	}
-	args := make([]interface{}, 0, len(members))
+	args := make([]any, 0, len(members))
 	for _, member := range members {
 		args = append(args, member)
 	}
