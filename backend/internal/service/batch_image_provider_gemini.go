@@ -577,7 +577,7 @@ func (c *GeminiBatchHTTPClient) DownloadFile(ctx context.Context, apiKey string,
 		return nil, "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		return nil, "", readGeminiAPIError(resp)
 	}
 	contentType := resp.Header.Get("Content-Type")
@@ -612,7 +612,7 @@ func (c *GeminiBatchHTTPClient) doNoBody(req *http.Request) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return readGeminiAPIError(resp)
 	}
@@ -624,7 +624,7 @@ func (c *GeminiBatchHTTPClient) doJSON(req *http.Request, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return readGeminiAPIError(resp)
 	}

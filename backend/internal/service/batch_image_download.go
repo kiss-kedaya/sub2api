@@ -144,7 +144,7 @@ func (s *BatchImageDownloadService) OpenItemContent(ctx context.Context, owner B
 	if err != nil {
 		return nil, ErrBatchImageResultMissing.WithCause(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	line, err := findBatchImageLineImages(r, item.CustomID)
 	if err != nil {
@@ -207,7 +207,7 @@ func (s *BatchImageDownloadService) StreamZip(ctx context.Context, owner BatchIm
 		return nil, err
 	}
 	if permit != nil {
-		defer permit.Release(ctx)
+		defer func() { _ = permit.Release(ctx) }()
 	}
 
 	provider, account, err := s.providerAndAccount(ctx, job)
@@ -218,7 +218,7 @@ func (s *BatchImageDownloadService) StreamZip(ctx context.Context, owner BatchIm
 	if err != nil {
 		return nil, ErrBatchImageResultMissing.WithCause(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	streamCtx := ctx
 	cancel := func() {}
@@ -546,13 +546,13 @@ func sanitizeBatchImageFilenameBase(value string) string {
 	for _, r := range value {
 		switch {
 		case r == '/' || r == '\\' || r == ':' || r == 0:
-			b.WriteByte('_')
+			_ = b.WriteByte('_')
 		case unicode.IsControl(r):
-			b.WriteByte('_')
+			_ = b.WriteByte('_')
 		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '.':
-			b.WriteRune(r)
+			_, _ = b.WriteRune(r)
 		default:
-			b.WriteByte('_')
+			_ = b.WriteByte('_')
 		}
 	}
 	out := strings.Trim(b.String(), ". ")
@@ -577,7 +577,7 @@ func sanitizeBatchImageFilenameExtension(extension string) string {
 	var b strings.Builder
 	for _, r := range extension {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(r)
+			_, _ = b.WriteRune(r)
 		}
 	}
 	out := b.String()
