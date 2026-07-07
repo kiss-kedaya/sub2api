@@ -114,12 +114,58 @@ func TestBatchImageResultIndexer_WritesCountsAndReplacesItems(t *testing.T) {
 	require.Equal(t, BatchImageCounts{SuccessCount: 1, FailCount: 1}, repo.counts[job.BatchID])
 	require.NotContains(t, fmt.Sprintf("%+v", repo.items[job.BatchID]), batchImageTestData)
 
+	// 重新索引时与现有 custom_id 集对账：未知的 "ok2" 被丢弃，
+	// 输出中缺失的 ok/bad 补为 PROVIDER_RESULT_MISSING 失败记录。
 	provider.result = `{"key":"ok2","response":{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/webp","data":"` + batchImageTestData + `"}}]}}]}}` + "\n"
 	result, err = (&BatchImageResultIndexer{Repo: repo}).Index(context.Background(), job, provider, &Account{})
 	require.NoError(t, err)
-	require.Equal(t, 1, result.TotalCount)
-	require.Len(t, repo.items[job.BatchID], 1)
-	require.Equal(t, "ok2", repo.items[job.BatchID][0].CustomID)
+	require.Equal(t, 2, result.TotalCount)
+	require.Equal(t, 0, result.SuccessCount)
+	require.Equal(t, 2, result.FailCount)
+	require.Len(t, repo.items[job.BatchID], 2)
+	gotIDs := []string{repo.items[job.BatchID][0].CustomID, repo.items[job.BatchID][1].CustomID}
+	require.ElementsMatch(t, []string{"ok", "bad"}, gotIDs)
+	for _, item := range repo.items[job.BatchID] {
+		require.Equal(t, BatchImageItemStatusFailed, item.Status)
+		require.Equal(t, "PROVIDER_RESULT_MISSING", batchImageDerefString(item.ErrorCode))
+	}
+}
+
+func TestBatchImageResultIndexer_ReconcilesMissingAndUnknownCustomIDs(t *testing.T) {
+	repo := newFakeBatchImageRepository()
+	outputRef := "files/output"
+	job := &BatchImageJob{BatchID: "imgbatch_reconcile", ProviderOutputRef: &outputRef, ItemCount: 3}
+	// 预创建提交时的 pending 条目（提交流程的行为）。
+	require.NoError(t, repo.BulkCreateBatchImageItems(context.Background(), []CreateBatchImageItemParams{
+		{JobID: job.BatchID, CustomID: "a", Status: BatchImageItemStatusPending},
+		{JobID: job.BatchID, CustomID: "b", Status: BatchImageItemStatusPending},
+		{JobID: job.BatchID, CustomID: "c", Status: BatchImageItemStatusPending},
+	}))
+	// provider 输出：a 成功，b 失败，c 漏掉，多出未知的 x。
+	output := strings.Join([]string{
+		`{"key":"a","response":{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"` + batchImageTestData + `"}}]}}]}}`,
+		`{"key":"b","error":{"code":"SAFETY","message":"blocked"}}`,
+		`{"key":"x","error":{"code":"UNKNOWN","message":"not ours"}}`,
+	}, "\n") + "\n"
+	provider := &fakeProcessorProvider{result: output}
+
+	result, err := (&BatchImageResultIndexer{Repo: repo}).Index(context.Background(), job, provider, &Account{})
+	require.NoError(t, err)
+	require.Equal(t, 3, result.TotalCount)
+	require.Equal(t, 1, result.SuccessCount)
+	require.Equal(t, 2, result.FailCount)
+	require.Len(t, repo.items[job.BatchID], 3)
+	byID := make(map[string]CreateBatchImageItemParams)
+	for _, item := range repo.items[job.BatchID] {
+		byID[item.CustomID] = item
+	}
+	require.NotContains(t, byID, "x")
+	require.Equal(t, BatchImageItemStatusSuccess, byID["a"].Status)
+	require.Equal(t, BatchImageItemStatusFailed, byID["b"].Status)
+	require.Equal(t, BatchImageItemStatusFailed, byID["c"].Status)
+	require.Equal(t, "PROVIDER_RESULT_MISSING", batchImageDerefString(byID["c"].ErrorCode))
+	// 对账后 success+fail == item_count，结算计数校验可通过。
+	require.Equal(t, job.ItemCount, result.SuccessCount+result.FailCount)
 }
 
 func TestBatchImageResultIndexer_EmptyInvalidAndDuplicateOutput(t *testing.T) {
@@ -487,6 +533,37 @@ func (r *fakeBatchImageRepository) TransitionBatchImageJobStatus(_ context.Conte
 	return nil
 }
 
+func (r *fakeBatchImageRepository) TouchBatchImageJobSubmitting(_ context.Context, batchID string) error {
+	job, ok := r.jobs[batchID]
+	if !ok {
+		return ErrBatchImageJobNotFound
+	}
+	if job.Status == BatchImageJobStatusCreated || job.Status == BatchImageJobStatusUploading {
+		job.UpdatedAt = time.Now()
+	}
+	return nil
+}
+
+func (r *fakeBatchImageRepository) FailStaleUnsubmittedBatchImageJob(_ context.Context, batchID string, cutoff time.Time, code, message string) (bool, error) {
+	job, ok := r.jobs[batchID]
+	if !ok {
+		return false, ErrBatchImageJobNotFound
+	}
+	if job.Status != BatchImageJobStatusCreated && job.Status != BatchImageJobStatusUploading {
+		return false, nil
+	}
+	if batchImageDerefString(job.ProviderJobName) != "" || job.UpdatedAt.After(cutoff) {
+		return false, nil
+	}
+	job.Status = BatchImageJobStatusFailed
+	job.LastErrorCode = batchImageStringPtr(code)
+	job.LastErrorMessage = batchImageStringPtr(message)
+	job.UpdatedAt = time.Now()
+	r.transitions[batchID] = append(r.transitions[batchID], BatchImageJobStatusFailed)
+	r.events[batchID] = append(r.events[batchID], "billing_hold_recovery_failed_unsubmitted")
+	return true, nil
+}
+
 func (r *fakeBatchImageRepository) UpdateBatchImageJobProviderOutputRef(_ context.Context, batchID, providerOutputRef string) error {
 	job, ok := r.jobs[batchID]
 	if !ok {
@@ -589,6 +666,11 @@ func (r *fakeBatchImageRepository) BulkCreateBatchImageItems(ctx context.Context
 }
 
 func (r *fakeBatchImageRepository) ReplaceBatchImageItemsForJob(_ context.Context, batchID string, items []CreateBatchImageItemParams, counts BatchImageCounts) error {
+	// 与真实实现一致：仅 indexing 状态允许重建 item 表（未注册的 job 保持宽松，
+	// 供直接构造 job 的单测使用）。
+	if job, ok := r.jobs[batchID]; ok && job.Status != BatchImageJobStatusIndexing {
+		return ErrBatchImageIndexStateConflict
+	}
 	r.replaceCalls++
 	copied := append([]CreateBatchImageItemParams(nil), items...)
 	for idx := range copied {
