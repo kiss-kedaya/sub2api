@@ -106,11 +106,11 @@ func buildOpenAICompactSSEPayload(finalResponse []byte) ([]byte, bool) {
 	var buf bytes.Buffer
 	outputIndex := 0
 	appendEvent := func(eventType string, data []byte) {
-		buf.WriteString("event: ")
-		buf.WriteString(eventType)
-		buf.WriteString("\ndata: ")
-		buf.Write(data)
-		buf.WriteString("\n\n")
+		_, _ = buf.WriteString("event: ")
+		_, _ = buf.WriteString(eventType)
+		_, _ = buf.WriteString("\ndata: ")
+		_, _ = buf.Write(data)
+		_, _ = buf.WriteString("\n\n")
 	}
 	for _, item := range gjson.GetBytes(response, "output").Array() {
 		if !item.IsObject() {
