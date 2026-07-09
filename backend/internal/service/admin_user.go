@@ -105,6 +105,18 @@ func (s *adminServiceImpl) GetUserIncludeDeleted(ctx context.Context, id int64) 
 	return s.userRepo.GetByIDIncludeDeleted(ctx, id)
 }
 
+// normalizeUserRole 校验并归一化角色输入。
+// 空字符串返回 fallback(未提供时的默认角色);非法值返回错误。
+func normalizeUserRole(role, fallback string) (string, error) {
+	if role == "" {
+		return fallback, nil
+	}
+	if role != RoleAdmin && role != RoleUser {
+		return "", fmt.Errorf("invalid role: %q (must be %s or %s)", role, RoleAdmin, RoleUser)
+	}
+	return role, nil
+}
+
 func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInput) (*User, error) {
 	balance := 0.0
 	if input.Balance != nil {
@@ -113,11 +125,17 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 		balance = s.settingService.GetDefaultBalance(ctx)
 	}
 
+	// 角色可由管理员在创建时指定(admin/user);未提供时默认 user。
+	role, err := normalizeUserRole(input.Role, RoleUser)
+	if err != nil {
+		return nil, err
+	}
+
 	user := &User{
 		Email:         input.Email,
 		Username:      input.Username,
 		Notes:         input.Notes,
-		Role:          RoleUser, // Always create as regular user, never admin
+		Role:          role,
 		Balance:       balance,
 		Concurrency:   input.Concurrency,
 		RPMLimit:      input.RPMLimit,
@@ -195,6 +213,15 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 
 	if input.Status != "" {
 		user.Status = input.Status
+	}
+
+	// 角色变更(admin/user);空字符串表示不修改。
+	if input.Role != "" {
+		role, err := normalizeUserRole(input.Role, user.Role)
+		if err != nil {
+			return nil, err
+		}
+		user.Role = role
 	}
 
 	if input.Concurrency != nil {
