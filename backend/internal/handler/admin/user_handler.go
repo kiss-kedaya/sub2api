@@ -276,6 +276,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		Concurrency:   req.Concurrency,
 		RPMLimit:      req.RPMLimit,
 		AllowedGroups: req.AllowedGroups,
+		ActorAdminID:  getAdminIDFromContext(c),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -320,6 +321,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		Status:        req.Status,
 		AllowedGroups: req.AllowedGroups,
 		GroupRates:    req.GroupRates,
+		ActorAdminID:  getAdminIDFromContext(c),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
