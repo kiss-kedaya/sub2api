@@ -694,10 +694,3 @@ func (s *OpenAIGatewayService) tempUnscheduleGrok(ctx context.Context, account *
 		_ = s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, until, reason)
 	}
 }
-
-func ptrStringOrNil(value string) *string {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	return &value
-}
