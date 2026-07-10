@@ -407,7 +407,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// Forward request
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
-		writerSizeBeforeForward := c.Writer.Size()
+		// 用扣除 compact 心跳字节的口径快照：心跳注释不构成语义响应，
+		// 不能因心跳字节变化而放弃 failover 换号（#3887）。
+		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -441,7 +443,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
 					}
@@ -641,6 +643,13 @@ func (h *OpenAIGatewayHandler) logOpenAIRemoteCompactOutcome(c *gin.Context, sta
 	outcome := "failed"
 	if status >= 200 && status < 300 {
 		outcome = "succeeded"
+	}
+	// compact 心跳提交后失败的 wire 状态码固化为 200，真实结局以流内错误
+	// 标记为准（response.failed 降级路径会 MarkOpsStreamError）。
+	if outcome == "succeeded" && c != nil {
+		if _, hasStreamErr := service.GetOpsStreamError(c); hasStreamErr {
+			outcome = "failed"
+		}
 	}
 	latencyMs := time.Since(startedAt).Milliseconds()
 	if latencyMs < 0 {
@@ -2024,7 +2033,9 @@ func openAIForwardErrorAlreadyCommunicated(c *gin.Context, writerSizeBeforeForwa
 	if err == nil || c == nil || c.Writer == nil {
 		return false
 	}
-	if c.Writer.Size() == writerSizeBeforeForward {
+	// 与快照同口径：排除 compact 心跳字节，避免"仅心跳写出"被误判为
+	// 响应已写出（#3887）。
+	if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
 		return false
 	}
 
@@ -2336,6 +2347,16 @@ func (h *OpenAIGatewayHandler) rejectIfCyberSessionBlocked(c *gin.Context, apiKe
 	}
 	if !h.gatewayService.IsCyberSessionBlocked(c.Request.Context(), key) {
 		return false
+	}
+	// body-signal compact 心跳可能已把响应头提交为 200（cyber 检查在用户槽位
+	// 长等待之后执行）：以 response.failed 终止事件回传；未提交时停拍后照常
+	// 写 JSON（#3887）。
+	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
+		service.MarkOpsStreamError(c, "permission_error", cyberSessionBlockedClientMsg, http.StatusForbidden)
+		if writeResponsesFailedSSE(c, "permission_error", cyberSessionBlockedClientMsg) {
+			h.enqueueCyberSessionBlockedOpsEntry(c, apiKey, model, key)
+			return true
+		}
 	}
 	switch format {
 	case cyberBlockFormatAnthropic:
