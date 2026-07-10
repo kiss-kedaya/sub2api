@@ -44,8 +44,17 @@ func ResponsesToChatCompletionsRequest(req *ResponsesRequest) (*ChatCompletionsR
 	}
 	// tools 全部被丢弃（如仅含 web_search/image_generation 等服务端工具）时不再转发
 	// tool_choice：上游会拒绝 "'tool_choice' is only allowed when 'tools' are specified"。
+	// 指向被丢弃工具的选择项同理（见 responsesToolChoiceToChatToolChoice）。
 	if len(out.Tools) > 0 && len(req.ToolChoice) > 0 {
-		out.ToolChoice = responsesToolChoiceToChatToolChoice(req.ToolChoice)
+		declared := make(map[string]bool, len(out.Tools))
+		for _, tool := range out.Tools {
+			if tool.Function != nil {
+				declared[tool.Function.Name] = true
+			}
+		}
+		if tc := responsesToolChoiceToChatToolChoice(req.ToolChoice, declared); len(tc) > 0 {
+			out.ToolChoice = tc
+		}
 	}
 	if req.Text != nil {
 		out.ResponseFormat = responsesTextFormatToChatResponseFormat(req.Text.Format)
@@ -705,14 +714,19 @@ func flattenNamespaceToolName(namespace, name string) string {
 	return prefix.String() + suffix
 }
 
-func responsesToolChoiceToChatToolChoice(raw json.RawMessage) json.RawMessage {
+// responsesToolChoiceToChatToolChoice 把 Responses 的 tool_choice 转为 chat 形态。
+// declared 是转换后实际声明的 chat 工具名集合：具名选择项仅在目标工具幸存时转发，
+// 服务端工具（web_search 等）的选择项随工具本身丢弃——指向未声明工具的 tool_choice
+// 会被 chat 上游 400 拒绝。返回 nil 表示丢弃 tool_choice。
+func responsesToolChoiceToChatToolChoice(raw json.RawMessage, declared map[string]bool) json.RawMessage {
 	var choice map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &choice); err != nil {
+		// "auto"/"none"/"required" 等字符串形式原样转发。
 		return raw
 	}
 	// custom 工具已降级为 function 工具，指向它的 tool_choice 同样按 function 转换。
 	if t := rawString(choice["type"]); t != "function" && t != "custom" {
-		return raw
+		return nil
 	}
 	name := rawString(choice["name"])
 	if name == "" {
@@ -720,6 +734,9 @@ func responsesToolChoiceToChatToolChoice(raw json.RawMessage) json.RawMessage {
 	}
 	if name == "" {
 		return raw
+	}
+	if !declared[name] {
+		return nil
 	}
 	out, err := json.Marshal(map[string]any{
 		"type": "function",
