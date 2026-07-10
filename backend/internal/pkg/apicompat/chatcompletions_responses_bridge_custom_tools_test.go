@@ -103,7 +103,7 @@ func TestChatCompletionsResponseToResponses_CustomToolCallOutputItem(t *testing.
 		}},
 	}
 
-	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", map[string]bool{"exec": true}, false)
+	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", map[string]bool{"exec": true}, false, nil)
 	require.Len(t, out.Output, 2)
 
 	assert.Equal(t, "custom_tool_call", out.Output[0].Type)
@@ -226,7 +226,7 @@ func TestChatCompletionsResponseToResponses_ToolSearchCallOutputItem(t *testing.
 		}},
 	}
 
-	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", nil, true)
+	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", nil, true, nil)
 	require.Len(t, out.Output, 1)
 
 	item := out.Output[0]
@@ -258,7 +258,7 @@ func TestChatCompletionsResponseToResponses_ToolSearchNotDeclaredKeepsFunctionCa
 	}
 
 	// 客户端未声明 type=tool_search 时，同名普通 function 工具不受影响。
-	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", nil, false)
+	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", nil, false, nil)
 	require.Len(t, out.Output, 1)
 	assert.Equal(t, "function_call", out.Output[0].Type)
 }
@@ -504,6 +504,190 @@ func TestResponsesEventToSSE_CustomToolCallItemCarriesAllFields(t *testing.T) {
 	assert.Contains(t, sse, `"name":"exec"`)
 	assert.Contains(t, sse, `"input":"dir"`)
 	assert.Contains(t, sse, `"type":"custom_tool_call"`)
+}
+
+func TestNamespaceToolNames_MapsFlattenedNames(t *testing.T) {
+	tools := []ResponsesTool{
+		{Type: "namespace", Name: "gmail", Tools: []ResponsesTool{
+			{Type: "function", Name: "send"},
+			{Type: "custom", Name: "skip_me"},
+		}},
+		{Type: "namespace", Name: "crm", Children: []ResponsesTool{
+			{Type: "function", Name: "query"},
+		}},
+		{Type: "function", Name: "wait"},
+	}
+
+	m := NamespaceToolNames(tools)
+	require.Len(t, m, 2)
+	assert.Equal(t, NamespacedToolName{Namespace: "gmail", Name: "send"}, m["gmail__send"])
+	assert.Equal(t, NamespacedToolName{Namespace: "crm", Name: "query"}, m["crm__query"])
+
+	// 摊平名超长时截断加哈希，无法按字符串切分还原，必须经映射反查。
+	longNS := "very_long_namespace_prefix_for_testing_purposes"
+	longChild := "and_a_rather_long_tool_name_too"
+	m2 := NamespaceToolNames([]ResponsesTool{{
+		Type: "namespace", Name: longNS,
+		Tools: []ResponsesTool{{Type: "function", Name: longChild}},
+	}})
+	assert.Equal(t, NamespacedToolName{Namespace: longNS, Name: longChild},
+		m2[flattenNamespaceToolName(longNS, longChild)])
+
+	assert.Nil(t, NamespaceToolNames(nil))
+}
+
+// codex 按 namespace+name 路由 namespace 子工具的调用：回程必须把摊平名还原为
+// 裸子工具名并带独立 namespace 字段，平铺名的 function_call 会被 codex 判为
+// unsupported call 拒绝执行。
+func TestChatCompletionsResponseToResponses_NamespacedToolCallRestored(t *testing.T) {
+	resp := &ChatCompletionsResponse{
+		ID: "cc-1",
+		Choices: []ChatChoice{{
+			Message: ChatMessage{
+				Role: "assistant",
+				ToolCalls: []ChatToolCall{
+					{ID: "call_n", Function: ChatFunctionCall{Name: "mcp__svc__echo", Arguments: `{"text":"hi"}`}},
+					{ID: "call_9", Function: ChatFunctionCall{Name: "wait", Arguments: `{"cell_id": 3}`}},
+				},
+			},
+		}},
+	}
+	nsTools := map[string]NamespacedToolName{
+		"mcp__svc__echo": {Namespace: "mcp__svc", Name: "echo"},
+	}
+
+	out := ChatCompletionsResponseToResponses(resp, "glm-5.2", nil, false, nsTools)
+	require.Len(t, out.Output, 2)
+
+	item := out.Output[0]
+	assert.Equal(t, "function_call", item.Type)
+	assert.Equal(t, "echo", item.Name)
+	assert.Equal(t, "mcp__svc", item.Namespace)
+	assert.Equal(t, "call_n", item.CallID)
+	assert.Equal(t, `{"text":"hi"}`, item.Arguments)
+
+	// 非流式响应体走 ResponsesOutput.MarshalJSON，namespace 必须落到线上 JSON。
+	b, err := json.Marshal(item)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"namespace":"mcp__svc"`)
+	assert.Contains(t, string(b), `"name":"echo"`)
+
+	// 未命中映射的普通 function 调用不受影响，且不携带 namespace 字段。
+	assert.Equal(t, "wait", out.Output[1].Name)
+	assert.Empty(t, out.Output[1].Namespace)
+	b2, err := json.Marshal(out.Output[1])
+	require.NoError(t, err)
+	assert.NotContains(t, string(b2), `"namespace"`)
+}
+
+func TestChatCompletionsChunkToResponsesEvents_NamespacedToolCallStream(t *testing.T) {
+	state := NewChatCompletionsToResponsesStreamState("glm-5.2")
+	state.NamespaceTools = map[string]NamespacedToolName{
+		"mcp__svc__echo": {Namespace: "mcp__svc", Name: "echo"},
+	}
+
+	idx := 0
+	chunk := &ChatCompletionsChunk{
+		ID: "cc-1",
+		Choices: []ChatChunkChoice{{
+			Delta: ChatDelta{
+				ToolCalls: []ChatToolCall{{
+					Index:    &idx,
+					ID:       "call_n",
+					Function: ChatFunctionCall{Name: "mcp__svc__echo", Arguments: `{"text":"hi"}`},
+				}},
+			},
+		}},
+	}
+
+	events := ChatCompletionsChunkToResponsesEvents(chunk, state)
+	events = append(events, FinalizeChatCompletionsResponsesStream(state)...)
+
+	var added, itemDone *ResponsesStreamEvent
+	for i := range events {
+		evt := &events[i]
+		switch evt.Type {
+		case "response.output_item.added":
+			if evt.Item != nil && evt.Item.Type != "message" && evt.Item.Type != "reasoning" {
+				added = evt
+			}
+		case "response.output_item.done":
+			if evt.Item != nil && evt.Item.Type == "function_call" {
+				itemDone = evt
+			}
+		case "response.custom_tool_call_input.delta", "response.custom_tool_call_input.done":
+			t.Fatalf("namespace 子工具调用不应产出 custom 事件: %s", evt.Type)
+		}
+	}
+
+	require.NotNil(t, added, "缺少 namespace 调用的 output_item.added")
+	assert.Equal(t, "function_call", added.Item.Type)
+	assert.Equal(t, "echo", added.Item.Name)
+	assert.Equal(t, "mcp__svc", added.Item.Namespace)
+
+	require.NotNil(t, itemDone, "缺少 namespace 调用的 output_item.done")
+	assert.Equal(t, "call_n", itemDone.Item.CallID)
+	assert.Equal(t, "echo", itemDone.Item.Name)
+	assert.Equal(t, "mcp__svc", itemDone.Item.Namespace)
+	assert.Equal(t, `{"text":"hi"}`, itemDone.Item.Arguments)
+
+	// SSE 线上形态经 responsesItemWire 白名单重组，必须单独断言 namespace 落线。
+	sse, err := ResponsesEventToSSE(*itemDone)
+	require.NoError(t, err)
+	assert.Contains(t, sse, `"namespace":"mcp__svc"`)
+	assert.Contains(t, sse, `"name":"echo"`)
+	assert.Contains(t, sse, `"call_id":"call_n"`)
+
+	// response.completed 的 output 数组同样携带还原后的 namespace 调用项。
+	final := events[len(events)-1]
+	require.Equal(t, "response.completed", final.Type)
+	require.NotNil(t, final.Response)
+	found := false
+	for _, item := range final.Response.Output {
+		if item.Type == "function_call" {
+			found = true
+			assert.Equal(t, "echo", item.Name)
+			assert.Equal(t, "mcp__svc", item.Namespace)
+		}
+	}
+	assert.True(t, found, "response.completed 缺少还原后的 namespace 调用项")
+}
+
+func TestChatCompletionsChunkToResponsesEvents_NamespacedToolNameArrivesLate(t *testing.T) {
+	state := NewChatCompletionsToResponsesStreamState("glm-5.2")
+	state.NamespaceTools = map[string]NamespacedToolName{
+		"mcp__svc__echo": {Namespace: "mcp__svc", Name: "echo"},
+	}
+
+	idx := 0
+	chunk1 := &ChatCompletionsChunk{Choices: []ChatChunkChoice{{Delta: ChatDelta{
+		ToolCalls: []ChatToolCall{{Index: &idx, ID: "call_n", Function: ChatFunctionCall{Arguments: `{"te`}}},
+	}}}}
+	chunk2 := &ChatCompletionsChunk{Choices: []ChatChunkChoice{{Delta: ChatDelta{
+		ToolCalls: []ChatToolCall{{Index: &idx, Function: ChatFunctionCall{Name: "mcp__svc__echo", Arguments: `xt":"hi"}`}}},
+	}}}}
+
+	var events []ResponsesStreamEvent
+	events = append(events, ChatCompletionsChunkToResponsesEvents(chunk1, state)...)
+	events = append(events, ChatCompletionsChunkToResponsesEvents(chunk2, state)...)
+	events = append(events, FinalizeChatCompletionsResponsesStream(state)...)
+
+	addedCount := 0
+	deltas := ""
+	for _, evt := range events {
+		switch evt.Type {
+		case "response.output_item.added":
+			if evt.Item != nil && evt.Item.Type != "reasoning" && evt.Item.Type != "message" {
+				addedCount++
+				assert.Equal(t, "echo", evt.Item.Name, "迟到的名字命中 namespace 映射时按还原名宣告")
+				assert.Equal(t, "mcp__svc", evt.Item.Namespace)
+			}
+		case "response.function_call_arguments.delta":
+			deltas += evt.Delta
+		}
+	}
+	assert.Equal(t, 1, addedCount, "工具调用只宣告一次")
+	assert.Equal(t, `{"text":"hi"}`, deltas, "宣告前累积的参数需在宣告时补发")
 }
 
 func TestChatCompletionsChunkToResponsesEvents_FunctionToolStreamUnaffected(t *testing.T) {
