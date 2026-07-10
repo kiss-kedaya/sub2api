@@ -621,6 +621,30 @@ func TestResponsesToChatCompletionsRequest_DropsToolChoiceForDroppedTool(t *test
 	assert.JSONEq(t, `{"type":"function","function":{"name":"wait"}}`, string(out.ToolChoice))
 }
 
+// tool_search 工具没有被丢弃而是降级为同名 function 代理，强制选择它的 tool_choice
+// 必须同步降级为指向代理的 function 选择，不能静默丢弃（丢弃会把强制搜索退化为
+// 自动选择，模型可以不执行搜索）。
+func TestResponsesToChatCompletionsRequest_ToolSearchToolChoiceMapsToProxy(t *testing.T) {
+	out, err := ResponsesToChatCompletionsRequest(&ResponsesRequest{
+		Model:      "glm-5.2",
+		Input:      json.RawMessage(`"hi"`),
+		Tools:      []ResponsesTool{{Type: "tool_search"}},
+		ToolChoice: json.RawMessage(`{"type":"tool_search"}`),
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"function","function":{"name":"tool_search"}}`, string(out.ToolChoice))
+
+	// 未声明 type=tool_search 时强制选择它没有可指向的代理，丢弃选择项。
+	out, err = ResponsesToChatCompletionsRequest(&ResponsesRequest{
+		Model:      "glm-5.2",
+		Input:      json.RawMessage(`"hi"`),
+		Tools:      []ResponsesTool{{Type: "function", Name: "wait"}},
+		ToolChoice: json.RawMessage(`{"type":"tool_search"}`),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, out.ToolChoice)
+}
+
 // 客户端请求在原生 Responses API 上合法（namespace 子工具按 namespace+name 路由），
 // 是摊平转换让名字产生歧义；歧义无法消除时必须显式拒绝整个请求（400），而不是
 // 静默降级——否则重复声明发给上游、回程还原到错误工具，问题只能靠抓包定位。
