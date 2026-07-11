@@ -76,6 +76,12 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	// 2. Resolve model mapping (same as ForwardAsChatCompletions)
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	grokCacheIdentity := ""
+	if account.Platform == PlatformGrok {
+		// Resolve before image bridging or other body rewrites so the fallback is
+		// anchored to the client's stable conversation prefix.
+		grokCacheIdentity = resolveGrokCacheIdentity(c, body, "", upstreamModel)
+	}
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
@@ -134,6 +140,12 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 			return nil, fmt.Errorf("enable stream usage: %w", usageErr)
 		}
 	}
+	if account.Platform == PlatformGrok {
+		upstreamBody, err = stripGrokChatPromptCacheKey(upstreamBody)
+		if err != nil {
+			return nil, fmt.Errorf("remove Responses-only Grok prompt cache key: %w", err)
+		}
+	}
 
 	logger.L().Debug("openai chat_completions raw: forwarding without protocol conversion",
 		zap.Int64("account_id", account.ID),
@@ -152,7 +164,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if customUA == "" && account.Platform == PlatformGrok {
 		customUA = "sub2api-grok/1.0"
 	}
-	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA)
+	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA, grokCacheIdentity)
 	if err != nil {
 		return nil, err
 	}
