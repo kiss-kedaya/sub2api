@@ -155,6 +155,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	imageBillingModel string,
 	imageSizeTier string,
 	imageInputSize string,
+	grokCacheIdentity string,
 	turn int,
 	writeClientMessage func([]byte) error,
 ) (*OpenAIForwardResult, error) {
@@ -179,21 +180,19 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	var upstreamReq *http.Request
 	if account.Platform == PlatformGrok {
-		upstreamModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
-		if originalModel != "" {
-			if mappedModel := normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel)); mappedModel != "" {
-				upstreamModel = mappedModel
-			}
-		}
-		if upstreamModel == "" {
-			upstreamModel = "grok-4.3"
-		}
+		upstreamModel := resolveGrokWSUpstreamModel(account, body, originalModel)
+		grokIntentSourceBody := body
 		body, err = patchGrokResponsesBody(body, upstreamModel)
 		if err != nil {
 			releaseUpstreamCtx()
 			return nil, err
 		}
-		upstreamReq, err = buildGrokResponsesRequest(upstreamCtx, c, account, body, token)
+		body, err = applyGrokResponsesCacheIdentity(body, grokIntentSourceBody, grokCacheIdentity, account.IsGrokOAuth())
+		if err != nil {
+			releaseUpstreamCtx()
+			return nil, fmt.Errorf("apply grok prompt cache identity: %w", err)
+		}
+		upstreamReq, err = buildGrokResponsesRequest(upstreamCtx, c, account, body, token, grokCacheIdentity)
 	} else {
 		upstreamReq, err = s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
 	}
@@ -406,4 +405,26 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		return resultWithUsage(), nil
 	}
 	return resultWithUsage(), errors.New("upstream http bridge stream ended before terminal event")
+}
+
+func resolveGrokWSCacheIdentity(c *gin.Context, account *Account, payload []byte, originalModel string) (string, error) {
+	body, err := prepareOpenAIWSHTTPBridgeBody(payload)
+	if err != nil {
+		return "", err
+	}
+	upstreamModel := resolveGrokWSUpstreamModel(account, body, originalModel)
+	return resolveGrokCacheIdentity(c, body, "", upstreamModel), nil
+}
+
+func resolveGrokWSUpstreamModel(account *Account, body []byte, originalModel string) string {
+	upstreamModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	if account != nil && originalModel != "" {
+		if mappedModel := normalizeOpenAIModelForUpstream(account, account.GetMappedModel(originalModel)); mappedModel != "" {
+			upstreamModel = mappedModel
+		}
+	}
+	if upstreamModel == "" {
+		upstreamModel = "grok-4.3"
+	}
+	return upstreamModel
 }
