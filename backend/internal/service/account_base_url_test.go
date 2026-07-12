@@ -200,6 +200,72 @@ func TestGetGrokBaseURLUsesSubscriptionProxyForOAuth(t *testing.T) {
 			expected: xai.DefaultCLIBaseURL,
 		},
 		{
+			name: "oauth legacy API root is migrated at runtime",
+			account: Account{
+				Type:     AccountTypeOAuth,
+				Platform: PlatformGrok,
+				Credentials: map[string]any{
+					"base_url": "https://api.x.ai",
+				},
+			},
+			expected: xai.DefaultCLIBaseURL,
+		},
+		{
+			name: "oauth legacy API root with canonical HTTPS port is migrated at runtime",
+			account: Account{
+				Type:     AccountTypeOAuth,
+				Platform: PlatformGrok,
+				Credentials: map[string]any{
+					"base_url": "HTTPS://API.X.AI:443/",
+				},
+			},
+			expected: xai.DefaultCLIBaseURL,
+		},
+		{
+			name: "oauth legacy API canonical port with leading zeroes is migrated at runtime",
+			account: Account{
+				Type:     AccountTypeOAuth,
+				Platform: PlatformGrok,
+				Credentials: map[string]any{
+					"base_url": "https://api.x.ai:0443/v1",
+				},
+			},
+			expected: xai.DefaultCLIBaseURL,
+		},
+		{
+			name: "oauth legacy API encoded version path is migrated at runtime",
+			account: Account{
+				Type:     AccountTypeOAuth,
+				Platform: PlatformGrok,
+				Credentials: map[string]any{
+					"base_url": "https://api.x.ai/%76%31",
+				},
+			},
+			expected: xai.DefaultCLIBaseURL,
+		},
+		{
+			name: "oauth legacy API encoded trailing slash is migrated at runtime",
+			account: Account{
+				Type:     AccountTypeOAuth,
+				Platform: PlatformGrok,
+				Credentials: map[string]any{
+					"base_url": "https://api.x.ai/v1%2F",
+				},
+			},
+			expected: xai.DefaultCLIBaseURL,
+		},
+		{
+			name: "oauth non-default API port remains an explicit override",
+			account: Account{
+				Type:     AccountTypeOAuth,
+				Platform: PlatformGrok,
+				Credentials: map[string]any{
+					"base_url": "https://api.x.ai:8443/v1",
+				},
+			},
+			expected: "https://api.x.ai:8443/v1",
+		},
+		{
 			name: "oauth explicit custom base_url remains supported",
 			account: Account{
 				Type:     AccountTypeOAuth,
