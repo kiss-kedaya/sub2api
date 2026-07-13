@@ -174,6 +174,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	routingStart := time.Now()
 
 	for {
+		if requestCtx.Err() != nil {
+			return
+		}
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
 			requestCtx,
 			apiKey.GroupID,
@@ -257,9 +260,18 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+				if requestCtx.Err() != nil {
+					return
+				}
+				if failoverErr.ShouldReportAccountScheduleFailure() {
+					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+				}
 				if c.Writer.Size() != writerSizeBeforeForward {
 					h.handleFailoverExhausted(c, failoverErr, true)
+					return
+				}
+				if !failoverErr.ShouldRetryNextAccount() {
+					h.handleFailoverExhausted(c, failoverErr, false)
 					return
 				}
 				if failoverErr.RetryableOnSameAccount {

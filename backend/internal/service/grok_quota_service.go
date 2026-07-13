@@ -149,7 +149,9 @@ func (s *GrokQuotaService) probeUsage(ctx context.Context, accountID int64) (*Gr
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	applyGrokCLIHeaders(req.Header)
+	if account.IsGrokOAuth() {
+		applyGrokCLIHeaders(req.Header)
+	}
 
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, maxInt(account.Concurrency, 1))
 	if err != nil {
@@ -387,6 +389,7 @@ func (s *GrokQuotaService) prepareProbe(ctx context.Context, accountID int64) (*
 	if err != nil {
 		return nil, "", "", err
 	}
+	proxyURL := s.resolveProxyURL(ctx, account)
 
 	token, err := s.tokenProvider.GetAccessToken(ctx, account)
 	if err != nil {
@@ -396,7 +399,7 @@ func (s *GrokQuotaService) prepareProbe(ctx context.Context, accountID int64) (*
 		return nil, "", "", infraerrors.New(http.StatusBadGateway, "GROK_QUOTA_TOKEN_UNAVAILABLE", "access token is empty")
 	}
 
-	return account, token, s.resolveProxyURL(ctx, account), nil
+	return account, token, proxyURL, nil
 }
 
 func (s *GrokQuotaService) resolveProxyURL(ctx context.Context, account *Account) string {
@@ -408,6 +411,7 @@ func (s *GrokQuotaService) resolveProxyURL(ctx context.Context, account *Account
 		return account.Proxy.URL()
 	case s != nil && s.proxyRepo != nil:
 		if proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID); err == nil && proxy != nil {
+			account.Proxy = proxy
 			return proxy.URL()
 		}
 	}
