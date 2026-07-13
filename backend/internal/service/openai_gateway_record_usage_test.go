@@ -1056,7 +1056,7 @@ func TestOpenAIGatewayServiceRecordUsage_GPT56SeparatesCacheWriteForBillingAndSt
 	require.InDelta(t, usageRepo.lastLog.TotalCost*1.1, usageRepo.lastLog.ActualCost, 1e-12)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_Gpt54LongContextBillingEnabledByDefault(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_Gpt54LongContextBillingDisabledByDefault(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	subRepo := &openAIRecordUsageSubRepoStub{}
@@ -1080,17 +1080,17 @@ func TestOpenAIGatewayServiceRecordUsage_Gpt54LongContextBillingEnabledByDefault
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
 
-	expectedInput := 300000 * 2.5e-6 * 2.0
-	expectedOutput := 2000 * 15e-6 * 1.5
+	expectedInput := 300000 * 2.5e-6
+	expectedOutput := 2000 * 15e-6
 	require.InDelta(t, expectedInput, usageRepo.lastLog.InputCost, 1e-10)
 	require.InDelta(t, expectedOutput, usageRepo.lastLog.OutputCost, 1e-10)
 	require.InDelta(t, expectedInput+expectedOutput, usageRepo.lastLog.TotalCost, 1e-10)
 	require.InDelta(t, (expectedInput+expectedOutput)*1.1, usageRepo.lastLog.ActualCost, 1e-10)
-	require.True(t, usageRepo.lastLog.LongContextBillingApplied)
+	require.False(t, usageRepo.lastLog.LongContextBillingApplied)
 	require.Equal(t, 1, userRepo.deductCalls)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_Gpt54LongContextBillingDisabledPerAccount(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_Gpt54LongContextBillingEnabledPerAccount(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	subRepo := &openAIRecordUsageSubRepoStub{}
@@ -1111,20 +1111,20 @@ func TestOpenAIGatewayServiceRecordUsage_Gpt54LongContextBillingDisabledPerAccou
 		Account: &Account{
 			ID:       3015,
 			Platform: PlatformOpenAI,
-			Extra:    map[string]any{"openai_long_context_billing_enabled": false},
+			Extra:    map[string]any{"openai_long_context_billing_enabled": true},
 		},
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
 
-	expectedInput := 300000 * 2.5e-6
-	expectedOutput := 2000 * 15e-6
+	expectedInput := 300000 * 2.5e-6 * 2.0
+	expectedOutput := 2000 * 15e-6 * 1.5
 	require.InDelta(t, expectedInput, usageRepo.lastLog.InputCost, 1e-10)
 	require.InDelta(t, expectedOutput, usageRepo.lastLog.OutputCost, 1e-10)
 	require.InDelta(t, expectedInput+expectedOutput, usageRepo.lastLog.TotalCost, 1e-10)
 	require.InDelta(t, (expectedInput+expectedOutput)*1.1, usageRepo.lastLog.ActualCost, 1e-10)
-	require.False(t, usageRepo.lastLog.LongContextBillingApplied)
+	require.True(t, usageRepo.lastLog.LongContextBillingApplied)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_SparkShadowUsesCurrentParentBillingSetting(t *testing.T) {

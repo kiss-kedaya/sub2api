@@ -848,6 +848,17 @@ func TestCalculateCostWithLongContext_AboveThreshold_CacheBelowThreshold(t *test
 	require.True(t, cost.ActualCost > normalCost.ActualCost, "长上下文费用应高于正常费用")
 }
 
+func TestCalculateCostWithLongContext_MarkerRequiresActualCostIncrease(t *testing.T) {
+	svc := newTestBillingService()
+	tokens := UsageTokens{InputTokens: 300000}
+
+	cost, err := svc.CalculateCostWithLongContext("claude-sonnet-4", tokens, 0, 200000, 2.0)
+
+	require.NoError(t, err)
+	require.Zero(t, cost.ActualCost)
+	require.False(t, cost.LongContextBillingApplied)
+}
+
 func TestCalculateCostWithLongContext_DisabledThreshold(t *testing.T) {
 	svc := newTestBillingService()
 

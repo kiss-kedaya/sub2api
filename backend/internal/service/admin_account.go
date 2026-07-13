@@ -101,7 +101,7 @@ func normalizeOpenAILongContextBillingExtra(platform string, extra map[string]an
 	}
 	_, exists := normalized[openAILongContextBillingEnabledKey]
 	if !exists {
-		normalized[openAILongContextBillingEnabledKey] = true
+		normalized[openAILongContextBillingEnabledKey] = false
 	}
 	return normalized, nil
 }
@@ -118,21 +118,6 @@ func normalizeOpenAILongContextBillingUpdateExtra(account *Account, input *Updat
 		if hasCurrent {
 			normalized[openAILongContextBillingEnabledKey] = current
 		}
-		return normalized, nil
-	}
-
-	incoming, ok := normalized[openAILongContextBillingEnabledKey].(bool)
-	if !ok {
-		return nil, infraerrors.BadRequest(
-			"OPENAI_LONG_CONTEXT_BILLING_INVALID",
-			"openai_long_context_billing_enabled must be a boolean",
-		)
-	}
-	importSource, _ := input.Extra["import_source"].(string)
-	accessToken, _ := input.Credentials["access_token"].(string)
-	isCodexSessionImport := importSource == "codex_session" && strings.TrimSpace(accessToken) != ""
-	if hasCurrent && !current && incoming && isCodexSessionImport {
-		normalized[openAILongContextBillingEnabledKey] = false
 	}
 	return normalized, nil
 }
