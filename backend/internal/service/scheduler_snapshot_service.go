@@ -254,7 +254,6 @@ func (s *SchedulerSnapshotService) pollOutbox() {
 		return
 	}
 
-	watermarkForCheck := watermark
 	seen := make(map[batchSeenKey]struct{})
 	for _, event := range events {
 		eventCtx, cancel := context.WithTimeout(context.Background(), outboxEventTimeout)
@@ -281,12 +280,15 @@ func (s *SchedulerSnapshotService) pollOutbox() {
 	}
 	if wmErr != nil {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox watermark write failed: %v", wmErr)
-	} else {
-		watermarkForCheck = lastID
-		s.cleanupConsumedOutbox(lastID)
+		return
 	}
+	s.cleanupConsumedOutbox(lastID)
 
-	s.checkOutboxLag(ctx, events[0], watermarkForCheck)
+	// 只有 watermark 成功推进后，当前批次才算已消费。延迟必须按下一条待消费事件计算，
+	// 否则本批次处理越慢，越容易误触发一次更慢的全量重建，形成正反馈。
+	lagCtx, lagCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.checkOutboxLag(lagCtx, lastID)
+	lagCancel()
 }
 
 func (s *SchedulerSnapshotService) cleanupConsumedOutbox(watermark int64) {
@@ -620,12 +622,23 @@ func (s *SchedulerSnapshotService) triggerFullRebuild(reason string) error {
 	return s.rebuildBuckets(ctx, buckets, reason)
 }
 
-func (s *SchedulerSnapshotService) checkOutboxLag(ctx context.Context, oldest SchedulerOutboxEvent, watermark int64) {
-	if oldest.CreatedAt.IsZero() || s.cfg == nil {
+func (s *SchedulerSnapshotService) checkOutboxLag(ctx context.Context, watermark int64) {
+	if s.cfg == nil || s.outboxRepo == nil {
+		return
+	}
+	oldestCreatedAt, ok, err := s.outboxRepo.FirstCreatedAtAfter(ctx, watermark)
+	if err != nil {
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox pending event read failed: %v", err)
+		return
+	}
+	if !ok || oldestCreatedAt.IsZero() {
+		s.lagMu.Lock()
+		s.lagFailures = 0
+		s.lagMu.Unlock()
 		return
 	}
 
-	lag := time.Since(oldest.CreatedAt)
+	lag := time.Since(oldestCreatedAt)
 	if lagSeconds := int(lag.Seconds()); lagSeconds >= s.cfg.Gateway.Scheduling.OutboxLagWarnSeconds && s.cfg.Gateway.Scheduling.OutboxLagWarnSeconds > 0 {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox lag warning: %ds", lagSeconds)
 	}
@@ -652,7 +665,7 @@ func (s *SchedulerSnapshotService) checkOutboxLag(ctx context.Context, oldest Sc
 	}
 
 	threshold := s.cfg.Gateway.Scheduling.OutboxBacklogRebuildRows
-	if threshold <= 0 || s.outboxRepo == nil {
+	if threshold <= 0 {
 		return
 	}
 	maxID, err := s.outboxRepo.MaxID(ctx)
