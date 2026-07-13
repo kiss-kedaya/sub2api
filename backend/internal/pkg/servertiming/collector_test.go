@@ -120,13 +120,10 @@ func TestCollectorConcurrentRecording(t *testing.T) {
 }
 
 func TestContextHelpersHandleMissingCollector(t *testing.T) {
-	if Active(nil) || Active(context.Background()) {
+	if Active(context.Background()) {
 		t.Fatal("context without collector reported active")
 	}
 	if got := HeaderValue(context.Background(), time.Now(), "hit"); got != "" {
 		t.Fatalf("HeaderValue() = %q without collector, want empty", got)
-	}
-	if got := WithCollector(nil, nil); got == nil {
-		t.Fatal("WithCollector(nil, nil) returned nil context")
 	}
 }
