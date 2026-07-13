@@ -327,7 +327,7 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 						readErr = fmt.Errorf("account not found after Grok OAuth success CAS miss")
 					}
 					return nil, &providerCycleContainmentRefreshError{
-						err: fmt.Errorf("Grok OAuth success CAS lost and current state is unavailable: %w", readErr),
+						err: fmt.Errorf("grok OAuth success CAS lost and current state is unavailable: %w", readErr),
 					}
 				}
 				slog.Info("oauth_refresh_success_cas_skipped_stale_credentials",
@@ -342,7 +342,7 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 					readErr = fmt.Errorf("account not found after Grok OAuth success CAS")
 				}
 				return nil, &providerCycleContainmentRefreshError{
-					err: fmt.Errorf("Grok OAuth success persisted but durable account state is unavailable: %w", readErr),
+					err: fmt.Errorf("grok OAuth success persisted but durable account state is unavailable: %w", readErr),
 				}
 			}
 			// The CAS changes credentials only. A concurrent admin or scheduler
