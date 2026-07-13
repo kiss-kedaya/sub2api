@@ -32,33 +32,54 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 		return
 	}
 
-	account, err := h.gatewayService.SelectAccountForModel(c.Request.Context(), apiKey.GroupID, "", "")
-	if err != nil {
+	maxAccountSwitches := h.maxAccountSwitches
+	if maxAccountSwitches <= 0 {
+		maxAccountSwitches = 3
+	}
+	failedAccountIDs := make(map[int64]struct{})
+	switchCount := 0
+	var lastUpstreamErr error
+
+	for {
+		account, err := h.gatewayService.SelectAccountForModelWithExclusions(c.Request.Context(), apiKey.GroupID, "", "", failedAccountIDs)
+		if err != nil {
+			if c.Request.Context().Err() != nil {
+				return
+			}
+			if lastUpstreamErr != nil {
+				h.errorResponse(c, infraerrors.Code(lastUpstreamErr), "upstream_error", infraerrors.Message(lastUpstreamErr))
+				return
+			}
+			h.errorResponse(c, http.StatusServiceUnavailable, "upstream_error", "No available OpenAI accounts")
+			return
+		}
+
+		manifest, err := h.gatewayService.FetchCodexModelsManifest(c.Request.Context(), account, c.Query("client_version"), c.GetHeader("If-None-Match"))
+		if err != nil {
+			if c.Request.Context().Err() != nil {
+				return
+			}
+			if service.IsRetryableCodexModelsManifestError(err) && switchCount < maxAccountSwitches {
+				failedAccountIDs[account.ID] = struct{}{}
+				switchCount++
+				lastUpstreamErr = err
+				continue
+			}
+			h.errorResponse(c, infraerrors.Code(err), "upstream_error", infraerrors.Message(err))
+			return
+		}
 		if c.Request.Context().Err() != nil {
 			return
 		}
-		h.errorResponse(c, http.StatusServiceUnavailable, "upstream_error", "No available OpenAI accounts")
-		return
-	}
 
-	manifest, err := h.gatewayService.FetchCodexModelsManifest(c.Request.Context(), account, c.Query("client_version"), c.GetHeader("If-None-Match"))
-	if err != nil {
-		if c.Request.Context().Err() != nil {
+		if manifest.ETag != "" {
+			c.Header("ETag", manifest.ETag)
+		}
+		if manifest.NotModified {
+			c.Status(http.StatusNotModified)
 			return
 		}
-		h.errorResponse(c, infraerrors.Code(err), "upstream_error", infraerrors.Message(err))
+		c.Data(http.StatusOK, "application/json", manifest.Body)
 		return
 	}
-	if c.Request.Context().Err() != nil {
-		return
-	}
-
-	if manifest.ETag != "" {
-		c.Header("ETag", manifest.ETag)
-	}
-	if manifest.NotModified {
-		c.Status(http.StatusNotModified)
-		return
-	}
-	c.Data(http.StatusOK, "application/json", manifest.Body)
 }
