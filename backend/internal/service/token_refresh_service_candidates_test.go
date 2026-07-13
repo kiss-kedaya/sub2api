@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 type tokenRefreshCandidateRepo struct {
 	AccountRepository
+	mu                    sync.Mutex
 	accounts              []Account
 	updatedCredentialIDs  []int64
 	setErrorCalls         int
@@ -24,6 +26,8 @@ type tokenRefreshCandidateRepo struct {
 }
 
 func (r *tokenRefreshCandidateRepo) ListActive(context.Context) ([]Account, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.listActiveCalls++
 	return r.accounts, nil
 }
@@ -66,22 +70,30 @@ func (r *tokenRefreshCandidateRepo) ListOAuthRefreshCandidatePage(_ context.Cont
 }
 
 func (r *tokenRefreshCandidateRepo) UpdateCredentials(_ context.Context, id int64, _ map[string]any) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.updatedCredentialIDs = append(r.updatedCredentialIDs, id)
 	return nil
 }
 
 func (r *tokenRefreshCandidateRepo) SetError(context.Context, int64, string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.setErrorCalls++
 	return nil
 }
 
 func (r *tokenRefreshCandidateRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, reason string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.setTempUnschedCalls++
 	r.lastTempUnschedReason = reason
 	return nil
 }
 
 func (r *tokenRefreshCandidateRepo) ClearTempUnschedulable(context.Context, int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.clearTempCalls++
 	return nil
 }
