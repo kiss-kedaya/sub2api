@@ -1283,7 +1283,7 @@ func (s *BillingService) CalculateCostWithLongContext(model string, tokens Usage
 		CacheReadCost:             inRangeCost.CacheReadCost + outRangeCost.CacheReadCost,
 		TotalCost:                 inRangeCost.TotalCost + outRangeCost.TotalCost,
 		ActualCost:                inRangeCost.ActualCost + outRangeCost.ActualCost,
-		LongContextBillingApplied: true,
+		LongContextBillingApplied: outRangeCost.ActualCost > 0,
 	}, nil
 }
 

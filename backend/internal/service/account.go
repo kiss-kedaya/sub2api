@@ -1195,14 +1195,10 @@ func (a *Account) IsOpenAI() bool {
 }
 
 func (a *Account) IsOpenAILongContextBillingEnabled() bool {
-	if a == nil || !a.IsOpenAI() {
+	if a == nil || !a.IsOpenAI() || a.Extra == nil {
 		return false
 	}
-	raw, exists := a.Extra[openAILongContextBillingEnabledKey]
-	if !exists {
-		return true
-	}
-	enabled, ok := raw.(bool)
+	enabled, ok := a.Extra[openAILongContextBillingEnabledKey].(bool)
 	return ok && enabled
 }
 
