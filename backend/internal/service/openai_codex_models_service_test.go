@@ -2,11 +2,15 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -16,6 +20,26 @@ import (
 type codexModelsHTTPUpstreamStub struct {
 	do func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error)
 }
+
+type codexModelsBlockingBody struct {
+	ctx         context.Context
+	readStarted chan struct{}
+	startedOnce *sync.Once
+	release     <-chan struct{}
+	body        *strings.Reader
+}
+
+func (b *codexModelsBlockingBody) Read(p []byte) (int, error) {
+	b.startedOnce.Do(func() { close(b.readStarted) })
+	select {
+	case <-b.release:
+		return b.body.Read(p)
+	case <-b.ctx.Done():
+		return 0, b.ctx.Err()
+	}
+}
+
+func (b *codexModelsBlockingBody) Close() error { return nil }
 
 func (s *codexModelsHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	return s.do(req, proxyURL, accountID, accountConcurrency)
@@ -244,16 +268,449 @@ func TestFetchCodexModelsManifestAPIKeyCustomUpstream(t *testing.T) {
 	}
 }
 
-func TestFetchCodexModelsManifestAPIKeyNotModified(t *testing.T) {
+func TestFetchCodexModelsManifestAPIKeySharedRefreshSurvivesCallerCancellation(t *testing.T) {
+	const manifestBody = `{"models":[{"slug":"gpt-5.6"}]}`
+	var calls atomic.Int32
+	var readStartedOnce sync.Once
+	readStarted := make(chan struct{})
+	deadlineRemaining := make(chan time.Duration, 1)
+	release := make(chan struct{})
+	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		calls.Add(1)
+		deadline, ok := req.Context().Deadline()
+		if !ok {
+			deadlineRemaining <- 0
+		} else {
+			deadlineRemaining <- time.Until(deadline)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Etag": []string{`W/"shared"`}},
+			Body: &codexModelsBlockingBody{
+				ctx:         req.Context(),
+				readStarted: readStarted,
+				startedOnce: &readStartedOnce,
+				release:     release,
+				body:        strings.NewReader(manifestBody),
+			},
+		}, nil
+	}}
+
+	s := newCodexModelsAPIKeyTestService(upstream)
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	firstErr := make(chan error, 1)
+	go func() {
+		_, err := s.FetchCodexModelsManifest(firstCtx, account, "0.144.0", "")
+		firstErr <- err
+	}()
+
+	select {
+	case <-readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("upstream body read did not start")
+	}
+	remaining := <-deadlineRemaining
+	if remaining < 14*time.Second || remaining > codexModelsManifestRequestTimeout {
+		t.Errorf("detached refresh deadline: got %s, want approximately %s", remaining, codexModelsManifestRequestTimeout)
+	}
+	cancelFirst()
+	select {
+	case err := <-firstErr:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("first caller error: got %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled caller did not return promptly")
+	}
+
+	secondResult := make(chan struct {
+		manifest *CodexModelsManifest
+		err      error
+	}, 1)
+	go func() {
+		manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+		secondResult <- struct {
+			manifest *CodexModelsManifest
+			err      error
+		}{manifest: manifest, err: err}
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("upstream calls before shared refresh completed: got %d, want 1", got)
+	}
+	close(release)
+	select {
+	case result := <-secondResult:
+		if result.err != nil {
+			t.Fatalf("second caller returned error: %v", result.err)
+		}
+		if string(result.manifest.Body) != manifestBody {
+			t.Errorf("second caller body: got %q", result.manifest.Body)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second caller did not receive shared refresh result")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("total upstream calls: got %d, want 1", got)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyConcurrentRequestsShareRefresh(t *testing.T) {
+	const callers = 8
+	var calls atomic.Int32
+	started := make(chan struct{})
+	var startedOnce sync.Once
+	release := make(chan struct{})
+	upstream := &codexModelsHTTPUpstreamStub{do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		calls.Add(1)
+		startedOnce.Do(func() { close(started) })
+		<-release
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"models":[]}`)),
+		}, nil
+	}}
+
+	s := newCodexModelsAPIKeyTestService(upstream)
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+	begin := make(chan struct{})
+	errs := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			<-begin
+			_, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+			errs <- err
+		}()
+	}
+	close(begin)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("upstream request did not start")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("concurrent upstream calls: got %d, want 1", got)
+	}
+	close(release)
+	for i := 0; i < callers; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("caller %d returned error: %v", i, err)
+		}
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyFreshCacheHandlesETagLocally(t *testing.T) {
+	var calls atomic.Int32
+	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		calls.Add(1)
+		if got := req.Header.Get("If-None-Match"); got != "" {
+			t.Errorf("cache refresh must not inherit a caller's If-None-Match: got %q", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Etag": []string{`W/"cached"`}},
+			Body:       io.NopCloser(strings.NewReader(`{"models":[]}`)),
+		}, nil
+	}}
+
+	s := newCodexModelsAPIKeyTestService(upstream)
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", ""); err != nil {
+		t.Fatalf("initial fetch returned error: %v", err)
+	}
+	manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", `W/"cached"`)
+	if err != nil {
+		t.Fatalf("cached fetch returned error: %v", err)
+	}
+	if !manifest.NotModified {
+		t.Fatal("matching cached ETag must return NotModified")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("upstream calls: got %d, want 1", got)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyCacheKeyIsolatesRequestIdentity(t *testing.T) {
+	var calls atomic.Int32
+	upstream := &codexModelsHTTPUpstreamStub{do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"models":[]}`)),
+		}, nil
+	}}
+	s := newCodexModelsAPIKeyTestService(upstream)
+
+	base := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+	fetch := func(account *Account, version string) {
+		t.Helper()
+		if _, err := s.FetchCodexModelsManifest(context.Background(), account, version, ""); err != nil {
+			t.Fatalf("fetch returned error: %v", err)
+		}
+	}
+	fetch(base, "0.144.0")
+	fetch(base, "0.144.0")
+
+	differentAccount := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+	differentAccount.ID = 3
+	fetch(differentAccount, "0.144.0")
+
+	differentToken := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+	differentToken.Credentials["api_key"] = "sk-other"
+	fetch(differentToken, "0.144.0")
+
+	differentUpstream := newCodexModelsAPIKeyTestAccount("https://other-upstream.example")
+	fetch(differentUpstream, "0.144.0")
+	fetch(base, "0.145.0")
+
+	differentHeaders := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+	differentHeaders.Credentials[credKeyHeaderOverrideEnabled] = true
+	differentHeaders.Credentials[credKeyHeaderOverrides] = map[string]any{"x-tenant": "other"}
+	fetch(differentHeaders, "0.144.0")
+
+	proxyID := int64(9)
+	differentProxy := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+	differentProxy.ProxyID = &proxyID
+	differentProxy.Proxy = &Proxy{Protocol: "http", Host: "127.0.0.1", Port: 8080}
+	fetch(differentProxy, "0.144.0")
+	fetch(differentProxy, "0.144.0")
+
+	if got := calls.Load(); got != 7 {
+		t.Errorf("isolated upstream calls: got %d, want 7", got)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyCacheBoundsEntriesAndBodySize(t *testing.T) {
+	var calls atomic.Int32
+	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		calls.Add(1)
+		body := `{"models":[]}`
+		if strings.Contains(req.URL.Host, "large") {
+			body = strings.Repeat("x", (1<<20)+1)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	}}
+	s := newCodexModelsAPIKeyTestService(upstream)
+	fetch := func(account *Account) {
+		t.Helper()
+		if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", ""); err != nil {
+			t.Fatalf("fetch returned error: %v", err)
+		}
+	}
+
+	small := newCodexModelsAPIKeyTestAccount("https://small.example")
+	fetch(small)
+	fetch(small)
+	large := newCodexModelsAPIKeyTestAccount("https://large.example")
+	large.ID = 3
+	fetch(large)
+	fetch(large)
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("body-size bounded cache calls: got %d, want 3", got)
+	}
+
+	for i := int64(10); i < 75; i++ {
+		account := newCodexModelsAPIKeyTestAccount("https://bounded.example")
+		account.ID = i
+		fetch(account)
+	}
+	last := newCodexModelsAPIKeyTestAccount("https://bounded.example")
+	last.ID = 74
+	fetch(last)
+	if got := calls.Load(); got != 68 {
+		t.Fatalf("most recent cache entry was not retained: calls=%d, want 68", got)
+	}
+	first := newCodexModelsAPIKeyTestAccount("https://bounded.example")
+	first.ID = 10
+	fetch(first)
+	if got := calls.Load(); got != 69 {
+		t.Errorf("oldest cache entry was not evicted: calls=%d, want 69", got)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyServesStaleWhileRefreshing(t *testing.T) {
+	var calls atomic.Int32
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+	upstream := &codexModelsHTTPUpstreamStub{do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		call := calls.Add(1)
+		body := `{"models":[{"slug":"old"}]}`
+		if call > 1 {
+			if call == 2 {
+				close(refreshStarted)
+			}
+			<-releaseRefresh
+			body = `{"models":[{"slug":"new"}]}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	}}
+	s := newCodexModelsAPIKeyTestService(upstream)
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", ""); err != nil {
+		t.Fatalf("initial fetch returned error: %v", err)
+	}
+
+	s.codexModelsManifestCache.mu.Lock()
+	for key, entry := range s.codexModelsManifestCache.entries {
+		entry.expiresAt = time.Now().Add(-time.Second)
+		s.codexModelsManifestCache.entries[key] = entry
+	}
+	s.codexModelsManifestCache.mu.Unlock()
+
+	resultCh := make(chan struct {
+		manifest *CodexModelsManifest
+		err      error
+	}, 1)
+	go func() {
+		manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+		resultCh <- struct {
+			manifest *CodexModelsManifest
+			err      error
+		}{manifest: manifest, err: err}
+	}()
+	select {
+	case <-refreshStarted:
+	case <-time.After(time.Second):
+		t.Fatal("background refresh did not start")
+	}
+
+	var staleResult struct {
+		manifest *CodexModelsManifest
+		err      error
+	}
+	select {
+	case staleResult = <-resultCh:
+	case <-time.After(100 * time.Millisecond):
+		t.Error("stale manifest was not returned while refresh was blocked")
+		close(releaseRefresh)
+		staleResult = <-resultCh
+	}
+	if staleResult.err != nil {
+		t.Fatalf("stale fetch returned error: %v", staleResult.err)
+	}
+	if got := string(staleResult.manifest.Body); got != `{"models":[{"slug":"old"}]}` {
+		t.Errorf("stale body: got %q", got)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("upstream calls during stale refresh: got %d, want 2", got)
+	}
+
+	select {
+	case <-releaseRefresh:
+	default:
+		close(releaseRefresh)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+		if err == nil && string(manifest.Body) == `{"models":[{"slug":"new"}]}` {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("refreshed manifest was not cached: manifest=%v err=%v", manifest, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("stale refresh was not deduplicated: calls=%d, want 2", got)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyRevalidatesStaleETag(t *testing.T) {
+	var calls atomic.Int32
+	refreshDone := make(chan struct{})
+	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		call := calls.Add(1)
+		if call == 1 {
+			header := make(http.Header)
+			header.Set("ETag", `W/"cached"`)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     header,
+				Body:       io.NopCloser(strings.NewReader(`{"models":[{"slug":"cached"}]}`)),
+			}, nil
+		}
+		if got := req.Header.Get("If-None-Match"); got != `W/"cached"` {
+			t.Errorf("background revalidation If-None-Match: got %q", got)
+		}
+		close(refreshDone)
+		header := make(http.Header)
+		header.Set("ETag", `W/"cached"`)
+		return &http.Response{StatusCode: http.StatusNotModified, Header: header, Body: http.NoBody}, nil
+	}}
+	s := newCodexModelsAPIKeyTestService(upstream)
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+	if _, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", ""); err != nil {
+		t.Fatalf("initial fetch returned error: %v", err)
+	}
+	s.codexModelsManifestCache.mu.Lock()
+	for key, entry := range s.codexModelsManifestCache.entries {
+		entry.expiresAt = time.Now().Add(-time.Second)
+		s.codexModelsManifestCache.entries[key] = entry
+	}
+	s.codexModelsManifestCache.mu.Unlock()
+
+	manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+	if err != nil {
+		t.Fatalf("stale fetch returned error: %v", err)
+	}
+	if got := string(manifest.Body); got != `{"models":[{"slug":"cached"}]}` {
+		t.Fatalf("stale body: got %q", got)
+	}
+	select {
+	case <-refreshDone:
+	case <-time.After(time.Second):
+		t.Fatal("ETag revalidation did not complete")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		s.codexModelsManifestCache.mu.Lock()
+		fresh := false
+		for _, entry := range s.codexModelsManifestCache.entries {
+			fresh = time.Now().Before(entry.expiresAt)
+		}
+		s.codexModelsManifestCache.mu.Unlock()
+		if fresh {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("304 revalidation did not renew the cached manifest")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	manifest, err = s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+	if err != nil || string(manifest.Body) != `{"models":[{"slug":"cached"}]}` {
+		t.Fatalf("renewed cached manifest: body=%q err=%v", manifest.Body, err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("upstream calls: got %d, want 2", got)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyColdCacheHandlesNotModifiedLocally(t *testing.T) {
 	var gotIfNoneMatch string
 	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 		gotIfNoneMatch = req.Header.Get("If-None-Match")
 		header := make(http.Header)
 		header.Set("ETag", `W/"api-key-manifest"`)
 		return &http.Response{
-			StatusCode: http.StatusNotModified,
+			StatusCode: http.StatusOK,
 			Header:     header,
-			Body:       http.NoBody,
+			Body:       io.NopCloser(strings.NewReader(`{"models":[]}`)),
 		}, nil
 	}}
 
@@ -273,8 +730,35 @@ func TestFetchCodexModelsManifestAPIKeyNotModified(t *testing.T) {
 	if manifest.ETag != `W/"api-key-manifest"` {
 		t.Errorf("etag not passed through: got %q", manifest.ETag)
 	}
-	if gotIfNoneMatch != `W/"api-key-manifest"` {
-		t.Errorf("if-none-match header: got %q", gotIfNoneMatch)
+	if gotIfNoneMatch != "" {
+		t.Errorf("cold shared refresh must not inherit caller if-none-match: got %q", gotIfNoneMatch)
+	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyDoesNotCacheUnexpectedColdNotModified(t *testing.T) {
+	var calls atomic.Int32
+	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		calls.Add(1)
+		if got := req.Header.Get("If-None-Match"); got != "" {
+			t.Errorf("cold shared refresh If-None-Match: got %q", got)
+		}
+		header := make(http.Header)
+		header.Set("ETag", `W/"unexpected"`)
+		return &http.Response{StatusCode: http.StatusNotModified, Header: header, Body: http.NoBody}, nil
+	}}
+	s := newCodexModelsAPIKeyTestService(upstream)
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+	for i := 0; i < 2; i++ {
+		manifest, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+		if err != nil {
+			t.Fatalf("fetch %d returned error: %v", i, err)
+		}
+		if !manifest.NotModified {
+			t.Fatalf("fetch %d: expected upstream NotModified response", i)
+		}
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("unexpected cold 304 was cached: upstream calls=%d, want 2", got)
 	}
 }
 
