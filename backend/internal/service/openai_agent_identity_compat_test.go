@@ -89,7 +89,8 @@ func TestAccountTestServiceOpenAICompactAgentIdentityRecoversInvalidTaskOnce(t *
 		{StatusCode: http.StatusUnauthorized, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"invalid_task_id"}}`))},
 		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"compact-agent","status":"completed"}`))},
 	}}
-	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+	invalidator := &agentIdentityWSInvalidationRecorder{}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream, agentIdentityWS: invalidator}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/22/test", bytes.NewReader(nil))
@@ -99,6 +100,7 @@ func TestAccountTestServiceOpenAICompactAgentIdentityRecoversInvalidTaskOnce(t *
 	require.Len(t, upstream.requests, 2)
 	require.Equal(t, "task-compact-new", account.GetCredential("task_id"))
 	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, []int64{account.ID}, invalidator.accountIDs)
 }
 
 func TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders(t *testing.T) {
@@ -429,6 +431,14 @@ func decodeAgentAssertionTask(t *testing.T, header string) string {
 type agentIdentityForwardRepo struct {
 	AccountRepository
 	account *Account
+}
+
+type agentIdentityWSInvalidationRecorder struct {
+	accountIDs []int64
+}
+
+func (r *agentIdentityWSInvalidationRecorder) InvalidateAgentIdentityWSConnections(accountID int64) {
+	r.accountIDs = append(r.accountIDs, accountID)
 }
 
 type accountTestAgentIdentityRepo struct {
