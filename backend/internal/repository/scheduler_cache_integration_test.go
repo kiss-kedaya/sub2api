@@ -137,3 +137,40 @@ func TestSchedulerCacheRetireAndReopenFencesOldEpochIntegration(t *testing.T) {
 	require.Len(t, snapshot, 1)
 	require.Equal(t, account.ID, snapshot[0].ID)
 }
+
+func TestSchedulerCacheGroupLifecycleLeaseOwnerAndTTLIntegration(t *testing.T) {
+	ctx := context.Background()
+	rdb := testRedis(t)
+	cache := NewSchedulerCache(rdb)
+	const groupID int64 = 78
+	const ttl = 500 * time.Millisecond
+
+	first, acquired, err := cache.TryAcquireGroupLifecycleLease(ctx, groupID, ttl)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	pttl, err := rdb.PTTL(ctx, schedulerGroupLifecycleLockKey(groupID)).Result()
+	require.NoError(t, err)
+	require.Positive(t, pttl)
+	require.LessOrEqual(t, pttl, ttl)
+
+	var second service.SchedulerGroupLifecycleLease
+	require.Eventually(t, func() bool {
+		var acquireErr error
+		second, acquired, acquireErr = cache.TryAcquireGroupLifecycleLease(ctx, groupID, time.Minute)
+		return acquireErr == nil && acquired
+	}, 5*time.Second, 20*time.Millisecond)
+	require.NotEqual(t, first.OwnerToken, second.OwnerToken)
+
+	require.ErrorIs(t, cache.ReleaseGroupLifecycleLease(ctx, first), service.ErrSchedulerGroupLifecycleLeaseLost)
+	_, acquired, err = cache.TryAcquireGroupLifecycleLease(ctx, groupID, time.Minute)
+	require.NoError(t, err)
+	require.False(t, acquired, "a stale release must not delete the successor lease")
+
+	require.NoError(t, cache.ReleaseGroupLifecycleLease(ctx, second))
+	require.ErrorIs(t, cache.ReleaseGroupLifecycleLease(ctx, second), service.ErrSchedulerGroupLifecycleLeaseLost)
+	third, acquired, err := cache.TryAcquireGroupLifecycleLease(ctx, groupID, time.Minute)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	require.True(t, third.ValidFor(groupID))
+	require.NoError(t, cache.ReleaseGroupLifecycleLease(ctx, third))
+}
