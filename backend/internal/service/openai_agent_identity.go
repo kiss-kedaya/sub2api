@@ -492,16 +492,20 @@ func redactAgentIdentitySensitiveBodyForAccount(ctx context.Context, repo Accoun
 			redacted = strings.ReplaceAll(redacted, value, "[redacted]")
 		}
 	}
-	for {
-		start := strings.Index(redacted, "AgentAssertion ")
-		if start < 0 {
+	const assertionPrefix = "AgentAssertion "
+	for offset := 0; offset < len(redacted); {
+		relativeStart := strings.Index(redacted[offset:], assertionPrefix)
+		if relativeStart < 0 {
 			break
 		}
-		end := start + len("AgentAssertion ")
+		start := offset + relativeStart
+		valueStart := start + len(assertionPrefix)
+		end := valueStart
 		for end < len(redacted) && !strings.ContainsRune(" \t\r\n\"',}", rune(redacted[end])) {
 			end++
 		}
-		redacted = redacted[:start] + "AgentAssertion [redacted]" + redacted[end:]
+		redacted = redacted[:valueStart] + "[redacted]" + redacted[end:]
+		offset = valueStart + len("[redacted]")
 	}
 	return []byte(redacted)
 }

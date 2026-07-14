@@ -261,6 +261,23 @@ func TestCalculateCost_OpenAIGPT54LongContextAppliesWholeSessionMultipliers(t *t
 	require.InDelta(t, expectedOutput, cost.OutputCost, 1e-10)
 	require.InDelta(t, expectedInput+expectedOutput, cost.TotalCost, 1e-10)
 	require.InDelta(t, expectedInput+expectedOutput, cost.ActualCost, 1e-10)
+	require.True(t, cost.LongContextBillingApplied)
+}
+
+func TestCalculateCost_OpenAIGPT54LongContextMarkerRequiresActualCostIncrease(t *testing.T) {
+	svc := newTestBillingService()
+
+	cost, err := svc.calculateCostWithServiceTierPolicy(
+		"gpt-5.4-2026-03-05",
+		UsageTokens{InputTokens: 300000},
+		0,
+		"",
+		true,
+	)
+
+	require.NoError(t, err)
+	require.Zero(t, cost.ActualCost)
+	require.False(t, cost.LongContextBillingApplied)
 }
 
 func TestCalculateCost_OpenAIGPT55ProUsesGPT55PricingPolicy(t *testing.T) {
@@ -831,6 +848,17 @@ func TestCalculateCostWithLongContext_AboveThreshold_CacheBelowThreshold(t *test
 	require.True(t, cost.ActualCost > normalCost.ActualCost, "长上下文费用应高于正常费用")
 }
 
+func TestCalculateCostWithLongContext_MarkerRequiresActualCostIncrease(t *testing.T) {
+	svc := newTestBillingService()
+	tokens := UsageTokens{InputTokens: 300000}
+
+	cost, err := svc.CalculateCostWithLongContext("claude-sonnet-4", tokens, 0, 200000, 2.0)
+
+	require.NoError(t, err)
+	require.Zero(t, cost.ActualCost)
+	require.False(t, cost.LongContextBillingApplied)
+}
+
 func TestCalculateCostWithLongContext_DisabledThreshold(t *testing.T) {
 	svc := newTestBillingService()
 
@@ -1035,6 +1063,58 @@ func TestGetModelPricing_Grok45OfficialFallback(t *testing.T) {
 			require.InDelta(t, 6e-6, pricing.OutputPricePerToken, 1e-12)
 			require.InDelta(t, 0.5e-6, pricing.CacheReadPricePerToken, 1e-12)
 			require.False(t, pricing.SupportsCacheBreakdown)
+		})
+	}
+}
+
+func TestGetModelPricing_GrokCatalogFallbacks(t *testing.T) {
+	svc := newTestBillingService()
+
+	tests := []struct {
+		name      string
+		models    []string
+		input     float64
+		cacheRead float64
+		output    float64
+	}{
+		{
+			name: "Grok 4.3 family",
+			models: []string{
+				"grok-4.3",
+				"grok-4.20-0309-reasoning",
+				"grok-4.20-0309-non-reasoning",
+				"grok-4.20-multi-agent-0309",
+				"grok-4.20-reasoning",
+				"grok-4.20-non-reasoning",
+			},
+			input:     1.25e-6,
+			cacheRead: 0.2e-6,
+			output:    2.5e-6,
+		},
+		{
+			name: "Grok coding and Composer family",
+			models: []string{
+				"grok-build",
+				"grok-build-0.1",
+				"grok-composer",
+				"grok-composer-2.5-fast",
+				"composer-2.5",
+			},
+			input:     1e-6,
+			cacheRead: 0.2e-6,
+			output:    2e-6,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, model := range tt.models {
+				pricing, err := svc.GetModelPricing(model)
+				require.NoError(t, err, "model %s", model)
+				require.InDelta(t, tt.input, pricing.InputPricePerToken, 1e-12, "model %s input", model)
+				require.InDelta(t, tt.cacheRead, pricing.CacheReadPricePerToken, 1e-12, "model %s cached input", model)
+				require.InDelta(t, tt.output, pricing.OutputPricePerToken, 1e-12, "model %s output", model)
+			}
 		})
 	}
 }

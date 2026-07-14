@@ -133,7 +133,32 @@ func TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders(t *test
 	require.Equal(t, "account-agent-passthrough", req.Header.Get("chatgpt-account-id"))
 	require.NotEqual(t, "client-session", req.Header.Get("session_id"))
 	require.NotEqual(t, "client-conversation", req.Header.Get("conversation_id"))
-	require.Equal(t, isolateOpenAISessionID(0, "cache-agent"), req.Header.Get("session_id"))
+	require.Equal(t, isolateOpenAISessionID(0, "client-session"), req.Header.Get("session_id"))
+	require.Equal(t, isolateOpenAISessionID(0, "client-conversation"), req.Header.Get("conversation_id"))
+	requestBody, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(requestBody), `"prompt_cache_key":"cache-agent"`)
+
+	// Authentication mode must not affect session isolation or prompt-cache
+	// behavior. Compare the same request with the existing OAuth path instead
+	// of pinning this test to an implementation-specific hash.
+	oauthAccount := &Account{
+		ID:       26,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "account-oauth-passthrough",
+		},
+	}
+	oauthRecorder := httptest.NewRecorder()
+	oauthContext, _ := gin.CreateTestContext(oauthRecorder)
+	oauthContext.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	oauthContext.Request.Header.Set("session_id", "client-session")
+	oauthContext.Request.Header.Set("conversation_id", "client-conversation")
+	oauthReq, err := svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), oauthContext, oauthAccount, body, "oauth-token")
+	require.NoError(t, err)
+	require.Equal(t, oauthReq.Header.Get("session_id"), req.Header.Get("session_id"))
+	require.Equal(t, oauthReq.Header.Get("conversation_id"), req.Header.Get("conversation_id"))
 }
 
 func TestOpenAIAgentIdentityErrorRedactionDoesNotLeakCredentialValues(t *testing.T) {
