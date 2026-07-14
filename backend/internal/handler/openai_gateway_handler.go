@@ -58,6 +58,7 @@ func openAIModelMappedBody(body []byte, mapped bool, mappedModel string, replace
 
 func seedOpenAIForwardImageIntentHint(c *gin.Context, channelMapped bool, imageIntent bool) {
 	if channelMapped {
+		// 渠道映射改变了规范请求，保持 unknown，由 Forward 按映射后的 model/body 初始化。
 		return
 	}
 	service.SetOpenAIImageIntentHint(c, imageIntent)
