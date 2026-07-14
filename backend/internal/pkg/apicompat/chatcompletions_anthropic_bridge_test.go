@@ -12,9 +12,6 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-func strPtr(s string) *string { return &s }
-func intPtr(v int) *int       { return &v }
-
 // collectAnthropicStreamEvents feeds CC chunks through the direct bridge and
 // appends finalize events, returning the full Anthropic event sequence.
 func collectAnthropicStreamEvents(t *testing.T, chunks []string) []AnthropicStreamEvent {
@@ -199,7 +196,8 @@ func TestAnthropicToChatCompletionsRequest_ToolChoiceSpecificTool(t *testing.T) 
 	var tc map[string]any
 	require.NoError(t, json.Unmarshal(out.ToolChoice, &tc))
 	require.Equal(t, "function", tc["type"])
-	fn := tc["function"].(map[string]any)
+	fn, ok := tc["function"].(map[string]any)
+	require.True(t, ok, "tool_choice function should be a map")
 	require.Equal(t, "get_weather", fn["name"])
 }
 
@@ -254,10 +252,10 @@ func TestAnthropicToChatCompletionsRequest_MaxTokensFloor(t *testing.T) {
 
 func TestAnthropicToChatCompletionsRequest_ReasoningEffortMapping(t *testing.T) {
 	req := &AnthropicRequest{
-		Model:         "gpt-5.4",
-		MaxTokens:     100,
-		OutputConfig:  &AnthropicOutputConfig{Effort: "max"},
-		Messages:      []AnthropicMessage{{Role: "user", Content: json.RawMessage(`"hi"`)}},
+		Model:        "gpt-5.4",
+		MaxTokens:    100,
+		OutputConfig: &AnthropicOutputConfig{Effort: "max"},
+		Messages:     []AnthropicMessage{{Role: "user", Content: json.RawMessage(`"hi"`)}},
 	}
 
 	out, err := AnthropicToChatCompletionsRequest(req)
