@@ -563,12 +563,15 @@ name = "OpenAI"
 base_url = "${baseUrl}"
 wire_api = "responses"
 requires_openai_auth = false
-env_key = "SUB2API_API_KEY"
 http_headers = { "x-openai-actor-authorization" = "local-image-extension" }
 
 [features]
-image_generation = true
 goals = true`
+
+  // auth.json content
+  const authContent = `{
+  "OPENAI_API_KEY": "${apiKey}"
+}`
 
   return [
     {
@@ -576,20 +579,11 @@ goals = true`
       content: configContent,
       hint: t('keys.useKeyModal.openai.configTomlHint')
     },
-    generateCodexAPIKeyEnvironment(apiKey, isWindows)
+    {
+      path: `${configDir}/auth.json`,
+      content: authContent
+    }
   ]
-}
-
-function generateCodexAPIKeyEnvironment(apiKey: string, isWindows: boolean): FileConfig {
-  return isWindows
-    ? {
-        path: 'PowerShell',
-        content: `$env:SUB2API_API_KEY="${apiKey}"`
-      }
-    : {
-        path: 'Terminal',
-        content: `export SUB2API_API_KEY="${apiKey}"`
-      }
 }
 
 function generateGrokFiles(baseUrl: string, apiKey: string): FileConfig[] {
@@ -620,7 +614,7 @@ function generateOpenAIWsFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
 
-  // config.toml content with the Responses WebSocket transport enabled
+  // config.toml content with WebSocket v2
   const configContent = `model_provider = "OpenAI"
 model = "gpt-5.5"
 review_model = "gpt-5.5"
@@ -635,12 +629,16 @@ base_url = "${baseUrl}"
 wire_api = "responses"
 supports_websockets = true
 requires_openai_auth = false
-env_key = "SUB2API_API_KEY"
 http_headers = { "x-openai-actor-authorization" = "local-image-extension" }
 
 [features]
-image_generation = true
+responses_websockets_v2 = true
 goals = true`
+
+  // auth.json content
+  const authContent = `{
+  "OPENAI_API_KEY": "${apiKey}"
+}`
 
   return [
     {
@@ -648,7 +646,10 @@ goals = true`
       content: configContent,
       hint: t('keys.useKeyModal.openai.configTomlHint')
     },
-    generateCodexAPIKeyEnvironment(apiKey, isWindows)
+    {
+      path: `${configDir}/auth.json`,
+      content: authContent
+    }
   ]
 }
 
