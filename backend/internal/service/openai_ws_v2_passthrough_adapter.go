@@ -243,8 +243,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if account == nil {
 		return errors.New("account is nil")
 	}
-	if strings.TrimSpace(token) == "" {
-		return errors.New("token is empty")
+	if err := validateOpenAIWSBearerToken(account, token); err != nil {
+		return err
 	}
 	requestModel := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "model").String())
 	requestPreviousResponseID := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "previous_response_id").String())
