@@ -67,7 +67,9 @@ func TestSchedulerCacheSnapshotUsesSlimMetadataButKeepsFullAccount(t *testing.T)
 		},
 	}
 
-	require.NoError(t, cache.SetSnapshot(ctx, bucket, []service.Account{account}))
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, token, []service.Account{account}))
 
 	snapshot, hit, err := cache.GetSnapshot(ctx, bucket)
 	require.NoError(t, err)
@@ -101,4 +103,37 @@ func TestSchedulerCacheSnapshotUsesSlimMetadataButKeepsFullAccount(t *testing.T)
 	require.Equal(t, strings.Repeat("x", 4096), full.GetCredential("huge_blob"))
 	require.Len(t, full.AccountGroups, 1)
 	require.NotNil(t, full.AccountGroups[0].Group)
+}
+
+func TestSchedulerCacheRetireAndReopenFencesOldEpochIntegration(t *testing.T) {
+	ctx := context.Background()
+	rdb := testRedis(t)
+	cache := NewSchedulerCache(rdb)
+	bucket := service.SchedulerBucket{GroupID: 77, Platform: service.PlatformAntigravity, Mode: service.SchedulerModeForced}
+	account := service.Account{ID: 7701, Platform: service.PlatformAntigravity, Type: service.AccountTypeOAuth}
+
+	oldToken, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, oldToken, []service.Account{account}))
+	require.NoError(t, cache.RetireBucket(ctx, bucket))
+	require.NoError(t, cache.RetireBucket(ctx, bucket))
+
+	_, hit, err := cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.False(t, hit)
+	_, err = cache.CaptureBucketWriteToken(ctx, bucket)
+	require.ErrorIs(t, err, service.ErrSchedulerBucketRetired)
+	require.ErrorIs(t, cache.SetSnapshot(ctx, bucket, oldToken, []service.Account{account}), service.ErrSchedulerBucketRetired)
+
+	newToken, err := cache.ReopenBucket(ctx, bucket)
+	require.NoError(t, err)
+	require.Greater(t, newToken.Epoch, oldToken.Epoch)
+	require.ErrorIs(t, cache.SetSnapshot(ctx, bucket, oldToken, []service.Account{account}), service.ErrSchedulerBucketWriteFenced)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, newToken, []service.Account{account}))
+
+	snapshot, hit, err := cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Len(t, snapshot, 1)
+	require.Equal(t, account.ID, snapshot[0].ID)
 }

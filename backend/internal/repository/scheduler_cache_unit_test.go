@@ -14,13 +14,18 @@ import (
 )
 
 func newSchedulerCacheUnit(t *testing.T) *schedulerCache {
+	cache, _ := newSchedulerCacheUnitWithRedis(t)
+	return cache
+}
+
+func newSchedulerCacheUnitWithRedis(t *testing.T) (*schedulerCache, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 	cache, ok := newSchedulerCacheWithChunkSizes(rdb, defaultSchedulerSnapshotMGetChunkSize, defaultSchedulerSnapshotWriteChunkSize).(*schedulerCache)
 	require.True(t, ok)
-	return cache
+	return cache, mr
 }
 
 func TestSchedulerCacheWriteAccountsSkipsUnencodableTimes(t *testing.T) {
@@ -228,4 +233,208 @@ func TestBuildSchedulerMetadataAccount_KeepsSparkShadowRoutingIdentity(t *testin
 	require.Equal(t, map[string]any{"gpt-5.3-codex-spark": "gpt-5.3-codex-spark"}, got.Credentials["model_mapping"])
 	require.Equal(t, map[string]any{"gpt-5.4": "gpt-5.4-openai-compact"}, got.Credentials["compact_model_mapping"])
 	require.Nil(t, got.Credentials["access_token"])
+}
+
+func TestSchedulerCacheBucketRetirementFencesWritersAndReopen(t *testing.T) {
+	ctx := context.Background()
+	cache, mr := newSchedulerCacheUnitWithRedis(t)
+	bucket := service.SchedulerBucket{GroupID: 41, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	otherBucket := service.SchedulerBucket{GroupID: 42, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	account := service.Account{ID: 4101, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, token.ValidFor(bucket))
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, token, []service.Account{account}))
+
+	// A token is bound to the full bucket identity, not just an epoch number.
+	err = cache.SetSnapshot(ctx, otherBucket, token, []service.Account{account})
+	require.ErrorIs(t, err, service.ErrSchedulerBucketWriteFenced)
+	_, err = cache.rdb.Get(ctx, schedulerBucketKey(schedulerVersionPrefix, otherBucket)).Result()
+	require.ErrorIs(t, err, redis.Nil)
+	otherAccount := service.Account{ID: 4201, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+	otherToken, err := cache.CaptureBucketWriteToken(ctx, otherBucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, otherBucket, otherToken, []service.Account{otherAccount}))
+	otherEpoch := otherToken.Epoch
+
+	activeVersion, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerActivePrefix, bucket)).Result()
+	require.NoError(t, err)
+	require.NoError(t, cache.RetireBucket(ctx, bucket))
+	retiredEpoch, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerEpochPrefix, bucket)).Int64()
+	require.NoError(t, err)
+	require.Greater(t, retiredEpoch, token.Epoch)
+
+	// Retirement is idempotent and does not advance the epoch again.
+	require.NoError(t, cache.RetireBucket(ctx, bucket))
+	retiredEpochAgain, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerEpochPrefix, bucket)).Int64()
+	require.NoError(t, err)
+	require.Equal(t, retiredEpoch, retiredEpochAgain)
+
+	// New readers miss because ready/active were removed atomically. A reader that
+	// captured activeVersion before retirement may still finish against that version.
+	_, hit, err := cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.False(t, hit)
+	ids, err := cache.rdb.ZRange(ctx, schedulerSnapshotKey(bucket, activeVersion), 0, -1).Result()
+	require.NoError(t, err)
+	require.Equal(t, []string{"4101"}, ids)
+	ttl, err := cache.rdb.TTL(ctx, schedulerSnapshotKey(bucket, activeVersion)).Result()
+	require.NoError(t, err)
+	require.Positive(t, ttl)
+	require.LessOrEqual(t, ttl, time.Duration(snapshotGraceTTLSeconds)*time.Second)
+
+	buckets, err := cache.ListBuckets(ctx)
+	require.NoError(t, err)
+	require.NotContains(t, buckets, bucket)
+	require.Contains(t, buckets, otherBucket)
+	otherSnapshot, otherHit, err := cache.GetSnapshot(ctx, otherBucket)
+	require.NoError(t, err)
+	require.True(t, otherHit)
+	require.Len(t, otherSnapshot, 1)
+	require.Equal(t, otherAccount.ID, otherSnapshot[0].ID)
+	otherEpochAfter, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerEpochPrefix, otherBucket)).Int64()
+	require.NoError(t, err)
+	require.Equal(t, otherEpoch, otherEpochAfter)
+
+	_, err = cache.CaptureBucketWriteToken(ctx, bucket)
+	require.ErrorIs(t, err, service.ErrSchedulerBucketRetired)
+	versionBeforeRejectedWrite, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerVersionPrefix, bucket)).Int64()
+	require.NoError(t, err)
+	err = cache.SetSnapshot(ctx, bucket, token, []service.Account{account})
+	require.ErrorIs(t, err, service.ErrSchedulerBucketRetired)
+	versionAfterRejectedWrite, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerVersionPrefix, bucket)).Int64()
+	require.NoError(t, err)
+	require.Equal(t, versionBeforeRejectedWrite, versionAfterRejectedWrite, "fenced writers must not allocate a new version")
+	retired, err := cache.rdb.Exists(ctx, schedulerBucketKey(schedulerRetiredPrefix, bucket)).Result()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, retired, "ordinary writers must never clear the tombstone")
+	mr.FastForward(time.Duration(snapshotGraceTTLSeconds+1) * time.Second)
+	exists, err := cache.rdb.Exists(ctx, schedulerSnapshotKey(bucket, activeVersion)).Result()
+	require.NoError(t, err)
+	require.Zero(t, exists, "retired active snapshot must expire after the in-flight grace period")
+
+	newToken, err := cache.ReopenBucket(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, newToken.ValidFor(bucket))
+	require.Equal(t, retiredEpoch, newToken.Epoch)
+	reopenedAgain, err := cache.ReopenBucket(ctx, bucket)
+	require.NoError(t, err)
+	require.Equal(t, newToken, reopenedAgain, "reopen must be idempotent within one retirement generation")
+	err = cache.SetSnapshot(ctx, bucket, token, []service.Account{account})
+	require.ErrorIs(t, err, service.ErrSchedulerBucketWriteFenced)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, newToken, []service.Account{account}))
+	reopenedWhileOpen, err := cache.ReopenBucket(ctx, bucket)
+	require.NoError(t, err)
+	require.Equal(t, newToken, reopenedWhileOpen)
+
+	snapshot, hit, err := cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Len(t, snapshot, 1)
+	require.Equal(t, account.ID, snapshot[0].ID)
+}
+
+func TestSchedulerCacheActivationIsFencedAfterRetire(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 51, Platform: service.PlatformAnthropic, Mode: service.SchedulerModeMixed}
+	account := service.Account{ID: 5101, Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey}
+
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	version, err := cache.allocateSnapshotVersion(ctx, bucket, token)
+	require.NoError(t, err)
+	require.NoError(t, cache.writeSnapshotVersion(ctx, bucket, version, []service.Account{account}))
+
+	// Deterministic race C: retirement and authoritative reopen both happen after
+	// INCR/write but before the old writer activates.
+	require.NoError(t, cache.RetireBucket(ctx, bucket))
+	_, err = cache.ReopenBucket(ctx, bucket)
+	require.NoError(t, err)
+	err = cache.activateSnapshotVersion(ctx, bucket, token, version)
+	require.ErrorIs(t, err, service.ErrSchedulerBucketWriteFenced)
+
+	exists, err := cache.rdb.Exists(ctx, schedulerSnapshotKey(bucket, version)).Result()
+	require.NoError(t, err)
+	require.Zero(t, exists, "fenced activation must delete its unpublished snapshot")
+	exists, err = cache.rdb.Exists(
+		ctx,
+		schedulerBucketKey(schedulerReadyPrefix, bucket),
+		schedulerBucketKey(schedulerActivePrefix, bucket),
+	).Result()
+	require.NoError(t, err)
+	require.Zero(t, exists)
+	buckets, err := cache.ListBuckets(ctx)
+	require.NoError(t, err)
+	require.NotContains(t, buckets, bucket)
+}
+
+func TestSchedulerCacheConcurrentReopenReturnsSameToken(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 53, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeForced}
+	account := service.Account{ID: 5301, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+
+	oldToken, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.RetireBucket(ctx, bucket))
+
+	type reopenResult struct {
+		token service.SchedulerBucketWriteToken
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan reopenResult, 2)
+	for range 2 {
+		go func() {
+			<-start
+			token, err := cache.ReopenBucket(ctx, bucket)
+			results <- reopenResult{token: token, err: err}
+		}()
+	}
+	close(start)
+	first := <-results
+	second := <-results
+	require.NoError(t, first.err)
+	require.NoError(t, second.err)
+	require.Equal(t, first.token, second.token)
+	require.Greater(t, first.token.Epoch, oldToken.Epoch)
+
+	require.ErrorIs(t, cache.SetSnapshot(ctx, bucket, oldToken, []service.Account{account}), service.ErrSchedulerBucketWriteFenced)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, first.token, []service.Account{account}))
+}
+
+func TestSchedulerCacheReopenExpiresPreviousActiveSnapshot(t *testing.T) {
+	ctx := context.Background()
+	cache, mr := newSchedulerCacheUnitWithRedis(t)
+	bucket := service.SchedulerBucket{GroupID: 52, Platform: service.PlatformGemini, Mode: service.SchedulerModeForced}
+	account := service.Account{ID: 5201, Platform: service.PlatformGemini, Type: service.AccountTypeAPIKey}
+
+	oldToken, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, oldToken, []service.Account{account}))
+	oldVersion, err := cache.rdb.Get(ctx, schedulerBucketKey(schedulerActivePrefix, bucket)).Result()
+	require.NoError(t, err)
+	retiredEpoch := oldToken.Epoch + 1
+	require.NoError(t, cache.rdb.Set(ctx, schedulerBucketKey(schedulerEpochPrefix, bucket), retiredEpoch, 0).Err())
+	require.NoError(t, cache.rdb.Set(ctx, schedulerBucketKey(schedulerRetiredPrefix, bucket), retiredEpoch, 0).Err())
+
+	newToken, err := cache.ReopenBucket(ctx, bucket)
+	require.NoError(t, err)
+	require.Equal(t, retiredEpoch, newToken.Epoch)
+	_, hit, err := cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.False(t, hit)
+	ttl, err := cache.rdb.TTL(ctx, schedulerSnapshotKey(bucket, oldVersion)).Result()
+	require.NoError(t, err)
+	require.Positive(t, ttl)
+	require.LessOrEqual(t, ttl, time.Duration(snapshotGraceTTLSeconds)*time.Second)
+
+	require.ErrorIs(t, cache.SetSnapshot(ctx, bucket, oldToken, []service.Account{account}), service.ErrSchedulerBucketWriteFenced)
+	mr.FastForward(time.Duration(snapshotGraceTTLSeconds+1) * time.Second)
+	exists, err := cache.rdb.Exists(ctx, schedulerSnapshotKey(bucket, oldVersion)).Result()
+	require.NoError(t, err)
+	require.Zero(t, exists)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, newToken, []service.Account{account}))
 }
