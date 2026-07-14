@@ -39,6 +39,7 @@ var (
 type openAIWSDialError struct {
 	StatusCode      int
 	ResponseHeaders http.Header
+	ResponseBody    []byte
 	Err             error
 }
 
@@ -1540,9 +1541,15 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 	}
 	conn, status, handshakeHeaders, err := p.clientDialer.Dial(ctx, req.WSURL, headers, req.ProxyURL)
 	if err != nil {
+		var handshakeErr *openAIWSHandshakeError
+		var responseBody []byte
+		if errors.As(err, &handshakeErr) && handshakeErr != nil {
+			responseBody = append([]byte(nil), handshakeErr.Body...)
+		}
 		return nil, &openAIWSDialError{
 			StatusCode:      status,
 			ResponseHeaders: cloneHeader(handshakeHeaders),
+			ResponseBody:    responseBody,
 			Err:             err,
 		}
 	}

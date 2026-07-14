@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -161,13 +162,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		return nil, err
 	}
 
-	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
-	releaseUpstreamCtx()
-	if err != nil {
-		return nil, err
-	}
-
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
@@ -177,18 +171,42 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		c.Set("openai_passthrough", true)
 	}
 
-	upstreamStart := time.Now()
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
-	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
-	if err != nil {
-		// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
-		// a failover so the handler switches to a healthy account, and temporarily
-		// unschedule the account on durable faults (e.g. rejected proxy credentials).
-		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
-	}
-	defer func() { _ = resp.Body.Close() }()
+	agentTaskRecoveryTried := false
+	var resp *http.Response
+	for {
+		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
+		releaseUpstreamCtx()
+		if buildErr != nil {
+			return nil, buildErr
+		}
 
-	if resp.StatusCode >= 400 {
+		upstreamStart := time.Now()
+		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+		if err != nil {
+			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
+			// a failover so the handler switches to a healthy account.
+			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
+		}
+		if resp.StatusCode < 400 {
+			break
+		}
+
+		// Peek only to identify an invalid task. Restore the body so the existing
+		// passthrough error handling sees the same response after recovery fails.
+		probeBody := s.readUpstreamErrorBody(resp)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(probeBody))
+		if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, probeBody) {
+			agentTaskRecoveryTried = true
+			expectedTaskID := account.GetCredential("task_id")
+			if recoveryErr := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); recoveryErr != nil {
+				return nil, fmt.Errorf("agent identity task recovery failed: %w", recoveryErr)
+			}
+			continue
+		}
+
 		// 透传模式默认保持原样代理；但 429/529 属于网关必须兜底的
 		// 上游容量类错误，应先触发多账号 failover 以维持基础 SLA。
 		if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode) {
@@ -196,6 +214,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body)
 	}
+	defer func() { _ = resp.Body.Close() }()
 
 	serviceTier := extractOpenAIServiceTierFromBody(body)
 
