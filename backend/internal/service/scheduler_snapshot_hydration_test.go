@@ -35,6 +35,14 @@ func (c *snapshotHydrationCache) ReopenBucket(ctx context.Context, bucket Schedu
 	return SchedulerBucketWriteToken{Bucket: bucket, Epoch: 1}, nil
 }
 
+func (c *snapshotHydrationCache) TryAcquireGroupLifecycleLease(context.Context, int64, time.Duration) (SchedulerGroupLifecycleLease, bool, error) {
+	return SchedulerGroupLifecycleLease{}, false, nil
+}
+
+func (c *snapshotHydrationCache) ReleaseGroupLifecycleLease(context.Context, SchedulerGroupLifecycleLease) error {
+	return nil
+}
+
 func (c *snapshotHydrationCache) GetAccount(ctx context.Context, accountID int64) (*Account, error) {
 	if c.accounts == nil {
 		return nil, nil
