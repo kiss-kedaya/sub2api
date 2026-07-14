@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -268,25 +267,6 @@ func (s *OpenAIGatewayService) BindGrokMediaVideoRequestAccount(ctx context.Cont
 	return s.BindStickySession(ctx, groupID, GrokMediaVideoRequestSessionHash(requestID), accountID)
 }
 
-func (e GrokMediaEndpoint) upstreamURL(baseURL, requestID string) (string, error) {
-	switch e {
-	case GrokMediaEndpointImagesGenerations:
-		return xai.BuildImagesGenerationsURL(baseURL)
-	case GrokMediaEndpointImagesEdits:
-		return xai.BuildImagesEditsURL(baseURL)
-	case GrokMediaEndpointVideosGenerations:
-		return xai.BuildVideosGenerationsURL(baseURL)
-	case GrokMediaEndpointVideosEdits:
-		return xai.BuildVideosEditsURL(baseURL)
-	case GrokMediaEndpointVideosExtensions:
-		return xai.BuildVideosExtensionsURL(baseURL)
-	case GrokMediaEndpointVideoStatus:
-		return xai.BuildVideoURL(baseURL, requestID)
-	default:
-		return "", fmt.Errorf("unsupported grok media endpoint: %s", e)
-	}
-}
-
 func (s *OpenAIGatewayService) ForwardGrokMedia(
 	ctx context.Context,
 	c *gin.Context,
@@ -308,7 +288,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	if err != nil {
 		return nil, err
 	}
-	targetURL, err := endpoint.upstreamURL(account.GetGrokMediaBaseURL(), requestID)
+	targetURL, err := buildGrokMediaURL(account, s.cfg, endpoint, requestID)
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +348,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		return s.handleGrokMediaErrorResponse(ctx, resp, c, account, requestIDHeader, requestModel)
 	}
 
-	s.updateGrokUsageSnapshot(ctx, account, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
+	s.updateGrokUsageFromResponse(ctx, account, resp.Header, resp.StatusCode)
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		return nil, err
