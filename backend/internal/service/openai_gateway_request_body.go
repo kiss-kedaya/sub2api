@@ -136,12 +136,20 @@ func sanitizeEncryptedReasoningInputItem(item any) (next any, changed bool, keep
 		return item, false, true
 	}
 
-	_, hasEncryptedContent := inputItem["encrypted_content"]
-	if !hasEncryptedContent {
-		return item, false, true
+	if _, has := inputItem["encrypted_content"]; has {
+		delete(inputItem, "encrypted_content")
+		changed = true
 	}
 
-	delete(inputItem, "encrypted_content")
+	// xAI 422: "content": null 导致 untagged enum 反序列化失败
+	if v, has := inputItem["content"]; has && v == nil {
+		delete(inputItem, "content")
+		changed = true
+	}
+
+	if !changed {
+		return item, false, true
+	}
 	if len(inputItem) == 1 {
 		return nil, true, false
 	}

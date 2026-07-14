@@ -1771,3 +1771,70 @@ func TestFailoverOpenAIUpstreamHTTPErrorUsesOnlyGrokRateLimitPolicy(t *testing.T
 	require.Equal(t, 1, repo.rateLimitedCalls)
 	require.Zero(t, repo.tempUnschedCalls)
 }
+
+func TestPatchGrokResponsesBody_StripsReasoningContentNull(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "grok-latest",
+		"input": [
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"thinking..."}],"content":null,"encrypted_content":null},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello!"}]}
+		]
+	}`)
+
+	patched, err := patchGrokResponsesBody(body, "grok-4.5")
+	require.NoError(t, err)
+	require.True(t, json.Valid(patched))
+
+	input := gjson.GetBytes(patched, "input")
+	require.True(t, input.IsArray())
+
+	items := input.Array()
+	require.Len(t, items, 3)
+
+	reasoning := items[1]
+	require.Equal(t, "reasoning", reasoning.Get("type").String())
+	require.True(t, reasoning.Get("summary").Exists(), "summary should be preserved")
+	require.False(t, reasoning.Get("content").Exists(), "content: null should be stripped")
+}
+
+func TestPatchGrokResponsesBody_KeepsReasoningContentNonNull(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "grok-latest",
+		"input": [
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"ok"}],"content":"real content"}
+		]
+	}`)
+
+	patched, err := patchGrokResponsesBody(body, "grok-4.5")
+	require.NoError(t, err)
+
+	reasoning := gjson.GetBytes(patched, "input.0")
+	require.Equal(t, "real content", reasoning.Get("content").String(), "non-null content must not be stripped")
+}
+
+func TestPatchGrokResponsesBody_MultipleReasoningContentNull(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "grok-latest",
+		"input": [
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"r1"}],"content":null},
+			{"type":"message","role":"user","content":"hi"},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"r2"}],"content":null}
+		]
+	}`)
+
+	patched, err := patchGrokResponsesBody(body, "grok-4.5")
+	require.NoError(t, err)
+
+	items := gjson.GetBytes(patched, "input").Array()
+	require.Len(t, items, 3)
+
+	require.False(t, items[0].Get("content").Exists())
+	require.False(t, items[2].Get("content").Exists())
+}
