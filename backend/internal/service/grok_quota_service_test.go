@@ -302,16 +302,7 @@ func TestGrokQuotaServiceProbeUsageReportsProbeModelOnUpstreamError(t *testing.T
 
 func TestGrokQuotaServiceProbeUsageRedactsUpstreamErrorBodyFromErrorAndLogs(t *testing.T) {
 	const upstreamSecret = "upstream-secret-refresh-token"
-	account := &Account{
-		ID:          49,
-		Platform:    PlatformGrok,
-		Type:        AccountTypeOAuth,
-		Concurrency: 1,
-		Credentials: map[string]any{
-			"access_token": "access-token",
-			"expires_at":   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-		},
-	}
+	account := healthyGrokQuotaOAuthAccount(49)
 	repo := &grokQuotaAccountRepo{
 		mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
 			accountsByID: map[int64]*Account{49: account},
@@ -453,13 +444,7 @@ func TestGrokQuotaServiceProbeUsageReturnsRateLimitedSnapshot(t *testing.T) {
 func TestGrokQuotaServiceQueryQuotaFreeFallsBackToGrok45(t *testing.T) {
 	t.Parallel()
 
-	account := &Account{
-		ID: 51, Platform: PlatformGrok, Type: AccountTypeOAuth, Concurrency: 1,
-		Credentials: map[string]any{
-			"access_token": "access-token",
-			"expires_at":   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-		},
-	}
+	account := healthyGrokQuotaOAuthAccount(51)
 	repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
 		accountsByID: map[int64]*Account{account.ID: account},
 	}}
@@ -500,13 +485,7 @@ func TestGrokQuotaServiceQueryQuotaFreeFallsBackToGrok45(t *testing.T) {
 func TestGrokQuotaServiceQueryQuotaPaidBillingSkipsActiveProbe(t *testing.T) {
 	t.Parallel()
 
-	account := &Account{
-		ID: 52, Platform: PlatformGrok, Type: AccountTypeOAuth, Concurrency: 1,
-		Credentials: map[string]any{
-			"access_token": "access-token",
-			"expires_at":   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-		},
-	}
+	account := healthyGrokQuotaOAuthAccount(52)
 	repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
 		accountsByID: map[int64]*Account{account.ID: account},
 	}}
@@ -534,13 +513,7 @@ func TestGrokQuotaServiceQueryQuotaPaidBillingSkipsActiveProbe(t *testing.T) {
 func TestGrokQuotaServiceQueryQuotaCustomPaidMonthlyLimitSkipsActiveProbe(t *testing.T) {
 	t.Parallel()
 
-	account := &Account{
-		ID: 57, Platform: PlatformGrok, Type: AccountTypeOAuth, Concurrency: 1,
-		Credentials: map[string]any{
-			"access_token": "access-token",
-			"expires_at":   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-		},
-	}
+	account := healthyGrokQuotaOAuthAccount(57)
 	repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
 		accountsByID: map[int64]*Account{account.ID: account},
 	}}
@@ -673,13 +646,7 @@ func TestGrokLocalUsageForBillingOnlyReturnsAvailableWindows(t *testing.T) {
 func TestAccountUsageServiceGrokRefreshUsesBillingOnly(t *testing.T) {
 	t.Parallel()
 
-	account := &Account{
-		ID: 54, Platform: PlatformGrok, Type: AccountTypeOAuth, Concurrency: 1,
-		Credentials: map[string]any{
-			"access_token": "access-token",
-			"expires_at":   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-		},
-	}
+	account := healthyGrokQuotaOAuthAccount(54)
 	repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
 		accountsByID: map[int64]*Account{account.ID: account},
 	}}
@@ -714,13 +681,7 @@ func TestAccountUsageServiceGrokRefreshUsesBillingOnly(t *testing.T) {
 func TestGrokQuotaServiceProbeFlightsDeduplicateBillingAndSeparateActive(t *testing.T) {
 	t.Parallel()
 
-	account := &Account{
-		ID: 55, Platform: PlatformGrok, Type: AccountTypeOAuth, Concurrency: 1,
-		Credentials: map[string]any{
-			"access_token": "access-token",
-			"expires_at":   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-		},
-	}
+	account := healthyGrokQuotaOAuthAccount(55)
 	repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
 		accountsByID: map[int64]*Account{account.ID: account},
 	}}
@@ -776,13 +737,7 @@ func TestGrokQuotaServiceProbeFlightsDeduplicateBillingAndSeparateActive(t *test
 func TestGrokQuotaServiceBilling429DoesNotPauseModelScheduling(t *testing.T) {
 	t.Parallel()
 
-	account := &Account{
-		ID: 56, Platform: PlatformGrok, Type: AccountTypeOAuth, Concurrency: 1,
-		Credentials: map[string]any{
-			"access_token": "access-token",
-			"expires_at":   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-		},
-	}
+	account := healthyGrokQuotaOAuthAccount(56)
 	repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
 		accountsByID: map[int64]*Account{account.ID: account},
 	}}
@@ -802,13 +757,7 @@ func TestGrokQuotaServiceBilling429DoesNotPauseModelScheduling(t *testing.T) {
 func TestGrokQuotaServiceQueryQuotaFree429PersistsLimitAndKeepsBilling(t *testing.T) {
 	t.Parallel()
 
-	account := &Account{
-		ID: 53, Platform: PlatformGrok, Type: AccountTypeOAuth, Concurrency: 1,
-		Credentials: map[string]any{
-			"access_token": "access-token",
-			"expires_at":   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-		},
-	}
+	account := healthyGrokQuotaOAuthAccount(53)
 	repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
 		accountsByID: map[int64]*Account{account.ID: account},
 	}}
