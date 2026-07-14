@@ -163,7 +163,7 @@ func TestEnsureAgentIdentityTaskSharesLockAcrossServicesForSameAccount(t *testin
 		"agent_runtime_id":  key.runtimeID,
 		"agent_private_key": privateKey,
 	}}
-	repo := &agentIdentityCredentialsRepo{}
+	repo := &agentIdentityCredentialsRepo{account: account}
 	registerCalls := 0
 	var registerMu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -179,10 +179,11 @@ func TestEnsureAgentIdentityTaskSharesLockAcrossServicesForSameAccount(t *testin
 
 	start := make(chan struct{})
 	errors := make(chan error, 2)
-	for range 2 {
+	requests := []*Account{cloneAgentIdentityTestAccount(account), cloneAgentIdentityTestAccount(account)}
+	for _, request := range requests {
 		go func() {
 			<-start
-			errors <- ensureAgentIdentityTaskForAccount(context.Background(), repo, nil, &sync.Mutex{}, account, "")
+			errors <- ensureAgentIdentityTaskForAccount(context.Background(), repo, nil, &sync.Mutex{}, request, "")
 		}()
 	}
 	close(start)
@@ -191,13 +192,24 @@ func TestEnsureAgentIdentityTaskSharesLockAcrossServicesForSameAccount(t *testin
 	registerMu.Lock()
 	defer registerMu.Unlock()
 	require.Equal(t, 1, registerCalls)
-	require.Equal(t, "task-shared", account.GetCredential("task_id"))
+	require.Equal(t, "task-shared", repo.account.GetCredential("task_id"))
+}
+
+func cloneAgentIdentityTestAccount(account *Account) *Account {
+	copy := *account
+	copy.Credentials = shallowCopyMap(account.Credentials)
+	return &copy
 }
 
 type agentIdentityCredentialsRepo struct {
 	AccountRepository
 	credentials map[string]any
+	account     *Account
 	mu          sync.Mutex
+}
+
+func (r *agentIdentityCredentialsRepo) GetByID(_ context.Context, _ int64) (*Account, error) {
+	return r.account, nil
 }
 
 func (r *agentIdentityCredentialsRepo) UpdateCredentials(_ context.Context, _ int64, credentials map[string]any) error {

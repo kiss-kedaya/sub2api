@@ -261,6 +261,25 @@ func ensureAgentIdentityTaskForAccount(ctx context.Context, repo AccountReposito
 	}
 	sharedTaskMu.Lock()
 	defer sharedTaskMu.Unlock()
+	// Re-read inside the shared lock. Different request paths often receive
+	// independent repository snapshots; checking only the caller's snapshot
+	// would allow sequential duplicate registrations after the first writer
+	// has already persisted a new task.
+	if repo != nil && credAccount.ID > 0 {
+		if refreshed, refreshErr := repo.GetByID(ctx, credAccount.ID); refreshErr == nil && refreshed != nil {
+			if refreshed.IsShadow() {
+				if resolved, resolveErr := resolveCredentialAccount(ctx, repo, refreshed); resolveErr == nil && resolved != nil {
+					refreshed = resolved
+				}
+			}
+			if refreshed.IsOpenAIAgentIdentity() {
+				credAccount = refreshed
+				if !account.IsShadow() {
+					account.Credentials = shallowCopyMap(credAccount.Credentials)
+				}
+			}
+		}
+	}
 	currentTaskID = strings.TrimSpace(credAccount.GetCredential("task_id"))
 	if currentTaskID != "" && (expectedTaskID == "" || currentTaskID != expectedTaskID) {
 		return nil
@@ -276,6 +295,9 @@ func ensureAgentIdentityTaskForAccount(ctx context.Context, repo AccountReposito
 	credentials["task_id"] = newTaskID
 	if err := persistAccountCredentials(ctx, repo, credAccount, credentials); err != nil {
 		return err
+	}
+	if !account.IsShadow() && account != credAccount {
+		account.Credentials = shallowCopyMap(credAccount.Credentials)
 	}
 	if pool != nil {
 		pool.ClearAccount(credAccount.ID)
