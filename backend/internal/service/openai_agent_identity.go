@@ -261,7 +261,11 @@ func ensureAgentIdentityTaskForAccount(ctx context.Context, repo AccountReposito
 	if credAccount.ID > 0 {
 		candidate := &sync.Mutex{}
 		actual, _ := agentIdentityTaskLocks.LoadOrStore(credAccount.ID, candidate)
-		sharedTaskMu = actual.(*sync.Mutex)
+		loadedTaskMu, ok := actual.(*sync.Mutex)
+		if !ok {
+			return errors.New("agent identity task lock has invalid type")
+		}
+		sharedTaskMu = loadedTaskMu
 	}
 	sharedTaskMu.Lock()
 	defer sharedTaskMu.Unlock()
