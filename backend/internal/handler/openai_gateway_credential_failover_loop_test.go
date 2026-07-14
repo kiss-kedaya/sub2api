@@ -31,6 +31,7 @@ type grokCredentialHandlerRepo struct {
 	accounts       []service.Account
 	setErrorIDs    []int64
 	setTempIDs     []int64
+	rateLimitIDs   []int64
 	updateExtraIDs []int64
 	selectionCalls int
 	setErrorErr    error
@@ -106,6 +107,34 @@ func (r *grokCredentialHandlerRepo) SetTempUnschedulable(_ context.Context, id i
 		}
 	}
 	return nil
+}
+
+func (r *grokCredentialHandlerRepo) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rateLimitIDs = append(r.rateLimitIDs, id)
+	for i := range r.accounts {
+		if r.accounts[i].ID != id {
+			continue
+		}
+		now := time.Now()
+		r.accounts[i].RateLimitedAt = &now
+		value := resetAt
+		r.accounts[i].RateLimitResetAt = &value
+	}
+	return nil
+}
+
+func (r *grokCredentialHandlerRepo) SetRateLimitedIfLater(ctx context.Context, id int64, resetAt time.Time) error {
+	r.mu.Lock()
+	for i := range r.accounts {
+		if r.accounts[i].ID == id && r.accounts[i].RateLimitResetAt != nil && !resetAt.After(*r.accounts[i].RateLimitResetAt) {
+			r.mu.Unlock()
+			return nil
+		}
+	}
+	r.mu.Unlock()
+	return r.SetRateLimited(ctx, id, resetAt)
 }
 
 func (r *grokCredentialHandlerRepo) SetGrokCredentialErrorIfMatch(
@@ -204,6 +233,12 @@ func (r *grokCredentialHandlerRepo) selectorCalls() int {
 	return r.selectionCalls
 }
 
+func (r *grokCredentialHandlerRepo) rateLimitedAccountIDs() []int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]int64(nil), r.rateLimitIDs...)
+}
+
 type grokCredentialHandlerTokenCache struct {
 	service.GrokTokenCache
 	mu        sync.Mutex
@@ -282,6 +317,8 @@ type grokCredentialHandlerUpstream struct {
 	requestURLs   []string
 	authorization []string
 	failAccountID int64
+	rateLimitIDs  map[int64]bool
+	failureStatus map[int64]int
 	cancelRequest context.CancelFunc
 }
 
@@ -295,8 +332,27 @@ func (u *grokCredentialHandlerUpstream) Do(req *http.Request, _ string, accountI
 	u.requestURLs = append(u.requestURLs, req.URL.String())
 	u.authorization = append(u.authorization, req.Header.Get("Authorization"))
 	failAccountID := u.failAccountID
+	rateLimited := u.rateLimitIDs[accountID]
+	failureStatus := u.failureStatus[accountID]
 	cancelRequest := u.cancelRequest
 	u.mu.Unlock()
+	if rateLimited {
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header: http.Header{
+				"Content-Type": []string{"application/json"},
+				"Retry-After":  []string{"60"},
+			},
+			Body: io.NopCloser(bytes.NewBufferString(`{"error":{"message":"rate limited"}}`)),
+		}, nil
+	}
+	if failureStatus > 0 {
+		return &http.Response{
+			StatusCode: failureStatus,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewBufferString(`{"error":{"message":"upstream unavailable"}}`)),
+		}, nil
+	}
 	if accountID == failAccountID {
 		if cancelRequest != nil {
 			cancelRequest()
@@ -502,6 +558,115 @@ func TestResponsesCredentialFailoverLoop(t *testing.T) {
 	})
 }
 
+func TestResponsesGrok429FailoverIsBounded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("first rate limited account selects healthy account", func(t *testing.T) {
+		_, repo, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "first_429")
+		defer cleanup()
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBufferString(`{"model":"grok","input":"hello","stream":false}`))
+		req.Header.Set("Content-Type", "application/json")
+
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		require.Contains(t, recorder.Body.String(), "resp_healthy")
+		require.Equal(t, []int64{801, 802}, upstream.accountHits())
+		require.Equal(t, []int64{801}, repo.rateLimitedAccountIDs())
+	})
+
+	t.Run("two rate limited accounts stop without sweeping the pool", func(t *testing.T) {
+		_, repo, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "all_429")
+		defer cleanup()
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBufferString(`{"model":"grok","input":"hello","stream":false}`))
+		req.Header.Set("Content-Type", "application/json")
+
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusTooManyRequests, recorder.Code, recorder.Body.String())
+		require.Equal(t, []int64{801, 802}, upstream.accountHits())
+		require.Equal(t, []int64{801, 802}, repo.rateLimitedAccountIDs())
+		require.NotContains(t, recorder.Body.String(), "expired")
+		require.NotContains(t, recorder.Body.String(), "healthy-access")
+		require.NotContains(t, recorder.Body.String(), "rate limited")
+	})
+}
+
+func TestResponsesGrok429FailoverHandlesMixedStatuses(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("429 then 500 stops after the bounded followup", func(t *testing.T) {
+		_, _, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "mixed_429_500")
+		defer cleanup()
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBufferString(`{"model":"grok","input":"hello","stream":false}`))
+		req.Header.Set("Content-Type", "application/json")
+
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusBadGateway, recorder.Code, recorder.Body.String())
+		require.Equal(t, []int64{801, 802}, upstream.accountHits())
+		require.NotContains(t, recorder.Body.String(), "upstream unavailable")
+	})
+
+	t.Run("500 then 429 permits one healthy followup", func(t *testing.T) {
+		_, _, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "mixed_500_429")
+		defer cleanup()
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBufferString(`{"model":"grok","input":"hello","stream":false}`))
+		req.Header.Set("Content-Type", "application/json")
+
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		require.Equal(t, []int64{801, 802, 803}, upstream.accountHits())
+	})
+
+	t.Run("OAuth 429 then API-key failure cannot bypass the bound", func(t *testing.T) {
+		_, _, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "oauth_429_apikey_500")
+		defer cleanup()
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBufferString(`{"model":"grok","input":"hello","stream":false}`))
+		req.Header.Set("Content-Type", "application/json")
+
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusBadGateway, recorder.Code, recorder.Body.String())
+		require.Equal(t, []int64{801, 802}, upstream.accountHits())
+	})
+}
+
+func TestGrokMedia429FailoverIsBounded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("first 429 selects one healthy followup", func(t *testing.T) {
+		_, _, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "first_429")
+		defer cleanup()
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/openai/v1/videos/request-1", nil)
+
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		require.Equal(t, []int64{801, 802}, upstream.accountHits())
+	})
+
+	t.Run("second 429 stops without sweeping a third account", func(t *testing.T) {
+		_, _, upstream, router, cleanup := newGrokCredentialFailoverHandler(t, "all_429")
+		defer cleanup()
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/openai/v1/videos/request-1", nil)
+
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusTooManyRequests, recorder.Code, recorder.Body.String())
+		require.Equal(t, []int64{801, 802}, upstream.accountHits())
+		require.NotContains(t, recorder.Body.String(), "rate limited")
+	})
+}
+
 func TestGrokOAuthCredentialFailoverAcrossHTTPHandlers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	endpoints := []struct {
@@ -667,8 +832,22 @@ func newGrokCredentialFailoverHandler(t *testing.T, mode string) (*OpenAIGateway
 			},
 		},
 	}
-	if mode == "postmap_cancel" {
+	if mode == "postmap_cancel" || mode == "first_429" || mode == "all_429" || mode == "mixed_429_500" || mode == "mixed_500_429" || mode == "oauth_429_apikey_500" {
 		accounts[0].Credentials["expires_at"] = time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	}
+	if mode == "all_429" || mode == "mixed_429_500" || mode == "mixed_500_429" || mode == "oauth_429_apikey_500" {
+		accounts = append(accounts, service.Account{
+			ID: 803, Name: "untried-healthy", Platform: service.PlatformGrok, Type: service.AccountTypeOAuth,
+			Status: service.StatusActive, Schedulable: true, Concurrency: 1, Priority: 3,
+			Credentials: map[string]any{
+				"access_token": "untried-healthy-access", "refresh_token": "untried-healthy-refresh",
+				"expires_at": time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339),
+			},
+		})
+	}
+	if mode == "oauth_429_apikey_500" {
+		accounts[1].Type = service.AccountTypeAPIKey
+		accounts[1].Credentials = map[string]any{"api_key": "third-party-key"}
 	}
 	if mode == "all_revoked" {
 		accounts[1].Credentials["expires_at"] = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
@@ -694,6 +873,21 @@ func newGrokCredentialFailoverHandler(t *testing.T, mode string) (*OpenAIGateway
 		provider.SetRefreshAPI(service.NewOAuthRefreshAPI(repo, tokenCache), refresher)
 	}
 	upstream := &grokCredentialHandlerUpstream{}
+	switch mode {
+	case "first_429":
+		upstream.rateLimitIDs = map[int64]bool{801: true}
+	case "all_429":
+		upstream.rateLimitIDs = map[int64]bool{801: true, 802: true}
+	case "mixed_429_500":
+		upstream.rateLimitIDs = map[int64]bool{801: true}
+		upstream.failureStatus = map[int64]int{802: http.StatusInternalServerError}
+	case "mixed_500_429":
+		upstream.failureStatus = map[int64]int{801: http.StatusInternalServerError}
+		upstream.rateLimitIDs = map[int64]bool{802: true}
+	case "oauth_429_apikey_500":
+		upstream.rateLimitIDs = map[int64]bool{801: true}
+		upstream.failureStatus = map[int64]int{802: http.StatusInternalServerError}
+	}
 	cfg := &config.Config{RunMode: config.RunModeSimple}
 	cfg.Gateway.MaxAccountSwitches = 3
 	billingCache := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
