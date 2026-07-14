@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -14,26 +15,36 @@ import (
 )
 
 var (
-	ErrSchedulerCacheNotReady   = errors.New("scheduler cache not ready")
-	ErrSchedulerFallbackLimited = errors.New("scheduler db fallback limited")
+	ErrSchedulerCacheNotReady           = errors.New("scheduler cache not ready")
+	ErrSchedulerFallbackLimited         = errors.New("scheduler db fallback limited")
+	ErrSchedulerGroupLifecycleLeaseBusy = errors.New("scheduler group lifecycle lease busy")
+	ErrSchedulerBucketRebuildBusy       = errors.New("scheduler bucket rebuild busy")
 )
 
 const (
-	outboxEventTimeout          = 2 * time.Minute
-	schedulerOutboxCleanupBatch = 5000
+	outboxEventTimeout                    = 2 * time.Minute
+	schedulerOutboxCleanupBatch           = 5000
+	schedulerGroupLifecycleTimeout        = 30 * time.Second
+	schedulerGroupLifecycleLeaseTTL       = 60 * time.Second
+	schedulerGroupLifecycleReleaseTimeout = 2 * time.Second
 )
 
-// batchSeenKey tracks which (groupID, platform) bucket sets have already been
-// rebuilt within a single pollOutbox call, to avoid redundant work when multiple
-// account_changed events share the same groups.
+// batchSeenKey tracks completed per-platform rebuilds and group lifecycle work
+// within one pollOutbox call.
 type batchSeenKey struct {
-	groupID  int64
-	platform string
+	groupID   int64
+	platform  string
+	lifecycle bool
 }
 
 type schedulerBucketWriteTask struct {
 	bucket SchedulerBucket
 	token  SchedulerBucketWriteToken
+}
+
+type schedulerGroupLifecyclePlan struct {
+	active bool
+	tasks  []schedulerBucketWriteTask
 }
 
 type SchedulerSnapshotService struct {
@@ -513,11 +524,120 @@ func (s *SchedulerSnapshotService) handleAccountEvent(ctx context.Context, accou
 }
 
 func (s *SchedulerSnapshotService) handleGroupEvent(ctx context.Context, groupID *int64, seen map[batchSeenKey]struct{}) error {
-	if groupID == nil || *groupID <= 0 {
+	if groupID == nil || *groupID <= 0 || s.isRunModeSimple() {
 		return nil
 	}
-	groupIDs := []int64{*groupID}
-	return s.rebuildByGroupIDs(ctx, groupIDs, "group_change", seen)
+	if seen != nil {
+		if _, ok := seen[batchSeenKey{groupID: *groupID, lifecycle: true}]; ok {
+			return nil
+		}
+	}
+	return s.reconcileGroupLifecycle(ctx, *groupID, seen)
+}
+
+func (s *SchedulerSnapshotService) reconcileGroupLifecycle(ctx context.Context, groupID int64, seen map[batchSeenKey]struct{}) error {
+	plan, err := s.prepareGroupLifecycle(ctx, groupID, nil)
+	if err != nil {
+		return err
+	}
+	if plan.active {
+		for _, task := range plan.tasks {
+			if err := s.rebuildBucketWithTokenPolicy(ctx, task, "group_change", true); err != nil {
+				return err
+			}
+		}
+	}
+	markGroupLifecycleSeen(seen, groupID)
+	return nil
+}
+
+func (s *SchedulerSnapshotService) prepareGroupLifecycle(ctx context.Context, groupID int64, knownHistorical []SchedulerBucket) (plan schedulerGroupLifecyclePlan, retErr error) {
+	if groupID <= 0 || s.isRunModeSimple() {
+		return schedulerGroupLifecyclePlan{}, nil
+	}
+	if s.cache == nil || s.groupRepo == nil {
+		return schedulerGroupLifecyclePlan{}, ErrSchedulerCacheNotReady
+	}
+
+	lifecycleCtx, cancel := context.WithTimeout(ctx, schedulerGroupLifecycleTimeout)
+	defer cancel()
+	lease, acquired, err := s.cache.TryAcquireGroupLifecycleLease(lifecycleCtx, groupID, schedulerGroupLifecycleLeaseTTL)
+	if err != nil {
+		return schedulerGroupLifecyclePlan{}, err
+	}
+	if !acquired {
+		return schedulerGroupLifecyclePlan{}, fmt.Errorf("%w: group=%d", ErrSchedulerGroupLifecycleLeaseBusy, groupID)
+	}
+	leaseHeld := true
+	defer func() {
+		if leaseHeld {
+			retErr = errors.Join(retErr, s.releaseGroupLifecycleLease(lease))
+		}
+	}()
+
+	group, err := s.groupRepo.GetByIDLite(lifecycleCtx, groupID)
+	missing := errors.Is(err, ErrGroupNotFound)
+	if err != nil && !missing {
+		return schedulerGroupLifecyclePlan{}, err
+	}
+	if err == nil && (group == nil || group.ID != groupID || !group.Hydrated) {
+		return schedulerGroupLifecyclePlan{}, fmt.Errorf("untrusted scheduler group lifecycle state: group=%d", groupID)
+	}
+
+	plan = schedulerGroupLifecyclePlan{active: !missing && group.IsActive()}
+	if plan.active {
+		buckets := schedulerBucketsForGroup(groupID)
+		plan.tasks = make([]schedulerBucketWriteTask, 0, len(buckets))
+		for _, bucket := range buckets {
+			token, err := s.cache.ReopenBucket(lifecycleCtx, bucket)
+			if err != nil {
+				return schedulerGroupLifecyclePlan{}, err
+			}
+			plan.tasks = append(plan.tasks, schedulerBucketWriteTask{bucket: bucket, token: token})
+		}
+	} else {
+		registered := knownHistorical
+		if registered == nil {
+			registered, err = s.cache.ListBuckets(lifecycleCtx)
+			if err != nil {
+				return schedulerGroupLifecyclePlan{}, err
+			}
+		}
+		buckets := schedulerBucketsForGroup(groupID)
+		for _, bucket := range registered {
+			if bucket.GroupID == groupID {
+				buckets = append(buckets, bucket)
+			}
+		}
+		for _, bucket := range dedupeBuckets(buckets) {
+			if err := s.cache.RetireBucket(lifecycleCtx, bucket); err != nil {
+				return schedulerGroupLifecyclePlan{}, err
+			}
+		}
+	}
+
+	releaseErr := s.releaseGroupLifecycleLease(lease)
+	leaseHeld = false
+	if releaseErr != nil {
+		return schedulerGroupLifecyclePlan{}, releaseErr
+	}
+	return plan, nil
+}
+
+func (s *SchedulerSnapshotService) releaseGroupLifecycleLease(lease SchedulerGroupLifecycleLease) error {
+	releaseCtx, cancel := context.WithTimeout(context.Background(), schedulerGroupLifecycleReleaseTimeout)
+	defer cancel()
+	return s.cache.ReleaseGroupLifecycleLease(releaseCtx, lease)
+}
+
+func markGroupLifecycleSeen(seen map[batchSeenKey]struct{}, groupID int64) {
+	if seen == nil {
+		return
+	}
+	seen[batchSeenKey{groupID: groupID, lifecycle: true}] = struct{}{}
+	for _, platform := range schedulerSnapshotPlatforms() {
+		seen[batchSeenKey{groupID: groupID, platform: platform}] = struct{}{}
+	}
 }
 
 func (s *SchedulerSnapshotService) rebuildByAccount(ctx context.Context, account *Account, groupIDs []int64, reason string, seen map[batchSeenKey]struct{}) error {
@@ -537,14 +657,34 @@ func (s *SchedulerSnapshotService) rebuildByAccount(ctx context.Context, account
 	return s.rebuildBuckets(ctx, buckets, reason)
 }
 
+func schedulerSnapshotPlatforms() [5]string {
+	return [5]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok}
+}
+
+func schedulerBucketsForGroup(groupID int64) []SchedulerBucket {
+	if groupID <= 0 {
+		return nil
+	}
+	buckets := make([]SchedulerBucket, 0, 12)
+	for _, platform := range schedulerSnapshotPlatforms() {
+		buckets = append(buckets,
+			SchedulerBucket{GroupID: groupID, Platform: platform, Mode: SchedulerModeSingle},
+			SchedulerBucket{GroupID: groupID, Platform: platform, Mode: SchedulerModeForced},
+		)
+		if platform == PlatformAnthropic || platform == PlatformGemini {
+			buckets = append(buckets, SchedulerBucket{GroupID: groupID, Platform: platform, Mode: SchedulerModeMixed})
+		}
+	}
+	return buckets
+}
+
 func (s *SchedulerSnapshotService) rebuildByGroupIDs(ctx context.Context, groupIDs []int64, reason string, seen map[batchSeenKey]struct{}) error {
 	groupIDs = s.normalizeGroupIDs(groupIDs)
 	if len(groupIDs) == 0 {
 		return nil
 	}
-	platforms := []string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok}
 	buckets := make([]SchedulerBucket, 0, len(groupIDs)*12)
-	for _, platform := range platforms {
+	for _, platform := range schedulerSnapshotPlatforms() {
 		buckets = append(buckets, s.bucketsForPlatform(platform, groupIDs, seen)...)
 	}
 	return s.rebuildBuckets(ctx, buckets, reason)
@@ -561,7 +701,7 @@ func (s *SchedulerSnapshotService) bucketsForPlatform(platform string, groupIDs 
 		// in the group, so subsequent rebuilds for the same group+platform within
 		// the same batch are redundant.
 		if seen != nil {
-			key := batchSeenKey{gid, platform}
+			key := batchSeenKey{groupID: gid, platform: platform}
 			if _, exists := seen[key]; exists {
 				continue
 			}
@@ -609,6 +749,10 @@ func (s *SchedulerSnapshotService) prepareBucketWriteTasks(ctx context.Context, 
 }
 
 func (s *SchedulerSnapshotService) rebuildBucketWithToken(ctx context.Context, task schedulerBucketWriteTask, reason string) error {
+	return s.rebuildBucketWithTokenPolicy(ctx, task, reason, false)
+}
+
+func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicy(ctx context.Context, task schedulerBucketWriteTask, reason string, strict bool) error {
 	if s.cache == nil {
 		return ErrSchedulerCacheNotReady
 	}
@@ -618,6 +762,9 @@ func (s *SchedulerSnapshotService) rebuildBucketWithToken(ctx context.Context, t
 		return err
 	}
 	if !ok {
+		if strict {
+			return fmt.Errorf("%w: bucket=%s", ErrSchedulerBucketRebuildBusy, bucket.String())
+		}
 		return nil
 	}
 	defer func() {
@@ -635,6 +782,9 @@ func (s *SchedulerSnapshotService) rebuildBucketWithToken(ctx context.Context, t
 	if err := s.cache.SetSnapshot(rebuildCtx, bucket, task.token, accounts); err != nil {
 		if errors.Is(err, ErrSchedulerBucketRetired) || errors.Is(err, ErrSchedulerBucketWriteFenced) {
 			slog.Debug("[Scheduler] rebuild fenced", "bucket", bucket.String(), "reason", reason)
+			if strict {
+				return err
+			}
 			return nil
 		}
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild cache failed: bucket=%s reason=%s err=%v", bucket.String(), reason, err)
