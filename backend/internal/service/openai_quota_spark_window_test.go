@@ -237,6 +237,61 @@ func TestResetCreditAgentIdentityUsesAssertionAndRecoversInvalidTaskOnce(t *test
 	require.Equal(t, []int64{account.ID}, invalidator.accountIDs)
 }
 
+func TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	require.NoError(t, err)
+	account := &Account{
+		ID:       202,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"auth_mode":          OpenAIAuthModeAgentIdentity,
+			"agent_runtime_id":   "runtime-reset-concurrent",
+			"agent_private_key":  base64.StdEncoding.EncodeToString(der),
+			"task_id":            "task-reset-old",
+			"chatgpt_account_id": "account-reset-concurrent",
+		},
+	}
+	repo := &stubQuotaAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	resetCalls := 0
+	registerCalls := 0
+	var assertions []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		if strings.Contains(r.URL.Path, "/task/register") {
+			registerCalls++
+			_, _ = w.Write([]byte(`{"task_id":"task-reset-unexpected"}`))
+			return
+		}
+		resetCalls++
+		assertions = append(assertions, r.Header.Get("authorization"))
+		if resetCalls == 1 {
+			credentials := shallowCopyMap(account.Credentials)
+			credentials["task_id"] = "task-reset-concurrent"
+			account.Credentials = credentials
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"code":"invalid_task_id"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":"ok","windows_reset":1}`))
+	}))
+	defer srv.Close()
+	oldBase := openAIAgentIdentityAuthAPIBaseURL
+	openAIAgentIdentityAuthAPIBaseURL = srv.URL
+	t.Cleanup(func() { openAIAgentIdentityAuthAPIBaseURL = oldBase })
+
+	svc := NewOpenAIQuotaService(repo, nil, nil, newQuotaRedirectingFactory(srv))
+	result, err := svc.ResetCredit(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.Equal(t, "ok", result.Code)
+	require.Equal(t, 2, resetCalls)
+	require.Zero(t, registerCalls)
+	require.Equal(t, "task-reset-old", decodeAgentAssertionTask(t, assertions[0]))
+	require.Equal(t, "task-reset-concurrent", decodeAgentAssertionTask(t, assertions[1]))
+}
+
 // ── Part B: prepareUpstreamCall 影子 resolve ──────────────────────────────
 
 // TestPrepareUpstreamCallShadowResolve 验证影子账号（200）QueryUsage 时:

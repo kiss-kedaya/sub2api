@@ -158,7 +158,7 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 
 	var payload OpenAIQuotaUsage
 	for recovered := false; ; {
-		quotaHeaders, headerErr := s.buildCodexQuotaHeaders(callCtx, accountID, accessToken, chatGPTAccountID, fedRAMP)
+		quotaHeaders, expectedTaskID, headerErr := s.buildCodexQuotaHeaders(callCtx, accountID, accessToken, chatGPTAccountID, fedRAMP)
 		if headerErr != nil {
 			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_QUOTA_AUTH_FAILED", "failed to build upstream authentication: %v", headerErr)
 		}
@@ -173,7 +173,7 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 		if !resp.IsSuccessState() {
 			if agentIdentity && !recovered && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, []byte(resp.String())) {
 				recovered = true
-				if err := s.recoverAgentIdentityTask(ctx, accountID); err != nil {
+				if err := s.recoverAgentIdentityTask(ctx, accountID, expectedTaskID); err != nil {
 					return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_QUOTA_AUTH_FAILED", "agent identity task recovery failed: %v", err)
 				}
 				continue
@@ -207,7 +207,7 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 }
 
 func (s *OpenAIQuotaService) queryResetCreditDetails(ctx context.Context, client *req.Client, accessToken, chatGPTAccountID string, fedRAMP bool, accountID int64) *openAIRateLimitResetCreditDetails {
-	quotaHeaders, headerErr := s.buildCodexQuotaHeaders(ctx, accountID, accessToken, chatGPTAccountID, fedRAMP)
+	quotaHeaders, _, headerErr := s.buildCodexQuotaHeaders(ctx, accountID, accessToken, chatGPTAccountID, fedRAMP)
 	if headerErr != nil {
 		slog.Warn("openai_quota_reset_credit_details_auth_failed", "account_id", accountID, "error", headerErr)
 		return nil
@@ -281,7 +281,7 @@ func (s *OpenAIQuotaService) ResetCredit(ctx context.Context, accountID int64) (
 
 	var payload OpenAIQuotaResetResult
 	for recovered := false; ; {
-		headers, headerErr := s.buildCodexQuotaHeaders(callCtx, accountID, accessToken, chatGPTAccountID, fedRAMP)
+		headers, expectedTaskID, headerErr := s.buildCodexQuotaHeaders(callCtx, accountID, accessToken, chatGPTAccountID, fedRAMP)
 		if headerErr != nil {
 			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_QUOTA_AUTH_FAILED", "failed to build upstream authentication: %v", headerErr)
 		}
@@ -298,7 +298,7 @@ func (s *OpenAIQuotaService) ResetCredit(ctx context.Context, accountID int64) (
 		if !resp.IsSuccessState() {
 			if agentIdentity && !recovered && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, []byte(resp.String())) {
 				recovered = true
-				if err := s.recoverAgentIdentityTask(ctx, accountID); err != nil {
+				if err := s.recoverAgentIdentityTask(ctx, accountID, expectedTaskID); err != nil {
 					return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_QUOTA_AUTH_FAILED", "agent identity task recovery failed: %v", err)
 				}
 				continue
@@ -394,7 +394,7 @@ func (s *OpenAIQuotaService) prepareUpstreamCall(ctx context.Context, accountID 
 	return accessToken, chatGPTAccountID, proxyURL, fedRAMP, nil
 }
 
-func (s *OpenAIQuotaService) recoverAgentIdentityTask(ctx context.Context, accountID int64) error {
+func (s *OpenAIQuotaService) recoverAgentIdentityTask(ctx context.Context, accountID int64, expectedTaskID string) error {
 	if s == nil || s.accountRepo == nil {
 		return fmt.Errorf("account repository is unavailable")
 	}
@@ -411,7 +411,7 @@ func (s *OpenAIQuotaService) recoverAgentIdentityTask(ctx context.Context, accou
 	if !account.IsOpenAIAgentIdentity() {
 		return nil
 	}
-	return ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account, account.GetCredential("task_id"))
+	return ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account, expectedTaskID)
 }
 
 func (s *OpenAIQuotaService) isAgentIdentityAccount(ctx context.Context, accountID int64) bool {
@@ -431,41 +431,41 @@ func (s *OpenAIQuotaService) isAgentIdentityAccount(ctx context.Context, account
 	return account.IsOpenAIAgentIdentity()
 }
 
-func (s *OpenAIQuotaService) buildCodexQuotaHeaders(ctx context.Context, accountID int64, accessToken, chatGPTAccountID string, fedRAMP bool) (map[string]string, error) {
+func (s *OpenAIQuotaService) buildCodexQuotaHeaders(ctx context.Context, accountID int64, accessToken, chatGPTAccountID string, fedRAMP bool) (map[string]string, string, error) {
 	headers := buildCodexCommonHeaders(accessToken, chatGPTAccountID, fedRAMP)
 	if s == nil || s.accountRepo == nil {
-		return headers, nil
+		return headers, "", nil
 	}
 	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil || account == nil {
 		if strings.TrimSpace(accessToken) == "" {
-			return nil, fmt.Errorf("agent identity account credentials are unavailable")
+			return nil, "", fmt.Errorf("agent identity account credentials are unavailable")
 		}
-		return headers, nil
+		return headers, "", nil
 	}
 	if account.IsShadow() {
 		if resolved, resolveErr := resolveCredentialAccount(ctx, s.accountRepo, account); resolveErr == nil && resolved != nil {
 			account = resolved
 		} else if strings.TrimSpace(accessToken) == "" {
-			return nil, fmt.Errorf("agent identity shadow credentials are unavailable")
+			return nil, "", fmt.Errorf("agent identity shadow credentials are unavailable")
 		}
 	}
 	if !account.IsOpenAIAgentIdentity() {
-		return headers, nil
+		return headers, "", nil
 	}
 	if err := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account, ""); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	key, err := agentIdentityKeyFromAccount(account)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	assertion, err := buildAgentAssertion(key, time.Now())
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	headers["authorization"] = assertion
-	return headers, nil
+	return headers, key.taskID, nil
 }
 
 func (s *OpenAIQuotaService) redactQuotaErrorBody(ctx context.Context, accountID int64, body string) string {
