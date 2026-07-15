@@ -808,3 +808,264 @@ func TestChatCompletionsToAnthropicStreamState_ToolCallNameArrivesLate(t *testin
 	}
 	require.Equal(t, "late_tool", toolName)
 }
+
+// assembleToolUseBlocks rebuilds tool_use blocks from a stream the way an
+// Anthropic client does: content_block_start announces id/name, input_json_delta
+// fragments concatenate into the input JSON.
+type assembledToolUse struct {
+	ID    string
+	Name  string
+	Input string
+}
+
+func assembleToolUseBlocks(events []AnthropicStreamEvent) []assembledToolUse {
+	blockByIdx := map[int]int{} // anthropic block index → position in out
+	var out []assembledToolUse
+	for _, e := range events {
+		switch e.Type {
+		case "content_block_start":
+			if e.ContentBlock != nil && e.ContentBlock.Type == "tool_use" && e.Index != nil {
+				blockByIdx[*e.Index] = len(out)
+				out = append(out, assembledToolUse{ID: e.ContentBlock.ID, Name: e.ContentBlock.Name})
+			}
+		case "content_block_delta":
+			if e.Delta != nil && e.Delta.Type == "input_json_delta" && e.Index != nil {
+				if pos, ok := blockByIdx[*e.Index]; ok {
+					out[pos].Input += e.Delta.PartialJSON
+				}
+			}
+		}
+	}
+	return out
+}
+
+func TestChatCompletionsToAnthropicStreamState_ToolCallArgsArriveBeforeName(t *testing.T) {
+	// Some upstreams stream argument fragments before the tool name. The
+	// fragments buffered while the announcement is deferred must be flushed
+	// with the content_block_start, so the client rebuilds complete JSON.
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_early","function":{"arguments":"{\"city\":"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"SF\""}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"get_weather","arguments":"}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+	})
+
+	tools := assembleToolUseBlocks(events)
+	require.Len(t, tools, 1)
+	require.Equal(t, "call_early", tools[0].ID)
+	require.Equal(t, "get_weather", tools[0].Name)
+	require.JSONEq(t, `{"city":"SF"}`, tools[0].Input)
+
+	// No delta may precede the block's content_block_start.
+	started := map[int]bool{}
+	for _, e := range events {
+		switch e.Type {
+		case "content_block_start":
+			started[*e.Index] = true
+		case "content_block_delta":
+			require.True(t, started[*e.Index], "delta before content_block_start on index %d", *e.Index)
+		}
+	}
+}
+
+func TestChatCompletionsToAnthropicStreamState_ToolCallNameNeverArrives(t *testing.T) {
+	// If the name never arrives, the tool is announced at finalize with an
+	// empty name (like the double-conversion path) so its arguments are not
+	// silently dropped — stop_reason still reports tool_use.
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_anon","function":{"arguments":"{\"a\":1}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+	})
+
+	tools := assembleToolUseBlocks(events)
+	require.Len(t, tools, 1)
+	require.Equal(t, "call_anon", tools[0].ID)
+	require.Equal(t, "", tools[0].Name)
+	require.JSONEq(t, `{"a":1}`, tools[0].Input)
+
+	// Block lifecycle must stay balanced and terminate before message_stop.
+	types := anthropicEventTypes(events)
+	require.Equal(t, []string{
+		"message_start",
+		"content_block_start",
+		"content_block_delta",
+		"content_block_stop",
+		"message_delta",
+		"message_stop",
+	}, types)
+}
+
+func TestChatCompletionsToAnthropicStreamState_EmptyArgsToolEmitsPlaceholderDelta(t *testing.T) {
+	// A tool call whose arguments never arrive gets a final input_json_delta
+	// "{}" before its stop — the double-conversion path normalizes empty
+	// arguments to "{}", and some clients assemble input only from deltas.
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_empty","type":"function","function":{"name":"noop","arguments":""}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+	})
+
+	tools := assembleToolUseBlocks(events)
+	require.Len(t, tools, 1)
+	require.Equal(t, "noop", tools[0].Name)
+	require.JSONEq(t, `{}`, tools[0].Input)
+}
+
+func TestAnthropicToChatCompletionsRequest_UserArrayContentFoldsToString(t *testing.T) {
+	// Text-only array content folds into a single string joined with "\n\n",
+	// like the double-conversion path — strict chat upstreams reject array
+	// content when no image forces the parts form.
+	req := &AnthropicRequest{
+		Model:     "deepseek-v4-pro",
+		MaxTokens: 100,
+		Messages: []AnthropicMessage{
+			{Role: "user", Content: json.RawMessage(`[{"type":"text","text":"first"},{"type":"text","text":"second"}]`)},
+		},
+	}
+
+	out, err := AnthropicToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.Len(t, out.Messages, 1)
+	require.Equal(t, `"first\n\nsecond"`, string(out.Messages[0].Content))
+}
+
+func TestDirectBridge_RequestMatchesDoubleConversion_ArrayUserContent(t *testing.T) {
+	// Array-form user content: text-only folds to a string, image-bearing stays
+	// in parts form — both must match the double-conversion chain exactly.
+	req := &AnthropicRequest{
+		Model:     "deepseek-v4-pro",
+		MaxTokens: 100,
+		Messages: []AnthropicMessage{
+			{Role: "user", Content: json.RawMessage(`[{"type":"text","text":"first"},{"type":"text","text":"second"}]`)},
+			{Role: "assistant", Content: json.RawMessage(`"ok"`)},
+			{Role: "user", Content: json.RawMessage(`[{"type":"text","text":"look"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aGVsbG8="}}]`)},
+		},
+	}
+
+	direct, err := AnthropicToChatCompletionsRequest(req)
+	require.NoError(t, err)
+
+	responsesReq, err := AnthropicToResponses(req)
+	require.NoError(t, err)
+	double, err := ResponsesToChatCompletionsRequest(responsesReq)
+	require.NoError(t, err)
+
+	require.Len(t, direct.Messages, len(double.Messages), "message count mismatch")
+	for i := range direct.Messages {
+		require.Equal(t, double.Messages[i].Role, direct.Messages[i].Role, "msg %d role mismatch", i)
+		var dContent, dblContent any
+		require.NoError(t, json.Unmarshal(double.Messages[i].Content, &dblContent))
+		require.NoError(t, json.Unmarshal(direct.Messages[i].Content, &dContent))
+		require.Equal(t, dblContent, dContent, "msg %d content mismatch", i)
+	}
+}
+
+func TestDirectBridge_NonStreamingMatchesDoubleConversion_CacheWriteTokens(t *testing.T) {
+	// cache_write_tokens and cache_creation_tokens are alternate spellings, not
+	// additive — when both are set, the double-conversion path prefers write.
+	resp := &ChatCompletionsResponse{
+		ID:    "chatcmpl-cache",
+		Model: "deepseek-v4-pro",
+		Choices: []ChatChoice{{
+			Message:      ChatMessage{Role: "assistant", Content: json.RawMessage(`"hi"`)},
+			FinishReason: "stop",
+		}},
+		Usage: &ChatUsage{
+			PromptTokens:     100,
+			CompletionTokens: 10,
+			TotalTokens:      110,
+			PromptTokensDetails: &ChatTokenDetails{
+				CachedTokens:        20,
+				CacheCreationTokens: 7,
+				CacheWriteTokens:    9,
+			},
+		},
+	}
+
+	direct := ChatCompletionsResponseToAnthropic(resp, "claude-sonnet-4-20250514")
+
+	responsesResp := ChatCompletionsResponseToResponses(resp, "claude-sonnet-4-20250514", nil, false, nil)
+	double := ResponsesToAnthropic(responsesResp, "claude-sonnet-4-20250514")
+
+	require.Equal(t, double.Usage.InputTokens, direct.Usage.InputTokens)
+	require.Equal(t, double.Usage.OutputTokens, direct.Usage.OutputTokens)
+	require.Equal(t, double.Usage.CacheReadInputTokens, direct.Usage.CacheReadInputTokens)
+	require.Equal(t, double.Usage.CacheCreationInputTokens, direct.Usage.CacheCreationInputTokens)
+	require.Equal(t, 9, direct.Usage.CacheCreationInputTokens)
+}
+
+func TestChatCompletionsResponseToAnthropic_GeneratesIDWhenMissing(t *testing.T) {
+	resp := &ChatCompletionsResponse{
+		Model: "deepseek-v4-pro",
+		Choices: []ChatChoice{{
+			Message:      ChatMessage{Role: "assistant", Content: json.RawMessage(`"hi"`)},
+			FinishReason: "stop",
+		}},
+	}
+
+	out := ChatCompletionsResponseToAnthropic(resp, "claude-sonnet-4-20250514")
+	require.NotEmpty(t, out.ID, "response id must be generated when the upstream omits one")
+}
+
+func TestAnthropicToChatCompletionsRequest_ToolChoiceUndeclaredDropped(t *testing.T) {
+	// A named tool_choice pointing at a dropped/unknown tool is not forwarded —
+	// chat upstreams 400 on tool_choice referencing an undeclared tool.
+	base := AnthropicRequest{
+		Model:     "deepseek-v4-pro",
+		MaxTokens: 100,
+		Tools: []AnthropicTool{
+			{Name: "get_weather", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			{Name: "web_search_20250305", Type: "web_search_20250305", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		},
+		Messages: []AnthropicMessage{
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+		},
+	}
+
+	undeclared := base
+	undeclared.ToolChoice = json.RawMessage(`{"type":"tool","name":"nonexistent"}`)
+	out, err := AnthropicToChatCompletionsRequest(&undeclared)
+	require.NoError(t, err)
+	require.Empty(t, out.ToolChoice, "tool_choice for an undeclared tool must be dropped")
+
+	droppedServerTool := base
+	droppedServerTool.ToolChoice = json.RawMessage(`{"type":"tool","name":"web_search_20250305"}`)
+	out, err = AnthropicToChatCompletionsRequest(&droppedServerTool)
+	require.NoError(t, err)
+	require.Empty(t, out.ToolChoice, "tool_choice for a dropped server tool must be dropped")
+
+	unknownType := base
+	unknownType.ToolChoice = json.RawMessage(`{"type":"mystery"}`)
+	out, err = AnthropicToChatCompletionsRequest(&unknownType)
+	require.NoError(t, err)
+	require.Empty(t, out.ToolChoice, "unknown tool_choice types must be dropped")
+
+	declared := base
+	declared.ToolChoice = json.RawMessage(`{"type":"tool","name":"get_weather"}`)
+	out, err = AnthropicToChatCompletionsRequest(&declared)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"function","function":{"name":"get_weather"}}`, string(out.ToolChoice))
+}
+
+func TestChatCompletionsResponseToAnthropic_ContentFilterWithToolUse(t *testing.T) {
+	// content_filter (and unknown finish reasons) derive stop_reason from the
+	// blocks, like the double-conversion path.
+	resp := &ChatCompletionsResponse{
+		ID:    "chatcmpl-cf",
+		Model: "deepseek-v4-pro",
+		Choices: []ChatChoice{{
+			Message: ChatMessage{
+				Role:    "assistant",
+				Content: json.RawMessage(`"partial"`),
+				ToolCalls: []ChatToolCall{{
+					ID:       "call_cf",
+					Type:     "function",
+					Function: ChatFunctionCall{Name: "search", Arguments: `{"q":"x"}`},
+				}},
+			},
+			FinishReason: "content_filter",
+		}},
+	}
+
+	out := ChatCompletionsResponseToAnthropic(resp, "claude-sonnet-4-20250514")
+	require.Equal(t, "tool_use", out.StopReason)
+}
