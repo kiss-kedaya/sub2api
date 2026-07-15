@@ -258,7 +258,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	// for non-composer models, so they would be silently dropped. Route them to
 	// Responses even when no prompt-cache identity is available.
 	hasImageInput := openAIJSONValueMayContainImageInput(gjson.GetBytes(body, "messages"))
-	if !grokChatResponsesRuntimeEligible(upstreamModel, cacheIdentity) && !(hasImageInput && strings.TrimSpace(upstreamModel) == "grok-4.5") {
+	if !grokChatResponsesRuntimeEligible(upstreamModel, cacheIdentity) && (!hasImageInput || strings.TrimSpace(upstreamModel) != "grok-4.5") {
 		return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
 
