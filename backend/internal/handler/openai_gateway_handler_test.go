@@ -96,6 +96,19 @@ func TestOpenAIHandleStreamingAwareError_JSONEscaping(t *testing.T) {
 	}
 }
 
+func TestOpenAIForwardSucceededForScheduling(t *testing.T) {
+	require.True(t, openAIForwardSucceededForScheduling(nil))
+	require.True(t, openAIForwardSucceededForScheduling(&service.OpenAIForwardResult{}))
+	require.True(t, openAIForwardSucceededForScheduling(&service.OpenAIForwardResult{
+		OpenAIWSMode:          true,
+		UpstreamTerminalEvent: "response.completed",
+	}))
+	require.False(t, openAIForwardSucceededForScheduling(&service.OpenAIForwardResult{
+		OpenAIWSMode:          true,
+		UpstreamTerminalEvent: "response.failed",
+	}))
+}
+
 func TestResolveOpenAIMessagesMetadataSession_DoesNotDerivePromptCacheKey(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-5","metadata":{"user_id":"claude-code-session"},"messages":[{"role":"user","content":"hello"}]}`)
 
