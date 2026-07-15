@@ -297,10 +297,62 @@ func TestGrokFreeMessagesFunctionToolCacheRouteRequiresKnownFreeTier(t *testing.
 			wantMix: true,
 		},
 		{
+			name: "free successful billing has blank plan",
+			account: func() *Account {
+				a := healthyGrokOAuthGatewayTestAccount(9111, "access-token")
+				a.Extra = map[string]any{grokBillingExtraKey: map[string]any{
+					"status_code":        http.StatusOK,
+					"source":             "billing_probe",
+					"monthly_updated_at": "2026-07-15T05:00:00Z",
+				}}
+				return a
+			}(),
+			wantMix: true,
+		},
+		{
+			name: "free rolling token quota",
+			account: func() *Account {
+				a := healthyGrokOAuthGatewayTestAccount(9112, "access-token")
+				a.Extra = map[string]any{grokQuotaSnapshotExtraKey: map[string]any{
+					"headers_observed": true,
+					"tokens":           map[string]any{"limit": grokFreeRolling24hTokenLimit},
+				}}
+				return a
+			}(),
+			wantMix: true,
+		},
+		{
 			name: "supergrok remains unchanged",
 			account: func() *Account {
 				a := healthyGrokOAuthGatewayTestAccount(912, "access-token")
 				a.Credentials["subscription_tier"] = "supergrok"
+				return a
+			}(),
+		},
+		{
+			name: "paid billing overrides stale free quota",
+			account: func() *Account {
+				a := healthyGrokOAuthGatewayTestAccount(9121, "access-token")
+				a.Extra = map[string]any{
+					grokBillingExtraKey: map[string]any{"plan": "SuperGrok", "status_code": http.StatusOK},
+					grokQuotaSnapshotExtraKey: map[string]any{
+						"headers_observed": true,
+						"tokens":           map[string]any{"limit": grokFreeRolling24hTokenLimit},
+					},
+				}
+				return a
+			}(),
+		},
+		{
+			name: "partial billing without monthly evidence remains unknown",
+			account: func() *Account {
+				a := healthyGrokOAuthGatewayTestAccount(9122, "access-token")
+				a.Extra = map[string]any{grokBillingExtraKey: map[string]any{
+					"status_code":    http.StatusOK,
+					"source":         "billing_probe",
+					"partial":        true,
+					"failed_windows": []string{"monthly"},
+				}}
 				return a
 			}(),
 		},
