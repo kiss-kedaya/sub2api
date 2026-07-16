@@ -112,12 +112,12 @@ func TestSessionBindingHash(t *testing.T) {
 
 func TestParseAuditLogRetentionDays(t *testing.T) {
 	cases := map[string]int{
-		"":        defaultAuditLogRetentionDays,
-		"abc":     defaultAuditLogRetentionDays,
-		"90":      90,
-		"0":       0,
-		"-1":      0,
-		"  30  ":  30,
+		"":       defaultAuditLogRetentionDays,
+		"abc":    defaultAuditLogRetentionDays,
+		"90":     90,
+		"0":      0,
+		"-1":     0,
+		"  30  ": 30,
 	}
 	for in, want := range cases {
 		if got := parseAuditLogRetentionDays(in); got != want {
