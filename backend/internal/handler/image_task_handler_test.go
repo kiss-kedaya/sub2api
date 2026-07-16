@@ -47,7 +47,7 @@ func (s *asyncImageMemoryStore) Get(_ context.Context, id string) (*service.Imag
 func TestAsyncImageHandlerSubmitAndPoll(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
-	tasks := service.NewImageTaskServiceWithOptions(store, time.Hour, time.Minute)
+	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
 	release := make(chan struct{})
 	h := &AsyncImageHandler{tasks: tasks}
 	h.execute = func(_ string, c *gin.Context) {
@@ -104,4 +104,42 @@ func TestAsyncImageHandlerSubmitAndPoll(t *testing.T) {
 	require.Equal(t, "no-store", pollWriter.Header().Get("Cache-Control"))
 	require.Empty(t, pollWriter.Header().Get("Retry-After"))
 	require.Contains(t, pollWriter.Body.String(), "https://example.test/image.png")
+}
+
+// When object storage is not configured the feature is fully disabled: the
+// endpoints must return 404 without creating a task or writing to Redis.
+func TestAsyncImageHandlerDisabledReturns404(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+	tasks := service.NewImageTaskServiceWithOptions(store, time.Hour, time.Minute) // enabled == false
+	h := &AsyncImageHandler{tasks: tasks}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		groupID := int64(3)
+		c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+			ID:      9,
+			UserID:  7,
+			GroupID: &groupID,
+			Group:   &service.Group{ID: groupID, Platform: service.PlatformOpenAI, AllowImageGeneration: true},
+		})
+		c.Next()
+	})
+	router.POST("/v1/images/generations/async", h.Submit)
+	router.GET("/v1/images/tasks/:task_id", h.Get)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations/async", strings.NewReader(`{"model":"gpt-image-1","prompt":"cat"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Contains(t, w.Body.String(), "not enabled")
+
+	pollReq := httptest.NewRequest(http.MethodGet, "/v1/images/tasks/imgtask_missing", nil)
+	pollWriter := httptest.NewRecorder()
+	router.ServeHTTP(pollWriter, pollReq)
+	require.Equal(t, http.StatusNotFound, pollWriter.Code)
+
+	// No task was created / persisted.
+	require.Empty(t, store.tasks)
 }
