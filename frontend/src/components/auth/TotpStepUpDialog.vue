@@ -111,6 +111,7 @@ async function submit(otp: string) {
   try {
     await totpAPI.stepUp(otp)
     verifying.value = false
+    resetInputs()
     props.controller.onVerified()
   } catch (err: any) {
     verifying.value = false
