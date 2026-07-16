@@ -262,9 +262,9 @@ func (s *OpenAIGatewayService) readUpstreamErrorBody(resp *http.Response) []byte
 	return body
 }
 
-func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, resp *http.Response, account *Account, responseBody []byte, requestedModel ...string) {
-	if len(requestedModel) > 0 {
-		s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, responseBody, requestedModel[0])
+func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, resp *http.Response, account *Account, responseBody []byte, canonicalModel ...string) {
+	if len(canonicalModel) > 0 {
+		s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, responseBody, canonicalModel[0])
 		return
 	}
 	s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, responseBody)
@@ -385,6 +385,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	}
 	if reqModel == "" {
 		reqModel, _, _ = extractOpenAIRequestMetaFromBody(requestBody)
+		reqModel = canonicalOpenAIAccountSchedulingModel(account, reqModel)
 	}
 	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
 	kind := "http_error"
