@@ -180,6 +180,72 @@ func TestPromptSnapshotEmptyAndLongUnicodeInput(t *testing.T) {
 	}
 }
 
+func TestPromptSnapshotIncludesClientControlledInstructions(t *testing.T) {
+	tests := []struct {
+		name, protocol, body string
+		want                 []string
+	}{
+		{
+			name:     "openai system and developer",
+			protocol: "openai_chat_completions",
+			body:     `{"messages":[{"role":"system","content":"system jailbreak"},{"role":"developer","content":"developer policy"},{"role":"assistant","content":"ignore"},{"role":"user","content":"hello"}]}`,
+			want:     []string{"system jailbreak", "developer policy", "hello"},
+		},
+		{
+			name:     "openai system only",
+			protocol: "openai_chat_completions",
+			body:     `{"messages":[{"role":"system","content":"only system instruction"}]}`,
+			want:     []string{"only system instruction"},
+		},
+		{
+			name:     "responses instructions",
+			protocol: "openai_responses",
+			body:     `{"instructions":"response instructions","input":[{"role":"user","content":[{"type":"input_text","text":"user turn"}]}]}`,
+			want:     []string{"response instructions", "user turn"},
+		},
+		{
+			name:     "anthropic system",
+			protocol: "anthropic_messages",
+			body:     `{"system":"claude system","messages":[{"role":"user","content":[{"type":"text","text":"claude user"}]}]}`,
+			want:     []string{"claude system", "claude user"},
+		},
+		{
+			name:     "gemini systemInstruction",
+			protocol: "gemini",
+			body:     `{"systemInstruction":{"parts":[{"text":"gemini system"}]},"contents":[{"role":"user","parts":[{"text":"gemini user"}]}]}`,
+			want:     []string{"gemini system", "gemini user"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot, err := ExtractPromptSnapshot(Request{Protocol: tt.protocol, Body: []byte(tt.body)})
+			require.NoError(t, err)
+			for _, expected := range tt.want {
+				require.Contains(t, snapshot.ScanText, expected)
+			}
+			require.NotContains(t, snapshot.ScanText, "ignore")
+		})
+	}
+}
+
+func TestBuildPromptPreviewWithholdsMajorityOfOrdinaryText(t *testing.T) {
+	prompt := strings.Repeat("机密业务提示词内容", 40)
+	preview := BuildPromptPreview(prompt, DefaultPromptPreviewMaxRunes)
+	require.NotEmpty(t, preview)
+	require.Contains(t, preview, "***")
+	require.LessOrEqual(t, utf8.RuneCountInString(strings.TrimSuffix(strings.TrimSuffix(preview, "…"), "***")), 24)
+	require.Less(t, utf8.RuneCountInString(preview), utf8.RuneCountInString(prompt)/2)
+	require.NotContains(t, preview, prompt)
+}
+
+func TestBuildPromptPreviewFullyMasksShortUnlabelledSecrets(t *testing.T) {
+	require.Equal(t, "***", BuildPromptPreview("short-secret-value!!", DefaultPromptPreviewMaxRunes))
+	require.Equal(t, "***", BuildPromptPreview(strings.Repeat("a", 31), DefaultPromptPreviewMaxRunes))
+	partial := BuildPromptPreview(strings.Repeat("b", 32), DefaultPromptPreviewMaxRunes)
+	require.True(t, strings.HasPrefix(partial, "b"))
+	require.Contains(t, partial, "***")
+}
+
 func mustJSON(t *testing.T, value string) []byte {
 	t.Helper()
 	raw, err := json.Marshal(value)

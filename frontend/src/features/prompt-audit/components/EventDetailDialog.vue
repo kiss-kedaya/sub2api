@@ -45,7 +45,8 @@
         <dt class="text-gray-500">Config</dt><dd>v{{ event.config_version }}</dd>
         <dt class="text-gray-500">Chunks</dt><dd>{{ event.chunk_total }}</dd>
         <dt class="text-gray-500">Latency</dt><dd>{{ event.latency_ms }} ms</dd>
-        <dt class="text-gray-500">Protocol</dt><dd>{{ event.snapshot.protocol }} · {{ event.snapshot.endpoint }} · {{ event.snapshot.stage }}</dd>
+        <dt class="text-gray-500">{{ t('admin.promptAudit.events.stage') }}</dt><dd>{{ event.snapshot.stage || 'http' }}</dd>
+        <dt class="text-gray-500">Protocol</dt><dd>{{ event.snapshot.protocol }} · {{ event.snapshot.endpoint }}</dd>
       </dl>
     </div>
   </BaseDialog>

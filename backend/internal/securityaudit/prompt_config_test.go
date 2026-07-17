@@ -1,6 +1,7 @@
 package securityaudit
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -98,15 +99,36 @@ func TestConfigManagerColdStartOnlyFailsClosedForExplicitBlockingIntent(t *testi
 	manager.observeExpectedState(`{"enabled":true,"blocking_enabled":false,"config_version":42}`, true)
 	require.Equal(t, int64(42), manager.expected.Load())
 	require.Equal(t, ModeOff, manager.EffectiveMode(), "an async config version must not imply blocking")
+	require.False(t, manager.BlockingActivationDegraded())
 
 	manager.observeExpectedState(`{"enabled":true,"blocking_enabled":true,"config_version":43}`, false)
 	require.Equal(t, ModeOff, manager.EffectiveMode(), "the global risk-control switch still gates blocking")
 
 	manager.observeExpectedState(`{"enabled":true,"blocking_enabled":true,"config_version":44}`, true)
 	require.Equal(t, ModeBlocking, manager.EffectiveMode())
+	require.True(t, manager.BlockingActivationDegraded())
 
 	manager.observeExpectedState(`{"enabled":true`, true)
 	require.Equal(t, ModeBlocking, manager.EffectiveMode(), "undecodable storage must not erase the last known strict intent")
+}
+
+func TestConfigManagerStaleWeakerSnapshotFailsClosedWhenBlockingExpected(t *testing.T) {
+	manager := &ConfigManager{}
+	async := ActiveConfig{RiskControlEnabled: true, Enabled: true, BlockingEnabled: false, ConfigVersion: 1}
+	manager.snapshot.Store(&activeConfigSnapshot{active: async, storage: DefaultStorageConfig(), loadedAt: fixedClock{}.Now()})
+	manager.expected.Store(2)
+	manager.expectedBlocking.Store(true)
+
+	require.True(t, manager.BlockingActivationDegraded())
+	require.Equal(t, ModeBlocking, manager.EffectiveMode())
+
+	service := &PromptService{config: manager, evaluator: NewGuardEvaluator(nil, nil, nil)}
+	decision, err := service.Evaluate(context.Background(), Request{Protocol: "openai_chat_completions", Body: []byte(`{"messages":[{"role":"user","content":"hi"}]}`)})
+	require.Error(t, err)
+	require.Nil(t, decision)
+	var guardErr *GuardError
+	require.ErrorAs(t, err, &guardErr)
+	require.Equal(t, ErrorCodeUnavailable, guardErr.Code)
 }
 
 func TestParseLegacyConfigDefaultsMissingFieldsWithoutEnablingBlocking(t *testing.T) {

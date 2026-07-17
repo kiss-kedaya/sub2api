@@ -42,20 +42,24 @@ func ExtractPromptSnapshot(req Request) (PromptSnapshot, error) {
 		UserEmailSnapshot: req.UserEmail, APIKeyID: req.APIKeyID, APIKeyNameSnapshot: req.APIKeyName,
 		GroupID: cloneInt64Ptr(req.GroupID), GroupName: req.GroupName, Provider: req.Provider,
 		Endpoint: req.Endpoint, Protocol: req.Protocol, Model: req.Model,
-		PromptHash: hex.EncodeToString(digest[:]), RedactedPreview: BuildPromptPreview(scanText, 480),
+		PromptHash: hex.EncodeToString(digest[:]), RedactedPreview: BuildPromptPreview(scanText, DefaultPromptPreviewMaxRunes),
 		PromptLength: utf8.RuneCountInString(scanText), MessageCount: len(segments), Stage: stage,
 		ScanText: scanText,
 	}, nil
 }
+
+// DefaultPromptPreviewMaxRunes caps how much sanitized prompt text may be
+// considered before BuildPromptPreview withholds the majority for storage/UI.
+const DefaultPromptPreviewMaxRunes = 96
 
 func extractProtocolSegments(protocol string, document any) []string {
 	root, _ := document.(map[string]any)
 	protocol = strings.ToLower(strings.TrimSpace(protocol))
 	switch protocol {
 	case "openai_chat_completions", "openai_chat", "chat_completions":
-		return extractMessages(root["messages"], "user")
+		return extractChatLikeSegments(root)
 	case "anthropic_messages", "claude_messages", "messages":
-		return extractMessages(root["messages"], "user")
+		return append(extractAnthropicSystem(root["system"]), extractMessages(root["messages"], clientInstructionRoles...)...)
 	case "gemini", "gemini_generate_content":
 		return extractGeminiRoot(root)
 	case "openai_responses", "responses", "responses_websocket":
@@ -64,21 +68,21 @@ func extractProtocolSegments(protocol string, document any) []string {
 				return nil
 			}
 			if input, exists := root["input"]; exists && input != nil {
-				return extractResponses(input)
+				return append(extractInstructions(root["instructions"]), extractResponses(input)...)
 			}
 			if response, ok := root["response"].(map[string]any); ok {
-				return extractResponses(response["input"])
+				return append(extractInstructions(response["instructions"]), extractResponses(response["input"])...)
 			}
-			return nil
+			return extractInstructions(root["instructions"])
 		}
-		return extractResponses(root["input"])
+		return append(extractInstructions(root["instructions"]), extractResponses(root["input"])...)
 	case "openai_images", "grok_media", "media", "images":
 		return extractMediaPrompts(root)
 	default:
-		if messages := extractMessages(root["messages"], "user"); len(messages) > 0 {
-			return messages
+		if segments := extractChatLikeSegments(root); len(segments) > 0 {
+			return segments
 		}
-		if responses := extractResponses(root["input"]); len(responses) > 0 {
+		if responses := append(extractInstructions(root["instructions"]), extractResponses(root["input"])...); len(responses) > 0 {
 			return responses
 		}
 		if gemini := extractGeminiRoot(root); len(gemini) > 0 {
@@ -88,15 +92,32 @@ func extractProtocolSegments(protocol string, document any) []string {
 	}
 }
 
-func extractMessages(value any, wantedRole string) []string {
+var clientInstructionRoles = []string{"user", "system", "developer"}
+
+func extractChatLikeSegments(root map[string]any) []string {
+	if root == nil {
+		return nil
+	}
+	return extractMessages(root["messages"], clientInstructionRoles...)
+}
+
+func extractMessages(value any, wantedRoles ...string) []string {
 	items, ok := value.([]any)
 	if !ok {
 		return nil
 	}
+	wanted := make(map[string]struct{}, len(wantedRoles))
+	for _, role := range wantedRoles {
+		wanted[strings.ToLower(strings.TrimSpace(role))] = struct{}{}
+	}
 	result := make([]string, 0, len(items))
 	for _, item := range items {
 		message, ok := item.(map[string]any)
-		if !ok || !strings.EqualFold(stringValue(message["role"]), wantedRole) {
+		if !ok {
+			continue
+		}
+		role := strings.ToLower(stringValue(message["role"]))
+		if _, match := wanted[role]; !match {
 			continue
 		}
 		texts := contentTexts(message["content"])
@@ -105,6 +126,34 @@ func extractMessages(value any, wantedRole string) []string {
 		}
 	}
 	return result
+}
+
+func extractInstructions(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		if text := strings.TrimSpace(typed); text != "" {
+			return []string{text}
+		}
+	case []any:
+		return contentTexts(typed)
+	case map[string]any:
+		return contentTexts(typed)
+	}
+	return nil
+}
+
+func extractAnthropicSystem(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		if text := strings.TrimSpace(typed); text != "" {
+			return []string{text}
+		}
+	case []any:
+		return contentTexts(typed)
+	case map[string]any:
+		return contentTexts(typed)
+	}
+	return nil
 }
 
 func extractResponses(value any) []string {
@@ -119,7 +168,7 @@ func extractResponses(value any) []string {
 				result = append(result, entry)
 			case map[string]any:
 				role := strings.ToLower(stringValue(entry["role"]))
-				if role != "" && role != "user" {
+				if role != "" && role != "user" && role != "system" && role != "developer" {
 					continue
 				}
 				if content, exists := entry["content"]; exists {
@@ -134,7 +183,7 @@ func extractResponses(value any) []string {
 		return result
 	case map[string]any:
 		role := strings.ToLower(stringValue(typed["role"]))
-		if role != "" && role != "user" {
+		if role != "" && role != "user" && role != "system" && role != "developer" {
 			return nil
 		}
 		return contentTexts(typed["content"])
@@ -179,7 +228,9 @@ func extractGeminiRoot(root map[string]any) []string {
 	if root == nil {
 		return nil
 	}
-	result := extractGemini(root["contents"])
+	result := extractGeminiSystemInstruction(root["systemInstruction"])
+	result = append(result, extractGeminiSystemInstruction(root["system_instruction"])...)
+	result = append(result, extractGemini(root["contents"])...)
 	result = append(result, extractGemini(root["content"])...)
 	result = append(result, extractGeminiInstances(root["instances"])...)
 	if requests, ok := root["requests"].([]any); ok {
@@ -188,12 +239,39 @@ func extractGeminiRoot(root map[string]any) []string {
 			if !ok {
 				continue
 			}
+			result = append(result, extractGeminiSystemInstruction(request["systemInstruction"])...)
+			result = append(result, extractGeminiSystemInstruction(request["system_instruction"])...)
 			result = append(result, extractGemini(request["contents"])...)
 			result = append(result, extractGemini(request["content"])...)
 			result = append(result, extractGeminiInstances(request["instances"])...)
 		}
 	}
 	return result
+}
+
+func extractGeminiSystemInstruction(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		if text := strings.TrimSpace(typed); text != "" {
+			return []string{text}
+		}
+	case map[string]any:
+		if parts, ok := typed["parts"].([]any); ok {
+			result := make([]string, 0, len(parts))
+			for _, part := range parts {
+				if object, ok := part.(map[string]any); ok {
+					if text := stringValue(object["text"]); text != "" {
+						result = append(result, text)
+					}
+				}
+			}
+			return result
+		}
+		return contentTexts(typed)
+	case []any:
+		return extractGemini(typed)
+	}
+	return nil
 }
 
 func extractGeminiInstances(value any) []string {
@@ -344,33 +422,42 @@ func RedactPreview(value string, maxRunes int) string {
 	return TrimRunes(value, maxRunes)
 }
 
-// BuildPromptPreview always withholds part of the sanitized input. Even short,
-// otherwise-benign prompts must not become a recoverable raw-prompt database
-// field merely because no secret pattern happened to match.
+// BuildPromptPreview stores only a short, non-recoverable head of sanitized
+// input. Ordinary confidential prompts must not land nearly intact in PostgreSQL
+// or the admin UI merely because no secret regex matched.
 func BuildPromptPreview(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		maxRunes = DefaultPromptPreviewMaxRunes
+	}
 	redacted := strings.TrimSpace(RedactPreview(value, maxRunes))
 	if redacted == "" {
 		return ""
 	}
 	runes := []rune(redacted)
 	hadTruncation := strings.HasSuffix(redacted, "…")
-	visibleLength := len(runes)
-	if hadTruncation && visibleLength > 0 {
-		visibleLength--
+	if hadTruncation && len(runes) > 0 {
+		runes = runes[:len(runes)-1]
 	}
-	maskCount := visibleLength / 4
-	if maskCount < 1 {
-		maskCount = 1
+	if len(runes) == 0 {
+		return "***…"
 	}
-	if maskCount > 16 {
-		maskCount = 16
+	// Short unlabelled secrets would otherwise leak a recoverable prefix (e.g.
+	// 20 runes → 5 visible). Fully withhold anything below the keep threshold.
+	const minLengthForPartialPreview = 32
+	if len(runes) < minLengthForPartialPreview {
+		if hadTruncation {
+			return "***…"
+		}
+		return "***"
 	}
-	keep := visibleLength - maskCount
-	if keep < 0 {
-		keep = 0
+	// Keep at most a quarter of the already-truncated text, and never more than
+	// 24 runes, so the majority of prompt content is withheld by default.
+	keep := len(runes) / 4
+	if keep > 24 {
+		keep = 24
 	}
 	preview := string(runes[:keep]) + "***"
-	if hadTruncation {
+	if hadTruncation || keep < len(runes) {
 		preview += "…"
 	}
 	return preview
