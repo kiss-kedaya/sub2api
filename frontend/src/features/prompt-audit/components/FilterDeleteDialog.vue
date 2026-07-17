@@ -94,11 +94,21 @@
 
     <template #footer>
       <div class="flex flex-wrap items-center justify-end gap-3">
+        <p v-if="confirmDisabledReason" class="mr-auto text-xs text-gray-500 dark:text-dark-400" data-test="confirm-disabled-reason">
+          {{ t(confirmDisabledReason) }}
+        </p>
         <button type="button" class="btn btn-secondary" @click="$emit('close')">{{ t('common.cancel') }}</button>
         <button type="button" class="btn btn-secondary" :disabled="!canPreview || previewing || deleting" data-test="run-delete-preview" @click="requestPreview">
           {{ previewing ? t('admin.promptAudit.events.filterDeletePreviewing') : t('admin.promptAudit.events.filterDeletePreviewAction') }}
         </button>
-        <button type="button" class="btn btn-danger" :disabled="!preview || preview.matched_count === 0 || previewing || deleting" data-test="confirm-filter-delete" @click="$emit('confirm')">
+        <button
+          type="button"
+          class="btn btn-danger"
+          :disabled="confirmDisabled"
+          :title="confirmDisabledReason ? t(confirmDisabledReason) : undefined"
+          data-test="confirm-filter-delete"
+          @click="requestConfirm"
+        >
           {{ deleting ? t('common.submitting') : t('admin.promptAudit.events.confirmFilterDelete') }}
         </button>
       </div>
@@ -130,7 +140,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'close'): void
   (event: 'preview', value: PromptEventFilters): void
-  (event: 'confirm'): void
+  (event: 'confirm', value: PromptEventFilters): void
   (event: 'criteria-change'): void
 }>()
 const { t, locale } = useI18n()
@@ -153,12 +163,30 @@ watch(
 
 const canPreview = computed(() => preset.value !== 'custom' || hasExplicitDeleteRange(local))
 
+// One-click flow: a valid criteria selection is enough to confirm — the parent
+// mints the server-side confirmation token on the fly. The button stays
+// disabled only when the range is invalid, work is in flight, or a fresh
+// preview already proved there is nothing to delete.
+const confirmDisabled = computed(
+  () => !canPreview.value || props.previewing || props.deleting || (props.preview !== null && props.preview.matched_count === 0),
+)
+const confirmDisabledReason = computed(() => {
+  if (props.previewing || props.deleting) return ''
+  if (!canPreview.value) return 'admin.promptAudit.events.filterDeleteConfirmInvalidRange'
+  if (props.preview && props.preview.matched_count === 0) return 'admin.promptAudit.events.filterDeleteConfirmNoMatches'
+  return ''
+})
+
 function criteriaChanged() {
   emit('criteria-change')
 }
 function requestPreview() {
   if (!canPreview.value) return
   emit('preview', resolveDeleteRangeFilters(local, preset.value))
+}
+function requestConfirm() {
+  if (confirmDisabled.value) return
+  emit('confirm', resolveDeleteRangeFilters(local, preset.value))
 }
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value))
