@@ -673,6 +673,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			"quota_daily_start",
 			"quota_weekly_used",
 			"quota_weekly_start",
+			grokBillingExtraKey,
 			UpstreamBillingProbeEnabledExtraKey,
 			UpstreamBillingProbeExtraKey,
 		} {

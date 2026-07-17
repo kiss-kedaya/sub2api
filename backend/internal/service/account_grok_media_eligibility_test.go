@@ -23,6 +23,16 @@ func TestGrokMediaGenerationEligibility(t *testing.T) {
 		StatusCode:       http.StatusOK,
 		WeeklyStatusCode: http.StatusOK,
 	}
+	weeklyForbidden := &xai.BillingSummary{
+		StatusCode:        http.StatusOK,
+		WeeklyStatusCode:  http.StatusForbidden,
+		MonthlyStatusCode: http.StatusOK,
+	}
+	monthlyForbidden := &xai.BillingSummary{
+		StatusCode:        http.StatusOK,
+		WeeklyStatusCode:  http.StatusOK,
+		MonthlyStatusCode: http.StatusForbidden,
+	}
 
 	tests := []struct {
 		name       string
@@ -36,6 +46,10 @@ func TestGrokMediaGenerationEligibility(t *testing.T) {
 		{name: "unobserved oauth preserves legacy routing", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}, want: true, wantReason: "billing_unobserved"},
 		{name: "weekly allowance is not treated as weekly subscription", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: weeklyAllowance}}, want: true, wantReason: "eligible"},
 		{name: "billing forbidden is rejected", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: forbiddenBilling}}, want: false, wantReason: "billing_forbidden"},
+		{name: "weekly billing forbidden is rejected after partial success", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: weeklyForbidden}}, want: false, wantReason: "billing_forbidden"},
+		{name: "monthly billing forbidden is rejected after partial success", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: monthlyForbidden}}, want: false, wantReason: "billing_forbidden"},
+		{name: "malformed billing observation preserves legacy routing", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: make(chan int)}}, want: true, wantReason: "billing_unobserved"},
+		{name: "malformed override falls back to observations", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{GrokMediaEligibleExtraKey: "false", grokBillingExtraKey: weeklyAllowance}}, want: true, wantReason: "eligible"},
 		{name: "explicit disable wins", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{GrokMediaEligibleExtraKey: false}}, want: false, wantReason: "override_disabled"},
 		{name: "explicit enable wins over forbidden probe", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{GrokMediaEligibleExtraKey: true, grokBillingExtraKey: forbiddenBilling}}, want: true, wantReason: "override_enabled"},
 	}
@@ -117,5 +131,30 @@ func TestNormalizeGrokMediaEligibilityUpdateExtra(t *testing.T) {
 		require.NoError(t, err)
 		require.NotContains(t, normalized, GrokMediaEligibleExtraKey)
 		require.Contains(t, input.Extra, GrokMediaEligibleExtraKey)
+	})
+
+	t.Run("provided boolean replaces current override", func(t *testing.T) {
+		input := &UpdateAccountInput{Extra: map[string]any{GrokMediaEligibleExtraKey: true}}
+		normalized, err := normalizeGrokMediaEligibilityUpdateExtra(account, input, map[string]any{GrokMediaEligibleExtraKey: true})
+
+		require.NoError(t, err)
+		require.Equal(t, true, normalized[GrokMediaEligibleExtraKey])
+	})
+
+	t.Run("malformed override is rejected on update", func(t *testing.T) {
+		input := &UpdateAccountInput{Extra: map[string]any{GrokMediaEligibleExtraKey: "false"}}
+		_, err := normalizeGrokMediaEligibilityUpdateExtra(account, input, nil)
+
+		require.Error(t, err)
+		require.Equal(t, http.StatusBadRequest, infraerrors.Code(err))
+	})
+
+	t.Run("non grok update is unchanged", func(t *testing.T) {
+		input := &UpdateAccountInput{Extra: map[string]any{GrokMediaEligibleExtraKey: "provider-owned"}}
+		normalized := map[string]any{GrokMediaEligibleExtraKey: "provider-owned"}
+		got, err := normalizeGrokMediaEligibilityUpdateExtra(&Account{Platform: PlatformOpenAI}, input, normalized)
+
+		require.NoError(t, err)
+		require.Equal(t, normalized, got)
 	})
 }
