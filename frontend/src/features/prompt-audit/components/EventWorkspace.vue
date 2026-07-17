@@ -79,7 +79,7 @@
             <td class="px-3 py-3 text-gray-700 dark:text-dark-200">{{ event.snapshot.group_name || '—' }}</td>
             <td class="px-3 py-3">
               <p class="font-medium text-gray-900 dark:text-white">{{ event.snapshot.endpoint }}</p>
-              <p class="mt-1 text-xs text-gray-500">{{ event.snapshot.model }} · {{ event.snapshot.protocol }}</p>
+              <p class="mt-1 text-xs text-gray-500">{{ event.snapshot.model }} · {{ event.snapshot.protocol }} · {{ event.snapshot.stage || 'http' }}</p>
             </td>
             <td class="px-3 py-3">
               <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="decisionClass(event.decision)">{{ event.decision }} · {{ event.risk_level }}</span>
