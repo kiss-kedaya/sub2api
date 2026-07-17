@@ -1622,6 +1622,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	if h.opsService != nil {
+		h.opsService.SetMonitoringEnabled(settings.OpsMonitoringEnabled)
+	}
 
 	// Update OpenAI fast policy (stored under dedicated key, only when provided).
 	if req.OpenAIFastPolicySettings != nil {
