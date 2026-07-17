@@ -235,6 +235,10 @@ func isOpenAICompatibleAccountEligibleForRequest(ctx context.Context, account *A
 		return false
 	}
 	if !account.SupportsOpenAIEndpointCapability(requiredCapability) {
+		if account.IsGrok() && requiredCapability == OpenAIEndpointCapabilityGrokMediaGeneration {
+			_, reason := account.GrokMediaGenerationEligibility()
+			slog.Debug("grok_media_account_ineligible", "account_id", account.ID, "reason", reason)
+		}
 		return false
 	}
 	if requireCompact && (!account.IsOpenAI() || openAICompactSupportTier(account) == 0) {
