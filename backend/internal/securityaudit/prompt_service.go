@@ -312,20 +312,26 @@ func modelsResponseReady(body []byte, model string) bool {
 }
 
 func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint) (ActiveEndpoint, bool, error) {
+	baseURL, err := NormalizeBaseURL(input.BaseURL)
+	if err != nil {
+		return ActiveEndpoint{}, false, err
+	}
 	token := strings.TrimSpace(input.Token)
 	if token == "" {
 		if cfg, ok := s.config.Active(); ok {
 			for _, endpoint := range cfg.Endpoints {
-				if endpoint.ID == strings.TrimSpace(input.ID) {
-					token = endpoint.Token
-					break
+				if endpoint.ID != strings.TrimSpace(input.ID) {
+					continue
 				}
+				// Reuse a stored credential only when the probe targets the same
+				// normalized base URL. Otherwise an admin probe could exfiltrate
+				// the Guard token to an attacker-controlled HTTPS host.
+				if endpoint.BaseURL == baseURL {
+					token = endpoint.Token
+				}
+				break
 			}
 		}
-	}
-	baseURL, err := NormalizeBaseURL(input.BaseURL)
-	if err != nil {
-		return ActiveEndpoint{}, false, err
 	}
 	model := strings.TrimSpace(input.Model)
 	if model == "" {

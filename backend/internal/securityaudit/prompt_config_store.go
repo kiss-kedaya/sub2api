@@ -36,6 +36,11 @@ type ConfigManager struct {
 	// independently of whether endpoint credentials or the full config could be
 	// activated. A config version alone cannot distinguish async from blocking.
 	expectedBlocking atomic.Bool
+	// configUntrusted is set when a load/reload fails before a trustworthy
+	// snapshot is installed. While set, EffectiveMode fails closed so a
+	// persisted blocking policy cannot be silently skipped after startup or
+	// invalidation errors.
+	configUntrusted atomic.Bool
 
 	stateMu       sync.RWMutex
 	lastLoadError string
@@ -63,6 +68,9 @@ func (m *ConfigManager) Start(ctx context.Context) error {
 	m.cancel = cancel
 	m.lifecycleMu.Unlock()
 	loadErr := m.Reload(runCtx)
+	if loadErr != nil {
+		m.markConfigUntrusted()
+	}
 	m.wg.Add(1)
 	go m.refreshLoop(runCtx)
 	if m.redis != nil {
@@ -89,17 +97,20 @@ func (m *ConfigManager) Shutdown(_ context.Context) error {
 
 func (m *ConfigManager) Reload(ctx context.Context) error {
 	if m == nil || m.settings == nil {
+		m.markUntrustedIfNoActiveSnapshot()
 		return errors.New("prompt audit setting repository unavailable")
 	}
 	values, err := m.settings.GetMultiple(ctx, []string{SettingKeyPromptAuditConfig, SettingKeyRiskControl})
 	if err != nil {
 		m.recordLoadError(err)
+		m.markUntrustedIfNoActiveSnapshot()
 		return err
 	}
 	m.observeExpectedState(values[SettingKeyPromptAuditConfig], values[SettingKeyRiskControl] == "true")
 	storage, err := ParseStorageConfig(values[SettingKeyPromptAuditConfig])
 	if err != nil {
 		m.recordLoadError(err)
+		m.markUntrustedIfNoActiveSnapshot()
 		return err
 	}
 	m.expected.Store(storage.ConfigVersion)
@@ -107,10 +118,13 @@ func (m *ConfigManager) Reload(ctx context.Context) error {
 	active, err := ActiveFromStorage(storage, values[SettingKeyRiskControl] == "true", m.encryptor)
 	if err != nil {
 		m.recordLoadError(err)
+		// expectedBlocking may already require fail-closed via BlockingActivationDegraded.
+		m.markUntrustedIfNoActiveSnapshot()
 		return err
 	}
 	now := m.clock.Now()
 	m.snapshot.Store(&activeConfigSnapshot{storage: cloneStorageConfig(storage), active: cloneActiveConfig(active), loadedAt: now})
+	m.configUntrusted.Store(false)
 	m.clearLoadError()
 	LogInfo(EventConfigLoaded, map[string]any{
 		"config_version": storage.ConfigVersion, "status": "loaded",
@@ -130,7 +144,13 @@ func (m *ConfigManager) Active() (ActiveConfig, bool) {
 }
 
 func (m *ConfigManager) BlockingActivationDegraded() bool {
-	if m == nil || !m.expectedBlocking.Load() {
+	if m == nil {
+		return false
+	}
+	if m.configUntrusted.Load() {
+		return true
+	}
+	if !m.expectedBlocking.Load() {
 		return false
 	}
 	active, ok := m.Active()
@@ -151,6 +171,22 @@ func (m *ConfigManager) EffectiveMode() Mode {
 		return ModeOff
 	}
 	return active.EffectiveMode()
+}
+
+func (m *ConfigManager) markConfigUntrusted() {
+	if m == nil {
+		return
+	}
+	m.configUntrusted.Store(true)
+}
+
+func (m *ConfigManager) markUntrustedIfNoActiveSnapshot() {
+	if m == nil {
+		return
+	}
+	if _, ok := m.Active(); !ok {
+		m.markConfigUntrusted()
+	}
 }
 
 func (m *ConfigManager) Public() PublicConfig {
@@ -378,6 +414,11 @@ func (m *ConfigManager) subscribeLoop(ctx context.Context) {
 			}
 			m.expected.Store(version)
 			if err := m.Reload(ctx); err != nil {
+				// A newer published version failed to activate. Until reload
+				// succeeds, do not keep serving a potentially stale weaker mode.
+				if active, ok := m.Active(); !ok || active.ConfigVersion < version {
+					m.markConfigUntrusted()
+				}
 				LogWarn(EventConfigReloadDegraded, map[string]any{
 					"config_version": version, "status": "degraded", "error_code": "config_invalidation_reload_failed",
 				})
