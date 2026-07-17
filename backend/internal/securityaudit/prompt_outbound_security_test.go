@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,25 +13,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type staticResolver struct{ addresses []netip.Addr }
-
-func (r staticResolver) LookupNetIP(context.Context, string, string) ([]netip.Addr, error) {
-	return r.addresses, nil
-}
-
-func TestNormalizeBaseURLSecurity(t *testing.T) {
-	allowed := []string{"https://guard.example.com", "https://guard.example.com/v1", "http://127.0.0.1:8080", "http://localhost:8080"}
+func TestNormalizeBaseURLAllowsAdministratorConfiguredDestinations(t *testing.T) {
+	allowed := []string{
+		"https://guard.example.com", "https://guard.example.com/v1", "http://guard.example.com",
+		"http://127.0.0.1:8080", "http://10.0.0.8:8080", "https://172.16.0.5",
+		"http://169.254.169.254", "https://metadata.google.internal", "https://192.0.2.1",
+		"http://internal-admin.local", "http://guard.local:8080",
+	}
 	for _, raw := range allowed {
 		_, err := NormalizeBaseURL(raw)
 		require.NoError(t, err, raw)
 	}
 	blocked := []string{
-		"ftp://guard.example.com", "http://guard.example.com", "https://user:pass@guard.example.com",
-		"https://guard.example.com?q=secret", "https://guard.example.com/#fragment", "http://169.254.169.254",
-		"https://metadata.google.internal", "https://0.0.0.0", "https://224.0.0.1", "https://192.0.2.1",
-		"https://[::]", "https://[fe80::1]", "https://[ff02::1]", "https://[2001:db8::1]",
-		"http://10.0.0.8:8080", "http://192.168.1.10:8080", "https://172.16.0.5",
-		"http://internal-admin.local", "http://guard.local:8080",
+		"ftp://guard.example.com", "https://user:pass@guard.example.com",
+		"https://guard.example.com?q=secret", "https://guard.example.com/#fragment",
 	}
 	for _, raw := range blocked {
 		_, err := NormalizeBaseURL(raw)
@@ -43,24 +37,13 @@ func TestNormalizeBaseURLSecurity(t *testing.T) {
 	require.Equal(t, "https://guard.example.com/v1/chat/completions", url)
 }
 
-func TestSecureDialRejectsDNSRebindingToPrivateAddress(t *testing.T) {
-	dial := secureDialContext(nil, staticResolver{addresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")}}, false)
-	_, err := dial(context.Background(), "tcp", "guard.example.com:443")
-	require.Error(t, err)
-}
-
-func TestSecureDialLocalhostAllowlistRejectsRFC1918Resolution(t *testing.T) {
-	dial := secureDialContext(nil, staticResolver{addresses: []netip.Addr{netip.MustParseAddr("10.0.0.8")}}, true)
-	_, err := dial(context.Background(), "tcp", "localhost:8080")
-	require.Error(t, err)
-}
-
-func TestSecureHTTPClientDoesNotBypassDestinationValidationThroughEnvironmentProxy(t *testing.T) {
+func TestHTTPClientUsesDirectStandardDialer(t *testing.T) {
 	client, err := NewSecureHTTPClient(ActiveEndpoint{BaseURL: "https://guard.example.com", TimeoutMS: 1000})
 	require.NoError(t, err)
 	transport, ok := client.Transport.(*http.Transport)
 	require.True(t, ok)
 	require.Nil(t, transport.Proxy)
+	require.NotNil(t, transport.DialContext)
 }
 
 func TestOpenAICompatibleScannerRequestContract(t *testing.T) {
@@ -83,13 +66,16 @@ func TestOpenAICompatibleScannerRequestContract(t *testing.T) {
 	require.Equal(t, EventPass, result.Decision)
 }
 
-func TestOpenAICompatibleScannerRejectsRedirectAndOversize(t *testing.T) {
-	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://127.0.0.1/other", http.StatusFound)
+func TestOpenAICompatibleScannerFollowsRedirectAndRejectsOversize(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Safety: Safe\nCategories: None"}}]}`))
 	}))
+	defer target.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, http.StatusFound) }))
 	defer redirect.Close()
-	_, err := NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{ID: "redirect", BaseURL: redirect.URL, Model: DefaultGuardModel, TimeoutMS: 1000}, "hello", AllScannerIDs)
-	require.Error(t, err)
+	result, err := NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{ID: "redirect", BaseURL: redirect.URL, Model: DefaultGuardModel, TimeoutMS: 1000}, "hello", AllScannerIDs)
+	require.NoError(t, err)
+	require.Equal(t, EventPass, result.Decision)
 	oversize := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("x", int(maxGuardResponseBytes)+1)))
 	}))
