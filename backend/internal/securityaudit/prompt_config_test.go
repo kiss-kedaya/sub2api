@@ -131,6 +131,22 @@ func TestConfigManagerStaleWeakerSnapshotFailsClosedWhenBlockingExpected(t *test
 	require.Equal(t, ErrorCodeUnavailable, guardErr.Code)
 }
 
+type errorSettingRepository struct{ staticSettingRepository }
+
+func (errorSettingRepository) GetMultiple(context.Context, []string) (map[string]string, error) {
+	return nil, errors.New("settings unavailable")
+}
+
+func TestConfigManagerStartupLoadFailureFailsClosedWithoutSnapshot(t *testing.T) {
+	manager := NewConfigManager(nil, errorSettingRepository{}, nil, prefixEncryptor{})
+	err := manager.Start(context.Background())
+	require.Error(t, err)
+	require.True(t, manager.configUntrusted.Load())
+	require.True(t, manager.BlockingActivationDegraded())
+	require.Equal(t, ModeBlocking, manager.EffectiveMode())
+	require.NoError(t, manager.Shutdown(context.Background()))
+}
+
 func TestParseLegacyConfigDefaultsMissingFieldsWithoutEnablingBlocking(t *testing.T) {
 	storage, err := ParseStorageConfig(`{"enabled":false,"config_version":9}`)
 	require.NoError(t, err)

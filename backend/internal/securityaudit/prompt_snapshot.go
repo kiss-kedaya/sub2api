@@ -92,7 +92,10 @@ func extractProtocolSegments(protocol string, document any) []string {
 	}
 }
 
-var clientInstructionRoles = []string{"user", "system", "developer"}
+// clientInstructionRoles are roles a client may freely populate. Attackers can
+// place jailbreak/PII text in assistant/tool turns, so blocking audit must scan
+// them too—not only user/system/developer instructions.
+var clientInstructionRoles = []string{"user", "system", "developer", "assistant", "tool"}
 
 func extractChatLikeSegments(root map[string]any) []string {
 	if root == nil {
@@ -168,7 +171,7 @@ func extractResponses(value any) []string {
 				result = append(result, entry)
 			case map[string]any:
 				role := strings.ToLower(stringValue(entry["role"]))
-				if role != "" && role != "user" && role != "system" && role != "developer" {
+				if role != "" && !isClientInstructionRole(role) {
 					continue
 				}
 				if content, exists := entry["content"]; exists {
@@ -183,12 +186,21 @@ func extractResponses(value any) []string {
 		return result
 	case map[string]any:
 		role := strings.ToLower(stringValue(typed["role"]))
-		if role != "" && role != "user" && role != "system" && role != "developer" {
+		if role != "" && !isClientInstructionRole(role) {
 			return nil
 		}
 		return contentTexts(typed["content"])
 	default:
 		return nil
+	}
+}
+
+func isClientInstructionRole(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "user", "system", "developer", "assistant", "tool", "model":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -209,7 +221,7 @@ func extractGemini(value any) []string {
 			continue
 		}
 		role := strings.ToLower(stringValue(content["role"]))
-		if role != "" && role != "user" {
+		if role != "" && !isClientInstructionRole(role) {
 			continue
 		}
 		parts, _ := content["parts"].([]any)
