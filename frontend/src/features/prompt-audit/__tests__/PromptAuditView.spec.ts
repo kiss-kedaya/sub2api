@@ -49,7 +49,7 @@ const ConfirmStub = defineComponent({ props: ['show', 'title', 'message'], emits
 const FilterDeleteStub = defineComponent({
   props: ['show', 'initialFilters', 'preview', 'previewing', 'deleting'],
   emits: ['close', 'preview', 'confirm', 'criteria-change'],
-  template: '<div v-if="show" data-test="filter-delete-dialog"><button data-test="dialog-preview" @click="$emit(\'preview\', { ...initialFilters, start_at: \'2026-07-15T00:00\', end_at: \'2026-07-16T00:00\' })">run</button><button data-test="dialog-confirm" @click="$emit(\'confirm\')">confirm</button><span data-test="dialog-preview-state">{{ preview ? preview.matched_count : \'none\' }}</span></div>',
+  template: '<div v-if="show" data-test="filter-delete-dialog"><button data-test="dialog-preview" @click="$emit(\'preview\', { ...initialFilters, start_at: \'2026-07-15T00:00\', end_at: \'2026-07-16T00:00\' })">run</button><button data-test="dialog-confirm" @click="$emit(\'confirm\', { ...initialFilters, start_at: \'2026-07-15T00:00\', end_at: \'2026-07-16T00:00\' })">confirm</button><span data-test="dialog-preview-state">{{ preview ? preview.matched_count : \'none\' }}</span></div>',
 })
 
 function mountView() {
@@ -203,6 +203,29 @@ describe('PromptAuditView', () => {
     expect(mocks.previewDelete).toHaveBeenCalledWith(expect.objectContaining({ start_at: '2026-07-15T00:00', end_at: '2026-07-16T00:00' }))
     await wrapper.get('[data-test="dialog-confirm"]').trigger('click')
     await flushPromises()
+    expect(mocks.deleteEventsByFilter).toHaveBeenCalledWith(expect.objectContaining({
+      start_at: '2026-07-15T00:00',
+      end_at: '2026-07-16T00:00',
+    }), expect.objectContaining({
+      snapshot_max_id: 10,
+      confirmation_token: 'opaque-confirmation',
+    }))
+    expect(wrapper.find('[data-test="filter-delete-dialog"]').exists()).toBe(false)
+  })
+
+  it('mints the confirmation token on the fly for one-click filter deletion without a manual preview', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-test="preview"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="filter-delete-dialog"]').exists()).toBe(true)
+    expect(mocks.previewDelete).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-test="dialog-confirm"]').trigger('click')
+    await flushPromises()
+    expect(mocks.previewDelete).toHaveBeenCalledOnce()
+    expect(mocks.previewDelete).toHaveBeenCalledWith(expect.objectContaining({ start_at: '2026-07-15T00:00', end_at: '2026-07-16T00:00' }))
     expect(mocks.deleteEventsByFilter).toHaveBeenCalledWith(expect.objectContaining({
       start_at: '2026-07-15T00:00',
       end_at: '2026-07-16T00:00',
