@@ -41,32 +41,12 @@ func normalizeIP(ip string) string {
 	return ip
 }
 
-// privateNets 预编译私有 IP CIDR 块，避免每次调用 isPrivateIP 时重复解析
-var privateNets []*net.IPNet
-
 // CompiledIPRules 表示预编译的 IP 匹配规则。
 // PatternCount 记录原始规则数量，用于保留“规则存在但全无效”时的行为语义。
 type CompiledIPRules struct {
 	CIDRs        []*net.IPNet
 	IPs          []net.IP
 	PatternCount int
-}
-
-func init() {
-	for _, cidr := range []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"127.0.0.0/8",
-		"::1/128",
-		"fc00::/7",
-	} {
-		_, block, err := net.ParseCIDR(cidr)
-		if err != nil {
-			panic("invalid CIDR: " + cidr)
-		}
-		privateNets = append(privateNets, block)
-	}
 }
 
 // CompileIPRules 将 IP/CIDR 字符串规则预编译为可复用结构。
@@ -110,20 +90,6 @@ func matchesCompiledRules(parsedIP net.IP, rules *CompiledIPRules) bool {
 	}
 	for _, ruleIP := range rules.IPs {
 		if parsedIP.Equal(ruleIP) {
-			return true
-		}
-	}
-	return false
-}
-
-// isPrivateIP 检查 IP 是否为私有地址。
-func isPrivateIP(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	for _, block := range privateNets {
-		if block.Contains(ip) {
 			return true
 		}
 	}
