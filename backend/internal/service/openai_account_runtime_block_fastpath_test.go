@@ -83,6 +83,58 @@ func TestOpenAIRuntimeBlocker_IgnoresNonOpenAIFromRateLimitService(t *testing.T)
 	require.False(t, gateway.isOpenAIAccountRuntimeBlocked(account))
 }
 
+func TestOpenAIPoolModeTempRule_StopsSameAccountRetryAndBlocksAcrossModels(t *testing.T) {
+	repo := &errorPolicyRepoStub{}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	gateway := &OpenAIGatewayService{
+		cfg:              &config.Config{},
+		rateLimitService: rateLimitService,
+	}
+	rateLimitService.SetAccountRuntimeBlocker(gateway)
+	account := &Account{
+		ID:          46,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"pool_mode":                    true,
+			"pool_mode_retry_status_codes": []any{float64(http.StatusServiceUnavailable)},
+			"temp_unschedulable_enabled":   true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       float64(http.StatusServiceUnavailable),
+					"keywords":         []any{"unavailable"},
+					"duration_minutes": float64(30),
+				},
+			},
+		},
+	}
+	body := []byte(`{"error":{"message":"Service temporarily unavailable"}}`)
+	resp := &http.Response{
+		StatusCode: http.StatusServiceUnavailable,
+		Header:     http.Header{},
+	}
+
+	failoverErr := gateway.failoverOpenAIUpstreamHTTPError(
+		context.Background(),
+		nil,
+		account,
+		resp,
+		body,
+		"Service temporarily unavailable",
+		"gpt-5.4",
+	)
+
+	require.NotNil(t, failoverErr)
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, 0, repo.setErrCalls)
+	require.Equal(t, StatusActive, account.Status)
+	require.True(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"))
+	require.True(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5"))
+}
+
 func TestOpenAIModelNotFound_DoesNotRuntimeBlockWholeAccount(t *testing.T) {
 	repo := &modelNotFoundAccountRepoStub{}
 	svc := &OpenAIGatewayService{
