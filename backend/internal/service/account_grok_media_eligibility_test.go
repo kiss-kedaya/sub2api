@@ -1,0 +1,121 @@
+//go:build unit
+
+package service
+
+import (
+	"context"
+	"net/http"
+	"testing"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/stretchr/testify/require"
+)
+
+func TestGrokMediaGenerationEligibility(t *testing.T) {
+	forbiddenBilling := &xai.BillingSummary{
+		StatusCode:        http.StatusForbidden,
+		WeeklyStatusCode:  http.StatusForbidden,
+		MonthlyStatusCode: http.StatusForbidden,
+	}
+	weeklyAllowance := &xai.BillingSummary{
+		PeriodType:       "weekly",
+		StatusCode:       http.StatusOK,
+		WeeklyStatusCode: http.StatusOK,
+	}
+
+	tests := []struct {
+		name       string
+		account    *Account
+		want       bool
+		wantReason string
+	}{
+		{name: "nil account", account: nil, want: false, wantReason: "not_grok"},
+		{name: "non grok account", account: &Account{Platform: PlatformOpenAI}, want: false, wantReason: "not_grok"},
+		{name: "non oauth grok account stays eligible", account: &Account{Platform: PlatformGrok, Type: AccountTypeAPIKey}, want: true, wantReason: "non_oauth"},
+		{name: "unobserved oauth preserves legacy routing", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}, want: true, wantReason: "billing_unobserved"},
+		{name: "weekly allowance is not treated as weekly subscription", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: weeklyAllowance}}, want: true, wantReason: "eligible"},
+		{name: "billing forbidden is rejected", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: forbiddenBilling}}, want: false, wantReason: "billing_forbidden"},
+		{name: "explicit disable wins", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{GrokMediaEligibleExtraKey: false}}, want: false, wantReason: "override_disabled"},
+		{name: "explicit enable wins over forbidden probe", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{GrokMediaEligibleExtraKey: true, grokBillingExtraKey: forbiddenBilling}}, want: true, wantReason: "override_enabled"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, reason := tt.account.GrokMediaGenerationEligibility()
+			require.Equal(t, tt.want, got)
+			require.Equal(t, tt.wantReason, reason)
+		})
+	}
+}
+
+func TestGrokMediaCapabilityFiltersOnlyGeneration(t *testing.T) {
+	account := &Account{
+		ID:          1,
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Extra:       map[string]any{GrokMediaEligibleExtraKey: false},
+	}
+
+	require.True(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityChatCompletions))
+	require.False(t, account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityGrokMediaGeneration))
+	require.False(t, isOpenAICompatibleAccountEligibleForRequest(
+		context.Background(), account, PlatformGrok, "grok-imagine-video", false,
+		OpenAIEndpointCapabilityGrokMediaGeneration,
+	))
+}
+
+func TestNormalizeGrokMediaEligibilityExtra(t *testing.T) {
+	t.Run("boolean override is accepted", func(t *testing.T) {
+		extra, err := normalizeGrokMediaEligibilityExtra(PlatformGrok, map[string]any{GrokMediaEligibleExtraKey: false})
+
+		require.NoError(t, err)
+		require.Equal(t, false, extra[GrokMediaEligibleExtraKey])
+	})
+
+	t.Run("null clears override", func(t *testing.T) {
+		extra, err := normalizeGrokMediaEligibilityExtra(PlatformGrok, map[string]any{GrokMediaEligibleExtraKey: nil})
+
+		require.NoError(t, err)
+		require.NotContains(t, extra, GrokMediaEligibleExtraKey)
+	})
+
+	t.Run("malformed override is rejected", func(t *testing.T) {
+		_, err := normalizeGrokMediaEligibilityExtra(PlatformGrok, map[string]any{GrokMediaEligibleExtraKey: "false"})
+
+		require.Error(t, err)
+		require.Equal(t, http.StatusBadRequest, infraerrors.Code(err))
+	})
+
+	t.Run("other platforms ignore provider owned value", func(t *testing.T) {
+		extra := map[string]any{GrokMediaEligibleExtraKey: "provider-owned"}
+		normalized, err := normalizeGrokMediaEligibilityExtra(PlatformOpenAI, extra)
+
+		require.NoError(t, err)
+		require.Equal(t, extra, normalized)
+	})
+}
+
+func TestNormalizeGrokMediaEligibilityUpdateExtra(t *testing.T) {
+	account := &Account{Platform: PlatformGrok, Extra: map[string]any{GrokMediaEligibleExtraKey: false}}
+
+	t.Run("omitted override preserves current value", func(t *testing.T) {
+		input := &UpdateAccountInput{Extra: map[string]any{"quota_used": float64(1)}}
+		normalized, err := normalizeGrokMediaEligibilityUpdateExtra(account, input, map[string]any{"quota_used": float64(1)})
+
+		require.NoError(t, err)
+		require.Equal(t, false, normalized[GrokMediaEligibleExtraKey])
+	})
+
+	t.Run("null removes current override", func(t *testing.T) {
+		input := &UpdateAccountInput{Extra: map[string]any{GrokMediaEligibleExtraKey: nil}}
+		normalized, err := normalizeGrokMediaEligibilityUpdateExtra(account, input, map[string]any{GrokMediaEligibleExtraKey: nil})
+
+		require.NoError(t, err)
+		require.NotContains(t, normalized, GrokMediaEligibleExtraKey)
+		require.Contains(t, input.Extra, GrokMediaEligibleExtraKey)
+	})
+}
