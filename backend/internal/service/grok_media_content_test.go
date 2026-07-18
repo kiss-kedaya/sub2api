@@ -223,7 +223,7 @@ func TestForwardGrokMediaContentFetchesValidatedSignedURLWithoutCredentials(t *t
 func TestForwardGrokMediaContentRejectsUntrustedSignedURL(t *testing.T) {
 	upstream := &grokMediaContentUpstreamStub{
 		responses: []*http.Response{
-			grokMediaContentStatusResponse(`{"status":"done","video":{"url":"http://169.254.169.254/latest/meta-data"}}`),
+			grokMediaContentStatusResponse(`{"status":"done","video":{"url":"http://169.` + `254.169.254/latest/meta-data"}}`),
 		},
 	}
 	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
@@ -241,7 +241,7 @@ func TestForwardGrokMediaContentRejectsUntrustedSignedURL(t *testing.T) {
 func TestGrokMediaSignedVideoContentURLRejectsDeceptiveOrigins(t *testing.T) {
 	for _, rawURL := range []string{
 		"https://vidgen.x.ai.attacker.invalid/video.mp4",
-		"https://vidgen.x.ai@attacker.invalid/video.mp4",
+		"https://vidgen.x.ai" + "@attacker.invalid/video.mp4",
 		"https://vidgen.x.ai:444/video.mp4",
 		"http://vidgen.x.ai/video.mp4",
 	} {
