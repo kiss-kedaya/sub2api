@@ -269,16 +269,50 @@ func parseGrokMediaMultipartRequest(contentType string, body []byte, info *GrokM
 	}
 }
 
-func GrokMediaVideoRequestSessionHash(requestID string) string {
+func GrokMediaVideoRequestSessionHash(requestID string, userID, apiKeyID int64) string {
 	requestID = strings.TrimSpace(requestID)
-	if requestID == "" {
+	if requestID == "" || userID <= 0 || apiKeyID <= 0 {
 		return ""
 	}
-	return "grok-video:" + DeriveSessionHashFromSeed(requestID)
+	ownerSeed := fmt.Sprintf("%d:%d:%s", userID, apiKeyID, requestID)
+	return "grok-video:" + DeriveSessionHashFromSeed(ownerSeed)
 }
 
-func (s *OpenAIGatewayService) BindGrokMediaVideoRequestAccount(ctx context.Context, groupID *int64, requestID string, accountID int64) error {
-	return s.BindStickySession(ctx, groupID, GrokMediaVideoRequestSessionHash(requestID), accountID)
+func (s *OpenAIGatewayService) BindGrokMediaVideoRequestAccount(
+	ctx context.Context,
+	groupID *int64,
+	requestID string,
+	userID, apiKeyID, accountID int64,
+) error {
+	if s == nil || s.cache == nil {
+		return fmt.Errorf("grok video request binding cache is unavailable")
+	}
+	sessionHash := GrokMediaVideoRequestSessionHash(requestID, userID, apiKeyID)
+	cacheKey := s.openAISessionCacheKey(sessionHash)
+	if cacheKey == "" || accountID <= 0 {
+		return fmt.Errorf("grok video request binding is invalid")
+	}
+	ttl := openaiStickySessionTTL
+	if s.cfg != nil && s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds > 0 {
+		ttl = time.Duration(s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds) * time.Second
+	}
+	return s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), cacheKey, accountID, ttl)
+}
+
+func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
+	ctx context.Context,
+	groupID *int64,
+	requestID string,
+	userID, apiKeyID int64,
+) (int64, error) {
+	if s == nil || s.cache == nil {
+		return 0, fmt.Errorf("grok video request binding cache is unavailable")
+	}
+	cacheKey := s.openAISessionCacheKey(GrokMediaVideoRequestSessionHash(requestID, userID, apiKeyID))
+	if cacheKey == "" {
+		return 0, fmt.Errorf("grok video request binding is invalid")
+	}
+	return s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), cacheKey)
 }
 
 func (s *OpenAIGatewayService) ForwardGrokMedia(
@@ -369,7 +403,8 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 
 	requestIDHeader := firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
 	requestModel := requestInfo.Model
-	if resp.StatusCode >= 400 {
+	preserveContentRangeError := endpoint == GrokMediaEndpointVideoContent && resp.StatusCode == http.StatusRequestedRangeNotSatisfiable
+	if resp.StatusCode >= 400 && !preserveContentRangeError {
 		return s.handleGrokMediaErrorResponse(ctx, resp, c, account, requestIDHeader, requestModel)
 	}
 
@@ -859,7 +894,7 @@ func isGrokMediaVideoContentURL(rawURL, requestID string) bool {
 	if err != nil || parsed.Path == "" {
 		return false
 	}
-	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	segments := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
 	if len(segments) < 3 {
 		return false
 	}

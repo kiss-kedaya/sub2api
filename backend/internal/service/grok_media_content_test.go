@@ -93,6 +93,67 @@ func TestForwardGrokMediaContentUsesUpstreamCredentialAndStreamsRange(t *testing
 	require.Equal(t, "bytes 0-12/100", recorder.Header().Get("Content-Range"))
 	require.Equal(t, "bytes", recorder.Header().Get("Accept-Ranges"))
 	require.Equal(t, `attachment; filename="task-1.mp4"`, recorder.Header().Get("Content-Disposition"))
+	require.True(t, IsResponseCommitted(c))
+}
+
+func TestForwardGrokMediaContentStreamsFullResponseWithSafeDefaults(t *testing.T) {
+	upstream := &grokMediaContentUpstreamStub{
+		response: &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        http.Header{"Set-Cookie": []string{"secret=upstream"}, "X-Upstream-Secret": []string{"hidden"}},
+			Body:          io.NopCloser(strings.NewReader("full-video")),
+			ContentLength: -1,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	c, recorder := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", nil)
+
+	_, err := svc.ForwardGrokMedia(
+		context.Background(), c, grokMediaContentTestAccount(),
+		GrokMediaEndpointVideoContent, "task-1", nil, "",
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "full-video", recorder.Body.String())
+	require.Empty(t, upstream.request.Header.Get("Range"))
+	require.Equal(t, "application/octet-stream", recorder.Header().Get("Content-Type"))
+	require.Empty(t, recorder.Header().Get("Content-Length"))
+	require.Empty(t, recorder.Header().Get("Set-Cookie"))
+	require.Empty(t, recorder.Header().Get("X-Upstream-Secret"))
+	require.True(t, IsResponseCommitted(c))
+}
+
+func TestForwardGrokMediaContentPreservesRangeNotSatisfiable(t *testing.T) {
+	upstream := &grokMediaContentUpstreamStub{
+		response: &http.Response{
+			StatusCode: http.StatusRequestedRangeNotSatisfiable,
+			Header: http.Header{
+				"Content-Type":   []string{"text/plain"},
+				"Content-Length": []string{"11"},
+				"Content-Range":  []string{"bytes */100"},
+				"Accept-Ranges":  []string{"bytes"},
+			},
+			Body: io.NopCloser(strings.NewReader("bad-range!!")),
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	c, recorder := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", map[string]string{
+		"Range": "bytes=500-600",
+	})
+
+	_, err := svc.ForwardGrokMedia(
+		context.Background(), c, grokMediaContentTestAccount(),
+		GrokMediaEndpointVideoContent, "task-1", nil, "",
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, http.StatusRequestedRangeNotSatisfiable, recorder.Code)
+	require.Equal(t, "bad-range!!", recorder.Body.String())
+	require.Equal(t, "bytes=500-600", upstream.request.Header.Get("Range"))
+	require.Equal(t, "bytes */100", recorder.Header().Get("Content-Range"))
+	require.Equal(t, "bytes", recorder.Header().Get("Accept-Ranges"))
+	require.True(t, IsResponseCommitted(c))
 }
 
 func TestForwardGrokVideoStatusRewritesOnlyProtectedContentURL(t *testing.T) {
@@ -122,4 +183,13 @@ func TestForwardGrokVideoStatusRewritesOnlyProtectedContentURL(t *testing.T) {
 	require.Equal(t, "https://vidgen.x.ai/task-1.mp4", gjson.Get(recorder.Body.String(), "video_url").String())
 	require.Equal(t, "9007199254740993", gjson.Get(recorder.Body.String(), "counter").String())
 	require.NotContains(t, recorder.Body.String(), "malicious.invalid")
+}
+
+func TestRewriteGrokMediaVideoContentURLsPreservesOtherIDsAndHandlesNestedEscapedID(t *testing.T) {
+	body := []byte(`{"nested":[{"url":"https://relay.example/v1/videos/task%2Fone/content"},{"url":"https://relay.example/v1/videos/task-two/content"}]}`)
+
+	rewritten := rewriteGrokMediaVideoContentURLs(body, "task/one", "/v1/videos/task%2Fone/content")
+
+	require.Equal(t, "/v1/videos/task%2Fone/content", gjson.GetBytes(rewritten, "nested.0.url").String())
+	require.Equal(t, "https://relay.example/v1/videos/task-two/content", gjson.GetBytes(rewritten, "nested.1.url").String())
 }
