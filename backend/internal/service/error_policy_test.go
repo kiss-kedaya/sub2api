@@ -333,6 +333,9 @@ func TestApplyErrorPolicy(t *testing.T) {
 				Type:     AccountTypeOAuth,
 				Platform: PlatformAntigravity,
 				Credentials: map[string]any{
+					"model_mapping": map[string]any{
+						"claude-sonnet-4-5": "claude-sonnet-4-5",
+					},
 					"temp_unschedulable_enabled": true,
 					"temp_unschedulable_rules": []any{
 						map[string]any{
@@ -362,9 +365,10 @@ func TestApplyErrorPolicy(t *testing.T) {
 
 			var handleErrorCount int
 			p := antigravityRetryLoopParams{
-				ctx:     context.Background(),
-				prefix:  "[test]",
-				account: tt.account,
+				ctx:            context.Background(),
+				prefix:         "[test]",
+				account:        tt.account,
+				requestedModel: "claude-sonnet-4-5",
 				handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult {
 					handleErrorCount++
 					return nil
@@ -382,6 +386,9 @@ func TestApplyErrorPolicy(t *testing.T) {
 				var switchErr *AntigravityAccountSwitchError
 				require.ErrorAs(t, retErr, &switchErr)
 				require.Equal(t, tt.account.ID, switchErr.OriginalAccountID)
+				require.Zero(t, repo.tempCalls)
+				require.Len(t, repo.modelRateLimitCalls, 1)
+				require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].scope)
 			} else {
 				require.NoError(t, retErr)
 			}
@@ -449,9 +456,10 @@ func TestApplyErrorPolicy_GeminiRateLimitBypassesCustomSkip(t *testing.T) {
 
 type errorPolicyRepoStub struct {
 	mockAccountRepoForGemini
-	tempCalls    int
-	setErrCalls  int
-	lastErrorMsg string
+	tempCalls           int
+	setErrCalls         int
+	lastErrorMsg        string
+	modelRateLimitCalls []modelNotFoundRateLimitCall
 }
 
 func (r *errorPolicyRepoStub) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
@@ -462,5 +470,14 @@ func (r *errorPolicyRepoStub) SetTempUnschedulable(ctx context.Context, id int64
 func (r *errorPolicyRepoStub) SetError(ctx context.Context, id int64, errorMsg string) error {
 	r.setErrCalls++
 	r.lastErrorMsg = errorMsg
+	return nil
+}
+
+func (r *errorPolicyRepoStub) SetModelRateLimit(_ context.Context, id int64, scope string, resetAt time.Time, reason ...string) error {
+	call := modelNotFoundRateLimitCall{accountID: id, scope: scope, resetAt: resetAt}
+	if len(reason) > 0 {
+		call.reason = reason[0]
+	}
+	r.modelRateLimitCalls = append(r.modelRateLimitCalls, call)
 	return nil
 }
