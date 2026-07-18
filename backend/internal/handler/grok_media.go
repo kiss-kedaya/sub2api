@@ -46,6 +46,11 @@ func (h *OpenAIGatewayHandler) GrokVideoStatus(c *gin.Context) {
 	h.handleGrokMedia(c, service.GrokMediaEndpointVideoStatus, c.Param("request_id"))
 }
 
+// GrokVideoContent proxies downloadable video content through the task's upstream account.
+func (h *OpenAIGatewayHandler) GrokVideoContent(c *gin.Context) {
+	h.handleGrokMedia(c, service.GrokMediaEndpointVideoContent, c.Param("request_id"))
+}
+
 func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.GrokMediaEndpoint, requestID string) {
 	streamStarted := false
 	defer h.recoverResponsesPanic(c, &streamStarted)
@@ -100,7 +105,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
-	if endpoint == service.GrokMediaEndpointVideoStatus && strings.TrimSpace(requestID) == "" {
+	if endpoint.IsVideoLookupRequest() && strings.TrimSpace(requestID) == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "request_id is required")
 		return
 	}
@@ -160,8 +165,17 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		sessionSeed = []byte(requestID)
 	}
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, sessionSeed)
-	if endpoint == service.GrokMediaEndpointVideoStatus {
-		sessionHash = service.GrokMediaVideoRequestSessionHash(requestID)
+	boundLookupAccountID := int64(0)
+	if endpoint.IsVideoLookupRequest() {
+		sessionHash = service.GrokMediaVideoRequestSessionHash(requestID, subject.UserID, apiKey.ID)
+		boundLookupAccountID, err = h.gatewayService.ResolveGrokMediaVideoRequestAccount(
+			c.Request.Context(), apiKey.GroupID, requestID, subject.UserID, apiKey.ID,
+		)
+		if err != nil || boundLookupAccountID <= 0 {
+			reqLog.Info("grok_media.video_lookup_owner_binding_missing", zap.Error(err))
+			h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
+			return
+		}
 	}
 	requestCtx := c.Request.Context()
 	failedAccountIDs := make(map[int64]struct{})
@@ -236,6 +250,14 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				markOpsRoutingCapacityLimited(c)
 			}
 			h.errorResponse(c, cls.Status, cls.ErrType, cls.Message)
+			return
+		}
+		if boundLookupAccountID > 0 && selection.Account.ID != boundLookupAccountID {
+			reqLog.Warn("grok_media.video_lookup_bound_account_unavailable",
+				zap.Int64("bound_account_id", boundLookupAccountID),
+				zap.Int64("selected_account_id", selection.Account.ID),
+			)
+			h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
 			return
 		}
 
@@ -317,6 +339,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					h.handleFailoverExhausted(c, failoverErr, false)
 					return
 				}
+				if endpoint.IsVideoLookupRequest() {
+					h.handleFailoverExhausted(c, failoverErr, false)
+					return
+				}
 				if failoverErr.RetryableOnSameAccount {
 					retryLimit := account.GetPoolModeRetryCount()
 					if sameAccountRetryCount[account.ID] < retryLimit {
@@ -356,7 +382,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				continue
 			}
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, grokMediaScheduleModel(account, routingModel, nil), false, nil)
-			if c.Writer.Size() == writerSizeBeforeForward {
+			if !service.IsResponseCommitted(c) && c.Writer.Size() == writerSizeBeforeForward {
 				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
 			}
 			reqLog.Warn("grok_media.forward_failed",
@@ -368,7 +394,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, grokMediaScheduleModel(account, routingModel, result), true, nil)
 		if endpoint.IsGenerationRequest() && strings.TrimSpace(result.ResponseID) != "" {
-			if err := h.gatewayService.BindGrokMediaVideoRequestAccount(requestCtx, apiKey.GroupID, result.ResponseID, account.ID); err != nil {
+			if err := h.gatewayService.BindGrokMediaVideoRequestAccount(
+				requestCtx, apiKey.GroupID, result.ResponseID, subject.UserID, apiKey.ID, account.ID,
+			); err != nil {
 				reqLog.Warn("grok_media.bind_video_request_account_failed",
 					zap.Int64("account_id", account.ID),
 					zap.String("request_id", result.ResponseID),
