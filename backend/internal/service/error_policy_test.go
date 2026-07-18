@@ -209,6 +209,50 @@ func TestCheckErrorPolicy(t *testing.T) {
 			body:       []byte(`unauthorized`),
 			expected:   ErrorPolicySkipped,
 		},
+		{
+			name: "pool_mode_temp_unschedulable_hit_returns_temp_unscheduled",
+			account: &Account{
+				ID:       9,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{
+					"pool_mode":                  true,
+					"temp_unschedulable_enabled": true,
+					"temp_unschedulable_rules": []any{
+						map[string]any{
+							"error_code":       float64(http.StatusServiceUnavailable),
+							"keywords":         []any{"unavailable"},
+							"duration_minutes": float64(30),
+						},
+					},
+				},
+			},
+			statusCode: http.StatusServiceUnavailable,
+			body:       []byte(`Service temporarily unavailable`),
+			expected:   ErrorPolicyTempUnscheduled,
+		},
+		{
+			name: "pool_mode_temp_unschedulable_miss_returns_skipped",
+			account: &Account{
+				ID:       10,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{
+					"pool_mode":                  true,
+					"temp_unschedulable_enabled": true,
+					"temp_unschedulable_rules": []any{
+						map[string]any{
+							"error_code":       float64(http.StatusServiceUnavailable),
+							"keywords":         []any{"maintenance"},
+							"duration_minutes": float64(30),
+						},
+					},
+				},
+			},
+			statusCode: http.StatusServiceUnavailable,
+			body:       []byte(`Service temporarily unavailable`),
+			expected:   ErrorPolicySkipped,
+		},
 	}
 
 	for _, tt := range tests {
@@ -222,7 +266,7 @@ func TestCheckErrorPolicy(t *testing.T) {
 	}
 }
 
-func TestHandleUpstreamError_PoolModeCustomErrorCodesOverride(t *testing.T) {
+func TestHandleUpstreamError_PoolModePolicies(t *testing.T) {
 	t.Run("pool_mode_without_custom_error_codes_still_skips", func(t *testing.T) {
 		repo := &errorPolicyRepoStub{}
 		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
@@ -260,6 +304,72 @@ func TestHandleUpstreamError_PoolModeCustomErrorCodesOverride(t *testing.T) {
 
 		require.True(t, shouldDisable)
 		require.Equal(t, 1, repo.setErrCalls)
+		require.Equal(t, 0, repo.tempCalls)
+	})
+
+	t.Run("pool_mode_explicit_temp_rule_stops_scheduling", func(t *testing.T) {
+		repo := &errorPolicyRepoStub{}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		account := &Account{
+			ID:       32,
+			Type:     AccountTypeAPIKey,
+			Platform: PlatformOpenAI,
+			Credentials: map[string]any{
+				"pool_mode":                  true,
+				"temp_unschedulable_enabled": true,
+				"temp_unschedulable_rules": []any{
+					map[string]any{
+						"error_code":       float64(http.StatusServiceUnavailable),
+						"keywords":         []any{"unavailable"},
+						"duration_minutes": float64(30),
+					},
+				},
+			},
+		}
+
+		shouldDisable := svc.HandleUpstreamError(
+			context.Background(),
+			account,
+			http.StatusServiceUnavailable,
+			http.Header{},
+			[]byte("Service temporarily unavailable"),
+		)
+
+		require.True(t, shouldDisable)
+		require.Equal(t, 0, repo.setErrCalls)
+		require.Equal(t, 1, repo.tempCalls)
+	})
+
+	t.Run("pool_mode_temp_rule_miss_still_skips", func(t *testing.T) {
+		repo := &errorPolicyRepoStub{}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		account := &Account{
+			ID:       33,
+			Type:     AccountTypeAPIKey,
+			Platform: PlatformOpenAI,
+			Credentials: map[string]any{
+				"pool_mode":                  true,
+				"temp_unschedulable_enabled": true,
+				"temp_unschedulable_rules": []any{
+					map[string]any{
+						"error_code":       float64(http.StatusServiceUnavailable),
+						"keywords":         []any{"maintenance"},
+						"duration_minutes": float64(30),
+					},
+				},
+			},
+		}
+
+		shouldDisable := svc.HandleUpstreamError(
+			context.Background(),
+			account,
+			http.StatusServiceUnavailable,
+			http.Header{},
+			[]byte("Service temporarily unavailable"),
+		)
+
+		require.False(t, shouldDisable)
+		require.Equal(t, 0, repo.setErrCalls)
 		require.Equal(t, 0, repo.tempCalls)
 	})
 }
