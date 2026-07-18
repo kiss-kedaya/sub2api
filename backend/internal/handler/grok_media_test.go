@@ -73,3 +73,22 @@ func TestGrokMediaRequiredCapability(t *testing.T) {
 		})
 	}
 }
+
+func TestGrokMediaScheduleModelUsesNormalizedMappedUpstream(t *testing.T) {
+	account := &service.Account{
+		Platform: service.PlatformGrok,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"grok-imagine-video-1.5": "wrong-raw-model",
+				"grok-imagine-video":     "mapped-video-model",
+			},
+		},
+	}
+
+	require.Equal(t, "mapped-video-model", grokMediaScheduleModel(account, "grok-imagine-video", nil))
+	require.Equal(t, "actual-upstream-model", grokMediaScheduleModel(account, "grok-imagine-video", &service.OpenAIForwardResult{
+		UpstreamModel: "actual-upstream-model",
+	}))
+	require.Equal(t, "mapped-video-model", grokMediaScheduleModel(account, "grok-imagine-video", &service.OpenAIForwardResult{}))
+	require.Equal(t, "grok-imagine-video", grokMediaScheduleModel(nil, " grok-imagine-video ", nil))
+}
