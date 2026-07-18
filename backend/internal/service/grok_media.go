@@ -881,33 +881,5 @@ func grokMediaContentProxyURL(c *gin.Context, requestID string) string {
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/") {
 		pathPrefix = "/v1"
 	}
-	path := pathPrefix + "/videos/" + url.PathEscape(strings.Trim(requestID, "/")) + "/content"
-	host := strings.TrimSpace(c.GetHeader("X-Forwarded-Host"))
-	if comma := strings.IndexByte(host, ','); comma >= 0 {
-		host = strings.TrimSpace(host[:comma])
-	}
-	if host == "" {
-		host = strings.TrimSpace(c.Request.Host)
-	}
-	if strings.ContainsAny(host, " \t\r\n") {
-		return ""
-	}
-	scheme := strings.ToLower(strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")))
-	if comma := strings.IndexByte(scheme, ','); comma >= 0 {
-		scheme = strings.TrimSpace(scheme[:comma])
-	}
-	if scheme != "http" && scheme != "https" {
-		scheme = strings.ToLower(strings.TrimSpace(c.Request.URL.Scheme))
-	}
-	if scheme != "http" && scheme != "https" {
-		if c.Request.TLS != nil {
-			scheme = "https"
-		} else {
-			scheme = "http"
-		}
-	}
-	if host == "" {
-		return path
-	}
-	return scheme + "://" + host + path
+	return pathPrefix + "/videos/" + url.PathEscape(strings.Trim(requestID, "/")) + "/content"
 }
