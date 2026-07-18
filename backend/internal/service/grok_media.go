@@ -364,6 +364,16 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	if err != nil {
 		return nil, err
 	}
+	if endpoint == GrokMediaEndpointImagesGenerations || endpoint == GrokMediaEndpointImagesEdits {
+		if countOpenAIResponseImageOutputsFromJSONBytes(respBody) <= 0 {
+			setOpsUpstreamError(c, http.StatusBadGateway, "xAI upstream returned no image output", truncateString(string(respBody), 512))
+			return nil, &UpstreamFailoverError{
+				StatusCode:      http.StatusBadGateway,
+				ResponseBody:    respBody,
+				ResponseHeaders: resp.Header.Clone(),
+			}
+		}
+	}
 	writeGrokMediaResponse(c, resp, respBody, s.responseHeaderFilter)
 	usage := grokMediaUsageFromResponse(endpoint, requestInfo, respBody)
 	return &OpenAIForwardResult{
@@ -584,14 +594,7 @@ func grokMediaUsageFromResponse(endpoint GrokMediaEndpoint, requestInfo GrokMedi
 	meta := grokMediaUsageMetadata{Usage: usage}
 	switch endpoint {
 	case GrokMediaEndpointImagesGenerations, GrokMediaEndpointImagesEdits:
-		imageCount := countOpenAIResponseImageOutputsFromJSONBytes(responseBody)
-		if imageCount <= 0 {
-			imageCount = requestInfo.N
-		}
-		if imageCount <= 0 {
-			imageCount = 1
-		}
-		meta.ImageCount = imageCount
+		meta.ImageCount = countOpenAIResponseImageOutputsFromJSONBytes(responseBody)
 		meta.ImageSize = requestInfo.SizeTier
 		meta.ImageInputSize = requestInfo.Size
 		meta.ImageOutputSizes = collectOpenAIResponseImageOutputSizesFromJSONBytes(responseBody)

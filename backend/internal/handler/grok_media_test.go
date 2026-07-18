@@ -1,11 +1,25 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+type grokMediaEligibilityProberStub struct {
+	eligible bool
+	reason   string
+	err      error
+	calls    int
+}
+
+func (s *grokMediaEligibilityProberStub) ProbeMediaEligibility(context.Context, int64) (bool, string, error) {
+	s.calls++
+	return s.eligible, s.reason, s.err
+}
 
 func TestShouldRecordGrokMediaUsage(t *testing.T) {
 	tests := []struct {
@@ -72,4 +86,56 @@ func TestGrokMediaRequiredCapability(t *testing.T) {
 			require.Equal(t, tt.want, grokMediaRequiredCapability(tt.endpoint))
 		})
 	}
+}
+
+func TestEnsureGrokMediaAccountEligibility(t *testing.T) {
+	t.Run("non oauth account does not probe", func(t *testing.T) {
+		prober := &grokMediaEligibilityProberStub{}
+		h := &OpenAIGatewayHandler{grokMediaEligibilityProber: prober}
+		account := &service.Account{Platform: service.PlatformGrok, Type: service.AccountTypeAPIKey}
+
+		eligible, reason, err := h.ensureGrokMediaAccountEligibility(context.Background(), account)
+
+		require.NoError(t, err)
+		require.True(t, eligible)
+		require.Equal(t, "non_oauth", reason)
+		require.Zero(t, prober.calls)
+	})
+
+	t.Run("unobserved oauth is probed before forwarding", func(t *testing.T) {
+		prober := &grokMediaEligibilityProberStub{eligible: true, reason: "eligible"}
+		h := &OpenAIGatewayHandler{grokMediaEligibilityProber: prober}
+		account := &service.Account{ID: 7, Platform: service.PlatformGrok, Type: service.AccountTypeOAuth}
+
+		eligible, reason, err := h.ensureGrokMediaAccountEligibility(context.Background(), account)
+
+		require.NoError(t, err)
+		require.True(t, eligible)
+		require.Equal(t, "eligible", reason)
+		require.Equal(t, 1, prober.calls)
+	})
+
+	t.Run("missing prober fails closed", func(t *testing.T) {
+		h := &OpenAIGatewayHandler{}
+		account := &service.Account{ID: 8, Platform: service.PlatformGrok, Type: service.AccountTypeOAuth}
+
+		eligible, reason, err := h.ensureGrokMediaAccountEligibility(context.Background(), account)
+
+		require.Error(t, err)
+		require.False(t, eligible)
+		require.Equal(t, "billing_probe_unavailable", reason)
+	})
+
+	t.Run("probe failure fails closed", func(t *testing.T) {
+		probeErr := errors.New("probe failed")
+		prober := &grokMediaEligibilityProberStub{reason: "billing_unobserved", err: probeErr}
+		h := &OpenAIGatewayHandler{grokMediaEligibilityProber: prober}
+		account := &service.Account{ID: 9, Platform: service.PlatformGrok, Type: service.AccountTypeOAuth}
+
+		eligible, reason, err := h.ensureGrokMediaAccountEligibility(context.Background(), account)
+
+		require.ErrorIs(t, err, probeErr)
+		require.False(t, eligible)
+		require.Equal(t, "billing_unobserved", reason)
+	})
 }
