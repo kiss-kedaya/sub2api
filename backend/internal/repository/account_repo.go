@@ -893,6 +893,20 @@ func (r *accountRepository) ListOpsAccountsForStats(ctx context.Context, platfor
 func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selector) {
 	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderAsc)
+	if sortBy == "upstream_billing_rate" {
+		direction := "ASC"
+		tieOrder := entsql.Asc
+		if sortOrder == pagination.SortOrderDesc {
+			direction = "DESC"
+			tieOrder = entsql.Desc
+		}
+		return []func(*entsql.Selector){func(s *entsql.Selector) {
+			extra := s.C(dbaccount.FieldExtra)
+			expression := upstreamBillingRateSortExpression(extra)
+			s.OrderExpr(entsql.Expr(expression + " " + direction + " NULLS LAST"))
+			s.OrderBy(tieOrder(s.C(dbaccount.FieldID)))
+		}}
+	}
 
 	field := dbaccount.FieldName
 	defaultOrder := true
@@ -932,6 +946,40 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 		return []func(*entsql.Selector){dbent.Asc(dbaccount.FieldName), dbent.Asc(dbaccount.FieldID)}
 	}
 	return []func(*entsql.Selector){dbent.Asc(field), dbent.Asc(dbaccount.FieldID)}
+}
+
+func upstreamBillingRateSortExpression(extra string) string {
+	status := extra + " #>> '{upstream_billing_probe,status}'"
+	effectiveJSON := extra + " #> '{upstream_billing_probe,data,effective_rate_multiplier}'"
+	effective := extra + " #>> '{upstream_billing_probe,data,effective_rate_multiplier}'"
+	resolvedJSON := extra + " #> '{upstream_billing_probe,data,resolved_rate_multiplier}'"
+	resolved := extra + " #>> '{upstream_billing_probe,data,resolved_rate_multiplier}'"
+	peakEnabledJSON := extra + " #> '{upstream_billing_probe,data,peak_rate_enabled}'"
+	peakEnabled := extra + " #>> '{upstream_billing_probe,data,peak_rate_enabled}'"
+	peakStart := extra + " #>> '{upstream_billing_probe,data,peak_start}'"
+	peakEnd := extra + " #>> '{upstream_billing_probe,data,peak_end}'"
+	peakMultiplierJSON := extra + " #> '{upstream_billing_probe,data,peak_rate_multiplier}'"
+	peakMultiplier := extra + " #>> '{upstream_billing_probe,data,peak_rate_multiplier}'"
+	peakMultiplierValue := "(CASE WHEN jsonb_typeof(" + peakMultiplierJSON + ") = 'number' THEN (" + peakMultiplier + ")::numeric END)"
+	billingScope := extra + " #>> '{upstream_billing_probe,data,billing_scope}'"
+	timezone := extra + " #>> '{upstream_billing_probe,data,timezone}'"
+	validClock := "'^([01][0-9]|2[0-3]):[0-5][0-9]$'"
+	startMinute := "(CASE WHEN " + peakStart + " ~ " + validClock + " THEN split_part(" + peakStart + ", ':', 1)::numeric * 60 + split_part(" + peakStart + ", ':', 2)::numeric END)"
+	endMinute := "(CASE WHEN " + peakEnd + " ~ " + validClock + " THEN split_part(" + peakEnd + ", ':', 1)::numeric * 60 + split_part(" + peakEnd + ", ':', 2)::numeric END)"
+	localMinute := "(EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE (" + timezone + "))) * 60 + EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE (" + timezone + "))))"
+	validPeakWindow := peakStart + " ~ " + validClock + " AND " +
+		peakEnd + " ~ " + validClock + " AND " +
+		startMinute + " < " + endMinute
+	validPeakConfig := validPeakWindow + " AND " + peakMultiplierValue + " >= 0 AND " +
+		"EXISTS (SELECT 1 FROM pg_timezone_names WHERE name = " + timezone + ")"
+	dynamicRate := "CASE WHEN " + peakEnabled + " = 'false' THEN (" + resolved + ")::numeric WHEN " + peakEnabled + " = 'true' AND " + validPeakConfig +
+		" THEN (" + resolved + ")::numeric * CASE WHEN " + localMinute + " >= " + startMinute + " AND " + localMinute + " < " + endMinute +
+		" THEN " + peakMultiplierValue + " ELSE 1 END ELSE NULL END"
+	legacySnapshot := "jsonb_typeof(" + resolvedJSON + ") IS NULL AND jsonb_typeof(" + peakEnabledJSON + ") IS NULL"
+
+	return "CASE WHEN " + status + " IN ('ok', 'failed') AND (jsonb_typeof(" + resolvedJSON + ") = 'number' OR jsonb_typeof(" + effectiveJSON + ") = 'number') THEN CASE WHEN jsonb_typeof(" +
+		resolvedJSON + ") = 'number' AND jsonb_typeof(" + peakEnabledJSON + ") = 'boolean' THEN CASE WHEN " + billingScope + " = 'token' THEN " + dynamicRate + " ELSE NULL END WHEN " + legacySnapshot +
+		" AND jsonb_typeof(" + effectiveJSON + ") = 'number' THEN (" + effective + ")::numeric END END"
 }
 
 func (r *accountRepository) ListByGroup(ctx context.Context, groupID int64) ([]service.Account, error) {
@@ -2615,6 +2663,12 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		args = append(args, *updates.Schedulable)
 		idx++
 	}
+	if updates.ProbeEnabled != nil {
+		if updates.Extra == nil {
+			updates.Extra = make(map[string]any)
+		}
+		updates.Extra[service.UpstreamBillingProbeEnabledExtraKey] = *updates.ProbeEnabled
+	}
 	// JSONB 需要合并而非覆盖，使用 raw SQL 保持旧行为。
 	if len(updates.Credentials) > 0 {
 		payload, err := json.Marshal(updates.Credentials)
@@ -2645,8 +2699,14 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 
 	setClauses = append(setClauses, "updated_at = NOW()")
 
-	query := "UPDATE accounts SET " + joinClauses(setClauses, ", ") + " WHERE id = ANY($" + itoa(idx) + ") AND deleted_at IS NULL"
+	whereClause := " WHERE id = ANY($" + itoa(idx) + ") AND deleted_at IS NULL"
 	args = append(args, pq.Array(ids))
+	idx++
+	if updates.ProbeEnabled != nil {
+		whereClause += " AND platform = $" + itoa(idx) + " AND type = $" + itoa(idx+1)
+		args = append(args, service.PlatformOpenAI, service.AccountTypeAPIKey)
+	}
+	query := "UPDATE accounts SET " + joinClauses(setClauses, ", ") + whereClause
 
 	baseCtx := ctx
 	contextTx := dbent.TxFromContext(ctx)
@@ -2674,6 +2734,20 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return 0, err
+	}
+	if updates.ProbeEnabled != nil {
+		expectedRows := int64(0)
+		seenIDs := make(map[int64]struct{}, len(ids))
+		for _, id := range ids {
+			if _, seen := seenIDs[id]; seen {
+				continue
+			}
+			seenIDs[id] = struct{}{}
+			expectedRows++
+		}
+		if rows != expectedRows {
+			return 0, service.ErrUpstreamBillingProbeAccountInvalid
+		}
 	}
 	if rows > 0 {
 		payload := map[string]any{"account_ids": ids}
