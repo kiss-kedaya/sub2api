@@ -206,18 +206,27 @@ func TestPatchGrokResponsesBodyDropsToolChoiceWhenNoSupportedToolsRemain(t *test
 	require.False(t, gjson.GetBytes(patched, "tool_choice").Exists())
 }
 
-func TestPatchGrokResponsesBodyDropsCodexAdditionalToolsInputItems(t *testing.T) {
+func TestPatchGrokResponsesBodyPromotesCodexAdditionalTools(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`{
 		"model": "grok",
+		"tools": [
+			{"type": "function", "name": "existing", "description": "top-level wins"},
+			{"type": "web_search"}
+		],
+		"tool_choice": "auto",
 		"input": [
 			{
 				"type": "additional_tools",
 				"role": "developer",
 				"tools": [
-					{"type": "namespace", "name": "image_gen"},
-					{"type": "function", "name": "wait"}
+					{"type": "function", "name": "existing", "description": "duplicate carrier definition"},
+					{"type": "function", "name": "wait"},
+					{"type": "web_search"},
+					{"type": "shell"},
+					{"type": "custom", "name": "apply_patch"},
+					{"type": "namespace", "name": "collaboration"}
 				]
 			},
 			{
@@ -239,10 +248,131 @@ func TestPatchGrokResponsesBodyDropsCodexAdditionalToolsInputItems(t *testing.T)
 	require.Equal(t, "grok-4.5", gjson.GetBytes(patched, "model").String())
 	require.Equal(t, 2, len(gjson.GetBytes(patched, "input").Array()))
 	require.False(t, gjson.GetBytes(patched, `input.#(type=="additional_tools")`).Exists())
+	tools := gjson.GetBytes(patched, "tools").Array()
+	require.Len(t, tools, 4)
+	require.Equal(t, "existing", tools[0].Get("name").String())
+	require.Equal(t, "top-level wins", tools[0].Get("description").String())
+	require.Equal(t, "web_search", tools[1].Get("type").String())
+	require.Equal(t, "wait", tools[2].Get("name").String())
+	require.Equal(t, "shell", tools[3].Get("type").String())
+	require.False(t, gjson.GetBytes(patched, `tools.#(type=="custom")`).Exists())
+	require.False(t, gjson.GetBytes(patched, `tools.#(type=="namespace")`).Exists())
+	require.Equal(t, "auto", gjson.GetBytes(patched, "tool_choice").String())
 	require.Equal(t, "developer", gjson.GetBytes(patched, "input.0.role").String())
 	require.Equal(t, "system prompt", gjson.GetBytes(patched, "input.0.content.0.text").String())
 	require.Equal(t, "user", gjson.GetBytes(patched, "input.1.role").String())
 	require.Equal(t, "hello", gjson.GetBytes(patched, "input.1.content.0.text").String())
+}
+
+func TestForwardGrokResponsesCodexAdditionalToolsUsesMixedCacheIntent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{
+		"model":"grok",
+		"stream":false,
+		"prompt_cache_key":"codex-session",
+		"input":[
+			{"type":"additional_tools","role":"developer","tools":[
+				{"type":"function","name":"lookup","description":"look up a key","parameters":{"type":"object"}},
+				{"type":"function","name":"web_search","description":"search","parameters":{"type":"object"}},
+				{"type":"custom","name":"apply_patch"},
+				{"type":"namespace","name":"collaboration"}
+			]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}
+		]
+	}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set(grokClientToolCacheOptInHeader, "prefer-cache")
+	c.Set("api_key", &APIKey{ID: 4501})
+
+	account := healthyGrokOAuthGatewayTestAccount(4501, "access-token")
+	account.Credentials["subscription_tier"] = "free"
+	repo := &grokQuotaAccountRepo{
+		mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
+			accountsByID: map[int64]*Account{account.ID: account},
+		},
+	}
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{
+			"id":"resp_codex_lite","object":"response","model":"grok-4.5","status":"completed",
+			"output":[],"usage":{"input_tokens":10,"output_tokens":1}
+		}`)),
+	}}
+	svc := &OpenAIGatewayService{
+		httpUpstream:      upstream,
+		grokTokenProvider: NewGrokTokenProvider(repo, nil),
+		accountRepo:       repo,
+	}
+
+	result, err := svc.forwardGrokResponses(context.Background(), c, account, body, "grok", false, time.Now())
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "resp_codex_lite", result.ResponseID)
+	require.False(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools")`).Exists())
+	tools := gjson.GetBytes(upstream.lastBody, "tools").Array()
+	require.Len(t, tools, 3)
+	require.Equal(t, "function", tools[0].Get("type").String())
+	require.Equal(t, "lookup", tools[0].Get("name").String())
+	require.Equal(t, "web_search", tools[1].Get("type").String())
+	require.Equal(t, "x_search", tools[2].Get("type").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "tool_choice").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="custom")`).Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="namespace")`).Exists())
+	identity := gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String()
+	require.NotEmpty(t, identity)
+	require.Equal(t, identity, upstream.lastReq.Header.Get(grokConversationIDHeader))
+	require.Empty(t, upstream.lastReq.Header.Get(grokClientToolCacheOptInHeader))
+}
+
+func TestGrokResponsesCacheIdentityIncludesPromotedCodexTools(t *testing.T) {
+	c := newGrokCacheTestContext(4503)
+	lookupBody := []byte(`{"model":"grok","input":[{"type":"additional_tools","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]},{"type":"message","role":"user","content":"same prompt"}]}`)
+	readBody := []byte(`{"model":"grok","input":[{"type":"additional_tools","tools":[{"type":"function","name":"read_file","parameters":{"type":"object"}}]},{"type":"message","role":"user","content":"same prompt"}]}`)
+
+	patchedLookup, err := patchGrokResponsesBody(lookupBody, "grok-4.5")
+	require.NoError(t, err)
+	patchedRead, err := patchGrokResponsesBody(readBody, "grok-4.5")
+	require.NoError(t, err)
+
+	lookupIdentity := resolveGrokCacheIdentity(c, patchedLookup, "", "grok-4.5")
+	readIdentity := resolveGrokCacheIdentity(c, patchedRead, "", "grok-4.5")
+	require.NotEmpty(t, lookupIdentity)
+	require.NotEmpty(t, readIdentity)
+	require.NotEqual(t, lookupIdentity, readIdentity)
+}
+
+func TestCodexUnsupportedAdditionalToolsDoNotBecomeToolFreeCacheIntent(t *testing.T) {
+	body := []byte(`{
+		"model":"grok","tool_choice":"auto",
+		"input":[
+			{"type":"additional_tools","role":"developer","tools":[
+				{"type":"custom","name":"apply_patch"},
+				{"type":"namespace","name":"collaboration"}
+			]},
+			{"type":"message","role":"user","content":"hello"}
+		]
+	}`)
+	patched, err := patchGrokResponsesBody(body, "grok-4.5")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(patched, "tools").Exists())
+	require.False(t, gjson.GetBytes(patched, "tool_choice").Exists())
+
+	mixedCacheIntent := patched
+	patched, err = applyGrokResponsesCacheIdentity(patched, body, "isolated-id", true)
+	require.NoError(t, err)
+	account := healthyGrokOAuthGatewayTestAccount(4502, "access-token")
+	account.Credentials["subscription_tier"] = "free"
+	patched, err = applyGrokFreeRequestToolCacheRoute(nil, patched, mixedCacheIntent, account, "isolated-id")
+
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(patched, "tools").Exists())
+	require.False(t, gjson.GetBytes(patched, "tool_choice").Exists())
+	require.Equal(t, "isolated-id", gjson.GetBytes(patched, "prompt_cache_key").String())
 }
 
 func TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken(t *testing.T) {
