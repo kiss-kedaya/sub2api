@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/textproto"
 	"net/url"
 	"os"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"golang.org/x/net/http/httpguts"
 )
 
 const (
@@ -668,6 +670,13 @@ type CORSConfig struct {
 	AllowCredentials bool     `mapstructure:"allow_credentials"`
 }
 
+const MaxForwardedClientIPHeaders = 16
+
+type ForwardedClientIPSettings struct {
+	TrustForwardedIP bool
+	Headers          []string
+}
+
 type SecurityConfig struct {
 	URLAllowlist    URLAllowlistConfig   `mapstructure:"url_allowlist"`
 	ResponseHeaders ResponseHeaderConfig `mapstructure:"response_headers"`
@@ -676,19 +685,58 @@ type SecurityConfig struct {
 	ProxyProbe      ProxyProbeConfig     `mapstructure:"proxy_probe"`
 	// TrustForwardedIPForAPIKeyACL enables legacy raw forwarded-header takeover.
 	// When disabled, server.trusted_proxies is authoritative for all client-IP consumers.
-	TrustForwardedIPForAPIKeyACL     bool         `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
-	trustForwardedIPForAPIKeyACLLive *atomic.Bool `mapstructure:"-"`
+	TrustForwardedIPForAPIKeyACL  bool                                      `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
+	ForwardedClientIPHeaders      []string                                  `mapstructure:"forwarded_client_ip_headers" json:"forwarded_client_ip_headers" yaml:"forwarded_client_ip_headers"`
+	forwardedClientIPSettingsLive atomic.Pointer[ForwardedClientIPSettings] `mapstructure:"-" json:"-" yaml:"-"`
+}
+
+func NormalizeForwardedClientIPHeaders(headers []string) ([]string, error) {
+	normalized := make([]string, 0, len(headers))
+	seen := make(map[string]struct{}, len(headers))
+	for _, header := range headers {
+		header = strings.TrimSpace(header)
+		if !httpguts.ValidHeaderFieldName(header) {
+			return nil, fmt.Errorf("invalid HTTP header field name %q", header)
+		}
+		canonical := textproto.CanonicalMIMEHeaderKey(header)
+		key := strings.ToLower(canonical)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		if len(normalized) == MaxForwardedClientIPHeaders {
+			return nil, fmt.Errorf("forwarded client IP headers must contain at most %d unique names", MaxForwardedClientIPHeaders)
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, canonical)
+	}
+	return normalized, nil
+}
+
+func cloneForwardedClientIPHeaders(headers []string) []string {
+	if len(headers) == 0 {
+		return []string{}
+	}
+	return append([]string(nil), headers...)
+}
+
+func (c *Config) ForwardedClientIPSettings() ForwardedClientIPSettings {
+	if c == nil {
+		return ForwardedClientIPSettings{Headers: []string{}}
+	}
+	if snapshot := c.Security.forwardedClientIPSettingsLive.Load(); snapshot != nil {
+		return ForwardedClientIPSettings{
+			TrustForwardedIP: snapshot.TrustForwardedIP,
+			Headers:          cloneForwardedClientIPHeaders(snapshot.Headers),
+		}
+	}
+	return ForwardedClientIPSettings{
+		TrustForwardedIP: c.Security.TrustForwardedIPForAPIKeyACL,
+		Headers:          cloneForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders),
+	}
 }
 
 func (c *Config) TrustForwardedIPForAPIKeyACL() bool {
-	if c == nil {
-		return false
-	}
-	live := c.Security.trustForwardedIPForAPIKeyACLLive
-	if live == nil {
-		return c.Security.TrustForwardedIPForAPIKeyACL
-	}
-	return live.Load()
+	return c.ForwardedClientIPSettings().TrustForwardedIP
 }
 
 // ForwardedClientIPTrustEnabled reports whether the legacy forwarded-header
@@ -697,15 +745,22 @@ func (c *Config) ForwardedClientIPTrustEnabled() bool {
 	return c != nil && c.TrustForwardedIPForAPIKeyACL()
 }
 
+func (c *Config) SetForwardedClientIPSettings(enabled bool, headers []string) {
+	if c == nil {
+		return
+	}
+	headers = cloneForwardedClientIPHeaders(headers)
+	c.Security.forwardedClientIPSettingsLive.Store(&ForwardedClientIPSettings{
+		TrustForwardedIP: enabled,
+		Headers:          headers,
+	})
+}
+
 func (c *Config) SetTrustForwardedIPForAPIKeyACL(enabled bool) {
 	if c == nil {
 		return
 	}
-	c.Security.TrustForwardedIPForAPIKeyACL = enabled
-	if c.Security.trustForwardedIPForAPIKeyACLLive == nil {
-		c.Security.trustForwardedIPForAPIKeyACLLive = &atomic.Bool{}
-	}
-	c.Security.trustForwardedIPForAPIKeyACLLive.Store(enabled)
+	c.SetForwardedClientIPSettings(enabled, c.ForwardedClientIPSettings().Headers)
 }
 
 type URLAllowlistConfig struct {
@@ -1574,6 +1629,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		// 配置文件不存在时使用默认值
 	}
 	trustedProxiesEnv, trustedProxiesEnvConfigured := os.LookupEnv("SERVER_TRUSTED_PROXIES")
+	forwardedClientIPHeadersEnv, forwardedClientIPHeadersEnvConfigured := os.LookupEnv("SECURITY_FORWARDED_CLIENT_IP_HEADERS")
 	trustedProxiesConfigured := viper.InConfig("server.trusted_proxies") ||
 		viper.IsSet("server.trusted_proxies") || trustedProxiesEnvConfigured
 
@@ -1583,6 +1639,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 	if trustedProxiesEnvConfigured {
 		cfg.Server.TrustedProxies = normalizeStringSlice(strings.Split(trustedProxiesEnv, ","))
+	}
+	if forwardedClientIPHeadersEnvConfigured {
+		cfg.Security.ForwardedClientIPHeaders = normalizeStringSlice(strings.Split(forwardedClientIPHeadersEnv, ","))
 	}
 	cfg.Server.TrustedProxiesConfigured = trustedProxiesConfigured
 	if cfg.Gateway.OpenAIScheduler.StickyEscapeTTFTMs == 0 {
@@ -1640,7 +1699,12 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	cfg.Security.ResponseHeaders.AdditionalAllowed = normalizeStringSlice(cfg.Security.ResponseHeaders.AdditionalAllowed)
 	cfg.Security.ResponseHeaders.ForceRemove = normalizeStringSlice(cfg.Security.ResponseHeaders.ForceRemove)
 	cfg.Security.CSP.Policy = strings.TrimSpace(cfg.Security.CSP.Policy)
-	cfg.SetTrustForwardedIPForAPIKeyACL(cfg.Security.TrustForwardedIPForAPIKeyACL)
+	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(cfg.Security.ForwardedClientIPHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("security.forwarded_client_ip_headers: %w", err)
+	}
+	cfg.Security.ForwardedClientIPHeaders = forwardedClientIPHeaders
+	cfg.SetForwardedClientIPSettings(cfg.Security.TrustForwardedIPForAPIKeyACL, forwardedClientIPHeaders)
 	cfg.Log.Level = strings.ToLower(strings.TrimSpace(cfg.Log.Level))
 	cfg.Log.Format = strings.ToLower(strings.TrimSpace(cfg.Log.Format))
 	cfg.Log.ServiceName = strings.TrimSpace(cfg.Log.ServiceName)
@@ -2244,6 +2308,12 @@ func setDefaults() {
 }
 
 func (c *Config) Validate() error {
+	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
+	if err != nil {
+		return fmt.Errorf("security.forwarded_client_ip_headers: %w", err)
+	}
+	c.Security.ForwardedClientIPHeaders = forwardedClientIPHeaders
+	c.SetForwardedClientIPSettings(c.Security.TrustForwardedIPForAPIKeyACL, forwardedClientIPHeaders)
 	if c.Server.ReadHeaderTimeout < 1 || c.Server.ReadHeaderTimeout > 60 {
 		return fmt.Errorf("server.read_header_timeout must be between 1 and 60 seconds")
 	}
