@@ -92,6 +92,101 @@ func TestGetSecurityClientIPSwitchEnabledUsesLegacyHeaders(t *testing.T) {
 	require.Equal(t, "1.2.3.4", w.Body.String())
 }
 
+func TestGetSecurityClientIPCustomHeaderPrecedenceAndFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name           string
+		trustForward   bool
+		headers        []string
+		requestHeaders map[string]string
+		want           string
+	}{
+		{
+			name:         "configured order precedes built-ins",
+			trustForward: true,
+			headers:      []string{"X-CDN-First", "X-CDN-Second"},
+			requestHeaders: map[string]string{
+				"X-CDN-First":      "198.51.100.10",
+				"X-CDN-Second":     "203.0.113.20",
+				"CF-Connecting-IP": "8.8.8.8",
+			},
+			want: "198.51.100.10",
+		},
+		{
+			name:         "comma candidates skip invalid and private values",
+			trustForward: true,
+			headers:      []string{"X-CDN-First", "X-CDN-Second"},
+			requestHeaders: map[string]string{
+				"X-CDN-First":  "not-an-ip, 10.0.0.8",
+				"X-CDN-Second": "also-bad, 203.0.113.9",
+			},
+			want: "203.0.113.9",
+		},
+		{
+			name:         "legacy public header wins over custom private fallback",
+			trustForward: true,
+			headers:      []string{"X-CDN-IP"},
+			requestHeaders: map[string]string{
+				"X-CDN-IP":  "10.0.0.8",
+				"X-Real-IP": "1.2.3.4",
+			},
+			want: "1.2.3.4",
+		},
+		{
+			name:         "custom private fallback retains configured precedence",
+			trustForward: true,
+			headers:      []string{"X-CDN-IP"},
+			requestHeaders: map[string]string{
+				"X-CDN-IP":  "10.0.0.8",
+				"X-Real-IP": "192.168.1.4",
+			},
+			want: "10.0.0.8",
+		},
+		{
+			name:         "invalid custom value continues to built-ins",
+			trustForward: true,
+			headers:      []string{"X-CDN-IP"},
+			requestHeaders: map[string]string{
+				"X-CDN-IP":         "1.2.3.4:443",
+				"CF-Connecting-IP": "4.4.4.4",
+			},
+			want: "4.4.4.4",
+		},
+		{
+			name:         "disabled mode ignores custom and legacy headers",
+			trustForward: false,
+			headers:      []string{"X-CDN-IP"},
+			requestHeaders: map[string]string{
+				"X-CDN-IP":  "1.2.3.4",
+				"X-Real-IP": "4.4.4.4",
+			},
+			want: "9.9.9.9",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			r := gin.New()
+			require.NoError(t, r.SetTrustedProxies(nil))
+			r.GET("/t", func(c *gin.Context) {
+				SetForwardedIPSettings(c, test.trustForward, test.headers)
+				c.String(200, GetSecurityClientIP(c, !test.trustForward))
+			})
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/t", nil)
+			req.RemoteAddr = "9.9.9.9:12345"
+			for name, value := range test.requestHeaders {
+				req.Header.Set(name, value)
+			}
+			r.ServeHTTP(w, req)
+
+			require.Equal(t, test.want, w.Body.String())
+		})
+	}
+}
+
 func TestGetSecurityClientIPSwitchDisabledUsesConfiguredTrustedProxy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -123,6 +218,28 @@ func TestGetClientIPSwitchDisabledUsesTrustedProxyChain(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, "9.9.9.9", w.Body.String())
+}
+
+func TestGetSecurityClientIPRequestSnapshotCopiesCustomHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	require.NoError(t, r.SetTrustedProxies(nil))
+	r.GET("/t", func(c *gin.Context) {
+		headers := []string{"X-Original-IP"}
+		SetForwardedIPSettings(c, true, headers)
+		headers[0] = "X-Mutated-IP"
+		c.String(200, GetSecurityClientIP(c, false))
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/t", nil)
+	req.RemoteAddr = "9.9.9.9:12345"
+	req.Header.Set("X-Original-IP", "1.2.3.4")
+	req.Header.Set("X-Mutated-IP", "4.4.4.4")
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, "1.2.3.4", w.Body.String())
 }
 
 func TestGetSecurityClientIPRequestSnapshotOverridesLiveFallback(t *testing.T) {
