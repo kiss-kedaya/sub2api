@@ -537,13 +537,13 @@ func formatOpsReportInteger(value int64) string {
 
 	var builder strings.Builder
 	builder.Grow(len(raw) + (len(raw)-start-1)/3)
-	builder.WriteString(raw[:start])
+	_, _ = builder.WriteString(raw[:start])
 	digitLen := len(raw) - start
 	for offset := 0; offset < digitLen; offset++ {
 		if offset > 0 && (digitLen-offset)%3 == 0 {
-			builder.WriteByte(',')
+			_ = builder.WriteByte(',')
 		}
-		builder.WriteByte(raw[start+offset])
+		_ = builder.WriteByte(raw[start+offset])
 	}
 	return builder.String()
 }
@@ -623,11 +623,6 @@ func (s *OpsScheduledReportService) generateReportContent(ctx context.Context, r
 	default:
 		return opsScheduledReportContent{}, fmt.Errorf("unknown report type: %s", report.ReportType)
 	}
-}
-
-func (s *OpsScheduledReportService) generateReportHTML(ctx context.Context, report *opsScheduledReport, now time.Time) (string, error) {
-	content, err := s.generateReportContent(ctx, report, now)
-	return content.html, err
 }
 
 func buildOpsSummaryEmailHTML(title string, start, end time.Time, overview *OpsDashboardOverview) string {
