@@ -41,10 +41,27 @@ func TestLoadHTTPIngressSafetyDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 10, cfg.Server.ReadHeaderTimeout)
 	require.Equal(t, 64*1024, cfg.Server.MaxHeaderBytes)
+	require.Equal(t, []string{
+		"127.0.0.0/8",
+		"::1/128",
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"fc00::/7",
+	}, cfg.Server.TrustedProxies)
 	require.Equal(t, int64(32*1024*1024), cfg.Gateway.TextMaxBodySize)
 	require.True(t, cfg.APIKeyAuth.InvalidAbuse.Enabled)
 	require.Equal(t, 120, cfg.APIKeyAuth.InvalidAbuse.Threshold)
 	require.Equal(t, 16384, cfg.APIKeyAuth.InvalidAbuse.Capacity)
+}
+
+func TestLoadExplicitEmptyTrustedProxiesKeepsLegacyDefault(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	viper.Set("server.trusted_proxies", []string{})
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Empty(t, cfg.Server.TrustedProxies)
 }
 
 func TestLoadForBootstrapAllowsMissingJWTSecret(t *testing.T) {
