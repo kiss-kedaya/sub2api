@@ -75,14 +75,59 @@ func TestGrokChatResponsesBridgeEligibility(t *testing.T) {
 			reason: "empty_message_content",
 		},
 		{
-			name:   "function tools fall back",
-			body:   `{"model":"grok","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}]}`,
-			reason: "unsupported_tools",
+			name: "function tools bridge",
+			body: `{"model":"grok","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"},"strict":false}}]}`,
+			want: true,
 		},
 		{
-			name:   "automatic tool choice falls back",
-			body:   `{"model":"grok","messages":[{"role":"user","content":"hi"}],"tools":[],"tool_choice":"auto"}`,
+			name:   "legacy functions fall back",
+			body:   `{"model":"grok","messages":[{"role":"user","content":"hi"}],"functions":[{"name":"lookup","parameters":{"type":"object"}}]}`,
+			reason: "unsupported_functions",
+		},
+		{
+			name: "automatic tool choice bridges",
+			body: `{"model":"grok","messages":[{"role":"user","content":"hi"}],"tools":[],"tool_choice":"auto"}`,
+			want: true,
+		},
+		{
+			name:   "required tool choice without tools falls back",
+			body:   `{"model":"grok","messages":[{"role":"user","content":"hi"}],"tools":[],"tool_choice":"required"}`,
+			reason: "required_tool_choice_without_tools",
+		},
+		{
+			name: "tool history bridges",
+			body: `{"model":"grok","messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_lookup","type":"function","function":{"name":"lookup","arguments":"{\"key\":\"alpha\"}"}}]},{"role":"tool","tool_call_id":"call_lookup","content":"{\"value\":\"ok\"}"},{"role":"user","content":"summarize"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],"tool_choice":"auto","parallel_tool_calls":true}`,
+			want: true,
+		},
+		{
+			name:   "unknown tool type falls back",
+			body:   `{"model":"grok","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"web_search","function":{"name":"lookup","parameters":{"type":"object"}}}]}`,
+			reason: "unsupported_tool_type",
+		},
+		{
+			name:   "missing tool schema falls back",
+			body:   `{"model":"grok","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}]}`,
+			reason: "invalid_tool_function_parameters",
+		},
+		{
+			name:   "named tool choice falls back",
+			body:   `{"model":"grok","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
 			reason: "unsupported_tool_choice",
+		},
+		{
+			name:   "invalid tool call arguments fall back",
+			body:   `{"model":"grok","messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_lookup","type":"function","function":{"name":"lookup","arguments":"{"}}]}]}`,
+			reason: "invalid_tool_call_arguments",
+		},
+		{
+			name:   "tool result without call id falls back",
+			body:   `{"model":"grok","messages":[{"role":"tool","content":"ok"}]}`,
+			reason: "invalid_tool_call_id",
+		},
+		{
+			name:   "non boolean parallel tool calls falls back",
+			body:   `{"model":"grok","messages":[{"role":"user","content":"hi"}],"parallel_tool_calls":"true"}`,
+			reason: "invalid_parallel_tool_calls",
 		},
 		{
 			name:   "reasoning effort falls back because conversion adds summary",
@@ -100,9 +145,9 @@ func TestGrokChatResponsesBridgeEligibility(t *testing.T) {
 			reason: "empty_message_content",
 		},
 		{
-			name:   "tool history falls back",
+			name:   "empty tool history falls back",
 			body:   `{"model":"grok","messages":[{"role":"assistant","content":"","tool_calls":[]}]}`,
-			reason: "unsafe_message_field_tool_calls",
+			reason: "empty_message_content",
 		},
 		{
 			name:   "unknown field falls back",
@@ -181,6 +226,64 @@ func TestForwardGrokChatViaResponsesNonStreamingCachesAndReturnsChat(t *testing.
 	require.Equal(t, "cached ok", gjson.Get(recorder.Body.String(), "choices.0.message.content").String())
 	require.Equal(t, int64(9856), gjson.Get(recorder.Body.String(), "usage.prompt_tokens_details.cached_tokens").Int())
 	require.NotNil(t, repo.updates[account.ID][grokQuotaSnapshotExtraKey])
+}
+
+func TestForwardGrokChatViaResponsesTraeToolHistoryKeepsCacheRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	firstTurnBody := []byte(`{"model":"grok","messages":[{"role":"system","content":"Be concise"},{"role":"user","content":"Find alpha"}],"stream":false,"prompt_cache_key":"trae-session","tools":[{"type":"function","function":{"name":"lookup","description":"Lookup a value","parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"strict":false}}],"tool_choice":"auto","parallel_tool_calls":true}`)
+	body := []byte(`{"model":"grok","messages":[{"role":"system","content":"Be concise"},{"role":"user","content":"Find alpha"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_lookup","type":"function","function":{"name":"lookup","arguments":"{\"key\":\"alpha\"}"}}]},{"role":"tool","tool_call_id":"call_lookup","content":"{\"value\":\"ok\"}"},{"role":"user","content":"Summarize"}],"stream":false,"prompt_cache_key":"trae-session","tools":[{"type":"function","function":{"name":"lookup","description":"Lookup a value","parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"strict":false}}],"tool_choice":"auto","parallel_tool_calls":true}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, grokChatRawEndpoint, bytes.NewReader(body))
+	c.Request.Header.Set(grokClientToolCacheOptInHeader, "prefer-cache")
+	c.Set("api_key", &APIKey{ID: 7151})
+
+	account := grokChatBridgeTestAccount(715)
+	account.Credentials["subscription_tier"] = "free"
+	repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
+		accountsByID: map[int64]*Account{account.ID: account},
+	}}
+	upstream := &httpUpstreamRecorder{resp: grokChatBridgeCompletedResponse("resp_grok_chat_trae", 8192)}
+	svc := &OpenAIGatewayService{
+		httpUpstream:      upstream,
+		grokTokenProvider: NewGrokTokenProvider(repo, nil),
+		accountRepo:       repo,
+	}
+
+	firstTurnIdentity := resolveGrokCacheIdentity(c, firstTurnBody, "", "grok-4.5")
+	extendedTurnIdentity := resolveGrokCacheIdentity(c, body, "", "grok-4.5")
+	require.NotEmpty(t, firstTurnIdentity)
+	require.Equal(t, firstTurnIdentity, extendedTurnIdentity)
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, xai.DefaultCLIBaseURL+"/responses", upstream.lastReq.URL.String())
+	require.Equal(t, grokChatResponsesEndpoint, result.UpstreamEndpoint)
+	require.Equal(t, extendedTurnIdentity, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, extendedTurnIdentity, upstream.lastReq.Header.Get(grokConversationIDHeader))
+
+	tools := gjson.GetBytes(upstream.lastBody, "tools").Array()
+	require.Len(t, tools, 3)
+	require.Equal(t, "function", tools[0].Get("type").String())
+	require.Equal(t, "lookup", tools[0].Get("name").String())
+	require.Equal(t, "Lookup a value", tools[0].Get("description").String())
+	require.Equal(t, "string", tools[0].Get("parameters.properties.key.type").String())
+	require.True(t, tools[0].Get("strict").Exists())
+	require.False(t, tools[0].Get("strict").Bool())
+	require.Equal(t, "web_search", tools[1].Get("type").String())
+	require.Equal(t, "x_search", tools[2].Get("type").String())
+	require.Equal(t, "auto", gjson.GetBytes(upstream.lastBody, "tool_choice").String())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "parallel_tool_calls").Bool())
+
+	require.Equal(t, "function_call", gjson.GetBytes(upstream.lastBody, "input.2.type").String())
+	require.Equal(t, "call_lookup", gjson.GetBytes(upstream.lastBody, "input.2.call_id").String())
+	require.Equal(t, "lookup", gjson.GetBytes(upstream.lastBody, "input.2.name").String())
+	require.Equal(t, `{"key":"alpha"}`, gjson.GetBytes(upstream.lastBody, "input.2.arguments").String())
+	require.Equal(t, "function_call_output", gjson.GetBytes(upstream.lastBody, "input.3.type").String())
+	require.Equal(t, "call_lookup", gjson.GetBytes(upstream.lastBody, "input.3.call_id").String())
+	require.Equal(t, `{"value":"ok"}`, gjson.GetBytes(upstream.lastBody, "input.3.output").String())
 }
 
 func TestForwardGrokChatViaResponsesStreamingPropagatesCachedUsage(t *testing.T) {
