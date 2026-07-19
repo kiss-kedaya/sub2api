@@ -41,27 +41,85 @@ func TestLoadHTTPIngressSafetyDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 10, cfg.Server.ReadHeaderTimeout)
 	require.Equal(t, 64*1024, cfg.Server.MaxHeaderBytes)
-	require.Equal(t, []string{
-		"127.0.0.0/8",
-		"::1/128",
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"fc00::/7",
-	}, cfg.Server.TrustedProxies)
+	require.Empty(t, cfg.Server.TrustedProxies)
+	require.False(t, cfg.Server.TrustedProxiesConfigured)
+	require.True(t, cfg.TrustForwardedIPForAPIKeyACL())
 	require.Equal(t, int64(32*1024*1024), cfg.Gateway.TextMaxBodySize)
 	require.True(t, cfg.APIKeyAuth.InvalidAbuse.Enabled)
 	require.Equal(t, 120, cfg.APIKeyAuth.InvalidAbuse.Threshold)
 	require.Equal(t, 16384, cfg.APIKeyAuth.InvalidAbuse.Capacity)
 }
 
-func TestLoadExplicitEmptyTrustedProxiesKeepsLegacyDefault(t *testing.T) {
+func TestLoadExplicitEmptyTrustedProxiesEnablesConfiguredMode(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	viper.Set("server.trusted_proxies", []string{})
 
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.Empty(t, cfg.Server.TrustedProxies)
+	require.True(t, cfg.Server.TrustedProxiesConfigured)
+}
+
+func TestLoadExplicitTrustedProxiesEnablesConfiguredMode(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	viper.Set("server.trusted_proxies", []string{"127.0.0.1/32"})
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, []string{"127.0.0.1/32"}, cfg.Server.TrustedProxies)
+	require.True(t, cfg.Server.TrustedProxiesConfigured)
+}
+
+func TestLoadTrustedProxiesFromEnvironment(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("SERVER_TRUSTED_PROXIES", "127.0.0.1/32, ::1/128")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, []string{"127.0.0.1/32", "::1/128"}, cfg.Server.TrustedProxies)
+	require.True(t, cfg.Server.TrustedProxiesConfigured)
+}
+
+func TestLoadExplicitEmptyTrustedProxiesFromEnvironment(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("SERVER_TRUSTED_PROXIES", "")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Empty(t, cfg.Server.TrustedProxies)
+	require.True(t, cfg.Server.TrustedProxiesConfigured)
+}
+
+func TestLoadTrustedProxiesPresenceFromYAML(t *testing.T) {
+	tests := []struct {
+		name       string
+		yaml       string
+		want       []string
+		configured bool
+	}{
+		{name: "absent", yaml: "server:\n  mode: debug\n", configured: false},
+		{name: "explicit empty", yaml: "server:\n  trusted_proxies: []\n", want: []string{}, configured: true},
+		{
+			name:       "populated",
+			yaml:       "server:\n  trusted_proxies:\n    - 127.0.0.1/32\n    - ::1/128\n",
+			want:       []string{"127.0.0.1/32", "::1/128"},
+			configured: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			configDir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(test.yaml), 0o600))
+			t.Setenv("DATA_DIR", configDir)
+
+			cfg, err := Load()
+			require.NoError(t, err)
+			require.Equal(t, test.want, cfg.Server.TrustedProxies)
+			require.Equal(t, test.configured, cfg.Server.TrustedProxiesConfigured)
+		})
+	}
 }
 
 func TestLoadForBootstrapAllowsMissingJWTSecret(t *testing.T) {
