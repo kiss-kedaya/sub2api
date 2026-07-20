@@ -140,6 +140,28 @@ func TestResolveGrokCacheIdentityExplicitHeaderPriority(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+func TestResolveGrokCacheIdentityPrefersClaudeCodeSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c := newGrokCacheTestContext(701)
+	c.Request.Header.Set(claudeCodeSessionHeader, "cc-session-abc")
+	c.Request.Header.Set("session_id", "session-key")
+	body1 := []byte(`{"model":"grok","input":"turn-1"}`)
+	body2 := []byte(`{"model":"grok","input":"turn-2-different-user-text"}`)
+
+	first := resolveGrokCacheIdentity(c, body1, "", "grok-4.5")
+	second := resolveGrokCacheIdentity(c, body2, "unrelated-explicit", "grok-4.5")
+	require.NotEmpty(t, first)
+	require.Equal(t, first, second, "same Claude Code session must keep stable Grok cache identity across turns")
+
+	// metadata.user_id JSON form used by Claude Code clients
+	metaBody := []byte(`{"model":"grok","metadata":{"user_id":"{\"session_id\":\"meta-session-xyz\"}"},"input":"hi"}`)
+	metaOnly := newGrokCacheTestContext(702)
+	metaID := resolveGrokCacheIdentity(metaOnly, metaBody, "", "grok-4.5")
+	require.NotEmpty(t, metaID)
+	metaBody2 := []byte(`{"model":"grok","metadata":{"user_id":"{\"session_id\":\"meta-session-xyz\"}"},"input":"later turn"}`)
+	require.Equal(t, metaID, resolveGrokCacheIdentity(metaOnly, metaBody2, "", "grok-4.5"))
+}
+
 func TestResolveGrokCacheIdentityFailsClosedWithoutAPIKeyContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c := newGrokCacheTestContext(0)
