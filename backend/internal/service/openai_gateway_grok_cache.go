@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
@@ -14,11 +15,46 @@ import (
 
 const (
 	grokConversationIDHeader         = "X-Grok-Conv-Id"
+	claudeCodeSessionHeader          = "X-Claude-Code-Session-Id"
 	grokClientToolCacheOptInHeader   = "X-Sub2API-Grok-Client-Tool-Cache"
 	grokFreeCacheNativeToolsJSON     = `[{"type":"web_search"},{"type":"x_search"}]`
 	grokFreeCacheDisabledToolChoice  = "none"
 	grokClientToolCacheOptInExtraKey = "grok_client_tool_cache_enabled"
 )
+
+// Claude Code metadata.user_id often ends with _session_<uuid>.
+var claudeCodeSessionSuffixPattern = regexp.MustCompile(`_session_([a-f0-9-]+)$`)
+
+// extractClaudeCodeSessionID resolves the Claude Code conversation id from
+// headers or Anthropic/OpenAI-compatible payload metadata.
+func extractClaudeCodeSessionID(c *gin.Context, body []byte) string {
+	if c != nil {
+		if seed := strings.TrimSpace(c.GetHeader(claudeCodeSessionHeader)); seed != "" {
+			return seed
+		}
+	}
+	return extractClaudeCodeSessionIDFromPayload(body)
+}
+
+func extractClaudeCodeSessionIDFromPayload(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	userID := strings.TrimSpace(gjson.GetBytes(body, "metadata.user_id").String())
+	if userID == "" {
+		return ""
+	}
+	if matches := claudeCodeSessionSuffixPattern.FindStringSubmatch(userID); len(matches) >= 2 {
+		return matches[1]
+	}
+	// Claude Code may embed JSON: {"session_id":"..."}
+	if len(userID) > 0 && userID[0] == '{' {
+		if sid := strings.TrimSpace(gjson.Get(userID, "session_id").String()); sid != "" {
+			return sid
+		}
+	}
+	return ""
+}
 
 // resolveGrokCacheIdentity derives one stable, tenant-isolated routing identity
 // for xAI's server-side prompt cache. The returned value is safe to expose to
@@ -68,13 +104,22 @@ func resolveGrokCacheIdentity(c *gin.Context, body []byte, explicitKey, upstream
 func explicitGrokCacheSeed(c *gin.Context, body []byte, explicitKey string) string {
 	seed := ""
 	if c != nil {
-		seed = strings.TrimSpace(c.GetHeader("session_id"))
+		// Claude Code session is the most stable multi-turn identity for
+		// /v1/messages → Grok bridges. Prefer it over generic session headers
+		// so prompt cache routing matches CPA behavior.
+		seed = extractClaudeCodeSessionID(c, body)
+		if seed == "" {
+			seed = strings.TrimSpace(c.GetHeader("session_id"))
+		}
 		if seed == "" {
 			seed = strings.TrimSpace(c.GetHeader("conversation_id"))
 		}
 		if seed == "" {
 			seed = strings.TrimSpace(c.GetHeader(grokConversationIDHeader))
 		}
+	}
+	if seed == "" && len(body) > 0 {
+		seed = extractClaudeCodeSessionIDFromPayload(body)
 	}
 	if seed == "" && len(body) > 0 {
 		seed = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
