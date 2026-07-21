@@ -16,6 +16,7 @@ func TestNormalizeMaxReasoningEffort(t *testing.T) {
 		{name: "empty", in: "", want: ""},
 		{name: "separator", in: "x-high", want: "xhigh"},
 		{name: "max is distinct", in: "max", want: "max"},
+		{name: "none is unsupported", in: "none", want: ""},
 		{name: "invalid", in: "banana", want: ""},
 	}
 	for _, tt := range tests {
@@ -58,7 +59,7 @@ func TestNormalizeReasoningEffortMappings(t *testing.T) {
 		}
 
 		_, err := NormalizeReasoningEffortMappings(PlatformOpenAI, []ReasoningEffortMapping{{From: "none", To: "low"}})
-		require.ErrorContains(t, err, "not supported for platform")
+		require.ErrorContains(t, err, "empty or unknown")
 
 		_, err = NormalizeReasoningEffortMappings(PlatformOpenAI, []ReasoningEffortMapping{{From: "ultra", To: "high"}})
 		require.ErrorContains(t, err, "empty or unknown")
@@ -96,6 +97,7 @@ func TestApplyOpenAIReasoningEffortPolicy(t *testing.T) {
 		{name: "normalizes request alias", body: `{"reasoning_effort":"x-high"}`, max: "xhigh", path: "reasoning_effort", want: "xhigh", changed: true},
 		{name: "caps max below its distinct rank", body: `{"reasoning_effort":"max"}`, max: "xhigh", path: "reasoning_effort", want: "xhigh", changed: true},
 		{name: "keeps xhigh below max", body: `{"reasoning_effort":"xhigh"}`, max: "max", path: "reasoning_effort", want: "xhigh", changed: false},
+		{name: "ignores stale none ceiling", body: `{"reasoning_effort":"high"}`, max: "none", path: "reasoning_effort", want: "high", changed: false},
 		{name: "caps both shapes", body: `{"reasoning":{"effort":"high"},"reasoning_effort":"xhigh"}`, max: "low", path: "reasoning.effort", want: "low", changed: true},
 		{name: "maps before cap", body: `{"reasoning":{"effort":"MAX"}}`, max: "medium", mappings: []ReasoningEffortMapping{{From: "max", To: "xhigh"}}, path: "reasoning.effort", want: "medium", changed: true},
 		{name: "does not chain mappings", body: `{"reasoning_effort":"max"}`, mappings: []ReasoningEffortMapping{{From: "max", To: "xhigh"}, {From: "xhigh", To: "low"}}, path: "reasoning_effort", want: "xhigh", changed: true},
