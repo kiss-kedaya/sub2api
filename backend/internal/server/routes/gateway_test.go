@@ -16,7 +16,12 @@ import (
 )
 
 func newGatewayRoutesTestRouter(platform ...string) *gin.Engine {
-	return newGatewayRoutesTestRouterWithConfig(&config.Config{}, platform...)
+	return newGatewayRoutesTestRouterWithConfig(&config.Config{
+		Gateway: config.GatewayConfig{
+			MaxBodySize:     1024 * 1024,
+			TextMaxBodySize: 1024 * 1024,
+		},
+	}, platform...)
 }
 
 func newGatewayRoutesTestRouterWithConfig(cfg *config.Config, platform ...string) *gin.Engine {
@@ -177,18 +182,20 @@ func TestGatewayRoutesGrokImagesAndVideosPathsAreRegistered(t *testing.T) {
 	}
 }
 
-func TestGatewayRoutesCompositeVideoStatusUsesGrokHandler(t *testing.T) {
+func TestGatewayRoutesCompositeVideoLookupsUseGrokHandler(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformComposite)
 
 	for _, path := range []string{
 		"/v1/videos/request-123",
 		"/videos/request-123",
+		"/v1/videos/request-123/content",
+		"/videos/request-123/content",
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
-		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s should hit Grok video status handler", path)
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s should hit Grok video lookup handler", path)
 		require.NotContains(t, w.Body.String(), "not supported for this platform")
 	}
 }
