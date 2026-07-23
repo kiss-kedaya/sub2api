@@ -79,13 +79,13 @@ func stripOpenAIResponsesInputNamespaces(body []byte) ([]byte, error) {
 
 	var rebuilt bytes.Buffer
 	rebuilt.Grow(len(input.Raw))
-	rebuilt.WriteByte('[')
+	_ = rebuilt.WriteByte('[')
 	changed := false
 	first := true
 	var stripErr error
 	input.ForEach(func(_, item gjson.Result) bool {
 		if !first {
-			rebuilt.WriteByte(',')
+			_ = rebuilt.WriteByte(',')
 		}
 		first = false
 		itemBody := []byte(item.Raw)
@@ -96,7 +96,7 @@ func stripOpenAIResponsesInputNamespaces(body []byte) ([]byte, error) {
 			}
 			changed = true
 		}
-		rebuilt.Write(itemBody)
+		_, _ = rebuilt.Write(itemBody)
 		return true
 	})
 	if stripErr != nil {
@@ -105,7 +105,7 @@ func stripOpenAIResponsesInputNamespaces(body []byte) ([]byte, error) {
 	if !changed {
 		return body, nil
 	}
-	rebuilt.WriteByte(']')
+	_ = rebuilt.WriteByte(']')
 	stripped, err := sjson.SetRawBytes(body, "input", rebuilt.Bytes())
 	if err != nil {
 		return body, fmt.Errorf("replace OpenAI input after namespace deletion: %w", err)
