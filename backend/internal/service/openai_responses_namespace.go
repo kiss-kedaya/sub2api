@@ -7,6 +7,8 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 const openAIResponsesNamespaceNamesContextKey = "openai_responses_namespace_names"
@@ -47,6 +49,55 @@ func flattenOpenAIResponsesNamespaces(c *gin.Context, body []byte) ([]byte, erro
 	}
 	setOpenAIResponsesNamespaceNames(c, names)
 	return rebuilt, nil
+}
+
+// stripOpenAIResponsesInputNamespaces removes namespace only from direct input
+// array items. Namespace declarations and nested namespace fields are left
+// untouched. Rebuilding the input array once keeps this linear for long
+// histories and avoids decoding JSON numbers through float64.
+func stripOpenAIResponsesInputNamespaces(body []byte) ([]byte, error) {
+	if !bytes.Contains(body, []byte(`"namespace"`)) {
+		return body, nil
+	}
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return body, nil
+	}
+
+	var rebuilt bytes.Buffer
+	rebuilt.Grow(len(input.Raw))
+	rebuilt.WriteByte('[')
+	changed := false
+	first := true
+	var stripErr error
+	input.ForEach(func(_, item gjson.Result) bool {
+		if !first {
+			rebuilt.WriteByte(',')
+		}
+		first = false
+		itemBody := []byte(item.Raw)
+		if item.IsObject() && item.Get("namespace").Exists() {
+			itemBody, stripErr = sjson.DeleteBytes(itemBody, "namespace")
+			if stripErr != nil {
+				return false
+			}
+			changed = true
+		}
+		rebuilt.Write(itemBody)
+		return true
+	})
+	if stripErr != nil {
+		return body, fmt.Errorf("delete OpenAI input namespace: %w", stripErr)
+	}
+	if !changed {
+		return body, nil
+	}
+	rebuilt.WriteByte(']')
+	stripped, err := sjson.SetRawBytes(body, "input", rebuilt.Bytes())
+	if err != nil {
+		return body, fmt.Errorf("replace OpenAI input after namespace deletion: %w", err)
+	}
+	return stripped, nil
 }
 
 func setOpenAIResponsesNamespaceNames(c *gin.Context, names map[string]apicompat.ResponsesNamespaceName) {
