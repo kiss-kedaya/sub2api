@@ -29,33 +29,50 @@ func sanitizeOpenAIResponsesInputItemIDs(body []byte) ([]byte, bool, error) {
 		return body, false, nil
 	}
 
-	paths := make([]string, 0)
+	items := make([][]byte, 0)
+	changed := false
+	var sanitizeErr error
 	index := 0
 	input.ForEach(func(_, item gjson.Result) bool {
 		currentIndex := index
 		index++
-		if !item.IsObject() {
-			return true
+		itemBody := []byte(item.Raw)
+		if item.IsObject() {
+			itemType := item.Get("type")
+			id := item.Get("id")
+			if itemType.Type == gjson.String && id.Type == gjson.String &&
+				shouldStripOpenAIResponsesInputItemID(itemType.String(), id.String()) {
+				itemBody, sanitizeErr = sjson.DeleteBytes(itemBody, "id")
+				if sanitizeErr != nil {
+					sanitizeErr = fmt.Errorf("delete input.%d.id: %w", currentIndex, sanitizeErr)
+					return false
+				}
+				changed = true
+			}
 		}
-		itemType := item.Get("type")
-		id := item.Get("id")
-		if itemType.Type == gjson.String && id.Type == gjson.String &&
-			shouldStripOpenAIResponsesInputItemID(itemType.String(), id.String()) {
-			paths = append(paths, fmt.Sprintf("input.%d.id", currentIndex))
-		}
+		items = append(items, itemBody)
 		return true
 	})
-	if len(paths) == 0 {
+	if sanitizeErr != nil {
+		return nil, false, sanitizeErr
+	}
+	if !changed {
 		return body, false, nil
 	}
 
-	sanitized := body
-	for _, path := range paths {
-		var err error
-		sanitized, err = sjson.DeleteBytes(sanitized, path)
-		if err != nil {
-			return nil, false, fmt.Errorf("delete %s: %w", path, err)
+	rebuiltInput := make([]byte, 0, len(input.Raw))
+	rebuiltInput = append(rebuiltInput, '[')
+	for i, item := range items {
+		if i > 0 {
+			rebuiltInput = append(rebuiltInput, ',')
 		}
+		rebuiltInput = append(rebuiltInput, item...)
+	}
+	rebuiltInput = append(rebuiltInput, ']')
+
+	sanitized, err := sjson.SetRawBytes(body, "input", rebuiltInput)
+	if err != nil {
+		return nil, false, fmt.Errorf("replace sanitized input: %w", err)
 	}
 	return sanitized, true, nil
 }
