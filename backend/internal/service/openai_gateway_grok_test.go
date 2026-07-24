@@ -209,6 +209,60 @@ func TestPatchGrokResponsesBodyDropsToolChoiceWhenNoSupportedToolsRemain(t *test
 	require.False(t, gjson.GetBytes(patched, "tool_choice").Exists())
 }
 
+func TestSanitizeGrokResponsesToolsKeepsToolChoiceOnlyWithSupportedTools(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		body           string
+		wantTools      bool
+		wantToolChoice bool
+	}{
+		{
+			name: "missing tools with string tool choice",
+			body: `{"input":"hello","tool_choice":"auto"}`,
+		},
+		{
+			name: "missing tools with object tool choice",
+			body: `{"input":"hello","tool_choice":{"type":"function","name":"lookup"}}`,
+		},
+		{
+			name:      "empty tools",
+			body:      `{"input":"hello","tools":[],"tool_choice":"auto"}`,
+			wantTools: true,
+		},
+		{
+			name: "all tools unsupported",
+			body: `{"input":"hello","tools":[{"type":"namespace","name":"client_tools"}],"tool_choice":"auto"}`,
+		},
+		{
+			name:           "supported tool",
+			body:           `{"input":"hello","tools":[{"type":"function","name":"lookup"}],"tool_choice":"auto"}`,
+			wantTools:      true,
+			wantToolChoice: true,
+		},
+		{
+			name:           "malformed non-array tools remain untouched",
+			body:           `{"input":"hello","tools":{"type":"function","name":"lookup"},"tool_choice":"auto"}`,
+			wantTools:      true,
+			wantToolChoice: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			patched, err := sanitizeGrokResponsesTools([]byte(tt.body))
+			require.NoError(t, err)
+			require.True(t, json.Valid(patched))
+			require.Equal(t, tt.wantTools, gjson.GetBytes(patched, "tools").Exists())
+			require.Equal(t, tt.wantToolChoice, gjson.GetBytes(patched, "tool_choice").Exists())
+			if tt.wantToolChoice {
+				require.Equal(t, "auto", gjson.GetBytes(patched, "tool_choice").String())
+			}
+		})
+	}
+}
+
 func TestPatchGrokResponsesBodyPromotesCodexAdditionalTools(t *testing.T) {
 	t.Parallel()
 
