@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -414,4 +415,55 @@ func TestProxyLiveSidebandForwardsTextAndBinary(t *testing.T) {
 	require.Equal(t, `{"v":1,"s":0,"t":"v1.sideband"}`, dialer.headers.Get(liveAttestationHeader))
 	upstream.reads <- liveTestFrame{err: coderws.CloseError{Code: coderws.StatusNormalClosure}}
 	require.ErrorIs(t, <-proxyResult, ErrLiveCallNotFound)
+}
+
+// TestLiveSessionEndedTreatsLeaseLossAsTerminal 锁定：租约续租失败（ErrLiveUnavailable）
+// 必须判为会话终结。RefreshLiveLease 的 Lua 在 leaseID 被 GC 后不会重新写入，若把它
+// 当临时错误交给 observer 重连，会话会空转到 ExpiresAt 且不计入任何并发限制。
+func TestLiveSessionEndedTreatsLeaseLossAsTerminal(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"租约丢失", ErrLiveUnavailable, true},
+		{"租约丢失（被包装）", fmt.Errorf("refresh live lease: %w", ErrLiveUnavailable), true},
+		{"上游报告会话已关闭", ErrLiveCallNotFound, true},
+		{"到达会话时长上限", context.DeadlineExceeded, true},
+		{"控制权被他人接管", ErrLiveControllerChanged, false},
+		{"临时读错误", errors.New("unexpected EOF"), false},
+		{"无错误", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, liveSessionEnded(tc.err))
+		})
+	}
+}
+
+// TestWaitForLiveObserverRetryLeavesExpiryToLoopFinalize 锁定：已过期但控制权仍在
+// observer 手上时返回 true，让调用方回到 observeLiveCall 循环顶部的过期分支去
+// finalize（写 usage log + 释放租约）。在此处直接返回 false 会让会话静默结束、不留记录。
+func TestWaitForLiveObserverRetryLeavesExpiryToLoopFinalize(t *testing.T) {
+	record := &LiveCallRecord{
+		CallID:     "call_expired",
+		CallHash:   hashLiveCallID("call_expired"),
+		Controller: LiveControllerObserver,
+		ExpiresAt:  time.Now().Add(-time.Minute),
+	}
+	store := &liveTestStore{}
+	require.NoError(t, store.SaveLiveCall(context.Background(), record, time.Hour))
+	svc := &OpenAIGatewayService{cache: store}
+
+	require.True(t, svc.waitForLiveObserverRetry(record),
+		"过期判定必须留给循环顶部，否则不会写 usage log")
+
+	// 控制权已被他人接管时仍必须停止重试，避免与新控制者抢同一个 call。
+	require.NoError(t, store.SaveLiveCall(context.Background(), &LiveCallRecord{
+		CallID:     record.CallID,
+		CallHash:   record.CallHash,
+		Controller: LiveControllerProxy,
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}, time.Hour))
+	require.False(t, svc.waitForLiveObserverRetry(record))
 }
