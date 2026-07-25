@@ -511,7 +511,7 @@ func (s *OpenAIGatewayService) ProxyLiveSideband(
 		go s.observeLiveCall(record.CallHash)
 		return err
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	downstream.SetReadLimit(openAIWSMessageReadLimitBytes)
 
 	proxyCtx, cancel := context.WithCancel(ctx)
