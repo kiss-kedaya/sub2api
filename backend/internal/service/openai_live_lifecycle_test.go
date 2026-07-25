@@ -371,7 +371,7 @@ func TestProxyLiveSidebandForwardsTextAndBinary(t *testing.T) {
 			proxyResult <- err
 			return
 		}
-		defer downstream.CloseNow()
+		defer func() { _ = downstream.CloseNow() }()
 		proxyResult <- service.ProxyLiveSideband(request.Context(), record, downstream)
 	}))
 	defer server.Close()
@@ -382,7 +382,7 @@ func TestProxyLiveSidebandForwardsTextAndBinary(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
-	defer client.CloseNow()
+	defer func() { _ = client.CloseNow() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
