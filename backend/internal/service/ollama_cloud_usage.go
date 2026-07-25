@@ -196,6 +196,10 @@ func (s *SettingService) SetOllamaCloudUsageSettings(ctx context.Context, settin
 	if settings == nil {
 		return infraerrors.BadRequest("INVALID_OLLAMA_CLOUD_USAGE_SETTINGS", "settings cannot be nil")
 	}
+	if settings.DebounceMinutes == 0 {
+		// Legacy clients that omit debounce_minutes keep the fail-safe default.
+		settings.DebounceMinutes = ollamaCloudUsageDefaultDebounceMinutes
+	}
 	if settings.IntervalMinutes < ollamaCloudUsageMinIntervalMinutes || settings.IntervalMinutes > ollamaCloudUsageMaxIntervalMinutes {
 		return infraerrors.BadRequest(
 			"INVALID_OLLAMA_CLOUD_USAGE_INTERVAL",
