@@ -317,10 +317,14 @@ func TestOllamaCloudUsageSettingsDefaultOffAndValidation(t *testing.T) {
 
 	err = settingsService.SetOllamaCloudUsageSettings(context.Background(), &OllamaCloudUsageSettings{Enabled: true, IntervalMinutes: 14, DebounceMinutes: 1})
 	require.Error(t, err)
-	err = settingsService.SetOllamaCloudUsageSettings(context.Background(), &OllamaCloudUsageSettings{Enabled: true, IntervalMinutes: 90, DebounceMinutes: 0})
-	require.Error(t, err)
 	err = settingsService.SetOllamaCloudUsageSettings(context.Background(), &OllamaCloudUsageSettings{Enabled: true, IntervalMinutes: 90, DebounceMinutes: 61})
 	require.Error(t, err)
+	// DebounceMinutes=0 (legacy omit) defaults to 1 on write.
+	err = settingsService.SetOllamaCloudUsageSettings(context.Background(), &OllamaCloudUsageSettings{Enabled: true, IntervalMinutes: 90, DebounceMinutes: 0})
+	require.NoError(t, err)
+	settings, err = settingsService.GetOllamaCloudUsageSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, settings.DebounceMinutes)
 	err = settingsService.SetOllamaCloudUsageSettings(context.Background(), &OllamaCloudUsageSettings{Enabled: true, IntervalMinutes: 90, DebounceMinutes: 2})
 	require.NoError(t, err)
 	settings, err = settingsService.GetOllamaCloudUsageSettings(context.Background())
