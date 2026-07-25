@@ -253,6 +253,7 @@ func (s *OpenAIGatewayService) createUpstreamLiveCall(
 ) (*LiveCallCreated, error) {
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
+		logLiveCreateStageFailure(ctx, account.ID, "access_token", err)
 		return nil, err
 	}
 	body, err := json.Marshal(struct {
@@ -272,6 +273,7 @@ func (s *OpenAIGatewayService) createUpstreamLiveCall(
 	}
 	authHeaders, err := s.buildOpenAIAuthenticationHeaders(ctx, account, token)
 	if err != nil {
+		logLiveCreateStageFailure(ctx, account.ID, "authentication_headers", err)
 		return nil, err
 	}
 	for key, values := range authHeaders {
@@ -281,6 +283,7 @@ func (s *OpenAIGatewayService) createUpstreamLiveCall(
 	}
 	upstreamReq.Host = "chatgpt.com"
 	if err := resolveAndSetOpenAIChatGPTAccountHeaders(ctx, s.accountRepo, upstreamReq.Header, account); err != nil {
+		logLiveCreateStageFailure(ctx, account.ID, "account_headers", err)
 		return nil, err
 	}
 	upstreamReq.Header.Set("Content-Type", "application/json")
@@ -289,6 +292,7 @@ func (s *OpenAIGatewayService) createUpstreamLiveCall(
 
 	resp, err := s.httpUpstream.Do(upstreamReq, resolveAccountProxyURL(account), account.ID, account.Concurrency)
 	if err != nil {
+		logLiveCreateStageFailure(ctx, account.ID, "upstream_transport", err)
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -316,6 +320,15 @@ func (s *OpenAIGatewayService) createUpstreamLiveCall(
 		CallID:   callID,
 		Location: resp.Header.Get("Location"),
 	}, nil
+}
+
+func logLiveCreateStageFailure(ctx context.Context, accountID int64, stage string, err error) {
+	logger.FromContext(ctx).Warn(
+		"OpenAI Live 创建阶段失败",
+		zap.Int64("account_id", accountID),
+		zap.String("stage", stage),
+		zap.String("error_type", fmt.Sprintf("%T", err)),
+	)
 }
 
 func logLiveUpstreamFailure(
@@ -376,6 +389,12 @@ func applyLiveUpstreamIdentityHeaders(headers http.Header) {
 	headers.Set("OpenAI-Alpha", "quicksilver=v2")
 	ensureCodexIdentityHeaders(headers)
 	enforceCodexIdentityHeaders(headers)
+	if strings.TrimSpace(headers.Get("session-id")) == "" {
+		headers.Set("session-id", uuid.NewString())
+	}
+	if strings.TrimSpace(headers.Get("thread-id")) == "" {
+		headers.Set("thread-id", uuid.NewString())
+	}
 	// Realtime/Live 不使用 Responses 的实验头。
 	headers.Del("OpenAI-Beta")
 }
