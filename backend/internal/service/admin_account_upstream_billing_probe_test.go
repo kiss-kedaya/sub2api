@@ -17,6 +17,95 @@ func (r *upstreamBillingProbeAdminRepo) ListShadowsByParent(context.Context, int
 	return nil, nil
 }
 
+type accountBillingSettingsAdminRepo struct {
+	*upstreamBillingProbeAccountRepo
+	concurrentRate   *float64
+	lastExplicitRate *float64
+	updateCalls      int
+}
+
+func (r *accountBillingSettingsAdminRepo) UpdateWithAccountBillingSettings(
+	_ context.Context,
+	account *Account,
+	probeEnabled *bool,
+	rateSyncEnabled *bool,
+	rateMultiplier *float64,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	current := r.accounts[account.ID]
+	if current == nil {
+		return ErrAccountNotFound
+	}
+	updated := *account
+	updated.Credentials = mergeMap(nil, account.Credentials)
+	updated.Extra = mergeMap(nil, account.Extra)
+	if updated.Extra == nil {
+		updated.Extra = make(map[string]any)
+	}
+	if probeEnabled != nil {
+		updated.Extra[UpstreamBillingProbeEnabledExtraKey] = *probeEnabled
+	}
+	if rateSyncEnabled != nil {
+		updated.Extra[UpstreamBillingRateSyncEnabledExtraKey] = *rateSyncEnabled
+	}
+	switch {
+	case rateMultiplier != nil:
+		value := *rateMultiplier
+		updated.RateMultiplier = &value
+		r.lastExplicitRate = &value
+	case r.concurrentRate != nil:
+		value := *r.concurrentRate
+		updated.RateMultiplier = &value
+		r.lastExplicitRate = nil
+	default:
+		updated.RateMultiplier = cloneAccountValuePointer(current.RateMultiplier)
+		r.lastExplicitRate = nil
+	}
+	r.accounts[account.ID] = &updated
+	r.updateCalls++
+	return nil
+}
+
+func TestUpdateAccountRoutesRateIntentThroughAtomicBillingUpdater(t *testing.T) {
+	accountID := int64(109)
+	initialRate := 0.1
+	concurrentRate := 0.2
+	repo := &accountBillingSettingsAdminRepo{
+		upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+			accountID: {
+				ID:             accountID,
+				Name:           "before",
+				Platform:       PlatformOpenAI,
+				Type:           AccountTypeAPIKey,
+				Status:         StatusActive,
+				RateMultiplier: &initialRate,
+				Extra: map[string]any{
+					UpstreamBillingProbeEnabledExtraKey:    true,
+					UpstreamBillingRateSyncEnabledExtraKey: true,
+				},
+			},
+		}},
+		concurrentRate: &concurrentRate,
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	updated, err := svc.UpdateAccount(context.Background(), accountID, &UpdateAccountInput{Name: "after"})
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.updateCalls)
+	require.Nil(t, repo.lastExplicitRate)
+	require.Equal(t, concurrentRate, *updated.RateMultiplier)
+
+	zero := 0.0
+	updated, err = svc.UpdateAccount(context.Background(), accountID, &UpdateAccountInput{RateMultiplier: &zero})
+	require.NoError(t, err)
+	require.Equal(t, 2, repo.updateCalls)
+	require.NotNil(t, repo.lastExplicitRate)
+	require.Zero(t, *repo.lastExplicitRate)
+	require.Zero(t, *updated.RateMultiplier)
+}
+
 func TestCreateAccountDropsManagedUpstreamBillingProbeState(t *testing.T) {
 	repo := &upstreamBillingProbeAccountRepo{}
 	svc := &adminServiceImpl{accountRepo: repo}
@@ -28,13 +117,15 @@ func TestCreateAccountDropsManagedUpstreamBillingProbeState(t *testing.T) {
 		Credentials:          map[string]any{"api_key": "sk-test"},
 		SkipDefaultGroupBind: true,
 		Extra: map[string]any{
-			UpstreamBillingProbeEnabledExtraKey: true,
-			UpstreamBillingProbeExtraKey:        map[string]any{"status": "ok"},
+			UpstreamBillingProbeEnabledExtraKey:    true,
+			UpstreamBillingRateSyncEnabledExtraKey: true,
+			UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
 		},
 	})
 
 	require.NoError(t, err)
 	require.NotContains(t, created.Extra, UpstreamBillingProbeEnabledExtraKey)
+	require.NotContains(t, created.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	require.NotContains(t, created.Extra, UpstreamBillingProbeExtraKey)
 }
 
@@ -73,8 +164,9 @@ func TestUpdateAccountPreservesManagedUpstreamBillingProbeStateForUnrelatedEdit(
 			Type:     AccountTypeAPIKey,
 			Status:   StatusActive,
 			Extra: map[string]any{
-				UpstreamBillingProbeEnabledExtraKey: true,
-				UpstreamBillingProbeExtraKey:        map[string]any{"status": "ok"},
+				UpstreamBillingProbeEnabledExtraKey:    true,
+				UpstreamBillingRateSyncEnabledExtraKey: true,
+				UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
 			},
 		},
 	}}
@@ -86,6 +178,7 @@ func TestUpdateAccountPreservesManagedUpstreamBillingProbeStateForUnrelatedEdit(
 
 	require.NoError(t, err)
 	require.Equal(t, true, updated.Extra[UpstreamBillingProbeEnabledExtraKey])
+	require.Equal(t, true, updated.Extra[UpstreamBillingRateSyncEnabledExtraKey])
 	require.Contains(t, updated.Extra, UpstreamBillingProbeExtraKey)
 	require.Equal(t, "value", updated.Extra["custom"])
 }
@@ -196,8 +289,9 @@ func TestUpdateAccountInvalidatesProbeSnapshotWhenUpstreamIdentityChanges(t *tes
 						"base_url": "https://old.example",
 					},
 					Extra: map[string]any{
-						UpstreamBillingProbeEnabledExtraKey: true,
-						UpstreamBillingProbeExtraKey:        map[string]any{"status": "ok"},
+						UpstreamBillingProbeEnabledExtraKey:    true,
+						UpstreamBillingRateSyncEnabledExtraKey: true,
+						UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
 					},
 				},
 			}}
@@ -210,6 +304,7 @@ func TestUpdateAccountInvalidatesProbeSnapshotWhenUpstreamIdentityChanges(t *tes
 				require.Equal(t, true, updated.Extra[UpstreamBillingProbeEnabledExtraKey])
 			} else {
 				require.NotContains(t, updated.Extra, UpstreamBillingProbeEnabledExtraKey)
+				require.NotContains(t, updated.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 			}
 		})
 	}
@@ -289,14 +384,68 @@ func TestUpdateAccountAcceptsProbeEnabledAndRejectsInjectedSnapshot(t *testing.T
 	svc := &adminServiceImpl{accountRepo: repo}
 	updated, err := svc.UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
 		Extra: map[string]any{
-			UpstreamBillingProbeEnabledExtraKey: true,
-			UpstreamBillingProbeExtraKey:        map[string]any{"status": "ok"},
+			UpstreamBillingProbeEnabledExtraKey:    true,
+			UpstreamBillingRateSyncEnabledExtraKey: true,
+			UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
 		},
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, true, updated.Extra[UpstreamBillingProbeEnabledExtraKey])
+	require.NotContains(t, updated.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	require.NotContains(t, updated.Extra, UpstreamBillingProbeExtraKey)
+}
+
+func TestUpdateAccountRateSyncControlsProbeAndManualMode(t *testing.T) {
+	accountID := int64(151)
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		accountID: {
+			ID:       accountID,
+			Platform: PlatformGemini,
+			Type:     AccountTypeAPIKey,
+			Status:   StatusActive,
+			Extra:    map[string]any{},
+		},
+	}}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	syncEnabled := true
+	updated, err := svc.UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		RateSyncEnabled: &syncEnabled,
+	})
+	require.NoError(t, err)
+	require.Equal(t, true, updated.Extra[UpstreamBillingProbeEnabledExtraKey])
+	require.Equal(t, true, updated.Extra[UpstreamBillingRateSyncEnabledExtraKey])
+
+	syncEnabled = false
+	updated, err = svc.UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		RateSyncEnabled: &syncEnabled,
+	})
+	require.NoError(t, err)
+	require.Equal(t, true, updated.Extra[UpstreamBillingProbeEnabledExtraKey])
+	require.Equal(t, false, updated.Extra[UpstreamBillingRateSyncEnabledExtraKey])
+}
+
+func TestUpdateAccountRejectsSyncWithExplicitlyDisabledProbe(t *testing.T) {
+	accountID := int64(152)
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		accountID: {
+			ID:       accountID,
+			Platform: PlatformAnthropic,
+			Type:     AccountTypeAPIKey,
+			Status:   StatusActive,
+		},
+	}}
+	probeEnabled := false
+	syncEnabled := true
+
+	_, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		ProbeEnabled:    &probeEnabled,
+		RateSyncEnabled: &syncEnabled,
+	})
+
+	require.Error(t, err)
+	require.Empty(t, repo.updates[accountID])
 }
 
 func TestUpdateAccountExplicitProbeDisableUsesDedicatedExtraUpdate(t *testing.T) {
@@ -321,6 +470,7 @@ func TestUpdateAccountExplicitProbeDisableUsesDedicatedExtraUpdate(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, repo.updates[accountID], 1)
 	require.Equal(t, false, repo.updates[accountID][0][UpstreamBillingProbeEnabledExtraKey])
+	require.Equal(t, false, repo.updates[accountID][0][UpstreamBillingRateSyncEnabledExtraKey])
 }
 
 func TestUpdateAccountExplicitUnchangedProbeEnabledStillUsesDedicatedExtraUpdate(t *testing.T) {
@@ -364,15 +514,36 @@ func TestUpdateAccountRejectsInvalidProbeEnabled(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestUpdateAccountExtraDropsManagedBillingProbeFields(t *testing.T) {
+	accountID := int64(153)
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		accountID: {ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+	}}
+
+	err := (&adminServiceImpl{accountRepo: repo}).UpdateAccountExtra(context.Background(), accountID, map[string]any{
+		"custom":                               "value",
+		UpstreamBillingProbeEnabledExtraKey:    true,
+		UpstreamBillingRateSyncEnabledExtraKey: true,
+		UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "value", repo.accounts[accountID].Extra["custom"])
+	require.NotContains(t, repo.accounts[accountID].Extra, UpstreamBillingProbeEnabledExtraKey)
+	require.NotContains(t, repo.accounts[accountID].Extra, UpstreamBillingRateSyncEnabledExtraKey)
+	require.NotContains(t, repo.accounts[accountID].Extra, UpstreamBillingProbeExtraKey)
+}
+
 func TestBulkUpdateAccountsDropsManagedUpstreamBillingProbeState(t *testing.T) {
 	repo := &upstreamBillingProbeAccountRepo{}
 	svc := &adminServiceImpl{accountRepo: repo}
 	input := &BulkUpdateAccountsInput{
 		AccountIDs: []int64{1},
 		Extra: map[string]any{
-			"custom":                            "value",
-			UpstreamBillingProbeEnabledExtraKey: true,
-			UpstreamBillingProbeExtraKey:        map[string]any{"status": "ok"},
+			"custom":                               "value",
+			UpstreamBillingProbeEnabledExtraKey:    true,
+			UpstreamBillingRateSyncEnabledExtraKey: true,
+			UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
 		},
 	}
 
@@ -383,6 +554,7 @@ func TestBulkUpdateAccountsDropsManagedUpstreamBillingProbeState(t *testing.T) {
 	require.Len(t, repo.bulkUpdates, 1)
 	require.Equal(t, "value", repo.bulkUpdates[0].Extra["custom"])
 	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamBillingProbeEnabledExtraKey)
+	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamBillingProbeExtraKey)
 }
 
@@ -403,6 +575,9 @@ func TestBulkUpdateAccountsAcceptsDedicatedUpstreamBillingProbeSetting(t *testin
 			require.Equal(t, 2, result.Success)
 			require.Len(t, repo.bulkUpdates, 1)
 			require.Equal(t, enabled, repo.bulkUpdates[0].Extra[UpstreamBillingProbeEnabledExtraKey])
+			if !enabled {
+				require.Equal(t, false, repo.bulkUpdates[0].Extra[UpstreamBillingRateSyncEnabledExtraKey])
+			}
 			require.NotNil(t, repo.bulkUpdates[0].ProbeEnabled)
 			require.Equal(t, enabled, *repo.bulkUpdates[0].ProbeEnabled)
 		})
