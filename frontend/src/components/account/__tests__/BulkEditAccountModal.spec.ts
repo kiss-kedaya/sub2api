@@ -4,9 +4,13 @@ import BulkEditAccountModal from '../BulkEditAccountModal.vue'
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 import { adminAPI } from '@/api/admin'
 
+const { showError } = vi.hoisted(() => ({
+  showError: vi.fn()
+}))
+
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: vi.fn(),
+    showError,
     showSuccess: vi.fn(),
     showInfo: vi.fn()
   })
@@ -77,6 +81,7 @@ describe('BulkEditAccountModal', () => {
   beforeEach(() => {
     vi.mocked(adminAPI.accounts.bulkUpdate).mockReset()
     vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockReset()
+    showError.mockReset()
 
     vi.mocked(adminAPI.accounts.bulkUpdate).mockResolvedValue({
       success: 2,
@@ -86,6 +91,33 @@ describe('BulkEditAccountModal', () => {
     vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockResolvedValue({
       has_risk: false
     } as any)
+  })
+
+  it('批量修改倍率时提示自动同步账号需要先关闭同步', async () => {
+    const wrapper = mountModal()
+
+    expect(wrapper.find('[data-testid="bulk-rate-sync-warning"]').exists()).toBe(false)
+    await wrapper.get('#bulk-edit-rate-multiplier-enabled').setValue(true)
+
+    expect(wrapper.get('[data-testid="bulk-rate-sync-warning"]').text()).toContain(
+      'admin.accounts.bulkEdit.rateSyncWarning'
+    )
+  })
+
+  it('后端拒绝修改同步账号倍率时展示专用错误', async () => {
+    vi.mocked(adminAPI.accounts.bulkUpdate).mockRejectedValueOnce({
+      status: 409,
+      reason: 'UPSTREAM_BILLING_RATE_SYNC_BULK_CONFLICT',
+      metadata: { count: '2' },
+      message: 'conflict'
+    })
+    const wrapper = mountModal()
+
+    await wrapper.get('#bulk-edit-rate-multiplier-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith('admin.accounts.bulkEdit.rateSyncConflict')
   })
 
   it('antigravity 白名单包含 Gemini 图片模型且过滤掉普通 GPT 模型', async () => {
