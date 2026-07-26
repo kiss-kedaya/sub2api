@@ -597,13 +597,6 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 			expectedCacheRead: floatPtr(0.30e-6),
 		},
 		{
-			name:              "kimi k3 anthropic 1m suffix",
-			model:             "kimi-k3[1m]",
-			expectedInput:     3e-6,
-			expectedOutput:    floatPtr(15e-6),
-			expectedCacheRead: floatPtr(0.30e-6),
-		},
-		{
 			name:              "kimi code bare alias k3",
 			model:             "k3",
 			expectedInput:     3e-6,
@@ -619,7 +612,7 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 		},
 		{
 			name:              "kimi k3 path suffix moonshot",
-			model:             "moonshot/kimi-k3[1m]",
+			model:             "moonshot/kimi-k3",
 			expectedInput:     3e-6,
 			expectedOutput:    floatPtr(15e-6),
 			expectedCacheRead: floatPtr(0.30e-6),
@@ -753,6 +746,9 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 		// kimi-k3 非 Contains：kimi-k30 / 内嵌 foo-kimi-k3-bar 不得误命中。
 		{name: "kimi-k30 unknown no fallback", model: "kimi-k30", expectNilPricing: true},
 		{name: "embedded kimi-k3 unknown no fallback", model: "foo-kimi-k3-bar", expectNilPricing: true},
+		// kimi-k3[1m] 是 Claude Code 上下文选择语法，不是 Kimi API 模型 ID，不命中 fallback。
+		{name: "kimi-k3[1m] not an API model id no fallback", model: "kimi-k3[1m]", expectNilPricing: true},
+		{name: "path kimi-k3[1m] not an API model id no fallback", model: "moonshot/kimi-k3[1m]", expectNilPricing: true},
 		// kimi-k2-0905 / kimi-k2-0711 官方未公布独立价，走 kimi-k2 隐性回退（接受）——
 		// 如未来官方公布独立价，需在 getFallbackPricing 加显式分支。
 		{
