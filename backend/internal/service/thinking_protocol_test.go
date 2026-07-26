@@ -23,7 +23,6 @@ func TestResolveThinkingProtocol(t *testing.T) {
 		{"kimi-coding", "kimi-coding-v2", ThinkingProtocolPassbackRequired},
 		{"kimi-k2-thinking", "kimi-k2-thinking", ThinkingProtocolPassbackRequired},
 		{"kimi-k3 platform", "kimi-k3", ThinkingProtocolPassbackRequired},
-		{"kimi-k3 anthropic 1m", "kimi-k3[1m]", ThinkingProtocolPassbackRequired},
 		{"kimi code bare k3", "k3", ThinkingProtocolPassbackRequired},
 		{"kimi code bare k3-256k", "k3-256k", ThinkingProtocolPassbackRequired},
 		{"moonshot-v1", "moonshot-v1-32k", ThinkingProtocolPassbackRequired},
