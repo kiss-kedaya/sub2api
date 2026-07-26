@@ -90,9 +90,13 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 	requestCtx := c.Request.Context()
+	pricingAt := time.Time{}
 	if service.IsImageGenerationIntentForPlatform("/v1/responses", reqModel, body, openAICompatibleRequestPlatform(c.Request.Context(), apiKey)) {
 		requestCtx = service.WithOpenAIImageGenerationIntent(requestCtx)
+	} else {
+		requestCtx, pricingAt = service.WithGatewayTokenRequestPricing(requestCtx)
 	}
+	c.Request = c.Request.WithContext(requestCtx)
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(requestCtx, apiKey.GroupID, reqModel)
@@ -157,6 +161,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		APIKeyID:  apiKey.ID,
 	}
 	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
+	sessionBoundAccountID, _ := h.gatewayService.GetCachedSessionAccountID(requestCtx, apiKey.GroupID, sessionHash)
 
 	// 3. Account selection + failover loop
 	fs := NewFailoverState(h.maxAccountSwitches, false)
@@ -219,6 +224,20 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				h.handleConcurrencyError(c, err, "account", streamStarted)
 				return
 			}
+		}
+		latest, vetoed, reason := h.gatewayService.GatewayProfitControlVetoLatest(requestCtx, account)
+		if vetoed {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			reqLog.Debug("gateway.responses.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
+			fs.FailedAccountIDs[account.ID] = struct{}{}
+			continue
+		}
+		account = latest
+		selection.Account = latest
+		if err := h.gatewayService.BindStickySessionAfterProfitAdmission(requestCtx, apiKey.GroupID, sessionHash, account.ID, sessionBoundAccountID); err != nil {
+			reqLog.Warn("gateway.responses.bind_sticky_session_after_profit_admission_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		}
 		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
 
@@ -299,6 +318,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				User:               apiKey.User,
 				Account:            account,
 				Subscription:       subscription,
+				PricingAt:          pricingAt,
 				InboundEndpoint:    inboundEndpoint,
 				UpstreamEndpoint:   upstreamEndpoint,
 				UserAgent:          userAgent,
