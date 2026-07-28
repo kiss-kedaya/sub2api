@@ -2634,7 +2634,7 @@ func (c *Config) Validate() error {
 			u.Host = strings.ToLower(u.Host)
 			host := strings.ToLower(u.Hostname())
 			localDevelopment := host == "localhost" || host == "127.0.0.1" || host == "::1"
-			if u.Scheme != "https" && !(u.Scheme == "http" && localDevelopment) {
+			if u.Scheme != "https" && (u.Scheme != "http" || !localDevelopment) {
 				return fmt.Errorf("webauthn.rp_origins entry %q must use HTTPS (HTTP is allowed only for localhost)", origin)
 			}
 			if host != c.WebAuthn.RPID && !strings.HasSuffix(host, "."+c.WebAuthn.RPID) {
