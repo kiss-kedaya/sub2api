@@ -182,7 +182,7 @@ func (s *SettingService) PasskeyEnabled(ctx context.Context) (bool, error) {
 	}
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyPasskeyEnabled)
 	if errors.Is(err, ErrSettingNotFound) {
-		return true, nil // preserve enabled deployments when upgrading from config-only releases
+		return true, nil // configured deployments default to enabled until the admin persists the switch
 	}
 	if err != nil {
 		return false, fmt.Errorf("read passkey setting: %w", err)
@@ -206,10 +206,16 @@ func (s *SettingService) passkeyConfigured() bool {
 	return s != nil && s.cfg != nil && s.cfg.WebAuthn.Enabled
 }
 
+// passkeySettingEnabled must stay ANDed with passkeyConfigured: a stale
+// "true" row after the WebAuthn config is removed would otherwise make the
+// admin update gate reject every settings save while the UI toggle is locked.
 func (s *SettingService) passkeySettingEnabled(settings map[string]string) bool {
+	if !s.passkeyConfigured() {
+		return false
+	}
 	value, ok := settings[SettingKeyPasskeyEnabled]
 	if !ok {
-		return s.passkeyConfigured()
+		return true
 	}
 	return value == "true"
 }

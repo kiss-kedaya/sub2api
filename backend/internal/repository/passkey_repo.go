@@ -92,7 +92,7 @@ func (r *passkeyRepository) ListByUserID(
 	if err != nil {
 		return nil, fmt.Errorf("list passkey credentials: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	records := make([]service.PasskeyCredentialRecord, 0)
 	for rows.Next() {
