@@ -159,7 +159,7 @@ func TestApplyToolsLastCacheBreakpoint_StripsDeferredToolCacheControl(t *testing
 }
 
 func TestApplyToolsLastCacheBreakpoint_SkipsDeferredFinalTool(t *testing.T) {
-	body := []byte(`{"tools":[{"name":"a","input_schema":{}},{"name":"b","custom":{"defer_loading":true}}]}`)
+	body := []byte(`{"tools":[{"name":"a","input_schema":{}},{"name":"b","defer_loading":true}]}`)
 	out := applyToolsLastCacheBreakpoint(body)
 
 	require.Equal(t, "ephemeral", gjson.GetBytes(out, "tools.0.cache_control.type").String())
@@ -168,11 +168,12 @@ func TestApplyToolsLastCacheBreakpoint_SkipsDeferredFinalTool(t *testing.T) {
 }
 
 func TestApplyToolsLastCacheBreakpoint_OnlyLiteralTrueIsDeferred(t *testing.T) {
-	body := []byte(`{"tools":[{"name":"true","custom":{"defer_loading":true},"cache_control":{"type":"ephemeral"}},{"name":"false","custom":{"defer_loading":false},"cache_control":{"type":"ephemeral"}},{"name":"string","custom":{"defer_loading":"true"},"cache_control":{"type":"ephemeral"}},{"name":"number","custom":{"defer_loading":1},"cache_control":{"type":"ephemeral"}},{"name":"object","custom":{"defer_loading":{}},"cache_control":{"type":"ephemeral"}}]}`)
+	body := []byte(`{"tools":[{"name":"custom-true","custom":{"defer_loading":true},"cache_control":{"type":"ephemeral"}},{"name":"top-level-true","defer_loading":true,"cache_control":{"type":"ephemeral"}},{"name":"false","defer_loading":false,"cache_control":{"type":"ephemeral"}},{"name":"string","defer_loading":"true","cache_control":{"type":"ephemeral"}},{"name":"number","defer_loading":1,"cache_control":{"type":"ephemeral"}},{"name":"object","defer_loading":{},"cache_control":{"type":"ephemeral"}}]}`)
 	out := stripDeferredToolCacheControl(body)
 
 	require.False(t, gjson.GetBytes(out, "tools.0.cache_control").Exists())
-	for idx := 1; idx < 5; idx++ {
+	require.False(t, gjson.GetBytes(out, "tools.1.cache_control").Exists())
+	for idx := 2; idx < 6; idx++ {
 		require.Equal(t, "ephemeral", gjson.GetBytes(out, fmt.Sprintf("tools.%d.cache_control.type", idx)).String())
 	}
 }
