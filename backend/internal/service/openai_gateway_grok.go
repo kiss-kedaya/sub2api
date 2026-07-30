@@ -1365,6 +1365,9 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 		if s.applyGrokForbiddenPolicy(ctx, account, responseBody) {
 			return
 		}
+		if account.IsPoolMode() {
+			return
+		}
 		s.tempUnscheduleGrok(ctx, account, 30*time.Minute, "grok access or entitlement denied")
 	case http.StatusTooManyRequests:
 		// updateGrokUsageSnapshot installs both runtime and durable rate-limit state.
