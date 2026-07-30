@@ -259,32 +259,40 @@ func TestHandleGrokAccountUpstreamErrorEntitlement403KeepsDefaultCooldown(t *tes
 	require.Less(t, repo.lastTempUnschedUntil, before.Add(31*time.Minute))
 }
 
-func TestHandleGrokAccountUpstreamErrorEntitlement403RespectsPoolMode(t *testing.T) {
-	t.Run("pool mode keeps scheduling state", func(t *testing.T) {
-		repo := &grokQuotaAccountRepo{}
-		svc := &OpenAIGatewayService{accountRepo: repo}
-		account := &Account{
-			ID:       4722,
-			Platform: PlatformGrok,
-			Type:     AccountTypeAPIKey,
-			Credentials: map[string]any{
-				"pool_mode": true,
-			},
-		}
-		body := []byte(`{"error":{"message":"grok access or entitlement denied"}}`)
+func TestHandleGrokAccountUpstreamErrorDefaultCooldownsRespectPoolMode(t *testing.T) {
+	for _, statusCode := range []int{
+		http.StatusUnauthorized,
+		http.StatusPaymentRequired,
+		http.StatusForbidden,
+		http.StatusInternalServerError,
+	} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			repo := &grokQuotaAccountRepo{}
+			svc := &OpenAIGatewayService{accountRepo: repo}
+			account := &Account{
+				ID:       int64(4800 + statusCode),
+				Platform: PlatformGrok,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"pool_mode": true,
+				},
+			}
+			body := []byte(`{"error":{"message":"grok access or entitlement denied"}}`)
 
-		svc.handleGrokAccountUpstreamError(
-			context.Background(), account, http.StatusForbidden, nil,
-			body,
-		)
+			svc.handleGrokAccountUpstreamError(
+				context.Background(), account, statusCode, nil, body,
+			)
 
-		require.Zero(t, repo.tempUnschedCalls)
-		require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
-		require.Nil(t, account.TempUnschedulableUntil)
-		require.Empty(t, account.TempUnschedulableReason)
-		require.True(t, svc.shouldFailoverGrokUpstreamError(http.StatusForbidden, body))
-		require.True(t, account.IsPoolModeRetryableStatus(http.StatusForbidden))
-	})
+			require.Zero(t, repo.tempUnschedCalls)
+			require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+			require.Nil(t, account.TempUnschedulableUntil)
+			require.Empty(t, account.TempUnschedulableReason)
+			require.True(t, svc.shouldFailoverGrokUpstreamError(statusCode, body))
+		})
+	}
+
+	account := &Account{Type: AccountTypeAPIKey, Credentials: map[string]any{"pool_mode": true}}
+	require.True(t, account.IsPoolModeRetryableStatus(http.StatusForbidden))
 
 	t.Run("explicit temporary rule still applies", func(t *testing.T) {
 		repo := &grokQuotaAccountRepo{}
