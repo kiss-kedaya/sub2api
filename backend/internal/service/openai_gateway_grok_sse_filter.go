@@ -10,6 +10,21 @@ import (
 	"sync"
 )
 
+// OpenAI Responses SSE event types are a closed enum for strict clients
+// (grok CLI, Codex CLI): an unknown `event: ping` frame aborts the whole
+// turn. Vendor gateways behind Grok subscriptions inject such frames for
+// billing/keepalive, so ping frames are rewritten into an SSE comment that
+// every parser ignores while the connection still looks alive downstream.
+var grokResponsesPingComment = []byte(": ping\n\n")
+
+// A vendor ping frame is one event line plus one small data line. Cap what is
+// buffered while deciding, so an upstream streaming a frame that never ends
+// cannot grow gateway memory; frames over the cap are passed through as-is.
+const (
+	grokResponsesPingFrameMaxLines = 16
+	grokResponsesPingFrameMaxBytes = 16 * 1024
+)
+
 type grokResponsesBillingPingFilterBody struct {
 	*io.PipeReader
 	source    io.Closer
@@ -61,38 +76,111 @@ func filterGrokResponsesBillingPings(
 	}
 	scanner.Buffer(scanBuf[:0:initialBufferSize], maxLineSize)
 	scanner.Split(scanSSELinesPreservingEndings)
-	frame := make([][]byte, 0, 3)
 
-	writeFrame := func() error {
-		if !isGrokResponsesBillingPingFrame(frame) {
-			for _, line := range frame {
-				if _, err := destination.Write(line); err != nil {
-					return err
-				}
+	// Only frames opened by an `event: ping` line are buffered (pingFrame);
+	// every other frame streams through line by line without copying.
+	pingFrame := make([][]byte, 0, 3)
+	pingFrameBytes := 0
+	inPassthroughFrame := false
+
+	replayPingFrame := func() error {
+		for _, line := range pingFrame {
+			if _, err := destination.Write(line); err != nil {
+				return err
 			}
 		}
-		frame = frame[:0]
+		pingFrame = pingFrame[:0]
+		pingFrameBytes = 0
 		return nil
 	}
+	// endPingFrame decides a complete buffered candidate: vendor ping frames
+	// become an SSE comment, everything else is replayed verbatim. blankLine
+	// is nil when the stream ends inside the frame.
+	endPingFrame := func(blankLine []byte) error {
+		if isGrokResponsesPingEventFrame(pingFrame) {
+			pingFrame = pingFrame[:0]
+			pingFrameBytes = 0
+			_, err := destination.Write(grokResponsesPingComment)
+			return err
+		}
+		if err := replayPingFrame(); err != nil {
+			return err
+		}
+		if blankLine == nil {
+			return nil
+		}
+		_, err := destination.Write(blankLine)
+		return err
+	}
+	abort := func(err error) { _ = destination.CloseWithError(err) }
 
 	for scanner.Scan() {
-		line := append([]byte(nil), scanner.Bytes()...)
-		frame = append(frame, line)
-		if len(bytes.TrimSuffix(bytes.TrimSuffix(line, []byte("\n")), []byte("\r"))) == 0 {
-			if err := writeFrame(); err != nil {
-				_ = destination.CloseWithError(err)
+		line := scanner.Bytes()
+		isBlank := len(trimSSELineEnding(line)) == 0
+
+		if inPassthroughFrame {
+			if _, err := destination.Write(line); err != nil {
+				abort(err)
 				return
 			}
+			if isBlank {
+				inPassthroughFrame = false
+			}
+			continue
 		}
+
+		if len(pingFrame) > 0 {
+			if isBlank {
+				if err := endPingFrame(line); err != nil {
+					abort(err)
+					return
+				}
+				continue
+			}
+			if canExtendGrokResponsesPingFrame(line) &&
+				len(pingFrame) < grokResponsesPingFrameMaxLines &&
+				pingFrameBytes+len(line) <= grokResponsesPingFrameMaxBytes {
+				pingFrame = append(pingFrame, append([]byte(nil), line...))
+				pingFrameBytes += len(line)
+				continue
+			}
+			// Not a filterable ping frame after all (unexpected field line,
+			// or past the buffering caps): replay it and stream the rest of
+			// the frame through unchanged.
+			if err := replayPingFrame(); err != nil {
+				abort(err)
+				return
+			}
+			if _, err := destination.Write(line); err != nil {
+				abort(err)
+				return
+			}
+			inPassthroughFrame = true
+			continue
+		}
+
+		// Frame start: only `event: ping` opens a buffered candidate.
+		if !isBlank {
+			if value, ok := extractOpenAISSEEventLine(string(trimSSELineEnding(line))); ok && value == "ping" {
+				pingFrame = append(pingFrame, append([]byte(nil), line...))
+				pingFrameBytes = len(line)
+				continue
+			}
+		}
+		if _, err := destination.Write(line); err != nil {
+			abort(err)
+			return
+		}
+		inPassthroughFrame = !isBlank
 	}
-	if len(frame) > 0 {
-		if err := writeFrame(); err != nil {
-			_ = destination.CloseWithError(err)
+	if len(pingFrame) > 0 {
+		if err := endPingFrame(nil); err != nil {
+			abort(err)
 			return
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		_ = destination.CloseWithError(fmt.Errorf("filter Grok Responses billing ping: %w", err))
+		abort(fmt.Errorf("filter Grok Responses billing ping: %w", err))
 		return
 	}
 	_ = destination.Close()
@@ -119,44 +207,42 @@ func scanSSELinesPreservingEndings(data []byte, atEOF bool) (advance int, token 
 	return 0, nil, nil
 }
 
-func isGrokResponsesBillingPingFrame(rawLines [][]byte) bool {
-	eventType := ""
-	data := ""
-	eventLines := 0
-	dataLines := 0
-	for _, rawLine := range rawLines {
-		line := strings.TrimSuffix(strings.TrimSuffix(string(rawLine), "\n"), "\r")
-		if line == "" {
-			continue
-		}
-		if value, ok := extractOpenAISSEEventLine(line); ok {
-			eventType = value
-			eventLines++
-			continue
-		}
-		if value, ok := extractOpenAISSEDataLine(line); ok {
-			data = value
-			dataLines++
-			continue
-		}
-		return false
-	}
-	if eventType != "ping" || eventLines != 1 || dataLines != 1 {
-		return false
-	}
+func trimSSELineEnding(line []byte) []byte {
+	return bytes.TrimSuffix(bytes.TrimSuffix(line, []byte("\n")), []byte("\r"))
+}
 
+// canExtendGrokResponsesPingFrame reports whether a line may still belong to a
+// vendor ping frame: only data lines and SSE comments. Any other field (a
+// second event line, id, retry, ...) means the frame is not a plain ping.
+func canExtendGrokResponsesPingFrame(rawLine []byte) bool {
+	line := trimSSELineEnding(rawLine)
+	if len(line) > 0 && line[0] == ':' {
+		return true
+	}
+	_, ok := extractOpenAISSEDataLine(string(line))
+	return ok
+}
+
+// isGrokResponsesPingEventFrame decides a buffered candidate whose first line
+// is already `event: ping`. The only candidates replayed verbatim are frames
+// whose data payload declares a different event type than the SSE event line;
+// every other shape (billing cost, keepalive, no data, malformed JSON) would
+// break strict Responses clients and is rewritten into a comment.
+func isGrokResponsesPingEventFrame(rawLines [][]byte) bool {
+	dataParts := make([]string, 0, 1)
+	for _, rawLine := range rawLines[1:] {
+		if value, ok := extractOpenAISSEDataLine(string(trimSSELineEnding(rawLine))); ok {
+			dataParts = append(dataParts, value)
+		}
+	}
+	if len(dataParts) == 0 {
+		return true
+	}
 	var payload struct {
-		Type         string          `json:"type"`
-		OpenCodeType json.RawMessage `json:"x-opencode-type"`
-		Cost         json.RawMessage `json:"cost"`
+		Type *string `json:"type"`
 	}
-	if err := json.Unmarshal([]byte(data), &payload); err != nil || payload.Type != "ping" {
-		return false
+	if err := json.Unmarshal([]byte(strings.Join(dataParts, "\n")), &payload); err != nil || payload.Type == nil {
+		return true
 	}
-	if len(payload.OpenCodeType) > 0 {
-		var openCodeType string
-		return json.Unmarshal(payload.OpenCodeType, &openCodeType) == nil && openCodeType == "inference-cost"
-	}
-	var cost string
-	return json.Unmarshal(payload.Cost, &cost) == nil && cost == "0"
+	return *payload.Type == "ping"
 }

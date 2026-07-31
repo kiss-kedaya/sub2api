@@ -16,6 +16,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func filterGrokPingTestInput(t *testing.T, input string) string {
+	t.Helper()
+	body := newGrokResponsesBillingPingFilterBody(
+		io.NopCloser(strings.NewReader(input)),
+		&Account{Platform: PlatformGrok},
+		defaultMaxLineSize,
+	)
+	output, err := io.ReadAll(body)
+	require.NoError(t, err)
+	require.NoError(t, body.Close())
+	return string(output)
+}
+
 func TestGrokResponsesBillingPingFilter(t *testing.T) {
 	input := strings.Join([]string{
 		": upstream keepalive",
@@ -37,18 +50,11 @@ func TestGrokResponsesBillingPingFilter(t *testing.T) {
 		"",
 	}, "\n")
 
-	body := newGrokResponsesBillingPingFilterBody(
-		io.NopCloser(strings.NewReader(input)),
-		&Account{Platform: PlatformGrok},
-		defaultMaxLineSize,
-	)
-	output, err := io.ReadAll(body)
-	require.NoError(t, err)
-	require.NoError(t, body.Close())
-
-	result := string(output)
+	result := filterGrokPingTestInput(t, input)
+	require.NotContains(t, result, "event: ping")
 	require.NotContains(t, result, `"x-opencode-type":"inference-cost"`)
 	require.NotContains(t, result, `{"type":"ping","cost":"0"}`)
+	require.Equal(t, 2, strings.Count(result, ": ping\n\n"))
 	require.Contains(t, result, ": upstream keepalive\n\n")
 	require.Contains(t, result, "event: response.output_text.delta")
 	require.Contains(t, result, `{"type":"response.output_text.delta","delta":"hello"}`)
@@ -58,79 +64,94 @@ func TestGrokResponsesBillingPingFilter(t *testing.T) {
 	require.Contains(t, result, `"usage":{"input_tokens":3,"output_tokens":5}`)
 }
 
-func TestGrokResponsesBillingPingFilterPreservesUnrelatedPingFrames(t *testing.T) {
+// Every `event: ping` frame is outside the Responses closed event enum and
+// breaks strict clients regardless of its payload shape, so all variants are
+// rewritten into an SSE comment (issue #5105).
+func TestGrokResponsesBillingPingFilterConvertsPingVariants(t *testing.T) {
+	frames := []string{
+		"event: ping\ndata: {\"type\":\"ping\",\"x-opencode-type\":\"inference-cost\",\"cost\":\"0.06029240\"}\n\n",
+		"event: ping\ndata: {\"type\":\"ping\",\"cost\":\"0\"}\n\n",
+		"event: ping\ndata: {\"type\":\"ping\",\"cost\":\"0.06029240\"}\n\n",
+		"event: ping\ndata: {\"type\":\"ping\",\"kind\":\"keepalive\"}\n\n",
+		"event: ping\ndata: {\"type\":\"ping\"}\n\n",
+		"event: ping\ndata: {\"type\":\"ping\",\"cost\":2}\n\n",
+		"event: ping\ndata: {\"type\":\"ping\",\"cost\":0.0001}\n\n",
+		"event: ping\ndata: {\"type\":\"ping\",\"cost\":\" 0 \"}\n\n",
+		"event: ping\ndata: {\"type\":\"ping\",\"x-opencode-type\":\"keepalive\",\"cost\":0}\n\n",
+		"event: ping\ndata: {\"type\":\"ping\",\"x-opencode-type\":null,\"cost\":0}\n\n",
+		"event: ping\ndata: {\"cost\":\"0\"}\n\n",
+		"event: ping\ndata: {not-json}\n\n",
+		"event: ping\n\n",
+		"event: ping\n: vendor note\ndata: {\"type\":\"ping\"}\n\n",
+	}
+	result := filterGrokPingTestInput(t, strings.Join(frames, ""))
+	require.Equal(t, strings.Repeat(": ping\n\n", len(frames)), result)
+}
+
+func TestGrokResponsesBillingPingFilterPreservesNonPingFrames(t *testing.T) {
 	input := strings.Join([]string{
-		"event: ping",
-		`data: {"type":"ping","kind":"keepalive"}`,
-		"",
-		"event: ping",
-		`data: {"type":"ping","cost":2}`,
-		"",
-		"event: ping",
-		`data: {"type":"ping"}`,
-		"",
-		"event: ping",
-		`data: {"type":"ping","cost":0.0001}`,
-		"",
-		"event: ping",
-		`data: {"type":"ping","cost":0}`,
-		"",
-		"event: ping",
-		`data: {"type":"ping","cost":" 0 "}`,
-		"",
-		"event: ping",
-		`data: {"type":"ping","x-opencode-type":"keepalive","cost":0}`,
-		"",
 		"event: ping",
 		`data: {"type":" ping ","cost":0}`,
 		"",
 		"event: ping",
-		`data: {"type":"ping","x-opencode-type":null,"cost":0}`,
+		`data: {"type":"response.completed"}`,
 		"",
 		"event: custom",
 		`data: {"type":"ping","x-opencode-type":"inference-cost"}`,
 		"",
+		`data: {"type":"ping","cost":"0"}`,
+		"",
+		": keepalive comment",
+		"",
+		"retry: 1000",
+		"",
 	}, "\n")
 
-	body := newGrokResponsesBillingPingFilterBody(
-		io.NopCloser(strings.NewReader(input)),
-		&Account{Platform: PlatformGrok},
-		defaultMaxLineSize,
-	)
-	output, err := io.ReadAll(body)
-	require.NoError(t, err)
-	require.NoError(t, body.Close())
-	require.Equal(t, input, string(output))
+	require.Equal(t, input, filterGrokPingTestInput(t, input))
 }
 
-func TestGrokResponsesBillingPingFilterPreservesFramingAndMalformedInput(t *testing.T) {
+// A ping candidate that turns out to carry an unexpected SSE field is not a
+// vendor billing/keepalive frame; it must be replayed byte for byte.
+func TestGrokResponsesBillingPingFilterPassesThroughPingFrameWithUnknownField(t *testing.T) {
+	input := "event: ping\nid: 7\ndata: {\"type\":\"ping\",\"cost\":\"0\"}\n\n"
+	require.Equal(t, input, filterGrokPingTestInput(t, input))
+}
+
+// Buffering caps: a ping candidate that grows past the line or byte limit is
+// streamed through unchanged instead of accumulating unbounded memory.
+func TestGrokResponsesBillingPingFilterPassesThroughOversizedPingFrame(t *testing.T) {
+	lines := []string{"event: ping"}
+	for i := 0; i < grokResponsesPingFrameMaxLines; i++ {
+		lines = append(lines, ": filler comment")
+	}
+	lines = append(lines, `data: {"type":"ping","cost":"0"}`, "")
+	byLines := strings.Join(lines, "\n")
+	require.Equal(t, byLines, filterGrokPingTestInput(t, byLines))
+
+	byBytes := "event: ping\ndata: {\"type\":\"ping\",\"pad\":\"" +
+		strings.Repeat("x", grokResponsesPingFrameMaxBytes) + "\"}\n\n"
+	require.Equal(t, byBytes, filterGrokPingTestInput(t, byBytes))
+}
+
+func TestGrokResponsesBillingPingFilterConvertsMalformedPingFrames(t *testing.T) {
 	input := "event: ping\r\ndata: {not-json}\r\n\r\n" +
 		"event: ping\r\ndata: {\"type\":\"ping\",\"cost\":\"0\"} trailing\r\n\r\n" +
 		"event: future.response.event\r\ndata: {\"type\":\"future.response.event\"}"
-	body := newGrokResponsesBillingPingFilterBody(
-		io.NopCloser(strings.NewReader(input)),
-		&Account{Platform: PlatformGrok},
-		defaultMaxLineSize,
-	)
-	output, err := io.ReadAll(body)
-	require.NoError(t, err)
-	require.NoError(t, body.Close())
-	require.Equal(t, input, string(output))
+	want := ": ping\n\n" + ": ping\n\n" +
+		"event: future.response.event\r\ndata: {\"type\":\"future.response.event\"}"
+	require.Equal(t, want, filterGrokPingTestInput(t, input))
 }
 
 func TestGrokResponsesBillingPingFilterHandlesBareCRFrames(t *testing.T) {
 	input := "event: ping\rdata: {\"type\":\"ping\",\"cost\":\"0\"}\r\r" +
 		"event: future.event\rdata: {\"type\":\"future.event\"}\r\r"
-	want := "event: future.event\rdata: {\"type\":\"future.event\"}\r\r"
-	body := newGrokResponsesBillingPingFilterBody(
-		io.NopCloser(strings.NewReader(input)),
-		&Account{Platform: PlatformGrok},
-		defaultMaxLineSize,
-	)
-	output, err := io.ReadAll(body)
-	require.NoError(t, err)
-	require.NoError(t, body.Close())
-	require.Equal(t, want, string(output))
+	want := ": ping\n\n" + "event: future.event\rdata: {\"type\":\"future.event\"}\r\r"
+	require.Equal(t, want, filterGrokPingTestInput(t, input))
+}
+
+func TestGrokResponsesBillingPingFilterConvertsPartialPingFrameAtEOF(t *testing.T) {
+	input := "event: ping\ndata: {\"type\":\"ping\",\"cost\":\"0\"}"
+	require.Equal(t, ": ping\n\n", filterGrokPingTestInput(t, input))
 }
 
 func TestGrokResponsesBillingPingFilterDoesNotFilterNonGrokAccounts(t *testing.T) {
@@ -177,6 +198,7 @@ func TestGrokResponsesBillingPingFilterPreservesUsageAndTerminalEvent(t *testing
 	require.Equal(t, "resp_1", result.responseID)
 	require.Contains(t, recorder.Body.String(), "response.completed")
 	require.NotContains(t, recorder.Body.String(), "inference-cost")
+	require.NotContains(t, recorder.Body.String(), "event: ping")
 }
 
 type grokPingFilterTestReadCloser struct {
