@@ -205,7 +205,7 @@ func TestGrokResponsesBillingPingFilterCloseCancelsSourceOnce(t *testing.T) {
 func TestGrokResponsesBillingPingFilterFlushesCompletedFrames(t *testing.T) {
 	upstreamReader, upstreamWriter := io.Pipe()
 	body := newGrokResponsesBillingPingFilterBody(upstreamReader, &Account{Platform: PlatformGrok}, defaultMaxLineSize)
-	defer body.Close()
+	t.Cleanup(func() { require.NoError(t, body.Close()) })
 
 	go func() {
 		_, _ = io.WriteString(upstreamWriter, "event: future.event\ndata: {\"type\":\"future.event\"}\n\n")
