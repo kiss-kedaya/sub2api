@@ -512,11 +512,11 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 	if acquireErr == nil && result != nil && result.Acquired {
 		_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
-		return &AccountSelectionResult{
+		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account:     account,
 			Acquired:    true,
 			ReleaseFunc: result.ReleaseFunc,
-		}, false, nil
+		}), false, nil
 	}
 
 	cfg := s.service.schedulingConfig()
@@ -532,7 +532,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			)
 			return nil, true, nil
 		}
-		return &AccountSelectionResult{
+		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account: account,
 			WaitPlan: &AccountWaitPlan{
 				AccountID:      accountID,
@@ -540,7 +540,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 				Timeout:        cfg.StickySessionWaitTimeout,
 				MaxWaiting:     cfg.StickySessionMaxWaiting,
 			},
-		}, false, nil
+		}), false, nil
 	}
 	return nil, false, nil
 }
@@ -1170,11 +1170,11 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		if req.SessionHash != "" && !req.PreserveStickyBinding {
 			_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, fresh.ID)
 		}
-		return &AccountSelectionResult{
+		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account:     fresh,
 			Acquired:    true,
 			ReleaseFunc: result.ReleaseFunc,
-		}, compactBlocked, nil
+		}), compactBlocked, nil
 	}
 	return nil, compactBlocked, nil
 }
@@ -1249,15 +1249,15 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			if req.SessionHash != "" && !req.PreserveStickyBinding {
 				_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, account.ID)
 			}
-			return &AccountSelectionResult{
+			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 				Account:     account,
 				Acquired:    true,
 				ReleaseFunc: result.ReleaseFunc,
-			}, nil
+			}), nil
 		}
 		if s.service.concurrencyService != nil {
 			cfg := s.service.schedulingConfig()
-			return &AccountSelectionResult{
+			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 				Account: account,
 				WaitPlan: &AccountWaitPlan{
 					AccountID:      account.ID,
@@ -1265,7 +1265,7 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 					Timeout:        cfg.StickySessionWaitTimeout,
 					MaxWaiting:     cfg.StickySessionMaxWaiting,
 				},
-			}, nil
+			}), nil
 		}
 	}
 	return nil, nil
@@ -1622,7 +1622,7 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 				compactBlocked = true
 				continue
 			}
-			return &AccountSelectionResult{
+			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 				Account: fresh,
 				WaitPlan: &AccountWaitPlan{
 					AccountID:      fresh.ID,
@@ -1630,7 +1630,7 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 					Timeout:        cfg.FallbackWaitTimeout,
 					MaxWaiting:     cfg.FallbackMaxWaiting,
 				},
-			}, candidateCount, topK, loadSkew, nil
+			}), candidateCount, topK, loadSkew, nil
 		}
 	}
 

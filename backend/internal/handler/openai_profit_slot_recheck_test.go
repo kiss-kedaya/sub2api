@@ -70,7 +70,10 @@ func profitSlotTestContext(t *testing.T, gw *service.OpenAIGatewayService, group
 		ProfitMinMargin:      0.5,
 	}
 	base := context.WithValue(context.Background(), ctxkey.Group, group)
-	ctx, pricingAt := gw.WithOpenAIRequestPricingContext(base, &groupID, suppress)
+	if suppress {
+		base = service.WithOpenAIProfitControlSuppressed(base)
+	}
+	ctx, pricingAt := gw.WithOpenAIRequestPricingContext(base, &groupID)
 	require.False(t, pricingAt.IsZero())
 	return ctx
 }
