@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"log/slog"
-	"math"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
@@ -43,10 +42,7 @@ func (s *GatewayService) withGatewayProfitControlGate(ctx context.Context, group
 		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
 	}
 	downstream *= billingGroup.PeakMultiplierAt(pricingAt)
-	threshold := downstream * (1 - group.ProfitMinMargin - group.ProfitSafetyBuffer)
-	if math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < 0 {
-		threshold = 0
-	}
+	threshold := clampProfitControlThreshold(downstream * (1 - group.ProfitMinMargin - group.ProfitSafetyBuffer))
 
 	gate := &openAIProfitControlGate{
 		groupID:   group.ID,
@@ -71,7 +67,8 @@ func (s *GatewayService) resolveProfitControlGroup(ctx context.Context, groupID 
 		return group, nil
 	}
 	if s.schedulerSnapshot != nil {
-		return s.schedulerSnapshot.GetGroupByID(ctx, groupID)
+		// Lite 读取：门只用平台/倍率/利润/高峰字段，不需要账号计数聚合。
+		return s.schedulerSnapshot.GetGroupByIDLite(ctx, groupID)
 	}
 	return s.resolveGroupByID(ctx, groupID)
 }
