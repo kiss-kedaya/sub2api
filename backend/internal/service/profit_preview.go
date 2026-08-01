@@ -115,8 +115,8 @@ func PreviewProfitAdmission(inputs []ProfitPreviewGroupInput, evalAt time.Time) 
 		}
 		minD := minRate * peak
 		deduction := group.ProfitMinMargin + group.ProfitSafetyBuffer
-		thresholdDefault := clampProfitPreviewThreshold(defaultD * (1 - deduction))
-		thresholdMinD := clampProfitPreviewThreshold(minD * (1 - deduction))
+		thresholdDefault := clampProfitControlThreshold(defaultD * (1 - deduction))
+		thresholdMinD := clampProfitControlThreshold(minD * (1 - deduction))
 		report.DefaultD = defaultD
 		report.MinEffectiveD = minD
 		report.ThresholdDefault = thresholdDefault
@@ -183,11 +183,11 @@ func previewAccountProfitAdmission(
 		verdict.Class = ProfitPreviewClassAdmitted
 	case !validRate:
 		verdict.Class = ProfitPreviewClassRejectedInvalidRate
-	case profitPreviewOverThreshold(*account.RateMultiplier, thresholdDefault):
+	case profitControlOverThreshold(*account.RateMultiplier, thresholdDefault):
 		verdict.Class = ProfitPreviewClassRejectedThreshold
 	default:
 		verdict.Class = ProfitPreviewClassAdmitted
-		verdict.RejectedUnderMinD = profitPreviewOverThreshold(*account.RateMultiplier, thresholdMinD)
+		verdict.RejectedUnderMinD = profitControlOverThreshold(*account.RateMultiplier, thresholdMinD)
 	}
 	return verdict
 }
@@ -208,16 +208,4 @@ func profitPreviewProbeWarnings(account *Account, evalAt time.Time) []string {
 		}
 	}
 	return nil
-}
-
-func clampProfitPreviewThreshold(threshold float64) float64 {
-	if math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < 0 {
-		return 0
-	}
-	return threshold
-}
-
-// profitPreviewOverThreshold 与线上否决点共用同一 epsilon 边界语义。
-func profitPreviewOverThreshold(upstream, threshold float64) bool {
-	return upstream-threshold > profitControlRateEpsilon*math.Max(1, math.Abs(threshold))
 }
