@@ -151,16 +151,31 @@ func TestReconcileCRSUpstreamBillingProbeExtra(t *testing.T) {
 		require.NotContains(t, extra, UpstreamBillingProbeExtraKey)
 	})
 
+	// API-key 平台间切换：探测资格保留（放宽后不再限 OpenAI），开关沿用本地值，
+	// 但平台属于探测身份，快照必须作废。
+	for _, target := range []struct {
+		name     string
+		platform string
+	}{
+		{name: "anthropic api key", platform: PlatformAnthropic},
+		{name: "gemini api key", platform: PlatformGemini},
+	} {
+		t.Run(target.name+" keeps enabled and clears snapshot", func(t *testing.T) {
+			extra := mergeMap(existing.Extra, remote)
+			reconcileCRSUpstreamBillingProbeExtra(existing, target.platform, AccountTypeAPIKey, existing.Credentials, extra)
+			require.Equal(t, false, extra[UpstreamBillingProbeEnabledExtraKey])
+			require.NotContains(t, extra, UpstreamBillingProbeExtraKey)
+		})
+	}
+
 	for _, target := range []struct {
 		name     string
 		platform string
 		typeName string
 	}{
 		{name: "anthropic oauth", platform: PlatformAnthropic, typeName: AccountTypeOAuth},
-		{name: "anthropic api key", platform: PlatformAnthropic, typeName: AccountTypeAPIKey},
 		{name: "openai oauth", platform: PlatformOpenAI, typeName: AccountTypeOAuth},
 		{name: "gemini oauth", platform: PlatformGemini, typeName: AccountTypeOAuth},
-		{name: "gemini api key", platform: PlatformGemini, typeName: AccountTypeAPIKey},
 	} {
 		t.Run(target.name+" removes inapplicable state", func(t *testing.T) {
 			extra := mergeMap(existing.Extra, remote)
