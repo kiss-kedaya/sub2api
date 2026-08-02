@@ -88,11 +88,11 @@ describe('UpstreamBillingRateCell', () => {
       }
     })
 
-    expect(wrapper.text()).toContain('0.6x')
+    expect(wrapper.text()).toContain('0.60x')
     await wrapper.setProps({ now: Date.parse('2026-07-13T01:00:00Z') })
-    expect(wrapper.text()).toContain('0.9x')
+    expect(wrapper.text()).toContain('0.90x')
     await wrapper.setProps({ now: Date.parse('2026-07-13T10:00:00Z') })
-    expect(wrapper.text()).toContain('0.6x')
+    expect(wrapper.text()).toContain('0.60x')
     expect(wrapper.text()).not.toContain('admin.accounts.upstreamBilling.latest')
     expect(wrapper.get('[data-testid="upstream-billing-probe"]').text()).toBe('')
     expect(wrapper.get('[data-testid="upstream-billing-probe"]').attributes('aria-label')).toBe(
@@ -132,11 +132,11 @@ describe('UpstreamBillingRateCell', () => {
         }
       })
     })
-    expect(wrapper.text()).toContain('0.6x')
+    expect(wrapper.text()).toContain('0.60x')
     expect(wrapper.text()).toContain('admin.accounts.upstreamBilling.failed')
 
     await wrapper.setProps({ now: Date.parse('2026-07-13T01:00:00Z') })
-    expect(wrapper.text()).toContain('0.9x')
+    expect(wrapper.text()).toContain('0.90x')
     expect(wrapper.text()).not.toContain('admin.accounts.upstreamBilling.stale')
 
     await wrapper.setProps({ now: Date.parse('2026-07-13T01:00:00.001Z') })
@@ -312,7 +312,7 @@ describe('UpstreamBillingRateCell', () => {
     await wrapper.setProps({ account: malformedAccount({}, { received_at: 'not-a-time' }) })
     expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.stale')
     await wrapper.setProps({ account: malformedAccount({}, { received_at: '2026-07-13T00:31:00Z' }) })
-    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('0.6x')
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('0.60x')
     await wrapper.setProps({ account: malformedAccount({}, { received_at: '2026-07-13T00:36:00Z' }) })
     expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.stale')
     await wrapper.setProps({ account: malformedAccount({}, { fresh_until: '2026-07-12T23:59:00Z' }) })
