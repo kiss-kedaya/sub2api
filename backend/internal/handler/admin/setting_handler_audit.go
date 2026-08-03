@@ -443,6 +443,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAICodexUserAgent != after.OpenAICodexUserAgent {
 		changed = append(changed, "openai_codex_user_agent")
 	}
+	if before.OpenAICodexClientVersion != after.OpenAICodexClientVersion {
+		changed = append(changed, "openai_codex_client_version")
+	}
+	if before.OpenAICodexVersionAutoSyncEnabled != after.OpenAICodexVersionAutoSyncEnabled {
+		changed = append(changed, "openai_codex_version_auto_sync_enabled")
+	}
 	if before.PaymentVisibleMethodAlipaySource != after.PaymentVisibleMethodAlipaySource {
 		changed = append(changed, "payment_visible_method_alipay_source")
 	}
