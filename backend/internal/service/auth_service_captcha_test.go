@@ -150,11 +150,11 @@ func TestVerifyCaptchaRejectsEnabledTencentProviderWithIncompleteCredentials(t *
 	require.Zero(t, verifier.calls)
 }
 
-func TestVerifyTencentCaptchaIfEnabledVerifiesTencentProof(t *testing.T) {
+func TestVerifyActionCaptchaIfEnabledVerifiesTencentProof(t *testing.T) {
 	verifier := &tencentCaptchaVerifierStub{response: &TencentCaptchaVerifyResponse{CaptchaCode: 1}}
 	svc := newAuthServiceForCaptchaTest(tencentCaptchaSettings(), false, nil, verifier)
 
-	err := svc.VerifyTencentCaptchaIfEnabled(context.Background(), CaptchaProof{
+	err := svc.VerifyActionCaptchaIfEnabled(context.Background(), CaptchaProof{
 		TencentTicket:  "ticket",
 		TencentRandstr: "@rand",
 	}, "203.0.113.10")
@@ -164,7 +164,7 @@ func TestVerifyTencentCaptchaIfEnabledVerifiesTencentProof(t *testing.T) {
 	require.Equal(t, TencentCaptchaProof{Ticket: "ticket", Randstr: "@rand"}, verifier.proof)
 }
 
-func TestVerifyTencentCaptchaIfEnabledDoesNotExpandTurnstileCoverage(t *testing.T) {
+func TestVerifyActionCaptchaIfEnabledDoesNotExpandTurnstileCoverage(t *testing.T) {
 	settings := map[string]string{
 		SettingKeyTurnstileEnabled:   "true",
 		SettingKeyTurnstileSecretKey: "turnstile-secret",
@@ -172,17 +172,17 @@ func TestVerifyTencentCaptchaIfEnabledDoesNotExpandTurnstileCoverage(t *testing.
 	turnstileVerifier := &turnstileVerifierSpy{}
 	svc := newAuthServiceForCaptchaTest(settings, false, turnstileVerifier, nil)
 
-	err := svc.VerifyTencentCaptchaIfEnabled(context.Background(), CaptchaProof{}, "203.0.113.10")
+	err := svc.VerifyActionCaptchaIfEnabled(context.Background(), CaptchaProof{}, "203.0.113.10")
 
 	require.NoError(t, err)
 	require.Zero(t, turnstileVerifier.called)
 }
 
-func TestVerifyTencentCaptchaIfEnabledFailsClosedOnSettingReadError(t *testing.T) {
+func TestVerifyActionCaptchaIfEnabledFailsClosedOnSettingReadError(t *testing.T) {
 	repo := &settingRepoStub{err: errors.New("settings unavailable")}
 	svc := newAuthServiceForCaptchaRepoTest(repo, false, &turnstileVerifierSpy{}, &tencentCaptchaVerifierStub{})
 
-	err := svc.VerifyTencentCaptchaIfEnabled(context.Background(), CaptchaProof{}, "203.0.113.10")
+	err := svc.VerifyActionCaptchaIfEnabled(context.Background(), CaptchaProof{}, "203.0.113.10")
 
 	require.ErrorIs(t, err, ErrServiceUnavailable)
 }
