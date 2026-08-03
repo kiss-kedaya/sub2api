@@ -509,8 +509,8 @@ describe('AccountUsageCell', () => {
 
 	await flushPromises()
 	expect(getUsage).toHaveBeenCalledTimes(2)
-	  expect(wrapper.text()).toContain('5h|0|200')
-	})
+	expect(wrapper.text()).toContain('5h|0|200')
+  })
 
   it('OpenAI 重置响应更新账号行时不会额外拉取 usage', async () => {
     getUsage.mockResolvedValue({
