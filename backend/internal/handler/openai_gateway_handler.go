@@ -2021,6 +2021,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			MaxReasoningEffort:      maxReasoningEffort,
 			ReasoningEffortMappings: reasoningEffortMappings,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
+				c.Set(securityAuditWSTurnContextKey, turn)
 				if turn == 1 {
 					return nil
 				}
