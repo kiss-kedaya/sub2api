@@ -18,7 +18,7 @@ const {
   apiClientPostMock,
   authStoreState,
   createTurnstileResetMock,
-  verifyTencentMock,
+  verifyActionMock,
 } = vi.hoisted(() => ({
   pushMock: vi.fn(),
   showSuccessMock: vi.fn(),
@@ -33,7 +33,7 @@ const {
   persistOAuthTokenContextMock: vi.fn(),
   apiClientPostMock: vi.fn(),
   createTurnstileResetMock: vi.fn(),
-  verifyTencentMock: vi.fn(),
+  verifyActionMock: vi.fn(),
   authStoreState: {
     pendingAuthSession: null as null | {
       token: string
@@ -116,7 +116,7 @@ describe('EmailVerifyView', () => {
     persistOAuthTokenContextMock.mockReset()
     apiClientPostMock.mockReset()
     createTurnstileResetMock.mockReset()
-    verifyTencentMock.mockReset()
+    verifyActionMock.mockReset()
     authStoreState.pendingAuthSession = null
     sessionStorage.clear()
     localStorage.clear()
@@ -142,9 +142,9 @@ describe('EmailVerifyView', () => {
       registration_email_suffix_whitelist: [],
     })
     sendVerifyCodeMock.mockResolvedValue({ countdown: 0 })
-    verifyTencentMock
-      .mockResolvedValueOnce({ ticket: 'ticket-1', randstr: '@rand-1' })
-      .mockResolvedValueOnce({ ticket: 'ticket-2', randstr: '@rand-2' })
+    verifyActionMock
+      .mockResolvedValueOnce({ token: 'ticket-1', randstr: '@rand-1' })
+      .mockResolvedValueOnce({ token: 'ticket-2', randstr: '@rand-2' })
     sessionStorage.setItem(
       'register_data',
       JSON.stringify({
@@ -157,7 +157,7 @@ describe('EmailVerifyView', () => {
 
     const CaptchaChallengeStub = defineComponent({
       setup(_, { expose }) {
-        expose({ verifyTencent: verifyTencentMock, reset: createTurnstileResetMock })
+        expose({ verifyAction: verifyActionMock, reset: createTurnstileResetMock })
         return () => h('div')
       },
     })
@@ -182,7 +182,7 @@ describe('EmailVerifyView', () => {
     await resendButton().trigger('click')
     await flushPromises()
 
-    expect(verifyTencentMock).toHaveBeenCalledTimes(2)
+    expect(verifyActionMock).toHaveBeenCalledTimes(2)
     expect(sendVerifyCodeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
       tencent_captcha_ticket: 'ticket-1',
       tencent_captcha_randstr: '@rand-1',
