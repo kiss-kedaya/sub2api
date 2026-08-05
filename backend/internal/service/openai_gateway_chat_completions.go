@@ -463,6 +463,17 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	// When the terminal event has an empty output array, reconstruct from
 	// accumulated delta events so the client receives the full content.
 	acc.SupplementResponseOutput(finalResponse)
+	if account != nil && account.Platform == PlatformGrok && !hasBillableOpenAIUsage(usage) {
+		return nil, s.newOpenAIStreamFailoverError(
+			c,
+			account,
+			false,
+			firstNonEmpty(requestID, resp.Header.Get("xai-request-id")),
+			nil,
+			grokMissingUsageMessage,
+			resp.Header,
+		)
+	}
 
 	chatResp := apicompat.ResponsesToChatCompletions(finalResponse, originalModel)
 
