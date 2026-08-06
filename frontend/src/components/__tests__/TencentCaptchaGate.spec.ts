@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TencentCaptchaGate from '@/components/TencentCaptchaGate.vue'
-import { resetTencentCaptchaLoaderForTest } from '@/utils/tencentCaptcha'
+import { loadTencentCaptcha, resetTencentCaptchaLoaderForTest } from '@/utils/tencentCaptcha'
 
 const locale = { value: 'zh' }
 
@@ -197,6 +197,43 @@ describe('TencentCaptchaGate', () => {
     )
   })
 
+  it('refreshes a preloaded proof before the provider ticket expires', async () => {
+    vi.useFakeTimers()
+    try {
+      let callback: ((result: CaptchaResult) => void) | undefined
+      let constructorCount = 0
+      window.TCaptchaGlobal = true
+      window.TencentCaptcha = class {
+        constructor(...received: unknown[]) {
+          constructorCount += 1
+          callback = received[2] as (result: CaptchaResult) => void
+        }
+        show = vi.fn()
+        destroy = vi.fn()
+      } as unknown as typeof window.TencentCaptcha
+      const wrapper = mount(TencentCaptchaGate, {
+        props: { appId: '123456789', region: 'intl' }
+      })
+
+      await flushPromises()
+      callback?.({ ret: 0, ticket: 'expired-ticket', randstr: 'expired-rand' })
+      await flushPromises()
+      vi.advanceTimersByTime(4 * 60 * 1000)
+
+      const verification = wrapper.vm.verify()
+      await flushPromises()
+      expect(constructorCount).toBe(2)
+
+      callback?.({ ret: 0, ticket: 'fresh-ticket', randstr: 'fresh-rand' })
+      await expect(verification).resolves.toEqual({
+        ticket: 'fresh-ticket',
+        randstr: 'fresh-rand'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps the three-argument form for the Chinese mainland site', async () => {
     const args: unknown[][] = []
     window.TencentCaptcha = class {
@@ -246,6 +283,26 @@ describe('TencentCaptchaGate', () => {
     expect(
       document.head.querySelector('script[src*="TJNCaptcha-global.js"]')
     ).not.toBeNull()
+  })
+
+  it('does not inject a second SDK when the region changes in one page', async () => {
+    const constructor = class {
+      constructor() {}
+      show = vi.fn()
+      destroy = vi.fn()
+    } as unknown as typeof window.TencentCaptcha
+
+    const firstLoad = loadTencentCaptcha('cn')
+    const firstScript = document.head.querySelector<HTMLScriptElement>('script[src*="TJCaptcha.js"]')
+    expect(firstScript).not.toBeNull()
+    window.TencentCaptcha = constructor
+    firstScript?.dispatchEvent(new Event('load'))
+    await expect(firstLoad).resolves.toBe(constructor)
+
+    await expect(loadTencentCaptcha('intl')).rejects.toThrow(
+      'Tencent Captcha region changed; reload the page to apply it'
+    )
+    expect(document.head.querySelector('script[src*="TJNCaptcha-global.js"]')).toBeNull()
   })
 
   it('settles a pending verification when reset', async () => {
