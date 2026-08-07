@@ -508,11 +508,12 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	}
 	// Team+model cool: sticky must not pin a sibling under the same team 429 window.
 	now := time.Now()
-	if account != nil && isGrokTeamModelRateLimited(account, req.RequestedModel, now) {
+	upstreamModel := canonicalOpenAIAccountSchedulingModel(account, req.RequestedModel)
+	if account != nil && isGrokTeamModelRateLimited(account, upstreamModel, now) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, false, nil
 	}
-	if account != nil && isGrokModelQuotaBlocked(account.ID, req.RequestedModel, now) {
+	if account != nil && isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, false, nil
 	}
@@ -1262,6 +1263,12 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 		// normal and sticky selection paths. Otherwise an over-quota free account
 		// could be reintroduced after the primary candidate pass.
 		if len(s.filterGrokFreeQuotaAccounts(ctx, []Account{*account})) == 0 {
+			continue
+		}
+		upstreamModel := canonicalOpenAIAccountSchedulingModel(account, req.RequestedModel)
+		now := time.Now()
+		if isGrokTeamModelRateLimited(account, upstreamModel, now) ||
+			isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
 			continue
 		}
 		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
