@@ -1,11 +1,15 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
@@ -70,9 +74,26 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	defer conn.CloseNow()
 
 	model := c.Query("model")
-	if err := h.gatewayService.ProxyGrokRealtime(c.Request.Context(), c, conn, selection.Account, token, model); err != nil {
-		reqLog.Info("grok_realtime.proxy_failed", zap.Error(err))
+	if strings.TrimSpace(model) == "" {
+		model = "grok-voice-latest"
+	}
+	started := time.Now()
+	proxyErr := h.gatewayService.ProxyGrokRealtime(c.Request.Context(), c, conn, selection.Account, token, model)
+	elapsed := time.Since(started)
+	if proxyErr != nil {
+		reqLog.Info("grok_realtime.proxy_failed", zap.Error(proxyErr))
 		_ = conn.Close(coderws.StatusInternalError, "upstream realtime websocket failed")
+	}
+	// Bill completed (or partially completed) realtime sessions by elapsed minutes
+	// when group audio_realtime_price_per_min is configured.
+	if elapsed > 0 {
+		subscription, _ := middleware2.GetSubscriptionFromContext(c)
+		result := &service.OpenAIForwardResult{
+			Model:      model,
+			Duration:   elapsed,
+			AudioUsage: &service.AudioUsage{Mode: "realtime", DurationOrUnits: elapsed.Minutes()},
+		}
+		h.recordGrokVoiceUsage(c, apiKey, selection.Account, subscription, "realtime", nil, result)
 	}
 }
 
@@ -146,7 +167,8 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 			return h.gatewayService.ForwardGrokVoice(c.Request.Context(), c, account, endpoint, body, contentType)
 		}()
 		if forwardErr == nil {
-			_ = result
+			subscription, _ := middleware2.GetSubscriptionFromContext(c)
+			h.recordGrokVoiceUsage(c, apiKey, account, subscription, endpoint, body, result)
 			return
 		}
 		var failoverErr *service.UpstreamFailoverError
@@ -161,6 +183,66 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	if last != nil {
 		h.handleFailoverExhausted(c, last, false)
 	}
+}
+
+// recordGrokVoiceUsage bills TTS/STT/realtime via group audio prices when AudioUsage is set.
+func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
+	c *gin.Context,
+	apiKey *service.APIKey,
+	account *service.Account,
+	subscription *service.UserSubscription,
+	endpoint string,
+	body []byte,
+	result *service.OpenAIForwardResult,
+) {
+	if h == nil || c == nil || apiKey == nil || account == nil || result == nil {
+		return
+	}
+	if result.AudioUsage == nil {
+		return
+	}
+	userAgent := c.GetHeader("User-Agent")
+	clientIP := ip.GetClientIP(c)
+	sessionID := service.ExtractClientSessionID(c)
+	requestPayloadHash := service.HashUsageRequestPayload(body)
+	if requestPayloadHash == "" {
+		requestPayloadHash = service.HashUsageRequestPayload([]byte(endpoint))
+	}
+	inboundEndpoint := GetInboundEndpoint(c)
+	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+	model := strings.TrimSpace(result.Model)
+	if model == "" {
+		model = endpoint
+	}
+
+	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+			Result:             result,
+			APIKey:             apiKey,
+			User:               apiKey.User,
+			Account:            account,
+			Subscription:       subscription,
+			InboundEndpoint:    inboundEndpoint,
+			UpstreamEndpoint:   upstreamEndpoint,
+			UserAgent:          userAgent,
+			IPAddress:          clientIP,
+			RequestPayloadHash: requestPayloadHash,
+			APIKeyService:      h.apiKeyService,
+			QuotaPlatform:      quotaPlatform,
+			SessionID:          sessionID,
+			ChannelUsageFields: clientRequestedUsageFields(c, service.ChannelMappingResult{}, model, result.UpstreamModel),
+		}); err != nil {
+			logger.L().With(
+				zap.String("component", "handler.openai_gateway.grok_voice"),
+				zap.Int64("user_id", apiKey.User.ID),
+				zap.Int64("api_key_id", apiKey.ID),
+				zap.Any("group_id", apiKey.GroupID),
+				zap.String("endpoint", endpoint),
+				zap.Int64("account_id", account.ID),
+			).Error("grok_voice.record_usage_failed", zap.Error(err))
+		}
+	})
 }
 
 func readGrokVoiceGatewayBody(c *gin.Context) ([]byte, error) {
