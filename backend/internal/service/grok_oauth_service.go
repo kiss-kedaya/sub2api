@@ -162,11 +162,15 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 	if state == "" {
 		state = strings.TrimSpace(parsed.State)
 	}
-	if parsed.RequiresState && state == "" {
-		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_STATE_REQUIRED", "oauth state is required for callback URLs")
+	if state == "" {
+		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_STATE_REQUIRED", "oauth state is required")
 	}
-	if state != "" && subtle.ConstantTimeCompare([]byte(state), []byte(session.State)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(state), []byte(session.State)) != 1 {
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_INVALID_STATE", "invalid oauth state")
+	}
+	if redirectURI := strings.TrimSpace(input.RedirectURI); redirectURI != "" &&
+		redirectURI != strings.TrimSpace(session.RedirectURI) {
+		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_REDIRECT_URI_MISMATCH", "redirect_uri does not match the OAuth session")
 	}
 
 	proxyURL := session.ProxyURL
@@ -184,13 +188,11 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_SESSION_ALREADY_USED", "oauth session has already been used")
 	}
 	defer s.sessionStore.Delete(input.SessionID)
-	redirectURI := session.RedirectURI
-	if strings.TrimSpace(input.RedirectURI) != "" {
-		redirectURI = input.RedirectURI
-	}
-
-	tokenResp, err := s.oauthClient.ExchangeCode(ctx, code, session.CodeVerifier, redirectURI, proxyURL, session.ClientID)
+	tokenResp, err := s.oauthClient.ExchangeCode(ctx, code, session.CodeVerifier, session.RedirectURI, proxyURL, session.ClientID)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateGrokTokenResponse(tokenResp); err != nil {
 		return nil, err
 	}
 	return s.tokenInfoFromResponse(tokenResp, session.ClientID, nil), nil
@@ -213,6 +215,9 @@ func (s *GrokOAuthService) RefreshToken(ctx context.Context, refreshToken, proxy
 	}
 	tokenResp, err := s.oauthClient.RefreshToken(ctx, refreshToken, proxyURL, clientID)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateGrokTokenResponse(tokenResp); err != nil {
 		return nil, err
 	}
 	tokenInfo := s.tokenInfoFromResponse(tokenResp, clientID, nil)

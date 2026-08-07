@@ -128,9 +128,15 @@ func (h *GrokOAuthHandler) RefreshToken(c *gin.Context) {
 	var proxyURL string
 	if req.ProxyID != nil {
 		proxy, err := h.adminService.GetProxy(c.Request.Context(), *req.ProxyID)
-		if err == nil && proxy != nil {
-			proxyURL = proxy.URL()
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
 		}
+		if proxy == nil {
+			response.BadRequest(c, "GROK_OAUTH_PROXY_NOT_FOUND: proxy not found")
+			return
+		}
+		proxyURL = proxy.URL()
 	}
 	tokenInfo, err := h.grokOAuthService.RefreshToken(c.Request.Context(), refreshToken, proxyURL, req.ClientID)
 	if err != nil {
