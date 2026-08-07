@@ -119,6 +119,27 @@ func TestBuildBillingSummaryMonthlyOnlyKeepsWeeklyUsageEmpty(t *testing.T) {
 	require.InDelta(t, 50, *summary.UsedPercent, 1e-9)
 }
 
+func TestBuildBillingSummaryWeeklyDoesNotInheritMonthlyPeriodEnd(t *testing.T) {
+	t.Parallel()
+	// Weekly usage without currentPeriod.end must not copy billingPeriodEnd (monthly).
+	payload, err := ParseBillingPayload([]byte(`{
+		"config": {
+			"creditUsagePercent": 95.0,
+			"productUsage": [{"product":"Api","usagePercent":95.0}],
+			"billingPeriodStart": "2026-07-01T00:00:00Z",
+			"billingPeriodEnd": "2026-08-01T00:00:00Z",
+			"monthlyLimit": {"val": 15000},
+			"used": {"val": 1000}
+		}
+	}`))
+	require.NoError(t, err)
+	summary := BuildBillingSummary(payload.Config)
+	require.NotNil(t, summary)
+	require.Equal(t, "weekly", summary.PeriodType)
+	require.Equal(t, "", summary.PeriodEnd)
+	require.Equal(t, "2026-08-01T00:00:00Z", summary.BillingPeriodEnd)
+}
+
 func TestMergeBillingProbeResultRetainsFailedWindow(t *testing.T) {
 	t.Parallel()
 	previous := &BillingSummary{

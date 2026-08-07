@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -92,15 +93,41 @@ func isExplicitGrokFreeOAuthAccount(account *Account) bool {
 }
 
 // filterGrokFreeQuotaAccounts applies a local, rolling soft gate only to
-// explicitly FREE Grok OAuth accounts on the scheduling hot path.
+// FREE Grok OAuth accounts on the OpenAI scheduling hot path.
 // Missing or failed statistics always fail open; upstream quota/rate-limit
 // handling remains authoritative. Admin quota/import probes never call this.
 func (s *defaultOpenAIAccountScheduler) filterGrokFreeQuotaAccounts(ctx context.Context, accounts []Account) []Account {
 	if s == nil || s.service == nil {
 		return accounts
 	}
-	settings, enabled := resolveGrokFreeQuotaGateSettings(s.service.cfg)
-	if !enabled || len(accounts) == 0 || s.service.usageLogRepo == nil {
+	return filterGrokFreeQuotaAccountsCore(ctx, s.service.cfg, s.service.usageLogRepo, &s.grokFreeQuotaGateCache, accounts)
+}
+
+// filterGrokFreeQuotaAccountsForGateway applies the same soft gate on Gateway
+// scheduling (e.g. /v1/web_search) so free accounts near local 95%/1M are not
+// still selected for native search while Responses soft-gates them out.
+func (s *GatewayService) filterGrokFreeQuotaAccountsForGateway(ctx context.Context, accounts []Account) []Account {
+	if s == nil {
+		return accounts
+	}
+	return filterGrokFreeQuotaAccountsCore(ctx, s.cfg, s.usageLogRepo, &gatewayGrokFreeQuotaGateCache, accounts)
+}
+
+// Shared cache for Gateway path (OpenAI scheduler keeps its own map).
+var gatewayGrokFreeQuotaGateCache sync.Map
+
+func filterGrokFreeQuotaAccountsCore(
+	ctx context.Context,
+	cfg *config.Config,
+	usageLogRepo UsageLogRepository,
+	cache *sync.Map,
+	accounts []Account,
+) []Account {
+	if cache == nil {
+		return accounts
+	}
+	settings, enabled := resolveGrokFreeQuotaGateSettings(cfg)
+	if !enabled || len(accounts) == 0 || usageLogRepo == nil {
 		return accounts
 	}
 	now := time.Now().UTC()
@@ -112,7 +139,7 @@ func (s *defaultOpenAIAccountScheduler) filterGrokFreeQuotaAccounts(ctx context.
 		if !isExplicitGrokFreeOAuthAccount(account) || account.ID <= 0 {
 			continue
 		}
-		if cached, ok := s.grokFreeQuotaGateCache.Load(account.ID); ok {
+		if cached, ok := cache.Load(account.ID); ok {
 			entry, valid := cached.(grokFreeQuotaGateCacheEntry)
 			age := now.Sub(entry.checkedAt)
 			if valid && settings.cacheTTL > 0 && age >= 0 && age < settings.cacheTTL {
@@ -129,12 +156,12 @@ func (s *defaultOpenAIAccountScheduler) filterGrokFreeQuotaAccounts(ctx context.
 	}
 
 	if len(missingIDs) > 0 {
-		statsByID, err := s.queryGrokFreeQuotaWindowStats(ctx, missingIDs, now.Add(-settings.window))
+		statsByID, err := queryGrokFreeQuotaWindowStats(ctx, usageLogRepo, missingIDs, now.Add(-settings.window))
 		if err != nil {
 			grokFreeQuotaGateQueryFailureTotal.Add(1)
 			if settings.cacheTTL > 0 {
 				for _, accountID := range missingIDs {
-					s.grokFreeQuotaGateCache.Store(accountID, grokFreeQuotaGateCacheEntry{checkedAt: now})
+					cache.Store(accountID, grokFreeQuotaGateCacheEntry{checkedAt: now})
 				}
 			}
 			slog.Warn("grok_free_quota_soft_gate_stats_failed",
@@ -148,7 +175,7 @@ func (s *defaultOpenAIAccountScheduler) filterGrokFreeQuotaAccounts(ctx context.
 					tokens = stats.Tokens
 				}
 				tokensByID[accountID] = tokens
-				s.grokFreeQuotaGateCache.Store(accountID, grokFreeQuotaGateCacheEntry{tokens: tokens, checkedAt: now, known: true})
+				cache.Store(accountID, grokFreeQuotaGateCacheEntry{tokens: tokens, checkedAt: now, known: true})
 				if tokens >= settings.gateTokens {
 					grokFreeQuotaGateBlockedTotal.Add(1)
 					slog.Info("grok_free_quota_soft_gate_blocked",
@@ -175,13 +202,16 @@ func (s *defaultOpenAIAccountScheduler) filterGrokFreeQuotaAccounts(ctx context.
 	return filtered
 }
 
-func (s *defaultOpenAIAccountScheduler) queryGrokFreeQuotaWindowStats(ctx context.Context, accountIDs []int64, start time.Time) (map[int64]*usagestats.AccountStats, error) {
-	if batch, ok := s.service.usageLogRepo.(accountWindowStatsBatchReader); ok {
+func queryGrokFreeQuotaWindowStats(ctx context.Context, usageLogRepo UsageLogRepository, accountIDs []int64, start time.Time) (map[int64]*usagestats.AccountStats, error) {
+	if usageLogRepo == nil {
+		return nil, nil
+	}
+	if batch, ok := usageLogRepo.(accountWindowStatsBatchReader); ok {
 		return batch.GetAccountWindowStatsBatch(ctx, accountIDs, start)
 	}
 	statsByID := make(map[int64]*usagestats.AccountStats, len(accountIDs))
 	for _, accountID := range accountIDs {
-		stats, err := s.service.usageLogRepo.GetAccountWindowStats(ctx, accountID, start)
+		stats, err := usageLogRepo.GetAccountWindowStats(ctx, accountID, start)
 		if err != nil {
 			return nil, err
 		}

@@ -1450,6 +1450,7 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		if clearErr := h.adminService.UpdateAccountExtra(ctx, accountID, map[string]any{
 			"grok_needs_reauth":        false,
 			"grok_needs_reauth_reason": "",
+			"grok_needs_reauth_at":     "",
 		}); clearErr != nil {
 			slog.Warn("apply_oauth_credentials.clear_grok_reauth_failed",
 				"account_id", accountID,

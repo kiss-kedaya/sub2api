@@ -173,17 +173,14 @@ func BuildBillingSummary(config *BillingConfig) *BillingSummary {
 	periodType := resolvePeriodType(period)
 	creditUsage := cloneFloat(config.CreditUsagePercent)
 
+	// Weekly period bounds must not fall back to monthly billing period ends —
+	// that would park accounts on a multi-week horizon when weekly UsagePercent
+	// is high (scheduler seven_day uses PeriodEnd).
 	periodStart := ""
 	periodEnd := ""
 	if period != nil {
 		periodStart = strings.TrimSpace(period.Start)
 		periodEnd = strings.TrimSpace(period.End)
-	}
-	if periodStart == "" {
-		periodStart = strings.TrimSpace(config.BillingPeriodStart)
-	}
-	if periodEnd == "" {
-		periodEnd = strings.TrimSpace(config.BillingPeriodEnd)
 	}
 
 	products := make([]BillingProductSummary, 0, len(config.ProductUsage))
