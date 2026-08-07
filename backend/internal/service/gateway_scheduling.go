@@ -1451,6 +1451,12 @@ func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID in
 	if s.isAccountBlockedBySchedulingThreshold(ctx, account) {
 		return nil, nil
 	}
+	// Sticky / non-list selection must honor free soft-gate (same as listSchedulableAccounts).
+	if account.IsGrok() {
+		if gated := s.filterGrokFreeQuotaAccountsForGateway(ctx, []Account{*account}); len(gated) == 0 {
+			return nil, nil
+		}
+	}
 	return account, nil
 }
 
