@@ -1,0 +1,419 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
+)
+
+const (
+	defaultGrokWebSearchResults = 5
+	maxGrokWebSearchResults     = 20
+)
+
+func (h *GatewayHandler) WebSearch(c *gin.Context) {
+	type webSearchReq struct {
+		Query      string `json:"query" binding:"required"`
+		MaxResults int    `json:"max_results"`
+	}
+
+	var req webSearchReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"type":    "invalid_request_error",
+			"message": err.Error(),
+		}})
+		return
+	}
+	req.MaxResults = normalizeGrokWebSearchMaxResults(req.MaxResults)
+
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
+	if !ok || apiKey == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{
+			"type":    "authentication_error",
+			"message": "API key required",
+		}})
+		return
+	}
+
+	if apiKey.Group == nil || apiKey.Group.Platform != "grok" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"type":    "invalid_request_error",
+			"message": "web search is only supported for grok groups",
+		}})
+		return
+	}
+
+	// Billing eligibility (same as other requests)
+	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		c.JSON(status, gin.H{"error": gin.H{"type": code, "message": message}})
+		return
+	}
+
+	// Use exactly the same scheduling as other requests (SelectAccountWithLoadAwareness handles load, rate limit, sticky, etc.)
+	groupID := apiKey.GroupID
+	if groupID == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"type":    "invalid_request_error",
+			"message": "group required",
+		}})
+		return
+	}
+
+	selected, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), groupID, "", xai.DefaultTextModel, nil, "", 0)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
+			"type":    "scheduling_error",
+			"message": err.Error(),
+		}})
+		return
+	}
+	if selected == nil || selected.Account == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
+			"type":    "scheduling_error",
+			"message": "No available accounts",
+		}})
+		return
+	}
+	account := selected.Account
+	accountReleaseFunc := selected.ReleaseFunc
+	if !selected.Acquired {
+		if selected.WaitPlan == nil || h.concurrencyHelper == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
+				"type":    "scheduling_error",
+				"message": "No available accounts",
+			}})
+			return
+		}
+		accountWaitCounted := false
+		canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(c.Request.Context(), account.ID, selected.WaitPlan.MaxWaiting)
+		if waitErr != nil {
+			logger.L().Warn("gateway.web_search.account_wait_counter_increment_failed",
+				zap.Int64("account_id", account.ID),
+				zap.Error(waitErr),
+			)
+		} else if !canWait {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{
+				"type":    "rate_limit_error",
+				"message": "Too many pending requests, please retry later",
+			}})
+			return
+		} else {
+			accountWaitCounted = true
+		}
+		releaseWait := func() {
+			if accountWaitCounted {
+				h.concurrencyHelper.DecrementAccountWaitCount(c.Request.Context(), account.ID)
+				accountWaitCounted = false
+			}
+		}
+		streamStarted := false
+		release, acquireErr := h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
+			c,
+			account.ID,
+			selected.WaitPlan.MaxConcurrency,
+			selected.WaitPlan.Timeout,
+			false,
+			&streamStarted,
+		)
+		releaseWait()
+		if acquireErr != nil {
+			h.handleConcurrencyError(c, acquireErr, "account", streamStarted)
+			return
+		}
+		accountReleaseFunc = release
+	}
+	if accountReleaseFunc != nil {
+		defer accountReleaseFunc()
+	}
+
+	// Scheduling is 100% the same as other requests:
+	// SelectAccountWithLoadAwareness handles load balancing, rate limits, failover, sticky sessions, concurrency, proxies etc.
+	// Downstream rate limiting, billing etc. can be wired the same way.
+
+	// Use Grok *native* web search via the selected Grok account + responses API + web_search tool.
+	// This ensures results come from Grok's own search (not third-party emulation like Tavily/Brave).
+	// Output is normalized to the same unified format for clients/agents/MCP.
+
+	nativeResp, providerName, err := h.doGrokNativeWebSearch(c.Request.Context(), c, account, req.Query, req.MaxResults)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{
+			"type":    "web_search_error",
+			"message": err.Error(),
+		}})
+		return
+	}
+
+	userAgent := c.GetHeader("User-Agent")
+	clientIP := ip.GetClientIP(c)
+	inboundEndpoint := GetInboundEndpoint(c)
+	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+	requestPayloadHash := service.HashUsageRequestPayload([]byte(req.Query))
+	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+	h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+			Result: &service.ForwardResult{
+				RequestID:   "web_search:" + service.HashUsageRequestPayload([]byte(req.Query)),
+				Model:       "grok-web-search",
+				SearchCount: 1,
+				Duration:    0,
+			},
+			APIKey:             apiKey,
+			User:               apiKey.User,
+			Account:            account,
+			Subscription:       subscription,
+			InboundEndpoint:    inboundEndpoint,
+			UpstreamEndpoint:   upstreamEndpoint,
+			UserAgent:          userAgent,
+			IPAddress:          clientIP,
+			RequestPayloadHash: requestPayloadHash,
+			APIKeyService:      h.apiKeyService,
+			QuotaPlatform:      quotaPlatform,
+		}); err != nil {
+			logger.L().With(
+				zap.String("component", "handler.gateway.web_search"),
+				zap.Int64("user_id", apiKey.User.ID),
+				zap.Int64("api_key_id", apiKey.ID),
+				zap.Int64("account_id", account.ID),
+			).Error("gateway.web_search.record_usage_failed", zap.Error(err))
+		}
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"query":       req.Query,
+		"results":     nativeResp.Results,
+		"provider":    providerName,
+		"max_results": req.MaxResults,
+	})
+}
+
+// doGrokNativeWebSearch executes web search using the Grok account's native capability
+// by calling the responses endpoint with web_search tool, then normalizes sources to unified format.
+func (h *GatewayHandler) doGrokNativeWebSearch(ctx context.Context, c *gin.Context, account *service.Account, query string, maxResults int) (*websearch.SearchResponse, string, error) {
+	maxResults = normalizeGrokWebSearchMaxResults(maxResults)
+
+	// Build a minimal responses request that triggers Grok web search tool.
+	// Ask for structured metadata because xAI action.sources commonly contains URLs only.
+	searchBody := map[string]any{
+		"model":   xai.DefaultTextModel,
+		"input":   buildGrokWebSearchPrompt(query, maxResults),
+		"tools":   []map[string]any{{"type": "web_search"}},
+		"include": []string{"web_search_call.action.sources"},
+		"store":   false,
+		"stream":  false,
+	}
+	bodyBytes, _ := json.Marshal(searchBody)
+
+	respBytes, err := h.gatewayService.DoGrokNativeResponsesJSON(ctx, c, account, bodyBytes)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Extract sources from Grok responses output.
+	// Prefer web_search_call.action.sources (standardized), fallback to annotations or text links.
+	results := extractGrokWebSearchSources(respBytes, maxResults)
+
+	return &websearch.SearchResponse{
+		Results: results,
+		Query:   query,
+	}, "grok-native", nil
+}
+
+func normalizeGrokWebSearchMaxResults(maxResults int) int {
+	if maxResults <= 0 {
+		return defaultGrokWebSearchResults
+	}
+	if maxResults > maxGrokWebSearchResults {
+		return maxGrokWebSearchResults
+	}
+	return maxResults
+}
+
+func buildGrokWebSearchPrompt(query string, maxResults int) string {
+	return fmt.Sprintf(`Search the web for the user query below. Return ONLY valid JSON with this exact shape: {"results":[{"url":"https://...","title":"page title","snippet":"concise factual summary"}]}. Return at most %d unique results. Every URL must be an actual web_search source. Populate a non-empty title and snippet for every result. Do not wrap the JSON in markdown.
+
+User query:
+%s`, normalizeGrokWebSearchMaxResults(maxResults), query)
+}
+
+// extractGrokWebSearchSources returns model-enriched results only when their URLs
+// are present in the actual web_search sources, then falls back to raw sources.
+func extractGrokWebSearchSources(body []byte, maxResults int) []websearch.SearchResult {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return nil
+	}
+	maxResults = normalizeGrokWebSearchMaxResults(maxResults)
+
+	sources := make(map[string]websearch.SearchResult)
+	var sourceOrder []string
+	addSource := func(rawURL, title, snippet string) {
+		key, ok := normalizeGrokWebSearchURL(rawURL)
+		if !ok {
+			return
+		}
+		result, exists := sources[key]
+		if !exists {
+			result.URL = strings.TrimSpace(rawURL)
+			sourceOrder = append(sourceOrder, key)
+		}
+		if result.Title == "" {
+			result.Title = usableGrokWebSearchTitle(title, result.URL)
+		}
+		if result.Snippet == "" {
+			result.Snippet = strings.TrimSpace(snippet)
+		}
+		sources[key] = result
+	}
+
+	output := gjson.GetBytes(body, "output")
+	output.ForEach(func(_, item gjson.Result) bool {
+		if item.Get("type").String() == "web_search_call" {
+			sources := item.Get("action.sources")
+			if sources.IsArray() {
+				sources.ForEach(func(_, src gjson.Result) bool {
+					addSource(src.Get("url").String(), src.Get("title").String(), src.Get("snippet").String())
+					return true
+				})
+			}
+		}
+		if item.Get("type").String() == "message" {
+			item.Get("content").ForEach(func(_, part gjson.Result) bool {
+				if part.Get("type").String() != "output_text" {
+					return true
+				}
+				part.Get("annotations").ForEach(func(_, ann gjson.Result) bool {
+					if ann.Get("type").String() == "url_citation" || ann.Get("type").String() == "web" {
+						addSource(ann.Get("url").String(), ann.Get("title").String(), "")
+					}
+					return true
+				})
+				return true
+			})
+		}
+		return true
+	})
+
+	var out []websearch.SearchResult
+	seen := make(map[string]bool)
+	output.ForEach(func(_, item gjson.Result) bool {
+		if item.Get("type").String() != "message" {
+			return true
+		}
+		item.Get("content").ForEach(func(_, part gjson.Result) bool {
+			if part.Get("type").String() != "output_text" || len(out) >= maxResults {
+				return true
+			}
+			for _, result := range parseGrokWebSearchStructuredResults(part.Get("text").String()) {
+				key, ok := normalizeGrokWebSearchURL(result.URL)
+				if !ok || seen[key] {
+					continue
+				}
+				source, allowed := sources[key]
+				if !allowed {
+					continue
+				}
+				seen[key] = true
+				result.URL = source.URL
+				result.Title = usableGrokWebSearchTitle(result.Title, result.URL)
+				if result.Title == "" {
+					result.Title = source.Title
+				}
+				result.Snippet = strings.TrimSpace(result.Snippet)
+				if result.Snippet == "" {
+					result.Snippet = source.Snippet
+				}
+				out = append(out, result)
+				if len(out) >= maxResults {
+					break
+				}
+			}
+			return true
+		})
+		return len(out) < maxResults
+	})
+
+	for _, key := range sourceOrder {
+		if len(out) >= maxResults {
+			break
+		}
+		if seen[key] {
+			continue
+		}
+		result := sources[key]
+		if result.Title == "" {
+			result.Title = grokWebSearchTitleFromURL(result.URL)
+		}
+		seen[key] = true
+		out = append(out, result)
+	}
+	return out
+}
+
+func parseGrokWebSearchStructuredResults(text string) []websearch.SearchResult {
+	text = strings.TrimSpace(text)
+	start := strings.IndexByte(text, '{')
+	end := strings.LastIndexByte(text, '}')
+	if start < 0 || end < start {
+		return nil
+	}
+	var payload struct {
+		Results []websearch.SearchResult `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(text[start:end+1]), &payload); err != nil {
+		return nil
+	}
+	return payload.Results
+}
+
+func normalizeGrokWebSearchURL(rawURL string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", false
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	u.Fragment = ""
+	if u.Path == "" {
+		u.Path = "/"
+	}
+	return u.String(), true
+}
+
+func usableGrokWebSearchTitle(title, rawURL string) string {
+	title = strings.TrimSpace(title)
+	if title == "" || title == rawURL {
+		return ""
+	}
+	if _, err := strconv.Atoi(title); err == nil {
+		return ""
+	}
+	return title
+}
+
+func grokWebSearchTitleFromURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return rawURL
+	}
+	return strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+}
+
