@@ -21899,6 +21899,12 @@ type GroupMutation struct {
 	video_model_prices                      *map[string]map[string]float64
 	web_search_price_per_call               *float64
 	addweb_search_price_per_call            *float64
+	audio_realtime_price_per_min            *float64
+	addaudio_realtime_price_per_min         *float64
+	audio_tts_price_per_million_chars       *float64
+	addaudio_tts_price_per_million_chars    *float64
+	audio_stt_price_per_hour                *float64
+	addaudio_stt_price_per_hour             *float64
 	claude_code_only                        *bool
 	fallback_group_id                       *int64
 	addfallback_group_id                    *int64
@@ -23842,6 +23848,216 @@ func (m *GroupMutation) ResetWebSearchPricePerCall() {
 	delete(m.clearedFields, group.FieldWebSearchPricePerCall)
 }
 
+// SetAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field.
+func (m *GroupMutation) SetAudioRealtimePricePerMin(f float64) {
+	m.audio_realtime_price_per_min = &f
+	m.addaudio_realtime_price_per_min = nil
+}
+
+// AudioRealtimePricePerMin returns the value of the "audio_realtime_price_per_min" field in the mutation.
+func (m *GroupMutation) AudioRealtimePricePerMin() (r float64, exists bool) {
+	v := m.audio_realtime_price_per_min
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAudioRealtimePricePerMin returns the old "audio_realtime_price_per_min" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldAudioRealtimePricePerMin(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAudioRealtimePricePerMin is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAudioRealtimePricePerMin requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAudioRealtimePricePerMin: %w", err)
+	}
+	return oldValue.AudioRealtimePricePerMin, nil
+}
+
+// AddAudioRealtimePricePerMin adds f to the "audio_realtime_price_per_min" field.
+func (m *GroupMutation) AddAudioRealtimePricePerMin(f float64) {
+	if m.addaudio_realtime_price_per_min != nil {
+		*m.addaudio_realtime_price_per_min += f
+	} else {
+		m.addaudio_realtime_price_per_min = &f
+	}
+}
+
+// AddedAudioRealtimePricePerMin returns the value that was added to the "audio_realtime_price_per_min" field in this mutation.
+func (m *GroupMutation) AddedAudioRealtimePricePerMin() (r float64, exists bool) {
+	v := m.addaudio_realtime_price_per_min
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearAudioRealtimePricePerMin clears the value of the "audio_realtime_price_per_min" field.
+func (m *GroupMutation) ClearAudioRealtimePricePerMin() {
+	m.audio_realtime_price_per_min = nil
+	m.addaudio_realtime_price_per_min = nil
+	m.clearedFields[group.FieldAudioRealtimePricePerMin] = struct{}{}
+}
+
+// AudioRealtimePricePerMinCleared returns if the "audio_realtime_price_per_min" field was cleared in this mutation.
+func (m *GroupMutation) AudioRealtimePricePerMinCleared() bool {
+	_, ok := m.clearedFields[group.FieldAudioRealtimePricePerMin]
+	return ok
+}
+
+// ResetAudioRealtimePricePerMin resets all changes to the "audio_realtime_price_per_min" field.
+func (m *GroupMutation) ResetAudioRealtimePricePerMin() {
+	m.audio_realtime_price_per_min = nil
+	m.addaudio_realtime_price_per_min = nil
+	delete(m.clearedFields, group.FieldAudioRealtimePricePerMin)
+}
+
+// SetAudioTtsPricePerMillionChars sets the "audio_tts_price_per_million_chars" field.
+func (m *GroupMutation) SetAudioTtsPricePerMillionChars(f float64) {
+	m.audio_tts_price_per_million_chars = &f
+	m.addaudio_tts_price_per_million_chars = nil
+}
+
+// AudioTtsPricePerMillionChars returns the value of the "audio_tts_price_per_million_chars" field in the mutation.
+func (m *GroupMutation) AudioTtsPricePerMillionChars() (r float64, exists bool) {
+	v := m.audio_tts_price_per_million_chars
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAudioTtsPricePerMillionChars returns the old "audio_tts_price_per_million_chars" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldAudioTtsPricePerMillionChars(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAudioTtsPricePerMillionChars is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAudioTtsPricePerMillionChars requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAudioTtsPricePerMillionChars: %w", err)
+	}
+	return oldValue.AudioTtsPricePerMillionChars, nil
+}
+
+// AddAudioTtsPricePerMillionChars adds f to the "audio_tts_price_per_million_chars" field.
+func (m *GroupMutation) AddAudioTtsPricePerMillionChars(f float64) {
+	if m.addaudio_tts_price_per_million_chars != nil {
+		*m.addaudio_tts_price_per_million_chars += f
+	} else {
+		m.addaudio_tts_price_per_million_chars = &f
+	}
+}
+
+// AddedAudioTtsPricePerMillionChars returns the value that was added to the "audio_tts_price_per_million_chars" field in this mutation.
+func (m *GroupMutation) AddedAudioTtsPricePerMillionChars() (r float64, exists bool) {
+	v := m.addaudio_tts_price_per_million_chars
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearAudioTtsPricePerMillionChars clears the value of the "audio_tts_price_per_million_chars" field.
+func (m *GroupMutation) ClearAudioTtsPricePerMillionChars() {
+	m.audio_tts_price_per_million_chars = nil
+	m.addaudio_tts_price_per_million_chars = nil
+	m.clearedFields[group.FieldAudioTtsPricePerMillionChars] = struct{}{}
+}
+
+// AudioTtsPricePerMillionCharsCleared returns if the "audio_tts_price_per_million_chars" field was cleared in this mutation.
+func (m *GroupMutation) AudioTtsPricePerMillionCharsCleared() bool {
+	_, ok := m.clearedFields[group.FieldAudioTtsPricePerMillionChars]
+	return ok
+}
+
+// ResetAudioTtsPricePerMillionChars resets all changes to the "audio_tts_price_per_million_chars" field.
+func (m *GroupMutation) ResetAudioTtsPricePerMillionChars() {
+	m.audio_tts_price_per_million_chars = nil
+	m.addaudio_tts_price_per_million_chars = nil
+	delete(m.clearedFields, group.FieldAudioTtsPricePerMillionChars)
+}
+
+// SetAudioSttPricePerHour sets the "audio_stt_price_per_hour" field.
+func (m *GroupMutation) SetAudioSttPricePerHour(f float64) {
+	m.audio_stt_price_per_hour = &f
+	m.addaudio_stt_price_per_hour = nil
+}
+
+// AudioSttPricePerHour returns the value of the "audio_stt_price_per_hour" field in the mutation.
+func (m *GroupMutation) AudioSttPricePerHour() (r float64, exists bool) {
+	v := m.audio_stt_price_per_hour
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAudioSttPricePerHour returns the old "audio_stt_price_per_hour" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldAudioSttPricePerHour(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAudioSttPricePerHour is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAudioSttPricePerHour requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAudioSttPricePerHour: %w", err)
+	}
+	return oldValue.AudioSttPricePerHour, nil
+}
+
+// AddAudioSttPricePerHour adds f to the "audio_stt_price_per_hour" field.
+func (m *GroupMutation) AddAudioSttPricePerHour(f float64) {
+	if m.addaudio_stt_price_per_hour != nil {
+		*m.addaudio_stt_price_per_hour += f
+	} else {
+		m.addaudio_stt_price_per_hour = &f
+	}
+}
+
+// AddedAudioSttPricePerHour returns the value that was added to the "audio_stt_price_per_hour" field in this mutation.
+func (m *GroupMutation) AddedAudioSttPricePerHour() (r float64, exists bool) {
+	v := m.addaudio_stt_price_per_hour
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearAudioSttPricePerHour clears the value of the "audio_stt_price_per_hour" field.
+func (m *GroupMutation) ClearAudioSttPricePerHour() {
+	m.audio_stt_price_per_hour = nil
+	m.addaudio_stt_price_per_hour = nil
+	m.clearedFields[group.FieldAudioSttPricePerHour] = struct{}{}
+}
+
+// AudioSttPricePerHourCleared returns if the "audio_stt_price_per_hour" field was cleared in this mutation.
+func (m *GroupMutation) AudioSttPricePerHourCleared() bool {
+	_, ok := m.clearedFields[group.FieldAudioSttPricePerHour]
+	return ok
+}
+
+// ResetAudioSttPricePerHour resets all changes to the "audio_stt_price_per_hour" field.
+func (m *GroupMutation) ResetAudioSttPricePerHour() {
+	m.audio_stt_price_per_hour = nil
+	m.addaudio_stt_price_per_hour = nil
+	delete(m.clearedFields, group.FieldAudioSttPricePerHour)
+}
+
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (m *GroupMutation) SetClaudeCodeOnly(b bool) {
 	m.claude_code_only = &b
@@ -25147,7 +25363,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 56)
+	fields := make([]string, 0, 59)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -25252,6 +25468,15 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.web_search_price_per_call != nil {
 		fields = append(fields, group.FieldWebSearchPricePerCall)
+	}
+	if m.audio_realtime_price_per_min != nil {
+		fields = append(fields, group.FieldAudioRealtimePricePerMin)
+	}
+	if m.audio_tts_price_per_million_chars != nil {
+		fields = append(fields, group.FieldAudioTtsPricePerMillionChars)
+	}
+	if m.audio_stt_price_per_hour != nil {
+		fields = append(fields, group.FieldAudioSttPricePerHour)
 	}
 	if m.claude_code_only != nil {
 		fields = append(fields, group.FieldClaudeCodeOnly)
@@ -25394,6 +25619,12 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.VideoModelPrices()
 	case group.FieldWebSearchPricePerCall:
 		return m.WebSearchPricePerCall()
+	case group.FieldAudioRealtimePricePerMin:
+		return m.AudioRealtimePricePerMin()
+	case group.FieldAudioTtsPricePerMillionChars:
+		return m.AudioTtsPricePerMillionChars()
+	case group.FieldAudioSttPricePerHour:
+		return m.AudioSttPricePerHour()
 	case group.FieldClaudeCodeOnly:
 		return m.ClaudeCodeOnly()
 	case group.FieldFallbackGroupID:
@@ -25515,6 +25746,12 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldVideoModelPrices(ctx)
 	case group.FieldWebSearchPricePerCall:
 		return m.OldWebSearchPricePerCall(ctx)
+	case group.FieldAudioRealtimePricePerMin:
+		return m.OldAudioRealtimePricePerMin(ctx)
+	case group.FieldAudioTtsPricePerMillionChars:
+		return m.OldAudioTtsPricePerMillionChars(ctx)
+	case group.FieldAudioSttPricePerHour:
+		return m.OldAudioSttPricePerHour(ctx)
 	case group.FieldClaudeCodeOnly:
 		return m.OldClaudeCodeOnly(ctx)
 	case group.FieldFallbackGroupID:
@@ -25811,6 +26048,27 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetWebSearchPricePerCall(v)
 		return nil
+	case group.FieldAudioRealtimePricePerMin:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAudioRealtimePricePerMin(v)
+		return nil
+	case group.FieldAudioTtsPricePerMillionChars:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAudioTtsPricePerMillionChars(v)
+		return nil
+	case group.FieldAudioSttPricePerHour:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAudioSttPricePerHour(v)
+		return nil
 	case group.FieldClaudeCodeOnly:
 		v, ok := value.(bool)
 		if !ok {
@@ -26017,6 +26275,15 @@ func (m *GroupMutation) AddedFields() []string {
 	if m.addweb_search_price_per_call != nil {
 		fields = append(fields, group.FieldWebSearchPricePerCall)
 	}
+	if m.addaudio_realtime_price_per_min != nil {
+		fields = append(fields, group.FieldAudioRealtimePricePerMin)
+	}
+	if m.addaudio_tts_price_per_million_chars != nil {
+		fields = append(fields, group.FieldAudioTtsPricePerMillionChars)
+	}
+	if m.addaudio_stt_price_per_hour != nil {
+		fields = append(fields, group.FieldAudioSttPricePerHour)
+	}
 	if m.addfallback_group_id != nil {
 		fields = append(fields, group.FieldFallbackGroupID)
 	}
@@ -26077,6 +26344,12 @@ func (m *GroupMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedVideoPrice1080p()
 	case group.FieldWebSearchPricePerCall:
 		return m.AddedWebSearchPricePerCall()
+	case group.FieldAudioRealtimePricePerMin:
+		return m.AddedAudioRealtimePricePerMin()
+	case group.FieldAudioTtsPricePerMillionChars:
+		return m.AddedAudioTtsPricePerMillionChars()
+	case group.FieldAudioSttPricePerHour:
+		return m.AddedAudioSttPricePerHour()
 	case group.FieldFallbackGroupID:
 		return m.AddedFallbackGroupID()
 	case group.FieldFallbackGroupIDOnInvalidRequest:
@@ -26217,6 +26490,27 @@ func (m *GroupMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddWebSearchPricePerCall(v)
 		return nil
+	case group.FieldAudioRealtimePricePerMin:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAudioRealtimePricePerMin(v)
+		return nil
+	case group.FieldAudioTtsPricePerMillionChars:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAudioTtsPricePerMillionChars(v)
+		return nil
+	case group.FieldAudioSttPricePerHour:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAudioSttPricePerHour(v)
+		return nil
 	case group.FieldFallbackGroupID:
 		v, ok := value.(int64)
 		if !ok {
@@ -26309,6 +26603,15 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldWebSearchPricePerCall) {
 		fields = append(fields, group.FieldWebSearchPricePerCall)
 	}
+	if m.FieldCleared(group.FieldAudioRealtimePricePerMin) {
+		fields = append(fields, group.FieldAudioRealtimePricePerMin)
+	}
+	if m.FieldCleared(group.FieldAudioTtsPricePerMillionChars) {
+		fields = append(fields, group.FieldAudioTtsPricePerMillionChars)
+	}
+	if m.FieldCleared(group.FieldAudioSttPricePerHour) {
+		fields = append(fields, group.FieldAudioSttPricePerHour)
+	}
 	if m.FieldCleared(group.FieldFallbackGroupID) {
 		fields = append(fields, group.FieldFallbackGroupID)
 	}
@@ -26373,6 +26676,15 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldWebSearchPricePerCall:
 		m.ClearWebSearchPricePerCall()
+		return nil
+	case group.FieldAudioRealtimePricePerMin:
+		m.ClearAudioRealtimePricePerMin()
+		return nil
+	case group.FieldAudioTtsPricePerMillionChars:
+		m.ClearAudioTtsPricePerMillionChars()
+		return nil
+	case group.FieldAudioSttPricePerHour:
+		m.ClearAudioSttPricePerHour()
 		return nil
 	case group.FieldFallbackGroupID:
 		m.ClearFallbackGroupID()
@@ -26495,6 +26807,15 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldWebSearchPricePerCall:
 		m.ResetWebSearchPricePerCall()
+		return nil
+	case group.FieldAudioRealtimePricePerMin:
+		m.ResetAudioRealtimePricePerMin()
+		return nil
+	case group.FieldAudioTtsPricePerMillionChars:
+		m.ResetAudioTtsPricePerMillionChars()
+		return nil
+	case group.FieldAudioSttPricePerHour:
+		m.ResetAudioSttPricePerHour()
 		return nil
 	case group.FieldClaudeCodeOnly:
 		m.ResetClaudeCodeOnly()
