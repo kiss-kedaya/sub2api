@@ -1258,7 +1258,10 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	if s.schedulerSnapshot != nil {
 		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, false)
-		return accounts, err
+		if err != nil {
+			return accounts, err
+		}
+		return s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts), nil
 	}
 	var accounts []Account
 	var err error
@@ -1272,7 +1275,7 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
-	return accounts, nil
+	return s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts), nil
 }
 
 func (s *OpenAIGatewayService) tryAcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
@@ -1306,6 +1309,9 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.
 	if s.isOpenAIAccountRequestRuntimeBlocked(fresh, requestedModel) {
 		return nil
 	}
+	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, fresh) {
+		return nil
+	}
 	if s.isOpenAIProxyStreamQuarantined(ctx, fresh) {
 		return nil
 	}
@@ -1335,6 +1341,9 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 		if !isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, requireCompact, requiredCapability) {
 			return nil
 		}
+		if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, account) {
+			return nil
+		}
 		if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
 			return nil
 		}
@@ -1358,6 +1367,9 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 		return nil
 	}
 	if s.isOpenAIAccountRequestRuntimeBlocked(latest, requestedModel) {
+		return nil
+	}
+	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, latest) {
 		return nil
 	}
 	if s.isOpenAIProxyStreamQuarantined(ctx, latest) {
@@ -1386,7 +1398,32 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	if err != nil || account == nil {
 		return account, err
 	}
+	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, account) {
+		return nil, nil
+	}
 	return account, nil
+}
+
+func (s *OpenAIGatewayService) filterOpenAIAccountsBySchedulingThreshold(ctx context.Context, accounts []Account) []Account {
+	if len(accounts) == 0 {
+		return accounts
+	}
+
+	filtered := make([]Account, 0, len(accounts))
+	for i := range accounts {
+		if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, &accounts[i]) {
+			continue
+		}
+		filtered = append(filtered, accounts[i])
+	}
+	return filtered
+}
+
+func (s *OpenAIGatewayService) isOpenAIAccountBlockedBySchedulingThreshold(ctx context.Context, account *Account) bool {
+	if s == nil || s.rateLimitService == nil || account == nil {
+		return false
+	}
+	return s.rateLimitService.ApplyAccountSchedulingThreshold(ctx, account)
 }
 
 func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {

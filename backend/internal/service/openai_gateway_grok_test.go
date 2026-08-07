@@ -2082,7 +2082,7 @@ func TestForwardAsChatCompletionsForGrokStreamingUsesRawXAIChatCompletions(t *te
 	require.Equal(t, xai.DefaultCLIBaseURL+"/chat/completions", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer access-token", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
-	require.Equal(t, "sub2api-grok/1.0", upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, xai.CLIUserAgent(xai.CLIClientVersion), upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "grok-4.5", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream_options.include_usage").Bool())
 	require.True(t, result.Stream)
@@ -2255,7 +2255,7 @@ func TestForwardAsChatCompletionsForGrokStreamingStopFallsBackToRawXAIChatComple
 	require.Equal(t, xai.DefaultCLIBaseURL+"/chat/completions", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer access-token", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
-	require.Equal(t, "sub2api-grok/1.0", upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, xai.CLIUserAgent(xai.CLIClientVersion), upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, grokCLIVersion, upstream.lastReq.Header.Get("X-Grok-Client-Version"))
 	require.NotEmpty(t, upstream.lastReq.Header.Get(grokConversationIDHeader))
 	require.NotEqual(t, "native-client-conversation", upstream.lastReq.Header.Get(grokConversationIDHeader))
@@ -2359,7 +2359,7 @@ func TestForwardAsAnthropicForGrokUsesXAIResponses(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, xai.DefaultCLIBaseURL+"/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer access-token", upstream.lastReq.Header.Get("Authorization"))
-	require.Equal(t, "sub2api-grok/1.0", upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, xai.CLIUserAgent(xai.CLIClientVersion), upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, grokCLIVersion, upstream.lastReq.Header.Get("X-Grok-Client-Version"))
 	require.Equal(t, "grok-experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Empty(t, upstream.lastReq.Header.Get("originator"))
@@ -3223,4 +3223,31 @@ func TestIsGrokImageGenerationModel(t *testing.T) {
 			require.Equal(t, tt.want, isGrokImageGenerationModel(tt.model))
 		})
 	}
+}
+
+func TestBuildGrokSchedulerExtraUpdates_FeedsThresholdEvaluator(t *testing.T) {
+	int64p := func(v int64) *int64 { return &v }
+	resetUnix := time.Now().Add(90 * time.Minute).Unix()
+	snapshot := &xai.QuotaSnapshot{
+		Requests: &xai.QuotaWindow{Limit: int64p(100), Remaining: int64p(30)},                         // 70% used
+		Tokens:   &xai.QuotaWindow{Limit: int64p(1000), Remaining: int64p(50), ResetUnix: &resetUnix}, // 95% used (most constrained)
+	}
+
+	updates := buildGrokSchedulerExtraUpdates(snapshot)
+	require.NotNil(t, updates)
+	require.InDelta(t, 95.0, updates["grok_sched_utilization"], 0.001, "picks the most-constrained window")
+	require.Contains(t, updates, "grok_sched_reset_at")
+
+	// The written extras must actually drive EvaluateAccountSchedulingThreshold
+	// (proves the previously-dead read side is now fed).
+	account := &Account{Platform: PlatformGrok, Extra: updates}
+	decision := EvaluateAccountSchedulingThreshold(account, map[string]int{PlatformGrok: 90}, time.Now())
+	require.True(t, decision.ShouldPause)
+	require.InDelta(t, 95.0, decision.UsedPercent, 0.001)
+	require.NotNil(t, decision.Until)
+}
+
+func TestBuildGrokSchedulerExtraUpdates_NilWhenNoQuotaWindows(t *testing.T) {
+	require.Nil(t, buildGrokSchedulerExtraUpdates(&xai.QuotaSnapshot{}))
+	require.Nil(t, buildGrokSchedulerExtraUpdates(nil))
 }

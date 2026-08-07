@@ -26,6 +26,21 @@ func TestGrokModelQuotaBlock_FiltersOnlyNamedModel(t *testing.T) {
 	require.Equal(t, id+1, filtered[0].ID)
 }
 
+func TestGrokModelQuotaBlockFiltersMappedUpstreamModel(t *testing.T) {
+	id := time.Now().UnixNano()%1_000_000 + 7000
+	markGrokModelQuotaBlock(id, "grok-4.5", time.Now().Add(time.Hour))
+	account := Account{
+		ID:       id,
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{"gpt-*": "grok-4.5"},
+		},
+	}
+
+	require.Empty(t, filterGrokModelQuotaBlockedAccounts([]Account{account}, "gpt-5", time.Now()))
+}
+
 func TestIsGrokModelSpecificFreeUsage(t *testing.T) {
 	require.True(t, isGrokModelSpecificFreeUsage(
 		"you've used all the included free usage for model grok-4.5", "grok-4.5"))
