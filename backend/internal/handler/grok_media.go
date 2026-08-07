@@ -417,7 +417,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				)
 			}
 		}
-		if shouldRecordGrokMediaUsage(endpoint, requestModel) {
+		if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {
 			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
 		}
 		reqLog.Debug("grok_media.request_completed",
@@ -459,8 +459,20 @@ func grokMediaScheduleModel(account *service.Account, routingModel string, resul
 	return account.GetMappedModel(routingModel)
 }
 
-func shouldRecordGrokMediaUsage(endpoint service.GrokMediaEndpoint, requestModel string) bool {
-	return endpoint.IsGenerationRequest() && strings.TrimSpace(requestModel) != ""
+// shouldRecordGrokMediaUsage gates usage writes for Grok media generation only.
+// Status/content polls, empty model, and failed generations with zero billable
+// image/video units never bill.
+func shouldRecordGrokMediaUsage(endpoint service.GrokMediaEndpoint, requestModel string, result *service.OpenAIForwardResult) bool {
+	if !endpoint.IsGenerationRequest() || strings.TrimSpace(requestModel) == "" {
+		return false
+	}
+	if result == nil {
+		return false
+	}
+	if result.VideoCount > 0 {
+		return true
+	}
+	return result.ImageCount > 0
 }
 
 func recordGrokMediaUsage(
