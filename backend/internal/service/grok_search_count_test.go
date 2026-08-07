@@ -19,6 +19,18 @@ func TestCountGrokNativeSearchCallsFromJSONBytes(t *testing.T) {
 	require.Equal(t, 3, countGrokNativeSearchCallsFromJSONBytes(body))
 }
 
+func TestCountGrokNativeSearchCallsFromJSONBytes_PrefersNestedResponse(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"output":[{"type":"web_search_call","id":"duplicate"}],"response":{"output":[{"type":"web_search_call","id":"duplicate"},{"type":"x_search_call","id":"xs1"}]}}`)
+	require.Equal(t, 2, countGrokNativeSearchCallsFromJSONBytes(body))
+}
+
+func TestCountGrokNativeSearchCallsFromJSONBytes_FallsBackWhenNestedOutputNull(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"output":[{"type":"web_search_call","id":"ws1"}],"response":{"output":null}}`)
+	require.Equal(t, 1, countGrokNativeSearchCallsFromJSONBytes(body))
+}
+
 func TestCountGrokNativeSearchCallsFromSSEBodyDedups(t *testing.T) {
 	t.Parallel()
 	sse := stringsJoin(
@@ -50,6 +62,17 @@ func TestCountGrokNativeSearchCallsInSSEDataDedup_NoIDStillDedups(t *testing.T) 
 	done := []byte(`{"type":"response.output_item.done","item":{"type":"web_search_call"}}`)
 	completed := []byte(`{"type":"response.completed","response":{"output":[{"type":"web_search_call"}]}}`)
 	require.Equal(t, 1, countGrokNativeSearchCallsInSSEDataDedup(done, seen))
+	require.Equal(t, 0, countGrokNativeSearchCallsInSSEDataDedup(completed, seen))
+}
+
+func TestCountGrokNativeSearchCallsInSSEDataDedup_MultipleNoIDCalls(t *testing.T) {
+	t.Parallel()
+	seen := make(map[string]struct{})
+	firstDone := []byte(`{"type":"response.output_item.done","item":{"type":"web_search_call"}}`)
+	secondDone := []byte(`{"type":"response.output_item.done","item":{"type":"web_search_call"}}`)
+	completed := []byte(`{"type":"response.completed","response":{"output":[{"type":"web_search_call"},{"type":"web_search_call"}]}}`)
+	require.Equal(t, 1, countGrokNativeSearchCallsInSSEDataDedup(firstDone, seen))
+	require.Equal(t, 1, countGrokNativeSearchCallsInSSEDataDedup(secondDone, seen))
 	require.Equal(t, 0, countGrokNativeSearchCallsInSSEDataDedup(completed, seen))
 }
 

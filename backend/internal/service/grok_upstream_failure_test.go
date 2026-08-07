@@ -40,7 +40,7 @@ func TestClassifyGrokUpstreamFailure_FreeUsage(t *testing.T) {
 			require.True(t, d.ShouldCooldown)
 			require.True(t, d.ShouldFailover)
 			require.False(t, d.BlockModel, "free-usage must not soft-block models")
-			require.GreaterOrEqual(t, d.Cooldown, 20*time.Minute)
+			require.Equal(t, grokFreeUsageProbeCooldown, d.Cooldown)
 		})
 	}
 }
@@ -98,9 +98,23 @@ func TestHandleGrokAccountUpstreamError_FreeUsageBodyCoolsAccount(t *testing.T) 
 
 	require.Equal(t, 1, repo.tempUnschedCalls)
 	require.Equal(t, "grok free usage exhausted", repo.lastTempUnschedReason)
-	// 24h rolling → 2h cool
-	require.Greater(t, repo.lastTempUnschedUntil, before.Add(119*time.Minute))
-	require.Less(t, repo.lastTempUnschedUntil, before.Add(121*time.Minute))
+	// Rolling-window exhaustion must use a short probe cooldown when no
+	// upstream absolute reset is available; it must not start a 24h lock here.
+	require.Greater(t, repo.lastTempUnschedUntil, before.Add(grokFreeUsageProbeCooldown-time.Second))
+	require.Less(t, repo.lastTempUnschedUntil, before.Add(grokFreeUsageProbeCooldown+time.Second))
+}
+
+func TestHandleGrokAccountUpstreamError_FreeUsageUsesUpstreamReset(t *testing.T) {
+	repo := &grokQuotaAccountRepo{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 9102, Platform: PlatformGrok, Type: AccountTypeOAuth}
+	body := []byte(`{"error":{"code":"subscription:free-usage-exhausted","message":"free usage exhausted; rolling 24-hour window"}}`)
+
+	svc.handleGrokAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests,
+		http.Header{"Retry-After": []string{"3600"}}, body)
+
+	require.Zero(t, repo.tempUnschedCalls)
+	require.WithinDuration(t, time.Now().Add(time.Hour), repo.lastRateLimitResetAt, 2*time.Second)
 }
 
 func TestHandleGrokAccountUpstreamError_EmptyOutputCoolsAccount(t *testing.T) {

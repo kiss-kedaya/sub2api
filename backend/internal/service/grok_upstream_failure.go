@@ -406,21 +406,14 @@ func isGrokEmptyModelOutputCode(code string) bool {
 }
 
 func grokFreeUsageCooldownDuration(low string) time.Duration {
-	if m := reGrokResetsWindow.FindStringSubmatch(low); len(m) == 2 {
-		hours, _ := strconv.Atoi(m[1])
-		if hours > 0 {
-			d := time.Duration(hours) * time.Hour / 12
-			if d < 20*time.Minute {
-				d = 20 * time.Minute
-			}
-			if d > 6*time.Hour {
-				d = 6 * time.Hour
-			}
-			return d
-		}
-	}
-	return 2 * time.Hour
+	// "rolling 24-hour" describes the upstream usage window, not a cooldown
+	// that starts when this proxy observes a 429. Without an upstream reset
+	// timestamp we cannot know when the oldest usage exits that window, so use
+	// a short probe interval and let a successful probe clear the block.
+	return grokFreeUsageProbeCooldown
 }
+
+const grokFreeUsageProbeCooldown = 10 * time.Minute
 
 func parseGrokTokenPair(errText string) (actual, limit int64, ok bool) {
 	m := reGrokTokenPair.FindStringSubmatch(errText)
@@ -488,7 +481,9 @@ func (s *OpenAIGatewayService) applyGrokUpstreamFailureDecision(
 	case GrokFailureBilling:
 		low := strings.ToLower(decision.Reason)
 		if strings.Contains(low, "spending") || strings.Contains(low, "credits") {
-			s.markGrokSpendingLimitReauth(ctx, account)
+			// Spending-limit/credit exhaustion is a billing-window condition. Keep
+			// the account recoverable and let the normal rate-limit recovery clear it.
+			s.rateLimitGrok(ctx, account, grokSpendingLimitResetAt(account, time.Now()))
 			return true
 		}
 		// Keep the historical 402/payment reason for ops UI + regression tests.
