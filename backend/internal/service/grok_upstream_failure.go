@@ -437,17 +437,25 @@ func parseGrokTokenPair(errText string) (actual, limit int64, ok bool) {
 
 func extractGrokFailureModel(text string, responseBody []byte, fallback string) string {
 	if m := reGrokModelFor.FindStringSubmatch(text); len(m) == 2 {
-		return strings.TrimSpace(m[1])
+		return normalizeGrokFailureModelID(m[1])
 	}
 	if len(responseBody) > 0 {
 		if m := strings.TrimSpace(firstNonEmpty(
 			gjson.GetBytes(responseBody, "error.model").String(),
 			gjson.GetBytes(responseBody, "model").String(),
 		)); m != "" {
-			return m
+			return normalizeGrokFailureModelID(m)
 		}
 	}
-	return strings.TrimSpace(fallback)
+	return normalizeGrokFailureModelID(fallback)
+}
+
+// normalizeGrokFailureModelID trims whitespace and trailing punctuation the
+// "for model X." extractors sometimes capture.
+func normalizeGrokFailureModelID(model string) string {
+	model = strings.TrimSpace(model)
+	model = strings.TrimRight(model, ".,;:!?")
+	return strings.TrimSpace(model)
 }
 
 // applyGrokUpstreamFailureDecision maps a classification onto existing account
@@ -466,14 +474,28 @@ func (s *OpenAIGatewayService) applyGrokUpstreamFailureDecision(
 	switch decision.Class {
 	case GrokFailureFreeUsage:
 		reason = "grok free usage exhausted"
+		// Model-scoped free usage: soft-block only the named model so other
+		// models on the same account remain pickable (grok2api ModelQuotaBlock).
+		low := strings.ToLower(decision.Reason)
+		if decision.Model != "" && isGrokModelSpecificFreeUsage(low, decision.Model) {
+			until := time.Now().Add(decision.Cooldown)
+			markGrokModelQuotaBlock(account.ID, decision.Model, until)
+			// Account-wide cool is still applied as a safety net when the body
+			// does not isolate a model cleanly; for model-specific free we only
+			// model-block and skip the long account cool when BlockModel was set
+			// by the classifier... actually free-usage keeps BlockModel false.
+			// Prefer model block + shorter account cool via tempUnschedule below.
+		}
+		coolUntil := time.Now().Add(decision.Cooldown)
+		markGrokFreeUsageRecovery(account.ID, coolUntil)
 	case GrokFailureBilling:
 		low := strings.ToLower(decision.Reason)
 		if strings.Contains(low, "spending") || strings.Contains(low, "credits") {
-			reason = "grok spending limit"
-		} else {
-			// Keep the historical 402/payment reason for ops UI + regression tests.
-			reason = "grok payment required"
+			s.markGrokSpendingLimitReauth(ctx, account)
+			return true
 		}
+		// Keep the historical 402/payment reason for ops UI + regression tests.
+		reason = "grok payment required"
 	case GrokFailureEmptyUpstream:
 		reason = "grok empty model output"
 	case GrokFailureModelCapacity:

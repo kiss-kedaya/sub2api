@@ -1415,7 +1415,7 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 	case http.StatusForbidden:
 		// Spending-limit already handled by body classifier when phrasing matches.
 		if isGrokSpendingLimitError(responseBody) {
-			s.tempUnscheduleGrok(ctx, account, 30*time.Minute, "grok spending limit")
+			s.markGrokSpendingLimitReauth(ctx, account)
 			return
 		}
 		s.tempUnscheduleGrok(ctx, account, 30*time.Minute, "grok access or entitlement denied")
