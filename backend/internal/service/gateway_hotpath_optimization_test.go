@@ -154,6 +154,11 @@ func (s *stickyGatewayCacheHotpathStub) ClaimGrokVideoBilled(_ context.Context, 
 	return true, nil
 }
 
+func (s *stickyGatewayCacheHotpathStub) ReleaseGrokVideoBilled(_ context.Context, _ string) error {
+	return nil
+}
+
+
 
 func (s *modelsListAccountRepoStub) ListSchedulableByGroupID(ctx context.Context, groupID int64) ([]Account, error) {
 	s.listByGroupCalls.Add(1)

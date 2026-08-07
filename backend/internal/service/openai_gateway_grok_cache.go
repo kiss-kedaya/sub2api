@@ -346,11 +346,20 @@ func isKnownGrokFreeAccount(account *Account) bool {
 			inferredFreeSignal = true
 		}
 	}
-	if tier := strings.TrimSpace(account.GetCredential("subscription_tier")); tier != "" {
-		if isGrokFreeSubscriptionTier(tier) {
-			freeSignal = true
-		} else if !isGrokUnknownSubscriptionTier(tier) {
-			paidSignal = true
+	for _, key := range []string{"subscription_tier", "plan_type"} {
+		if tier := strings.TrimSpace(account.GetCredential(key)); tier != "" {
+			if isGrokFreeSubscriptionTier(tier) {
+				freeSignal = true
+			} else if !isGrokUnknownSubscriptionTier(tier) {
+				paidSignal = true
+			}
+		}
+		if tier := strings.TrimSpace(account.GetExtraString(key)); tier != "" {
+			if isGrokFreeSubscriptionTier(tier) {
+				freeSignal = true
+			} else if !isGrokUnknownSubscriptionTier(tier) {
+				paidSignal = true
+			}
 		}
 	}
 	// Explicit paid evidence always wins over an inferred Free signal. This

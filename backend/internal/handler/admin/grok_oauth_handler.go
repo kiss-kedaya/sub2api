@@ -459,7 +459,33 @@ func (h *GrokOAuthHandler) createAccountFromSSOToken(ctx context.Context, req Gr
 // 配置且 Build 恒写官方地址，会吞掉导入时指定的自定义转发地址——与
 // RefreshAccountToken 的保留逻辑对齐，请求显式提供时以请求为准。
 func grokSSOImportCredentials(built map[string]any, reqCredentials map[string]any) map[string]any {
-	credentials := service.MergeCredentials(cloneGrokSSOMap(reqCredentials), built)
+	// Only merge operator config from the request — never free-form secrets
+	// (password / sso_token / cookie / etc.) into stored credentials.
+	allowedReqKeys := map[string]struct{}{
+		"base_url": {}, "model_mapping": {}, "header_override": {},
+		"header_overrides": {}, "custom_headers": {},
+	}
+	ops := map[string]any{}
+	for k, v := range reqCredentials {
+		if _, ok := allowedReqKeys[k]; !ok {
+			continue
+		}
+		if service.IsSensitiveCredentialKey(k) {
+			continue
+		}
+		ops[k] = v
+	}
+	credentials := service.MergeCredentials(ops, built)
+	// Strip any sensitive keys that might have slipped in via older callers.
+	for k := range credentials {
+		if service.IsSensitiveCredentialKey(k) {
+			// Keep only keys produced by BuildAccountCredentials (tokens).
+			if k == "access_token" || k == "refresh_token" || k == "id_token" {
+				continue
+			}
+			delete(credentials, k)
+		}
+	}
 	if reqBaseURL, ok := reqCredentials["base_url"].(string); ok && strings.TrimSpace(reqBaseURL) != "" {
 		credentials["base_url"] = strings.TrimSpace(reqBaseURL)
 	}
