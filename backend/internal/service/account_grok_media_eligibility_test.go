@@ -13,6 +13,7 @@ import (
 )
 
 func TestGrokMediaGenerationEligibility(t *testing.T) {
+	weeklyUsagePercent := 12.5
 	forbiddenBilling := &xai.BillingSummary{
 		StatusCode:        http.StatusForbidden,
 		WeeklyStatusCode:  http.StatusForbidden,
@@ -20,6 +21,7 @@ func TestGrokMediaGenerationEligibility(t *testing.T) {
 	}
 	weeklyAllowance := &xai.BillingSummary{
 		PeriodType:       "weekly",
+		UsagePercent:     &weeklyUsagePercent,
 		StatusCode:       http.StatusOK,
 		WeeklyStatusCode: http.StatusOK,
 	}
@@ -43,12 +45,12 @@ func TestGrokMediaGenerationEligibility(t *testing.T) {
 		{name: "nil account", account: nil, want: false, wantReason: "not_grok"},
 		{name: "non grok account", account: &Account{Platform: PlatformOpenAI}, want: false, wantReason: "not_grok"},
 		{name: "non oauth grok account stays eligible", account: &Account{Platform: PlatformGrok, Type: AccountTypeAPIKey}, want: true, wantReason: "non_oauth"},
-		{name: "unobserved oauth preserves legacy routing", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}, want: true, wantReason: "billing_unobserved"},
-		{name: "weekly allowance is not treated as weekly subscription", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: weeklyAllowance}}, want: true, wantReason: "eligible"},
+		{name: "unobserved oauth fails closed", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}, want: false, wantReason: "billing_unobserved"},
+		{name: "weekly paid usage is eligible without inferring from period type", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: weeklyAllowance}}, want: true, wantReason: "eligible"},
 		{name: "billing forbidden is rejected", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: forbiddenBilling}}, want: false, wantReason: "billing_forbidden"},
 		{name: "weekly billing forbidden is rejected after partial success", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: weeklyForbidden}}, want: false, wantReason: "billing_forbidden"},
 		{name: "monthly billing forbidden is rejected after partial success", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: monthlyForbidden}}, want: false, wantReason: "billing_forbidden"},
-		{name: "malformed billing observation preserves legacy routing", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: make(chan int)}}, want: true, wantReason: "billing_unobserved"},
+		{name: "malformed billing observation fails closed", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: make(chan int)}}, want: false, wantReason: "billing_unobserved"},
 		{name: "malformed override falls back to observations", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{GrokMediaEligibleExtraKey: "false", grokBillingExtraKey: weeklyAllowance}}, want: true, wantReason: "eligible"},
 		{name: "explicit disable wins", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{GrokMediaEligibleExtraKey: false}}, want: false, wantReason: "override_disabled"},
 		{name: "explicit enable wins over forbidden probe", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{GrokMediaEligibleExtraKey: true, grokBillingExtraKey: forbiddenBilling}}, want: true, wantReason: "override_enabled"},
@@ -61,6 +63,24 @@ func TestGrokMediaGenerationEligibility(t *testing.T) {
 			require.Equal(t, tt.wantReason, reason)
 		})
 	}
+}
+
+func TestGrokMediaCapabilityKeepsOnlyUnobservedOAuthAsProbeCandidate(t *testing.T) {
+	unobserved := &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}
+	eligible, reason := unobserved.GrokMediaGenerationEligibility()
+	require.False(t, eligible)
+	require.Equal(t, "billing_unobserved", reason)
+	require.True(t, unobserved.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityGrokMediaGeneration))
+
+	inconclusive := &Account{
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{grokBillingExtraKey: &xai.BillingSummary{
+			StatusCode: http.StatusOK,
+			Partial:    true,
+		}},
+	}
+	require.False(t, inconclusive.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityGrokMediaGeneration))
 }
 
 func TestGrokMediaCapabilityFiltersOnlyGeneration(t *testing.T) {
