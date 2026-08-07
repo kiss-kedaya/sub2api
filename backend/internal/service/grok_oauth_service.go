@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/redis/go-redis/v9"
 )
 
 const grokDefaultAccessTokenTTL = 6 * time.Hour
@@ -32,6 +33,17 @@ func NewGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthClient,
 		service.config = configs[0]
 	}
 	return service
+}
+
+// WithRedisSessionStore enables cross-instance, single-use OAuth callbacks.
+func (s *GrokOAuthService) WithRedisSessionStore(rdb *redis.Client) *GrokOAuthService {
+	if s != nil && rdb != nil {
+		if s.sessionStore != nil {
+			s.sessionStore.Stop()
+		}
+		s.sessionStore = xai.NewRedisSessionStore(rdb)
+	}
+	return s
 }
 
 type GrokOAuthCapabilities struct {
@@ -139,7 +151,6 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 	if !ok {
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_SESSION_NOT_FOUND", "session not found or expired")
 	}
-	defer s.sessionStore.Delete(input.SessionID)
 
 	parsed := xai.ParseAuthorizationInput(input.Code)
 	code := strings.TrimSpace(parsed.Code)
@@ -165,6 +176,13 @@ func (s *GrokOAuthService) ExchangeCode(ctx context.Context, input *GrokExchange
 			return nil, err
 		}
 	}
+	if s.oauthClient == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "GROK_OAUTH_CLIENT_NOT_CONFIGURED", "oauth client is not configured")
+	}
+	if !s.sessionStore.TryConsumeSession(input.SessionID) {
+		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_SESSION_ALREADY_USED", "oauth session has already been used")
+	}
+	defer s.sessionStore.Delete(input.SessionID)
 	redirectURI := session.RedirectURI
 	if strings.TrimSpace(input.RedirectURI) != "" {
 		redirectURI = input.RedirectURI
