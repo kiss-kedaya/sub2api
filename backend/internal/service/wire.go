@@ -1,9 +1,9 @@
 package service
 
 import (
-	"os"
 	"context"
 	"database/sql"
+	"os"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -915,7 +915,6 @@ func ProvideChannelMonitorRunner(svc *ChannelMonitorService, settingService *Set
 	r.Start()
 	return r
 }
-
 
 // ProvideChannelMonitorV2Service wires settings for user-facing privacy flags
 // (e.g. hide RPM/TPM throughput).
