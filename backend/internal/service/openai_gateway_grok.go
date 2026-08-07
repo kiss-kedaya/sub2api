@@ -1367,8 +1367,15 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 	case http.StatusUnauthorized:
 		s.tempUnscheduleGrok(ctx, account, 10*time.Minute, "grok credentials unauthorized")
 	case http.StatusPaymentRequired:
+		// 402: temporarily unschedulable with a clear payment-required reason.
 		s.tempUnscheduleGrok(ctx, account, 30*time.Minute, "grok payment required")
 	case http.StatusForbidden:
+		// Spending-limit 403 (personal-team-blocked:spending-limit) is billing exhaustion,
+		// not a generic entitlement denial — still temp-unschedule with a distinct reason.
+		if isGrokSpendingLimitError(responseBody) {
+			s.tempUnscheduleGrok(ctx, account, 30*time.Minute, "grok spending limit")
+			return
+		}
 		s.tempUnscheduleGrok(ctx, account, 30*time.Minute, "grok access or entitlement denied")
 	case http.StatusTooManyRequests:
 		// updateGrokUsageSnapshot installs rate-limit state for non-pool accounts.
@@ -1377,7 +1384,27 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 			s.tempUnscheduleGrok(ctx, account, 2*time.Minute, "grok upstream temporary error")
 		}
 	}
-	_ = responseBody
+}
+
+// isGrokSpendingLimitError detects xAI billing exhaustion bodies (often 403, sometimes 402).
+func isGrokSpendingLimitError(responseBody []byte) bool {
+	if len(responseBody) == 0 {
+		return false
+	}
+	code := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		gjson.GetBytes(responseBody, "code").String(),
+		gjson.GetBytes(responseBody, "error.code").String(),
+	)))
+	if code == "personal-team-blocked:spending-limit" {
+		return true
+	}
+	message := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		gjson.GetBytes(responseBody, "error").String(),
+		gjson.GetBytes(responseBody, "error.message").String(),
+		gjson.GetBytes(responseBody, "message").String(),
+	)))
+	return strings.Contains(message, "spending limit") ||
+		strings.Contains(message, "run out of credits")
 }
 
 func (s *OpenAIGatewayService) tempUnscheduleGrok(ctx context.Context, account *Account, cooldown time.Duration, reason string) {

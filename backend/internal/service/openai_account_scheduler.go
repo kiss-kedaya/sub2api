@@ -284,9 +284,10 @@ func (s *openAIAccountRuntimeStats) size() int {
 }
 
 type defaultOpenAIAccountScheduler struct {
-	service *OpenAIGatewayService
-	metrics openAIAccountSchedulerMetrics
-	stats   *openAIAccountRuntimeStats
+	service                *OpenAIGatewayService
+	metrics                openAIAccountSchedulerMetrics
+	stats                  *openAIAccountRuntimeStats
+	grokFreeQuotaGateCache sync.Map // key: int64(accountID), value: grokFreeQuotaGateCacheEntry
 }
 
 type openAISelectionProbeBudget struct {
@@ -496,6 +497,12 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	}
 	account = s.service.recheckSelectedOpenAIAccountFromDB(ctx, account, req.GroupID, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
 	if account == nil || !s.service.openAIAccountMatchesSchedulingGroup(account, req.GroupID) || !s.isAccountTransportCompatible(account, req.RequiredTransport) {
+		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		return nil, false, nil
+	}
+	// Free-tier soft gate: sticky session must not pin an over-quota free OAuth account.
+	// Admin QueryQuota / import probes do not use this path.
+	if account != nil && len(s.filterGrokFreeQuotaAccounts(ctx, []Account{*account})) == 0 {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, false, nil
 	}
@@ -1329,6 +1336,11 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	}
 	if len(accounts) == 0 {
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary(""))
+	}
+	// Local free-tier soft gate on the Grok scheduling path only (not admin probe).
+	accounts = s.filterGrokFreeQuotaAccounts(ctx, accounts)
+	if len(accounts) == 0 {
+		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary("grok_free_quota_soft_gate"))
 	}
 
 	// require_privacy_set: 获取分组信息
