@@ -507,7 +507,12 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		return nil, false, nil
 	}
 	// Team+model cool: sticky must not pin a sibling under the same team 429 window.
-	if account != nil && isGrokTeamModelRateLimited(account, req.RequestedModel, time.Now()) {
+	now := time.Now()
+	if account != nil && isGrokTeamModelRateLimited(account, req.RequestedModel, now) {
+		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		return nil, false, nil
+	}
+	if account != nil && isGrokModelQuotaBlocked(account.ID, req.RequestedModel, now) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, false, nil
 	}
@@ -1355,13 +1360,20 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	}
 	// Team+model rate-limit cool: siblings of a 429'd team skip the hot model.
 	if req.Platform == PlatformGrok {
-		filtered := filterGrokTeamModelRateLimitedAccounts(accounts, req.RequestedModel, time.Now())
+		now := time.Now()
+		filtered := filterGrokTeamModelRateLimitedAccounts(accounts, req.RequestedModel, now)
 		if len(filtered) == 0 && len(accounts) > 0 {
 			return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary("grok_team_model_rate_limit"))
 		}
 		if filtered != nil {
 			accounts = filtered
 		}
+		// Per-account model free-usage soft-block (other models stay eligible).
+		modelFiltered := filterGrokModelQuotaBlockedAccounts(accounts, req.RequestedModel, now)
+		if len(modelFiltered) == 0 && len(accounts) > 0 {
+			return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary("grok_model_quota_block"))
+		}
+		accounts = modelFiltered
 	}
 
 	// require_privacy_set: 获取分组信息

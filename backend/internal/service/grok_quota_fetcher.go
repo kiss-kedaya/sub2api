@@ -124,6 +124,12 @@ func (f *GrokQuotaFetcher) BuildUsageInfo(account *Account) *UsageInfo {
 			usage.ErrorCode = "rate_limited"
 		}
 	}
+	if accountGrokNeedsReauth(account) {
+		usage.NeedsReauth = true
+		if usage.ErrorCode == "" {
+			usage.ErrorCode = "spending_limit"
+		}
+	}
 	applyGrokCredentialUsageFallback(usage, account)
 	if activeProbeClearsForbidden && strings.TrimSpace(snapshot.EntitlementStatus) == "" &&
 		strings.EqualFold(strings.TrimSpace(usage.GrokEntitlementStatus), "forbidden") {
