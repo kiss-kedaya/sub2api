@@ -410,9 +410,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		} else if req.Header.Get("accept") == "" {
 			req.Header.Set("accept", "text/event-stream")
 		}
-		if req.Header.Get("OpenAI-Beta") == "" {
-			req.Header.Set("OpenAI-Beta", "responses=experimental")
-		}
 		if req.Header.Get("originator") == "" {
 			req.Header.Set("originator", openai.CodexDefaultOriginator)
 		}
