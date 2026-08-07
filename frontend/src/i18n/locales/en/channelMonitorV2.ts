@@ -5,6 +5,13 @@ export default {
     updating: 'Updating data',
     updatedTo: 'Updated to {time}',
     partialCoverage: 'Partial historical coverage',
+    bootstrap: {
+      title: 'Building historical monitor data',
+      description:
+        'On first enable, passive aggregation silently fills the 90m, 24h, 7d, and 30d windows in the background. All ranges become complete once this finishes.',
+      progress: '{percent}% complete',
+      working: 'Aggregating in the background…',
+    },
     timeRange: 'Time range',
     clearFilters: 'Reset',
     refreshingFilters: 'Filters changed; refreshing matrix, trend, and details…',
