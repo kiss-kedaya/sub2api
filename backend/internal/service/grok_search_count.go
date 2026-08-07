@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -14,10 +15,14 @@ func countGrokNativeSearchCallsFromJSONBytes(body []byte) int {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return 0
 	}
-	count := 0
-	count += countGrokNativeSearchCallsInOutputArray(gjson.GetBytes(body, "output"))
-	count += countGrokNativeSearchCallsInOutputArray(gjson.GetBytes(body, "response.output"))
-	return count
+	// Responses envelopes normally expose either top-level output (JSON mode)
+	// or response.output (terminal SSE payload). Compatibility layers can retain
+	// both copies; counting both would bill the same search twice. Prefer the
+	// canonical nested response when present and fall back to top-level output.
+	if nested := gjson.GetBytes(body, "response.output"); nested.IsArray() {
+		return countGrokNativeSearchCallsInOutputArray(nested)
+	}
+	return countGrokNativeSearchCallsInOutputArray(gjson.GetBytes(body, "output"))
 }
 
 func countGrokNativeSearchCallsFromSSEBody(body string) int {
@@ -65,6 +70,7 @@ func countGrokNativeSearchCallsInSSEDataDedup(data []byte, seen map[string]struc
 	}
 	added := 0
 	local := make(map[string]struct{}, len(keys))
+	isItemDone := strings.TrimSpace(gjson.GetBytes(data, "type").String()) == "response.output_item.done"
 	for _, k := range keys {
 		if k == "" {
 			continue
@@ -74,7 +80,23 @@ func countGrokNativeSearchCallsInSSEDataDedup(data []byte, seen map[string]struc
 		}
 		local[k] = struct{}{}
 		if _, ok := seen[k]; ok {
-			continue
+			if !isItemDone || !strings.HasPrefix(k, "synth:") {
+				continue
+			}
+			// Each id-less item.done is a distinct completed invocation. Advance
+			// its ordinal so interrupted streams remain accurately billable.
+			separator := strings.LastIndexByte(k, ':')
+			if separator < 0 {
+				continue
+			}
+			base := k[:separator]
+			for ordinal := 2; ; ordinal++ {
+				candidate := base + ":" + strconv.Itoa(ordinal)
+				if _, exists := seen[candidate]; !exists {
+					k = candidate
+					break
+				}
+			}
 		}
 		seen[k] = struct{}{}
 		added++
@@ -95,6 +117,7 @@ func collectGrokNativeSearchCallKeys(data []byte) []string {
 		}
 	}
 	var keys []string
+	syntheticOrdinals := make(map[string]int)
 	consider := func(item gjson.Result) {
 		if !isGrokNativeSearchOutputItem(item) {
 			return
@@ -106,10 +129,14 @@ func collectGrokNativeSearchCallKeys(data []byte) []string {
 			strings.TrimSpace(item.Get("item.id").String()),
 		)
 		if key == "" {
-			// Synthetic fingerprint: type + name is stable across done/completed
-			// for the same tool invocation when upstream omits call_id.
-			key = "synth:" + strings.ToLower(strings.TrimSpace(item.Get("type").String())) +
+			// Include the ordinal among same-kind calls. A plain type:name key
+			// collapses two id-less web searches in one completed response into
+			// one charge. The ordinal remains stable between ordered item.done
+			// events and response.completed output.
+			base := "synth:" + strings.ToLower(strings.TrimSpace(item.Get("type").String())) +
 				":" + strings.ToLower(strings.TrimSpace(item.Get("name").String()))
+			syntheticOrdinals[base]++
+			key = base + ":" + strconv.Itoa(syntheticOrdinals[base])
 		}
 		keys = append(keys, key)
 	}
