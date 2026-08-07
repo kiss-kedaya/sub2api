@@ -29,6 +29,20 @@ func TestCountGrokNativeSearchCallsFromSSEBodyDedups(t *testing.T) {
 	require.Equal(t, 2, countGrokNativeSearchCallsFromSSEBody(sse))
 }
 
+func TestCountGrokNativeSearchCallsInSSEDataDedup_LiveStreamPath(t *testing.T) {
+	t.Parallel()
+	// Mirrors the live streaming accumulator: item.done then response.completed
+	// for the same call_id must bill once (regression for ~2× surcharge).
+	seen := make(map[string]struct{})
+	done := []byte(`{"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws1","call_id":"c1"}}`)
+	completed := []byte(`{"type":"response.completed","response":{"output":[{"type":"web_search_call","id":"ws1","call_id":"c1"},{"type":"x_search_call","id":"xs1","call_id":"c2"}]}}`)
+	require.Equal(t, 1, countGrokNativeSearchCallsInSSEDataDedup(done, seen))
+	require.Equal(t, 1, countGrokNativeSearchCallsInSSEDataDedup(completed, seen))
+	// Raw (no-dedup) path still double-counts the same envelope pair.
+	require.Equal(t, 1, countGrokNativeSearchCallsInSSEData(done))
+	require.Equal(t, 2, countGrokNativeSearchCallsInSSEData(completed))
+}
+
 func stringsJoin(lines ...string) string {
 	out := ""
 	for _, l := range lines {

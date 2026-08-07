@@ -1278,7 +1278,11 @@ func (s *GatewayService) DoGrokNativeResponsesJSON(ctx context.Context, account 
 	}
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
-		return nil, fmt.Errorf("get grok token: %w", err)
+		// Credential/token failures should try the next Grok account in the pool.
+		return nil, &UpstreamFailoverError{
+			StatusCode: http.StatusUnauthorized,
+			Reason:     GatewayFailureReason("grok_search_token"),
+		}
 	}
 	targetURL, err := buildGrokResponsesURL(account, nil)
 	if err != nil {
@@ -1312,7 +1316,10 @@ func (s *GatewayService) DoGrokNativeResponsesJSON(ctx context.Context, account 
 	defer func() { _ = resp.Body.Close() }()
 	respBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if readErr != nil {
-		return nil, fmt.Errorf("read grok native search response: %w", readErr)
+		return nil, &UpstreamFailoverError{
+			StatusCode: http.StatusBadGateway,
+			Reason:     GatewayFailureReason("grok_search_read"),
+		}
 	}
 	if resp.StatusCode >= 400 {
 		msg := string(respBytes)

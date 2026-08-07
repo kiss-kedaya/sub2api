@@ -24,32 +24,54 @@ func countGrokNativeSearchCallsFromSSEBody(body string) int {
 	if strings.TrimSpace(body) == "" {
 		return 0
 	}
-	total := 0
 	seen := make(map[string]struct{})
+	total := 0
 	forEachOpenAISSEDataPayload(body, func(data []byte) {
-		n, keys := countGrokNativeSearchCallsInSSEDataWithKeys(data)
-		if n <= 0 {
-			return
-		}
-		// Dedup stream item.added / item.done for the same call id.
-		if len(keys) == 0 {
-			total += n
-			return
-		}
-		for _, k := range keys {
-			if _, ok := seen[k]; ok {
-				continue
-			}
-			seen[k] = struct{}{}
-			total++
-		}
+		total += countGrokNativeSearchCallsInSSEDataDedup(data, seen)
 	})
 	return total
 }
 
+// countGrokNativeSearchCallsInSSEData counts search tool calls in one SSE
+// payload without cross-event dedup. Prefer countGrokNativeSearchCallsInSSEDataDedup
+// for live streams so item.done + response.completed do not double-bill.
 func countGrokNativeSearchCallsInSSEData(data []byte) int {
 	n, _ := countGrokNativeSearchCallsInSSEDataWithKeys(data)
 	return n
+}
+
+// countGrokNativeSearchCallsInSSEDataDedup increments only unseen call ids.
+// Callers must reuse the same seen map for the full stream lifetime.
+func countGrokNativeSearchCallsInSSEDataDedup(data []byte, seen map[string]struct{}) int {
+	if seen == nil {
+		return countGrokNativeSearchCallsInSSEData(data)
+	}
+	n, keys := countGrokNativeSearchCallsInSSEDataWithKeys(data)
+	if n <= 0 {
+		return 0
+	}
+	// No stable id: fall back to raw count once (cannot dedup across events).
+	if len(keys) == 0 {
+		return n
+	}
+	// Intra-event + cross-event dedup by call_id/id.
+	added := 0
+	local := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		if k == "" {
+			continue
+		}
+		if _, ok := local[k]; ok {
+			continue
+		}
+		local[k] = struct{}{}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		added++
+	}
+	return added
 }
 
 func countGrokNativeSearchCallsInSSEDataWithKeys(data []byte) (int, []string) {

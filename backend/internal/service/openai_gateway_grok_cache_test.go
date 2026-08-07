@@ -889,6 +889,17 @@ func TestGrokFreeMessagesFunctionToolCacheRouteRequiresKnownFreeTier(t *testing.
 			}(),
 		},
 		{
+			name: "paid billing overrides stale free credentials",
+			account: func() *Account {
+				a := healthyGrokOAuthGatewayTestAccount(9123, "access-token")
+				a.Credentials["subscription_tier"] = "free"
+				a.Extra = map[string]any{
+					grokBillingExtraKey: map[string]any{"plan": "SuperGrok", "status_code": http.StatusOK},
+				}
+				return a
+			}(),
+		},
+		{
 			name: "partial billing without monthly evidence remains unknown",
 			account: func() *Account {
 				a := healthyGrokOAuthGatewayTestAccount(9122, "access-token")
