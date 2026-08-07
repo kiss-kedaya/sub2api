@@ -3916,10 +3916,11 @@ const applyTempUnschedConfig = (credentials: Record<string, unknown>) => {
 }
 
 
-const supportsAccountSchedulingThresholdOverridePlatform = (platform: Account['platform'] | undefined) =>
-  platform === 'openai' || platform === 'anthropic' || platform === 'grok'
+function supportsAccountSchedulingThresholdOverridePlatform(platform: Account['platform'] | undefined) {
+  return platform === 'openai' || platform === 'anthropic' || platform === 'grok'
+}
 
-const normalizeAccountSchedulingThresholdOverride = (value: unknown): number | null => {
+function normalizeAccountSchedulingThresholdOverride(value: unknown): number | null {
   if (value === null || value === undefined || value === '') {
     return null
   }
@@ -3934,13 +3935,14 @@ const normalizeAccountSchedulingThresholdOverride = (value: unknown): number | n
   return integer
 }
 
-const clampAccountSchedulingThresholdOverride = (value: unknown): number =>
-  Math.min(100, Math.max(1, Math.trunc(Number(value) || 100)))
+function clampAccountSchedulingThresholdOverride(value: unknown): number {
+  return Math.min(100, Math.max(1, Math.trunc(Number(value) || 100)))
+}
 
-const loadAccountSchedulingThresholdOverride = (
+function loadAccountSchedulingThresholdOverride(
   platform: Account['platform'] | undefined,
   credentials: Record<string, unknown> | undefined
-) => {
+) {
   if (!supportsAccountSchedulingThresholdOverridePlatform(platform)) {
     accountSchedulingThresholdOverrideEnabled.value = false
     accountSchedulingThresholdOverrideValue.value = 100
