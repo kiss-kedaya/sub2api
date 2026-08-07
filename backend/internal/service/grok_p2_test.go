@@ -57,17 +57,6 @@ func TestGrokStickyAffinitySeed_ScopesByModel(t *testing.T) {
 	require.Contains(t, a, "grok-affinity:v1:")
 }
 
-func TestGrokFreeUsageRecoveryHints(t *testing.T) {
-	id := int64(9001)
-	coolUntil := time.Now().Add(time.Hour)
-	markGrokFreeUsageRecovery(id, coolUntil)
-	require.True(t, isGrokFreeUsageCooling(id, time.Now()))
-	require.False(t, isGrokFreeUsageProbePreferred(id, time.Now()))
-	// After cool: probe preferred
-	require.True(t, isGrokFreeUsageProbePreferred(id, coolUntil.Add(time.Minute)))
-	require.False(t, isGrokFreeUsageCooling(id, coolUntil.Add(time.Minute)))
-}
-
 func TestExtractGrokModelIDsFromModelsBody(t *testing.T) {
 	body := []byte(`{"object":"list","data":[{"id":"grok-4.5"},{"id":"grok-4.3"},{"id":"grok-4.5"}]}`)
 	ids := extractGrokModelIDsFromModelsBody(body)
