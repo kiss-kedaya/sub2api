@@ -385,8 +385,13 @@ func (s *ChannelMonitorV2Service) SetRuntimeReader(r channelMonitorRuntimeReader
 }
 
 func (s *ChannelMonitorV2Service) hideThroughputForViewer(ctx context.Context, admin bool) bool {
-	if admin || s == nil || s.settings == nil {
+	if admin {
 		return false
+	}
+	// Privacy is fail-closed: an absent or unavailable settings reader must not
+	// expose fleet-scale rates to ordinary users.
+	if s == nil || s.settings == nil {
+		return true
 	}
 	return s.settings.GetChannelMonitorRuntime(ctx).HideThroughput
 }
