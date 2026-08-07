@@ -192,6 +192,11 @@ func (c *schedulerTestGatewayCache) ClaimGrokVideoBilled(_ context.Context, _ st
 	return true, nil
 }
 
+func (c *schedulerTestGatewayCache) ReleaseGrokVideoBilled(_ context.Context, _ string) error {
+	return nil
+}
+
+
 func newSchedulerTestOpenAIWSV2Config() *config.Config {
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAIWS.Enabled = true

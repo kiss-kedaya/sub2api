@@ -198,20 +198,46 @@ func estimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType st
 		}
 		return &AudioUsage{Mode: "tts", DurationOrUnits: float64(chars) / 1_000_000.0}
 	case "stt":
-		// Prefer explicit duration_seconds; else estimate from elapsed with a floor.
+		// Prefer response duration when present; do not trust client duration_seconds alone
+		// (under-report would underbill). Floor against body-size heuristic and elapsed.
 		secs := 0.0
+		if gjson.ValidBytes(respBody) {
+			for _, path := range []string{"duration", "duration_seconds", "audio_duration", "usage.seconds"} {
+				if v := gjson.GetBytes(respBody, path); v.Exists() && v.Type == gjson.Number && v.Float() > 0 {
+					secs = v.Float()
+					break
+				}
+			}
+		}
+		// Multipart / body size heuristic: ~16KB/s for compressed speech (lower bound).
+		sizeFloor := 0.0
+		if len(reqBody) > 0 {
+			sizeFloor = float64(len(reqBody)) / 16000.0
+		}
+		clientSecs := 0.0
 		if gjson.ValidBytes(reqBody) {
-			if v := gjson.GetBytes(reqBody, "duration_seconds"); v.Exists() {
-				secs = v.Float()
+			if v := gjson.GetBytes(reqBody, "duration_seconds"); v.Exists() && v.Type == gjson.Number {
+				clientSecs = v.Float()
 			}
 		}
 		if secs <= 0 {
 			secs = elapsed.Seconds()
 		}
 		if secs <= 0 {
-			// Multipart audio size heuristic: ~16KB/s for compressed speech.
-			if len(reqBody) > 0 {
-				secs = float64(len(reqBody)) / 16000.0
+			secs = clientSecs
+		}
+		if secs <= 0 {
+			secs = sizeFloor
+		}
+		// Cap untrusted client under-report: if client duration is much smaller than
+		// size/elapsed floors, bill the larger of floors (anti underbill).
+		if clientSecs > 0 && secs == clientSecs {
+			floor := sizeFloor
+			if elapsed.Seconds() > floor {
+				floor = elapsed.Seconds()
+			}
+			if floor > 0 && clientSecs < floor*0.5 {
+				secs = floor
 			}
 		}
 		if secs <= 0 {
