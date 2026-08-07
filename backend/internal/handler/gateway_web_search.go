@@ -3,19 +3,21 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
-	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
@@ -79,7 +81,8 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		return
 	}
 
-	selected, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), groupID, "", xai.DefaultTextModel, nil, "", 0)
+	failedAccounts := make(map[int64]struct{})
+	selected, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), groupID, "", xai.DefaultTextModel, failedAccounts, "", 0)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
 			"type":    "scheduling_error",
@@ -143,7 +146,11 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		accountReleaseFunc = release
 	}
 	if accountReleaseFunc != nil {
-		defer accountReleaseFunc()
+		defer func() {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+		}()
 	}
 
 	// Scheduling is 100% the same as other requests:
@@ -156,11 +163,40 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 
 	nativeResp, providerName, err := h.doGrokNativeWebSearch(c.Request.Context(), c, account, req.Query, req.MaxResults)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{
-			"type":    "web_search_error",
-			"message": err.Error(),
-		}})
-		return
+		var failoverErr *service.UpstreamFailoverError
+		if errors.As(err, &failoverErr) && failoverErr.ShouldRetryNextAccount() {
+			failedAccounts[account.ID] = struct{}{}
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+				accountReleaseFunc = nil
+			}
+			for attempt := 1; attempt < 4; attempt++ {
+				selected, selectErr := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), groupID, "", xai.DefaultTextModel, failedAccounts, "", 0)
+				if selectErr != nil || selected == nil || selected.Account == nil {
+					break
+				}
+				account = selected.Account
+				if selected.Acquired {
+					accountReleaseFunc = selected.ReleaseFunc
+				} else {
+					break
+				}
+				nativeResp, providerName, err = h.doGrokNativeWebSearch(c.Request.Context(), c, account, req.Query, req.MaxResults)
+				if err == nil {
+					break
+				}
+				if !errors.As(err, &failoverErr) || !failoverErr.ShouldRetryNextAccount() {
+					break
+				}
+				failedAccounts[account.ID] = struct{}{}
+				accountReleaseFunc()
+				accountReleaseFunc = nil
+			}
+		}
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "web_search_error", "message": err.Error()}})
+			return
+		}
 	}
 
 	userAgent := c.GetHeader("User-Agent")
@@ -169,15 +205,16 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	requestPayloadHash := service.HashUsageRequestPayload([]byte(req.Query))
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
-	// Unique per invocation (not hash(query) alone) so identical queries still bill.
-	searchRequestID := "web_search:" + service.HashUsageRequestPayload([]byte(req.Query+"|"+clientIP+"|"+userAgent))
+	// Request IDs are billing idempotency keys, so they must be unique per invocation.
+	// Query/IP/UA hashes would collapse repeated identical searches into one charge.
+	searchRequestID := "web_search:" + uuid.NewString()
 	if apiKey.Group != nil && (apiKey.Group.GetSearchPricePer1k() == nil || *apiKey.Group.GetSearchPricePer1k() <= 0) {
 		logger.L().With(
 			zap.String("component", "handler.gateway.web_search"),
 			zap.Int64("group_id", apiKey.Group.ID),
 		).Warn("gateway.web_search.search_price_per_1k_unset_free")
 	}
-	h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 			Result: &service.ForwardResult{
 				RequestID:   searchRequestID,

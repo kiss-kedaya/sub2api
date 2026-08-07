@@ -1307,7 +1307,7 @@ func (s *GatewayService) DoGrokNativeResponsesJSON(ctx context.Context, account 
 	}
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
-		return nil, fmt.Errorf("grok native search upstream: %w", err)
+		return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, Reason: GatewayFailureReason("grok_search_transport")}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	respBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -1318,6 +1318,9 @@ func (s *GatewayService) DoGrokNativeResponsesJSON(ctx context.Context, account 
 		msg := string(respBytes)
 		if len(msg) > 200 {
 			msg = msg[:200]
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusPaymentRequired || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBytes}
 		}
 		return nil, fmt.Errorf("grok upstream %d: %s", resp.StatusCode, msg)
 	}
