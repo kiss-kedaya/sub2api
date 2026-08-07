@@ -330,6 +330,10 @@ type UpdateSettingsRequest struct {
 	ChannelMonitorEnabled                *bool `json:"channel_monitor_enabled"`
 	ChannelMonitorDefaultIntervalSeconds *int  `json:"channel_monitor_default_interval_seconds"`
 
+	// Grok model mapping policy
+	GrokDefaultTextModel           *string `json:"grok_default_text_model"`
+	GrokCrossClientModelMapEnabled *bool   `json:"grok_cross_client_model_map_enabled"`
+
 	// Available Channels feature switch (user-facing)
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
 
@@ -1860,6 +1864,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.ChannelMonitorDefaultIntervalSeconds
 		}(),
+		GrokDefaultTextModel: func() string {
+			if req.GrokDefaultTextModel != nil {
+				return *req.GrokDefaultTextModel
+			}
+			return previousSettings.GrokDefaultTextModel
+		}(),
+		GrokCrossClientModelMapEnabled: func() bool {
+			if req.GrokCrossClientModelMapEnabled != nil {
+				return *req.GrokCrossClientModelMapEnabled
+			}
+			return previousSettings.GrokCrossClientModelMapEnabled
+		}(),
 		AvailableChannelsEnabled: func() bool {
 			if req.AvailableChannelsEnabled != nil {
 				return *req.AvailableChannelsEnabled
@@ -2292,6 +2308,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 
 		ChannelMonitorEnabled:                updatedSettings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: updatedSettings.ChannelMonitorDefaultIntervalSeconds,
+
+		GrokDefaultTextModel:           updatedSettings.GrokDefaultTextModel,
+		GrokCrossClientModelMapEnabled: updatedSettings.GrokCrossClientModelMapEnabled,
 
 		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
 

@@ -46,6 +46,9 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 	if err := createGroupRecord(ctx, r.client, groupIn); err != nil {
 		return err
 	}
+	if saveErr := saveGroupVideoModelPrices(ctx, r.sql, groupIn.ID, groupIn.VideoModelPrices); saveErr != nil {
+		return fmt.Errorf("save group video_model_prices: %w", saveErr)
+	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group create failed: group=%d err=%v", groupIn.ID, err)
 	}
@@ -225,7 +228,11 @@ func (r *groupRepository) GetByIDLite(ctx context.Context, id int64) (*service.G
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrGroupNotFound, nil)
 	}
-	return groupEntityToService(m), nil
+	out := groupEntityToService(m)
+	if prices, loadErr := loadGroupVideoModelPrices(ctx, r.sql, []int64{id}); loadErr == nil {
+		applyVideoModelPricesToGroup(out, prices)
+	}
+	return out, nil
 }
 
 func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) error {
@@ -356,6 +363,9 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		return translatePersistenceError(err, service.ErrGroupNotFound, service.ErrGroupExists)
 	}
 	groupIn.UpdatedAt = updated.UpdatedAt
+	if err := saveGroupVideoModelPrices(ctx, r.sql, groupIn.ID, groupIn.VideoModelPrices); err != nil {
+		return fmt.Errorf("save group video_model_prices: %w", err)
+	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group update failed: group=%d err=%v", groupIn.ID, err)
 	}
