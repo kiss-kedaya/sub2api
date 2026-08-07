@@ -118,6 +118,12 @@ func explicitGrokCacheSeed(c *gin.Context, body []byte, explicitKey string) stri
 	if seed == "" {
 		seed = strings.TrimSpace(explicitKey)
 	}
+	// previous_response_id is last-resort: multi-turn Responses without an
+	// explicit session still share one cache identity (model is already in the
+	// isolated seed). Message ids are rejected by the seed helper.
+	if seed == "" && len(body) > 0 {
+		seed = grokPreviousResponseSessionSeed(body)
+	}
 	return seed
 }
 
