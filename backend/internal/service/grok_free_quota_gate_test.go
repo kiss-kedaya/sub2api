@@ -56,7 +56,7 @@ func (r *grokFreeQuotaUsageRepoStub) GetAccountWindowStatsBatch(_ context.Contex
 func grokFreeQuotaTestConfig() *config.Config {
 	cfg := &config.Config{}
 	cfg.Gateway.Grok.FreeQuotaSoftGateEnabled = true
-	cfg.Gateway.Grok.FreeQuotaTokenLimit = 2_000_000
+	cfg.Gateway.Grok.FreeQuotaTokenLimit = 500_000
 	cfg.Gateway.Grok.FreeQuotaSoftGatePercent = 95
 	cfg.Gateway.Grok.FreeQuotaWindowHours = 24
 	cfg.Gateway.Grok.FreeQuotaStatsCacheSeconds = 5
@@ -65,7 +65,7 @@ func grokFreeQuotaTestConfig() *config.Config {
 
 func TestFilterGrokFreeQuotaAccountsOnlyBlocksExplicitFreeOAuth(t *testing.T) {
 	repo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*usagestats.AccountStats{
-		1: {Tokens: 1_900_000},
+		1: {Tokens: 475_000}, // 95% of 500k
 	}}
 	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{cfg: grokFreeQuotaTestConfig(), usageLogRepo: repo}}
 	accounts := []Account{
@@ -116,7 +116,7 @@ func TestFilterGrokFreeQuotaAccountsUnknownTierFailOpen(t *testing.T) {
 
 func TestFilterGrokFreeQuotaAccountsRecoversAfterRollingUsageFalls(t *testing.T) {
 	repo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*usagestats.AccountStats{
-		1: {Tokens: 1_950_000},
+		1: {Tokens: 490_000},
 	}}
 	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{cfg: grokFreeQuotaTestConfig(), usageLogRepo: repo}}
 	accounts := []Account{{
@@ -126,12 +126,12 @@ func TestFilterGrokFreeQuotaAccountsRecoversAfterRollingUsageFalls(t *testing.T)
 
 	require.Empty(t, scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts))
 	repo.mu.Lock()
-	repo.stats[1] = &usagestats.AccountStats{Tokens: 1_200_000}
+	repo.stats[1] = &usagestats.AccountStats{Tokens: 100_000}
 	repo.mu.Unlock()
 	require.Empty(t, scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts), "fresh cache keeps the short soft-gate hold")
 
 	scheduler.grokFreeQuotaGateCache.Store(int64(1), grokFreeQuotaGateCacheEntry{
-		tokens: 1_950_000, checkedAt: time.Now().Add(-time.Minute), known: true,
+		tokens: 490_000, checkedAt: time.Now().Add(-time.Minute), known: true,
 	})
 	require.Equal(t, []int64{1}, accountIDs(scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)))
 	require.Equal(t, 2, repo.calls)
@@ -140,8 +140,20 @@ func TestFilterGrokFreeQuotaAccountsRecoversAfterRollingUsageFalls(t *testing.T)
 func TestResolveGrokFreeQuotaGateSettingsDefaultsToNinetyFivePercent(t *testing.T) {
 	settings, ok := resolveGrokFreeQuotaGateSettings(grokFreeQuotaTestConfig())
 	require.True(t, ok)
-	require.Equal(t, int64(1_900_000), settings.gateTokens)
+	require.Equal(t, int64(500_000), settings.limitTokens)
+	require.Equal(t, int64(475_000), settings.gateTokens) // 95% of 500k
 	require.Equal(t, 24*time.Hour, settings.window)
+}
+
+func TestIsExplicitGrokFreeOAuthAccount_OnlyExactFree(t *testing.T) {
+	t.Parallel()
+	require.False(t, isExplicitGrokFreeOAuthAccount(nil))
+	require.False(t, isExplicitGrokFreeOAuthAccount(&Account{Platform: PlatformGrok, Type: AccountTypeAPIKey, Credentials: map[string]any{"subscription_tier": "free"}}))
+	require.True(t, isExplicitGrokFreeOAuthAccount(&Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{"subscription_tier": "FREE"}}))
+	require.True(t, isExplicitGrokFreeOAuthAccount(&Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": "free"}}))
+	// basic / inferred free are NOT soft-gated (personal-dev contract).
+	require.False(t, isExplicitGrokFreeOAuthAccount(&Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{"subscription_tier": "basic"}}))
+	require.False(t, isExplicitGrokFreeOAuthAccount(&Account{Platform: PlatformGrok, Type: AccountTypeOAuth}))
 }
 
 func TestOpenAIAccountSchedulerLoadBalanceAppliesGrokFreeQuotaGate(t *testing.T) {
@@ -155,7 +167,7 @@ func TestOpenAIAccountSchedulerLoadBalanceAppliesGrokFreeQuotaGate(t *testing.T)
 		cfg:         cfg,
 		accountRepo: &grokFreeQuotaAccountRepoStub{accounts: accounts},
 		usageLogRepo: &grokFreeQuotaUsageRepoStub{stats: map[int64]*usagestats.AccountStats{
-			1: {Tokens: 1_900_000},
+			1: {Tokens: 480_000}, // over 95% of 500k
 		}},
 	}
 	scheduler := &defaultOpenAIAccountScheduler{service: svc, stats: newOpenAIAccountRuntimeStats()}
@@ -177,7 +189,7 @@ func TestGrokFreeQuotaGateIsSchedulerOnlyAdminPathUnfiltered(t *testing.T) {
 	require.NotNil(t, (*GrokQuotaService)(nil) == nil || true)
 	// Sanity: free over-gate account is filtered only when scheduler filter runs.
 	repo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*usagestats.AccountStats{
-		9: {Tokens: 2_000_000},
+		9: {Tokens: 500_000},
 	}}
 	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{cfg: grokFreeQuotaTestConfig(), usageLogRepo: repo}}
 	overGate := Account{ID: 9, Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{"subscription_tier": "FREE"}}
