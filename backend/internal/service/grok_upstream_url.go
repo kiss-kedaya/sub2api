@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -68,20 +69,28 @@ func redactedGrokBaseURLValidator(validator xai.BaseURLValidator) xai.BaseURLVal
 	}
 }
 
-func buildGrokResponsesURL(account *Account, cfg *config.Config) (string, error) {
+func buildGrokResponsesURL(account *Account, cfg *config.Config, settings ...*SettingService) (string, error) {
 	validator, err := grokBaseURLValidator(account, cfg)
 	if err != nil {
 		return "", err
 	}
-	return xai.BuildResponsesURLWithValidator(account.GetGrokBaseURL(), validator)
+	baseURL := account.GetGrokBaseURL()
+	if len(settings) > 0 && settings[0] != nil {
+		baseURL = settings[0].ResolveGrokBaseURL(context.Background(), account)
+	}
+	return xai.BuildResponsesURLWithValidator(baseURL, validator)
 }
 
-func buildGrokChatCompletionsURL(account *Account, cfg *config.Config) (string, error) {
+func buildGrokChatCompletionsURL(account *Account, cfg *config.Config, settings ...*SettingService) (string, error) {
 	validator, err := grokBaseURLValidator(account, cfg)
 	if err != nil {
 		return "", err
 	}
-	return xai.BuildChatCompletionsURLWithValidator(account.GetGrokBaseURL(), validator)
+	baseURL := account.GetGrokBaseURL()
+	if len(settings) > 0 && settings[0] != nil {
+		baseURL = settings[0].ResolveGrokBaseURL(context.Background(), account)
+	}
+	return xai.BuildChatCompletionsURLWithValidator(baseURL, validator)
 }
 
 // buildGrokBillingURL 解析 billing 探测端点：跟随账号的转发 base_url，
@@ -91,7 +100,14 @@ func buildGrokBillingURL(account *Account, cfg *config.Config, weekly bool) (str
 	if err != nil {
 		return "", err
 	}
-	return xai.BuildBillingURLWithValidator(account.GetGrokBaseURL(), weekly, validator)
+	baseURL := account.GetGrokBaseURL()
+	// Official public/regional API hosts do not expose Grok Build billing.
+	// Keep custom relays on their configured host because they may proxy the CLI
+	// billing path alongside inference.
+	if xai.IsOfficialBaseURL(baseURL) && !isGrokCLIProxyBaseURL(baseURL) {
+		baseURL = xai.DefaultCLIBaseURL
+	}
+	return xai.BuildBillingURLWithValidator(baseURL, weekly, validator)
 }
 
 func buildGrokMediaURL(account *Account, cfg *config.Config, endpoint GrokMediaEndpoint, requestID string) (string, error) {
