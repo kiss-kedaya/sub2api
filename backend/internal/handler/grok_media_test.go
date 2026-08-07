@@ -42,13 +42,13 @@ func TestShouldRecordGrokMediaUsage(t *testing.T) {
 			want:     true,
 		},
 		{
-			name:     "video generation records usage",
+			name:     "video generation defers usage until status",
 			endpoint: service.GrokMediaEndpointVideosGenerations,
 			model:    "grok-imagine-video-1.5",
-			want:     true,
+			want:     false,
 		},
 		{
-			name:     "video status skips empty model usage",
+			name:     "video status skips immediate helper (status path claims separately)",
 			endpoint: service.GrokMediaEndpointVideoStatus,
 			model:    "",
 			want:     false,
@@ -71,9 +71,9 @@ func TestShouldRecordGrokMediaUsage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Nil result must never bill.
 			require.False(t, shouldRecordGrokMediaUsage(tt.endpoint, tt.model, nil))
-			// Non-nil result with units only bills generation endpoints with model.
+			// Immediate helper only bills image generation (async video bills on status).
 			result := &service.OpenAIForwardResult{ImageCount: 1, VideoCount: 0}
-			if tt.endpoint.IsGenerationRequest() && strings.TrimSpace(tt.model) != "" {
+			if tt.endpoint.IsGenerationRequest() && !isGrokVideoCreateEndpoint(tt.endpoint) && strings.TrimSpace(tt.model) != "" {
 				require.Equal(t, tt.want, shouldRecordGrokMediaUsage(tt.endpoint, tt.model, result))
 			} else {
 				require.False(t, shouldRecordGrokMediaUsage(tt.endpoint, tt.model, result))

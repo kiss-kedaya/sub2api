@@ -406,7 +406,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, grokMediaScheduleModel(account, routingModel, result), true, nil)
-		if endpoint.IsGenerationRequest() && strings.TrimSpace(result.ResponseID) != "" {
+		if isGrokVideoCreateEndpoint(endpoint) && strings.TrimSpace(result.ResponseID) != "" {
 			if err := h.gatewayService.BindGrokMediaVideoRequestAccount(
 				requestCtx, apiKey.GroupID, result.ResponseID, subject.UserID, apiKey.ID, account.ID,
 			); err != nil {
@@ -416,8 +416,28 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					zap.Error(err),
 				)
 			}
+			// Defer billing until status polling observes video.url. Persist create-time
+			// model/duration/resolution so status can still price if upstream omits them.
+			if err := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, service.GrokVideoPendingBilling{
+				Model:                requestModel,
+				BillingModel:         firstNonEmptyString(result.BillingModel, requestModel),
+				UpstreamModel:        result.UpstreamModel,
+				VideoResolution:      result.VideoResolution,
+				VideoDurationSeconds: result.VideoDurationSeconds,
+				OriginalModel:        clientRequestedModel(c, requestModel),
+			}); err != nil {
+				reqLog.Warn("grok_media.store_video_pending_billing_failed",
+					zap.Int64("account_id", account.ID),
+					zap.String("request_id", result.ResponseID),
+					zap.Error(err),
+				)
+			}
 		}
-		if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {
+		if endpoint == service.GrokMediaEndpointVideoStatus {
+			if billResult := prepareGrokVideoStatusBilling(requestCtx, h, reqLog, apiKey, subject, requestID, result); billResult != nil {
+				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, requestID)
+			}
+		} else if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {
 			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
 		}
 		reqLog.Debug("grok_media.request_completed",
@@ -459,20 +479,112 @@ func grokMediaScheduleModel(account *service.Account, routingModel string, resul
 	return account.GetMappedModel(routingModel)
 }
 
-// shouldRecordGrokMediaUsage gates usage writes for Grok media generation only.
-// Status/content polls, empty model, and failed generations with zero billable
-// image/video units never bill.
-func shouldRecordGrokMediaUsage(endpoint service.GrokMediaEndpoint, requestModel string, result *service.OpenAIForwardResult) bool {
-	if !endpoint.IsGenerationRequest() || strings.TrimSpace(requestModel) == "" {
+func isGrokVideoCreateEndpoint(endpoint service.GrokMediaEndpoint) bool {
+	switch endpoint {
+	case service.GrokMediaEndpointVideosGenerations,
+		service.GrokMediaEndpointVideosEdits,
+		service.GrokMediaEndpointVideosExtensions:
+		return true
+	default:
 		return false
 	}
+}
+
+// shouldRecordGrokMediaUsage gates usage writes for immediate (image) generation.
+// Async video create never bills here — status polling does when video.url appears.
+// Status/content polls, empty model, and failed generations with zero billable
+// image units never bill via this helper.
+func shouldRecordGrokMediaUsage(endpoint service.GrokMediaEndpoint, requestModel string, result *service.OpenAIForwardResult) bool {
 	if result == nil {
 		return false
 	}
-	if result.VideoCount > 0 {
-		return true
+	if isGrokVideoCreateEndpoint(endpoint) || endpoint.IsVideoLookupRequest() {
+		return false
+	}
+	if !endpoint.IsGenerationRequest() || strings.TrimSpace(requestModel) == "" {
+		return false
 	}
 	return result.ImageCount > 0
+}
+
+// prepareGrokVideoStatusBilling claims one-shot billing and merges status-body
+// duration/resolution/model with the create-time pending snapshot.
+func prepareGrokVideoStatusBilling(
+	ctx context.Context,
+	h *OpenAIGatewayHandler,
+	reqLog *zap.Logger,
+	apiKey *service.APIKey,
+	subject middleware2.AuthSubject,
+	requestID string,
+	statusResult *service.OpenAIForwardResult,
+) *service.OpenAIForwardResult {
+	if h == nil || h.gatewayService == nil || apiKey == nil || statusResult == nil {
+		return nil
+	}
+	// Prefer units already extracted on the forward result; otherwise re-check pending-only path
+	// is not enough without a status URL (VideoCount stays 0).
+	if statusResult.VideoCount <= 0 {
+		return nil
+	}
+	claimed, err := h.gatewayService.ClaimGrokVideoBilling(ctx, requestID, subject.UserID, apiKey.ID)
+	if err != nil {
+		reqLog.Warn("grok_media.video_billing_claim_failed", zap.String("request_id", requestID), zap.Error(err))
+		return nil
+	}
+	if !claimed {
+		reqLog.Debug("grok_media.video_billing_already_claimed", zap.String("request_id", requestID))
+		return nil
+	}
+	pending, loadErr := h.gatewayService.LoadGrokVideoPendingBilling(ctx, requestID, subject.UserID, apiKey.ID)
+	if loadErr != nil {
+		reqLog.Warn("grok_media.video_pending_billing_load_failed", zap.String("request_id", requestID), zap.Error(loadErr))
+	}
+	// Re-merge with pending so create-time model wins when status omits model fields.
+	// statusResult already has status-body duration/resolution when present.
+	merged := *statusResult
+	if pending != nil {
+		if strings.TrimSpace(merged.Model) == "" {
+			merged.Model = firstNonEmptyString(pending.BillingModel, pending.Model, pending.OriginalModel)
+		}
+		if strings.TrimSpace(merged.BillingModel) == "" {
+			merged.BillingModel = firstNonEmptyString(pending.BillingModel, pending.Model, merged.Model)
+		}
+		if strings.TrimSpace(merged.UpstreamModel) == "" {
+			merged.UpstreamModel = pending.UpstreamModel
+		}
+		if strings.TrimSpace(merged.VideoResolution) == "" {
+			merged.VideoResolution = pending.VideoResolution
+		}
+		if merged.VideoDurationSeconds <= 0 {
+			merged.VideoDurationSeconds = pending.VideoDurationSeconds
+		}
+		if strings.TrimSpace(merged.ResponseID) == "" {
+			merged.ResponseID = requestID
+		}
+	}
+	if strings.TrimSpace(merged.Model) == "" {
+		merged.Model = "grok-imagine-video"
+	}
+	if strings.TrimSpace(merged.BillingModel) == "" {
+		merged.BillingModel = merged.Model
+	}
+	// Stable dedup key: same video task bills once across status polls.
+	if strings.TrimSpace(merged.RequestID) == "" {
+		merged.RequestID = "grok-video:" + strings.TrimSpace(firstNonEmptyString(merged.ResponseID, requestID))
+	}
+	merged.VideoCount = 1
+	merged.VideoResolution = service.NormalizeVideoBillingResolutionOrDefault(merged.VideoResolution)
+	merged.VideoDurationSeconds = service.NormalizeVideoBillingDurationSecondsOrDefault(merged.VideoDurationSeconds)
+	return &merged
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func recordGrokMediaUsage(
