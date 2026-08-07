@@ -134,7 +134,7 @@ func (r *channelMonitorV2Repository) GetDimensions(ctx context.Context, filter s
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	platformCounts := map[string]int64{}
 	type modelValue struct {
 		platform string
@@ -602,7 +602,7 @@ func (r *channelMonitorV2Repository) listActiveGroupIDs(ctx context.Context) ([]
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	ids := []int64{}
 	for rows.Next() {
 		var id int64
@@ -623,7 +623,7 @@ func (r *channelMonitorV2Repository) loadChannelMonitorV2GroupInfo(ctx context.C
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int64
 		var name, platform string
@@ -646,7 +646,7 @@ func (r *channelMonitorV2Repository) GetErrors(ctx context.Context, filter servi
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	counts := map[string]int64{}
 	var total int64
 	ignoredSet := service.ChannelMonitorV2IgnoredCategorySet(cfg)
@@ -760,7 +760,7 @@ func (r *channelMonitorV2Repository) loadErrorDetails(ctx context.Context, filte
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[string][]service.ChannelMonitorV2ErrorDetail{}
 	for rows.Next() {
 		var platform, model, errorType, owner, source, message string
@@ -830,7 +830,7 @@ func (r *channelMonitorV2Repository) GetUsers(ctx context.Context, filter servic
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	type userMeta struct{ email, username string }
 	meta := map[int64]userMeta{}
 	accs := map[int64]*metricAccumulator{}
@@ -923,7 +923,7 @@ func (r *channelMonitorV2Repository) loadFacts(ctx context.Context, filter servi
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	facts := []channelMonitorV2Fact{}
 	for rows.Next() {
 		var bucket time.Time
@@ -964,7 +964,7 @@ func (r *channelMonitorV2Repository) loadHistograms(ctx context.Context, filter 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []channelMonitorV2Histogram{}
 	for rows.Next() {
 		var bucket time.Time
@@ -1379,7 +1379,7 @@ func (r *channelMonitorV2Repository) loadIgnoredErrorCounts(
 	if err != nil {
 		return byBucket, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var bucket time.Time
 		var platform, model string
@@ -1422,7 +1422,7 @@ func (r *channelMonitorV2Repository) loadIgnoredErrorCountsByPlatformModel(
 	if err != nil {
 		return byPM, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var platform, model string
 		var count int64
@@ -1475,7 +1475,7 @@ func (r *channelMonitorV2Repository) loadIgnoredErrorCountsByMatrixKey(
 	if err != nil {
 		return byDimBucket, byDim, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var bucket time.Time
 		var platform, model string
