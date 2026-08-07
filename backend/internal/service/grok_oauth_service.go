@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
@@ -18,14 +19,31 @@ type GrokOAuthService struct {
 	sessionStore *xai.SessionStore
 	proxyRepo    ProxyRepository
 	oauthClient  GrokOAuthClient
+	config       *config.Config
 }
 
-func NewGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthClient) *GrokOAuthService {
-	return &GrokOAuthService{
+func NewGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthClient, configs ...*config.Config) *GrokOAuthService {
+	service := &GrokOAuthService{
 		sessionStore: xai.NewSessionStore(),
 		proxyRepo:    proxyRepo,
 		oauthClient:  oauthClient,
 	}
+	if len(configs) > 0 {
+		service.config = configs[0]
+	}
+	return service
+}
+
+type GrokOAuthCapabilities struct {
+	PasswordAuthEnabled bool `json:"password_auth_enabled"`
+}
+
+func (s *GrokOAuthService) GetCapabilities() GrokOAuthCapabilities {
+	return GrokOAuthCapabilities{PasswordAuthEnabled: s.passwordAuthEnabled()}
+}
+
+func (s *GrokOAuthService) passwordAuthEnabled() bool {
+	return s.config != nil && s.config.Gateway.Grok.PasswordAuthEnabled
 }
 
 type GrokAuthURLResult struct {
@@ -212,6 +230,9 @@ func (s *GrokOAuthService) ConvertFromSSO(ctx context.Context, ssoToken string, 
 // AuthorizePassword logs in with email/password, converts the resulting SSO cookie
 // to Build OAuth, and returns OAuth tokens only. Password and raw SSO are never persisted.
 func (s *GrokOAuthService) AuthorizePassword(ctx context.Context, email, password string, proxyID *int64) (*GrokTokenInfo, error) {
+	if !s.passwordAuthEnabled() {
+		return nil, infraerrors.New(http.StatusForbidden, "GROK_OAUTH_PASSWORD_AUTH_DISABLED", "Grok password authorization is disabled")
+	}
 	email = strings.TrimSpace(email)
 	if email == "" {
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_EMAIL_REQUIRED", "email is required")
