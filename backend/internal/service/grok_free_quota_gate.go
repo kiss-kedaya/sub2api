@@ -199,7 +199,10 @@ func scheduleGrokFreeQuotaStatsRefresh(
 		return
 	}
 	inFlightRoot, _ := freeQuotaRefreshInFlight.LoadOrStore(cache, &sync.Map{})
-	inFlight := inFlightRoot.(*sync.Map)
+	inFlight, ok := inFlightRoot.(*sync.Map)
+	if !ok || inFlight == nil {
+		return
+	}
 
 	toFetch := make([]int64, 0, len(accountIDs))
 	for _, id := range accountIDs {
