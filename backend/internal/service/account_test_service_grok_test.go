@@ -502,10 +502,10 @@ func TestAccountTestService_GrokExplicitImageModeDefaultsModel(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"type":"test_complete"`)
 }
 
-func TestAccountTestService_GrokVideoZDRUploadURLRequiredCountsAsConnectivityOK(t *testing.T) {
+func TestAccountTestService_GrokVideoUpstreamErrorIsNotMaskedAsSuccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	account := &Account{
-		ID: 21, Name: "grok-oauth-video-zdr", Platform: PlatformGrok,
+		ID: 21, Name: "grok-oauth-video-err", Platform: PlatformGrok,
 		Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1,
 		Credentials: map[string]any{
 			"access_token":  "grok-access-token",
@@ -518,7 +518,7 @@ func TestAccountTestService_GrokVideoZDRUploadURLRequiredCountsAsConnectivityOK(
 		StatusCode: http.StatusBadRequest,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body: io.NopCloser(strings.NewReader(
-			`{"code":"invalid-argument","error":"Zero Data Retention teams must provide output.upload_url for video generation."}`,
+			`{"code":"invalid-argument","error":"bad video request"}`,
 		)),
 	}}
 	svc := &AccountTestService{
@@ -532,14 +532,11 @@ func TestAccountTestService_GrokVideoZDRUploadURLRequiredCountsAsConnectivityOK(
 
 	err := svc.TestAccountConnection(c, account.ID, "grok-imagine-video", "bounce ball", AccountTestModeGrokVideo)
 
-	require.NoError(t, err)
+	require.Error(t, err)
 	require.Equal(t, "https://api.x.ai/v1/videos/generations", upstream.lastReq.URL.String())
-	require.Contains(t, rec.Body.String(), "NO VIDEO GENERATED")
-	require.Contains(t, rec.Body.String(), "output.upload_url")
-	require.Contains(t, rec.Body.String(), "Connectivity OK")
-	require.Contains(t, rec.Body.String(), `"type":"test_complete"`)
-	require.Contains(t, rec.Body.String(), `"success":true`)
-	require.NotContains(t, rec.Body.String(), `"type":"error"`)
+	require.Contains(t, rec.Body.String(), `"type":"error"`)
+	require.Contains(t, rec.Body.String(), "Grok videos API returned 400")
+	require.NotContains(t, rec.Body.String(), `"success":true`)
 }
 
 type grokRealtimeTestConn struct {
