@@ -20,11 +20,22 @@ const (
 	channelMonitorV2BootstrapWindow = ChannelMonitorV2BootstrapProductWindow
 	// First tick after upgrade prioritizes the default 90m view (with small padding).
 	channelMonitorV2BootstrapFirst = 2 * time.Hour
-	// Subsequent bootstrap chunks grow so 24h/7d/30d fill without waiting full 90d pace.
-	// Order after first tick: 22h → full 1d chunks until 30d, then 1d toward 90d.
-	channelMonitorV2RecentOverlap    = 10 * time.Minute
-	channelMonitorV2BackfillChunk    = 24 * time.Hour
-	channelMonitorV2MinBackfillChunk = time.Hour
+	// Always refresh a small trailing window so late writes land without
+	// re-aggregating large history every tick.
+	channelMonitorV2RecentOverlap = 10 * time.Minute
+
+	// Gentle backfill: small adaptive chunks, never default 24h hammering.
+	// Initial historical chunk after the 2h seed.
+	channelMonitorV2BackfillChunkInit = time.Hour
+	channelMonitorV2MinBackfillChunk  = 15 * time.Minute
+	// Depth-based ceilings (product phases 90m → 1d → 7d → 30d → 90d).
+	channelMonitorV2MaxChunkNear1d = 2 * time.Hour
+	channelMonitorV2MaxChunkNear7d = 4 * time.Hour
+	channelMonitorV2MaxChunkFar    = 6 * time.Hour
+
+	// Soft adaptive timing: grow only when a recompute is clearly cheap.
+	channelMonitorV2GrowChunkUnder = 15 * time.Second
+	channelMonitorV2MaxBackoff     = 10 * time.Minute
 )
 
 // channelMonitorRuntimeSubscriber is the optional settings hook that lets the
@@ -49,6 +60,8 @@ type ChannelMonitorV2Aggregator struct {
 	backfillAt       time.Time
 	backfillChunk    time.Duration
 	backfillFailures int
+	// nextWaitFloor is applied after runOnce when failures require backoff.
+	nextWaitFloor time.Duration
 	// cursorLoaded is true after the first successful watermark read (or init).
 	cursorLoaded bool
 	// hasAggregated is true once any recompute in this process (or durable data) exists.
@@ -66,7 +79,7 @@ func NewChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, 
 		instanceID:    uuid.NewString(),
 		stopCh:        make(chan struct{}),
 		kickCh:        make(chan struct{}, 1),
-		backfillChunk: channelMonitorV2BackfillChunk,
+		backfillChunk: channelMonitorV2BackfillChunkInit,
 	}
 }
 
@@ -161,12 +174,13 @@ func (s *ChannelMonitorV2Aggregator) loop() {
 		}
 		cancel()
 		s.runOnce()
-		// While product bootstrap is incomplete, tick faster so 90m/24h/7d/30d
-		// fill without waiting a full refresh_interval between historical chunks.
-		if s.bootstrapActive() {
-			if interval > 5*time.Second {
-				interval = 5 * time.Second
-			}
+		// Hard gate: never compress bootstrap to multi-Hz ticks. Soft gate: on
+		// repeated failures raise the wait floor (exponential backoff).
+		s.mu.Lock()
+		floor := s.nextWaitFloor
+		s.mu.Unlock()
+		if floor > interval {
+			interval = floor
 		}
 		if !s.wait(interval) {
 			return
@@ -250,14 +264,13 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 	// Phase 1 (first upgrade / empty): seed the default 90m UI window quickly.
 	if !hasData || cursor.IsZero() {
 		start := now.Add(-channelMonitorV2BootstrapFirst)
+		started := time.Now()
 		if err := s.repo.RecomputeRange(ctx, start, now); err != nil {
 			logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] bootstrap recent aggregation failed: %v", err)
+			s.recordBackfillFailure(now, cursor)
 			return
 		}
-		s.mu.Lock()
-		s.backfillAt = start
-		s.hasAggregated = true
-		s.mu.Unlock()
+		s.recordBackfillSuccess(start, time.Since(started), now)
 		return
 	}
 
@@ -267,27 +280,34 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 		return
 	}
 
-	// Phase 2: walk history backward in chunks until retention max (90d).
+	// Phase 2: walk history backward at most one chunk per tick until retention max (90d).
 	// Product UI (30d) fills first; remaining 30–90d continues silently.
 	retentionCutoff := now.Add(-channelMonitorV2RetentionMax)
 	if !cursor.After(retentionCutoff) {
 		return
 	}
-	// Walk backward in 1d chunks. After the 2h seed, the next chunk reaches
-	// past 24h so the default + daily UI ranges fill within a few ticks; 7d/30d
-	// follow as more chunks complete (banner tracks progress against 30d).
 	end := cursor
 	s.mu.Lock()
 	chunk := s.backfillChunk
 	s.mu.Unlock()
 	if chunk <= 0 {
-		chunk = channelMonitorV2BackfillChunk
+		chunk = channelMonitorV2BackfillChunkInit
+	}
+	maxChunk := channelMonitorV2MaxChunkForDepth(now, end)
+	if chunk > maxChunk {
+		chunk = maxChunk
+	}
+	if chunk < channelMonitorV2MinBackfillChunk {
+		chunk = channelMonitorV2MinBackfillChunk
 	}
 	start := end.Add(-chunk)
 	// Once bootstrap reaches historical data, keep chunks on day boundaries so
 	// daily rollups never depend on 1m rows from two independently pruned chunks.
 	if end.Before(now.Add(-7 * 24 * time.Hour)) {
-		start = end.Add(-chunk).Truncate(24 * time.Hour)
+		aligned := end.Add(-chunk).Truncate(24 * time.Hour)
+		if aligned.Before(end) {
+			start = aligned
+		}
 	}
 	if start.Before(retentionCutoff) {
 		start = retentionCutoff
@@ -295,25 +315,87 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 	if !start.Before(end) {
 		return
 	}
+	started := time.Now()
 	if err := s.repo.RecomputeRange(ctx, start, end); err != nil {
 		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] backfill failed %s..%s: %v", start, end, err)
-		s.mu.Lock()
-		s.backfillFailures++
-		if s.backfillChunk > channelMonitorV2MinBackfillChunk {
-			s.backfillChunk /= 2
-			if s.backfillChunk < channelMonitorV2MinBackfillChunk {
-				s.backfillChunk = channelMonitorV2MinBackfillChunk
-			}
-		}
-		s.mu.Unlock()
+		s.recordBackfillFailure(now, end)
 		return
 	}
+	s.recordBackfillSuccess(start, time.Since(started), now)
+}
+
+// channelMonitorV2MaxChunkForDepth returns the hard ceiling for a historical
+// chunk ending at `end` (earliest already covered / next walk end).
+func channelMonitorV2MaxChunkForDepth(now, end time.Time) time.Duration {
+	age := now.Sub(end)
+	switch {
+	case age < 24*time.Hour:
+		return channelMonitorV2MaxChunkNear1d
+	case age < 7*24*time.Hour:
+		return channelMonitorV2MaxChunkNear7d
+	default:
+		return channelMonitorV2MaxChunkFar
+	}
+}
+
+func (s *ChannelMonitorV2Aggregator) recordBackfillSuccess(coveredFrom time.Time, elapsed time.Duration, now time.Time) {
 	s.mu.Lock()
-	s.backfillChunk = channelMonitorV2BackfillChunk
-	s.backfillFailures = 0
-	s.backfillAt = start
+	defer s.mu.Unlock()
+	s.backfillAt = coveredFrom
 	s.hasAggregated = true
-	s.mu.Unlock()
+	s.backfillFailures = 0
+	s.nextWaitFloor = 0
+	maxChunk := channelMonitorV2MaxChunkForDepth(now, coveredFrom)
+	// Grow slowly only when the recompute was clearly cheap.
+	if elapsed > 0 && elapsed < channelMonitorV2GrowChunkUnder {
+		next := s.backfillChunk
+		if next <= 0 {
+			next = channelMonitorV2BackfillChunkInit
+		}
+		next = time.Duration(float64(next) * 1.5)
+		if next > maxChunk {
+			next = maxChunk
+		}
+		if next < channelMonitorV2MinBackfillChunk {
+			next = channelMonitorV2MinBackfillChunk
+		}
+		s.backfillChunk = next
+		return
+	}
+	// Keep a healthy chunk within the depth ceiling after success.
+	if s.backfillChunk <= 0 || s.backfillChunk > maxChunk {
+		s.backfillChunk = channelMonitorV2BackfillChunkInit
+		if s.backfillChunk > maxChunk {
+			s.backfillChunk = maxChunk
+		}
+	}
+}
+
+func (s *ChannelMonitorV2Aggregator) recordBackfillFailure(now, end time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.backfillFailures++
+	// Shrink chunk toward the minimum so large DBs self-throttle.
+	if s.backfillChunk <= 0 {
+		s.backfillChunk = channelMonitorV2BackfillChunkInit
+	}
+	s.backfillChunk /= 2
+	if s.backfillChunk < channelMonitorV2MinBackfillChunk {
+		s.backfillChunk = channelMonitorV2MinBackfillChunk
+	}
+	maxChunk := channelMonitorV2MaxChunkForDepth(now, end)
+	if s.backfillChunk > maxChunk {
+		s.backfillChunk = maxChunk
+	}
+	// Exponential backoff on wait floor: 1m, 2m, 4m… capped at 10m.
+	floor := time.Minute << uint(s.backfillFailures-1)
+	if floor > channelMonitorV2MaxBackoff {
+		floor = channelMonitorV2MaxBackoff
+	}
+	if floor < time.Minute {
+		floor = time.Minute
+	}
+	s.nextWaitFloor = floor
 }
 
 // ensureCursor restores durable backfill_cursor after process restart so progress
