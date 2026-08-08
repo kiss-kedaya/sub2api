@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -148,6 +149,24 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	if err != nil {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
+	}
+	if endpoint == "tts" {
+		subject, _ := middleware2.GetAuthSubjectFromContext(c)
+		reqLog := requestLogger(c, "handler.openai_gateway.grok_voice", zap.String("endpoint", endpoint))
+		// TTS bodies use {"input":"..."} (and variants). Normalize to chat messages so
+		// content moderation extractors see the spoken text.
+		auditBody := body
+		if input := extractGrokTTSInputText(body); input != "" {
+			if b, err := json.Marshal(map[string]any{
+				"messages": []map[string]any{{"role": "user", "content": input}},
+			}); err == nil {
+				auditBody = b
+			}
+		}
+		if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, "grok-4.5", auditBody); decision != nil && !decision.AllowNextStage {
+			h.openAISecurityAuditError(c, decision)
+			return
+		}
 	}
 	contentType := c.GetHeader("Content-Type")
 	if strings.TrimSpace(contentType) == "" {
@@ -297,4 +316,23 @@ func readGrokVoiceGatewayBody(c *gin.Context) ([]byte, error) {
 		return nil, errors.New("request body is required")
 	}
 	return io.ReadAll(c.Request.Body)
+}
+
+// extractGrokTTSInputText pulls the primary spoken text from a TTS JSON body.
+func extractGrokTTSInputText(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	for _, key := range []string{"input", "text", "prompt"} {
+		if v, ok := payload[key]; ok {
+			if s, ok := v.(string); ok {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
 }
