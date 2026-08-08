@@ -233,6 +233,32 @@ func isForcedUsageBillingRequestID(requestID string) bool {
 		strings.HasPrefix(id, "grok_realtime:")
 }
 
+// StableGrokAudioBillingRequestID is the durable usage_logs / dedup key for one
+// voice HTTP call (TTS/STT). Prefer an upstream request id when present.
+func StableGrokAudioBillingRequestID(upstreamRequestID string) string {
+	upstreamRequestID = strings.TrimSpace(upstreamRequestID)
+	if strings.HasPrefix(upstreamRequestID, "grok_audio:") {
+		return upstreamRequestID
+	}
+	if upstreamRequestID == "" {
+		upstreamRequestID = generateRequestID()
+	}
+	return "grok_audio:" + upstreamRequestID
+}
+
+// StableGrokRealtimeBillingRequestID is the durable usage_logs / dedup key for
+// one realtime WebSocket session.
+func StableGrokRealtimeBillingRequestID(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if strings.HasPrefix(sessionID, "grok_realtime:") {
+		return sessionID
+	}
+	if sessionID == "" {
+		sessionID = generateRequestID()
+	}
+	return "grok_realtime:" + sessionID
+}
+
 func resolveUsageBillingPayloadFingerprint(ctx context.Context, requestPayloadHash string) string {
 	if payloadHash := strings.TrimSpace(requestPayloadHash); payloadHash != "" {
 		return payloadHash

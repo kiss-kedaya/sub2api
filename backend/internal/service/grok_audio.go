@@ -76,10 +76,11 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 		contentType = "application/json"
 	}
 	req.Header.Set("Content-Type", contentType)
-	// Voice hits api.x.ai (not CLI proxy). Still stamp CLI identity headers for
-	// consistency with other Grok outbound calls; transport will not rewrite
-	// non-CLI-proxy hosts.
-	applyGrokCLIHeaders(req.Header)
+	// Match media path: CLI identity headers only on the CLI chat proxy.
+	// Official api.x.ai voice rejects or mistreats OAuth when CLI headers are stamped.
+	if account.IsGrokOAuth() && isGrokCLIProxyTarget(targetURL) {
+		applyGrokCLIHeaders(req.Header)
+	}
 	account.ApplyHeaderOverrides(req.Header)
 
 	proxyURL := ""
@@ -102,8 +103,10 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 	}
 	writeGrokMediaResponse(c, resp, data, s.responseHeaderFilter)
 	audioUsage := estimateGrokVoiceAudioUsage(baseEndpoint, body, contentType, data, time.Since(started))
+	upstreamID := firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
 	return &OpenAIForwardResult{
-		RequestID:     firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
+		// Forced durable money-event id so usage_billing_dedup cannot collapse under a reused client id.
+		RequestID:     StableGrokAudioBillingRequestID(upstreamID),
 		Model:         baseEndpoint,
 		UpstreamModel: baseEndpoint,
 		Duration:      time.Since(started),
@@ -132,8 +135,10 @@ func (s *OpenAIGatewayService) ProxyGrokRealtime(ctx context.Context, c *gin.Con
 	u.Scheme = "wss"
 	u.RawQuery = "model=" + url.QueryEscape(firstNonEmpty(model, "grok-voice-latest"))
 	headers := http.Header{"Authorization": []string{"Bearer " + token}}
-	// Stamp CLI identity for consistency (host is api.x.ai; no CLI-proxy rewrite).
-	applyGrokCLIHeaders(headers)
+	// Match media/voice HTTP: CLI headers only on CLI proxy hosts.
+	if account.IsGrokOAuth() && isGrokCLIProxyTarget(u.String()) {
+		applyGrokCLIHeaders(headers)
+	}
 	if account != nil {
 		account.ApplyHeaderOverrides(headers)
 	}
