@@ -335,6 +335,43 @@ type GrokVideoPendingBilling struct {
 	VideoResolution      string `json:"video_resolution,omitempty"`
 	VideoDurationSeconds int    `json:"video_duration_seconds,omitempty"`
 	OriginalModel        string `json:"original_model,omitempty"`
+	// CreatedAt is when the gateway accepted the async create (RFC3339Nano UTC).
+	// duration_ms for deferred billing is measured from this instant until the
+	// first official done+video.url observation (status poll or content download),
+	// not the latency of that single discovery request alone.
+	CreatedAt string `json:"created_at,omitempty"`
+}
+
+// GrokVideoPendingCreatedAtNow formats a create-accept timestamp for pending billing.
+func GrokVideoPendingCreatedAtNow() string {
+	return time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+// GrokVideoE2EDuration returns wall time from create accept to discovery of completion.
+// Returns 0 when CreatedAt is missing or unparseable (caller keeps poll-only Duration).
+func GrokVideoE2EDuration(createdAt string, discoveredAt time.Time) time.Duration {
+	createdAt = strings.TrimSpace(createdAt)
+	if createdAt == "" {
+		return 0
+	}
+	if discoveredAt.IsZero() {
+		discoveredAt = time.Now()
+	}
+	var created time.Time
+	var err error
+	if created, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
+		if created, err = time.Parse(time.RFC3339, createdAt); err != nil {
+			return 0
+		}
+	}
+	if created.IsZero() {
+		return 0
+	}
+	d := discoveredAt.Sub(created)
+	if d < 0 {
+		return 0
+	}
+	return d
 }
 
 func grokVideoPendingBillingKey(requestID string, userID, apiKeyID int64) string {
@@ -379,6 +416,12 @@ func (s *OpenAIGatewayService) StoreGrokVideoPendingBilling(
 	}
 	if pending.VideoDurationSeconds > 0 {
 		pending.VideoDurationSeconds = NormalizeVideoBillingDurationSecondsOrDefault(pending.VideoDurationSeconds)
+	}
+	// Always stamp create-accept time when missing so deferred duration_ms is E2E.
+	if strings.TrimSpace(pending.CreatedAt) == "" {
+		pending.CreatedAt = GrokVideoPendingCreatedAtNow()
+	} else {
+		pending.CreatedAt = strings.TrimSpace(pending.CreatedAt)
 	}
 	payload, err := json.Marshal(pending)
 	if err != nil {
