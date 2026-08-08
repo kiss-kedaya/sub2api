@@ -203,6 +203,9 @@ func filterGrokFreeQuotaAccountsCore(
 				}
 			}
 		}
+		// Only sweep on the query path: it is already TTL-bounded, so the Range
+		// cost stays off the cache-hit hot path.
+		sweepGrokFreeQuotaGateCache(cache, now, settings.cacheTTL)
 	}
 
 	filtered := make([]Account, 0, len(accounts))
@@ -216,6 +219,33 @@ func filterGrokFreeQuotaAccountsCore(
 		filtered = append(filtered, *account)
 	}
 	return filtered
+}
+
+// grokFreeQuotaGateCacheMinSweepAge floors the eviction age so a tiny cacheTTL
+// does not turn the cache into a per-call re-query.
+const grokFreeQuotaGateCacheMinSweepAge = 5 * time.Minute
+
+// sweepGrokFreeQuotaGateCache drops entries far past their TTL.
+//
+// Entries are keyed by account ID and only ever overwritten, so an account that
+// stops being scheduled (deleted, or moved off the free tier) would otherwise
+// sit in the map for the process lifetime. A still-live account simply
+// re-populates its entry on the next miss.
+func sweepGrokFreeQuotaGateCache(cache *sync.Map, now time.Time, cacheTTL time.Duration) {
+	if cache == nil || cacheTTL <= 0 {
+		return
+	}
+	maxAge := cacheTTL * 20
+	if maxAge < grokFreeQuotaGateCacheMinSweepAge {
+		maxAge = grokFreeQuotaGateCacheMinSweepAge
+	}
+	cache.Range(func(key, value any) bool {
+		entry, ok := value.(grokFreeQuotaGateCacheEntry)
+		if !ok || now.Sub(entry.checkedAt) > maxAge {
+			cache.Delete(key)
+		}
+		return true
+	})
 }
 
 func queryGrokFreeQuotaWindowStats(ctx context.Context, usageLogRepo UsageLogRepository, accountIDs []int64, start time.Time) (map[int64]*usagestats.AccountStats, error) {

@@ -1,6 +1,8 @@
 package service
 
 import (
+	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
@@ -52,12 +54,24 @@ func CanonicalGrokImagineVideoPriceFamily(model string) string {
 
 // NormalizeVideoModelPrices cleans and canonicalizes a per-model resolution map.
 // Keys become price families; tiers use 480p/720p/1080p. Negative prices dropped.
+//
+// Model keys are walked in sorted order rather than in Go map order: several
+// aliases can canonicalize onto the same family, and an unordered walk would
+// make the winning price for a conflicting tier vary between processes.
+// Unrecognized tiers are dropped with a warning instead of silently collapsing
+// into the 480p bucket.
 func NormalizeVideoModelPrices(in map[string]map[string]float64) map[string]map[string]float64 {
 	if len(in) == 0 {
 		return nil
 	}
+	modelKeys := make([]string, 0, len(in))
+	for modelKey := range in {
+		modelKeys = append(modelKeys, modelKey)
+	}
+	sort.Strings(modelKeys)
 	out := make(map[string]map[string]float64)
-	for modelKey, tierPrices := range in {
+	for _, modelKey := range modelKeys {
+		tierPrices := in[modelKey]
 		if len(tierPrices) == 0 {
 			continue
 		}
@@ -78,11 +92,32 @@ func NormalizeVideoModelPrices(in map[string]map[string]float64) map[string]map[
 		if normalizedTiers == nil {
 			normalizedTiers = make(map[string]float64)
 		}
-		for tierKey, price := range tierPrices {
+		tierKeys := make([]string, 0, len(tierPrices))
+		for tierKey := range tierPrices {
+			tierKeys = append(tierKeys, tierKey)
+		}
+		sort.Strings(tierKeys)
+		for _, tierKey := range tierKeys {
+			price := tierPrices[tierKey]
 			if price < 0 {
 				continue
 			}
-			tier := NormalizeVideoBillingResolutionOrDefault(tierKey)
+			tier, ok := LookupVideoBillingResolution(tierKey)
+			if !ok {
+				slog.Warn("video_model_prices_unknown_resolution_dropped",
+					"model_key", modelKey,
+					"family", family,
+					"resolution", tierKey)
+				continue
+			}
+			if existing, exists := normalizedTiers[tier]; exists && existing != price {
+				slog.Warn("video_model_prices_conflicting_tier_price",
+					"model_key", modelKey,
+					"family", family,
+					"resolution", tier,
+					"previous_price", existing,
+					"price", price)
+			}
 			normalizedTiers[tier] = price
 		}
 		if len(normalizedTiers) > 0 {
