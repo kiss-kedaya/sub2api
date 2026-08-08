@@ -81,7 +81,7 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 
 	model := c.Query("model")
 	if strings.TrimSpace(model) == "" {
