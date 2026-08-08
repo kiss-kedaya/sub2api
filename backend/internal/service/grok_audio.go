@@ -22,7 +22,8 @@ var supportedGrokVoiceHTTPEndpoints = map[string]struct{}{
 	"custom-voices": {},
 }
 
-// ForwardGrokVoice forwards the official xAI Voice HTTP APIs (/tts, /stt, /custom-voices).
+// ForwardGrokVoice forwards the official xAI Voice HTTP APIs (/tts, /stt, and
+// the custom-voices CRUD/audio subresources).
 // The response is intentionally passed through because TTS returns audio bytes
 // while STT returns JSON and xAI may add format-specific headers.
 func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Context, account *Account, endpoint string, body []byte, contentType string) (*OpenAIForwardResult, error) {
@@ -33,8 +34,23 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 		return nil, fmt.Errorf("account platform %s is not supported for grok voice", account.Platform)
 	}
 	endpoint = strings.Trim(strings.TrimSpace(endpoint), "/")
-	if _, ok := supportedGrokVoiceHTTPEndpoints[endpoint]; !ok {
+	parts := strings.Split(endpoint, "/")
+	baseEndpoint := parts[0]
+	if _, ok := supportedGrokVoiceHTTPEndpoints[baseEndpoint]; !ok {
 		return nil, fmt.Errorf("unsupported grok voice endpoint: %s", endpoint)
+	}
+	if len(parts) > 1 && baseEndpoint != "custom-voices" {
+		return nil, fmt.Errorf("unsupported grok voice endpoint: %s", endpoint)
+	}
+	if baseEndpoint == "custom-voices" {
+		if len(parts) > 3 || (len(parts) == 3 && parts[2] != "audio") {
+			return nil, fmt.Errorf("unsupported grok voice endpoint: %s", endpoint)
+		}
+	}
+	for _, part := range parts[1:] {
+		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "?#\\") {
+			return nil, fmt.Errorf("invalid grok voice endpoint path")
+		}
 	}
 	token, _, err := s.getRequestCredential(ctx, c, account)
 	if err != nil {
@@ -46,7 +62,11 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 	}
 	upstreamCtx, release := detachUpstreamContext(ctx)
 	defer release()
-	req, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(body))
+	method := http.MethodPost
+	if c != nil && c.Request != nil && strings.TrimSpace(c.Request.Method) != "" {
+		method = c.Request.Method
+	}
+	req, err := http.NewRequestWithContext(upstreamCtx, method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -81,11 +101,11 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 		return nil, err
 	}
 	writeGrokMediaResponse(c, resp, data, s.responseHeaderFilter)
-	audioUsage := estimateGrokVoiceAudioUsage(endpoint, body, contentType, data, time.Since(started))
+	audioUsage := estimateGrokVoiceAudioUsage(baseEndpoint, body, contentType, data, time.Since(started))
 	return &OpenAIForwardResult{
 		RequestID:     firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
-		Model:         endpoint,
-		UpstreamModel: endpoint,
+		Model:         baseEndpoint,
+		UpstreamModel: baseEndpoint,
 		Duration:      time.Since(started),
 		AudioUsage:    audioUsage,
 	}, nil

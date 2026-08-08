@@ -279,7 +279,13 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 }
 
 func readGrokVoiceGatewayBody(c *gin.Context) ([]byte, error) {
-	if c == nil || c.Request == nil || c.Request.Body == nil {
+	if c == nil || c.Request == nil {
+		return nil, errors.New("request body is required")
+	}
+	if c.Request.Body == nil {
+		if c.Request.Method == http.MethodGet || c.Request.Method == http.MethodDelete {
+			return nil, nil
+		}
 		return nil, errors.New("request body is required")
 	}
 	return io.ReadAll(c.Request.Body)
