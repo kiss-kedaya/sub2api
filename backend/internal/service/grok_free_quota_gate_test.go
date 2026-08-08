@@ -157,15 +157,23 @@ func TestFilterGrokFreeQuotaAccountsRecoversAfterRollingUsageFalls(t *testing.T)
 	require.Empty(t, scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts), "fresh cache keeps the soft-gate hold")
 
 	// Expire entry → miss fails open and schedules refresh with recovered usage.
+	// Clear in-flight markers so a refresh is allowed after we force-expire the entry.
+	if root, ok := freeQuotaRefreshInFlight.Load(&scheduler.grokFreeQuotaGateCache); ok {
+		if m, ok := root.(*sync.Map); ok {
+			m.Delete(int64(1))
+		}
+	}
+	callsBeforeExpire := repo.calls
 	scheduler.grokFreeQuotaGateCache.Store(int64(1), grokFreeQuotaGateCacheEntry{
-		tokens: 490_000, checkedAt: time.Now().Add(-time.Minute), known: true,
+		tokens: 490_000, checkedAt: time.Now().Add(-2 * time.Minute), known: true, // TTL=60s → stale
 	})
+	// Hot path fail-open while refresh is in flight.
 	require.Equal(t, []int64{1}, accountIDs(scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)))
 	require.Eventually(t, func() bool {
 		filtered := scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
-		return len(filtered) == 1 && filtered[0].ID == 1
+		return len(filtered) == 1 && filtered[0].ID == 1 &&
+			repo.calls > callsBeforeExpire
 	}, 2*time.Second, 10*time.Millisecond)
-	require.GreaterOrEqual(t, repo.calls, 2)
 }
 
 func TestResolveGrokFreeQuotaGateSettingsDefaultsToNinetyFivePercent(t *testing.T) {
