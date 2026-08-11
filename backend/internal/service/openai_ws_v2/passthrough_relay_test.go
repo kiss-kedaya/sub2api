@@ -865,7 +865,7 @@ func (c *errorOnWriteFrameConn) Close() error {
 	return nil
 }
 
-func TestRelay_NoDeltaTerminalSequence_FirstTokenMsNil(t *testing.T) {
+func TestRelay_NoSemanticOutputTerminalSequence_FirstTokenMsNil(t *testing.T) {
 	t.Parallel()
 
 	for _, terminalEvent := range []string{"response.completed", "response.done"} {
@@ -877,27 +877,23 @@ func TestRelay_NoDeltaTerminalSequence_FirstTokenMsNil(t *testing.T) {
 			upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
 				{
 					msgType: coderws.MessageText,
-					payload: []byte(`{"type":"response.created","response":{"id":"resp_no_delta"}}`),
+					payload: []byte(`{"type":"response.created","response":{"id":"resp_no_output"}}`),
 				},
 				{
 					msgType: coderws.MessageText,
-					payload: []byte(`{"type":"response.in_progress","response":{"id":"resp_no_delta"}}`),
+					payload: []byte(`{"type":"response.in_progress","response":{"id":"resp_no_output"}}`),
 				},
 				{
 					msgType: coderws.MessageText,
-					payload: []byte(`{"type":"response.output_text.done","response_id":"resp_no_delta","text":""}`),
+					payload: []byte(`{"type":"response.content_part.done","response_id":"resp_no_output"}`),
 				},
 				{
 					msgType: coderws.MessageText,
-					payload: []byte(`{"type":"response.content_part.done","response_id":"resp_no_delta"}`),
+					payload: []byte(`{"type":"response.output_item.done","response_id":"resp_no_output"}`),
 				},
 				{
 					msgType: coderws.MessageText,
-					payload: []byte(`{"type":"response.output_item.done","response_id":"resp_no_delta"}`),
-				},
-				{
-					msgType: coderws.MessageText,
-					payload: []byte(`{"type":"` + terminalEvent + `","response":{"id":"resp_no_delta","usage":{"input_tokens":2,"output_tokens":0}}}`),
+					payload: []byte(`{"type":"` + terminalEvent + `","response":{"id":"resp_no_output","usage":{"input_tokens":2,"output_tokens":0}}}`),
 				},
 			}, true)
 
@@ -918,7 +914,61 @@ func TestRelay_NoDeltaTerminalSequence_FirstTokenMsNil(t *testing.T) {
 			require.Nil(t, turn.FirstTokenMs)
 			require.Equal(t, terminalEvent, result.TerminalEventType)
 			require.Nil(t, result.FirstTokenMs)
-			require.Equal(t, int64(6), result.UpstreamToClientFrames)
+			require.Equal(t, int64(5), result.UpstreamToClientFrames)
+		})
+	}
+}
+
+func TestRelay_NoDeltaOutputDoneEvent_RecordsFirstTokenBeforeTerminal(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		donePayload string
+	}{
+		{
+			name:        "output text done",
+			donePayload: `{"type":"response.output_text.done","response_id":"resp_done","text":"hello"}`,
+		},
+		{
+			name:        "function call arguments done",
+			donePayload: `{"type":"response.function_call_arguments.done","response_id":"resp_done","arguments":"{\"city\":\"Paris\"}"}`,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			clientConn := newPassthroughTestFrameConn(nil, false)
+			upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+				{msgType: coderws.MessageText, payload: []byte(`{"type":"response.created","response":{"id":"resp_done"}}`)},
+				{msgType: coderws.MessageText, payload: []byte(tt.donePayload)},
+				{msgType: coderws.MessageText, payload: []byte(`{"type":"response.completed","response":{"id":"resp_done","usage":{"input_tokens":2,"output_tokens":1}}}`)},
+			}, true)
+
+			base := time.Unix(0, 0)
+			var nowTick atomic.Int64
+			nowFn := func() time.Time {
+				return base.Add(time.Duration(nowTick.Add(1)) * 10 * time.Millisecond)
+			}
+			var turn RelayTurnResult
+			result, relayExit := Relay(
+				context.Background(),
+				clientConn,
+				upstreamConn,
+				[]byte(`{"type":"response.create","model":"gpt-5.3-codex","input":[]}`),
+				RelayOptions{
+					Now:            nowFn,
+					OnTurnComplete: func(current RelayTurnResult) { turn = current },
+				},
+			)
+
+			require.Nil(t, relayExit)
+			require.NotNil(t, turn.FirstTokenMs)
+			require.Less(t, int64(*turn.FirstTokenMs), turn.Duration.Milliseconds())
+			require.NotNil(t, result.FirstTokenMs)
+			require.Less(t, int64(*result.FirstTokenMs), result.Duration.Milliseconds())
 		})
 	}
 }
