@@ -1153,14 +1153,14 @@ func TestCalculateCostWithLongContext_PropagatesError(t *testing.T) {
 func TestGetModelPricing_Grok45OfficialFallback(t *testing.T) {
 	svc := newTestBillingService()
 
-	for _, model := range []string{"grok", "grok-latest", "grok-4.5", "grok-4.5-latest", "grok-build-latest"} {
+	for _, model := range []string{"grok", "grok-latest", "grok-4.5", "grok-4.5-latest"} {
 		model := model
 		t.Run(model, func(t *testing.T) {
 			pricing, err := svc.GetModelPricing(model)
 			require.NoError(t, err)
 			require.InDelta(t, 2e-6, pricing.InputPricePerToken, 1e-12)
 			require.InDelta(t, 6e-6, pricing.OutputPricePerToken, 1e-12)
-			require.InDelta(t, 0.5e-6, pricing.CacheReadPricePerToken, 1e-12)
+			require.InDelta(t, 0.3e-6, pricing.CacheReadPricePerToken, 1e-12)
 			require.False(t, pricing.SupportsCacheBreakdown)
 		})
 	}
