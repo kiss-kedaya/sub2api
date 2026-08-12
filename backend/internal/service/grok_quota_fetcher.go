@@ -179,9 +179,22 @@ func applyGrokCredentialUsageFallback(usage *UsageInfo, account *Account) {
 		usage.SubscriptionTier = tier
 		usage.SubscriptionTierRaw = tier
 	}
+	applyGrokLiveJWTSubscriptionTier(usage, account)
 	if usage.GrokEntitlementStatus == "" {
 		usage.GrokEntitlementStatus = strings.TrimSpace(account.GetCredential("entitlement_status"))
 	}
+}
+
+func applyGrokLiveJWTSubscriptionTier(usage *UsageInfo, account *Account) {
+	if usage == nil || account == nil {
+		return
+	}
+	tier := xai.SubscriptionTierFromJWT(account.GetCredential("access_token"))
+	if tier == "" {
+		return
+	}
+	usage.SubscriptionTier = tier
+	usage.SubscriptionTierRaw = tier
 }
 
 func grokBillingSnapshotFromExtra(extra map[string]any) (*xai.BillingSummary, error) {
