@@ -63,14 +63,19 @@ func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2StaysOnResponses(t *test
 			require.True(t, ok)
 
 			require.Equal(t, "/v1/responses", c.Request.URL.Path)
-			require.False(t, isOpenAIRemoteCompactPath(c))
+			require.False(t, isOpenAILegacyCompactPath(c))
 			require.Equal(t, body, normalized)
 			require.True(t, gjson.GetBytes(normalized, "stream").Bool())
 			require.True(t, gjson.GetBytes(normalized, "store").Bool())
 			require.Equal(t, "pck-signal-1", gjson.GetBytes(normalized, "prompt_cache_key").String())
 			require.Equal(t, "max", gjson.GetBytes(normalized, "reasoning.effort").String())
 			require.Equal(t, "all_turns", gjson.GetBytes(normalized, "reasoning.context").String())
-			require.True(t, requiresOpenAICompactAccount(c, normalized))
+			legacyCompact := service.IsOpenAIResponsesCompactPath(c)
+			nativeV2 := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(normalized)
+			require.False(t, legacyCompact)
+			require.True(t, nativeV2)
+			require.Equal(t, service.OpenAIEndpointCapabilityResponses,
+				openAIResponsesRequiredCapabilityForRequest(false, nativeV2 || legacyCompact, service.PlatformOpenAI))
 
 			reqStream, streamOK := parseOpenAICompatibleStream(normalized)
 			require.True(t, streamOK)
@@ -87,105 +92,7 @@ func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2StaysOnResponses(t *test
 func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2PathAliasesStayOnResponses(t *testing.T) {
 	h := &OpenAIGatewayHandler{}
 	body := []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`)
-	for _, path := range []string{"/v1/responses/", "/backend-api/codex/responses"} {
-		t.Run(path, func(t *testing.T) {
-			c := newCompactBodySignalTestContext(t, path, body)
-
-			normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
-			require.True(t, ok)
-			require.Equal(t, path, c.Request.URL.Path)
-			require.Equal(t, body, normalized)
-		})
-	}
-}
-
-func TestRequiresOpenAICompactAccount_RemoteV2UsesNativeRequestSignal(t *testing.T) {
-	h := &OpenAIGatewayHandler{}
-	tests := []struct {
-		name       string
-		body       []byte
-		betaHeader string
-		wantBefore bool
-		wantAfter  bool
-		path       string
-	}{
-		{
-			name:       "native_v2_headerless",
-			body:       []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`),
-			wantBefore: true,
-			wantAfter:  true,
-			path:       "/v1/responses",
-		},
-		{
-			name:       "native_v2_without_trigger",
-			body:       []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"message","role":"user","content":"hello"}]}`),
-			betaHeader: "remote_compaction_v2",
-			wantBefore: false,
-			wantAfter:  false,
-			path:       "/v1/responses",
-		},
-		{
-			name:       "native_v2_unrelated_header",
-			body:       []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`),
-			betaHeader: "responses_websockets_v2",
-			wantBefore: true,
-			wantAfter:  true,
-			path:       "/v1/responses",
-		},
-		{
-			name:       "native_v2_wrong_case_header",
-			body:       []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`),
-			betaHeader: "REMOTE_COMPACTION_V2",
-			wantBefore: true,
-			wantAfter:  true,
-			path:       "/v1/responses",
-		},
-		{
-			name:       "responses_subpath_with_native_signal",
-			body:       []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`),
-			betaHeader: "remote_compaction_v2",
-			wantBefore: false,
-			wantAfter:  false,
-			path:       "/v1/responses/resp_123/responses",
-		},
-		{
-			name:       "stream_false_promotes",
-			body:       []byte(`{"model":"gpt-5.6-sol","stream":false,"input":[{"type":"compaction_trigger"}]}`),
-			wantBefore: false,
-			wantAfter:  true,
-			path:       "/v1/responses",
-		},
-		{
-			name:       "stream_absent_promotes",
-			body:       []byte(`{"model":"gpt-5.6-sol","input":[{"type":"compaction_trigger"}]}`),
-			betaHeader: "remote_compaction_v2",
-			wantBefore: false,
-			wantAfter:  true,
-			path:       "/v1/responses",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := newCompactBodySignalTestContext(t, tt.path, tt.body)
-			if tt.betaHeader != "" {
-				c.Request.Header.Set("x-codex-beta-features", tt.betaHeader)
-			}
-
-			require.Equal(t, tt.wantBefore, requiresOpenAICompactAccount(c, tt.body))
-			normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), tt.body)
-			require.True(t, ok)
-			require.Equal(t, tt.wantAfter, requiresOpenAICompactAccount(c, normalized))
-		})
-	}
-}
-
-func TestRequiresOpenAICompactAccount_RemoteV2SupportsResponsesRootAliases(t *testing.T) {
-	h := &OpenAIGatewayHandler{}
-	body := []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`)
-
 	for _, path := range []string{
-		"/v1/responses",
 		"/v1/responses/",
 		"/openai/v1/responses",
 		"/responses",
@@ -197,7 +104,132 @@ func TestRequiresOpenAICompactAccount_RemoteV2SupportsResponsesRootAliases(t *te
 			normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
 			require.True(t, ok)
 			require.Equal(t, path, c.Request.URL.Path)
-			require.True(t, requiresOpenAICompactAccount(c, normalized))
+			require.Equal(t, body, normalized)
+			legacyCompact := service.IsOpenAIResponsesCompactPath(c)
+			nativeV2 := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(normalized)
+			require.False(t, legacyCompact)
+			require.True(t, nativeV2)
+			require.Equal(t, service.OpenAIEndpointCapabilityResponses,
+				openAIResponsesRequiredCapabilityForRequest(false, nativeV2 || legacyCompact, service.PlatformOpenAI))
+		})
+	}
+}
+
+func TestOpenAIResponsesCompactionRoutingFlags(t *testing.T) {
+	h := &OpenAIGatewayHandler{}
+	tests := []struct {
+		name                string
+		body                []byte
+		path                string
+		wantLegacyBefore    bool
+		wantNativeBefore    bool
+		wantLegacyAfter     bool
+		wantNativeAfter     bool
+		wantCapabilityAfter service.OpenAIEndpointCapability
+		wantPathAfter       string
+		wantBodyUnchanged   bool
+	}{
+		{
+			name:                "native_v2_stream_trigger",
+			body:                []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`),
+			path:                "/v1/responses",
+			wantLegacyBefore:    false,
+			wantNativeBefore:    true,
+			wantLegacyAfter:     false,
+			wantNativeAfter:     true,
+			wantCapabilityAfter: service.OpenAIEndpointCapabilityResponses,
+			wantPathAfter:       "/v1/responses",
+			wantBodyUnchanged:   true,
+		},
+		{
+			name:                "native_v2_without_trigger",
+			body:                []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"message","role":"user","content":"hello"}]}`),
+			path:                "/v1/responses",
+			wantLegacyBefore:    false,
+			wantNativeBefore:    false,
+			wantLegacyAfter:     false,
+			wantNativeAfter:     false,
+			wantCapabilityAfter: service.OpenAIEndpointCapabilityChatCompletions,
+			wantPathAfter:       "/v1/responses",
+			wantBodyUnchanged:   true,
+		},
+		{
+			name:                "explicit_compact",
+			body:                []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`),
+			path:                "/v1/responses/compact",
+			wantLegacyBefore:    true,
+			wantNativeBefore:    false,
+			wantLegacyAfter:     true,
+			wantNativeAfter:     false,
+			wantCapabilityAfter: service.OpenAIEndpointCapabilityResponses,
+			wantPathAfter:       "/v1/responses/compact",
+		},
+		{
+			name:                "nested_compact",
+			body:                []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`),
+			path:                "/v1/responses/compact/detail",
+			wantLegacyBefore:    true,
+			wantNativeBefore:    false,
+			wantLegacyAfter:     true,
+			wantNativeAfter:     false,
+			wantCapabilityAfter: service.OpenAIEndpointCapabilityResponses,
+			wantPathAfter:       "/v1/responses/compact/detail",
+		},
+		{
+			name:                "responses_subpath_with_native_signal",
+			body:                []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"compaction_trigger"}]}`),
+			path:                "/v1/responses/resp_123/responses",
+			wantLegacyBefore:    false,
+			wantNativeBefore:    false,
+			wantLegacyAfter:     false,
+			wantNativeAfter:     false,
+			wantCapabilityAfter: service.OpenAIEndpointCapabilityChatCompletions,
+			wantPathAfter:       "/v1/responses/resp_123/responses",
+			wantBodyUnchanged:   true,
+		},
+		{
+			name:                "stream_false_promotes",
+			body:                []byte(`{"model":"gpt-5.6-sol","stream":false,"input":[{"type":"compaction_trigger"}]}`),
+			path:                "/v1/responses",
+			wantLegacyBefore:    false,
+			wantNativeBefore:    false,
+			wantLegacyAfter:     true,
+			wantNativeAfter:     false,
+			wantCapabilityAfter: service.OpenAIEndpointCapabilityResponses,
+			wantPathAfter:       "/v1/responses/compact",
+		},
+		{
+			name:                "stream_absent_promotes",
+			body:                []byte(`{"model":"gpt-5.6-sol","input":[{"type":"compaction_trigger"}]}`),
+			path:                "/v1/responses",
+			wantLegacyBefore:    false,
+			wantNativeBefore:    false,
+			wantLegacyAfter:     true,
+			wantNativeAfter:     false,
+			wantCapabilityAfter: service.OpenAIEndpointCapabilityResponses,
+			wantPathAfter:       "/v1/responses/compact",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newCompactBodySignalTestContext(t, tt.path, tt.body)
+			legacyBefore := service.IsOpenAIResponsesCompactPath(c)
+			nativeBefore := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(tt.body)
+			require.Equal(t, tt.wantLegacyBefore, legacyBefore)
+			require.Equal(t, tt.wantNativeBefore, nativeBefore)
+			normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), tt.body)
+			require.True(t, ok)
+			require.Equal(t, tt.wantPathAfter, c.Request.URL.Path)
+			legacyAfter := service.IsOpenAIResponsesCompactPath(c)
+			nativeAfter := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(normalized)
+			require.Equal(t, tt.wantLegacyAfter, legacyAfter)
+			require.Equal(t, tt.wantNativeAfter, nativeAfter)
+			require.Equal(t, tt.wantCapabilityAfter,
+				openAIResponsesRequiredCapabilityForRequest(false, nativeAfter || legacyAfter, service.PlatformOpenAI))
+			if tt.wantBodyUnchanged {
+				require.Equal(t, tt.body, normalized)
+			}
 		})
 	}
 }
@@ -279,7 +311,7 @@ func TestNormalizeOpenAIResponsesCompactRequest_NoTriggerUntouched(t *testing.T)
 	normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
 	require.True(t, ok)
 	require.Equal(t, "/v1/responses", c.Request.URL.Path)
-	require.False(t, isOpenAIRemoteCompactPath(c))
+	require.False(t, isOpenAILegacyCompactPath(c))
 	require.Equal(t, body, normalized)
 	require.True(t, gjson.GetBytes(normalized, "stream").Bool())
 }
