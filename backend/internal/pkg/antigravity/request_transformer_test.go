@@ -565,3 +565,27 @@ func TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions
 	require.Equal(t, "get_weather", req.Request.Tools[0].FunctionDeclarations[0].Name)
 	require.NotNil(t, req.Request.Tools[1].GoogleSearch)
 }
+
+func TestGeminiToolConfig_IncludeServerSideToolInvocations(t *testing.T) {
+	t.Run("serialize and deserialize toolConfig with includeServerSideToolInvocations", func(t *testing.T) {
+		trueVal := true
+		cfg := GeminiToolConfig{
+			FunctionCallingConfig: &GeminiFunctionCallingConfig{
+				Mode: "VALIDATED",
+			},
+			IncludeServerSideToolInvocations: &trueVal,
+		}
+
+		data, err := json.Marshal(cfg)
+		require.NoError(t, err)
+		require.Contains(t, string(data), `"includeServerSideToolInvocations":true`)
+
+		var decoded GeminiToolConfig
+		err = json.Unmarshal(data, &decoded)
+		require.NoError(t, err)
+		require.NotNil(t, decoded.IncludeServerSideToolInvocations)
+		require.True(t, *decoded.IncludeServerSideToolInvocations)
+		require.Equal(t, "VALIDATED", decoded.FunctionCallingConfig.Mode)
+	})
+}
+
