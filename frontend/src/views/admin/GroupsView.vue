@@ -510,7 +510,7 @@
           <p class="input-hint">{{ t("admin.groups.platformHint") }}</p>
         </div>
         <!-- 从分组复制账号 -->
-        <div v-if="copyAccountsGroupOptions.length > 0">
+        <div v-if="!authStore.isSimpleMode && copyAccountsGroupOptions.length > 0">
           <div class="mb-1.5 flex items-center gap-1">
             <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
               {{ t("admin.groups.copyAccounts.title") }}
@@ -598,7 +598,7 @@
           </select>
           <p class="input-hint">{{ t("admin.groups.copyAccounts.hint") }}</p>
         </div>
-        <div>
+        <div v-if="!authStore.isSimpleMode">
           <label class="input-label">{{
             t("admin.groups.form.rateMultiplier")
           }}</label>
@@ -2307,6 +2307,7 @@
           />
           <p class="input-hint">{{ t("admin.groups.platformNotEditable") }}</p>
         </div>
+        <template v-if="!authStore.isSimpleMode">
         <!-- 从分组复制账号（编辑时） -->
         <div v-if="copyAccountsGroupOptionsForEdit.length > 0">
           <div class="mb-1.5 flex items-center gap-1">
@@ -4022,6 +4023,7 @@
             {{ t("admin.groups.modelRouting.addRule") }}
           </button>
         </div>
+        </template>
       </form>
 
       <template #footer>
@@ -4568,6 +4570,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAppStore } from "@/stores/app";
+import { useAuthStore } from "@/stores/auth";
 import { useOnboardingStore } from "@/stores/onboarding";
 import { adminAPI } from "@/api/admin";
 import type {
@@ -4738,6 +4741,7 @@ const groupPricingToAPI = (
 
 const { t } = useI18n();
 const appStore = useAppStore();
+const authStore = useAuthStore();
 const onboardingStore = useOnboardingStore();
 
 const ALWAYS_VISIBLE_COLUMNS = new Set(["name", "actions"]);
@@ -4751,43 +4755,27 @@ const VERSION_NEW_HIDDEN_COLUMNS: Record<number, string[]> = {
   2: ["id"],
 };
 
-const allColumns = computed<Column[]>(() => [
-  { key: "name", label: t("admin.groups.columns.name"), sortable: true },
-  { key: "id", label: t("admin.groups.columns.id"), sortable: true },
-  {
-    key: "platform",
-    label: t("admin.groups.columns.platform"),
-    sortable: true,
-  },
-  {
-    key: "billing_type",
-    label: t("admin.groups.columns.billingType"),
-    sortable: true,
-  },
-  {
-    key: "rate_multiplier",
-    label: t("admin.groups.columns.rateMultiplier"),
-    sortable: true,
-  },
-  {
-    key: "is_exclusive",
-    label: t("admin.groups.columns.type"),
-    sortable: true,
-  },
-  {
-    key: "account_count",
-    label: t("admin.groups.columns.accounts"),
-    sortable: true,
-  },
-  {
-    key: "capacity",
-    label: t("admin.groups.columns.capacity"),
-    sortable: false,
-  },
-  { key: "usage", label: t("admin.groups.columns.usage"), sortable: false },
-  { key: "status", label: t("admin.groups.columns.status"), sortable: true },
-  { key: "actions", label: t("admin.groups.columns.actions"), sortable: false },
-]);
+const allColumns = computed<Column[]>(() => {
+  const basic: Column[] = [
+    { key: "name", label: t("admin.groups.columns.name"), sortable: true },
+    { key: "id", label: t("admin.groups.columns.id"), sortable: true },
+    { key: "platform", label: t("admin.groups.columns.platform"), sortable: true },
+    { key: "account_count", label: t("admin.groups.columns.accounts"), sortable: true },
+    { key: "status", label: t("admin.groups.columns.status"), sortable: true },
+    { key: "actions", label: t("admin.groups.columns.actions"), sortable: false },
+  ];
+  if (authStore.isSimpleMode) return basic;
+  return [
+    ...basic.slice(0, 3),
+    { key: "billing_type", label: t("admin.groups.columns.billingType"), sortable: true },
+    { key: "rate_multiplier", label: t("admin.groups.columns.rateMultiplier"), sortable: true },
+    { key: "is_exclusive", label: t("admin.groups.columns.type"), sortable: true },
+    basic[3],
+    { key: "capacity", label: t("admin.groups.columns.capacity"), sortable: false },
+    { key: "usage", label: t("admin.groups.columns.usage"), sortable: false },
+    ...basic.slice(4),
+  ];
+});
 
 const toggleableColumns = computed(() =>
   allColumns.value.filter((col) => !ALWAYS_VISIBLE_COLUMNS.has(col.key)),

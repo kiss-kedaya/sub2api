@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -24,6 +25,7 @@ type GroupHandler struct {
 	adminService         service.AdminService
 	dashboardService     *service.DashboardService
 	groupCapacityService *service.GroupCapacityService
+	cfg                  *config.Config
 }
 
 // GetLiveCapability 返回当前服务端是否具备生成 Live attestation 的运行环境。
@@ -87,11 +89,68 @@ func (f optionalLimitField) ToServiceInput() *float64 {
 
 // NewGroupHandler creates a new admin group handler
 func NewGroupHandler(adminService service.AdminService, dashboardService *service.DashboardService, groupCapacityService *service.GroupCapacityService) *GroupHandler {
+	return NewGroupHandlerWithConfig(adminService, dashboardService, groupCapacityService, nil)
+}
+
+func NewGroupHandlerWithConfig(adminService service.AdminService, dashboardService *service.DashboardService, groupCapacityService *service.GroupCapacityService, cfg *config.Config) *GroupHandler {
 	return &GroupHandler{
 		adminService:         adminService,
 		dashboardService:     dashboardService,
 		groupCapacityService: groupCapacityService,
+		cfg:                  cfg,
 	}
+}
+
+func (h *GroupHandler) isSimpleMode() bool {
+	return h != nil && h.cfg != nil && h.cfg.RunMode == config.RunModeSimple
+}
+
+func sanitizeCreateGroupRequestForSimpleMode(req *CreateGroupRequest) {
+	if req == nil {
+		return
+	}
+	req.RateMultiplier = 1
+	req.IsExclusive = false
+	req.SubscriptionType = service.SubscriptionTypeStandard
+	req.DailyLimitUSD, req.WeeklyLimitUSD, req.MonthlyLimitUSD = optionalLimitField{}, optionalLimitField{}, optionalLimitField{}
+	req.AllowImageGeneration, req.AllowBatchImageGeneration = false, false
+	req.ImageRateIndependent, req.ImageRateMultiplier = false, nil
+	req.ImagePrice1K, req.ImagePrice2K, req.ImagePrice4K = nil, nil, nil
+	req.VideoRateIndependent, req.VideoRateMultiplier = false, nil
+	req.PeakRateEnabled, req.PeakStart, req.PeakEnd, req.PeakRateMultiplier = false, "", "", nil
+	req.ProfitControlEnabled, req.ProfitMinMargin, req.ProfitSafetyBuffer = false, nil, nil
+	req.ClaudeCodeOnly, req.FallbackGroupID, req.FallbackGroupIDOnInvalidRequest = false, nil, nil
+	req.ModelRouting, req.ModelRoutingEnabled, req.MCPXMLInject = nil, false, nil
+	req.SupportedModelScopes, req.AllowMessagesDispatch, req.AllowLive = nil, false, false
+	req.RequireOAuthOnly, req.RequirePrivacySet, req.DefaultMappedModel = false, false, ""
+	req.MessagesDispatchModelConfig, req.ModelsListConfig = service.OpenAIMessagesDispatchModelConfig{}, service.GroupModelsListConfig{}
+	req.RPMLimit, req.MaxReasoningEffort, req.ReasoningEffortMappings = 0, "", nil
+	req.CopyAccountsFromGroupIDs = nil
+}
+
+func sanitizeUpdateGroupRequestForSimpleMode(req *UpdateGroupRequest) {
+	if req == nil {
+		return
+	}
+	rate, exclusive, disabled, image, messages, live, oauth, privacy := 1.0, false, false, false, false, false, false, false
+	rpm := 0
+	req.RateMultiplier, req.IsExclusive = &rate, &exclusive
+	req.Status, req.SubscriptionType = "", service.SubscriptionTypeStandard
+	req.DailyLimitUSD, req.WeeklyLimitUSD, req.MonthlyLimitUSD = optionalLimitField{}, optionalLimitField{}, optionalLimitField{}
+	req.AllowImageGeneration, req.AllowBatchImageGeneration = &image, &image
+	req.ImageRateIndependent, req.ImageRateMultiplier = &disabled, nil
+	req.ImagePrice1K, req.ImagePrice2K, req.ImagePrice4K = nil, nil, nil
+	req.VideoRateIndependent, req.VideoRateMultiplier = &disabled, nil
+	req.PeakRateEnabled, req.PeakStart, req.PeakEnd, req.PeakRateMultiplier = &disabled, nil, nil, nil
+	req.ProfitControlEnabled, req.ProfitMinMargin, req.ProfitSafetyBuffer = &disabled, nil, nil
+	req.ClaudeCodeOnly, req.FallbackGroupID, req.FallbackGroupIDOnInvalidRequest = &disabled, nil, nil
+	req.ModelRouting, req.ModelRoutingEnabled, req.MCPXMLInject = nil, &disabled, nil
+	req.SupportedModelScopes = nil
+	req.AllowMessagesDispatch, req.AllowLive = &messages, &live
+	req.RequireOAuthOnly, req.RequirePrivacySet = &oauth, &privacy
+	req.DefaultMappedModel, req.MessagesDispatchModelConfig, req.ModelsListConfig = nil, nil, nil
+	req.RPMLimit, req.MaxReasoningEffort, req.ReasoningEffortMappings = &rpm, nil, nil
+	req.CopyAccountsFromGroupIDs = nil
 }
 
 // CreateGroupRequest represents create group request
@@ -501,6 +560,9 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	if h.isSimpleMode() {
+		sanitizeCreateGroupRequestForSimpleMode(&req)
+	}
 
 	if err := service.ValidatePeakRateConfig(req.SubscriptionType, req.PeakRateEnabled, req.PeakStart, req.PeakEnd, float64ValueOrDefault(req.PeakRateMultiplier, 1.0)); err != nil {
 		response.BadRequest(c, err.Error())
@@ -644,6 +706,9 @@ func (h *GroupHandler) Update(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
+	}
+	if h.isSimpleMode() {
+		sanitizeUpdateGroupRequestForSimpleMode(&req)
 	}
 
 	group, err := h.adminService.UpdateGroup(c.Request.Context(), groupID, &service.UpdateGroupInput{
