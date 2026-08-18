@@ -739,6 +739,27 @@ func (s *SettingService) GetRateLimit429CooldownSettings(ctx context.Context) (*
 	if settings.CooldownSeconds > 7200 {
 		settings.CooldownSeconds = 7200
 	}
+	if settings.Strategy != "same_account_retry" {
+		settings.Strategy = "cooldown"
+	}
+	if settings.RetryIntervalMs < 100 {
+		settings.RetryIntervalMs = 500
+	}
+	if settings.RetryIntervalMs > 60000 {
+		settings.RetryIntervalMs = 60000
+	}
+	if settings.RetryMaxDurationSeconds < 1 {
+		settings.RetryMaxDurationSeconds = 120
+	}
+	if settings.RetryMaxDurationSeconds > 600 {
+		settings.RetryMaxDurationSeconds = 600
+	}
+	if settings.MaxAccountSwitches < 0 {
+		settings.MaxAccountSwitches = 0
+	}
+	if settings.MaxAccountSwitches > 10 {
+		settings.MaxAccountSwitches = 10
+	}
 
 	return &settings, nil
 }
@@ -748,12 +769,28 @@ func (s *SettingService) SetRateLimit429CooldownSettings(ctx context.Context, se
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
 	}
+	if settings.Strategy == "" { settings.Strategy = "cooldown" }
+	if settings.RetryIntervalMs == 0 { settings.RetryIntervalMs = 500 }
+	if settings.RetryMaxDurationSeconds == 0 { settings.RetryMaxDurationSeconds = 120 }
+	if settings.MaxAccountSwitches < 0 { settings.MaxAccountSwitches = 0 }
 
 	if settings.CooldownSeconds < 1 || settings.CooldownSeconds > 7200 {
 		if settings.Enabled {
 			return fmt.Errorf("cooldown_seconds must be between 1-7200")
 		}
 		settings.CooldownSeconds = 5
+	}
+	if settings.Strategy != "cooldown" && settings.Strategy != "same_account_retry" {
+		return fmt.Errorf("strategy must be cooldown or same_account_retry")
+	}
+	if settings.RetryIntervalMs < 100 || settings.RetryIntervalMs > 60000 {
+		return fmt.Errorf("retry_interval_ms must be between 100-60000")
+	}
+	if settings.RetryMaxDurationSeconds < 1 || settings.RetryMaxDurationSeconds > 600 {
+		return fmt.Errorf("retry_max_duration_seconds must be between 1-600")
+	}
+	if settings.MaxAccountSwitches < 0 || settings.MaxAccountSwitches > 10 {
+		return fmt.Errorf("max_account_switches must be between 0-10")
 	}
 
 	data, err := json.Marshal(settings)
