@@ -10,8 +10,10 @@ import {
   PROVIDER_GROK,
 } from '@/constants/channelMonitor'
 
-const { listTemplates } = vi.hoisted(() => ({
+const { listTemplates, accountsList, accountsGetById } = vi.hoisted(() => ({
   listTemplates: vi.fn(),
+  accountsList: vi.fn(),
+  accountsGetById: vi.fn(),
 }))
 
 
@@ -33,6 +35,10 @@ vi.mock('@/api/admin', () => ({
     },
     channelMonitorTemplate: {
       list: listTemplates,
+    },
+    accounts: {
+      list: (...args: unknown[]) => accountsList(...args),
+      getById: (...args: unknown[]) => accountsGetById(...args),
     },
   },
 }))
@@ -85,6 +91,8 @@ function mountDialog() {
 describe('channel monitor Grok provider', () => {
   beforeEach(() => {
     listTemplates.mockReset().mockResolvedValue({ items: [] })
+    accountsList.mockReset().mockResolvedValue({ items: [] })
+    accountsGetById.mockReset()
   })
 
   it('offers Grok in the responsive provider grid and prefills its official defaults', async () => {
