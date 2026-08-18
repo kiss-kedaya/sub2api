@@ -282,18 +282,18 @@ func TestUsageQuotaTiers_MapsAllWindowKinds(t *testing.T) {
 	remaining := int64(400)
 	resetUnix := int64(1777283883)
 	usage := &UsageInfo{
-		FiveHour:           &UsageProgress{Utilization: 50},
-		SevenDay:           &UsageProgress{Utilization: 60},
-		SevenDaySonnet:     &UsageProgress{Utilization: 70},
-		SevenDayFable:      &UsageProgress{Utilization: 80},
-		ThirtyDay:          &UsageProgress{Utilization: 20},
-		GeminiSharedDaily:  &UsageProgress{Utilization: 11},
-		GeminiProDaily:     &UsageProgress{Utilization: 22},
-		GeminiFlashDaily:   &UsageProgress{Utilization: 33},
-		GrokRequestQuota:   &xai.QuotaWindow{Limit: &limit, Remaining: &remaining, ResetUnix: &resetUnix},
-		GrokTokenQuota:     &xai.QuotaWindow{Limit: &limit, Remaining: &remaining, ResetAt: "2026-08-19T00:00:00Z"},
+		FiveHour:          &UsageProgress{Utilization: 50},
+		SevenDay:          &UsageProgress{Utilization: 60},
+		SevenDaySonnet:    &UsageProgress{Utilization: 70},
+		SevenDayFable:     &UsageProgress{Utilization: 80},
+		ThirtyDay:         &UsageProgress{Utilization: 20},
+		GeminiSharedDaily: &UsageProgress{Utilization: 11},
+		GeminiProDaily:    &UsageProgress{Utilization: 22},
+		GeminiFlashDaily:  &UsageProgress{Utilization: 33},
+		GrokRequestQuota:  &xai.QuotaWindow{Limit: &limit, Remaining: &remaining, ResetUnix: &resetUnix},
+		GrokTokenQuota:    &xai.QuotaWindow{Limit: &limit, Remaining: &remaining, ResetAt: "2026-08-19T00:00:00Z"},
 		AntigravityQuota: map[string]*AntigravityModelQuota{
-			"gemini-3-pro": {Utilization: 45},
+			"gemini-3-pro":   {Utilization: 45},
 			"gemini-3-flash": {Utilization: 55},
 		},
 	}
