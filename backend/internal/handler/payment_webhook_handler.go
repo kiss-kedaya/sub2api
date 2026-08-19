@@ -67,6 +67,11 @@ func (h *PaymentWebhookHandler) AirwallexWebhook(c *gin.Context) {
 	h.handleNotify(c, payment.TypeAirwallex)
 }
 
+// EPUSDTWebhook handles GMPay/EPUSDT JSON callbacks.
+func (h *PaymentWebhookHandler) EPUSDTWebhook(c *gin.Context) {
+	h.handleNotify(c, payment.TypeEpusdt)
+}
+
 // handleNotify is the shared logic for all provider webhook handlers.
 func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string) {
 	var rawBody string
@@ -106,6 +111,9 @@ func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string)
 	resolvedProviderKey, notification, err := verifyNotificationWithProviders(c.Request.Context(), providers, rawBody, headers)
 	if err != nil {
 		truncatedBody := rawBody
+		if providerKey == payment.TypeEpusdt {
+			truncatedBody = "[redacted]"
+		}
 		if len(truncatedBody) > webhookLogTruncateLen {
 			truncatedBody = truncatedBody[:webhookLogTruncateLen] + "...(truncated)"
 		}
@@ -152,6 +160,13 @@ func extractOutTradeNo(rawBody, providerKey string) string {
 		values, err := url.ParseQuery(rawBody)
 		if err == nil {
 			return values.Get("out_trade_no")
+		}
+	case payment.TypeEpusdt:
+		var payload struct {
+			OrderID string `json:"order_id"`
+		}
+		if err := json.Unmarshal([]byte(rawBody), &payload); err == nil {
+			return strings.TrimSpace(payload.OrderID)
 		}
 	case payment.TypeAirwallex:
 		var payload struct {

@@ -66,6 +66,9 @@ func RegisterPaymentRoutes(
 		webhook.POST("/wxpay", webhookHandler.WxpayNotify)
 		webhook.POST("/stripe", webhookHandler.StripeWebhook)
 		webhook.POST("/airwallex", webhookHandler.AirwallexWebhook)
+		webhook.POST("/epusdt", webhookHandler.EPUSDTWebhook)
+		// Compatibility alias for existing EPUSDT deployments.
+		v1.POST("/payments/callback", webhookHandler.EPUSDTWebhook)
 	}
 
 	// --- Admin payment endpoints (admin auth) ---
