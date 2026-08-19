@@ -88,6 +88,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
 
+	// 自适应账号的 Chat Completions 入站始终使用供应商原生 CC 端点。
+	if account.IsAdaptiveAPIProtocol() {
+		return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+	}
+
 	// 入口分流（国产供应商 Anthropic 协议）：上游为供应商原生 Anthropic 端点，
 	// CC 入站请求经 CC→Responses→Anthropic 转换链直通该端点。必须先于
 	// ShouldUseResponsesAPI 分流：该类账号经 probe 落标
