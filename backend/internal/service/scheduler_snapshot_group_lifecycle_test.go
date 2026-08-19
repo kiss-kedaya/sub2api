@@ -325,8 +325,8 @@ func newGroupLifecycleTestService(cache SchedulerCache, accounts AccountReposito
 }
 
 func expectedGroupLifecycleBuckets(groupID int64) []SchedulerBucket {
-	platforms := []string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok}
-	buckets := make([]SchedulerBucket, 0, 12)
+	platforms := schedulerSnapshotPlatforms()
+	buckets := make([]SchedulerBucket, 0, 18)
 	for _, platform := range platforms {
 		buckets = append(buckets,
 			SchedulerBucket{GroupID: groupID, Platform: platform, Mode: SchedulerModeSingle},

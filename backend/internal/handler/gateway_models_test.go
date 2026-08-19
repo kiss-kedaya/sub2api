@@ -321,6 +321,27 @@ func TestGatewayModels_CompositeCustomModelsListFiltersAcrossConcretePlatforms(t
 							},
 						},
 					},
+					{
+						ID:       4,
+						Platform: service.PlatformKimi,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{"kimi-custom": "kimi-upstream"},
+						},
+					},
+					{
+						ID:       5,
+						Platform: service.PlatformZhipu,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{"glm-custom": "glm-upstream"},
+						},
+					},
+					{
+						ID:       6,
+						Platform: service.PlatformDeepseek,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{"deepseek-custom": "deepseek-upstream"},
+						},
+					},
 				},
 			},
 		},
@@ -335,7 +356,7 @@ func TestGatewayModels_CompositeCustomModelsListFiltersAcrossConcretePlatforms(t
 			Platform: service.PlatformComposite,
 			ModelsListConfig: service.GroupModelsListConfig{
 				Enabled: true,
-				Models:  []string{"gemini-2.5-flash", "missing-model", "ag-custom-model", "gpt-5.5"},
+				Models:  []string{"gemini-2.5-flash", "missing-model", "ag-custom-model", "gpt-5.5", "kimi-custom", "glm-custom", "deepseek-custom"},
 			},
 		},
 	})
@@ -346,7 +367,7 @@ func TestGatewayModels_CompositeCustomModelsListFiltersAcrossConcretePlatforms(t
 
 	var got gatewayModelsResponseForTest
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-	require.Equal(t, []string{"gemini-2.5-flash", "ag-custom-model", "gpt-5.5"}, modelIDsForTest(got.Data))
+	require.Equal(t, []string{"gemini-2.5-flash", "ag-custom-model", "gpt-5.5", "kimi-custom", "glm-custom", "deepseek-custom"}, modelIDsForTest(got.Data))
 }
 
 func TestGatewayModels_CompositeUnmappedAccountsFallbackToLinkedPlatformsOnly(t *testing.T) {
