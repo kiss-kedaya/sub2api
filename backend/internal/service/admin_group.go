@@ -512,7 +512,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		ReasoningEffortMappings:         reasoningEffortMappings,
 	}
 	sanitizeGroupMessagesDispatchFields(group)
-	if group.Platform != PlatformOpenAI {
+	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
@@ -892,7 +892,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		group.ReasoningEffortMappings = reasoningEffortMappings
 	}
 	sanitizeGroupMessagesDispatchFields(group)
-	if group.Platform != PlatformOpenAI {
+	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
