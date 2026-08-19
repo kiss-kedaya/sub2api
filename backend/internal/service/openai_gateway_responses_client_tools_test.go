@@ -88,6 +88,74 @@ func TestClearOpenAIResponsesClientToolMappingRemovesStaleContextState(t *testin
 	require.False(t, ok)
 }
 
+func TestShouldAdaptOpenAIResponsesClientToolsForDeepSeekResponses(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	body := openAIClientToolsRequest(true)
+
+	deepSeekResponses := &Account{
+		Platform: PlatformDeepseek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_protocol": APIProtocolResponses,
+		},
+	}
+	require.True(t, shouldAdaptOpenAIResponsesClientTools(deepSeekResponses, c, body))
+
+	deepSeekChat := &Account{
+		Platform: PlatformDeepseek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_protocol": APIProtocolChatCompletions,
+		},
+	}
+	require.False(t, shouldAdaptOpenAIResponsesClientTools(deepSeekChat, c, body))
+}
+
+func TestDeepSeekResponsesPassthroughRestoresClientToolsStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := openAIClientToolsRequest(true)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+
+	sse := strings.Join([]string{
+		`data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"i1","call_id":"c1","name":"exec","status":"in_progress"}}`,
+		`data: {"type":"response.function_call_arguments.done","sequence_number":1,"item_id":"i1","call_id":"c1","name":"exec","arguments":"{\"input\":\"pwd\"}"}`,
+		`data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"i1","call_id":"c1","name":"exec","arguments":"{\"input\":\"pwd\"}","status":"completed"}}`,
+		`data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_ds_tools","status":"completed","output":[{"type":"function_call","id":"i1","call_id":"c1","name":"exec","arguments":"{\"input\":\"pwd\"}"}],"usage":{"input_tokens":1,"output_tokens":1}}}`,
+	}, "\n\n") + "\n\n"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	svc := openAIClientToolsTestService(upstream)
+	account := &Account{
+		ID:       5661,
+		Platform: PlatformDeepseek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":      "test-key",
+			"api_protocol": APIProtocolResponses,
+			"base_url":     "https://relay.example",
+		},
+	}
+
+	result, err := svc.forwardOpenAIPassthrough(
+		context.Background(), c, account, body, body, "gpt-5.4", false, nil, true, time.Now(),
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assertOpenAIClientToolsLowered(t, upstream.lastBody)
+	output := recorder.Body.String()
+	require.Contains(t, output, `"type":"custom_tool_call"`)
+	require.Contains(t, output, `"type":"response.custom_tool_call_input.done"`)
+	require.Contains(t, output, `"input":"pwd"`)
+}
+
 func TestOpenAIPassthroughAPIKeyRestoresClientToolsNonStreaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := openAIClientToolsRequest(false)

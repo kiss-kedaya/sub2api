@@ -83,6 +83,17 @@ func needsOpenAIResponsesClientToolAdaptation(body []byte) bool {
 	return needsAdaptation
 }
 
+func shouldAdaptOpenAIResponsesClientTools(account *Account, c *gin.Context, body []byte) bool {
+	if account == nil || account.Type != AccountTypeAPIKey || isOpenAIResponsesCompactPath(c) ||
+		!needsOpenAIResponsesClientToolAdaptation(body) {
+		return false
+	}
+	if account.Platform == PlatformOpenAI {
+		return true
+	}
+	return account.Platform == PlatformDeepseek && account.GetAPIProtocol() == APIProtocolResponses
+}
+
 func openAIResponsesClientToolMapping(c *gin.Context) (apicompat.ResponsesClientToolMapping, bool) {
 	if c == nil {
 		return apicompat.ResponsesClientToolMapping{}, false
@@ -183,8 +194,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 	}
 
-	if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
-		!isOpenAIResponsesCompactPath(c) && needsOpenAIResponsesClientToolAdaptation(body) {
+	if shouldAdaptOpenAIResponsesClientTools(account, c, body) {
 		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
 		if adaptErr != nil {
 			return nil, adaptErr
