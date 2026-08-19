@@ -197,7 +197,7 @@ func TestOpsClassificationTreatsCredentialFailureAsAuthNotInference(t *testing.T
 	require.Equal(t, http.StatusForbidden, entry.UpstreamErrors[0].UpstreamStatusCode)
 }
 
-func TestOpsRecoveredCredentialFailoverUsesAccountAuthAttribution(t *testing.T) {
+func TestOpsRecoveredCredentialFailoverDoesNotCreateRequestError(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 	gin.SetMode(gin.TestMode)
 	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
@@ -218,20 +218,71 @@ func TestOpsRecoveredCredentialFailoverUsesAccountAuthAttribution(t *testing.T) 
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/openai/v1/responses", nil))
 
 	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Zero(t, OpsErrorLogQueueLength())
+	select {
+	case job := <-opsErrorLogQueue:
+		t.Fatalf("successful failover must not create ops error row: %+v", job.entry)
+	default:
+	}
+}
+
+func TestOpsWebSocketCredentialFailoverSuccessDoesNotCreateRequestError(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.GET("/openai/v1/responses", func(c *gin.Context) {
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			Stage: string(service.GatewayFailureStageAccountAuth), Scope: string(service.GatewayFailureScopeAccount),
+			Reason: string(service.GrokCredentialReasonRevoked), Message: "Grok OAuth credentials require account action",
+		}})
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/openai/v1/responses", nil)
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Zero(t, OpsErrorLogQueueLength())
+	select {
+	case job := <-opsErrorLogQueue:
+		t.Fatalf("successful websocket failover must not create ops error row: %+v", job.entry)
+	default:
+	}
+}
+
+func TestOpsWebSocketCredentialFailoverExhaustedIsRecorded(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.GET("/openai/v1/responses", func(c *gin.Context) {
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			Stage: string(service.GatewayFailureStageAccountAuth), Scope: string(service.GatewayFailureScopeAccount),
+			Reason: string(service.GrokCredentialReasonRevoked), Message: "Grok OAuth credentials require account action",
+		}})
+		closeOpenAIWSFailoverExhausted(c, nil, &service.UpstreamFailoverError{
+			Stage:             service.GatewayFailureStageAccountAuth,
+			Scope:             service.GatewayFailureScopeAccount,
+			Reason:            service.GrokCredentialReasonRevoked,
+			NextAccountAction: service.NextAccountStop,
+		})
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/openai/v1/responses", nil)
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, int64(1), OpsErrorLogQueueLength())
 	job := <-opsErrorLogQueue
 	require.Equal(t, "account_auth", job.entry.ErrorPhase)
-	require.Equal(t, "provider", job.entry.ErrorOwner)
-	require.Equal(t, "gateway", job.entry.ErrorSource)
-	require.Contains(t, job.entry.ErrorMessage, "Recovered account authentication failure")
-	require.NotContains(t, job.entry.ErrorMessage, "403")
-	require.NotContains(t, job.entry.ErrorMessage, "earlier inference failure")
-	require.NotNil(t, job.entry.UpstreamStatusCode)
-	require.Zero(t, *job.entry.UpstreamStatusCode)
-	require.Nil(t, job.entry.UpstreamErrors)
-	require.NotNil(t, job.entry.UpstreamErrorsJSON)
-	events, err := service.ParseOpsUpstreamErrors(*job.entry.UpstreamErrorsJSON)
-	require.NoError(t, err)
-	require.Len(t, events, 2)
-	require.Equal(t, http.StatusForbidden, events[0].UpstreamStatusCode)
+	require.Equal(t, http.StatusServiceUnavailable, job.entry.StatusCode)
+	require.Equal(t, service.GrokCredentialUnavailableClientMessage, job.entry.ErrorMessage)
 }
