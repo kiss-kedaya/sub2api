@@ -729,6 +729,188 @@ func extractOpenAIRequestMetaFromBody(body []byte) (model string, stream bool, p
 	return view.Model, view.Stream, view.PromptCacheKey
 }
 
+func normalizeOpenAIOAuthResponsesCompatibilityFields(reqBody map[string]any) bool {
+	if reqBody == nil {
+		return false
+	}
+	changed := false
+	if prompt, exists := reqBody["prompt"]; exists {
+		if input, hasInput := reqBody["input"]; !hasInput || input == nil {
+			if prompt != nil {
+				reqBody["input"] = prompt
+			}
+		}
+		delete(reqBody, "prompt")
+		changed = true
+	}
+	if _, exists := reqBody["commands"]; exists {
+		delete(reqBody, "commands")
+		changed = true
+	}
+	return changed
+}
+
+func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 {
+		return body, false, nil
+	}
+	normalized := body
+	changed := false
+	prompt := gjson.GetBytes(normalized, "prompt")
+	if prompt.Exists() {
+		input := gjson.GetBytes(normalized, "input")
+		if prompt.Type != gjson.Null && (!input.Exists() || input.Type == gjson.Null) {
+			next, err := sjson.SetRawBytes(normalized, "input", []byte(prompt.Raw))
+			if err != nil {
+				return body, false, fmt.Errorf("normalize oauth responses prompt: %w", err)
+			}
+			normalized = next
+		}
+		next, err := sjson.DeleteBytes(normalized, "prompt")
+		if err != nil {
+			return body, false, fmt.Errorf("normalize oauth responses delete prompt: %w", err)
+		}
+		normalized = next
+		changed = true
+	}
+	if gjson.GetBytes(normalized, "commands").Exists() {
+		next, err := sjson.DeleteBytes(normalized, "commands")
+		if err != nil {
+			return body, false, fmt.Errorf("normalize oauth responses delete commands: %w", err)
+		}
+		normalized = next
+		changed = true
+	}
+	return normalized, changed, nil
+}
+
+func normalizeOpenAIResponsesReasoningMode(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 {
+		return body, false, nil
+	}
+	mode := gjson.GetBytes(body, "reasoning.mode")
+	if !mode.Exists() || mode.Type != gjson.String {
+		return body, false, nil
+	}
+	updated := body
+	effort := gjson.GetBytes(body, "reasoning.effort")
+	if (!effort.Exists() || effort.Type == gjson.Null || strings.TrimSpace(effort.String()) == "") &&
+		strings.EqualFold(strings.TrimSpace(mode.String()), "pro") {
+		var err error
+		updated, err = sjson.SetBytes(updated, "reasoning.effort", "max")
+		if err != nil {
+			return body, false, fmt.Errorf("set reasoning effort for mode=pro: %w", err)
+		}
+	}
+	updated, err := sjson.DeleteBytes(updated, "reasoning.mode")
+	if err != nil {
+		return body, false, fmt.Errorf("delete unsupported reasoning.mode: %w", err)
+	}
+	if reasoning := gjson.GetBytes(updated, "reasoning"); reasoning.Exists() && reasoning.IsObject() && len(reasoning.Map()) == 0 {
+		updated, err = sjson.DeleteBytes(updated, "reasoning")
+		if err != nil {
+			return body, false, fmt.Errorf("delete empty reasoning object: %w", err)
+		}
+	}
+	return updated, true, nil
+}
+
+func normalizeOpenAIResponseFormatSchemasBody(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 {
+		return body, false, nil
+	}
+	textFormat := strings.TrimSpace(gjson.GetBytes(body, "text.format.type").String())
+	responseFormat := strings.TrimSpace(gjson.GetBytes(body, "response_format.type").String())
+	if textFormat != "json_schema" && responseFormat != "json_schema" {
+		return body, false, nil
+	}
+	var reqBody map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&reqBody); err != nil {
+		return body, false, fmt.Errorf("normalize responses schema body: %w", err)
+	}
+	if !normalizeOpenAIResponseFormatSchemas(reqBody) {
+		return body, false, nil
+	}
+	normalized, err := json.Marshal(reqBody)
+	if err != nil {
+		return body, false, fmt.Errorf("serialize normalized responses schema body: %w", err)
+	}
+	return normalized, true, nil
+}
+
+func normalizeOpenAIResponsesWebSocketCompatibilityBody(body []byte, account *Account) ([]byte, bool, error) {
+	normalized := body
+	changed := false
+	if sanitized, idsChanged, err := sanitizeOpenAIResponsesInputItemIDs(normalized); err != nil {
+		return body, false, fmt.Errorf("sanitize websocket Responses input item IDs: %w", err)
+	} else if idsChanged {
+		normalized = sanitized
+		changed = true
+	}
+	if account != nil && account.IsOpenAI() && account.IsOAuth() {
+		if reasoningBody, reasoningChanged, err := normalizeOpenAIResponsesReasoningMode(normalized); err != nil {
+			return body, false, err
+		} else if reasoningChanged {
+			normalized = reasoningBody
+			changed = true
+		}
+	}
+	if account != nil && account.IsOpenAIOAuth() {
+		oauthBody, oauthChanged, err := normalizeOpenAIOAuthResponsesCompatibilityBody(normalized)
+		if err != nil {
+			return body, false, err
+		}
+		normalized = oauthBody
+		changed = changed || oauthChanged
+		for _, field := range openAIChatGPTInternalUnsupportedFields {
+			if !gjson.GetBytes(normalized, field).Exists() {
+				continue
+			}
+			next, deleteErr := sjson.DeleteBytes(normalized, field)
+			if deleteErr != nil {
+				return body, false, fmt.Errorf("normalize websocket body delete %s: %w", field, deleteErr)
+			}
+			normalized = next
+			changed = true
+		}
+	}
+	if schemaBody, schemaChanged, err := normalizeOpenAIResponseFormatSchemasBody(normalized); err != nil {
+		return body, false, err
+	} else if schemaChanged {
+		normalized = schemaBody
+		changed = true
+	}
+	if openAIRequestBodyImageGenerationToolNeedsNormalization(normalized) {
+		var reqBody map[string]any
+		if err := json.Unmarshal(normalized, &reqBody); err != nil {
+			return body, false, fmt.Errorf("normalize websocket image tool body: %w", err)
+		}
+		if normalizeOpenAIResponsesImageGenerationTools(reqBody) {
+			next, err := json.Marshal(reqBody)
+			if err != nil {
+				return body, false, fmt.Errorf("serialize normalized websocket image tool body: %w", err)
+			}
+			normalized = next
+			changed = true
+		}
+	}
+	if toolBody, toolChanged, err := sanitizeOpenAIResponsesToolParameterTypes(normalized); err != nil {
+		return body, false, fmt.Errorf("normalize websocket tool parameter types: %w", err)
+	} else if toolChanged {
+		normalized = toolBody
+		changed = true
+	}
+	if patternBody, patternChanged, err := sanitizeOpenAIResponsesToolSchemaPatterns(normalized); err != nil {
+		return body, false, fmt.Errorf("normalize websocket tool schema patterns: %w", err)
+	} else if patternChanged {
+		normalized = patternBody
+		changed = true
+	}
+	return normalized, changed, nil
+}
+
 // normalizeOpenAIPassthroughOAuthBody 将透传 OAuth 请求体收敛为旧链路关键行为：
 // 1) 删除 ChatGPT internal API 不支持的顶层 Responses 参数
 // 2) store=false 3) 非 compact 保持 stream=true；compact 强制 stream=false
@@ -737,8 +919,16 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 		return body, false, nil
 	}
 
-	normalized := body
-	changed := false
+	normalized, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBody(body)
+	if err != nil {
+		return body, false, err
+	}
+	if reasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningMode(normalized); reasoningErr != nil {
+		return body, false, reasoningErr
+	} else if reasoningChanged {
+		normalized = reasoningBody
+		changed = true
+	}
 
 	for _, field := range openAIChatGPTInternalUnsupportedFields {
 		if value := gjson.GetBytes(normalized, field); !value.Exists() {
@@ -749,6 +939,12 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 			return body, false, fmt.Errorf("normalize passthrough body delete %s: %w", field, err)
 		}
 		normalized = next
+		changed = true
+	}
+	if schemaBody, schemaChanged, schemaErr := normalizeOpenAIResponseFormatSchemasBody(normalized); schemaErr != nil {
+		return body, false, schemaErr
+	} else if schemaChanged {
+		normalized = schemaBody
 		changed = true
 	}
 

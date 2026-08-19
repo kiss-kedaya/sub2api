@@ -482,6 +482,16 @@ func TestShouldApplyOpenAIAlphaSearchAccountErrorSideEffects(t *testing.T) {
 	require.True(t, shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(http.StatusTooManyRequests))
 }
 
+func TestSanitizeOpenAIAlphaSearchBody_RemovesResponsesOnlyFields(t *testing.T) {
+	body := []byte(`{"id":"search-session","store":false,"prompt_cache_key":"cache","commands":{"search_query":[{"q":"news"}]}}`)
+
+	normalized, err := sanitizeOpenAIAlphaSearchBody(body)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(normalized, "store").Exists())
+	require.False(t, gjson.GetBytes(normalized, "prompt_cache_key").Exists())
+	require.Equal(t, "news", gjson.GetBytes(normalized, "commands.search_query.0.q").String())
+}
+
 func TestIsOpenAIAlphaSearchEndpointUnsupported(t *testing.T) {
 	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
