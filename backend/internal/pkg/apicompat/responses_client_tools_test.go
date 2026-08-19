@@ -106,15 +106,15 @@ func TestAdaptResponsesClientToolsWithInheritedMapping_LowersFollowupHistoryWith
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, inherited, mapping)
-	items := req["input"].([]any)
-	call := items[0].(map[string]any)
+	items := requireResponsesClientToolValue[[]any](t, req["input"])
+	call := requireResponsesClientToolValue[map[string]any](t, items[0])
 	require.Equal(t, "function_call", call["type"])
-	require.JSONEq(t, `{"input":"pwd"}`, call["arguments"].(string))
+	require.JSONEq(t, `{"input":"pwd"}`, requireResponsesClientToolValue[string](t, call["arguments"]))
 	require.NotContains(t, call, "input")
-	output := items[1].(map[string]any)
+	output := requireResponsesClientToolValue[map[string]any](t, items[1])
 	require.Equal(t, "function_call_output", output["type"])
 	require.NotContains(t, output, "id")
-	require.JSONEq(t, `[{"text":"ok","type":"input_text"}]`, output["output"].(string))
+	require.JSONEq(t, `[{"text":"ok","type":"input_text"}]`, requireResponsesClientToolValue[string](t, output["output"]))
 }
 
 func TestAdaptResponsesClientToolsWithInheritedMapping_ExplicitToolsReplaceInheritedMapping(t *testing.T) {
