@@ -44,10 +44,10 @@ func NewProxyExitInfoProber(cfg *config.Config) service.ProxyExitInfoProber {
 	}
 
 	return &proxyProbeService{
-		insecureSkipVerify: insecure,
-		allowPrivateHosts:  allowPrivate,
-		validateResolvedIP: validateResolvedIP,
-		maxResponseBytes:   maxResponseBytes,
+		insecureSkipVerify:  insecure,
+		allowPrivateHosts:   allowPrivate,
+		validateResolvedIP:  validateResolvedIP,
+		maxResponseBytes:    maxResponseBytes,
 		configuredProbeURLs: configuredTargets,
 	}
 }
