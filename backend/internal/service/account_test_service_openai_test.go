@@ -268,7 +268,7 @@ func TestAccountTestService_DeepSeekCustomBaseURLUsesV1ResponsesPath(t *testing.
 		Concurrency: 1,
 		Credentials: map[string]any{
 			"api_key":      "sk-test",
-			"base_url":     "https://token.cvte.com/v1",
+			"base_url":     "https://relay.example.com/v1",
 			"api_protocol": APIProtocolResponses,
 		},
 		Extra: map[string]any{
@@ -279,7 +279,47 @@ func TestAccountTestService_DeepSeekCustomBaseURLUsesV1ResponsesPath(t *testing.
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
 	require.NoError(t, err)
 	require.Len(t, upstream.requests, 1)
-	require.Equal(t, "https://token.cvte.com/v1/responses", upstream.requests[0].URL.String())
+	require.Equal(t, "https://relay.example.com/v1/responses", upstream.requests[0].URL.String())
+}
+
+func TestAccountTestService_DeepSeekResponsesRoutesToOpenAIProbe(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := newTestContext()
+
+	resp := newJSONResponse(http.StatusOK, "")
+	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
+
+`))
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          93,
+		Platform:    PlatformDeepseek,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":      "sk-test",
+			"base_url":     "https://relay.example.com/v1",
+			"api_protocol": APIProtocolResponses,
+		},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesSupported: true,
+		},
+	}
+	repo := &openAIAccountTestRepo{
+		mockAccountRepoForGemini: mockAccountRepoForGemini{
+			accountsByID: map[int64]*Account{93: account},
+		},
+	}
+	svc.accountRepo = repo
+
+	err := svc.TestAccountConnection(ctx, account.ID, "gpt-5.4", "", "")
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, "https://relay.example.com/v1/responses", upstream.requests[0].URL.String())
 }
 
 func TestAccountTestService_DeepSeekDefaultBaseURLUsesNativeResponsesPath(t *testing.T) {
