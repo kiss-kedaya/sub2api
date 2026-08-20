@@ -633,7 +633,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 		})
 		s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, upstreamModel), account, resp.StatusCode, resp.Header, respBody)
 		if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
-			retryable, retryDelay, retryDeadline := grokSameAccountRetryMetadata(account, resp.StatusCode, respBody)
+			retryable, retryDelay, retryDeadline, retryMax := grokSameAccountRetryMetadata(account, resp.StatusCode, respBody)
 			return nil, &UpstreamFailoverError{
 				StatusCode:               resp.StatusCode,
 				ResponseBody:             respBody,
@@ -642,6 +642,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 				RequestScopedTransient:   retryable && resp.StatusCode == http.StatusTooManyRequests,
 				SameAccountRetryDelay:    retryDelay,
 				SameAccountRetryDeadline: retryDeadline,
+				SameAccountRetryMax:      retryMax,
 			}
 		}
 		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
