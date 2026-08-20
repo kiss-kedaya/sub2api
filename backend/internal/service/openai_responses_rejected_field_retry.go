@@ -7,7 +7,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -19,18 +21,54 @@ var (
 	openAIResponsesRejectedStatusParamPattern     = regexp.MustCompile(`(?i)^input\[(\d+)\]\.status$`)
 	openAIResponsesRejectedContentParamPattern    = regexp.MustCompile(`(?i)^input\[(\d+)\]\.content$`)
 	openAIResponsesRejectedCacheParamPattern      = regexp.MustCompile(`(?i)^input\[(\d+)\]\.prompt_cache_breakpoint$`)
-	openAIResponsesRejectedMessageParamPattern    = regexp.MustCompile(`(?i)(?:unknown|unsupported)[ _-]+parameter\s*(?::|=|is)?\s*["']?(max_output_tokens|input\[\d+\]\.(?:namespace|status))(?:["']|\b)`)
+	openAIResponsesRejectedMessageParamPattern    = regexp.MustCompile(`(?i)(?:unknown|unsupported)[ _-]+parameter\s*(?::|=|is)?\s*["']?(max_output_tokens|truncation|input\[\d+\]\.(?:namespace|status))(?:["']|\b)`)
 	openAIResponsesInvalidTypeMessageParamPattern = regexp.MustCompile(`(?i)invalid[ _-]+type\s+for\s+["']?(input\[\d+\]\.content)(?:["']|\b)[^\n]*\b(?:got|received)\s+null\b`)
+	openAIResponsesMaxZeroContentMessagePattern   = regexp.MustCompile(`(?i)invalid\s+["']?(input\[\d+\]\.content)["']?\s*:\s*array too long\.[^\n]*maximum length 0\b`)
 	openAIResponsesCacheModelRejectionPattern     = regexp.MustCompile(`(?i)["']?(prompt_cache_breakpoint|input\[\d+\]\.prompt_cache_breakpoint)["']?\s+is\s+not\s+supported\s+on\s+this\s+model\b`)
+	openAIResponsesToolParametersParamPattern     = regexp.MustCompile(`(?i)^(?:tools|input)\[\d+\](?:\.tools\[\d+\])*(?:\.function)?\.parameters$`)
+	openAIResponsesMissingSchemaTypePattern       = regexp.MustCompile(`(?i)\bgot\s+["']?type\s*:\s*["']?none["']?`)
 )
 
 type openAIResponsesRejectedFieldRetryState struct {
-	attempts       int
+	mu             sync.Mutex
+	budget         *openAIResponsesRejectedFieldRetryBudget
 	seenBodyHashes map[[sha256.Size]byte]struct{}
 }
 
+type openAIResponsesRejectedFieldRetryBudget struct {
+	mu       sync.Mutex
+	attempts int
+}
+
+const openAIResponsesRejectedFieldRetryBudgetContextKey = "openai_responses_rejected_field_retry_budget"
+
+// openAIResponsesRejectedFieldRetryStateForRequest returns a fresh loop guard
+// for one account attempt backed by the inbound request's shared retry budget.
+// A later account may apply the same compatibility transform, while all account
+// attempts together remain bounded.
+func openAIResponsesRejectedFieldRetryStateForRequest(c *gin.Context, initialBody []byte) *openAIResponsesRejectedFieldRetryState {
+	var budget *openAIResponsesRejectedFieldRetryBudget
+	if c != nil {
+		if existing, ok := c.Get(openAIResponsesRejectedFieldRetryBudgetContextKey); ok {
+			budget, _ = existing.(*openAIResponsesRejectedFieldRetryBudget)
+		}
+	}
+	if budget == nil {
+		budget = &openAIResponsesRejectedFieldRetryBudget{}
+		if c != nil {
+			c.Set(openAIResponsesRejectedFieldRetryBudgetContextKey, budget)
+		}
+	}
+	return newOpenAIResponsesRejectedFieldRetryStateWithBudget(initialBody, budget)
+}
+
 func newOpenAIResponsesRejectedFieldRetryState(initialBody []byte) *openAIResponsesRejectedFieldRetryState {
+	return newOpenAIResponsesRejectedFieldRetryStateWithBudget(initialBody, &openAIResponsesRejectedFieldRetryBudget{})
+}
+
+func newOpenAIResponsesRejectedFieldRetryStateWithBudget(initialBody []byte, budget *openAIResponsesRejectedFieldRetryBudget) *openAIResponsesRejectedFieldRetryState {
 	state := &openAIResponsesRejectedFieldRetryState{
+		budget:         budget,
 		seenBodyHashes: make(map[[sha256.Size]byte]struct{}, maxOpenAIResponsesRejectedFieldRetries+1),
 	}
 	state.remember(initialBody)
@@ -38,15 +76,22 @@ func newOpenAIResponsesRejectedFieldRetryState(initialBody []byte) *openAIRespon
 }
 
 func (s *openAIResponsesRejectedFieldRetryState) Allow(nextBody []byte) bool {
-	if s == nil || len(nextBody) == 0 || s.attempts >= maxOpenAIResponsesRejectedFieldRetries {
+	if s == nil || s.budget == nil || len(nextBody) == 0 {
 		return false
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	bodyHash := sha256.Sum256(nextBody)
 	if _, seen := s.seenBodyHashes[bodyHash]; seen {
 		return false
 	}
+	s.budget.mu.Lock()
+	defer s.budget.mu.Unlock()
+	if s.budget.attempts >= maxOpenAIResponsesRejectedFieldRetries {
+		return false
+	}
 	s.seenBodyHashes[bodyHash] = struct{}{}
-	s.attempts++
+	s.budget.attempts++
 	return true
 }
 
@@ -54,6 +99,12 @@ func (s *openAIResponsesRejectedFieldRetryState) remember(body []byte) {
 	if s == nil || len(body) == 0 {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rememberLocked(body)
+}
+
+func (s *openAIResponsesRejectedFieldRetryState) rememberLocked(body []byte) {
 	if s.seenBodyHashes == nil {
 		s.seenBodyHashes = make(map[[sha256.Size]byte]struct{}, maxOpenAIResponsesRejectedFieldRetries+1)
 	}
@@ -68,6 +119,17 @@ func normalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, respon
 	code := strings.ToLower(strings.TrimSpace(extractUpstreamErrorCode(responseBody)))
 	message := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(responseBody)))
 	param := strings.ToLower(strings.TrimSpace(gjson.GetBytes(responseBody, "error.param").String()))
+	if code == "invalid_function_parameters" &&
+		openAIResponsesToolParametersParamPattern.MatchString(param) &&
+		openAIResponsesMissingSchemaTypePattern.MatchString(message) {
+		retryBody, changed, err := sanitizeOpenAIResponsesToolParameterTypes(body)
+		if err != nil {
+			return nil, "", false, fmt.Errorf("repair rejected tool parameter root type: %w", err)
+		}
+		if changed {
+			return retryBody, "tool parameter root type rejection", true, nil
+		}
+	}
 	cacheMessageParam := openAIResponsesCacheModelRejectionParamFromMessage(message)
 	cacheParam := param
 	if cacheParam == "" {
@@ -88,8 +150,12 @@ func normalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, respon
 		}
 	}
 	if isExplicitOpenAIResponsesFieldRejection(code, message) {
+		messageParam := openAIResponsesRejectedParamFromMessage(message)
+		if param != "" && messageParam != "" && param != messageParam {
+			return nil, "", false, nil
+		}
 		if param == "" {
-			param = openAIResponsesRejectedParamFromMessage(message)
+			param = messageParam
 		}
 		if index, ok := openAIResponsesRejectedNamespaceIndex(param); ok {
 			return removeOpenAIResponsesRejectedNamespaceAtIndex(body, index)
@@ -104,6 +170,13 @@ func normalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, respon
 			}
 			return retryBody, "max_output_tokens parameter rejection", true, nil
 		}
+		if param == "truncation" && gjson.GetBytes(body, "truncation").Exists() {
+			retryBody, err := sjson.DeleteBytes(body, "truncation")
+			if err != nil {
+				return nil, "", false, fmt.Errorf("delete rejected truncation: %w", err)
+			}
+			return retryBody, "truncation parameter rejection", true, nil
+		}
 	}
 
 	messageContentParam := openAIResponsesInvalidTypeParamFromMessage(message)
@@ -114,6 +187,11 @@ func normalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, respon
 	if index, ok := openAIResponsesRejectedContentIndex(contentParam); ok &&
 		contentParam == messageContentParam && isExplicitOpenAIResponsesNullContentRejection(code, message) {
 		return normalizeOpenAIResponsesRejectedNullContentAtIndex(body, index)
+	}
+	maxZeroContentParam := openAIResponsesMaxZeroContentParamFromMessage(message)
+	if index, ok := openAIResponsesRejectedContentIndex(param); ok &&
+		param == maxZeroContentParam && code == "array_above_max_length" {
+		return removeOpenAIResponsesRejectedReasoningContentAtIndex(body, index)
 	}
 	return nil, "", false, nil
 }
@@ -129,6 +207,14 @@ func isExplicitOpenAIResponsesFieldRejection(code, message string) bool {
 
 func openAIResponsesRejectedParamFromMessage(message string) string {
 	match := openAIResponsesRejectedMessageParamPattern.FindStringSubmatch(strings.TrimSpace(message))
+	if len(match) != 2 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(match[1]))
+}
+
+func openAIResponsesMaxZeroContentParamFromMessage(message string) string {
+	match := openAIResponsesMaxZeroContentMessagePattern.FindStringSubmatch(strings.TrimSpace(message))
 	if len(match) != 2 {
 		return ""
 	}
@@ -244,6 +330,20 @@ func normalizeOpenAIResponsesRejectedNullContentAtIndex(body []byte, index int) 
 	default:
 		return nil, "", false, nil
 	}
+}
+
+func removeOpenAIResponsesRejectedReasoningContentAtIndex(body []byte, index int) ([]byte, string, bool, error) {
+	itemPath := fmt.Sprintf("input.%d", index)
+	item := gjson.GetBytes(body, itemPath)
+	content := item.Get("content")
+	if !item.IsObject() || strings.TrimSpace(item.Get("type").String()) != "reasoning" || !content.IsArray() || len(content.Array()) == 0 {
+		return nil, "", false, nil
+	}
+	retryBody, err := sjson.DeleteBytes(body, itemPath+".content")
+	if err != nil {
+		return nil, "", false, fmt.Errorf("delete rejected reasoning content at input[%d]: %w", index, err)
+	}
+	return retryBody, "indexed reasoning content maximum-length rejection", true, nil
 }
 
 func removeOpenAIResponsesRejectedNamespaceAtIndex(body []byte, index int) ([]byte, string, bool, error) {

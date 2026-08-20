@@ -173,15 +173,6 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact
 
 func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuthTransformOptions) codexTransformResult {
 	result := codexTransformResult{}
-	toolNameReverse, toolNamesChanged, err := aliasOpenAIOAuthReservedToolNames(reqBody)
-	if err != nil {
-		result.Error = err
-		return result
-	}
-	result.ToolNameReverse = toolNameReverse
-	if toolNamesChanged {
-		result.Modified = true
-	}
 	if normalizeOpenAIOAuthResponsesCompatibilityFields(reqBody) {
 		result.Modified = true
 	}
@@ -271,6 +262,18 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	}
 
 	if normalizeCodexTools(reqBody) {
+		result.Modified = true
+	}
+	// Collect aliases only after prompt/functions/function_call compatibility
+	// has produced the final Responses protocol nodes. Otherwise references
+	// introduced by those migrations can retain the reserved name.
+	toolNameReverse, toolNamesChanged, err := aliasOpenAIOAuthReservedToolNames(reqBody)
+	if err != nil {
+		result.Error = err
+		return result
+	}
+	result.ToolNameReverse = toolNameReverse
+	if toolNamesChanged {
 		result.Modified = true
 	}
 	if normalizeCodexToolChoice(reqBody) {
@@ -1218,7 +1221,7 @@ func normalizeOpenAIResponsesImageOnlyModel(reqBody map[string]any) bool {
 }
 
 func normalizeOpenAIModelForUpstream(account *Account, model string) string {
-	if account == nil || account.Type == AccountTypeOAuth {
+	if account == nil || account.UsesOpenAICodexProtocol() {
 		return normalizeCodexModel(model)
 	}
 	return strings.TrimSpace(model)
@@ -1599,7 +1602,7 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 		if typ == "reasoning" {
 			newItem := make(map[string]any, len(m))
 			for key, value := range m {
-				if key == "id" {
+				if key == "id" || key == "call_id" {
 					// rs_* id replayed under store=false 404s; strip it.
 					continue
 				}

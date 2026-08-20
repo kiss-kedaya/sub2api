@@ -472,6 +472,68 @@ func TestRelay_OnTurnComplete_PerTerminalEvent(t *testing.T) {
 	require.Equal(t, 5, result.Usage.OutputTokens)
 }
 
+func TestRelay_OnTurnComplete_BareErrorWithoutIDBeforeLaterCompleted(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"error","usage":{"input_tokens":5,"output_tokens":1},"error":{"message":"first turn failed"}}`),
+		},
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.completed","response":{"id":"resp_next","usage":{"input_tokens":3,"output_tokens":2}}}`),
+		},
+	}, true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	turns := make([]RelayTurnResult, 0, 2)
+	result, relayExit := Relay(
+		ctx,
+		clientConn,
+		upstreamConn,
+		[]byte(`{"type":"response.create","model":"gpt-5.6-sol","input":[]}`),
+		RelayOptions{OnTurnComplete: func(turn RelayTurnResult) { turns = append(turns, turn) }},
+	)
+
+	require.Nil(t, relayExit)
+	require.Len(t, turns, 2)
+	require.Equal(t, "error", turns[0].TerminalEventType)
+	require.Empty(t, turns[0].RequestID)
+	require.Equal(t, Usage{InputTokens: 5, OutputTokens: 1}, turns[0].Usage)
+	require.Equal(t, "response.completed", turns[1].TerminalEventType)
+	require.Equal(t, "resp_next", turns[1].RequestID)
+	require.Equal(t, Usage{InputTokens: 3, OutputTokens: 2}, turns[1].Usage)
+	require.Equal(t, Usage{InputTokens: 8, OutputTokens: 3}, result.Usage)
+}
+
+func TestRelay_OnTurnComplete_AuxiliaryFrameDoesNotSettleBareErrorBeforeFailed(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"error","error":{"code":"server_error","message":"failed"}}`)},
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"rate_limits.updated","rate_limits":[{"name":"requests","remaining":1}]}`)},
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.failed","response":{"id":"resp_authoritative","usage":{"input_tokens":7,"output_tokens":2},"error":{"code":"server_error","message":"failed"}}}`)},
+	}, true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	turns := make([]RelayTurnResult, 0, 1)
+	result, relayExit := Relay(ctx, clientConn, upstreamConn, []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":[]}`), RelayOptions{
+		OnTurnComplete: func(turn RelayTurnResult) { turns = append(turns, turn) },
+	})
+
+	require.Nil(t, relayExit)
+	require.Len(t, turns, 1)
+	require.Equal(t, "response.failed", turns[0].TerminalEventType)
+	require.Equal(t, "resp_authoritative", turns[0].RequestID)
+	require.Equal(t, Usage{InputTokens: 7, OutputTokens: 2}, turns[0].Usage)
+	require.Equal(t, turns[0].Usage, result.Usage)
+}
+
 func TestRelay_OnTurnComplete_UsesCurrentResponseCreateModel(t *testing.T) {
 	t.Parallel()
 

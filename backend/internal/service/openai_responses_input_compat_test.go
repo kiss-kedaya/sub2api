@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -71,9 +70,11 @@ func TestSanitizeOpenAIResponsesOrphanToolOutputs(t *testing.T) {
 	})
 }
 
-func TestTruncateOpenAIResponsesInputText(t *testing.T) {
-	oversized := strings.Repeat("a", openAIResponsesInputTextMaxChars+1)
+func TestOpenAIResponsesInputTextIsNeverSilentlyTruncated(t *testing.T) {
+	atLimit := strings.Repeat("z", openAIResponsesInputTextMaxChars)
+	oversized := strings.Repeat("a", openAIResponsesInputTextMaxChars) + "中"
 	input := []any{
+		map[string]any{"type": "function_call_output", "call_id": "limit", "output": atLimit},
 		map[string]any{"type": "function_call_output", "call_id": "a", "output": oversized},
 		map[string]any{"type": "tool_search_output", "call_id": "b", "output": oversized},
 		map[string]any{"type": "custom_tool_call_output", "call_id": "c", "output": oversized},
@@ -88,35 +89,25 @@ func TestTruncateOpenAIResponsesInputText(t *testing.T) {
 	}
 	reqBody := map[string]any{"input": input}
 
-	require.True(t, truncateOpenAIResponsesInputText(reqBody))
-	for _, rawItem := range input[:4] {
+	require.False(t, truncateOpenAIResponsesInputText(reqBody))
+	require.Equal(t, atLimit, input[0].(map[string]any)["output"])
+	for _, rawItem := range input[1:5] {
 		item := rawItem.(map[string]any)
-		require.Len(t, item["output"].(string), openAIResponsesInputTextMaxChars)
+		require.Equal(t, oversized, item["output"])
 	}
-	content := input[4].(map[string]any)["content"].([]any)
+	content := input[5].(map[string]any)["content"].([]any)
 	require.Equal(t, "short", content[0].(map[string]any)["text"])
-	require.Len(t, content[1].(map[string]any)["text"].(string), openAIResponsesInputTextMaxChars)
+	require.Equal(t, oversized, content[1].(map[string]any)["text"])
 }
 
-func TestTruncateOpenAIResponsesInputStringPreservesUTF8Boundary(t *testing.T) {
-	value := strings.Repeat("a", openAIResponsesInputTextMaxChars-1) + "中中"
-
-	got, changed := truncateOpenAIResponsesInputString(value)
-
-	require.True(t, changed)
-	require.True(t, utf8.ValidString(got))
-	require.Equal(t, openAIResponsesInputTextMaxChars, utf8.RuneCountInString(got))
-	require.Equal(t, "中", got[len(got)-len("中"):])
-}
-
-func TestOpenAIResponsesInputMayNeedTruncation(t *testing.T) {
+func TestOpenAIResponsesInputNeverRequestsPreemptiveTruncation(t *testing.T) {
 	short := []byte(`{"input":[{"type":"function_call_output","output":"ok"}]}`)
 	largeUnrelated := []byte(`{"input":"` + strings.Repeat("x", openAIResponsesInputTextMaxChars+1) + `"}`)
 	largeOutput := []byte(`{"input":[{"type":"function_call_output","output":"` + strings.Repeat("x", openAIResponsesInputTextMaxChars+1) + `"}]}`)
 
 	require.False(t, openAIResponsesInputMayNeedTruncation(short))
 	require.False(t, openAIResponsesInputMayNeedTruncation(largeUnrelated))
-	require.True(t, openAIResponsesInputMayNeedTruncation(largeOutput))
+	require.False(t, openAIResponsesInputMayNeedTruncation(largeOutput))
 }
 
 func TestOpenAIGatewayService_OAuthDropsOrphanAfterDroppingPreviousResponse(t *testing.T) {
@@ -139,8 +130,9 @@ func TestOpenAIGatewayService_OAuthDropsOrphanAfterDroppingPreviousResponse(t *t
 	require.Empty(t, gjson.GetBytes(upstream.bodies[0], "input").Array())
 }
 
-func TestOpenAIGatewayService_TruncatesOversizedToolOutputBeforeForward(t *testing.T) {
-	body := []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"` + strings.Repeat("x", openAIResponsesInputTextMaxChars+1) + `"}]}`)
+func TestOpenAIGatewayService_PreservesOversizedToolOutputForUpstream(t *testing.T) {
+	oversized := strings.Repeat("x", openAIResponsesInputTextMaxChars) + "中"
+	body := []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"` + oversized + `"}]}`)
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
 		newOpenAIRejectedFieldTestResponse(http.StatusOK, `{"id":"resp_ok","output":[],"usage":{"input_tokens":1,"output_tokens":1,"input_tokens_details":{"cached_tokens":0}}}`),
 	}}
@@ -155,5 +147,5 @@ func TestOpenAIGatewayService_TruncatesOversizedToolOutputBeforeForward(t *testi
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Len(t, upstream.bodies, 1)
-	require.Equal(t, openAIResponsesInputTextMaxChars, len(gjson.GetBytes(upstream.bodies[0], "input.1.output").String()))
+	require.Equal(t, oversized, gjson.GetBytes(upstream.bodies[0], "input.1.output").String())
 }
