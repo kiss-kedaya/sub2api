@@ -30,8 +30,9 @@ const (
 	opsStreamKey                 = "ops_stream"
 	opsAccountIDKey              = "ops_account_id"
 	opsRoutingCapacityLimitedKey = "ops_routing_capacity_limited"
+	opsDedicatedErrorRecordedKey = "ops_dedicated_error_recorded"
 
-	opsUpstreamModelKey = "ops_upstream_model"
+	opsUpstreamModelKey = service.OpsUpstreamModelKey
 	opsRequestTypeKey   = "ops_request_type"
 
 	// 错误过滤匹配常量 — shouldSkipOpsErrorLog 和错误分类共用
@@ -467,6 +468,7 @@ func setOpsSelectedAccount(c *gin.Context, accountID int64, platform ...string) 
 	if c == nil || accountID <= 0 {
 		return
 	}
+	service.ClearOpsUpstreamModel(c)
 	c.Set(opsAccountIDKey, accountID)
 	if c.Request != nil {
 		ctx := context.WithValue(c.Request.Context(), ctxkey.AccountID, accountID)
@@ -517,236 +519,498 @@ func isOpsNoAvailableAccountError(err error) bool {
 }
 
 type opsCaptureWriter struct {
-	gin.ResponseWriter
-	limit        int
-	buf          bytes.Buffer
-	probe        []byte
-	sseCapturing bool
-	ctx          *gin.Context
+	// Handles are never pooled. A generation binds each handle to exactly one
+	// pooled state lease, so a stale handle cannot reach a later request.
+	state      *opsCaptureWriterState
+	generation uint64
+	pool       opsCaptureWriterStatePool
 }
 
-const opsCaptureWriterLimit = service.OpsErrorLogQueueBodyMaxBytes
+type opsCaptureWriterState struct {
+	mu             sync.RWMutex
+	generation     uint64
+	responseWriter gin.ResponseWriter
+	limit          int
+	buf            bytes.Buffer
+	probe          []byte
+	lineProbe      []byte
+	frameLineLen   int
+	frameTruncated bool
+	lineTruncated  bool
+	skipLF         bool
+	sseCapturing   bool
+	terminalError  parsedOpsError
+	terminalFound  bool
+	ctx            *gin.Context
+}
+
+const (
+	opsCaptureWriterLimit         = service.OpsErrorLogQueueBodyMaxBytes
+	opsTerminalSSEFrameProbeLimit = 16 * 1024
+)
 
 const opsCaptureWriterPoolMaxRetainedCapacity = service.OpsErrorLogQueueBodyMaxBytes
 
-var opsCaptureWriterPool = sync.Pool{
+type opsCaptureWriterStatePool interface {
+	Get() any
+	Put(any)
+}
+
+var opsCaptureWriterPool opsCaptureWriterStatePool = &sync.Pool{
 	New: func() any {
-		return &opsCaptureWriter{limit: opsCaptureWriterLimit}
+		return &opsCaptureWriterState{limit: opsCaptureWriterLimit}
 	},
 }
 
 func acquireOpsCaptureWriter(rw gin.ResponseWriter) *opsCaptureWriter {
-	w, ok := opsCaptureWriterPool.Get().(*opsCaptureWriter)
-	if !ok || w == nil {
-		w = &opsCaptureWriter{}
+	return acquireOpsCaptureWriterFromPool(opsCaptureWriterPool, rw)
+}
+
+func acquireOpsCaptureWriterFromPool(pool opsCaptureWriterStatePool, rw gin.ResponseWriter) *opsCaptureWriter {
+	var pooled any
+	if pool != nil {
+		pooled = pool.Get()
 	}
-	w.ResponseWriter = rw
-	w.limit = opsCaptureWriterLimit
-	w.buf.Reset()
-	w.probe = w.probe[:0]
-	w.sseCapturing = false
-	return w
+	state, ok := pooled.(*opsCaptureWriterState)
+	if !ok || state == nil {
+		state = &opsCaptureWriterState{}
+	}
+	state.mu.Lock()
+	state.generation++
+	state.responseWriter = rw
+	state.limit = opsCaptureWriterLimit
+	state.buf.Reset()
+	state.probe = state.probe[:0]
+	state.lineProbe = state.lineProbe[:0]
+	state.frameLineLen = 0
+	state.frameTruncated = false
+	state.lineTruncated = false
+	state.skipLF = false
+	state.sseCapturing = false
+	state.terminalError = parsedOpsError{}
+	state.terminalFound = false
+	state.ctx = nil
+	generation := state.generation
+	state.mu.Unlock()
+	return &opsCaptureWriter{state: state, generation: generation, pool: pool}
 }
 
 func releaseOpsCaptureWriter(w *opsCaptureWriter) {
-	if w == nil {
+	if w == nil || w.state == nil {
 		return
 	}
-	w.ResponseWriter = nil
-	w.ctx = nil
-	w.limit = opsCaptureWriterLimit
-	w.probe = w.probe[:0]
-	w.sseCapturing = false
-	if !shouldPoolOpsCaptureWriter(w) {
+	state := w.state
+	state.mu.Lock()
+	if state.generation != w.generation {
+		state.mu.Unlock()
 		return
 	}
-	w.buf.Reset()
-	opsCaptureWriterPool.Put(w)
-}
-
-func shouldPoolOpsCaptureWriter(w *opsCaptureWriter) bool {
-	return w != nil && w.buf.Cap() <= opsCaptureWriterPoolMaxRetainedCapacity
-}
-
-func (w *opsCaptureWriter) Status() int {
-	if w.ResponseWriter == nil {
-		return 0
+	state.generation++
+	state.responseWriter = nil
+	state.ctx = nil
+	state.limit = opsCaptureWriterLimit
+	state.probe = state.probe[:0]
+	state.lineProbe = state.lineProbe[:0]
+	state.frameLineLen = 0
+	state.frameTruncated = false
+	state.lineTruncated = false
+	state.skipLF = false
+	state.sseCapturing = false
+	state.terminalError = parsedOpsError{}
+	state.terminalFound = false
+	poolable := shouldPoolOpsCaptureWriterState(state)
+	state.buf.Reset()
+	state.mu.Unlock()
+	if poolable && w.pool != nil {
+		w.pool.Put(state)
 	}
-	return w.ResponseWriter.Status()
 }
 
-func (w *opsCaptureWriter) Size() int {
-	if w.ResponseWriter == nil {
-		return -1
-	}
-	return w.ResponseWriter.Size()
+func shouldPoolOpsCaptureWriterState(state *opsCaptureWriterState) bool {
+	return state != nil && state.buf.Cap() <= opsCaptureWriterPoolMaxRetainedCapacity &&
+		cap(state.probe) <= opsTerminalSSEFrameProbeLimit && cap(state.lineProbe) <= 256
 }
 
-func (w *opsCaptureWriter) Written() bool {
-	if w.ResponseWriter == nil {
-		return false
+func (w *opsCaptureWriter) lockActive() (*opsCaptureWriterState, gin.ResponseWriter) {
+	if w == nil || w.state == nil {
+		return nil, nil
 	}
-	return w.ResponseWriter.Written()
+	state := w.state
+	state.mu.RLock()
+	if state.generation != w.generation || state.responseWriter == nil {
+		state.mu.RUnlock()
+		return nil, nil
+	}
+	return state, state.responseWriter
+}
+
+func (w *opsCaptureWriter) lockActiveWrite() (*opsCaptureWriterState, gin.ResponseWriter) {
+	if w == nil || w.state == nil {
+		return nil, nil
+	}
+	state := w.state
+	state.mu.Lock()
+	if state.generation != w.generation || state.responseWriter == nil {
+		state.mu.Unlock()
+		return nil, nil
+	}
+	return state, state.responseWriter
+}
+
+func (w *opsCaptureWriter) setContext(ctx *gin.Context) {
+	state, _ := w.lockActiveWrite()
+	if state == nil {
+		return
+	}
+	state.ctx = ctx
+	state.mu.Unlock()
+}
+
+func (w *opsCaptureWriter) capturedBytes() []byte {
+	state, _ := w.lockActive()
+	if state == nil {
+		return nil
+	}
+	defer state.mu.RUnlock()
+	return append([]byte(nil), state.buf.Bytes()...)
+}
+
+func (w *opsCaptureWriter) capturedTerminalError() (parsedOpsError, bool) {
+	state, _ := w.lockActive()
+	if state == nil {
+		return parsedOpsError{}, false
+	}
+	defer state.mu.RUnlock()
+	return state.terminalError, state.terminalFound
+}
+
+func (w *opsCaptureWriter) finalizeCapture() {
+	state, _ := w.lockActiveWrite()
+	if state == nil {
+		return
+	}
+	defer state.mu.Unlock()
+	state.finalizeResponseCapture()
 }
 
 func (w *opsCaptureWriter) Header() http.Header {
-	if w.ResponseWriter == nil {
+	state, rw := w.lockActive()
+	if state == nil {
 		return http.Header{}
 	}
-	return w.ResponseWriter.Header()
+	defer state.mu.RUnlock()
+	return rw.Header()
 }
-
 func (w *opsCaptureWriter) WriteHeader(code int) {
-	if w.ResponseWriter == nil {
+	state, rw := w.lockActive()
+	if state == nil {
 		return
 	}
-	w.ResponseWriter.WriteHeader(code)
+	defer state.mu.RUnlock()
+	rw.WriteHeader(code)
 }
-
 func (w *opsCaptureWriter) WriteHeaderNow() {
-	if w.ResponseWriter == nil {
+	state, rw := w.lockActive()
+	if state == nil {
 		return
 	}
-	w.ResponseWriter.WriteHeaderNow()
+	defer state.mu.RUnlock()
+	rw.WriteHeaderNow()
 }
-
+func (w *opsCaptureWriter) Status() int {
+	state, rw := w.lockActive()
+	if state == nil {
+		return 0
+	}
+	defer state.mu.RUnlock()
+	return rw.Status()
+}
+func (w *opsCaptureWriter) Size() int {
+	state, rw := w.lockActive()
+	if state == nil {
+		return -1
+	}
+	defer state.mu.RUnlock()
+	return rw.Size()
+}
+func (w *opsCaptureWriter) Written() bool {
+	state, rw := w.lockActive()
+	if state == nil {
+		return false
+	}
+	defer state.mu.RUnlock()
+	return rw.Written()
+}
 func (w *opsCaptureWriter) Flush() {
-	if w.ResponseWriter == nil {
+	state, rw := w.lockActive()
+	if state == nil {
 		return
 	}
-	w.ResponseWriter.Flush()
+	defer state.mu.RUnlock()
+	rw.Flush()
 }
-
 func (w *opsCaptureWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if w.ResponseWriter == nil {
+	state, rw := w.lockActive()
+	if state == nil {
 		return nil, nil, errors.New("response writer released")
 	}
-	return w.ResponseWriter.Hijack()
+	defer state.mu.RUnlock()
+	return rw.Hijack()
 }
-
 func (w *opsCaptureWriter) CloseNotify() <-chan bool {
-	if w.ResponseWriter == nil {
+	state, rw := w.lockActive()
+	if state == nil {
 		ch := make(chan bool)
 		close(ch)
 		return ch
 	}
-	return w.ResponseWriter.CloseNotify()
+	defer state.mu.RUnlock()
+	return rw.CloseNotify()
 }
-
 func (w *opsCaptureWriter) Pusher() http.Pusher {
-	if w.ResponseWriter == nil {
+	state, rw := w.lockActive()
+	if state == nil {
 		return nil
 	}
-	return w.ResponseWriter.Pusher()
+	defer state.mu.RUnlock()
+	return rw.Pusher()
 }
 
 func (w *opsCaptureWriter) Write(b []byte) (int, error) {
-	if w.ResponseWriter == nil {
+	state, rw := w.lockActiveWrite()
+	if state == nil {
 		return 0, nil
 	}
-	if w.shouldCapture() {
-		w.captureResponseChunk(b, w.Status())
+	defer state.mu.Unlock()
+	if state.shouldCapture() {
+		state.captureResponseChunk(b, rw.Status())
 	}
-	return w.ResponseWriter.Write(b)
+	return rw.Write(b)
 }
 
 func (w *opsCaptureWriter) WriteString(s string) (int, error) {
-	if w.ResponseWriter == nil {
+	state, rw := w.lockActiveWrite()
+	if state == nil {
 		return 0, nil
 	}
-	if w.shouldCapture() {
-		w.captureResponseChunk([]byte(s), w.Status())
+	defer state.mu.Unlock()
+	if state.shouldCapture() {
+		state.captureResponseChunk([]byte(s), rw.Status())
 	}
-	return w.ResponseWriter.WriteString(s)
+	return rw.WriteString(s)
 }
 
-var opsTerminalSSEMarkers = [][]byte{
-	[]byte("event: response.failed"),
-	[]byte("event: error"),
-	[]byte(`data: {"type":"response.failed"`),
-	[]byte(`data:{"type":"response.failed"`),
-	[]byte(`data: {"type":"error"`),
-	[]byte(`data:{"type":"error"`),
+var _ gin.ResponseWriter = (*opsCaptureWriter)(nil)
+
+func isOpsTerminalSSEFrame(frame []byte) bool {
+	eventType, payload := parseOpsSSEFrameEnvelope(frame)
+	if bytes.Equal(eventType, []byte("response.failed")) || bytes.Equal(eventType, []byte("error")) {
+		return true
+	}
+	if len(payload) == 0 {
+		return false
+	}
+	// Most successful frames cannot be terminal. Avoid JSON decoding on this
+	// hot path while still validating any plausible terminal payload below.
+	if !bytes.Contains(payload, []byte("response.failed")) && !bytes.Contains(payload, []byte(`"error"`)) {
+		return false
+	}
+	var event struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(payload, &event) == nil &&
+		(event.Type == "response.failed" || event.Type == "error")
 }
 
-func (w *opsCaptureWriter) captureResponseChunk(chunk []byte, status int) {
-	if w == nil || w.limit <= 0 || w.buf.Len() >= w.limit || len(chunk) == 0 {
-		return
+func parseOpsSSEFrameEnvelope(frame []byte) ([]byte, []byte) {
+	var eventType []byte
+	var data []byte
+	dataOwned := false
+	dataSeen := false
+	for len(frame) > 0 {
+		line := frame
+		lf := bytes.IndexByte(frame, '\n')
+		cr := bytes.IndexByte(frame, '\r')
+		idx := lf
+		if idx < 0 || (cr >= 0 && cr < idx) {
+			idx = cr
+		}
+		if idx >= 0 {
+			line = frame[:idx]
+			consume := idx + 1
+			if frame[idx] == '\r' && consume < len(frame) && frame[consume] == '\n' {
+				consume++
+			}
+			frame = frame[consume:]
+		} else {
+			frame = nil
+		}
+		if len(line) == 0 || line[0] == ':' {
+			continue
+		}
+		field, value, found := bytes.Cut(line, []byte{':'})
+		if !found {
+			value = nil
+		}
+		field = bytes.TrimSpace(field)
+		value = bytes.TrimSpace(value)
+		switch {
+		case bytes.Equal(field, []byte("event")):
+			eventType = value
+		case bytes.Equal(field, []byte("data")):
+			if !dataSeen {
+				data = value
+				dataSeen = true
+				continue
+			}
+			if !dataOwned {
+				data = append([]byte(nil), data...)
+				dataOwned = true
+			}
+			data = append(data, '\n')
+			data = append(data, value...)
+		}
 	}
-	if status >= 400 || w.sseCapturing {
-		w.appendCapturedResponse(chunk)
-		return
-	}
-
-	combined := make([]byte, 0, len(w.probe)+len(chunk))
-	combined = append(combined, w.probe...)
-	combined = append(combined, chunk...)
-	if start := findOpsTerminalSSEStart(combined); start >= 0 {
-		w.sseCapturing = true
-		w.probe = w.probe[:0]
-		w.appendCapturedResponse(combined[start:])
-		return
-	}
-
-	// Retain one full marker width so a marker split across writes still has
-	// its preceding byte available for the SSE line-boundary check.
-	keep := opsTerminalSSEProbeSize
-	if keep > len(combined) {
-		keep = len(combined)
-	}
-	w.probe = append(w.probe[:0], combined[len(combined)-keep:]...)
+	return bytes.TrimSpace(eventType), data
 }
 
-func (w *opsCaptureWriter) appendCapturedResponse(chunk []byte) {
-	remaining := w.limit - w.buf.Len()
+func (state *opsCaptureWriterState) captureResponseChunk(chunk []byte, status int) {
+	if state == nil || state.limit <= 0 || len(chunk) == 0 {
+		return
+	}
+	if status >= 400 {
+		state.appendCapturedResponse(chunk)
+		return
+	}
+	if state.sseCapturing {
+		state.appendTerminalProbe(chunk)
+		state.appendCapturedResponse(chunk)
+		return
+	}
+	for i, b := range chunk {
+		if state.skipLF {
+			state.skipLF = false
+			if b == '\n' {
+				continue
+			}
+		}
+		if !state.lineTruncated {
+			if len(state.lineProbe) < 256 {
+				state.lineProbe = append(state.lineProbe, b)
+			} else {
+				state.lineTruncated = true
+			}
+		}
+		if !state.frameTruncated {
+			if len(state.probe) < opsTerminalSSEFrameProbeLimit {
+				state.probe = append(state.probe, b)
+			} else {
+				state.frameTruncated = true
+			}
+		}
+		if b != '\n' && b != '\r' {
+			state.frameLineLen++
+			continue
+		}
+		if b == '\r' {
+			state.skipLF = true
+		}
+		if !state.lineTruncated && isOpsTerminalSSEEventLine(state.lineProbe) {
+			state.sseCapturing = true
+			state.terminalError = parsedOpsError{ErrorType: "upstream_error", StreamFailure: true}
+			state.terminalFound = true
+			state.appendCapturedResponse(state.lineProbe)
+			state.probe = state.probe[:0]
+			state.appendTerminalProbe(state.lineProbe)
+			state.lineProbe = state.lineProbe[:0]
+			state.frameLineLen = 0
+			state.frameTruncated = false
+			state.lineTruncated = false
+			state.skipLF = false
+			state.appendTerminalProbe(chunk[i+1:])
+			state.appendCapturedResponse(chunk[i+1:])
+			return
+		}
+		if state.frameLineLen != 0 {
+			state.frameLineLen = 0
+			state.lineProbe = state.lineProbe[:0]
+			state.lineTruncated = false
+			continue
+		}
+		if !state.frameTruncated && isOpsTerminalSSEFrame(state.probe) {
+			state.sseCapturing = true
+			state.terminalError, state.terminalFound = parseOpsSSEFailure(state.probe)
+			state.appendCapturedResponse(state.probe)
+			state.probe = state.probe[:0]
+			state.appendCapturedResponse(chunk[i+1:])
+			return
+		}
+		state.probe = state.probe[:0]
+		state.lineProbe = state.lineProbe[:0]
+		state.frameTruncated = false
+		state.lineTruncated = false
+	}
+}
+
+func isOpsTerminalSSEEventLine(line []byte) bool {
+	line = bytes.TrimSpace(line)
+	field, value, found := bytes.Cut(line, []byte{':'})
+	return found && bytes.Equal(bytes.TrimSpace(field), []byte("event")) &&
+		(bytes.Equal(bytes.TrimSpace(value), []byte("response.failed")) ||
+			bytes.Equal(bytes.TrimSpace(value), []byte("error")))
+}
+
+func (state *opsCaptureWriterState) appendTerminalProbe(chunk []byte) {
+	remaining := opsTerminalSSEFrameProbeLimit - len(state.probe)
+	if remaining <= 0 {
+		state.frameTruncated = true
+		return
+	}
+	if len(chunk) > remaining {
+		chunk = chunk[:remaining]
+		state.frameTruncated = true
+	}
+	state.probe = append(state.probe, chunk...)
+}
+
+func (state *opsCaptureWriterState) finalizeResponseCapture() {
+	if state == nil {
+		return
+	}
+	if state.terminalFound {
+		if parsed, ok := parseOpsSSEFailure(state.probe); ok {
+			state.terminalError = parsed
+		}
+		return
+	}
+	if state.frameTruncated || len(state.probe) == 0 || !isOpsTerminalSSEFrame(state.probe) {
+		return
+	}
+	state.sseCapturing = true
+	state.appendCapturedResponse(state.probe)
+	state.terminalError, state.terminalFound = parseOpsSSEFailure(state.probe)
+	if !state.terminalFound {
+		state.terminalError = parsedOpsError{ErrorType: "upstream_error", StreamFailure: true}
+		state.terminalFound = true
+	}
+}
+
+func (state *opsCaptureWriterState) appendCapturedResponse(chunk []byte) {
+	remaining := state.limit - state.buf.Len()
 	if remaining <= 0 {
 		return
 	}
 	if len(chunk) > remaining {
 		chunk = chunk[:remaining]
 	}
-	_, _ = w.buf.Write(chunk)
+	_, _ = state.buf.Write(chunk)
 }
 
-func findOpsTerminalSSEStart(data []byte) int {
-	earliest := -1
-	for _, marker := range opsTerminalSSEMarkers {
-		searchFrom := 0
-		for searchFrom < len(data) {
-			idx := bytes.Index(data[searchFrom:], marker)
-			if idx < 0 {
-				break
-			}
-			idx += searchFrom
-			if idx == 0 || data[idx-1] == '\n' {
-				if earliest < 0 || idx < earliest {
-					earliest = idx
-				}
-				break
-			}
-			searchFrom = idx + 1
-		}
-	}
-	return earliest
-}
-
-func maxOpsTerminalSSEMarkerSize() int {
-	maxSize := 0
-	for _, marker := range opsTerminalSSEMarkers {
-		if len(marker) > maxSize {
-			maxSize = len(marker)
-		}
-	}
-	return maxSize
-}
-
-var opsTerminalSSEProbeSize = maxOpsTerminalSSEMarkerSize()
-
-func (w *opsCaptureWriter) shouldCapture() bool {
-	if w.ctx == nil {
+func (state *opsCaptureWriterState) shouldCapture() bool {
+	if state.ctx == nil {
 		return true
 	}
-	_, rejected := middleware2.GetIngressRejectReason(w.ctx)
+	_, rejected := middleware2.GetIngressRejectReason(state.ctx)
 	return !rejected
 }
 
@@ -759,7 +1023,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		originalWriter := c.Writer
 		w := acquireOpsCaptureWriter(originalWriter)
-		w.ctx = c
+		w.setContext(c)
 		defer func() {
 			// Restore the original writer before returning so outer middlewares
 			// don't observe a pooled wrapper that has been released.
@@ -770,6 +1034,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}()
 		c.Writer = w
 		c.Next()
+		w.finalizeCapture()
 
 		if _, rejected := middleware2.GetIngressRejectReason(c); rejected {
 			return
@@ -781,14 +1046,22 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		if !ops.IsMonitoringEnabled(c.Request.Context()) {
 			return
 		}
+		if c.GetBool(opsDedicatedErrorRecordedKey) {
+			return
+		}
 
 		if shouldSkipOpsErrorLogForCyber(c) {
 			return
 		}
 
 		status := c.Writer.Status()
-		body := w.buf.Bytes()
+		body := w.capturedBytes()
 		parsed := parseOpsErrorResponse(body)
+		if !parsed.StreamFailure {
+			if terminal, ok := w.capturedTerminalError(); ok {
+				parsed = terminal
+			}
+		}
 		if status < 400 {
 			if parsed.StreamFailure {
 				status = inferStreamFailureStatus(c, parsed)
@@ -802,10 +1075,8 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}
 
 		// Skip logging if a passthrough rule with skip_monitoring=true matched.
-		if v, ok := c.Get(service.OpsSkipPassthroughKey); ok {
-			if skip, _ := v.(bool); skip {
-				return
-			}
+		if shouldSkipFinalOpsFailure(c) {
+			return
 		}
 
 		// Skip logging if the error should be filtered based on settings
@@ -897,9 +1168,8 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			IsCountTokens:     isCountTokensRequest(c),
 
 			ErrorMessage: parsed.Message,
-			// Keep the captured error body (already capped at the queue-safe limit) so the
-			// service layer can sanitize JSON before truncating for storage.
-			ErrorBody:   string(body),
+			// Sanitize each SSE data payload before the body enters the async queue.
+			ErrorBody:   sanitizeOpsSSEDataForPersistence(body),
 			ErrorSource: errorSource,
 			ErrorOwner:  errorOwner,
 
@@ -951,16 +1221,15 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 // 仅在 status<400 且不存在上游错误上下文时调用：上游透传错误已由中间件的
 // upstream-context 分支落库，无需在此重复记录。
 func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) {
-	streamErr, ok := service.GetOpsStreamError(c)
-	if !ok {
-		return
+	for _, streamErr := range service.GetOpsStreamErrors(c) {
+		logOpsStreamErrorValue(c, ops, wireStatus, streamErr)
 	}
+}
 
+func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus int, streamErr service.OpsStreamError) {
 	// 命中 skip_monitoring=true 透传规则的请求跳过落库，与其它分支一致。
-	if v, ok := c.Get(service.OpsSkipPassthroughKey); ok {
-		if skip, _ := v.(bool); skip {
-			return
-		}
+	if streamErr.SkipMonitoring || (streamErr.Turn == 0 && shouldSkipFinalOpsFailure(c)) {
+		return
 	}
 
 	// 复用与 status>=400 分支相同的设置过滤（context canceled / 无可用账号等）。
@@ -1070,6 +1339,9 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 	}
 	applyOpsLatencyFieldsFromContext(c, entry)
 	applyOpsUpstreamFieldsFromContext(c, entry)
+	if streamErr.Turn > 0 {
+		applyOpsStreamErrorSnapshot(entry, streamErr)
+	}
 
 	if apiKey != nil {
 		entry.APIKeyID = &apiKey.ID
@@ -1090,6 +1362,70 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 	}
 
 	enqueueOpsErrorLog(ops, entry)
+}
+
+func applyOpsStreamErrorSnapshot(entry *service.OpsInsertErrorLogInput, streamErr service.OpsStreamError) {
+	if entry == nil {
+		return
+	}
+	if streamErr.AccountID > 0 {
+		accountID := streamErr.AccountID
+		entry.AccountID = &accountID
+	}
+	entry.UpstreamModel = strings.TrimSpace(streamErr.UpstreamModel)
+	entry.UpstreamStatusCode = nil
+	if streamErr.UpstreamStatus > 0 {
+		status := streamErr.UpstreamStatus
+		entry.UpstreamStatusCode = &status
+	}
+	entry.UpstreamErrorMessage = nil
+	if message := strings.TrimSpace(streamErr.UpstreamMessage); message != "" {
+		entry.UpstreamErrorMessage = &message
+	}
+	entry.UpstreamErrorDetail = nil
+	if detail := strings.TrimSpace(streamErr.UpstreamDetail); detail != "" {
+		entry.UpstreamErrorDetail = &detail
+	}
+	entry.UpstreamErrors = streamErr.UpstreamErrors
+	lastStage := ""
+	for i := len(streamErr.UpstreamErrors) - 1; i >= 0; i-- {
+		if streamErr.UpstreamErrors[i] != nil {
+			lastStage = streamErr.UpstreamErrors[i].Stage
+			break
+		}
+	}
+	if lastStage == string(service.GatewayFailureStageAccountAuth) {
+		entry.ErrorPhase = string(service.GatewayFailureStageAccountAuth)
+		entry.ErrorOwner = "provider"
+		entry.ErrorSource = "gateway"
+		entry.IsBusinessLimited = false
+	} else if streamErr.UpstreamStatus > 0 || len(streamErr.UpstreamErrors) > 0 {
+		entry.ErrorPhase = "upstream"
+		entry.ErrorOwner = "provider"
+		entry.ErrorSource = "upstream_http"
+		entry.IsBusinessLimited = false
+	}
+}
+
+func shouldSkipFinalOpsFailure(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	if v, ok := c.Get(service.OpsSkipPassthroughKey); ok {
+		if skip, _ := v.(bool); skip {
+			return true
+		}
+	}
+	if v, ok := c.Get(service.OpsUpstreamErrorsKey); ok {
+		if events, ok := v.([]*service.OpsUpstreamErrorEvent); ok {
+			for i := len(events) - 1; i >= 0; i-- {
+				if events[i] != nil {
+					return events[i].SkipMonitoring
+				}
+			}
+		}
+	}
+	return false
 }
 
 // isCountTokensRequest checks if the request is a count_tokens request
@@ -1153,7 +1489,13 @@ func applyOpsUpstreamFieldsFromContext(c *gin.Context, entry *service.OpsInsertE
 	if v, ok := c.Get(service.OpsUpstreamErrorsKey); ok {
 		if events, ok := v.([]*service.OpsUpstreamErrorEvent); ok && len(events) > 0 {
 			entry.UpstreamErrors = events
-			last := events[len(events)-1]
+			var last *service.OpsUpstreamErrorEvent
+			for i := len(events) - 1; i >= 0; i-- {
+				if events[i] != nil {
+					last = events[i]
+					break
+				}
+			}
 			if last == nil {
 				return
 			}
@@ -1169,15 +1511,18 @@ func applyOpsUpstreamFieldsFromContext(c *gin.Context, entry *service.OpsInsertE
 					entry.UpstreamErrorDetail = &detail
 				}
 			} else {
-				if entry.UpstreamStatusCode == nil && last.UpstreamStatusCode > 0 {
+				entry.UpstreamStatusCode = nil
+				if last.UpstreamStatusCode > 0 {
 					code := last.UpstreamStatusCode
 					entry.UpstreamStatusCode = &code
 				}
-				if entry.UpstreamErrorMessage == nil && strings.TrimSpace(last.Message) != "" {
+				entry.UpstreamErrorMessage = nil
+				if strings.TrimSpace(last.Message) != "" {
 					message := strings.TrimSpace(last.Message)
 					entry.UpstreamErrorMessage = &message
 				}
-				if entry.UpstreamErrorDetail == nil && strings.TrimSpace(last.Detail) != "" {
+				entry.UpstreamErrorDetail = nil
+				if strings.TrimSpace(last.Detail) != "" {
 					detail := strings.TrimSpace(last.Detail)
 					entry.UpstreamErrorDetail = &detail
 				}
@@ -1217,6 +1562,7 @@ type parsedOpsError struct {
 	ErrorType     string
 	Message       string
 	Code          string
+	StatusCode    int
 	StreamFailure bool
 }
 
@@ -1241,59 +1587,85 @@ func parseOpsErrorResponse(body []byte) parsedOpsError {
 		if t == "" {
 			t = "api_error"
 		}
-		var code string
-		if v, ok := errObj["code"]; ok {
-			switch n := v.(type) {
-			case string:
-				code = strings.TrimSpace(n)
-			case float64:
-				code = strconvItoa(int(n))
-			case int:
-				code = strconvItoa(n)
-			}
-		}
+		code := opsJSONScalarString(errObj["code"])
 		return parsedOpsError{ErrorType: t, Message: msg, Code: code}
+	}
+	if errMessage, ok := m["error"].(string); ok && strings.TrimSpace(errMessage) != "" {
+		t, _ := m["type"].(string)
+		if t == "" || t == "error" {
+			t = "api_error"
+		}
+		return parsedOpsError{ErrorType: t, Message: strings.TrimSpace(errMessage), Code: opsJSONScalarString(m["code"])}
 	}
 
 	// APIKeyAuth-style: { code:"INSUFFICIENT_BALANCE", message:"..." }
-	code, _ := m["code"].(string)
+	code := opsJSONScalarString(m["code"])
 	msg, _ := m["message"].(string)
 	if code != "" || msg != "" {
-		return parsedOpsError{ErrorType: "api_error", Message: msg, Code: code}
+		t, _ := m["type"].(string)
+		if t == "" || t == "error" {
+			t = "api_error"
+		}
+		return parsedOpsError{ErrorType: t, Message: msg, Code: code}
 	}
 
 	return parsedOpsError{Message: truncateString(string(body), 1024)}
 }
 
+func opsJSONScalarString(value any) string {
+	switch value := value.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case float64:
+		return strconvItoa(int(value))
+	case json.Number:
+		return strings.TrimSpace(value.String())
+	case int:
+		return strconvItoa(value)
+	case int64:
+		return strconv.FormatInt(value, 10)
+	default:
+		return ""
+	}
+}
+
+func opsJSONInt(value any) int {
+	switch value := value.(type) {
+	case float64:
+		return int(value)
+	case json.Number:
+		parsed, _ := strconv.Atoi(value.String())
+		return parsed
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(value))
+		return parsed
+	case int:
+		return value
+	case int64:
+		return int(value)
+	default:
+		return 0
+	}
+}
+
 func parseOpsSSEFailure(body []byte) (parsedOpsError, bool) {
 	normalized := strings.ReplaceAll(string(body), "\r\n", "\n")
-	if findOpsTerminalSSEStart([]byte(normalized)) < 0 {
-		return parsedOpsError{}, false
-	}
-
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
 	var errorCandidate *parsedOpsError
 	for _, frame := range strings.Split(normalized, "\n\n") {
 		frame = strings.TrimSpace(frame)
 		if frame == "" {
 			continue
 		}
-		var eventType string
-		dataLines := make([]string, 0, 1)
-		for _, line := range strings.Split(frame, "\n") {
-			switch {
-			case strings.HasPrefix(line, "event:"):
-				eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			case strings.HasPrefix(line, "data:"):
-				dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-			}
-		}
-		if eventType != "response.failed" && eventType != "error" && len(dataLines) == 0 {
+		eventTypeBytes, payloadBytes := parseOpsSSEFrameEnvelope([]byte(frame))
+		eventType := string(eventTypeBytes)
+		if eventType != "response.failed" && eventType != "error" && len(payloadBytes) == 0 {
 			continue
 		}
 
-		payload := strings.Join(dataLines, "\n")
+		payload := string(payloadBytes)
 		var event map[string]any
-		if err := json.Unmarshal([]byte(payload), &event); err == nil {
+		if err := json.Unmarshal(payloadBytes, &event); err == nil {
 			if eventType == "" {
 				eventType, _ = event["type"].(string)
 			}
@@ -1306,10 +1678,32 @@ func parseOpsSSEFailure(body []byte) (parsedOpsError, bool) {
 		if eventType == "error" {
 			parsed.ErrorType = "api_error"
 		}
-		if errObj := opsSSEErrorObject(event); errObj != nil {
+		errObj := opsSSEErrorObject(event)
+		if errObj == nil && event != nil && (event["message"] != nil || event["code"] != nil) {
+			errObj = event
+		}
+		if errObj != nil {
 			parsed.ErrorType, _ = errObj["type"].(string)
+			if parsed.ErrorType == "error" || parsed.ErrorType == "response.failed" {
+				parsed.ErrorType = ""
+			}
 			parsed.Message, _ = errObj["message"].(string)
-			parsed.Code, _ = errObj["code"].(string)
+			switch code := errObj["code"].(type) {
+			case string:
+				parsed.Code = strings.TrimSpace(code)
+			case float64:
+				parsed.Code = strconvItoa(int(code))
+			}
+			parsed.StatusCode = opsJSONInt(errObj["status_code"])
+			if parsed.StatusCode == 0 {
+				parsed.StatusCode = opsJSONInt(errObj["status"])
+			}
+			if parsed.StatusCode == 0 {
+				parsed.StatusCode = opsJSONInt(event["status_code"])
+			}
+			if parsed.StatusCode == 0 {
+				parsed.StatusCode = opsJSONInt(event["status"])
+			}
 			if parsed.ErrorType == "" {
 				parsed.ErrorType = inferResponsesFailedOpsErrorType(parsed.Code)
 			}
@@ -1322,7 +1716,12 @@ func parseOpsSSEFailure(body []byte) (parsedOpsError, bool) {
 			}
 		}
 		if strings.TrimSpace(parsed.Message) == "" && payload != "" {
-			parsed.Message = truncateString(payload, 1024)
+			trimmedPayload := strings.TrimSpace(payload)
+			if strings.HasPrefix(trimmedPayload, "{") || strings.HasPrefix(trimmedPayload, "[") {
+				parsed.Message = "upstream stream failed"
+			} else {
+				parsed.Message = truncateString(trimmedPayload, 1024)
+			}
 		}
 		if eventType == "response.failed" {
 			return parsed, true
@@ -1348,19 +1747,74 @@ func opsSSEErrorObject(event map[string]any) map[string]any {
 			return errObj
 		}
 	}
+	// Some providers flatten error fields onto the terminal event itself:
+	// {"type":"error","code":"service_unavailable","message":"..."}.
+	if eventType, _ := event["type"].(string); eventType == "error" {
+		return event
+	}
 	return nil
+}
+
+func sanitizeOpsSSEDataForPersistence(body []byte) string {
+	if len(body) == 0 || !bytes.Contains(body, []byte("data")) {
+		return string(body)
+	}
+	normalized := bytes.ReplaceAll(body, []byte("\r\n"), []byte{'\n'})
+	normalized = bytes.ReplaceAll(normalized, []byte{'\r'}, []byte{'\n'})
+	frames := bytes.Split(normalized, []byte("\n\n"))
+	var out bytes.Buffer
+	out.Grow(len(body))
+	for frameIndex, frame := range frames {
+		if frameIndex > 0 {
+			out.WriteString("\n\n")
+		}
+		_, payload := parseOpsSSEFrameEnvelope(frame)
+		trimmedPayload := bytes.TrimSpace(payload)
+		replacement := ""
+		if json.Valid(trimmedPayload) {
+			replacement, _ = service.SanitizeOpsErrorBodyForQueue(string(trimmedPayload))
+		} else if len(trimmedPayload) > 0 && (trimmedPayload[0] == '{' || trimmedPayload[0] == '[') {
+			// Captured terminal frames can be truncated at the queue bound. Never
+			// persist a JSON-looking fragment that could contain an unredacted key.
+			replacement = `{"payload_truncated":true}`
+		}
+		if replacement == "" {
+			out.Write(frame)
+			continue
+		}
+		wroteData := false
+		emittedLine := false
+		for _, line := range bytes.Split(frame, []byte{'\n'}) {
+			field, _, found := bytes.Cut(line, []byte{':'})
+			if found && bytes.Equal(bytes.TrimSpace(field), []byte("data")) {
+				if wroteData {
+					continue
+				}
+				line = append([]byte("data: "), replacement...)
+				wroteData = true
+			}
+			if emittedLine {
+				out.WriteByte('\n')
+			}
+			out.Write(line)
+			emittedLine = true
+		}
+	}
+	return out.String()
 }
 
 func inferResponsesFailedOpsErrorType(code string) string {
 	switch strings.TrimSpace(code) {
 	case "rate_limit_exceeded":
 		return "rate_limit_error"
-	case "permission_denied", "cyber_policy", "content_policy":
+	case "permission_denied", "permission_error", "insufficient_permissions", "cyber_policy", "content_policy":
 		return "permission_error"
 	case "invalid_request", "context_length_exceeded":
 		return "invalid_request_error"
 	case "server_is_overloaded":
 		return "overloaded_error"
+	case "service_unavailable", "service_unavailable_error", "server_error":
+		return "service_unavailable_error"
 	case "authentication_failed":
 		return "authentication_error"
 	default:
@@ -1368,15 +1822,20 @@ func inferResponsesFailedOpsErrorType(code string) string {
 	}
 }
 
-func inferStreamFailureStatus(c *gin.Context, parsed parsedOpsError) int {
+func inferStreamFailureStatus(_ *gin.Context, parsed parsedOpsError) int {
+	if parsed.StatusCode >= 400 && parsed.StatusCode <= 599 {
+		return parsed.StatusCode
+	}
 	switch strings.TrimSpace(parsed.Code) {
 	case "rate_limit_exceeded":
 		return http.StatusTooManyRequests
-	case "permission_denied", "cyber_policy", "content_policy":
+	case "permission_denied", "permission_error", "insufficient_permissions", "cyber_policy", "content_policy":
 		return http.StatusForbidden
 	case "invalid_request", "context_length_exceeded":
 		return http.StatusBadRequest
 	case "server_is_overloaded":
+		return http.StatusServiceUnavailable
+	case "service_unavailable", "service_unavailable_error", "server_error":
 		return http.StatusServiceUnavailable
 	case "authentication_failed":
 		return http.StatusUnauthorized
@@ -1395,20 +1854,6 @@ func inferStreamFailureStatus(c *gin.Context, parsed parsedOpsError) int {
 		return http.StatusServiceUnavailable
 	}
 
-	if c != nil {
-		if v, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
-			switch code := v.(type) {
-			case int:
-				if code >= 400 {
-					return code
-				}
-			case int64:
-				if code >= 400 {
-					return int(code)
-				}
-			}
-		}
-	}
 	return http.StatusBadGateway
 }
 
@@ -1458,6 +1903,9 @@ func isKnownOpsErrorType(t string) bool {
 	switch t {
 	case "invalid_request_error",
 		"authentication_error",
+		"permission_error",
+		"model_not_found",
+		"service_unavailable",
 		"rate_limit_error",
 		"billing_error",
 		"subscription_error",
@@ -1507,7 +1955,7 @@ func classifyOpsPhase(errType, message, code string) string {
 			return "request"
 		}
 		return "upstream"
-	case "invalid_request_error":
+	case "invalid_request_error", "permission_error", "forbidden_error", "not_found_error", "model_not_found":
 		return "request"
 	case "upstream_error", "overloaded_error":
 		return "upstream"
@@ -1523,7 +1971,7 @@ func classifyOpsPhase(errType, message, code string) string {
 
 func classifyOpsSeverity(errType string, status int) string {
 	switch errType {
-	case "invalid_request_error", "authentication_error", "billing_error", "subscription_error":
+	case "invalid_request_error", "authentication_error", "permission_error", "forbidden_error", "not_found_error", "model_not_found", "billing_error", "subscription_error":
 		return "P3"
 	}
 	if status >= 500 {
