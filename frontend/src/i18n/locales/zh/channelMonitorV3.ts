@@ -16,6 +16,8 @@ export default {
     critical: '异常',
     unknown: '样本不足',
     allModels: '全部模型',
+    unknownGroup: '未知分组',
+    timelineTooltip: '{time} · 可用率 {availability} · 缓存率 {cache} · 首 Token {ttft}',
     emptyTitle: '暂无渠道数据',
     emptyDescription: '当前时间范围内还没有可展示的被动监控数据',
     summary: '可用率 {success} · 缓存率 {cache}',

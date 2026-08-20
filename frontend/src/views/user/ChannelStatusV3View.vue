@@ -25,11 +25,17 @@
       </section>
 
       <div v-if="loading && rows.length === 0" class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        <div v-for="i in 6" :key="i" class="h-64 animate-pulse rounded-2xl bg-gray-100 dark:bg-dark-800" />
+        <div v-for="i in 8" :key="i" class="h-72 animate-pulse rounded-2xl bg-gray-100 dark:bg-dark-800" />
       </div>
       <EmptyState v-else-if="rows.length === 0" :title="t('channelMonitorV3.emptyTitle')" :description="t('channelMonitorV3.emptyDescription')" />
       <div v-else class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        <ChannelMonitorV3Card v-for="row in rows" :key="`${row.platform}:${row.group_id ?? ''}:${row.model ?? ''}`" :row="row" />
+        <ChannelMonitorV3Card
+          v-for="row in rows"
+          :key="row.group_id ?? `${row.platform}:${row.group_name ?? ''}`"
+          :row="row"
+          :countdown-seconds="countdownSeconds"
+          :timeline-length="timelineLength"
+        />
       </div>
     </div>
   </AppLayout>
@@ -61,10 +67,18 @@ const snapshot = ref<MonitorSnapshot | null>(null)
 const matrix = ref<MonitorMatrixResponse | null>(null)
 const loading = ref(false)
 const refreshing = ref(false)
+const countdownSeconds = ref(0)
 let controller: AbortController | null = null
 let refreshTimer: number | null = null
+let countdownTimer: number | null = null
 
-const rows = computed(() => matrix.value?.items ?? [])
+// platform_group is intentionally used here: the backend scopes it to the
+// monitor group_ids selected by the operator, so unrelated groups never appear.
+const rows = computed(() => [...(matrix.value?.items ?? [])]
+  .filter(row => row.group_id != null && row.group_id > 0)
+  .sort((a, b) => (a.group_id ?? 0) - (b.group_id ?? 0)))
+const timelineLength = computed(() => ({ '90m': 18, '24h': 24, '7d': 14, '30d': 30 })[filter.value.range])
+
 function formatPercent(value: number) { return formatMonitorPercent(value, locale.value || 'zh-CN') }
 function formatTime(value?: string) { if (!value) return '-'; return new Intl.DateTimeFormat(locale.value || undefined, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) }
 function setRange(value: MonitorRange) { filter.value = { ...filter.value, range: value } }
@@ -78,7 +92,7 @@ async function reload(silent = true) {
   try {
     const [nextSnapshot, nextMatrix] = await Promise.all([
       api.getSnapshot(filter.value, false, request.signal),
-      api.getMatrix(filter.value, 'platform', false, request.signal),
+      api.getMatrix(filter.value, 'platform_group', false, request.signal),
     ])
     if (request.signal.aborted || controller !== request) return
     snapshot.value = nextSnapshot
@@ -91,11 +105,25 @@ async function reload(silent = true) {
     if (controller === request) { loading.value = false; refreshing.value = false }
   }
 }
+
 function scheduleRefresh(seconds: number) {
+  const interval = Math.max(10, seconds)
   if (refreshTimer) window.clearInterval(refreshTimer)
-  refreshTimer = window.setInterval(() => { if (!loading.value && !refreshing.value && !document.hidden) void reload(true) }, Math.max(10, seconds) * 1000)
+  if (countdownTimer) window.clearInterval(countdownTimer)
+  countdownSeconds.value = interval
+  countdownTimer = window.setInterval(() => {
+    if (!document.hidden && countdownSeconds.value > 0) countdownSeconds.value -= 1
+  }, 1000)
+  refreshTimer = window.setInterval(() => {
+    if (!loading.value && !refreshing.value && !document.hidden) void reload(true)
+  }, interval * 1000)
 }
+
 watch(() => filter.value.range, () => void reload(false))
 onMounted(() => void reload(false))
-onBeforeUnmount(() => { controller?.abort(); if (refreshTimer) window.clearInterval(refreshTimer) })
+onBeforeUnmount(() => {
+  controller?.abort()
+  if (refreshTimer) window.clearInterval(refreshTimer)
+  if (countdownTimer) window.clearInterval(countdownTimer)
+})
 </script>
