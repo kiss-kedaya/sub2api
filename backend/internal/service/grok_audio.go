@@ -63,7 +63,6 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 	}
 	upstreamCtx, release := detachUpstreamContext(ctx)
 	defer release()
-	upstreamCtx = WithHTTPUpstreamProfile(upstreamCtx, HTTPUpstreamProfileGrok)
 	method := http.MethodPost
 	if c != nil && c.Request != nil && strings.TrimSpace(c.Request.Method) != "" {
 		method = c.Request.Method
