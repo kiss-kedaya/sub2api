@@ -56,16 +56,13 @@ const (
 const profitVetoExhaustedMessage = "No available accounts: all candidates rejected by group profit control"
 
 func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryCount int) time.Duration {
-	// An OAuth 429 with a request-scoped deadline intentionally retries
-	// immediately; zero is meaningful here and must not fall back to 500ms.
-	if failoverErr != nil && failoverErr.StatusCode == http.StatusTooManyRequests &&
-		!failoverErr.SameAccountRetryDeadline.IsZero() && failoverErr.SameAccountRetryDelay <= 0 {
-		return 0
+	if failoverErr == nil {
+		return sameAccountRetryDelay
 	}
-	if failoverErr != nil && failoverErr.SameAccountRetryDelay > 0 {
+	if failoverErr.SameAccountRetryDelay > 0 {
 		return failoverErr.SameAccountRetryDelay
 	}
-	if failoverErr == nil || !failoverErr.RequestScopedTransient || retryCount <= 1 {
+	if !failoverErr.RequestScopedTransient || retryCount <= 1 {
 		return sameAccountRetryDelay
 	}
 
@@ -79,43 +76,10 @@ func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryC
 	return delay
 }
 
-func sameAccountRetryAllowed(failoverErr *service.UpstreamFailoverError, retryCount, retryLimit int) bool {
-	if failoverErr == nil || !failoverErr.RetryableOnSameAccount {
-		return false
-	}
-	if retryLimit > 0 && retryCount >= retryLimit {
-		return false
-	}
-	if !failoverErr.SameAccountRetryDeadline.IsZero() {
-		return time.Now().Before(failoverErr.SameAccountRetryDeadline)
-	}
-	return retryCount < retryLimit
-}
-
-func pinSameAccountRetryContext(
-	ctx context.Context,
-	fs *FailoverState,
-	accountID int64,
-	groupID *int64,
-	failoverErr *service.UpstreamFailoverError,
-	prevRetryCount int,
-	prevSwitchCount int,
-	bridgeOldKeys bool,
-) context.Context {
-	if ctx == nil || fs == nil || failoverErr == nil || !failoverErr.RetryableOnSameAccount {
-		return ctx
-	}
-	if fs.SwitchCount != prevSwitchCount {
-		return ctx
-	}
-	if fs.SameAccountRetryCount[accountID] != prevRetryCount+1 {
-		return ctx
-	}
-	prefetchedGroupID := int64(0)
-	if groupID != nil {
-		prefetchedGroupID = *groupID
-	}
-	return service.WithPrefetchedStickySession(ctx, accountID, prefetchedGroupID, bridgeOldKeys)
+// sameAccountRetryDeadlineAllows prevents a retry from starting after the
+// service-provided same-account retry window has elapsed.
+func sameAccountRetryDeadlineAllows(failoverErr *service.UpstreamFailoverError) bool {
+	return failoverErr == nil || failoverErr.SameAccountRetryDeadline.IsZero() || time.Now().Before(failoverErr.SameAccountRetryDeadline)
 }
 
 // FailoverState 跨循环迭代共享的 failover 状态
@@ -168,24 +132,6 @@ func (s *FailoverState) RecordProfitVeto(accountID int64) FailoverAction {
 	return FailoverContinue
 }
 
-// RecordConcurrencyTimeout excludes a busy account after the slot ladder
-// (deadline two-shot or wait-queue full) and continues onto another account
-// while the original sticky binding is preserved by the caller.
-func (s *FailoverState) RecordConcurrencyTimeout(accountID int64) FailoverAction {
-	if s == nil {
-		return FailoverExhausted
-	}
-	if s.FailedAccountIDs == nil {
-		s.FailedAccountIDs = make(map[int64]struct{})
-	}
-	s.FailedAccountIDs[accountID] = struct{}{}
-	if s.SwitchCount >= s.MaxSwitches {
-		return FailoverExhausted
-	}
-	s.SwitchCount++
-	return FailoverContinue
-}
-
 // ProfitVetoCount 返回本次请求累计的利润否决次数（供日志使用）。
 func (s *FailoverState) ProfitVetoCount() int { return s.profitVetoCount }
 
@@ -223,27 +169,27 @@ func (s *FailoverState) HandleFailoverError(
 		return FailoverExhausted
 	}
 
-	retryMax := retryLimit
-	if failoverErr.SameAccountRetryMax > 0 {
-		retryMax = failoverErr.SameAccountRetryMax
-	}
-
 	// 同账号重试不算切换账号，粘性会话仅在实际切换时强制缓存计费。
-	sameAccountRetry := sameAccountRetryAllowed(failoverErr, s.SameAccountRetryCount[accountID], retryMax)
+	retryCount := s.SameAccountRetryCount[accountID]
+	sameAccountRetryAllowed := failoverErr.RetryableOnSameAccount && retryLimit > 0 && retryCount < retryLimit
+	if sameAccountRetryAllowed && !failoverErr.SameAccountRetryDeadline.IsZero() {
+		sameAccountRetryAllowed = time.Now().Before(failoverErr.SameAccountRetryDeadline)
+	}
+	sameAccountRetry := sameAccountRetryAllowed
 	if needForceCacheBilling(s.hasBoundSession, failoverErr, sameAccountRetry) {
 		s.ForceCacheBilling = true
 	}
 
 	// 同账号重试：对 RetryableOnSameAccount 的临时性错误，先在同一账号上重试。
 	// 重试次数上限 retryLimit 由调用方传入（账号级 pool_mode_retry_count 配置）。
-	if sameAccountRetryAllowed(failoverErr, s.SameAccountRetryCount[accountID], retryMax) {
+	if sameAccountRetryAllowed {
 		s.SameAccountRetryCount[accountID]++
 		retryDelay := sameAccountRetryDelayFor(failoverErr, s.SameAccountRetryCount[accountID])
 		logger.FromContext(ctx).Warn("gateway.failover_same_account_retry",
 			zap.Int64("account_id", accountID),
 			zap.Int("upstream_status", failoverErr.StatusCode),
 			zap.Int("same_account_retry_count", s.SameAccountRetryCount[accountID]),
-			zap.Int("same_account_retry_max", retryMax),
+			zap.Int("same_account_retry_max", retryLimit),
 			zap.Duration("retry_delay", retryDelay),
 		)
 		if !sleepWithContext(ctx, retryDelay) {
@@ -259,11 +205,6 @@ func (s *FailoverState) HandleFailoverError(
 
 	// 加入失败列表
 	s.FailedAccountIDs[accountID] = struct{}{}
-	for _, excludedAccountID := range failoverErr.ExcludedAccountIDs {
-		if excludedAccountID > 0 {
-			s.FailedAccountIDs[excludedAccountID] = struct{}{}
-		}
-	}
 
 	// 检查是否耗尽
 	if s.SwitchCount >= s.MaxSwitches {
