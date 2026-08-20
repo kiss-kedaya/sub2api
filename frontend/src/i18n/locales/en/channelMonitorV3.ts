@@ -1,0 +1,24 @@
+/** Compact V3 presentation for the V2 passive channel monitor. */
+export default {
+  channelMonitorV3: {
+    title: 'Channel status',
+    description: 'V2 passive usage · cache and availability',
+    updatedTo: 'Updated to {time}',
+    partialCoverage: 'Partial history coverage',
+    loadFailed: 'Failed to load channel status',
+    cacheRate: 'Cache rate',
+    successRate: 'Availability',
+    ttft: 'First token',
+    samples: '{count} requests',
+    healthScore: 'Health score',
+    healthy: 'Healthy',
+    warning: 'Watch',
+    critical: 'Critical',
+    unknown: 'Insufficient samples',
+    allModels: 'All models',
+    emptyTitle: 'No channel data',
+    emptyDescription: 'There is no passive-monitor data for this time range yet',
+    summary: 'Availability {success} · Cache {cache}',
+    ranges: { '90m': '90m', '24h': '24h', '7d': '7d', '30d': '30d' },
+  },
+}
