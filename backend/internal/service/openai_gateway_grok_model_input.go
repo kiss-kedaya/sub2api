@@ -371,7 +371,7 @@ func collapseGrokAssistantOutputText(content any) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		text.WriteString(value)
+		_, _ = text.WriteString(value)
 	}
 	if strings.TrimSpace(text.String()) == "" {
 		return "", false

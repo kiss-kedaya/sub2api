@@ -311,12 +311,18 @@ func (p *openAIResponsesToolSchemaParser) parseObject(
 	}
 }
 
+var (
+	openAIResponsesJSONOneOfKey     = []byte(`"oneOf"`)
+	openAIResponsesJSONAnyOfKey     = []byte(`"anyOf"`)
+	openAIResponsesJSONEscapeNeedle = []byte{'\\'}
+)
+
 func openAIMissingRootObjectUnionTypeEdit(raw []byte, absoluteStart int) (openAIResponsesToolSchemaEdit, bool) {
 	if len(raw) > openAIResponsesObjectUnionMaxSize {
 		return openAIResponsesToolSchemaEdit{}, false
 	}
-	if !bytes.Contains(raw, []byte(`"oneOf"`)) && !bytes.Contains(raw, []byte(`"anyOf"`)) &&
-		!bytes.Contains(raw, []byte{'\\'}) {
+	if !bytes.Contains(raw, openAIResponsesJSONOneOfKey) && !bytes.Contains(raw, openAIResponsesJSONAnyOfKey) &&
+		!bytes.Contains(raw, openAIResponsesJSONEscapeNeedle) {
 		return openAIResponsesToolSchemaEdit{}, false
 	}
 	var schema map[string]json.RawMessage

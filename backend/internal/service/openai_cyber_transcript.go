@@ -38,11 +38,9 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 		if !v.Exists() || (v.Type == gjson.String && strings.TrimSpace(v.String()) == "") {
 			continue
 		}
-		canonical := v.Raw
+		canonical := normalizeCompatSeedJSON(json.RawMessage(v.Raw))
 		if v.Type == gjson.String {
 			canonical = v.String()
-		} else {
-			canonical = normalizeCompatSeedJSON(json.RawMessage(v.Raw))
 		}
 		_, _ = h.Write([]byte("|"))
 		_, _ = h.Write([]byte(field))
@@ -63,10 +61,11 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 		hasModelGeneratedItem := false
 		sequence.ForEach(func(_, item gjson.Result) bool {
 			canonical := item.Raw
-			if item.Type == gjson.String {
+			switch item.Type {
+			case gjson.String:
 				encoded, _ := json.Marshal(item.String())
 				canonical = string(encoded)
-			} else if item.Type == gjson.JSON {
+			case gjson.JSON:
 				canonical = normalizeCompatSeedJSON(json.RawMessage(item.Raw))
 			}
 			if strings.TrimSpace(canonical) == "" {
