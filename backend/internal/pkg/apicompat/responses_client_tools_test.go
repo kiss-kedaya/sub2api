@@ -66,6 +66,68 @@ func TestAdaptResponsesClientTools_LowersDeclarationsHistoryChoiceAndNamespaces(
 	require.Equal(t, "team__send", namespaceCall["name"])
 }
 
+func TestAdaptResponsesClientTools_LowersToolSearchDiscoveryPayloadWithoutOutput(t *testing.T) {
+	req := map[string]any{
+		"tools": []any{map[string]any{"type": "tool_search"}},
+		"input": []any{map[string]any{
+			"type":      "tool_search_output",
+			"call_id":   "search_1",
+			"tools":     []any{map[string]any{"name": "github", "type": "namespace"}},
+			"status":    "completed",
+			"execution": "client",
+		}},
+	}
+
+	mapping, changed, err := AdaptResponsesClientTools(req)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.True(t, mapping.ToolSearch)
+
+	item := requireResponsesClientToolValue[map[string]any](t, requireResponsesClientToolValue[[]any](t, req["input"])[0])
+	require.Equal(t, "function_call_output", item["type"])
+	require.Equal(t, "search_1", item["call_id"])
+	require.JSONEq(t, `[{"name":"github","type":"namespace"}]`, requireResponsesClientToolValue[string](t, item["output"]))
+	require.NotContains(t, item, "tools")
+	require.NotContains(t, item, "status")
+	require.NotContains(t, item, "execution")
+}
+
+func TestAdaptResponsesClientTools_ToolSearchExplicitOutputTakesPriority(t *testing.T) {
+	req := map[string]any{
+		"tools": []any{map[string]any{"type": "tool_search"}},
+		"input": []any{map[string]any{
+			"type": "tool_search_output", "call_id": "search_1",
+			"output": "authoritative", "tools": []any{map[string]any{"name": "ignored"}},
+		}},
+	}
+
+	_, changed, err := AdaptResponsesClientTools(req)
+	require.NoError(t, err)
+	require.True(t, changed)
+	item := requireResponsesClientToolValue[map[string]any](t, requireResponsesClientToolValue[[]any](t, req["input"])[0])
+	require.Equal(t, "authoritative", item["output"])
+	require.NotContains(t, item, "tools")
+}
+
+func TestAdaptResponsesClientTools_DoesNotInventMissingToolSearchOutput(t *testing.T) {
+	req := map[string]any{
+		"tools": []any{map[string]any{"type": "tool_search"}},
+		"input": []any{map[string]any{
+			"type": "tool_search_output", "call_id": "search_1",
+			"status": "incomplete", "execution": "client",
+		}},
+	}
+
+	_, changed, err := AdaptResponsesClientTools(req)
+	require.NoError(t, err)
+	require.True(t, changed)
+	item := requireResponsesClientToolValue[map[string]any](t, requireResponsesClientToolValue[[]any](t, req["input"])[0])
+	require.Equal(t, "function_call_output", item["type"])
+	require.NotContains(t, item, "output")
+	require.Equal(t, "incomplete", item["status"])
+	require.Equal(t, "client", item["execution"])
+}
+
 func requireResponsesClientToolValue[T any](t *testing.T, value any) T {
 	t.Helper()
 	typed, ok := value.(T)
