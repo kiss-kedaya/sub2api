@@ -206,7 +206,7 @@ func TestHandleUpstreamError_429_NonModelRateLimit(t *testing.T) {
 	// 但 429 兜底逻辑会使用 requestedModel 设置模型级限流
 	require.Nil(t, result)
 	require.Len(t, repo.modelRateLimitCalls, 1)
-	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
+	require.Equal(t, "claude-sonnet-4-6", repo.modelRateLimitCalls[0].modelKey)
 }
 
 // TestHandleUpstreamError_429_NonModelRateLimit_UsesMappedModelKey 测试 429 非模型限流场景
@@ -844,17 +844,28 @@ func TestSetAntigravityModelRateLimits_GeminiWritesFamilyScope(t *testing.T) {
 	require.Equal(t, antigravityGeminiModelRateLimitKey, repo.modelRateLimitCalls[1].modelKey)
 }
 
-func TestSetAntigravityModelRateLimits_ClaudeDoesNotWriteGeminiScope(t *testing.T) {
+func TestSetAntigravityModelRateLimits_DoesNotDoubleMapCustomChain(t *testing.T) {
 	repo := &stubAntigravityAccountRepo{}
 	svc := &AntigravityGatewayService{}
-	account := &Account{ID: 790, Platform: PlatformAntigravity}
+	account := &Account{
+		ID:       790,
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"custom-sonnet":     "claude-sonnet-4-5",
+				"claude-sonnet-4-5": "claude-sonnet-4-6",
+			},
+		},
+	}
 	resetAt := time.Now().Add(30 * time.Second)
+	canonicalModel := resolveFinalAntigravityModelKey(context.Background(), account, "custom-sonnet")
+	require.Equal(t, "claude-sonnet-4-5", canonicalModel)
 
 	success := svc.setAntigravityModelRateLimits(
 		context.Background(),
 		repo,
 		account,
-		"claude-sonnet-4-5",
+		canonicalModel,
 		"[test]",
 		429,
 		resetAt,
@@ -862,6 +873,33 @@ func TestSetAntigravityModelRateLimits_ClaudeDoesNotWriteGeminiScope(t *testing.
 	)
 
 	require.True(t, success)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
+}
+
+func TestSetModelRateLimitAndClearSession_UsesUpstreamReportedModelMetadata(t *testing.T) {
+	repo := &stubAntigravityAccountRepo{}
+	svc := &AntigravityGatewayService{accountRepo: repo}
+	account := &Account{
+		ID:       791,
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"claude-sonnet-4-5": "claude-sonnet-4-6",
+			},
+		},
+	}
+
+	svc.setModelRateLimitAndClearSession(&handleModelRateLimitParams{
+		ctx:        context.Background(),
+		prefix:     "[test]",
+		account:    account,
+		statusCode: 429,
+	}, &antigravitySmartRetryInfo{
+		RetryDelay: 30 * time.Second,
+		ModelName:  "claude-sonnet-4-5",
+	})
+
 	require.Len(t, repo.modelRateLimitCalls, 1)
 	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
 }
@@ -877,7 +915,7 @@ func TestAntigravityRetryLoop_PreCheck_SwitchesWhenRateLimited(t *testing.T) {
 		Concurrency: 1,
 		Extra: map[string]any{
 			modelRateLimitsKey: map[string]any{
-				"claude-sonnet-4-5": map[string]any{
+				"claude-sonnet-4-6": map[string]any{
 					"rate_limit_reset_at": time.Now().Add(2 * time.Second).Format(time.RFC3339),
 				},
 			},
@@ -920,7 +958,7 @@ func TestAntigravityRetryLoop_PreCheck_SwitchesWhenRemainingLong(t *testing.T) {
 		Concurrency: 1,
 		Extra: map[string]any{
 			modelRateLimitsKey: map[string]any{
-				"claude-sonnet-4-5": map[string]any{
+				"claude-sonnet-4-6": map[string]any{
 					"rate_limit_reset_at": time.Now().Add(11 * time.Second).Format(time.RFC3339),
 				},
 			},

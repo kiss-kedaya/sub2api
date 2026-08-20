@@ -43,6 +43,20 @@ func TestDefaultAntigravityModelMapping_ContainsNewClaudeModels(t *testing.T) {
 	}
 }
 
+func TestDefaultAntigravityModelMapping_MigratesLegacySonnet45(t *testing.T) {
+	t.Parallel()
+
+	for _, model := range []string{
+		"claude-sonnet-4-5",
+		"claude-sonnet-4-5-thinking",
+		"claude-sonnet-4-5-20250929",
+	} {
+		if got := DefaultAntigravityModelMapping[model]; got != "claude-sonnet-4-6" {
+			t.Fatalf("expected legacy model %q to map to claude-sonnet-4-6, got %q", model, got)
+		}
+	}
+}
+
 func TestDefaultAntigravityModelMapping_Gemini31ProAliases(t *testing.T) {
 	t.Parallel()
 
