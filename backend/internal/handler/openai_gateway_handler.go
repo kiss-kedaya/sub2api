@@ -717,7 +717,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					}
 					// 池模式：同账号重试
 					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
+						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
 						if sameAccountRetryCount[account.ID] < retryLimit && sameAccountRetryDeadlineAllows(failoverErr) {
 							sameAccountRetryCount[account.ID]++
 							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
@@ -1266,7 +1266,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					}
 					// 池模式：同账号重试
 					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
+						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
 						if sameAccountRetryCount[account.ID] < retryLimit && sameAccountRetryDeadlineAllows(failoverErr) {
 							sameAccountRetryCount[account.ID]++
 							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
