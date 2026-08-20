@@ -1491,7 +1491,15 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
 		return true
 	}
-	return isOpenAITransientProcessingError(http.StatusBadRequest, message, payload)
+	if isOpenAITransientProcessingError(http.StatusBadRequest, message, payload) {
+		return true
+	}
+	combined := strings.ToLower(strings.TrimSpace(message + " " +
+		gjson.GetBytes(payload, "error.message").String() + " " +
+		gjson.GetBytes(payload, "response.error.message").String()))
+	return strings.Contains(combined, "temporary") ||
+		strings.Contains(combined, "try again") ||
+		strings.Contains(combined, "please retry")
 }
 
 func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
