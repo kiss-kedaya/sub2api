@@ -647,25 +647,46 @@ func convertOpenAIModelListToCodexManifest(body []byte) []byte {
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return body
 	}
-	type codexModelEntry struct {
-		Slug string `json:"slug"`
-	}
-	models := make([]codexModelEntry, 0, len(entries))
+	modelIDs := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		id := strings.TrimSpace(entry.ID)
 		if id == "" {
 			continue
 		}
-		models = append(models, codexModelEntry{Slug: id})
+		modelIDs = append(modelIDs, id)
 	}
-	if len(models) == 0 {
+	if len(modelIDs) == 0 {
 		return body
 	}
-	converted, err := json.Marshal(map[string][]codexModelEntry{"models": models})
+	converted, err := BuildCodexModelsManifest(modelIDs)
 	if err != nil {
 		return body
 	}
 	return converted
+}
+
+// BuildCodexModelsManifest creates the minimal manifest accepted by Codex
+// custom providers while preserving the effective model order for the group.
+func BuildCodexModelsManifest(modelIDs []string) ([]byte, error) {
+	type codexModelEntry struct {
+		Slug string `json:"slug"`
+	}
+
+	seen := make(map[string]struct{}, len(modelIDs))
+	models := make([]codexModelEntry, 0, len(modelIDs))
+	for _, rawModelID := range modelIDs {
+		modelID := strings.TrimSpace(rawModelID)
+		if modelID == "" {
+			continue
+		}
+		if _, exists := seen[modelID]; exists {
+			continue
+		}
+		seen[modelID] = struct{}{}
+		models = append(models, codexModelEntry{Slug: modelID})
+	}
+
+	return json.Marshal(map[string][]codexModelEntry{"models": models})
 }
 
 func validateCodexModelsManifestEnvelope(body []byte) error {

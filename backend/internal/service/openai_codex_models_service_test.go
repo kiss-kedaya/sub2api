@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,28 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
 )
+
+// Scenario: non-OpenAI groups expose their effective model IDs as a Codex manifest.
+func TestBuildCodexModelsManifest(t *testing.T) {
+	body, err := BuildCodexModelsManifest([]string{
+		" grok-4.6 ",
+		"deepseek-v4-pro",
+		"grok-4.6",
+		"",
+	})
+	require.NoError(t, err)
+
+	var got struct {
+		Models []struct {
+			Slug string `json:"slug"`
+		} `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(body, &got))
+	require.Equal(t, []string{"grok-4.6", "deepseek-v4-pro"}, []string{
+		got.Models[0].Slug,
+		got.Models[1].Slug,
+	})
+}
 
 type codexModelsHTTPUpstreamStub struct {
 	do func(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error)

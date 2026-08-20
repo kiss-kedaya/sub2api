@@ -172,6 +172,65 @@
           </div>
         </div>
 
+        <section
+          v-if="showCodexModelCatalog"
+          data-testid="codex-model-catalog"
+          class="overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800/50"
+        >
+          <div class="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+              <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                {{ t('keys.useKeyModal.codexModelCatalog.title') }}
+              </h3>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('keys.useKeyModal.codexModelCatalog.description') }}
+              </p>
+              <p class="mt-1 truncate font-mono text-xs text-gray-700 dark:text-gray-300">
+                {{ codexModelCatalogPath }}
+              </p>
+            </div>
+            <button
+              v-if="codexModelManifestState === 'ready'"
+              type="button"
+              class="btn btn-primary min-h-9 flex-shrink-0 px-3 text-xs"
+              @click="downloadCodexModelManifest"
+            >
+              <Icon name="download" size="sm" class="mr-1.5" />
+              {{ t('keys.useKeyModal.codexModelCatalog.download') }}
+            </button>
+            <button
+              v-else
+              type="button"
+              data-testid="codex-model-catalog-fetch"
+              class="btn btn-primary min-h-9 flex-shrink-0 px-3 text-xs"
+              :disabled="codexModelManifestState === 'loading' || !apiKey"
+              @click="loadCodexModelManifest"
+            >
+              <Icon
+                name="refresh"
+                size="sm"
+                class="mr-1.5"
+                :class="codexModelManifestState === 'loading' ? 'animate-spin' : ''"
+              />
+              {{ codexModelManifestState === 'error'
+                ? t('keys.useKeyModal.codexModelCatalog.retry')
+                : t('keys.useKeyModal.codexModelCatalog.fetch') }}
+            </button>
+          </div>
+          <p
+            v-if="codexModelManifestState === 'ready'"
+            class="border-t border-gray-200 px-4 py-2 text-xs text-emerald-700 dark:border-dark-700 dark:text-emerald-300"
+          >
+            {{ t('keys.useKeyModal.codexModelCatalog.modelsCount', { count: codexModelManifestModelCount }) }}
+          </p>
+          <p
+            v-else-if="codexModelManifestState === 'error'"
+            class="border-t border-red-200 px-4 py-2 text-xs text-red-700 dark:border-red-900 dark:text-red-300"
+          >
+            {{ t('keys.useKeyModal.codexModelCatalog.errorDescription') }}
+          </p>
+        </section>
+
         <!-- Usage Note -->
         <div v-if="showPlatformNote" class="flex items-start gap-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800">
           <Icon name="infoCircle" size="md" class="text-blue-500 flex-shrink-0 mt-0.5" />
@@ -198,9 +257,11 @@
 <script setup lang="ts">
 import { ref, computed, h, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { saveAs } from 'file-saver'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
+import { fetchCodexModelsManifest } from '@/api/codex'
 import type { GroupPlatform } from '@/types'
 
 interface Props {
@@ -239,6 +300,29 @@ const activeTab = ref<string>('unix')
 const activeClientTab = ref<string>('claude')
 type CodexAuthMode = 'legacy' | 'api-key'
 const codexAuthMode = ref<CodexAuthMode>('legacy')
+type CodexModelManifestState = 'idle' | 'loading' | 'ready' | 'error'
+const codexModelManifestState = ref<CodexModelManifestState>('idle')
+const codexModelManifestContent = ref('')
+const codexModelManifestModelCount = ref(0)
+let codexModelManifestController: AbortController | null = null
+let codexModelManifestRequestID = 0
+
+const showCodexModelCatalog = computed(() =>
+  props.show &&
+  ((props.platform === 'openai' && (activeClientTab.value === 'codex' || activeClientTab.value === 'codex-ws')) ||
+    ((props.platform === 'grok' || props.platform === 'deepseek' || props.platform === 'composite') && activeClientTab.value === 'codex'))
+)
+
+const codexModelCatalogPath = computed(() => {
+  const isWindows = activeTab.value === 'windows'
+  const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
+  return joinConfigPath(configDir, 'codex-models.json', isWindows)
+})
+
+const codexManifestContext = computed(() => {
+  if (!showCodexModelCatalog.value) return ''
+  return `${props.platform}|${props.baseUrl}|${props.apiKey}`
+})
 
 // Reset tabs when platform changes
 const defaultClientTab = computed(() => {
@@ -265,6 +349,14 @@ watch(() => props.platform, () => {
 watch(() => props.show, (show) => {
   if (show) {
     codexAuthMode.value = 'legacy'
+  } else {
+    resetCodexModelManifest()
+  }
+})
+
+watch(codexManifestContext, (context, previousContext) => {
+  if (context !== previousContext) {
+    resetCodexModelManifest()
   }
 })
 
@@ -368,6 +460,13 @@ const clientTabs = computed((): TabConfig[] => {
         { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
+    case 'deepseek':
+    case 'composite':
+      return [
+        { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
+        { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
+        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
+      ]
     default:
       return [
         { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
@@ -423,6 +522,14 @@ const platformDescription = computed(() => {
         return t('keys.useKeyModal.grok.codexDescription')
       }
       return t('keys.useKeyModal.grok.description')
+    case 'deepseek':
+      return activeClientTab.value === 'codex'
+        ? t('keys.useKeyModal.deepseek.codexDescription')
+        : t('keys.useKeyModal.deepseek.description')
+    case 'composite':
+      return activeClientTab.value === 'codex'
+        ? t('keys.useKeyModal.composite.codexDescription')
+        : t('keys.useKeyModal.composite.description')
     default:
       return t('keys.useKeyModal.description')
   }
@@ -460,12 +567,65 @@ const platformNote = computed(() => {
         return t('keys.useKeyModal.grok.noteWindows')
       }
       return t('keys.useKeyModal.grok.note')
+    case 'deepseek':
+      return activeClientTab.value === 'codex'
+        ? t('keys.useKeyModal.deepseek.codexNote')
+        : t('keys.useKeyModal.note')
+    case 'composite':
+      return activeClientTab.value === 'codex'
+        ? t('keys.useKeyModal.composite.codexNote')
+        : t('keys.useKeyModal.note')
     default:
       return t('keys.useKeyModal.note')
   }
 })
 
 const showPlatformNote = computed(() => activeClientTab.value !== 'opencode')
+
+function resetCodexModelManifest() {
+  codexModelManifestController?.abort()
+  codexModelManifestController = null
+  codexModelManifestRequestID += 1
+  codexModelManifestState.value = 'idle'
+  codexModelManifestContent.value = ''
+  codexModelManifestModelCount.value = 0
+}
+
+async function loadCodexModelManifest() {
+  if (!showCodexModelCatalog.value || !props.apiKey) return
+
+  codexModelManifestController?.abort()
+  const controller = new AbortController()
+  const requestID = ++codexModelManifestRequestID
+  codexModelManifestController = controller
+  codexModelManifestState.value = 'loading'
+
+  try {
+    const result = await fetchCodexModelsManifest(props.baseUrl, props.apiKey, controller.signal)
+    if (requestID !== codexModelManifestRequestID) return
+    codexModelManifestContent.value = result.content
+    codexModelManifestModelCount.value = result.modelCount
+    codexModelManifestState.value = 'ready'
+  } catch (error) {
+    const errorName = error && typeof error === 'object' && 'name' in error
+      ? String((error as { name?: unknown }).name || '')
+      : ''
+    if (requestID !== codexModelManifestRequestID || errorName === 'AbortError') return
+    codexModelManifestState.value = 'error'
+  } finally {
+    if (requestID === codexModelManifestRequestID) {
+      codexModelManifestController = null
+    }
+  }
+}
+
+function downloadCodexModelManifest() {
+  if (!codexModelManifestContent.value) return
+  saveAs(
+    new Blob([codexModelManifestContent.value], { type: 'application/json;charset=utf-8' }),
+    'codex-models.json'
+  )
+}
 
 const escapeHtml = (value: string) => value
   .replace(/&/g, '&amp;')
@@ -548,6 +708,16 @@ const currentFiles = computed((): FileConfig[] => {
         return generateGrokCodexFiles(apiBase, apiKey)
       }
       return generateGrokFiles(apiBase, apiKey)
+    case 'deepseek':
+      if (activeClientTab.value === 'codex') {
+        return generateRoutedCodexFiles(apiBase, apiKey, 'deepseek')
+      }
+      return generateAnthropicFiles(baseRoot, apiKey)
+    case 'composite':
+      if (activeClientTab.value === 'codex') {
+        return generateRoutedCodexFiles(apiBase, apiKey, 'composite')
+      }
+      return generateAnthropicFiles(baseRoot, apiKey)
     default:
       return generateAnthropicFiles(baseUrl, apiKey)
   }
@@ -720,6 +890,7 @@ model = "gpt-5.5"
 review_model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
+model_catalog_json = "${escapeTomlBasicString(codexModelCatalogPath.value)}"
 network_access = "enabled"
 windows_wsl_setup_acknowledged = true
 
@@ -762,6 +933,10 @@ http_headers = { "x-openai-actor-authorization" = "local-image-extension" }`
 function joinConfigPath(dir: string, file: string, windows: boolean): string {
   if (!windows) return `${dir}/${file}`
   return `${dir}\\${file}`
+}
+
+function escapeTomlBasicString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
 
 function generateGrokFiles(baseUrl: string, apiKey: string): FileConfig[] {
@@ -938,6 +1113,7 @@ function generateGrokCodexFiles(baseUrl: string, apiKey: string): FileConfig[] {
 
 model_provider = "sub2api"
 model = "grok-4.5"
+model_catalog_json = "${escapeTomlBasicString(codexModelCatalogPath.value)}"
 # Optional:
 # review_model = "grok-4.5"
 # model_reasoning_effort = "medium"
@@ -973,6 +1149,44 @@ supports_websockets = false
   ]
 }
 
+function generateRoutedCodexFiles(
+  baseUrl: string,
+  apiKey: string,
+  platform: 'deepseek' | 'composite'
+): FileConfig[] {
+  const isWindows = activeTab.value === 'windows'
+  const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
+  const model = platform === 'deepseek' ? 'deepseek-v4-pro' : 'gpt-5.5'
+  const label = platform === 'deepseek' ? 'DeepSeek' : 'Composite'
+  const envContent = isWindows
+    ? `$env:SUB2API_API_KEY="${apiKey}"`
+    : `export SUB2API_API_KEY="${apiKey}"`
+
+  const configContent = `# Codex CLI -> Sub2API ${label} group
+model_provider = "sub2api"
+model = "${model}"
+review_model = "${model}"
+disable_response_storage = true
+model_catalog_json = "${escapeTomlBasicString(codexModelCatalogPath.value)}"
+
+[model_providers.sub2api]
+name = "OpenAI"
+base_url = "${baseUrl}"
+env_key = "SUB2API_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false`
+
+  return [
+    { path: isWindows ? 'PowerShell' : 'Terminal', content: envContent },
+    {
+      path: joinConfigPath(configDir, 'config.toml', isWindows),
+      content: configContent,
+      hint: t(`keys.useKeyModal.${platform}.codexConfigTomlHint`)
+    }
+  ]
+}
+
 function generateOpenAIWsFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
@@ -983,6 +1197,7 @@ model = "gpt-5.5"
 review_model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
+model_catalog_json = "${escapeTomlBasicString(codexModelCatalogPath.value)}"
 network_access = "enabled"
 windows_wsl_setup_acknowledged = true
 
