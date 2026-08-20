@@ -147,7 +147,7 @@ func classifyGrokUpstreamFailure(statusCode int, responseBody []byte, requestedM
 		return GrokUpstreamFailureDecision{
 			Class:          GrokFailureModelCapacity,
 			Model:          model,
-			Cooldown:       3 * time.Minute,
+			Cooldown:       time.Minute,
 			ShouldCooldown: true,
 			ShouldFailover: true,
 			BlockModel:     false,
