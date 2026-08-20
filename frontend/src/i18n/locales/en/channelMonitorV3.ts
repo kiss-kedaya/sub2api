@@ -16,6 +16,8 @@ export default {
     critical: 'Critical',
     unknown: 'Insufficient samples',
     allModels: 'All models',
+    unknownGroup: 'Unknown group',
+    timelineTooltip: '{time} · Availability {availability} · Cache {cache} · First token {ttft}',
     emptyTitle: 'No channel data',
     emptyDescription: 'There is no passive-monitor data for this time range yet',
     summary: 'Availability {success} · Cache {cache}',
