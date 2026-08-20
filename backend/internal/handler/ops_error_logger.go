@@ -1766,7 +1766,7 @@ func sanitizeOpsSSEDataForPersistence(body []byte) string {
 	out.Grow(len(body))
 	for frameIndex, frame := range frames {
 		if frameIndex > 0 {
-			out.WriteString("\n\n")
+			_, _ = out.WriteString("\n\n")
 		}
 		_, payload := parseOpsSSEFrameEnvelope(frame)
 		trimmedPayload := bytes.TrimSpace(payload)
@@ -1779,7 +1779,7 @@ func sanitizeOpsSSEDataForPersistence(body []byte) string {
 			replacement = `{"payload_truncated":true}`
 		}
 		if replacement == "" {
-			out.Write(frame)
+			_, _ = out.Write(frame)
 			continue
 		}
 		wroteData := false
@@ -1794,9 +1794,9 @@ func sanitizeOpsSSEDataForPersistence(body []byte) string {
 				wroteData = true
 			}
 			if emittedLine {
-				out.WriteByte('\n')
+				_ = out.WriteByte('\n')
 			}
-			out.Write(line)
+			_, _ = out.Write(line)
 			emittedLine = true
 		}
 	}

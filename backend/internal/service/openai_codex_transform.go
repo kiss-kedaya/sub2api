@@ -115,10 +115,6 @@ func normalizeCodexCallIDForItemType(itemType, id string) string {
 	return compactCodexCallIDForItemType(itemType, candidate)
 }
 
-func compactCodexCallID(id string) string {
-	return compactCodexCallIDForItemType("function_call", id)
-}
-
 func compactCodexCallIDForItemType(itemType, id string) string {
 	prefix := openAIResponsesToolCallIDPrefix(itemType) + "_"
 	digest := sha256.Sum256([]byte("sub2api:codex-call-id:v1:" + id))

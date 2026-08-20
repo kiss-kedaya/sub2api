@@ -37,7 +37,6 @@ func normalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 				request["input"] = legacy.input
 				applyLegacyResponsesTopLevelFields(request, legacy)
 				delete(request, "previous_response_id")
-				changed = true
 			}
 		}
 		// messages is not a Responses field. When native input is present but the
