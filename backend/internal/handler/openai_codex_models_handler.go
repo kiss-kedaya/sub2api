@@ -56,7 +56,10 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 		// 让 ops 错误日志携带实际选中的上游账号，便于定位失效账号（#4544）。
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		manifest, err := h.gatewayService.FetchCodexModelsManifest(c.Request.Context(), account, c.Query("client_version"), c.GetHeader("If-None-Match"))
+		ifNoneMatch := c.GetHeader("If-None-Match")
+		// The client ETag represents the final group-specific body, so fetch the
+		// source manifest before applying local filtering and alias metadata.
+		manifest, err := h.gatewayService.FetchCodexModelsManifest(c.Request.Context(), account, c.Query("client_version"), "")
 		if err != nil {
 			if c.Request.Context().Err() != nil {
 				return
@@ -70,6 +73,14 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			h.errorResponse(c, infraerrors.Code(err), "upstream_error", infraerrors.Message(err))
 			return
 		}
+		if err := h.gatewayService.CompleteAPIKeyCodexModelsManifestForClient(manifest, account); err != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to complete Codex models manifest")
+			return
+		}
+		if err := h.gatewayService.MergeGroupConfiguredCodexModels(c.Request.Context(), apiKey.Group, manifest, ifNoneMatch); err != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to build Codex models manifest")
+			return
+		}
 		if c.Request.Context().Err() != nil {
 			return
 		}
@@ -79,6 +90,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 		}
 		if manifest.NotModified {
 			c.Status(http.StatusNotModified)
+			c.Writer.WriteHeaderNow()
 			return
 		}
 		c.Data(http.StatusOK, "application/json", manifest.Body)
