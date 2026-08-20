@@ -20,7 +20,7 @@
           <button v-for="option in ranges" :key="option.value" type="button" class="tab !px-2.5 !py-1 text-xs" :class="filter.range === option.value ? 'tab-active' : ''" @click="setRange(option.value)">{{ option.label }}</button>
           <span class="mx-1 hidden h-5 w-px bg-gray-200 dark:bg-dark-700 sm:block" />
           <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('channelMonitorV3.description') }}</span>
-          <span v-if="snapshot" class="ml-auto text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">{{ t('channelMonitorV3.summary', { success: formatPercent(1 - snapshot.metrics.error_rate), cache: formatPercent(snapshot.metrics.cache_rate) }) }}</span>
+          <span v-if="snapshot" class="ml-auto text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">{{ t('channelMonitorV3.summary', { success: formatPercent(1 - (latestSnapshotMetrics?.error_rate ?? 0)), cache: formatPercent(latestSnapshotMetrics?.cache_rate ?? 0) }) }}</span>
         </div>
       </section>
 
@@ -78,6 +78,12 @@ const rows = computed(() => [...(matrix.value?.items ?? [])]
   .filter(row => row.group_id != null && row.group_id > 0)
   .sort((a, b) => (a.group_id ?? 0) - (b.group_id ?? 0)))
 const timelineLength = computed(() => ({ '90m': 18, '24h': 24, '7d': 14, '30d': 30 })[filter.value.range])
+const latestSnapshotMetrics = computed(() => {
+  const trend = [...(snapshot.value?.trend ?? [])]
+    .filter(point => point.bucket_start && point.metrics)
+    .sort((a, b) => Date.parse(a.bucket_start) - Date.parse(b.bucket_start))
+  return trend.at(-1)?.metrics ?? snapshot.value?.metrics
+})
 
 function formatPercent(value: number) { return formatMonitorPercent(value, locale.value || 'zh-CN') }
 function formatTime(value?: string) { if (!value) return '-'; return new Intl.DateTimeFormat(locale.value || undefined, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) }
