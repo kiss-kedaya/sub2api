@@ -12,7 +12,7 @@
         ]"
         :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
       >
-        <span v-if="currentVersion" class="font-medium">v{{ currentVersion }}</span>
+        <span v-if="currentVersion" class="font-medium">{{ displayCurrentVersion }}</span>
         <span
           v-else
           class="h-3 w-12 animate-pulse rounded bg-gray-200 font-medium dark:bg-dark-600"
@@ -84,7 +84,7 @@
                   <span
                     v-if="currentVersion"
                     class="text-2xl font-bold text-gray-900 dark:text-white"
-                    >v{{ currentVersion }}</span
+                    >{{ displayCurrentVersion }}</span
                   >
                   <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
                   <!-- Show check mark when up to date -->
@@ -108,7 +108,7 @@
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
                   {{
                     hasUpdate
-                      ? t('version.latestVersion') + ': v' + latestVersion
+                      ? t('version.latestVersion') + ': ' + displayLatestVersion
                       : t('version.upToDate')
                   }}
                 </p>
@@ -255,7 +255,7 @@
                       {{ t('version.updateAvailable') }}
                     </p>
                     <p class="text-xs text-amber-600/70 dark:text-amber-400/70">
-                      v{{ latestVersion }}
+                      {{ displayLatestVersion }}
                     </p>
                   </div>
                   <svg
@@ -312,7 +312,7 @@
                       {{ t('version.updateAvailable') }}
                     </p>
                     <p class="text-xs text-amber-600/70 dark:text-amber-400/70">
-                      v{{ latestVersion }}
+                      {{ displayLatestVersion }}
                     </p>
                   </div>
                 </div>
@@ -632,7 +632,7 @@
 
     <!-- Non-admin: Simple static version text -->
     <span v-else-if="version" class="text-xs text-gray-500 dark:text-dark-400">
-      v{{ version }}
+      {{ formatVersion(version) }}
     </span>
   </div>
 </template>
@@ -651,9 +651,9 @@ import {
 import { useClipboard } from '@/composables/useClipboard'
 import Icon from '@/components/icons/Icon.vue'
 
-const GITHUB_REPO = 'Wei-Shaw/sub2api'
-// Docker Hub image published by CI (tags carry no "v" prefix, e.g. weishaw/sub2api:0.1.146)
-const DOCKER_IMAGE = 'weishaw/sub2api'
+const GITHUB_REPO = 'kiss-kedaya/sub2api-official'
+// GHCR image published by CI (tags carry no "v" prefix).
+const DOCKER_IMAGE = 'ghcr.io/kiss-kedaya/sub2api-official'
 
 const { t } = useI18n()
 
@@ -673,6 +673,18 @@ const dropdownRef = ref<HTMLElement | null>(null)
 const loading = computed(() => appStore.versionLoading)
 const currentVersion = computed(() => appStore.currentVersion || props.version || '')
 const latestVersion = computed(() => appStore.latestVersion)
+
+// Version values may come from the embedded VERSION file or GitHub and can
+// arrive with or without the conventional `v` prefix. Normalize at the UI
+// boundary so versions are rendered consistently (never `vv0.1.x`).
+function formatVersion(version?: string): string {
+  const normalized = (version || '').trim()
+  if (!normalized) return ''
+  return normalized.startsWith('v') ? normalized : `v${normalized}`
+}
+
+const displayCurrentVersion = computed(() => formatVersion(currentVersion.value))
+const displayLatestVersion = computed(() => formatVersion(latestVersion.value))
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
