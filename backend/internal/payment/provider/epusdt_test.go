@@ -75,15 +75,31 @@ func TestEPUSDTCreatePaymentSignsPayloadAndReturnsRedirect(t *testing.T) {
 
 	prov := newTestEPUSDT(t, server)
 	resp, err := prov.CreatePayment(context.Background(), payment.CreatePaymentRequest{
-		OrderID: "order-123",
-		Amount:  "12.34",
-		Subject: "充值",
+		OrderID:   "order-123",
+		Amount:    "12.34",
+		Subject:   "充值",
+		ReturnURL: "https://shop.example.test/payment/result?order_id=123&status=success",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "trade-123", resp.TradeNo)
 	require.Equal(t, server.URL+"/pay/trade-123", resp.PayURL)
 	require.Equal(t, "CNY", resp.Currency)
 	require.Equal(t, payment.CreatePaymentResultOrderCreated, resp.ResultType)
+	require.Equal(t, "https://shop.example.test/payment/result?order_id=123&status=success", received["redirect_url"])
+}
+
+func TestEPUSDTRejectsUntrustedReturnURL(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status_code":200,"message":"success","data":{"trade_id":"trade-123","order_id":"order-123","payment_url":"/pay/trade-123"}}`))
+	}))
+	defer server.Close()
+	prov := newTestEPUSDT(t, server)
+	_, err := prov.CreatePayment(context.Background(), payment.CreatePaymentRequest{
+		OrderID:   "order-123",
+		Amount:    "1",
+		ReturnURL: "https://evil.example.test/payment/result?status=success",
+	})
+	require.ErrorContains(t, err, "host mismatch")
 }
 
 func TestEPUSDTQueryOrderMapsStatuses(t *testing.T) {
