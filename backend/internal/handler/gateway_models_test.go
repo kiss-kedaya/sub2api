@@ -25,6 +25,12 @@ type gatewayModelsResponseForTest struct {
 	Data   []gatewayModelItemForTest `json:"data"`
 }
 
+type codexModelsResponseForTest struct {
+	Models []struct {
+		Slug string `json:"slug"`
+	} `json:"models"`
+}
+
 type gatewayModelItemForTest struct {
 	ID                      string                                `json:"id"`
 	Object                  string                                `json:"object"`
@@ -68,6 +74,150 @@ func TestDefaultModelIDsForCompositeIncludesAntigravityDefaults(t *testing.T) {
 
 	compositeIDs := defaultModelIDsForPlatform(service.PlatformComposite)
 	require.Contains(t, compositeIDs, antigravityIDs[0])
+}
+
+// Scenario: non-OpenAI groups return a Codex manifest instead of a standard model list.
+func TestGatewayCodexModels_NonOpenAIGroupsUseMappedModels(t *testing.T) {
+	tests := []struct {
+		name     string
+		platform string
+		model    string
+	}{
+		{name: "Grok", platform: service.PlatformGrok, model: "grok-4.6"},
+		{name: "DeepSeek", platform: service.PlatformDeepseek, model: "deepseek-v4-pro"},
+	}
+
+	for index, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			groupID := int64(100 + index)
+			h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+				byGroup: map[int64][]service.Account{
+					groupID: {
+						{
+							ID:       1,
+							Platform: tt.platform,
+							Credentials: map[string]any{
+								"model_mapping": map[string]any{tt.model: tt.model},
+							},
+						},
+					},
+				},
+			})
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodGet, "/models?client_version=0.147.0", nil)
+			c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+				Group: &service.Group{ID: groupID, Platform: tt.platform},
+			})
+
+			h.CodexModels(c)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			var got codexModelsResponseForTest
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			require.Len(t, got.Models, 1)
+			require.Equal(t, tt.model, got.Models[0].Slug)
+		})
+	}
+}
+
+// Scenario: Composite manifests aggregate models across routed platforms.
+func TestGatewayCodexModels_CompositeUsesCompleteEffectiveModelList(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const groupID int64 = 120
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+		byGroup: map[int64][]service.Account{
+			groupID: {
+				{
+					ID:       1,
+					Platform: service.PlatformOpenAI,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"gpt-5.5": "gpt-5.5"},
+					},
+				},
+				{
+					ID:       2,
+					Platform: service.PlatformGrok,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"grok-4.6": "grok-4.6"},
+					},
+				},
+			},
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/models?client_version=0.147.0", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformComposite},
+	})
+
+	h.CodexModels(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got codexModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{"gpt-5.5", "grok-4.6"}, codexModelSlugsForTest(got.Models))
+}
+
+// Scenario: group models_list_config limits the generated Codex manifest.
+func TestGatewayCodexModels_CustomModelsListFiltersCompositeManifest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const groupID int64 = 121
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+		byGroup: map[int64][]service.Account{
+			groupID: {
+				{
+					ID:       1,
+					Platform: service.PlatformOpenAI,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"gpt-5.5": "gpt-5.5"},
+					},
+				},
+				{
+					ID:       2,
+					Platform: service.PlatformGrok,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"grok-4.6": "grok-4.6"},
+					},
+				},
+			},
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/models?client_version=0.147.0", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{
+			ID:       groupID,
+			Platform: service.PlatformComposite,
+			ModelsListConfig: service.GroupModelsListConfig{
+				Enabled: true,
+				Models:  []string{"grok-4.6"},
+			},
+		},
+	})
+
+	h.CodexModels(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got codexModelsResponseForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{"grok-4.6"}, codexModelSlugsForTest(got.Models))
+}
+
+func codexModelSlugsForTest(models []struct {
+	Slug string `json:"slug"`
+}) []string {
+	slugs := make([]string, 0, len(models))
+	for _, model := range models {
+		slugs = append(slugs, model.Slug)
+	}
+	return slugs
 }
 
 func TestGatewayModels_GeminiGroupFallsBackToGeminiModels(t *testing.T) {
