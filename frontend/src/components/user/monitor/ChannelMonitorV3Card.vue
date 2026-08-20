@@ -57,13 +57,20 @@ const { t } = useI18n()
 const { statusLabel, statusBadgeClass, providerLabel, providerBadgeClass } = useChannelMonitorFormat()
 
 const groupLabel = computed(() => props.row.group_name || (props.row.group_id ? `#${props.row.group_id}` : t('channelMonitorV3.unknownGroup')))
-const cacheRate = computed(() => formatMonitorPercent(props.row.metrics.cache_rate))
-const successRate = computed(() => formatMonitorPercent(1 - props.row.metrics.error_rate))
-const ttft = computed(() => formatMonitorMs(props.row.metrics.ttft.p50_ms))
+const latestBucket = computed(() => [...props.row.buckets]
+  .filter(bucket => bucket.bucket_start && bucket.metrics)
+  .sort((a, b) => Date.parse(a.bucket_start) - Date.parse(b.bucket_start))
+  .at(-1))
+const latestMetrics = computed(() => latestBucket.value?.metrics ?? props.row.metrics)
+const latestHealth = computed(() => latestBucket.value?.health ?? props.row.health)
+// The cards show the newest completed monitoring bucket, not the selected-range aggregate.
+const cacheRate = computed(() => formatMonitorPercent(latestMetrics.value.cache_rate))
+const successRate = computed(() => formatMonitorPercent(1 - latestMetrics.value.error_rate))
+const ttft = computed(() => formatMonitorMs(latestMetrics.value.ttft.p50_ms))
 const monitorStatus = computed<MonitorStatus | null>(() => {
-  if (props.row.health.overall === 'healthy') return 'operational'
-  if (props.row.health.overall === 'warning') return 'degraded'
-  if (props.row.health.overall === 'critical') return 'failed'
+  if (latestHealth.value.overall === 'healthy') return 'operational'
+  if (latestHealth.value.overall === 'warning') return 'degraded'
+  if (latestHealth.value.overall === 'critical') return 'failed'
   return null
 })
 const statusText = computed(() => monitorStatus.value ? statusLabel(monitorStatus.value) : t('channelMonitorV3.unknown'))
