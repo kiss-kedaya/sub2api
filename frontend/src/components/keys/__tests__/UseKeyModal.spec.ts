@@ -25,6 +25,15 @@ vi.mock('file-saver', () => ({
 
 import UseKeyModal from '../UseKeyModal.vue'
 
+function readBlobAsText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(String(reader.result || '')))
+    reader.addEventListener('error', () => reject(reader.error))
+    reader.readAsText(blob)
+  })
+}
+
 describe('UseKeyModal', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -606,10 +615,28 @@ describe('UseKeyModal', () => {
 
   // Scenario: API Key users can fetch a routed group catalog and reference it from config.toml.
   it('offers a downloadable Codex catalog for Composite API keys', async () => {
+    const manifest = {
+      models: [
+        {
+          slug: 'gpt-5.5',
+          default_reasoning_level: 'medium',
+          supported_reasoning_levels: [{ effort: 'xhigh', description: 'Extra-high reasoning depth' }],
+          input_modalities: ['text', 'image'],
+          model_messages: { instructions_template: 'Use the routed model.' }
+        },
+        {
+          slug: 'grok-4.6',
+          default_reasoning_level: 'high',
+          supported_reasoning_levels: [{ effort: 'xhigh', description: 'Extra-high reasoning depth' }],
+          input_modalities: ['text'],
+          model_messages: { instructions_template: 'Use the routed model.' }
+        }
+      ]
+    }
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ models: [{ slug: 'gpt-5.5' }, { slug: 'grok-4.6' }] })
+      json: async () => manifest
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -663,6 +690,8 @@ describe('UseKeyModal', () => {
     expect(downloadButton).toBeDefined()
     await downloadButton!.trigger('click')
     expect(saveAsMock).toHaveBeenCalledWith(expect.any(Blob), 'codex-models.json')
+    const downloadedBlob = saveAsMock.mock.calls[0]?.[0] as Blob
+    expect(JSON.parse(await readBlobAsText(downloadedBlob))).toEqual(manifest)
 
     const windowsTab = wrapper.findAll('button').find((button) => button.text().trim() === 'Windows')
     expect(windowsTab).toBeDefined()

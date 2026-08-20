@@ -27,8 +27,18 @@ type gatewayModelsResponseForTest struct {
 
 type codexModelsResponseForTest struct {
 	Models []struct {
-		Slug string `json:"slug"`
+		Slug                     string                       `json:"slug"`
+		SupportedReasoningLevels []codexReasoningLevelForTest `json:"supported_reasoning_levels"`
+		InputModalities          []string                     `json:"input_modalities"`
+		ModelMessages            map[string]json.RawMessage   `json:"model_messages"`
+		TruncationPolicy         map[string]json.RawMessage   `json:"truncation_policy"`
+		AvailabilityNUX          json.RawMessage              `json:"availability_nux"`
+		Upgrade                  json.RawMessage              `json:"upgrade"`
 	} `json:"models"`
+}
+
+type codexReasoningLevelForTest struct {
+	Effort string `json:"effort"`
 }
 
 type gatewayModelItemForTest struct {
@@ -79,12 +89,33 @@ func TestDefaultModelIDsForCompositeIncludesAntigravityDefaults(t *testing.T) {
 // Scenario: non-OpenAI groups return a Codex manifest instead of a standard model list.
 func TestGatewayCodexModels_NonOpenAIGroupsUseMappedModels(t *testing.T) {
 	tests := []struct {
-		name     string
-		platform string
-		model    string
+		name       string
+		platform   string
+		model      string
+		efforts    []string
+		modalities []string
 	}{
-		{name: "Grok", platform: service.PlatformGrok, model: "grok-4.6"},
-		{name: "DeepSeek", platform: service.PlatformDeepseek, model: "deepseek-v4-pro"},
+		{
+			name:       "Grok",
+			platform:   service.PlatformGrok,
+			model:      "grok-4.6",
+			efforts:    []string{"low", "medium", "high", "xhigh"},
+			modalities: []string{"text", "image"},
+		},
+		{
+			name:       "DeepSeek",
+			platform:   service.PlatformDeepseek,
+			model:      "deepseek-v4-pro",
+			efforts:    []string{"low", "high", "max"},
+			modalities: []string{"text"},
+		},
+		{
+			name:       "provider-qualified Claude",
+			platform:   service.PlatformAnthropic,
+			model:      "anthropic/claude-sonnet-4-6",
+			efforts:    []string{"low", "medium", "high", "max"},
+			modalities: []string{"text"},
+		},
 	}
 
 	for index, tt := range tests {
@@ -119,6 +150,12 @@ func TestGatewayCodexModels_NonOpenAIGroupsUseMappedModels(t *testing.T) {
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 			require.Len(t, got.Models, 1)
 			require.Equal(t, tt.model, got.Models[0].Slug)
+			require.NotEmpty(t, got.Models[0].ModelMessages)
+			require.NotEmpty(t, got.Models[0].TruncationPolicy)
+			require.NotNil(t, got.Models[0].AvailabilityNUX)
+			require.NotNil(t, got.Models[0].Upgrade)
+			require.Equal(t, tt.efforts, codexReasoningEffortsForTest(got.Models[0].SupportedReasoningLevels))
+			require.Equal(t, tt.modalities, got.Models[0].InputModalities)
 		})
 	}
 }
@@ -161,6 +198,45 @@ func TestGatewayCodexModels_CompositeUsesCompleteEffectiveModelList(t *testing.T
 	var got codexModelsResponseForTest
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	require.Equal(t, []string{"gpt-5.5", "grok-4.6"}, codexModelSlugsForTest(got.Models))
+}
+
+func TestGatewayCodexModels_GeneratedManifestUsesFinalBodyETag(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const groupID int64 = 122
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+		byGroup: map[int64][]service.Account{
+			groupID: {{
+				ID:       1,
+				Platform: service.PlatformDeepseek,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"deepseek-v4-pro": "deepseek-v4-pro"},
+				},
+			}},
+		},
+	})
+	group := &service.Group{ID: groupID, Platform: service.PlatformDeepseek}
+
+	first := httptest.NewRecorder()
+	firstContext, _ := gin.CreateTestContext(first)
+	firstContext.Request = httptest.NewRequest(http.MethodGet, "/models?client_version=0.147.0", nil)
+	firstContext.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: group})
+	h.CodexModels(firstContext)
+
+	require.Equal(t, http.StatusOK, first.Code)
+	etag := first.Header().Get("ETag")
+	require.NotEmpty(t, etag)
+	require.Equal(t, service.CodexModelsManifestETag(first.Body.Bytes()), etag)
+
+	second := httptest.NewRecorder()
+	secondContext, _ := gin.CreateTestContext(second)
+	secondContext.Request = httptest.NewRequest(http.MethodGet, "/models?client_version=0.147.0", nil)
+	secondContext.Request.Header.Set("If-None-Match", "W/"+etag)
+	secondContext.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: group})
+	h.CodexModels(secondContext)
+
+	require.Equal(t, http.StatusNotModified, second.Code)
+	require.Empty(t, second.Body.Bytes())
+	require.Equal(t, etag, second.Header().Get("ETag"))
 }
 
 // Scenario: group models_list_config limits the generated Codex manifest.
@@ -211,13 +287,27 @@ func TestGatewayCodexModels_CustomModelsListFiltersCompositeManifest(t *testing.
 }
 
 func codexModelSlugsForTest(models []struct {
-	Slug string `json:"slug"`
+	Slug                     string                       `json:"slug"`
+	SupportedReasoningLevels []codexReasoningLevelForTest `json:"supported_reasoning_levels"`
+	InputModalities          []string                     `json:"input_modalities"`
+	ModelMessages            map[string]json.RawMessage   `json:"model_messages"`
+	TruncationPolicy         map[string]json.RawMessage   `json:"truncation_policy"`
+	AvailabilityNUX          json.RawMessage              `json:"availability_nux"`
+	Upgrade                  json.RawMessage              `json:"upgrade"`
 }) []string {
 	slugs := make([]string, 0, len(models))
 	for _, model := range models {
 		slugs = append(slugs, model.Slug)
 	}
 	return slugs
+}
+
+func codexReasoningEffortsForTest(levels []codexReasoningLevelForTest) []string {
+	efforts := make([]string, 0, len(levels))
+	for _, level := range levels {
+		efforts = append(efforts, level.Effort)
+	}
+	return efforts
 }
 
 func TestGatewayModels_GeminiGroupFallsBackToGeminiModels(t *testing.T) {
