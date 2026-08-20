@@ -183,6 +183,13 @@ func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T
 				newOpenAIUpstreamErrorResponse(tc.statusCode, tc.body),
 				c, newOpenAIUpstreamErrorTestAccount(), nil,
 			)
+			if tc.name == "forbidden" {
+				var failoverErr *UpstreamFailoverError
+				require.ErrorAs(t, err, &failoverErr)
+				require.Equal(t, http.StatusForbidden, failoverErr.StatusCode)
+				require.False(t, c.Writer.Written())
+				return
+			}
 
 			require.Error(t, err)
 			require.Equal(t, tc.wantStatus, rec.Code)

@@ -387,20 +387,41 @@ func TestOpenAIResponseFlush_FailedAndErrorEventsFlushAtBoundaries(t *testing.T)
 		require.Contains(t, flushes[1], "response.failed")
 	})
 
-	t.Run("retryable error event buffered until terminal", func(t *testing.T) {
-		// 可重试类 error 帧不算客户端输出：保持在 attempt 缓冲中不单独 flush，
-		// 为随后可能到达的 response.failed 保留 pre-output failover 能力，
-		// 与终止帧一起出站。
+	t.Run("bare error synthesizes failed before done", func(t *testing.T) {
 		body := "data: {\"type\":\"error\",\"error\":{\"message\":\"failed\"}}\n\n" +
 			"data: [DONE]\n\n"
 		recorder := newOpenAIResponseFlushRecorder()
 
 		result, err := runOpenAIResponseFlushTest(recorder, io.NopCloser(strings.NewReader(body)), config.GatewayConfig{})
 
-		require.NoError(t, err)
+		require.Error(t, err)
 		require.NotNil(t, result)
 		gotBody, flushes := recorder.snapshot()
-		require.Equal(t, body, gotBody)
+		require.NotContains(t, gotBody, `"type":"error"`)
+		require.Equal(t, 1, strings.Count(gotBody, `"type":"response.failed"`))
+		require.Contains(t, gotBody, `"status":"failed"`)
+		require.NotContains(t, gotBody, "[DONE]")
+		require.Len(t, flushes, 1)
+	})
+
+	t.Run("bare error forwards following failed and drains terminal usage", func(t *testing.T) {
+		errorEvent := "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_request\",\"message\":\"bad request\"}}\n\n"
+		body := errorEvent +
+			"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_failed\",\"usage\":{\"input_tokens\":9,\"output_tokens\":2},\"error\":{\"code\":\"invalid_request\",\"message\":\"bad request\"}}}\n\n" +
+			"data: [DONE]\n\n"
+		recorder := newOpenAIResponseFlushRecorder()
+
+		result, err := runOpenAIResponseFlushTest(recorder, io.NopCloser(strings.NewReader(body)), config.GatewayConfig{})
+
+		require.Error(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, 9, result.usage.InputTokens)
+		require.Equal(t, 2, result.usage.OutputTokens)
+		gotBody, flushes := recorder.snapshot()
+		require.NotContains(t, gotBody, `"type":"error"`)
+		require.Equal(t, 1, strings.Count(gotBody, `"type":"response.failed"`))
+		require.Contains(t, gotBody, `"id":"resp_failed"`)
+		require.NotContains(t, gotBody, "[DONE]")
 		require.Len(t, flushes, 1)
 	})
 
@@ -411,12 +432,54 @@ func TestOpenAIResponseFlush_FailedAndErrorEventsFlushAtBoundaries(t *testing.T)
 
 		result, err := runOpenAIResponseFlushTest(recorder, io.NopCloser(strings.NewReader(body)), config.GatewayConfig{})
 
-		require.NoError(t, err)
+		require.Error(t, err)
 		require.NotNil(t, result)
 		gotBody, flushes := recorder.snapshot()
-		require.Equal(t, body, gotBody)
-		require.Len(t, flushes, 2)
+		require.NotContains(t, gotBody, `"type":"error"`)
+		require.Equal(t, 1, strings.Count(gotBody, `"type":"response.failed"`))
+		require.Len(t, flushes, 1)
 	})
+}
+
+func TestOpenAIResponseFlush_BareErrorTimeoutSynthesizesFailed(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config.GatewayConfig
+	}{
+		{
+			name: "stream interval timeout",
+			cfg:  config.GatewayConfig{StreamDataIntervalTimeout: 1},
+		},
+		{
+			name: "first output timeout",
+			cfg:  config.GatewayConfig{OpenAIFirstOutputTimeoutSeconds: 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader, writer := io.Pipe()
+			defer writer.Close()
+			recorder := newOpenAIResponseFlushRecorder()
+			resultCh, errCh := runOpenAIResponseFlushTestAsync(recorder, reader, tt.cfg)
+
+			_, writeErr := io.WriteString(writer, "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_request\",\"message\":\"bad request\"}}\n\n")
+			require.NoError(t, writeErr)
+
+			select {
+			case err := <-errCh:
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "upstream response failed")
+			case <-time.After(3 * time.Second):
+				t.Fatal("timed out waiting for bare error terminal synthesis")
+			}
+			require.NotNil(t, <-resultCh)
+			body, flushes := recorder.snapshot()
+			require.NotContains(t, body, `"type":"error"`)
+			require.Equal(t, 1, strings.Count(body, `"type":"response.failed"`))
+			require.Len(t, flushes, 1)
+		})
+	}
 }
 
 func TestOpenAIResponseFlush_ReusedTypeKeepsSSEBytesAndTerminalSemantics(t *testing.T) {

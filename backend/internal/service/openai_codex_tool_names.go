@@ -6,12 +6,15 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 const (
 	codexReservedPythonToolName = "python"
 	codexPythonToolAlias        = "python__sub2api"
 	codexToolNameReverseKey     = "openai_codex_tool_name_reverse"
+	codexToolNameSessionKey     = "openai_codex_tool_name_session_reverse"
 )
 
 type codexToolNameField struct {
@@ -88,23 +91,35 @@ func collectOpenAIResponsesToolNameFields(reqBody map[string]any) []codexToolNam
 				continue
 			}
 			toolType := strings.ToLower(strings.TrimSpace(firstNonEmptyString(tool["type"])))
-			if toolType != "namespace" {
+			if toolType == "function" {
 				appendName(tool, "name")
+				if function, ok := tool["function"].(map[string]any); ok {
+					appendName(function, "name")
+				}
 			}
-			if function, ok := tool["function"].(map[string]any); ok {
-				appendName(function, "name")
+			if toolType == "namespace" {
+				collectTools(tool["tools"])
 			}
-			collectTools(tool["tools"])
 		}
 	}
 	collectTools(reqBody["tools"])
-	collectTools(reqBody["functions"])
-	if choice, ok := reqBody["tool_choice"].(map[string]any); ok {
-		if !strings.EqualFold(strings.TrimSpace(firstNonEmptyString(choice["type"])), "namespace") {
-			appendName(choice, "name")
-		}
-		if function, ok := choice["function"].(map[string]any); ok {
+	if functions, ok := reqBody["functions"].([]any); ok {
+		for _, raw := range functions {
+			function, _ := raw.(map[string]any)
 			appendName(function, "name")
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(firstNonEmptyString(reqBody["type"])), "session.update") {
+		if session, ok := reqBody["session"].(map[string]any); ok {
+			collectTools(session["tools"])
+		}
+	}
+	if choice, ok := reqBody["tool_choice"].(map[string]any); ok {
+		if strings.EqualFold(strings.TrimSpace(firstNonEmptyString(choice["type"])), "function") {
+			appendName(choice, "name")
+			if function, ok := choice["function"].(map[string]any); ok {
+				appendName(function, "name")
+			}
 		}
 	}
 	if input, ok := reqBody["input"].([]any); ok {
@@ -117,7 +132,7 @@ func collectOpenAIResponsesToolNameFields(reqBody map[string]any) []codexToolNam
 			if typ == "additional_tools" {
 				collectTools(item["tools"])
 			}
-			if strings.HasSuffix(typ, "_call") || typ == "tool_call" {
+			if typ == "function_call" {
 				appendName(item, "name")
 				if function, ok := item["function"].(map[string]any); ok {
 					appendName(function, "name")
@@ -133,7 +148,7 @@ func aliasOpenAIOAuthReservedToolNamesBody(body []byte) ([]byte, map[string]stri
 		return body, nil, false, nil
 	}
 	var reqBody map[string]any
-	if err := json.Unmarshal(body, &reqBody); err != nil {
+	if err := decodeOpenAIJSONUseNumber(body, &reqBody); err != nil {
 		return body, nil, false, fmt.Errorf("decode OAuth reserved tool names: %w", err)
 	}
 	reverse, changed, err := aliasOpenAIOAuthReservedToolNames(reqBody)
@@ -177,18 +192,44 @@ func setCodexToolNameReverse(c *gin.Context, reverse map[string]string) {
 	if c == nil {
 		return
 	}
+	storeCodexToolNameReverse(c, codexToolNameReverseKey, reverse)
+	storeCodexToolNameReverse(c, codexToolNameSessionKey, nil)
+}
+
+func storeCodexToolNameReverse(c *gin.Context, key string, reverse map[string]string) {
+	if c == nil {
+		return
+	}
 	copyMap := make(map[string]string, len(reverse))
 	for aliased, original := range reverse {
 		copyMap[aliased] = original
 	}
-	c.Set(codexToolNameReverseKey, copyMap)
+	c.Set(key, copyMap)
+}
+
+func mergeCodexToolNameReverse(c *gin.Context, reverse map[string]string) {
+	if c == nil || len(reverse) == 0 {
+		return
+	}
+	merged := make(map[string]string, len(reverse)+len(codexToolNameReverseFromContext(c)))
+	for aliased, original := range codexToolNameReverseFromContext(c) {
+		merged[aliased] = original
+	}
+	for aliased, original := range reverse {
+		merged[aliased] = original
+	}
+	storeCodexToolNameReverse(c, codexToolNameReverseKey, merged)
 }
 
 func codexToolNameReverseFromContext(c *gin.Context) map[string]string {
+	return codexToolNameReverseForKey(c, codexToolNameReverseKey)
+}
+
+func codexToolNameReverseForKey(c *gin.Context, key string) map[string]string {
 	if c == nil {
 		return nil
 	}
-	raw, ok := c.Get(codexToolNameReverseKey)
+	raw, ok := c.Get(key)
 	if !ok {
 		return nil
 	}
@@ -196,12 +237,59 @@ func codexToolNameReverseFromContext(c *gin.Context) map[string]string {
 	return reverse
 }
 
+// updateCodexToolNameReverseForWSFrame keeps the active turn isolated from
+// session updates that may arrive while that turn is still streaming.
+func updateCodexToolNameReverseForWSFrame(c *gin.Context, frame []byte, reverse map[string]string) {
+	if c == nil {
+		return
+	}
+	eventType := strings.TrimSpace(gjson.GetBytes(frame, "type").String())
+	switch eventType {
+	case "session.update":
+		if gjson.GetBytes(frame, "session.tools").Exists() {
+			storeCodexToolNameReverse(c, codexToolNameSessionKey, reverse)
+		}
+	case "response.create", "":
+		active := reverse
+		if !openAIWSFrameHasExplicitToolDeclarations(frame) {
+			active = mergeCodexToolNameReverseMaps(
+				codexToolNameReverseForKey(c, codexToolNameSessionKey),
+				reverse,
+			)
+		}
+		storeCodexToolNameReverse(c, codexToolNameReverseKey, active)
+	}
+}
+
+func openAIWSFrameHasExplicitToolDeclarations(frame []byte) bool {
+	if gjson.GetBytes(frame, "tools").Exists() {
+		return true
+	}
+	for _, item := range gjson.GetBytes(frame, "input").Array() {
+		if strings.EqualFold(strings.TrimSpace(item.Get("type").String()), "additional_tools") && item.Get("tools").Exists() {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeCodexToolNameReverseMaps(base, overlay map[string]string) map[string]string {
+	merged := make(map[string]string, len(base)+len(overlay))
+	for aliased, original := range base {
+		merged[aliased] = original
+	}
+	for aliased, original := range overlay {
+		merged[aliased] = original
+	}
+	return merged
+}
+
 func restoreCodexToolNamesInJSON(data []byte, reverse map[string]string) []byte {
 	if len(data) == 0 || len(reverse) == 0 || !json.Valid(data) {
 		return data
 	}
 	var decoded any
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	if err := decodeOpenAIJSONUseNumber(data, &decoded); err != nil {
 		return data
 	}
 	if !restoreCodexToolNameFields(decoded, reverse) {
@@ -215,29 +303,152 @@ func restoreCodexToolNamesInJSON(data []byte, reverse map[string]string) []byte 
 }
 
 func restoreCodexToolNamesFromContext(c *gin.Context, data []byte) []byte {
-	return restoreCodexToolNamesInJSON(data, codexToolNameReverseFromContext(c))
+	reverse := codexToolNameReverseFromContext(c)
+	switch strings.TrimSpace(gjson.GetBytes(data, "type").String()) {
+	case "session.created", "session.updated":
+		reverse = codexToolNameReverseForKey(c, codexToolNameSessionKey)
+	}
+	return restoreCodexToolNamesInJSON(data, reverse)
+}
+
+func restoreCodexToolNamesFromSSEContext(c *gin.Context, data []byte, eventType string) []byte {
+	if strings.TrimSpace(gjson.GetBytes(data, "type").String()) != "" || strings.TrimSpace(eventType) == "" {
+		return restoreCodexToolNamesFromContext(c, data)
+	}
+	compat := []byte(openAICompatPayloadWithEventType(string(data), eventType))
+	restored := restoreCodexToolNamesFromContext(c, compat)
+	if string(restored) == string(compat) {
+		return data
+	}
+	withoutSyntheticType, err := sjson.DeleteBytes(restored, "type")
+	if err != nil {
+		return restored
+	}
+	return withoutSyntheticType
 }
 
 func restoreCodexToolNameFields(value any, reverse map[string]string) bool {
+	root, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
 	changed := false
-	switch typed := value.(type) {
-	case map[string]any:
-		if name, ok := typed["name"].(string); ok {
+	restoreItem := func(raw any) {
+		item, ok := raw.(map[string]any)
+		if !ok || !strings.EqualFold(strings.TrimSpace(firstNonEmptyString(item["type"])), "function_call") {
+			return
+		}
+		name, _ := item["name"].(string)
+		if original, exists := reverse[name]; exists {
+			item["name"] = original
+			changed = true
+		}
+	}
+	restoreOutput := func(raw any) {
+		output, _ := raw.([]any)
+		for _, item := range output {
+			restoreItem(item)
+		}
+	}
+	restoreResponse := func(raw any) {
+		response, ok := raw.(map[string]any)
+		if ok {
+			restoreOutput(response["output"])
+		}
+	}
+	restoreFunction := func(raw any) {
+		function, ok := raw.(map[string]any)
+		if !ok {
+			return
+		}
+		name, _ := function["name"].(string)
+		if original, exists := reverse[name]; exists {
+			function["name"] = original
+			changed = true
+		}
+	}
+	restoreChatToolCalls := func(raw any) {
+		toolCalls, _ := raw.([]any)
+		for _, rawCall := range toolCalls {
+			call, ok := rawCall.(map[string]any)
+			if !ok {
+				continue
+			}
+			callType := strings.ToLower(strings.TrimSpace(firstNonEmptyString(call["type"])))
+			if callType == "" || callType == "function" {
+				restoreFunction(call["function"])
+			}
+		}
+	}
+	restoreMessageContent := func(raw any) {
+		content, _ := raw.([]any)
+		for _, rawBlock := range content {
+			block, ok := rawBlock.(map[string]any)
+			if !ok || !strings.EqualFold(strings.TrimSpace(firstNonEmptyString(block["type"])), "tool_use") {
+				continue
+			}
+			name, _ := block["name"].(string)
 			if original, exists := reverse[name]; exists {
-				typed["name"] = original
+				block["name"] = original
 				changed = true
 			}
 		}
-		for _, child := range typed {
-			if restoreCodexToolNameFields(child, reverse) {
-				changed = true
+	}
+	var restoreTools func(any)
+	restoreTools = func(raw any) {
+		tools, _ := raw.([]any)
+		for _, rawTool := range tools {
+			tool, ok := rawTool.(map[string]any)
+			if !ok {
+				continue
+			}
+			toolType := strings.ToLower(strings.TrimSpace(firstNonEmptyString(tool["type"])))
+			if toolType == "function" {
+				name, _ := tool["name"].(string)
+				if original, exists := reverse[name]; exists {
+					tool["name"] = original
+					changed = true
+				}
+			}
+			if toolType == "namespace" {
+				restoreTools(tool["tools"])
 			}
 		}
-	case []any:
-		for _, child := range typed {
-			if restoreCodexToolNameFields(child, reverse) {
-				changed = true
+	}
+
+	eventType := strings.ToLower(strings.TrimSpace(firstNonEmptyString(root["type"])))
+	switch eventType {
+	case "response.output_item.added", "response.output_item.done":
+		restoreItem(root["item"])
+	case "response.created", "response.in_progress", "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
+		restoreResponse(root["response"])
+	case "session.created", "session.updated":
+		if session, ok := root["session"].(map[string]any); ok {
+			restoreTools(session["tools"])
+		}
+	}
+	if _, hasOutput := root["output"]; hasOutput {
+		restoreOutput(root["output"])
+	}
+	if choices, ok := root["choices"].([]any); ok {
+		for _, rawChoice := range choices {
+			choice, ok := rawChoice.(map[string]any)
+			if !ok {
+				continue
 			}
+			for _, key := range []string{"message", "delta"} {
+				if message, ok := choice[key].(map[string]any); ok {
+					restoreChatToolCalls(message["tool_calls"])
+				}
+			}
+		}
+	}
+	restoreMessageContent(root["content"])
+	if block, ok := root["content_block"].(map[string]any); ok && strings.EqualFold(strings.TrimSpace(firstNonEmptyString(block["type"])), "tool_use") {
+		name, _ := block["name"].(string)
+		if original, exists := reverse[name]; exists {
+			block["name"] = original
+			changed = true
 		}
 	}
 	return changed

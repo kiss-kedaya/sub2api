@@ -67,6 +67,35 @@ func TestCheckErrorPolicy(t *testing.T) {
 			expected:   ErrorPolicySkipped,
 		},
 		{
+			name: "global_529_bypasses_custom_error_code_filter",
+			account: &Account{
+				ID:       33,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{
+					"custom_error_codes_enabled": true,
+					"custom_error_codes":         []any{float64(429)},
+				},
+			},
+			statusCode: 529,
+			body:       []byte(`{"error":{"message":"overloaded"}}`),
+			expected:   ErrorPolicyMatched,
+		},
+		{
+			name: "global_529_bypasses_pool_mode",
+			account: &Account{
+				ID:       34,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{
+					"pool_mode": true,
+				},
+			},
+			statusCode: 529,
+			body:       []byte(`{"error":{"message":"overloaded"}}`),
+			expected:   ErrorPolicyMatched,
+		},
+		{
 			name: "temp_unschedulable_hit_returns_temp_unscheduled",
 			account: &Account{
 				ID:       4,

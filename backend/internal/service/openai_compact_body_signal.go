@@ -1,7 +1,6 @@
 package service
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -30,7 +29,7 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 		return body, false, nil
 	}
 	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
+	if err := decodeOpenAIJSONUseNumber(body, &payload); err != nil {
 		return body, false, err
 	}
 	input, ok := payload["input"].([]any)
@@ -57,7 +56,7 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	}
 	normalized = append(normalized, map[string]any{"type": "compaction_trigger"})
 	payload["input"] = normalized
-	encoded, err := json.Marshal(payload)
+	encoded, err := marshalOpenAIUpstreamJSON(payload)
 	if err != nil {
 		return body, false, err
 	}
@@ -143,7 +142,7 @@ func applyOpenAICodexBetaFeatures(c *gin.Context, account *Account, h http.Heade
 		ensureOpenAIRemoteCompactionV2BetaFeature(h)
 		return
 	}
-	if account == nil || !account.IsOpenAIOAuth() {
+	if account == nil || !account.IsOpenAIOAuthLike() {
 		return
 	}
 	if hasOpenAICodexBetaFeaturesHeader(h) {
