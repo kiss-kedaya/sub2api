@@ -459,7 +459,7 @@ func TestOpenAIResponseFlush_BareErrorTimeoutSynthesizesFailed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reader, writer := io.Pipe()
-			defer writer.Close()
+			defer func() { _ = writer.Close() }()
 			recorder := newOpenAIResponseFlushRecorder()
 			resultCh, errCh := runOpenAIResponseFlushTestAsync(recorder, reader, tt.cfg)
 

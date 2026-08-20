@@ -427,8 +427,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
 				); retry {
 					body = retryBody
-					upstreamPassthroughModel = fallbackModel
-					compactModelFallbackRetried = true
 					SetOpsUpstreamModel(c, fallbackModel)
 					return s.forwardOpenAIPassthrough(ctx, c, account, body, canonicalImageIntentBody, requestedModel, true, reasoningEffort, reqStream, startTime)
 				}
@@ -448,8 +446,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
 				); retry {
 					body = retryBody
-					upstreamPassthroughModel = fallbackModel
-					compactModelFallbackRetried = true
 					SetOpsUpstreamModel(c, fallbackModel)
 					return s.forwardOpenAIPassthrough(ctx, c, account, body, canonicalImageIntentBody, requestedModel, true, reasoningEffort, reqStream, startTime)
 				}
@@ -1513,7 +1509,7 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 		}
 		fallthrough
 	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
-		var ctx context.Context = context.Background()
+		ctx := context.Background()
 		if c != nil && c.Request != nil {
 			ctx = c.Request.Context()
 		}
