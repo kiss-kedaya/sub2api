@@ -406,10 +406,10 @@ func TestSanitizeGrokResponsesToolsKeepsToolChoiceOnlyWithSupportedTools(t *test
 			wantToolChoice: true,
 		},
 		{
-			name:           "malformed non-array tools remain untouched",
+			name:           "malformed non-array tools are removed",
 			body:           `{"input":"hello","tools":{"type":"function","name":"lookup"},"tool_choice":"auto"}`,
-			wantTools:      true,
-			wantToolChoice: true,
+			wantTools:      false,
+			wantToolChoice: false,
 		},
 	}
 
