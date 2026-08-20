@@ -88,6 +88,25 @@ func TestEPUSDTCreatePaymentSignsPayloadAndReturnsRedirect(t *testing.T) {
 	require.Equal(t, "https://shop.example.test/payment/result?order_id=123&status=success", received["redirect_url"])
 }
 
+func TestEPUSDTCanonicalizesHTTPReturnURL(t *testing.T) {
+	var received map[string]interface{}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &received))
+		_, _ = w.Write([]byte(`{"status_code":200,"message":"success","data":{"trade_id":"trade-http","order_id":"order-http","payment_url":"/pay/trade-http"}}`))
+	}))
+	defer server.Close()
+	prov := newTestEPUSDT(t, server)
+	_, err := prov.CreatePayment(context.Background(), payment.CreatePaymentRequest{
+		OrderID:   "order-http",
+		Amount:    "1",
+		ReturnURL: "http://shop.example.test/payment/result",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "https://shop.example.test/payment/result", received["redirect_url"])
+}
+
 func TestEPUSDTRejectsUntrustedReturnURL(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status_code":200,"message":"success","data":{"trade_id":"trade-123","order_id":"order-123","payment_url":"/pay/trade-123"}}`))
