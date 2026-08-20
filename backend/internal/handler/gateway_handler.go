@@ -1150,22 +1150,42 @@ func (h *GatewayHandler) CodexModels(c *gin.Context) {
 		return
 	}
 
-	modelIDs := h.codexModelIDsForGroup(c.Request.Context(), apiKey.Group)
-	body, err := service.BuildCodexModelsManifest(modelIDs)
+	forcedPlatform := ""
+	if value, exists := middleware2.GetForcePlatformFromContext(c); exists {
+		forcedPlatform = strings.TrimSpace(value)
+	}
+	modelIDs := h.codexModelIDsForGroup(c.Request.Context(), apiKey.Group, forcedPlatform)
+	modelIDs = service.FilterCodexModelIDsForGroup(modelIDs, apiKey.Group)
+	body, err := h.gatewayService.BuildCodexModelsManifestForGroup(
+		c.Request.Context(),
+		apiKey.Group,
+		forcedPlatform,
+		modelIDs,
+	)
 	if err != nil {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to build Codex models manifest")
+		return
+	}
+	etag := service.CodexModelsManifestETag(body)
+	c.Header("ETag", etag)
+	if service.CodexModelsManifestETagMatches(c.GetHeader("If-None-Match"), etag) {
+		c.Status(http.StatusNotModified)
+		c.Writer.WriteHeaderNow()
 		return
 	}
 	c.Data(http.StatusOK, "application/json", body)
 }
 
-func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *service.Group) []string {
+func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *service.Group, platformOverride string) []string {
 	if h == nil || h.gatewayService == nil || group == nil {
 		return nil
 	}
 
 	groupID := &group.ID
-	platform := group.Platform
+	platform := strings.TrimSpace(platformOverride)
+	if platform == "" {
+		platform = group.Platform
+	}
 	if platform == service.PlatformComposite {
 		availableModels := h.compositeAvailableModels(ctx, groupID)
 		fallbackModels := defaultModelIDsForPlatform(service.PlatformComposite)
