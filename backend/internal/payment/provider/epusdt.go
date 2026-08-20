@@ -111,6 +111,27 @@ func normalizeEPUSDTURL(raw, field string) (string, error) {
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
+// normalizeEPUSDTOrderReturnURL validates the per-order redirect URL after the
+// payment service has appended its signed/order-resume query parameters. The
+// configured returnUrl remains strict; only HTTPS URLs on that same host are
+// accepted here.
+func normalizeEPUSDTOrderReturnURL(raw, configured string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return "", fmt.Errorf("epusdt returnUrl must be an HTTPS URL")
+	}
+	base, err := url.Parse(strings.TrimSpace(configured))
+	if err != nil || base.Scheme != "https" || base.Host == "" || base.User != nil {
+		return "", fmt.Errorf("epusdt returnUrl configuration is invalid")
+	}
+	if !strings.EqualFold(parsed.Scheme, base.Scheme) || !strings.EqualFold(parsed.Host, base.Host) {
+		return "", fmt.Errorf("epusdt returnUrl host mismatch")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	return strings.TrimRight(parsed.String(), "?"), nil
+}
+
 func (e *EPUSDT) Name() string { return "EPUSDT" }
 
 func (e *EPUSDT) ProviderKey() string { return payment.TypeEpusdt }
@@ -150,7 +171,11 @@ func (e *EPUSDT) CreatePayment(ctx context.Context, req payment.CreatePaymentReq
 	if err != nil {
 		return nil, err
 	}
-	returnURL, err = normalizeEPUSDTURL(returnURL, "returnUrl")
+	// The payment service appends order_id/out_trade_no/status (and, for
+	// resumable flows, a resume token) to the merchant return URL before
+	// invoking the provider. Keep the configured returnUrl strict, but allow
+	// this controlled query string on the per-order redirect URL.
+	returnURL, err = normalizeEPUSDTOrderReturnURL(returnURL, e.config["returnUrl"])
 	if err != nil {
 		return nil, err
 	}
