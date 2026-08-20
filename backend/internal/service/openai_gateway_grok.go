@@ -173,7 +173,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			markGrokTeamModelRateLimit(account, upstreamModel, resolveGrokTeamRateLimitUntil(time.Now().Add(grokTeamRateLimitDefaultTTL), time.Now()))
 		}
 		if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
-			retryable, retryDelay, retryDeadline := grokSameAccountRetryMetadata(account, resp.StatusCode, respBody)
+			retryable, retryDelay, retryDeadline, retryMax := grokSameAccountRetryMetadata(account, resp.StatusCode, respBody)
 			return nil, &UpstreamFailoverError{
 				StatusCode:               resp.StatusCode,
 				ResponseBody:             respBody,
@@ -182,6 +182,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 				RequestScopedTransient:   retryable && resp.StatusCode == http.StatusTooManyRequests,
 				SameAccountRetryDelay:    retryDelay,
 				SameAccountRetryDeadline: retryDeadline,
+				SameAccountRetryMax:      retryMax,
 			}
 		}
 		return s.handleErrorResponse(ctx, resp, c, account, patchedBody, upstreamModel)
@@ -1186,7 +1187,7 @@ func (s *OpenAIGatewayService) describeGrokComposerImage(
 		})
 		s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, grokComposerImageBridgeVisionModel), account, resp.StatusCode, resp.Header, respBody)
 		if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
-			retryable, retryDelay, retryDeadline := grokSameAccountRetryMetadata(account, resp.StatusCode, respBody)
+			retryable, retryDelay, retryDeadline, retryMax := grokSameAccountRetryMetadata(account, resp.StatusCode, respBody)
 			return "", OpenAIUsage{}, &UpstreamFailoverError{
 				StatusCode:               resp.StatusCode,
 				ResponseBody:             respBody,
@@ -1195,6 +1196,7 @@ func (s *OpenAIGatewayService) describeGrokComposerImage(
 				RequestScopedTransient:   retryable && resp.StatusCode == http.StatusTooManyRequests,
 				SameAccountRetryDelay:    retryDelay,
 				SameAccountRetryDeadline: retryDeadline,
+				SameAccountRetryMax:      retryMax,
 			}
 		}
 		return "", OpenAIUsage{}, fmt.Errorf("grok composer image bridge upstream error: %s", upstreamMsg)
