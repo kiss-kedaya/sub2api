@@ -110,17 +110,19 @@ func TestShouldMarkGrokTeamModelRateLimit_ExcludesCapacity(t *testing.T) {
 
 func TestGrokSameAccountRetryMetadata_CapacityDeadline(t *testing.T) {
 	account := &Account{ID: 9107, Platform: PlatformGrok, Type: AccountTypeOAuth}
-	retryable, delay, deadline := grokSameAccountRetryMetadata(account, http.StatusTooManyRequests,
+	retryable, delay, deadline, retryMax := grokSameAccountRetryMetadata(account, http.StatusTooManyRequests,
 		[]byte(`{"error":{"message":"model capacity exceeded"}}`))
 	require.True(t, retryable)
 	require.Equal(t, 500*time.Millisecond, delay)
 	require.WithinDuration(t, time.Now().Add(30*time.Second), deadline, 2*time.Second)
+	require.Equal(t, 1, retryMax)
 
-	retryable, delay, deadline = grokSameAccountRetryMetadata(account, http.StatusTooManyRequests,
+	retryable, delay, deadline, retryMax = grokSameAccountRetryMetadata(account, http.StatusTooManyRequests,
 		[]byte(`{"error":{"message":"rate limit exceeded"}}`))
 	require.False(t, retryable)
 	require.Zero(t, delay)
 	require.True(t, deadline.IsZero())
+	require.Zero(t, retryMax)
 }
 
 func TestClassifyGrokUpstreamFailure_ValidationNoCool(t *testing.T) {
@@ -148,6 +150,15 @@ func TestClassifyGrokUpstreamFailure_CompatibilityDoesNotCooldown(t *testing.T) 
 		require.True(t, d.ShouldFailover, body)
 		require.False(t, d.ShouldCooldown, body)
 		require.Zero(t, d.Cooldown, body)
+	}
+}
+
+func TestClassifyGrokUpstreamFailure_CompatibilityRequiresClientError(t *testing.T) {
+	body := []byte(`{"error":{"message":"upstream failed while handling the compaction blob"}}`)
+	for _, status := range []int{http.StatusBadGateway, http.StatusInternalServerError} {
+		d := classifyGrokUpstreamFailure(status, body, "grok-4.6")
+		require.NotEqual(t, GrokFailureCompatibility, d.Class)
+		require.True(t, d.ShouldCooldown)
 	}
 }
 
