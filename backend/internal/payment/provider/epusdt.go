@@ -117,14 +117,21 @@ func normalizeEPUSDTURL(raw, field string) (string, error) {
 // accepted here.
 func normalizeEPUSDTOrderReturnURL(raw, configured string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-		return "", fmt.Errorf("epusdt returnUrl must be an HTTPS URL")
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return "", fmt.Errorf("epusdt returnUrl must be an HTTP or HTTPS URL")
 	}
 	base, err := url.Parse(strings.TrimSpace(configured))
 	if err != nil || base.Scheme != "https" || base.Host == "" || base.User != nil {
 		return "", fmt.Errorf("epusdt returnUrl configuration is invalid")
 	}
-	if !strings.EqualFold(parsed.Scheme, base.Scheme) || !strings.EqualFold(parsed.Host, base.Host) {
+	if strings.EqualFold(parsed.Scheme, "http") {
+		// The site can be opened through the legacy HTTP/IP entrypoint. EPUSDT
+		// requires HTTPS, so canonicalize that accepted same-site origin to the
+		// configured HTTPS merchant origin instead of forwarding an HTTP URL.
+		parsed.Scheme = base.Scheme
+		parsed.Host = base.Host
+		parsed.User = nil
+	} else if !strings.EqualFold(parsed.Scheme, base.Scheme) || !strings.EqualFold(parsed.Host, base.Host) {
 		return "", fmt.Errorf("epusdt returnUrl host mismatch")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
