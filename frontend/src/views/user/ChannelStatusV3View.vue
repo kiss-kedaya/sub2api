@@ -33,6 +33,7 @@
           v-for="row in rows"
           :key="row.group_id ?? `${row.platform}:${row.group_name ?? ''}`"
           :row="row"
+          :user-rate-multiplier="getUserRateMultiplier(row.group_id)"
           :countdown-seconds="countdownSeconds"
           :timeline-length="timelineLength"
         />
@@ -50,7 +51,9 @@ import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import * as api from '@/api/channelMonitorV2'
+import userGroupsAPI from '@/api/groups'
 import type { MonitorFilter, MonitorMatrixResponse, MonitorRange, MonitorSnapshot } from '@/api/channelMonitorV2'
+import type { Group } from '@/types'
 import ChannelMonitorV3Card from '@/components/user/monitor/ChannelMonitorV3Card.vue'
 import { formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
 
@@ -67,6 +70,7 @@ const snapshot = ref<MonitorSnapshot | null>(null)
 const matrix = ref<MonitorMatrixResponse | null>(null)
 const loading = ref(false)
 const refreshing = ref(false)
+const userGroupRates = ref<Record<number, number>>({})
 const countdownSeconds = ref(0)
 let controller: AbortController | null = null
 let refreshTimer: number | null = null
@@ -88,6 +92,27 @@ const latestSnapshotMetrics = computed(() => {
 function formatPercent(value: number) { return formatMonitorPercent(value, locale.value || 'zh-CN') }
 function formatTime(value?: string) { if (!value) return '-'; return new Intl.DateTimeFormat(locale.value || undefined, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) }
 function setRange(value: MonitorRange) { filter.value = { ...filter.value, range: value } }
+
+function getUserRateMultiplier(groupId?: number) {
+  if (!groupId) return null
+  const value = userGroupRates.value[groupId]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+async function loadUserGroupRates() {
+  try {
+    const [groups, customRates] = await Promise.all([
+      userGroupsAPI.getAvailable(),
+      userGroupsAPI.getUserGroupRates(),
+    ])
+    userGroupRates.value = Object.fromEntries(
+      (groups as Group[]).map(group => [group.id, customRates[group.id] ?? group.rate_multiplier]),
+    )
+  } catch (error) {
+    // Monitoring remains usable when the optional pricing endpoint is unavailable.
+    console.warn('Failed to load channel monitor group rates', error)
+  }
+}
 
 async function reload(silent = true) {
   controller?.abort()
@@ -126,7 +151,7 @@ function scheduleRefresh(seconds: number) {
 }
 
 watch(() => filter.value.range, () => void reload(false))
-onMounted(() => void reload(false))
+onMounted(() => { void loadUserGroupRates(); void reload(false) })
 onBeforeUnmount(() => {
   controller?.abort()
   if (refreshTimer) window.clearInterval(refreshTimer)
