@@ -141,8 +141,3 @@ func (c *tempUnschedCache) RecordOpenAIAPIKeyHealthFailure(ctx context.Context, 
 	}
 	return count, tripped == 1, nil
 }
-
-func (c *tempUnschedCache) ResetOpenAIAPIKeyHealthFailures(ctx context.Context, accountID int64) error {
-	key := c.openAIAPIKeyHealthKey(accountID)
-	return c.rdb.Del(ctx, key, key+":sequence").Err()
-}

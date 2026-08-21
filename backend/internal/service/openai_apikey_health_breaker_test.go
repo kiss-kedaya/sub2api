@@ -13,10 +13,12 @@ import (
 
 type openAIAPIKeyHealthSettingRepo struct {
 	SettingRepository
-	value string
+	value    string
+	getCalls int
 }
 
 func (r *openAIAPIKeyHealthSettingRepo) GetValue(context.Context, string) (string, error) {
+	r.getCalls++
 	return r.value, nil
 }
 
@@ -35,7 +37,6 @@ func (r *openAIAPIKeyHealthAccountRepo) SetTempUnschedulable(_ context.Context, 
 type openAIAPIKeyHealthCacheStub struct {
 	TempUnschedCache
 	recordCalls int
-	resetCalls  int
 	setCalls    int
 	tripped     bool
 }
@@ -43,11 +44,6 @@ type openAIAPIKeyHealthCacheStub struct {
 func (c *openAIAPIKeyHealthCacheStub) RecordOpenAIAPIKeyHealthFailure(context.Context, int64, int, int) (int64, bool, error) {
 	c.recordCalls++
 	return 3, c.tripped, nil
-}
-
-func (c *openAIAPIKeyHealthCacheStub) ResetOpenAIAPIKeyHealthFailures(context.Context, int64) error {
-	c.resetCalls++
-	return nil
 }
 
 func (c *openAIAPIKeyHealthCacheStub) SetTempUnsched(context.Context, int64, *TempUnschedState) error {
@@ -127,10 +123,11 @@ func TestOpenAIAPIKeyHealthBreakerTripsPersistedAndRuntimeState(t *testing.T) {
 	require.Contains(t, repo.reason, openAIAPIKeyHealthBreakerReason)
 }
 
-func TestOpenAIAPIKeyHealthSuccessResetsOnlyEligiblePoolAccount(t *testing.T) {
+func TestOpenAIAPIKeyHealthSuccessDoesNotTouchSettingsOrCache(t *testing.T) {
 	encoded, err := json.Marshal(OpenAIAPIKeyHealthBreakerSettings{Enabled: true, WindowMinutes: 1, FailureThreshold: 3, CooldownMinutes: 5})
 	require.NoError(t, err)
-	settings := NewSettingService(&openAIAPIKeyHealthSettingRepo{value: string(encoded)}, &config.Config{})
+	settingRepo := &openAIAPIKeyHealthSettingRepo{value: string(encoded)}
+	settings := NewSettingService(settingRepo, &config.Config{})
 	cache := &openAIAPIKeyHealthCacheStub{}
 	svc := NewRateLimitService(&openAIAPIKeyHealthAccountRepo{}, nil, &config.Config{}, nil, cache)
 	svc.SetSettingService(settings)
@@ -138,5 +135,6 @@ func TestOpenAIAPIKeyHealthSuccessResetsOnlyEligiblePoolAccount(t *testing.T) {
 
 	svc.ObserveOpenAIAPIKeyHealthSuccess(context.Background(), openAIHealthPoolAccount())
 	svc.ObserveOpenAIAPIKeyHealthSuccess(context.Background(), &Account{ID: 43, Platform: PlatformOpenAI, Type: AccountTypeAPIKey})
-	require.Equal(t, 1, cache.resetCalls)
+	require.Zero(t, settingRepo.getCalls)
+	require.Zero(t, cache.recordCalls)
 }

@@ -45,11 +45,11 @@ func TestOpenAIResponsesInputItemIDPrefixUsesObservedOutputContracts(t *testing.
 	}
 }
 
-func TestSanitizeOpenAIResponsesInputItemIDsKeepsReferenceGraphConsistent(t *testing.T) {
+func TestSanitizeOpenAIResponsesInputItemIDsDoesNotCascadeAcrossIDNamespaces(t *testing.T) {
 	body := []byte(`{"input":[
 		{"type":"function_call","id":"item_bad_call","call_id":"call_valid","name":"lookup","arguments":"{}"},
 		{"type":"function_call_output","call_id":"call_valid","output":"preserve paired output"},
-		{"type":"function_call_output","call_id":"item_bad_call","output":"drop dangling output"},
+		{"type":"function_call_output","call_id":"item_bad_call","output":"preserve opaque output"},
 		{"type":"item_reference","id":"item_bad_call"},
 		{"type":"item_reference","id":"remote_valid"},
 		{"type":"custom_tool_call","id":"ctc_valid","call_id":"ctco_bad_output","name":"apply_patch","input":"patch"},
@@ -61,14 +61,16 @@ func TestSanitizeOpenAIResponsesInputItemIDsKeepsReferenceGraphConsistent(t *tes
 	require.NoError(t, err)
 	require.True(t, changed)
 	items := gjson.GetBytes(sanitized, "input").Array()
-	require.Len(t, items, 5)
+	require.Len(t, items, 7)
 	require.False(t, items[0].Get("id").Exists())
 	require.Equal(t, "call_valid", items[0].Get("call_id").String())
 	require.Equal(t, "preserve paired output", items[1].Get("output").String())
-	require.Equal(t, "remote_valid", items[2].Get("id").String())
-	require.Equal(t, "ctc_valid", items[3].Get("id").String())
-	require.False(t, items[4].Get("id").Exists())
-	require.Equal(t, "ctco_bad_output", items[4].Get("call_id").String())
+	require.Equal(t, "preserve opaque output", items[2].Get("output").String())
+	require.Equal(t, "item_bad_call", items[3].Get("id").String())
+	require.Equal(t, "remote_valid", items[4].Get("id").String())
+	require.Equal(t, "ctc_valid", items[5].Get("id").String())
+	require.False(t, items[6].Get("id").Exists())
+	require.Equal(t, "ctco_bad_output", items[6].Get("call_id").String())
 }
 
 func TestSanitizeOpenAIResponsesInputItemIDsLeavesUnrelatedReferencesUntouched(t *testing.T) {
@@ -93,7 +95,7 @@ func TestSanitizeOpenAIResponsesInputItemIDsPreservesReferenceToDuplicateRetaine
 	require.Equal(t, "ctc_shared", gjson.GetBytes(sanitized, "input.2.id").String())
 }
 
-func TestSanitizeOpenAIResponsesInputItemIDsClosesReferencesAfterDroppingOutput(t *testing.T) {
+func TestSanitizeOpenAIResponsesInputItemIDsPreservesOpaqueOutputsAndReferences(t *testing.T) {
 	body := []byte(`{"input":[
 		{"type":"function_call","id":"item_shared","call_id":"call_real"},
 		{"type":"function_call_output","id":"item_shared","call_id":"item_shared","output":"dangling"},
@@ -106,10 +108,12 @@ func TestSanitizeOpenAIResponsesInputItemIDsClosesReferencesAfterDroppingOutput(
 
 	require.NoError(t, err)
 	require.True(t, changed)
-	require.Len(t, gjson.GetBytes(sanitized, "input").Array(), 3)
+	require.Len(t, gjson.GetBytes(sanitized, "input").Array(), 5)
 	require.False(t, gjson.GetBytes(sanitized, "input.0.id").Exists())
-	require.Equal(t, "kept_output", gjson.GetBytes(sanitized, "input.1.id").String())
-	require.Equal(t, "kept_output", gjson.GetBytes(sanitized, "input.2.id").String())
+	require.Equal(t, "dangling", gjson.GetBytes(sanitized, "input.1.output").String())
+	require.Equal(t, "item_shared", gjson.GetBytes(sanitized, "input.2.id").String())
+	require.Equal(t, "kept_output", gjson.GetBytes(sanitized, "input.3.id").String())
+	require.Equal(t, "kept_output", gjson.GetBytes(sanitized, "input.4.id").String())
 
 	second, changedAgain, err := sanitizeOpenAIResponsesInputItemIDs(sanitized)
 	require.NoError(t, err)
