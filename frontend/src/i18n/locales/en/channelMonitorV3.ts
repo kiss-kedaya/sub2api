@@ -16,6 +16,7 @@ export default {
     critical: 'Critical',
     unknown: 'Insufficient samples',
     allModels: 'All models',
+    userRate: 'User rate',
     unknownGroup: 'Unknown group',
     timelineTooltip: '{time} · Availability {availability} · Cache {cache} · First token {ttft}',
     emptyTitle: 'No channel data',
