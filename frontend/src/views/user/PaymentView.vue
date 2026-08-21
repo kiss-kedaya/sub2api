@@ -93,7 +93,39 @@
             </button>
             </template>
           </template>
-          <!-- Subscribe Tab -->
+          <!-- Recharge Center Tab: reuse the configured custom payment center instead of subscriptions -->
+          <template v-else-if="activeTab === 'rechargeCenter'">
+            <div class="overflow-hidden rounded-2xl border border-blue-100/80 bg-white/80 shadow-sm dark:border-blue-900/50 dark:bg-dark-800/80">
+              <div class="flex flex-col gap-3 border-b border-blue-100/70 bg-gradient-to-r from-blue-50/80 via-white to-cyan-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-blue-900/40 dark:from-blue-950/40 dark:via-dark-800 dark:to-cyan-950/30">
+                <div>
+                  <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('payment.rechargeCenterTitle') }}</p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('payment.rechargeCenterDescription') }}</p>
+                </div>
+                <a
+                  v-if="rechargeCenterUrl"
+                  :href="rechargeCenterUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center justify-center rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-medium text-blue-700 transition hover:border-blue-300 hover:bg-blue-50 dark:border-blue-800 dark:bg-dark-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                >
+                  {{ t('payment.rechargeCenterOpen') }}
+                </a>
+              </div>
+              <div v-if="rechargeCenterUrl" class="bg-white p-2 dark:bg-dark-900/30 sm:p-3">
+                <iframe
+                  :src="rechargeCenterUrl"
+                  title="Recharge Center"
+                  class="h-[min(78vh,860px)] min-h-[620px] w-full rounded-xl border border-gray-100 bg-white dark:border-dark-700"
+                  allow="payment *; clipboard-write"
+                  allowfullscreen
+                ></iframe>
+              </div>
+              <div v-else class="px-5 py-16 text-center text-sm text-gray-500 dark:text-gray-400">
+                {{ t('payment.rechargeCenterUnavailable') }}
+              </div>
+            </div>
+          </template>
+          <!-- Legacy subscription flow kept for compatibility with existing order recovery links. -->
           <template v-else-if="activeTab === 'subscription'">
             <!-- Subscription confirm (inline, replaces plan list) -->
             <template v-if="selectedPlan">
@@ -291,6 +323,7 @@ import { DEFAULT_PAYMENT_CURRENCY, formatPaymentAmount, normalizePaymentCurrency
 import { planValiditySuffix as validitySuffixOf } from '@/components/payment/validity'
 import type { PaymentMethodOption } from '@/components/payment/PaymentMethodSelector.vue'
 import { buildPaymentErrorToastMessage, describePaymentScenarioError } from './paymentUx'
+import { buildEmbeddedUrl, detectTheme } from '@/utils/embedded-url'
 import { hasWechatResumeQuery, parseWechatResumeRoute, stripWechatResumeQuery } from './paymentWechatResume'
 
 const i18n = useI18n()
@@ -322,7 +355,7 @@ const loading = ref(true)
 const submitting = ref(false)
 const errorMessage = ref('')
 const errorHintMessage = ref('')
-const activeTab = ref<'recharge' | 'subscription'>('recharge')
+const activeTab = ref<'recharge' | 'rechargeCenter' | 'subscription'>('recharge')
 const amount = ref<number | null>(null)
 const selectedMethod = ref('')
 const selectedPlan = ref<SubscriptionPlan | null>(null)
@@ -506,9 +539,9 @@ const checkout = ref<CheckoutInfoResponse>({
 })
 
 const tabs = computed(() => {
-  const result: { key: 'recharge' | 'subscription'; label: string }[] = []
+  const result: { key: 'recharge' | 'rechargeCenter'; label: string }[] = []
   if (!checkout.value.balance_disabled) result.push({ key: 'recharge', label: t('payment.tabTopUp') })
-  result.push({ key: 'subscription', label: t('payment.tabSubscribe') })
+  result.push({ key: 'rechargeCenter', label: t('payment.tabRechargeCenter') })
   return result
 })
 
@@ -567,6 +600,22 @@ const localeCode = computed(() => {
     return String((raw as { value?: string }).value || '')
   }
   return undefined
+})
+
+const RECHARGE_CENTER_MENU_ID = '322273f5aaa4d036'
+const rechargeCenterUrl = computed(() => {
+  const item = appStore.cachedPublicSettings?.custom_menu_items?.find(
+    candidate => candidate.id === RECHARGE_CENTER_MENU_ID,
+  )
+  const baseUrl = item?.url?.trim() || ''
+  if (!baseUrl || baseUrl.startsWith('md:')) return ''
+  return buildEmbeddedUrl(
+    baseUrl,
+    authStore.user?.id,
+    authStore.token,
+    detectTheme(),
+    localeCode.value,
+  )
 })
 
 function currencyFractionDigits(currency: string): number {
@@ -1136,9 +1185,10 @@ onMounted(async () => {
     }
     await resumeWechatPaymentFromQuery()
     if (checkout.value.balance_disabled) {
-      activeTab.value = 'subscription'
+      activeTab.value = 'rechargeCenter'
     }
-    // Handle renewal navigation: ?tab=subscription&group=123
+    // Preserve legacy subscription deep links for payment callbacks and old renewal URLs.
+    // The visible navigation no longer exposes this tab; normal users use Recharge Center.
     if (route.query.tab === 'subscription') {
       activeTab.value = 'subscription'
       if (route.query.group) {
