@@ -328,6 +328,9 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User, field
 	if fields.BalanceNotifyExtraEmails {
 		updateOp = updateOp.SetBalanceNotifyExtraEmails(marshalExtraEmails(userIn.BalanceNotifyExtraEmails))
 	}
+	if fields.BalanceNotifyPrimaryEmailDisabled {
+		updateOp = updateOp.SetBalanceNotifyPrimaryEmailDisabled(userIn.BalanceNotifyPrimaryEmailDisabled)
+	}
 	if fields.SignupSource && userIn.SignupSource != "" {
 		updateOp = updateOp.SetSignupSource(userIn.SignupSource)
 	}

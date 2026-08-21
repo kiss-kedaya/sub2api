@@ -390,6 +390,20 @@ func (_u *UserUpdate) SetNillableBalanceNotifyExtraEmails(v *string) *UserUpdate
 	return _u
 }
 
+// SetBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field.
+func (_u *UserUpdate) SetBalanceNotifyPrimaryEmailDisabled(v bool) *UserUpdate {
+	_u.mutation.SetBalanceNotifyPrimaryEmailDisabled(v)
+	return _u
+}
+
+// SetNillableBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableBalanceNotifyPrimaryEmailDisabled(v *bool) *UserUpdate {
+	if v != nil {
+		_u.SetBalanceNotifyPrimaryEmailDisabled(*v)
+	}
+	return _u
+}
+
 // SetTotalRecharged sets the "total_recharged" field.
 func (_u *UserUpdate) SetTotalRecharged(v float64) *UserUpdate {
 	_u.mutation.ResetTotalRecharged()
@@ -1086,6 +1100,9 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.BalanceNotifyExtraEmails(); ok {
 		_spec.SetField(user.FieldBalanceNotifyExtraEmails, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.BalanceNotifyPrimaryEmailDisabled(); ok {
+		_spec.SetField(user.FieldBalanceNotifyPrimaryEmailDisabled, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.TotalRecharged(); ok {
 		_spec.SetField(user.FieldTotalRecharged, field.TypeFloat64, value)
@@ -2066,6 +2083,20 @@ func (_u *UserUpdateOne) SetNillableBalanceNotifyExtraEmails(v *string) *UserUpd
 	return _u
 }
 
+// SetBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field.
+func (_u *UserUpdateOne) SetBalanceNotifyPrimaryEmailDisabled(v bool) *UserUpdateOne {
+	_u.mutation.SetBalanceNotifyPrimaryEmailDisabled(v)
+	return _u
+}
+
+// SetNillableBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableBalanceNotifyPrimaryEmailDisabled(v *bool) *UserUpdateOne {
+	if v != nil {
+		_u.SetBalanceNotifyPrimaryEmailDisabled(*v)
+	}
+	return _u
+}
+
 // SetTotalRecharged sets the "total_recharged" field.
 func (_u *UserUpdateOne) SetTotalRecharged(v float64) *UserUpdateOne {
 	_u.mutation.ResetTotalRecharged()
@@ -2792,6 +2823,9 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.BalanceNotifyExtraEmails(); ok {
 		_spec.SetField(user.FieldBalanceNotifyExtraEmails, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.BalanceNotifyPrimaryEmailDisabled(); ok {
+		_spec.SetField(user.FieldBalanceNotifyPrimaryEmailDisabled, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.TotalRecharged(); ok {
 		_spec.SetField(user.FieldTotalRecharged, field.TypeFloat64, value)

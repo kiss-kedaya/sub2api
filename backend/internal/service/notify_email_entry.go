@@ -2,15 +2,67 @@ package service
 
 import (
 	"encoding/json"
+	"net/mail"
 	"strings"
 )
 
 // NotifyEmailEntry represents a notification email with enable/disable and verification state.
-// All emails are user-managed; maximum 3 entries per user.
+// Primary is true for the current account-bound email. The primary entry is derived
+// from users.email, cannot be removed, and has its disabled state stored separately.
 type NotifyEmailEntry struct {
 	Email    string `json:"email"`
 	Disabled bool   `json:"disabled"`
 	Verified bool   `json:"verified"`
+	Primary  bool   `json:"primary,omitempty"`
+}
+
+// IsValidNotifyEmail reports whether an account email can be used as a notification
+// recipient. Synthetic/reserved sign-in addresses are intentionally excluded.
+func IsValidNotifyEmail(email string) bool {
+	email = strings.TrimSpace(email)
+	if email == "" || isReservedEmail(email) {
+		return false
+	}
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || parsed.Address != email {
+		return false
+	}
+	at := strings.LastIndexByte(email, '@')
+	return at > 0 && at < len(email)-1 && strings.Contains(email[at+1:], ".")
+}
+
+// BuildNotifyEmailEntries returns the account-bound email first, followed by the
+// existing extra notification emails. The primary entry is always verified and
+// inherits its persisted disabled state; duplicate extras are omitted.
+func BuildNotifyEmailEntries(user *User) []NotifyEmailEntry {
+	if user == nil {
+		return nil
+	}
+	entries := make([]NotifyEmailEntry, 0, len(user.BalanceNotifyExtraEmails)+1)
+	seen := make(map[string]struct{}, len(user.BalanceNotifyExtraEmails)+1)
+	if IsValidNotifyEmail(user.Email) {
+		primary := strings.TrimSpace(user.Email)
+		entries = append(entries, NotifyEmailEntry{
+			Email: primary, Disabled: user.BalanceNotifyPrimaryEmailDisabled,
+			Verified: true, Primary: true,
+		})
+		seen[strings.ToLower(primary)] = struct{}{}
+	}
+	for _, entry := range user.BalanceNotifyExtraEmails {
+		email := strings.TrimSpace(entry.Email)
+		if email == "" {
+			continue
+		}
+		key := strings.ToLower(email)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		entry.Email = email
+		entry.Primary = false
+		entries = append(entries, entry)
+		seen[key] = struct{}{}
+	}
+	return entries
 }
 
 // parseNotifyEmails parses a JSON string into []NotifyEmailEntry.
