@@ -8,6 +8,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,7 @@ import (
 // SettingHandler 公开设置处理器（无需认证）
 type SettingHandler struct {
 	settingService           *service.SettingService
+	userService              *service.UserService
 	notificationEmailService *service.NotificationEmailService
 	version                  string
 }
@@ -26,6 +28,11 @@ func NewSettingHandler(settingService *service.SettingService, version string) *
 		settingService: settingService,
 		version:        version,
 	}
+}
+
+// SetUserService attaches the authenticated user reader used by gated settings endpoints.
+func (h *SettingHandler) SetUserService(userService *service.UserService) {
+	h.userService = userService
 }
 
 // SetNotificationEmailService attaches the public notification email service without
@@ -120,6 +127,40 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 
 		AllowUserViewErrorRequests: settings.AllowUserViewErrorRequests,
 	})
+}
+
+// GetCustomEndpoints returns admin-configured extra API endpoints only to users
+// whose cumulative successful recharge has reached the configured threshold.
+// GET /api/v1/user/custom-endpoints
+func (h *SettingHandler) GetCustomEndpoints(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if h.userService == nil {
+		response.Error(c, http.StatusInternalServerError, "User service unavailable")
+		return
+	}
+
+	user, err := h.userService.GetByID(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if user.TotalRecharged < service.CustomEndpointRechargeThreshold {
+		response.Success(c, []dto.CustomEndpoint{})
+		return
+	}
+
+	raw, err := h.settingService.GetConfiguredCustomEndpoints(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, dto.ParseCustomEndpoints(raw))
 }
 
 // UnsubscribeNotificationEmail handles optional notification email opt-outs.
