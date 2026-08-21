@@ -627,6 +627,29 @@ function downloadCodexModelManifest() {
   )
 }
 
+const codexCatalogModelSlugs = computed(() => {
+  if (!codexModelManifestContent.value) return []
+  try {
+    const payload: unknown = JSON.parse(codexModelManifestContent.value)
+    if (typeof payload !== 'object' || payload === null || !('models' in payload)) return []
+    const models = (payload as { models?: unknown }).models
+    if (!Array.isArray(models)) return []
+    return models.flatMap((model) => {
+      if (typeof model !== 'object' || model === null || !('slug' in model)) return []
+      const slug = (model as { slug?: unknown }).slug
+      if (typeof slug !== 'string' || !slug.trim()) return []
+      return [slug.trim()]
+    })
+  } catch {
+    return []
+  }
+})
+
+function selectCodexCatalogModel(preferredModel: string): string {
+  if (codexCatalogModelSlugs.value.includes(preferredModel)) return preferredModel
+  return codexCatalogModelSlugs.value[0] || preferredModel
+}
+
 const escapeHtml = (value: string) => value
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -884,10 +907,12 @@ function generateOpenAIFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
 
+  const model = selectCodexCatalogModel('gpt-5.5')
+
   // config.toml content
   const configContent = `model_provider = "OpenAI"
-model = "gpt-5.5"
-review_model = "gpt-5.5"
+model = "${model}"
+review_model = "${model}"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 model_catalog_json = "${escapeTomlBasicString(codexModelCatalogPath.value)}"
@@ -1087,6 +1112,7 @@ function generateGrokCodexFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const shell = activeTab.value
   const isWindowsPath = shell === 'windows' || shell === 'cmd' || shell === 'powershell'
   const configDir = isWindowsPath ? '%userprofile%\\.codex' : '~/.codex'
+  const model = selectCodexCatalogModel('grok-4.5')
 
   let envPath: string
   let envContent: string
@@ -1112,10 +1138,10 @@ function generateGrokCodexFiles(baseUrl: string, apiKey: string): FileConfig[] {
 # Switch model: grok-4.5 | grok-4.3 | grok-build-0.1 | grok-4.20-multi-agent-0309 (text / web_search)
 
 model_provider = "sub2api"
-model = "grok-4.5"
+model = "${model}"
 model_catalog_json = "${escapeTomlBasicString(codexModelCatalogPath.value)}"
 # Optional:
-# review_model = "grok-4.5"
+# review_model = "${model}"
 # model_reasoning_effort = "medium"
 # model_context_window = 500000
 # disable_response_storage = true
@@ -1156,7 +1182,8 @@ function generateRoutedCodexFiles(
 ): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
-  const model = platform === 'deepseek' ? 'deepseek-v4-pro' : 'gpt-5.5'
+  const preferredModel = platform === 'deepseek' ? 'deepseek-v4-pro' : 'gpt-5.5'
+  const model = selectCodexCatalogModel(preferredModel)
   const label = platform === 'deepseek' ? 'DeepSeek' : 'Composite'
   const envContent = isWindows
     ? `$env:SUB2API_API_KEY="${apiKey}"`
@@ -1190,11 +1217,12 @@ supports_websockets = false`
 function generateOpenAIWsFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
+  const model = selectCodexCatalogModel('gpt-5.5')
 
   // config.toml content with WebSocket v2
   const configContent = `model_provider = "OpenAI"
-model = "gpt-5.5"
-review_model = "gpt-5.5"
+model = "${model}"
+review_model = "${model}"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 model_catalog_json = "${escapeTomlBasicString(codexModelCatalogPath.value)}"
