@@ -75,6 +75,23 @@ func TestSameAccountRetryAllowedUsesDeadlineInsteadOfPoolCount(t *testing.T) {
 	require.False(t, sameAccountRetryAllowed(err, 0, 100))
 }
 
+func TestSameAccountRetryDeadlineAllows(t *testing.T) {
+	require.True(t, sameAccountRetryDeadlineAllows(&service.UpstreamFailoverError{}))
+	require.True(t, sameAccountRetryDeadlineAllows(&service.UpstreamFailoverError{
+		SameAccountRetryDeadline: time.Now().Add(time.Second),
+	}))
+	require.False(t, sameAccountRetryDeadlineAllows(&service.UpstreamFailoverError{
+		SameAccountRetryDeadline: time.Now().Add(-time.Second),
+	}))
+}
+
+func TestEffectiveSameAccountRetryLimitHonorsErrorCapAndDisabledAccount(t *testing.T) {
+	account := &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{"pool_mode": true, "pool_mode_retry_count": float64(3)}}
+	require.Equal(t, 1, effectiveSameAccountRetryLimit(&service.UpstreamFailoverError{SameAccountRetryMax: 1}, account))
+	account.Credentials["pool_mode_retry_count"] = float64(0)
+	require.Equal(t, 0, effectiveSameAccountRetryLimit(&service.UpstreamFailoverError{SameAccountRetryMax: 1}, account))
+}
+
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
@@ -335,7 +352,7 @@ func TestHandleFailoverError_CacheBilling(t *testing.T) {
 		require.Zero(t, fs.SwitchCount)
 	})
 
-	t.Run("deadline允许超过计数上限时仍不强制缓存计费", func(t *testing.T) {
+	t.Run("deadline存在但计数已耗尽时按切换处理并强制缓存计费", func(t *testing.T) {
 		mock := &mockTempUnscheduler{}
 		fs := NewFailoverState(3, true)
 		fs.SameAccountRetryCount[100] = maxSameAccountRetries
@@ -345,8 +362,8 @@ func TestHandleFailoverError_CacheBilling(t *testing.T) {
 
 		fs.HandleFailoverError(context.Background(), mock, 100, "openai", maxSameAccountRetries, err)
 
-		require.False(t, fs.ForceCacheBilling)
-		require.Zero(t, fs.SwitchCount)
+		require.True(t, fs.ForceCacheBilling)
+		require.Equal(t, 1, fs.SwitchCount)
 	})
 
 	t.Run("同账号重试耗尽并实际切换时设置ForceCacheBilling", func(t *testing.T) {
