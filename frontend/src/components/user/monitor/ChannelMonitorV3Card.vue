@@ -43,7 +43,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitorStatus } from '@/api/admin/channelMonitor'
 import type { MonitorMatrixRow } from '@/api/channelMonitorV2'
-import { availabilityBadgeClass, availabilityTextClass, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
+import { availabilityTextClass, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
 import { providerGradient, useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import ProviderIcon from './ProviderIcon.vue'
 import ChannelMonitorV3Timeline from './ChannelMonitorV3Timeline.vue'
@@ -55,7 +55,7 @@ const props = defineProps<{
   userRateMultiplier?: number | null
 }>()
 const { t } = useI18n()
-const { statusLabel, providerLabel, providerBadgeClass } = useChannelMonitorFormat()
+const { statusLabel, statusBadgeClass, providerLabel, providerBadgeClass } = useChannelMonitorFormat()
 
 const groupLabel = computed(() => props.row.group_name || t('channelMonitorV3.unknownGroup'))
 const formattedUserRate = computed(() => {
@@ -81,8 +81,7 @@ const monitorStatus = computed<MonitorStatus | null>(() => {
   return null
 })
 const statusText = computed(() => monitorStatus.value ? statusLabel(monitorStatus.value) : t('channelMonitorV3.unknown'))
-const statusClass = computed(() => {
-  if (!monitorStatus.value) return availabilityBadgeClass(null)
-  return availabilityBadgeClass(availabilityPercent.value)
-})
+const statusClass = computed(() => monitorStatus.value
+  ? statusBadgeClass(monitorStatus.value)
+  : 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300')
 </script>
