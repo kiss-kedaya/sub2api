@@ -36,8 +36,14 @@ func (r *errSettingRepo) Get(_ context.Context, _ string) (*Setting, error) {
 type overloadAccountRepoStub struct {
 	mockAccountRepoForGemini
 	overloadCalls   int
+	errorCalls      int
 	lastOverloadID  int64
 	lastOverloadEnd time.Time
+}
+
+func (r *overloadAccountRepoStub) SetError(_ context.Context, _ int64, _ string) error {
+	r.errorCalls++
+	return nil
 }
 
 func (r *overloadAccountRepoStub) SetOverloaded(_ context.Context, id int64, until time.Time) error {
@@ -269,7 +275,7 @@ func TestHandle529_DBReadError_FallsBackToConfig(t *testing.T) {
 	require.WithinDuration(t, before.Add(7*time.Minute), accountRepo.lastOverloadEnd, 2*time.Second)
 }
 
-func TestHandleUpstreamError_529BypassesPoolAndCustomCodeGates(t *testing.T) {
+func TestHandleUpstreamError_529RespectsAccountPolicies(t *testing.T) {
 	tests := []struct {
 		name        string
 		credentials map[string]any
@@ -301,10 +307,30 @@ func TestHandleUpstreamError_529BypassesPoolAndCustomCodeGates(t *testing.T) {
 			shouldDisable := svc.HandleUpstreamError(context.Background(), account, 529, nil, []byte(`{"error":{"message":"overloaded"}}`))
 
 			require.False(t, shouldDisable)
-			require.Equal(t, 1, repo.overloadCalls)
-			require.Equal(t, account.ID, repo.lastOverloadID)
+			require.Zero(t, repo.overloadCalls)
+			require.Zero(t, repo.errorCalls)
 		})
 	}
+}
+
+func TestHandleUpstreamError_529CustomCodeDisablesInsteadOfOverloadCooldown(t *testing.T) {
+	repo := &overloadAccountRepoStub{}
+	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:       102,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"custom_error_codes_enabled": true,
+			"custom_error_codes":         []any{float64(529)},
+		},
+	}
+
+	shouldDisable := svc.HandleUpstreamError(context.Background(), account, 529, nil, []byte(`{"error":{"message":"overloaded"}}`))
+
+	require.True(t, shouldDisable)
+	require.Equal(t, 1, repo.errorCalls)
+	require.Zero(t, repo.overloadCalls)
 }
 
 // ===========================================================================
