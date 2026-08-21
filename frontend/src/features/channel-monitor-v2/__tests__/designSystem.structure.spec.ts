@@ -2,6 +2,8 @@
  * Structure contracts: channel-monitor-v2 + studio shells must use project
  * design-system utility classes rather than isolated flat RGB skins.
  */
+import { availabilityBadgeClass } from '../monitorFormat'
+
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -100,5 +102,22 @@ describe('channel-monitor-v2 design system structure', () => {
     expect(src).toContain('class="tabs')
     expect(src).toContain('tab-active')
     expect(src).toContain('MonitorSettingsPanel')
+  })
+})
+
+
+describe('availabilityBadgeClass', () => {
+  it('uses the requested availability color bands', () => {
+    expect(availabilityBadgeClass(95)).toContain('bg-emerald-700')
+    expect(availabilityBadgeClass(90)).toContain('bg-emerald-700')
+    expect(availabilityBadgeClass(89.9)).toContain('bg-emerald-100')
+    expect(availabilityBadgeClass(80)).toContain('bg-emerald-100')
+    expect(availabilityBadgeClass(79.9)).toContain('bg-yellow-100')
+    expect(availabilityBadgeClass(60)).toContain('bg-yellow-100')
+    expect(availabilityBadgeClass(59.9)).toContain('bg-amber-200')
+    expect(availabilityBadgeClass(50)).toContain('bg-amber-200')
+    expect(availabilityBadgeClass(49.9)).toContain('bg-red-600')
+    expect(availabilityBadgeClass(30)).toContain('bg-red-600')
+    expect(availabilityBadgeClass(29.9)).toContain('bg-gray-950')
   })
 })
