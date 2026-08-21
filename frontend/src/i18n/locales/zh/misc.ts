@@ -408,7 +408,7 @@ export default {
     noActiveSubscription: '暂无有效订阅',
     tabTopUp: '充值',
     tabSubscribe: '充值中心',
-    tabRechargeCenter: '充值中心',
+    tabRechargeCenter: '支付宝 / 微信充值中心',
     rechargeCenterTitle: '支付宝 / 微信充值中心',
     rechargeCenterDescription: '已为你接入充值中心，可使用支付宝或微信完成充值。',
     rechargeCenterOpen: '新窗口打开',
