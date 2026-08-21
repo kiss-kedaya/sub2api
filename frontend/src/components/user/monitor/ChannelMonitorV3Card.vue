@@ -21,7 +21,7 @@
       </div>
       <div class="rounded-xl border border-gray-100 bg-gray-50/80 p-3 dark:border-dark-700/50 dark:bg-dark-900/40">
         <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{{ t('channelMonitorV3.successRate') }}</div>
-        <div class="mt-1.5 font-mono text-lg font-bold tabular-nums text-gray-900 dark:text-gray-100">{{ successRate }}</div>
+        <div class="mt-1.5 font-mono text-lg font-bold tabular-nums" :class="availabilityClass">{{ successRate }}</div>
       </div>
       <div class="rounded-xl border border-gray-100 bg-gray-50/80 p-3 dark:border-dark-700/50 dark:bg-dark-900/40">
         <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{{ t('channelMonitorV3.ttft') }}</div>
@@ -43,7 +43,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitorStatus } from '@/api/admin/channelMonitor'
 import type { MonitorMatrixRow } from '@/api/channelMonitorV2'
-import { formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
+import { availabilityBadgeClass, availabilityTextClass, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
 import { providerGradient, useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import ProviderIcon from './ProviderIcon.vue'
 import ChannelMonitorV3Timeline from './ChannelMonitorV3Timeline.vue'
@@ -55,7 +55,7 @@ const props = defineProps<{
   userRateMultiplier?: number | null
 }>()
 const { t } = useI18n()
-const { statusLabel, statusBadgeClass, providerLabel, providerBadgeClass } = useChannelMonitorFormat()
+const { statusLabel, providerLabel, providerBadgeClass } = useChannelMonitorFormat()
 
 const groupLabel = computed(() => props.row.group_name || t('channelMonitorV3.unknownGroup'))
 const formattedUserRate = computed(() => {
@@ -70,7 +70,9 @@ const latestMetrics = computed(() => latestBucket.value?.metrics ?? props.row.me
 const latestHealth = computed(() => latestBucket.value?.health ?? props.row.health)
 // The cards show the newest completed monitoring bucket, not the selected-range aggregate.
 const cacheRate = computed(() => formatMonitorPercent(latestMetrics.value.cache_rate))
-const successRate = computed(() => formatMonitorPercent(1 - latestMetrics.value.error_rate))
+const availabilityPercent = computed(() => (1 - latestMetrics.value.error_rate) * 100)
+const successRate = computed(() => formatMonitorPercent(availabilityPercent.value / 100))
+const availabilityClass = computed(() => availabilityTextClass(availabilityPercent.value))
 const ttft = computed(() => formatMonitorMs(latestMetrics.value.ttft.p50_ms))
 const monitorStatus = computed<MonitorStatus | null>(() => {
   if (latestHealth.value.overall === 'healthy') return 'operational'
@@ -79,7 +81,8 @@ const monitorStatus = computed<MonitorStatus | null>(() => {
   return null
 })
 const statusText = computed(() => monitorStatus.value ? statusLabel(monitorStatus.value) : t('channelMonitorV3.unknown'))
-const statusClass = computed(() => monitorStatus.value
-  ? statusBadgeClass(monitorStatus.value)
-  : 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300')
+const statusClass = computed(() => {
+  if (!monitorStatus.value) return availabilityBadgeClass(null)
+  return availabilityBadgeClass(availabilityPercent.value)
+})
 </script>

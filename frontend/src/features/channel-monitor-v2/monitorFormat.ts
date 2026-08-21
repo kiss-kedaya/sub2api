@@ -63,6 +63,34 @@ export function formatMonitorPercent(value: number, locale = monitorIntlLocale()
   }).format((value || 0) * 100)}%`
 }
 
+/**
+ * Color the user-facing availability status by the newest availability value.
+ * Boundaries are intentionally ordered from worst to best so that the bands
+ * do not overlap: <30 black, <50 red, <60 yellow, <80 pale yellow,
+ * <90 light green, and >=90 deep green.
+ */
+export function availabilityBadgeClass(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'
+  }
+  if (value < 30) return 'bg-gray-950 text-white dark:bg-black dark:text-white'
+  if (value < 50) return 'bg-red-600 text-white dark:bg-red-500 dark:text-white'
+  if (value < 60) return 'bg-amber-200 text-amber-950 dark:bg-amber-500/80 dark:text-white'
+  if (value < 80) return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-200'
+  if (value < 90) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200'
+  return 'bg-emerald-700 text-white dark:bg-emerald-600 dark:text-white'
+}
+
+export function availabilityTextClass(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return 'text-gray-900 dark:text-gray-100'
+  if (value < 30) return 'text-gray-950 dark:text-white'
+  if (value < 50) return 'text-red-600 dark:text-red-400'
+  if (value < 60) return 'text-amber-700 dark:text-amber-300'
+  if (value < 80) return 'text-yellow-700 dark:text-yellow-300'
+  if (value < 90) return 'text-emerald-700 dark:text-emerald-300'
+  return 'text-emerald-800 dark:text-emerald-300'
+}
+
 export function formatMonitorMs(value: number | null | undefined): string {
   if (value == null) return '-'
   return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`
