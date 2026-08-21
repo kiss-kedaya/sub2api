@@ -61,6 +61,8 @@ type User struct {
 	BalanceNotifyThreshold *float64 `json:"balance_notify_threshold,omitempty"`
 	// BalanceNotifyExtraEmails holds the value of the "balance_notify_extra_emails" field.
 	BalanceNotifyExtraEmails string `json:"balance_notify_extra_emails,omitempty"`
+	// BalanceNotifyPrimaryEmailDisabled holds the value of the "balance_notify_primary_email_disabled" field.
+	BalanceNotifyPrimaryEmailDisabled bool `json:"balance_notify_primary_email_disabled,omitempty"`
 	// TotalRecharged holds the value of the "total_recharged" field.
 	TotalRecharged float64 `json:"total_recharged,omitempty"`
 	// RpmLimit holds the value of the "rpm_limit" field.
@@ -237,7 +239,7 @@ func (*User) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case user.FieldTotpEnabled, user.FieldBalanceNotifyEnabled:
+		case user.FieldTotpEnabled, user.FieldBalanceNotifyEnabled, user.FieldBalanceNotifyPrimaryEmailDisabled:
 			values[i] = new(sql.NullBool)
 		case user.FieldBalance, user.FieldFrozenBalance, user.FieldBalanceNotifyThreshold, user.FieldTotalRecharged:
 			values[i] = new(sql.NullFloat64)
@@ -405,6 +407,12 @@ func (_m *User) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field balance_notify_extra_emails", values[i])
 			} else if value.Valid {
 				_m.BalanceNotifyExtraEmails = value.String
+			}
+		case user.FieldBalanceNotifyPrimaryEmailDisabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field balance_notify_primary_email_disabled", values[i])
+			} else if value.Valid {
+				_m.BalanceNotifyPrimaryEmailDisabled = value.Bool
 			}
 		case user.FieldTotalRecharged:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
@@ -601,6 +609,9 @@ func (_m *User) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("balance_notify_extra_emails=")
 	builder.WriteString(_m.BalanceNotifyExtraEmails)
+	builder.WriteString(", ")
+	builder.WriteString("balance_notify_primary_email_disabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.BalanceNotifyPrimaryEmailDisabled))
 	builder.WriteString(", ")
 	builder.WriteString("total_recharged=")
 	builder.WriteString(fmt.Sprintf("%v", _m.TotalRecharged))

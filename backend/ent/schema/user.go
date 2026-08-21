@@ -108,6 +108,8 @@ func (User) Fields() []ent.Field {
 		field.String("balance_notify_extra_emails").
 			SchemaType(map[string]string{dialect.Postgres: "text"}).
 			Default("[]"),
+		field.Bool("balance_notify_primary_email_disabled").
+			Default(false),
 		field.Float("total_recharged").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
 			Default(0),

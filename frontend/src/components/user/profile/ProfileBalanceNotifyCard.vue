@@ -52,7 +52,7 @@
 
           <!-- Saved email entries -->
           <div v-if="emailEntries.length > 0" class="space-y-2 mb-3">
-            <div v-for="(entry, idx) in emailEntries" :key="idx"
+            <div v-for="(entry, idx) in emailEntries" :key="`${entry.primary ? 'primary' : entry.email}-${idx}`"
               class="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-dark-700 rounded-lg">
               <div class="flex items-center gap-2 min-w-0 flex-1">
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
@@ -60,6 +60,7 @@
                   <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-gray-500 peer-checked:bg-primary-600"></div>
                 </label>
                 <span class="text-sm text-gray-700 dark:text-gray-300 truncate">{{ entry.email }}</span>
+                <span v-if="entry.primary" class="text-xs text-primary-600 dark:text-primary-400 shrink-0">{{ t('profile.balanceNotify.primaryEmail') }}</span>
               </div>
               <div class="flex items-center gap-2 shrink-0">
                 <template v-if="!entry.verified">
@@ -91,7 +92,7 @@
                   </template>
                 </template>
                 <span v-else class="text-xs text-green-500">{{ t('profile.balanceNotify.verified') }}</span>
-                <button @click="handleRemoveEmail(entry.email)" class="text-red-500 hover:text-red-700 text-xs">
+                <button v-if="!entry.primary" @click="handleRemoveEmail(entry.email)" class="text-red-500 hover:text-red-700 text-xs">
                   {{ t('profile.balanceNotify.removeEmail') }}
                 </button>
               </div>
@@ -165,7 +166,7 @@ import { userAPI } from '@/api'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import type { NotifyEmailEntry } from '@/types'
 
-const maxTotalEmails = 3
+const maxExtraEmails = 3
 
 interface PendingEmail {
   email: string
@@ -205,7 +206,8 @@ const verifyCountdown = ref(0)
 let verifyTimer: ReturnType<typeof setInterval> | null = null
 
 const canAddMore = computed(() => {
-  return emailEntries.value.length + pendingEmails.value.length < maxTotalEmails
+  const extraCount = emailEntries.value.filter(entry => !entry.primary).length
+  return extraCount + pendingEmails.value.length < maxExtraEmails
 })
 
 watch(() => props.enabled, (val) => { notifyEnabled.value = val })
@@ -318,6 +320,9 @@ async function verifyPending(idx: number) {
 }
 
 const handleRemoveEmail = async (email: string) => {
+  if (emailEntries.value.some(entry => entry.primary && entry.email.toLowerCase() === email.toLowerCase())) {
+    return
+  }
   try {
     await userAPI.removeNotifyEmail(email)
     appStore.showSuccess(t('profile.balanceNotify.removeSuccess'))

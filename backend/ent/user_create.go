@@ -326,6 +326,20 @@ func (_c *UserCreate) SetNillableBalanceNotifyExtraEmails(v *string) *UserCreate
 	return _c
 }
 
+// SetBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field.
+func (_c *UserCreate) SetBalanceNotifyPrimaryEmailDisabled(v bool) *UserCreate {
+	_c.mutation.SetBalanceNotifyPrimaryEmailDisabled(v)
+	return _c
+}
+
+// SetNillableBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field if the given value is not nil.
+func (_c *UserCreate) SetNillableBalanceNotifyPrimaryEmailDisabled(v *bool) *UserCreate {
+	if v != nil {
+		_c.SetBalanceNotifyPrimaryEmailDisabled(*v)
+	}
+	return _c
+}
+
 // SetTotalRecharged sets the "total_recharged" field.
 func (_c *UserCreate) SetTotalRecharged(v float64) *UserCreate {
 	_c.mutation.SetTotalRecharged(v)
@@ -648,6 +662,10 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultBalanceNotifyExtraEmails
 		_c.mutation.SetBalanceNotifyExtraEmails(v)
 	}
+	if _, ok := _c.mutation.BalanceNotifyPrimaryEmailDisabled(); !ok {
+		v := user.DefaultBalanceNotifyPrimaryEmailDisabled
+		_c.mutation.SetBalanceNotifyPrimaryEmailDisabled(v)
+	}
 	if _, ok := _c.mutation.TotalRecharged(); !ok {
 		v := user.DefaultTotalRecharged
 		_c.mutation.SetTotalRecharged(v)
@@ -738,6 +756,9 @@ func (_c *UserCreate) check() error {
 	}
 	if _, ok := _c.mutation.BalanceNotifyExtraEmails(); !ok {
 		return &ValidationError{Name: "balance_notify_extra_emails", err: errors.New(`ent: missing required field "User.balance_notify_extra_emails"`)}
+	}
+	if _, ok := _c.mutation.BalanceNotifyPrimaryEmailDisabled(); !ok {
+		return &ValidationError{Name: "balance_notify_primary_email_disabled", err: errors.New(`ent: missing required field "User.balance_notify_primary_email_disabled"`)}
 	}
 	if _, ok := _c.mutation.TotalRecharged(); !ok {
 		return &ValidationError{Name: "total_recharged", err: errors.New(`ent: missing required field "User.total_recharged"`)}
@@ -859,6 +880,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.BalanceNotifyExtraEmails(); ok {
 		_spec.SetField(user.FieldBalanceNotifyExtraEmails, field.TypeString, value)
 		_node.BalanceNotifyExtraEmails = value
+	}
+	if value, ok := _c.mutation.BalanceNotifyPrimaryEmailDisabled(); ok {
+		_spec.SetField(user.FieldBalanceNotifyPrimaryEmailDisabled, field.TypeBool, value)
+		_node.BalanceNotifyPrimaryEmailDisabled = value
 	}
 	if value, ok := _c.mutation.TotalRecharged(); ok {
 		_spec.SetField(user.FieldTotalRecharged, field.TypeFloat64, value)
@@ -1444,6 +1469,18 @@ func (u *UserUpsert) UpdateBalanceNotifyExtraEmails() *UserUpsert {
 	return u
 }
 
+// SetBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field.
+func (u *UserUpsert) SetBalanceNotifyPrimaryEmailDisabled(v bool) *UserUpsert {
+	u.Set(user.FieldBalanceNotifyPrimaryEmailDisabled, v)
+	return u
+}
+
+// UpdateBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field to the value that was provided on create.
+func (u *UserUpsert) UpdateBalanceNotifyPrimaryEmailDisabled() *UserUpsert {
+	u.SetExcluded(user.FieldBalanceNotifyPrimaryEmailDisabled)
+	return u
+}
+
 // SetTotalRecharged sets the "total_recharged" field.
 func (u *UserUpsert) SetTotalRecharged(v float64) *UserUpsert {
 	u.Set(user.FieldTotalRecharged, v)
@@ -1886,6 +1923,20 @@ func (u *UserUpsertOne) SetBalanceNotifyExtraEmails(v string) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateBalanceNotifyExtraEmails() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateBalanceNotifyExtraEmails()
+	})
+}
+
+// SetBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field.
+func (u *UserUpsertOne) SetBalanceNotifyPrimaryEmailDisabled(v bool) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetBalanceNotifyPrimaryEmailDisabled(v)
+	})
+}
+
+// UpdateBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateBalanceNotifyPrimaryEmailDisabled() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateBalanceNotifyPrimaryEmailDisabled()
 	})
 }
 
@@ -2503,6 +2554,20 @@ func (u *UserUpsertBulk) SetBalanceNotifyExtraEmails(v string) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateBalanceNotifyExtraEmails() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateBalanceNotifyExtraEmails()
+	})
+}
+
+// SetBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field.
+func (u *UserUpsertBulk) SetBalanceNotifyPrimaryEmailDisabled(v bool) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetBalanceNotifyPrimaryEmailDisabled(v)
+	})
+}
+
+// UpdateBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateBalanceNotifyPrimaryEmailDisabled() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateBalanceNotifyPrimaryEmailDisabled()
 	})
 }
 
