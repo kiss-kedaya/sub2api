@@ -30,7 +30,7 @@ var (
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "kiss-kedaya/sub2api-official"
+	githubRepo     = "kiss-kedaya/sub2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
