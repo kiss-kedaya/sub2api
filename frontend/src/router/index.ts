@@ -302,12 +302,12 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/purchase',
-    name: 'PurchaseSubscription',
+    name: 'RechargeCenter',
     component: () => import('@/views/user/PaymentView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Purchase Subscription',
+      title: 'Recharge Center',
       titleKey: 'nav.buySubscription',
       descriptionKey: 'purchase.description',
       requiresPayment: true
