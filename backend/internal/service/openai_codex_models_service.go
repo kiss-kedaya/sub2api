@@ -561,7 +561,7 @@ func claudeCodexDisplayName(modelID string) string {
 // routed through a custom provider. The response is also suitable for saving
 // as model_catalog_json in clients that do not refresh custom-provider catalogs.
 func BuildCodexModelsManifest(modelIDs []string) ([]byte, error) {
-	return buildCodexModelsManifest(modelIDs, nil)
+	return buildCodexModelsManifest(modelIDs, nil, nil)
 }
 
 // BuildCodexModelsManifestForGroup derives input capabilities from the
@@ -598,6 +598,13 @@ func (s *GatewayService) BuildCodexModelsManifestForGroup(
 		}
 	}
 	imageInputModels := make(map[string]bool, len(modelIDs))
+	metadataModels := codexCatalogMetadataModels(
+		effectivePlatform,
+		modelIDs,
+		accounts,
+		compositeRoutes,
+		compositeRoutesAvailable,
+	)
 	for _, modelID := range modelIDs {
 		if groupCodexModelSupportsImageInput(
 			effectivePlatform,
@@ -609,10 +616,10 @@ func (s *GatewayService) BuildCodexModelsManifestForGroup(
 			imageInputModels[strings.TrimSpace(modelID)] = true
 		}
 	}
-	return buildCodexModelsManifest(modelIDs, imageInputModels)
+	return buildCodexModelsManifest(modelIDs, imageInputModels, metadataModels)
 }
 
-func buildCodexModelsManifest(modelIDs []string, imageInputModels map[string]bool) ([]byte, error) {
+func buildCodexModelsManifest(modelIDs []string, imageInputModels map[string]bool, metadataModels map[string]string) ([]byte, error) {
 	seen := make(map[string]struct{}, len(modelIDs))
 	models := make([]configuredCodexModelDescriptor, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
@@ -623,11 +630,16 @@ func buildCodexModelsManifest(modelIDs []string, imageInputModels map[string]boo
 		if _, exists := seen[modelID]; exists {
 			continue
 		}
-		if isCodexDedicatedMediaModel(modelID) {
+		metadataModelID := strings.TrimSpace(metadataModels[modelID])
+		if metadataModelID == "" {
+			metadataModelID = modelID
+		}
+		if isCodexDedicatedMediaModel(modelID) || isCodexDedicatedMediaModel(metadataModelID) {
 			continue
 		}
 		seen[modelID] = struct{}{}
-		descriptor := newConfiguredCodexModelDescriptor(modelID)
+		descriptor := newConfiguredCodexModelDescriptor(metadataModelID)
+		descriptor.Slug = modelID
 		if imageInputModels[modelID] {
 			descriptor.InputModalities = []string{"text", "image"}
 		}
@@ -636,6 +648,105 @@ func buildCodexModelsManifest(modelIDs []string, imageInputModels map[string]boo
 	return json.Marshal(struct {
 		Models []configuredCodexModelDescriptor `json:"models"`
 	}{Models: models})
+}
+
+func codexCatalogMetadataModels(
+	platform string,
+	modelIDs []string,
+	accounts []Account,
+	compositeRoutes []CompositeModelRoute,
+	compositeRoutesAvailable bool,
+) map[string]string {
+	metadataModels := make(map[string]string, len(modelIDs))
+	for _, modelID := range modelIDs {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			continue
+		}
+		metadataModelID := resolveCodexCatalogMetadataModel(
+			platform,
+			modelID,
+			accounts,
+			compositeRoutes,
+			compositeRoutesAvailable,
+		)
+		if metadataModelID != "" && metadataModelID != modelID {
+			metadataModels[modelID] = metadataModelID
+		}
+	}
+	return metadataModels
+}
+
+func resolveCodexCatalogMetadataModel(
+	platform string,
+	modelID string,
+	accounts []Account,
+	compositeRoutes []CompositeModelRoute,
+	compositeRoutesAvailable bool,
+) string {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return ""
+	}
+	if platform == PlatformComposite {
+		if !compositeRoutesAvailable {
+			return modelID
+		}
+		if route, matched := matchCompositeRoute(compositeRoutes, modelID, CompositeRouteEndpointResponses); matched {
+			if upstreamModel := strings.TrimSpace(route.UpstreamModel); upstreamModel != "" {
+				return upstreamModel
+			}
+			return modelID
+		}
+		if codexCompositeRouteMatchesModel(compositeRoutes, modelID) {
+			return modelID
+		}
+
+		claimedPlatforms := make(map[string]struct{})
+		for _, account := range accounts {
+			accountPlatform := strings.TrimSpace(account.Platform)
+			if !isConcreteRequestPlatform(accountPlatform) || !codexExplicitModelMappingClaims(account, modelID) {
+				continue
+			}
+			claimedPlatforms[accountPlatform] = struct{}{}
+		}
+		if len(claimedPlatforms) > 1 {
+			return modelID
+		}
+		for accountPlatform := range claimedPlatforms {
+			return uniqueCodexMappedModel(accounts, accountPlatform, modelID)
+		}
+
+		detectedPlatform, detected := DetectModelPlatform(modelID)
+		if !detected {
+			return modelID
+		}
+		platform = detectedPlatform
+	}
+	return uniqueCodexMappedModel(accounts, platform, modelID)
+}
+
+func uniqueCodexMappedModel(accounts []Account, platform string, modelID string) string {
+	targets := make(map[string]struct{})
+	for i := range accounts {
+		account := &accounts[i]
+		if account.Platform != platform {
+			continue
+		}
+		mappedModel, matched := account.ResolveMappedModel(modelID)
+		mappedModel = strings.TrimSpace(mappedModel)
+		if !matched || mappedModel == "" {
+			continue
+		}
+		targets[mappedModel] = struct{}{}
+	}
+	if len(targets) != 1 {
+		return modelID
+	}
+	for target := range targets {
+		return target
+	}
+	return modelID
 }
 
 func groupCodexModelSupportsImageInput(

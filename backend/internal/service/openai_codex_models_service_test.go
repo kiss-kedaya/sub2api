@@ -324,6 +324,8 @@ func TestBuildCodexModelsManifestForGroupAdvertisesOfficialGrokResponsesImageInp
 	models := decodeCodexManifestModels(t, body)
 	require.Len(t, models, 1)
 	require.Equal(t, []any{"text", "image"}, models[0]["input_modalities"])
+	require.Equal(t, "Grok 4.5", models[0]["display_name"])
+	require.Equal(t, []string{"low", "medium", "high"}, effortsFromManifestModel(t, models[0]))
 }
 
 func TestBuildCodexModelsManifestForGroupAdvertisesOfficialOpenAIResponsesImageInput(t *testing.T) {
@@ -549,6 +551,106 @@ func TestBuildCodexModelsManifestForGroupUsesAccountMappingOwnershipAndMappedMod
 	models := decodeCodexManifestModels(t, body)
 	require.Len(t, models, 1)
 	require.Equal(t, []any{"text", "image"}, models[0]["input_modalities"])
+}
+
+// Scenario: a Composite exact alias inherits metadata from its unique mapped target model.
+func TestBuildCodexModelsManifestForGroupUsesMappedTargetMetadataForCompositeAlias(t *testing.T) {
+	t.Parallel()
+
+	const groupID int64 = 733
+	svc := &GatewayService{accountRepo: codexModelsVisibilityAccountRepo{byGroup: map[int64][]Account{
+		groupID: {{
+			ID:       23,
+			Platform: PlatformAnthropic,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"model_mapping": map[string]any{"reasoning-alias": "claude-opus-4-8"},
+			},
+		}},
+	}}}
+
+	body, err := svc.BuildCodexModelsManifestForGroup(
+		context.Background(),
+		&Group{ID: groupID, Platform: PlatformComposite},
+		"",
+		[]string{"reasoning-alias"},
+	)
+	require.NoError(t, err)
+
+	models := decodeCodexManifestModels(t, body)
+	require.Len(t, models, 1)
+	require.Equal(t, "reasoning-alias", models[0]["slug"])
+	require.Equal(t, "Claude Opus 4.8", models[0]["display_name"])
+	require.Equal(t, "Claude coding and reasoning model routed through Sub2API.", models[0]["description"])
+	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max"}, effortsFromManifestModel(t, models[0]))
+}
+
+// Scenario: conflicting targets on the same platform keep the public alias but do not guess capabilities.
+func TestBuildCodexModelsManifestForGroupUsesSafeFallbackForConflictingAliasTargets(t *testing.T) {
+	t.Parallel()
+
+	const groupID int64 = 734
+	svc := &GatewayService{accountRepo: codexModelsVisibilityAccountRepo{byGroup: map[int64][]Account{
+		groupID: {
+			{
+				ID:       24,
+				Platform: PlatformAnthropic,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"shared-alias": "claude-opus-4-8"},
+				},
+			},
+			{
+				ID:       25,
+				Platform: PlatformAnthropic,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"shared-alias": "claude-haiku-4-5-20251001"},
+				},
+			},
+		},
+	}}}
+
+	body, err := svc.BuildCodexModelsManifestForGroup(
+		context.Background(),
+		&Group{ID: groupID, Platform: PlatformComposite},
+		"",
+		[]string{"shared-alias"},
+	)
+	require.NoError(t, err)
+
+	models := decodeCodexManifestModels(t, body)
+	require.Len(t, models, 1)
+	require.Equal(t, "shared-alias", models[0]["slug"])
+	require.Equal(t, "shared-alias", models[0]["display_name"])
+	require.Equal(t, "Custom model routed through Sub2API.", models[0]["description"])
+	require.Empty(t, effortsFromManifestModel(t, models[0]))
+}
+
+// Scenario: a media-only target remains hidden even when exposed through an ordinary alias.
+func TestBuildCodexModelsManifestForGroupOmitsDedicatedMediaTargetAlias(t *testing.T) {
+	t.Parallel()
+
+	const groupID int64 = 735
+	svc := &GatewayService{accountRepo: codexModelsVisibilityAccountRepo{byGroup: map[int64][]Account{
+		groupID: {{
+			ID:       26,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"model_mapping": map[string]any{"creative-alias": "gpt-image-2"},
+			},
+		}},
+	}}}
+
+	body, err := svc.BuildCodexModelsManifestForGroup(
+		context.Background(),
+		&Group{ID: groupID, Platform: PlatformComposite},
+		"",
+		[]string{"creative-alias"},
+	)
+	require.NoError(t, err)
+	require.Empty(t, decodeCodexManifestModels(t, body))
 }
 
 func TestBuildCodexModelsManifestForGroupLoadsAccountsOnce(t *testing.T) {
