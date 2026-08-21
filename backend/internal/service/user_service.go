@@ -111,6 +111,8 @@ type UserUpdateFields struct {
 	BalanceNotifySettings bool
 	// BalanceNotifyExtraEmails 与上一项分开，避免"改通知阈值"覆盖并发的"加通知邮箱"。
 	BalanceNotifyExtraEmails bool
+	// BalanceNotifyPrimaryEmailDisabled controls the account-bound notification email.
+	BalanceNotifyPrimaryEmailDisabled bool
 	// AllowedGroups 为 true 时才同步 user_allowed_groups 关联表。
 	AllowedGroups bool
 }
@@ -1349,11 +1351,18 @@ func (s *UserService) addOrVerifyNotifyEmail(ctx context.Context, userID int64, 
 	if err != nil {
 		return err
 	}
+	if IsValidNotifyEmail(user.Email) && strings.EqualFold(user.Email, email) {
+		return infraerrors.BadRequest("EMAIL_IS_PRIMARY", "the account-bound email is already the primary notification email")
+	}
 	for i, e := range user.BalanceNotifyExtraEmails {
 		if strings.EqualFold(e.Email, email) {
 			if !e.Verified {
 				user.BalanceNotifyExtraEmails[i].Verified = true
-				return s.userRepo.Update(ctx, user, UserUpdateFields{BalanceNotifyExtraEmails: true})
+				if err := s.userRepo.Update(ctx, user, UserUpdateFields{BalanceNotifyExtraEmails: true}); err != nil {
+					return err
+				}
+				s.invalidateNotifyEmailAuthCache(ctx, userID)
+				return nil
 			}
 			return nil // Already verified
 		}
@@ -1366,7 +1375,11 @@ func (s *UserService) addOrVerifyNotifyEmail(ctx context.Context, userID int64, 
 		Disabled: false,
 		Verified: true,
 	})
-	return s.userRepo.Update(ctx, user, UserUpdateFields{BalanceNotifyExtraEmails: true})
+	if err := s.userRepo.Update(ctx, user, UserUpdateFields{BalanceNotifyExtraEmails: true}); err != nil {
+		return err
+	}
+	s.invalidateNotifyEmailAuthCache(ctx, userID)
+	return nil
 }
 
 // RemoveNotifyEmail removes an email from user's extra notification emails.
@@ -1374,6 +1387,10 @@ func (s *UserService) RemoveNotifyEmail(ctx context.Context, userID int64, email
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return err
+	}
+
+	if IsValidNotifyEmail(user.Email) && strings.EqualFold(user.Email, email) {
+		return infraerrors.BadRequest("PRIMARY_EMAIL_NOT_REMOVABLE", "the account-bound email cannot be removed; disable it instead")
 	}
 
 	filtered := make([]NotifyEmailEntry, 0, len(user.BalanceNotifyExtraEmails))
@@ -1389,7 +1406,11 @@ func (s *UserService) RemoveNotifyEmail(ctx context.Context, userID int64, email
 		return infraerrors.BadRequest("EMAIL_NOT_FOUND", "notification email not found")
 	}
 	user.BalanceNotifyExtraEmails = filtered
-	return s.userRepo.Update(ctx, user, UserUpdateFields{BalanceNotifyExtraEmails: true})
+	if err := s.userRepo.Update(ctx, user, UserUpdateFields{BalanceNotifyExtraEmails: true}); err != nil {
+		return err
+	}
+	s.invalidateNotifyEmailAuthCache(ctx, userID)
+	return nil
 }
 
 // ToggleNotifyEmail toggles the disabled state of a notification email entry.
@@ -1397,6 +1418,15 @@ func (s *UserService) ToggleNotifyEmail(ctx context.Context, userID int64, email
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return err
+	}
+
+	if IsValidNotifyEmail(user.Email) && strings.EqualFold(user.Email, email) {
+		user.BalanceNotifyPrimaryEmailDisabled = disabled
+		if err := s.userRepo.Update(ctx, user, UserUpdateFields{BalanceNotifyPrimaryEmailDisabled: true}); err != nil {
+			return err
+		}
+		s.invalidateNotifyEmailAuthCache(ctx, userID)
+		return nil
 	}
 
 	found := false
@@ -1411,7 +1441,17 @@ func (s *UserService) ToggleNotifyEmail(ctx context.Context, userID int64, email
 		return infraerrors.BadRequest("EMAIL_NOT_FOUND", "notification email not found")
 	}
 
-	return s.userRepo.Update(ctx, user, UserUpdateFields{BalanceNotifyExtraEmails: true})
+	if err := s.userRepo.Update(ctx, user, UserUpdateFields{BalanceNotifyExtraEmails: true}); err != nil {
+		return err
+	}
+	s.invalidateNotifyEmailAuthCache(ctx, userID)
+	return nil
+}
+
+func (s *UserService) invalidateNotifyEmailAuthCache(ctx context.Context, userID int64) {
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
+	}
 }
 
 // notifyVerifyEmailTemplate is the HTML template for notify email verification.

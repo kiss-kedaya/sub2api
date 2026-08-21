@@ -48398,82 +48398,83 @@ func (m *UsageLogMutation) ResetEdge(name string) error {
 // UserMutation represents an operation that mutates the User nodes in the graph.
 type UserMutation struct {
 	config
-	op                            Op
-	typ                           string
-	id                            *int64
-	created_at                    *time.Time
-	updated_at                    *time.Time
-	deleted_at                    *time.Time
-	email                         *string
-	password_hash                 *string
-	role                          *string
-	balance                       *float64
-	addbalance                    *float64
-	frozen_balance                *float64
-	addfrozen_balance             *float64
-	concurrency                   *int
-	addconcurrency                *int
-	status                        *string
-	username                      *string
-	notes                         *string
-	totp_secret_encrypted         *string
-	totp_enabled                  *bool
-	totp_enabled_at               *time.Time
-	signup_source                 *string
-	last_login_at                 *time.Time
-	last_active_at                *time.Time
-	balance_notify_enabled        *bool
-	balance_notify_threshold_type *string
-	balance_notify_threshold      *float64
-	addbalance_notify_threshold   *float64
-	balance_notify_extra_emails   *string
-	total_recharged               *float64
-	addtotal_recharged            *float64
-	rpm_limit                     *int
-	addrpm_limit                  *int
-	clearedFields                 map[string]struct{}
-	api_keys                      map[int64]struct{}
-	removedapi_keys               map[int64]struct{}
-	clearedapi_keys               bool
-	redeem_codes                  map[int64]struct{}
-	removedredeem_codes           map[int64]struct{}
-	clearedredeem_codes           bool
-	subscriptions                 map[int64]struct{}
-	removedsubscriptions          map[int64]struct{}
-	clearedsubscriptions          bool
-	assigned_subscriptions        map[int64]struct{}
-	removedassigned_subscriptions map[int64]struct{}
-	clearedassigned_subscriptions bool
-	announcement_reads            map[int64]struct{}
-	removedannouncement_reads     map[int64]struct{}
-	clearedannouncement_reads     bool
-	allowed_groups                map[int64]struct{}
-	removedallowed_groups         map[int64]struct{}
-	clearedallowed_groups         bool
-	usage_logs                    map[int64]struct{}
-	removedusage_logs             map[int64]struct{}
-	clearedusage_logs             bool
-	attribute_values              map[int64]struct{}
-	removedattribute_values       map[int64]struct{}
-	clearedattribute_values       bool
-	promo_code_usages             map[int64]struct{}
-	removedpromo_code_usages      map[int64]struct{}
-	clearedpromo_code_usages      bool
-	payment_orders                map[int64]struct{}
-	removedpayment_orders         map[int64]struct{}
-	clearedpayment_orders         bool
-	auth_identities               map[int64]struct{}
-	removedauth_identities        map[int64]struct{}
-	clearedauth_identities        bool
-	pending_auth_sessions         map[int64]struct{}
-	removedpending_auth_sessions  map[int64]struct{}
-	clearedpending_auth_sessions  bool
-	platform_quotas               map[int64]struct{}
-	removedplatform_quotas        map[int64]struct{}
-	clearedplatform_quotas        bool
-	done                          bool
-	oldValue                      func(context.Context) (*User, error)
-	predicates                    []predicate.User
+	op                                    Op
+	typ                                   string
+	id                                    *int64
+	created_at                            *time.Time
+	updated_at                            *time.Time
+	deleted_at                            *time.Time
+	email                                 *string
+	password_hash                         *string
+	role                                  *string
+	balance                               *float64
+	addbalance                            *float64
+	frozen_balance                        *float64
+	addfrozen_balance                     *float64
+	concurrency                           *int
+	addconcurrency                        *int
+	status                                *string
+	username                              *string
+	notes                                 *string
+	totp_secret_encrypted                 *string
+	totp_enabled                          *bool
+	totp_enabled_at                       *time.Time
+	signup_source                         *string
+	last_login_at                         *time.Time
+	last_active_at                        *time.Time
+	balance_notify_enabled                *bool
+	balance_notify_threshold_type         *string
+	balance_notify_threshold              *float64
+	addbalance_notify_threshold           *float64
+	balance_notify_extra_emails           *string
+	balance_notify_primary_email_disabled *bool
+	total_recharged                       *float64
+	addtotal_recharged                    *float64
+	rpm_limit                             *int
+	addrpm_limit                          *int
+	clearedFields                         map[string]struct{}
+	api_keys                              map[int64]struct{}
+	removedapi_keys                       map[int64]struct{}
+	clearedapi_keys                       bool
+	redeem_codes                          map[int64]struct{}
+	removedredeem_codes                   map[int64]struct{}
+	clearedredeem_codes                   bool
+	subscriptions                         map[int64]struct{}
+	removedsubscriptions                  map[int64]struct{}
+	clearedsubscriptions                  bool
+	assigned_subscriptions                map[int64]struct{}
+	removedassigned_subscriptions         map[int64]struct{}
+	clearedassigned_subscriptions         bool
+	announcement_reads                    map[int64]struct{}
+	removedannouncement_reads             map[int64]struct{}
+	clearedannouncement_reads             bool
+	allowed_groups                        map[int64]struct{}
+	removedallowed_groups                 map[int64]struct{}
+	clearedallowed_groups                 bool
+	usage_logs                            map[int64]struct{}
+	removedusage_logs                     map[int64]struct{}
+	clearedusage_logs                     bool
+	attribute_values                      map[int64]struct{}
+	removedattribute_values               map[int64]struct{}
+	clearedattribute_values               bool
+	promo_code_usages                     map[int64]struct{}
+	removedpromo_code_usages              map[int64]struct{}
+	clearedpromo_code_usages              bool
+	payment_orders                        map[int64]struct{}
+	removedpayment_orders                 map[int64]struct{}
+	clearedpayment_orders                 bool
+	auth_identities                       map[int64]struct{}
+	removedauth_identities                map[int64]struct{}
+	clearedauth_identities                bool
+	pending_auth_sessions                 map[int64]struct{}
+	removedpending_auth_sessions          map[int64]struct{}
+	clearedpending_auth_sessions          bool
+	platform_quotas                       map[int64]struct{}
+	removedplatform_quotas                map[int64]struct{}
+	clearedplatform_quotas                bool
+	done                                  bool
+	oldValue                              func(context.Context) (*User, error)
+	predicates                            []predicate.User
 }
 
 var _ ent.Mutation = (*UserMutation)(nil)
@@ -49525,6 +49526,42 @@ func (m *UserMutation) ResetBalanceNotifyExtraEmails() {
 	m.balance_notify_extra_emails = nil
 }
 
+// SetBalanceNotifyPrimaryEmailDisabled sets the "balance_notify_primary_email_disabled" field.
+func (m *UserMutation) SetBalanceNotifyPrimaryEmailDisabled(b bool) {
+	m.balance_notify_primary_email_disabled = &b
+}
+
+// BalanceNotifyPrimaryEmailDisabled returns the value of the "balance_notify_primary_email_disabled" field in the mutation.
+func (m *UserMutation) BalanceNotifyPrimaryEmailDisabled() (r bool, exists bool) {
+	v := m.balance_notify_primary_email_disabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBalanceNotifyPrimaryEmailDisabled returns the old "balance_notify_primary_email_disabled" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldBalanceNotifyPrimaryEmailDisabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBalanceNotifyPrimaryEmailDisabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBalanceNotifyPrimaryEmailDisabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBalanceNotifyPrimaryEmailDisabled: %w", err)
+	}
+	return oldValue.BalanceNotifyPrimaryEmailDisabled, nil
+}
+
+// ResetBalanceNotifyPrimaryEmailDisabled resets all changes to the "balance_notify_primary_email_disabled" field.
+func (m *UserMutation) ResetBalanceNotifyPrimaryEmailDisabled() {
+	m.balance_notify_primary_email_disabled = nil
+}
+
 // SetTotalRecharged sets the "total_recharged" field.
 func (m *UserMutation) SetTotalRecharged(f float64) {
 	m.total_recharged = &f
@@ -50373,7 +50410,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 24)
+	fields := make([]string, 0, 25)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}
@@ -50440,6 +50477,9 @@ func (m *UserMutation) Fields() []string {
 	if m.balance_notify_extra_emails != nil {
 		fields = append(fields, user.FieldBalanceNotifyExtraEmails)
 	}
+	if m.balance_notify_primary_email_disabled != nil {
+		fields = append(fields, user.FieldBalanceNotifyPrimaryEmailDisabled)
+	}
 	if m.total_recharged != nil {
 		fields = append(fields, user.FieldTotalRecharged)
 	}
@@ -50498,6 +50538,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.BalanceNotifyThreshold()
 	case user.FieldBalanceNotifyExtraEmails:
 		return m.BalanceNotifyExtraEmails()
+	case user.FieldBalanceNotifyPrimaryEmailDisabled:
+		return m.BalanceNotifyPrimaryEmailDisabled()
 	case user.FieldTotalRecharged:
 		return m.TotalRecharged()
 	case user.FieldRpmLimit:
@@ -50555,6 +50597,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldBalanceNotifyThreshold(ctx)
 	case user.FieldBalanceNotifyExtraEmails:
 		return m.OldBalanceNotifyExtraEmails(ctx)
+	case user.FieldBalanceNotifyPrimaryEmailDisabled:
+		return m.OldBalanceNotifyPrimaryEmailDisabled(ctx)
 	case user.FieldTotalRecharged:
 		return m.OldTotalRecharged(ctx)
 	case user.FieldRpmLimit:
@@ -50721,6 +50765,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetBalanceNotifyExtraEmails(v)
+		return nil
+	case user.FieldBalanceNotifyPrimaryEmailDisabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBalanceNotifyPrimaryEmailDisabled(v)
 		return nil
 	case user.FieldTotalRecharged:
 		v, ok := value.(float64)
@@ -50964,6 +51015,9 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldBalanceNotifyExtraEmails:
 		m.ResetBalanceNotifyExtraEmails()
+		return nil
+	case user.FieldBalanceNotifyPrimaryEmailDisabled:
+		m.ResetBalanceNotifyPrimaryEmailDisabled()
 		return nil
 	case user.FieldTotalRecharged:
 		m.ResetTotalRecharged()

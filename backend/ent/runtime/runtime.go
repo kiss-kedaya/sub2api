@@ -2229,12 +2229,16 @@ func init() {
 	userDescBalanceNotifyExtraEmails := userFields[18].Descriptor()
 	// user.DefaultBalanceNotifyExtraEmails holds the default value on creation for the balance_notify_extra_emails field.
 	user.DefaultBalanceNotifyExtraEmails = userDescBalanceNotifyExtraEmails.Default.(string)
+	// userDescBalanceNotifyPrimaryEmailDisabled is the schema descriptor for balance_notify_primary_email_disabled field.
+	userDescBalanceNotifyPrimaryEmailDisabled := userFields[19].Descriptor()
+	// user.DefaultBalanceNotifyPrimaryEmailDisabled holds the default value on creation for the balance_notify_primary_email_disabled field.
+	user.DefaultBalanceNotifyPrimaryEmailDisabled = userDescBalanceNotifyPrimaryEmailDisabled.Default.(bool)
 	// userDescTotalRecharged is the schema descriptor for total_recharged field.
-	userDescTotalRecharged := userFields[19].Descriptor()
+	userDescTotalRecharged := userFields[20].Descriptor()
 	// user.DefaultTotalRecharged holds the default value on creation for the total_recharged field.
 	user.DefaultTotalRecharged = userDescTotalRecharged.Default.(float64)
 	// userDescRpmLimit is the schema descriptor for rpm_limit field.
-	userDescRpmLimit := userFields[20].Descriptor()
+	userDescRpmLimit := userFields[21].Descriptor()
 	// user.DefaultRpmLimit holds the default value on creation for the rpm_limit field.
 	user.DefaultRpmLimit = userDescRpmLimit.Default.(int)
 	userallowedgroupFields := schema.UserAllowedGroup{}.Fields()

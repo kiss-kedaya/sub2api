@@ -3,11 +3,12 @@ package dto
 import "github.com/Wei-Shaw/sub2api/internal/service"
 
 // NotifyEmailEntry represents a notification email with enable/disable and verification state.
-// All emails are user-managed; maximum 3 entries per user.
+// Primary is the derived account-bound email and is not accepted as a writable extra.
 type NotifyEmailEntry struct {
 	Email    string `json:"email"`
 	Disabled bool   `json:"disabled"`
 	Verified bool   `json:"verified"`
+	Primary  bool   `json:"primary,omitempty"`
 }
 
 // NotifyEmailEntriesFromService converts service entries to DTO entries.
@@ -21,6 +22,7 @@ func NotifyEmailEntriesFromService(entries []service.NotifyEmailEntry) []NotifyE
 			Email:    e.Email,
 			Disabled: e.Disabled,
 			Verified: e.Verified,
+			Primary:  e.Primary,
 		}
 	}
 	return result

@@ -154,3 +154,35 @@ func TestParseNotifyEmails_MixedOldFormatWithWhitespace(t *testing.T) {
 	require.Len(t, result, 1)
 	require.Equal(t, "alice@example.com", result[0].Email)
 }
+
+// ---------- Primary account email ----------
+
+func TestBuildNotifyEmailEntriesPrimaryFirstAndDeduplicated(t *testing.T) {
+	user := &User{
+		Email: "User@Example.com",
+		BalanceNotifyExtraEmails: []NotifyEmailEntry{
+			{Email: "user@example.com", Verified: true},
+			{Email: "backup@example.com", Verified: true},
+		},
+	}
+	entries := BuildNotifyEmailEntries(user)
+	require.Len(t, entries, 2)
+	require.Equal(t, NotifyEmailEntry{Email: user.Email, Verified: true, Primary: true}, entries[0])
+	require.Equal(t, "backup@example.com", entries[1].Email)
+	require.False(t, entries[1].Primary)
+}
+
+func TestBuildNotifyEmailEntriesPrimaryDisabledState(t *testing.T) {
+	user := &User{Email: "person@example.com", BalanceNotifyPrimaryEmailDisabled: true}
+	entries := BuildNotifyEmailEntries(user)
+	require.Len(t, entries, 1)
+	require.True(t, entries[0].Primary)
+	require.True(t, entries[0].Disabled)
+	require.Empty(t, filterVerifiedEmails(entries))
+}
+
+func TestBuildNotifyEmailEntriesRejectsSyntheticPrimary(t *testing.T) {
+	for _, email := range []string{"dingtalk-123@dingtalk-connect.invalid", "", "not-an-email"} {
+		require.Empty(t, BuildNotifyEmailEntries(&User{Email: email}), email)
+	}
+}

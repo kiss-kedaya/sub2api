@@ -165,6 +165,11 @@ func BalanceNotifyExtraEmails(v string) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldBalanceNotifyExtraEmails, v))
 }
 
+// BalanceNotifyPrimaryEmailDisabled applies equality check predicate on the "balance_notify_primary_email_disabled" field. It's identical to BalanceNotifyPrimaryEmailDisabledEQ.
+func BalanceNotifyPrimaryEmailDisabled(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldBalanceNotifyPrimaryEmailDisabled, v))
+}
+
 // TotalRecharged applies equality check predicate on the "total_recharged" field. It's identical to TotalRechargedEQ.
 func TotalRecharged(v float64) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldTotalRecharged, v))
@@ -1303,6 +1308,16 @@ func BalanceNotifyExtraEmailsEqualFold(v string) predicate.User {
 // BalanceNotifyExtraEmailsContainsFold applies the ContainsFold predicate on the "balance_notify_extra_emails" field.
 func BalanceNotifyExtraEmailsContainsFold(v string) predicate.User {
 	return predicate.User(sql.FieldContainsFold(FieldBalanceNotifyExtraEmails, v))
+}
+
+// BalanceNotifyPrimaryEmailDisabledEQ applies the EQ predicate on the "balance_notify_primary_email_disabled" field.
+func BalanceNotifyPrimaryEmailDisabledEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldBalanceNotifyPrimaryEmailDisabled, v))
+}
+
+// BalanceNotifyPrimaryEmailDisabledNEQ applies the NEQ predicate on the "balance_notify_primary_email_disabled" field.
+func BalanceNotifyPrimaryEmailDisabledNEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldBalanceNotifyPrimaryEmailDisabled, v))
 }
 
 // TotalRechargedEQ applies the EQ predicate on the "total_recharged" field.

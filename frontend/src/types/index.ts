@@ -24,12 +24,12 @@ export interface FetchOptions {
 
 // ==================== Notification Types ====================
 
-/** Notification email entry with enable/disable and verification state.
- *  email="" is a placeholder for the primary email (user's registration email or admin email). */
+/** Notification email entry with enable/disable and verification state. */
 export interface NotifyEmailEntry {
   email: string
   disabled: boolean
   verified: boolean
+  primary?: boolean
 }
 
 // ==================== User & Auth Types ====================
