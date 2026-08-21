@@ -96,6 +96,51 @@ type CodexModelsManifest struct {
 	NotModified  bool
 }
 
+// BuildGroupConfiguredCodexModelsManifest builds a Codex catalog exclusively
+// from the public model names configured on accounts in an OpenAI group. The
+// boolean result distinguishes "no explicit configuration" from a configured
+// catalog that becomes empty after group-level filtering.
+func (s *OpenAIGatewayService) BuildGroupConfiguredCodexModelsManifest(
+	ctx context.Context,
+	group *Group,
+	ifNoneMatch string,
+) (*CodexModelsManifest, bool, error) {
+	if s == nil || s.accountRepo == nil || group == nil || group.Platform != PlatformOpenAI {
+		return nil, false, nil
+	}
+
+	configuredModels, err := s.groupConfiguredCodexModelIDs(ctx, group.ID)
+	if err != nil {
+		return nil, false, fmt.Errorf("load group configured Codex models: %w", err)
+	}
+	if len(configuredModels) == 0 {
+		return nil, false, nil
+	}
+
+	body, err := BuildCodexModelsManifest(nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("initialize group configured Codex models: %w", err)
+	}
+	body, _, err = mergeConfiguredCodexModelsManifest(
+		body,
+		configuredModels,
+		group.ModelsListConfig.Models,
+		group.CustomModelsListEnabled(),
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("build group configured Codex models: %w", err)
+	}
+	manifest := &CodexModelsManifest{
+		Body: body,
+		ETag: codexModelsManifestBodyETag(body),
+	}
+	if codexModelsManifestETagMatches(ifNoneMatch, manifest.ETag) {
+		manifest.Body = nil
+		manifest.NotModified = true
+	}
+	return manifest, true, nil
+}
+
 // MergeGroupConfiguredCodexModels adds account model aliases that are visible
 // to the authenticated OpenAI group without discarding metadata from upstream
 // Codex model entries. A group's custom models list also filters the picker,

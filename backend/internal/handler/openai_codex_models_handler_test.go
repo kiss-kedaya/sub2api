@@ -136,9 +136,6 @@ func TestCodexModelsAppliesLocalFiltersBeforeClientETag(t *testing.T) {
 			Credentials: map[string]any{
 				"api_key":  "sk-test",
 				"base_url": "https://upstream.example/v1",
-				"model_mapping": map[string]any{
-					"codex-auto-review": "codex-auto-review",
-				},
 			},
 		},
 	}}
@@ -191,6 +188,76 @@ func TestCodexModelsAppliesLocalFiltersBeforeClientETag(t *testing.T) {
 	}
 	if third.Body.Len() != 0 {
 		t.Fatalf("third body: got %q, want empty", third.Body.String())
+	}
+}
+
+// Scenario: OpenAI 分组内混用 OAuth 和第三方 API Key 时，管理员模型配置优先。
+func TestCodexModelsUsesConfiguredModelsBeforeUpstreamDiscovery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(44)
+	repo := &codexModelsFailoverAccountRepo{accounts: []service.Account{
+		{
+			ID:          1,
+			Name:        "ark-compatible",
+			Platform:    service.PlatformOpenAI,
+			Type:        service.AccountTypeAPIKey,
+			Status:      service.StatusActive,
+			Schedulable: true,
+			Priority:    0,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"api_key":  "sk-ark",
+				"base_url": "https://ark.example/v1",
+				"model_mapping": map[string]any{
+					"glm-5.3": "glm-5.3",
+				},
+			},
+		},
+		{
+			ID:          2,
+			Name:        "chatgpt-oauth",
+			Platform:    service.PlatformOpenAI,
+			Type:        service.AccountTypeOAuth,
+			Status:      service.StatusActive,
+			Schedulable: true,
+			Priority:    1,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"access_token": "oauth-test",
+			},
+		},
+	}}
+	upstream := &codexModelsFailoverHTTPUpstream{firstStatus: http.StatusNotFound}
+	gatewayService := service.NewOpenAIGatewayService(
+		repo,
+		nil, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeSimple}, nil, nil, nil, nil, nil,
+		upstream,
+		nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	handler := &OpenAIGatewayHandler{gatewayService: gatewayService}
+
+	recorder := performCodexModelsRequestForGroup(t, handler, &service.Group{
+		ID:       groupID,
+		Platform: service.PlatformOpenAI,
+	}, "")
+
+	if got := upstream.calls(); len(got) != 0 {
+		t.Fatalf("upstream account calls: got %v, want none", got)
+	}
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var envelope struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode body: %v; body=%s", err, recorder.Body.String())
+	}
+	if len(envelope.Models) != 1 || envelope.Models[0]["slug"] != "glm-5.3" {
+		t.Fatalf("models: got %v, want only glm-5.3", envelope.Models)
+	}
+	if _, ok := envelope.Models[0]["supported_reasoning_levels"]; !ok {
+		t.Fatalf("configured model is missing the Codex descriptor contract: %v", envelope.Models[0])
 	}
 }
 
