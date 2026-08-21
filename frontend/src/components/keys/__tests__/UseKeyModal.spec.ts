@@ -618,10 +618,10 @@ describe('UseKeyModal', () => {
     const manifest = {
       models: [
         {
-          slug: 'gpt-5.5',
+          slug: 'claude-opus-4-8',
           default_reasoning_level: 'medium',
-          supported_reasoning_levels: [{ effort: 'xhigh', description: 'Extra-high reasoning depth' }],
-          input_modalities: ['text', 'image'],
+          supported_reasoning_levels: [{ effort: 'max', description: 'Maximum reasoning depth' }],
+          input_modalities: ['text'],
           model_messages: { instructions_template: 'Use the routed model.' }
         },
         {
@@ -684,6 +684,13 @@ describe('UseKeyModal', () => {
     expect(wrapper.get('[data-testid="codex-model-catalog"]').text())
       .toContain('keys.useKeyModal.codexModelCatalog.download')
 
+    const loadedUnixConfig = wrapper.findAll('pre code')
+      .map((code) => code.text())
+      .find((content) => content.includes('[model_providers.sub2api]'))
+    expect(loadedUnixConfig).toContain('model = "claude-opus-4-8"')
+    expect(loadedUnixConfig).toContain('review_model = "claude-opus-4-8"')
+    expect(loadedUnixConfig).not.toContain('model = "gpt-5.5"')
+
     const downloadButton = wrapper.findAll('button').find((button) =>
       button.text().includes('keys.useKeyModal.codexModelCatalog.download')
     )
@@ -704,5 +711,52 @@ describe('UseKeyModal', () => {
     expect(windowsConfig).toContain(
       'model_catalog_json = "%userprofile%\\\\.codex\\\\codex-models.json"'
     )
+  })
+
+  // Scenario: the platform-preferred model remains selected when the downloaded catalog contains it.
+  it('keeps the preferred Composite default when it exists in the catalog', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        models: [
+          { slug: 'claude-opus-4-8' },
+          { slug: 'gpt-5.5' }
+        ]
+      })
+    }))
+
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-composite-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'composite'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const codexTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+    expect(codexTab).toBeDefined()
+    await codexTab!.trigger('click')
+    await wrapper.get('[data-testid="codex-model-catalog-fetch"]').trigger('click')
+    await flushPromises()
+
+    const config = wrapper.findAll('pre code')
+      .map((code) => code.text())
+      .find((content) => content.includes('[model_providers.sub2api]'))
+    expect(config).toContain('model = "gpt-5.5"')
+    expect(config).toContain('review_model = "gpt-5.5"')
   })
 })
