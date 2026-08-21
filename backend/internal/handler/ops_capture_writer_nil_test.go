@@ -176,17 +176,10 @@ func TestOpsCaptureWriter_ReleaseWaitsForDelegatedWriteWithoutHoldingStateMutex(
 	}()
 	<-inner.writeStarted
 
-	mutexAvailable := make(chan struct{})
-	go func() {
-		w.state.mu.Lock()
-		w.state.mu.Unlock()
-		close(mutexAvailable)
-	}()
-	select {
-	case <-mutexAvailable:
-	case <-time.After(time.Second):
+	if !w.state.mu.TryLock() {
 		t.Fatal("state mutex remained held across the delegated network write")
 	}
+	w.state.mu.Unlock()
 
 	releaseDone := make(chan struct{})
 	go func() {
