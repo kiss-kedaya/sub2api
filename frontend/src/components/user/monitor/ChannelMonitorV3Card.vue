@@ -8,7 +8,7 @@
         <div class="truncate text-base font-semibold text-gray-900 dark:text-gray-100">{{ groupLabel }}</div>
         <div class="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
           <span class="rounded-md px-1.5 py-0.5 text-[10px] font-medium" :class="providerBadgeClass(row.platform)">{{ providerLabel(row.platform) }}</span>
-          <span v-if="row.group_id" class="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] font-medium text-gray-500 dark:bg-dark-700 dark:text-gray-300">ID {{ row.group_id }}</span>
+          <span class="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] font-medium text-gray-500 dark:bg-dark-700 dark:text-gray-300">{{ t('channelMonitorV3.userRate') }} {{ formattedUserRate }}</span>
         </div>
       </div>
       <span class="shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold" :class="statusClass">{{ statusText }}</span>
@@ -52,11 +52,16 @@ const props = defineProps<{
   row: MonitorMatrixRow
   countdownSeconds: number
   timelineLength: number
+  userRateMultiplier?: number | null
 }>()
 const { t } = useI18n()
 const { statusLabel, statusBadgeClass, providerLabel, providerBadgeClass } = useChannelMonitorFormat()
 
-const groupLabel = computed(() => props.row.group_name || (props.row.group_id ? `#${props.row.group_id}` : t('channelMonitorV3.unknownGroup')))
+const groupLabel = computed(() => props.row.group_name || t('channelMonitorV3.unknownGroup'))
+const formattedUserRate = computed(() => {
+  const value = props.userRateMultiplier
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}x` : '-'
+})
 const latestBucket = computed(() => [...props.row.buckets]
   .filter(bucket => bucket.bucket_start && bucket.metrics)
   .sort((a, b) => Date.parse(a.bucket_start) - Date.parse(b.bucket_start))
