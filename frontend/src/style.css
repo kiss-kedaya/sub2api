@@ -17,8 +17,19 @@
   }
 
   body {
-    @apply bg-gray-50 text-gray-900 dark:bg-dark-950 dark:text-gray-100;
-    @apply min-h-screen;
+    @apply min-h-screen text-gray-900 dark:text-gray-100;
+    background:
+      radial-gradient(circle at 8% -10%, rgba(147, 197, 253, 0.32), transparent 34rem),
+      radial-gradient(circle at 92% 0%, rgba(186, 230, 253, 0.28), transparent 30rem),
+      linear-gradient(180deg, #f8fbff 0%, #f1f7ff 52%, #f8fbff 100%);
+    background-attachment: fixed;
+  }
+
+  .dark body {
+    background:
+      radial-gradient(circle at 8% -10%, rgba(30, 64, 175, 0.26), transparent 34rem),
+      radial-gradient(circle at 92% 0%, rgba(14, 116, 144, 0.18), transparent 30rem),
+      linear-gradient(180deg, #0f172a 0%, #111c35 52%, #0f172a 100%);
   }
 
   /* 自定义滚动条 - 仅针对 Firefox，避免 Chrome 取消 webkit 的全局定制 */
@@ -216,12 +227,16 @@
   }
 
   .glass-card {
-    @apply bg-white/70 dark:bg-dark-800/70;
+    @apply bg-white/75 dark:bg-dark-800/75;
     @apply backdrop-blur-xl;
     @apply rounded-2xl;
-    @apply border border-white/20 dark:border-dark-700/50;
-    @apply shadow-glass;
+    @apply border border-white/70 dark:border-dark-700/60;
+    box-shadow: 0 12px 36px rgba(30, 64, 175, 0.08), 0 2px 8px rgba(15, 23, 42, 0.04);
     @apply transition-all duration-300;
+  }
+
+  .glass-card:hover {
+    box-shadow: 0 18px 46px rgba(30, 64, 175, 0.12), 0 4px 12px rgba(15, 23, 42, 0.05);
   }
 
   /* ============ 卡片样式 ============ */
