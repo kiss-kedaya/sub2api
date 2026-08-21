@@ -29,7 +29,6 @@ type TempUnschedCache interface {
 // aggregate pool API-key failures across gateway instances.
 type OpenAIAPIKeyHealthCache interface {
 	RecordOpenAIAPIKeyHealthFailure(ctx context.Context, accountID int64, windowMinutes, threshold int) (count int64, tripped bool, err error)
-	ResetOpenAIAPIKeyHealthFailures(ctx context.Context, accountID int64) error
 }
 
 // TimeoutCounterCache 超时计数器缓存接口

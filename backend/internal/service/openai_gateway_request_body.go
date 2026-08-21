@@ -1033,17 +1033,11 @@ func normalizeOpenAIResponsesWebSocketCompatibilityBody(body []byte, account *Ac
 			changed = true
 		}
 	}
-	if account != nil && shouldSanitizeOpenAIResponsesToolSchemas(account.Platform) {
-		if toolBody, toolChanged, err := sanitizeOpenAIResponsesToolParameterTypes(normalized); err != nil {
-			return body, false, fmt.Errorf("normalize websocket tool parameter types: %w", err)
-		} else if toolChanged {
-			normalized = toolBody
-			changed = true
-		}
-		if patternBody, patternChanged, err := sanitizeOpenAIResponsesToolSchemaPatterns(normalized); err != nil {
-			return body, false, fmt.Errorf("normalize websocket tool schema patterns: %w", err)
-		} else if patternChanged {
-			normalized = patternBody
+	if account != nil {
+		if schemaBody, schemaChanged, err := sanitizeOpenAIResponsesToolSchemasForPlatform(normalized, account.Platform); err != nil {
+			return body, false, fmt.Errorf("normalize websocket tool schemas: %w", err)
+		} else if schemaChanged {
+			normalized = schemaBody
 			changed = true
 		}
 	}

@@ -239,11 +239,59 @@ func TestSanitizeOpenAIResponsesToolSchemas_InvalidAndTrailingJSON(t *testing.T)
 	}
 }
 
-func TestShouldSanitizeOpenAIResponsesToolSchemas_PlatformBoundary(t *testing.T) {
-	require.True(t, shouldSanitizeOpenAIResponsesToolSchemas(PlatformOpenAI))
-	for _, platform := range []string{PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformComposite, ""} {
-		require.False(t, shouldSanitizeOpenAIResponsesToolSchemas(platform), platform)
+func TestOpenAIResponsesToolSchemaCapabilities_PlatformBoundary(t *testing.T) {
+	tests := []struct {
+		platform         string
+		repairNullType   bool
+		removeLookaround bool
+	}{
+		{PlatformOpenAI, true, true},
+		{PlatformAnthropic, true, false},
+		{PlatformKimi, true, false},
+		{PlatformZhipu, true, false},
+		{PlatformDeepseek, true, false},
+		{PlatformGrok, false, false},
+		{PlatformGemini, false, false},
+		{PlatformAntigravity, false, false},
+		{PlatformComposite, false, false},
+		{"", false, false},
 	}
+	for _, tt := range tests {
+		t.Run(tt.platform, func(t *testing.T) {
+			require.Equal(t, tt.repairNullType, shouldRepairOpenAIResponsesNullToolSchemaType(tt.platform))
+			require.Equal(t, tt.removeLookaround, shouldSanitizeOpenAIResponsesToolSchemaPatterns(tt.platform))
+		})
+	}
+}
+
+func TestSanitizeOpenAIResponsesToolSchemasForPlatform_ReplayBoundary(t *testing.T) {
+	body := []byte(`{"tools":[{"type":"function","parameters":{"type":null,"properties":{"query":{"type":"string","pattern":"(?=keep)"}}}}]}`)
+
+	// A malformed tool definition may be replayed after account failover. Every
+	// compatible account must repair it, while non-OpenAI providers retain their
+	// supported regex semantics.
+	for _, platform := range []string{PlatformAnthropic, PlatformKimi, PlatformZhipu, PlatformDeepseek} {
+		t.Run(platform, func(t *testing.T) {
+			for attempt := 0; attempt < 2; attempt++ {
+				normalized, changed, err := sanitizeOpenAIResponsesToolSchemasForPlatform(body, platform)
+				require.NoError(t, err)
+				require.True(t, changed)
+				require.Equal(t, "object", gjson.GetBytes(normalized, "tools.0.parameters.type").String())
+				require.Equal(t, "(?=keep)", gjson.GetBytes(normalized, "tools.0.parameters.properties.query.pattern").String())
+			}
+		})
+	}
+
+	openAI, changed, err := sanitizeOpenAIResponsesToolSchemasForPlatform(body, PlatformOpenAI)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "object", gjson.GetBytes(openAI, "tools.0.parameters.type").String())
+	require.False(t, gjson.GetBytes(openAI, "tools.0.parameters.properties.query.pattern").Exists())
+
+	unsupported, changed, err := sanitizeOpenAIResponsesToolSchemasForPlatform(body, PlatformGrok)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(body), string(unsupported))
 }
 
 // 索引映射：只有坏条目被改，前后兄弟条目按原下标保持不变。
