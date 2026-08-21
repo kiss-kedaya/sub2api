@@ -377,6 +377,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 				c, account, requestedModel, body, resp.StatusCode, upstreamMsg, probeBody, compactModelFallbackRetried,
 			); retry {
+				s.appendOpenAICompactFallbackRetryOps(c, account, resp, probeBody, upstreamMsg, true)
 				fromModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 				body = retryBody
 				upstreamPassthroughModel = fallbackModel
@@ -425,6 +426,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					compactModelFallbackRetried = true
 					continue
 				}
+				if signal, ok := asOpenAICompactFallbackSignal(handleErr); ok {
+					_ = resp.Body.Close()
+					compactResp, compactBody := openAICompactFallbackErrorResponse(resp, signal)
+					if shouldFailoverOpenAIPassthroughResponse(account, compactResp.StatusCode, compactBody) {
+						return nil, s.handleFailoverErrorResponsePassthrough(ctx, compactResp, c, account, body, compactBody)
+					}
+					return nil, s.handleErrorResponsePassthrough(ctx, compactResp, c, account, body, compactBody)
+				}
 				_ = resp.Body.Close()
 				return nil, handleErr
 			}
@@ -443,6 +452,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					upstreamPassthroughModel = fallbackModel
 					compactModelFallbackRetried = true
 					continue
+				}
+				if signal, ok := asOpenAICompactFallbackSignal(handleErr); ok {
+					_ = resp.Body.Close()
+					compactResp, compactBody := openAICompactFallbackErrorResponse(resp, signal)
+					if shouldFailoverOpenAIPassthroughResponse(account, compactResp.StatusCode, compactBody) {
+						return nil, s.handleFailoverErrorResponsePassthrough(ctx, compactResp, c, account, body, compactBody)
+					}
+					return nil, s.handleErrorResponsePassthrough(ctx, compactResp, c, account, body, compactBody)
 				}
 				_ = resp.Body.Close()
 				return nil, handleErr
@@ -713,7 +730,7 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	if isOpenAIContextWindowError("", responseBody) {
 		return false
 	}
-	if isOpenAIUpstreamAccessStateError("", responseBody) {
+	if isOpenAIHTTPUpstreamAccessStateError(statusCode, "", responseBody) {
 		return true
 	}
 	if isOpenAIRequestBodyTooLargeError(statusCode, "", responseBody) {
@@ -1520,7 +1537,14 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 		if c != nil && c.Request != nil {
 			ctx = c.Request.Context()
 		}
-		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, headers, payload)
+		accountHeaders := headers
+		if statusCode == http.StatusTooManyRequests {
+			// The enclosing HTTP response succeeded. Its quota snapshot describes
+			// normal account state and must not become the reset for a semantic 429
+			// carried by a stream terminal event.
+			accountHeaders = nil
+		}
+		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload)
 	default:
 		return statusCode, false
 	}

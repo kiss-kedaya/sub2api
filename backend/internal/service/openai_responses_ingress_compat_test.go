@@ -70,3 +70,25 @@ func TestNormalizeOpenAIResponsesLegacyIngressKeepsPromptAliasAndDropsCommands(t
 	require.False(t, gjson.GetBytes(normalized, "prompt").Exists())
 	require.False(t, gjson.GetBytes(normalized, "commands").Exists())
 }
+
+func TestNormalizeOpenAIResponsesLegacyIngressPreservesNativePromptTemplate(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","prompt":{"id":"pmpt_abc","version":"7","variables":{"topic":"ownership"}}}`)
+
+	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(body)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.JSONEq(t, string(body), string(normalized))
+	require.Equal(t, "pmpt_abc", gjson.GetBytes(normalized, "prompt.id").String())
+	require.False(t, gjson.GetBytes(normalized, "input").Exists())
+}
+
+func TestNormalizeOpenAIResponsesLegacyIngressPreservesUnknownPromptShapeWhileDroppingCommands(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","prompt":["one","two"],"commands":[{"name":"legacy"}]}`)
+
+	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, int64(2), gjson.GetBytes(normalized, "prompt.#").Int())
+	require.False(t, gjson.GetBytes(normalized, "input").Exists())
+	require.False(t, gjson.GetBytes(normalized, "commands").Exists())
+}

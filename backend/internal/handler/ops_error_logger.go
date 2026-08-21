@@ -528,6 +528,7 @@ type opsCaptureWriter struct {
 
 type opsCaptureWriterState struct {
 	mu             sync.RWMutex
+	inFlight       sync.WaitGroup
 	generation     uint64
 	responseWriter gin.ResponseWriter
 	limit          int
@@ -605,9 +606,15 @@ func releaseOpsCaptureWriter(w *opsCaptureWriter) {
 		state.mu.Unlock()
 		return
 	}
+	// Invalidate the lease before waiting. No new delegated calls can start for
+	// this handle, while calls that already copied the writer keep it alive via
+	// inFlight until their network operation returns.
 	state.generation++
 	state.responseWriter = nil
 	state.ctx = nil
+	state.mu.Unlock()
+	state.inFlight.Wait()
+	state.mu.Lock()
 	state.limit = opsCaptureWriterLimit
 	state.probe = state.probe[:0]
 	state.lineProbe = state.lineProbe[:0]
@@ -657,6 +664,27 @@ func (w *opsCaptureWriter) lockActiveWrite() (*opsCaptureWriterState, gin.Respon
 	return state, state.responseWriter
 }
 
+func (w *opsCaptureWriter) beginDelegatedCall() (*opsCaptureWriterState, gin.ResponseWriter) {
+	if w == nil || w.state == nil {
+		return nil, nil
+	}
+	state := w.state
+	state.mu.Lock()
+	if state.generation != w.generation || state.responseWriter == nil {
+		state.mu.Unlock()
+		return nil, nil
+	}
+	rw := state.responseWriter
+	state.inFlight.Add(1)
+	return state, rw
+}
+
+func finishDelegatedCall(state *opsCaptureWriterState) {
+	if state != nil {
+		state.inFlight.Done()
+	}
+}
+
 func (w *opsCaptureWriter) setContext(ctx *gin.Context) {
 	state, _ := w.lockActiveWrite()
 	if state == nil {
@@ -702,19 +730,21 @@ func (w *opsCaptureWriter) Header() http.Header {
 	return rw.Header()
 }
 func (w *opsCaptureWriter) WriteHeader(code int) {
-	state, rw := w.lockActive()
+	state, rw := w.beginDelegatedCall()
 	if state == nil {
 		return
 	}
-	defer state.mu.RUnlock()
+	state.mu.Unlock()
+	defer finishDelegatedCall(state)
 	rw.WriteHeader(code)
 }
 func (w *opsCaptureWriter) WriteHeaderNow() {
-	state, rw := w.lockActive()
+	state, rw := w.beginDelegatedCall()
 	if state == nil {
 		return
 	}
-	defer state.mu.RUnlock()
+	state.mu.Unlock()
+	defer finishDelegatedCall(state)
 	rw.WriteHeaderNow()
 }
 func (w *opsCaptureWriter) Status() int {
@@ -742,19 +772,21 @@ func (w *opsCaptureWriter) Written() bool {
 	return rw.Written()
 }
 func (w *opsCaptureWriter) Flush() {
-	state, rw := w.lockActive()
+	state, rw := w.beginDelegatedCall()
 	if state == nil {
 		return
 	}
-	defer state.mu.RUnlock()
+	state.mu.Unlock()
+	defer finishDelegatedCall(state)
 	rw.Flush()
 }
 func (w *opsCaptureWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	state, rw := w.lockActive()
+	state, rw := w.beginDelegatedCall()
 	if state == nil {
 		return nil, nil, errors.New("response writer released")
 	}
-	defer state.mu.RUnlock()
+	state.mu.Unlock()
+	defer finishDelegatedCall(state)
 	return rw.Hijack()
 }
 func (w *opsCaptureWriter) CloseNotify() <-chan bool {
@@ -777,26 +809,28 @@ func (w *opsCaptureWriter) Pusher() http.Pusher {
 }
 
 func (w *opsCaptureWriter) Write(b []byte) (int, error) {
-	state, rw := w.lockActiveWrite()
+	state, rw := w.beginDelegatedCall()
 	if state == nil {
 		return 0, nil
 	}
-	defer state.mu.Unlock()
 	if state.shouldCapture() {
 		state.captureResponseChunk(b, rw.Status())
 	}
+	state.mu.Unlock()
+	defer finishDelegatedCall(state)
 	return rw.Write(b)
 }
 
 func (w *opsCaptureWriter) WriteString(s string) (int, error) {
-	state, rw := w.lockActiveWrite()
+	state, rw := w.beginDelegatedCall()
 	if state == nil {
 		return 0, nil
 	}
-	defer state.mu.Unlock()
 	if state.shouldCapture() {
 		state.captureResponseChunk([]byte(s), rw.Status())
 	}
+	state.mu.Unlock()
+	defer finishDelegatedCall(state)
 	return rw.WriteString(s)
 }
 
@@ -887,6 +921,13 @@ func (state *opsCaptureWriterState) captureResponseChunk(chunk []byte, status in
 		state.appendCapturedResponse(chunk)
 		return
 	}
+	// Most stream writes contain one or more complete successful SSE frames.
+	// Skip the byte-wise frame parser when the chunk cannot contain a terminal
+	// event and leaves no split frame to carry into the next write.
+	if len(state.probe) == 0 && len(state.lineProbe) == 0 && endsAtOpsSSEFrameBoundary(chunk) &&
+		!mayContainOpsTerminalSSE(chunk) {
+		return
+	}
 	for i, b := range chunk {
 		if state.skipLF {
 			state.skipLF = false
@@ -950,6 +991,20 @@ func (state *opsCaptureWriterState) captureResponseChunk(chunk []byte, status in
 		state.frameTruncated = false
 		state.lineTruncated = false
 	}
+}
+
+func endsAtOpsSSEFrameBoundary(chunk []byte) bool {
+	return bytes.HasSuffix(chunk, []byte("\n\n")) ||
+		bytes.HasSuffix(chunk, []byte("\r\n\r\n")) ||
+		bytes.HasSuffix(chunk, []byte("\r\r"))
+}
+
+func mayContainOpsTerminalSSE(chunk []byte) bool {
+	if bytes.Contains(chunk, []byte("response.failed")) {
+		return true
+	}
+	return bytes.Contains(chunk, []byte("error")) &&
+		(bytes.Contains(chunk, []byte("event")) || bytes.Contains(chunk, []byte(`"type"`)))
 }
 
 func isOpsTerminalSSEEventLine(line []byte) bool {
@@ -1066,10 +1121,14 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			if parsed.StreamFailure {
 				status = inferStreamFailureStatus(c, parsed)
 			} else {
-				// Locally generated in-band errors use an explicit context marker and
-				// may not have a capturable terminal frame. Preserve that fallback,
-				// but never turn recovered upstream attempts into request errors.
-				logOpsStreamError(c, ops, status)
+				// A marked in-band error is a visible request failure even though its
+				// wire status is already 200. Otherwise retain recovered attempts as a
+				// provider-health row whose 2xx status keeps it outside request SLA.
+				if len(service.GetOpsStreamErrors(c)) > 0 {
+					logOpsStreamError(c, ops, status)
+				} else {
+					logOpsRecoveredUpstream(c, ops, status)
+				}
 				return
 			}
 		}
@@ -1212,6 +1271,126 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 
 		enqueueOpsErrorLog(ops, entry)
 	}
+}
+
+func logOpsRecoveredUpstream(c *gin.Context, ops *service.OpsService, finalStatus int) {
+	if c == nil || ops == nil || finalStatus >= 400 {
+		return
+	}
+
+	entry := &service.OpsInsertErrorLogInput{StatusCode: finalStatus}
+	applyOpsUpstreamFieldsFromContext(c, entry)
+	if entry.UpstreamStatusCode == nil && entry.UpstreamErrorMessage == nil &&
+		entry.UpstreamErrorDetail == nil && len(entry.UpstreamErrors) == 0 {
+		return
+	}
+
+	lastStatus := 0
+	if entry.UpstreamStatusCode != nil {
+		lastStatus = *entry.UpstreamStatusCode
+	}
+	lastStage := ""
+	for i := len(entry.UpstreamErrors) - 1; i >= 0; i-- {
+		if event := entry.UpstreamErrors[i]; event != nil {
+			lastStage = event.Stage
+			if event.AccountID > 0 {
+				accountID := event.AccountID
+				entry.AccountID = &accountID
+			}
+			break
+		}
+	}
+	if entry.AccountID == nil {
+		if accountID, ok := c.Get(opsAccountIDKey); ok {
+			if value, ok := accountID.(int64); ok && value > 0 {
+				entry.AccountID = &value
+			}
+		}
+	}
+
+	entry.ErrorPhase = "upstream"
+	entry.ErrorType = "upstream_error"
+	entry.ErrorSource = "upstream_http"
+	entry.ErrorOwner = "provider"
+	entry.Severity = classifyOpsSeverity(entry.ErrorType, lastStatus)
+	entry.IsCountTokens = isCountTokensRequest(c)
+	entry.CreatedAt = time.Now()
+	entry.ErrorMessage = "Recovered upstream error"
+	if lastStage == string(service.GatewayFailureStageAccountAuth) {
+		entry.ErrorPhase = string(service.GatewayFailureStageAccountAuth)
+		entry.ErrorMessage = "Recovered account authentication failure"
+	} else if lastStatus > 0 {
+		entry.ErrorMessage += " " + strconv.Itoa(lastStatus)
+	}
+	if entry.UpstreamErrorMessage != nil && strings.TrimSpace(*entry.UpstreamErrorMessage) != "" {
+		entry.ErrorMessage += ": " + strings.TrimSpace(*entry.UpstreamErrorMessage)
+	}
+	entry.ErrorMessage = truncateString(entry.ErrorMessage, 2048)
+
+	if c.Request != nil {
+		entry.UserAgent = c.GetHeader("User-Agent")
+		if c.Request.URL != nil {
+			entry.RequestPath = c.Request.URL.Path
+		}
+		if c.Request.Context() != nil {
+			entry.ClientRequestID, _ = c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+			entry.RequestID, _ = c.Request.Context().Value(ctxkey.RequestID).(string)
+		}
+	}
+	entry.RequestID = strings.TrimSpace(entry.RequestID)
+	if entry.RequestID == "" {
+		entry.RequestID = c.Writer.Header().Get("X-Request-Id")
+	}
+	entry.Model = c.GetString(opsModelKey)
+	entry.RequestedModel = entry.Model
+	entry.Stream = c.GetBool(opsStreamKey)
+	entry.InboundEndpoint = GetInboundEndpoint(c)
+	entry.UpstreamModel = c.GetString(opsUpstreamModelKey)
+	entry.RequestType = opsRequestTypeFromContext(c)
+
+	apiKey := getOpsAPIKey(c)
+	fallbackPlatform := guessPlatformFromPath(entry.RequestPath)
+	var requestContext context.Context = context.Background()
+	if c.Request != nil {
+		requestContext = c.Request.Context()
+	}
+	entry.Platform = resolveOpsPlatform(requestContext, apiKey, fallbackPlatform)
+	entry.UpstreamEndpoint = GetUpstreamEndpoint(c, entry.Platform)
+	if apiKey != nil {
+		entry.APIKeyID = &apiKey.ID
+		entry.APIKeyPrefix = keyPrefix(apiKey.Key, 8)
+		if apiKey.User != nil {
+			entry.UserID = &apiKey.User.ID
+		}
+		if apiKey.GroupID != nil {
+			entry.GroupID = apiKey.GroupID
+		}
+		if apiKey.Group != nil && apiKey.Group.Platform != "" {
+			entry.Platform = apiKey.Group.Platform
+		}
+	}
+	if clientIP := strings.TrimSpace(ip.GetClientIP(c)); clientIP != "" {
+		entry.ClientIP = &clientIP
+	}
+	applyOpsLatencyFieldsFromContext(c, entry)
+	enqueueOpsErrorLog(ops, entry)
+}
+
+func opsRequestTypeFromContext(c *gin.Context) *int16 {
+	if c == nil {
+		return nil
+	}
+	if value, ok := c.Get(opsRequestTypeKey); ok {
+		switch typed := value.(type) {
+		case int16:
+			result := typed
+			return &result
+		case int:
+			result := int16(typed)
+			return &result
+		}
+	}
+	return nil
 }
 
 // logOpsStreamError 记录一次挂在已固化 HTTP 200 SSE 流上的就地错误。

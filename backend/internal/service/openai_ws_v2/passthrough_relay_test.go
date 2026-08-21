@@ -41,6 +41,16 @@ type closeSpyFrameConn struct {
 	closeCalls atomic.Int32
 }
 
+type cancelJoinProbeFrameConn struct {
+	readStarted  chan struct{}
+	readCanceled chan struct{}
+	allowReturn  chan struct{}
+	readReturned chan struct{}
+	startOnce    sync.Once
+	cancelOnce   sync.Once
+	returnOnce   sync.Once
+}
+
 func newPassthroughTestFrameConn(frames []passthroughTestFrame, autoClose bool) *passthroughTestFrameConn {
 	c := &passthroughTestFrameConn{
 		readCh: make(chan passthroughTestFrame, len(frames)+1),
@@ -178,6 +188,38 @@ func (c *closeSpyFrameConn) CloseCalls() int32 {
 	}
 	return c.closeCalls.Load()
 }
+
+func newCancelJoinProbeFrameConn() *cancelJoinProbeFrameConn {
+	return &cancelJoinProbeFrameConn{
+		readStarted:  make(chan struct{}),
+		readCanceled: make(chan struct{}),
+		allowReturn:  make(chan struct{}),
+		readReturned: make(chan struct{}),
+	}
+}
+
+func (c *cancelJoinProbeFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
+	c.startOnce.Do(func() { close(c.readStarted) })
+	<-ctx.Done()
+	c.cancelOnce.Do(func() { close(c.readCanceled) })
+	<-c.allowReturn
+	c.returnOnce.Do(func() { close(c.readReturned) })
+	return coderws.MessageText, nil, ctx.Err()
+}
+
+func (c *cancelJoinProbeFrameConn) WriteFrame(ctx context.Context, _ coderws.MessageType, _ []byte) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
+func (c *cancelJoinProbeFrameConn) Close() error { return nil }
 
 func TestRelay_BasicRelayAndUsage(t *testing.T) {
 	t.Parallel()
@@ -370,6 +412,58 @@ func TestRelay_IdleTimeoutDoesNotCloseClientOnError(t *testing.T) {
 	require.Equal(t, "idle_timeout", relayExit.Stage)
 	require.Zero(t, clientConn.CloseCalls(), "错误路径不应提前关闭客户端连接，交给上层决定 close code")
 	require.GreaterOrEqual(t, upstreamConn.CloseCalls(), int32(1))
+}
+
+func TestRelay_JoinsUpstreamReaderBeforeReturning(t *testing.T) {
+	t.Parallel()
+
+	clientConn := &closeSpyFrameConn{}
+	upstreamConn := newCancelJoinProbeFrameConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	resultCh := make(chan *RelayExit, 1)
+
+	go func() {
+		_, relayExit := Relay(
+			ctx,
+			clientConn,
+			upstreamConn,
+			[]byte(`{"type":"response.create","model":"gpt-4o","input":[]}`),
+			RelayOptions{},
+		)
+		resultCh <- relayExit
+	}()
+
+	select {
+	case <-upstreamConn.readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("upstream reader did not start")
+	}
+	cancel()
+	select {
+	case <-upstreamConn.readCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("upstream reader did not observe relay cancellation")
+	}
+	select {
+	case <-resultCh:
+		t.Fatal("Relay returned before the upstream reader exited")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(upstreamConn.allowReturn)
+	select {
+	case relayExit := <-resultCh:
+		require.NotNil(t, relayExit)
+		require.ErrorIs(t, relayExit.Err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("Relay did not return after the upstream reader exited")
+	}
+	select {
+	case <-upstreamConn.readReturned:
+	default:
+		t.Fatal("Relay returned before the upstream reader completion signal")
+	}
+	require.Zero(t, clientConn.CloseCalls(), "错误路径不应提前关闭客户端连接")
 }
 
 func TestRelay_NilConnections(t *testing.T) {

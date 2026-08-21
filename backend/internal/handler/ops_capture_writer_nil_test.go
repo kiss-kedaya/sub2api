@@ -12,6 +12,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type blockingOpsResponseWriter struct {
+	gin.ResponseWriter
+	writeStarted chan struct{}
+	writeRelease chan struct{}
+}
+
+func (w *blockingOpsResponseWriter) WriteString(s string) (int, error) {
+	close(w.writeStarted)
+	<-w.writeRelease
+	return w.ResponseWriter.WriteString(s)
+}
+
 type deterministicOpsCaptureWriterStatePool struct {
 	states []*opsCaptureWriterState
 }
@@ -143,4 +155,57 @@ func TestOpsCaptureWriter_StaleLeaseCannotReachReacquiredState(t *testing.T) {
 	other := acquireOpsCaptureWriterFromPool(pool, thirdContext.Writer)
 	defer releaseOpsCaptureWriter(other)
 	require.NotSame(t, current.state, other.state)
+}
+
+func TestOpsCaptureWriter_ReleaseWaitsForDelegatedWriteWithoutHoldingStateMutex(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	pool := &deterministicOpsCaptureWriterStatePool{}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	inner := &blockingOpsResponseWriter{
+		ResponseWriter: ctx.Writer,
+		writeStarted:   make(chan struct{}),
+		writeRelease:   make(chan struct{}),
+	}
+	w := acquireOpsCaptureWriterFromPool(pool, inner)
+
+	writeDone := make(chan struct{})
+	go func() {
+		defer close(writeDone)
+		_, _ = w.WriteString("body")
+	}()
+	<-inner.writeStarted
+
+	mutexAvailable := make(chan struct{})
+	go func() {
+		w.state.mu.Lock()
+		w.state.mu.Unlock()
+		close(mutexAvailable)
+	}()
+	select {
+	case <-mutexAvailable:
+	case <-time.After(time.Second):
+		t.Fatal("state mutex remained held across the delegated network write")
+	}
+
+	releaseDone := make(chan struct{})
+	go func() {
+		releaseOpsCaptureWriter(w)
+		close(releaseDone)
+	}()
+	select {
+	case <-releaseDone:
+		t.Fatal("release returned while a delegated write was still active")
+	case <-time.After(20 * time.Millisecond):
+	}
+	require.Empty(t, pool.states)
+
+	close(inner.writeRelease)
+	<-writeDone
+	select {
+	case <-releaseDone:
+	case <-time.After(time.Second):
+		t.Fatal("release did not finish after the delegated write returned")
+	}
+	require.Len(t, pool.states, 1)
 }
