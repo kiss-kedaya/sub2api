@@ -20,7 +20,10 @@ func (s *settingPublicRepoStub) Get(ctx context.Context, key string) (*Setting, 
 }
 
 func (s *settingPublicRepoStub) GetValue(ctx context.Context, key string) (string, error) {
-	panic("unexpected GetValue call")
+	if s.err != nil {
+		return "", s.err
+	}
+	return s.values[key], nil
 }
 
 func (s *settingPublicRepoStub) Set(ctx context.Context, key, value string) error {
@@ -50,6 +53,23 @@ func (s *settingPublicRepoStub) GetAll(ctx context.Context) (map[string]string, 
 
 func (s *settingPublicRepoStub) Delete(ctx context.Context, key string) error {
 	panic("unexpected Delete call")
+}
+
+func TestSettingService_GetPublicSettings_DoesNotExposeCustomEndpoints(t *testing.T) {
+	repo := &settingPublicRepoStub{
+		values: map[string]string{
+			SettingKeyCustomEndpoints: `[{"name":"internal","endpoint":"https://internal.example/api","description":"private"}]`,
+		},
+	}
+	svc := NewSettingService(repo, &config.Config{})
+
+	settings, err := svc.GetPublicSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "[]", settings.CustomEndpoints)
+
+	raw, err := svc.GetConfiguredCustomEndpoints(context.Background())
+	require.NoError(t, err)
+	require.JSONEq(t, repo.values[SettingKeyCustomEndpoints], raw)
 }
 
 func TestSettingService_GetPublicSettings_ExposesRegistrationEmailSuffixWhitelist(t *testing.T) {

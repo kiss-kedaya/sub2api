@@ -14,6 +14,12 @@ import (
 	"time"
 )
 
+// GetConfiguredCustomEndpoints returns the admin-configured custom endpoints.
+// Callers must enforce the authenticated business eligibility policy before exposing this value.
+func (s *SettingService) GetConfiguredCustomEndpoints(ctx context.Context) (string, error) {
+	return s.settingRepo.GetValue(ctx, SettingKeyCustomEndpoints)
+}
+
 // IsRegistrationEnabled 检查是否开放注册
 func (s *SettingService) IsRegistrationEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationEnabled)
