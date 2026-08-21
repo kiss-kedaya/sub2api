@@ -189,7 +189,7 @@ export default {
     logout: '退出登录',
     github: 'GitHub',
     mySubscriptions: '我的订阅',
-    buySubscription: '充值/订阅',
+    buySubscription: '充值中心',
     docs: '文档',
     myOrders: '我的订单',
     orderManagement: '订单管理',
