@@ -768,6 +768,71 @@ func TestMergeGroupConfiguredCodexModelsInjectsCurrentGroupAliases(t *testing.T)
 	require.Equal(t, codexModelsManifestBodyETag(manifest.Body), manifest.ETag)
 }
 
+// Scenario: OpenAI 分组存在账号模型配置时直接生成本地 Codex 清单。
+func TestBuildGroupConfiguredCodexModelsManifestUsesAdministratorConfiguration(t *testing.T) {
+	t.Parallel()
+
+	const groupID int64 = 77
+	svc := &OpenAIGatewayService{accountRepo: codexModelsVisibilityAccountRepo{
+		byGroup: map[int64][]Account{
+			groupID: {
+				{
+					Platform: PlatformOpenAI,
+					Type:     AccountTypeOAuth,
+				},
+				{
+					Platform: PlatformOpenAI,
+					Type:     AccountTypeAPIKey,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{
+							"glm-5.3": "glm-5.3",
+						},
+					},
+				},
+			},
+		},
+	}}
+	group := &Group{ID: groupID, Platform: PlatformOpenAI}
+
+	manifest, configured, err := svc.BuildGroupConfiguredCodexModelsManifest(context.Background(), group, "")
+	require.NoError(t, err)
+	require.True(t, configured)
+	require.Equal(t, []string{"glm-5.3"}, codexManifestModelSlugs(t, manifest.Body))
+	require.Equal(t, codexModelsManifestBodyETag(manifest.Body), manifest.ETag)
+
+	notModified, configured, err := svc.BuildGroupConfiguredCodexModelsManifest(
+		context.Background(),
+		group,
+		"W/"+manifest.ETag,
+	)
+	require.NoError(t, err)
+	require.True(t, configured)
+	require.True(t, notModified.NotModified)
+	require.Empty(t, notModified.Body)
+	require.Equal(t, manifest.ETag, notModified.ETag)
+}
+
+// Scenario: 没有管理员模型配置时保留现有上游发现路径。
+func TestBuildGroupConfiguredCodexModelsManifestFallsThroughWithoutConfiguration(t *testing.T) {
+	t.Parallel()
+
+	const groupID int64 = 78
+	svc := &OpenAIGatewayService{accountRepo: codexModelsVisibilityAccountRepo{
+		byGroup: map[int64][]Account{
+			groupID: {{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}},
+		},
+	}}
+
+	manifest, configured, err := svc.BuildGroupConfiguredCodexModelsManifest(
+		context.Background(),
+		&Group{ID: groupID, Platform: PlatformOpenAI},
+		"",
+	)
+	require.NoError(t, err)
+	require.False(t, configured)
+	require.Nil(t, manifest)
+}
+
 func TestMergeGroupConfiguredCodexModelsFiltersAutoReviewByDefault(t *testing.T) {
 	t.Parallel()
 

@@ -170,13 +170,20 @@ func TestGatewayCodexModels_NonOpenAIGroupsUseMappedModels(t *testing.T) {
 	}
 }
 
-// Scenario: Composite manifests aggregate models across routed platforms.
+// Scenario: Composite manifests aggregate only administrator-configured models.
 func TestGatewayCodexModels_CompositeUsesCompleteEffectiveModelList(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	const groupID int64 = 120
 	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
 		byGroup: map[int64][]service.Account{
 			groupID: {
+				{
+					ID:          3,
+					Platform:    service.PlatformOpenAI,
+					Status:      service.StatusActive,
+					Schedulable: true,
+					Credentials: map[string]any{},
+				},
 				{
 					ID:       1,
 					Platform: service.PlatformOpenAI,
