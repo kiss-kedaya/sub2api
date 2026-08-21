@@ -27,7 +27,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitorMatrixBucket } from '@/api/channelMonitorV2'
-import { formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
+import { availabilityBarClass, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
 
 const props = withDefaults(defineProps<{
   buckets?: MonitorMatrixBucket[]
@@ -76,7 +76,11 @@ const displayBars = computed<TimelineBar[]>(() => {
     const state = bucket.health.overall === 'healthy' || bucket.health.overall === 'warning' || bucket.health.overall === 'critical'
       ? bucket.health.overall
       : 'unknown'
-    const style = STATUS_STYLE[state]
+    const availabilityPercent = (1 - bucket.metrics.error_rate) * 100
+    const style = {
+      ...(STATUS_STYLE[state]),
+      colorClass: availabilityBarClass(availabilityPercent),
+    }
     bars.push({
       key: bucket.bucket_start,
       ...style,

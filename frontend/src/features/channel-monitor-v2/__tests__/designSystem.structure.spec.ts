@@ -2,7 +2,7 @@
  * Structure contracts: channel-monitor-v2 + studio shells must use project
  * design-system utility classes rather than isolated flat RGB skins.
  */
-import { availabilityBadgeClass } from '../monitorFormat'
+import { availabilityBadgeClass, availabilityBarClass } from '../monitorFormat'
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -119,5 +119,11 @@ describe('availabilityBadgeClass', () => {
     expect(availabilityBadgeClass(49.9)).toContain('bg-red-600')
     expect(availabilityBadgeClass(30)).toContain('bg-red-600')
     expect(availabilityBadgeClass(29.9)).toContain('bg-gray-950')
+    expect(availabilityBarClass(95)).toContain('bg-emerald-600')
+    expect(availabilityBarClass(80)).toContain('bg-emerald-400')
+    expect(availabilityBarClass(60)).toContain('bg-yellow-300')
+    expect(availabilityBarClass(50)).toContain('bg-amber-400')
+    expect(availabilityBarClass(30)).toContain('bg-red-500')
+    expect(availabilityBarClass(29.9)).toContain('bg-gray-950')
   })
 })
