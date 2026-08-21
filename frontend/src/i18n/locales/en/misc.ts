@@ -384,7 +384,7 @@ export default {
     noActiveSubscription: 'No active subscription',
     tabTopUp: 'Top Up',
     tabSubscribe: 'Recharge Center',
-    tabRechargeCenter: 'Recharge Center',
+    tabRechargeCenter: 'Alipay / WeChat Recharge Center',
     rechargeCenterTitle: 'Alipay / WeChat Recharge Center',
     rechargeCenterDescription: 'Use the integrated recharge center to pay with Alipay or WeChat.',
     rechargeCenterOpen: 'Open in new tab',
