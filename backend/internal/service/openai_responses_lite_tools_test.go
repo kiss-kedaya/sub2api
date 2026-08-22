@@ -58,6 +58,21 @@ func TestNormalizeOpenAIResponsesLiteTools_MovesNamespacesAndKeepsSupportedTools
 	require.Equal(t, map[string]any{"type": "namespace", "name": "collaboration"}, reqBody["tool_choice"])
 }
 
+func TestNormalizeOpenAIResponsesLiteTools_PreservesDeferredFlagsWithToolSearch(t *testing.T) {
+	reqBody := map[string]any{
+		"tools": []any{
+			map[string]any{"type": "tool_search"},
+			map[string]any{"type": "function", "name": "shell", "defer_loading": true},
+		},
+	}
+
+	_, err := normalizeOpenAIResponsesLiteTools(reqBody)
+	require.NoError(t, err)
+	tools := reqBody["tools"].([]any)
+	require.Equal(t, "tool_search", tools[0].(map[string]any)["type"])
+	require.Equal(t, true, tools[1].(map[string]any)["defer_loading"])
+}
+
 func TestNormalizeOpenAIResponsesLiteTools_RejectsConflictingAdditionalTool(t *testing.T) {
 	reqBody := map[string]any{
 		"tools": []any{map[string]any{
