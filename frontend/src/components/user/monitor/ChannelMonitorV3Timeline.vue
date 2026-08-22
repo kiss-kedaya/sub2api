@@ -18,8 +18,10 @@
           class="v3-bar-hitbox"
           :class="{
             'is-active': hoveredBarIndex === index,
-            'is-neighbor': isNeighbor(index),
+            'is-neighbor': barDistance(index) === 1,
+            'is-pressed': hoveredBarIndex !== null && barDistance(index) > 0,
           }"
+          :style="barMotionStyle(index)"
           :aria-label="bar.title || '-'"
           @focus="setHoveredBar(index)"
           @blur="clearHoveredBar"
@@ -77,8 +79,30 @@ function clearHoveredBar() {
   hoveredBarIndex.value = null
 }
 
-function isNeighbor(index: number) {
-  return hoveredBarIndex.value !== null && Math.abs(index - hoveredBarIndex.value) === 1
+function barDistance(index: number) {
+  return hoveredBarIndex.value === null ? 0 : Math.abs(index - hoveredBarIndex.value)
+}
+
+function barMotionStyle(index: number) {
+  const distance = barDistance(index)
+  if (hoveredBarIndex.value === null) {
+    return {
+      '--bar-scale': '1',
+      '--bar-opacity': '1',
+      '--bar-lift': '0px',
+    }
+  }
+
+  // A soft pressure field keeps the track width stable while bars farther
+  // from the pointer progressively relax back to their resting scale.
+  const pressure = Math.exp(-distance / 2.6)
+  const scale = distance === 0 ? 1.28 : 1 - 0.18 * pressure
+  const opacity = distance === 0 ? 1 : 0.8 + (0.2 * (1 - pressure))
+  return {
+    '--bar-scale': scale.toFixed(3),
+    '--bar-opacity': opacity.toFixed(3),
+    '--bar-lift': distance === 0 ? '-1px' : '0px',
+  }
 }
 
 const STATUS_STYLE = {
@@ -149,8 +173,7 @@ const displayBars = computed<TimelineBar[]>(() => {
 
 .v3-timeline-bars {
 	display: flex;
-	align-items: flex-end;
-	gap: 3px;
+	position: relative;
 	height: 20px;
 	width: 100%;
 	isolation: isolate;
@@ -176,8 +199,10 @@ const displayBars = computed<TimelineBar[]>(() => {
 	border: 0;
 	background: transparent;
 	cursor: crosshair;
-	transform: scaleX(1);
-	transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), opacity 140ms ease;
+	transform: translateY(var(--bar-lift, 0px)) scaleX(var(--bar-scale, 1));
+	opacity: var(--bar-opacity, 1);
+	will-change: transform, opacity;
+	transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 260ms ease;
 }
 
 .v3-bar-hitbox:focus-visible {
@@ -196,17 +221,15 @@ const displayBars = computed<TimelineBar[]>(() => {
 	box-shadow: 0 4px 10px rgb(15 118 110 / 0.24);
 }
 
-.v3-bar-hitbox.is-neighbor {
+.v3-bar-hitbox.is-pressed {
 	z-index: 2;
-	opacity: 0.72;
-	transform: scaleX(0.74);
 }
 
 .v3-timeline-tooltip {
 	position: absolute;
 	left: 50%;
 	bottom: calc(100% + 8px);
-	z-index: 10;
+	z-index: 50;
 	width: max-content;
 	max-width: min(250px, 72vw);
 	transform: translateX(-50%);
