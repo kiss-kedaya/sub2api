@@ -412,6 +412,8 @@ export default {
     rechargeCenterTitle: '支付宝 / 微信充值中心',
     rechargeCenterDescription: '已为你接入充值中心，可使用支付宝或微信完成充值。',
     rechargeCenterOpen: '新窗口打开',
+    rechargeCenterFullscreen: '全屏查看',
+    rechargeCenterExitFullscreen: '退出全屏',
     rechargeCenterUnavailable: '充值中心暂时不可用，请联系管理员。',
     noPlans: '暂无可用订阅套餐',
     notAvailable: '充值功能暂未开放',
