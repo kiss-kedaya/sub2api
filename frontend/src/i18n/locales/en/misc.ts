@@ -388,6 +388,8 @@ export default {
     rechargeCenterTitle: 'Alipay / WeChat Recharge Center',
     rechargeCenterDescription: 'Use the integrated recharge center to pay with Alipay or WeChat.',
     rechargeCenterOpen: 'Open in new tab',
+    rechargeCenterFullscreen: 'View fullscreen',
+    rechargeCenterExitFullscreen: 'Exit fullscreen',
     rechargeCenterUnavailable: 'The recharge center is temporarily unavailable. Please contact an administrator.',
     noPlans: 'No subscription plans available',
     notAvailable: 'Top-up is currently unavailable',

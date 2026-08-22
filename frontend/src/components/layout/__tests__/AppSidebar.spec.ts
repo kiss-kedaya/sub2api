@@ -53,3 +53,9 @@ describe('AppSidebar header styles', () => {
     expect(sidebarBrandBlockMatch?.[0]).not.toContain('overflow: hidden;')
   })
 })
+
+describe('AppSidebar user navigation', () => {
+  it('hides the legacy subscriptions entry while keeping the route available', () => {
+    expect(componentSource).not.toContain("{ path: '/subscriptions'")
+  })
+})
