@@ -104,6 +104,36 @@ fi
 
 IFS=',' read -r -a SERVICES <<< "$SERVICES_RAW"
 [ "${#SERVICES[@]}" -gt 0 ] || fail 'no services configured'
+ORIGINAL_SERVICES=("${SERVICES[@]}")
+
+# When the updater runs inside one of the services it is about to recreate,
+# move that service to the end. The final restart is delegated to a detached
+# helper container so the updater process can return its HTTP response first.
+SELF_CONTAINER="${SUB2API_UPDATE_SELF_CONTAINER:-}"
+SELF_SERVICE="${SUB2API_UPDATE_SELF_SERVICE:-}"
+if [ -z "$SELF_CONTAINER" ] && [ -r /etc/hostname ] && command -v docker >/dev/null 2>&1; then
+  self_id="$(cat /etc/hostname 2>/dev/null || true)"
+  if [ -n "$self_id" ]; then
+    SELF_CONTAINER="$(docker inspect -f '{{.Name}}' "$self_id" 2>/dev/null | sed 's#^/##' || true)"
+    SELF_SERVICE="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$self_id" 2>/dev/null || true)"
+  fi
+fi
+if [ -n "$SELF_SERVICE" ]; then
+  reordered=()
+  self_seen=false
+  for service in "${SERVICES[@]}"; do
+    service="$(printf '%s' "$service" | xargs)"
+    if [ "$service" = "$SELF_SERVICE" ]; then
+      self_seen=true
+      continue
+    fi
+    reordered+=("$service")
+  done
+  if [ "$self_seen" = true ]; then
+    reordered+=("$SELF_SERVICE")
+    SERVICES=("${reordered[@]}")
+  fi
+fi
 
 IFS=',' read -r -a HEALTH_URLS <<< "$HEALTH_URLS_RAW"
 [ -n "$HEALTH_URLS_RAW" ] || fail 'SUB2API_UPDATE_HEALTH_URLS is required for post-rollout verification'
@@ -169,6 +199,19 @@ health_url_for() {
   fi
 }
 
+health_url_for_service() {
+  local service="$1"
+  local index=0
+  for original in "${ORIGINAL_SERVICES[@]}"; do
+    original="$(printf '%s' "$original" | xargs)"
+    if [ "$original" = "$service" ]; then
+      health_url_for "$index"
+      return 0
+    fi
+    index=$((index + 1))
+  done
+}
+
 wait_for_health() {
   local url="$1"
   [ -n "$url" ] || return 0
@@ -205,9 +248,8 @@ wait_for_container_health() {
 
 wait_for_service() {
   local service="$1"
-  local index="$2"
   local url
-  url="$(health_url_for "$index")"
+  url="$(health_url_for_service "$service")"
   if [ -n "$url" ]; then
     wait_for_health "$url"
   else
@@ -288,11 +330,28 @@ rollback() {
   for service in "${SERVICES[@]}"; do
     service="$(printf '%s' "$service" | xargs)"
     [ -n "$service" ] || continue
+    # The current service is still on the previous version until the update
+    # succeeds, so it must not be recreated while rollback is in progress.
+    [ -n "$SELF_SERVICE" ] && [ "$service" = "$SELF_SERVICE" ] && continue
     log "restarting $service at $CURRENT_VERSION"
     compose_with_version "$CURRENT_VERSION" up -d --no-deps --force-recreate "$service" || return 1
-    wait_for_service "$service" "$index" || return 1
+    wait_for_service "$service" || return 1
     index=$((index + 1))
   done
+}
+
+schedule_self_restart() {
+  [ -n "$SELF_CONTAINER" ] || fail 'self container could not be identified for final restart'
+  command -v docker >/dev/null 2>&1 || fail 'docker is required for the final service restart'
+  local image helper
+  image="$(docker inspect -f '{{.Config.Image}}' "$SELF_CONTAINER" 2>/dev/null || true)"
+  [ -n "$image" ] || fail "could not determine image for $SELF_CONTAINER"
+  helper="sub2api-update-self-${TARGET_VERSION//./-}-$$"
+  log "scheduling detached restart for $SELF_CONTAINER"
+  docker run --rm -d --name "$helper" \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    --entrypoint /bin/sh "$image" \
+    -c "sleep 3; docker restart '$SELF_CONTAINER' >/dev/null" >/dev/null
 }
 
 if [ "$UPDATE_MODE" = runtime ]; then
@@ -304,22 +363,28 @@ else
   fi
 fi
 
-index=0
 for service in "${SERVICES[@]}"; do
   service="$(printf '%s' "$service" | xargs)"
   [ -n "$service" ] || continue
   log "rolling $service to $TARGET_VERSION"
+  if [ -n "$SELF_SERVICE" ] && [ "$service" = "$SELF_SERVICE" ]; then
+    if ! schedule_self_restart; then
+      log 'self restart scheduling failed; starting rollback'
+      rollback || fail 'self restart scheduling failed and rollback also failed'
+      fail 'self restart scheduling failed; previous version restored'
+    fi
+    continue
+  fi
   if ! compose_with_version "$TARGET_VERSION" up -d --no-deps --force-recreate "$service"; then
     log 'rollout command failed; starting rollback'
     rollback || fail 'rollout failed and rollback also failed'
     fail 'rollout failed; previous version restored'
   fi
-  if ! wait_for_service "$service" "$index"; then
+  if ! wait_for_service "$service"; then
     log "health check failed for $service; starting rollback"
     rollback || fail 'health check failed and rollback also failed'
     fail 'health check failed; previous version restored'
   fi
-  index=$((index + 1))
 done
 
 log "update completed: $CURRENT_VERSION -> $TARGET_VERSION"
