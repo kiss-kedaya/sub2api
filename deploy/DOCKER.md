@@ -102,7 +102,7 @@ fails. Compose files should use the version variable so the target image is
 unambiguous:
 
 ```yaml
-image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.188}
+image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.189}
 ```
 
 When the release image is private or the deployment uses a locally built image,
