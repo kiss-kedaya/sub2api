@@ -64,6 +64,13 @@ func (s *PaymentService) GetWebhookProviders(ctx context.Context, providerKey, o
 			}
 			return []payment.Provider{prov}, nil
 		}
+		if !dbent.IsNotFound(err) {
+			return nil, fmt.Errorf("lookup webhook order: %w", err)
+		}
+		// The notification may be from another environment. We still need to
+		// verify its signature before acknowledging it as an unknown order, so
+		// try every enabled instance when the order number is not in our DB.
+		return s.getEnabledWebhookProvidersByKey(ctx, providerKey)
 	}
 
 	if strings.TrimSpace(providerKey) == payment.TypeWxpay {
