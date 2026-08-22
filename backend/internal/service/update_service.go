@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -25,6 +26,7 @@ import (
 var (
 	ErrNoUpdateAvailable         = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
 	ErrRollbackVersionNotAllowed = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
+	ErrUpdateOrchestratorMissing = infraerrors.InternalServer("UPDATE_ORCHESTRATOR_MISSING", "update orchestrator is not configured")
 )
 
 const (
@@ -43,6 +45,10 @@ const (
 	maxRollbackVersions = 3
 	// Fetch a few extra releases so filtering (current/newer/prerelease) still leaves enough candidates
 	rollbackFetchPageSize = 15
+
+	updateStrategyBinary       = "binary"
+	updateStrategyRuntime      = "runtime"
+	updateStrategyOrchestrated = "orchestrated"
 )
 
 // UpdateCache defines cache operations for update service
@@ -65,6 +71,18 @@ type UpdateService struct {
 	githubClient   GitHubReleaseClient
 	currentVersion string
 	buildType      string // "source" for manual builds, "release" for CI builds
+	updateRuntime  updateRuntimeConfig
+}
+
+// updateRuntimeConfig controls how an update is applied. The default binary
+// strategy preserves the existing systemd/in-place behavior. Docker or other
+// multi-instance deployments should set UPDATE_STRATEGY=orchestrated and point
+// UPDATE_ORCHESTRATOR at a host-side updater that owns pull, health checks,
+// rolling replacement, and rollback.
+type updateRuntimeConfig struct {
+	strategy         string
+	orchestratorPath string
+	runtimePath      string
 }
 
 // NewUpdateService creates a new UpdateService
@@ -74,6 +92,7 @@ func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, versi
 		githubClient:   githubClient,
 		currentVersion: version,
 		buildType:      buildType,
+		updateRuntime:  loadUpdateRuntimeConfig(),
 	}
 }
 
@@ -86,6 +105,7 @@ type UpdateInfo struct {
 	Cached         bool         `json:"cached"`
 	Warning        string       `json:"warning,omitempty"`
 	BuildType      string       `json:"build_type"` // "source" or "release"
+	UpdateStrategy string       `json:"update_strategy"`
 }
 
 // ReleaseInfo contains GitHub release details
@@ -129,6 +149,21 @@ type GitHubAsset struct {
 	Size               int64  `json:"size"`
 }
 
+func loadUpdateRuntimeConfig() updateRuntimeConfig {
+	strategy := strings.ToLower(strings.TrimSpace(os.Getenv("UPDATE_STRATEGY")))
+	if strategy == "" {
+		strategy = updateStrategyBinary
+	}
+	if strategy != updateStrategyBinary && strategy != updateStrategyRuntime && strategy != updateStrategyOrchestrated {
+		strategy = updateStrategyBinary
+	}
+	return updateRuntimeConfig{
+		strategy:         strategy,
+		orchestratorPath: strings.TrimSpace(os.Getenv("UPDATE_ORCHESTRATOR")),
+		runtimePath:      strings.TrimSpace(os.Getenv("UPDATE_RUNTIME_BINARY_PATH")),
+	}
+}
+
 // CheckUpdate checks for available updates
 func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInfo, error) {
 	// Try cache first
@@ -152,6 +187,7 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 			HasUpdate:      false,
 			Warning:        err.Error(),
 			BuildType:      s.buildType,
+			UpdateStrategy: s.updateRuntime.strategy,
 		}, nil
 	}
 
@@ -172,7 +208,63 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 		return ErrNoUpdateAvailable
 	}
 
+	if s.updateRuntime.strategy == updateStrategyOrchestrated {
+		return s.performOrchestratedUpdate(ctx, info)
+	}
+
 	return s.applyReleaseAssets(ctx, info.ReleaseInfo.Assets)
+}
+
+// NeedsRestart reports whether the caller must restart the current process.
+// The orchestrated strategy already restarts each Compose service and performs
+// a health check before returning, so sending a second restart request would
+// only create another avoidable interruption.
+func (s *UpdateService) NeedsRestart() bool {
+	return s.updateRuntime.strategy != updateStrategyOrchestrated
+}
+
+// performOrchestratedUpdate delegates the state-changing portion of an update
+// to a host-side executable. Keeping Docker access outside the application
+// process means the app does not need a Docker socket by default, while still
+// allowing the admin button to run a complete pull -> health -> rolling
+// restart -> rollback transaction when explicitly configured.
+func (s *UpdateService) performOrchestratedUpdate(ctx context.Context, info *UpdateInfo) error {
+	path := s.updateRuntime.orchestratorPath
+	if path == "" {
+		return ErrUpdateOrchestratorMissing
+	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("update orchestrator must be an absolute path: %s", path)
+	}
+	stat, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("update orchestrator unavailable: %w", err)
+	}
+	if stat.IsDir() {
+		return fmt.Errorf("update orchestrator is a directory: %s", path)
+	}
+
+	releaseURL := ""
+	if info.ReleaseInfo != nil {
+		releaseURL = info.ReleaseInfo.HTMLURL
+	}
+	cmd := exec.CommandContext(ctx, path,
+		"--current-version", info.CurrentVersion,
+		"--target-version", info.LatestVersion,
+		"--release-url", releaseURL,
+	)
+	output, err := cmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(output))
+	if err != nil {
+		if trimmed == "" {
+			return fmt.Errorf("orchestrated update failed: %w", err)
+		}
+		if len(trimmed) > 4096 {
+			trimmed = trimmed[len(trimmed)-4096:]
+		}
+		return fmt.Errorf("orchestrated update failed: %w: %s", err, trimmed)
+	}
+	return nil
 }
 
 // applyReleaseAssets downloads the platform archive from the given release assets,
@@ -207,14 +299,11 @@ func (s *UpdateService) applyReleaseAssets(ctx context.Context, releaseAssets []
 		}
 	}
 
-	// Get current executable path
-	exePath, err := os.Executable()
+	// Runtime deployments may expose a writable binary path mounted outside
+	// the image. Otherwise retain the existing executable replacement behavior.
+	exePath, err := s.updateTargetPath()
 	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
-	}
-	exePath, err = filepath.EvalSymlinks(exePath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve symlinks: %w", err)
+		return err
 	}
 
 	exeDir := filepath.Dir(exePath)
@@ -277,6 +366,25 @@ func (s *UpdateService) applyReleaseAssets(ctx context.Context, releaseAssets []
 	// Success - backup file is kept for rollback capability
 	// It will be cleaned up on next successful update
 	return nil
+}
+
+func (s *UpdateService) updateTargetPath() (string, error) {
+	if runtimePath := strings.TrimSpace(s.updateRuntime.runtimePath); runtimePath != "" {
+		if !filepath.IsAbs(runtimePath) {
+			return "", fmt.Errorf("UPDATE_RUNTIME_BINARY_PATH must be absolute: %s", runtimePath)
+		}
+		return filepath.Clean(runtimePath), nil
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+	exePath, err = filepath.EvalSymlinks(exePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve symlinks: %w", err)
+	}
+	return exePath, nil
 }
 
 // Rollback restores the previous version
@@ -346,6 +454,20 @@ func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) e
 	}
 	if match == nil {
 		return ErrRollbackVersionNotAllowed
+	}
+	if s.updateRuntime.strategy == updateStrategyOrchestrated {
+		return s.performOrchestratedUpdate(ctx, &UpdateInfo{
+			CurrentVersion: s.currentVersion,
+			LatestVersion:  strings.TrimPrefix(match.TagName, "v"),
+			ReleaseInfo: &ReleaseInfo{
+				Name:        match.Name,
+				Body:        match.Body,
+				PublishedAt: match.PublishedAt,
+				HTMLURL:     match.HTMLURL,
+			},
+			BuildType:      s.buildType,
+			UpdateStrategy: s.updateRuntime.strategy,
+		})
 	}
 
 	assets := make([]Asset, len(match.Assets))
@@ -427,8 +549,9 @@ func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, er
 			HTMLURL:     release.HTMLURL,
 			Assets:      assets,
 		},
-		Cached:    false,
-		BuildType: s.buildType,
+		Cached:         false,
+		BuildType:      s.buildType,
+		UpdateStrategy: s.updateRuntime.strategy,
 	}, nil
 }
 
@@ -619,6 +742,7 @@ func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
 		ReleaseInfo:    cached.ReleaseInfo,
 		Cached:         true,
 		BuildType:      s.buildType,
+		UpdateStrategy: s.updateRuntime.strategy,
 	}, nil
 }
 
@@ -664,4 +788,3 @@ func parseVersion(v string) [3]int {
 	}
 	return result
 }
-
