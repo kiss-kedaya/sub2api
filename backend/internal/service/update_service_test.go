@@ -69,6 +69,37 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
 }
 
+func TestUpdateServiceOrchestratedStrategyRequiresConfiguredRunner(t *testing.T) {
+	t.Setenv("UPDATE_STRATEGY", "orchestrated")
+	t.Setenv("UPDATE_ORCHESTRATOR", "")
+
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{
+			release: &GitHubRelease{
+				TagName: "v0.1.133",
+				Name:    "v0.1.133",
+			},
+		},
+		"0.1.132",
+		"release",
+	)
+
+	err := svc.PerformUpdate(context.Background())
+
+	require.ErrorIs(t, err, ErrUpdateOrchestratorMissing)
+}
+
+func TestUpdateServiceNeedsRestartDependsOnStrategy(t *testing.T) {
+	t.Setenv("UPDATE_STRATEGY", "orchestrated")
+	orchestrated := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.132", "release")
+	require.False(t, orchestrated.NeedsRestart())
+
+	t.Setenv("UPDATE_STRATEGY", "binary")
+	binary := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.132", "release")
+	require.True(t, binary.NeedsRestart())
+}
+
 func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {
 	return NewUpdateService(
 		&updateServiceCacheStub{},

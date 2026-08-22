@@ -5,15 +5,43 @@
       <span class="tabular-nums">{{ t('monitorCommon.nextUpdateIn', { n: countdownSeconds }) }}</span>
     </div>
 
-    <div class="flex h-5 w-full items-end gap-[3px]">
+    <div class="v3-timeline-bars" @mouseleave="clearHoveredBar">
       <div
         v-for="(bar, index) in displayBars"
         :key="bar.key"
-        class="v3-soft-glass-bar min-w-0 flex-1 rounded"
-        :class="bar.colorClass"
-        :style="{ height: `${bar.heightPct}%`, animationDelay: `${index * 18}ms` }"
-        :title="bar.title"
-      />
+        class="v3-bar-slot"
+        @mouseenter="setHoveredBar(index)"
+        @mouseleave="clearHoveredBar"
+      >
+        <button
+          type="button"
+          class="v3-bar-hitbox"
+          :class="{
+            'is-active': hoveredBarIndex === index,
+            'is-neighbor': isNeighbor(index),
+          }"
+          :aria-label="bar.title || '-'"
+          @focus="setHoveredBar(index)"
+          @blur="clearHoveredBar"
+        >
+          <span
+            class="v3-soft-glass-bar"
+            :class="bar.colorClass"
+            :style="{ height: `${bar.heightPct}%`, animationDelay: `${index * 18}ms` }"
+            aria-hidden="true"
+          />
+        </button>
+
+        <Transition name="v3-timeline-tooltip">
+          <div
+            v-if="hoveredBarIndex === index && bar.title"
+            class="v3-timeline-tooltip"
+            role="tooltip"
+          >
+            {{ bar.title }}
+          </div>
+        </Transition>
+      </div>
     </div>
 
     <div class="mt-1 flex justify-between text-[9px] uppercase tracking-widest text-gray-400">
@@ -24,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitorMatrixBucket } from '@/api/channelMonitorV2'
 import { availabilityBarClass, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
@@ -39,6 +67,19 @@ const props = withDefaults(defineProps<{
 })
 
 const { t, locale } = useI18n()
+const hoveredBarIndex = ref<number | null>(null)
+
+function setHoveredBar(index: number) {
+  hoveredBarIndex.value = index
+}
+
+function clearHoveredBar() {
+  hoveredBarIndex.value = null
+}
+
+function isNeighbor(index: number) {
+  return hoveredBarIndex.value !== null && Math.abs(index - hoveredBarIndex.value) === 1
+}
 
 const STATUS_STYLE = {
   healthy: { colorClass: 'bg-emerald-500', heightPct: 100 },
@@ -98,8 +139,113 @@ const displayBars = computed<TimelineBar[]>(() => {
 
 <style scoped>
 .v3-soft-glass-bar {
+	display: block;
+	width: 100%;
+	min-height: 3px;
+	border-radius: 3px;
   transform-origin: bottom;
   animation: v3-soft-glass-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.v3-timeline-bars {
+	display: flex;
+	align-items: flex-end;
+	gap: 3px;
+	height: 20px;
+	width: 100%;
+	isolation: isolate;
+}
+
+.v3-bar-slot {
+	position: relative;
+	display: flex;
+	align-items: flex-end;
+	min-width: 0;
+	height: 100%;
+	flex: 1 1 0%;
+}
+
+.v3-bar-hitbox {
+	position: relative;
+	display: flex;
+	align-items: flex-end;
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	cursor: crosshair;
+	transform: scaleX(1);
+	transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), opacity 140ms ease;
+}
+
+.v3-bar-hitbox:focus-visible {
+	outline: 2px solid rgb(59 130 246 / 0.6);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+.v3-bar-hitbox.is-active {
+	z-index: 3;
+	transform: translateY(-1px) scaleX(1.42);
+}
+
+.v3-bar-hitbox.is-active .v3-soft-glass-bar {
+	filter: saturate(1.12) brightness(1.05);
+	box-shadow: 0 4px 10px rgb(15 118 110 / 0.24);
+}
+
+.v3-bar-hitbox.is-neighbor {
+	z-index: 2;
+	opacity: 0.72;
+	transform: scaleX(0.74);
+}
+
+.v3-timeline-tooltip {
+	position: absolute;
+	left: 50%;
+	bottom: calc(100% + 8px);
+	z-index: 10;
+	width: max-content;
+	max-width: min(250px, 72vw);
+	transform: translateX(-50%);
+	border: 1px solid rgb(255 255 255 / 0.84);
+	border-radius: 9px;
+	background: rgb(15 23 42 / 0.92);
+	padding: 6px 9px;
+	color: rgb(248 250 252);
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1.35;
+	letter-spacing: 0;
+	white-space: normal;
+	box-shadow: 0 10px 24px rgb(15 23 42 / 0.2);
+	pointer-events: none;
+}
+
+.v3-timeline-tooltip::after {
+	position: absolute;
+	left: 50%;
+	bottom: -4px;
+	width: 7px;
+	height: 7px;
+	transform: translateX(-50%) rotate(45deg);
+	border-right: 1px solid rgb(255 255 255 / 0.84);
+	border-bottom: 1px solid rgb(255 255 255 / 0.84);
+	background: rgb(15 23 42 / 0.92);
+	content: '';
+}
+
+.v3-timeline-tooltip-enter-active,
+.v3-timeline-tooltip-leave-active {
+	transition: opacity 100ms ease, transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.v3-timeline-tooltip-enter-from,
+.v3-timeline-tooltip-leave-to {
+	opacity: 0;
+	transform: translateX(-50%) translateY(3px) scale(0.96);
 }
 
 @keyframes v3-soft-glass-rise {
@@ -116,6 +262,12 @@ const displayBars = computed<TimelineBar[]>(() => {
 @media (prefers-reduced-motion: reduce) {
   .v3-soft-glass-bar {
     animation: none;
+  }
+
+  .v3-bar-hitbox,
+  .v3-timeline-tooltip-enter-active,
+  .v3-timeline-tooltip-leave-active {
+    transition: none;
   }
 }
 </style>

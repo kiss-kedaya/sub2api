@@ -16,7 +16,7 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.183}
+    image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.184}
     container_name: sub2api
     restart: unless-stopped
     security_opt:
@@ -154,6 +154,18 @@ services:
       # Proxy for accessing GitHub (online updates + pricing data)
       # Examples: http://host:port, socks5://host:port
       - UPDATE_PROXY_URL=${UPDATE_PROXY_URL:-}
+      # Explicitly opt into the host-side orchestrator for Docker rollouts.
+      # The default binary strategy keeps ordinary/systemd deployments safe.
+      - UPDATE_STRATEGY=${UPDATE_STRATEGY:-binary}
+      - UPDATE_ORCHESTRATOR=${UPDATE_ORCHESTRATOR:-}
+      - UPDATE_RUNTIME_BINARY_PATH=${UPDATE_RUNTIME_BINARY_PATH:-}
+      - SUB2API_UPDATE_COMPOSE_FILE=${SUB2API_UPDATE_COMPOSE_FILE:-}
+      - SUB2API_UPDATE_PROJECT=${SUB2API_UPDATE_PROJECT:-}
+      - SUB2API_UPDATE_SERVICES=${SUB2API_UPDATE_SERVICES:-sub2api}
+      - SUB2API_UPDATE_HEALTH_URLS=${SUB2API_UPDATE_HEALTH_URLS:-}
+      - SUB2API_UPDATE_ENV_FILE=${SUB2API_UPDATE_ENV_FILE:-}
+      - SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS=${SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS:-120}
+      - SUB2API_UPDATE_VERSION_ENV=${SUB2API_UPDATE_VERSION_ENV:-SUB2API_VERSION}
 
       # =======================================================================
       # Image Generation Stream & Concurrency

@@ -10,7 +10,7 @@ docker run -d \
   -p 8080:8080 \
   -e DATABASE_URL="postgres://user:pass@host:5432/sub2api" \
   -e REDIS_URL="redis://host:6379" \
-  ghcr.io/kiss-kedaya/sub2api:0.1.183
+  ghcr.io/kiss-kedaya/sub2api:0.1.184
 ```
 
 ## Docker Compose
@@ -20,7 +20,7 @@ version: '3.8'
 
 services:
   sub2api:
-    image: ghcr.io/kiss-kedaya/sub2api:0.1.183
+    image: ghcr.io/kiss-kedaya/sub2api:0.1.184
     ports:
       - "8080:8080"
     environment:
@@ -69,6 +69,44 @@ volumes:
 - `x.y.z` - Specific version
 - `x.y` - Latest patch of minor version
 - `x` - Latest minor of major version
+
+## One-click rolling updates
+
+The admin version menu uses the regular binary updater by default. A Docker
+container cannot safely replace the executable inside its image, so production
+Compose deployments should opt into the host-side orchestrator instead.
+
+The image contains `update-orchestrator.sh` at
+`/usr/local/bin/sub2api-update`. Configure the application container with:
+
+```yaml
+environment:
+  UPDATE_STRATEGY: orchestrated
+  UPDATE_ORCHESTRATOR: /usr/local/bin/sub2api-update
+  SUB2API_UPDATE_COMPOSE_FILE: /opt/sub2api/docker-compose.yml
+  SUB2API_UPDATE_SERVICES: sub2api-1,sub2api-2,sub2api-3
+  SUB2API_UPDATE_HEALTH_URLS: http://127.0.0.1:7101/health,http://127.0.0.1:7102/health,http://127.0.0.1:7103/health
+  SUB2API_UPDATE_PROJECT: sub2api
+volumes:
+  - /var/run/docker.sock:/var/run/docker.sock
+  - /opt/sub2api:/opt/sub2api:ro
+```
+
+The application image includes the Docker CLI, but Docker socket access is
+intentionally opt-in because it grants host-level control. The Compose project
+must be mounted at the same path inside the updater container. The script then
+pulls the target image,
+recreates each configured service in order, waits for its health endpoint, and
+restores the previous version if any step fails. Compose files should use the
+version variable so the target image is unambiguous:
+
+```yaml
+image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.184}
+```
+
+The updater API does not expose arbitrary shell commands; it executes only the
+absolute path configured in `UPDATE_ORCHESTRATOR` and passes the current and
+target versions as arguments.
 
 ## Links
 

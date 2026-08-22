@@ -103,6 +103,14 @@ describe('channel-monitor-v2 design system structure', () => {
     expect(src).toContain('tab-active')
     expect(src).toContain('MonitorSettingsPanel')
   })
+
+  it('V3 timeline keeps hover details in a stable tooltip layer', () => {
+    const src = read('components/user/monitor/ChannelMonitorV3Timeline.vue')
+    expect(src).toContain('v3-bar-hitbox')
+    expect(src).toContain('is-neighbor')
+    expect(src).toContain('v3-timeline-tooltip')
+    expect(src).not.toContain(':title="bar.title"')
+  })
 })
 
 
