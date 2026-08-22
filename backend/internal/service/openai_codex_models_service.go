@@ -292,13 +292,23 @@ type configuredCodexModelDescriptor struct {
 	MultiAgentVersion                 any                             `json:"multi_agent_version"`
 }
 
+type codexModelMetadataOverride struct {
+	UpstreamModelMetadata
+	reasoningConflict       bool
+	inputModalitiesConflict bool
+}
+
 func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescriptor {
 	modelID = strings.TrimSpace(modelID)
+	noReasoningLevel := "none"
 	descriptor := configuredCodexModelDescriptor{
-		Slug:                              modelID,
-		DisplayName:                       modelID,
-		Description:                       "Custom model routed through Sub2API.",
-		SupportedReasoningLevels:          []configuredCodexReasoningLevel{},
+		Slug:                  modelID,
+		DisplayName:           modelID,
+		Description:           "Custom model routed through Sub2API.",
+		DefaultReasoningLevel: &noReasoningLevel,
+		SupportedReasoningLevels: []configuredCodexReasoningLevel{
+			{Effort: "none", Description: configuredCodexReasoningLevelDescription("none")},
+		},
 		ShellType:                         "unified_exec",
 		Visibility:                        "list",
 		SupportedInAPI:                    true,
@@ -606,7 +616,7 @@ func claudeCodexDisplayName(modelID string) string {
 // routed through a custom provider. The response is also suitable for saving
 // as model_catalog_json in clients that do not refresh custom-provider catalogs.
 func BuildCodexModelsManifest(modelIDs []string) ([]byte, error) {
-	return buildCodexModelsManifest(modelIDs, nil, nil)
+	return buildCodexModelsManifest(modelIDs, nil, nil, nil)
 }
 
 // BuildCodexModelsManifestForGroup derives input capabilities from the
@@ -626,7 +636,7 @@ func (s *GatewayService) BuildCodexModelsManifestForGroup(
 	if effectivePlatform == "" {
 		effectivePlatform = group.Platform
 	}
-	if effectivePlatform != PlatformOpenAI && effectivePlatform != PlatformGrok && effectivePlatform != PlatformComposite {
+	if effectivePlatform != PlatformComposite && !isConcreteRequestPlatform(effectivePlatform) {
 		return BuildCodexModelsManifest(modelIDs)
 	}
 
@@ -650,7 +660,9 @@ func (s *GatewayService) BuildCodexModelsManifestForGroup(
 		compositeRoutes,
 		compositeRoutesAvailable,
 	)
+	modelMetadata := make(map[string]codexModelMetadataOverride, len(modelIDs))
 	for _, modelID := range modelIDs {
+		modelID = strings.TrimSpace(modelID)
 		if groupCodexModelSupportsImageInput(
 			effectivePlatform,
 			modelID,
@@ -658,13 +670,27 @@ func (s *GatewayService) BuildCodexModelsManifestForGroup(
 			compositeRoutes,
 			compositeRoutesAvailable,
 		) {
-			imageInputModels[strings.TrimSpace(modelID)] = true
+			imageInputModels[modelID] = true
+		}
+		if metadata, ok := groupCodexModelMetadata(
+			effectivePlatform,
+			modelID,
+			accounts,
+			compositeRoutes,
+			compositeRoutesAvailable,
+		); ok {
+			modelMetadata[modelID] = metadata
 		}
 	}
-	return buildCodexModelsManifest(modelIDs, imageInputModels, metadataModels)
+	return buildCodexModelsManifest(modelIDs, imageInputModels, metadataModels, modelMetadata)
 }
 
-func buildCodexModelsManifest(modelIDs []string, imageInputModels map[string]bool, metadataModels map[string]string) ([]byte, error) {
+func buildCodexModelsManifest(
+	modelIDs []string,
+	imageInputModels map[string]bool,
+	metadataModels map[string]string,
+	modelMetadata map[string]codexModelMetadataOverride,
+) ([]byte, error) {
 	seen := make(map[string]struct{}, len(modelIDs))
 	models := make([]configuredCodexModelDescriptor, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
@@ -687,6 +713,9 @@ func buildCodexModelsManifest(modelIDs []string, imageInputModels map[string]boo
 		descriptor.Slug = modelID
 		if imageInputModels[modelID] {
 			descriptor.InputModalities = []string{"text", "image"}
+		}
+		if metadata, ok := modelMetadata[modelID]; ok {
+			applyUpstreamModelMetadataToCodexDescriptor(&descriptor, metadata)
 		}
 		models = append(models, descriptor)
 	}

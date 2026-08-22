@@ -182,8 +182,11 @@ func TestNewConfiguredCodexModelDescriptorUsesProviderMetadataAndSafeFallback(t 
 
 	grokNonReasoning := newConfiguredCodexModelDescriptor("grok-4.20-0309-non-reasoning")
 	require.Equal(t, "Grok 4.20 Non Reasoning", grokNonReasoning.DisplayName)
-	require.Nil(t, grokNonReasoning.DefaultReasoningLevel)
-	require.Empty(t, grokNonReasoning.SupportedReasoningLevels)
+	require.NotNil(t, grokNonReasoning.DefaultReasoningLevel)
+	require.Equal(t, "none", *grokNonReasoning.DefaultReasoningLevel)
+	require.Equal(t, []configuredCodexReasoningLevel{
+		{Effort: "none", Description: configuredCodexReasoningLevelDescription("none")},
+	}, grokNonReasoning.SupportedReasoningLevels)
 
 	claude := newConfiguredCodexModelDescriptor("claude-opus-4-6")
 	require.Equal(t, "Claude Opus 4.6", claude.DisplayName)
@@ -203,8 +206,9 @@ func TestNewConfiguredCodexModelDescriptorUsesProviderMetadataAndSafeFallback(t 
 
 	claudeHaiku := newConfiguredCodexModelDescriptor("claude-haiku-4-5-20251001")
 	require.Equal(t, "Claude Haiku 4.5", claudeHaiku.DisplayName)
-	require.Nil(t, claudeHaiku.DefaultReasoningLevel)
-	require.Empty(t, claudeHaiku.SupportedReasoningLevels)
+	require.NotNil(t, claudeHaiku.DefaultReasoningLevel)
+	require.Equal(t, "none", *claudeHaiku.DefaultReasoningLevel)
+	require.Equal(t, []string{"none"}, effortsFromConfiguredCodexLevels(claudeHaiku.SupportedReasoningLevels))
 
 	gpt56 := newConfiguredCodexModelDescriptor("gpt-5.6-sol")
 	require.Equal(t, "GPT-5.6 Sol", gpt56.DisplayName)
@@ -238,20 +242,25 @@ func TestNewConfiguredCodexModelDescriptorUsesProviderMetadataAndSafeFallback(t 
 
 	gpt4o := newConfiguredCodexModelDescriptor("gpt-4o")
 	require.Equal(t, "gpt-4o", gpt4o.DisplayName)
-	require.Nil(t, gpt4o.DefaultReasoningLevel)
-	require.Empty(t, gpt4o.SupportedReasoningLevels)
+	require.NotNil(t, gpt4o.DefaultReasoningLevel)
+	require.Equal(t, "none", *gpt4o.DefaultReasoningLevel)
+	require.Equal(t, []string{"none"}, effortsFromConfiguredCodexLevels(gpt4o.SupportedReasoningLevels))
 	require.True(t, gpt4o.SupportsParallelToolCalls)
 
 	image := newConfiguredCodexModelDescriptor("gpt-image-2")
 	require.Equal(t, "gpt-image-2", image.DisplayName)
-	require.Nil(t, image.DefaultReasoningLevel)
-	require.Empty(t, image.SupportedReasoningLevels)
+	require.NotNil(t, image.DefaultReasoningLevel)
+	require.Equal(t, "none", *image.DefaultReasoningLevel)
+	require.Equal(t, []string{"none"}, effortsFromConfiguredCodexLevels(image.SupportedReasoningLevels))
 
 	custom := newConfiguredCodexModelDescriptor("company-coding-model")
 	require.Equal(t, "company-coding-model", custom.DisplayName)
 	require.Equal(t, int64(272_000), custom.ContextWindow)
-	require.Nil(t, custom.DefaultReasoningLevel)
-	require.Empty(t, custom.SupportedReasoningLevels)
+	require.NotNil(t, custom.DefaultReasoningLevel)
+	require.Equal(t, "none", *custom.DefaultReasoningLevel)
+	require.Equal(t, []configuredCodexReasoningLevel{
+		{Effort: "none", Description: configuredCodexReasoningLevelDescription("none")},
+	}, custom.SupportedReasoningLevels)
 	require.False(t, custom.SupportsParallelToolCalls)
 	require.NotEmpty(t, custom.ModelMessages.InstructionsTemplate)
 	require.Equal(t, "auto", custom.DefaultReasoningSummary)
@@ -264,6 +273,40 @@ func effortsFromConfiguredCodexLevels(levels []configuredCodexReasoningLevel) []
 		efforts = append(efforts, level.Effort)
 	}
 	return efforts
+}
+
+// Scenario: 无推理模型可直接选中。
+func TestBuildCodexModelsManifestUsesSingleNoneReasoningChoiceForCustomModel(t *testing.T) {
+	t.Parallel()
+
+	body, err := BuildCodexModelsManifest([]string{"company-coding-model"})
+	require.NoError(t, err)
+	models := decodeCodexManifestModels(t, body)
+	require.Len(t, models, 1)
+	require.Equal(t, "none", models[0]["default_reasoning_level"])
+	levels, ok := models[0]["supported_reasoning_levels"].([]any)
+	require.True(t, ok)
+	require.Len(t, levels, 1)
+	firstLevel, ok := levels[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "none", firstLevel["effort"])
+}
+
+// Scenario: 已知推理模型保留真实档位。
+func TestBuildCodexModelsManifestKeepsKnownReasoningChoices(t *testing.T) {
+	t.Parallel()
+
+	body, err := BuildCodexModelsManifest([]string{"gpt-5.6-sol"})
+	require.NoError(t, err)
+	models := decodeCodexManifestModels(t, body)
+	require.Len(t, models, 1)
+	require.Equal(t, "low", models[0]["default_reasoning_level"])
+	levels, ok := models[0]["supported_reasoning_levels"].([]any)
+	require.True(t, ok)
+	require.Len(t, levels, 6)
+	firstLevel, ok := levels[0].(map[string]any)
+	require.True(t, ok)
+	require.NotEqual(t, "none", firstLevel["effort"])
 }
 
 // Scenario: 专用图片生成模型不进入 Codex 主模型目录。
@@ -679,7 +722,7 @@ func TestBuildCodexModelsManifestForGroupLoadsAccountsOnce(t *testing.T) {
 	require.Equal(t, int32(1), repo.calls.Load())
 }
 
-func TestBuildCodexModelsManifestForGroupSkipsCapabilityLookupForTextOnlyPlatform(t *testing.T) {
+func TestBuildCodexModelsManifestForGroupUsesFallbackWhenTextOnlyPlatformHasNoSnapshot(t *testing.T) {
 	t.Parallel()
 
 	repo := &countingCodexModelsAccountRepo{}
@@ -691,7 +734,7 @@ func TestBuildCodexModelsManifestForGroupSkipsCapabilityLookupForTextOnlyPlatfor
 		[]string{"deepseek-v4-pro"},
 	)
 	require.NoError(t, err)
-	require.Equal(t, int32(0), repo.calls.Load())
+	require.Equal(t, int32(1), repo.calls.Load())
 
 	models := decodeCodexManifestModels(t, body)
 	require.Len(t, models, 1)
