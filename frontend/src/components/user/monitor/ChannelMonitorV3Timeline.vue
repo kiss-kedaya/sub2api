@@ -1,17 +1,17 @@
 <template>
-  <div class="mt-4 border-t border-gray-100 pt-3 dark:border-dark-700/60">
+  <div class="mt-4 border-t border-white/70 pt-3 dark:border-dark-700/60">
     <div class="mb-2 flex justify-between text-[10px] font-semibold uppercase tracking-widest text-gray-400">
       <span>{{ t('monitorCommon.history60pts', { n: length }) }}</span>
       <span class="tabular-nums">{{ t('monitorCommon.nextUpdateIn', { n: countdownSeconds }) }}</span>
     </div>
 
-    <div class="flex h-5 w-full items-end gap-[2px]">
+    <div class="flex h-5 w-full items-end gap-[3px]">
       <div
-        v-for="bar in displayBars"
+        v-for="(bar, index) in displayBars"
         :key="bar.key"
-        class="min-w-0 flex-1 rounded-sm"
+        class="v3-soft-glass-bar min-w-0 flex-1 rounded"
         :class="bar.colorClass"
-        :style="{ height: `${bar.heightPct}%` }"
+        :style="{ height: `${bar.heightPct}%`, animationDelay: `${index * 18}ms` }"
         :title="bar.title"
       />
     </div>
@@ -95,3 +95,27 @@ const displayBars = computed<TimelineBar[]>(() => {
   return bars
 })
 </script>
+
+<style scoped>
+.v3-soft-glass-bar {
+  transform-origin: bottom;
+  animation: v3-soft-glass-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes v3-soft-glass-rise {
+  from {
+    transform: scaleY(0.15);
+    opacity: 0.3;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v3-soft-glass-bar {
+    animation: none;
+  }
+}
+</style>
