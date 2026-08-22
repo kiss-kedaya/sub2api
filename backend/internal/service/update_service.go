@@ -201,7 +201,7 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
-		return err
+		return normalizeUpdateError(err)
 	}
 
 	if !info.HasUpdate {
@@ -209,10 +209,20 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 	}
 
 	if s.updateRuntime.strategy == updateStrategyOrchestrated {
-		return s.performOrchestratedUpdate(ctx, info)
+		return normalizeUpdateError(s.performOrchestratedUpdate(ctx, info))
 	}
 
-	return s.applyReleaseAssets(ctx, info.ReleaseInfo.Assets)
+	return normalizeUpdateError(s.applyReleaseAssets(ctx, info.ReleaseInfo.Assets))
+}
+
+// normalizeUpdateError keeps update failures actionable for administrators.
+// The generic response layer intentionally hides raw errors, so untyped
+// download/orchestrator failures would otherwise become only "internal error".
+func normalizeUpdateError(err error) error {
+	if err == nil || infraerrors.Reason(err) != "" {
+		return err
+	}
+	return infraerrors.InternalServer("UPDATE_FAILED", err.Error()).WithCause(err)
 }
 
 // NeedsRestart reports whether the caller must restart the current process.
@@ -389,13 +399,13 @@ func (s *UpdateService) updateTargetPath() (string, error) {
 
 // Rollback restores the previous version
 func (s *UpdateService) Rollback() error {
-	exePath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
+	if s.updateRuntime.strategy == updateStrategyOrchestrated {
+		return infraerrors.BadRequest("ROLLBACK_VERSION_REQUIRED", "select a release version for Docker rollback")
 	}
-	exePath, err = filepath.EvalSymlinks(exePath)
+
+	exePath, err := s.updateTargetPath()
 	if err != nil {
-		return fmt.Errorf("failed to resolve symlinks: %w", err)
+		return err
 	}
 
 	backupFile := exePath + ".backup"

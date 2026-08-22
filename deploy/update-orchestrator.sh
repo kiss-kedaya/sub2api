@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Host-side updater for Docker Compose deployments.
-# The application calls this script only when UPDATE_STRATEGY=orchestrated.
-# It deliberately owns the full transaction so a failed health check restores
-# the previous image before returning an error to the admin API.
+# Host-side updater for Docker Compose deployments. The application invokes
+# this script only when UPDATE_STRATEGY=orchestrated. Image mode pulls a new
+# image; runtime mode downloads the release binary into a mounted path. Both
+# modes roll services one at a time and restore the previous state on failure.
 
 COMPOSE_FILE="${SUB2API_UPDATE_COMPOSE_FILE:-}"
 COMPOSE_PROJECT="${SUB2API_UPDATE_PROJECT:-}"
@@ -12,10 +12,16 @@ SERVICES_RAW="${SUB2API_UPDATE_SERVICES:-sub2api}"
 HEALTH_URLS_RAW="${SUB2API_UPDATE_HEALTH_URLS:-${SUB2API_UPDATE_HEALTH_URL:-}}"
 HEALTH_TIMEOUT="${SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS:-120}"
 ENV_FILE="${SUB2API_UPDATE_ENV_FILE:-}"
+UPDATE_MODE="${SUB2API_UPDATE_MODE:-image}"
+RUNTIME_PATH="${SUB2API_UPDATE_RUNTIME_PATH:-}"
+REPOSITORY="${SUB2API_UPDATE_REPOSITORY:-kiss-kedaya/sub2api}"
 
 CURRENT_VERSION=""
 TARGET_VERSION=""
 RELEASE_URL=""
+RUNTIME_BACKUP=""
+RUNTIME_HAD_PREVIOUS=false
+RUNTIME_CHANGED=false
 
 # Service names are identifiers, so whitespace around comma-separated values
 # is unambiguous and can be ignored safely.
@@ -38,6 +44,9 @@ Required environment:
   SUB2API_UPDATE_COMPOSE_FILE   Compose file used by the production service
 
 Optional environment:
+  SUB2API_UPDATE_MODE            image (default) or runtime
+  SUB2API_UPDATE_RUNTIME_PATH    Absolute host path for runtime mode
+  SUB2API_UPDATE_REPOSITORY      GitHub repository (default: kiss-kedaya/sub2api)
   SUB2API_UPDATE_PROJECT         Compose project name
   SUB2API_UPDATE_SERVICES        Comma-separated app services, in rollout order
   SUB2API_UPDATE_HEALTH_URLS     Comma-separated health URLs, one per service
@@ -66,6 +75,14 @@ if [[ ! "$CURRENT_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
 fi
 if [[ ! "$TARGET_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
   fail "invalid target version: $TARGET_VERSION"
+fi
+case "$UPDATE_MODE" in
+  image|runtime) ;;
+  *) fail "invalid SUB2API_UPDATE_MODE: $UPDATE_MODE (expected image or runtime)" ;;
+esac
+if [ "$UPDATE_MODE" = runtime ]; then
+  [ -n "$RUNTIME_PATH" ] || fail 'SUB2API_UPDATE_RUNTIME_PATH is required in runtime mode'
+  [[ "$RUNTIME_PATH" = /* ]] || fail 'SUB2API_UPDATE_RUNTIME_PATH must be absolute'
 fi
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
@@ -134,13 +151,21 @@ compose_with_version() {
 
 health_url_for() {
   local index="$1"
+  local configured=""
   if [ "${#HEALTH_URLS[@]}" -eq 0 ] || [ -z "${HEALTH_URLS[0]:-}" ]; then
     return 0
   fi
-  if [ "$index" -lt "${#HEALTH_URLS[@]}" ] && [ -n "${HEALTH_URLS[$index]}" ]; then
-    printf '%s' "${HEALTH_URLS[$index]}"
-  else
-    printf '%s' "${HEALTH_URLS[0]}"
+  if [ "$index" -lt "${#HEALTH_URLS[@]}" ]; then
+    configured="${HEALTH_URLS[$index]}"
+  elif [ "${#HEALTH_URLS[@]}" -eq 1 ]; then
+    # Backward-compatible single URL configuration.
+    configured="${HEALTH_URLS[0]}"
+  fi
+  if [ "$configured" = container ] || [ "$configured" = - ]; then
+    return 0
+  fi
+  if [ -n "$configured" ]; then
+    printf '%s' "$configured"
   fi
 }
 
@@ -157,24 +182,126 @@ wait_for_health() {
   done
 }
 
+wait_for_container_health() {
+  local service="$1"
+  command -v docker >/dev/null 2>&1 || fail 'docker is required for container health checks'
+  local deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
+  local container=""
+  local state=""
+  until [ -n "$container" ] && [ "$state" = healthy ]; do
+    container="$(compose ps -q "$service" 2>/dev/null | tail -n 1)"
+    if [ -n "$container" ]; then
+      state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
+    fi
+    if [ "$state" = unhealthy ] || [ "$state" = exited ] || [ "$state" = dead ]; then
+      return 1
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      return 1
+    fi
+    [ "$state" = healthy ] || sleep 2
+  done
+}
+
+wait_for_service() {
+  local service="$1"
+  local index="$2"
+  local url
+  url="$(health_url_for "$index")"
+  if [ -n "$url" ]; then
+    wait_for_health "$url"
+  else
+    wait_for_container_health "$service"
+  fi
+}
+
+download_runtime_binary() {
+  command -v curl >/dev/null 2>&1 || fail 'curl is required for runtime updates'
+  command -v tar >/dev/null 2>&1 || fail 'tar is required for runtime updates'
+  command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required for runtime updates'
+
+  local os arch archive base_url archive_path checksum_path expected actual extracted
+  case "$(uname -s)" in
+    Linux) os=linux ;;
+    Darwin) os=darwin ;;
+    *) fail "unsupported update operating system: $(uname -s)" ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) fail "unsupported update architecture: $(uname -m)" ;;
+  esac
+
+  archive="sub2api_${TARGET_VERSION}_${os}_${arch}.tar.gz"
+  base_url="https://github.com/${REPOSITORY}/releases/download/v${TARGET_VERSION}"
+  archive_path="$backup_dir/$archive"
+  checksum_path="$backup_dir/checksums.txt"
+
+  log "downloading runtime asset $archive"
+  curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 900 \
+    "$base_url/$archive" -o "$archive_path"
+  curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 60 \
+    "$base_url/checksums.txt" -o "$checksum_path"
+
+  expected="$(awk -v file="$archive" '$2 == file { print $1; exit }' "$checksum_path")"
+  [ -n "$expected" ] || fail "checksum entry not found for $archive"
+  actual="$(sha256sum "$archive_path" | awk '{print $1}')"
+  [ "$actual" = "$expected" ] || fail "checksum mismatch for $archive"
+
+  tar -xzf "$archive_path" -C "$backup_dir"
+  extracted="$backup_dir/sub2api"
+  [ -f "$extracted" ] || fail "release archive did not contain sub2api"
+  chmod 0755 "$extracted"
+
+  mkdir -p "$(dirname "$RUNTIME_PATH")"
+  if [ -f "$RUNTIME_PATH" ]; then
+    cp -p "$RUNTIME_PATH" "$backup_dir/runtime.backup"
+    RUNTIME_BACKUP="$backup_dir/runtime.backup"
+    RUNTIME_HAD_PREVIOUS=true
+  fi
+  local staged="$RUNTIME_PATH.tmp.$$"
+  cp -p "$extracted" "$staged"
+  chmod 0755 "$staged"
+  mv -f "$staged" "$RUNTIME_PATH"
+  RUNTIME_CHANGED=true
+}
+
+restore_runtime() {
+  [ "$RUNTIME_CHANGED" = true ] || return 0
+  if [ "$RUNTIME_HAD_PREVIOUS" = true ] && [ -f "$RUNTIME_BACKUP" ]; then
+    local staged="$RUNTIME_PATH.rollback.$$"
+    cp -p "$RUNTIME_BACKUP" "$staged"
+    chmod 0755 "$staged"
+    mv -f "$staged" "$RUNTIME_PATH"
+  else
+    rm -f "$RUNTIME_PATH"
+  fi
+  RUNTIME_CHANGED=false
+}
+
 rollback() {
   log "rolling back to $CURRENT_VERSION"
+  if [ "$UPDATE_MODE" = runtime ]; then
+    restore_runtime || return 1
+  fi
   local index=0
   for service in "${SERVICES[@]}"; do
     service="$(printf '%s' "$service" | xargs)"
     [ -n "$service" ] || continue
     log "restarting $service at $CURRENT_VERSION"
     compose_with_version "$CURRENT_VERSION" up -d --no-deps --force-recreate "$service" || return 1
-    local url
-    url="$(health_url_for "$index")"
-    wait_for_health "$url" || return 1
+    wait_for_service "$service" "$index" || return 1
     index=$((index + 1))
   done
 }
 
-log "pulling $TARGET_VERSION from $RELEASE_URL"
-if ! compose_with_version "$TARGET_VERSION" pull "${SERVICES[@]}"; then
-  fail 'image pull failed; no services were changed'
+if [ "$UPDATE_MODE" = runtime ]; then
+  download_runtime_binary
+else
+  log "pulling $TARGET_VERSION from $RELEASE_URL"
+  if ! compose_with_version "$TARGET_VERSION" pull "${SERVICES[@]}"; then
+    fail 'image pull failed; no services were changed'
+  fi
 fi
 
 index=0
@@ -187,8 +314,7 @@ for service in "${SERVICES[@]}"; do
     rollback || fail 'rollout failed and rollback also failed'
     fail 'rollout failed; previous version restored'
   fi
-  url="$(health_url_for "$index")"
-  if ! wait_for_health "$url"; then
+  if ! wait_for_service "$service" "$index"; then
     log "health check failed for $service; starting rollback"
     rollback || fail 'health check failed and rollback also failed'
     fail 'health check failed; previous version restored'

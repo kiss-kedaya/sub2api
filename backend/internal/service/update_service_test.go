@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -98,6 +99,22 @@ func TestUpdateServiceNeedsRestartDependsOnStrategy(t *testing.T) {
 	t.Setenv("UPDATE_STRATEGY", "binary")
 	binary := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.132", "release")
 	require.True(t, binary.NeedsRestart())
+}
+
+func TestNormalizeUpdateErrorPreservesActionableMessage(t *testing.T) {
+	err := normalizeUpdateError(errors.New("checksum mismatch for release asset"))
+
+	require.Equal(t, "UPDATE_FAILED", infraerrors.Reason(err))
+	require.Equal(t, "checksum mismatch for release asset", infraerrors.Message(err))
+}
+
+func TestOrchestratedRollbackRequiresReleaseVersion(t *testing.T) {
+	t.Setenv("UPDATE_STRATEGY", "orchestrated")
+
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.132", "release")
+	err := svc.Rollback()
+
+	require.Equal(t, "ROLLBACK_VERSION_REQUIRED", infraerrors.Reason(err))
 }
 
 func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {

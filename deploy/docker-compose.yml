@@ -16,9 +16,10 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.186}
+    image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.187}
     container_name: sub2api
     restart: unless-stopped
+    command: ["${SUB2API_COMMAND:-/app/sub2api}"]
     security_opt:
       - no-new-privileges:true
     ulimits:
@@ -159,6 +160,9 @@ services:
       - UPDATE_STRATEGY=${UPDATE_STRATEGY:-binary}
       - UPDATE_ORCHESTRATOR=${UPDATE_ORCHESTRATOR:-}
       - UPDATE_RUNTIME_BINARY_PATH=${UPDATE_RUNTIME_BINARY_PATH:-}
+      - SUB2API_UPDATE_MODE=${SUB2API_UPDATE_MODE:-image}
+      - SUB2API_UPDATE_RUNTIME_PATH=${SUB2API_UPDATE_RUNTIME_PATH:-}
+      - SUB2API_UPDATE_REPOSITORY=${SUB2API_UPDATE_REPOSITORY:-kiss-kedaya/sub2api}
       - SUB2API_UPDATE_COMPOSE_FILE=${SUB2API_UPDATE_COMPOSE_FILE:-}
       - SUB2API_UPDATE_PROJECT=${SUB2API_UPDATE_PROJECT:-}
       - SUB2API_UPDATE_SERVICES=${SUB2API_UPDATE_SERVICES:-sub2api}
