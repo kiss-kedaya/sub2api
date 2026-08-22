@@ -74,7 +74,7 @@ volumes:
 
 The admin version menu uses the regular binary updater by default. A Docker
 container cannot safely replace the executable inside its image, so production
-Compose deployments should opt into the host-side orchestrator instead.
+Compose deployments should opt into the orchestrated updater instead.
 
 The image contains `update-orchestrator.sh` at
 `/usr/local/bin/sub2api-update`. Configure the application container with:
@@ -88,9 +88,14 @@ environment:
   SUB2API_UPDATE_SERVICES: sub2api-1,sub2api-2,sub2api-3
   SUB2API_UPDATE_HEALTH_URLS: http://127.0.0.1:7101/health,http://127.0.0.1:7102/health,http://127.0.0.1:7103/health
   SUB2API_UPDATE_PROJECT: sub2api
+  # Optional when .env is mode 600 and the app runs as a non-root user.
+  SUB2API_UPDATE_HELPER_IMAGE: ghcr.io/kiss-kedaya/sub2api:0.1.190
 volumes:
   - /var/run/docker.sock:/var/run/docker.sock
   - /opt/sub2api:/opt/sub2api:ro
+# Match the host socket group (get it with: stat -c '%g' /var/run/docker.sock).
+group_add:
+  - "989"
 ```
 
 The application image includes the Docker CLI, but Docker socket access is
@@ -98,8 +103,10 @@ intentionally opt-in because it grants host-level control. The Compose project
 must be mounted at the same path inside the updater container. In `image` mode
 the script pulls the target image, recreates each configured service in order,
 waits for its health endpoint, and restores the previous version if any step
-fails. Compose files should use the version variable so the target image is
-unambiguous:
+fails. If the mounted `.env` is root-only, the script starts the configured
+helper image as UID 0 with only the Compose file, env file, and Docker socket
+mounted; it never changes secret-file permissions. Compose files should use the
+version variable so the target image is unambiguous:
 
 ```yaml
 image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.190}
@@ -108,19 +115,33 @@ image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.190}
 When the release image is private or the deployment uses a locally built image,
 use `runtime` mode instead. It downloads and verifies the matching release
 binary, atomically replaces a mounted runtime path, and then performs the same
-rolling health checks and rollback. The service command must execute that path:
+rolling health checks and rollback. For Docker, the path must be the path inside
+the updater container and services are found by Compose labels, so no Compose
+file or `.env` read is needed during the rollout:
 
 ```yaml
 environment:
   UPDATE_STRATEGY: orchestrated
   UPDATE_ORCHESTRATOR: /usr/local/bin/sub2api-update
   SUB2API_UPDATE_MODE: runtime
-  SUB2API_UPDATE_RUNTIME_PATH: /opt/sub2api/runtime/sub2api
-  SUB2API_UPDATE_REPOSITORY: kiss-kedaya/sub2api
+   SUB2API_UPDATE_RUNTIME_PATH: /app/runtime/sub2api
+   SUB2API_UPDATE_REPOSITORY: kiss-kedaya/sub2api
+   SUB2API_UPDATE_PROJECT: sub2api
+   SUB2API_UPDATE_SERVICES: api,worker
 command: ["/app/runtime/sub2api"]
 volumes:
-  - /opt/sub2api/runtime:/app/runtime
+   - /opt/sub2api/runtime:/app/runtime
+   - /var/run/docker.sock:/var/run/docker.sock
+group_add:
+   - "989"
 ```
+
+For a source-built systemd service, keep `UPDATE_STRATEGY=orchestrated`, set
+`SUB2API_UPDATE_MODE=runtime`, point `SUB2API_UPDATE_RUNTIME_PATH` at the
+installed binary, and provide a fixed command such as
+`SUB2API_UPDATE_RESTART_COMMAND="systemctl restart sub2api"`. Use health URLs
+for every service; the command is executed only after checksum verification and
+is never accepted from the HTTP request.
 
 The updater API does not expose arbitrary shell commands; it executes only the
 absolute path configured in `UPDATE_ORCHESTRATOR` and passes the current and
