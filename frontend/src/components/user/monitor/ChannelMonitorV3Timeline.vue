@@ -11,7 +11,6 @@
         :key="bar.key"
         class="v3-bar-slot"
         @mouseenter="setHoveredBar(index)"
-        @mouseleave="clearHoveredBar"
       >
         <button
           type="button"
@@ -21,17 +20,17 @@
             'is-neighbor': barDistance(index) === 1,
             'is-pressed': hoveredBarIndex !== null && barDistance(index) > 0,
           }"
-          :style="barMotionStyle(index)"
           :aria-label="bar.title || '-'"
           @focus="setHoveredBar(index)"
           @blur="clearHoveredBar"
         >
-          <span
-            class="v3-soft-glass-bar"
-            :class="bar.colorClass"
-            :style="{ height: `${bar.heightPct}%`, animationDelay: `${index * 18}ms` }"
-            aria-hidden="true"
-          />
+          <span class="v3-bar-visual" :style="barMotionStyle(index)" aria-hidden="true">
+            <span
+              class="v3-soft-glass-bar"
+              :class="bar.colorClass"
+              :style="{ height: `${bar.heightPct}%`, animationDelay: `${index * 18}ms` }"
+            />
+          </span>
         </button>
 
         <Transition name="v3-timeline-tooltip">
@@ -93,13 +92,15 @@ function barMotionStyle(index: number) {
     }
   }
 
-  // A soft pressure field keeps the track width stable while bars farther
-  // from the pointer progressively relax back to their resting scale.
-  const pressure = Math.exp(-distance / 2.6)
-  const scale = distance === 0 ? 1.28 : 1 - 0.18 * pressure
+  // Keep the hit target fixed. Only the visual layer responds, so its
+  // transformed bounds can never move the pointer between neighboring bars.
+  const pressure = Math.exp(-distance / 2.8)
+  const scaleX = distance === 0 ? 1.08 : 0.98 - 0.02 * pressure
+  const scaleY = distance === 0 ? 1.1 : 1 - 0.06 * pressure
   const opacity = distance === 0 ? 1 : 0.8 + (0.2 * (1 - pressure))
   return {
-    '--bar-scale': scale.toFixed(3),
+    '--bar-scale-x': scaleX.toFixed(3),
+    '--bar-scale-y': scaleY.toFixed(3),
     '--bar-opacity': opacity.toFixed(3),
     '--bar-lift': distance === 0 ? '-1px' : '0px',
   }
@@ -176,6 +177,7 @@ const displayBars = computed<TimelineBar[]>(() => {
 	position: relative;
 	height: 20px;
 	width: 100%;
+	gap: 4px;
 	isolation: isolate;
 }
 
@@ -199,10 +201,20 @@ const displayBars = computed<TimelineBar[]>(() => {
 	border: 0;
 	background: transparent;
 	cursor: crosshair;
-	transform: translateY(var(--bar-lift, 0px)) scaleX(var(--bar-scale, 1));
+	appearance: none;
+}
+
+.v3-bar-visual {
+	display: flex;
+	align-items: flex-end;
+	width: 100%;
+	height: 100%;
+	transform: translateY(var(--bar-lift, 0px)) scaleX(var(--bar-scale-x, 1)) scaleY(var(--bar-scale-y, 1));
+	transform-origin: center bottom;
 	opacity: var(--bar-opacity, 1);
+	pointer-events: none;
 	will-change: transform, opacity;
-	transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 260ms ease;
+	transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease;
 }
 
 .v3-bar-hitbox:focus-visible {
@@ -213,7 +225,6 @@ const displayBars = computed<TimelineBar[]>(() => {
 
 .v3-bar-hitbox.is-active {
 	z-index: 3;
-	transform: translateY(-1px) scaleX(1.42);
 }
 
 .v3-bar-hitbox.is-active .v3-soft-glass-bar {
