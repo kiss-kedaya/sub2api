@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Host-side updater for Docker Compose deployments. The application invokes
+# Update coordinator for Docker and source deployments. The application invokes
 # this script only when UPDATE_STRATEGY=orchestrated. Image mode pulls a new
-# image; runtime mode downloads the release binary into a mounted path. Both
-# modes roll services one at a time and restore the previous state on failure.
+# image through Compose; runtime mode verifies and atomically swaps a release
+# binary, then restarts services through Docker labels or a configured service
+# manager command. Both modes roll services one at a time and restore the
+# previous state on failure.
 
 COMPOSE_FILE="${SUB2API_UPDATE_COMPOSE_FILE:-}"
 COMPOSE_PROJECT="${SUB2API_UPDATE_PROJECT:-}"
@@ -15,6 +17,10 @@ ENV_FILE="${SUB2API_UPDATE_ENV_FILE:-}"
 UPDATE_MODE="${SUB2API_UPDATE_MODE:-image}"
 RUNTIME_PATH="${SUB2API_UPDATE_RUNTIME_PATH:-}"
 REPOSITORY="${SUB2API_UPDATE_REPOSITORY:-kiss-kedaya/sub2api}"
+RESTART_COMMAND="${SUB2API_UPDATE_RESTART_COMMAND:-}"
+HELPER_IMAGE="${SUB2API_UPDATE_HELPER_IMAGE:-${SUB2API_IMAGE:-}}"
+HELPER_ACTIVE="${SUB2API_UPDATE_HELPER_ACTIVE:-}"
+RUNTIME_BACKEND=""
 
 CURRENT_VERSION=""
 TARGET_VERSION=""
@@ -45,12 +51,16 @@ Required environment:
 
 Optional environment:
   SUB2API_UPDATE_MODE            image (default) or runtime
-  SUB2API_UPDATE_RUNTIME_PATH    Absolute host path for runtime mode
+  SUB2API_UPDATE_RUNTIME_PATH    Path visible to this process for runtime mode
   SUB2API_UPDATE_REPOSITORY      GitHub repository (default: kiss-kedaya/sub2api)
   SUB2API_UPDATE_PROJECT         Compose project name
   SUB2API_UPDATE_SERVICES        Comma-separated app services, in rollout order
   SUB2API_UPDATE_HEALTH_URLS     Comma-separated health URLs, one per service
   SUB2API_UPDATE_ENV_FILE        Env file used by Compose
+  SUB2API_UPDATE_RESTART_COMMAND Command used by runtime mode outside Docker;
+                                  use {service} as a per-service placeholder
+  SUB2API_UPDATE_HELPER_IMAGE    Root helper image for image mode when the env
+                                  file is not readable by the application user
   SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS (default: 120)
   SUB2API_UPDATE_VERSION_ENV     Variable name used by the image tag (default: SUB2API_VERSION)
 EOF
@@ -66,8 +76,6 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-[ -n "$COMPOSE_FILE" ] || fail 'SUB2API_UPDATE_COMPOSE_FILE is not configured'
-[ -f "$COMPOSE_FILE" ] || fail "compose file not found: $COMPOSE_FILE"
 [ -n "$CURRENT_VERSION" ] || fail '--current-version is required'
 [ -n "$TARGET_VERSION" ] || fail '--target-version is required'
 if [[ ! "$CURRENT_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
@@ -80,26 +88,70 @@ case "$UPDATE_MODE" in
   image|runtime) ;;
   *) fail "invalid SUB2API_UPDATE_MODE: $UPDATE_MODE (expected image or runtime)" ;;
 esac
+if [ "$UPDATE_MODE" = image ]; then
+  [ -n "$COMPOSE_FILE" ] || fail 'SUB2API_UPDATE_COMPOSE_FILE is not configured for image mode'
+  [ -f "$COMPOSE_FILE" ] || fail "compose file not found: $COMPOSE_FILE"
+fi
 if [ "$UPDATE_MODE" = runtime ]; then
   [ -n "$RUNTIME_PATH" ] || fail 'SUB2API_UPDATE_RUNTIME_PATH is required in runtime mode'
   [[ "$RUNTIME_PATH" = /* ]] || fail 'SUB2API_UPDATE_RUNTIME_PATH must be absolute'
+  if [ -n "$RESTART_COMMAND" ]; then
+    RUNTIME_BACKEND=command
+  elif command -v docker >/dev/null 2>&1 && [ -S /var/run/docker.sock ]; then
+    if ! docker ps >/dev/null 2>&1; then
+      fail 'Docker socket is not accessible to the updater user; add the host Docker GID with group_add or configure SUB2API_UPDATE_RESTART_COMMAND'
+    fi
+    RUNTIME_BACKEND=docker
+  else
+    fail 'runtime mode requires Docker socket access or SUB2API_UPDATE_RESTART_COMMAND'
+  fi
 fi
 
-if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose)
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE=(docker-compose)
-else
-  fail 'docker compose is not available'
-fi
+if [ "$UPDATE_MODE" = image ]; then
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    COMPOSE=(docker compose)
+  elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE=(docker-compose)
+  else
+    fail 'docker compose is not available'
+  fi
+  if ! docker ps >/dev/null 2>&1; then
+    fail 'Docker socket is not accessible to the updater user; add the host Docker GID with group_add'
+  fi
 
-compose_args=(-f "$COMPOSE_FILE")
-if [ -n "$COMPOSE_PROJECT" ]; then
-  compose_args+=(-p "$COMPOSE_PROJECT")
-fi
-if [ -n "$ENV_FILE" ]; then
-  [ -f "$ENV_FILE" ] || fail "env file not found: $ENV_FILE"
-  compose_args+=(--env-file "$ENV_FILE")
+  compose_args=(-f "$COMPOSE_FILE")
+  if [ -n "$COMPOSE_PROJECT" ]; then
+    compose_args+=(-p "$COMPOSE_PROJECT")
+  fi
+  if [ -n "$ENV_FILE" ]; then
+    [ -f "$ENV_FILE" ] || fail "env file not found: $ENV_FILE"
+    # Secret env files are intentionally root-only. Re-run image updates in a
+    # short-lived root helper instead of weakening the host file permissions.
+    if [ ! -r "$ENV_FILE" ] && [ "$HELPER_ACTIVE" != 1 ]; then
+      [ -n "$HELPER_IMAGE" ] || fail "env file is not readable; set SUB2API_UPDATE_HELPER_IMAGE for image mode"
+      log "env file is root-only; delegating image update to $HELPER_IMAGE"
+      helper_env=()
+      for name in SUB2API_UPDATE_MODE SUB2API_UPDATE_COMPOSE_FILE SUB2API_UPDATE_PROJECT \
+        SUB2API_UPDATE_SERVICES SUB2API_UPDATE_HEALTH_URLS SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS \
+        SUB2API_UPDATE_ENV_FILE SUB2API_UPDATE_VERSION_ENV SUB2API_UPDATE_REPOSITORY \
+        SUB2API_UPDATE_HELPER_IMAGE; do
+        if [[ -v "$name" ]]; then
+          helper_env+=(--env "$name=${!name}")
+        fi
+      done
+      helper_env+=(--env SUB2API_UPDATE_HELPER_ACTIVE=1)
+      docker run --rm --user 0:0 --network host \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v "$COMPOSE_FILE:$COMPOSE_FILE:ro" \
+        -v "$ENV_FILE:$ENV_FILE:ro" \
+        "${helper_env[@]}" \
+        --entrypoint /usr/local/bin/sub2api-update "$HELPER_IMAGE" \
+        --current-version "$CURRENT_VERSION" --target-version "$TARGET_VERSION" \
+        --release-url "$RELEASE_URL"
+      exit $?
+    fi
+    compose_args+=(--env-file "$ENV_FILE")
+  fi
 fi
 
 IFS=',' read -r -a SERVICES <<< "$SERVICES_RAW"
@@ -145,11 +197,6 @@ fi
 backup_dir="$(mktemp -d "${TMPDIR:-/tmp}/sub2api-update.XXXXXX")"
 cleanup() { rm -rf "$backup_dir"; }
 trap cleanup EXIT
-
-cp -p "$COMPOSE_FILE" "$backup_dir/compose.yml"
-if [ -n "$ENV_FILE" ]; then
-  cp -p "$ENV_FILE" "$backup_dir/env"
-fi
 
 compose() {
   "${COMPOSE[@]}" "${compose_args[@]}" "$@"
@@ -225,6 +272,24 @@ wait_for_health() {
   done
 }
 
+runtime_container_for_service() {
+  local service="$1"
+  local container=""
+  if [ "$RUNTIME_BACKEND" != docker ]; then
+    return 1
+  fi
+  if [ -n "$COMPOSE_PROJECT" ]; then
+    container="$(docker ps -aq \
+      --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+      --filter "label=com.docker.compose.service=$service" | head -n 1)"
+  else
+    # A single-container/source deployment can use the service name directly.
+    container="$(docker ps -aq --filter "name=^/${service}$" | head -n 1)"
+  fi
+  [ -n "$container" ] || return 1
+  printf '%s' "$container"
+}
+
 wait_for_container_health() {
   local service="$1"
   command -v docker >/dev/null 2>&1 || fail 'docker is required for container health checks'
@@ -232,7 +297,11 @@ wait_for_container_health() {
   local container=""
   local state=""
   until [ -n "$container" ] && [ "$state" = healthy ]; do
-    container="$(compose ps -q "$service" 2>/dev/null | tail -n 1)"
+    if [ "$UPDATE_MODE" = runtime ]; then
+      container="$(runtime_container_for_service "$service" 2>/dev/null || true)"
+    else
+      container="$(compose ps -q "$service" 2>/dev/null | tail -n 1)"
+    fi
     if [ -n "$container" ]; then
       state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
     fi
@@ -252,6 +321,8 @@ wait_for_service() {
   url="$(health_url_for_service "$service")"
   if [ -n "$url" ]; then
     wait_for_health "$url"
+  elif [ "$UPDATE_MODE" = runtime ] && [ "$RUNTIME_BACKEND" = command ]; then
+    fail "health URL is required for runtime service $service when using a restart command"
   else
     wait_for_container_health "$service"
   fi
@@ -297,12 +368,12 @@ download_runtime_binary() {
 
   mkdir -p "$(dirname "$RUNTIME_PATH")"
   if [ -f "$RUNTIME_PATH" ]; then
-    cp -p "$RUNTIME_PATH" "$backup_dir/runtime.backup"
+    cp "$RUNTIME_PATH" "$backup_dir/runtime.backup"
     RUNTIME_BACKUP="$backup_dir/runtime.backup"
     RUNTIME_HAD_PREVIOUS=true
   fi
   local staged="$RUNTIME_PATH.tmp.$$"
-  cp -p "$extracted" "$staged"
+  cp "$extracted" "$staged"
   chmod 0755 "$staged"
   mv -f "$staged" "$RUNTIME_PATH"
   RUNTIME_CHANGED=true
@@ -312,7 +383,7 @@ restore_runtime() {
   [ "$RUNTIME_CHANGED" = true ] || return 0
   if [ "$RUNTIME_HAD_PREVIOUS" = true ] && [ -f "$RUNTIME_BACKUP" ]; then
     local staged="$RUNTIME_PATH.rollback.$$"
-    cp -p "$RUNTIME_BACKUP" "$staged"
+    cp "$RUNTIME_BACKUP" "$staged"
     chmod 0755 "$staged"
     mv -f "$staged" "$RUNTIME_PATH"
   else
@@ -334,13 +405,23 @@ rollback() {
     # succeeds, so it must not be recreated while rollback is in progress.
     [ -n "$SELF_SERVICE" ] && [ "$service" = "$SELF_SERVICE" ] && continue
     log "restarting $service at $CURRENT_VERSION"
-    compose_with_version "$CURRENT_VERSION" up -d --no-deps --force-recreate "$service" || return 1
+    if [ "$UPDATE_MODE" = runtime ]; then
+      restart_service "$service" || return 1
+    else
+      compose_with_version "$CURRENT_VERSION" up -d --no-deps --force-recreate "$service" || return 1
+    fi
     wait_for_service "$service" || return 1
     index=$((index + 1))
   done
 }
 
 schedule_self_restart() {
+  if [ "$UPDATE_MODE" = runtime ] && [ "$RUNTIME_BACKEND" = command ]; then
+    local command="${RESTART_COMMAND//\{service\}/$SELF_SERVICE}"
+    log "scheduling detached restart command for $SELF_SERVICE"
+    nohup sh -c "sleep 3; $command" >/dev/null 2>&1 </dev/null &
+    return 0
+  fi
   [ -n "$SELF_CONTAINER" ] || fail 'self container could not be identified for final restart'
   command -v docker >/dev/null 2>&1 || fail 'docker is required for the final service restart'
   local image helper
@@ -352,6 +433,24 @@ schedule_self_restart() {
     -v /var/run/docker.sock:/var/run/docker.sock \
     --entrypoint /bin/sh "$image" \
     -c "sleep 3; docker restart '$SELF_CONTAINER' >/dev/null" >/dev/null
+}
+
+restart_service() {
+  local service="$1"
+  if [ "$UPDATE_MODE" = runtime ]; then
+    if [ "$RUNTIME_BACKEND" = docker ]; then
+      local container
+      container="$(runtime_container_for_service "$service")" || fail "container not found for runtime service: $service"
+      log "restarting container $container ($service)"
+      docker restart "$container" >/dev/null
+    else
+      local command="${RESTART_COMMAND//\{service\}/$service}"
+      log "running restart command for $service"
+      sh -c "$command"
+    fi
+  else
+    compose_with_version "$TARGET_VERSION" up -d --no-deps --force-recreate "$service"
+  fi
 }
 
 if [ "$UPDATE_MODE" = runtime ]; then
@@ -367,6 +466,9 @@ for service in "${SERVICES[@]}"; do
   service="$(printf '%s' "$service" | xargs)"
   [ -n "$service" ] || continue
   log "rolling $service to $TARGET_VERSION"
+  if [ "$UPDATE_MODE" = runtime ] && [ "$RUNTIME_BACKEND" = command ] && [ -z "$SELF_SERVICE" ] && [ "${#SERVICES[@]}" -eq 1 ]; then
+    SELF_SERVICE="$service"
+  fi
   if [ -n "$SELF_SERVICE" ] && [ "$service" = "$SELF_SERVICE" ]; then
     if ! schedule_self_restart; then
       log 'self restart scheduling failed; starting rollback'
@@ -375,7 +477,7 @@ for service in "${SERVICES[@]}"; do
     fi
     continue
   fi
-  if ! compose_with_version "$TARGET_VERSION" up -d --no-deps --force-recreate "$service"; then
+  if ! restart_service "$service"; then
     log 'rollout command failed; starting rollback'
     rollback || fail 'rollout failed and rollback also failed'
     fail 'rollout failed; previous version restored'
