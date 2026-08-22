@@ -83,6 +83,7 @@ The image contains `update-orchestrator.sh` at
 environment:
   UPDATE_STRATEGY: orchestrated
   UPDATE_ORCHESTRATOR: /usr/local/bin/sub2api-update
+  SUB2API_UPDATE_MODE: image
   SUB2API_UPDATE_COMPOSE_FILE: /opt/sub2api/docker-compose.yml
   SUB2API_UPDATE_SERVICES: sub2api-1,sub2api-2,sub2api-3
   SUB2API_UPDATE_HEALTH_URLS: http://127.0.0.1:7101/health,http://127.0.0.1:7102/health,http://127.0.0.1:7103/health
@@ -94,14 +95,31 @@ volumes:
 
 The application image includes the Docker CLI, but Docker socket access is
 intentionally opt-in because it grants host-level control. The Compose project
-must be mounted at the same path inside the updater container. The script then
-pulls the target image,
-recreates each configured service in order, waits for its health endpoint, and
-restores the previous version if any step fails. Compose files should use the
-version variable so the target image is unambiguous:
+must be mounted at the same path inside the updater container. In `image` mode
+the script pulls the target image, recreates each configured service in order,
+waits for its health endpoint, and restores the previous version if any step
+fails. Compose files should use the version variable so the target image is
+unambiguous:
 
 ```yaml
-image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.186}
+image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.187}
+```
+
+When the release image is private or the deployment uses a locally built image,
+use `runtime` mode instead. It downloads and verifies the matching release
+binary, atomically replaces a mounted runtime path, and then performs the same
+rolling health checks and rollback. The service command must execute that path:
+
+```yaml
+environment:
+  UPDATE_STRATEGY: orchestrated
+  UPDATE_ORCHESTRATOR: /usr/local/bin/sub2api-update
+  SUB2API_UPDATE_MODE: runtime
+  SUB2API_UPDATE_RUNTIME_PATH: /opt/sub2api/runtime/sub2api
+  SUB2API_UPDATE_REPOSITORY: kiss-kedaya/sub2api
+command: ["/app/runtime/sub2api"]
+volumes:
+  - /opt/sub2api/runtime:/app/runtime
 ```
 
 The updater API does not expose arbitrary shell commands; it executes only the
