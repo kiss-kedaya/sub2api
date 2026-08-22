@@ -10,7 +10,7 @@ docker run -d \
   -p 8080:8080 \
   -e DATABASE_URL="postgres://user:pass@host:5432/sub2api" \
   -e REDIS_URL="redis://host:6379" \
-  ghcr.io/kiss-kedaya/sub2api:0.1.184
+  ghcr.io/kiss-kedaya/sub2api:0.1.185
 ```
 
 ## Docker Compose
@@ -20,7 +20,7 @@ version: '3.8'
 
 services:
   sub2api:
-    image: ghcr.io/kiss-kedaya/sub2api:0.1.184
+    image: ghcr.io/kiss-kedaya/sub2api:0.1.185
     ports:
       - "8080:8080"
     environment:
@@ -101,7 +101,7 @@ restores the previous version if any step fails. Compose files should use the
 version variable so the target image is unambiguous:
 
 ```yaml
-image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.184}
+image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.185}
 ```
 
 The updater API does not expose arbitrary shell commands; it executes only the
