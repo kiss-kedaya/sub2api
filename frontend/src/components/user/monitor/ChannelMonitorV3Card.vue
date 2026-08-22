@@ -1,5 +1,5 @@
 <template>
-  <article class="group glass-card flex min-h-[286px] flex-col rounded-[24px] p-5 text-left hover:-translate-y-1">
+  <article class="group relative z-0 glass-card flex min-h-[286px] flex-col overflow-visible rounded-[24px] p-5 text-left hover:z-20 hover:-translate-y-1">
     <header class="flex items-start gap-3">
       <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl ring-1 ring-black/5 dark:ring-white/10" :class="providerGradient(row.platform)">
         <ProviderIcon :provider="row.platform" :size="20" />
