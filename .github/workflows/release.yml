@@ -1,9 +1,10 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # A tag created alongside a branch push can be coalesced into one PushEvent
+  # by GitHub. The create event is emitted for the tag itself, so it reliably
+  # starts the release even when both refs are pushed in one command.
+  create:
   workflow_dispatch:
     inputs:
       tag:
@@ -20,6 +21,7 @@ on:
 # tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
 env:
   SIMPLE_RELEASE: ${{ github.event.inputs.simple_release == 'true' || vars.SIMPLE_RELEASE == 'true' }}
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.event.ref || github.ref_name }}
   # Forks may not have write access to an existing GHCR package. Enable only after
   # the repository/package has been granted write:packages access.
   PUBLISH_GHCR: ${{ vars.PUBLISH_GHCR == 'true' }}
@@ -31,6 +33,7 @@ permissions:
 jobs:
   # Update VERSION file with tag version
   update-version:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -38,12 +41,8 @@ jobs:
 
       - name: Update VERSION file
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION=${{ github.event.inputs.tag }}
-            VERSION=${VERSION#v}
-          else
-            VERSION=${GITHUB_REF#refs/tags/v}
-          fi
+          VERSION="${{ env.RELEASE_TAG }}"
+          VERSION=${VERSION#v}
           echo "$VERSION" > backend/cmd/server/VERSION
           echo "Updated VERSION file to: $VERSION"
 
@@ -55,6 +54,7 @@ jobs:
           retention-days: 1
 
   build-frontend:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -88,6 +88,7 @@ jobs:
           retention-days: 1
 
   release:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
     needs: [update-version, build-frontend]
     runs-on: ubuntu-latest
     steps:
@@ -95,7 +96,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Download VERSION artifact
         uses: actions/download-artifact@v8
@@ -152,11 +153,7 @@ jobs:
       - name: Get tag message
         id: tag_message
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_NAME=${{ github.event.inputs.tag }}
-          else
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-          fi
+          TAG_NAME="${{ env.RELEASE_TAG }}"
           echo "Processing tag: $TAG_NAME"
 
           # 获取完整的 tag message（跳过第一行标题）
@@ -217,11 +214,7 @@ jobs:
             exit 0
           fi
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_NAME=${{ github.event.inputs.tag }}
-          else
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-          fi
+          TAG_NAME="${{ env.RELEASE_TAG }}"
           VERSION=${TAG_NAME#v}
           REPO="${{ github.repository }}"
           GHCR_IMAGE="ghcr.io/${REPO,,}"  # ${,,} converts to lowercase
@@ -278,7 +271,7 @@ jobs:
 
   sync-version-file:
     needs: [release]
-    if: ${{ needs.release.result == 'success' }}
+    if: ${{ needs.release.result == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout default branch
@@ -288,12 +281,8 @@ jobs:
 
       - name: Sync VERSION file to released tag
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION=${{ github.event.inputs.tag }}
-            VERSION=${VERSION#v}
-          else
-            VERSION=${GITHUB_REF#refs/tags/v}
-          fi
+          VERSION="${{ env.RELEASE_TAG }}"
+          VERSION=${VERSION#v}
 
           CURRENT_VERSION=$(tr -d '\r\n' < backend/cmd/server/VERSION || true)
           if [ "$CURRENT_VERSION" = "$VERSION" ]; then
