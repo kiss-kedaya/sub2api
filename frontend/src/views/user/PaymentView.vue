@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <div class="mx-auto max-w-4xl space-y-6">
+    <div :class="['mx-auto w-full space-y-6', activeTab === 'rechargeCenter' ? 'max-w-[1440px]' : 'max-w-4xl']">
       <div v-if="loading" class="flex items-center justify-center py-20">
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
       </div>
@@ -95,27 +95,37 @@
           </template>
           <!-- Recharge Center Tab: reuse the configured custom payment center instead of subscriptions -->
           <template v-else-if="activeTab === 'rechargeCenter'">
-            <div class="overflow-hidden rounded-2xl border border-blue-100/80 bg-white/80 shadow-sm dark:border-blue-900/50 dark:bg-dark-800/80">
+            <div ref="rechargeCenterFrameRef" class="recharge-center-shell overflow-hidden rounded-2xl border border-blue-100/80 bg-white/80 shadow-sm dark:border-blue-900/50 dark:bg-dark-800/80">
               <div class="flex flex-col gap-3 border-b border-blue-100/70 bg-gradient-to-r from-blue-50/80 via-white to-cyan-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-blue-900/40 dark:from-blue-950/40 dark:via-dark-800 dark:to-cyan-950/30">
                 <div>
                   <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('payment.rechargeCenterTitle') }}</p>
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('payment.rechargeCenterDescription') }}</p>
                 </div>
-                <a
-                  v-if="rechargeCenterUrl"
-                  :href="rechargeCenterUrl"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="inline-flex items-center justify-center rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-medium text-blue-700 transition hover:border-blue-300 hover:bg-blue-50 dark:border-blue-800 dark:bg-dark-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
-                >
-                  {{ t('payment.rechargeCenterOpen') }}
-                </a>
+                <div v-if="rechargeCenterUrl" class="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    class="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-medium text-blue-700 transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 dark:border-blue-800 dark:bg-dark-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                    :aria-label="isRechargeCenterFullscreen ? t('payment.rechargeCenterExitFullscreen') : t('payment.rechargeCenterFullscreen')"
+                    @click="toggleRechargeCenterFullscreen"
+                  >
+                    <Icon :name="isRechargeCenterFullscreen ? 'x' : 'arrowsUpDown'" size="sm" aria-hidden="true" />
+                    <span>{{ isRechargeCenterFullscreen ? t('payment.rechargeCenterExitFullscreen') : t('payment.rechargeCenterFullscreen') }}</span>
+                  </button>
+                  <a
+                    :href="rechargeCenterUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex min-h-10 items-center justify-center rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-medium text-blue-700 transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 dark:border-blue-800 dark:bg-dark-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                  >
+                    {{ t('payment.rechargeCenterOpen') }}
+                  </a>
+                </div>
               </div>
-              <div v-if="rechargeCenterUrl" class="bg-white p-2 dark:bg-dark-900/30 sm:p-3">
+              <div v-if="rechargeCenterUrl" class="recharge-center-frame bg-white p-2 dark:bg-dark-900/30 sm:p-3">
                 <iframe
                   :src="rechargeCenterUrl"
                   title="Recharge Center"
-                  class="h-[min(78vh,860px)] min-h-[620px] w-full rounded-xl border border-gray-100 bg-white dark:border-dark-700"
+                  class="h-[clamp(720px,calc(100dvh-210px),1080px)] min-h-[720px] w-full rounded-xl border border-gray-100 bg-white dark:border-dark-700"
                   allow="payment *; clipboard-write"
                   allowfullscreen
                 ></iframe>
@@ -288,7 +298,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -356,6 +366,8 @@ const submitting = ref(false)
 const errorMessage = ref('')
 const errorHintMessage = ref('')
 const activeTab = ref<'recharge' | 'rechargeCenter' | 'subscription'>('recharge')
+const rechargeCenterFrameRef = ref<HTMLElement | null>(null)
+const isRechargeCenterFullscreen = ref(false)
 const amount = ref<number | null>(null)
 const selectedMethod = ref('')
 const selectedPlan = ref<SubscriptionPlan | null>(null)
@@ -617,6 +629,24 @@ const rechargeCenterUrl = computed(() => {
     localeCode.value,
   )
 })
+
+function handleRechargeCenterFullscreenChange() {
+  isRechargeCenterFullscreen.value = typeof document !== 'undefined'
+    && document.fullscreenElement === rechargeCenterFrameRef.value
+}
+
+async function toggleRechargeCenterFullscreen() {
+  if (typeof document === 'undefined' || !rechargeCenterFrameRef.value) return
+  try {
+    if (document.fullscreenElement === rechargeCenterFrameRef.value) {
+      await document.exitFullscreen()
+    } else {
+      await rechargeCenterFrameRef.value.requestFullscreen()
+    }
+  } catch {
+    // Fullscreen can be denied by browser policy; the iframe remains usable.
+  }
+}
 
 function currencyFractionDigits(currency: string): number {
   try {
@@ -1146,6 +1176,7 @@ async function resumeWechatPaymentFromQuery() {
 }
 
 onMounted(async () => {
+  document.addEventListener('fullscreenchange', handleRechargeCenterFullscreenChange)
   try {
     const res = await paymentAPI.getCheckoutInfo()
     checkout.value = res.data
@@ -1207,4 +1238,28 @@ onMounted(async () => {
   // Fetch active subscriptions (uses cache, non-blocking)
   subscriptionStore.fetchActiveSubscriptions().catch(() => {})
 })
+
+onUnmounted(() => {
+  document.removeEventListener('fullscreenchange', handleRechargeCenterFullscreenChange)
+})
 </script>
+
+<style scoped>
+.recharge-center-shell:fullscreen {
+  display: flex;
+  height: 100dvh;
+  width: 100vw;
+  flex-direction: column;
+  border-radius: 0;
+}
+
+.recharge-center-shell:fullscreen .recharge-center-frame {
+  min-height: 0;
+  flex: 1;
+}
+
+.recharge-center-shell:fullscreen iframe {
+  height: 100%;
+  min-height: 0;
+}
+</style>

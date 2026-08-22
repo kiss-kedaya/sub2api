@@ -10,7 +10,7 @@
         v-for="(bar, index) in displayBars"
         :key="bar.key"
         class="v3-bar-slot"
-        @mouseenter="setHoveredBar(index)"
+        @mouseenter="setHoveredBar(index, $event)"
       >
         <button
           type="button"
@@ -21,7 +21,7 @@
             'is-pressed': hoveredBarIndex !== null && barDistance(index) > 0,
           }"
           :aria-label="bar.title || '-'"
-          @focus="setHoveredBar(index)"
+          @focus="setHoveredBar(index, $event)"
           @blur="clearHoveredBar"
         >
           <span class="v3-bar-visual" :style="barMotionStyle(index)" aria-hidden="true">
@@ -38,6 +38,7 @@
             v-if="hoveredBarIndex === index && bar.title"
             class="v3-timeline-tooltip"
             role="tooltip"
+            :style="tooltipStyle"
           >
             {{ bar.title }}
           </div>
@@ -69,9 +70,24 @@ const props = withDefaults(defineProps<{
 
 const { t, locale } = useI18n()
 const hoveredBarIndex = ref<number | null>(null)
+const tooltipPosition = ref({ left: 0, top: 0, x: '-50%' })
 
-function setHoveredBar(index: number) {
+function setHoveredBar(index: number, event?: Event) {
   hoveredBarIndex.value = index
+  const target = event?.currentTarget
+  if (!(target instanceof HTMLElement) || typeof window === 'undefined') return
+
+  const rect = target.getBoundingClientRect()
+  const viewportGutter = 16
+  const maxTooltipWidth = Math.min(280, window.innerWidth - viewportGutter * 2)
+  const center = rect.left + rect.width / 2
+  if (center + maxTooltipWidth / 2 > window.innerWidth - viewportGutter) {
+    tooltipPosition.value = { left: window.innerWidth - viewportGutter, top: rect.top - 8, x: '-100%' }
+  } else if (center - maxTooltipWidth / 2 < viewportGutter) {
+    tooltipPosition.value = { left: viewportGutter, top: rect.top - 8, x: '0%' }
+  } else {
+    tooltipPosition.value = { left: center, top: rect.top - 8, x: '-50%' }
+  }
 }
 
 function clearHoveredBar() {
@@ -95,11 +111,12 @@ function barMotionStyle(index: number) {
   // Keep the hit target fixed. Only the visual layer responds, so its
   // transformed bounds can never move the pointer between neighboring bars.
   const pressure = Math.exp(-distance / 2.8)
-  const scaleX = distance === 0 ? 1.08 : 0.98 - 0.02 * pressure
   const scaleY = distance === 0 ? 1.1 : 1 - 0.06 * pressure
   const opacity = distance === 0 ? 1 : 0.8 + (0.2 * (1 - pressure))
   return {
-    '--bar-scale-x': scaleX.toFixed(3),
+    // Keep every slot's horizontal footprint fixed so edge bars cannot expand
+    // the page or move the pointer between neighboring hit targets.
+    '--bar-scale-x': '1',
     '--bar-scale-y': scaleY.toFixed(3),
     '--bar-opacity': opacity.toFixed(3),
     '--bar-lift': distance === 0 ? '-1px' : '0px',
@@ -160,6 +177,12 @@ const displayBars = computed<TimelineBar[]>(() => {
   }
   return bars
 })
+
+const tooltipStyle = computed(() => ({
+  '--tooltip-left': `${tooltipPosition.value.left}px`,
+  '--tooltip-top': `${tooltipPosition.value.top}px`,
+  '--tooltip-x': tooltipPosition.value.x,
+}))
 </script>
 
 <style scoped>
@@ -237,13 +260,13 @@ const displayBars = computed<TimelineBar[]>(() => {
 }
 
 .v3-timeline-tooltip {
-	position: absolute;
-	left: 50%;
-	bottom: calc(100% + 8px);
+	position: fixed;
+	left: var(--tooltip-left, 50%);
+	top: var(--tooltip-top, 0px);
 	z-index: 50;
 	width: max-content;
-	max-width: min(250px, 72vw);
-	transform: translateX(-50%);
+	max-width: min(280px, calc(100vw - 32px));
+	transform: translateX(var(--tooltip-x, -50%)) translateY(-100%);
 	border: 1px solid rgb(255 255 255 / 0.84);
 	border-radius: 9px;
 	background: rgb(15 23 42 / 0.92);
@@ -279,7 +302,7 @@ const displayBars = computed<TimelineBar[]>(() => {
 .v3-timeline-tooltip-enter-from,
 .v3-timeline-tooltip-leave-to {
 	opacity: 0;
-	transform: translateX(-50%) translateY(3px) scale(0.96);
+	transform: translateX(var(--tooltip-x, -50%)) translateY(calc(-100% + 3px)) scale(0.96);
 }
 
 @keyframes v3-soft-glass-rise {
