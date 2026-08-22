@@ -33,16 +33,18 @@
           </span>
         </button>
 
-        <Transition name="v3-timeline-tooltip">
-          <div
-            v-if="hoveredBarIndex === index && bar.title"
-            class="v3-timeline-tooltip"
-            role="tooltip"
-            :style="tooltipStyle"
-          >
-            {{ bar.title }}
-          </div>
-        </Transition>
+        <Teleport to="body">
+          <Transition name="v3-timeline-tooltip">
+            <div
+              v-if="hoveredBarIndex === index && bar.title"
+              class="v3-timeline-tooltip"
+              role="tooltip"
+              :style="tooltipStyle"
+            >
+              {{ bar.title }}
+            </div>
+          </Transition>
+        </Teleport>
       </div>
     </div>
 
