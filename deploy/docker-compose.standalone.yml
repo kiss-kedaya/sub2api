@@ -12,7 +12,7 @@
 
 services:
   sub2api:
-    image: ghcr.io/kiss-kedaya/sub2api:0.1.182
+    image: ghcr.io/kiss-kedaya/sub2api:0.1.183
     container_name: sub2api
     restart: unless-stopped
     security_opt:
