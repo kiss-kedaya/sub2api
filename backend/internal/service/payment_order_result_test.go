@@ -40,6 +40,18 @@ func TestShouldUseAlipayMobilePrecreate(t *testing.T) {
 	}
 }
 
+func TestValidateOrderInputRejectsUnknownOrderType(t *testing.T) {
+	t.Parallel()
+
+	_, err := (&PaymentService{}).validateOrderInput(context.Background(), CreateOrderRequest{
+		OrderType: payment.PaymentType("manual_credit"),
+		Amount:    10,
+	}, &PaymentConfig{BalanceDisabled: true})
+	if err == nil || !strings.Contains(err.Error(), "order_type") {
+		t.Fatalf("validateOrderInput() error = %v, want invalid order type", err)
+	}
+}
+
 func TestIsOfficialAlipayProviderInstance(t *testing.T) {
 	t.Parallel()
 

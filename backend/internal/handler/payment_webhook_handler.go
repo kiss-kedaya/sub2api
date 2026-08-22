@@ -99,7 +99,11 @@ func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string)
 			c.String(http.StatusBadRequest, "verify failed")
 			return
 		}
-		writeSuccessResponse(c, providerKey)
+		// Provider resolution happens before signature verification so the
+		// callback can be bound to the order's merchant instance. A database,
+		// configuration, or ambiguous-instance error must be retried; returning
+		// 2xx here silently loses a legitimate payment notification.
+		c.String(http.StatusServiceUnavailable, "provider unavailable")
 		return
 	}
 
@@ -179,8 +183,19 @@ func extractOutTradeNo(rawBody, providerKey string) string {
 		if err := json.Unmarshal([]byte(rawBody), &payload); err == nil {
 			return strings.TrimSpace(payload.Data.Object.MerchantOrderID)
 		}
+	case payment.TypeStripe:
+		var payload struct {
+			Data struct {
+				Object struct {
+					Metadata map[string]string `json:"metadata"`
+				} `json:"object"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(rawBody), &payload); err == nil {
+			return strings.TrimSpace(payload.Data.Object.Metadata["orderId"])
+		}
 	}
-	// For other providers (Stripe, Alipay direct, WxPay direct), the registry
+	// For direct callback formats without an order identifier, the registry
 	// typically has only one instance, so no instance lookup is needed.
 	return ""
 }

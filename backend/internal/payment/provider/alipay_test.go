@@ -59,6 +59,18 @@ func TestIsTradeNotExist(t *testing.T) {
 	}
 }
 
+func TestAlipayRefundRequestNoIsStable(t *testing.T) {
+	t.Parallel()
+
+	got := alipayRefundRequestNo(" sub2_order_123 ")
+	if got != "sub2_order_123-refund" {
+		t.Fatalf("alipayRefundRequestNo() = %q, want %q", got, "sub2_order_123-refund")
+	}
+	if got != alipayRefundRequestNo("sub2_order_123") {
+		t.Fatal("refund request number must remain stable across retries")
+	}
+}
+
 func TestNewAlipay(t *testing.T) {
 	t.Parallel()
 

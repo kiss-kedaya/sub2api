@@ -24,7 +24,7 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.189}
+    image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.190}
     container_name: sub2api
     restart: unless-stopped
     command: ["${SUB2API_COMMAND:-/app/sub2api}"]
