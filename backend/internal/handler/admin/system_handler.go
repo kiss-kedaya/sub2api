@@ -46,6 +46,7 @@ func systemUpdateContext(ctx context.Context) (context.Context, context.CancelFu
 type systemUpdateService interface {
 	CheckUpdate(ctx context.Context, force bool) (*service.UpdateInfo, error)
 	PerformUpdate(ctx context.Context) error
+	NeedsRestart() bool
 	Rollback() error
 	ListRollbackVersions(ctx context.Context) ([]service.RollbackVersion, error)
 	RollbackToVersion(ctx context.Context, version string) error
@@ -119,10 +120,15 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 			return nil, err
 		}
 		succeeded = true
+		needsRestart := h.updateSvc.NeedsRestart()
+		message := "Update completed. Please restart the service."
+		if !needsRestart {
+			message = "Update completed and health checks passed."
+		}
 
 		return gin.H{
-			"message":      "Update completed. Please restart the service.",
-			"need_restart": true,
+			"message":      message,
+			"need_restart": needsRestart,
 			"operation_id": lock.OperationID(),
 		}, nil
 	})

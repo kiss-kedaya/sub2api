@@ -231,6 +231,27 @@
                 </button>
               </div>
 
+              <!-- Orchestrated deployments already restarted and health-checked. -->
+              <div v-else-if="updateSuccess" class="space-y-2">
+                <div
+                  class="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-800/50 dark:bg-green-900/20"
+                >
+                  <div
+                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/50"
+                  >
+                    <Icon name="check" size="sm" :stroke-width="2" class="text-green-600 dark:text-green-400" />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-green-700 dark:text-green-300">
+                      {{ successKind === 'rollback' ? t('version.rollbackComplete') : t('version.updateComplete') }}
+                    </p>
+                    <p class="text-xs text-green-600/70 dark:text-green-400/70">
+                      {{ t('version.upToDate') }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <!-- Priority 3: Update available for source build - show git pull hint -->
               <div v-else-if="hasUpdate && !isReleaseBuild" class="space-y-2">
                 <a
@@ -777,6 +798,13 @@ async function handleUpdate() {
     needRestart.value = result.need_restart
     // Clear version cache to reflect update completed
     appStore.clearVersionCache()
+    // A binary/systemd update is complete only after the new process is
+    // started. Trigger that final step from the same button click; the
+    // orchestrated Docker strategy reports need_restart=false because its
+    // host-side rollout already performed health checks and rollback handling.
+    if (result.need_restart) {
+      await handleRestart()
+    }
   } catch (error: unknown) {
     const err = error as { response?: { data?: { message?: string } }; message?: string }
     updateError.value = err.response?.data?.message || err.message || t('version.updateFailed')

@@ -93,6 +93,8 @@ RUN apk add --no-cache \
     ca-certificates \
     tzdata \
     curl \
+    docker-cli \
+    docker-cli-compose \
     su-exec \
     && rm -rf /var/cache/apk/*
 
@@ -112,7 +114,8 @@ RUN mkdir -p /app/data && chown -R sub2api:sub2api /app
 
 # Copy entrypoint script (fixes volume permissions then drops to sub2api)
 COPY deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod +x /app/docker-entrypoint.sh
+COPY deploy/update-orchestrator.sh /usr/local/bin/sub2api-update
+RUN chmod +x /app/docker-entrypoint.sh /usr/local/bin/sub2api-update
 
 # Expose port (can be overridden by SERVER_PORT env var)
 EXPOSE 8080

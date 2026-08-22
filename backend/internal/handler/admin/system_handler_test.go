@@ -25,6 +25,7 @@ type systemHandlerUpdateServiceStub struct {
 	performCall           int
 	performCtxErr         error
 	performHasDeadline    bool
+	needsRestart          bool
 	rollbackCall          int
 	rollbackToCall        int
 	rollbackToCtxErr      error
@@ -46,6 +47,10 @@ func (s *systemHandlerUpdateServiceStub) PerformUpdate(ctx context.Context) erro
 	s.performCtxErr = ctx.Err()
 	_, s.performHasDeadline = ctx.Deadline()
 	return s.performErr
+}
+
+func (s *systemHandlerUpdateServiceStub) NeedsRestart() bool {
+	return s.needsRestart
 }
 
 func (s *systemHandlerUpdateServiceStub) Rollback() error {
