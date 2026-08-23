@@ -32,6 +32,8 @@ func stripKeepaliveComments(body string) string {
 }
 
 func TestStartOpenAICompactSSEKeepalive_NoopWhenUnmarkedOrDisabled(t *testing.T) {
+	require.NotPanics(t, func() { StartOpenAICompactSSEKeepalive(nil, keepaliveTestInterval) })
+
 	// 未标记 client stream：不启动。
 	c, rec := newCompactBridgeTestContext(t, false)
 	stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
@@ -47,6 +49,46 @@ func TestStartOpenAICompactSSEKeepalive_NoopWhenUnmarkedOrDisabled(t *testing.T)
 	stop()
 	require.Zero(t, rec.Body.Len())
 	require.False(t, StopOpenAICompactSSEKeepaliveCommitted(c))
+}
+
+func TestStartOpenAIStreamSSEKeepalive_ProtectsPreHeaderWait(t *testing.T) {
+	// Ordinary Responses streaming does not carry the compact body marker, but
+	// it still needs the same pre-header heartbeat while fill scheduling waits
+	// on a stalled upstream account.
+	c, rec := newCompactBridgeTestContext(t, false)
+	stop := StartOpenAIStreamSSEKeepalive(c, keepaliveTestInterval)
+	defer stop()
+	waitForKeepaliveBeats()
+
+	require.True(t, StopOpenAICompactSSEKeepaliveCommitted(c))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
+	require.Contains(t, rec.Body.String(), ": keepalive\n\n")
+	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c), "comments are not semantic output")
+}
+
+func TestWriteOpenAIStreamSSEHeartbeatKeepsManagerRunning(t *testing.T) {
+	c, rec := newCompactBridgeTestContext(t, false)
+	stop := StartOpenAIStreamSSEKeepalive(c, keepaliveTestInterval)
+	defer stop()
+
+	value, ok := c.Get(openAICompactSSEKeepaliveKey)
+	require.True(t, ok)
+	k, ok := value.(*openAICompactSSEKeepalive)
+	require.True(t, ok)
+
+	n, err, handled := WriteOpenAIStreamSSEHeartbeat(c, []byte(": slot-wait\n\n"))
+	require.True(t, handled)
+	require.NoError(t, err)
+	require.Equal(t, len(": slot-wait\n\n"), n)
+	k.mu.Lock()
+	require.False(t, k.stopped, "slot heartbeat must not suspend pre-header keepalive")
+	k.mu.Unlock()
+
+	waitForKeepaliveBeats()
+	StopOpenAICompactSSEKeepaliveCommitted(c)
+	require.Contains(t, rec.Body.String(), ": slot-wait\n\n")
+	require.Contains(t, rec.Body.String(), ": keepalive\n\n")
 }
 
 func TestOpenAICompactSSEKeepalive_CommitsHeadersAndComments(t *testing.T) {
@@ -83,6 +125,22 @@ func TestOpenAIAdjustedWrittenSizeExcludesResponsesStreamKeepalive(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, len("data: semantic\n\n"), OpenAICompactKeepaliveAdjustedWrittenSize(c))
 	require.Equal(t, ":\n\ndata: semantic\n\n", rec.Body.String())
+}
+
+func TestOpenAIAdjustedWrittenSizeExcludesSlotWaitHeartbeat(t *testing.T) {
+	c, _ := newCompactBridgeTestContext(t, false)
+	n, err := c.Writer.Write([]byte(":\n\n"))
+	require.NoError(t, err)
+	// The handler keeps its own marker so it can distinguish a slot-wait ping
+	// from semantic output; mirror it into the service accounting shared by
+	// failover decisions.
+	c.Set("gateway_stream_heartbeat_bytes", n)
+	RecordOpenAIStreamKeepaliveBytes(c, n)
+
+	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c))
+	_, err = c.Writer.Write([]byte("data: semantic\n\n"))
+	require.NoError(t, err)
+	require.Equal(t, len("data: semantic\n\n"), OpenAICompactKeepaliveAdjustedWrittenSize(c))
 }
 
 // 心跳已提交后，2xx 桥接续写事件而不重复提交响应头。

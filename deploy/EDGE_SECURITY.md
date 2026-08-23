@@ -181,6 +181,21 @@ processing is restricted to explicit trusted proxy CIDRs.
 
 ## Caddy and CDN
 
+### Cloudflare 524 and long-lived API streams
+
+Cloudflare's current default Proxy Read Timeout is 125 seconds (clients may
+observe a value near 120 seconds). `proxy_read_timeout` in Nginx cannot raise
+that edge limit. A streaming request must emit an SSE comment/heartbeat before
+the first upstream response is available and continue emitting bytes during
+idle generation; a heartbeat that starts only after upstream headers is too
+late. Do not send heartbeat bytes for non-streaming JSON requests because that
+commits a 200 response and corrupts the JSON body.
+
+For requests that can legitimately run longer than the Cloudflare limit, use a
+DNS-only API hostname or an Enterprise zone with an increased Proxy Read
+Timeout. Polling/asynchronous APIs are the robust option for non-streaming,
+long-running work. See the [Cloudflare 524 guidance](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-524/).
+
 The bundled `deploy/Caddyfile` sets a 64 KiB header limit, a 10-second header
 timeout, a 256 MiB absolute body limit, and overwrites forwarded addresses from
 the TCP peer. It is therefore a direct-to-Caddy baseline. Do not use its

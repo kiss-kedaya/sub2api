@@ -1043,6 +1043,14 @@ func recordOpenAIStreamKeepaliveBytes(c *gin.Context, written int) {
 	c.Set(openAIStreamKeepaliveBytesKey, current+written)
 }
 
+// RecordOpenAIStreamKeepaliveBytes lets handlers that emit a stream heartbeat
+// while waiting for a slot share the same accounting used by the upstream
+// streaming keepalive.  These bytes are protocol padding, not model output,
+// and must not prevent a safe failover.
+func RecordOpenAIStreamKeepaliveBytes(c *gin.Context, written int) {
+	recordOpenAIStreamKeepaliveBytes(c, written)
+}
+
 func openAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
 	if localStarted {
 		return true

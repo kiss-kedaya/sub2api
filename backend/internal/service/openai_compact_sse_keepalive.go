@@ -43,7 +43,24 @@ type openAICompactSSEKeepalive struct {
 // 响应构造都会先在心跳互斥锁下停拍，未被显式拦截的写回路径（如 Forward
 // 内部的本地拒绝）也不会与心跳 goroutine 产生数据竞争或字节交错。
 func StartOpenAICompactSSEKeepalive(c *gin.Context, interval time.Duration) func() {
-	if c == nil || c.Writer == nil || interval <= 0 || !openAICompactClientWantsStream(c) {
+	enabled := c != nil && openAICompactClientWantsStream(c)
+	return startOpenAISSEKeepalive(c, interval, enabled)
+}
+
+// StartOpenAIStreamSSEKeepalive starts the same guarded SSE heartbeat for a
+// normal streaming Responses request.  Compact requests already own the
+// heartbeat, so this function is a no-op when another request heartbeat is
+// installed.  Keeping the state in the existing manager makes the adjusted
+// writer-size and failover accounting apply consistently to both paths.
+func StartOpenAIStreamSSEKeepalive(c *gin.Context, interval time.Duration) func() {
+	return startOpenAISSEKeepalive(c, interval, true)
+}
+
+func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration, enabled bool) func() {
+	if c == nil || c.Writer == nil || interval <= 0 || !enabled {
+		return func() {}
+	}
+	if _, exists := c.Get(openAICompactSSEKeepaliveKey); exists {
 		return func() {}
 	}
 	originalWriter := c.Writer
@@ -111,6 +128,51 @@ func (k *openAICompactSSEKeepalive) beat() bool {
 	}
 	k.writer.Flush()
 	return true
+}
+
+// WriteOpenAIStreamSSEHeartbeat writes a handler-owned SSE heartbeat through
+// the active pre-header keepalive manager without stopping that manager. This
+// is used while waiting for a concurrency slot: the slot ping is transport
+// padding just like the manager's own comment, so routing it through the
+// wrapper's normal Write/Header methods would incorrectly suspend the
+// pre-header protection immediately before a provider stall.
+//
+// handled is false when no active manager is installed (or it has already
+// been stopped); callers should then use their normal ResponseWriter path.
+func WriteOpenAIStreamSSEHeartbeat(c *gin.Context, payload []byte) (written int, err error, handled bool) {
+	if c == nil || len(payload) == 0 {
+		return 0, nil, false
+	}
+	value, ok := c.Get(openAICompactSSEKeepaliveKey)
+	if !ok {
+		return 0, nil, false
+	}
+	k, ok := value.(*openAICompactSSEKeepalive)
+	if !ok || k == nil {
+		return 0, nil, false
+	}
+
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.stopped {
+		return 0, nil, false
+	}
+	if !k.started {
+		header := k.writer.Header()
+		header.Set("Content-Type", "text/event-stream")
+		header.Set("Cache-Control", "no-cache")
+		header.Set("Connection", "keep-alive")
+		header.Set("X-Accel-Buffering", "no")
+		k.writer.WriteHeader(http.StatusOK)
+		k.started = true
+	}
+	written, err = k.writer.Write(payload)
+	if err != nil {
+		k.markStoppedLocked()
+		return written, err, true
+	}
+	k.writer.Flush()
+	return written, nil, true
 }
 
 // Stop 停止心跳；幂等，可与写回路径并发调用。

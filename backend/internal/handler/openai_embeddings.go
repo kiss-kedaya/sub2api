@@ -109,6 +109,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
+	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
 	switchCount := 0
 	maxAccountSwitches := h.maxAccountSwitches
@@ -223,10 +224,36 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 					)
 					return
 				}
+				if !failoverErr.ShouldRetryNextAccount() {
+					h.handleFailoverExhausted(c, failoverErr, false)
+					return
+				}
+				// Pool mode retry budget is per account. Exhaust it before
+				// excluding this account and selecting the next priority pool.
+				if failoverErr.RetryableOnSameAccount {
+					currentRetryCount := sameAccountRetryCount[account.ID]
+					nextRetryCount, retryDelay, retry := poolModeSameAccountRetry(account, failoverErr, currentRetryCount)
+					if retry {
+						sameAccountRetryCount[account.ID] = nextRetryCount
+						reqLog.Warn("openai_embeddings.pool_mode_same_account_retry",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.Int("retry_limit", effectiveSameAccountRetryLimit(failoverErr, account)),
+							zap.Int("retry_count", nextRetryCount),
+							zap.Duration("retry_delay", retryDelay),
+						)
+						select {
+						case <-c.Request.Context().Done():
+							return
+						case <-time.After(retryDelay):
+						}
+						continue
+					}
+				}
 				h.gatewayService.RecordOpenAIAccountSwitch()
 				failedAccountIDs[account.ID] = struct{}{}
 				lastFailoverErr = failoverErr
-				if switchCount >= maxAccountSwitches {
+				if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 					h.handleFailoverExhausted(c, failoverErr, false)
 					return
 				}

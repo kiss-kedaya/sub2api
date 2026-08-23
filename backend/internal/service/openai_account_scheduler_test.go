@@ -3335,6 +3335,103 @@ func TestBuildOpenAIWeightedSelectionOrder_DeterministicBySessionSeed(t *testing
 	}
 }
 
+func TestBuildOpenAIFillSelectionOrder_ExhaustsPriorityLayerBeforeFallback(t *testing.T) {
+	// Deliberately give the lower-priority account the best score.  A fill pass
+	// must still consume both priority=0 candidates before priority=1.
+	candidates := []openAIAccountCandidateScore{
+		{account: &Account{ID: 201, Priority: 0}, loadInfo: &AccountLoadInfo{LoadRate: 80}, score: 1},
+		{account: &Account{ID: 202, Priority: 0}, loadInfo: &AccountLoadInfo{LoadRate: 10}, score: 2},
+		{account: &Account{ID: 203, Priority: 1}, loadInfo: &AccountLoadInfo{LoadRate: 0}, score: 100},
+	}
+	order := buildOpenAIFillSelectionOrder(candidates, OpenAIAccountScheduleRequest{
+		SessionHash:    "fill-priority-test",
+		RequestedModel: "gpt-5.1",
+	})
+	require.Len(t, order, len(candidates))
+	require.Equal(t, 0, order[0].account.Priority)
+	require.Equal(t, 0, order[1].account.Priority)
+	require.Equal(t, 1, order[2].account.Priority)
+}
+
+func TestOpenAIAccountLoadPlan_FillSchedulingBypassesTopKProbe(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	scheduler := &defaultOpenAIAccountScheduler{service: svc}
+	accounts := []*Account{
+		{ID: 211, Priority: 0},
+		{ID: 212, Priority: 0},
+		{ID: 213, Priority: 1},
+	}
+	plan := scheduler.buildOpenAIAccountLoadPlan(context.Background(), OpenAIAccountScheduleRequest{
+		RequestedModel: "",
+		FillScheduling: true,
+	}, accounts, map[int64]*AccountLoadInfo{})
+	require.Equal(t, len(accounts), plan.topK)
+	require.Len(t, plan.selectionOrder, len(accounts))
+	for i := 0; i < 2; i++ {
+		require.Equal(t, 0, plan.selectionOrder[i].account.Priority)
+	}
+	require.Equal(t, 1, plan.selectionOrder[2].account.Priority)
+}
+
+func TestBuildOpenAIFillPriorityLayerOrderLargePoolUsesRankedOrder(t *testing.T) {
+	candidates := make([]openAIAccountCandidateScore, 0, openAIAccountSelectionProbeLimit+1)
+	for i := 0; i <= openAIAccountSelectionProbeLimit; i++ {
+		candidates = append(candidates, openAIAccountCandidateScore{
+			account:  &Account{ID: int64(220 + i), Priority: 0},
+			loadInfo: &AccountLoadInfo{LoadRate: int(i)},
+			score:    float64(openAIAccountSelectionProbeLimit - i),
+		})
+	}
+	ordered := buildOpenAIFillPriorityLayerOrder(candidates, OpenAIAccountScheduleRequest{})
+	require.Len(t, ordered, len(candidates))
+	require.Equal(t, int64(220), ordered[0].account.ID)
+	require.Equal(t, int64(220+openAIAccountSelectionProbeLimit), ordered[len(ordered)-1].account.ID)
+}
+
+func TestTryAcquireOpenAIFillSelectionOrderContinuesPastProbeBatch(t *testing.T) {
+	acquiredIDs := make([]int64, 0, 65)
+	acquireResults := make(map[int64]bool, 65)
+	accounts := make([]Account, 0, 65)
+	selectionOrder := make([]openAIAccountCandidateScore, 0, 65)
+	for i := int64(1); i <= 65; i++ {
+		accounts = append(accounts, Account{
+			ID:          i,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+		})
+		// The first 64 candidates are busy; only the first candidate in the
+		// second fill batch can be acquired.
+		acquireResults[i] = i == 65
+		selectionOrder = append(selectionOrder, openAIAccountCandidateScore{
+			account:  &accounts[len(accounts)-1],
+			loadInfo: &AccountLoadInfo{},
+		})
+	}
+	svc := &OpenAIGatewayService{
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{
+			acquireResults: acquireResults,
+			acquiredIDs:    &acquiredIDs,
+		}),
+	}
+	scheduler := &defaultOpenAIAccountScheduler{service: svc}
+	selection, _, err := scheduler.tryAcquireOpenAIFillSelectionOrder(context.Background(), OpenAIAccountScheduleRequest{
+		Platform:          PlatformOpenAI,
+		RequiredTransport: OpenAIUpstreamTransportAny,
+		FillScheduling:    true,
+	}, selectionOrder)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, int64(65), selection.Account.ID)
+	require.Len(t, acquiredIDs, 65)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceDistributesAcrossSessions(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(15)

@@ -155,7 +155,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	stopJSONKeepalive := func() {}
 	jsonKeepaliveStarted := false
 	defer func() { stopJSONKeepalive() }()
-	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 
 	for {
 		reqLog.Debug("openai.images.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
@@ -330,7 +330,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
-					if switchCount >= maxAccountSwitches {
+					if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}

@@ -161,9 +161,9 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		selectionSessionHash = "gemini:" + selectionSessionHash
 	}
 	// 3. Account selection + failover loop
-	fs := NewFailoverState(h.maxAccountSwitches, false)
+	fs := NewFillFailoverState(h.maxAccountSwitches, false)
 	if groupPlatform == service.PlatformGemini {
-		fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
+		fs = NewFillFailoverState(h.maxAccountSwitchesGemini, false)
 	}
 
 	for {
@@ -259,7 +259,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 
 		// 5. Forward request
-		writerSizeBeforeForward := c.Writer.Size()
+		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
 		forwardBody := body
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
@@ -296,7 +296,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				if c.Writer.Size() != writerSizeBeforeForward {
+				if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
 					h.handleCCFailoverExhausted(c, failoverErr, true)
 					return
 				}

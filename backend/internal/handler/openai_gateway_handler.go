@@ -92,8 +92,6 @@ type grokMediaEligibilityProber interface {
 	ProbeMediaEligibility(ctx context.Context, accountID int64) (bool, string, error)
 }
 
-const maxOpenAIFirstOutputTimeoutSwitches = 1
-
 func openAIForwardSucceededForScheduling(result *service.OpenAIForwardResult) bool {
 	return result.SucceededForScheduling()
 }
@@ -522,12 +520,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
-	firstOutputTimeoutSwitchCount := 0
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
-	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	var passthroughFailoverState openAIPassthroughFailoverState
 
 	// 生图意图的 /v1/responses 请求必须调度到确实支持 Responses API 的账号，否则
@@ -544,6 +541,19 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// token 计费部分仍受利润门保护，独立图片/视频端点才在门外。
 	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(pricingCtx)
+	// Cloudflare's proxied HTTP edge can terminate a request that has not
+	// produced any origin bytes for roughly 120s.  The normal stream keepalive
+	// starts only after an upstream response header arrives, so a provider that
+	// stalls before headers can still cause a 524 while fill scheduling is
+	// trying the next account.  For Responses streaming, emit protocol-safe SSE
+	// comments during the whole account-selection/failover loop.  The keepalive
+	// manager subtracts comment bytes from failover write accounting and turns a
+	// post-commit error into response.failed rather than corrupting JSON.
+	stopStreamHeaderKeepalive := func() {}
+	if reqStream {
+		stopStreamHeaderKeepalive = service.StartOpenAIStreamSSEKeepalive(c, h.openAICompactKeepaliveInterval())
+	}
+	defer stopStreamHeaderKeepalive()
 
 	for {
 		// Streaming Forward intentionally detaches the upstream request so usage can
@@ -771,10 +781,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
-					if openAIFirstOutputFailoverExhausted(failoverErr, &firstOutputTimeoutSwitchCount) {
-						h.handleFailoverExhausted(c, failoverErr, streamStarted)
-						return
-					}
 					// 池模式：同账号重试
 					if failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
@@ -799,7 +805,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
-					if switchCount >= maxAccountSwitches {
+					if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1141,12 +1147,21 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
-	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	effectiveMappedModel := preferredMappedModel
 
 	// 分组利润控制：Messages 文本入口同样请求级装门并固定 pricingAt。
 	msgPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(msgPricingCtx)
+	// Anthropic-compatible streaming responses can also spend time waiting for
+	// an upstream header while the fill scheduler retries accounts.  SSE
+	// comments are protocol-safe here and keep a proxied edge connection alive;
+	// non-streaming Messages requests remain untouched.
+	stopStreamHeaderKeepalive := func() {}
+	if reqStream {
+		stopStreamHeaderKeepalive = service.StartOpenAIStreamSSEKeepalive(c, h.openAICompactKeepaliveInterval())
+	}
+	defer stopStreamHeaderKeepalive()
 
 	for {
 		if failoverClientGone(c) {
@@ -1232,7 +1247,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		defaultMappedModel := strings.TrimSpace(effectiveMappedModel)
 		// 应用渠道模型映射到请求体
 		forwardBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
-		writerSizeBeforeForward := c.Writer.Size()
+		// Exclude pre-header SSE comments from the semantic-output snapshot;
+		// otherwise a stalled account that emitted only keepalives would block
+		// the fill-scheduling retry path.
+		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -1318,7 +1336,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						)
 						return
 					}
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
 						h.gatewayService.ObserveOpenAIAccountHealthFailure(c.Request.Context(), account, err)
 						h.handleAnthropicFailoverExhausted(c, failoverErr, true)
 						return
@@ -1354,7 +1372,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
-					if switchCount >= maxAccountSwitches {
+					if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1435,6 +1453,12 @@ func (h *OpenAIGatewayHandler) anthropicErrorResponse(c *gin.Context, status int
 // anthropicStreamingAwareError handles errors that may occur during streaming,
 // using Anthropic SSE error format.
 func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
+	// A pre-header SSE heartbeat may already have committed a 200 response.
+	// Stop it before taking over the writer and switch to Anthropic's in-stream
+	// error envelope instead of appending JSON to the comment stream.
+	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
+		streamStarted = true
+	}
 	if streamStarted {
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
@@ -2019,7 +2043,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
-	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
 	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
 		if account == nil || failoverErr == nil || failoverErr.StatusCode != http.StatusTooManyRequests || failoverErr.SameAccountRetryDeadline.IsZero() {
@@ -2062,7 +2086,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		h.gatewayService.RecordOpenAIAccountSwitch()
 		failedAccountIDs[account.ID] = struct{}{}
 		lastFailoverErr = failoverErr
-		if switchCount >= maxAccountSwitches {
+		if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 			closeOpenAIWSFailoverExhausted(c, wsConn, failoverErr)
 			return false
 		}
@@ -3091,17 +3115,6 @@ func openAIRequestAllowsFailoverReplay(c *gin.Context) bool {
 		return false
 	}
 	return !failoverClientGone(c)
-}
-
-func openAIFirstOutputFailoverExhausted(failoverErr *service.UpstreamFailoverError, switchCount *int) bool {
-	if failoverErr == nil || !failoverErr.SafeToFailoverAfterWrite || switchCount == nil {
-		return false
-	}
-	if *switchCount >= maxOpenAIFirstOutputTimeoutSwitches {
-		return true
-	}
-	*switchCount = *switchCount + 1
-	return false
 }
 
 // errorResponse returns OpenAI API format error response
