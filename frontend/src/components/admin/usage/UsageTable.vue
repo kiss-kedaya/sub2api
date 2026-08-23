@@ -230,6 +230,13 @@
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyDuration') }}</span>
               <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(row.duration_ms ?? 0)]">{{ formatDuration(row.duration_ms) }}</span>
+              <span class="text-gray-400 dark:text-gray-500">{{ t('usage.outputRate') }}</span>
+              <span
+                class="font-medium tabular-nums text-violet-600 dark:text-violet-400"
+                :title="t('usage.outputRateHint')"
+              >
+                {{ formatOutputRate(row.output_tokens, row.duration_ms) }}
+              </span>
             </div>
           </div>
         </template>
@@ -687,6 +694,14 @@ const formatDuration = (ms: number | null | undefined): string => {
   const totalSec = Math.round(ms / 1000)
   if (totalSec < 3600) return `${Math.floor(totalSec / 60)}m ${totalSec % 60}s`
   return `${Math.floor(totalSec / 3600)}h ${Math.floor((totalSec % 3600) / 60)}m`
+}
+
+/** Average generated-token throughput for this request, in output tokens/sec. */
+const formatOutputRate = (outputTokens: number | null | undefined, durationMs: number | null | undefined): string => {
+  const tokens = Number(outputTokens)
+  const duration = Number(durationMs)
+  if (!Number.isFinite(tokens) || tokens <= 0 || !Number.isFinite(duration) || duration <= 0) return '-'
+  return `${(tokens * 1000 / duration).toFixed(1)} t/s`
 }
 
 // Cost tooltip functions

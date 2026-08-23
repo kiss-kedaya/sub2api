@@ -65,7 +65,11 @@ const messages: Record<string, string> = {
 	'usage.sentUpstreamModel': 'Sent upstream',
 	'usage.upstreamResponseModel': 'Upstream response',
 	'usage.modelVariant': 'Possible version variant',
-	'usage.modelMismatch': 'Different model',
+  'usage.modelMismatch': 'Different model',
+  'usage.latencyFirstToken': 'First',
+  'usage.latencyDuration': 'Total',
+  'usage.outputRate': 'Output rate',
+  'usage.outputRateHint': 'Average output tokens per second',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -87,6 +91,7 @@ const DataTableStub = {
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
+        <slot name="cell-latency" :row="row" />
         <slot name="cell-request_id" :row="row" />
       </div>
     </div>
@@ -216,6 +221,31 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('$5.0000 / 1M tokens')
     expect(text).toContain('$30.0000 / 1M tokens')
     expect(text).toContain('$0.069568')
+  })
+
+  it('shows average output tokens per second beside latency', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          request_id: 'req-throughput',
+          output_tokens: 101,
+          duration_ms: 1938,
+          input_tokens: 10,
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('52.1 t/s')
   })
 
   it('shows requested and upstream models separately for admin rows', () => {
