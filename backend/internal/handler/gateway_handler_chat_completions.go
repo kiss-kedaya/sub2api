@@ -143,6 +143,15 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	// Keep proxied streaming connections alive while the compatibility layer
+	// performs account selection/fill scheduling and waits for upstream headers.
+	// Validation and billing errors above remain ordinary JSON responses.
+	stopStreamHeaderKeepalive := func() {}
+	if reqStream {
+		stopStreamHeaderKeepalive = service.StartOpenAIStreamSSEKeepalive(c, h.streamKeepaliveInterval())
+	}
+	defer stopStreamHeaderKeepalive()
+
 	// Parse request for session hash
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, _ := service.ParseGatewayRequest(bodyRef, "chat_completions")
@@ -365,6 +374,15 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 
 // chatCompletionsErrorResponse writes an error in OpenAI Chat Completions format.
 func (h *GatewayHandler) chatCompletionsErrorResponse(c *gin.Context, status int, errType, message string) {
+	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
+		// Keepalive comments are transport-only. Emit one protocol error frame
+		// only when no semantic response bytes have been sent; otherwise the
+		// existing stream owner has already produced the terminal/error event.
+		if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) < 0 {
+			h.handleStreamingAwareError(c, status, errType, message, true)
+		}
+		return
+	}
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"type":    errType,
@@ -375,8 +393,14 @@ func (h *GatewayHandler) chatCompletionsErrorResponse(c *gin.Context, status int
 
 // handleCCFailoverExhausted writes a failover-exhausted error in CC format.
 func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
+	keepaliveCommitted := service.StopOpenAICompactSSEKeepaliveCommitted(c)
 	if streamStarted {
-		return
+		// Preserve the existing no-append rule for a stream with semantic bytes.
+		// A pre-header keepalive is the one exception: it committed 200 without
+		// content, so it still needs a terminal error event.
+		if !keepaliveCommitted || service.OpenAICompactKeepaliveAdjustedWrittenSize(c) >= 0 {
+			return
+		}
 	}
 	if lastErr != nil {
 		copyFailoverRetryAfter(c, lastErr.ResponseHeaders)
