@@ -605,8 +605,11 @@ func ProvideScheduledTestRunnerService(
 	accountTestSvc *AccountTestService,
 	rateLimitSvc *RateLimitService,
 	cfg *config.Config,
+	lockCache LeaderLockCache,
+	db *sql.DB,
 ) *ScheduledTestRunnerService {
 	svc := NewScheduledTestRunnerService(planRepo, scheduledSvc, accountTestSvc, rateLimitSvc, cfg)
+	svc.SetLeaderLock(lockCache, db)
 	svc.Start()
 	return svc
 }

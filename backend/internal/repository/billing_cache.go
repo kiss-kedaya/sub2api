@@ -158,6 +158,30 @@ func (c *billingCache) SetUserBalance(ctx context.Context, userID int64, balance
 	return c.rdb.Set(ctx, key, balance, jitteredTTL()).Err()
 }
 
+// SetUserBalanceIfAbsent is used by cache-fill workers. A conditional write
+// prevents a stale database read from overwriting a newer billing result.
+func (c *billingCache) SetUserBalanceIfAbsent(ctx context.Context, userID int64, balance float64) error {
+	key := billingBalanceKey(userID)
+	_, err := c.rdb.SetNX(ctx, key, balance, jitteredTTL()).Result()
+	return err
+}
+
+// SetUserBalanceIfLower atomically publishes a deduction result without
+// allowing an older, larger balance to overwrite a newer one.
+func (c *billingCache) SetUserBalanceIfLower(ctx context.Context, userID int64, balance float64) error {
+	key := billingBalanceKey(userID)
+	const script = `
+local current = redis.call('GET', KEYS[1])
+if not current or tonumber(ARGV[1]) < tonumber(current) then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+  return 1
+end
+return 0
+`
+	_, err := redis.NewScript(script).Run(ctx, c.rdb, []string{key}, balance, int(jitteredTTL().Seconds())).Result()
+	return err
+}
+
 func (c *billingCache) DeductUserBalance(ctx context.Context, userID int64, amount float64) error {
 	key := billingBalanceKey(userID)
 	_, err := deductBalanceScript.Run(ctx, c.rdb, []string{key}, amount, int(jitteredTTL().Seconds())).Result()

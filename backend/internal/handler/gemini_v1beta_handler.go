@@ -224,6 +224,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	// For Gemini native API, do not send Claude-style ping frames.
 	geminiConcurrency := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone, 0)
+	geminiConcurrency.SetBalanceReader(h.concurrencyHelper.balanceReader)
 
 	// 1) user concurrency slot
 	streamStarted := false
