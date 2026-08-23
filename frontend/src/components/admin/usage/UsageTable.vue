@@ -235,7 +235,7 @@
                 class="font-medium tabular-nums text-violet-600 dark:text-violet-400"
                 :title="t('usage.outputRateHint')"
               >
-                {{ formatOutputRate(row.output_tokens, row.duration_ms) }}
+                {{ formatOutputRate(row.output_tokens, row.first_token_ms, row.duration_ms) }}
               </span>
             </div>
           </div>
@@ -696,12 +696,23 @@ const formatDuration = (ms: number | null | undefined): string => {
   return `${Math.floor(totalSec / 3600)}h ${Math.floor((totalSec % 3600) / 60)}m`
 }
 
-/** Average generated-token throughput for this request, in output tokens/sec. */
-const formatOutputRate = (outputTokens: number | null | undefined, durationMs: number | null | undefined): string => {
+/** Average generated-token throughput after the first token, in output tokens/sec. */
+const formatOutputRate = (
+  outputTokens: number | null | undefined,
+  firstTokenMs: number | null | undefined,
+  durationMs: number | null | undefined,
+): string => {
   const tokens = Number(outputTokens)
+  const firstToken = Number(firstTokenMs)
   const duration = Number(durationMs)
-  if (!Number.isFinite(tokens) || tokens <= 0 || !Number.isFinite(duration) || duration <= 0) return '-'
-  return `${(tokens * 1000 / duration).toFixed(1)} t/s`
+  const generationDuration = duration - firstToken
+  if (
+    !Number.isFinite(tokens) || tokens <= 0
+    || !Number.isFinite(firstToken) || firstToken < 0
+    || !Number.isFinite(duration) || duration <= 0
+    || generationDuration <= 0
+  ) return '-'
+  return `${(tokens * 1000 / generationDuration).toFixed(1)} t/s`
 }
 
 // Cost tooltip functions
