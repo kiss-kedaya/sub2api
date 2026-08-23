@@ -17,7 +17,14 @@ const (
 	// refreshes. The underlying data is still refreshed on the next cache miss.
 	reportCacheTTL         = 2 * time.Minute
 	reportCacheLoadTimeout = 20 * time.Second
+	reportCacheMaxEntries  = 256
+	reportCacheMaxLoads    = 4
+	reportCacheSweepEvery  = 30 * time.Second
 )
+
+// All report caches share one budget. Without a process-wide limit, five
+// independent caches can each start expensive scans at the same time.
+var reportCacheLoadSlots = make(chan struct{}, reportCacheMaxLoads)
 
 // reportCacheLoadContext lets an in-flight report finish after a browser aborts
 // so a retry can reuse the result instead of cancelling the expensive SQL scan.
@@ -36,10 +43,12 @@ type snapshotCacheEntry struct {
 }
 
 type snapshotCache struct {
-	mu    sync.RWMutex
-	ttl   time.Duration
-	items map[string]snapshotCacheEntry
-	sf    singleflight.Group
+	mu          sync.RWMutex
+	ttl         time.Duration
+	items       map[string]snapshotCacheEntry
+	sf          singleflight.Group
+	sweepEvery  time.Duration
+	lastSweepAt time.Time
 }
 
 type snapshotCacheLoadResult struct {
@@ -52,9 +61,26 @@ func newSnapshotCache(ttl time.Duration) *snapshotCache {
 		ttl = 30 * time.Second
 	}
 	return &snapshotCache{
-		ttl:   ttl,
-		items: make(map[string]snapshotCacheEntry),
+		ttl:         ttl,
+		items:       make(map[string]snapshotCacheEntry),
+		sweepEvery:  reportCacheSweepEvery,
+		lastSweepAt: time.Now(),
 	}
+}
+
+// sweepLocked removes expired entries at a bounded cadence. It is performed
+// on cache access rather than in a goroutine so each cache has no shutdown
+// lifecycle and tests do not leak background workers.
+func (c *snapshotCache) sweepLocked(now time.Time) {
+	if c == nil || c.sweepEvery <= 0 || now.Sub(c.lastSweepAt) < c.sweepEvery {
+		return
+	}
+	for key, entry := range c.items {
+		if !now.Before(entry.ExpiresAt) {
+			delete(c.items, key)
+		}
+	}
+	c.lastSweepAt = now
 }
 
 func (c *snapshotCache) Get(key string) (snapshotCacheEntry, bool) {
@@ -63,15 +89,20 @@ func (c *snapshotCache) Get(key string) (snapshotCacheEntry, bool) {
 	}
 	now := time.Now()
 
-	c.mu.RLock()
+	c.mu.Lock()
+	c.sweepLocked(now)
 	entry, ok := c.items[key]
-	c.mu.RUnlock()
+	c.mu.Unlock()
 	if !ok {
 		return snapshotCacheEntry{}, false
 	}
 	if now.After(entry.ExpiresAt) {
 		c.mu.Lock()
-		delete(c.items, key)
+		// Avoid deleting a newer value inserted after the initial read.
+		if current, exists := c.items[key]; exists &&
+			current.ExpiresAt.Equal(entry.ExpiresAt) && current.ETag == entry.ETag {
+			delete(c.items, key)
+		}
 		c.mu.Unlock()
 		return snapshotCacheEntry{}, false
 	}
@@ -91,12 +122,41 @@ func (c *snapshotCache) Set(key string, payload any) snapshotCacheEntry {
 		return entry
 	}
 	c.mu.Lock()
+	c.sweepLocked(time.Now())
+	if len(c.items) >= reportCacheMaxEntries {
+		now := time.Now()
+		for existingKey, existing := range c.items {
+			if now.After(existing.ExpiresAt) {
+				delete(c.items, existingKey)
+			}
+		}
+		// Keep the cache bounded even when every key is still fresh. The oldest
+		// entry is a conservative eviction choice and avoids unbounded RSS growth
+		// from arbitrary date/filter combinations.
+		if len(c.items) >= reportCacheMaxEntries {
+			oldestKey := ""
+			var oldest time.Time
+			for existingKey, existing := range c.items {
+				if oldestKey == "" || existing.ExpiresAt.Before(oldest) {
+					oldestKey = existingKey
+					oldest = existing.ExpiresAt
+				}
+			}
+			if oldestKey != "" {
+				delete(c.items, oldestKey)
+			}
+		}
+	}
 	c.items[key] = entry
 	c.mu.Unlock()
 	return entry
 }
 
 func (c *snapshotCache) GetOrLoad(key string, load func() (any, error)) (snapshotCacheEntry, bool, error) {
+	return c.GetOrLoadContext(context.Background(), key, load)
+}
+
+func (c *snapshotCache) GetOrLoadContext(ctx context.Context, key string, load func() (any, error)) (snapshotCacheEntry, bool, error) {
 	if load == nil {
 		return snapshotCacheEntry{}, false, nil
 	}
@@ -114,6 +174,14 @@ func (c *snapshotCache) GetOrLoad(key string, load func() (any, error)) (snapsho
 	value, err, _ := c.sf.Do(key, func() (any, error) {
 		if entry, ok := c.Get(key); ok {
 			return snapshotCacheLoadResult{Entry: entry, Hit: true}, nil
+		}
+		slotCtx, cancel := context.WithTimeout(context.Background(), reportCacheLoadTimeout)
+		defer cancel()
+		select {
+		case reportCacheLoadSlots <- struct{}{}:
+			defer func() { <-reportCacheLoadSlots }()
+		case <-slotCtx.Done():
+			return nil, slotCtx.Err()
 		}
 		payload, err := load()
 		if err != nil {

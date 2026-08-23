@@ -13,6 +13,10 @@ COMPOSE_PROJECT="${SUB2API_UPDATE_PROJECT:-}"
 SERVICES_RAW="${SUB2API_UPDATE_SERVICES:-sub2api}"
 HEALTH_URLS_RAW="${SUB2API_UPDATE_HEALTH_URLS:-${SUB2API_UPDATE_HEALTH_URL:-}}"
 HEALTH_TIMEOUT="${SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS:-120}"
+DRAIN_TIMEOUT="${SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS:-35}"
+if ! [[ "$DRAIN_TIMEOUT" =~ ^[0-9]+$ ]] || [ "$DRAIN_TIMEOUT" -lt 5 ]; then
+  DRAIN_TIMEOUT=35
+fi
 ENV_FILE="${SUB2API_UPDATE_ENV_FILE:-}"
 UPDATE_MODE="${SUB2API_UPDATE_MODE:-image}"
 RUNTIME_PATH="${SUB2API_UPDATE_RUNTIME_PATH:-}"
@@ -85,6 +89,7 @@ Optional environment:
   SUB2API_UPDATE_HELPER_IMAGE    Root helper image for image mode when the env
                                   file is not readable by the application user
   SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS (default: 120)
+  SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS Health drain/stop grace period (default: 35)
   SUB2API_UPDATE_VERSION_ENV     Variable name used by the image tag (default: SUB2API_VERSION)
 EOF
 }
@@ -154,6 +159,7 @@ if [ "$UPDATE_MODE" = image ]; then
       helper_env=()
       for name in SUB2API_UPDATE_MODE SUB2API_UPDATE_COMPOSE_FILE SUB2API_UPDATE_PROJECT \
         SUB2API_UPDATE_SERVICES SUB2API_UPDATE_HEALTH_URLS SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS \
+        SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS \
         SUB2API_UPDATE_ENV_FILE SUB2API_UPDATE_VERSION_ENV SUB2API_UPDATE_REPOSITORY \
         SUB2API_UPDATE_HELPER_IMAGE SUB2API_UPDATE_DOCKER_COMMAND \
         SUB2API_UPDATE_AUTO_DOCKER_GROUP; do
@@ -351,6 +357,17 @@ wait_for_service() {
   fi
 }
 
+graceful_restart_container() {
+  local container="$1"
+  local timeout="$DRAIN_TIMEOUT"
+  if ! [[ "$timeout" =~ ^[0-9]+$ ]] || [ "$timeout" -lt 5 ]; then
+    timeout=35
+  fi
+  # SIGTERM lets the Go server drain active streams before the hard deadline.
+  docker_cli stop --time "$timeout" "$container" >/dev/null
+  docker_cli start "$container" >/dev/null
+}
+
 download_runtime_binary() {
   command -v curl >/dev/null 2>&1 || fail 'curl is required for runtime updates'
   command -v tar >/dev/null 2>&1 || fail 'tar is required for runtime updates'
@@ -455,7 +472,7 @@ schedule_self_restart() {
   docker_cli run --rm -d --name "$helper" \
     -v /var/run/docker.sock:/var/run/docker.sock \
     --entrypoint /bin/sh "$image" \
-    -c "sleep 3; docker restart '$SELF_CONTAINER' >/dev/null" >/dev/null
+    -c "sleep 3; docker stop --time '$DRAIN_TIMEOUT' '$SELF_CONTAINER' >/dev/null && docker start '$SELF_CONTAINER' >/dev/null" >/dev/null
 }
 
 restart_service() {
@@ -474,7 +491,7 @@ restart_service() {
         fail "container not found for runtime service: $service"
       fi
       log "restarting container $container ($service)"
-      docker_cli restart "$container" >/dev/null
+      graceful_restart_container "$container"
     else
       local command="${RESTART_COMMAND//\{service\}/$service}"
       log "running restart command for $service"

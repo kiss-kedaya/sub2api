@@ -179,7 +179,8 @@ func runMainServer() {
 
 	log.Println("Shutting down server...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownTimeout := shutdownTimeoutFromEnv(os.Getenv("SERVER_SHUTDOWN_TIMEOUT_SECONDS"))
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
 	if err := app.Server.Shutdown(ctx); err != nil {
@@ -187,4 +188,22 @@ func runMainServer() {
 	}
 
 	log.Println("Server exited")
+}
+
+const (
+	defaultShutdownTimeout = 30 * time.Second
+	minShutdownTimeout     = 5 * time.Second
+	maxShutdownTimeout     = 10 * time.Minute
+)
+
+func shutdownTimeoutFromEnv(raw string) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultShutdownTimeout
+	}
+	parsed, err := time.ParseDuration(raw + "s")
+	if err != nil || parsed < minShutdownTimeout || parsed > maxShutdownTimeout {
+		return defaultShutdownTimeout
+	}
+	return parsed
 }

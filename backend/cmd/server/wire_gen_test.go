@@ -20,6 +20,25 @@ func TestProvideServiceBuildInfo(t *testing.T) {
 	require.Equal(t, in.BuildType, out.BuildType)
 }
 
+func TestShutdownTimeoutFromEnv(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want time.Duration
+	}{
+		{name: "default", raw: "", want: defaultShutdownTimeout},
+		{name: "configured seconds", raw: "45", want: 45 * time.Second},
+		{name: "too short", raw: "4", want: defaultShutdownTimeout},
+		{name: "too long", raw: "601", want: defaultShutdownTimeout},
+		{name: "invalid", raw: "nope", want: defaultShutdownTimeout},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, shutdownTimeoutFromEnv(tt.raw))
+		})
+	}
+}
+
 func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 	cfg := &config.Config{}
 
