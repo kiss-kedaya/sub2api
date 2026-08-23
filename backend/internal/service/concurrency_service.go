@@ -242,7 +242,10 @@ const (
 	// Anthropic requests are intentionally given a larger safety reserve because
 	// their typical completion cost is materially higher than other groups.
 	AnthropicBalanceConcurrencyReserveUSD = 1.0
-	DefaultBalanceConcurrencyReserveUSD   = 0.1
+	// OpenAI/Grok (and future non-Anthropic platforms) reserve a smaller fixed
+	// amount per active request. The reservation is still checked atomically
+	// against the user's current balance before the request is admitted.
+	DefaultBalanceConcurrencyReserveUSD = 0.05
 )
 
 // BalanceConcurrencyReserveUSD returns the amount of balance reserved by one
@@ -407,12 +410,15 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 // If the user is at max concurrency, it waits until a slot is available or timeout.
 // Returns a release function that MUST be called when the request completes.
 func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int) (*AcquireResult, error) {
-	// If maxConcurrency is 0 or negative, no limit
-	if maxConcurrency <= 0 {
-		return &AcquireResult{
-			Acquired:    true,
-			ReleaseFunc: func() {}, // no-op
-		}, nil
+	// A user must always retain one request slot. Treat legacy zero/negative
+	// values as the minimum rather than as unlimited concurrency; account-level
+	// limits keep their existing zero = unlimited semantics.
+	maxConcurrency = NormalizeUserConcurrency(maxConcurrency)
+	// Keep the existing fail-open behavior for lightweight/test deployments
+	// without a configured concurrency cache. A configured cache still receives
+	// the normalized minimum of one above.
+	if s == nil || s.cache == nil {
+		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
 	}
 
 	// Generate unique request ID for this slot
@@ -632,10 +638,17 @@ func (s *ConcurrencyService) GetAccountWaitingCount(ctx context.Context, account
 // CalculateMaxWait calculates the maximum wait queue size for a user
 // maxWait = userConcurrency + defaultExtraWaitSlots
 func CalculateMaxWait(userConcurrency int) int {
-	if userConcurrency <= 0 {
-		userConcurrency = 1
+	return NormalizeUserConcurrency(userConcurrency) + defaultExtraWaitSlots
+}
+
+// NormalizeUserConcurrency returns the effective user request limit. User
+// concurrency is intentionally bounded at one so an invalid or legacy zero
+// value cannot disable admission control entirely.
+func NormalizeUserConcurrency(userConcurrency int) int {
+	if userConcurrency < 1 {
+		return 1
 	}
-	return userConcurrency + defaultExtraWaitSlots
+	return userConcurrency
 }
 
 // GetAccountsLoadBatch 批量获取账号负载信息。

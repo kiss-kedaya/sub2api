@@ -12,10 +12,10 @@ func TestBalanceConcurrencyReserveUSD(t *testing.T) {
 		platform string
 		want     float64
 	}{
-		{name: "anthropic", platform: PlatformAnthropic, want: AnthropicBalanceConcurrencyReserveUSD},
-		{name: "openai", platform: PlatformOpenAI, want: DefaultBalanceConcurrencyReserveUSD},
-		{name: "grok", platform: PlatformGrok, want: DefaultBalanceConcurrencyReserveUSD},
-		{name: "future platform", platform: "future", want: DefaultBalanceConcurrencyReserveUSD},
+		{name: "anthropic", platform: PlatformAnthropic, want: 1.0},
+		{name: "openai", platform: PlatformOpenAI, want: 0.05},
+		{name: "grok", platform: PlatformGrok, want: 0.05},
+		{name: "future platform", platform: "future", want: 0.05},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
