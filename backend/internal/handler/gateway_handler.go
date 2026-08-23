@@ -95,6 +95,10 @@ func NewGatewayHandler(
 	if userMsgQueueService != nil && cfg != nil {
 		umqHelper = NewUserMsgQueueHelper(userMsgQueueService, SSEPingFormatClaude, pingInterval)
 	}
+	concurrencyHelper := NewConcurrencyHelper(concurrencyService, SSEPingFormatClaude, pingInterval)
+	if billingCacheService != nil && billingCacheService.SupportsBalanceConcurrency() {
+		concurrencyHelper.SetBalanceReader(billingCacheService)
+	}
 
 	return &GatewayHandler{
 		gatewayService:            gatewayService,
@@ -108,7 +112,7 @@ func NewGatewayHandler(
 		usageRecordWorkerPool:     usageRecordWorkerPool,
 		errorPassthroughService:   errorPassthroughService,
 		contentModerationService:  contentModerationService,
-		concurrencyHelper:         NewConcurrencyHelper(concurrencyService, SSEPingFormatClaude, pingInterval),
+		concurrencyHelper:         concurrencyHelper,
 		userMsgQueueHelper:        umqHelper,
 		maxAccountSwitches:        maxAccountSwitches,
 		maxAccountSwitchesGemini:  maxAccountSwitchesGemini,
@@ -2003,6 +2007,10 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return
 	}
+	if len(body) > countTokensMaxLocalBodyBytes {
+		h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", "count_tokens request body is too large")
+		return
+	}
 
 	setOpsRequestContext(c, "", false)
 
@@ -2048,33 +2056,16 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		return
 	}
 
-	// 计算粘性会话 hash
-	parsedReq.SessionContext = &service.SessionContext{
-		ClientIP:  ip.GetClientIP(c),
-		UserAgent: c.GetHeader("User-Agent"),
-		APIKeyID:  apiKey.ID,
-	}
-	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
-
-	// 选择支持该模型的账号
-	account, err := h.gatewayService.SelectAccountForModel(c.Request.Context(), apiKey.GroupID, sessionHash, parsedReq.Model)
+	// count_tokens is a local utility endpoint. Never select an upstream
+	// account here: forwarding the full prompt creates an unbilled provider
+	// cost side channel and makes the result depend on provider availability.
+	estimated, err := service.EstimateAnthropicCountTokens(parsedReq.Body.Bytes())
 	if err != nil {
-		reqLog.Warn("gateway.count_tokens_select_account_failed", zap.Error(err))
-		cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, parsedReq.Model, parsedReq.Model, service.PlatformAnthropic)
-		if !cls.ModelNotFound {
-			markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-		}
-		h.errorResponse(c, cls.Status, cls.ErrType, cls.Message)
+		reqLog.Warn("gateway.count_tokens_local_estimate_failed", zap.Error(err))
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to estimate input tokens")
 		return
 	}
-	setOpsSelectedAccount(c, account.ID, account.Platform)
-
-	// 转发请求（不记录使用量）
-	if err := h.gatewayService.ForwardCountTokens(c.Request.Context(), c, account, parsedReq); err != nil {
-		reqLog.Error("gateway.count_tokens_forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-		// 错误响应已在 ForwardCountTokens 中处理
-		return
-	}
+	c.JSON(http.StatusOK, gin.H{"input_tokens": estimated})
 }
 
 // InterceptType 表示请求拦截类型
@@ -2390,32 +2381,9 @@ func (h *GatewayHandler) maybeLogCompatibilityFallbackMetrics(reqLog *zap.Logger
 }
 
 func (h *GatewayHandler) submitUsageRecordTask(parent context.Context, task service.UsageRecordTask) {
-	if task == nil {
-		return
-	}
-	task = wrapUsageRecordTaskContext(parent, task)
-	if h.usageRecordWorkerPool != nil {
-		if mode := h.usageRecordWorkerPool.Submit(task); mode != service.UsageRecordSubmitModeDroppedStopped {
-			return
-		}
-		// 池已停止（进程关停窗口）：计费任务不能静默丢失，降级为内联同步执行。
-		// 显式配置的 drop/sample 溢出丢弃仍按配置语义保留。
-		logger.L().With(
-			zap.String("component", "handler.gateway.messages"),
-		).Warn("gateway.usage_record_task_stopped_sync_fallback")
-	}
-	// 回退路径：worker 池未注入或已停止时同步执行，避免退回到无界 goroutine 模式。
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			logger.L().With(
-				zap.String("component", "handler.gateway.messages"),
-				zap.Any("panic", recovered),
-			).Error("gateway.usage_record_task_panic_recovered")
-		}
-	}()
-	task(ctx)
+	// Every usage task can carry a money event. The old drop/sample path could
+	// commit a balance deduction and then discard the corresponding usage log.
+	h.submitMandatoryUsageRecordTask(parent, task)
 }
 
 // submitMandatoryUsageRecordTask never silently drops billing work on pool overflow.

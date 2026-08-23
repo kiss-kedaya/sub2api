@@ -218,6 +218,25 @@ func EstimateGrokCountTokens(body []byte) (int, error) {
 	return estimateAnthropicCountTokensLocally(body)
 }
 
+// EstimateAnthropicCountTokens estimates count_tokens locally so callers do
+// not need to forward an otherwise unbilled prompt to a provider.
+func EstimateAnthropicCountTokens(body []byte) (int, error) {
+	return estimateAnthropicCountTokensLocally(body)
+}
+
+// EstimateOpenAIResponsesInputTokens estimates the native Responses input
+// shape locally without selecting an account or calling an upstream provider.
+func EstimateOpenAIResponsesInputTokens(body []byte) (int, error) {
+	var req openAIInputTokensCountRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return 0, fmt.Errorf("parse responses input_tokens request: %w", err)
+	}
+	if strings.TrimSpace(req.Model) == "" {
+		return 0, fmt.Errorf("parse responses input_tokens request: model is required")
+	}
+	return estimateOpenAIInputTokens(req)
+}
+
 // estimateAnthropicCountTokensLocally 走 Anthropic→Responses→tiktoken 链本地估算
 // count_tokens，不发任何上游请求（上游无兼容端点的平台使用）。
 func estimateAnthropicCountTokensLocally(body []byte) (int, error) {

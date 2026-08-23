@@ -88,6 +88,7 @@ type cacheWriteTask struct {
 	apiKeyID         int64
 	balance          float64
 	amount           float64
+	authoritative    bool
 	subscriptionData *subscriptionCacheData
 }
 
@@ -126,6 +127,24 @@ type BillingCacheService struct {
 	cacheWriteDropFullLastLog   int64
 	cacheWriteDropClosedCount   uint64
 	cacheWriteDropClosedLastLog int64
+}
+
+// SupportsBalanceConcurrency reports whether this instance can safely serve
+// balance preflight reads. Simple mode intentionally bypasses wallet billing,
+// and lightweight test/bootstrap instances may not have a cache or repository.
+func (s *BillingCacheService) SupportsBalanceConcurrency() bool {
+	if s == nil || s.cfg == nil || s.cfg.RunMode == config.RunModeSimple {
+		return false
+	}
+	return s.cache != nil || s.userRepo != nil
+}
+
+type balanceCacheSetIfAbsent interface {
+	SetUserBalanceIfAbsent(ctx context.Context, userID int64, balance float64) error
+}
+
+type balanceCacheSetIfLower interface {
+	SetUserBalanceIfLower(ctx context.Context, userID int64, balance float64) error
 }
 
 // NewBillingCacheService 创建计费缓存服务
@@ -219,7 +238,11 @@ func (s *BillingCacheService) cacheWriteWorker(ch <-chan cacheWriteTask) {
 		ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
 		switch task.kind {
 		case cacheWriteSetBalance:
-			s.setBalanceCache(ctx, task.userID, task.balance)
+			if task.authoritative {
+				s.setBalanceCacheAtMost(ctx, task.userID, task.balance)
+			} else {
+				s.setBalanceCacheIfAbsent(ctx, task.userID, task.balance)
+			}
 		case cacheWriteSetSubscription:
 			s.setSubscriptionCache(ctx, task.userID, task.groupID, task.subscriptionData)
 		case cacheWriteUpdateSubscriptionUsage:
@@ -365,6 +388,47 @@ func (s *BillingCacheService) setBalanceCache(ctx context.Context, userID int64,
 	if err := s.cache.SetUserBalance(ctx, userID, balance); err != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: set balance cache failed for user %d: %v", userID, err)
 	}
+}
+
+func (s *BillingCacheService) setBalanceCacheIfAbsent(ctx context.Context, userID int64, balance float64) {
+	if s.cache == nil {
+		return
+	}
+	if setter, ok := s.cache.(balanceCacheSetIfAbsent); ok {
+		if err := setter.SetUserBalanceIfAbsent(ctx, userID, balance); err != nil {
+			logger.LegacyPrintf("service.billing_cache", "Warning: set-if-absent balance cache failed for user %d: %v", userID, err)
+		}
+		return
+	}
+	s.setBalanceCache(ctx, userID, balance)
+}
+
+func (s *BillingCacheService) setBalanceCacheAtMost(ctx context.Context, userID int64, balance float64) {
+	if s.cache == nil {
+		return
+	}
+	if setter, ok := s.cache.(balanceCacheSetIfLower); ok {
+		if err := setter.SetUserBalanceIfLower(ctx, userID, balance); err != nil {
+			logger.LegacyPrintf("service.billing_cache", "Warning: monotonic balance cache update failed for user %d: %v", userID, err)
+		}
+		return
+	}
+	s.setBalanceCache(ctx, userID, balance)
+}
+
+// QueueSetBalance publishes the authoritative post-billing balance. Unlike a
+// relative decrement, an absolute value is safe when cache-fill and billing
+// workers complete in either order.
+func (s *BillingCacheService) QueueSetBalance(userID int64, balance float64) {
+	if s.cache == nil {
+		return
+	}
+	if s.enqueueCacheWrite(cacheWriteTask{kind: cacheWriteSetBalance, userID: userID, balance: balance, authoritative: true}) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
+	defer cancel()
+	s.setBalanceCacheAtMost(ctx, userID, balance)
 }
 
 // DeductBalanceCache 扣减余额缓存（同步调用）

@@ -702,15 +702,18 @@ const formatOutputRate = (
   firstTokenMs: number | null | undefined,
   durationMs: number | null | undefined,
 ): string => {
+  if (outputTokens == null || firstTokenMs == null || durationMs == null) return '-'
   const tokens = Number(outputTokens)
   const firstToken = Number(firstTokenMs)
   const duration = Number(durationMs)
   const generationDuration = duration - firstToken
+  const durationsRoundToSameDisplay = formatDuration(firstTokenMs) === formatDuration(durationMs)
   if (
     !Number.isFinite(tokens) || tokens <= 0
     || !Number.isFinite(firstToken) || firstToken < 0
     || !Number.isFinite(duration) || duration <= 0
-    || generationDuration <= 0
+    || generationDuration < 100
+    || durationsRoundToSameDisplay
   ) return '-'
   return `${(tokens * 1000 / generationDuration).toFixed(1)} t/s`
 }

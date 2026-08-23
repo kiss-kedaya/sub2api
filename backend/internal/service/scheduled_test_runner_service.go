@@ -2,15 +2,24 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 )
 
-const scheduledTestDefaultMaxWorkers = 10
+const (
+	scheduledTestDefaultMaxWorkers = 10
+	// The runner is instantiated by every API/worker process. Keep the lock
+	// longer than the five-minute execution context so a slow run cannot lose
+	// leadership before its plans have finished.
+	scheduledTestRunnerLeaderLockKey = "scheduled-test-runner"
+	scheduledTestRunnerLeaderLockTTL = 10 * time.Minute
+)
 
 // ScheduledTestRunnerService periodically scans due test plans and executes them.
 type ScheduledTestRunnerService struct {
@@ -19,6 +28,16 @@ type ScheduledTestRunnerService struct {
 	accountTestSvc *AccountTestService
 	rateLimitSvc   *RateLimitService
 	cfg            *config.Config
+
+	// lockCache/db elect one process to execute each cron tick across all
+	// instances. With no backend configured the existing single-instance/test
+	// behavior remains ungated.
+	lockCache  LeaderLockCache
+	db         *sql.DB
+	instanceID string
+	// alignmentDelay is kept injectable so lock behavior can be tested without
+	// waiting for the production ten-second alignment delay.
+	alignmentDelay time.Duration
 
 	cron      *cron.Cron
 	startOnce sync.Once
@@ -39,7 +58,19 @@ func NewScheduledTestRunnerService(
 		accountTestSvc: accountTestSvc,
 		rateLimitSvc:   rateLimitSvc,
 		cfg:            cfg,
+		instanceID:     uuid.NewString(),
+		alignmentDelay: 10 * time.Second,
 	}
+}
+
+// SetLeaderLock injects the shared lock backends used to coordinate scheduled
+// tests across API and worker instances.
+func (s *ScheduledTestRunnerService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
+	if s == nil {
+		return
+	}
+	s.lockCache = lockCache
+	s.db = db
 }
 
 // Start begins the cron ticker (every minute).
@@ -85,8 +116,19 @@ func (s *ScheduledTestRunnerService) Stop() {
 }
 
 func (s *ScheduledTestRunnerService) runScheduled() {
+	lockCtx, cancelLock := context.WithTimeout(context.Background(), 2*time.Second)
+	release, acquired := tryAcquireSingletonLeaderLock(lockCtx, s.lockCache, s.db, scheduledTestRunnerLeaderLockKey, s.instanceID, scheduledTestRunnerLeaderLockTTL)
+	cancelLock()
+	if !acquired {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] tick skipped: this instance is not leader")
+		return
+	}
+	defer release()
+
 	// Delay 10s so execution lands at ~:10 of each minute instead of :00.
-	time.Sleep(10 * time.Second)
+	if s.alignmentDelay > 0 {
+		time.Sleep(s.alignmentDelay)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
