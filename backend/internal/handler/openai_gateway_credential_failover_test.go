@@ -103,6 +103,22 @@ func TestOpenAICoolingGroupForbiddenIsRetryable503(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "access forbidden")
 }
 
+func TestOpenAICoolingGroupCredentialReasonStillReturns503(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode:   http.StatusForbidden,
+		Reason:       service.OpenAIUpstreamAccessStateReason,
+		ResponseBody: []byte(`{"code":"FORBIDDEN","message":"当前分组内支持该模型的货源均在冷却中。请稍后重试"}`),
+	}, false)
+
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	require.Equal(t, "5", recorder.Header().Get("Retry-After"))
+	require.Equal(t, "overloaded_error", gjson.Get(recorder.Body.String(), "error.type").String())
+	require.NotContains(t, recorder.Body.String(), "access forbidden")
+}
+
 func TestOpenAICapacityFailoverExhaustionPreservesMessageAsServerError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	message := "Our servers are currently overloaded. Please try again later."
