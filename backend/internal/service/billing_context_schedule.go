@@ -119,11 +119,8 @@ func (s *BillingService) ResolveContextPricingSchedule(ctx context.Context, reso
 		}
 		tiers = append(tiers, tier)
 	}
-	if legacy == nil {
-		applyIntervalContextLabels(tiers, resolved.Intervals)
-	}
 	tiers = mergeEqualContextTiers(tiers)
-	applyGeneratedContextLabels(tiers, plan)
+	applyContextTierLabels(tiers, plan)
 
 	basis := ContextPricingBasisWholeRequest
 	if legacy != nil {
@@ -330,35 +327,14 @@ func contextPricePtr(v *float64, explicit bool) *float64 {
 	return v
 }
 
-// applyIntervalContextLabels 把管理员在渠道区间上配置的 tier_label 带到对应档位。
-func applyIntervalContextLabels(tiers []ContextPricingTier, intervals []PricingInterval) {
-	for i := range tiers {
-		for j := range intervals {
-			iv := &intervals[j]
-			if iv.TierLabel == "" || iv.MinTokens != tiers[i].MinTokens {
-				continue
-			}
-			if (iv.MaxTokens == nil) != (tiers[i].MaxTokens == nil) {
-				continue
-			}
-			if iv.MaxTokens != nil && *iv.MaxTokens != *tiers[i].MaxTokens {
-				continue
-			}
-			tiers[i].Label = iv.TierLabel
-			break
-		}
-	}
-}
-
-// mergeEqualContextTiers 合并相邻、四项单价相同且都没有管理员标签的段
-// （倍率 ≤1 的目录、关闭阶梯等场景塌成单档）。
+// mergeEqualContextTiers 合并相邻且四项单价相同的段（倍率 ≤1 的目录、关闭阶梯等场景塌成单档）。
 func mergeEqualContextTiers(tiers []ContextPricingTier) []ContextPricingTier {
 	if len(tiers) < 2 {
 		return tiers
 	}
 	merged := make([]ContextPricingTier, 0, len(tiers))
 	for _, t := range tiers {
-		if n := len(merged); n > 0 && merged[n-1].Label == "" && t.Label == "" && sameContextPrices(merged[n-1], t) {
+		if n := len(merged); n > 0 && sameContextPrices(merged[n-1], t) {
 			merged[n-1].MaxTokens = t.MaxTokens
 			continue
 		}
@@ -383,25 +359,25 @@ func samePricePtr(a, b *float64) bool {
 	return math.Abs(*a-*b) <= scale*1e-9
 }
 
-// applyGeneratedContextLabels 给档位打标签：渠道区间沿用管理员配置的 tier_label；
-// 目录阶梯/旧规则的两档按阈值生成（达到阈值即进高档时用 < / ≥）。
-func applyGeneratedContextLabels(tiers []ContextPricingTier, plan contextBreakpointPlan) {
+// applyContextTierLabels 给多档阶梯打统一形态的标签：有上限的档为「≤上限」，
+// 末档为「>下限」；档位按上下文升序，因此相邻的 ≤100K / ≤200K 即表示 (100K,200K]。
+// 目录阶梯/旧规则在"达到阈值即进高档"时改用 < / ≥ 表达阈值本身。
+// 渠道区间上的 tier_label 不用于 token 档位（token 模式的管理表单不暴露该字段）。
+func applyContextTierLabels(tiers []ContextPricingTier, plan contextBreakpointPlan) {
 	if len(tiers) < 2 {
 		return
 	}
-	if plan.thresholdBound > 0 {
-		label := formatContextTokenCount(plan.threshold)
-		lowPrefix, highPrefix := "≤", ">"
-		if plan.thresholdInclusive {
-			lowPrefix, highPrefix = "<", "≥"
-		}
-		for i := range tiers {
-			switch {
-			case tiers[i].MaxTokens != nil && *tiers[i].MaxTokens == plan.thresholdBound:
-				tiers[i].Label = lowPrefix + label
-			case tiers[i].MinTokens == plan.thresholdBound:
-				tiers[i].Label = highPrefix + label
-			}
+	for i := range tiers {
+		t := &tiers[i]
+		switch {
+		case plan.thresholdInclusive && t.MaxTokens != nil && *t.MaxTokens == plan.thresholdBound:
+			t.Label = "<" + formatContextTokenCount(plan.threshold)
+		case plan.thresholdInclusive && t.MinTokens == plan.thresholdBound:
+			t.Label = "≥" + formatContextTokenCount(plan.threshold)
+		case t.MaxTokens != nil:
+			t.Label = "≤" + formatContextTokenCount(*t.MaxTokens)
+		default:
+			t.Label = ">" + formatContextTokenCount(t.MinTokens)
 		}
 	}
 }
