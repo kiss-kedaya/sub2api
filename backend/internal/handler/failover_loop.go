@@ -49,7 +49,45 @@ const (
 	// 取值与 maxAccountSwitches 默认值一致：混合定价的大分组仍有充分重选机会，
 	// 同时把整池越线时的无谓选号开销限制在常数级。
 	maxProfitVetoAttempts = 10
+	// A single-account capacity pool may be retried briefly after the account
+	// is exhausted.  Fill scheduling must not turn that special case into a
+	// 1024-switch, multi-minute loop.
+	maxFillSingleAccountBackoffs = 3
+	// fillSchedulingSafetySwitchLimit is an emergency guard for the production
+	// fill-scheduling loops.  The configured max_account_switches value used to
+	// be a hard stop, which could return before the scheduler had tried all
+	// eligible accounts.  Fill scheduling now ends when the selection query has
+	// no candidates left; this high limit only protects against a broken/stale
+	// exclusion path causing an infinite loop.
+	fillSchedulingSafetySwitchLimit = 1024
 )
+
+// fillSchedulingSwitchBudget turns the legacy switch setting into a safety
+// floor.  A value of zero still gets a bounded budget, while an explicitly
+// larger value remains respected for installations with unusually large pools.
+func fillSchedulingSwitchBudget(configured int) int {
+	if configured < fillSchedulingSafetySwitchLimit {
+		return fillSchedulingSafetySwitchLimit
+	}
+	return configured
+}
+
+// fillSchedulingSwitchAllowed reports whether another account may be tried.
+// Candidate exhaustion is the normal termination condition; callers should
+// still invoke account selection after this check so the last error can be
+// returned with the correct upstream context.
+func fillSchedulingSwitchAllowed(switchCount, configured int) bool {
+	return switchCount < fillSchedulingSwitchBudget(configured)
+}
+
+// NewFillFailoverState creates the production failover state used by fill
+// scheduling.  NewFailoverState remains intentionally strict for unit tests
+// and callers that explicitly need the legacy bounded behavior.
+func NewFillFailoverState(maxSwitches int, hasBoundSession bool) *FailoverState {
+	state := NewFailoverState(fillSchedulingSwitchBudget(maxSwitches), hasBoundSession)
+	state.fillScheduling = true
+	return state
+}
 
 // profitVetoExhaustedMessage 是利润否决次数耗尽时返回给客户端的文案。
 // 语义上等同于「无可用账号」：候选账号都不满足分组的利润约束。
@@ -121,6 +159,22 @@ func effectiveSameAccountRetryLimit(failoverErr *service.UpstreamFailoverError, 
 	return limit
 }
 
+// poolModeSameAccountRetry returns the next retry number and delay when an
+// upstream error is eligible for the account's pool-mode retry budget.  Keeping
+// this decision in one helper prevents endpoint-specific loops from silently
+// skipping the configured same-account retries.
+func poolModeSameAccountRetry(account *service.Account, failoverErr *service.UpstreamFailoverError, retryCount int) (nextCount int, delay time.Duration, ok bool) {
+	if failoverErr == nil || !failoverErr.RetryableOnSameAccount {
+		return 0, 0, false
+	}
+	limit := effectiveSameAccountRetryLimit(failoverErr, account)
+	if !sameAccountRetryAllowed(failoverErr, retryCount, limit) {
+		return 0, 0, false
+	}
+	nextCount = retryCount + 1
+	return nextCount, sameAccountRetryDelayFor(failoverErr, nextCount), true
+}
+
 // FailoverState 跨循环迭代共享的 failover 状态
 type FailoverState struct {
 	SwitchCount           int
@@ -138,7 +192,9 @@ type FailoverState struct {
 	// SwitchCount 也不前进的活锁。清空后必须把它们放回排除集。
 	profitVetoedAccountIDs map[int64]struct{}
 	// profitVetoCount 本次请求累计的利润否决次数，用于 maxProfitVetoAttempts 上限。
-	profitVetoCount int
+	profitVetoCount       int
+	fillScheduling        bool
+	selectionBackoffCount int
 }
 
 // NewFailoverState 创建 failover 状态
@@ -186,6 +242,24 @@ func (s *FailoverState) allExclusionsAreProfitVetoed() bool {
 		}
 	}
 	return true
+}
+
+// hasMixedProfitVetoExclusions reports the only multi-account case where the
+// legacy 503 backoff is still useful: at least one account was rejected by the
+// profit gate, while another account was rejected by a real upstream failure.
+// Clearing the latter after the cooldown gives it a chance to recover, while a
+// pool made entirely of upstream failures remains exhausted and is never
+// endlessly reintroduced.
+func (s *FailoverState) hasMixedProfitVetoExclusions() bool {
+	if s == nil || len(s.FailedAccountIDs) <= 1 || len(s.profitVetoedAccountIDs) == 0 {
+		return false
+	}
+	for id := range s.FailedAccountIDs {
+		if _, profitVetoed := s.profitVetoedAccountIDs[id]; !profitVetoed {
+			return true
+		}
+	}
+	return false
 }
 
 // HandleFailoverError 处理 UpstreamFailoverError，返回下一步动作。
@@ -282,7 +356,20 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 
 	if s.LastFailoverErr != nil &&
 		s.LastFailoverErr.StatusCode == http.StatusServiceUnavailable &&
-		s.SwitchCount <= s.MaxSwitches {
+		s.SwitchCount <= s.MaxSwitches &&
+		// A multi-account pool must not clear its exclusion set after every
+		// candidate returned 503: doing so revisits already exhausted accounts
+		// instead of returning the final upstream error.  The sole multi-account
+		// exception is a mixed profit-veto/real-failure set, where clearing the
+		// real failure is required to preserve the existing profit-gate recovery
+		// behavior.
+		(len(s.FailedAccountIDs) <= 1 || s.hasMixedProfitVetoExclusions()) {
+		if s.fillScheduling && s.selectionBackoffCount >= maxFillSingleAccountBackoffs {
+			return FailoverExhausted
+		}
+		if s.fillScheduling {
+			s.selectionBackoffCount++
+		}
 
 		// 排除列表全由利润门否决贡献时，清空后会被原样恢复：退避重试拿不到
 		// 任何新候选，而利润否决不推进 SwitchCount，退避条件将永远成立。

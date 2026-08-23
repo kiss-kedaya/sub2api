@@ -61,7 +61,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			if c.Request.Context().Err() != nil {
 				return
 			}
-			if service.IsRetryableCodexModelsManifestError(err) && switchCount < maxAccountSwitches {
+			if service.IsRetryableCodexModelsManifestError(err) && fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 				failedAccountIDs[account.ID] = struct{}{}
 				switchCount++
 				lastUpstreamErr = err

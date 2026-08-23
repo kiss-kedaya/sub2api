@@ -243,7 +243,7 @@ func TestCodexModelsReturnsLastUpstreamErrorWhenAccountsAreExhausted(t *testing.
 	}
 }
 
-func TestCodexModelsHonorsAccountSwitchLimit(t *testing.T) {
+func TestCodexModelsFillsAllAvailableAccountsBeforeReturning(t *testing.T) {
 	handler, upstream, groupID := newCodexModelsFailoverTestHandlerWithAccountCount(http.StatusServiceUnavailable, 4, 2)
 	upstream.statuses = map[int64]int{
 		1: http.StatusServiceUnavailable,
@@ -253,14 +253,14 @@ func TestCodexModelsHonorsAccountSwitchLimit(t *testing.T) {
 	}
 	recorder := performCodexModelsRequest(t, handler, groupID)
 
-	if got, want := upstream.calls(), []int64{1, 2, 3}; !equalInt64Slices(got, want) {
+	if got, want := upstream.calls(), []int64{1, 2, 3, 4}; !equalInt64Slices(got, want) {
 		t.Fatalf("upstream account calls: got %v, want %v", got, want)
 	}
 	if recorder.Code != http.StatusBadGateway {
 		t.Fatalf("status: got %d, want %d; body=%s", recorder.Code, http.StatusBadGateway, recorder.Body.String())
 	}
-	if body := recorder.Body.String(); !strings.Contains(body, "upstream error 504") {
-		t.Fatalf("body does not preserve the limit-ending upstream error: %s", body)
+	if body := recorder.Body.String(); !strings.Contains(body, "upstream error 500") {
+		t.Fatalf("body does not preserve the final upstream error: %s", body)
 	}
 }
 

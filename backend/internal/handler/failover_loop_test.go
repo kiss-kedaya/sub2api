@@ -156,6 +156,36 @@ func TestNewFailoverState(t *testing.T) {
 	})
 }
 
+func TestFillSchedulingSwitchBudgetUsesPoolExhaustionSafetyFloor(t *testing.T) {
+	require.Equal(t, fillSchedulingSafetySwitchLimit, fillSchedulingSwitchBudget(0))
+	require.Equal(t, fillSchedulingSafetySwitchLimit, fillSchedulingSwitchBudget(10))
+	require.Equal(t, fillSchedulingSafetySwitchLimit+1, fillSchedulingSwitchBudget(fillSchedulingSafetySwitchLimit+1))
+	require.True(t, fillSchedulingSwitchAllowed(fillSchedulingSafetySwitchLimit-1, 10))
+	require.False(t, fillSchedulingSwitchAllowed(fillSchedulingSafetySwitchLimit, 10))
+
+	state := NewFillFailoverState(3, false)
+	require.Equal(t, fillSchedulingSafetySwitchLimit, state.MaxSwitches)
+}
+
+func TestPoolModeSameAccountRetryUsesAccountBudget(t *testing.T) {
+	account := &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{
+		"pool_mode":             true,
+		"pool_mode_retry_count": 2,
+	}}
+	failoverErr := &service.UpstreamFailoverError{RetryableOnSameAccount: true}
+
+	next, delay, ok := poolModeSameAccountRetry(account, failoverErr, 0)
+	require.True(t, ok)
+	require.Equal(t, 1, next)
+	require.Equal(t, sameAccountRetryDelay, delay)
+
+	next, _, ok = poolModeSameAccountRetry(account, failoverErr, 1)
+	require.True(t, ok)
+	require.Equal(t, 2, next)
+	_, _, ok = poolModeSameAccountRetry(account, failoverErr, 2)
+	require.False(t, ok, "the account must be excluded only after its configured retries are used")
+}
+
 // ---------------------------------------------------------------------------
 // sleepWithContext 测试
 // ---------------------------------------------------------------------------
@@ -994,6 +1024,15 @@ func TestHandleSelectionExhausted(t *testing.T) {
 
 		action := fs.HandleSelectionExhausted(context.Background())
 		require.Equal(t, FailoverContinue, action)
+	})
+	t.Run("多账号503全部失败时不得清空排除列表", func(t *testing.T) {
+		fs := NewFailoverState(10, false)
+		fs.LastFailoverErr = newTestFailoverErr(503, false, false)
+		fs.FailedAccountIDs[100] = struct{}{}
+		fs.FailedAccountIDs[200] = struct{}{}
+		action := fs.HandleSelectionExhausted(context.Background())
+		require.Equal(t, FailoverExhausted, action)
+		require.Len(t, fs.FailedAccountIDs, 2)
 	})
 }
 
