@@ -245,6 +245,50 @@ func TestOpenAIStreamCapacityShedErrorFramePrecedingFailedStillFailsOver(t *test
 	require.Empty(t, rec.Body.String())
 }
 
+// Some upstreams keep the capacity message but normalize the error code to
+// server_error and omit the "try again" hint. It is still a request-scoped
+// overload and must be retried before any semantic output is committed.
+func TestOpenAIStreamGenericServerErrorOverloadStillFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{cfg: &config.Config{
+		Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize},
+	}}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	stream := strings.Join([]string{
+		"event: response.created",
+		`data: {"type":"response.created","response":{"id":"resp_1"},"sequence_number":0}`,
+		"",
+		"event: response.in_progress",
+		`data: {"type":"response.in_progress","response":{"id":"resp_1"},"sequence_number":1}`,
+		"",
+		"event: error",
+		`data: {"type":"error","error":{"type":"service_unavailable_error","code":"server_error","message":"Our servers are currently overloaded."},"sequence_number":2}`,
+		"",
+		"event: response.failed",
+		`data: {"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"code":"server_error","message":"Our servers are currently overloaded."}},"sequence_number":3}`,
+		"",
+	}, "\n")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(stream)),
+		Header:     http.Header{"X-Request-Id": []string{"rid-generic-overload"}},
+	}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c,
+		&Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Name: "acc"},
+		time.Now(), "model", "model")
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.True(t, failoverErr.RequestScopedTransient)
+	require.Equal(t, http.StatusServiceUnavailable, failoverErr.ClientStatusCode)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+}
+
 // 流中途（已有真实输出）降载时无法再 failover，此时必须把降载码改写为客户端
 // 可重试的 server_error 再通过唯一 response.failed 终态转发——Codex 对
 // server_is_overloaded/slow_down 判致命并终止会话，对其余错误码执行内置退避重试。

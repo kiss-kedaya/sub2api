@@ -2796,6 +2796,12 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage(), streamStarted)
 		return
 	}
+	if service.IsUpstreamCapacityCoolingBody(responseBody) {
+		service.SetOpsUpstreamError(c, statusCode, service.ExtractUpstreamErrorMessage(responseBody), "")
+		c.Header("Retry-After", "5")
+		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "overloaded_error", "Upstream providers are temporarily cooling down; please retry later", streamStarted)
+		return
+	}
 
 	// 先检查透传规则
 	if h.errorPassthroughService != nil && len(responseBody) > 0 {

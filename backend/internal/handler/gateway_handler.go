@@ -1779,6 +1779,15 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 		h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage(), streamStarted)
 		return
 	}
+	// Some OpenAI-compatible providers encode a temporarily exhausted group as
+	// HTTP 403/FORBIDDEN. Do not mislabel that request-scoped capacity signal as
+	// a credential error after failover has exhausted the group.
+	if service.IsUpstreamCapacityCoolingBody(responseBody) {
+		service.SetOpsUpstreamError(c, statusCode, service.ExtractUpstreamErrorMessage(responseBody), "")
+		c.Header("Retry-After", "5")
+		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "overloaded_error", "Upstream providers are temporarily cooling down; please retry later", streamStarted)
+		return
+	}
 
 	// 先检查透传规则
 	if h.errorPassthroughService != nil && len(responseBody) > 0 {
