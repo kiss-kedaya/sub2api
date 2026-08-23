@@ -140,11 +140,15 @@ const (
 
 // ConcurrencyError represents a concurrency limit error with context
 type ConcurrencyError struct {
-	SlotType  string
-	IsTimeout bool
+	SlotType                  string
+	IsTimeout                 bool
+	BalanceWithholdingFailed bool
 }
 
 func (e *ConcurrencyError) Error() string {
+	if e.BalanceWithholdingFailed {
+		return balanceWithholdingFailedMessage
+	}
 	if e.IsTimeout {
 		return fmt.Sprintf("timeout waiting for %s concurrency slot", e.SlotType)
 	}
@@ -378,7 +382,10 @@ func (h *ConcurrencyHelper) withBalanceSlotFromGin(c *gin.Context, userID int64,
 		if releaseFunc != nil {
 			releaseFunc()
 		}
-		return nil, &ConcurrencyError{SlotType: "balance"}
+		return nil, &ConcurrencyError{
+			SlotType:                  "balance",
+			BalanceWithholdingFailed: true,
+		}
 	}
 
 	balanceRelease := result.ReleaseFunc
