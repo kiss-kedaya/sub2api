@@ -59,6 +59,17 @@ type GatewayHandler struct {
 	settingService            *service.SettingService
 }
 
+// streamKeepaliveInterval returns the configured interval for compatibility
+// streaming requests. A nil config or an explicit zero keeps the feature
+// disabled, matching the native OpenAI handlers and preserving test/lightweight
+// handler construction semantics.
+func (h *GatewayHandler) streamKeepaliveInterval() time.Duration {
+	if h == nil || h.cfg == nil || h.cfg.Gateway.StreamKeepaliveInterval <= 0 {
+		return 0
+	}
+	return time.Duration(h.cfg.Gateway.StreamKeepaliveInterval) * time.Second
+}
+
 // NewGatewayHandler creates a new GatewayHandler
 func NewGatewayHandler(
 	gatewayService *service.GatewayService,
@@ -252,6 +263,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
+
+	// Keep the edge connection alive while compatibility routing selects an
+	// account and waits for the upstream response headers. Start only after
+	// validation/billing so pre-stream errors retain their normal HTTP status.
+	stopStreamHeaderKeepalive := func() {}
+	if reqStream {
+		stopStreamHeaderKeepalive = service.StartOpenAIStreamSSEKeepalive(c, h.streamKeepaliveInterval())
+	}
+	defer stopStreamHeaderKeepalive()
 
 	// 设置请求所属分组 ID（用于渠道级功能判断，如 WebSearch 模拟）
 	parsedReq.GroupID = apiKey.GroupID
@@ -1848,6 +1868,14 @@ func (h *GatewayHandler) mapUpstreamError(statusCode int) (int, string, string) 
 
 // handleStreamingAwareError handles errors that may occur after streaming has started
 func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
+	// A compatibility stream may have committed HTTP 200 using only the
+	// pre-header keepalive comments. Stop the producer before taking over the
+	// writer and treat that case as a stream, while leaving ordinary JSON errors
+	// untouched when the first heartbeat has not fired yet.
+	keepaliveCommitted := service.StopOpenAICompactSSEKeepaliveCommitted(c)
+	if keepaliveCommitted {
+		streamStarted = true
+	}
 	if streamStarted {
 		// 响应状态码已固化为 200（ping/部分数据已 flush），错误只能就地以 SSE 帧回传。
 		// 标记本次流内错误，供 ops_error_logger 补记——否则该中间件按 status>=400 采集，
@@ -1968,6 +1996,10 @@ func (h *GatewayHandler) checkClaudeCodeVersion(c *gin.Context) bool {
 
 // errorResponse 返回Claude API格式的错误响应
 func (h *GatewayHandler) errorResponse(c *gin.Context, status int, errType, message string) {
+	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
+		h.handleStreamingAwareError(c, status, errType, message, true)
+		return
+	}
 	c.JSON(status, gin.H{
 		"type": "error",
 		"error": gin.H{
