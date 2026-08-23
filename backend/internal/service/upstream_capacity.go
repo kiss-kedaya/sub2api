@@ -45,6 +45,8 @@ func isUpstreamCapacityCoolingMessage(value string) bool {
 		"cooling",
 		"your request was blocked",
 		"request was blocked",
+		"error code: 1010",
+		"error 1010",
 		"all candidates failed",
 		"候选供应商均请求失败",
 		"支持该模型的货源均",
