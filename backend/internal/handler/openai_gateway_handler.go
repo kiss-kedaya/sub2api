@@ -1458,6 +1458,11 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 	if failoverErr != nil {
 		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
 	}
+	if failoverErr != nil && service.IsUpstreamCapacityCoolingBody(failoverErr.ResponseBody) {
+		c.Header("Retry-After", "5")
+		h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Upstream providers are temporarily cooling down; please retry later", streamStarted)
+		return
+	}
 	if failoverErr != nil && failoverErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(failoverErr)
 		h.anthropicStreamingAwareError(c, status, "api_error", message, streamStarted)
