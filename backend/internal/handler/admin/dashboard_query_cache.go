@@ -10,11 +10,11 @@ import (
 )
 
 var (
-	dashboardTrendCache        = newSnapshotCache(30 * time.Second)
-	dashboardModelStatsCache   = newSnapshotCache(30 * time.Second)
-	dashboardGroupStatsCache   = newSnapshotCache(30 * time.Second)
-	dashboardUsersTrendCache   = newSnapshotCache(30 * time.Second)
-	dashboardAPIKeysTrendCache = newSnapshotCache(30 * time.Second)
+	dashboardTrendCache        = newSnapshotCache(reportCacheTTL)
+	dashboardModelStatsCache   = newSnapshotCache(reportCacheTTL)
+	dashboardGroupStatsCache   = newSnapshotCache(reportCacheTTL)
+	dashboardUsersTrendCache   = newSnapshotCache(reportCacheTTL)
+	dashboardAPIKeysTrendCache = newSnapshotCache(reportCacheTTL)
 )
 
 type dashboardTrendCacheKey struct {
@@ -103,7 +103,9 @@ func (h *DashboardHandler) getUsageTrendCached(
 		UpstreamModelMismatch: upstreamModelMismatch,
 	})
 	entry, hit, err := dashboardTrendCache.GetOrLoad(key, func() (any, error) {
-		return h.dashboardService.GetUsageTrendWithUsageFilters(ctx, startTime, endTime, granularity, usagestats.UsageLogFilters{
+		loadCtx, cancel := reportCacheLoadContext(ctx)
+		defer cancel()
+		return h.dashboardService.GetUsageTrendWithUsageFilters(loadCtx, startTime, endTime, granularity, usagestats.UsageLogFilters{
 			UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
 			Model: model, RequestType: requestType, Stream: stream, BillingType: billingType,
 			UpstreamModelMismatch: upstreamModelMismatch,
@@ -140,7 +142,9 @@ func (h *DashboardHandler) getModelStatsCached(
 		UpstreamModelMismatch: upstreamModelMismatch,
 	})
 	entry, hit, err := dashboardModelStatsCache.GetOrLoad(key, func() (any, error) {
-		return h.dashboardService.GetModelStatsWithUsageFiltersBySource(ctx, startTime, endTime, usagestats.UsageLogFilters{
+		loadCtx, cancel := reportCacheLoadContext(ctx)
+		defer cancel()
+		return h.dashboardService.GetModelStatsWithUsageFiltersBySource(loadCtx, startTime, endTime, usagestats.UsageLogFilters{
 			UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
 			RequestType: requestType, Stream: stream, BillingType: billingType,
 			UpstreamModelMismatch: upstreamModelMismatch,
@@ -175,7 +179,9 @@ func (h *DashboardHandler) getGroupStatsCached(
 		UpstreamModelMismatch: upstreamModelMismatch,
 	})
 	entry, hit, err := dashboardGroupStatsCache.GetOrLoad(key, func() (any, error) {
-		return h.dashboardService.GetGroupStatsWithUsageFilters(ctx, startTime, endTime, usagestats.UsageLogFilters{
+		loadCtx, cancel := reportCacheLoadContext(ctx)
+		defer cancel()
+		return h.dashboardService.GetGroupStatsWithUsageFilters(loadCtx, startTime, endTime, usagestats.UsageLogFilters{
 			UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
 			RequestType: requestType, Stream: stream, BillingType: billingType,
 			UpstreamModelMismatch: upstreamModelMismatch,
