@@ -27,6 +27,14 @@ func TestConcurrencyErrorResponse(t *testing.T) {
 			wantMessage: "Concurrency limit exceeded for account, please retry later",
 		},
 		{
+			name:        "balance withholding failure is forbidden",
+			err:         &ConcurrencyError{SlotType: "balance", BalanceWithholdingFailed: true},
+			slotType:    "user",
+			wantStatus:  http.StatusForbidden,
+			wantType:    "permission_error",
+			wantMessage: balanceWithholdingFailedMessage,
+		},
+		{
 			name:        "client cancellation is not classified as concurrency limit",
 			err:         context.Canceled,
 			slotType:    "user",

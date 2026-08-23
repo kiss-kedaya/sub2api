@@ -52,6 +52,7 @@ func TestAcquireUserSlotWithWaitRejectsWhenBalanceBudgetIsFull(t *testing.T) {
 	var concurrencyErr *ConcurrencyError
 	require.ErrorAs(t, err, &concurrencyErr)
 	require.Equal(t, "balance", concurrencyErr.SlotType)
+	require.True(t, concurrencyErr.BalanceWithholdingFailed)
 	require.Equal(t, 1, cache.acquireCalls)
 	require.Equal(t, 1, cache.userReleaseCalls)
 }

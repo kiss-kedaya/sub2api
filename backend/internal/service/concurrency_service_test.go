@@ -261,12 +261,16 @@ func TestAcquireUserSlot_IndependentFromAccount(t *testing.T) {
 	require.NotNil(t, result.ReleaseFunc)
 }
 
-func TestAcquireUserSlot_UnlimitedConcurrency(t *testing.T) {
-	svc := NewConcurrencyService(&stubConcurrencyCacheForTest{})
+func TestAcquireUserSlot_MinimumConcurrency(t *testing.T) {
+	cache := &stubConcurrencyCacheForTest{acquireResult: true}
+	svc := NewConcurrencyService(cache)
 
-	result, err := svc.AcquireUserSlot(context.Background(), 1, 0)
-	require.NoError(t, err)
-	require.True(t, result.Acquired)
+	for _, maxConcurrency := range []int{0, -1} {
+		result, err := svc.AcquireUserSlot(context.Background(), 1, maxConcurrency)
+		require.NoError(t, err)
+		require.True(t, result.Acquired, "maxConcurrency=%d should retain one slot", maxConcurrency)
+		require.NotNil(t, result.ReleaseFunc)
+	}
 }
 
 func TestTrackAPIKeySlot_ReleaseDecrements(t *testing.T) {
