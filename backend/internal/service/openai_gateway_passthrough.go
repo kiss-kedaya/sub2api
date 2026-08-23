@@ -1472,6 +1472,14 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	if isOpenAIContextWindowError(message, payload) {
 		return false
 	}
+	// Capacity shedding is a request-scoped transient even when the upstream
+	// only sends the generic `server_error` code (some Responses deployments
+	// omit the more specific `server_is_overloaded` code and retry hint).
+	// Classify it before the generic error markers so the first-output stage can
+	// fail over without exposing a terminal SSE frame to the client.
+	if isOpenAIUpstreamCapacityShedEvent(payload) {
+		return true
+	}
 	if isOpenAIUpstreamAccessStateError(message, payload) {
 		return true
 	}
@@ -1523,6 +1531,11 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	}
 	if isOpenAIContextWindowError(message, payload) {
 		return false
+	}
+	// Do not require the provider to include "try again" in the message. The
+	// structured capacity-shed signal is sufficient to retry before output.
+	if isOpenAIUpstreamCapacityShedEvent(payload) {
+		return true
 	}
 	if isOpenAIUpstreamAccessStateError(message, payload) {
 		return true
