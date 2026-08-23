@@ -7,8 +7,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
 
-// 与 dashboard 查询缓存同款:30s TTL 进程内缓存,仅服务 /admin/usage/stats 读路径。
-var usageStatsCache = newSnapshotCache(30 * time.Second)
+// /admin/usage/stats scans usage_logs for endpoint dimensions, so keep the
+// result warm long enough for the admin page's related requests to reuse it.
+var usageStatsCache = newSnapshotCache(reportCacheTTL)
 
 type usageStatsCacheKeyData struct {
 	StartTime             string `json:"start_time"`
@@ -54,7 +55,9 @@ func usageStatsCacheKey(filters usagestats.UsageLogFilters) string {
 func (h *UsageHandler) getStatsCached(ctx context.Context, filters usagestats.UsageLogFilters) (*usagestats.UsageStats, bool, error) {
 	key := usageStatsCacheKey(filters)
 	entry, hit, err := usageStatsCache.GetOrLoad(key, func() (any, error) {
-		return h.usageService.GetStatsWithFilters(ctx, filters)
+		loadCtx, cancel := reportCacheLoadContext(ctx)
+		defer cancel()
+		return h.usageService.GetStatsWithFilters(loadCtx, filters)
 	})
 	if err != nil {
 		return nil, hit, err

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,23 @@ import (
 
 	"golang.org/x/sync/singleflight"
 )
+
+const (
+	// reportCacheTTL keeps the expensive admin reports warm across normal panel
+	// refreshes. The underlying data is still refreshed on the next cache miss.
+	reportCacheTTL         = 2 * time.Minute
+	reportCacheLoadTimeout = 20 * time.Second
+)
+
+// reportCacheLoadContext lets an in-flight report finish after a browser aborts
+// so a retry can reuse the result instead of cancelling the expensive SQL scan.
+func reportCacheLoadContext(parent context.Context) (context.Context, context.CancelFunc) {
+	base := context.Background()
+	if parent != nil {
+		base = context.WithoutCancel(parent)
+	}
+	return context.WithTimeout(base, reportCacheLoadTimeout)
+}
 
 type snapshotCacheEntry struct {
 	ETag      string

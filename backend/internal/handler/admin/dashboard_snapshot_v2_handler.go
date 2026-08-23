@@ -15,7 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var dashboardSnapshotV2Cache = newSnapshotCache(30 * time.Second)
+var dashboardSnapshotV2Cache = newSnapshotCache(reportCacheTTL)
 
 type dashboardSnapshotV2Stats struct {
 	usagestats.DashboardStats
@@ -117,8 +117,10 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 	cacheKey := string(keyRaw)
 
 	cached, hit, err := dashboardSnapshotV2Cache.GetOrLoad(cacheKey, func() (any, error) {
+		loadCtx, cancel := reportCacheLoadContext(c.Request.Context())
+		defer cancel()
 		return h.buildSnapshotV2Response(
-			c.Request.Context(),
+			loadCtx,
 			startTime,
 			endTime,
 			granularity,
