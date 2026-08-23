@@ -324,6 +324,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	agentTaskRecoveryTried := false
 	compactModelFallbackRetried := false
+	responsesLiteParallelToolCallsRetryTried := false
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
 	var resp *http.Response
 	var usage *OpenAIUsage
@@ -358,6 +359,22 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			probeBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(probeBody))
+			if !responsesLiteParallelToolCallsRetryTried &&
+				resp.StatusCode == http.StatusBadRequest &&
+				isOpenAIResponsesLiteParallelToolCallsError(probeBody) {
+				liteBody, changed, liteErr := normalizeOpenAIResponsesLiteParallelToolCalls(body)
+				if liteErr != nil {
+					return nil, liteErr
+				}
+				if changed {
+					body = liteBody
+					responsesLiteParallelToolCallsRetryTried = true
+					rejectedFieldRetryState.remember(body)
+					logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Retrying Responses Lite request with parallel_tool_calls=false (account: %s)", account.Name)
+					continue
+				}
+				responsesLiteParallelToolCallsRetryTried = true
+			}
 			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, probeBody); retryErr != nil {
 				return nil, fmt.Errorf("normalize passthrough rejected Responses field retry body: %w", retryErr)
 			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
@@ -571,6 +588,15 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	// DeepSeek 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	if c != nil && (isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)) {
+		normalized, changed, normalizeErr := normalizeOpenAIResponsesLiteParallelToolCalls(body)
+		if normalizeErr != nil {
+			return nil, normalizeErr
+		}
+		if changed {
+			body = normalized
+		}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {

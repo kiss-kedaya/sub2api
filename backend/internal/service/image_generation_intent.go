@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -16,7 +17,8 @@ const (
 )
 
 func isOpenAIResponsesLiteHeader(value string) bool {
-	return strings.EqualFold(strings.TrimSpace(value), "true")
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	return err == nil && parsed
 }
 
 func isOpenAIResponsesLiteWebSocketPayload(body []byte) bool {
@@ -24,6 +26,22 @@ func isOpenAIResponsesLiteWebSocketPayload(body []byte) bool {
 		return false
 	}
 	return isOpenAIResponsesLiteHeader(gjson.GetBytes(body, "client_metadata."+responsesLiteWSMetadataKey).String())
+}
+
+// isOpenAIResponsesLiteParallelToolCallsError recognizes the upstream contract
+// error so requests that arrived without the marker header can be retried once
+// with the required field. The first attempt is rejected before model execution.
+func isOpenAIResponsesLiteParallelToolCallsError(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(body)))
+	if message == "" {
+		message = strings.ToLower(string(body))
+	}
+	return strings.Contains(message, "parallel_tool_calls") &&
+		strings.Contains(message, "responses-lite") &&
+		strings.Contains(message, "false")
 }
 
 // ImageGenerationPermissionMessage returns the stable end-user error text for disabled groups.

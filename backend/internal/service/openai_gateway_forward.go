@@ -56,7 +56,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if legacyIngressChanged {
 		body = legacyIngressBody
 	}
-	responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader))
+	responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) ||
+		isOpenAIResponsesLiteWebSocketPayload(body)
 	if responsesLite {
 		liteBody, changed, liteErr := normalizeOpenAIResponsesLiteParallelToolCalls(body)
 		if liteErr != nil {
@@ -303,7 +304,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageGenerationAllowed = GroupAllowsImageGeneration(apiKey.Group)
 	}
 	codexImageGenerationBridgeEnabled := isCodexCLI &&
-		!isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) &&
+		!responsesLite &&
 		imageGenerationAllowed &&
 		codexImageGenerationExplicitToolPolicy != codexImageGenerationExplicitToolPolicyStrip &&
 		s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
@@ -907,6 +908,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	httpInvalidEncryptedContentRetryTried := false
+	responsesLiteParallelToolCallsRetryTried := false
 	compactModelFallbackRetried := false
 	agentTaskRecoveryTried := false
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
@@ -975,6 +977,24 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 			upstreamCode := extractUpstreamErrorCode(respBody)
+			if !responsesLiteParallelToolCallsRetryTried &&
+				resp.StatusCode == http.StatusBadRequest &&
+				isOpenAIResponsesLiteParallelToolCallsError(respBody) {
+				liteBody, changed, liteErr := normalizeOpenAIResponsesLiteParallelToolCalls(body)
+				if liteErr != nil {
+					return nil, liteErr
+				}
+				if changed {
+					body = liteBody
+					requestView = newOpenAIRequestView(body)
+					reqBody = nil
+					responsesLiteParallelToolCallsRetryTried = true
+					rejectedFieldRetryState.remember(body)
+					logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying Responses Lite request with parallel_tool_calls=false (account: %s)", account.Name)
+					continue
+				}
+				responsesLiteParallelToolCallsRetryTried = true
+			}
 			if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 				agentTaskRecoveryTried = true
 				expectedTaskID := account.GetCredential("task_id")
@@ -1245,6 +1265,15 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// DeepSeek 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	if c != nil && (isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)) {
+		normalized, changed, normalizeErr := normalizeOpenAIResponsesLiteParallelToolCalls(body)
+		if normalizeErr != nil {
+			return nil, normalizeErr
+		}
+		if changed {
+			body = normalized
+		}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
