@@ -1,10 +1,12 @@
 package repository
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -61,7 +63,9 @@ func (d *PgDumper) Restore(ctx context.Context, data io.Reader) error {
 		"-p", fmt.Sprintf("%d", d.cfg.Port),
 		"-U", d.cfg.User,
 		"-d", d.cfg.DBName,
+		"--no-psqlrc",
 		"--single-transaction",
+		"--set=ON_ERROR_STOP=1",
 	}
 
 	cmd := exec.CommandContext(ctx, "psql", args...)
@@ -72,13 +76,84 @@ func (d *PgDumper) Restore(ctx context.Context, data io.Reader) error {
 		cmd.Env = append(cmd.Environ(), "PGSSLMODE="+d.cfg.SSLMode)
 	}
 
-	cmd.Stdin = data
+	safeData, scanDone := safeRestoreSQLReader(data)
+	cmd.Stdin = safeData
 
 	output, err := cmd.CombinedOutput()
+	if scanErr := <-scanDone; scanErr != nil {
+		return fmt.Errorf("unsafe backup SQL: %w", scanErr)
+	}
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, string(output))
 	}
 	return nil
+}
+
+// safeRestoreSQLReader rejects psql client commands that can execute a shell
+// command or access files on the API host. Plain pg_dump output still streams
+// through unchanged, including COPY data and dump control markers.
+func safeRestoreSQLReader(data io.Reader) (io.Reader, <-chan error) {
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+		r := bufio.NewReader(data)
+		inCopyData := false
+		for {
+			line, err := r.ReadString('\n')
+			if len(line) > 0 {
+				if !inCopyData {
+					if command := unsafeRestorePSQLCommand(line); command != "" {
+						reason := fmt.Errorf("psql meta-command \\%s is not allowed", command)
+						_ = pw.CloseWithError(reason)
+						done <- reason
+						return
+					}
+					inCopyData = isRestoreCopyStart(line)
+				} else if strings.TrimSpace(line) == `\.` {
+					inCopyData = false
+				}
+				if _, writeErr := io.WriteString(pw, line); writeErr != nil {
+					done <- writeErr
+					return
+				}
+			}
+			if err != nil {
+				if err != io.EOF {
+					_ = pw.CloseWithError(err)
+					done <- err
+					return
+				}
+				_ = pw.Close()
+				done <- nil
+				return
+			}
+		}
+	}()
+	return pr, done
+}
+
+func unsafeRestorePSQLCommand(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if len(trimmed) < 2 || trimmed[0] != '\\' {
+		return ""
+	}
+	fields := strings.Fields(trimmed[1:])
+	if len(fields) == 0 {
+		return ""
+	}
+	command := strings.ToLower(fields[0])
+	switch command {
+	case "!", "shell", "include", "ir", "copy", "o", "out", "write", "edit", "g", "gx", "gexec":
+		return command
+	default:
+		return ""
+	}
+}
+
+func isRestoreCopyStart(line string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(line))
+	return strings.HasPrefix(normalized, "copy ") && strings.HasSuffix(normalized, " from stdin;")
 }
 
 // cmdReadCloser wraps a command stdout pipe and waits for the process on Close

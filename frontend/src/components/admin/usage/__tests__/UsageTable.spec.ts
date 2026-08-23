@@ -274,6 +274,32 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.text()).not.toContain('t/s')
   })
 
+  it('hides output rate when first-token and total durations round to the same value', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          request_id: 'req-throughput-rounded-window',
+          output_tokens: 10,
+          first_token_ms: 2710,
+          duration_ms: 2714,
+          input_tokens: 10,
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('t/s')
+  })
+
   it('shows requested and upstream models separately for admin rows', () => {
     const row = {
       request_id: 'req-admin-model-1',

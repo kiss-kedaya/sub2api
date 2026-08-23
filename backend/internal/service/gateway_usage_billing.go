@@ -429,14 +429,13 @@ func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingPara
 		return
 	}
 	if result != nil && result.NewBalance != nil && deps.billingCacheService.balanceBelowEligibilityThreshold(*result.NewBalance) {
-		if err := deps.billingCacheService.InvalidateUserBalance(ctx, p.User.ID); err != nil {
-			slog.Warn("invalidate balance cache after exhausted deduction failed",
-				"user_id", p.User.ID,
-				"new_balance", *result.NewBalance,
-				"balance_overdrafted", result.BalanceOverdrafted,
-				"error", err,
-			)
-		}
+		// Write the exact exhausted balance synchronously. Deleting the key is
+		// racy with an in-flight cache fill, which can resurrect an old balance.
+		deps.billingCacheService.setBalanceCacheAtMost(ctx, p.User.ID, *result.NewBalance)
+		return
+	}
+	if result != nil && result.NewBalance != nil {
+		deps.billingCacheService.QueueSetBalance(p.User.ID, *result.NewBalance)
 		return
 	}
 	deps.billingCacheService.QueueDeductBalance(p.User.ID, p.Cost.ActualCost)
