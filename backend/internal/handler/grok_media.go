@@ -185,7 +185,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
-	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	mediaEligibilityRejected := false
 	switchCount := 0
 	videoCreateStartedAt := ""
@@ -289,7 +289,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					zap.String("reason", eligibilityReason),
 					zap.Bool("probe_failed", eligibilityErr != nil),
 				)
-				if switchCount >= maxAccountSwitches {
+				if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 					markOpsRoutingCapacityLimited(c)
 					h.errorResponse(c, http.StatusServiceUnavailable, "grok_media_no_eligible_account", "No eligible Grok media accounts")
 					return
@@ -383,7 +383,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				h.gatewayService.RecordOpenAIAccountSwitch()
 				failedAccountIDs[account.ID] = struct{}{}
 				lastFailoverErr = failoverErr
-				if switchCount >= maxAccountSwitches {
+				if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 					h.handleFailoverExhausted(c, failoverErr, false)
 					return
 				}

@@ -86,6 +86,12 @@ type OpenAIAccountScheduleRequest struct {
 	// and compact_model_mapping; native remote compaction v2 leaves it false.
 	RequireCompact bool
 	ExcludedIDs    map[int64]struct{}
+	// FillScheduling is set for a failover re-selection after one or more
+	// upstream accounts have failed.  The normal scheduler intentionally uses
+	// a bounded Top-K probe for throughput; a fill pass must instead walk every
+	// remaining candidate, in strict Account.Priority layers, so a lower
+	// priority account cannot hide behind the probe window.
+	FillScheduling bool
 }
 
 type OpenAIAccountScheduleDecision struct {
@@ -415,7 +421,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		}
 	}
 
-	if !req.StickyWeighted {
+	if !req.FillScheduling && !req.StickyWeighted {
 		selection, escapedSticky, err := s.selectBySessionHash(ctx, req)
 		if err != nil {
 			return nil, decision, err
@@ -993,6 +999,12 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 	plan.candidates = candidates
 
 	plan.topK = s.service.openAIWSLBTopKForRequest(ctx)
+	if req.FillScheduling {
+		// A failover pass is an exhaustion walk, not a sampling decision.  Keep
+		// the normal Top-K behavior for the first attempt, but include every
+		// remaining candidate once an exclusion set exists.
+		plan.topK = len(candidates)
+	}
 	if plan.topK > len(candidates) {
 		plan.topK = len(candidates)
 	}
@@ -1009,7 +1021,13 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	plan openAIAccountLoadPlan,
 ) []openAIAccountCandidateScore {
 	buildSelectionOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
-		if len(pool) == 0 || plan.topK <= 0 {
+		if len(pool) == 0 {
+			return nil
+		}
+		if req.FillScheduling {
+			return buildOpenAIFillSelectionOrder(pool, req)
+		}
+		if plan.topK <= 0 {
 			return nil
 		}
 		groupTopK := plan.topK
@@ -1081,6 +1099,69 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	return buildSelectionOrder(plan.candidates)
 }
 
+// buildOpenAIFillSelectionOrder performs the failover "fill" walk.  Accounts
+// are partitioned by their configured priority first; only the accounts in
+// the current (lowest numeric) priority layer are considered before moving to
+// the next layer.  Within a layer we retain the scheduler's weighted load/error
+// ordering, which gives healthy accounts a balanced chance without allowing a
+// lower-priority account to jump the queue.
+func buildOpenAIFillSelectionOrder(
+	candidates []openAIAccountCandidateScore,
+	req OpenAIAccountScheduleRequest,
+) []openAIAccountCandidateScore {
+	if len(candidates) <= 1 {
+		return append([]openAIAccountCandidateScore(nil), candidates...)
+	}
+	byPriority := make(map[int][]openAIAccountCandidateScore, len(candidates))
+	priorities := make([]int, 0, len(candidates))
+	seenPriority := make(map[int]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		priority := openAIAccountSchedulingPriority(candidate.account)
+		byPriority[priority] = append(byPriority[priority], candidate)
+		if _, seen := seenPriority[priority]; !seen {
+			seenPriority[priority] = struct{}{}
+			priorities = append(priorities, priority)
+		}
+	}
+	sort.Ints(priorities)
+
+	order := make([]openAIAccountCandidateScore, 0, len(candidates))
+	for _, priority := range priorities {
+		// Weighted selection is intentionally scoped to this priority layer.
+		// Keep large pools on the O(n log n) ranked path: the weighted sampler
+		// is O(n^2) because it removes one item at a time, which is unnecessary
+		// once the fill walk is already split into bounded probe batches.
+		order = append(order, buildOpenAIFillPriorityLayerOrder(byPriority[priority], req)...)
+	}
+	return order
+}
+
+func buildOpenAIFillPriorityLayerOrder(
+	candidates []openAIAccountCandidateScore,
+	req OpenAIAccountScheduleRequest,
+) []openAIAccountCandidateScore {
+	if len(candidates) <= openAIAccountSelectionProbeLimit {
+		return buildOpenAIWeightedSelectionOrder(candidates, req)
+	}
+	ordered := append([]openAIAccountCandidateScore(nil), candidates...)
+	for i := range ordered {
+		if ordered[i].loadInfo == nil {
+			var accountID int64
+			if ordered[i].account != nil {
+				accountID = ordered[i].account.ID
+			}
+			ordered[i].loadInfo = &AccountLoadInfo{AccountID: accountID}
+		}
+		if math.IsNaN(ordered[i].score) || math.IsInf(ordered[i].score, 0) {
+			ordered[i].score = 0
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return isOpenAIAccountCandidateBetter(ordered[i], ordered[j])
+	})
+	return ordered
+}
+
 func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
 	if len(pool) == 0 {
 		return nil
@@ -1116,9 +1197,50 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
 	req OpenAIAccountScheduleRequest,
 	selectionOrder []openAIAccountCandidateScore,
 ) (*AccountSelectionResult, bool, error) {
+	if req.FillScheduling {
+		return s.tryAcquireOpenAIFillSelectionOrder(ctx, req, selectionOrder)
+	}
 	budget := newOpenAISelectionProbeBudget()
 	budget.enableLimit()
 	return s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, selectionOrder, budget)
+}
+
+// tryAcquireOpenAIFillSelectionOrder walks the complete failover order in
+// bounded probe batches. The regular scheduler caps a single probe at 64
+// accounts; a fill pass must continue past that boundary, while resetting the
+// budget per batch keeps Redis/DB work bounded for very large pools.
+func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAIFillSelectionOrder(
+	ctx context.Context,
+	req OpenAIAccountScheduleRequest,
+	selectionOrder []openAIAccountCandidateScore,
+) (*AccountSelectionResult, bool, error) {
+	if len(selectionOrder) == 0 {
+		return nil, false, nil
+	}
+	batchSize := openAIAccountSelectionProbeLimit
+	if batchSize <= 0 {
+		batchSize = 64
+	}
+	compactBlocked := false
+	for start := 0; start < len(selectionOrder); start += batchSize {
+		if err := ctx.Err(); err != nil {
+			return nil, compactBlocked, err
+		}
+		end := start + batchSize
+		if end > len(selectionOrder) {
+			end = len(selectionOrder)
+		}
+		// The slice itself is the bound for this batch.  Keep the internal
+		// budget unlimited so a fresh-account re-acquire cannot consume the
+		// final slot and silently skip the last candidate in the batch.
+		budget := newOpenAISelectionProbeBudget()
+		result, blocked, err := s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, selectionOrder[start:end], budget)
+		compactBlocked = compactBlocked || blocked
+		if err != nil || result != nil {
+			return result, compactBlocked, err
+		}
+	}
+	return nil, compactBlocked, nil
 }
 
 func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget(
@@ -1223,7 +1345,7 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
 ) (*AccountSelectionResult, error) {
-	if !req.StickyWeighted {
+	if !req.StickyWeighted || req.FillScheduling {
 		return nil, nil
 	}
 	for _, accountID := range []int64{req.StickyPreviousAccountID, req.StickyAccountID} {
@@ -1542,7 +1664,14 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 		return attempt
 	}
 
-	result, compactBlocked, acquireErr := s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, attempt.selectionOrder, budget)
+	var result *AccountSelectionResult
+	var compactBlocked bool
+	var acquireErr error
+	if req.FillScheduling {
+		result, compactBlocked, acquireErr = s.tryAcquireOpenAIFillSelectionOrder(ctx, req, attempt.selectionOrder)
+	} else {
+		result, compactBlocked, acquireErr = s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, attempt.selectionOrder, budget)
+	}
 	attempt.compactBlocked = compactBlocked
 	if acquireErr != nil {
 		attempt.err = acquireErr
@@ -1561,7 +1690,14 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 				budget.enableLimit()
 			}
 			if len(freshPlan.selectionOrder) > 0 {
-				freshResult, freshCompactBlocked, freshAcquireErr := s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, freshPlan.selectionOrder, budget)
+				var freshResult *AccountSelectionResult
+				var freshCompactBlocked bool
+				var freshAcquireErr error
+				if req.FillScheduling {
+					freshResult, freshCompactBlocked, freshAcquireErr = s.tryAcquireOpenAIFillSelectionOrder(ctx, req, freshPlan.selectionOrder)
+				} else {
+					freshResult, freshCompactBlocked, freshAcquireErr = s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, freshPlan.selectionOrder, budget)
+				}
 				if freshAcquireErr != nil {
 					attempt.err = freshAcquireErr
 					return attempt
@@ -2255,6 +2391,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		RequiredImageCapability: requiredImageCapability,
 		RequireCompact:          requireCompact,
 		ExcludedIDs:             excludedIDs,
+		FillScheduling:          len(excludedIDs) > 0,
 	})
 }
 

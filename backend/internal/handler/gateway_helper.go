@@ -25,6 +25,10 @@ func recordGatewayStreamHeartbeat(c *gin.Context, written int) {
 	total, _ := c.Get(gatewayStreamHeartbeatBytesKey)
 	bytes, _ := total.(int)
 	c.Set(gatewayStreamHeartbeatBytesKey, bytes+written)
+	// Keep the service-level failover accounting in sync.  Responses may also
+	// have emitted the pre-header heartbeat from the service package; subtract
+	// both kinds of padding before deciding whether replay is safe.
+	service.RecordOpenAIStreamKeepaliveBytes(c, written)
 }
 
 func gatewayStreamHasOnlyHeartbeats(c *gin.Context) bool {
@@ -140,8 +144,8 @@ const (
 
 // ConcurrencyError represents a concurrency limit error with context
 type ConcurrencyError struct {
-	SlotType                  string
-	IsTimeout                 bool
+	SlotType                 string
+	IsTimeout                bool
 	BalanceWithholdingFailed bool
 }
 
@@ -383,7 +387,7 @@ func (h *ConcurrencyHelper) withBalanceSlotFromGin(c *gin.Context, userID int64,
 			releaseFunc()
 		}
 		return nil, &ConcurrencyError{
-			SlotType:                  "balance",
+			SlotType:                 "balance",
 			BalanceWithholdingFailed: true,
 		}
 	}
@@ -510,19 +514,29 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 
 		case <-pingCh:
 			// Send ping to keep connection alive
-			if !*streamStarted {
-				c.Header("Content-Type", "text/event-stream")
-				c.Header("Cache-Control", "no-cache")
-				c.Header("Connection", "keep-alive")
-				c.Header("X-Accel-Buffering", "no")
+			// If the native OpenAI pre-header manager is active, write the slot
+			// ping under its mutex so this transport padding does not suspend the
+			// manager before the next upstream attempt.
+			written, err, handledByKeepalive := service.WriteOpenAIStreamSSEHeartbeat(c, []byte(h.pingFormat))
+			if !handledByKeepalive {
+				if !*streamStarted {
+					c.Header("Content-Type", "text/event-stream")
+					c.Header("Cache-Control", "no-cache")
+					c.Header("Connection", "keep-alive")
+					c.Header("X-Accel-Buffering", "no")
+					*streamStarted = true
+				}
+				written, err = fmt.Fprint(c.Writer, string(h.pingFormat))
+			} else if !*streamStarted {
 				*streamStarted = true
 			}
-			written, err := fmt.Fprint(c.Writer, string(h.pingFormat))
 			if err != nil {
 				return nil, err
 			}
 			recordGatewayStreamHeartbeat(c, written)
-			flusher.Flush()
+			if !handledByKeepalive {
+				flusher.Flush()
+			}
 
 		case <-timer.C:
 			// Try to acquire slot

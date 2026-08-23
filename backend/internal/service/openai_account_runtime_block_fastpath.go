@@ -25,6 +25,10 @@ const (
 // the first Grok OAuth 429. Once that 429 occurs, exactly one different account
 // may be attempted; any failure from that follow-up account ends failover.
 type OpenAIOAuth429FailoverState struct {
+	// FillScheduling allows the request to walk the complete eligible pool.
+	// The legacy OAuth storm guard remains available for callers that do not
+	// opt in, while production failover uses the bounded fill scheduler.
+	FillScheduling              bool
 	grokOAuth429FollowupPending bool
 }
 
@@ -426,6 +430,9 @@ func (s *OpenAIGatewayService) recordOpenAIOAuth429() {
 }
 
 func (s *OpenAIGatewayService) ShouldStopOpenAIOAuth429Failover(account *Account, statusCode int, failedSwitches int, state *OpenAIOAuth429FailoverState) bool {
+	if state != nil && state.FillScheduling {
+		return false
+	}
 	if failedSwitches < openAIOAuth429StormMaxAccountSwitches {
 		return false
 	}

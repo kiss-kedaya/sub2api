@@ -530,3 +530,13 @@ func TestShouldStopOpenAIOAuth429Failover_TracksOneGrokFollowupAttempt(t *testin
 	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusTooManyRequests, 0, &state))
 	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(apiKeyAccount, http.StatusTooManyRequests, 2, &state))
 }
+
+func TestShouldStopOpenAIOAuth429Failover_FillSchedulingWalksAllCandidates(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	state := OpenAIOAuth429FailoverState{FillScheduling: true}
+	account := &Account{ID: 99, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	for switches := 1; switches <= 128; switches++ {
+		require.False(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusTooManyRequests, switches, &state))
+	}
+}
