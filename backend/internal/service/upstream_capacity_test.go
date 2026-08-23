@@ -33,6 +33,11 @@ func TestIsUpstreamCapacityCoolingBody(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "cloudflare access block",
+			body: `error code: 1010`,
+			want: true,
+		},
+		{
 			name: "real credential forbidden",
 			body: `{"error":{"code":"FORBIDDEN","message":"invalid api key"}}`,
 			want: false,
