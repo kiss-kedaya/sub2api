@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -31,6 +32,36 @@ func TestSnapshotCache_Expiration(t *testing.T) {
 
 	_, ok := c.Get("key1")
 	require.False(t, ok, "expired entry should not be returned")
+}
+
+func TestSnapshotCache_SweepsExpiredEntriesOnAccess(t *testing.T) {
+	c := newSnapshotCache(time.Minute)
+	c.sweepEvery = time.Second
+	c.Set("expired", "value")
+	c.mu.Lock()
+	entry := c.items["expired"]
+	entry.ExpiresAt = time.Now().Add(-time.Second)
+	c.items["expired"] = entry
+	c.lastSweepAt = time.Now().Add(-2 * time.Second)
+	c.mu.Unlock()
+	c.Set("fresh", "value")
+
+	c.mu.Lock()
+	_, expiredStillStored := c.items["expired"]
+	c.mu.Unlock()
+	require.False(t, expiredStillStored)
+}
+
+func TestSnapshotCache_BoundsEntries(t *testing.T) {
+	c := newSnapshotCache(time.Minute)
+	for i := 0; i < reportCacheMaxEntries+1; i++ {
+		c.Set(fmt.Sprintf("key-%d", i), i)
+	}
+
+	c.mu.Lock()
+	count := len(c.items)
+	c.mu.Unlock()
+	require.LessOrEqual(t, count, reportCacheMaxEntries)
 }
 
 func TestSnapshotCache_GetEmptyKey(t *testing.T) {

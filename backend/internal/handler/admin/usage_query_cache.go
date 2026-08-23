@@ -54,7 +54,7 @@ func usageStatsCacheKey(filters usagestats.UsageLogFilters) string {
 // getStatsCached 命中则返回缓存,未命中则回源 usageService 并写缓存。
 func (h *UsageHandler) getStatsCached(ctx context.Context, filters usagestats.UsageLogFilters) (*usagestats.UsageStats, bool, error) {
 	key := usageStatsCacheKey(filters)
-	entry, hit, err := usageStatsCache.GetOrLoad(key, func() (any, error) {
+	entry, hit, err := usageStatsCache.GetOrLoadContext(ctx, key, func() (any, error) {
 		loadCtx, cancel := reportCacheLoadContext(ctx)
 		defer cancel()
 		return h.usageService.GetStatsWithFilters(loadCtx, filters)

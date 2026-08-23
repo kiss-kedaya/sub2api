@@ -102,7 +102,7 @@ func (h *DashboardHandler) getUsageTrendCached(
 		BillingType:           billingType,
 		UpstreamModelMismatch: upstreamModelMismatch,
 	})
-	entry, hit, err := dashboardTrendCache.GetOrLoad(key, func() (any, error) {
+	entry, hit, err := dashboardTrendCache.GetOrLoadContext(ctx, key, func() (any, error) {
 		loadCtx, cancel := reportCacheLoadContext(ctx)
 		defer cancel()
 		return h.dashboardService.GetUsageTrendWithUsageFilters(loadCtx, startTime, endTime, granularity, usagestats.UsageLogFilters{
@@ -141,7 +141,7 @@ func (h *DashboardHandler) getModelStatsCached(
 		BillingType:           billingType,
 		UpstreamModelMismatch: upstreamModelMismatch,
 	})
-	entry, hit, err := dashboardModelStatsCache.GetOrLoad(key, func() (any, error) {
+	entry, hit, err := dashboardModelStatsCache.GetOrLoadContext(ctx, key, func() (any, error) {
 		loadCtx, cancel := reportCacheLoadContext(ctx)
 		defer cancel()
 		return h.dashboardService.GetModelStatsWithUsageFiltersBySource(loadCtx, startTime, endTime, usagestats.UsageLogFilters{
@@ -178,7 +178,7 @@ func (h *DashboardHandler) getGroupStatsCached(
 		BillingType:           billingType,
 		UpstreamModelMismatch: upstreamModelMismatch,
 	})
-	entry, hit, err := dashboardGroupStatsCache.GetOrLoad(key, func() (any, error) {
+	entry, hit, err := dashboardGroupStatsCache.GetOrLoadContext(ctx, key, func() (any, error) {
 		loadCtx, cancel := reportCacheLoadContext(ctx)
 		defer cancel()
 		return h.dashboardService.GetGroupStatsWithUsageFilters(loadCtx, startTime, endTime, usagestats.UsageLogFilters{
@@ -201,7 +201,7 @@ func (h *DashboardHandler) getAPIKeyUsageTrendCached(ctx context.Context, startT
 		Granularity: granularity,
 		Limit:       limit,
 	})
-	entry, hit, err := dashboardAPIKeysTrendCache.GetOrLoad(key, func() (any, error) {
+	entry, hit, err := dashboardAPIKeysTrendCache.GetOrLoadContext(ctx, key, func() (any, error) {
 		return h.dashboardService.GetAPIKeyUsageTrend(ctx, startTime, endTime, granularity, limit)
 	})
 	if err != nil {
@@ -218,7 +218,7 @@ func (h *DashboardHandler) getUserUsageTrendCached(ctx context.Context, startTim
 		Granularity: granularity,
 		Limit:       limit,
 	})
-	entry, hit, err := dashboardUsersTrendCache.GetOrLoad(key, func() (any, error) {
+	entry, hit, err := dashboardUsersTrendCache.GetOrLoadContext(ctx, key, func() (any, error) {
 		return h.dashboardService.GetUserUsageTrend(ctx, startTime, endTime, granularity, limit)
 	})
 	if err != nil {

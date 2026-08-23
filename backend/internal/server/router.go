@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"log"
 	"sync/atomic"
 	"time"
@@ -36,6 +38,7 @@ func SetupRouter(
 	compositeResolver *service.CompositeRouteResolver,
 	cfg *config.Config,
 	redisClient *redis.Client,
+	db *sql.DB,
 ) *gin.Engine {
 	middleware2.SetIngressRejectRecorder(opsService)
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
@@ -90,7 +93,7 @@ func SetupRouter(
 	}
 
 	// 注册路由
-	registerRoutes(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient)
+	registerRoutes(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient, db)
 
 	return r
 }
@@ -112,9 +115,18 @@ func registerRoutes(
 	compositeResolver *service.CompositeRouteResolver,
 	cfg *config.Config,
 	redisClient *redis.Client,
+	db *sql.DB,
 ) {
 	// 通用路由（健康检查、状态等）
-	routes.RegisterCommonRoutes(r)
+	routes.RegisterCommonRoutes(r, func(ctx context.Context) error {
+		if db == nil || redisClient == nil {
+			return fmt.Errorf("readiness dependencies are unavailable")
+		}
+		if err := db.PingContext(ctx); err != nil {
+			return err
+		}
+		return redisClient.Ping(ctx).Err()
+	})
 
 	// API v1
 	v1 := r.Group("/api/v1")

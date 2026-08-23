@@ -19,6 +19,7 @@ services:
     image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.190}
     container_name: sub2api
     restart: unless-stopped
+    stop_grace_period: 35s
     command: ["${SUB2API_COMMAND:-/app/sub2api}"]
     security_opt:
       - no-new-privileges:true
@@ -50,6 +51,7 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
       - SERVER_MODE=${SERVER_MODE:-release}
+      - SERVER_SHUTDOWN_TIMEOUT_SECONDS=${SERVER_SHUTDOWN_TIMEOUT_SECONDS:-30}
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}
       - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
@@ -173,6 +175,7 @@ services:
       - SUB2API_UPDATE_RESTART_COMMAND=${SUB2API_UPDATE_RESTART_COMMAND:-}
       - SUB2API_UPDATE_HELPER_IMAGE=${SUB2API_UPDATE_HELPER_IMAGE:-}
       - SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS=${SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS:-120}
+      - SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS=${SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS:-35}
       - SUB2API_UPDATE_VERSION_ENV=${SUB2API_UPDATE_VERSION_ENV:-SUB2API_VERSION}
 
       # =======================================================================
@@ -212,7 +215,7 @@ services:
           "5",
           "-O",
           "/dev/null",
-          "http://localhost:8080/health",
+          "http://localhost:8080/readyz",
         ]
       interval: 30s
       timeout: 10s
