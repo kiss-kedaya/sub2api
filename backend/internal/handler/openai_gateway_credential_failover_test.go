@@ -119,6 +119,50 @@ func TestOpenAICoolingGroupCredentialReasonStillReturns503(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "access forbidden")
 }
 
+func TestCoolingGroupFailoverMappingsReturnRetryable503AcrossCompatHandlers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"code":"FORBIDDEN","message":"当前分组内所有候选供应商均请求失败。请稍后重试"}`)
+
+	tests := []struct {
+		name string
+		run  func(*gin.Context)
+		get  func(*httptest.ResponseRecorder) string
+	}{
+		{
+			name: "chat_completions",
+			run: func(c *gin.Context) {
+				(&GatewayHandler{}).handleCCFailoverExhausted(c, &service.UpstreamFailoverError{StatusCode: http.StatusForbidden, ResponseBody: body}, false)
+			},
+			get: func(r *httptest.ResponseRecorder) string { return gjson.Get(r.Body.String(), "error.type").String() },
+		},
+		{
+			name: "responses_compat",
+			run: func(c *gin.Context) {
+				(&GatewayHandler{}).handleResponsesFailoverExhausted(c, &service.UpstreamFailoverError{StatusCode: http.StatusForbidden, ResponseBody: body}, false)
+			},
+			get: func(r *httptest.ResponseRecorder) string { return gjson.Get(r.Body.String(), "error.code").String() },
+		},
+		{
+			name: "anthropic_compat",
+			run: func(c *gin.Context) {
+				(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, &service.UpstreamFailoverError{StatusCode: http.StatusForbidden, ResponseBody: body}, false)
+			},
+			get: func(r *httptest.ResponseRecorder) string { return gjson.Get(r.Body.String(), "error.type").String() },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			tt.run(c)
+			require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+			require.Equal(t, "5", recorder.Header().Get("Retry-After"))
+			require.Equal(t, map[string]string{"chat_completions": "server_error", "responses_compat": "server_error", "anthropic_compat": "api_error"}[tt.name], tt.get(recorder))
+			require.NotContains(t, recorder.Body.String(), "access forbidden")
+		})
+	}
+}
+
 func TestOpenAICapacityFailoverExhaustionPreservesMessageAsServerError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	message := "Our servers are currently overloaded. Please try again later."

@@ -381,6 +381,11 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 	if lastErr != nil {
 		copyFailoverRetryAfter(c, lastErr.ResponseHeaders)
 	}
+	if lastErr != nil && service.IsUpstreamCapacityCoolingBody(lastErr.ResponseBody) {
+		c.Header("Retry-After", "5")
+		h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "server_error", "Upstream providers are temporarily cooling down; please retry later")
+		return
+	}
 	if lastErr != nil && lastErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(lastErr)
 		h.chatCompletionsErrorResponse(c, status, "server_error", message)
