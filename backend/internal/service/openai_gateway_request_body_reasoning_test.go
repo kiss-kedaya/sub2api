@@ -292,3 +292,8 @@ func TestNormalizeOpenAIResponsesLiteParallelToolCalls(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAIResponsesLiteParallelToolCallsError(t *testing.T) {
+	require.True(t, isOpenAIResponsesLiteParallelToolCallsError([]byte(`{"error":{"message":"X-OpenAI-Internal-Codex-Responses-Lite requires ` + "`parallel_tool_calls`" + ` to be false."}}`)))
+	require.False(t, isOpenAIResponsesLiteParallelToolCallsError([]byte(`{"error":{"message":"parallel_tool_calls must be false"}}`)))
+}
