@@ -152,6 +152,15 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	// Keep the proxied Responses stream alive while compatibility routing waits
+	// for an upstream header or retries the fill-scheduling pool. Pre-stream
+	// validation and billing failures above remain normal JSON responses.
+	stopStreamHeaderKeepalive := func() {}
+	if reqStream {
+		stopStreamHeaderKeepalive = service.StartOpenAIStreamSSEKeepalive(c, h.streamKeepaliveInterval())
+	}
+	defer stopStreamHeaderKeepalive()
+
 	// Parse request for session hash
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, _ := service.ParseGatewayRequest(bodyRef, "responses")
@@ -353,6 +362,15 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 // responsesErrorResponse writes an error in OpenAI Responses API format.
 func (h *GatewayHandler) responsesErrorResponse(c *gin.Context, status int, code, message string) {
+	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
+		// Do not append JSON after the SSE preamble. A terminal Responses event
+		// is valid only when the stream contains transport heartbeats and no
+		// semantic bytes yet; otherwise the upstream stream owns its termination.
+		if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) < 0 {
+			h.handleStreamingAwareError(c, status, code, message, true)
+		}
+		return
+	}
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"code":    code,
@@ -363,6 +381,9 @@ func (h *GatewayHandler) responsesErrorResponse(c *gin.Context, status int, code
 
 // handleResponsesFailoverExhausted writes a failover-exhausted error in Responses format.
 func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
+	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
+		streamStarted = true
+	}
 	if lastErr != nil {
 		copyFailoverRetryAfter(c, lastErr.ResponseHeaders)
 	}
@@ -394,7 +415,7 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 		// official terminal bytes exist, preserve them without appending a second
 		// generic response.failed.
 		service.MarkOpsStreamError(c, code, message, status)
-		if c != nil && c.Writer != nil && (c.Writer.Size() <= 0 || gatewayStreamHasOnlyHeartbeats(c)) {
+		if c != nil && c.Writer != nil && (service.OpenAICompactKeepaliveAdjustedWrittenSize(c) < 0 || c.Writer.Size() <= 0 || gatewayStreamHasOnlyHeartbeats(c)) {
 			writeResponsesFailedSSE(c, code, message)
 		}
 		return

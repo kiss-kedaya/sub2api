@@ -114,19 +114,29 @@ func (h *UserMsgQueueHelper) waitForLockWithPing(
 			return nil, fmt.Errorf("umq wait timeout for account %d", accountID)
 
 		case <-pingCh:
-			if !*streamStarted {
-				c.Header("Content-Type", "text/event-stream")
-				c.Header("Cache-Control", "no-cache")
-				c.Header("Connection", "keep-alive")
-				c.Header("X-Accel-Buffering", "no")
+			// Route slot pings through the pre-header manager when one is
+			// active. Calling c.Header/c.Writer directly would suspend that
+			// manager immediately before the next upstream attempt.
+			written, err, handledByKeepalive := service.WriteOpenAIStreamSSEHeartbeat(c, []byte(h.pingFormat))
+			if !handledByKeepalive {
+				if !*streamStarted {
+					c.Header("Content-Type", "text/event-stream")
+					c.Header("Cache-Control", "no-cache")
+					c.Header("Connection", "keep-alive")
+					c.Header("X-Accel-Buffering", "no")
+					*streamStarted = true
+				}
+				written, err = fmt.Fprint(c.Writer, string(h.pingFormat))
+			} else if !*streamStarted {
 				*streamStarted = true
 			}
-			written, err := fmt.Fprint(c.Writer, string(h.pingFormat))
 			if err != nil {
 				return nil, err
 			}
 			recordGatewayStreamHeartbeat(c, written)
-			flusher.Flush()
+			if !handledByKeepalive {
+				flusher.Flush()
+			}
 
 		case <-timer.C:
 			result, err := h.queueService.TryAcquire(ctx, accountID)
@@ -221,19 +231,26 @@ func (h *UserMsgQueueHelper) ThrottleWithPing(
 			return ctx.Err()
 		case <-pingCh:
 			// SSE ping 逻辑（与 waitForLockWithPing 一致）
-			if !*streamStarted {
-				c.Header("Content-Type", "text/event-stream")
-				c.Header("Cache-Control", "no-cache")
-				c.Header("Connection", "keep-alive")
-				c.Header("X-Accel-Buffering", "no")
+			written, err, handledByKeepalive := service.WriteOpenAIStreamSSEHeartbeat(c, []byte(h.pingFormat))
+			if !handledByKeepalive {
+				if !*streamStarted {
+					c.Header("Content-Type", "text/event-stream")
+					c.Header("Cache-Control", "no-cache")
+					c.Header("Connection", "keep-alive")
+					c.Header("X-Accel-Buffering", "no")
+					*streamStarted = true
+				}
+				written, err = fmt.Fprint(c.Writer, string(h.pingFormat))
+			} else if !*streamStarted {
 				*streamStarted = true
 			}
-			written, err := fmt.Fprint(c.Writer, string(h.pingFormat))
 			if err != nil {
 				return err
 			}
 			recordGatewayStreamHeartbeat(c, written)
-			flusher.Flush()
+			if !handledByKeepalive {
+				flusher.Flush()
+			}
 		case <-timer.C:
 			return nil
 		}
