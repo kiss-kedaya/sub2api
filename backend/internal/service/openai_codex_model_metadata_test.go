@@ -135,6 +135,107 @@ func TestBuildCodexModelsManifestForGroupIntersectsSyncedAccountMetadata(t *test
 	require.EqualValues(t, 128_000, models[0]["context_window"])
 }
 
+// Scenario: the same public alias may target different models on one platform when complete snapshots can be intersected.
+func TestBuildCodexModelsManifestForGroupIntersectsDifferentMappedTargetsWithoutLeakingAlias(t *testing.T) {
+	t.Parallel()
+
+	const groupID int64 = 739
+	reasoning := true
+	newAccount := func(id int64, target, displayName, description string, levels, modalities []string, contextWindow int64) Account {
+		account := Account{
+			ID: id, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"base_url":      "https://provider.example/v1",
+				"model_mapping": map[string]any{"my-coder": target},
+			},
+		}
+		account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
+			target: {
+				ID: target, DisplayName: displayName, Description: description, Reasoning: &reasoning,
+				SupportedReasoningLevels: levels,
+				InputModalities:          modalities,
+				ContextWindow:            contextWindow,
+			},
+		}})
+		return account
+	}
+	openAIAccount := newAccount(
+		31,
+		"gpt-5.6-sol",
+		"GPT-5.6 Sol",
+		"OpenAI upstream model",
+		[]string{"low", "medium", "high", "xhigh"},
+		[]string{"text", "image"},
+		272_000,
+	)
+	arkAccount := newAccount(
+		32,
+		"glm-5.3",
+		"GLM 5.3",
+		"Ark upstream model",
+		[]string{"low", "medium", "high"},
+		[]string{"text"},
+		1_000_000,
+	)
+
+	for _, accounts := range [][]Account{{openAIAccount, arkAccount}, {arkAccount, openAIAccount}} {
+		svc := &GatewayService{accountRepo: codexModelsVisibilityAccountRepo{byGroup: map[int64][]Account{
+			groupID: accounts,
+		}}}
+		body, err := svc.BuildCodexModelsManifestForGroup(
+			context.Background(), &Group{ID: groupID, Platform: PlatformOpenAI}, "", []string{"my-coder"},
+		)
+		require.NoError(t, err)
+		models := decodeCodexManifestModels(t, body)
+		require.Len(t, models, 1)
+		require.Equal(t, "my-coder", models[0]["slug"])
+		require.Equal(t, "my-coder", models[0]["display_name"])
+		require.Equal(t, "Custom model routed through Sub2API.", models[0]["description"])
+		require.Equal(t, []string{"low", "medium", "high"}, effortsFromManifestModel(t, models[0]))
+		require.Equal(t, []any{"text"}, models[0]["input_modalities"])
+		require.EqualValues(t, 272_000, models[0]["context_window"])
+	}
+}
+
+// Scenario: a Composite alias claimed across platforms remains ambiguous and fails closed.
+func TestBuildCodexModelsManifestForGroupKeepsCrossPlatformAliasAmbiguityClosed(t *testing.T) {
+	t.Parallel()
+
+	const groupID int64 = 740
+	reasoning := true
+	newAccount := func(id int64, platform, target string) Account {
+		account := Account{
+			ID: id, Platform: platform, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{"model_mapping": map[string]any{"shared-alias": target}},
+		}
+		account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
+			target: {
+				ID: target, DisplayName: target, Reasoning: &reasoning,
+				SupportedReasoningLevels: []string{"low", "high"},
+				InputModalities:          []string{"text", "image"},
+				ContextWindow:            128_000,
+			},
+		}})
+		return account
+	}
+	svc := &GatewayService{accountRepo: codexModelsVisibilityAccountRepo{byGroup: map[int64][]Account{
+		groupID: {
+			newAccount(33, PlatformOpenAI, "gpt-5.6-sol"),
+			newAccount(34, PlatformGrok, "grok-4.6"),
+		},
+	}}}
+
+	body, err := svc.BuildCodexModelsManifestForGroup(
+		context.Background(), &Group{ID: groupID, Platform: PlatformComposite}, "", []string{"shared-alias"},
+	)
+	require.NoError(t, err)
+	models := decodeCodexManifestModels(t, body)
+	require.Len(t, models, 1)
+	require.Equal(t, "shared-alias", models[0]["display_name"])
+	require.Empty(t, effortsFromManifestModel(t, models[0]))
+	require.Equal(t, []any{"text"}, models[0]["input_modalities"])
+}
+
 func TestBuildCodexModelsManifestForGroupDoesNotAdvertiseNoneWhenAccountReasoningConflicts(t *testing.T) {
 	t.Parallel()
 

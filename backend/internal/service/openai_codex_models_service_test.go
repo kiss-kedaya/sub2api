@@ -623,8 +623,8 @@ func TestBuildCodexModelsManifestForGroupUsesMappedTargetMetadataForCompositeAli
 	models := decodeCodexManifestModels(t, body)
 	require.Len(t, models, 1)
 	require.Equal(t, "reasoning-alias", models[0]["slug"])
-	require.Equal(t, "Claude Opus 4.8", models[0]["display_name"])
-	require.Equal(t, "Claude coding and reasoning model routed through Sub2API.", models[0]["description"])
+	require.Equal(t, "reasoning-alias", models[0]["display_name"])
+	require.Equal(t, "Custom model routed through Sub2API.", models[0]["description"])
 	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max"}, effortsFromManifestModel(t, models[0]))
 }
 
@@ -816,6 +816,29 @@ func TestBuildGroupConfiguredCodexModelsManifestUsesAdministratorConfiguration(t
 	t.Parallel()
 
 	const groupID int64 = 77
+	reasoning := true
+	arkAccount := Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"glm-5.3":     "glm-5.3",
+				"gpt-image-2": "gpt-image-2",
+			},
+		},
+	}
+	arkAccount.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
+		"glm-5.3": {
+			ID:                       "glm-5.3",
+			DisplayName:              "GLM 5.3",
+			Description:              "Ark coding model",
+			Reasoning:                &reasoning,
+			DefaultReasoningLevel:    "medium",
+			SupportedReasoningLevels: []string{"low", "medium", "high"},
+			InputModalities:          []string{"text"},
+			ContextWindow:            1_000_000,
+		},
+	}})
 	svc := &OpenAIGatewayService{accountRepo: codexModelsVisibilityAccountRepo{
 		byGroup: map[int64][]Account{
 			groupID: {
@@ -823,15 +846,7 @@ func TestBuildGroupConfiguredCodexModelsManifestUsesAdministratorConfiguration(t
 					Platform: PlatformOpenAI,
 					Type:     AccountTypeOAuth,
 				},
-				{
-					Platform: PlatformOpenAI,
-					Type:     AccountTypeAPIKey,
-					Credentials: map[string]any{
-						"model_mapping": map[string]any{
-							"glm-5.3": "glm-5.3",
-						},
-					},
-				},
+				arkAccount,
 			},
 		},
 	}}
@@ -840,7 +855,14 @@ func TestBuildGroupConfiguredCodexModelsManifestUsesAdministratorConfiguration(t
 	manifest, configured, err := svc.BuildGroupConfiguredCodexModelsManifest(context.Background(), group, "")
 	require.NoError(t, err)
 	require.True(t, configured)
-	require.Equal(t, []string{"glm-5.3"}, codexManifestModelSlugs(t, manifest.Body))
+	models := decodeCodexManifestModels(t, manifest.Body)
+	require.Len(t, models, 1)
+	require.Equal(t, "glm-5.3", models[0]["slug"])
+	require.Equal(t, "GLM 5.3", models[0]["display_name"])
+	require.Equal(t, []string{"low", "medium", "high"}, effortsFromManifestModel(t, models[0]))
+	require.Equal(t, "medium", models[0]["default_reasoning_level"])
+	require.Equal(t, []any{"text"}, models[0]["input_modalities"])
+	require.EqualValues(t, 1_000_000, models[0]["context_window"])
 	require.Equal(t, codexModelsManifestBodyETag(manifest.Body), manifest.ETag)
 
 	notModified, configured, err := svc.BuildGroupConfiguredCodexModelsManifest(
@@ -1085,6 +1107,35 @@ func TestIsRetryableCodexModelsManifestTransportError(t *testing.T) {
 			if got := isRetryableCodexModelsManifestTransportError(tt.err); got != tt.retryable {
 				t.Fatalf("retryable = %v, want %v", got, tt.retryable)
 			}
+		})
+	}
+}
+
+func TestIsRetryableCodexModelsManifestStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		statusCode        int
+		useAPIKeyUpstream bool
+		retryable         bool
+	}{
+		{name: "api key 404", statusCode: http.StatusNotFound, useAPIKeyUpstream: true, retryable: true},
+		{name: "api key 405", statusCode: http.StatusMethodNotAllowed, useAPIKeyUpstream: true, retryable: true},
+		{name: "oauth 404", statusCode: http.StatusNotFound},
+		{name: "oauth 405", statusCode: http.StatusMethodNotAllowed},
+		{name: "api key 401", statusCode: http.StatusUnauthorized, useAPIKeyUpstream: true},
+		{name: "oauth 401", statusCode: http.StatusUnauthorized, retryable: true},
+		{name: "api key 400", statusCode: http.StatusBadRequest, useAPIKeyUpstream: true},
+		{name: "api key 403", statusCode: http.StatusForbidden, useAPIKeyUpstream: true},
+		{name: "rate limited", statusCode: http.StatusTooManyRequests, retryable: true},
+		{name: "server error", statusCode: http.StatusServiceUnavailable, retryable: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.retryable, isRetryableCodexModelsManifestStatus(tt.statusCode, tt.useAPIKeyUpstream))
 		})
 	}
 }

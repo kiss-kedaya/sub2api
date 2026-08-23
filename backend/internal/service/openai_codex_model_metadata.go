@@ -45,13 +45,8 @@ func groupCodexModelMetadata(
 			}
 		}
 	}
-	if explicitClaims && codexExplicitModelTargetsConflict(accounts, modelID) {
-		return codexModelMetadataOverride{
-			reasoningConflict:       true,
-			inputModalitiesConflict: true,
-		}, true
-	}
-
+	explicitTargetsConflict := explicitClaims && codexExplicitModelTargetsConflictForPlatform(accounts, platform, modelID)
+	publicAlias := upstreamModel != modelID
 	candidates := make([]UpstreamModelMetadata, 0)
 	for i := range accounts {
 		account := &accounts[i]
@@ -70,8 +65,17 @@ func groupCodexModelMetadata(
 			}
 			lookupModel = account.GetMappedModel(upstreamModel)
 		}
+		if strings.TrimSpace(lookupModel) != modelID {
+			publicAlias = true
+		}
 		metadata, ok := account.GetUpstreamModelMetadata(lookupModel)
 		if !ok {
+			if explicitTargetsConflict {
+				return codexModelMetadataOverride{
+					reasoningConflict:       true,
+					inputModalitiesConflict: true,
+				}, true
+			}
 			return codexModelMetadataOverride{}, false
 		}
 		candidates = append(candidates, metadata)
@@ -79,7 +83,12 @@ func groupCodexModelMetadata(
 	if len(candidates) == 0 {
 		return codexModelMetadataOverride{}, false
 	}
-	return intersectUpstreamModelMetadata(modelID, candidates), true
+	metadata := intersectUpstreamModelMetadata(modelID, candidates)
+	if publicAlias {
+		metadata.DisplayName = modelID
+		metadata.Description = configuredCodexCustomDescription
+	}
+	return metadata, true
 }
 
 func codexExplicitModelTargetsConflict(accounts []Account, modelID string) bool {
@@ -92,6 +101,23 @@ func codexExplicitModelTargetsConflict(accounts []Account, modelID string) bool 
 			continue
 		}
 		targets[strings.TrimSpace(account.Platform)+"\x00"+mappedModel] = struct{}{}
+	}
+	return len(targets) > 1
+}
+
+func codexExplicitModelTargetsConflictForPlatform(accounts []Account, platform, modelID string) bool {
+	targets := make(map[string]struct{})
+	for i := range accounts {
+		account := &accounts[i]
+		if account.Platform != platform {
+			continue
+		}
+		mappedModel, matched := account.ResolveMappedModel(modelID)
+		mappedModel = strings.TrimSpace(mappedModel)
+		if !matched || mappedModel == "" {
+			continue
+		}
+		targets[mappedModel] = struct{}{}
 	}
 	return len(targets) > 1
 }
