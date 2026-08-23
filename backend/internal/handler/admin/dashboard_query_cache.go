@@ -10,11 +10,11 @@ import (
 )
 
 var (
-	dashboardTrendCache        = newSnapshotCache(reportCacheTTL)
-	dashboardModelStatsCache   = newSnapshotCache(reportCacheTTL)
-	dashboardGroupStatsCache   = newSnapshotCache(reportCacheTTL)
-	dashboardUsersTrendCache   = newSnapshotCache(reportCacheTTL)
-	dashboardAPIKeysTrendCache = newSnapshotCache(reportCacheTTL)
+	dashboardTrendCache        = newNamedSnapshotCache("dashboard-trend", reportCacheTTL)
+	dashboardModelStatsCache   = newNamedSnapshotCache("dashboard-models", reportCacheTTL)
+	dashboardGroupStatsCache   = newNamedSnapshotCache("dashboard-groups", reportCacheTTL)
+	dashboardUsersTrendCache   = newNamedSnapshotCache("dashboard-users-trend", reportCacheTTL)
+	dashboardAPIKeysTrendCache = newNamedSnapshotCache("dashboard-api-keys-trend", reportCacheTTL)
 )
 
 type dashboardTrendCacheKey struct {
@@ -71,6 +71,14 @@ func mustMarshalDashboardCacheKey(value any) string {
 func snapshotPayloadAs[T any](payload any) (T, error) {
 	typed, ok := payload.(T)
 	if !ok {
+		if raw, rawOK := payload.(json.RawMessage); rawOK {
+			var decoded T
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				var zero T
+				return zero, err
+			}
+			return decoded, nil
+		}
 		var zero T
 		return zero, fmt.Errorf("unexpected cache payload type %T", payload)
 	}

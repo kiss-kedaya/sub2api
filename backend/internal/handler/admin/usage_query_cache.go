@@ -9,7 +9,7 @@ import (
 
 // /admin/usage/stats scans usage_logs for endpoint dimensions, so keep the
 // result warm long enough for the admin page's related requests to reuse it.
-var usageStatsCache = newSnapshotCache(reportCacheTTL)
+var usageStatsCache = newNamedSnapshotCache("usage-stats", reportCacheTTL)
 
 type usageStatsCacheKeyData struct {
 	StartTime             string `json:"start_time"`

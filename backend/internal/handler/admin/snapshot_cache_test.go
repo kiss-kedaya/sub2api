@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestSnapshotPayloadAs_RedisRawMessage(t *testing.T) {
+	raw := json.RawMessage(`[{"value":7}]`)
+	got, err := snapshotPayloadAs[[]struct {
+		Value int `json:"value"`
+	}](raw)
+	require.NoError(t, err)
+	require.Equal(t, 7, got[0].Value)
+}
 
 func TestSnapshotCache_SetAndGet(t *testing.T) {
 	c := newSnapshotCache(5 * time.Second)
