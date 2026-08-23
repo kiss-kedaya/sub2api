@@ -298,6 +298,23 @@ func TestCodexModelsFailsOverFromRetryableUpstreamStatus(t *testing.T) {
 	}
 }
 
+// Scenario: an API-key upstream without /models is excluded only for this discovery request.
+func TestCodexModelsFailsOverWhenAPIKeyModelsEndpointIsUnavailable(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			handler, upstream, groupID := newCodexModelsFailoverTestHandler(status)
+			recorder := performCodexModelsRequest(t, handler, groupID)
+
+			if got, want := upstream.calls(), []int64{1, 2}; !equalInt64Slices(got, want) {
+				t.Fatalf("upstream account calls: got %v, want %v", got, want)
+			}
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status: got %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestCodexModelsFailsOverFromUpstreamTransportError(t *testing.T) {
 	handler, upstream, groupID := newCodexModelsFailoverTestHandler(http.StatusServiceUnavailable)
 	upstream.firstErr = &net.OpError{
@@ -334,7 +351,6 @@ func TestCodexModelsDoesNotFailOverFromPermanentUpstreamStatus(t *testing.T) {
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusForbidden,
-		http.StatusNotFound,
 		600,
 	}
 	for _, status := range statuses {
