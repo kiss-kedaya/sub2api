@@ -300,6 +300,58 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.text()).not.toContain('t/s')
   })
 
+  it('hides output rate for tiny output samples', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          request_id: 'req-throughput-tiny-output',
+          output_tokens: 19,
+          first_token_ms: 180,
+          duration_ms: 1938,
+          input_tokens: 10,
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('t/s')
+  })
+
+  it('hides output rate for a very short generation window', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          request_id: 'req-throughput-short-window',
+          output_tokens: 100,
+          first_token_ms: 6900,
+          duration_ms: 7390,
+          input_tokens: 10,
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('t/s')
+  })
+
   it('shows requested and upstream models separately for admin rows', () => {
     const row = {
       request_id: 'req-admin-model-1',
