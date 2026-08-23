@@ -28,6 +28,11 @@ func TestIsUpstreamCapacityCoolingBody(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "provider request blocked",
+			body: `{"error":{"message":"Your request was blocked."}}`,
+			want: true,
+		},
+		{
 			name: "real credential forbidden",
 			body: `{"error":{"code":"FORBIDDEN","message":"invalid api key"}}`,
 			want: false,

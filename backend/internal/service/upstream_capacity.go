@@ -43,6 +43,8 @@ func isUpstreamCapacityCoolingMessage(value string) bool {
 	}
 	for _, marker := range []string{
 		"cooling",
+		"your request was blocked",
+		"request was blocked",
 		"all candidates failed",
 		"候选供应商均请求失败",
 		"支持该模型的货源均",
