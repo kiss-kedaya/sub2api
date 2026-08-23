@@ -15,7 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var dashboardSnapshotV2Cache = newSnapshotCache(reportCacheTTL)
+var dashboardSnapshotV2Cache = newNamedSnapshotCache("dashboard-snapshot-v2", reportCacheTTL)
 
 type dashboardSnapshotV2Stats struct {
 	usagestats.DashboardStats

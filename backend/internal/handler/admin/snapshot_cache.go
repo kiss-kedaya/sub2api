@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -20,11 +23,20 @@ const (
 	reportCacheMaxEntries  = 256
 	reportCacheMaxLoads    = 4
 	reportCacheSweepEvery  = 30 * time.Second
+	reportCacheMaxPayload  = 4 << 20
 )
 
 // All report caches share one budget. Without a process-wide limit, five
 // independent caches can each start expensive scans at the same time.
 var reportCacheLoadSlots = make(chan struct{}, reportCacheMaxLoads)
+var reportCacheRedis atomic.Pointer[redis.Client]
+
+// ConfigureReportCacheRedis installs the shared cache used by all API
+// replicas. A nil client disables the distributed layer and keeps the local
+// cache fallback fully functional.
+func ConfigureReportCacheRedis(client *redis.Client) {
+	reportCacheRedis.Store(client)
+}
 
 // reportCacheLoadContext lets an in-flight report finish after a browser aborts
 // so a retry can reuse the result instead of cancelling the expensive SQL scan.
@@ -49,6 +61,7 @@ type snapshotCache struct {
 	sf          singleflight.Group
 	sweepEvery  time.Duration
 	lastSweepAt time.Time
+	namespace   string
 }
 
 type snapshotCacheLoadResult struct {
@@ -57,14 +70,109 @@ type snapshotCacheLoadResult struct {
 }
 
 func newSnapshotCache(ttl time.Duration) *snapshotCache {
+	return newNamedSnapshotCache("default", ttl)
+}
+
+func newNamedSnapshotCache(namespace string, ttl time.Duration) *snapshotCache {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
+	}
+	if strings.TrimSpace(namespace) == "" {
+		namespace = "default"
 	}
 	return &snapshotCache{
 		ttl:         ttl,
 		items:       make(map[string]snapshotCacheEntry),
 		sweepEvery:  reportCacheSweepEvery,
 		lastSweepAt: time.Now(),
+		namespace:   namespace,
+	}
+}
+
+func (c *snapshotCache) redisKey(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return fmt.Sprintf("sub2api:admin:report:v1:%s:%x", c.namespace, sum[:])
+}
+
+func (c *snapshotCache) sharedGet(key string) (snapshotCacheEntry, bool) {
+	client := reportCacheRedis.Load()
+	if client == nil || key == "" {
+		return snapshotCacheEntry{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	raw, err := client.Get(ctx, c.redisKey(key)).Bytes()
+	if err != nil || len(raw) == 0 {
+		return snapshotCacheEntry{}, false
+	}
+	if len(raw) > reportCacheMaxPayload {
+		return snapshotCacheEntry{}, false
+	}
+	return snapshotCacheEntry{
+		ETag:      buildETagFromAny(json.RawMessage(raw)),
+		Payload:   json.RawMessage(raw),
+		ExpiresAt: time.Now().Add(c.ttl),
+	}, true
+}
+
+func (c *snapshotCache) sharedSet(key string, payload any) {
+	client := reportCacheRedis.Load()
+	if client == nil || key == "" {
+		return
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil || len(raw) == 0 || len(raw) > reportCacheMaxPayload {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	_ = client.Set(ctx, c.redisKey(key), raw, c.ttl).Err()
+}
+
+func (c *snapshotCache) sharedLock(ctx context.Context, key string) (string, string, bool) {
+	client := reportCacheRedis.Load()
+	if client == nil || key == "" {
+		return "", "", true
+	}
+	token := fmt.Sprintf("%d", time.Now().UnixNano())
+	lockKey := c.redisKey(key) + ":lock"
+	ok, err := client.SetNX(ctx, lockKey, token, reportCacheLoadTimeout+5*time.Second).Result()
+	if err != nil {
+		// Redis is an optimization. Continue locally if it is unavailable.
+		return "", "", true
+	}
+	if ok {
+		return lockKey, token, true
+	}
+	return lockKey, "", false
+}
+
+func (c *snapshotCache) sharedUnlock(lockKey, token string) {
+	client := reportCacheRedis.Load()
+	if client == nil || lockKey == "" || token == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	const releaseScript = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`
+	_, _ = client.Eval(ctx, releaseScript, []string{lockKey}, token).Result()
+}
+
+func (c *snapshotCache) waitForShared(ctx context.Context, key, lockKey string) (snapshotCacheEntry, bool) {
+	if lockKey == "" {
+		return snapshotCacheEntry{}, false
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if entry, ok := c.sharedGet(key); ok {
+			return entry, true
+		}
+		select {
+		case <-ctx.Done():
+			return snapshotCacheEntry{}, false
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -175,6 +283,28 @@ func (c *snapshotCache) GetOrLoadContext(ctx context.Context, key string, load f
 		if entry, ok := c.Get(key); ok {
 			return snapshotCacheLoadResult{Entry: entry, Hit: true}, nil
 		}
+		if entry, ok := c.sharedGet(key); ok {
+			c.Set(key, entry.Payload)
+			return snapshotCacheLoadResult{Entry: entry, Hit: true}, nil
+		}
+		lockCtx, lockCancel := context.WithTimeout(context.Background(), reportCacheLoadTimeout)
+		defer lockCancel()
+		lockKey, lockToken, acquired := c.sharedLock(lockCtx, key)
+		if !acquired {
+			if entry, ok := c.waitForShared(lockCtx, key, lockKey); ok {
+				c.Set(key, entry.Payload)
+				return snapshotCacheLoadResult{Entry: entry, Hit: true}, nil
+			}
+			// The other replica may have failed. Re-check/acquire after its lock
+			// expires rather than returning an empty report.
+			if entry, ok := c.sharedGet(key); ok {
+				c.Set(key, entry.Payload)
+				return snapshotCacheLoadResult{Entry: entry, Hit: true}, nil
+			}
+		}
+		if lockKey != "" && lockToken != "" {
+			defer c.sharedUnlock(lockKey, lockToken)
+		}
 		slotCtx, cancel := context.WithTimeout(context.Background(), reportCacheLoadTimeout)
 		defer cancel()
 		select {
@@ -187,6 +317,7 @@ func (c *snapshotCache) GetOrLoadContext(ctx context.Context, key string, load f
 		if err != nil {
 			return nil, err
 		}
+		c.sharedSet(key, payload)
 		return snapshotCacheLoadResult{Entry: c.Set(key, payload), Hit: false}, nil
 	})
 	if err != nil {
