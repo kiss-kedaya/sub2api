@@ -20,6 +20,8 @@ REPOSITORY="${SUB2API_UPDATE_REPOSITORY:-kiss-kedaya/sub2api}"
 RESTART_COMMAND="${SUB2API_UPDATE_RESTART_COMMAND:-}"
 HELPER_IMAGE="${SUB2API_UPDATE_HELPER_IMAGE:-${SUB2API_IMAGE:-}}"
 HELPER_ACTIVE="${SUB2API_UPDATE_HELPER_ACTIVE:-}"
+DOCKER_COMMAND_RAW="${SUB2API_UPDATE_DOCKER_COMMAND:-docker}"
+DOCKER=()
 RUNTIME_BACKEND=""
 
 CURRENT_VERSION=""
@@ -42,6 +44,25 @@ fail() {
   exit 1
 }
 
+configure_docker() {
+  read -r -a DOCKER <<< "$DOCKER_COMMAND_RAW"
+  [ "${#DOCKER[@]}" -gt 0 ] || fail 'SUB2API_UPDATE_DOCKER_COMMAND is empty'
+  command -v "${DOCKER[0]}" >/dev/null 2>&1 || fail "Docker command is not available: ${DOCKER[0]}"
+}
+
+docker_cli() {
+  "${DOCKER[@]}" "$@"
+}
+
+require_docker_access() {
+  local output detail
+  if output="$(docker_cli ps 2>&1)"; then
+    return 0
+  fi
+  detail="$(printf '%s' "$output" | tr '\n' ' ' | cut -c1-240)"
+  fail "Docker CLI cannot access /var/run/docker.sock${detail:+: $detail}; grant the updater user the socket GID with group_add, enable automatic socket-group setup, or set SUB2API_UPDATE_DOCKER_COMMAND"
+}
+
 usage() {
   cat <<'EOF'
 Usage: update-orchestrator.sh --current-version X.Y.Z --target-version X.Y.Z [--release-url URL]
@@ -57,6 +78,8 @@ Optional environment:
   SUB2API_UPDATE_SERVICES        Comma-separated app services, in rollout order
   SUB2API_UPDATE_HEALTH_URLS     Comma-separated health URLs, one per service
   SUB2API_UPDATE_ENV_FILE        Env file used by Compose
+  SUB2API_UPDATE_DOCKER_COMMAND  Docker command with optional arguments
+                                  (default: docker; e.g. sudo -n docker)
   SUB2API_UPDATE_RESTART_COMMAND Command used by runtime mode outside Docker;
                                   use {service} as a per-service placeholder
   SUB2API_UPDATE_HELPER_IMAGE    Root helper image for image mode when the env
@@ -97,10 +120,9 @@ if [ "$UPDATE_MODE" = runtime ]; then
   [[ "$RUNTIME_PATH" = /* ]] || fail 'SUB2API_UPDATE_RUNTIME_PATH must be absolute'
   if [ -n "$RESTART_COMMAND" ]; then
     RUNTIME_BACKEND=command
-  elif command -v docker >/dev/null 2>&1 && [ -S /var/run/docker.sock ]; then
-    if ! docker ps >/dev/null 2>&1; then
-      fail 'Docker socket is not accessible to the updater user; add the host Docker GID with group_add or configure SUB2API_UPDATE_RESTART_COMMAND'
-    fi
+  elif [ -S /var/run/docker.sock ]; then
+    configure_docker
+    require_docker_access
     RUNTIME_BACKEND=docker
   else
     fail 'runtime mode requires Docker socket access or SUB2API_UPDATE_RESTART_COMMAND'
@@ -108,16 +130,15 @@ if [ "$UPDATE_MODE" = runtime ]; then
 fi
 
 if [ "$UPDATE_MODE" = image ]; then
-  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    COMPOSE=(docker compose)
+  configure_docker
+  if docker_cli compose version >/dev/null 2>&1; then
+    COMPOSE=("${DOCKER[@]}" compose)
   elif command -v docker-compose >/dev/null 2>&1; then
     COMPOSE=(docker-compose)
   else
     fail 'docker compose is not available'
   fi
-  if ! docker ps >/dev/null 2>&1; then
-    fail 'Docker socket is not accessible to the updater user; add the host Docker GID with group_add'
-  fi
+  require_docker_access
 
   compose_args=(-f "$COMPOSE_FILE")
   if [ -n "$COMPOSE_PROJECT" ]; then
@@ -134,13 +155,14 @@ if [ "$UPDATE_MODE" = image ]; then
       for name in SUB2API_UPDATE_MODE SUB2API_UPDATE_COMPOSE_FILE SUB2API_UPDATE_PROJECT \
         SUB2API_UPDATE_SERVICES SUB2API_UPDATE_HEALTH_URLS SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS \
         SUB2API_UPDATE_ENV_FILE SUB2API_UPDATE_VERSION_ENV SUB2API_UPDATE_REPOSITORY \
-        SUB2API_UPDATE_HELPER_IMAGE; do
+        SUB2API_UPDATE_HELPER_IMAGE SUB2API_UPDATE_DOCKER_COMMAND \
+        SUB2API_UPDATE_AUTO_DOCKER_GROUP; do
         if [[ -v "$name" ]]; then
           helper_env+=(--env "$name=${!name}")
         fi
       done
       helper_env+=(--env SUB2API_UPDATE_HELPER_ACTIVE=1)
-      docker run --rm --user 0:0 --network host \
+      docker_cli run --rm --user 0:0 --network host \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "$COMPOSE_FILE:$COMPOSE_FILE:ro" \
         -v "$ENV_FILE:$ENV_FILE:ro" \
@@ -163,11 +185,11 @@ ORIGINAL_SERVICES=("${SERVICES[@]}")
 # helper container so the updater process can return its HTTP response first.
 SELF_CONTAINER="${SUB2API_UPDATE_SELF_CONTAINER:-}"
 SELF_SERVICE="${SUB2API_UPDATE_SELF_SERVICE:-}"
-if [ -z "$SELF_CONTAINER" ] && [ -r /etc/hostname ] && command -v docker >/dev/null 2>&1; then
+if [ -z "$SELF_CONTAINER" ] && [ -r /etc/hostname ] && [ "${#DOCKER[@]}" -gt 0 ]; then
   self_id="$(cat /etc/hostname 2>/dev/null || true)"
   if [ -n "$self_id" ]; then
-    SELF_CONTAINER="$(docker inspect -f '{{.Name}}' "$self_id" 2>/dev/null | sed 's#^/##' || true)"
-    SELF_SERVICE="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$self_id" 2>/dev/null || true)"
+    SELF_CONTAINER="$(docker_cli inspect -f '{{.Name}}' "$self_id" 2>/dev/null | sed 's#^/##' || true)"
+    SELF_SERVICE="$(docker_cli inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$self_id" 2>/dev/null || true)"
   fi
 fi
 if [ -n "$SELF_SERVICE" ]; then
@@ -279,20 +301,21 @@ runtime_container_for_service() {
     return 1
   fi
   if [ -n "$COMPOSE_PROJECT" ]; then
-    container="$(docker ps -aq \
+    container="$(docker_cli ps -aq \
       --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
-      --filter "label=com.docker.compose.service=$service" | head -n 1)"
+      --filter "label=com.docker.compose.service=$service")" || return 2
   else
     # A single-container/source deployment can use the service name directly.
-    container="$(docker ps -aq --filter "name=^/${service}$" | head -n 1)"
+    container="$(docker_cli ps -aq --filter "name=^/${service}$")" || return 2
   fi
+  container="$(printf '%s' "$container" | head -n 1)"
   [ -n "$container" ] || return 1
   printf '%s' "$container"
 }
 
 wait_for_container_health() {
   local service="$1"
-  command -v docker >/dev/null 2>&1 || fail 'docker is required for container health checks'
+  [ "${#DOCKER[@]}" -gt 0 ] || fail 'docker is required for container health checks'
   local deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
   local container=""
   local state=""
@@ -303,7 +326,7 @@ wait_for_container_health() {
       container="$(compose ps -q "$service" 2>/dev/null | tail -n 1)"
     fi
     if [ -n "$container" ]; then
-      state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
+      state="$(docker_cli inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
     fi
     if [ "$state" = unhealthy ] || [ "$state" = exited ] || [ "$state" = dead ]; then
       return 1
@@ -423,13 +446,13 @@ schedule_self_restart() {
     return 0
   fi
   [ -n "$SELF_CONTAINER" ] || fail 'self container could not be identified for final restart'
-  command -v docker >/dev/null 2>&1 || fail 'docker is required for the final service restart'
+  [ "${#DOCKER[@]}" -gt 0 ] || fail 'docker is required for the final service restart'
   local image helper
-  image="$(docker inspect -f '{{.Config.Image}}' "$SELF_CONTAINER" 2>/dev/null || true)"
+  image="$(docker_cli inspect -f '{{.Config.Image}}' "$SELF_CONTAINER" 2>/dev/null || true)"
   [ -n "$image" ] || fail "could not determine image for $SELF_CONTAINER"
   helper="sub2api-update-self-${TARGET_VERSION//./-}-$$"
   log "scheduling detached restart for $SELF_CONTAINER"
-  docker run --rm -d --name "$helper" \
+  docker_cli run --rm -d --name "$helper" \
     -v /var/run/docker.sock:/var/run/docker.sock \
     --entrypoint /bin/sh "$image" \
     -c "sleep 3; docker restart '$SELF_CONTAINER' >/dev/null" >/dev/null
@@ -440,9 +463,18 @@ restart_service() {
   if [ "$UPDATE_MODE" = runtime ]; then
     if [ "$RUNTIME_BACKEND" = docker ]; then
       local container
-      container="$(runtime_container_for_service "$service")" || fail "container not found for runtime service: $service"
+      local lookup_status=0
+      if container="$(runtime_container_for_service "$service")"; then
+        :
+      else
+        lookup_status=$?
+        if [ "$lookup_status" -eq 2 ]; then
+          fail "Docker CLI lost access while locating runtime service $service; check /var/run/docker.sock permissions"
+        fi
+        fail "container not found for runtime service: $service"
+      fi
       log "restarting container $container ($service)"
-      docker restart "$container" >/dev/null
+      docker_cli restart "$container" >/dev/null
     else
       local command="${RESTART_COMMAND//\{service\}/$service}"
       log "running restart command for $service"

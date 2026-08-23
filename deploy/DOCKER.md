@@ -88,6 +88,10 @@ environment:
   SUB2API_UPDATE_SERVICES: sub2api-1,sub2api-2,sub2api-3
   SUB2API_UPDATE_HEALTH_URLS: http://127.0.0.1:7101/health,http://127.0.0.1:7102/health,http://127.0.0.1:7103/health
   SUB2API_UPDATE_PROJECT: sub2api
+  # Optional command wrapper when the container cannot use the socket group.
+  # Example: sudo -n docker (requires a narrowly-scoped host sudo rule).
+  SUB2API_UPDATE_DOCKER_COMMAND: docker
+  SUB2API_UPDATE_AUTO_DOCKER_GROUP: "true"
   # Optional when .env is mode 600 and the app runs as a non-root user.
   SUB2API_UPDATE_HELPER_IMAGE: ghcr.io/kiss-kedaya/sub2api:0.1.190
 volumes:
@@ -97,6 +101,13 @@ volumes:
 group_add:
   - "989"
 ```
+
+The image automatically mirrors the mounted socket's numeric group into the
+`sub2api` user's supplementary groups before dropping privileges. This keeps
+the documented `group_add` form optional for standard Compose deployments; set
+`SUB2API_UPDATE_AUTO_DOCKER_GROUP=false` when group membership must remain
+explicit. The socket is still a deliberate host-control capability and should
+only be mounted for a trusted deployment.
 
 The application image includes the Docker CLI, but Docker socket access is
 intentionally opt-in because it grants host-level control. The Compose project

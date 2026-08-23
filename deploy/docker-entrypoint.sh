@@ -8,6 +8,29 @@ if [ "$(id -u)" = "0" ]; then
     mkdir -p /app/data
     # Use || true to avoid failure on read-only mounted files (e.g. config.yaml:ro)
     chown -R sub2api:sub2api /app/data 2>/dev/null || true
+
+    # A mounted Docker socket keeps the host group ID. Create a matching
+    # supplementary group before dropping privileges so orchestrated updates
+    # work without hard-coding a host-specific group_add value in Compose.
+    if [ "${SUB2API_UPDATE_AUTO_DOCKER_GROUP:-true}" = "true" ] && [ -S /var/run/docker.sock ]; then
+        docker_gid="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)"
+        case "$docker_gid" in
+            ''|*[!0-9]*|0) ;;
+            *)
+                docker_group="$(awk -F: -v gid="$docker_gid" '$3 == gid { print $1; exit }' /etc/group 2>/dev/null || true)"
+                if [ -z "$docker_group" ]; then
+                    docker_group="sub2api-docker"
+                    existing_gid="$(awk -F: -v name="$docker_group" '$1 == name { print $3; exit }' /etc/group 2>/dev/null || true)"
+                    if [ -n "$existing_gid" ] && [ "$existing_gid" != "$docker_gid" ]; then
+                        docker_group="sub2api-docker-$docker_gid"
+                    fi
+                    addgroup -g "$docker_gid" "$docker_group" >/dev/null 2>&1 || true
+                fi
+                addgroup sub2api "$docker_group" >/dev/null 2>&1 || true
+                ;;
+        esac
+    fi
+
     # Re-invoke this script as sub2api so the flag-detection below
     # also runs under the correct user.
     exec su-exec sub2api "$0" "$@"
