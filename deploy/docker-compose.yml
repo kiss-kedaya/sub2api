@@ -25,8 +25,10 @@ services:
       - no-new-privileges:true
     ulimits:
       nofile:
-        soft: 100000
-        hard: 100000
+        # One descriptor per long-lived client connection. Override on
+        # smaller hosts with CONTAINER_NOFILE_SOFT/HARD in .env.
+        soft: ${CONTAINER_NOFILE_SOFT:-200000}
+        hard: ${CONTAINER_NOFILE_HARD:-200000}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
     volumes:
@@ -52,6 +54,8 @@ services:
       - SERVER_PORT=8080
       - SERVER_MODE=${SERVER_MODE:-release}
       - SERVER_SHUTDOWN_TIMEOUT_SECONDS=${SERVER_SHUTDOWN_TIMEOUT_SECONDS:-30}
+      - SERVER_H2C_MAX_CONCURRENT_STREAMS=${SERVER_H2C_MAX_CONCURRENT_STREAMS:-512}
+      - SERVER_H2C_IDLE_TIMEOUT=${SERVER_H2C_IDLE_TIMEOUT:-3600}
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}
       - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
@@ -66,8 +70,10 @@ services:
       - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - DATABASE_DBNAME=${POSTGRES_DB:-sub2api}
       - DATABASE_SSLMODE=disable
-      - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-50}
-      - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-10}
+      # Shared high-concurrency defaults; these are bounded database pools,
+      # not one connection per streaming request.
+      - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-256}
+      - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-128}
       - DATABASE_CONN_MAX_LIFETIME_MINUTES=${DATABASE_CONN_MAX_LIFETIME_MINUTES:-30}
       - DATABASE_CONN_MAX_IDLE_TIME_MINUTES=${DATABASE_CONN_MAX_IDLE_TIME_MINUTES:-5}
 
@@ -79,8 +85,8 @@ services:
       - REDIS_USERNAME=${REDIS_USERNAME:-}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_DB=${REDIS_DB:-0}
-      - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-1024}
-      - REDIS_MIN_IDLE_CONNS=${REDIS_MIN_IDLE_CONNS:-10}
+      - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-4096}
+      - REDIS_MIN_IDLE_CONNS=${REDIS_MIN_IDLE_CONNS:-256}
       - REDIS_ENABLE_TLS=${REDIS_ENABLE_TLS:-false}
 
       # =======================================================================
@@ -191,6 +197,15 @@ services:
       - GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_FAILURE_THRESHOLD=${GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_FAILURE_THRESHOLD:-2}
       - GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_WINDOW_SECONDS=${GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_WINDOW_SECONDS:-60}
       - GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_TTL_SECONDS=${GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_TTL_SECONDS:-600}
+      - GATEWAY_MAX_CONNS_PER_HOST=${GATEWAY_MAX_CONNS_PER_HOST:-2048}
+      - GATEWAY_MAX_IDLE_CONNS=${GATEWAY_MAX_IDLE_CONNS:-8192}
+      - GATEWAY_MAX_IDLE_CONNS_PER_HOST=${GATEWAY_MAX_IDLE_CONNS_PER_HOST:-4096}
+      # Distributed WebSocket ingress lease. Keep a finite per-key ceiling
+      # while allowing a single tenant to use a large connection fan-out.
+      - GATEWAY_OPENAI_WS_MAX_INGRESS_CONNECTIONS_PER_API_KEY=${GATEWAY_OPENAI_WS_MAX_INGRESS_CONNECTIONS_PER_API_KEY:-2048}
+      - GATEWAY_OPENAI_WS_INGRESS_INTER_TURN_IDLE_TIMEOUT_SECONDS=${GATEWAY_OPENAI_WS_INGRESS_INTER_TURN_IDLE_TIMEOUT_SECONDS:-300}
+      - GATEWAY_OPENAI_WS_MAX_CONNS_PER_ACCOUNT=${GATEWAY_OPENAI_WS_MAX_CONNS_PER_ACCOUNT:-256}
+      - GATEWAY_OPENAI_WS_QUEUE_LIMIT_PER_CONN=${GATEWAY_OPENAI_WS_QUEUE_LIMIT_PER_CONN:-128}
       - GATEWAY_IMAGE_STREAM_DATA_INTERVAL_TIMEOUT=${GATEWAY_IMAGE_STREAM_DATA_INTERVAL_TIMEOUT:-900}
       - GATEWAY_IMAGE_STREAM_KEEPALIVE_INTERVAL=${GATEWAY_IMAGE_STREAM_KEEPALIVE_INTERVAL:-10}
       - GATEWAY_IMAGE_CONCURRENCY_ENABLED=${GATEWAY_IMAGE_CONCURRENCY_ENABLED:-false}
@@ -231,8 +246,8 @@ services:
     restart: unless-stopped
     ulimits:
       nofile:
-        soft: 100000
-        hard: 100000
+        soft: ${CONTAINER_NOFILE_SOFT:-200000}
+        hard: ${CONTAINER_NOFILE_HARD:-200000}
     # Pass the tuning values documented in .env.example to postgres. The
     # fallbacks are the postgres:18 stock defaults, so nothing changes when
     # the variables are not set.
@@ -277,8 +292,8 @@ services:
     restart: unless-stopped
     ulimits:
       nofile:
-        soft: 100000
-        hard: 100000
+        soft: ${CONTAINER_NOFILE_SOFT:-200000}
+        hard: ${CONTAINER_NOFILE_HARD:-200000}
     volumes:
       - redis_data:/data
     # The command is one quoted script for the inner `sh -c`. Compose keeps
@@ -291,6 +306,10 @@ services:
         --save 60 1 \
         --appendonly yes \
         --appendfsync everysec \
+        --maxclients ${REDIS_MAXCLIENTS:-50000} \
+        --tcp-backlog ${REDIS_TCP_BACKLOG:-65535} \
+        --io-threads ${REDIS_IO_THREADS:-4} \
+        --io-threads-do-reads ${REDIS_IO_THREADS_DO_READS:-yes} \
         ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}'
     environment:
       - TZ=${TZ:-Asia/Shanghai}

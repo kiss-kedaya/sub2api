@@ -128,6 +128,40 @@ server {
 }
 ```
 
+### High-concurrency SSE/WebSocket profile
+
+For a multi-replica deployment with thousands of long-lived connections, keep
+the edge limits above the expected connection count and disable request
+buffering for streaming routes. These directives belong in the `http`/`events`
+blocks and the Sub2API server location respectively:
+
+```nginx
+# http / events
+worker_processes auto;
+worker_rlimit_nofile 200000;
+events {
+    use epoll;
+    worker_connections 65535;
+    multi_accept on;
+}
+
+# streaming location
+proxy_http_version 1.1;
+proxy_buffering off;
+proxy_request_buffering off;
+proxy_cache off;
+proxy_read_timeout 3600s;
+proxy_send_timeout 3600s;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection $connection_upgrade;
+```
+
+Do not use `proxy_next_upstream` to retry a request after response headers or
+stream bytes have been sent. A pre-header retry is safe for a failed replica;
+replaying a partially delivered POST can duplicate a model request and its
+billing. Keep upstream readiness checks and rolling restarts separate from the
+streaming retry policy.
+
 If Nginx gzip is enabled in the `http` block, keep `text/event-stream` out of
 `gzip_types` and do not use `gzip_types *` for Sub2API. The
 `proxy_buffering off` setting above prevents proxy buffering, but it does not
