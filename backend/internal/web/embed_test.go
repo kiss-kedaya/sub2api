@@ -528,6 +528,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			"/antigravity/test",
 			"/setup/init",
 			"/health",
+			"/readyz",
 			"/responses",
 			"/responses/compact",
 		}
