@@ -26,12 +26,19 @@ builds:
       - -X main.Date={{.Date}}
       - -X main.BuildType=release
 
-# 跳过 archives
-archives: []
+archives:
+  - id: linux-amd64
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE*
+      - README*
+      - deploy/*
 
-# 跳过 checksum
 checksum:
-  disable: true
+  name_template: 'checksums.txt'
+  algorithm: sha256
 
 changelog:
   disable: true
@@ -39,6 +46,9 @@ changelog:
 # 仅 GHCR x86_64 镜像
 dockers:
   - id: ghcr-amd64
+    # GHCR is optional. A missing package write token must not prevent the
+    # runtime archive from being published to the GitHub Release.
+    skip_push: '{{ if eq .Env.PUBLISH_GHCR "true" }}false{{ else }}true{{ end }}'
     goos: linux
     goarch: amd64
     image_templates:
@@ -67,11 +77,9 @@ release:
   draft: false
   prerelease: auto
   name_template: "Sub2API {{.Version}} (Simple)"
-  # 跳过上传二进制包
-  skip_upload: true
   header: |
     > AI API Gateway Platform - 将 AI 订阅配额分发和管理
-    > ⚡ Simple Release: 仅包含 x86_64 GHCR 镜像
+    > ⚡ Simple Release: x86_64 runtime archive (and GHCR image when enabled)
 
     {{ .Env.TAG_MESSAGE }}
 
@@ -80,10 +88,13 @@ release:
 
     ## 📥 Installation
 
-    **Docker (x86_64 only):**
+    **Docker (x86_64 only, when GHCR publishing is enabled):**
     ```bash
     docker pull ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}
     ```
+
+    **Runtime archive:**
+    Download `sub2api_{{ .Version }}_linux_amd64.tar.gz` and `checksums.txt` from the assets below.
 
     ## 📚 Documentation
 
