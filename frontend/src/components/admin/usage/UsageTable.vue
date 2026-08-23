@@ -697,6 +697,9 @@ const formatDuration = (ms: number | null | undefined): string => {
 }
 
 /** Average generated-token throughput after the first token, in output tokens/sec. */
+const MIN_OUTPUT_TOKENS_FOR_RATE = 20
+const MIN_GENERATION_WINDOW_MS_FOR_RATE = 500
+
 const formatOutputRate = (
   outputTokens: number | null | undefined,
   firstTokenMs: number | null | undefined,
@@ -709,10 +712,10 @@ const formatOutputRate = (
   const generationDuration = duration - firstToken
   const durationsRoundToSameDisplay = formatDuration(firstTokenMs) === formatDuration(durationMs)
   if (
-    !Number.isFinite(tokens) || tokens <= 0
+    !Number.isFinite(tokens) || tokens < MIN_OUTPUT_TOKENS_FOR_RATE
     || !Number.isFinite(firstToken) || firstToken < 0
     || !Number.isFinite(duration) || duration <= 0
-    || generationDuration < 100
+    || generationDuration < MIN_GENERATION_WINDOW_MS_FOR_RATE
     || durationsRoundToSameDisplay
   ) return '-'
   return `${(tokens * 1000 / generationDuration).toFixed(1)} t/s`
