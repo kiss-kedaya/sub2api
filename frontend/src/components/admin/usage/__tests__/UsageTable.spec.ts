@@ -229,6 +229,7 @@ describe('admin UsageTable tooltip', () => {
         data: [{
           request_id: 'req-throughput',
           output_tokens: 101,
+          first_token_ms: 180,
           duration_ms: 1938,
           input_tokens: 10,
         }],
@@ -245,7 +246,32 @@ describe('admin UsageTable tooltip', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('52.1 t/s')
+    expect(wrapper.text()).toContain('57.5 t/s')
+  })
+
+  it('hides output rate when the generation window is unavailable', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          request_id: 'req-throughput-missing-first-token',
+          output_tokens: 101,
+          duration_ms: 1938,
+          input_tokens: 10,
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('t/s')
   })
 
   it('shows requested and upstream models separately for admin rows', () => {
