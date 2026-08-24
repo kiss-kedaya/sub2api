@@ -261,19 +261,23 @@ type OpenAIForwardResult struct {
 	// UpstreamTerminalEvent is the normalized terminal event observed on an
 	// upstream Responses WebSocket turn. Empty preserves legacy/non-WS success.
 	UpstreamTerminalEvent string
-	ResponseHeaders       http.Header
-	Duration              time.Duration
-	FirstTokenMs          *int
-	ClientDisconnect      bool
-	ImageCount            int
-	ImageSize             string
-	ImageInputSize        string
-	ImageOutputSize       string
-	ImageOutputSizes      []string
-	ImageSizeSource       string
-	ImageSizeBreakdown    map[string]int
-	VideoCount            int
-	VideoResolution       string
+	// NonBillableUpstreamError marks a deterministic request validation failure
+	// returned after an upstream stream was opened. The provider may include
+	// input usage in response.failed, but this attempt must not charge the user.
+	NonBillableUpstreamError bool
+	ResponseHeaders          http.Header
+	Duration                 time.Duration
+	FirstTokenMs             *int
+	ClientDisconnect         bool
+	ImageCount               int
+	ImageSize                string
+	ImageInputSize           string
+	ImageOutputSize          string
+	ImageOutputSizes         []string
+	ImageSizeSource          string
+	ImageSizeBreakdown       map[string]int
+	VideoCount               int
+	VideoResolution          string
 	// VideoDurationSeconds 是提交时请求的生成时长（xAI 按输出秒数计费），已归一化到 1-15 秒。
 	VideoDurationSeconds int
 	// WebSearchCalls 是 Codex alpha/search 网页搜索调用次数（每次成功请求为 1）。

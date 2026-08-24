@@ -1095,6 +1095,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageCount := 0
 		searchCount := 0
 		var imageOutputSizes []string
+		nonBillableUpstreamError := false
 		if reqStream {
 			streamResult, err := s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
 			if err != nil {
@@ -1140,6 +1141,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			imageCount = streamResult.imageCount
 			imageOutputSizes = streamResult.imageOutputSizes
 			searchCount = streamResult.searchCount
+			nonBillableUpstreamError = streamResult.nonBillableUpstreamError
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
@@ -1162,6 +1164,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			imageCount = nonStreamResult.imageCount
 			imageOutputSizes = nonStreamResult.imageOutputSizes
 			searchCount = nonStreamResult.searchCount
+			nonBillableUpstreamError = nonStreamResult.nonBillableUpstreamError
 		}
 		s.bindHTTPResponseAccount(ctx, c, account, responseID)
 
@@ -1192,6 +1195,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			OpenAIWSMode:                  false,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
+			NonBillableUpstreamError:      nonBillableUpstreamError,
 		}
 		if imageCount > 0 {
 			forwardResult.ImageCount = imageCount

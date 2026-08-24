@@ -26,21 +26,23 @@ import (
 
 // openaiStreamingResult streaming response result
 type openaiStreamingResult struct {
-	usage            *OpenAIUsage
-	firstTokenMs     *int
-	responseID       string
-	imageCount       int
-	imageOutputSizes []string
-	searchCount      int
+	usage                    *OpenAIUsage
+	firstTokenMs             *int
+	responseID               string
+	imageCount               int
+	imageOutputSizes         []string
+	searchCount              int
+	nonBillableUpstreamError bool
 }
 
 type openaiNonStreamingResult struct {
 	*OpenAIUsage
-	usage            *OpenAIUsage
-	responseID       string
-	imageCount       int
-	imageOutputSizes []string
-	searchCount      int
+	usage                    *OpenAIUsage
+	responseID               string
+	imageCount               int
+	imageOutputSizes         []string
+	searchCount              int
+	nonBillableUpstreamError bool
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
@@ -255,6 +257,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	var streamEarlyErr error
 	terminalFailurePending := false
+	nonBillableUpstreamError := false
 	failureDelivered := false
 	suppressCurrentEvent := false
 	var bareErrorPayload []byte
@@ -344,12 +347,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	streamSearchSeen := make(map[string]struct{})
 	resultWithUsage := func() *openaiStreamingResult {
 		return &openaiStreamingResult{
-			usage:            usage,
-			firstTokenMs:     firstTokenMs,
-			responseID:       responseID,
-			imageCount:       imageCounter.Count(),
-			imageOutputSizes: imageCounter.Sizes(),
-			searchCount:      searchCounter,
+			usage:                    usage,
+			firstTokenMs:             firstTokenMs,
+			responseID:               responseID,
+			imageCount:               imageCounter.Count(),
+			imageOutputSizes:         imageCounter.Sizes(),
+			searchCount:              searchCounter,
+			nonBillableUpstreamError: nonBillableUpstreamError,
 		}
 	}
 	flushPending := func(disconnectMessage string) {
@@ -542,6 +546,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					})
 				}
 				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
+				if !outputStarted && !cyberHit && isOpenAINonBillableRequestError(failedMessage, dataBytes) {
+					nonBillableUpstreamError = true
+				}
 				if !outputStarted && !cyberHit {
 					if compactErr := newOpenAICompactFallbackSignal(c, dataBytes, failedMessage); compactErr != nil {
 						sawFailedEvent = true

@@ -332,6 +332,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	responseID := ""
 	imageCount := 0
 	var imageOutputSizes []string
+	nonBillableUpstreamError := false
 	for {
 		actualModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 		if actualModel == "" {
@@ -459,6 +460,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			responseID = strings.TrimSpace(result.responseID)
 			imageCount = result.imageCount
 			imageOutputSizes = result.imageOutputSizes
+			nonBillableUpstreamError = result.nonBillableUpstreamError
 		} else {
 			result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
@@ -485,6 +487,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			responseID = strings.TrimSpace(result.responseID)
 			imageCount = result.imageCount
 			imageOutputSizes = result.imageOutputSizes
+			nonBillableUpstreamError = result.nonBillableUpstreamError
 		}
 		break
 	}
@@ -517,6 +520,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		OpenAIWSMode:                  false,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
+		NonBillableUpstreamError:      nonBillableUpstreamError,
 	}
 	if imageCount > 0 {
 		forwardResult.ImageCount = imageCount
@@ -1015,19 +1019,21 @@ func collectOpenAIPassthroughTimeoutHeaders(h http.Header) []string {
 }
 
 type openaiStreamingResultPassthrough struct {
-	usage            *OpenAIUsage
-	firstTokenMs     *int
-	responseID       string
-	imageCount       int
-	imageOutputSizes []string
+	usage                    *OpenAIUsage
+	firstTokenMs             *int
+	responseID               string
+	imageCount               int
+	imageOutputSizes         []string
+	nonBillableUpstreamError bool
 }
 
 type openaiNonStreamingResultPassthrough struct {
 	*OpenAIUsage
-	usage            *OpenAIUsage
-	responseID       string
-	imageCount       int
-	imageOutputSizes []string
+	usage                    *OpenAIUsage
+	responseID               string
+	imageCount               int
+	imageOutputSizes         []string
+	nonBillableUpstreamError bool
 }
 
 const openAIStreamKeepaliveBytesKey = "openai_stream_keepalive_bytes"
@@ -1750,6 +1756,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	failureDelivered := false
 	suppressCurrentEvent := false
 	responseFailedPending := false
+	nonBillableUpstreamError := false
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
@@ -1811,11 +1818,12 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
 		return &openaiStreamingResultPassthrough{
-			usage:            usage,
-			firstTokenMs:     firstTokenMs,
-			responseID:       responseID,
-			imageCount:       imageCounter.Count(),
-			imageOutputSizes: imageCounter.Sizes(),
+			usage:                    usage,
+			firstTokenMs:             firstTokenMs,
+			responseID:               responseID,
+			imageCount:               imageCounter.Count(),
+			imageOutputSizes:         imageCounter.Sizes(),
+			nonBillableUpstreamError: nonBillableUpstreamError,
 		}
 	}
 
@@ -1903,6 +1911,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					})
 				}
 				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
+				if !outputStarted && !cyberHit && isOpenAINonBillableRequestError(failedMessage, dataBytes) {
+					nonBillableUpstreamError = true
+				}
 				if !outputStarted && !cyberHit {
 					if compactErr := newOpenAICompactFallbackSignal(c, dataBytes, failedMessage); compactErr != nil {
 						return resultWithUsage(), compactErr

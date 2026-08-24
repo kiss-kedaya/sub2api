@@ -273,6 +273,22 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			}
 		}
 	}
+	// A provider can return deterministic request validation/context errors as
+	// response.failed over an HTTP-200 stream while also reporting input usage.
+	// Keep that usage visible for diagnostics, but never deduct the user's
+	// balance for work the provider rejected before generation started.
+	if result.NonBillableUpstreamError {
+		billingMode := string(BillingModeToken)
+		if cost != nil && strings.TrimSpace(cost.BillingMode) != "" {
+			billingMode = cost.BillingMode
+		}
+		cost = &CostBreakdown{BillingMode: billingMode}
+		logger.L().With(
+			zap.String("component", "service.openai_gateway"),
+			zap.Int64("account_id", account.ID),
+			zap.String("request_id", result.RequestID),
+		).Info("openai_usage.non_billable_upstream_request_error")
+	}
 
 	// Determine billing type
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()

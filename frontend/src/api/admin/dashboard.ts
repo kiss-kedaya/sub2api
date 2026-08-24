@@ -199,7 +199,8 @@ export async function getUserBreakdown(params: UserBreakdownParams): Promise<Use
  */
 export async function getSnapshotV2(params?: DashboardSnapshotV2Params): Promise<DashboardSnapshotV2Response> {
   const { data } = await apiClient.get<DashboardSnapshotV2Response>('/admin/dashboard/snapshot-v2', {
-    params
+    params,
+    timeout: 180000
   })
   return data
 }
@@ -252,7 +253,8 @@ export interface UserSpendingRankingParams
  */
 export async function getUserUsageTrend(params?: UserTrendParams): Promise<UserTrendResponse> {
   const { data } = await apiClient.get<UserTrendResponse>('/admin/dashboard/users-trend', {
-    params
+    params,
+    timeout: 180000
   })
   return data
 }
@@ -266,7 +268,8 @@ export async function getUserSpendingRanking(
   params?: UserSpendingRankingParams
 ): Promise<UserSpendingRankingResponse> {
   const { data } = await apiClient.get<UserSpendingRankingResponse>('/admin/dashboard/users-ranking', {
-    params
+    params,
+    timeout: 180000
   })
   return data
 }
