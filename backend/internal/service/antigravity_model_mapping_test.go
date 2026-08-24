@@ -89,10 +89,10 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-4-6",
 		},
 		{
-			name:           "默认映射 - claude-sonnet-4-5 → claude-sonnet-4-6",
+			name:           "显式 canonical 选择 - claude-sonnet-4-5 透传",
 			requestedModel: "claude-sonnet-4-5",
 			accountMapping: nil,
-			expected:       "claude-sonnet-4-6",
+			expected:       "claude-sonnet-4-5",
 		},
 		{
 			name:           "默认映射透传 - claude-opus-4-8",
@@ -117,6 +117,15 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			requestedModel: "claude-sonnet-4-5-thinking",
 			accountMapping: nil,
 			expected:       "claude-sonnet-4-6",
+		},
+		{
+			name:           "账户显式目标只映射一步 - custom-sonnet → claude-sonnet-4-5",
+			requestedModel: "custom-sonnet",
+			accountMapping: map[string]string{
+				"custom-sonnet":     "claude-sonnet-4-5",
+				"claude-sonnet-4-5": "claude-sonnet-4-6",
+			},
+			expected: "claude-sonnet-4-5",
 		},
 		{
 			name:           "默认映射透传 - gemini-2.5-flash",
