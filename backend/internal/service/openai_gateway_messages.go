@@ -907,6 +907,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	searchCount := 0
 	streamSearchSeen := make(map[string]struct{})
 	countSearch := account != nil && account.IsGrok()
+	nonBillableUpstreamError := false
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
@@ -943,6 +944,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
 			ClientDisconnect:              clientDisconnected,
+			NonBillableUpstreamError:      nonBillableUpstreamError,
 		}
 		if searchCount > 0 {
 			out.SearchCount = searchCount
@@ -1016,6 +1018,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 					return true
 				}
 				message := extractOpenAISSEErrorMessage(payloadBytes)
+				if !clientOutputStarted && isOpenAINonBillableRequestError(message, payloadBytes) {
+					nonBillableUpstreamError = true
+				}
 				// Once Anthropic output has started, switching accounts would splice
 				// two model streams together. Surface a proper Anthropic error event
 				// instead of returning a failover error that the handler cannot retry.
