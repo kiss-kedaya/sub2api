@@ -638,6 +638,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	searchCount := 0
 	streamSearchSeen := make(map[string]struct{})
 	countSearch := account != nil && account.IsGrok()
+	nonBillableUpstreamError := false
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -671,6 +672,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
+			NonBillableUpstreamError:      nonBillableUpstreamError,
 		}
 		if searchCount > 0 {
 			out.SearchCount = searchCount
@@ -714,6 +716,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		if strings.TrimSpace(event.Type) == "response.failed" || strings.TrimSpace(event.Type) == "error" {
 			payloadBytes := []byte(payload)
 			message := extractOpenAISSEErrorMessage(payloadBytes)
+			if !clientOutputStarted && isOpenAINonBillableRequestError(message, payloadBytes) {
+				nonBillableUpstreamError = true
+			}
 			if hit, code, msg := detectOpenAICyberPolicy(payloadBytes); hit {
 				// cyber_policy 致命且不可重试：不 failover。下发标准 error chunk +
 				// [DONE]，让程序化客户端可感知并停止重试（F4）；标记供 handler 事后

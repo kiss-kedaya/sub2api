@@ -490,6 +490,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	capacityFailoverSuppressedLogged := false
 	clientDisconnected := false
 	officialOpenAIResponses := account != nil && account.Platform == PlatformOpenAI
+	nonBillableUpstreamError := false
 	bareErrorPending := false
 	var bareErrorPayload []byte
 	bareErrorMessage := ""
@@ -521,6 +522,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			ResponseHeaders:               cloneHeader(resp.Header),
 			Duration:                      time.Since(turnStart),
 			FirstTokenMs:                  firstTokenMs,
+			NonBillableUpstreamError:      nonBillableUpstreamError,
 		}
 		if replayInput := replayCollector.Items(); len(replayInput) > 0 {
 			result.wsReplayInput = replayInput
@@ -656,6 +658,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			errMessage := extractOpenAISSEErrorMessage(upstreamMessage)
 			if errMessage == "" {
 				errMessage = "upstream error event"
+			}
+			if !wroteDownstream && isOpenAINonBillableRequestError(errMessage, upstreamMessage) {
+				nonBillableUpstreamError = true
 			}
 			statusCode := openAIStreamFailureStatus(upstreamMessage, errMessage)
 			shouldFailover := openAIStreamFailedEventShouldFailover(upstreamMessage, errMessage)

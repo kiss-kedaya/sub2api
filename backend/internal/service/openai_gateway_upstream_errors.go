@@ -202,6 +202,10 @@ func isOpenAIContextWindowError(upstreamMsg string, upstreamBody []byte) bool {
 		if strings.Contains(lower, "context_too_large") || strings.Contains(lower, "context_length_exceeded") {
 			return true
 		}
+		if strings.Contains(lower, "context window") &&
+			(strings.Contains(lower, "is full") || strings.Contains(lower, "full")) {
+			return true
+		}
 		if strings.Contains(lower, "maximum context length") || strings.Contains(lower, "max context length") {
 			return true
 		}
@@ -239,6 +243,43 @@ func isOpenAIContextWindowError(upstreamMsg string, upstreamBody []byte) bool {
 	// retry/client-status classification. Plain-text upstream errors remain
 	// supported by scanning the whole body only when it is not valid JSON.
 	return !gjson.ValidBytes(upstreamBody) && match(string(upstreamBody))
+}
+
+// isOpenAINonBillableRequestError identifies deterministic request failures
+// which can arrive as a HTTP-200 response.failed/error event with a usage
+// object attached. Those tokens describe a rejected request, not accepted
+// model work, so the usage row remains visible but its cost must be zero.
+// Policy/cyber failures are deliberately excluded by the caller before this
+// helper is used because those may represent provider-side processing.
+func isOpenAINonBillableRequestError(upstreamMsg string, upstreamBody []byte) bool {
+	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
+		return true
+	}
+	texts := []string{upstreamMsg}
+	if len(upstreamBody) > 0 {
+		if gjson.ValidBytes(upstreamBody) {
+			for _, path := range []string{
+				"error.message", "response.error.message", "message",
+				"error.code", "response.error.code", "code",
+			} {
+				if value := strings.TrimSpace(gjson.GetBytes(upstreamBody, path).String()); value != "" {
+					texts = append(texts, value)
+				}
+			}
+		} else {
+			texts = append(texts, string(upstreamBody))
+		}
+	}
+	combined := strings.ToLower(strings.Join(texts, " "))
+	if !strings.Contains(combined, "thinking") || !strings.Contains(combined, "budget_tokens") {
+		return false
+	}
+	if isThinkingBudgetConstraintError(combined) {
+		return true
+	}
+	return strings.Contains(combined, "less than max_tokens") ||
+		strings.Contains(combined, "less than max tokens") ||
+		strings.Contains(combined, "must be less")
 }
 
 func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
