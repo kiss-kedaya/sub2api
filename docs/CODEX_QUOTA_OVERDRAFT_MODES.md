@@ -9,14 +9,18 @@ they are not the same implementation.
 `codex_quota_overdraft_enabled` controls the native Sub2API state machine:
 
 - persists 5h/7d snapshots and cycle state in `accounts.extra`;
-- runs a bounded, compatibility-aware probe before admitting an exhausted
-  account back into scheduling;
+- runs a bounded, compatibility-aware probe after quota exhaustion is observed
+  and uses the persisted probe state to gate subsequent re-admission;
 - keeps the account eligible only while the reset timestamp is known and
   automatically recovers the temporary pause after reset;
 - uses request-scoped, server-generated evidence so a client cannot spoof a
   successful hidden call.
 
 This mode does not change real request bodies and is enabled by default.
+
+The current production integration covers the HTTP gateway paths. WebSocket
+turns do not yet capture the same request-scoped overdraft snapshot, so they
+continue to use the ordinary scheduler until a dedicated WS hook is added.
 
 ## CPA-compatible injection mode
 
@@ -31,8 +35,9 @@ particular, Sub2API currently keeps this switch off by default because an
 upstream may count the synthetic pair as input tokens; enabling it without an
 exact usage-correction policy can overcharge users or distort upstream cost.
 
-The deployment environment variables are legacy bootstrap values for databases
-that predate these keys; the persisted administrator settings are the normal
-runtime controls. Missing keys on an existing installation fall back to the
-legacy deployment value, while a fresh database writes the safe defaults
-explicitly. Once a key exists, the administrator setting is authoritative.
+The deployment environment variables are bootstrap values for databases that
+predate these keys; the persisted administrator settings are the normal runtime
+controls. The detector environment value is also an emergency upper bound:
+setting it to `false` disables the detector even when the database switch is
+`true`. Missing keys fall back to the deployment value, while migration 231
+materializes the compatibility defaults without overwriting an existing choice.
