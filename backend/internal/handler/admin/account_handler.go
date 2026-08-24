@@ -1492,6 +1492,8 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 
 // GetStats handles getting account statistics
 // GET /api/v1/admin/accounts/:id/stats
+const accountStatsRequestTimeout = 180 * time.Second
+
 func (h *AccountHandler) GetStats(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -1512,7 +1514,12 @@ func (h *AccountHandler) GetStats(c *gin.Context) {
 	endTime := timezone.StartOfDay(now.AddDate(0, 0, 1))
 	startTime := timezone.StartOfDay(now.AddDate(0, 0, -days+1))
 
-	stats, err := h.accountUsageService.GetAccountUsageStats(c.Request.Context(), accountID, startTime, endTime)
+	// Account history aggregation can be expensive on installations with a
+	// large usage log. Bound this endpoint independently so it can take up to
+	// 180s without changing the timeout behavior of other admin APIs.
+	statsCtx, cancel := context.WithTimeout(c.Request.Context(), accountStatsRequestTimeout)
+	defer cancel()
+	stats, err := h.accountUsageService.GetAccountUsageStats(statsCtx, accountID, startTime, endTime)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

@@ -287,7 +287,11 @@ export async function applyOAuthCredentials(
  */
 export async function getStats(id: number, days: number = 30): Promise<AccountUsageStatsResponse> {
   const { data } = await apiClient.get<AccountUsageStatsResponse>(`/admin/accounts/${id}/stats`, {
-    params: { days }
+    params: { days },
+    // Account history aggregates can legitimately take longer on large
+    // installations. Keep this longer timeout local to the stats endpoint;
+    // the shared API client timeout remains 30s for normal admin requests.
+    timeout: 180000
   })
   return data
 }

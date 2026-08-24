@@ -258,8 +258,12 @@ type SystemSettings struct {
 	PaymentVisibleMethodWxpayEnabled  bool
 
 	// OpenAI 账号调度
-	OpenAILowUpstreamRatePriorityEnabled                   bool
-	OpenAIOAuthSchedulingRateMultiplier                    float64
+	OpenAILowUpstreamRatePriorityEnabled bool
+	OpenAIOAuthSchedulingRateMultiplier  float64
+	// Codex quota overdraft controls. These are persisted admin settings;
+	// deployment config remains the process-level master gate.
+	CodexQuotaOverdraftEnabled                             bool
+	CodexQuotaOverdraftBusinessInjectionEnabled            bool
 	OpenAIAdvancedSchedulerEnabled                         bool
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool
 	OpenAIAdvancedSchedulerSubscriptionPriorityEnabled     bool
