@@ -344,6 +344,34 @@ func TestNormalizeOpenAIResponsesLiteToolsPayload_PreservesResponseCreateShape(t
 	require.False(t, gjson.GetBytes(updated, "parallel_tool_calls").Bool())
 }
 
+func TestNormalizeOpenAIResponsesLitePayloads_PreserveLargeSequence(t *testing.T) {
+	body := []byte(`{
+		"type":"response.create",
+		"sequence":900719925474099312345,
+		"tools":[{"type":"function","name":"lookup"}],
+		"parallel_tool_calls":true
+	}`)
+	tests := []struct {
+		name      string
+		normalize func([]byte) ([]byte, bool, error)
+	}{
+		{name: "OAuth-like tools normalization", normalize: normalizeOpenAIResponsesLiteToolsPayload},
+		{name: "API key parallel normalization", normalize: normalizeOpenAIResponsesLiteParallelToolCallsPayload},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updated, changed, err := tt.normalize(body)
+
+			require.NoError(t, err)
+			require.True(t, changed)
+			require.Equal(t, "900719925474099312345", gjson.GetBytes(updated, "sequence").Raw)
+			require.True(t, gjson.GetBytes(updated, "parallel_tool_calls").Exists())
+			require.False(t, gjson.GetBytes(updated, "parallel_tool_calls").Bool())
+		})
+	}
+}
+
 func TestApplyCodexOAuthTransform_PreservesLiteNamespaceToolChoice(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.6-terra",
