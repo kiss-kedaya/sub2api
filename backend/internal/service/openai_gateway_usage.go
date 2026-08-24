@@ -146,6 +146,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if !isGrokVideoUsageResult(result, nil) {
 		ApplyOpenAIImageBillingResolution(result)
 	}
+	logServiceTierBillingDowngrade("service.openai_gateway", account, result.RequestID, ApplyOpenAIServiceTierBillingResolution(result))
 
 	// OpenAI input_tokens 是总输入，包含缓存读取和缓存写入明细。
 	// 将三类 token 拆成互斥桶，避免缓存写入同时按普通输入和 cache_write 重复计费。
@@ -1093,6 +1094,7 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err != nil {
 			return
 		}
+		notifyOpenAIAutoReset(accountID)
 		if s.codexQuotaOverdraft == nil || (!codexQuotaOverdraftSnapshotPrearmReached(updates) && !codexQuotaOverdraftWasInjected(ctx, accountID)) {
 			return
 		}
