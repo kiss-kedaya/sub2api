@@ -437,22 +437,26 @@ type OpenAIGatewayService struct {
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
 
-	openaiWSPoolOnce               sync.Once
-	openaiWSStateStoreOnce         sync.Once
-	openaiSchedulerOnce            sync.Once
-	openaiProxyStreamCircuitOnce   sync.Once
-	openaiWSPassthroughDialerOnce  sync.Once
-	openaiModelTransientOnce       sync.Once
-	agentIdentityTaskMu            sync.Mutex
-	openaiWSPool                   *openAIWSConnPool
-	openaiWSStateStore             OpenAIWSStateStore
-	openaiScheduler                OpenAIAccountScheduler
-	openaiWSPassthroughDialer      openAIWSClientDialer
-	openaiWSSessionPreemptions     openAIWSSessionPreemptRegistry
-	openaiAccountStats             *openAIAccountRuntimeStats
-	openaiModelTransient           *openAIAccountModelTransientState
-	openaiProxyStreamCircuit       *openAIProxyStreamCircuit
-	openaiProxyStreamFailOpenLogAt atomic.Int64
+	openaiWSPoolOnce                    sync.Once
+	openaiWSStateStoreOnce              sync.Once
+	openaiSchedulerOnce                 sync.Once
+	openaiProxyStreamCircuitOnce        sync.Once
+	openaiWSPassthroughDialerOnce       sync.Once
+	openaiModelTransientOnce            sync.Once
+	agentIdentityTaskMu                 sync.Mutex
+	openaiWSPool                        *openAIWSConnPool
+	openaiWSStateStore                  OpenAIWSStateStore
+	openaiScheduler                     OpenAIAccountScheduler
+	openaiWSPassthroughDialer           openAIWSClientDialer
+	openaiWSSessionPreemptions          openAIWSSessionPreemptRegistry
+	openaiAccountStats                  *openAIAccountRuntimeStats
+	openaiModelTransient                *openAIAccountModelTransientState
+	openaiProxyStreamCircuit            *openAIProxyStreamCircuit
+	openaiProxyStreamFailOpenLogAt      atomic.Int64
+	codexQuotaOverdraftOnce             sync.Once
+	codexQuotaOverdraft                 *CodexQuotaOverdraftCoordinator
+	codexQuotaOverdraftFallbackThrottle *accountWriteThrottle
+	codexQuotaOverdraftCandidateCache   sync.Map
 
 	openaiWSFallbackUntil               sync.Map // key: int64(accountID), value: time.Time
 	openaiAccountRuntimeBlockUntil      sync.Map // key: int64(accountID), value: time.Time
@@ -505,6 +509,11 @@ func NewOpenAIGatewayService(
 	// 拿不到配置，故在此发布进程级开关快照。配置取反义，零值即「强制统一出口开启」。
 	if cfg != nil {
 		SetCodexIdentityEnforcementEnabled(!cfg.Gateway.DisableCodexIdentityEnforcement)
+		SetCodexQuotaOverdraftEnabled(cfg.Gateway.CodexQuotaOverdraftEnabled)
+		SetCodexQuotaOverdraftBusinessInjectionEnabled(cfg.Gateway.CodexQuotaOverdraftBusinessInjectionEnabled)
+	} else {
+		SetCodexQuotaOverdraftEnabled(false)
+		SetCodexQuotaOverdraftBusinessInjectionEnabled(false)
 	}
 	svc := &OpenAIGatewayService{
 		accountRepo:         accountRepo,
@@ -527,25 +536,36 @@ func NewOpenAIGatewayService(
 			nil,
 			"service.openai_gateway",
 		),
-		httpUpstream:          httpUpstream,
-		deferredService:       deferredService,
-		openAITokenProvider:   openAITokenProvider,
-		grokTokenProvider:     grokTokenProvider,
-		toolCorrector:         NewCodexToolCorrector(),
-		openaiWSResolver:      NewOpenAIWSProtocolResolver(cfg),
-		resolver:              resolver,
-		channelService:        channelService,
-		balanceNotifyService:  balanceNotifyService,
-		settingService:        settingService,
-		userPlatformQuotaRepo: userPlatformQuotaRepo,
-		liveAttestation:       liveattestation.NewProvider(),
-		liveAttestationCipher: newLiveAttestationCipher(cfg),
-		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
-		codexSnapshotThrottle: newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
-		openaiModelTransient:  newOpenAIAccountModelTransientState(openAIModelTransientDefaultMax),
+		httpUpstream:                        httpUpstream,
+		deferredService:                     deferredService,
+		openAITokenProvider:                 openAITokenProvider,
+		grokTokenProvider:                   grokTokenProvider,
+		toolCorrector:                       NewCodexToolCorrector(),
+		openaiWSResolver:                    NewOpenAIWSProtocolResolver(cfg),
+		resolver:                            resolver,
+		channelService:                      channelService,
+		balanceNotifyService:                balanceNotifyService,
+		settingService:                      settingService,
+		userPlatformQuotaRepo:               userPlatformQuotaRepo,
+		liveAttestation:                     liveattestation.NewProvider(),
+		liveAttestationCipher:               newLiveAttestationCipher(cfg),
+		responseHeaderFilter:                compileResponseHeaderFilter(cfg),
+		codexSnapshotThrottle:               newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
+		codexQuotaOverdraftFallbackThrottle: newAccountWriteThrottle(time.Second),
+		openaiModelTransient:                newOpenAIAccountModelTransientState(openAIModelTransientDefaultMax),
 	}
 	if rateLimitService != nil {
 		rateLimitService.SetAccountRuntimeBlocker(svc)
+	}
+	// Hydrate the process snapshot once at startup. Subsequent requests use the
+	// short SWR cache in SettingService, so a multi-instance deployment notices
+	// an admin toggle without putting a DB read on every request.
+	if settingService != nil {
+		startupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		runtime := settingService.GetCodexQuotaOverdraftRuntime(startupCtx)
+		cancel()
+		SetCodexQuotaOverdraftEnabled(runtime.Enabled)
+		SetCodexQuotaOverdraftBusinessInjectionEnabled(runtime.BusinessInjectionEnabled)
 	}
 	if openAITokenProvider != nil {
 		openAITokenProvider.SetAccountRuntimeBlocker(svc)

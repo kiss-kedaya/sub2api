@@ -1028,8 +1028,8 @@ func TestLoadDefaultDashboardCacheConfig(t *testing.T) {
 	if cfg.Dashboard.StatsTTLSeconds != 30 {
 		t.Fatalf("Dashboard.StatsTTLSeconds = %d, want 30", cfg.Dashboard.StatsTTLSeconds)
 	}
-	if cfg.Dashboard.StatsRefreshTimeoutSeconds != 30 {
-		t.Fatalf("Dashboard.StatsRefreshTimeoutSeconds = %d, want 30", cfg.Dashboard.StatsRefreshTimeoutSeconds)
+	if cfg.Dashboard.StatsRefreshTimeoutSeconds != 180 {
+		t.Fatalf("Dashboard.StatsRefreshTimeoutSeconds = %d, want 180", cfg.Dashboard.StatsRefreshTimeoutSeconds)
 	}
 }
 

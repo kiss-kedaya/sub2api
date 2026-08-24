@@ -490,6 +490,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
 	updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = strconv.FormatBool(settings.OpenAILowUpstreamRatePriorityEnabled)
 	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(settings.OpenAIOAuthSchedulingRateMultiplier, 'f', -1, 64)
+	updates[SettingKeyCodexQuotaOverdraftEnabled] = strconv.FormatBool(settings.CodexQuotaOverdraftEnabled)
+	updates[SettingKeyCodexQuotaOverdraftBusinessInjectionEnabled] = strconv.FormatBool(settings.CodexQuotaOverdraftBusinessInjectionEnabled)
 	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)
 	updates[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerStickyWeightedEnabled)
 	updates[SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerSubscriptionPriorityEnabled)
@@ -681,7 +683,12 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	if settings == nil {
 		return
 	}
-
+	// Publish the Codex gates together with the other in-process setting caches;
+	// this makes a panel change take effect immediately on the writer replica.
+	s.publishCodexQuotaOverdraftRuntime(CodexQuotaOverdraftRuntimeSettings{
+		Enabled:                  settings.CodexQuotaOverdraftEnabled,
+		BusinessInjectionEnabled: settings.CodexQuotaOverdraftBusinessInjectionEnabled,
+	})
 	// 先使 inflight singleflight 失效，再刷新缓存，缩小旧值覆盖新值的竞态窗口
 	versionBoundsSF.Forget("version_bounds")
 	versionBoundsCache.Store(&cachedVersionBounds{
