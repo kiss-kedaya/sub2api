@@ -26,6 +26,7 @@ type stubAdminService struct {
 	createdAccounts                     []*service.CreateAccountInput
 	createdGroups                       []*service.CreateGroupInput
 	updatedGroups                       []*service.UpdateGroupInput
+	advancedGroupOperationCalls         int
 	createdProxies                      []*service.CreateProxyInput
 	updatedProxyIDs                     []int64
 	updatedProxies                      []*service.UpdateProxyInput
@@ -297,6 +298,7 @@ func (s *stubAdminService) GetGroupModelsListCandidates(ctx context.Context, id 
 }
 
 func (s *stubAdminService) ListCompositeRoutes(ctx context.Context, groupID int64) ([]service.CompositeModelRoute, error) {
+	s.advancedGroupOperationCalls++
 	return []service.CompositeModelRoute{
 		{
 			ID:             1,
@@ -313,6 +315,7 @@ func (s *stubAdminService) ListCompositeRoutes(ctx context.Context, groupID int6
 }
 
 func (s *stubAdminService) CreateCompositeRoute(ctx context.Context, groupID int64, input service.CompositeRouteInput) (*service.CompositeModelRoute, error) {
+	s.advancedGroupOperationCalls++
 	return &service.CompositeModelRoute{
 		ID:             1,
 		GroupID:        groupID,
@@ -328,6 +331,7 @@ func (s *stubAdminService) CreateCompositeRoute(ctx context.Context, groupID int
 }
 
 func (s *stubAdminService) UpdateCompositeRoute(ctx context.Context, groupID, routeID int64, input service.CompositeRouteInput) (*service.CompositeModelRoute, error) {
+	s.advancedGroupOperationCalls++
 	return &service.CompositeModelRoute{
 		ID:             routeID,
 		GroupID:        groupID,
@@ -343,10 +347,12 @@ func (s *stubAdminService) UpdateCompositeRoute(ctx context.Context, groupID, ro
 }
 
 func (s *stubAdminService) DeleteCompositeRoute(ctx context.Context, groupID, routeID int64) error {
+	s.advancedGroupOperationCalls++
 	return nil
 }
 
 func (s *stubAdminService) PreviewCompositeRoute(ctx context.Context, groupID int64, input service.CompositeRoutePreviewRequest) (*service.CompositeRouteDecision, error) {
+	s.advancedGroupOperationCalls++
 	decision, err := service.NewCompositeRouteResolver(nil).Resolve(ctx, groupID, input.Model, input.Endpoint)
 	if err != nil {
 		return nil, err
@@ -361,6 +367,7 @@ func (s *stubAdminService) CreateGroup(ctx context.Context, input *service.Creat
 }
 
 func (s *stubAdminService) DuplicateGroup(ctx context.Context, id int64, actorScope, operationKey string) (*service.Group, error) {
+	s.advancedGroupOperationCalls++
 	group := service.Group{ID: 201, Name: "group (Copy)", Status: "inactive"}
 	return &group, nil
 }
@@ -388,10 +395,12 @@ func (s *stubAdminService) GetGroupRateMultipliers(_ context.Context, _ int64) (
 }
 
 func (s *stubAdminService) ClearGroupRateMultipliers(_ context.Context, _ int64) error {
+	s.advancedGroupOperationCalls++
 	return nil
 }
 
 func (s *stubAdminService) BatchSetGroupRateMultipliers(_ context.Context, _ int64, _ []service.GroupRateMultiplierInput) error {
+	s.advancedGroupOperationCalls++
 	return nil
 }
 
@@ -400,6 +409,7 @@ func (s *stubAdminService) ClearGroupRPMOverrides(_ context.Context, _ int64) er
 }
 
 func (s *stubAdminService) BatchSetGroupRPMOverrides(_ context.Context, _ int64, _ []service.GroupRPMOverrideInput) error {
+	s.advancedGroupOperationCalls++
 	return nil
 }
 
