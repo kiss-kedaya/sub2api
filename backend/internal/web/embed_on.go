@@ -5,8 +5,11 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	htmlpkg "html"
 	"io"
 	"io/fs"
@@ -15,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -42,6 +46,14 @@ type FrontendServer struct {
 	cache       *HTMLCache
 	settings    PublicSettingsProvider
 	overrideDir string // local file override directory
+	logoMu      sync.RWMutex
+	logoCache   *siteLogoAsset
+}
+
+type siteLogoAsset struct {
+	contentType string
+	etag        string
+	content     []byte
 }
 
 // NewFrontendServer creates a new frontend server with settings injection
@@ -81,12 +93,22 @@ func (s *FrontendServer) InvalidateCache() {
 	if s != nil && s.cache != nil {
 		s.cache.Invalidate()
 	}
+	if s != nil {
+		s.logoMu.Lock()
+		s.logoCache = nil
+		s.logoMu.Unlock()
+	}
 }
 
 // Middleware returns the Gin middleware handler
 func (s *FrontendServer) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
+
+		if path == "/site-logo" {
+			s.serveSiteLogo(c)
+			return
+		}
 
 		// Skip API routes
 		if shouldBypassEmbeddedFrontend(path) {
@@ -202,6 +224,8 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 }
 
 func (s *FrontendServer) injectSettings(settingsJSON []byte) []byte {
+	settingsJSON = normalizeInjectedSettings(settingsJSON)
+
 	// Create the script tag to inject with nonce placeholder
 	// The placeholder will be replaced with actual nonce at request time
 	script := []byte(`<script nonce="` + NonceHTMLPlaceholder + `">window.__APP_CONFIG__=` + string(settingsJSON) + `;</script>`)
@@ -215,6 +239,107 @@ func (s *FrontendServer) injectSettings(settingsJSON []byte) []byte {
 	result = injectSiteFavicon(result, settingsJSON)
 
 	return result
+}
+
+// normalizeInjectedSettings keeps large data URLs out of the HTML document.
+// The browser still receives the same configured logo through /site-logo.
+func normalizeInjectedSettings(settingsJSON []byte) []byte {
+	var settings map[string]json.RawMessage
+	if err := json.Unmarshal(settingsJSON, &settings); err != nil {
+		return settingsJSON
+	}
+
+	var logo string
+	if raw, ok := settings["site_logo"]; ok && json.Unmarshal(raw, &logo) == nil {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(logo)), "data:image/") {
+			settings["site_logo"] = json.RawMessage(`"/site-logo"`)
+			if normalized, err := json.Marshal(settings); err == nil {
+				return normalized
+			}
+		}
+	}
+	return settingsJSON
+}
+
+func (s *FrontendServer) serveSiteLogo(c *gin.Context) {
+	asset := s.cachedSiteLogo()
+	if asset == nil {
+		c.Status(http.StatusNotFound)
+		c.Abort()
+		return
+	}
+
+	c.Header("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+	c.Header("ETag", asset.etag)
+	if c.GetHeader("If-None-Match") == asset.etag {
+		c.Status(http.StatusNotModified)
+		c.Abort()
+		return
+	}
+	c.Data(http.StatusOK, asset.contentType, asset.content)
+	c.Abort()
+}
+
+func (s *FrontendServer) cachedSiteLogo() *siteLogoAsset {
+	s.logoMu.RLock()
+	asset := s.logoCache
+	s.logoMu.RUnlock()
+	if asset != nil {
+		return asset
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	settings, err := s.settings.GetPublicSettingsForInjection(ctx)
+	if err != nil {
+		return nil
+	}
+	settingsJSON, err := json.Marshal(settings)
+	if err != nil {
+		return nil
+	}
+	var cfg struct {
+		SiteLogo string `json:"site_logo"`
+	}
+	if err := json.Unmarshal(settingsJSON, &cfg); err != nil {
+		return nil
+	}
+	contentType, content, ok := decodeSiteLogoDataURL(cfg.SiteLogo)
+	if !ok {
+		return nil
+	}
+
+	digest := sha256.Sum256(content)
+	asset = &siteLogoAsset{
+		contentType: contentType,
+		etag:        `"` + fmt.Sprintf("%x", digest[:]) + `"`,
+		content:     content,
+	}
+	s.logoMu.Lock()
+	s.logoCache = asset
+	s.logoMu.Unlock()
+	return asset
+}
+
+func decodeSiteLogoDataURL(value string) (string, []byte, bool) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "data:image/") {
+		return "", nil, false
+	}
+	comma := strings.IndexByte(trimmed, ',')
+	if comma <= len("data:") || !strings.Contains(strings.ToLower(trimmed[:comma]), ";base64") {
+		return "", nil, false
+	}
+	metadata := strings.TrimSpace(trimmed[len("data:"):comma])
+	contentType := strings.ToLower(strings.TrimSpace(strings.SplitN(metadata, ";", 2)[0]))
+	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		return "", nil, false
+	}
+	content, err := base64.StdEncoding.DecodeString(strings.TrimSpace(trimmed[comma+1:]))
+	if err != nil || len(content) == 0 || len(content) > 2*1024*1024 {
+		return "", nil, false
+	}
+	return contentType, content, true
 }
 
 // injectSiteFavicon replaces the static favicon with a configured, browser-safe image URL.
