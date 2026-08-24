@@ -105,52 +105,57 @@ func (h *GroupHandler) isSimpleMode() bool {
 	return h != nil && h.cfg != nil && h.cfg.RunMode == config.RunModeSimple
 }
 
+func (h *GroupHandler) rejectSimpleModeAdvancedOperation(c *gin.Context) bool {
+	if !h.isSimpleMode() {
+		return false
+	}
+	response.Forbidden(c, "This operation is not supported in simple mode")
+	return true
+}
+
+type simpleModeGroupResponse struct {
+	ID                      int64              `json:"id"`
+	Name                    string             `json:"name"`
+	Description             string             `json:"description"`
+	Platform                string             `json:"platform"`
+	Status                  string             `json:"status"`
+	AccountGroups           []dto.AccountGroup `json:"account_groups,omitempty"`
+	AccountCount            int64              `json:"account_count,omitempty"`
+	ActiveAccountCount      int64              `json:"active_account_count,omitempty"`
+	RateLimitedAccountCount int64              `json:"rate_limited_account_count,omitempty"`
+	SortOrder               int                `json:"sort_order"`
+	CreatedAt               time.Time          `json:"created_at"`
+	UpdatedAt               time.Time          `json:"updated_at"`
+}
+
+func groupForSimpleMode(group *service.Group) *simpleModeGroupResponse {
+	if group == nil {
+		return nil
+	}
+	adminGroup := dto.GroupFromServiceAdmin(group)
+	return &simpleModeGroupResponse{
+		ID: group.ID, Name: group.Name, Description: group.Description, Platform: group.Platform,
+		Status: group.Status, AccountGroups: adminGroup.AccountGroups, AccountCount: group.AccountCount,
+		ActiveAccountCount: group.ActiveAccountCount, RateLimitedAccountCount: group.RateLimitedAccountCount,
+		SortOrder: group.SortOrder, CreatedAt: group.CreatedAt, UpdatedAt: group.UpdatedAt,
+	}
+}
+
 func sanitizeCreateGroupRequestForSimpleMode(req *CreateGroupRequest) {
 	if req == nil {
 		return
 	}
-	req.RateMultiplier = 1
-	req.IsExclusive = false
-	req.SubscriptionType = service.SubscriptionTypeStandard
-	req.DailyLimitUSD, req.WeeklyLimitUSD, req.MonthlyLimitUSD = optionalLimitField{}, optionalLimitField{}, optionalLimitField{}
-	req.AllowImageGeneration, req.AllowBatchImageGeneration = false, false
-	req.ImageRateIndependent, req.ImageRateMultiplier = false, nil
-	req.ImagePrice1K, req.ImagePrice2K, req.ImagePrice4K = nil, nil, nil
-	req.VideoRateIndependent, req.VideoRateMultiplier = false, nil
-	req.PeakRateEnabled, req.PeakStart, req.PeakEnd, req.PeakRateMultiplier = false, "", "", nil
-	req.ProfitControlEnabled, req.ProfitMinMargin, req.ProfitSafetyBuffer = false, nil, nil
-	req.ClaudeCodeOnly, req.FallbackGroupID, req.FallbackGroupIDOnInvalidRequest = false, nil, nil
-	req.ModelRouting, req.ModelRoutingEnabled, req.MCPXMLInject = nil, false, nil
-	req.SupportedModelScopes, req.AllowMessagesDispatch, req.AllowLive = nil, false, false
-	req.RequireOAuthOnly, req.RequirePrivacySet, req.DefaultMappedModel = false, false, ""
-	req.MessagesDispatchModelConfig, req.ModelsListConfig = service.OpenAIMessagesDispatchModelConfig{}, service.GroupModelsListConfig{}
-	req.RPMLimit, req.MaxReasoningEffort, req.ReasoningEffortMappings = 0, "", nil
-	req.CopyAccountsFromGroupIDs = nil
+	allowed := CreateGroupRequest{Name: req.Name, Description: req.Description, Platform: req.Platform}
+	allowed.RateMultiplier = 1
+	allowed.SubscriptionType = service.SubscriptionTypeStandard
+	*req = allowed
 }
 
 func sanitizeUpdateGroupRequestForSimpleMode(req *UpdateGroupRequest) {
 	if req == nil {
 		return
 	}
-	rate, exclusive, disabled, image, messages, live, oauth, privacy := 1.0, false, false, false, false, false, false, false
-	rpm := 0
-	req.RateMultiplier, req.IsExclusive = &rate, &exclusive
-	req.Status, req.SubscriptionType = "", service.SubscriptionTypeStandard
-	req.DailyLimitUSD, req.WeeklyLimitUSD, req.MonthlyLimitUSD = optionalLimitField{}, optionalLimitField{}, optionalLimitField{}
-	req.AllowImageGeneration, req.AllowBatchImageGeneration = &image, &image
-	req.ImageRateIndependent, req.ImageRateMultiplier = &disabled, nil
-	req.ImagePrice1K, req.ImagePrice2K, req.ImagePrice4K = nil, nil, nil
-	req.VideoRateIndependent, req.VideoRateMultiplier = &disabled, nil
-	req.PeakRateEnabled, req.PeakStart, req.PeakEnd, req.PeakRateMultiplier = &disabled, nil, nil, nil
-	req.ProfitControlEnabled, req.ProfitMinMargin, req.ProfitSafetyBuffer = &disabled, nil, nil
-	req.ClaudeCodeOnly, req.FallbackGroupID, req.FallbackGroupIDOnInvalidRequest = &disabled, nil, nil
-	req.ModelRouting, req.ModelRoutingEnabled, req.MCPXMLInject = nil, &disabled, nil
-	req.SupportedModelScopes = nil
-	req.AllowMessagesDispatch, req.AllowLive = &messages, &live
-	req.RequireOAuthOnly, req.RequirePrivacySet = &oauth, &privacy
-	req.DefaultMappedModel, req.MessagesDispatchModelConfig, req.ModelsListConfig = nil, nil, nil
-	req.RPMLimit, req.MaxReasoningEffort, req.ReasoningEffortMappings = &rpm, nil, nil
-	req.CopyAccountsFromGroupIDs = nil
+	*req = UpdateGroupRequest{Name: req.Name, Description: req.Description}
 }
 
 // CreateGroupRequest represents create group request
@@ -346,6 +351,14 @@ func (h *GroupHandler) List(c *gin.Context) {
 		return
 	}
 
+	if h.isSimpleMode() {
+		simpleGroups := make([]simpleModeGroupResponse, 0, len(groups))
+		for i := range groups {
+			simpleGroups = append(simpleGroups, *groupForSimpleMode(&groups[i]))
+		}
+		response.Paginated(c, simpleGroups, total, page, pageSize)
+		return
+	}
 	outGroups := make([]dto.AdminGroup, 0, len(groups))
 	for i := range groups {
 		outGroups = append(outGroups, *dto.GroupFromServiceAdmin(&groups[i]))
@@ -356,6 +369,9 @@ func (h *GroupHandler) List(c *gin.Context) {
 // ListCompositeRoutes handles listing composite model routes for one group.
 // GET /api/v1/admin/groups/:id/composite-routes
 func (h *GroupHandler) ListCompositeRoutes(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, ok := parsePositiveIDParam(c, "id")
 	if !ok {
 		return
@@ -371,6 +387,9 @@ func (h *GroupHandler) ListCompositeRoutes(c *gin.Context) {
 // CreateCompositeRoute handles creating one composite model route.
 // POST /api/v1/admin/groups/:id/composite-routes
 func (h *GroupHandler) CreateCompositeRoute(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, ok := parsePositiveIDParam(c, "id")
 	if !ok {
 		return
@@ -391,6 +410,9 @@ func (h *GroupHandler) CreateCompositeRoute(c *gin.Context) {
 // UpdateCompositeRoute handles replacing one composite model route.
 // PUT /api/v1/admin/groups/:id/composite-routes/:route_id
 func (h *GroupHandler) UpdateCompositeRoute(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, ok := parsePositiveIDParam(c, "id")
 	if !ok {
 		return
@@ -415,6 +437,9 @@ func (h *GroupHandler) UpdateCompositeRoute(c *gin.Context) {
 // DeleteCompositeRoute handles deleting one composite model route.
 // DELETE /api/v1/admin/groups/:id/composite-routes/:route_id
 func (h *GroupHandler) DeleteCompositeRoute(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, ok := parsePositiveIDParam(c, "id")
 	if !ok {
 		return
@@ -433,6 +458,9 @@ func (h *GroupHandler) DeleteCompositeRoute(c *gin.Context) {
 // PreviewCompositeRoute resolves a model without mutating routes.
 // POST /api/v1/admin/groups/:id/composite-routes/preview
 func (h *GroupHandler) PreviewCompositeRoute(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, ok := parsePositiveIDParam(c, "id")
 	if !ok {
 		return
@@ -505,6 +533,14 @@ func (h *GroupHandler) GetAll(c *gin.Context) {
 		return
 	}
 
+	if h.isSimpleMode() {
+		simpleGroups := make([]simpleModeGroupResponse, 0, len(groups))
+		for i := range groups {
+			simpleGroups = append(simpleGroups, *groupForSimpleMode(&groups[i]))
+		}
+		response.Success(c, simpleGroups)
+		return
+	}
 	outGroups := make([]dto.AdminGroup, 0, len(groups))
 	for i := range groups {
 		outGroups = append(outGroups, *dto.GroupFromServiceAdmin(&groups[i]))
@@ -527,12 +563,19 @@ func (h *GroupHandler) GetByID(c *gin.Context) {
 		return
 	}
 
+	if h.isSimpleMode() {
+		response.Success(c, groupForSimpleMode(group))
+		return
+	}
 	response.Success(c, dto.GroupFromServiceAdmin(group))
 }
 
 // GetModelsListCandidates handles getting candidate model IDs for custom /v1/models list.
 // GET /api/v1/admin/groups/:id/models-list-candidates
 func (h *GroupHandler) GetModelsListCandidates(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || groupID < 0 {
 		response.BadRequest(c, "Invalid group ID")
@@ -643,12 +686,19 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if h.isSimpleMode() {
+		response.Success(c, groupForSimpleMode(group))
+		return
+	}
 	response.Success(c, dto.GroupFromServiceAdmin(group))
 }
 
 // Duplicate handles creating an inactive group copy with the source account bindings.
 // POST /api/v1/admin/groups/:id/duplicate
 func (h *GroupHandler) Duplicate(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || groupID <= 0 {
 		response.BadRequest(c, "Invalid group ID")
@@ -779,6 +829,10 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		return
 	}
 
+	if h.isSimpleMode() {
+		response.Success(c, groupForSimpleMode(group))
+		return
+	}
 	response.Success(c, dto.GroupFromServiceAdmin(group))
 }
 
@@ -871,6 +925,9 @@ func (h *GroupHandler) GetGroupAPIKeys(c *gin.Context) {
 // GetGroupRateMultipliers handles getting rate multipliers for users in a group
 // GET /api/v1/admin/groups/:id/rate-multipliers
 func (h *GroupHandler) GetGroupRateMultipliers(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid group ID")
@@ -892,6 +949,9 @@ func (h *GroupHandler) GetGroupRateMultipliers(c *gin.Context) {
 // ClearGroupRateMultipliers handles clearing all rate multipliers for a group
 // DELETE /api/v1/admin/groups/:id/rate-multipliers
 func (h *GroupHandler) ClearGroupRateMultipliers(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid group ID")
@@ -914,6 +974,9 @@ type BatchSetGroupRateMultipliersRequest struct {
 // BatchSetGroupRateMultipliers handles batch setting rate multipliers for a group
 // PUT /api/v1/admin/groups/:id/rate-multipliers
 func (h *GroupHandler) BatchSetGroupRateMultipliers(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid group ID")
@@ -942,6 +1005,9 @@ type BatchSetGroupRPMOverridesRequest struct {
 // BatchSetGroupRPMOverrides handles batch setting rpm_override for users in a group
 // PUT /api/v1/admin/groups/:id/rpm-overrides
 func (h *GroupHandler) BatchSetGroupRPMOverrides(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid group ID")
@@ -965,6 +1031,9 @@ func (h *GroupHandler) BatchSetGroupRPMOverrides(c *gin.Context) {
 // ClearGroupRPMOverrides handles clearing all rpm_override for a group
 // DELETE /api/v1/admin/groups/:id/rpm-overrides
 func (h *GroupHandler) ClearGroupRPMOverrides(c *gin.Context) {
+	if h.rejectSimpleModeAdvancedOperation(c) {
+		return
+	}
 	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid group ID")

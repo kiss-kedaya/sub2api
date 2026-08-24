@@ -383,6 +383,7 @@
                 <span class="text-xs">{{ t("common.edit") }}</span>
               </button>
               <button
+                v-if="!authStore.isSimpleMode"
                 data-testid="group-duplicate"
                 :title="
                   duplicatingGroupIds.has(row.id)
@@ -403,7 +404,8 @@
                 </span>
               </button>
               <button
-                v-if="row.platform === 'composite'"
+                v-if="!authStore.isSimpleMode && row.platform === 'composite'"
+                data-testid="group-composite-routes"
                 @click="handleCompositeRoutes(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-cyan-600 dark:hover:bg-dark-700 dark:hover:text-cyan-400"
               >
@@ -413,6 +415,8 @@
                 }}</span>
               </button>
               <button
+                v-if="!authStore.isSimpleMode"
+                data-testid="group-rate-multipliers"
                 @click="handleRateMultipliers(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-purple-600 dark:hover:bg-dark-700 dark:hover:text-purple-400"
               >
@@ -422,6 +426,8 @@
                 }}</span>
               </button>
               <button
+                v-if="!authStore.isSimpleMode"
+                data-testid="group-rpm-overrides"
                 @click="handleRPMOverrides(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-orange-600 dark:hover:bg-dark-700 dark:hover:text-orange-400"
               >
@@ -598,7 +604,8 @@
           </select>
           <p class="input-hint">{{ t("admin.groups.copyAccounts.hint") }}</p>
         </div>
-        <div v-if="!authStore.isSimpleMode">
+        <template v-if="!authStore.isSimpleMode">
+        <div>
           <label class="input-label">{{
             t("admin.groups.form.rateMultiplier")
           }}</label>
@@ -2218,6 +2225,7 @@
             {{ t("admin.groups.modelRouting.addRule") }}
           </button>
         </div>
+        </template>
       </form>
 
       <template #footer>
@@ -4902,7 +4910,11 @@ const exclusiveOptions = computed(() => [
   { value: "false", label: t("admin.groups.nonExclusive") },
 ]);
 
-const platformOptions = computed(() => [...GROUP_PLATFORM_OPTIONS]);
+const platformOptions = computed(() =>
+  GROUP_PLATFORM_OPTIONS.filter(
+    (option) => !authStore.isSimpleMode || option.value !== "composite",
+  ),
+);
 
 const platformFilterOptions = computed(() => [
   { value: "", label: t("admin.groups.allPlatforms") },
