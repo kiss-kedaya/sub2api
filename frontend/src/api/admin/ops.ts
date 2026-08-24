@@ -1114,7 +1114,10 @@ export type OpsErrorListQueryParams = {
 
 // Legacy unified endpoints
 export async function listErrorLogs(params: OpsErrorListQueryParams): Promise<OpsErrorLogsResponse> {
-  const { data } = await apiClient.get<OpsErrorLogsResponse>('/admin/ops/errors', { params })
+  const { data } = await apiClient.get<OpsErrorLogsResponse>('/admin/ops/errors', {
+    params,
+    timeout: 180000
+  })
   return data
 }
 
@@ -1129,12 +1132,18 @@ export async function updateErrorResolved(errorId: number, resolved: boolean): P
 
 // New split endpoints
 export async function listRequestErrors(params: OpsErrorListQueryParams): Promise<OpsErrorLogsResponse> {
-  const { data } = await apiClient.get<OpsErrorLogsResponse>('/admin/ops/request-errors', { params })
+  const { data } = await apiClient.get<OpsErrorLogsResponse>('/admin/ops/request-errors', {
+    params,
+    timeout: 180000
+  })
   return data
 }
 
 export async function listUpstreamErrors(params: OpsErrorListQueryParams): Promise<OpsErrorLogsResponse> {
-  const { data } = await apiClient.get<OpsErrorLogsResponse>('/admin/ops/upstream-errors', { params })
+  const { data } = await apiClient.get<OpsErrorLogsResponse>('/admin/ops/upstream-errors', {
+    params,
+    timeout: 180000
+  })
   return data
 }
 
@@ -1168,7 +1177,10 @@ export async function listRequestErrorUpstreamErrors(
 }
 
 export async function listRequestDetails(params: OpsRequestDetailsParams): Promise<OpsRequestDetailsResponse> {
-  const { data } = await apiClient.get<OpsRequestDetailsResponse>('/admin/ops/requests', { params })
+  const { data } = await apiClient.get<OpsRequestDetailsResponse>('/admin/ops/requests', {
+    params,
+    timeout: 180000
+  })
   return data
 }
 
