@@ -123,6 +123,12 @@ func (r *pluginRuntime) validateAndApplyNormalizedConfig(ctx context.Context, co
 	if err := json.Unmarshal(configJSON, &normalized); err != nil {
 		return nil, fmt.Errorf("解析插件规范化配置: %w", err)
 	}
+	if normalized == nil {
+		return nil, errors.New("插件返回的规范化配置根节点必须是对象")
+	}
+	if _, ok := normalized.(map[string]any); !ok {
+		return nil, errors.New("插件返回的规范化配置根节点必须是对象")
+	}
 	configJSON, err = json.Marshal(normalized)
 	if err != nil {
 		return nil, fmt.Errorf("序列化插件规范化配置: %w", err)
@@ -135,6 +141,24 @@ func (r *pluginRuntime) validateAndApplyNormalizedConfig(ctx context.Context, co
 		return nil, fmt.Errorf("插件拒绝应用配置: %s", applied.Message)
 	}
 	return configJSON, nil
+}
+
+func (r *pluginRuntime) checkHealth(ctx context.Context) error {
+	if r == nil || r.api == nil || r.client == nil || r.client.Exited() {
+		return errors.New("插件进程已退出")
+	}
+	health, err := r.api.Health(ctx, &pluginv1.HealthRequest{})
+	if err != nil {
+		return fmt.Errorf("插件健康检查失败: %w", err)
+	}
+	if health == nil || !health.Healthy {
+		message := "插件报告不健康"
+		if health != nil && strings.TrimSpace(health.Message) != "" {
+			message = "插件不健康: " + health.Message
+		}
+		return errors.New(message)
+	}
+	return nil
 }
 
 func (r *pluginRuntime) beginRequest() bool {
