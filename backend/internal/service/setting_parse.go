@@ -232,6 +232,11 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAllowUngroupedKeyScheduling:                        "false",
 		SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "false",
 		SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "1",
+		// The detector is enabled by default for compatibility with the
+		// production rollout; deployment config remains the emergency master
+		// switch. Synthetic business-request injection stays explicitly off.
+		SettingKeyCodexQuotaOverdraftEnabled:                          "true",
+		SettingKeyCodexQuotaOverdraftBusinessInjectionEnabled:         "false",
 		SettingKeyEnableAnthropicCacheTTL1hInjection:                 "false",
 		SettingKeyRewriteMessageCacheControl:                         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyEnableClientDatelineNormalization:                  "true",
@@ -904,6 +909,21 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
 	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
 	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
+	if value, ok := settings[SettingKeyCodexQuotaOverdraftEnabled]; ok && strings.TrimSpace(value) != "" {
+		result.CodexQuotaOverdraftEnabled = value == "true"
+	} else {
+		// Missing/empty is the compatibility default; an explicit "false"
+		// remains authoritative and must never be overwritten.
+		result.CodexQuotaOverdraftEnabled = true
+	}
+	if value, ok := settings[SettingKeyCodexQuotaOverdraftBusinessInjectionEnabled]; ok && strings.TrimSpace(value) != "" {
+		result.CodexQuotaOverdraftBusinessInjectionEnabled = value == "true"
+	} else {
+		// Existing installations may not have the DB key yet. Preserve the
+		// legacy deployment setting until the key is materialized, while fresh
+		// databases receive the explicit safe default from InitializeDefaultSettings.
+		result.CodexQuotaOverdraftBusinessInjectionEnabled = s != nil && s.cfg != nil && s.cfg.Gateway.CodexQuotaOverdraftBusinessInjectionEnabled
+	}
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
 	result.OpenAIAdvancedSchedulerStickyWeightedEnabled = settings[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] == "true"
 	result.OpenAIAdvancedSchedulerSubscriptionPriorityEnabled = settings[SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled] == "true"

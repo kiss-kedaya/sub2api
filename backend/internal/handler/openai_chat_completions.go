@@ -150,7 +150,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 
 	// 分组利润控制：chat completions 文本入口请求级装门并固定 pricingAt。
-	ccPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+	ccPricingCtx := c.Request.Context()
+	ccPricingCtx = h.gatewayService.WithCodexQuotaOverdraftScheduling(ccPricingCtx)
+	ccPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(ccPricingCtx, apiKey.GroupID)
 	c.Request = c.Request.WithContext(ccPricingCtx)
 	// Keep a proxied streaming request alive even while the selected upstream
 	// is still waiting to return response headers.  The manager is a no-op for
@@ -402,6 +404,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		if result != nil {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), true, result.FirstTokenMs)
+			h.gatewayService.ObserveCodexQuotaOverdraftScheduleSuccess(c.Request.Context(), account, reqModel)
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), true, nil)
 		}

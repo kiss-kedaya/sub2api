@@ -957,6 +957,17 @@ type GatewayConfig struct {
 	// ForceCodexCLI: 强制将 OpenAI `/v1/responses` 请求按 Codex CLI 处理。
 	// 用于网关未透传/改写 User-Agent 时的兼容兜底（默认关闭，避免影响其他客户端）。
 	ForceCodexCLI bool `mapstructure:"force_codex_cli"`
+	// CodexQuotaOverdraftEnabled enables the guarded Codex 5h/7d quota-overdraft
+	// detector and scheduler integration. The detector defaults on for
+	// compatibility with the production rollout; this value is also used as a
+	// legacy fallback when an older database has no admin setting yet.
+	CodexQuotaOverdraftEnabled bool `mapstructure:"codex_quota_overdraft_enabled"`
+	// CodexQuotaOverdraftBusinessInjectionEnabled permits adding the synthetic
+	// no-op tool pair to real user requests. It is separate and opt-in because
+	// upstream token accounting may include that pair; probe-only operation is
+	// the safe default. It is used as a legacy fallback only when the DB key is
+	// absent.
+	CodexQuotaOverdraftBusinessInjectionEnabled bool `mapstructure:"codex_quota_overdraft_business_injection_enabled"`
 	// DisableCodexIdentityEnforcement: 关闭「强制统一 Codex 出站身份」。上游 /backend-api/codex
 	// 在容量紧张时按客户端身份分优先级降载，被降载的请求会拿到 HTTP 200 + 流内
 	// server_is_overloaded，该次请求失败。默认强制统一出口：所有 OAuth 出站的
@@ -2296,7 +2307,7 @@ func setDefaults() {
 	viper.SetDefault("dashboard_cache.key_prefix", "sub2api:")
 	viper.SetDefault("dashboard_cache.stats_fresh_ttl_seconds", 15)
 	viper.SetDefault("dashboard_cache.stats_ttl_seconds", 30)
-	viper.SetDefault("dashboard_cache.stats_refresh_timeout_seconds", 30)
+	viper.SetDefault("dashboard_cache.stats_refresh_timeout_seconds", 180)
 
 	// Dashboard aggregation
 	viper.SetDefault("dashboard_aggregation.enabled", true)
@@ -2340,6 +2351,8 @@ func setDefaults() {
 	viper.SetDefault("gateway.max_account_switches", 10)
 	viper.SetDefault("gateway.max_account_switches_gemini", 3)
 	viper.SetDefault("gateway.force_codex_cli", false)
+	viper.SetDefault("gateway.codex_quota_overdraft_enabled", true)
+	viper.SetDefault("gateway.codex_quota_overdraft_business_injection_enabled", false)
 	viper.SetDefault("gateway.disable_codex_identity_enforcement", false)
 	viper.SetDefault("gateway.disable_codex_originator_normalization", false)
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)

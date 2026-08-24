@@ -539,7 +539,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// D 与计费高峰因子，选号、槽位终检与全部 failover 重入共用同一门与阈值。
 	// 生图意图只影响能力路由与图片计费，不关门：混合 /v1/responses 请求的
 	// token 计费部分仍受利润门保护，独立图片/视频端点才在门外。
-	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+	requestCtx := c.Request.Context()
+	if !requireCompact && !imageIntent {
+		requestCtx = h.gatewayService.WithCodexQuotaOverdraftScheduling(requestCtx)
+	}
+	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(requestCtx, apiKey.GroupID)
 	c.Request = c.Request.WithContext(pricingCtx)
 	// Cloudflare's proxied HTTP edge can terminate a request that has not
 	// produced any origin bytes for roughly 120s.  The normal stream keepalive
@@ -860,6 +864,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(c.Request.Context(), account.ID, result.ResponseHeaders)
 			}
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result), openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
+			if openAIForwardSucceededForScheduling(result) {
+				h.gatewayService.ObserveCodexQuotaOverdraftScheduleSuccess(c.Request.Context(), account, forwardModel)
+			}
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result), openAIForwardSucceededForScheduling(result), nil)
 		}
@@ -1151,7 +1158,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	effectiveMappedModel := preferredMappedModel
 
 	// 分组利润控制：Messages 文本入口同样请求级装门并固定 pricingAt。
-	msgPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+	msgPricingCtx := c.Request.Context()
+	msgPricingCtx = h.gatewayService.WithCodexQuotaOverdraftScheduling(msgPricingCtx)
+	msgPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(msgPricingCtx, apiKey.GroupID)
 	c.Request = c.Request.WithContext(msgPricingCtx)
 	// Anthropic-compatible streaming responses can also spend time waiting for
 	// an upstream header while the fill scheduler retries accounts.  SSE
@@ -1412,6 +1421,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		}
 		if result != nil {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), true, result.FirstTokenMs)
+			h.gatewayService.ObserveCodexQuotaOverdraftScheduleSuccess(c.Request.Context(), account, currentRoutingModel)
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), true, nil)
 		}

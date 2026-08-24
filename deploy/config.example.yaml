@@ -255,6 +255,16 @@ gateway:
   #
   # 注意：开启后会影响所有客户端的行为（不仅限于 VS Code / Codex CLI），请谨慎开启。
   force_codex_cli: false
+  # Experimental Codex 5h/7d quota-overdraft detector (probe/state/recovery).
+  # 实验性 Codex 5h/7d 额度透支探测、状态与恢复；兼容现网默认开启。
+  # 可通过管理员系统设置或此部署级 master 开关关闭。
+  codex_quota_overdraft_enabled: true
+  # Injects a no-op tool pair into real business requests. Keep false unless
+  # you have accepted that upstream token accounting may include the pair.
+  # 真实业务请求注入无操作工具对；可能计入上游 token，默认关闭。
+  # Legacy bootstrap value used only when the DB-backed admin key does not yet
+  # exist. Fresh installations persist the safe false preference explicitly.
+  codex_quota_overdraft_business_injection_enabled: false
   # Stop rewriting load-shed Codex originators to the official CLI identity.
   # 关闭「把落在上游降载桶的 Codex originator 改写为官方 CLI 身份（codex_cli_rs）」。
   #
@@ -717,7 +727,7 @@ dashboard_cache:
   stats_ttl_seconds: 30
   # Async refresh timeout (seconds)
   # 异步刷新超时（秒）
-  stats_refresh_timeout_seconds: 30
+  stats_refresh_timeout_seconds: 180
 
 # =============================================================================
 # Dashboard Aggregation Configuration

@@ -1090,7 +1090,22 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 	go func() {
 		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err != nil {
+			return
+		}
+		if s.codexQuotaOverdraft == nil || (!codexQuotaOverdraftSnapshotPrearmReached(updates) && !codexQuotaOverdraftWasInjected(ctx, accountID)) {
+			return
+		}
+		account, err := s.accountRepo.GetByID(updateCtx, accountID)
+		if err != nil || account == nil || account.IsShadow() {
+			return
+		}
+		mergeAccountExtra(account, updates)
+		if codexQuotaOverdraftWasInjected(ctx, accountID) {
+			s.codexQuotaOverdraft.ObserveBusinessSuccess(account, "")
+		} else {
+			s.codexQuotaOverdraft.ObserveAccount(account, "")
+		}
 	}()
 }
 

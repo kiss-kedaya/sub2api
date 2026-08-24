@@ -507,6 +507,10 @@ export default {
         openaiCodexVersionAutoSync: '自动同步 Codex 版本号',
         openaiCodexVersionAutoSyncHint: '每 6 小时从官方仓库获取最新稳定版客户端版本号，无需为了跟版本而升级本服务。关闭后仅使用上方手填版本或内置版本。',
         openaiCodexVersionSyncedValue: '当前同步到：{version}',
+        codexOverdraftTitle: 'Codex 5 小时 / 7 天额度透支探测与调度',
+        codexOverdraftDescription: '默认开启。记录上游配额周期、执行有界探测并在窗口恢复后自动解除停调；不修改真实业务请求内容。',
+        codexOverdraftBusinessInjection: '兼容 CPAProxy 的真实请求隐藏注入',
+        codexOverdraftBusinessInjectionHint: '高风险开关：会向真实请求加入无操作工具对，上游可能把它计入输入 Token。只有确认计费修正和成本影响后才建议开启；默认关闭。',
         codexHardeningTitle: 'Codex 设置',
         codexClientRestrictionTitle: 'Codex 客户端限制',
         codexHardeningDesc:
