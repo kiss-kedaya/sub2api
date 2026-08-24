@@ -201,9 +201,10 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAvailableChannelsEnabled: "false",
 
 		// Model plaza feature (default disabled; opt-in, public unless require_auth)
-		SettingKeyModelPlazaEnabled:     "false",
-		SettingKeyModelPlazaRequireAuth: "false",
-		SettingKeyModelPlazaDescription: "",
+		SettingKeyModelPlazaEnabled:       "false",
+		SettingKeyModelPlazaRequireAuth:   "false",
+		SettingKeyModelPlazaDescription:   "",
+		SettingKeyPluginManagementEnabled: "false",
 
 		// Affiliate (邀请返利) feature (default disabled; opt-in)
 		SettingKeyAffiliateEnabled:              "false",
@@ -229,14 +230,14 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyCodexCLIOnlyEngineFingerprintSignals: openai.DefaultEngineFingerprintSignalsJSON(),
 
 		// 分组隔离（默认不允许未分组 Key 调度）
-		SettingKeyAllowUngroupedKeyScheduling:                        "false",
-		SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "false",
-		SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "1",
+		SettingKeyAllowUngroupedKeyScheduling:          "false",
+		SettingKeyOpenAILowUpstreamRatePriorityEnabled: "false",
+		SettingKeyOpenAIOAuthSchedulingRateMultiplier:  "1",
 		// The detector is enabled by default for compatibility with the
 		// production rollout; deployment config remains the emergency master
 		// switch. Synthetic business-request injection stays explicitly off.
-		SettingKeyCodexQuotaOverdraftEnabled:                          "true",
-		SettingKeyCodexQuotaOverdraftBusinessInjectionEnabled:         "false",
+		SettingKeyCodexQuotaOverdraftEnabled:                         "true",
+		SettingKeyCodexQuotaOverdraftBusinessInjectionEnabled:        "false",
 		SettingKeyEnableAnthropicCacheTTL1hInjection:                 "false",
 		SettingKeyRewriteMessageCacheControl:                         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyEnableClientDatelineNormalization:                  "true",
@@ -825,6 +826,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.ModelPlazaEnabled = settings[SettingKeyModelPlazaEnabled] == "true"
 	result.ModelPlazaRequireAuth = settings[SettingKeyModelPlazaRequireAuth] == "true"
 	result.ModelPlazaDescription = settings[SettingKeyModelPlazaDescription]
+	result.PluginManagementEnabled = settings[SettingKeyPluginManagementEnabled] == "true"
 
 	// Affiliate (邀请返利) feature (default: disabled; strict true)
 	result.AffiliateEnabled = settings[SettingKeyAffiliateEnabled] == "true"
@@ -912,9 +914,11 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	if value, ok := settings[SettingKeyCodexQuotaOverdraftEnabled]; ok && strings.TrimSpace(value) != "" {
 		result.CodexQuotaOverdraftEnabled = value == "true"
 	} else {
-		// Missing/empty is the compatibility default; an explicit "false"
-		// remains authoritative and must never be overwritten.
-		result.CodexQuotaOverdraftEnabled = true
+		// Existing installations may not have the DB key yet. Match the
+		// runtime cache's legacy-bootstrap fallback so the admin panel never
+		// displays a different value from the effective gateway gate. An
+		// explicit "false" remains authoritative and is handled above.
+		result.CodexQuotaOverdraftEnabled = s == nil || s.cfg == nil || s.cfg.Gateway.CodexQuotaOverdraftEnabled
 	}
 	if value, ok := settings[SettingKeyCodexQuotaOverdraftBusinessInjectionEnabled]; ok && strings.TrimSpace(value) != "" {
 		result.CodexQuotaOverdraftBusinessInjectionEnabled = value == "true"
@@ -923,6 +927,15 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		// legacy deployment setting until the key is materialized, while fresh
 		// databases receive the explicit safe default from InitializeDefaultSettings.
 		result.CodexQuotaOverdraftBusinessInjectionEnabled = s != nil && s.cfg != nil && s.cfg.Gateway.CodexQuotaOverdraftBusinessInjectionEnabled
+	}
+	// The deployment master switch is an emergency upper bound in the runtime
+	// cache as well. Expose the effective state in the admin API so an operator
+	// does not see an enabled toggle while every gateway replica is fail-closed.
+	if s != nil && s.cfg != nil && !s.cfg.Gateway.CodexQuotaOverdraftEnabled {
+		result.CodexQuotaOverdraftEnabled = false
+	}
+	if !result.CodexQuotaOverdraftEnabled {
+		result.CodexQuotaOverdraftBusinessInjectionEnabled = false
 	}
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
 	result.OpenAIAdvancedSchedulerStickyWeightedEnabled = settings[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] == "true"
