@@ -846,6 +846,80 @@ func TestBufferRawChatCompletions_RejectsOversizedResponse(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 }
 
+func TestOpenAIRawStreamTerminalState(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		payloads       []string
+		clientStarted  bool
+		wantTerminated bool
+		wantTruncated  bool
+	}{
+		{name: "done", payloads: []string{"{\"choices\":[]}", "[DONE]"}, clientStarted: true, wantTerminated: true},
+		{name: "usage", payloads: []string{`{"choices":[],"usage":{"prompt_tokens":1}}`}, clientStarted: true, wantTerminated: true},
+		{name: "finish reason", payloads: []string{`{"choices":[{"finish_reason":"stop"}]}`}, clientStarted: true, wantTerminated: true},
+		{name: "null finish reason", payloads: []string{`{"choices":[{"finish_reason":null}]}`}, clientStarted: true, wantTruncated: true},
+		{name: "empty response", clientStarted: false, wantTruncated: true},
+		{name: "non-sse already forwarded", clientStarted: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var state openAIRawStreamTerminalState
+			for _, payload := range tt.payloads {
+				state.ObserveDataLine(payload)
+			}
+			require.Equal(t, tt.wantTerminated, state.Terminated())
+			require.Equal(t, tt.wantTruncated, state.IsTruncated(tt.clientStarted))
+		})
+	}
+}
+
+func TestForwardAsRawChatCompletions_TruncatedBeforeOutputTriggersFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_empty"}},
+		Body:       io.NopCloser(strings.NewReader("")),
+	}}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.Error(t, err)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, OpenAIUpstreamStreamTruncatedCode, gjson.GetBytes(failoverErr.ResponseBody, "error.code").String())
+	require.False(t, c.Writer.Written())
+}
+
+func TestForwardAsRawChatCompletions_TruncatedAfterOutputReturnsTypedError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	upstreamBody := "data: {\"id\":\"cut\",\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_cut"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.Error(t, err)
+	require.NotNil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	code, _, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, OpenAIUpstreamStreamTruncatedCode, code)
+	require.Contains(t, rec.Body.String(), "partial")
+	require.NotContains(t, rec.Body.String(), "data: [DONE]")
+}
+
 func rawChatCompletionsTestConfig() *config.Config {
 	return &config.Config{
 		Security: config.SecurityConfig{
