@@ -19,6 +19,11 @@ services:
     image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.220}
     container_name: sub2api
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "${DOCKER_LOG_MAX_SIZE:-256m}"
+        max-file: "${DOCKER_LOG_MAX_FILE:-4}"
     mem_limit: ${SUB2API_MEM_LIMIT:-12g}
     memswap_limit: ${SUB2API_MEMSWAP_LIMIT:-12g}
     stop_grace_period: 35s
@@ -60,6 +65,8 @@ services:
       - SERVER_H2C_IDLE_TIMEOUT=${SERVER_H2C_IDLE_TIMEOUT:-3600}
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}
+      - GOGC=${SUB2API_GOGC:-100}
+      - GOMEMLIMIT=${SUB2API_GOMEMLIMIT:-off}
       - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
       - ALIPAY_MOBILE_PRECREATE_DEEP_LINK=${ALIPAY_MOBILE_PRECREATE_DEEP_LINK:-}
 
@@ -72,6 +79,7 @@ services:
       - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - DATABASE_DBNAME=${POSTGRES_DB:-sub2api}
       - DATABASE_SSLMODE=disable
+      - DATABASE_MIGRATION_MODE=${DATABASE_MIGRATION_MODE:-apply}
       # Shared high-concurrency defaults; these are bounded database pools,
       # not one connection per streaming request.
       - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-256}
@@ -271,6 +279,11 @@ services:
     image: postgres:18-alpine
     container_name: sub2api-postgres
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "${DOCKER_LOG_MAX_SIZE:-256m}"
+        max-file: "${DOCKER_LOG_MAX_FILE:-4}"
     ulimits:
       nofile:
         soft: ${CONTAINER_NOFILE_SOFT:-200000}
@@ -317,6 +330,11 @@ services:
     image: redis:8-alpine
     container_name: sub2api-redis
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "${DOCKER_LOG_MAX_SIZE:-256m}"
+        max-file: "${DOCKER_LOG_MAX_FILE:-4}"
     ulimits:
       nofile:
         soft: ${CONTAINER_NOFILE_SOFT:-200000}

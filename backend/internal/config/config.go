@@ -23,6 +23,11 @@ const (
 	RunModeSimple   = "simple"
 )
 
+const (
+	DatabaseMigrationModeApply    = "apply"
+	DatabaseMigrationModeValidate = "validate"
+)
+
 // 使用量记录队列溢出策略
 const (
 	UsageRecordOverflowPolicyDrop   = "drop"
@@ -1522,6 +1527,9 @@ type DatabaseConfig struct {
 	Password string `mapstructure:"password"`
 	DBName   string `mapstructure:"dbname"`
 	SSLMode  string `mapstructure:"sslmode"`
+	// MigrationMode controls whether startup applies pending migrations or only
+	// validates that the database already matches the embedded migration set.
+	MigrationMode string `mapstructure:"migration_mode"`
 	// 连接池配置（性能优化：可配置化连接池参数）
 	// MaxOpenConns: 最大打开连接数，控制数据库连接上限，防止资源耗尽
 	MaxOpenConns int `mapstructure:"max_open_conns"`
@@ -1846,6 +1854,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 
 	cfg.RunMode = NormalizeRunMode(cfg.RunMode)
+	cfg.Database.MigrationMode = strings.ToLower(strings.TrimSpace(cfg.Database.MigrationMode))
 	cfg.Server.Mode = strings.ToLower(strings.TrimSpace(cfg.Server.Mode))
 	if cfg.Server.Mode == "" {
 		cfg.Server.Mode = "debug"
@@ -2032,7 +2041,7 @@ func setDefaults() {
 	viper.SetDefault("log.rotation.max_age_days", 7)
 	viper.SetDefault("log.rotation.compress", true)
 	viper.SetDefault("log.rotation.local_time", true)
-	viper.SetDefault("log.sampling.enabled", false)
+	viper.SetDefault("log.sampling.enabled", true)
 	viper.SetDefault("log.sampling.initial", 100)
 	viper.SetDefault("log.sampling.thereafter", 100)
 
@@ -2168,6 +2177,7 @@ func setDefaults() {
 	viper.SetDefault("database.password", "postgres")
 	viper.SetDefault("database.dbname", "sub2api")
 	viper.SetDefault("database.sslmode", "prefer")
+	viper.SetDefault("database.migration_mode", DatabaseMigrationModeApply)
 	viper.SetDefault("database.max_open_conns", 256)
 	viper.SetDefault("database.max_idle_conns", 128)
 	viper.SetDefault("database.conn_max_lifetime_minutes", 30)
@@ -3057,6 +3067,14 @@ func (c *Config) Validate() error {
 	}
 	if c.Database.MaxOpenConns <= 0 {
 		return fmt.Errorf("database.max_open_conns must be positive")
+	}
+	if c.Database.MigrationMode == "" {
+		c.Database.MigrationMode = DatabaseMigrationModeApply
+	}
+	switch c.Database.MigrationMode {
+	case DatabaseMigrationModeApply, DatabaseMigrationModeValidate:
+	default:
+		return fmt.Errorf("database.migration_mode must be %q or %q", DatabaseMigrationModeApply, DatabaseMigrationModeValidate)
 	}
 	if c.Database.MaxIdleConns < 0 {
 		return fmt.Errorf("database.max_idle_conns must be non-negative")

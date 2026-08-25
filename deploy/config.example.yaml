@@ -641,7 +641,7 @@ log:
   sampling:
     # Enable zap sampler (reduce high-frequency repetitive logs)
     # 启用 zap 采样（减少高频重复日志）
-    enabled: false
+    enabled: true
     # Number of first entries per second to always log
     # 每秒无采样保留的前 N 条日志
     initial: 100
@@ -847,6 +847,9 @@ database:
   # SSL 模式：disable（禁用）, prefer（优先加密，默认）, require（要求）, verify-ca（验证CA）, verify-full（完全验证）
   # 默认值为 "prefer"，数据库支持 SSL 时自动使用加密连接，不支持时回退明文
   sslmode: "prefer"
+  # Startup migration policy: apply or validate. Canary instances should use
+  # validate only after a dedicated `sub2api -migrate-only` job succeeds.
+  migration_mode: "apply"
   # Max open connections (高并发场景建议 256+，需配合 PostgreSQL max_connections 调整)
   # 最大打开连接数
   max_open_conns: 256

@@ -116,6 +116,74 @@ func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 	return applyMigrationsFS(ctx, db, migrations.FS)
 }
 
+// CheckMigrations performs a read-only comparison between the embedded
+// migration set and schema_migrations. Extra historical rows are allowed, but
+// every embedded non-empty migration must be present with a compatible checksum.
+func CheckMigrations(ctx context.Context, db *sql.DB) error {
+	if db == nil {
+		return errors.New("nil sql db")
+	}
+	return checkMigrationsFS(ctx, db, migrations.FS)
+}
+
+func checkMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
+	if db == nil {
+		return errors.New("nil sql db")
+	}
+
+	rows, err := db.QueryContext(ctx, "SELECT filename, checksum FROM schema_migrations")
+	if err != nil {
+		return fmt.Errorf("read schema_migrations (run migrations before starting in validate mode): %w", err)
+	}
+	defer rows.Close()
+
+	applied := make(map[string]string)
+	for rows.Next() {
+		var name, checksum string
+		if err := rows.Scan(&name, &checksum); err != nil {
+			return fmt.Errorf("scan schema_migrations: %w", err)
+		}
+		applied[name] = checksum
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate schema_migrations: %w", err)
+	}
+
+	files, err := fs.Glob(fsys, "*.sql")
+	if err != nil {
+		return fmt.Errorf("list migrations: %w", err)
+	}
+	sort.Strings(files)
+
+	var pending []string
+	for _, name := range files {
+		contentBytes, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", name, err)
+		}
+		content := strings.TrimSpace(string(contentBytes))
+		if content == "" {
+			continue
+		}
+
+		sum := sha256.Sum256([]byte(content))
+		fileChecksum := hex.EncodeToString(sum[:])
+		dbChecksum, ok := applied[name]
+		if !ok {
+			pending = append(pending, name)
+			continue
+		}
+		if dbChecksum != fileChecksum && !isMigrationChecksumCompatible(name, dbChecksum, fileChecksum) {
+			return fmt.Errorf("migration %s checksum mismatch (db=%s file=%s)", name, dbChecksum, fileChecksum)
+		}
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("database has %d pending migration(s): %s", len(pending), strings.Join(pending, ", "))
+	}
+
+	return nil
+}
+
 // applyMigrationsFS 是迁移执行的核心实现。
 // 它从指定的文件系统读取 SQL 迁移文件并按顺序应用。
 //
