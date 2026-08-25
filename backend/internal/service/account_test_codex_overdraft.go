@@ -30,14 +30,12 @@ func (s *AccountTestService) prepareCodexQuotaOverdraftTestRequest(ctx context.C
 }
 
 func (s *AccountTestService) handleCodexQuotaOverdraftTest429(ctx context.Context, account *Account, headers http.Header, body []byte, preferredModel string) bool {
-	enabled, _ := s.codexQuotaOverdraftTestRuntime(ctx)
-	return s.codexQuotaOverdraft != nil && enabled && isCodexQuotaOverdraftAccount(account) &&
+	return s != nil && s.codexQuotaOverdraft != nil && CodexQuotaOverdraftSchedulingEnabled(ctx) && isCodexQuotaOverdraftAccount(account) &&
 		s.codexQuotaOverdraft.HandleQuota429(ctx, account, headers, body, preferredModel)
 }
 
 func (s *AccountTestService) observeCodexQuotaOverdraftTestResult(ctx context.Context, account *Account, preferredModel string, injected bool) {
-	enabled, _ := s.codexQuotaOverdraftTestRuntime(ctx)
-	if s.codexQuotaOverdraft == nil || !enabled || !isCodexQuotaOverdraftAccount(account) {
+	if s == nil || s.codexQuotaOverdraft == nil || !CodexQuotaOverdraftSchedulingEnabled(ctx) || !isCodexQuotaOverdraftAccount(account) {
 		return
 	}
 	if injected {

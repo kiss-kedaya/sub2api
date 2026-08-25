@@ -142,8 +142,11 @@ func NewCodexQuotaOverdraftCoordinator(
 	return coordinator
 }
 func (c *CodexQuotaOverdraftCoordinator) enabled() bool {
-	return c != nil && CodexQuotaOverdraftEnabled() &&
-		c.accountRepo != nil && c.httpUpstream != nil
+	return c != nil && CodexQuotaOverdraftEnabled() && c.dependenciesReady()
+}
+
+func (c *CodexQuotaOverdraftCoordinator) dependenciesReady() bool {
+	return c != nil && c.accountRepo != nil && c.httpUpstream != nil
 }
 
 // ObserveAccount starts a probe when a persisted 5h/7d snapshot first reaches
@@ -293,7 +296,7 @@ func (c *CodexQuotaOverdraftCoordinator) HandleQuota429(
 	body []byte,
 	preferredModel string,
 ) bool {
-	if !c.enabled() || !isCodexQuotaOverdraftAccount(account) || account.ID <= 0 ||
+	if !c.dependenciesReady() || !isCodexQuotaOverdraftAccount(account) || account.ID <= 0 ||
 		!codexQuotaOverdraftSchedulingEnabled(ctx) ||
 		!codexQuotaOverdraftResponseIsQuotaLimited(headers, body) {
 		return false
