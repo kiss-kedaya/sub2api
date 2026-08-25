@@ -56,6 +56,47 @@ func preauthorizeTextGatewayRequest(
 	})
 }
 
+// preauthorizePerRequestGatewayRequest reserves balance for count/size/duration
+// -metered endpoints (images, video, standalone search) before an upstream
+// account is selected. Unlike the text path it prices the request once from the
+// explicit billing units in estimate, holding the exact request price; usage
+// settlement later refunds any positive difference through the shared guard.
+func preauthorizePerRequestGatewayRequest(
+	ctx context.Context,
+	preauthorizer balancePreauthorizer,
+	pricing balancePreauthorizationPricingProvider,
+	apiKey *service.APIKey,
+	subscription *service.UserSubscription,
+	body []byte,
+	billingModel string,
+	pricingAt time.Time,
+	estimate service.PerRequestPreauthorizationEstimate,
+) (*service.BalancePreauthorizationGuard, error) {
+	if preauthorizer == nil || pricing == nil || apiKey == nil {
+		return nil, nil
+	}
+	billingType := service.BalancePreauthorizationBillingType(apiKey, subscription)
+	if requirement, ok := preauthorizer.(balancePreauthorizationRequirement); ok &&
+		!requirement.RequiresPreauthorization(billingType) {
+		return nil, nil
+	}
+	userID := apiKey.UserID
+	if userID <= 0 && apiKey.User != nil {
+		userID = apiKey.User.ID
+	}
+	payloadHash := service.HashUsageRequestPayload(body)
+	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
+		RequestID:                service.ResolveBalancePreauthorizationRequestID(ctx),
+		APIKeyID:                 apiKey.ID,
+		UserID:                   userID,
+		AuthorizationFingerprint: payloadHash,
+		BillingType:              billingType,
+		EstimateKind:             service.PreauthorizationEstimatePerRequest,
+		PerRequestEstimate:       estimate,
+		CostInput:                pricing.BalancePreauthorizationCostInput(ctx, apiKey, billingModel, pricingAt, ""),
+	})
+}
+
 func deferBalancePreauthorizationRefund(reqLog *zap.Logger, guard *service.BalancePreauthorizationGuard) {
 	if guard == nil {
 		return

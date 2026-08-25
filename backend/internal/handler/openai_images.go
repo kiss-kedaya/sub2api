@@ -144,6 +144,34 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	}
 
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
+
+	// 预扣：图片按“张数 × 尺寸档单价”计费，在选号（上游产生费用）之前按请求参数
+	// 精确预留余额；结算走 RecordUsage → applyUsageBilling 的 guard.Finalize 退实际
+	// 差额，兜底 defer 退款在 worker 交接后自动失效。pricingAt 与 Images 结算口径
+	// 一致地使用调用时刻。
+	balanceGuard, err := preauthorizePerRequestGatewayRequest(
+		c.Request.Context(), h.balancePreauthorizer, h.gatewayService,
+		apiKey, subscription, body,
+		service.BalancePreauthorizationBillingModel(routingModel, channelMapping),
+		time.Now(),
+		service.PerRequestPreauthorizationEstimate{
+			RequestCount: parsed.N,
+			SizeTier:     parsed.SizeTier,
+		},
+	)
+	if err != nil {
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		return
+	}
+	if balanceGuard != nil {
+		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
+
 	requestCtx := service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
 
 	maxAccountSwitches := h.maxAccountSwitches

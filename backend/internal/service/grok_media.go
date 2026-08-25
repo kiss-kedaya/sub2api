@@ -53,6 +53,19 @@ func (e GrokMediaEndpoint) IsGenerationRequest() bool {
 	}
 }
 
+// IsImageGenerationRequest reports whether the endpoint is a synchronous image
+// generation/edit, whose full billing parameters (count, size tier) are known
+// at request time. Video generation is asynchronous and settled after a status
+// lookup, so it is deliberately excluded from the synchronous preauth path.
+func (e GrokMediaEndpoint) IsImageGenerationRequest() bool {
+	switch e {
+	case GrokMediaEndpointImagesGenerations, GrokMediaEndpointImagesEdits:
+		return true
+	default:
+		return false
+	}
+}
+
 type GrokMediaRequestInfo struct {
 	Model           string
 	Prompt          string
