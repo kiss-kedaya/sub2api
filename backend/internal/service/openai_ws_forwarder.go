@@ -45,6 +45,10 @@ const (
 
 	openAIWSIngressStagePreviousResponseNotFound = "previous_response_not_found"
 	openAIWSMaxPrevResponseIDDeletePasses        = 8
+	// Keep ingress retries bounded. A stale pooled socket can fail a handful
+	// of consecutive handshakes, but an unbounded replay loop would amplify a
+	// provider outage and hold a client connection forever.
+	openAIWSIngressTurnRetryMax = 4
 )
 
 var openAIWSLogValueReplacer = strings.NewReplacer(
