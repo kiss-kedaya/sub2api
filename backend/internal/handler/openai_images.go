@@ -357,13 +357,8 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					zap.Int64("account_id", account.ID),
 					zap.Bool("fallback_error_response_written", wroteFallback),
 					zap.Bool("upstream_error_response_already_written", upstreamErrorAlreadyCommunicated),
-					zap.Error(err),
 				}
-				if shouldLogOpenAIForwardFailureAsWarn(c, wroteFallback) {
-					reqLog.Warn("openai.images.forward_failed", fields...)
-					return
-				}
-				reqLog.Error("openai.images.forward_failed", fields...)
+				logGatewayForwardFailureWithWarn(reqLog, c, "openai.images.forward_failed", err, shouldLogOpenAIForwardFailureAsWarn(c, wroteFallback), fields...)
 				return
 			}
 		}

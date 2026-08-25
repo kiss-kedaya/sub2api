@@ -129,16 +129,6 @@ type BillingCacheService struct {
 	cacheWriteDropClosedLastLog int64
 }
 
-// SupportsBalanceConcurrency reports whether this instance can safely serve
-// balance preflight reads. Simple mode intentionally bypasses wallet billing,
-// and lightweight test/bootstrap instances may not have a cache or repository.
-func (s *BillingCacheService) SupportsBalanceConcurrency() bool {
-	if s == nil || s.cfg == nil || s.cfg.RunMode == config.RunModeSimple {
-		return false
-	}
-	return s.cache != nil || s.userRepo != nil
-}
-
 type balanceCacheSetIfAbsent interface {
 	SetUserBalanceIfAbsent(ctx context.Context, userID int64, balance float64) error
 }
@@ -330,11 +320,23 @@ func (s *BillingCacheService) logCacheWriteDrop(task cacheWriteTask, reason stri
 // 余额缓存方法
 // ============================================
 
-// GetUserBalance 获取用户余额（优先从缓存读取）
+// GetUserBalance returns the persistent live wallet when one exists. The
+// short-lived legacy cache and PostgreSQL are only initialization fallbacks;
+// they may lag behind in-flight holds and asynchronously aggregated usage.
 func (s *BillingCacheService) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
 	if s.cache == nil {
 		// Redis不可用，直接查询数据库
 		return s.getUserBalanceFromDB(ctx, userID)
+	}
+
+	liveBalance, exists, err := s.cache.GetLiveBalance(ctx, userID)
+	if err != nil {
+		// Falling back to PostgreSQL here would ignore active holds and can
+		// authorize spend twice. Redis transport failures therefore fail closed.
+		return 0, fmt.Errorf("get live user balance: %w", err)
+	}
+	if exists {
+		return liveBalance, nil
 	}
 
 	// 尝试从缓存读取

@@ -103,6 +103,7 @@ func ProvideGatewayHandler(
 	usageService *service.UsageService,
 	apiKeyService *service.APIKeyService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	balancePreauthorizationService *service.BalancePreauthorizationService,
 	errorPassthroughService *service.ErrorPassthroughService,
 	contentModerationService *service.ContentModerationService,
 	userMsgQueueService *service.UserMessageQueueService,
@@ -113,6 +114,7 @@ func ProvideGatewayHandler(
 	h := NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService,
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
 		errorPassthroughService, contentModerationService, userMsgQueueService, cfg, settingService)
+	h.balancePreauthorizer = balancePreauthorizationService
 	h.securityAuditCoordinator = coordinator
 	return h
 }
@@ -124,6 +126,7 @@ func ProvideOpenAIGatewayHandler(
 	billingCacheService *service.BillingCacheService,
 	apiKeyService *service.APIKeyService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	balancePreauthorizationService *service.BalancePreauthorizationService,
 	errorPassthroughService *service.ErrorPassthroughService,
 	contentModerationService *service.ContentModerationService,
 	opsService *service.OpsService,
@@ -134,6 +137,7 @@ func ProvideOpenAIGatewayHandler(
 	gatewayService.SetPluginManager(pluginManager)
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
+	h.balancePreauthorizer = balancePreauthorizationService
 	h.securityAuditCoordinator = coordinator
 	h.grokMediaEligibilityProber = grokQuotaService
 	return h

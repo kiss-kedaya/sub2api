@@ -319,6 +319,23 @@ func TestAcquireUserSlotWithWait_TracksAPIKeySlot(t *testing.T) {
 	require.Equal(t, 1, cache.apiKeyReleaseCalls)
 }
 
+func TestAcquireUserSlotWithWait_TracksOnlyUserAndAPIKeySlots(t *testing.T) {
+	cache := &helperConcurrencyCacheStub{userSeq: []bool{true}}
+	helper := NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, 5*time.Millisecond)
+	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		ID:    77,
+		Group: &service.Group{ID: 10, Platform: service.PlatformOpenAI},
+	})
+
+	release, err := helper.AcquireUserSlotWithWait(c, 202, 3, false, new(bool))
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	release()
+	require.Equal(t, 1, cache.userReleaseCalls)
+	require.Equal(t, 1, cache.apiKeyReleaseCalls)
+}
+
 func TestTryAcquireUserSlotForAPIKey_TracksAPIKeySlot(t *testing.T) {
 	cache := &helperConcurrencyCacheStub{
 		userSeq: []bool{true},
