@@ -146,46 +146,21 @@ func stripOpenAIResponsesInputNamespaces(body []byte, keepToolCallNamespaces boo
 	if !bytes.Contains(body, []byte(`"namespace"`)) {
 		return body, nil
 	}
-	input := gjson.GetBytes(body, "input")
-	if !input.IsArray() {
-		return body, nil
-	}
-
-	var rebuilt bytes.Buffer
-	rebuilt.Grow(len(input.Raw))
-	_ = rebuilt.WriteByte('[')
-	changed := false
-	first := true
-	var stripErr error
-	input.ForEach(func(_, item gjson.Result) bool {
-		if !first {
-			_ = rebuilt.WriteByte(',')
+	stripped, _, err := rewriteOpenAIResponsesInput(body, func(_ int, item gjson.Result) (string, bool, bool, error) {
+		// Long histories mostly contain message/reasoning items without namespace;
+		// avoid reading type unless namespace is actually present.
+		if !item.IsObject() || !item.Get("namespace").Exists() ||
+			(keepToolCallNamespaces && isOpenAIResponsesToolCallItemType(item.Get("type").String())) {
+			return item.Raw, true, false, nil
 		}
-		first = false
-		itemBody := []byte(item.Raw)
-		// 先判存在再判类型：长历史里绝大多数是 message/reasoning 等不带 namespace
-		// 的项，这样它们无需再扫一次 type。
-		if item.IsObject() && item.Get("namespace").Exists() &&
-			(!keepToolCallNamespaces || !isOpenAIResponsesToolCallItemType(item.Get("type").String())) {
-			itemBody, stripErr = sjson.DeleteBytes(itemBody, "namespace")
-			if stripErr != nil {
-				return false
-			}
-			changed = true
+		itemBody, deleteErr := sjson.Delete(item.Raw, "namespace")
+		if deleteErr != nil {
+			return "", false, false, fmt.Errorf("delete OpenAI input namespace: %w", deleteErr)
 		}
-		_, _ = rebuilt.Write(itemBody)
-		return true
+		return itemBody, true, true, nil
 	})
-	_ = rebuilt.WriteByte(']')
-	if stripErr != nil {
-		return body, fmt.Errorf("delete OpenAI input namespace: %w", stripErr)
-	}
-	if !changed {
-		return body, nil
-	}
-	stripped, err := sjson.SetRawBytes(body, "input", rebuilt.Bytes())
 	if err != nil {
-		return body, fmt.Errorf("replace OpenAI input after namespace deletion: %w", err)
+		return body, err
 	}
 	return stripped, nil
 }
