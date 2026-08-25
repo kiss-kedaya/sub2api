@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,17 @@ const (
 	codexQuotaOverdraftMaxBodyBytes  = 32 << 20
 	codexQuotaOverdraftPrearmPercent = 95
 )
+
+// codexQuotaOverdraftUsedPercent parses a server quota snapshot defensively.
+// NaN/Inf and implausible values must never satisfy a >=95% comparison in an
+// in-memory scheduler path, even if a legacy JSON value bypassed SQL casting.
+func codexQuotaOverdraftUsedPercent(extra map[string]any, key string) (float64, bool) {
+	value := parseExtraFloat64(extra[key])
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1000 {
+		return 0, false
+	}
+	return value, true
+}
 
 var codexQuotaOverdraftEnabled atomic.Bool
 var codexQuotaOverdraftBusinessInjectionEnabled atomic.Bool
@@ -274,7 +286,8 @@ func codexQuotaOverdraftInjectionEligible(account *Account, now time.Time) bool 
 		}
 	}
 	windowEligible := func(usedKey, window string) bool {
-		if parseExtraFloat64(account.Extra[usedKey]) < codexQuotaOverdraftPrearmPercent {
+		used, valid := codexQuotaOverdraftUsedPercent(account.Extra, usedKey)
+		if !valid || used < codexQuotaOverdraftPrearmPercent {
 			return false
 		}
 		resetAt := codexQuotaOverdraftWindowResetAt(account.Extra, window, now)
@@ -464,15 +477,29 @@ func injectCodexQuotaOverdraftForRequest(body []byte, knownCallID func(string) b
 }
 
 func normalizeCodexQuotaOverdraftAccountForScheduling(ctx context.Context, account *Account) *Account {
+	now := time.Now().UTC()
 	if !codexQuotaOverdraftSchedulingEnabled(ctx) || !isCodexQuotaOverdraftAccount(account) ||
-		!codexQuotaOverdraftSchedulingAllowed(account, time.Now().UTC()) ||
-		account.TempUnschedulableUntil == nil || !time.Now().Before(*account.TempUnschedulableUntil) ||
-		!IsAccountSchedulingThresholdReason(account.TempUnschedulableReason) {
+		!codexQuotaOverdraftSchedulingAllowed(account, now) {
+		return account
+	}
+	clearRateLimit := account.RateLimitResetAt != nil && account.RateLimitResetAt.After(now) &&
+		codexQuotaOverdraftAccountHasQuotaEvidence(account, now)
+	clearThresholdPause := account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) &&
+		IsAccountSchedulingThresholdReason(account.TempUnschedulableReason)
+	if !clearRateLimit && !clearThresholdPause {
 		return account
 	}
 	clone := *account
-	clone.TempUnschedulableUntil = nil
-	clone.TempUnschedulableReason = ""
+	if clearRateLimit {
+		// This is a request-scoped clone only. The durable rate-limit timestamp
+		// remains intact so ordinary requests stay blocked until the reset.
+		clone.RateLimitedAt = nil
+		clone.RateLimitResetAt = nil
+	}
+	if clearThresholdPause {
+		clone.TempUnschedulableUntil = nil
+		clone.TempUnschedulableReason = ""
+	}
 	return &clone
 }
 
