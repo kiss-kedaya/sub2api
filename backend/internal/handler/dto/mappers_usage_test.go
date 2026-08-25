@@ -179,6 +179,31 @@ func TestUsageLogFromService_KeepsUserBillingAndIPWithoutAdminCostFields(t *test
 	require.NotContains(t, string(userJSON), "account_cost")
 }
 
+func TestUsageLogFromService_IncludesRequestedReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	requested := "max"
+	forwarded := "xhigh"
+	log := &service.UsageLog{
+		RequestID:                "req_effort",
+		Model:                    "gpt-5.4",
+		ReasoningEffort:          &forwarded,
+		RequestedReasoningEffort: &requested,
+	}
+
+	userDTO := UsageLogFromService(log)
+	adminDTO := UsageLogFromServiceAdmin(log)
+
+	require.NotNil(t, userDTO.ReasoningEffort)
+	require.Equal(t, forwarded, *userDTO.ReasoningEffort)
+	require.NotNil(t, userDTO.RequestedReasoningEffort)
+	require.Equal(t, requested, *userDTO.RequestedReasoningEffort)
+	require.NotNil(t, adminDTO.ReasoningEffort)
+	require.Equal(t, forwarded, *adminDTO.ReasoningEffort)
+	require.NotNil(t, adminDTO.RequestedReasoningEffort)
+	require.Equal(t, requested, *adminDTO.RequestedReasoningEffort)
+}
+
 func TestUsageLogFromService_FallsBackToLegacyModelWhenRequestedModelMissing(t *testing.T) {
 	t.Parallel()
 
