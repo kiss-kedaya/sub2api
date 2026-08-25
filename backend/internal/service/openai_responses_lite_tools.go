@@ -1,7 +1,6 @@
 package service
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -254,7 +253,7 @@ func openAIResponsesLiteToolIdentityForError(rawTool any) string {
 
 func normalizeOpenAIResponsesLiteToolsPayload(body []byte) ([]byte, bool, error) {
 	var requestBody map[string]any
-	if err := json.Unmarshal(body, &requestBody); err != nil {
+	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {
 		return body, false, fmt.Errorf("decode responses Lite request body: %w", err)
 	}
 	changed, err := normalizeOpenAIResponsesLiteTools(requestBody)
@@ -266,4 +265,75 @@ func normalizeOpenAIResponsesLiteToolsPayload(body []byte) ([]byte, bool, error)
 		return body, false, fmt.Errorf("encode responses Lite request body: %w", err)
 	}
 	return rebuilt, true, nil
+}
+
+// normalizeOpenAIResponsesLiteParallelToolCallsPayload applies the account
+// independent part of the Responses Lite contract. Lite accepts
+// parallel_tool_calls=false only when tools are present; when a request has no
+// tools the field must be omitted. Decode with UseNumber so large sequence and
+// metadata values survive the normalization byte-for-byte.
+func normalizeOpenAIResponsesLiteParallelToolCallsPayload(body []byte) ([]byte, bool, error) {
+	var requestBody map[string]any
+	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {
+		return body, false, fmt.Errorf("decode responses Lite request body: %w", err)
+	}
+	changed, err := ensureOpenAIResponsesLiteParallelToolCallsForAccount(requestBody, false)
+	if err != nil || !changed {
+		return body, false, err
+	}
+	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
+	if err != nil {
+		return body, false, fmt.Errorf("encode responses Lite request body: %w", err)
+	}
+	return rebuilt, true, nil
+}
+
+// normalizeOpenAIResponsesLitePayloadForAccount is the single account-aware
+// entry point used by HTTP, WS and bridge paths. OAuth accounts additionally
+// need namespace/tool lowering; API-key and passthrough accounts only need the
+// parallel_tool_calls contract. Keeping this decision here prevents one
+// transport from forwarding a value another transport already normalized.
+func normalizeOpenAIResponsesLitePayloadForAccount(body []byte, account *Account) ([]byte, bool, error) {
+	if account == nil || !account.IsOpenAI() {
+		return body, false, nil
+	}
+	if account.IsOpenAIOAuthLike() {
+		normalized, changed, err := normalizeOpenAIResponsesLiteToolsPayload(body)
+		if err != nil {
+			return body, false, err
+		}
+		parallelNormalized, parallelChanged, parallelErr := normalizeOpenAIResponsesLiteParallelToolCallsPayload(normalized)
+		if parallelErr != nil {
+			return body, false, parallelErr
+		}
+		if parallelChanged {
+			return parallelNormalized, true, nil
+		}
+		return normalized, changed, nil
+	}
+	return normalizeOpenAIResponsesLiteParallelToolCallsPayload(body)
+}
+
+func ensureOpenAIResponsesLiteParallelToolCallsForAccount(reqBody map[string]any, changed bool) (bool, error) {
+	if reqBody == nil {
+		return changed, nil
+	}
+	parallel, exists := reqBody["parallel_tool_calls"]
+	if exists {
+		if _, ok := parallel.(bool); !ok {
+			return false, newOpenAIResponsesLiteValidationError("parallel_tool_calls", "responses Lite requires parallel_tool_calls to be a boolean")
+		}
+	}
+	if !openAIResponsesLiteHasTools(reqBody) {
+		if exists {
+			delete(reqBody, "parallel_tool_calls")
+			return true, nil
+		}
+		return changed, nil
+	}
+	if parallel == false {
+		return changed, nil
+	}
+	reqBody["parallel_tool_calls"] = false
+	return true, nil
 }
