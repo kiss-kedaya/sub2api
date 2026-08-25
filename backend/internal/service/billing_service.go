@@ -64,6 +64,14 @@ type BillingCache interface {
 	DeductUserBalance(ctx context.Context, userID int64, amount float64) error
 	InvalidateUserBalance(ctx context.Context, userID int64) error
 
+	// Persistent live balance and idempotent request preauthorization.
+	GetLiveBalance(ctx context.Context, userID int64) (balance float64, exists bool, err error)
+	AuthorizeLiveBalance(ctx context.Context, userID int64, attemptID string, fallbackBalance, holdAmount float64) (LiveBalanceResult, error)
+	TopUpLiveBalance(ctx context.Context, userID int64, attemptID string, targetHoldAmount float64) (LiveBalanceResult, error)
+	FinalizeLiveBalance(ctx context.Context, userID int64, attemptID string, actualAmount float64) (LiveBalanceResult, error)
+	RefundLiveBalance(ctx context.Context, userID int64, attemptID string) (LiveBalanceResult, error)
+	AdjustLiveBalance(ctx context.Context, userID int64, eventID string, delta float64) (LiveBalanceResult, error)
+
 	// Subscription operations
 	GetSubscriptionCache(ctx context.Context, userID, groupID int64) (*SubscriptionCacheData, error)
 	SetSubscriptionCache(ctx context.Context, userID, groupID int64, data *SubscriptionCacheData) error

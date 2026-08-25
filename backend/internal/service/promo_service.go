@@ -147,17 +147,14 @@ func (s *PromoService) ApplyPromoCode(ctx context.Context, userID int64, code st
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit transaction: %w", err)
 	}
+	syncCommittedLiveBalanceAdjustment(
+		s.billingCacheService,
+		userID,
+		fmt.Sprintf("promo:%d:user:%d", promoCode.ID, userID),
+		promoCode.BonusAmount,
+	)
 
 	s.invalidatePromoCaches(ctx, userID, promoCode.BonusAmount)
-
-	// 失效余额缓存
-	if s.billingCacheService != nil {
-		go func() {
-			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = s.billingCacheService.InvalidateUserBalance(cacheCtx, userID)
-		}()
-	}
 
 	return nil
 }

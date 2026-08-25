@@ -309,6 +309,7 @@ func (m *mockAuthCacheInvalidator) InvalidateAuthCacheByUserID(_ context.Context
 // --- mock: BillingCache ---
 
 type mockBillingCache struct {
+	noopLiveBalanceCacheStub
 	invalidateErr       error
 	invalidateCallCount atomic.Int64
 	invalidatedUserIDs  []int64
@@ -388,10 +389,7 @@ func TestUpdateBalance_Success(t *testing.T) {
 	err := svc.UpdateBalance(context.Background(), 42, 100.0)
 	require.NoError(t, err)
 
-	// 等待异步 goroutine 完成
-	require.Eventually(t, func() bool {
-		return cache.invalidateCallCount.Load() == 1
-	}, 2*time.Second, 10*time.Millisecond, "应异步调用 InvalidateUserBalance")
+	require.Equal(t, int64(1), cache.invalidateCallCount.Load(), "应同步发布已提交的余额变化")
 
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -633,10 +631,7 @@ func TestUpdateBalance_CacheFailure_DoesNotAffectReturn(t *testing.T) {
 	err := svc.UpdateBalance(context.Background(), 99, 200.0)
 	require.NoError(t, err, "缓存失效失败不应影响主流程返回值")
 
-	// 等待异步 goroutine 完成（即使失败也应调用）
-	require.Eventually(t, func() bool {
-		return cache.invalidateCallCount.Load() == 1
-	}, 2*time.Second, 10*time.Millisecond, "即使失败也应调用 InvalidateUserBalance")
+	require.GreaterOrEqual(t, cache.invalidateCallCount.Load(), int64(1), "即使失败也应有界重试余额同步")
 }
 
 func TestTouchLastActive_UpdatesWhenStale(t *testing.T) {
@@ -701,10 +696,8 @@ func TestUpdateBalance_WithAuthCacheInvalidator(t *testing.T) {
 	require.Equal(t, []int64{77}, auth.invalidatedUserIDs)
 	auth.mu.Unlock()
 
-	// 验证 billing cache 异步失效
-	require.Eventually(t, func() bool {
-		return cache.invalidateCallCount.Load() == 1
-	}, 2*time.Second, 10*time.Millisecond)
+	// 验证 billing cache 同步发布
+	require.Equal(t, int64(1), cache.invalidateCallCount.Load())
 }
 
 func TestNewUserService_FieldsAssignment(t *testing.T) {

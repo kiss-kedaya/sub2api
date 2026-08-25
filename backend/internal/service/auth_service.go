@@ -86,6 +86,7 @@ type AuthService struct {
 	affiliateService      *AffiliateService
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	billingCacheService   *BillingCacheService
 }
 
 type CaptchaProof struct {
@@ -152,6 +153,10 @@ func (s *AuthService) SetTencentCaptchaService(tencentCaptchaService *TencentCap
 
 func (s *AuthService) SetAliyunCaptchaService(aliyunCaptchaService *AliyunCaptchaService) {
 	s.aliyunCaptchaService = aliyunCaptchaService
+}
+
+func (s *AuthService) SetBillingCacheService(billingCacheService *BillingCacheService) {
+	s.billingCacheService = billingCacheService
 }
 
 // Register 用户注册，返回token和用户
