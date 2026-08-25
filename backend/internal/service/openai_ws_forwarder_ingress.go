@@ -848,8 +848,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if isOpenAIWSSessionPreempted(ctx) {
 				return nil, errOpenAIWSSessionPreempted
 			}
-			canonicalModel := canonicalOpenAIAccountSchedulingModel(account, ingressSessionOriginalModel)
-			s.handleOpenAIWSDialTransientFailure(ctx, account, canonicalModel, acquireErr)
 			dialStatus, dialClass, dialCloseStatus, dialCloseReason, dialRespServer, dialRespVia, dialRespCFRay, dialRespReqID := summarizeOpenAIWSDialError(acquireErr)
 			logOpenAIWSModeInfo(
 				"ingress_ws_upstream_acquire_fail account_id=%d turn=%d reason=%s dial_status=%d dial_class=%s dial_close_status=%s dial_close_reason=%s dial_resp_server=%s dial_resp_via=%s dial_resp_cf_ray=%s dial_resp_x_request_id=%s cause=%s preferred_conn_id=%s force_preferred_conn=%v ws_host=%s ws_path=%s proxy_enabled=%v",
@@ -916,6 +914,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			truncateOpenAIWSLogValue(preferred, openAIWSIDValueMaxLen),
 		)
 		return lease, nil
+	}
+	reportFinalAcquireFailure := func(acquireErr error) {
+		canonicalModel := canonicalOpenAIAccountSchedulingModel(account, ingressSessionOriginalModel)
+		s.handleOpenAIWSDialTransientFailure(ctx, account, canonicalModel, acquireErr)
 	}
 
 	var rejectedFieldRetryState *openAIResponsesRejectedFieldRetryState
@@ -1278,6 +1280,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	turn := 1
 	rejectedFieldRetryState = newOpenAIResponsesRejectedFieldRetryState(currentPayload)
 	turnRetry := 0
+	turnRetryStartedAt := time.Time{}
 	turnPrevRecoveryTried := false
 	lastTurnFinishedAt := time.Time{}
 	lastTurnResponseID := ""
@@ -1373,8 +1376,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		skipBeforeTurn = true
 		return true
 	}
-	retryIngressTurn := func(relayErr error, turn int, connID string) bool {
-		if !isOpenAIWSIngressTurnRetryable(relayErr) || turnRetry >= 1 {
+	retryIngressFailure := func(reason string, turn int, connID string) bool {
+		if turnRetry >= openAIWSIngressTurnRetryMax {
+			s.recordOpenAIWSRetryExhausted()
 			return false
 		}
 		if isStrictAffinityTurn(currentPayload) {
@@ -1386,18 +1390,45 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			)
 			return false
 		}
-		turnRetry++
+		if turnRetryStartedAt.IsZero() {
+			turnRetryStartedAt = time.Now()
+		}
+		nextAttempt := turnRetry + 1
+		backoff := s.openAIWSRetryBackoff(nextAttempt)
+		budget := s.openAIWSRetryTotalBudget()
+		if budget > 0 && time.Since(turnRetryStartedAt)+backoff > budget {
+			s.recordOpenAIWSRetryExhausted()
+			return false
+		}
+		if backoff > 0 {
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return false
+			case <-timer.C:
+			}
+		}
+		turnRetry = nextAttempt
+		s.recordOpenAIWSRetryAttempt(backoff)
 		logOpenAIWSModeInfo(
-			"ingress_ws_turn_retry account_id=%d turn=%d retry=%d reason=%s conn_id=%s",
+			"ingress_ws_turn_retry account_id=%d turn=%d retry=%d reason=%s conn_id=%s backoff_ms=%d",
 			account.ID,
 			turn,
 			turnRetry,
-			truncateOpenAIWSLogValue(openAIWSIngressTurnRetryReason(relayErr), openAIWSLogValueMaxLen),
+			truncateOpenAIWSLogValue(reason, openAIWSLogValueMaxLen),
 			truncateOpenAIWSLogValue(connID, openAIWSIDValueMaxLen),
+			backoff.Milliseconds(),
 		)
 		resetSessionLease(true)
 		skipBeforeTurn = true
 		return true
+	}
+	retryIngressTurn := func(relayErr error, turn int, connID string) bool {
+		if !isOpenAIWSIngressTurnRetryable(relayErr) {
+			return false
+		}
+		return retryIngressFailure(openAIWSIngressTurnRetryReason(relayErr), turn, connID)
 	}
 	for {
 		if turn > 1 && !skipBeforeTurn && hooks != nil && hooks.BeforeRequest != nil {
@@ -1567,6 +1598,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if sessionLease == nil {
 			acquiredLease, acquireErr := acquireTurnLease(turn, preferredConnID, forcePreferredConn)
 			if acquireErr != nil {
+				var dialErr *openAIWSDialError
+				if !forcePreferredConn && errors.As(acquireErr, &dialErr) && retryIngressFailure("acquire_upstream", turn, sessionConnID) {
+					continue
+				}
+				reportFinalAcquireFailure(acquireErr)
 				return fmt.Errorf("acquire upstream websocket: %w", acquireErr)
 			}
 			sessionLease = acquiredLease
@@ -1675,6 +1711,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 
 				acquiredLease, acquireErr := acquireTurnLease(turn, preferredConnID, forcePreferredConn)
 				if acquireErr != nil {
+					reportFinalAcquireFailure(acquireErr)
 					return fmt.Errorf("acquire upstream websocket after preflight ping fail: %w", acquireErr)
 				}
 				sessionLease = acquiredLease
@@ -1738,6 +1775,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			return finalErr
 		}
 		turnRetry = 0
+		turnRetryStartedAt = time.Time{}
 		turnPrevRecoveryTried = false
 		lastTurnFinishedAt = time.Now()
 		lastTurnClean = true
