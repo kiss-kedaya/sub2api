@@ -70,6 +70,7 @@ func ProvideAuthService(
 	defaultSubAssigner DefaultSubscriptionAssigner,
 	affiliateService *AffiliateService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	billingCacheService *BillingCacheService,
 ) *AuthService {
 	svc := NewAuthService(
 		entClient,
@@ -88,6 +89,7 @@ func ProvideAuthService(
 	)
 	svc.SetTencentCaptchaService(tencentCaptchaService)
 	svc.SetAliyunCaptchaService(aliyunCaptchaService)
+	svc.SetBillingCacheService(billingCacheService)
 	return svc
 }
 
@@ -728,6 +730,7 @@ func ProvideOpsService(
 	systemLogSink *OpsSystemLogSink,
 	settingService *SettingService,
 	authCacheInvalidationWorker *AuthCacheInvalidationWorker,
+	liveBalanceOutboxWorker *LiveBalanceAdjustmentOutboxWorker,
 	apiKeyService *APIKeyService,
 ) *OpsService {
 	svc := NewOpsService(
@@ -750,6 +753,7 @@ func ProvideOpsService(
 		settingService.WarmOpenAIQuotaAutoPauseSettings(context.Background())
 	}
 	svc.authCacheInvalidationWorker = authCacheInvalidationWorker
+	svc.liveBalanceOutboxWorker = liveBalanceOutboxWorker
 	svc.apiKeyService = apiKeyService
 	svc.StartRuntimeSettingsRefresh(context.Background())
 	return svc
@@ -909,6 +913,10 @@ var ProviderSet = wire.NewSet(
 	ProvideConcurrencyService,
 	ProvideUserMessageQueueService,
 	NewUsageRecordWorkerPool,
+	NewBalancePreauthorizationService,
+	NewBalancePreauthorizationRecoveryWorker,
+	NewUsageBalanceSettlementWorker,
+	ProvideLiveBalanceAdjustmentOutboxWorker,
 	ProvideSchedulerSnapshotService,
 	NewIdentityService,
 	NewCRSSyncService,

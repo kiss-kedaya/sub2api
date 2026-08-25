@@ -357,7 +357,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("image generation disabled for group")
 	}
 
-	instructions := gjson.GetBytes(body, "instructions")
+	requestRoot := parseRawJSONView(body)
+	instructions := requestRoot.Get("instructions")
 	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
 	if instructionsEmpty && !compatMessagesBridge && !nativeDeepSeekResponses {
 		markPatchSet("instructions", defaultCodexSynthInstructions(reqModel))
@@ -385,12 +386,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Upstream model resolved: %s -> %s (account: %s, type: %s, isCodexCLI: %v)", billingModel, upstreamModel, account.Name, account.Type, isCodexCLI)
 		}
 	}
-	if strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String()) == "minimal" {
+	if strings.TrimSpace(requestRoot.Get("reasoning.effort").String()) == "minimal" {
 		markPatchSet("reasoning.effort", "none")
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized reasoning.effort: minimal -> none (account: %s)", account.Name)
 	}
-	if strings.TrimSpace(gjson.GetBytes(body, "text.format.type").String()) == "json_schema" ||
-		strings.TrimSpace(gjson.GetBytes(body, "response_format.type").String()) == "json_schema" {
+	if strings.TrimSpace(requestRoot.Get("text.format.type").String()) == "json_schema" ||
+		strings.TrimSpace(requestRoot.Get("response_format.type").String()) == "json_schema" {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
 			return nil, decodeErr
@@ -546,12 +547,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
-	if !SupportsVerbosity(upstreamModel) && gjson.GetBytes(body, "text.verbosity").Exists() {
+	if !SupportsVerbosity(upstreamModel) && requestRoot.Get("text.verbosity").Exists() {
 		markPatchDelete("text.verbosity")
 	}
 
 	if !isCodexCLI {
-		maxOutputTokens := gjson.GetBytes(body, "max_output_tokens")
+		maxOutputTokens := requestRoot.Get("max_output_tokens")
 		if maxOutputTokens.Exists() {
 			switch account.Platform {
 			case PlatformOpenAI, PlatformDeepseek:
@@ -578,24 +579,24 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// 仅对 OpenAI 平台归一化：Anthropic 合法使用 max_tokens，其 max_output_tokens
 		// 反向转换已在上方 switch 中处理。
 		if account.Platform == PlatformOpenAI {
-			if maxTokens := gjson.GetBytes(body, "max_tokens"); maxTokens.Exists() {
-				if !gjson.GetBytes(body, "max_output_tokens").Exists() {
+			if maxTokens := requestRoot.Get("max_tokens"); maxTokens.Exists() {
+				if !requestRoot.Get("max_output_tokens").Exists() {
 					markPatchSet("max_output_tokens", maxTokens.Value())
 				}
 				markPatchDelete("max_tokens")
 			}
 		}
-		if gjson.GetBytes(body, "max_completion_tokens").Exists() && (account.Type == AccountTypeAPIKey || account.Platform != PlatformOpenAI) {
+		if requestRoot.Get("max_completion_tokens").Exists() && (account.Type == AccountTypeAPIKey || account.Platform != PlatformOpenAI) {
 			markPatchDelete("max_completion_tokens")
 		}
 		for _, unsupportedField := range []string{"prompt_cache_retention", "safety_identifier", "prompt_cache_options"} {
-			if gjson.GetBytes(body, unsupportedField).Exists() {
+			if requestRoot.Get(unsupportedField).Exists() {
 				markPatchDelete(unsupportedField)
 			}
 		}
 	}
 	if wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 &&
-		!account.IsOpenAIApiKey() && gjson.GetBytes(body, "previous_response_id").Exists() {
+		!account.IsOpenAIApiKey() && requestRoot.Get("previous_response_id").Exists() {
 		markPatchDelete("previous_response_id")
 	}
 	if openAIRequestBodyMayContainEmptyBase64InputImage(body) {
@@ -1148,8 +1149,54 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		searchCount := 0
 		var imageOutputSizes []string
 		nonBillableUpstreamError := false
+		clientDisconnect := false
+		buildForwardResult := func() *OpenAIForwardResult {
+			if usage == nil {
+				usage = &OpenAIUsage{}
+			}
+			forwardResult := &OpenAIForwardResult{
+				RequestID:                     resp.Header.Get("x-request-id"),
+				ResponseID:                    responseID,
+				Usage:                         *usage,
+				Model:                         originalModel,
+				BillingModel:                  billingModel,
+				UpstreamModel:                 upstreamModel,
+				UpstreamResponseModel:         observedUpstreamResponseModel(c),
+				UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+				UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
+				ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
+				ReasoningEffort:               reasoningEffort,
+				Stream:                        reqStream,
+				OpenAIWSMode:                  false,
+				Duration:                      time.Since(startTime),
+				FirstTokenMs:                  firstTokenMs,
+				ClientDisconnect:              clientDisconnect,
+				NonBillableUpstreamError:      nonBillableUpstreamError,
+			}
+			if imageCount > 0 {
+				forwardResult.ImageCount = imageCount
+				forwardResult.ImageSize = imageSizeTier
+				forwardResult.ImageInputSize = imageInputSize
+				forwardResult.ImageOutputSizes = imageOutputSizes
+				forwardResult.BillingModel = imageBillingModel
+			}
+			if searchCount > 0 && account != nil && account.IsGrok() {
+				forwardResult.SearchCount = searchCount
+			}
+			return forwardResult
+		}
 		if reqStream {
 			streamResult, err := s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
+			if streamResult != nil {
+				usage = streamResult.usage
+				firstTokenMs = streamResult.firstTokenMs
+				responseID = strings.TrimSpace(streamResult.responseID)
+				imageCount = streamResult.imageCount
+				imageOutputSizes = streamResult.imageOutputSizes
+				searchCount = streamResult.searchCount
+				nonBillableUpstreamError = streamResult.nonBillableUpstreamError
+				clientDisconnect = streamResult.clientDisconnect
+			}
 			if err != nil {
 				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
@@ -1185,15 +1232,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					}
 					return s.handleErrorResponse(ctx, compactResp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
 				}
-				return nil, err
+				return preserveOpenAIStreamingResultOnError(buildForwardResult(), err)
 			}
-			usage = streamResult.usage
-			firstTokenMs = streamResult.firstTokenMs
-			responseID = strings.TrimSpace(streamResult.responseID)
-			imageCount = streamResult.imageCount
-			imageOutputSizes = streamResult.imageOutputSizes
-			searchCount = streamResult.searchCount
-			nonBillableUpstreamError = streamResult.nonBillableUpstreamError
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
@@ -1230,42 +1270,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			notifyOpenAIAutoReset(*account.ParentAccountID)
 		}
 
-		if usage == nil {
-			usage = &OpenAIUsage{}
-		}
-
-		forwardResult := &OpenAIForwardResult{
-			RequestID:                     resp.Header.Get("x-request-id"),
-			ResponseID:                    responseID,
-			Usage:                         *usage,
-			Model:                         originalModel,
-			BillingModel:                  billingModel,
-			UpstreamModel:                 upstreamModel,
-			UpstreamResponseModel:         observedUpstreamResponseModel(c),
-			UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
-			UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
-			ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
-			ReasoningEffort:               reasoningEffort,
-			Stream:                        reqStream,
-			OpenAIWSMode:                  false,
-			Duration:                      time.Since(startTime),
-			FirstTokenMs:                  firstTokenMs,
-			NonBillableUpstreamError:      nonBillableUpstreamError,
-		}
-		if imageCount > 0 {
-			forwardResult.ImageCount = imageCount
-			forwardResult.ImageSize = imageSizeTier
-			forwardResult.ImageInputSize = imageInputSize
-			forwardResult.ImageOutputSizes = imageOutputSizes
-			forwardResult.BillingModel = imageBillingModel
-		}
-		// Grok-native web_search / x_search / tool_search tool invocations (per-1k pricing).
-		// Token cost still applies separately when usage is present; search is additive only
-		// when search_price_per_1k is configured (nil price → $0 from CalculateSearchCost).
-		if searchCount > 0 && account != nil && account.IsGrok() {
-			forwardResult.SearchCount = searchCount
-		}
-		return forwardResult, nil
+		return buildForwardResult(), nil
 	}
 }
 

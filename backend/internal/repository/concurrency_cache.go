@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -29,8 +28,6 @@ const (
 	accountSlotKeyPrefix = "concurrency:account:"
 	// 格式: concurrency:user:{userID}
 	userSlotKeyPrefix = "concurrency:user:"
-	// 格式: concurrency:balance:user:{userID}
-	balanceSlotKeyPrefix = "concurrency:balance:user:"
 	// 格式: concurrency:api_key:{apiKeyID}
 	apiKeySlotKeyPrefix      = "concurrency:api_key:"
 	liveAccountSlotKeyPrefix = "concurrency:live:account:"
@@ -129,112 +126,6 @@ var (
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
 		redis.call('ZREMRANGEBYSCORE', liveKey, '-inf', now - 60)
 		return redis.call('ZCARD', key) + redis.call('ZCARD', liveKey)
-	`)
-
-	// acquireBalanceSlotScript keeps the user's weighted active reservations
-	// below the current balance. The group key is maintained alongside the
-	// global user key for precise release and operational visibility. Both keys
-	// are updated atomically in one Redis script, so multiple API instances cannot
-	// oversubscribe the same balance.
-	acquireBalanceSlotScript = redis.NewScript(`
-		redis.replicate_commands()
-		local balanceKey = KEYS[1]
-		local userKey = KEYS[2]
-		local groupKey = KEYS[3]
-		local amountsKey = KEYS[4]
-		local totalKey = KEYS[5]
-		local reserveUSD = tonumber(ARGV[1])
-		local fallbackBalance = tonumber(ARGV[2])
-		local requestID = ARGV[3]
-		local ttl = tonumber(ARGV[4])
-		local now = tonumber(redis.call('TIME')[1])
-		local expireBefore = now - ttl
-
-		local expired = redis.call('ZRANGEBYSCORE', userKey, '-inf', expireBefore)
-		for _, member in ipairs(expired) do
-			local amount = tonumber(redis.call('HGET', amountsKey, member) or 0)
-			if amount > 0 then
-				redis.call('INCRBYFLOAT', totalKey, -amount)
-			end
-			redis.call('HDEL', amountsKey, member)
-		end
-		redis.call('ZREMRANGEBYSCORE', userKey, '-inf', expireBefore)
-		redis.call('ZREMRANGEBYSCORE', groupKey, '-inf', expireBefore)
-
-		-- A retry of the same request refreshes its lease without consuming a
-		-- second slot.
-		if redis.call('ZSCORE', userKey, requestID) ~= false then
-			if redis.call('HEXISTS', amountsKey, requestID) == 0 then
-				redis.call('HSET', amountsKey, requestID, reserveUSD)
-				redis.call('INCRBYFLOAT', totalKey, reserveUSD)
-			end
-			redis.call('ZADD', userKey, now, requestID)
-			redis.call('ZADD', groupKey, now, requestID)
-			redis.call('EXPIRE', userKey, ttl)
-			redis.call('EXPIRE', groupKey, ttl)
-			redis.call('EXPIRE', amountsKey, ttl)
-			redis.call('EXPIRE', totalKey, ttl)
-			return 1
-		end
-
-		local rawBalance = redis.call('GET', balanceKey)
-		local balance = tonumber(rawBalance)
-		if not balance then
-			balance = fallbackBalance
-			if balance then
-				redis.call('SET', balanceKey, tostring(balance), 'EX', 300, 'NX')
-			end
-		elseif fallbackBalance and fallbackBalance < balance then
-			-- Prefer the lower observation when the cache changes between the
-			-- preflight read and this atomic reservation.
-			balance = fallbackBalance
-		end
-		if not balance or balance < reserveUSD then
-			return 0
-		end
-
-		local reserved = tonumber(redis.call('GET', totalKey) or 0)
-		if reserved + reserveUSD > balance + 0.000000001 then
-			return 0
-		end
-
-		redis.call('ZADD', userKey, now, requestID)
-		redis.call('ZADD', groupKey, now, requestID)
-		redis.call('HSET', amountsKey, requestID, reserveUSD)
-		redis.call('INCRBYFLOAT', totalKey, reserveUSD)
-		redis.call('EXPIRE', userKey, ttl)
-		redis.call('EXPIRE', groupKey, ttl)
-		redis.call('EXPIRE', amountsKey, ttl)
-		redis.call('EXPIRE', totalKey, ttl)
-		return 1
-	`)
-
-	releaseBalanceSlotScript = redis.NewScript(`
-		redis.replicate_commands()
-		local userKey = KEYS[1]
-		local groupKey = KEYS[2]
-		local amountsKey = KEYS[3]
-		local totalKey = KEYS[4]
-		local requestID = ARGV[1]
-		local amount = tonumber(redis.call('HGET', amountsKey, requestID) or 0)
-		if amount > 0 then
-			local remaining = tonumber(redis.call('INCRBYFLOAT', totalKey, -amount) or 0)
-			if remaining <= 0.000000001 then
-				redis.call('DEL', totalKey)
-			end
-		end
-		redis.call('HDEL', amountsKey, requestID)
-		redis.call('ZREM', userKey, requestID)
-		redis.call('ZREM', groupKey, requestID)
-		if redis.call('ZCARD', userKey) == 0 then
-			redis.call('DEL', userKey)
-			redis.call('DEL', amountsKey)
-			redis.call('DEL', totalKey)
-		end
-		if redis.call('ZCARD', groupKey) == 0 then
-			redis.call('DEL', groupKey)
-		end
-		return 1
 	`)
 
 	acquireLiveLeaseScript = redis.NewScript(`
@@ -493,24 +384,6 @@ func accountSlotKey(accountID int64) string {
 
 func userSlotKey(userID int64) string {
 	return fmt.Sprintf("%s%d", userSlotKeyPrefix, userID)
-}
-
-func balanceUserSlotKey(userID int64) string {
-	return fmt.Sprintf("%s%d", balanceSlotKeyPrefix, userID)
-}
-
-func balanceUserReservationAmountsKey(userID int64) string {
-	return balanceUserSlotKey(userID) + ":amounts"
-}
-
-func balanceUserReservationTotalKey(userID int64) string {
-	return balanceUserSlotKey(userID) + ":reserved"
-}
-
-func balanceGroupSlotKey(userID, groupID int64, platform string) string {
-	platform = strings.ToLower(strings.TrimSpace(platform))
-	platform = strings.NewReplacer(":", "_", "{", "_", "}", "_").Replace(platform)
-	return fmt.Sprintf("%s%d:group:%d:%s", balanceSlotKeyPrefix, userID, groupID, platform)
 }
 
 func apiKeySlotKey(apiKeyID int64) string {
@@ -854,38 +727,6 @@ func (c *concurrencyCache) ReleaseUserSlot(ctx context.Context, userID int64, re
 	// 释放后按 Redis 中剩余负载修正索引状态。
 	c.refreshUserActiveIndex(ctx, userID)
 	return nil
-}
-
-// AcquireUserBalanceSlot atomically reserves a balance-backed request slot.
-func (c *concurrencyCache) AcquireUserBalanceSlot(ctx context.Context, userID, groupID int64, platform string, reserveUSD, balance float64, requestID string) (bool, error) {
-	if c == nil || c.rdb == nil || userID <= 0 || groupID <= 0 || reserveUSD <= 0 || balance < 0 || strings.TrimSpace(platform) == "" {
-		return false, nil
-	}
-	result, err := acquireBalanceSlotScript.Run(ctx, c.rdb, []string{
-		billingBalanceKey(userID),
-		balanceUserSlotKey(userID),
-		balanceGroupSlotKey(userID, groupID, platform),
-		balanceUserReservationAmountsKey(userID),
-		balanceUserReservationTotalKey(userID),
-	}, reserveUSD, balance, requestID, c.slotTTLSeconds).Int()
-	if err != nil {
-		return false, err
-	}
-	return result == 1, nil
-}
-
-// ReleaseUserBalanceSlot releases both the user's global reservation and its
-// group-scoped mirror. Expiration still reclaims abandoned requests.
-func (c *concurrencyCache) ReleaseUserBalanceSlot(ctx context.Context, userID, groupID int64, platform, requestID string) error {
-	if c == nil || c.rdb == nil || userID <= 0 || groupID <= 0 || requestID == "" {
-		return nil
-	}
-	return releaseBalanceSlotScript.Run(ctx, c.rdb, []string{
-		balanceUserSlotKey(userID),
-		balanceGroupSlotKey(userID, groupID, platform),
-		balanceUserReservationAmountsKey(userID),
-		balanceUserReservationTotalKey(userID),
-	}, requestID).Err()
 }
 
 func (c *concurrencyCache) GetUserConcurrency(ctx context.Context, userID int64) (int, error) {

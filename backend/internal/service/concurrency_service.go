@@ -9,7 +9,6 @@ import (
 	"errors"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -60,14 +59,6 @@ type APIKeyConcurrencyCache interface {
 	TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
 	ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
 	GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error)
-}
-
-// BalanceConcurrencyCache reserves short-lived, billable request slots.
-// It is intentionally a separate optional interface so existing test doubles
-// and alternative cache implementations keep working without a breaking change.
-type BalanceConcurrencyCache interface {
-	AcquireUserBalanceSlot(ctx context.Context, userID, groupID int64, platform string, reserveUSD, balance float64, requestID string) (bool, error)
-	ReleaseUserBalanceSlot(ctx context.Context, userID, groupID int64, platform, requestID string) error
 }
 
 // OpenAIWSIngressLeaseCache owns the short-lived distributed lease used to
@@ -234,29 +225,7 @@ const (
 	maxAccountLoadBatchCacheEntries = 256
 	apiKeyConcurrencyFetchTimeout   = 3 * time.Second
 	apiKeySlotTrackTimeout          = 2 * time.Second
-	balanceSlotOperationTimeout     = 2 * time.Second
-	balanceSlotReleaseTimeout       = 5 * time.Second
 )
-
-const (
-	// Anthropic requests are intentionally given a larger safety reserve because
-	// their typical completion cost is materially higher than other groups.
-	AnthropicBalanceConcurrencyReserveUSD = 1.0
-	// OpenAI/Grok (and future non-Anthropic platforms) reserve a smaller fixed
-	// amount per active request. The reservation is still checked atomically
-	// against the user's current balance before the request is admitted.
-	DefaultBalanceConcurrencyReserveUSD = 0.05
-)
-
-// BalanceConcurrencyReserveUSD returns the amount of balance reserved by one
-// active request for a platform. Unknown/future platforms use the conservative
-// low-cost default so they remain protected without requiring a code change.
-func BalanceConcurrencyReserveUSD(platform string) float64 {
-	if strings.EqualFold(strings.TrimSpace(platform), PlatformAnthropic) {
-		return AnthropicBalanceConcurrencyReserveUSD
-	}
-	return DefaultBalanceConcurrencyReserveUSD
-}
 
 // ConcurrencyService 管理账号和用户的并发限制。
 type ConcurrencyService struct {
@@ -445,48 +414,6 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 	return &AcquireResult{
 		Acquired:    false,
 		ReleaseFunc: nil,
-	}, nil
-}
-
-// AcquireUserBalanceSlot atomically reserves one balance-backed slot. When the
-// configured cache does not implement the optional interface, it is a no-op to
-// preserve compatibility with in-memory/test caches.
-func (s *ConcurrencyService) AcquireUserBalanceSlot(ctx context.Context, userID, groupID int64, platform string, reserveUSD, balance float64) (*AcquireResult, error) {
-	if balance < 0 {
-		return &AcquireResult{Acquired: false}, nil
-	}
-	if s == nil || s.cache == nil || userID <= 0 || groupID <= 0 || reserveUSD <= 0 {
-		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
-	}
-	cache, ok := s.cache.(BalanceConcurrencyCache)
-	if !ok {
-		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
-	}
-
-	requestID := generateRequestID()
-	baseCtx := context.Background()
-	if ctx != nil {
-		baseCtx = context.WithoutCancel(ctx)
-	}
-	acquireCtx, cancel := context.WithTimeout(baseCtx, balanceSlotOperationTimeout)
-	acquired, err := cache.AcquireUserBalanceSlot(acquireCtx, userID, groupID, platform, reserveUSD, balance, requestID)
-	cancel()
-	if err != nil {
-		return nil, err
-	}
-	if !acquired {
-		return &AcquireResult{Acquired: false}, nil
-	}
-
-	return &AcquireResult{
-		Acquired: true,
-		ReleaseFunc: func() {
-			releaseCtx, releaseCancel := context.WithTimeout(context.Background(), balanceSlotReleaseTimeout)
-			defer releaseCancel()
-			if err := cache.ReleaseUserBalanceSlot(releaseCtx, userID, groupID, platform, requestID); err != nil {
-				logger.LegacyPrintf("service.concurrency", "Warning: failed to release balance slot for user %d (group=%d, platform=%s, req=%s): %v", userID, groupID, platform, requestID, err)
-			}
-		},
 	}, nil
 }
 
