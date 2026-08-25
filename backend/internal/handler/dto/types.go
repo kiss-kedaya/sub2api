@@ -486,11 +486,10 @@ type UsageLog struct {
 	Model     string `json:"model"`
 	// ServiceTier records the OpenAI service tier used for billing, e.g. "priority" / "flex".
 	ServiceTier *string `json:"service_tier,omitempty"`
-	// ReasoningEffort is the effective effort after group policy / model-family remapping.
+	// ReasoningEffort is the client-requested effort (mapping-hidden, like Model).
 	// OpenAI: "low"/"medium"/"high"/"xhigh"; Claude: "low"/"medium"/"high"/"max".
+	// Historical rows without requested_reasoning_effort fall back to the stored effective value.
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
-	// RequestedReasoningEffort is the client-requested effort before mapping.
-	RequestedReasoningEffort *string `json:"requested_reasoning_effort,omitempty"`
 	// InboundEndpoint is the client-facing API endpoint path, e.g. /v1/chat/completions.
 	InboundEndpoint *string `json:"inbound_endpoint,omitempty"`
 	// UpstreamEndpoint is the normalized upstream endpoint path, e.g. /v1/responses.
@@ -565,6 +564,9 @@ type AdminUsageLog struct {
 	// UpstreamModel is the actual model sent to the upstream provider after mapping.
 	// Omitted when no mapping was applied (requested model was used as-is).
 	UpstreamModel *string `json:"upstream_model,omitempty"`
+	// UpstreamReasoningEffort is the effort actually forwarded after group policy /
+	// model-family remapping. Omitted when it matches the client-requested value.
+	UpstreamReasoningEffort *string `json:"upstream_reasoning_effort,omitempty"`
 	// UpstreamResponseModel is the raw model declared by the upstream response.
 	UpstreamResponseModel *string `json:"upstream_response_model,omitempty"`
 	// UpstreamModelMismatch is nil when the upstream did not declare a model.
