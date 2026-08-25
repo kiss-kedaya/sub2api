@@ -122,6 +122,32 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 	embPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(embPricingCtx)
 
+	// 预扣：embeddings 按输入 token 计费，复用文本端点的 token 上限估算生命周期，
+	// 在选号（上游产生费用）之前原子预留余额；结算走 RecordUsage → applyUsageBilling
+	// 的 guard.Finalize 退实际差额，兜底 defer 退款在 worker 交接后自动失效。
+	preauthorizationBody := body
+	if channelMapping.Mapped {
+		preauthorizationBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
+	}
+	balanceGuard, err := preauthorizeTextGatewayRequest(
+		embPricingCtx, h.balancePreauthorizer, h.gatewayService,
+		apiKey, subscription, preauthorizationBody,
+		service.BalancePreauthorizationBillingModel(reqModel, channelMapping),
+		pricingAt, gjson.GetBytes(preauthorizationBody, "service_tier").String(),
+	)
+	if err != nil {
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.errorResponse(c, status, code, message)
+		return
+	}
+	if balanceGuard != nil {
+		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
+
 	for {
 		selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
 			c.Request.Context(),
