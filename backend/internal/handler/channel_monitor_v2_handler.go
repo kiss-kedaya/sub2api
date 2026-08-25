@@ -13,11 +13,12 @@ import (
 )
 
 type ChannelMonitorV2Handler struct {
-	service *service.ChannelMonitorV2Service
+	service       *service.ChannelMonitorV2Service
+	apiKeyService *service.APIKeyService
 }
 
-func NewChannelMonitorV2Handler(svc *service.ChannelMonitorV2Service) *ChannelMonitorV2Handler {
-	return &ChannelMonitorV2Handler{service: svc}
+func NewChannelMonitorV2Handler(svc *service.ChannelMonitorV2Service, apiKeyService *service.APIKeyService) *ChannelMonitorV2Handler {
+	return &ChannelMonitorV2Handler{service: svc, apiKeyService: apiKeyService}
 }
 
 // channelMonitorV2IsAdmin is true when the request already passed admin auth
@@ -68,13 +69,17 @@ func (h *ChannelMonitorV2Handler) Dimensions(c *gin.Context) {
 	if !ok {
 		return
 	}
+	admin := channelMonitorV2IsAdmin(c)
+	if !h.scopeFilter(c, &filter, admin) {
+		return
+	}
 	result, err := h.service.Dimensions(c.Request.Context(), filter)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 	// Admin and user share this handler; only non-admin responses strip volume.
-	if !channelMonitorV2IsAdmin(c) {
+	if !admin {
 		service.RedactChannelMonitorV2Dimensions(result)
 	}
 	response.Success(c, result)
@@ -94,6 +99,9 @@ func (h *ChannelMonitorV2Handler) snapshot(c *gin.Context, admin bool) {
 	if !ok {
 		return
 	}
+	if !h.scopeFilter(c, &filter, admin) {
+		return
+	}
 	result, err := h.service.Snapshot(c.Request.Context(), filter, admin)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -105,6 +113,9 @@ func (h *ChannelMonitorV2Handler) snapshot(c *gin.Context, admin bool) {
 func (h *ChannelMonitorV2Handler) models(c *gin.Context, admin bool) {
 	filter, ok := h.parseFilter(c)
 	if !ok {
+		return
+	}
+	if !h.scopeFilter(c, &filter, admin) {
 		return
 	}
 	result, err := h.service.Models(c.Request.Context(), filter, admin)
@@ -125,6 +136,9 @@ func (h *ChannelMonitorV2Handler) matrix(c *gin.Context, admin bool) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if !h.scopeFilter(c, &filter, admin) {
+		return
+	}
 	result, err := h.service.Matrix(c.Request.Context(), filter, groupBy, admin)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -138,7 +152,11 @@ func (h *ChannelMonitorV2Handler) Errors(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.ErrorsForViewer(c.Request.Context(), filter, channelMonitorV2IsAdmin(c))
+	admin := channelMonitorV2IsAdmin(c)
+	if !h.scopeFilter(c, &filter, admin) {
+		return
+	}
+	result, err := h.service.ErrorsForViewer(c.Request.Context(), filter, admin)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -156,12 +174,44 @@ func (h *ChannelMonitorV2Handler) users(c *gin.Context, admin bool) {
 		response.Error(c, http.StatusUnauthorized, "user not found in context")
 		return
 	}
+	if !h.scopeFilter(c, &filter, admin) {
+		return
+	}
 	result, err := h.service.Users(c.Request.Context(), filter, subject.UserID, admin)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 	response.Success(c, result)
+}
+
+// scopeFilter applies the authenticated user's server-derived group scope to
+// every read endpoint. Administrators retain the complete configured scope;
+// ordinary viewers fail closed when the authorization dependency is absent.
+func (h *ChannelMonitorV2Handler) scopeFilter(c *gin.Context, filter *service.ChannelMonitorV2Filter, admin bool) bool {
+	if admin {
+		return true
+	}
+	if h.apiKeyService == nil {
+		response.Error(c, http.StatusInternalServerError, "channel monitor group authorization unavailable")
+		return false
+	}
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		response.Unauthorized(c, "user not found in context")
+		return false
+	}
+	groups, err := h.apiKeyService.GetAvailableGroups(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return false
+	}
+	filter.RestrictGroups = true
+	filter.AllowedGroupIDs = make([]int64, 0, len(groups))
+	for i := range groups {
+		filter.AllowedGroupIDs = append(filter.AllowedGroupIDs, groups[i].ID)
+	}
+	return true
 }
 
 func (h *ChannelMonitorV2Handler) parseFilter(c *gin.Context) (service.ChannelMonitorV2Filter, bool) {
