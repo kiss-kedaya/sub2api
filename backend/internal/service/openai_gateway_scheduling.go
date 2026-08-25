@@ -1831,26 +1831,37 @@ func normalizeCodexQuotaOverdraftHydratedAccount(ctx context.Context, account *A
 	if account.OverloadUntil != nil && now.Before(*account.OverloadUntil) {
 		return nil, false
 	}
-	if account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt) {
+	clearRateLimit := account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt)
+	if clearRateLimit && (!codexQuotaOverdraftAccountHasQuotaEvidence(account, now) ||
+		!codexQuotaOverdraftSchedulingAllowed(account, now)) {
 		return nil, false
 	}
+	clearThresholdPause := account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil)
 	if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
 		if !IsAccountSchedulingThresholdReason(account.TempUnschedulableReason) ||
 			!codexQuotaOverdraftSchedulingAllowed(account, now) {
 			return nil, false
 		}
-		clone := *account
-		clone.TempUnschedulableUntil = nil
-		clone.TempUnschedulableReason = ""
-		if !clone.IsSchedulable() {
-			return nil, false
-		}
-		return &clone, true
 	}
-	if !account.IsSchedulable() {
+	if !clearRateLimit && !clearThresholdPause && !account.IsSchedulable() {
 		return nil, false
 	}
-	return account, true
+	if !clearRateLimit && !clearThresholdPause {
+		return account, true
+	}
+	clone := *account
+	if clearRateLimit {
+		clone.RateLimitedAt = nil
+		clone.RateLimitResetAt = nil
+	}
+	if clearThresholdPause {
+		clone.TempUnschedulableUntil = nil
+		clone.TempUnschedulableReason = ""
+	}
+	if !clone.IsSchedulable() {
+		return nil, false
+	}
+	return &clone, true
 }
 
 func (s *OpenAIGatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan) (*AccountSelectionResult, error) {

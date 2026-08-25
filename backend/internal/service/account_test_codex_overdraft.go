@@ -13,10 +13,14 @@ func (s *AccountTestService) SetCodexQuotaOverdraftCoordinator(coordinator *Code
 }
 
 func (s *AccountTestService) prepareCodexQuotaOverdraftTestRequest(ctx context.Context, account *Account, payload []byte) (context.Context, []byte, bool) {
-	if !s.codexQuotaOverdraftTestEnabled(account) || !codexQuotaOverdraftInjectionEligible(account, time.Now().UTC()) {
+	enabled, businessInjection := s.codexQuotaOverdraftTestRuntime(ctx)
+	if !enabled || !isCodexQuotaOverdraftAccount(account) {
 		return ctx, payload, false
 	}
-	ctx = WithCodexQuotaOverdraftScheduling(ctx)
+	ctx = WithCodexQuotaOverdraftSchedulingSnapshot(ctx, enabled, businessInjection)
+	if !businessInjection || !codexQuotaOverdraftInjectionEligible(account, time.Now().UTC()) {
+		return ctx, payload, false
+	}
 	updated, changed, err := injectCodexQuotaOverdraft(payload)
 	if err != nil || !changed {
 		return ctx, payload, false
@@ -26,11 +30,14 @@ func (s *AccountTestService) prepareCodexQuotaOverdraftTestRequest(ctx context.C
 }
 
 func (s *AccountTestService) handleCodexQuotaOverdraftTest429(ctx context.Context, account *Account, headers http.Header, body []byte, preferredModel string) bool {
-	return s.codexQuotaOverdraft != nil && s.codexQuotaOverdraftTestEnabled(account) && s.codexQuotaOverdraft.HandleQuota429(ctx, account, headers, body, preferredModel)
+	enabled, _ := s.codexQuotaOverdraftTestRuntime(ctx)
+	return s.codexQuotaOverdraft != nil && enabled && isCodexQuotaOverdraftAccount(account) &&
+		s.codexQuotaOverdraft.HandleQuota429(ctx, account, headers, body, preferredModel)
 }
 
-func (s *AccountTestService) observeCodexQuotaOverdraftTestResult(account *Account, preferredModel string, injected bool) {
-	if s.codexQuotaOverdraft == nil || !s.codexQuotaOverdraftTestEnabled(account) {
+func (s *AccountTestService) observeCodexQuotaOverdraftTestResult(ctx context.Context, account *Account, preferredModel string, injected bool) {
+	enabled, _ := s.codexQuotaOverdraftTestRuntime(ctx)
+	if s.codexQuotaOverdraft == nil || !enabled || !isCodexQuotaOverdraftAccount(account) {
 		return
 	}
 	if injected {
@@ -41,5 +48,17 @@ func (s *AccountTestService) observeCodexQuotaOverdraftTestResult(account *Accou
 }
 
 func (s *AccountTestService) codexQuotaOverdraftTestEnabled(account *Account) bool {
-	return s != nil && CodexQuotaOverdraftEnabled() && CodexQuotaOverdraftBusinessInjectionEnabled() && isCodexQuotaOverdraftAccount(account)
+	enabled, _ := s.codexQuotaOverdraftTestRuntime(context.Background())
+	return enabled && isCodexQuotaOverdraftAccount(account)
+}
+
+func (s *AccountTestService) codexQuotaOverdraftTestRuntime(ctx context.Context) (bool, bool) {
+	if s == nil {
+		return false, false
+	}
+	if s.settingService != nil {
+		runtime := s.settingService.GetCodexQuotaOverdraftRuntime(ctx)
+		return runtime.Enabled, runtime.BusinessInjectionEnabled
+	}
+	return CodexQuotaOverdraftEnabled(), CodexQuotaOverdraftBusinessInjectionEnabled()
 }

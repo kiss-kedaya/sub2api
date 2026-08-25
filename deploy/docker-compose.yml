@@ -16,7 +16,7 @@ services:
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.190}
+    image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.219}
     container_name: sub2api
     restart: unless-stopped
     stop_grace_period: 35s
@@ -206,9 +206,9 @@ services:
       - GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_WINDOW_SECONDS=${GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_WINDOW_SECONDS:-60}
       - GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_TTL_SECONDS=${GATEWAY_OPENAI_PROXY_STREAM_CIRCUIT_TTL_SECONDS:-600}
       - GATEWAY_MAX_BODY_SIZE=${GATEWAY_MAX_BODY_SIZE:-268435456}
-      - GATEWAY_MAX_CONNS_PER_HOST=${GATEWAY_MAX_CONNS_PER_HOST:-2048}
-      - GATEWAY_MAX_IDLE_CONNS=${GATEWAY_MAX_IDLE_CONNS:-8192}
-      - GATEWAY_MAX_IDLE_CONNS_PER_HOST=${GATEWAY_MAX_IDLE_CONNS_PER_HOST:-4096}
+      - GATEWAY_MAX_CONNS_PER_HOST=${GATEWAY_MAX_CONNS_PER_HOST:-1024}
+      - GATEWAY_MAX_IDLE_CONNS=${GATEWAY_MAX_IDLE_CONNS:-2560}
+      - GATEWAY_MAX_IDLE_CONNS_PER_HOST=${GATEWAY_MAX_IDLE_CONNS_PER_HOST:-120}
       # Distributed WebSocket ingress lease. Keep a finite per-key ceiling
       # while allowing a single tenant to use a large connection fan-out.
       - GATEWAY_OPENAI_WS_MAX_INGRESS_CONNECTIONS_PER_API_KEY=${GATEWAY_OPENAI_WS_MAX_INGRESS_CONNECTIONS_PER_API_KEY:-2048}

@@ -284,6 +284,36 @@ func TestRateLimitService_RecoverAccountAfterSuccessfulTest_ClearErrorFailed(t *
 	require.Equal(t, 0, repo.clearRateLimitCalls)
 }
 
+func TestRateLimitService_RecoverAccountAfterSuccessfulTest_PreservesActiveCodexOverdraftPause(t *testing.T) {
+	now := time.Now().UTC()
+	future := now.Add(time.Hour)
+	repo := &rateLimitClearRepoStub{
+		getByIDAccount: &Account{
+			ID:                     43,
+			Platform:               PlatformOpenAI,
+			Type:                   AccountTypeOAuth,
+			Status:                 StatusActive,
+			RateLimitedAt:          &now,
+			RateLimitResetAt:       &future,
+			TempUnschedulableUntil: &future,
+			Extra: map[string]any{
+				CodexQuotaOverdraftProbeExtraKey: &CodexQuotaOverdraftProbeState{
+					Status:    codexQuotaOverdraftProbeFailed,
+					CycleKey:  "7d:test",
+					RecoverAt: &future,
+				},
+			},
+		},
+	}
+	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+
+	result, err := svc.RecoverAccountAfterSuccessfulTest(context.Background(), 43)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.ClearedRateLimit)
+	require.Zero(t, repo.clearRateLimitCalls)
+}
+
 func TestRateLimitService_RecoverAccountState_InvalidatesOAuthTokenOnErrorRecovery(t *testing.T) {
 	repo := &rateLimitClearRepoStub{
 		getByIDAccount: &Account{

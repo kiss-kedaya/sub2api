@@ -76,6 +76,11 @@ func (s *OpenAIGatewayService) listCodexQuotaOverdraftSchedulableAccounts(
 	if err != nil {
 		return nil, true, fmt.Errorf("query overdraft accounts failed: %w", err)
 	}
+	// The repository predicate keeps ordinary future 429s out. This second
+	// defensive pass handles legacy/string snapshots and keeps the exception
+	// narrow: only accounts with a server-observed >=95% Codex window may bypass
+	// a future rate-limit timestamp.
+	accounts = filterCodexQuotaOverdraftRateLimitedAccounts(accounts, now)
 	accounts = normalizeCodexQuotaOverdraftAccountsForScheduling(ctx, accounts)
 	accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
 	markCodexQuotaOverdraftCandidates(ctx, accounts)
@@ -86,6 +91,48 @@ func (s *OpenAIGatewayService) listCodexQuotaOverdraftSchedulableAccounts(
 		s.codexQuotaOverdraftCandidateCache.Store(cacheKey, codexQuotaOverdraftCandidateCacheEntry{accounts: append([]Account(nil), accounts...), updatedAt: now})
 	}
 	return accounts, true, nil
+}
+
+func filterCodexQuotaOverdraftRateLimitedAccounts(accounts []Account, now time.Time) []Account {
+	if len(accounts) == 0 {
+		return accounts
+	}
+	filtered := make([]Account, 0, len(accounts))
+	for i := range accounts {
+		account := &accounts[i]
+		if account.RateLimitResetAt != nil && account.RateLimitResetAt.After(now) &&
+			!codexQuotaOverdraftAccountHasQuotaEvidence(account, now) {
+			continue
+		}
+		filtered = append(filtered, *account)
+	}
+	return filtered
+}
+
+// codexQuotaOverdraftAccountHasQuotaEvidence is deliberately stricter than
+// codexQuotaOverdraftSchedulingAllowed. The latter treats an account with no
+// exhausted signal as harmless for normal scheduling; a future rate-limit
+// bypass must require an explicit, server-observed 5h/7d quota snapshot.
+func codexQuotaOverdraftAccountHasQuotaEvidence(account *Account, now time.Time) bool {
+	if !isCodexQuotaOverdraftAccount(account) {
+		return false
+	}
+	for _, window := range []struct {
+		usedKey string
+		name    string
+	}{
+		{usedKey: "codex_5h_used_percent", name: "5h"},
+		{usedKey: "codex_7d_used_percent", name: "7d"},
+	} {
+		used, valid := codexQuotaOverdraftUsedPercent(account.Extra, window.usedKey)
+		if !valid || used < codexQuotaOverdraftPrearmPercent {
+			continue
+		}
+		if resetAt := codexQuotaOverdraftWindowResetAt(account.Extra, window.name, now); resetAt != nil && resetAt.After(now) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *OpenAIGatewayService) cleanupCodexQuotaOverdraftCandidateCache(now time.Time) {
