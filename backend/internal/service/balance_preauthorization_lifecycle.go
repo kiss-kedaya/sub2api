@@ -106,10 +106,42 @@ func NewBalancePreauthorizationService(
 	return service
 }
 
+// PreauthorizationEstimateKind selects how estimateHold prices a request.
+// The token upper-bound path is the historical default for chat/text traffic;
+// the per-request path prices count/size/duration-metered endpoints (images,
+// video, standalone search) directly through the unified cost engine.
+type PreauthorizationEstimateKind uint8
+
+const (
+	// PreauthorizationEstimateTokenUpperBound treats BillableInputBytes as a
+	// conservative token upper bound and holds the largest of the input,
+	// cache-read, and cache-creation pricing scenarios plus an output window.
+	PreauthorizationEstimateTokenUpperBound PreauthorizationEstimateKind = iota
+	// PreauthorizationEstimatePerRequest prices the request once from explicit
+	// per-request billing units (image count, size tier, video seconds) using
+	// the same BillingModeImage/Video/PerRequest path as post-usage settlement.
+	PreauthorizationEstimatePerRequest
+)
+
+// PerRequestPreauthorizationEstimate carries the already-parsed billing units
+// for a count/size/duration-metered endpoint. All fields mirror CostInput so
+// the reserved hold is priced with the exact policy used at settlement.
+type PerRequestPreauthorizationEstimate struct {
+	// RequestCount is the number of billable units (e.g. images requested).
+	RequestCount int
+	// UsageUnits is a continuous billable quantity (e.g. total video seconds).
+	// When positive it takes precedence over RequestCount in the cost engine.
+	UsageUnits float64
+	// SizeTier is the per-request size label ("1K"/"2K"/"4K"/"HD" ...).
+	SizeTier string
+}
+
 // BalancePreauthorizationRequest carries the exact pricing context frozen for
-// the request. Tokens in CostInput are ignored: the service prices the same
-// conservative byte upper bound as input, cache-read, and cache-creation and
-// holds the largest result.
+// the request. For the token upper-bound estimate kind, Tokens in CostInput are
+// ignored: the service prices the same conservative byte upper bound as input,
+// cache-read, and cache-creation and holds the largest result. For the
+// per-request estimate kind, PerRequestEstimate supplies the billing units and
+// the output window is unused.
 type BalancePreauthorizationRequest struct {
 	RequestID                 string
 	APIKeyID                  int64
@@ -119,6 +151,8 @@ type BalancePreauthorizationRequest struct {
 	BillableInputBytes        int
 	InitialOutputWindowTokens int
 	CostInput                 CostInput
+	EstimateKind              PreauthorizationEstimateKind
+	PerRequestEstimate        PerRequestPreauthorizationEstimate
 }
 
 // RequiresPreauthorization lets handlers avoid pricing and hashing work for
@@ -232,7 +266,26 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	return &BalancePreauthorizationGuard{core: core, ownerToken: 1}, nil
 }
 
+// estimateHold dispatches to the pricing strategy named by the request. Both
+// strategies resolve pricing before any billing-state mutation and fail closed
+// (returning an error) rather than emitting a zero hold for an unknown model.
 func (s *BalancePreauthorizationService) estimateHold(
+	ctx context.Context,
+	request BalancePreauthorizationRequest,
+) (float64, int, error) {
+	switch request.EstimateKind {
+	case PreauthorizationEstimatePerRequest:
+		return s.estimatePerRequestHold(ctx, request)
+	default:
+		return s.estimateTokenUpperBoundHold(ctx, request)
+	}
+}
+
+// estimateTokenUpperBoundHold prices chat/text traffic. A text token cannot
+// encode fewer than one source byte, so transformed payload bytes are a safe
+// token upper bound; the largest of the input/cache-read/cache-creation
+// scenarios plus a bounded output window is reserved.
+func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,
 ) (float64, int, error) {
@@ -240,17 +293,9 @@ func (s *BalancePreauthorizationService) estimateHold(
 	if outputWindow == 0 {
 		outputWindow = DefaultBalancePreauthorizationOutputWindow
 	}
-	base := request.CostInput
-	base.Ctx = ctx
-	if base.Resolved == nil && base.Resolver != nil {
-		base.Resolved = base.Resolver.Resolve(ctx, PricingInput{
-			Model:   base.Model,
-			GroupID: base.GroupID,
-			Group:   base.Group,
-		})
-		if base.Resolved == nil {
-			return 0, 0, ErrModelPricingUnavailable
-		}
+	base, err := s.resolvedPricingCostInput(ctx, request.CostInput)
+	if err != nil {
+		return 0, 0, err
 	}
 
 	scenarios := [...]UsageTokens{
@@ -277,6 +322,53 @@ func (s *BalancePreauthorizationService) estimateHold(
 		maxCost = math.Max(maxCost, breakdown.ActualCost)
 	}
 	return quantizeBillingHoldUpFromFloat(maxCost), outputWindow, nil
+}
+
+// estimatePerRequestHold prices count/size/duration-metered endpoints once
+// through the unified cost engine's per-request path. The reserved hold is the
+// exact request price; settlement later refunds any positive difference. No
+// output window applies, so the reserved-token field is reported as zero.
+func (s *BalancePreauthorizationService) estimatePerRequestHold(
+	ctx context.Context,
+	request BalancePreauthorizationRequest,
+) (float64, int, error) {
+	base, err := s.resolvedPricingCostInput(ctx, request.CostInput)
+	if err != nil {
+		return 0, 0, err
+	}
+	base.RequestCount = request.PerRequestEstimate.RequestCount
+	base.UsageUnits = request.PerRequestEstimate.UsageUnits
+	base.SizeTier = request.PerRequestEstimate.SizeTier
+
+	breakdown, err := s.costCalculator.CalculateCostUnified(base)
+	if err != nil {
+		return 0, 0, err
+	}
+	if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
+		return 0, 0, ErrInvalidBillingPreauthorizationEstimate
+	}
+	return quantizeBillingHoldUpFromFloat(breakdown.ActualCost), 0, nil
+}
+
+// resolvedPricingCostInput freezes the pricing resolution once so an unknown
+// paid model fails closed before any wallet mutation. A missing resolver is
+// left untouched: CalculateCostUnified falls back to its legacy pricing path.
+func (s *BalancePreauthorizationService) resolvedPricingCostInput(
+	ctx context.Context,
+	base CostInput,
+) (CostInput, error) {
+	base.Ctx = ctx
+	if base.Resolved == nil && base.Resolver != nil {
+		base.Resolved = base.Resolver.Resolve(ctx, PricingInput{
+			Model:   base.Model,
+			GroupID: base.GroupID,
+			Group:   base.Group,
+		})
+		if base.Resolved == nil {
+			return CostInput{}, ErrModelPricingUnavailable
+		}
+	}
+	return base, nil
 }
 
 func (s *BalancePreauthorizationService) compensateAuthorizationFailure(requestID string, apiKeyID, userID int64) {

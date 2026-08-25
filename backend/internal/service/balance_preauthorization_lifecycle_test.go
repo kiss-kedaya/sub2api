@@ -36,6 +36,9 @@ type preauthorizationCostCalculatorStub struct {
 	inputs   []CostInput
 	err      error
 	zero     bool
+	// perUnitPrice, when > 0, switches the stub to per-request pricing:
+	// cost = perUnitPrice * max(UsageUnits, RequestCount) * sizeTierMultiplier.
+	perUnitPrice float64
 }
 
 func (s *preauthorizationCostCalculatorStub) CalculateCostUnified(input CostInput) (*CostBreakdown, error) {
@@ -46,6 +49,24 @@ func (s *preauthorizationCostCalculatorStub) CalculateCostUnified(input CostInpu
 	}
 	if s.zero {
 		return &CostBreakdown{ActualCost: 0}, nil
+	}
+	if s.perUnitPrice > 0 {
+		units := input.UsageUnits
+		if units <= 0 {
+			units = float64(input.RequestCount)
+		}
+		if units <= 0 {
+			units = 1
+		}
+		multiplier := 1.0
+		switch input.SizeTier {
+		case "2K":
+			multiplier = 1.5
+		case "4K":
+			multiplier = 2
+		}
+		cost := s.perUnitPrice * units * multiplier * input.RateMultiplier
+		return &CostBreakdown{ActualCost: cost, BillingMode: string(BillingModeImage)}, nil
 	}
 	cost := 0.003
 	switch {
@@ -364,6 +385,72 @@ func TestBalancePreauthorizationLifecycleHotWalletSkipsPostgreSQLSnapshot(t *tes
 	require.Equal(t, []string{
 		"price", "price", "price", "price", "repo_prepare", "wallet_authorize_existing", "repo_authorized",
 	}, fixture.recorder.snapshot())
+}
+
+// perRequestPreauthorizationRequest builds a count/size-metered request that
+// exercises the PreauthorizationEstimatePerRequest path (e.g. image endpoints).
+func perRequestPreauthorizationRequest(count int, sizeTier string) BalancePreauthorizationRequest {
+	groupID := int64(9)
+	return BalancePreauthorizationRequest{
+		RequestID:                " image-req-1 ",
+		APIKeyID:                 7,
+		UserID:                   42,
+		AuthorizationFingerprint: " auth-fingerprint ",
+		BillingType:              BillingTypeBalance,
+		EstimateKind:             PreauthorizationEstimatePerRequest,
+		PerRequestEstimate: PerRequestPreauthorizationEstimate{
+			RequestCount: count,
+			SizeTier:     sizeTier,
+		},
+		CostInput: CostInput{
+			Model:          "gpt-image-1",
+			GroupID:        &groupID,
+			RateMultiplier: 1.0,
+			PricingAt:      time.Unix(123, 0),
+		},
+	}
+}
+
+// TestBalancePreauthorizationPricesPerRequestEndpointsByParameters proves the
+// per-request estimate reserves the exact request price once (not a token
+// upper-bound), scales with count and size tier, and reports a zero output
+// window. This is the P0-1 fix for image/video/search endpoints.
+func TestBalancePreauthorizationPricesPerRequestEndpointsByParameters(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	fixture.calculator.perUnitPrice = 0.04
+
+	guard, err := fixture.service.Preauthorize(context.Background(), perRequestPreauthorizationRequest(3, "2K"))
+	require.NoError(t, err)
+	require.NotNil(t, guard)
+
+	// One pricing call only (no 4-scenario token upper bound), priced as
+	// 0.04 * 3 images * 1.5 (2K) * 1.0 multiplier = 0.18.
+	require.Len(t, fixture.calculator.inputs, 1)
+	require.InDelta(t, 0.18, guard.HoldAmount(), 1e-12)
+	require.Equal(t, 0, guard.ReservedOutputTokens())
+	require.Equal(t, 3, fixture.calculator.inputs[0].RequestCount)
+	require.Equal(t, "2K", fixture.calculator.inputs[0].SizeTier)
+	require.Equal(t, 0, fixture.calculator.inputs[0].Tokens.OutputTokens)
+	require.InDelta(t, 0.18, fixture.repo.prepared.HoldAmount, 1e-12)
+
+	// Settlement refunds the positive difference: actual 0.12 < reserved 0.18.
+	require.NoError(t, guard.Finalize(context.Background(), 0.12, "actual-fingerprint"))
+	require.InDelta(t, 0.12, fixture.wallet.lastActual, 1e-12)
+}
+
+// TestBalancePreauthorizationPerRequestFailsClosedOnUnknownPricing proves an
+// unpriced paid model is rejected before any wallet mutation rather than
+// silently reserving zero (the §6.9 silent-zero-charge guard for the
+// per-request path).
+func TestBalancePreauthorizationPerRequestFailsClosedOnUnknownPricing(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	fixture.calculator.err = ErrModelPricingUnavailable
+
+	guard, err := fixture.service.Preauthorize(context.Background(), perRequestPreauthorizationRequest(1, "1K"))
+	require.Error(t, err)
+	require.Nil(t, guard)
+	require.NotContains(t, fixture.recorder.snapshot(), "repo_prepare")
+	require.NotContains(t, fixture.recorder.snapshot(), "wallet_authorize_existing")
 }
 
 func TestBalancePreauthorizationLifecycleColdWalletWithUnsettledLedgerFailsClosed(t *testing.T) {
