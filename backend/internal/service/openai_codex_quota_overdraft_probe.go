@@ -1128,16 +1128,16 @@ func codexQuotaOverdraftSignalFromAccount(account *Account, state *CodexQuotaOve
 	if account == nil || len(account.Extra) == 0 {
 		return codexQuotaOverdraftSignal{}, false
 	}
-	fiveUsed := parseExtraFloat64(account.Extra["codex_5h_used_percent"])
-	sevenUsed := parseExtraFloat64(account.Extra["codex_7d_used_percent"])
+	fiveUsed, fiveValid := codexQuotaOverdraftUsedPercent(account.Extra, "codex_5h_used_percent")
+	sevenUsed, sevenValid := codexQuotaOverdraftUsedPercent(account.Extra, "codex_7d_used_percent")
 	fiveReset := codexQuotaOverdraftWindowResetAt(account.Extra, "5h", now)
 	sevenReset := codexQuotaOverdraftWindowResetAt(account.Extra, "7d", now)
 	if state != nil {
 		fiveReset = stabilizeCodexQuotaOverdraftReset(fiveReset, state.FiveHourRecoverAt, now)
 		sevenReset = stabilizeCodexQuotaOverdraftReset(sevenReset, state.SevenDayRecoverAt, now)
 	}
-	fiveExhausted := fiveUsed >= 100 && fiveReset != nil && fiveReset.After(now)
-	sevenExhausted := sevenUsed >= 100 && sevenReset != nil && sevenReset.After(now)
+	fiveExhausted := fiveValid && fiveUsed >= 100 && fiveReset != nil && fiveReset.After(now)
+	sevenExhausted := sevenValid && sevenUsed >= 100 && sevenReset != nil && sevenReset.After(now)
 	if !fiveExhausted && !sevenExhausted {
 		return codexQuotaOverdraftSignal{}, false
 	}
@@ -1166,14 +1166,14 @@ func clearRecoveredCodexQuotaOverdraftWindows(state *CodexQuotaOverdraftProbeSta
 		return false
 	}
 	changed := false
-	fiveUsed := parseExtraFloat64(account.Extra["codex_5h_used_percent"])
-	sevenUsed := parseExtraFloat64(account.Extra["codex_7d_used_percent"])
-	if state.FiveHourStartedAt != nil && (fiveUsed < 100 || state.FiveHourRecoverAt == nil || !state.FiveHourRecoverAt.After(now)) {
+	fiveUsed, fiveValid := codexQuotaOverdraftUsedPercent(account.Extra, "codex_5h_used_percent")
+	sevenUsed, sevenValid := codexQuotaOverdraftUsedPercent(account.Extra, "codex_7d_used_percent")
+	if state.FiveHourStartedAt != nil && (!fiveValid || fiveUsed < 100 || state.FiveHourRecoverAt == nil || !state.FiveHourRecoverAt.After(now)) {
 		state.FiveHourStartedAt = nil
 		state.FiveHourRecoverAt = nil
 		changed = true
 	}
-	if state.SevenDayStartedAt != nil && (sevenUsed < 100 || state.SevenDayRecoverAt == nil || !state.SevenDayRecoverAt.After(now)) {
+	if state.SevenDayStartedAt != nil && (!sevenValid || sevenUsed < 100 || state.SevenDayRecoverAt == nil || !state.SevenDayRecoverAt.After(now)) {
 		state.SevenDayStartedAt = nil
 		state.SevenDayRecoverAt = nil
 		changed = true
@@ -1240,8 +1240,10 @@ func codexQuotaOverdraftSnapshotPrearmReached(updates map[string]any) bool {
 	if len(updates) == 0 {
 		return false
 	}
-	return parseExtraFloat64(updates["codex_5h_used_percent"]) >= codexQuotaOverdraftPrearmPercent ||
-		parseExtraFloat64(updates["codex_7d_used_percent"]) >= codexQuotaOverdraftPrearmPercent
+	five, fiveValid := codexQuotaOverdraftUsedPercent(updates, "codex_5h_used_percent")
+	seven, sevenValid := codexQuotaOverdraftUsedPercent(updates, "codex_7d_used_percent")
+	return (fiveValid && five >= codexQuotaOverdraftPrearmPercent) ||
+		(sevenValid && seven >= codexQuotaOverdraftPrearmPercent)
 }
 
 func applyCodexQuotaOverdraftUsage(
@@ -1433,11 +1435,14 @@ func codexQuotaOverdraftWindowResetAt(extra map[string]any, window string, now t
 	if seconds <= 0 {
 		return nil
 	}
-	base := now
-	if updatedAt := parseExtraTime(extra["codex_usage_updated_at"]); !updatedAt.IsZero() {
-		base = updatedAt
+	// A relative reset is meaningful only when it is anchored to the server
+	// snapshot timestamp. Without that timestamp, anchoring at the local clock
+	// would let a legacy/malformed record manufacture fresh quota evidence.
+	updatedAt := parseExtraTime(extra["codex_usage_updated_at"])
+	if updatedAt.IsZero() {
+		return nil
 	}
-	resetAt := base.Add(time.Duration(seconds * float64(time.Second)))
+	resetAt := updatedAt.Add(time.Duration(seconds * float64(time.Second)))
 	return &resetAt
 }
 
