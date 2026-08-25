@@ -93,14 +93,14 @@
         <template #cell-reasoning_effort="{ row }">
           <div v-if="hasReasoningEffortMapping(row)" class="space-y-0.5 text-xs">
             <div class="font-medium text-gray-900 dark:text-white">
-              {{ formatReasoningEffort(row.requested_reasoning_effort) }}
+              {{ formatReasoningEffort(row.reasoning_effort) }}
             </div>
             <div class="text-gray-500 dark:text-gray-400">
-              <span class="mr-0.5">↳</span>{{ formatReasoningEffort(row.reasoning_effort) }}
+              <span class="mr-0.5">↳</span>{{ formatReasoningEffort(row.upstream_reasoning_effort) }}
             </div>
           </div>
           <span v-else class="text-sm text-gray-900 dark:text-white">
-            {{ formatReasoningEffort(row.requested_reasoning_effort || row.reasoning_effort) }}
+            {{ formatReasoningEffort(row.reasoning_effort) }}
           </span>
         </template>
 
@@ -596,8 +596,8 @@ const ipGeoBatchLoading = ref(false)
 const showIpGeoToolbar = computed(() => props.columns.some((col) => col.key === 'ip_address'))
 
 const hasReasoningEffortMapping = (row: AdminUsageLog): boolean => {
-  const requested = row.requested_reasoning_effort?.trim() || ''
-  const forwarded = row.reasoning_effort?.trim() || ''
+  const requested = row.reasoning_effort?.trim() || ''
+  const forwarded = row.upstream_reasoning_effort?.trim() || ''
   return requested !== '' && forwarded !== '' && !reasoningEffortValuesEqual(requested, forwarded)
 }
 

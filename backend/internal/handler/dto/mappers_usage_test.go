@@ -179,7 +179,7 @@ func TestUsageLogFromService_KeepsUserBillingAndIPWithoutAdminCostFields(t *test
 	require.NotContains(t, string(userJSON), "account_cost")
 }
 
-func TestUsageLogFromService_IncludesRequestedReasoningEffort(t *testing.T) {
+func TestUsageLogFromService_UsersSeeRequestedReasoningEffortOnly(t *testing.T) {
 	t.Parallel()
 
 	requested := "max"
@@ -195,13 +195,43 @@ func TestUsageLogFromService_IncludesRequestedReasoningEffort(t *testing.T) {
 	adminDTO := UsageLogFromServiceAdmin(log)
 
 	require.NotNil(t, userDTO.ReasoningEffort)
-	require.Equal(t, forwarded, *userDTO.ReasoningEffort)
-	require.NotNil(t, userDTO.RequestedReasoningEffort)
-	require.Equal(t, requested, *userDTO.RequestedReasoningEffort)
+	require.Equal(t, requested, *userDTO.ReasoningEffort)
 	require.NotNil(t, adminDTO.ReasoningEffort)
-	require.Equal(t, forwarded, *adminDTO.ReasoningEffort)
-	require.NotNil(t, adminDTO.RequestedReasoningEffort)
-	require.Equal(t, requested, *adminDTO.RequestedReasoningEffort)
+	require.Equal(t, requested, *adminDTO.ReasoningEffort)
+	require.NotNil(t, adminDTO.UpstreamReasoningEffort)
+	require.Equal(t, forwarded, *adminDTO.UpstreamReasoningEffort)
+
+	userJSON, err := json.Marshal(userDTO)
+	require.NoError(t, err)
+	require.Contains(t, string(userJSON), `"reasoning_effort":"max"`)
+	require.NotContains(t, string(userJSON), "upstream_reasoning_effort")
+	require.NotContains(t, string(userJSON), "requested_reasoning_effort")
+
+	adminJSON, err := json.Marshal(adminDTO)
+	require.NoError(t, err)
+	require.Contains(t, string(adminJSON), `"reasoning_effort":"max"`)
+	require.Contains(t, string(adminJSON), `"upstream_reasoning_effort":"xhigh"`)
+}
+
+func TestUsageLogFromService_OmitsUpstreamReasoningEffortWhenUnmapped(t *testing.T) {
+	t.Parallel()
+
+	effort := "high"
+	log := &service.UsageLog{
+		RequestID:                "req_effort_same",
+		Model:                    "gpt-5.4",
+		ReasoningEffort:          &effort,
+		RequestedReasoningEffort: &effort,
+	}
+
+	adminDTO := UsageLogFromServiceAdmin(log)
+	require.NotNil(t, adminDTO.ReasoningEffort)
+	require.Equal(t, effort, *adminDTO.ReasoningEffort)
+	require.Nil(t, adminDTO.UpstreamReasoningEffort)
+
+	adminJSON, err := json.Marshal(adminDTO)
+	require.NoError(t, err)
+	require.NotContains(t, string(adminJSON), "upstream_reasoning_effort")
 }
 
 func TestUsageLogFromService_FallsBackToLegacyModelWhenRequestedModelMissing(t *testing.T) {

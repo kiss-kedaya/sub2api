@@ -263,8 +263,8 @@ describe('admin UsageTable tooltip', () => {
         data: [{
           request_id: 'req-admin-effort-1',
           model: 'gpt-5.4',
-          requested_reasoning_effort: 'max',
-          reasoning_effort: 'xhigh',
+          reasoning_effort: 'max',
+          upstream_reasoning_effort: 'xhigh',
         }],
         loading: false,
         columns: [],
@@ -291,7 +291,6 @@ describe('admin UsageTable tooltip', () => {
         data: [{
           request_id: 'req-admin-effort-2',
           model: 'gpt-5.6-sol',
-          requested_reasoning_effort: 'max',
           reasoning_effort: 'max',
         }],
         loading: false,
@@ -310,6 +309,32 @@ describe('admin UsageTable tooltip', () => {
     const text = wrapper.text()
     expect(text).toContain('Max')
     expect(text).not.toContain('↳')
+  })
+
+  it('hides mapped reasoning effort for user rows that only have the requested value', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          request_id: 'req-user-effort-1',
+          model: 'gpt-5.4',
+          reasoning_effort: 'max',
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('Max')
+    expect(wrapper.text()).not.toContain('XHigh')
+    expect(wrapper.text()).not.toContain('↳')
   })
 
 	it.each([
