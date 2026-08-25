@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -462,6 +463,45 @@ func (r *fakeBatchImageBillingRepo) Apply(_ context.Context, cmd *UsageBillingCo
 	}
 	r.commands = append(r.commands, cmd)
 	return &UsageBillingApplyResult{Applied: true}, nil
+}
+
+func (r *fakeBatchImageBillingRepo) PrepareBalancePreauthorization(_ context.Context, cmd *BalancePreauthorizationCommand) (*BalancePreauthorizationRecord, error) {
+	if cmd == nil {
+		return &BalancePreauthorizationRecord{}, nil
+	}
+	return &BalancePreauthorizationRecord{
+		RequestID:                cmd.RequestID,
+		APIKeyID:                 cmd.APIKeyID,
+		UserID:                   cmd.UserID,
+		AuthorizationFingerprint: cmd.AuthorizationFingerprint,
+		HoldAmount:               cmd.HoldAmount,
+		Status:                   BalanceSettlementPrepared,
+		ExpiresAt:                cmd.ExpiresAt,
+	}, nil
+}
+
+func (r *fakeBatchImageBillingRepo) MarkBalancePreauthorizationAuthorized(context.Context, string, int64) error {
+	return nil
+}
+
+func (r *fakeBatchImageBillingRepo) BeginBalancePreauthorizationFinalization(context.Context, string, int64, float64, string) error {
+	return nil
+}
+
+func (r *fakeBatchImageBillingRepo) CompleteBalancePreauthorizationSettlement(context.Context, string, int64) error {
+	return nil
+}
+
+func (r *fakeBatchImageBillingRepo) BeginBalancePreauthorizationRefund(context.Context, string, int64) error {
+	return nil
+}
+
+func (r *fakeBatchImageBillingRepo) CompleteBalancePreauthorizationRefund(context.Context, string, int64) error {
+	return nil
+}
+
+func (r *fakeBatchImageBillingRepo) ListRecoverableBalancePreauthorizations(context.Context, time.Time, time.Time, int) ([]BalancePreauthorizationRecord, error) {
+	return nil, nil
 }
 
 func (r *fakeBatchImageBillingRepo) ReserveBatchImageBalance(_ context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error) {

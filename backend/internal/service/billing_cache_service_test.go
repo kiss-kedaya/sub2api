@@ -12,6 +12,7 @@ import (
 )
 
 type billingCacheWorkerStub struct {
+	noopLiveBalanceCacheStub
 	balanceUpdates      int64
 	subscriptionUpdates int64
 }
