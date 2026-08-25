@@ -88,6 +88,28 @@ func (o *upstreamResponseModelObserver) ObserveOpenAI(payload []byte, eventType 
 	o.ObserveServiceTier(tier, terminal)
 }
 
+func (o *upstreamResponseModelObserver) ObserveOpenAIFrame(frame openAISSEDataFrame) {
+	if !frame.validJSON {
+		return
+	}
+	model := firstTrimmedGJSONResultString(frame.root, "response.model", "model")
+	terminal := isUpstreamResponseModelTerminalEvent(frame.eventType)
+	o.Observe(model, terminal)
+	// Every payload that declares a service tier also declares a model, so
+	// model-free delta frames skip the extra lookups entirely.
+	if model == "" {
+		return
+	}
+	// Non-terminal Responses API events echo the requested tier rather than the
+	// tier actually used. Only terminal events and untyped payloads (chat
+	// completions chunks, non-streaming bodies) report the processing tier.
+	if !terminal && frame.eventType != "" {
+		return
+	}
+	tier := normalizeObservedOpenAIServiceTier(firstTrimmedGJSONResultString(frame.root, "response.service_tier", "service_tier"))
+	o.ObserveServiceTier(tier, terminal)
+}
+
 func (o *upstreamResponseModelObserver) ObserveAnthropic(payload []byte) {
 	model := firstValidTrimmedGJSONString(payload, "message.model", "model")
 	o.Observe(model, false)
@@ -270,6 +292,19 @@ func firstValidTrimmedGJSONString(payload []byte, paths ...string) string {
 			if !gjson.ValidBytes(payload) {
 				return ""
 			}
+			return text
+		}
+	}
+	return ""
+}
+
+func firstTrimmedGJSONResultString(root gjson.Result, paths ...string) string {
+	for _, path := range paths {
+		value := root.Get(path)
+		if !value.Exists() || value.Type != gjson.String {
+			continue
+		}
+		if text := strings.TrimSpace(value.String()); text != "" {
 			return text
 		}
 	}

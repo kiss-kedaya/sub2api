@@ -41,7 +41,8 @@ func countGrokNativeSearchCallsFromSSEBody(body string) int {
 // payload without cross-event dedup. Prefer countGrokNativeSearchCallsInSSEDataDedup
 // for live streams so item.done + response.completed do not double-bill.
 func countGrokNativeSearchCallsInSSEData(data []byte) int {
-	n, _ := countGrokNativeSearchCallsInSSEDataWithKeys(data)
+	frame := parseOpenAISSEDataFrame(data, "")
+	n, _ := countGrokNativeSearchCallsInSSEFrameWithKeys(frame)
 	return n
 }
 
@@ -52,17 +53,25 @@ func countGrokNativeSearchCallsInSSEData(data []byte) int {
 // item.done + response.completed for the same tool still count once (never fall
 // back to raw multi-event n, which ~2× overbills).
 func countGrokNativeSearchCallsInSSEDataDedup(data []byte, seen map[string]struct{}) int {
-	if seen == nil {
-		return countGrokNativeSearchCallsInSSEData(data)
+	return countGrokNativeSearchCallsInSSEFrameDedup(parseOpenAISSEDataFrame(data, ""), seen)
+}
+
+func countGrokNativeSearchCallsInSSEFrameDedup(frame openAISSEDataFrame, seen map[string]struct{}) int {
+	if !openAISSEFrameMayContainGrokSearch(frame) {
+		return 0
 	}
-	n, keys := countGrokNativeSearchCallsInSSEDataWithKeys(data)
+	if seen == nil {
+		n, _ := countGrokNativeSearchCallsInSSEFrameWithKeys(frame)
+		return n
+	}
+	n, keys := countGrokNativeSearchCallsInSSEFrameWithKeys(frame)
 	if n <= 0 {
 		return 0
 	}
 	// Prefer stable ids; fill gaps with synthetic keys so we never raw-add n.
 	if len(keys) < n {
 		// Rebuild keys for every item so unkeyed items still get a fingerprint.
-		keys = collectGrokNativeSearchCallKeys(data)
+		keys = collectGrokNativeSearchCallKeysFromFrame(frame)
 	}
 	if len(keys) == 0 {
 		// True empty — should not happen when n>0; fail-closed to 0 extra bill.
@@ -70,7 +79,7 @@ func countGrokNativeSearchCallsInSSEDataDedup(data []byte, seen map[string]struc
 	}
 	added := 0
 	local := make(map[string]struct{}, len(keys))
-	isItemDone := strings.TrimSpace(gjson.GetBytes(data, "type").String()) == "response.output_item.done"
+	isItemDone := frame.eventType == "response.output_item.done"
 	for _, k := range keys {
 		if k == "" {
 			continue
@@ -105,14 +114,11 @@ func countGrokNativeSearchCallsInSSEDataDedup(data []byte, seen map[string]struc
 }
 
 func collectGrokNativeSearchCallKeys(data []byte) []string {
-	if len(data) == 0 || !gjson.ValidBytes(data) {
-		return nil
-	}
-	// An empty type means a bare item object without an SSE envelope; anything
-	// else that is not a completion event carries no billable call.
-	switch strings.TrimSpace(gjson.GetBytes(data, "type").String()) {
-	case "response.output_item.done", "response.completed", "response.done", "":
-	default:
+	return collectGrokNativeSearchCallKeysFromFrame(parseOpenAISSEDataFrame(data, ""))
+}
+
+func collectGrokNativeSearchCallKeysFromFrame(frame openAISSEDataFrame) []string {
+	if !openAISSEFrameMayContainGrokSearch(frame) {
 		return nil
 	}
 	var keys []string
@@ -139,32 +145,29 @@ func collectGrokNativeSearchCallKeys(data []byte) []string {
 		}
 		keys = append(keys, key)
 	}
-	if item := gjson.GetBytes(data, "item"); item.Exists() {
+	if item := frame.root.Get("item"); item.Exists() {
 		consider(item)
 	}
-	gjson.GetBytes(data, "response.output").ForEach(func(_, item gjson.Result) bool {
+	frame.root.Get("response.output").ForEach(func(_, item gjson.Result) bool {
 		consider(item)
 		return true
 	})
-	gjson.GetBytes(data, "output").ForEach(func(_, item gjson.Result) bool {
+	frame.root.Get("output").ForEach(func(_, item gjson.Result) bool {
 		consider(item)
 		return true
 	})
-	if len(keys) == 0 && isGrokNativeSearchOutputItem(gjson.ParseBytes(data)) {
-		consider(gjson.ParseBytes(data))
+	if len(keys) == 0 && isGrokNativeSearchOutputItem(frame.root) {
+		consider(frame.root)
 	}
 	return keys
 }
 
 func countGrokNativeSearchCallsInSSEDataWithKeys(data []byte) (int, []string) {
-	if len(data) == 0 || !gjson.ValidBytes(data) {
-		return 0, nil
-	}
-	// Count once on item completion / completed response, not on every delta.
-	// An empty type is a bare item object without an SSE envelope.
-	switch strings.TrimSpace(gjson.GetBytes(data, "type").String()) {
-	case "response.output_item.done", "response.completed", "response.done", "":
-	default:
+	return countGrokNativeSearchCallsInSSEFrameWithKeys(parseOpenAISSEDataFrame(data, ""))
+}
+
+func countGrokNativeSearchCallsInSSEFrameWithKeys(frame openAISSEDataFrame) (int, []string) {
+	if !openAISSEFrameMayContainGrokSearch(frame) {
 		return 0, nil
 	}
 	var keys []string
@@ -184,22 +187,36 @@ func countGrokNativeSearchCallsInSSEDataWithKeys(data []byte) (int, []string) {
 			keys = append(keys, key)
 		}
 	}
-	if item := gjson.GetBytes(data, "item"); item.Exists() {
+	if item := frame.root.Get("item"); item.Exists() {
 		consider(item)
 	}
-	gjson.GetBytes(data, "response.output").ForEach(func(_, item gjson.Result) bool {
+	frame.root.Get("response.output").ForEach(func(_, item gjson.Result) bool {
 		consider(item)
 		return true
 	})
-	gjson.GetBytes(data, "output").ForEach(func(_, item gjson.Result) bool {
+	frame.root.Get("output").ForEach(func(_, item gjson.Result) bool {
 		consider(item)
 		return true
 	})
 	// Bare output item event without nested item key.
-	if n == 0 && isGrokNativeSearchOutputItem(gjson.ParseBytes(data)) {
-		consider(gjson.ParseBytes(data))
+	if n == 0 && isGrokNativeSearchOutputItem(frame.root) {
+		consider(frame.root)
 	}
 	return n, keys
+}
+
+func openAISSEFrameMayContainGrokSearch(frame openAISSEDataFrame) bool {
+	if !frame.validJSON {
+		return false
+	}
+	// Count once on item completion / completed response, not on every delta.
+	// An empty type means a bare item object without an SSE envelope.
+	switch frame.eventType {
+	case "response.output_item.done", "response.completed", "response.done", "":
+		return true
+	default:
+		return false
+	}
 }
 
 func countGrokNativeSearchCallsInOutputArray(output gjson.Result) int {

@@ -1,10 +1,62 @@
 package service
 
 import (
+	"bytes"
 	"strings"
 
 	"github.com/tidwall/gjson"
 )
+
+// openAISSEDataFrame validates one SSE data payload and caches the effective
+// event type plus a reusable gjson root. Hot-path consumers must use this
+// metadata instead of independently validating and rescanning the same frame.
+type openAISSEDataFrame struct {
+	data             []byte
+	trimmed          []byte
+	root             gjson.Result
+	validJSON        bool
+	payloadEventType string
+	eventType        string
+}
+
+func parseOpenAISSEDataFrame(data []byte, fallbackEventType string) openAISSEDataFrame {
+	return newOpenAISSEDataFrame(data, fallbackEventType, false)
+}
+
+// parseTrustedOpenAISSEDataFrame refreshes metadata after a successful sjson /
+// json.Marshal transformation. Those transforms can only return valid JSON, so
+// revalidating their output would reintroduce a second full-frame scan.
+func parseTrustedOpenAISSEDataFrame(data []byte, fallbackEventType string) openAISSEDataFrame {
+	return newOpenAISSEDataFrame(data, fallbackEventType, true)
+}
+
+func newOpenAISSEDataFrame(data []byte, fallbackEventType string, trustedJSON bool) openAISSEDataFrame {
+	trimmed := bytes.TrimSpace(data)
+	frame := openAISSEDataFrame{
+		data:    data,
+		trimmed: trimmed,
+	}
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("[DONE]")) {
+		frame.eventType = strings.TrimSpace(fallbackEventType)
+		return frame
+	}
+
+	// Parse once even for malformed payloads: gjson preserves the historical
+	// best-effort type extraction (for example, a terminal object followed by
+	// trailing bytes), while validJSON keeps structured consumers fail-closed.
+	frame.root = gjson.ParseBytes(trimmed)
+	frame.validJSON = trustedJSON || gjson.ValidBytes(trimmed)
+	frame.payloadEventType = strings.TrimSpace(frame.root.Get("type").String())
+	frame.eventType = frame.payloadEventType
+	if frame.eventType == "" {
+		frame.eventType = strings.TrimSpace(fallbackEventType)
+	}
+	return frame
+}
+
+func (f openAISSEDataFrame) isDone() bool {
+	return bytes.Equal(f.trimmed, []byte("[DONE]"))
+}
 
 type openAISSEDataAccumulator struct {
 	lines []string
