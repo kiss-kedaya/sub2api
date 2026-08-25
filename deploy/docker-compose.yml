@@ -19,6 +19,8 @@ services:
     image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.220}
     container_name: sub2api
     restart: unless-stopped
+    mem_limit: ${SUB2API_MEM_LIMIT:-12g}
+    memswap_limit: ${SUB2API_MEMSWAP_LIMIT:-12g}
     stop_grace_period: 35s
     command: ["${SUB2API_COMMAND:-/app/sub2api}"]
     security_opt:
