@@ -350,6 +350,15 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			LoweredTools:  loweredTools,
 		})
 	}
+	if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
+		liteBody, liteChanged, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
+		if liteErr != nil {
+			return nil, fmt.Errorf("normalize responses Lite payload: %w", liteErr)
+		}
+		if liteChanged {
+			body = liteBody
+		}
+	}
 
 	buildUpstreamRequest := func(requestBody []byte) (*http.Request, error) {
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
@@ -408,7 +417,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if buildErr != nil {
 			return nil, buildErr
 		}
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		if err != nil {
 			if turn == 1 {
 				return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
@@ -514,7 +523,8 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			UpstreamModel:                 mappedModel,
 			UpstreamResponseModel:         responseModelObserver.Model(),
 			UpstreamResponseModelConflict: responseModelObserver.Conflict(),
-			ServiceTier:                   extractOpenAIServiceTierFromBody(body),
+			UpstreamResponseServiceTier:   responseModelObserver.ServiceTier(),
+			ServiceTier:                   resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, extractOpenAIServiceTierFromBody(body)),
 			ReasoningEffort:               ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(body, mappedModel, originalModel), body, mappedModel),
 			Stream:                        reqStream,
 			OpenAIWSMode:                  true,
