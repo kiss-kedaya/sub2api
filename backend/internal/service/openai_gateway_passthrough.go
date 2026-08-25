@@ -391,7 +391,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			if !responsesLiteParallelToolCallsRetryTried &&
 				resp.StatusCode == http.StatusBadRequest &&
 				isOpenAIResponsesLiteParallelToolCallsError(probeBody) {
-				liteBody, changed, liteErr := normalizeOpenAIResponsesLiteParallelToolCalls(body)
+				liteBody, changed, liteErr := normalizeOpenAIResponsesLiteParallelToolCallsPayload(body)
 				if liteErr != nil {
 					return nil, liteErr
 				}

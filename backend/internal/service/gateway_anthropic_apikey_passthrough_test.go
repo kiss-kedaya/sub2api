@@ -1235,8 +1235,13 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_UpstreamRequest
 	result, err := svc.forwardAnthropicAPIKeyPassthrough(context.Background(), c, account, []byte(`{"model":"x"}`), "x", "x", false, time.Now())
 	require.Nil(t, result)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "upstream request failed")
-	require.Equal(t, http.StatusBadGateway, rec.Code)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.JSONEq(t, string(anthropicTransportFailoverBody), string(failoverErr.ResponseBody))
+	// The gateway must leave response ownership to the handler so it can retry
+	// another account before committing a 502.
+	require.Zero(t, rec.Body.Len())
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_EmptyResponseBody(t *testing.T) {
@@ -1295,21 +1300,29 @@ func TestGatewayService_ParseSSEUsagePassthrough_MessageStartFallbacks(t *testin
 }
 
 func TestGatewayService_ParseSSEUsagePassthrough_MessageDeltaSelectiveOverwrite(t *testing.T) {
-	usage := &ClaudeUsage{
-		InputTokens:           10,
-		CacheCreation5mTokens: 2,
-		CacheCreation1hTokens: 6,
-	}
-	data := `{"type":"message_delta","usage":{"input_tokens":0,"output_tokens":5,"cache_creation_input_tokens":8,"cache_read_input_tokens":0,"cached_tokens":11,"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":0}}}`
+	usage := &ClaudeUsage{}
+	start := `{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":463184,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":463184}}}}`
+	parseSSEUsagePassthrough(start, usage)
+	data := `{"type":"message_delta","usage":{"input_tokens":0,"output_tokens":5,"cache_creation_input_tokens":463184,"cache_read_input_tokens":0,"cached_tokens":11,"cache_creation":{"ephemeral_5m_input_tokens":463184,"ephemeral_1h_input_tokens":0}}}`
 
 	parseSSEUsagePassthrough(data, usage)
 
 	require.Equal(t, 10, usage.InputTokens, "message_delta 中 0 值不应覆盖已有 input_tokens")
 	require.Equal(t, 5, usage.OutputTokens)
-	require.Equal(t, 8, usage.CacheCreationInputTokens)
+	require.Equal(t, 463184, usage.CacheCreationInputTokens)
 	require.Equal(t, 11, usage.CacheReadInputTokens, "cache_read_input_tokens 为空时应回退到 cached_tokens")
+	require.Equal(t, 463184, usage.CacheCreation5mTokens)
+	require.Equal(t, 0, usage.CacheCreation1hTokens, "message_delta 中显式 0 值应清除旧 TTL 明细")
+}
+
+func TestGatewayService_ParseSSEUsagePassthrough_OmittedTTLFieldPreservesPreviousBucket(t *testing.T) {
+	usage := &ClaudeUsage{CacheCreation5mTokens: 2, CacheCreation1hTokens: 6}
+	data := `{"type":"message_delta","usage":{"cache_creation":{"ephemeral_5m_input_tokens":1}}}`
+
+	parseSSEUsagePassthrough(data, usage)
+
 	require.Equal(t, 1, usage.CacheCreation5mTokens)
-	require.Equal(t, 6, usage.CacheCreation1hTokens, "message_delta 中 0 值不应覆盖已有 1h 明细")
+	require.Equal(t, 6, usage.CacheCreation1hTokens, "省略的 TTL 字段不应被当作显式 0")
 }
 
 func TestGatewayService_ParseSSEUsagePassthrough_NoopCases(t *testing.T) {

@@ -59,11 +59,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if legacyIngressChanged {
 		body = legacyIngressBody
 	}
-	responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) ||
-		isOpenAIResponsesLiteWebSocketPayload(body)
+	responsesLite := account.IsOpenAI() && (isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) ||
+		isOpenAIResponsesLiteWebSocketPayload(body))
 	if responsesLite {
-		liteBody, changed, liteErr := normalizeOpenAIResponsesLiteParallelToolCalls(body)
+		liteBody, changed, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
 		if liteErr != nil {
+			param := "tools"
+			var validationErr *openAIResponsesLiteValidationError
+			if errors.As(liteErr, &validationErr) {
+				param = validationErr.param
+			}
+			setOpsUpstreamError(c, http.StatusBadRequest, liteErr.Error(), "")
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+				"type": "invalid_request_error", "message": liteErr.Error(), "param": param,
+			}})
 			return nil, liteErr
 		}
 		if changed {
@@ -1015,7 +1024,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if !responsesLiteParallelToolCallsRetryTried &&
 				resp.StatusCode == http.StatusBadRequest &&
 				isOpenAIResponsesLiteParallelToolCallsError(respBody) {
-				liteBody, changed, liteErr := normalizeOpenAIResponsesLiteParallelToolCalls(body)
+				liteBody, changed, liteErr := normalizeOpenAIResponsesLiteParallelToolCallsPayload(body)
 				if liteErr != nil {
 					return nil, liteErr
 				}
@@ -1316,8 +1325,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// DeepSeek 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
-	if c != nil && (isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)) {
-		normalized, changed, normalizeErr := normalizeOpenAIResponsesLiteParallelToolCalls(body)
+	if c != nil && account.IsOpenAI() && (isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)) {
+		normalized, changed, normalizeErr := normalizeOpenAIResponsesLiteParallelToolCallsPayload(body)
 		if normalizeErr != nil {
 			return nil, normalizeErr
 		}
