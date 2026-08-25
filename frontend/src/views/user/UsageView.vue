@@ -230,7 +230,7 @@ import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import Icon from '@/components/icons/Icon.vue'
 import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
-import { formatReasoningEffortMapping } from '@/utils/format'
+import { formatReasoningEffort } from '@/utils/format'
 import { getBillingModeLabel, getDisplayBillingMode as resolveDisplayBillingMode } from '@/utils/billingMode'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import type {
@@ -658,7 +658,7 @@ const exportToCSV = async () => {
       log.created_at,
       log.api_key?.name || '',
       log.model,
-      formatReasoningEffortMapping(log.requested_reasoning_effort, log.reasoning_effort),
+      formatReasoningEffort(log.reasoning_effort),
       log.inbound_endpoint || '',
       log.ip_address || '',
       getRequestTypeExportText(log),
