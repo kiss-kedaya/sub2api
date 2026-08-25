@@ -27,6 +27,11 @@ services:
     image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.220}
     container_name: sub2api
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "${DOCKER_LOG_MAX_SIZE:-256m}"
+        max-file: "${DOCKER_LOG_MAX_FILE:-4}"
     mem_limit: ${SUB2API_MEM_LIMIT:-12g}
     memswap_limit: ${SUB2API_MEMSWAP_LIMIT:-12g}
     command: ["${SUB2API_COMMAND:-/app/sub2api}"]
@@ -58,6 +63,8 @@ services:
       - SERVER_MODE=${SERVER_MODE:-release}
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}
+      - GOGC=${SUB2API_GOGC:-100}
+      - GOMEMLIMIT=${SUB2API_GOMEMLIMIT:-off}
       - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
 
       # =======================================================================
@@ -69,8 +76,9 @@ services:
       - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - DATABASE_DBNAME=${POSTGRES_DB:-sub2api}
       - DATABASE_SSLMODE=disable
-      - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-50}
-      - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-10}
+      - DATABASE_MIGRATION_MODE=${DATABASE_MIGRATION_MODE:-apply}
+      - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-256}
+      - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-128}
       - DATABASE_CONN_MAX_LIFETIME_MINUTES=${DATABASE_CONN_MAX_LIFETIME_MINUTES:-30}
       - DATABASE_CONN_MAX_IDLE_TIME_MINUTES=${DATABASE_CONN_MAX_IDLE_TIME_MINUTES:-5}
 
@@ -253,6 +261,11 @@ services:
     image: postgres:18-alpine
     container_name: sub2api-postgres
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "${DOCKER_LOG_MAX_SIZE:-256m}"
+        max-file: "${DOCKER_LOG_MAX_FILE:-4}"
     ulimits:
       nofile:
         soft: 100000
@@ -284,6 +297,11 @@ services:
     image: redis:8-alpine
     container_name: sub2api-redis
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "${DOCKER_LOG_MAX_SIZE:-256m}"
+        max-file: "${DOCKER_LOG_MAX_FILE:-4}"
     ulimits:
       nofile:
         soft: 100000

@@ -30,6 +30,37 @@ func TestLoadDefaultModelsListReadMaxBytes(t *testing.T) {
 	require.Equal(t, DefaultModelsListReadMaxBytes, cfg.Gateway.ModelsListReadMaxBytes)
 }
 
+func TestLoadEnablesDuplicateLogSamplingByDefault(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Log.Sampling.Enabled)
+}
+
+func TestLoadDefaultsDatabaseMigrationModeToApply(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("DATABASE_MIGRATION_MODE", "")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, DatabaseMigrationModeApply, cfg.Database.MigrationMode)
+}
+
+func TestLoadNormalizesDatabaseMigrationModeFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("DATABASE_MIGRATION_MODE", " VaLiDaTe ")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, DatabaseMigrationModeValidate, cfg.Database.MigrationMode)
+}
+
+func TestLoadRejectsInvalidDatabaseMigrationMode(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("DATABASE_MIGRATION_MODE", "skip")
+	_, err := Load()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "database.migration_mode")
+}
+
 func TestLoadTimezonePrecedence(t *testing.T) {
 	tests := []struct {
 		name         string
