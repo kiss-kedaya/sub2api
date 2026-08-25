@@ -224,7 +224,6 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	// For Gemini native API, do not send Claude-style ping frames.
 	geminiConcurrency := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone, 0)
-	geminiConcurrency.SetBalanceReader(h.concurrencyHelper.balanceReader)
 
 	// 1) user concurrency slot
 	streamStarted := false
@@ -539,7 +538,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				}
 			}
 			// ForwardNative already wrote the response
-			reqLog.Error("gemini.forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+			logGatewayForwardFailure(reqLog, c, "gemini.forward_failed", err, zap.Int64("account_id", account.ID))
 			return
 		}
 

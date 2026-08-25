@@ -109,6 +109,9 @@ func provideCleanup(
 	emailQueue *service.EmailQueueService,
 	billingCache *service.BillingCacheService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	balancePreauthorizationRecoveryWorker *service.BalancePreauthorizationRecoveryWorker,
+	usageBalanceSettlementWorker *service.UsageBalanceSettlementWorker,
+	liveBalanceAdjustmentOutboxWorker *service.LiveBalanceAdjustmentOutboxWorker,
 	subscriptionService *service.SubscriptionService,
 	oauth *service.OAuthService,
 	openaiOAuth *service.OpenAIOAuthService,
@@ -301,6 +304,24 @@ func provideCleanup(
 			{"UsageRecordWorkerPool", func() error {
 				if usageRecordWorkerPool != nil {
 					usageRecordWorkerPool.Stop()
+				}
+				return nil
+			}},
+			{"BalancePreauthorizationRecoveryWorker", func() error {
+				if balancePreauthorizationRecoveryWorker != nil {
+					balancePreauthorizationRecoveryWorker.Stop()
+				}
+				return nil
+			}},
+			{"UsageBalanceSettlementWorker", func() error {
+				if usageBalanceSettlementWorker != nil {
+					usageBalanceSettlementWorker.Stop()
+				}
+				return nil
+			}},
+			{"LiveBalanceAdjustmentOutboxWorker", func() error {
+				if liveBalanceAdjustmentOutboxWorker != nil {
+					liveBalanceAdjustmentOutboxWorker.Stop()
 				}
 				return nil
 			}},

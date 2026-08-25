@@ -205,6 +205,35 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	searchCount := 0
 	imageCount := 0
 	var imageOutputSizes []string
+	clientDisconnect := false
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(patchedBody, originalModel)
+	buildForwardResult := func() *OpenAIForwardResult {
+		if usage == nil {
+			usage = &OpenAIUsage{}
+		}
+		result := &OpenAIForwardResult{
+			RequestID:        firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
+			ResponseID:       responseID,
+			Usage:            *usage,
+			Model:            originalModel,
+			UpstreamModel:    upstreamModel,
+			ReasoningEffort:  reasoningEffort,
+			Stream:           reqStream,
+			OpenAIWSMode:     false,
+			ResponseHeaders:  resp.Header.Clone(),
+			Duration:         time.Since(startTime),
+			FirstTokenMs:     firstTokenMs,
+			ClientDisconnect: clientDisconnect,
+		}
+		if searchCount > 0 {
+			result.SearchCount = searchCount
+		}
+		if imageCount > 0 {
+			result.ImageCount = imageCount
+			result.ImageOutputSizes = imageOutputSizes
+		}
+		return result
+	}
 	if reqStream {
 		maxLineSize := defaultMaxLineSize
 		if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
@@ -215,15 +244,18 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			resp.Body = newGrokResponsesClientToolStreamBody(resp.Body, clientToolMapping, maxLineSize)
 		}
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, upstreamModel)
-		if err != nil {
-			return nil, err
+		if streamResult != nil {
+			usage = streamResult.usage
+			firstTokenMs = streamResult.firstTokenMs
+			responseID = strings.TrimSpace(streamResult.responseID)
+			searchCount = streamResult.searchCount
+			imageCount = streamResult.imageCount
+			imageOutputSizes = streamResult.imageOutputSizes
+			clientDisconnect = streamResult.clientDisconnect
 		}
-		usage = streamResult.usage
-		firstTokenMs = streamResult.firstTokenMs
-		responseID = strings.TrimSpace(streamResult.responseID)
-		searchCount = streamResult.searchCount
-		imageCount = streamResult.imageCount
-		imageOutputSizes = streamResult.imageOutputSizes
+		if err != nil {
+			return preserveOpenAIStreamingResultOnError(buildForwardResult(), err)
+		}
 	} else {
 		nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 		if err != nil {
@@ -236,33 +268,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		imageOutputSizes = nonStreamResult.imageOutputSizes
 	}
 
-	if usage == nil {
-		usage = &OpenAIUsage{}
-	}
-	reasoningEffort := extractOpenAIReasoningEffortFromBody(patchedBody, originalModel)
-	result := &OpenAIForwardResult{
-		RequestID:       firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
-		ResponseID:      responseID,
-		Usage:           *usage,
-		Model:           originalModel,
-		UpstreamModel:   upstreamModel,
-		ReasoningEffort: reasoningEffort,
-		Stream:          reqStream,
-		OpenAIWSMode:    false,
-		ResponseHeaders: resp.Header.Clone(),
-		Duration:        time.Since(startTime),
-		FirstTokenMs:    firstTokenMs,
-	}
-	// Propagate search/image counters from the shared Responses handler — without
-	// this, stream/JSON counting runs but search_price_per_1k / image bills never apply.
-	if searchCount > 0 {
-		result.SearchCount = searchCount
-	}
-	if imageCount > 0 {
-		result.ImageCount = imageCount
-		result.ImageOutputSizes = imageOutputSizes
-	}
-	return result, nil
+	return buildForwardResult(), nil
 }
 
 func isGrokInvalidEncryptedContentResponse(statusCode int, body []byte) bool {

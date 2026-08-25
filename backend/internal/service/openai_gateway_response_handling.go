@@ -34,6 +34,7 @@ type openaiStreamingResult struct {
 	imageOutputSizes         []string
 	searchCount              int
 	nonBillableUpstreamError bool
+	clientDisconnect         bool
 }
 
 type openaiNonStreamingResult struct {
@@ -346,7 +347,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	searchCounter := 0
 	// Dedup search tool calls across SSE events (item.done + response.completed
 	// both list the same call_id — counting both would ~2× the surcharge).
-	streamSearchSeen := make(map[string]struct{})
+	var streamSearchSeen map[string]struct{}
+	if account != nil && account.Platform == PlatformGrok {
+		streamSearchSeen = make(map[string]struct{})
+	}
 	resultWithUsage := func() *openaiStreamingResult {
 		return &openaiStreamingResult{
 			usage:                    usage,
@@ -356,6 +360,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			imageOutputSizes:         imageCounter.Sizes(),
 			searchCount:              searchCounter,
 			nonBillableUpstreamError: nonBillableUpstreamError,
+			clientDisconnect:         clientDisconnected,
 		}
 	}
 	flushPending := func(disconnectMessage string) {
@@ -483,7 +488,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		// Extract data from SSE line (supports both "data: " and "data:" formats)
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
-			eventType := effectiveOpenAISSEEventType(dataBytes, pendingSSEEventType)
+			frame := parseOpenAISSEDataFrame(dataBytes, pendingSSEEventType)
+			eventType := frame.eventType
 			if codexFailureTerminal && sawBareError && !sawResponseFailed &&
 				(eventType == "response.completed" || eventType == "response.done") {
 				// A later successful terminal is authoritative over a pending bare
@@ -499,7 +505,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if codexFailureTerminal && sawBareError && !sawResponseFailed && eventType != "response.failed" {
 				suppressCurrentEvent = true
 			}
-			observer.ObserveOpenAI(dataBytes, eventType)
+			observer.ObserveOpenAIFrame(frame)
 			// 初始上游 data 的 type 只解析一次：原始值保持终止事件的精确匹配，规范化值供后续分支复用。
 			if openAIStreamEventIsTerminalWithType(data, eventType) {
 				sawTerminalEvent = true
@@ -509,7 +515,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				}
 			}
 			if responseID == "" {
-				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
+				responseID = extractOpenAIResponseIDFromSSEFrame(frame)
 			}
 			forceFlushFailedEvent := false
 			if !capacityFailoverSuppressedLogged && account != nil && account.Platform == PlatformOpenAI &&
@@ -605,36 +611,45 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				sawFailedEvent = true
 				terminalFailurePending = !codexFailureTerminal || eventType == "response.failed"
 			}
-			if normalizedData, normalized := normalizeCompletedImageGenerationStatus(dataBytes); normalized {
+			if normalizedData, normalized := normalizeCompletedImageGenerationStatusFrame(frame); normalized {
 				dataBytes = normalizedData
 				data = string(normalizedData)
 				line = "data: " + data
+				frame = parseTrustedOpenAISSEDataFrame(dataBytes, eventType)
 			}
-			imageCounter.AddSSEData(dataBytes)
-			searchCounter += countGrokNativeSearchCallsInSSEDataDedup(dataBytes, streamSearchSeen)
+			if openAISSEFrameMayContainImageOutput(frame) {
+				imageCounter.AddSSEFrame(frame)
+			}
+			if account != nil && account.Platform == PlatformGrok && openAISSEFrameMayContainGrokSearch(frame) {
+				searchCounter += countGrokNativeSearchCallsInSSEFrameDedup(frame, streamSearchSeen)
+			}
 
 			// Correct Codex tool calls if needed (apply_patch -> edit, etc.)
 			if correctedData, corrected := s.toolCorrector.CorrectToolCallsInSSEBytes(dataBytes); corrected {
 				dataBytes = correctedData
 				data = string(correctedData)
 				line = "data: " + data
-				eventType = effectiveOpenAISSEEventType(dataBytes, eventType)
+				frame = parseTrustedOpenAISSEDataFrame(dataBytes, eventType)
+				eventType = frame.eventType
 			}
-			if imageOutput, ok := extractImageGenerationOutputFromSSEData(dataBytes, streamSeenImages); ok {
-				streamImageOutputs = append(streamImageOutputs, imageOutput)
+			if eventType == "response.output_item.done" {
+				if imageOutput, ok := extractImageGenerationOutputFromSSEFrame(frame, streamSeenImages); ok {
+					streamImageOutputs = append(streamImageOutputs, imageOutput)
+				}
+				streamDoneItems.ObserveFrame(frame)
 			}
-			streamDoneItems.Observe(dataBytes)
 			if responsesStreamEventMayContributeToOutput(eventType) {
 				var streamEvent apicompat.ResponsesStreamEvent
 				if err := json.Unmarshal(dataBytes, &streamEvent); err == nil {
 					streamOutputAccumulator.ProcessEvent(&streamEvent)
 				}
 			}
-			if normalizedData, normalized := normalizeResponsesStreamingTerminalOutput(dataBytes, streamOutputAccumulator, streamDoneItems, streamImageOutputs); normalized {
+			if normalizedData, normalized := normalizeResponsesStreamingTerminalFrameOutput(frame, streamOutputAccumulator, streamDoneItems, streamImageOutputs); normalized {
 				dataBytes = normalizedData
 				data = string(normalizedData)
 				line = "data: " + data
-				eventType = effectiveOpenAISSEEventType(dataBytes, eventType)
+				frame = parseTrustedOpenAISSEDataFrame(dataBytes, eventType)
+				eventType = frame.eventType
 			}
 			restoredData, restoreErr := restoreGrokResponsesClientToolPayload(c, dataBytes)
 			if restoreErr != nil {
@@ -646,12 +661,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				streamEarlyErr = fmt.Errorf("restore OpenAI namespace response: %w", restoreErr)
 				return
 			}
-			restoredData = restoreCodexToolNamesFromSSEContext(c, restoredData, eventType)
+			if !bytes.Equal(restoredData, dataBytes) {
+				frame = parseTrustedOpenAISSEDataFrame(restoredData, eventType)
+			}
+			restoredData = restoreCodexToolNamesFromSSEFrame(c, frame)
 			if !bytes.Equal(restoredData, dataBytes) {
 				dataBytes = restoredData
 				data = string(restoredData)
 				line = "data: " + data
-				eventType = effectiveOpenAISSEEventType(dataBytes, eventType)
+				frame = parseTrustedOpenAISSEDataFrame(dataBytes, eventType)
+				eventType = frame.eventType
 			}
 			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(
 				dataBytes,
@@ -661,14 +680,15 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				dataBytes = sanitizedData
 				data = string(sanitizedData)
 				line = "data: " + data
+				frame = parseTrustedOpenAISSEDataFrame(dataBytes, eventType)
 			}
 			// Replace model in response if needed.
 			// Fast path: most events do not contain model field values.
 			if needModelReplace && mappedModel != "" && strings.Contains(line, mappedModel) {
 				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
 			}
-			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
-			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
+			startsClientOutput := forceFlushFailedEvent || openAIStreamFrameStartsClientOutput(frame)
+			startsVisibleOutput := openAIStreamFrameStartsVisibleOutput(frame)
 			if stageFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
 				eventStartsVisibleOutput = eventStartsVisibleOutput || startsVisibleOutput
@@ -686,7 +706,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if account != nil && account.Platform == PlatformOpenAI &&
 				(eventType == "response.completed" || eventType == "response.done") &&
 				!sawFailedEvent && !responsesSemanticOutputSeen && !clientOutputStarted &&
-				openAIResponsesCompletedEventIsEmpty(dataBytes, usage) {
+				openAIResponsesCompletedFrameIsEmpty(frame, usage) {
 				sawTerminalEvent = true
 				streamEarlyErr = newOpenAIResponsesEmptyCompletedFailoverError(c, account, upstreamRequestID)
 				return
@@ -1350,7 +1370,11 @@ func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
 // an earlier event. An empty terminal event after a stream with no semantic
 // output is treated as a silent upstream refusal (issue #5009).
 func openAIResponsesCompletedEventIsEmpty(data []byte, usage *OpenAIUsage) bool {
-	if len(data) == 0 || !gjson.ValidBytes(data) {
+	return openAIResponsesCompletedFrameIsEmpty(parseOpenAISSEDataFrame(data, ""), usage)
+}
+
+func openAIResponsesCompletedFrameIsEmpty(frame openAISSEDataFrame, usage *OpenAIUsage) bool {
+	if !frame.validJSON {
 		return false
 	}
 	if usage != nil && (usage.InputTokens > 0 || usage.OutputTokens > 0 ||
@@ -1358,13 +1382,13 @@ func openAIResponsesCompletedEventIsEmpty(data []byte, usage *OpenAIUsage) bool 
 		usage.CacheCreationInputTokens > 0 || usage.CacheReadInputTokens > 0) {
 		return false
 	}
-	if gjson.GetBytes(data, "usage").Exists() || gjson.GetBytes(data, "response.usage").Exists() {
+	if frame.root.Get("usage").Exists() || frame.root.Get("response.usage").Exists() {
 		return false
 	}
-	if gjson.GetBytes(data, "error").Exists() || gjson.GetBytes(data, "response.error").Exists() {
+	if frame.root.Get("error").Exists() || frame.root.Get("response.error").Exists() {
 		return false
 	}
-	if output := gjson.GetBytes(data, "response.output"); output.Exists() && output.IsArray() && len(output.Array()) > 0 {
+	if output := frame.root.Get("response.output"); output.Exists() && output.IsArray() && len(output.Array()) > 0 {
 		return false
 	}
 	return true
@@ -1387,13 +1411,17 @@ func mergeHostedImageGenToolUsage(imageGen gjson.Result, usage *OpenAIUsage) {
 }
 
 func extractOpenAIResponseIDFromJSONBytes(body []byte) string {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
+	return extractOpenAIResponseIDFromSSEFrame(parseOpenAISSEDataFrame(body, ""))
+}
+
+func extractOpenAIResponseIDFromSSEFrame(frame openAISSEDataFrame) string {
+	if !frame.validJSON {
 		return ""
 	}
-	if id := strings.TrimSpace(gjson.GetBytes(body, "id").String()); id != "" {
+	if id := strings.TrimSpace(frame.root.Get("id").String()); id != "" {
 		return id
 	}
-	return strings.TrimSpace(gjson.GetBytes(body, "response.id").String())
+	return strings.TrimSpace(frame.root.Get("response.id").String())
 }
 
 const openAIHTTPResponseOwnerContextKey = "openai_http_response_owner"
@@ -1947,7 +1975,12 @@ func extractCodexFinalResponse(body string) ([]byte, bool) {
 }
 
 func normalizeCompletedImageGenerationStatus(data []byte) ([]byte, bool) {
-	if len(data) == 0 || !gjson.ValidBytes(data) {
+	return normalizeCompletedImageGenerationStatusFrame(parseOpenAISSEDataFrame(data, ""))
+}
+
+func normalizeCompletedImageGenerationStatusFrame(frame openAISSEDataFrame) ([]byte, bool) {
+	data := frame.data
+	if !frame.validJSON || !openAISSEEventMayNormalizeImageStatus(frame.eventType) {
 		return data, false
 	}
 
@@ -1964,10 +1997,9 @@ func normalizeCompletedImageGenerationStatus(data []byte) ([]byte, bool) {
 		}
 	}
 
-	eventType := strings.TrimSpace(gjson.GetBytes(data, "type").String())
-	switch eventType {
+	switch frame.eventType {
 	case "response.output_item.done":
-		if !shouldNormalize(gjson.GetBytes(data, "item")) {
+		if !shouldNormalize(frame.root.Get("item")) {
 			return data, false
 		}
 		updated, err := sjson.SetBytes(data, "item.status", "completed")
@@ -1976,7 +2008,7 @@ func normalizeCompletedImageGenerationStatus(data []byte) ([]byte, bool) {
 		}
 		return updated, true
 	case "response.completed", "response.done":
-		output := gjson.GetBytes(data, "response.output")
+		output := frame.root.Get("response.output")
 		if !output.Exists() || !output.IsArray() {
 			return data, false
 		}
@@ -2020,17 +2052,18 @@ func newResponsesStreamOutputItems() *responsesStreamOutputItems {
 // raw JSON is kept byte for byte so vendor extensions and future fields survive
 // the rebuild.
 func (r *responsesStreamOutputItems) Observe(data []byte) {
-	if r == nil || len(data) == 0 || !gjson.ValidBytes(data) {
+	r.ObserveFrame(parseOpenAISSEDataFrame(data, ""))
+}
+
+func (r *responsesStreamOutputItems) ObserveFrame(frame openAISSEDataFrame) {
+	if r == nil || !frame.validJSON || frame.eventType != "response.output_item.done" {
 		return
 	}
-	if strings.TrimSpace(gjson.GetBytes(data, "type").String()) != "response.output_item.done" {
-		return
-	}
-	item := gjson.GetBytes(data, "item")
+	item := frame.root.Get("item")
 	if !item.Exists() || !item.IsObject() {
 		return
 	}
-	index := int(gjson.GetBytes(data, "output_index").Int())
+	index := int(frame.root.Get("output_index").Int())
 	r.items[index] = json.RawMessage(append([]byte(nil), item.Raw...))
 }
 
@@ -2068,14 +2101,21 @@ func (r *responsesStreamOutputItems) BuildOutput() ([]byte, bool) {
 }
 
 func normalizeResponsesStreamingTerminalOutput(data []byte, acc *apicompat.BufferedResponseAccumulator, doneItems *responsesStreamOutputItems, imageOutputs []json.RawMessage) ([]byte, bool) {
-	eventType := strings.TrimSpace(gjson.GetBytes(data, "type").String())
-	switch eventType {
+	return normalizeResponsesStreamingTerminalFrameOutput(parseOpenAISSEDataFrame(data, ""), acc, doneItems, imageOutputs)
+}
+
+func normalizeResponsesStreamingTerminalFrameOutput(frame openAISSEDataFrame, acc *apicompat.BufferedResponseAccumulator, doneItems *responsesStreamOutputItems, imageOutputs []json.RawMessage) ([]byte, bool) {
+	data := frame.data
+	if !frame.validJSON {
+		return data, false
+	}
+	switch frame.eventType {
 	case "response.completed", "response.done", "response.incomplete", "response.cancelled", "response.canceled":
 	default:
 		return data, false
 	}
 
-	output := gjson.GetBytes(data, "response.output")
+	output := frame.root.Get("response.output")
 	hasAccumulatedOutput := (acc != nil && acc.HasContent()) || len(imageOutputs) > 0 || doneItems.HasItems()
 	if output.Exists() && output.IsArray() {
 		terminalCount := len(output.Array())
@@ -2312,13 +2352,14 @@ func buildResponsesOutputJSON(acc *apicompat.BufferedResponseAccumulator, imageO
 }
 
 func extractImageGenerationOutputFromSSEData(data []byte, seen map[string]struct{}) (json.RawMessage, bool) {
-	if len(data) == 0 || !gjson.ValidBytes(data) {
+	return extractImageGenerationOutputFromSSEFrame(parseOpenAISSEDataFrame(data, ""), seen)
+}
+
+func extractImageGenerationOutputFromSSEFrame(frame openAISSEDataFrame, seen map[string]struct{}) (json.RawMessage, bool) {
+	if !frame.validJSON || frame.eventType != "response.output_item.done" {
 		return nil, false
 	}
-	if gjson.GetBytes(data, "type").String() != "response.output_item.done" {
-		return nil, false
-	}
-	item := gjson.GetBytes(data, "item")
+	item := frame.root.Get("item")
 	if !item.Exists() || !item.IsObject() || item.Get("type").String() != "image_generation_call" {
 		return nil, false
 	}
