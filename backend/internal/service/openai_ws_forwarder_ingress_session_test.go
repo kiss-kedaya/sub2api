@@ -1364,8 +1364,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_HTTPBridgeModeRe
 	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{
 		"type":"response.create","model":"gpt-5.1","stream":false,
 		"parallel_tool_calls":true,
-		"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},
-		"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]
+		"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"}
 	}`))
 	cancelWrite()
 	require.NoError(t, err)

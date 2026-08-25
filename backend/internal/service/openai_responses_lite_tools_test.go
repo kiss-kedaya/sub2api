@@ -201,25 +201,33 @@ func TestNormalizeOpenAIResponsesLiteTools_ForcesParallelToolCallsFalse(t *testi
 	}
 }
 
-func TestNormalizeOpenAIResponsesLiteTools_RemovesParallelToolCallsWithoutTools(t *testing.T) {
-	for _, value := range []bool{true, false} {
-		reqBody := map[string]any{
-			"reasoning":           map[string]any{"context": "all_turns"},
-			"parallel_tool_calls": value,
-		}
-
-		changed, err := normalizeOpenAIResponsesLiteTools(reqBody)
-
-		require.NoError(t, err)
-		require.True(t, changed)
-		require.NotContains(t, reqBody, "parallel_tool_calls")
+func TestNormalizeOpenAIResponsesLiteTools_PinsParallelToolCallsWithoutTools(t *testing.T) {
+	tests := []struct {
+		name        string
+		parallel    any
+		include     bool
+		wantChanged bool
+	}{
+		{name: "字段缺失", wantChanged: true},
+		{name: "值为 true", parallel: true, include: true, wantChanged: true},
+		{name: "值为 false", parallel: false, include: true, wantChanged: false},
 	}
 
-	reqBody := map[string]any{"reasoning": map[string]any{"context": "all_turns"}}
-	changed, err := normalizeOpenAIResponsesLiteTools(reqBody)
-	require.NoError(t, err)
-	require.False(t, changed)
-	require.NotContains(t, reqBody, "parallel_tool_calls")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reqBody := map[string]any{"reasoning": map[string]any{"context": "all_turns"}}
+			if tt.include {
+				reqBody["parallel_tool_calls"] = tt.parallel
+			}
+
+			changed, err := normalizeOpenAIResponsesLiteTools(reqBody)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantChanged, changed)
+			require.Contains(t, reqBody, "parallel_tool_calls")
+			require.Equal(t, false, reqBody["parallel_tool_calls"])
+		})
+	}
 }
 
 func TestNormalizeOpenAIResponsesLiteTools_RejectsNonBooleanParallelToolCalls(t *testing.T) {
@@ -490,49 +498,70 @@ func TestOpenAIGatewayServiceForward_NormalizesResponsesLiteToolsForOAuth(t *tes
 	}
 }
 
-func TestOpenAIGatewayServiceForward_RemovesParallelToolCallsForToollessResponsesLite(t *testing.T) {
+func TestOpenAIGatewayServiceForward_PinsParallelToolCallsForToollessResponsesLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	for _, passthrough := range []bool{false, true} {
-		name := "managed"
-		if passthrough {
-			name = "passthrough"
-		}
-		t.Run(name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(rec)
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
-			c.Request.Header.Set("User-Agent", "codex_cli_rs/0.144.1")
-			c.Request.Header.Set(responsesLiteHeader, "true")
-			upstream := &httpUpstreamRecorder{resp: &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-				Body: io.NopCloser(strings.NewReader(
-					"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_lite\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n" +
-						"data: [DONE]\n\n",
-				)),
-			}}
-			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
-			account := &Account{
-				ID: 502, Name: "responses-lite-no-tools", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
-				Concurrency: 1, Status: StatusActive, Schedulable: true, RateMultiplier: f64p(1),
-				Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-account"},
-				Extra:       map[string]any{"openai_passthrough": passthrough},
+	accountCases := []struct {
+		name        string
+		accountType string
+		credentials map[string]any
+	}{
+		{name: "oauth", accountType: AccountTypeOAuth, credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-account"}},
+		{name: "apikey", accountType: AccountTypeAPIKey, credentials: map[string]any{"api_key": "sk-test"}},
+	}
+	parallelCases := []struct {
+		name  string
+		field string
+	}{
+		{name: "字段缺失"},
+		{name: "值为 true", field: `,"parallel_tool_calls":true`},
+		{name: "值为 false", field: `,"parallel_tool_calls":false`},
+	}
+
+	for _, accountCase := range accountCases {
+		for _, passthrough := range []bool{false, true} {
+			mode := "managed"
+			if passthrough {
+				mode = "passthrough"
 			}
-			body := []byte(`{
-				"model":"gpt-5.6-terra","stream":true,"instructions":"test",
-				"reasoning":{"effort":"high","context":"current_turn"},
-				"parallel_tool_calls":true,
-				"input":[{"type":"message","role":"user","content":"hello"}]
-			}`)
+			for _, parallelCase := range parallelCases {
+				name := accountCase.name + "/" + mode + "/" + parallelCase.name
+				t.Run(name, func(t *testing.T) {
+					rec := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(rec)
+					c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+					c.Request.Header.Set("User-Agent", "codex_cli_rs/0.144.1")
+					c.Request.Header.Set(responsesLiteHeader, "true")
+					upstream := &httpUpstreamRecorder{resp: &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+						Body: io.NopCloser(strings.NewReader(
+							"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_lite\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n" +
+								"data: [DONE]\n\n",
+						)),
+					}}
+					svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+					account := &Account{
+						ID: 502, Name: "responses-lite-no-tools", Platform: PlatformOpenAI, Type: accountCase.accountType,
+						Concurrency: 1, Status: StatusActive, Schedulable: true, RateMultiplier: f64p(1),
+						Credentials: accountCase.credentials,
+						Extra:       map[string]any{"openai_passthrough": passthrough},
+					}
+					body := []byte(`{
+						"model":"gpt-5.6-terra","stream":true,"instructions":"test",
+						"reasoning":{"effort":"high","context":"current_turn"},
+						"input":[{"type":"message","role":"user","content":"hello"}]` + parallelCase.field + `
+					}`)
 
-			result, err := svc.Forward(context.Background(), c, account, body)
+					result, err := svc.Forward(context.Background(), c, account, body)
 
-			require.NoError(t, err)
-			require.NotNil(t, result)
-			require.Equal(t, "true", upstream.lastReq.Header.Get(responsesLiteHeader))
-			require.False(t, gjson.GetBytes(upstream.lastBody, "parallel_tool_calls").Exists(), string(upstream.lastBody))
-		})
+					require.NoError(t, err)
+					require.NotNil(t, result)
+					require.Equal(t, "true", upstream.lastReq.Header.Get(responsesLiteHeader))
+					require.Equal(t, gjson.False, gjson.GetBytes(upstream.lastBody, "parallel_tool_calls").Type, string(upstream.lastBody))
+				})
+			}
+		}
 	}
 }
 
