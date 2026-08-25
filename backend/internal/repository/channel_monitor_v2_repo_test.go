@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,6 +92,70 @@ func TestChannelMonitorV2WhereRejectsGroupFilterOutsideConfiguredScope(t *testin
 	require.Contains(t, where, "FALSE")
 	require.NotContains(t, where, "m.group_id = ANY")
 	require.Len(t, args, 3)
+}
+
+func TestChannelMonitorV2WhereRestrictsOrdinaryViewerToAllowedConfiguredGroups(t *testing.T) {
+	filter := service.ChannelMonitorV2Filter{
+		Start: time.Unix(1, 0), End: time.Unix(2, 0),
+		GroupIDs: []int64{4, 9}, AllowedGroupIDs: []int64{3, 4}, RestrictGroups: true,
+	}
+	cfg := service.ChannelMonitorV2Config{
+		Platforms: []service.ChannelMonitorV2PlatformConfig{{Platform: "openai", Enabled: true}},
+		GroupIDs:  []int64{3, 4, 9},
+	}
+	where, args := channelMonitorV2Where(filter, cfg, "m")
+	require.Contains(t, where, "m.group_id = ANY($4)")
+	require.Equal(t, pq.Array([]int64{4}), args[3])
+}
+
+func TestChannelMonitorV2WhereRejectsOrdinaryViewerWithNoAllowedGroups(t *testing.T) {
+	filter := service.ChannelMonitorV2Filter{
+		Start: time.Unix(1, 0), End: time.Unix(2, 0),
+		GroupIDs: []int64{9}, RestrictGroups: true,
+	}
+	cfg := service.ChannelMonitorV2Config{
+		Platforms: []service.ChannelMonitorV2PlatformConfig{{Platform: "openai", Enabled: true}},
+		GroupIDs:  []int64{3, 9},
+	}
+	where, _ := channelMonitorV2Where(filter, cfg, "m")
+	require.Contains(t, where, "FALSE")
+	require.NotContains(t, where, "m.group_id = ANY")
+}
+
+func TestChannelMonitorV2CatalogKeepsViewerScopeWhileIgnoringPickerFilters(t *testing.T) {
+	filter := service.ChannelMonitorV2Filter{
+		Platforms: []string{"openai"}, GroupIDs: []int64{9}, Models: []string{"gpt-5"},
+		AllowedGroupIDs: []int64{3}, RestrictGroups: true,
+	}
+	catalog := channelMonitorV2CatalogFilter(filter)
+	require.Empty(t, catalog.Platforms)
+	require.Empty(t, catalog.GroupIDs)
+	require.Empty(t, catalog.Models)
+	require.True(t, catalog.RestrictGroups)
+	require.Equal(t, []int64{3}, catalog.AllowedGroupIDs)
+}
+
+func TestChannelMonitorV2AdminScopeRemainsGlobal(t *testing.T) {
+	filter := service.ChannelMonitorV2Filter{Start: time.Unix(1, 0), End: time.Unix(2, 0), GroupIDs: []int64{9}}
+	cfg := service.ChannelMonitorV2Config{
+		Platforms: []service.ChannelMonitorV2PlatformConfig{{Platform: "openai", Enabled: true}},
+		GroupIDs:  []int64{3, 9},
+	}
+	where, args := channelMonitorV2Where(filter, cfg, "m")
+	require.Contains(t, where, "m.group_id = ANY($4)")
+	require.Equal(t, pq.Array([]int64{9}), args[3])
+}
+
+func TestChannelMonitorV2MatrixDoesNotSeedGroupsForEmptyViewerScope(t *testing.T) {
+	filter := service.ChannelMonitorV2Filter{RestrictGroups: true}
+	cfg := service.ChannelMonitorV2Config{
+		Platforms: []service.ChannelMonitorV2PlatformConfig{{Platform: "openai", Enabled: true}},
+		GroupIDs:  []int64{3, 9},
+	}
+	accs := seedChannelMonitorV2MatrixAccumulators(filter, cfg, service.ChannelMonitorV2GroupByPlatformGroup, map[int64]channelMonitorV2GroupInfo{
+		3: {name: "private"}, 9: {name: "other-private"},
+	})
+	require.Empty(t, accs)
 }
 
 func TestChannelMonitorV2ErrorAggregationCountsFinalUserErrorsOnly(t *testing.T) {
