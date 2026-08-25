@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -195,6 +196,109 @@ func TestBuildCodexModelsManifestForGroupIntersectsDifferentMappedTargetsWithout
 		require.Equal(t, []any{"text"}, models[0]["input_modalities"])
 		require.EqualValues(t, 272_000, models[0]["context_window"])
 	}
+}
+
+// Scenario: temporarily unschedulable mapped accounts still participate in capability intersection.
+func TestBuildCodexModelsManifestForGroupIntersectsUnschedulableMappedAccounts(t *testing.T) {
+	t.Parallel()
+
+	const groupID int64 = 741
+	schedulable := newCodexCatalogMappedAccount(
+		41,
+		"gpt-5.6-sol",
+		"GPT-5.6 Sol",
+		[]string{"low", "medium", "high", "xhigh"},
+		[]string{"text", "image"},
+		1_000_000,
+		true,
+		nil,
+	)
+	unschedulable := newCodexCatalogMappedAccount(
+		42,
+		"glm-5.3",
+		"GLM 5.3",
+		[]string{"low", "medium", "high"},
+		[]string{"text"},
+		272_000,
+		false,
+		map[string]any{"exclusive-model": "exclusive-upstream"},
+	)
+	svc := &GatewayService{accountRepo: splitCodexModelsAccountRepo{
+		schedulable: map[int64][]Account{groupID: {schedulable}},
+		catalog:     map[int64][]Account{groupID: {schedulable, unschedulable}},
+	}}
+
+	body, err := svc.BuildCodexModelsManifestForGroup(
+		context.Background(), &Group{ID: groupID, Platform: PlatformOpenAI}, "", []string{"my-coder"},
+	)
+	require.NoError(t, err)
+	models := decodeCodexManifestModels(t, body)
+	require.Len(t, models, 1)
+	require.Equal(t, "my-coder", models[0]["slug"])
+	require.Equal(t, "my-coder", models[0]["display_name"])
+	require.Equal(t, []string{"low", "medium", "high"}, effortsFromManifestModel(t, models[0]))
+	require.Equal(t, []any{"text"}, models[0]["input_modalities"])
+	require.EqualValues(t, 272_000, models[0]["context_window"])
+}
+
+// Scenario: deleting an account can widen the advertised contract.
+func TestBuildCodexModelsManifestForGroupWidensAfterUnschedulableAccountIsRemoved(t *testing.T) {
+	t.Parallel()
+
+	const groupID int64 = 742
+	remaining := newCodexCatalogMappedAccount(
+		41,
+		"gpt-5.6-sol",
+		"GPT-5.6 Sol",
+		[]string{"low", "medium", "high", "xhigh"},
+		[]string{"text", "image"},
+		1_000_000,
+		true,
+		nil,
+	)
+	svc := &GatewayService{accountRepo: splitCodexModelsAccountRepo{
+		schedulable: map[int64][]Account{groupID: {remaining}},
+		catalog:     map[int64][]Account{groupID: {remaining}},
+	}}
+
+	body, err := svc.BuildCodexModelsManifestForGroup(
+		context.Background(), &Group{ID: groupID, Platform: PlatformOpenAI}, "", []string{"my-coder"},
+	)
+	require.NoError(t, err)
+	models := decodeCodexManifestModels(t, body)
+	require.Len(t, models, 1)
+	require.Equal(t, []any{"text", "image"}, models[0]["input_modalities"])
+	require.EqualValues(t, 1_000_000, models[0]["context_window"])
+}
+
+func TestBuildCodexModelsManifestForGroupFallsBackToSchedulableWhenListByGroupFails(t *testing.T) {
+	t.Parallel()
+
+	const groupID int64 = 743
+	repo := &countingCodexModelsAccountRepo{
+		accounts: []Account{newCodexCatalogMappedAccount(
+			41,
+			"gpt-5.6-sol",
+			"GPT-5.6 Sol",
+			[]string{"low", "medium", "high", "xhigh"},
+			[]string{"text", "image"},
+			1_000_000,
+			true,
+			nil,
+		)},
+		listByGroupErr: errors.New("group listing unavailable"),
+	}
+	svc := &GatewayService{accountRepo: repo}
+
+	body, err := svc.BuildCodexModelsManifestForGroup(
+		context.Background(), &Group{ID: groupID, Platform: PlatformOpenAI}, "", []string{"my-coder"},
+	)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), repo.calls.Load())
+	models := decodeCodexManifestModels(t, body)
+	require.Len(t, models, 1)
+	require.Equal(t, []any{"text", "image"}, models[0]["input_modalities"])
+	require.EqualValues(t, 1_000_000, models[0]["context_window"])
 }
 
 // Scenario: a Composite alias claimed across platforms remains ambiguous and fails closed.
