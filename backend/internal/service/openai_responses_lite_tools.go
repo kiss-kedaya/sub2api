@@ -106,35 +106,11 @@ func ensureOpenAIResponsesLiteParallelToolCalls(reqBody map[string]any, changed 
 			return false, newOpenAIResponsesLiteValidationError("parallel_tool_calls", "responses Lite requires parallel_tool_calls to be a boolean")
 		}
 	}
-	if !openAIResponsesLiteHasTools(reqBody) {
-		if exists {
-			delete(reqBody, "parallel_tool_calls")
-			return true, nil
-		}
-		return changed, nil
-	}
 	if parallel == false {
 		return changed, nil
 	}
 	reqBody["parallel_tool_calls"] = false
 	return true, nil
-}
-
-func openAIResponsesLiteHasTools(reqBody map[string]any) bool {
-	if tools, ok := reqBody["tools"].([]any); ok && len(tools) > 0 {
-		return true
-	}
-	input, _ := reqBody["input"].([]any)
-	for _, rawItem := range input {
-		item, ok := rawItem.(map[string]any)
-		if !ok || strings.TrimSpace(firstNonEmptyString(item["type"])) != "additional_tools" {
-			continue
-		}
-		if tools, ok := item["tools"].([]any); ok && len(tools) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func ensureOpenAIResponsesLiteReasoningContext(reqBody map[string]any) (bool, error) {
