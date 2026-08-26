@@ -4,6 +4,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"log/slog"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
@@ -324,6 +326,12 @@ func (a *Account) IsGeminiCodeAssist() bool {
 	return oauthType == "code_assist"
 }
 
+// IsGeminiGoogleOne reports whether this account uses the legacy consumer
+// Gemini CLI / Code Assist OAuth channel.
+func (a *Account) IsGeminiGoogleOne() bool {
+	return a.Platform == PlatformGemini && a.Type == AccountTypeOAuth && a.GeminiOAuthType() == "google_one"
+}
+
 func (a *Account) CanGetUsage() bool {
 	return a.Type == AccountTypeOAuth
 }
@@ -625,6 +633,9 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 		return nil
 	}
 	if len(rawMapping) == 0 {
+		if a.IsGeminiGoogleOne() {
+			return geminicli.GoogleOneModelMapping()
+		}
 		// Antigravity 平台使用默认映射
 		if a.Platform == domain.PlatformAntigravity {
 			return domain.DefaultAntigravityModelMapping
@@ -659,6 +670,9 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 	}
 
 	// Antigravity 平台使用默认映射
+	if a.IsGeminiGoogleOne() {
+		return geminicli.GoogleOneModelMapping()
+	}
 	if a.Platform == domain.PlatformAntigravity {
 		return domain.DefaultAntigravityModelMapping
 	}
@@ -3120,15 +3134,56 @@ func parseExtraFloat64(value any) float64 {
 }
 
 func parseExtraTime(value any) time.Time {
-	if s, ok := value.(string); ok {
-		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-			return t
+	if value == nil {
+		return time.Time{}
+	}
+	switch typed := value.(type) {
+	case time.Time:
+		return typed
+	case *time.Time:
+		if typed != nil {
+			return *typed
 		}
-		if t, err := time.Parse(time.RFC3339, s); err == nil {
-			return t
+	case json.Number:
+		if parsed, err := strconv.ParseFloat(string(typed), 64); err == nil {
+			return parseUnixExtraTime(parsed)
+		}
+	case float64:
+		return parseUnixExtraTime(typed)
+	case float32:
+		return parseUnixExtraTime(float64(typed))
+	case int:
+		return time.Unix(int64(typed), 0).UTC()
+	case int64:
+		return time.Unix(typed, 0).UTC()
+	case uint64:
+		return time.Unix(int64(typed), 0).UTC()
+	}
+	s := strings.TrimSpace(fmt.Sprint(value))
+	if s == "" || s == "<nil>" {
+		return time.Time{}
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, time.RFC1123, "2006-01-02T15:04:05Z", "2006-01-02T15:04:05.000Z"} {
+		if parsed, err := time.Parse(layout, s); err == nil {
+			return parsed
 		}
 	}
+	if parsed, err := strconv.ParseFloat(s, 64); err == nil {
+		return parseUnixExtraTime(parsed)
+	}
 	return time.Time{}
+}
+
+func parseUnixExtraTime(value float64) time.Time {
+	if value == 0 {
+		return time.Time{}
+	}
+	if value > 1e12 || value < -1e12 {
+		value /= 1000
+	}
+	seconds := int64(value)
+	nanos := int64((value - float64(seconds)) * 1e9)
+	return time.Unix(seconds, nanos).UTC()
 }
 
 // parseExtraInt 从 extra 字段解析 int 值

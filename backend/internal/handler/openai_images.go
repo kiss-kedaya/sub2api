@@ -144,6 +144,29 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	}
 
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
+
+	// 预扣：图片按“张数 × 尺寸档单价”计费，在选号（上游产生费用）之前按请求参数
+	// 精确预留余额；结算走 RecordUsage → applyUsageBilling 的 guard.Finalize 退实际
+	// 差额，兜底 defer 退款在 worker 交接后自动失效。pricingAt 与 Images 结算口径
+	// 一致地使用调用时刻。
+	balanceGuard, err := preauthorizePerRequestGatewayRequest(
+		c.Request.Context(), h.balancePreauthorizer, h.gatewayService,
+		apiKey, subscription, body,
+		service.BalancePreauthorizationBillingModel(routingModel, channelMapping),
+		time.Now(),
+		service.PerRequestPreauthorizationEstimate{
+			RequestCount: parsed.N,
+			SizeTier:     parsed.SizeTier,
+		},
+	)
+	if h.handlePreauthorizationError(c, err, streamStarted) {
+		return
+	}
+	if balanceGuard != nil {
+		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
+
 	requestCtx := service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
 
 	maxAccountSwitches := h.maxAccountSwitches
@@ -357,13 +380,8 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					zap.Int64("account_id", account.ID),
 					zap.Bool("fallback_error_response_written", wroteFallback),
 					zap.Bool("upstream_error_response_already_written", upstreamErrorAlreadyCommunicated),
-					zap.Error(err),
 				}
-				if shouldLogOpenAIForwardFailureAsWarn(c, wroteFallback) {
-					reqLog.Warn("openai.images.forward_failed", fields...)
-					return
-				}
-				reqLog.Error("openai.images.forward_failed", fields...)
+				logGatewayForwardFailureWithWarn(reqLog, c, "openai.images.forward_failed", err, shouldLogOpenAIForwardFailureAsWarn(c, wroteFallback), fields...)
 				return
 			}
 		}

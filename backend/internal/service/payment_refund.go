@@ -313,6 +313,12 @@ func (s *PaymentService) ExecuteRefund(ctx context.Context, p *RefundPlan) (*Ref
 				return nil, fmt.Errorf("deduction: %w", err)
 			}
 			p.BalanceToDeduct = deducted
+			syncCommittedLiveBalanceAdjustment(
+				s.liveBalanceBillingCache(),
+				p.Order.UserID,
+				newLiveBalanceAdjustmentEventID("payment-refund-deduct"),
+				-deducted,
+			)
 		} else {
 			slog.Warn("skipping balance deduction on retry (previous rollback failed)", "orderID", p.OrderID)
 			p.BalanceToDeduct = 0
@@ -504,6 +510,14 @@ func (s *PaymentService) finalizePendingRefundSuccess(ctx context.Context, p *Re
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit refund finalization: %w", err)
+	}
+	if p.DeductionType == payment.DeductionTypeBalance && p.BalanceToDeduct > 0 {
+		syncCommittedLiveBalanceAdjustment(
+			s.liveBalanceBillingCache(),
+			p.Order.UserID,
+			newLiveBalanceAdjustmentEventID("payment-refund-final-deduct"),
+			-p.BalanceToDeduct,
+		)
 	}
 	return result, nil
 }
@@ -700,6 +714,12 @@ func (s *PaymentService) RollbackRefund(ctx context.Context, p *RefundPlan, gErr
 			s.writeAuditLog(ctx, p.OrderID, "REFUND_ROLLBACK_FAILED", "admin", map[string]any{"gatewayError": psErrMsg(gErr), "rollbackError": psErrMsg(err), "balanceDeducted": p.BalanceToDeduct})
 			return false
 		}
+		syncCommittedLiveBalanceAdjustment(
+			s.liveBalanceBillingCache(),
+			p.Order.UserID,
+			newLiveBalanceAdjustmentEventID("payment-refund-rollback"),
+			p.BalanceToDeduct,
+		)
 	}
 	if p.DeductionType == payment.DeductionTypeSubscription && p.SubDaysToDeduct > 0 && p.SubscriptionID > 0 {
 		if _, err := s.subscriptionSvc.ExtendSubscription(ctx, p.SubscriptionID, p.SubDaysToDeduct); err != nil {
@@ -709,6 +729,13 @@ func (s *PaymentService) RollbackRefund(ctx context.Context, p *RefundPlan, gErr
 		}
 	}
 	return true
+}
+
+func (s *PaymentService) liveBalanceBillingCache() *BillingCacheService {
+	if s == nil || s.redeemService == nil {
+		return nil
+	}
+	return s.redeemService.billingCacheService
 }
 
 func (s *PaymentService) restoreStatus(ctx context.Context, p *RefundPlan) {

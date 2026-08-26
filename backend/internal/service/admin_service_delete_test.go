@@ -488,6 +488,7 @@ type subscriptionInvalidateCall struct {
 }
 
 type billingCacheStub struct {
+	noopLiveBalanceCacheStub
 	invalidations chan subscriptionInvalidateCall
 }
 

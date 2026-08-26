@@ -52,6 +52,12 @@ export default {
           priceDescription: 'Pricing notes (Markdown)',
           priceDescriptionHint: 'Rendered at the top of the plaza page. Use it for billing rules, exchange rates, promotions, etc.',
         },
+        pluginManagement: {
+          title: 'Plugin Management',
+          description: 'Controls whether the plugin management entry appears in the admin sidebar. This switch does not control plugin runtime state.',
+          enabled: 'Show Plugin Management',
+          enabledHint: 'Turning this off only hides the sidebar entry; loaded or running plugins are not stopped.',
+        },
         riskControl: {
           title: 'Risk Control',
           description: 'Enable the content moderation menu and gateway audit entry point. Disabled by default.',
@@ -514,6 +520,10 @@ export default {
         openaiCodexVersionAutoSync: 'Auto-sync Codex version',
         openaiCodexVersionAutoSyncHint: 'Fetches the latest stable client version from the official repository every 6 hours, so you never need to upgrade this service just to keep the version current. When disabled, only the version above or the built-in default is used.',
         openaiCodexVersionSyncedValue: 'Currently synced: {version}',
+        codexOverdraftTitle: 'Codex 5h / 7d quota-overdraft detection and scheduling',
+        codexOverdraftDescription: 'Enabled by default. Records quota cycles, runs bounded probes, and automatically releases scheduling blocks after recovery without changing real business requests.',
+        codexOverdraftBusinessInjection: 'CPAProxy-compatible real-request hidden injection',
+        codexOverdraftBusinessInjectionHint: 'High-risk switch: adds a no-op tool pair to real requests, which upstream may count as input tokens. Enable only after accepting the billing and cost impact; off by default.',
         codexHardeningTitle: "Codex Settings",
         codexClientRestrictionTitle: "Codex client restriction",
         codexHardeningDesc:

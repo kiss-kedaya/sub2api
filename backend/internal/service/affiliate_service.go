@@ -8,7 +8,6 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
 var (
@@ -418,6 +417,12 @@ func (s *AffiliateService) TransferAffiliateQuota(ctx context.Context, userID in
 		return 0, 0, err
 	}
 	if transferred > 0 {
+		syncCommittedLiveBalanceAdjustment(
+			s.billingCacheService,
+			userID,
+			newLiveBalanceAdjustmentEventID("affiliate-transfer"),
+			transferred,
+		)
 		s.invalidateAffiliateCaches(ctx, userID)
 	}
 	return transferred, balance, nil
@@ -480,11 +485,6 @@ func maskSegment(s string) string {
 func (s *AffiliateService) invalidateAffiliateCaches(ctx context.Context, userID int64) {
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
-	}
-	if s.billingCacheService != nil {
-		if err := s.billingCacheService.InvalidateUserBalance(ctx, userID); err != nil {
-			logger.LegacyPrintf("service.affiliate", "[Affiliate] Failed to invalidate billing cache for user %d: %v", userID, err)
-		}
 	}
 }
 

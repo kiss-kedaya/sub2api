@@ -90,6 +90,25 @@ describe('API Client', () => {
       expect(config.params).toHaveProperty('timezone')
     })
 
+    it('报表类 GET 请求统一使用 180s 超时预算', async () => {
+      const adapter = vi.fn().mockResolvedValue({
+        status: 200,
+        data: { code: 0, data: {} },
+        headers: {},
+        config: {},
+        statusText: 'OK',
+      })
+      apiClient.defaults.adapter = adapter
+
+      await apiClient.get('/admin/usage/stats')
+      await apiClient.get('/admin/accounts/28659/stats')
+      await apiClient.get('/admin/ops/errors')
+
+      expect(adapter.mock.calls[0][0].timeout).toBe(180000)
+      expect(adapter.mock.calls[1][0].timeout).toBe(180000)
+      expect(adapter.mock.calls[2][0].timeout).toBe(180000)
+    })
+
     it('POST 请求不附加 timezone 参数', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,

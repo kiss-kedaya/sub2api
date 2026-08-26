@@ -8,12 +8,23 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
 
 var ErrUsageBillingRequestIDRequired = errors.New("usage billing request_id is required")
 var ErrUsageBillingRequestConflict = errors.New("usage billing request fingerprint conflict")
+
+const (
+	BalanceSettlementPrepared int16 = iota
+	BalanceSettlementAuthorized
+	BalanceSettlementFinalizationPending
+	BalanceSettlementPending
+	BalanceSettlementApplied
+	BalanceSettlementRefunded
+	BalanceSettlementTerminal
+)
 
 // UsageBillingCommand describes one billable request that must be applied at most once.
 type UsageBillingCommand struct {
@@ -37,11 +48,16 @@ type UsageBillingCommand struct {
 	ImageCount          int
 	MediaType           string
 
-	BalanceCost         float64
-	SubscriptionCost    float64
-	APIKeyQuotaCost     float64
-	APIKeyRateLimitCost float64
-	AccountQuotaCost    float64
+	BalanceCost float64
+	// BalancePreauthorized means this request already reserved spendable balance
+	// in the Redis live wallet. Repository.Apply must only persist the actual
+	// amount as finalization_pending; it must not enqueue the database deduction
+	// until the Redis reservation has been finalized.
+	BalancePreauthorized bool
+	SubscriptionCost     float64
+	APIKeyQuotaCost      float64
+	APIKeyRateLimitCost  float64
+	AccountQuotaCost     float64
 }
 
 func (c *UsageBillingCommand) Normalize() {
@@ -163,11 +179,34 @@ type AccountQuotaState struct {
 }
 
 type UsageBillingApplyResult struct {
-	Applied              bool
-	APIKeyQuotaExhausted bool
-	NewBalance           *float64           // post-deduction balance (nil = no balance deduction)
-	BalanceOverdrafted   bool               // true when the sufficient-balance guard missed and debt was still recorded
-	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
+	Applied                    bool
+	BalanceFinalizationPending bool
+	APIKeyQuotaExhausted       bool
+	NewBalance                 *float64           // post-deduction balance (nil = no balance deduction)
+	BalanceOverdrafted         bool               // true when the sufficient-balance guard missed and debt was still recorded
+	QuotaState                 *AccountQuotaState // post-increment quota state (nil = no quota increment)
+}
+
+type BalancePreauthorizationCommand struct {
+	RequestID                string
+	APIKeyID                 int64
+	UserID                   int64
+	AuthorizationFingerprint string
+	HoldAmount               float64
+	ExpiresAt                time.Time
+}
+
+type BalancePreauthorizationRecord struct {
+	RequestID                string
+	APIKeyID                 int64
+	UserID                   int64
+	RequestFingerprint       string
+	AuthorizationFingerprint string
+	HoldAmount               float64
+	Amount                   float64
+	Status                   int16
+	ExpiresAt                time.Time
+	UpdatedAt                time.Time
 }
 
 // BatchImageBalanceHoldCommand describes an idempotent balance hold operation.
@@ -220,7 +259,48 @@ type BatchImageBalanceHoldResult struct {
 
 type UsageBillingRepository interface {
 	Apply(ctx context.Context, cmd *UsageBillingCommand) (*UsageBillingApplyResult, error)
+	// PrepareBalancePreauthorization is idempotent for the same request,
+	// API key, user, fingerprint, and quantized hold. It returns the existing
+	// state instead of reopening a completed state.
+	PrepareBalancePreauthorization(ctx context.Context, cmd *BalancePreauthorizationCommand) (*BalancePreauthorizationRecord, error)
+	// MarkBalancePreauthorizationAuthorized transitions prepared -> authorized;
+	// repeating an already-authorized transition succeeds without regression.
+	MarkBalancePreauthorizationAuthorized(ctx context.Context, requestID string, apiKeyID int64) error
+	// BeginBalancePreauthorizationFinalization persists the actual charge before
+	// Redis settlement. An identical retry in finalization_pending is a no-op.
+	BeginBalancePreauthorizationFinalization(ctx context.Context, requestID string, apiKeyID int64, amount float64, requestFingerprint string) error
+	// CompleteBalancePreauthorizationSettlement transitions a positive finalized
+	// charge to settlement_pending. Repeating it in pending/applied is a no-op.
+	CompleteBalancePreauthorizationSettlement(ctx context.Context, requestID string, apiKeyID int64) error
+	// BeginBalancePreauthorizationRefund transitions prepared/authorized ->
+	// finalization_pending with zero actual charge. Repeating it in zero-amount
+	// finalization_pending/refunded is a no-op.
+	BeginBalancePreauthorizationRefund(ctx context.Context, requestID string, apiKeyID int64) error
+	// CompleteBalancePreauthorizationRefund accepts only a zero-amount finalized
+	// record. Repeating it after refunded is a no-op.
+	CompleteBalancePreauthorizationRefund(ctx context.Context, requestID string, apiKeyID int64) error
+	// ListRecoverableBalancePreauthorizations returns expired prepared/authorized
+	// holds and stale finalizations. Callers supply distinct cutoffs so active
+	// finalization is not raced by recovery.
+	ListRecoverableBalancePreauthorizations(ctx context.Context, authorizationExpiredBefore, finalizationStaleBefore time.Time, limit int) ([]BalancePreauthorizationRecord, error)
 	ReserveBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
 	CaptureBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
 	ReleaseBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
+}
+
+// UsageBalanceSettlementResult describes one user-level database update after
+// multiple immutable request charges have been coalesced.
+type UsageBalanceSettlementResult struct {
+	UserID     int64
+	EventCount int
+	Amount     float64
+	NewBalance float64
+}
+
+// UsageBalanceSettlementRepository is the durable consumer side of balance
+// billing. Implementations must apply a selected batch and mark its events in
+// the same database transaction so a crash can neither lose nor double-charge.
+type UsageBalanceSettlementRepository interface {
+	FlushPendingBalanceSettlements(ctx context.Context, limit int) ([]UsageBalanceSettlementResult, error)
+	DeleteAppliedBalanceSettlements(ctx context.Context, before time.Time, limit int) (int64, error)
 }

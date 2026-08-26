@@ -247,11 +247,14 @@ type OpenAIForwardResult struct {
 	// response before any client-facing rewrite or protocol conversion.
 	UpstreamResponseModel         string
 	UpstreamResponseModelConflict bool
+	// UpstreamResponseServiceTier is the tier the upstream reports having used
+	// (response service_tier: "priority" / "default" / "flex" / ...); "" when not declared.
+	UpstreamResponseServiceTier string
 	// UpstreamEndpoint is the actual upstream API path used for this request.
 	// It avoids guessing when one downstream protocol can use multiple upstream endpoints.
 	UpstreamEndpoint string
-	// ServiceTier records the OpenAI Responses API service tier, e.g. "priority" / "flex".
-	// Nil means the request did not specify a recognized tier.
+	// ServiceTier 优先取上游实际响应回显的 tier；缺失时回退到最终出站 body 的
+	// tier。nil 表示两者都无识别 tier。
 	ServiceTier *string
 	// ReasoningEffort is extracted from request body (reasoning.effort) or derived from model suffix.
 	// Stored for usage records display; nil means not provided / not applicable.
@@ -424,6 +427,7 @@ type OpenAIGatewayService struct {
 	billingCacheService   *BillingCacheService
 	userGroupRateResolver *userGroupRateResolver
 	httpUpstream          HTTPUpstream
+	pluginManager         *PluginManager
 	deferredService       *DeferredService
 	openAITokenProvider   *OpenAITokenProvider
 	grokTokenProvider     *GrokTokenProvider
@@ -437,22 +441,26 @@ type OpenAIGatewayService struct {
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
 
-	openaiWSPoolOnce               sync.Once
-	openaiWSStateStoreOnce         sync.Once
-	openaiSchedulerOnce            sync.Once
-	openaiProxyStreamCircuitOnce   sync.Once
-	openaiWSPassthroughDialerOnce  sync.Once
-	openaiModelTransientOnce       sync.Once
-	agentIdentityTaskMu            sync.Mutex
-	openaiWSPool                   *openAIWSConnPool
-	openaiWSStateStore             OpenAIWSStateStore
-	openaiScheduler                OpenAIAccountScheduler
-	openaiWSPassthroughDialer      openAIWSClientDialer
-	openaiWSSessionPreemptions     openAIWSSessionPreemptRegistry
-	openaiAccountStats             *openAIAccountRuntimeStats
-	openaiModelTransient           *openAIAccountModelTransientState
-	openaiProxyStreamCircuit       *openAIProxyStreamCircuit
-	openaiProxyStreamFailOpenLogAt atomic.Int64
+	openaiWSPoolOnce                    sync.Once
+	openaiWSStateStoreOnce              sync.Once
+	openaiSchedulerOnce                 sync.Once
+	openaiProxyStreamCircuitOnce        sync.Once
+	openaiWSPassthroughDialerOnce       sync.Once
+	openaiModelTransientOnce            sync.Once
+	agentIdentityTaskMu                 sync.Mutex
+	openaiWSPool                        *openAIWSConnPool
+	openaiWSStateStore                  OpenAIWSStateStore
+	openaiScheduler                     OpenAIAccountScheduler
+	openaiWSPassthroughDialer           openAIWSClientDialer
+	openaiWSSessionPreemptions          openAIWSSessionPreemptRegistry
+	openaiAccountStats                  *openAIAccountRuntimeStats
+	openaiModelTransient                *openAIAccountModelTransientState
+	openaiProxyStreamCircuit            *openAIProxyStreamCircuit
+	openaiProxyStreamFailOpenLogAt      atomic.Int64
+	codexQuotaOverdraftOnce             sync.Once
+	codexQuotaOverdraft                 *CodexQuotaOverdraftCoordinator
+	codexQuotaOverdraftFallbackThrottle *accountWriteThrottle
+	codexQuotaOverdraftCandidateCache   sync.Map
 
 	openaiWSFallbackUntil               sync.Map // key: int64(accountID), value: time.Time
 	openaiAccountRuntimeBlockUntil      sync.Map // key: int64(accountID), value: time.Time
@@ -505,6 +513,11 @@ func NewOpenAIGatewayService(
 	// 拿不到配置，故在此发布进程级开关快照。配置取反义，零值即「强制统一出口开启」。
 	if cfg != nil {
 		SetCodexIdentityEnforcementEnabled(!cfg.Gateway.DisableCodexIdentityEnforcement)
+		SetCodexQuotaOverdraftEnabled(cfg.Gateway.CodexQuotaOverdraftEnabled)
+		SetCodexQuotaOverdraftBusinessInjectionEnabled(cfg.Gateway.CodexQuotaOverdraftBusinessInjectionEnabled)
+	} else {
+		SetCodexQuotaOverdraftEnabled(false)
+		SetCodexQuotaOverdraftBusinessInjectionEnabled(false)
 	}
 	svc := &OpenAIGatewayService{
 		accountRepo:         accountRepo,
@@ -527,25 +540,36 @@ func NewOpenAIGatewayService(
 			nil,
 			"service.openai_gateway",
 		),
-		httpUpstream:          httpUpstream,
-		deferredService:       deferredService,
-		openAITokenProvider:   openAITokenProvider,
-		grokTokenProvider:     grokTokenProvider,
-		toolCorrector:         NewCodexToolCorrector(),
-		openaiWSResolver:      NewOpenAIWSProtocolResolver(cfg),
-		resolver:              resolver,
-		channelService:        channelService,
-		balanceNotifyService:  balanceNotifyService,
-		settingService:        settingService,
-		userPlatformQuotaRepo: userPlatformQuotaRepo,
-		liveAttestation:       liveattestation.NewProvider(),
-		liveAttestationCipher: newLiveAttestationCipher(cfg),
-		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
-		codexSnapshotThrottle: newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
-		openaiModelTransient:  newOpenAIAccountModelTransientState(openAIModelTransientDefaultMax),
+		httpUpstream:                        httpUpstream,
+		deferredService:                     deferredService,
+		openAITokenProvider:                 openAITokenProvider,
+		grokTokenProvider:                   grokTokenProvider,
+		toolCorrector:                       NewCodexToolCorrector(),
+		openaiWSResolver:                    NewOpenAIWSProtocolResolver(cfg),
+		resolver:                            resolver,
+		channelService:                      channelService,
+		balanceNotifyService:                balanceNotifyService,
+		settingService:                      settingService,
+		userPlatformQuotaRepo:               userPlatformQuotaRepo,
+		liveAttestation:                     liveattestation.NewProvider(),
+		liveAttestationCipher:               newLiveAttestationCipher(cfg),
+		responseHeaderFilter:                compileResponseHeaderFilter(cfg),
+		codexSnapshotThrottle:               newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
+		codexQuotaOverdraftFallbackThrottle: newAccountWriteThrottle(time.Second),
+		openaiModelTransient:                newOpenAIAccountModelTransientState(openAIModelTransientDefaultMax),
 	}
 	if rateLimitService != nil {
 		rateLimitService.SetAccountRuntimeBlocker(svc)
+	}
+	// Hydrate the process snapshot once at startup. Subsequent requests use the
+	// short SWR cache in SettingService, so a multi-instance deployment notices
+	// an admin toggle without putting a DB read on every request.
+	if settingService != nil {
+		startupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		runtime := settingService.GetCodexQuotaOverdraftRuntime(startupCtx)
+		cancel()
+		SetCodexQuotaOverdraftEnabled(runtime.Enabled)
+		SetCodexQuotaOverdraftBusinessInjectionEnabled(runtime.BusinessInjectionEnabled)
 	}
 	if openAITokenProvider != nil {
 		openAITokenProvider.SetAccountRuntimeBlocker(svc)

@@ -4501,6 +4501,34 @@
               </h2>
             </div>
             <div class="p-6 space-y-4">
+                <div class="rounded-lg border border-blue-200 bg-blue-50/70 p-4 dark:border-blue-900/60 dark:bg-blue-950/20">
+                  <div class="flex items-start justify-between gap-4">
+                    <div class="min-w-0">
+                      <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                        {{ t("admin.settings.gatewayForwarding.codexOverdraftTitle") }}
+                      </h3>
+                      <p class="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                        {{ t("admin.settings.gatewayForwarding.codexOverdraftDescription") }}
+                      </p>
+                    </div>
+                    <Toggle v-model="form.codex_quota_overdraft_enabled" data-testid="codex-quota-overdraft-toggle" />
+                  </div>
+                  <div class="mt-4 flex items-start justify-between gap-4 border-t border-blue-200/70 pt-4 dark:border-blue-900/50">
+                    <div class="min-w-0">
+                      <h4 class="text-sm font-medium text-gray-900 dark:text-white">
+                        {{ t("admin.settings.gatewayForwarding.codexOverdraftBusinessInjection") }}
+                      </h4>
+                      <p class="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                        {{ t("admin.settings.gatewayForwarding.codexOverdraftBusinessInjectionHint") }}
+                      </p>
+                    </div>
+                    <Toggle
+                      v-model="form.codex_quota_overdraft_business_injection_enabled"
+                      :disabled="!form.codex_quota_overdraft_enabled"
+                      data-testid="codex-quota-overdraft-business-toggle"
+                    />
+                  </div>
+                </div>
                 <div>
                   <h3 class="text-base font-semibold text-gray-900 dark:text-white">
                     {{ t("admin.settings.gatewayForwarding.codexClientRestrictionTitle") }}
@@ -7191,6 +7219,30 @@
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.pluginManagement.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.pluginManagement.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.pluginManagement.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.pluginManagement.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.plugin_management_enabled" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ t('admin.settings.features.riskControl.title') }}
             </h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -9454,6 +9506,8 @@ type SettingsForm = Omit<
   force_email_on_third_party_signup: boolean;
   openai_low_upstream_rate_priority_enabled: boolean;
   openai_oauth_scheduling_rate_multiplier: number;
+  codex_quota_overdraft_enabled: boolean;
+  codex_quota_overdraft_business_injection_enabled: boolean;
   openai_advanced_scheduler_enabled: boolean;
   openai_advanced_scheduler_sticky_weighted_enabled: boolean;
   openai_advanced_scheduler_subscription_priority_enabled: boolean;
@@ -9696,6 +9750,10 @@ const form = reactive<SettingsForm>({
   allow_ungrouped_key_scheduling: false,
   openai_low_upstream_rate_priority_enabled: false,
   openai_oauth_scheduling_rate_multiplier: 1,
+  // Codex 5h/7d detector stays on for compatibility; real-request injection
+  // is opt-in because upstream may count the synthetic tool pair.
+  codex_quota_overdraft_enabled: true,
+  codex_quota_overdraft_business_injection_enabled: false,
   openai_advanced_scheduler_enabled: false,
   openai_advanced_scheduler_sticky_weighted_enabled: false,
   openai_advanced_scheduler_subscription_priority_enabled: false,
@@ -9752,6 +9810,8 @@ const form = reactive<SettingsForm>({
   model_plaza_enabled: false,
   model_plaza_require_auth: false,
   model_plaza_description: '',
+  // Plugin management menu visibility; plugin runtime is unaffected.
+  plugin_management_enabled: false,
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: false,
   // Allow user view error requests
@@ -11356,6 +11416,11 @@ async function saveSettings() {
         form.openai_low_upstream_rate_priority_enabled,
       openai_oauth_scheduling_rate_multiplier:
         form.openai_oauth_scheduling_rate_multiplier,
+      codex_quota_overdraft_enabled: form.codex_quota_overdraft_enabled,
+      // Keep the subordinate preference when the master switch is temporarily
+      // off; runtime still requires master=true before any injection occurs.
+      codex_quota_overdraft_business_injection_enabled:
+        form.codex_quota_overdraft_business_injection_enabled,
       openai_advanced_scheduler_enabled: form.openai_advanced_scheduler_enabled,
       openai_advanced_scheduler_sticky_weighted_enabled:
         form.openai_advanced_scheduler_sticky_weighted_enabled,
@@ -11408,6 +11473,7 @@ async function saveSettings() {
       model_plaza_enabled: form.model_plaza_enabled,
       model_plaza_require_auth: form.model_plaza_require_auth,
       model_plaza_description: form.model_plaza_description,
+      plugin_management_enabled: form.plugin_management_enabled,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
       allow_user_view_error_requests: form.allow_user_view_error_requests,

@@ -1,6 +1,8 @@
 package service
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -28,39 +30,36 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
-	var payload map[string]any
-	if err := decodeOpenAIJSONUseNumber(body, &payload); err != nil {
-		return body, false, err
+	if !json.Valid(body) {
+		return body, false, fmt.Errorf("normalize compaction trigger input order: invalid JSON")
 	}
-	input, ok := payload["input"].([]any)
-	if !ok || len(input) == 0 {
+	input := parseRawJSONView(body).Get("input")
+	if !input.IsArray() {
 		return body, false, nil
 	}
 	triggerCount := 0
-	normalized := make([]any, 0, len(input))
-	for _, raw := range input {
-		item, itemOK := raw.(map[string]any)
-		if itemOK && item["type"] == "compaction_trigger" {
+	itemCount := 0
+	lastIsTrigger := false
+	input.ForEach(func(_, item gjson.Result) bool {
+		lastIsTrigger = item.IsObject() && item.Get("type").String() == "compaction_trigger"
+		if lastIsTrigger {
 			triggerCount++
-			continue
 		}
-		normalized = append(normalized, raw)
-	}
+		itemCount++
+		return true
+	})
 	if triggerCount == 0 {
 		return body, false, nil
 	}
-	if triggerCount == 1 {
-		if last, ok := input[len(input)-1].(map[string]any); ok && last["type"] == "compaction_trigger" {
-			return body, false, nil
+	if triggerCount == 1 && itemCount > 0 && lastIsTrigger {
+		return body, false, nil
+	}
+	return rewriteOpenAIResponsesInput(body, func(_ int, item gjson.Result) (string, bool, bool, error) {
+		if item.IsObject() && item.Get("type").String() == "compaction_trigger" {
+			return "", false, true, nil
 		}
-	}
-	normalized = append(normalized, map[string]any{"type": "compaction_trigger"})
-	payload["input"] = normalized
-	encoded, err := marshalOpenAIUpstreamJSON(payload)
-	if err != nil {
-		return body, false, err
-	}
-	return encoded, true, nil
+		return item.Raw, true, false, nil
+	}, `{"type":"compaction_trigger"}`)
 }
 
 func isOpenAINativeCompactionV2(c *gin.Context) bool {
@@ -159,7 +158,7 @@ func HasCompactionTriggerInInput(body []byte) bool {
 	if len(body) == 0 {
 		return false
 	}
-	input := gjson.GetBytes(body, "input")
+	input := parseRawJSONView(body).Get("input")
 	if !input.IsArray() {
 		return false
 	}

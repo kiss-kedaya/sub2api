@@ -210,7 +210,7 @@ func SanitizeOpenAICrossModeFailoverReasoning(body []byte) (sanitized []byte, ch
 	if len(body) == 0 {
 		return body, false, nil
 	}
-	if !gjson.GetBytes(body, "input").Exists() {
+	if !parseRawJSONView(body).Get("input").Exists() {
 		return body, false, nil
 	}
 	var decoded map[string]any
@@ -339,7 +339,7 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 		"text",
 		"previous_response_id",
 	} {
-		value := gjson.GetBytes(body, field)
+		value := parseRawJSONView(body).Get(field)
 		if !value.Exists() {
 			continue
 		}
@@ -362,12 +362,11 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 }
 
 func normalizeOpenAIParallelToolCallsWithoutTools(body []byte) ([]byte, bool, error) {
-	parallel := gjson.GetBytes(body, "parallel_tool_calls")
+	parallel := parseRawJSONView(body).Get("parallel_tool_calls")
 	if !parallel.Exists() {
 		return body, false, nil
 	}
-	tools := gjson.GetBytes(body, "tools")
-	if tools.IsArray() && len(tools.Array()) > 0 {
+	if openAIRequestBodyHasTools(body) {
 		return body, false, nil
 	}
 	normalized, err := sjson.DeleteBytes(body, "parallel_tool_calls")
@@ -381,7 +380,13 @@ func normalizeOpenAIParallelToolCallsWithoutTools(body []byte) ([]byte, bool, er
 // field before account routing so managed, passthrough, OAuth, and API-key
 // accounts all satisfy the same upstream contract.
 func normalizeOpenAIResponsesLiteParallelToolCalls(body []byte) ([]byte, bool, error) {
-	parallel := gjson.GetBytes(body, "parallel_tool_calls")
+	parallel := parseRawJSONView(body).Get("parallel_tool_calls")
+	if parallel.Exists() && parallel.Type != gjson.False && parallel.Type != gjson.True {
+		return body, false, newOpenAIResponsesLiteValidationError(
+			"parallel_tool_calls",
+			"responses Lite requires parallel_tool_calls to be a boolean",
+		)
+	}
 	if parallel.Type == gjson.False {
 		return body, false, nil
 	}
@@ -392,71 +397,114 @@ func normalizeOpenAIResponsesLiteParallelToolCalls(body []byte) ([]byte, bool, e
 	return normalized, true, nil
 }
 
+// openAIRequestBodyHasTools is the []byte counterpart of openAIResponsesLiteHasTools:
+// besides the top-level "tools" array it also recognizes the Responses Lite carrier.
+// normalizeOpenAIResponsesLiteTools moves namespace tools into an input item of type
+// "additional_tools" and drops the top-level "tools" key; the request still carries
+// tools at that point. Looking only at the top level therefore misreads such a body as
+// "no tools" and deletes the parallel_tool_calls:false that
+// ensureOpenAIResponsesLiteParallelToolCalls had just pinned, and OpenAI falls back to
+// its default of true and rejects the request with
+// 400 unsupported_value: "X-OpenAI-Internal-Codex-Responses-Lite requires
+// `parallel_tool_calls` to be false."
+func openAIRequestBodyHasTools(body []byte) bool {
+	root := parseRawJSONView(body)
+	hasTools := false
+	if tools := root.Get("tools"); tools.IsArray() {
+		tools.ForEach(func(_, _ gjson.Result) bool {
+			hasTools = true
+			return false
+		})
+	}
+	if hasTools {
+		return true
+	}
+	hasAdditionalTools := func(item gjson.Result) bool {
+		if strings.TrimSpace(item.Get("type").String()) != "additional_tools" {
+			return false
+		}
+		if tools := item.Get("tools"); tools.IsArray() {
+			tools.ForEach(func(_, _ gjson.Result) bool {
+				hasTools = true
+				return false
+			})
+		}
+		return hasTools
+	}
+	input := root.Get("input")
+	if !input.IsArray() {
+		// gjson.Result.Array historically treated a non-array value as one
+		// element. Keep that compatibility for clients that send a single
+		// additional_tools object while avoiding Array's allocation.
+		return hasAdditionalTools(input)
+	}
+	input.ForEach(func(_, item gjson.Result) bool {
+		return !hasAdditionalTools(item)
+	})
+	return hasTools
+}
+
 func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body []byte, knownStoreFalse bool) ([]byte, bool, error) {
-	if !knownStoreFalse && gjson.GetBytes(body, "store").Type != gjson.False {
+	root := parseRawJSONView(body)
+	if !knownStoreFalse && root.Get("store").Type != gjson.False {
 		return body, false, nil
 	}
-	input := gjson.GetBytes(body, "input")
+	input := root.Get("input")
 	if !input.IsArray() {
 		return body, false, nil
 	}
+	if !json.Valid(body) {
+		return body, false, fmt.Errorf("normalize API-key store=false reasoning replay: invalid JSON")
+	}
 
-	var reqBody map[string]any
-	if err := decodeOpenAIJSONUseNumber(body, &reqBody); err != nil {
-		return body, false, fmt.Errorf("normalize API-key store=false reasoning replay: %w", err)
-	}
-	items, ok := reqBody["input"].([]any)
-	if !ok {
-		return body, false, nil
-	}
-	filtered := make([]any, 0, len(items))
-	changed := false
-	for _, rawItem := range items {
-		item, ok := rawItem.(map[string]any)
-		if !ok {
-			filtered = append(filtered, rawItem)
-			continue
+	return rewriteOpenAIResponsesInput(body, func(index int, item gjson.Result) (string, bool, bool, error) {
+		if !item.IsObject() {
+			return item.Raw, true, false, nil
 		}
-		typ := strings.TrimSpace(firstNonEmptyString(item["type"]))
-		id := strings.TrimSpace(firstNonEmptyString(item["id"]))
+		typ := strings.TrimSpace(item.Get("type").String())
+		id := strings.TrimSpace(item.Get("id").String())
+		itemBody := item.Raw
+		changed := false
 		switch typ {
 		case "reasoning":
-			encryptedContent, hasEncryptedContent := item["encrypted_content"].(string)
-			if !hasEncryptedContent || strings.TrimSpace(encryptedContent) == "" {
-				changed = true
-				continue
+			encryptedContent := item.Get("encrypted_content")
+			if encryptedContent.Type != gjson.String || strings.TrimSpace(encryptedContent.String()) == "" {
+				return "", false, true, nil
 			}
 			if strings.HasPrefix(id, "rs_") {
-				delete(item, "id")
+				var err error
+				itemBody, err = sjson.Delete(itemBody, "id")
+				if err != nil {
+					return "", false, false, fmt.Errorf("delete input.%d.id: %w", index, err)
+				}
 				changed = true
 			}
-			if summary, ok := item["summary"]; !ok || summary == nil {
-				item["summary"] = []any{}
+			summary := item.Get("summary")
+			if !summary.Exists() || summary.Type == gjson.Null {
+				var err error
+				itemBody, err = sjson.SetRaw(itemBody, "summary", "[]")
+				if err != nil {
+					return "", false, false, fmt.Errorf("set input.%d.summary: %w", index, err)
+				}
 				changed = true
 			}
 		case "item_reference":
 			if strings.HasPrefix(id, "rs_") {
-				changed = true
-				continue
+				return "", false, true, nil
 			}
 		}
 		if shouldStripOpenAIResponsesNonPairCallID(typ) {
-			if _, hasCallID := item["call_id"]; hasCallID {
-				delete(item, "call_id")
+			if item.Get("call_id").Exists() {
+				var err error
+				itemBody, err = sjson.Delete(itemBody, "call_id")
+				if err != nil {
+					return "", false, false, fmt.Errorf("delete input.%d.call_id: %w", index, err)
+				}
 				changed = true
 			}
 		}
-		filtered = append(filtered, item)
-	}
-	if !changed {
-		return body, false, nil
-	}
-	reqBody["input"] = filtered
-	normalized, err := marshalOpenAIUpstreamJSON(reqBody)
-	if err != nil {
-		return body, false, fmt.Errorf("serialize API-key store=false reasoning replay: %w", err)
-	}
-	return normalized, true, nil
+		return itemBody, true, changed, nil
+	})
 }
 
 func normalizeOpenAICodexCompactReasoningEffortForAccount(c *gin.Context, account *Account, body []byte) ([]byte, bool, error) {
@@ -464,14 +512,14 @@ func normalizeOpenAICodexCompactReasoningEffortForAccount(c *gin.Context, accoun
 		return body, false, nil
 	}
 
-	requestedModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	requestedModel := strings.TrimSpace(parseRawJSONView(body).Get("model").String())
 	effectiveModel := account.GetMappedModel(requestedModel)
 	return normalizeOpenAICodexCompactReasoningEffort(body, effectiveModel)
 }
 
 func normalizeOpenAICodexCompactReasoningEffort(body []byte, effectiveModel string) ([]byte, bool, error) {
 	if !isOpenAIGPT56Model(effectiveModel) ||
-		!strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String()), "max") {
+		!strings.EqualFold(strings.TrimSpace(parseRawJSONView(body).Get("reasoning.effort").String()), "max") {
 		return body, false, nil
 	}
 
@@ -562,7 +610,7 @@ func appendOpenAIResponsesRequestPathSuffix(baseURL, suffix string) string {
 
 func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
 	// 使用 gjson/sjson 精确替换 model 字段，避免全量 JSON 反序列化
-	if m := gjson.GetBytes(body, "model"); m.Exists() && m.Str == fromModel {
+	if m := parseRawJSONView(body).Get("model"); m.Exists() && m.Str == fromModel {
 		newBody, err := sjson.SetBytes(body, "model", toModel)
 		if err != nil {
 			return body
@@ -857,9 +905,9 @@ func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 	}
 	normalized := body
 	changed := false
-	prompt := gjson.GetBytes(normalized, "prompt")
+	prompt := parseRawJSONView(normalized).Get("prompt")
 	if prompt.Exists() {
-		input := gjson.GetBytes(normalized, "input")
+		input := parseRawJSONView(normalized).Get("input")
 		if prompt.Type != gjson.Null && (!input.Exists() || input.Type == gjson.Null) {
 			next, err := sjson.SetRawBytes(normalized, "input", []byte(prompt.Raw))
 			if err != nil {
@@ -874,7 +922,7 @@ func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 		normalized = next
 		changed = true
 	}
-	if gjson.GetBytes(normalized, "commands").Exists() {
+	if parseRawJSONView(normalized).Get("commands").Exists() {
 		next, err := sjson.DeleteBytes(normalized, "commands")
 		if err != nil {
 			return body, false, fmt.Errorf("normalize oauth responses delete commands: %w", err)
@@ -889,12 +937,12 @@ func normalizeOpenAIResponsesReasoningMode(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
-	mode := gjson.GetBytes(body, "reasoning.mode")
+	mode := parseRawJSONView(body).Get("reasoning.mode")
 	if !mode.Exists() || mode.Type != gjson.String {
 		return body, false, nil
 	}
 	updated := body
-	effort := gjson.GetBytes(body, "reasoning.effort")
+	effort := parseRawJSONView(body).Get("reasoning.effort")
 	if (!effort.Exists() || effort.Type == gjson.Null || strings.TrimSpace(effort.String()) == "") &&
 		strings.EqualFold(strings.TrimSpace(mode.String()), "pro") {
 		var err error
@@ -907,7 +955,7 @@ func normalizeOpenAIResponsesReasoningMode(body []byte) ([]byte, bool, error) {
 	if err != nil {
 		return body, false, fmt.Errorf("delete unsupported reasoning.mode: %w", err)
 	}
-	if reasoning := gjson.GetBytes(updated, "reasoning"); reasoning.Exists() && reasoning.IsObject() && len(reasoning.Map()) == 0 {
+	if reasoning := parseRawJSONView(updated).Get("reasoning"); reasoning.Exists() && reasoning.IsObject() && len(reasoning.Map()) == 0 {
 		updated, err = sjson.DeleteBytes(updated, "reasoning")
 		if err != nil {
 			return body, false, fmt.Errorf("delete empty reasoning object: %w", err)
@@ -920,8 +968,9 @@ func normalizeOpenAIResponseFormatSchemasBody(body []byte) ([]byte, bool, error)
 	if len(body) == 0 {
 		return body, false, nil
 	}
-	textFormat := strings.TrimSpace(gjson.GetBytes(body, "text.format.type").String())
-	responseFormat := strings.TrimSpace(gjson.GetBytes(body, "response_format.type").String())
+	root := parseRawJSONView(body)
+	textFormat := strings.TrimSpace(root.Get("text.format.type").String())
+	responseFormat := strings.TrimSpace(root.Get("response_format.type").String())
 	if textFormat != "json_schema" && responseFormat != "json_schema" {
 		return body, false, nil
 	}
@@ -1253,6 +1302,57 @@ func normalizeOpenAIServiceTier(raw string) *string {
 	default:
 		return nil
 	}
+}
+
+// ErrInvalidOpenAIServiceTier indicates a request carried a service_tier value
+// that is not a known OpenAI tier. HTTP handlers translate it into a 400
+// invalid_request_error so malformed values are rejected up front instead of
+// being silently stripped (which would mask the user's intent to use fast
+// mode).
+type ErrInvalidOpenAIServiceTier struct {
+	Value string
+}
+
+func (e *ErrInvalidOpenAIServiceTier) Error() string {
+	return fmt.Sprintf("invalid service_tier %q: must be one of auto, default, fast, flex, priority, scale", e.Value)
+}
+
+const invalidOpenAIServiceTierValueMaxLen = 64
+
+func boundInvalidOpenAIServiceTierValue(raw string) string {
+	if len(raw) <= invalidOpenAIServiceTierValueMaxLen {
+		return raw
+	}
+	return raw[:invalidOpenAIServiceTierValueMaxLen] + "..."
+}
+
+// ValidateOpenAIServiceTierField validates the service_tier field of a raw
+// OpenAI-compatible request body (/v1/responses and /v1/chat/completions).
+//
+//   - absent / null → valid, returns "" (field omitted keeps current behavior)
+//   - "fast" → normalized to "priority" (the two are equivalent; the canonical
+//     value is what reaches the OpenAI upstream)
+//   - "priority" / "flex" / "auto" / "default" / "scale" → valid, returned as-is
+//   - an explicitly present non-string value, an empty string, or any other
+//     unknown value → *ErrInvalidOpenAIServiceTier (handler maps to HTTP 400),
+//     matching OpenAI's enum validation semantics
+func ValidateOpenAIServiceTierField(body []byte) (string, error) {
+	tierResult := gjson.GetBytes(body, "service_tier")
+	if !tierResult.Exists() || tierResult.Type == gjson.Null {
+		return "", nil
+	}
+	if tierResult.Type != gjson.String {
+		return "", &ErrInvalidOpenAIServiceTier{Value: "<non-string>"}
+	}
+	raw := strings.TrimSpace(tierResult.String())
+	if raw == "" {
+		return "", &ErrInvalidOpenAIServiceTier{Value: raw}
+	}
+	norm := normalizedOpenAIServiceTierValue(raw)
+	if norm == "" {
+		return "", &ErrInvalidOpenAIServiceTier{Value: boundInvalidOpenAIServiceTierValue(raw)}
+	}
+	return norm, nil
 }
 
 // OpenAIFastBlockedError indicates a request was rejected by the OpenAI fast

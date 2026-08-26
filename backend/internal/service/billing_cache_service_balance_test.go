@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,17 +18,39 @@ type balanceEligibilityCacheStub struct {
 	billingCacheWorkerStub
 
 	balance                  float64
+	balanceMu                sync.Mutex
 	cacheMissAfterInvalidate bool
 	invalidated              atomic.Bool
 	deductCalls              atomic.Int64
 	invalidateCalls          atomic.Int64
+	setCalls                 atomic.Int64
 }
 
 func (s *balanceEligibilityCacheStub) GetUserBalance(context.Context, int64) (float64, error) {
 	if s.cacheMissAfterInvalidate && s.invalidated.Load() {
 		return 0, errors.New("cache miss")
 	}
+	s.balanceMu.Lock()
+	defer s.balanceMu.Unlock()
 	return s.balance, nil
+}
+
+func (s *balanceEligibilityCacheStub) SetUserBalance(_ context.Context, _ int64, balance float64) error {
+	s.balanceMu.Lock()
+	s.balance = balance
+	s.balanceMu.Unlock()
+	s.setCalls.Add(1)
+	return nil
+}
+
+func (s *balanceEligibilityCacheStub) SetUserBalanceIfLower(_ context.Context, _ int64, balance float64) error {
+	s.balanceMu.Lock()
+	if balance < s.balance {
+		s.balance = balance
+	}
+	s.balanceMu.Unlock()
+	s.setCalls.Add(1)
+	return nil
 }
 
 func (s *balanceEligibilityCacheStub) DeductUserBalance(context.Context, int64, float64) error {
@@ -83,12 +106,13 @@ func TestSyncBalanceCacheAfterDeduction_InvalidatesExhaustedBalance(t *testing.T
 		BalanceOverdrafted: true,
 	})
 
-	require.Equal(t, int64(1), cache.invalidateCalls.Load())
+	require.Equal(t, int64(1), cache.setCalls.Load())
+	require.Equal(t, int64(0), cache.invalidateCalls.Load())
 	require.Equal(t, int64(0), cache.deductCalls.Load())
 
 	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "")
 	require.ErrorIs(t, err, ErrInsufficientBalance)
-	require.Equal(t, int64(1), userRepo.calls.Load())
+	require.Equal(t, int64(0), userRepo.calls.Load())
 }
 
 func TestSyncBalanceCacheAfterDeduction_InvalidatesWhenBalanceFallsBelowReserve(t *testing.T) {
@@ -104,7 +128,8 @@ func TestSyncBalanceCacheAfterDeduction_InvalidatesWhenBalanceFallsBelowReserve(
 		User: &User{ID: 1},
 	}, &billingDeps{billingCacheService: svc}, &UsageBillingApplyResult{NewBalance: &newBalance})
 
-	require.Equal(t, int64(1), cache.invalidateCalls.Load())
+	require.Equal(t, int64(1), cache.setCalls.Load())
+	require.Equal(t, int64(0), cache.invalidateCalls.Load())
 	require.Equal(t, int64(0), cache.deductCalls.Load())
 }
 
@@ -121,8 +146,9 @@ func TestSyncBalanceCacheAfterDeduction_QueuesDeductWhenBalanceStillEligible(t *
 		User: &User{ID: 1},
 	}, &billingDeps{billingCacheService: svc}, &UsageBillingApplyResult{NewBalance: &newBalance})
 
-	require.Equal(t, int64(0), cache.invalidateCalls.Load())
 	require.Eventually(t, func() bool {
-		return cache.deductCalls.Load() == 1
+		return cache.setCalls.Load() == 1
 	}, 2*time.Second, 10*time.Millisecond)
+	require.Equal(t, int64(0), cache.invalidateCalls.Load())
+	require.Equal(t, int64(0), cache.deductCalls.Load())
 }

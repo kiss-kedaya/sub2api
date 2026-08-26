@@ -23,6 +23,44 @@ func resetViperWithJWTSecret(t *testing.T) {
 	t.Setenv("JWT_SECRET", strings.Repeat("x", 32))
 }
 
+func TestLoadDefaultModelsListReadMaxBytes(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, DefaultModelsListReadMaxBytes, cfg.Gateway.ModelsListReadMaxBytes)
+}
+
+func TestLoadEnablesDuplicateLogSamplingByDefault(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Log.Sampling.Enabled)
+}
+
+func TestLoadDefaultsDatabaseMigrationModeToApply(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("DATABASE_MIGRATION_MODE", "")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, DatabaseMigrationModeApply, cfg.Database.MigrationMode)
+}
+
+func TestLoadNormalizesDatabaseMigrationModeFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("DATABASE_MIGRATION_MODE", " VaLiDaTe ")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, DatabaseMigrationModeValidate, cfg.Database.MigrationMode)
+}
+
+func TestLoadRejectsInvalidDatabaseMigrationMode(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("DATABASE_MIGRATION_MODE", "skip")
+	_, err := Load()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "database.migration_mode")
+}
+
 func TestLoadTimezonePrecedence(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -553,6 +591,15 @@ func TestLoadOpenAIWSClientFirstMessageTimeoutFromEnv(t *testing.T) {
 	require.Equal(t, 120, cfg.Gateway.OpenAIWS.ClientFirstMessageTimeoutSeconds)
 }
 
+func TestLoadOpenAIWSForceHTTPFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_OPENAI_WS_FORCE_HTTP", "true")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Gateway.OpenAIWS.ForceHTTP)
+}
+
 func TestLoadDefaultOpenAICompactModel(t *testing.T) {
 	resetViperWithJWTSecret(t)
 
@@ -1028,8 +1075,8 @@ func TestLoadDefaultDashboardCacheConfig(t *testing.T) {
 	if cfg.Dashboard.StatsTTLSeconds != 30 {
 		t.Fatalf("Dashboard.StatsTTLSeconds = %d, want 30", cfg.Dashboard.StatsTTLSeconds)
 	}
-	if cfg.Dashboard.StatsRefreshTimeoutSeconds != 30 {
-		t.Fatalf("Dashboard.StatsRefreshTimeoutSeconds = %d, want 30", cfg.Dashboard.StatsRefreshTimeoutSeconds)
+	if cfg.Dashboard.StatsRefreshTimeoutSeconds != 180 {
+		t.Fatalf("Dashboard.StatsRefreshTimeoutSeconds = %d, want 180", cfg.Dashboard.StatsRefreshTimeoutSeconds)
 	}
 }
 
@@ -1793,6 +1840,11 @@ func TestValidateConfigErrors(t *testing.T) {
 			name:    "gateway text body exceeds media body",
 			mutate:  func(c *Config) { c.Gateway.TextMaxBodySize = c.Gateway.MaxBodySize + 1 },
 			wantErr: "gateway.text_max_body_size",
+		},
+		{
+			name:    "gateway models list read limit",
+			mutate:  func(c *Config) { c.Gateway.ModelsListReadMaxBytes = 0 },
+			wantErr: "gateway.models_list_read_max_bytes",
 		},
 		{
 			name:    "gateway response header timeout",

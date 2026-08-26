@@ -27,6 +27,25 @@ export const apiClient: AxiosInstance = axios.create({
   }
 })
 
+// Heavy usage/report endpoints can legitimately scan a large usage history.
+// Keep the normal API budget at 30s, but give report requests the same 180s
+// budget as the corresponding backend handlers.  Centralising this rule is
+// intentional: a new admin report must not silently regress to 30s merely
+// because its caller forgot an endpoint-local Axios option.
+export const LONG_RUNNING_REPORT_TIMEOUT_MS = 180000
+
+const longRunningReportPath = (url: string): boolean => {
+  const path = url
+    .split('?')[0]
+    .replace(/^https?:\/\/[^/]+/i, '')
+    .replace(/^\/api\/v\d+\//i, '/')
+  return (
+    /^\/?admin\/accounts\/[^/]+\/stats(?:\/|$)/i.test(path) ||
+    /^\/?admin\/(?:usage\/stats|dashboard\/|ops\/(?:dashboard\/|errors(?:\/|$)|request-errors(?:\/|$)|upstream-errors(?:\/|$)))/i.test(path) ||
+    /^\/?usage\/(?:stats|dashboard\/)/i.test(path)
+  )
+}
+
 // ==================== Request Interceptor ====================
 
 // Get user's timezone
@@ -40,6 +59,13 @@ const getUserTimezone = (): string => {
 
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    const requestURL = String(config.url || '')
+    if (longRunningReportPath(requestURL)) {
+      // Respect an explicitly larger caller timeout, while ensuring report
+      // calls never inherit the shared 30s default.
+      config.timeout = Math.max(config.timeout ?? 0, LONG_RUNNING_REPORT_TIMEOUT_MS)
+    }
+
     // Attach token from localStorage
     const token = localStorage.getItem('auth_token')
     if (token && config.headers) {
@@ -60,7 +86,6 @@ apiClient.interceptors.request.use(
     }
 
     if (config.headers) {
-      const requestURL = String(config.url || '')
       if (shouldMarkAdminUIRequest(requestURL)) {
         config.headers[ADMIN_UI_REQUEST_HEADER] = '1'
       }

@@ -512,6 +512,14 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}
+	if redeemCode.Type == RedeemTypeBalance && redeemCode.Value != 0 {
+		syncCommittedLiveBalanceAdjustment(
+			s.billingCacheService,
+			userID,
+			fmt.Sprintf("redeem:%d:user:%d", redeemCode.ID, userID),
+			redeemCode.Value,
+		)
+	}
 
 	// 事务提交成功后失效缓存
 	s.invalidateRedeemCaches(ctx, userID, redeemCode)
@@ -537,14 +545,6 @@ func (s *RedeemService) invalidateRedeemCaches(ctx context.Context, userID int64
 		if s.authCacheInvalidator != nil {
 			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
 		}
-		if s.billingCacheService == nil {
-			return
-		}
-		go func() {
-			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = s.billingCacheService.InvalidateUserBalance(cacheCtx, userID)
-		}()
 	case RedeemTypeConcurrency:
 		if s.authCacheInvalidator != nil {
 			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)

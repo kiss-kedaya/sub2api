@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -319,6 +320,41 @@ func restoreCodexToolNamesFromSSEContext(c *gin.Context, data []byte, eventType 
 	restored := restoreCodexToolNamesFromContext(c, compat)
 	if string(restored) == string(compat) {
 		return data
+	}
+	withoutSyntheticType, err := sjson.DeleteBytes(restored, "type")
+	if err != nil {
+		return restored
+	}
+	return withoutSyntheticType
+}
+
+func restoreCodexToolNamesFromSSEFrame(c *gin.Context, frame openAISSEDataFrame) []byte {
+	if !frame.validJSON {
+		return frame.data
+	}
+	// Responses tool names can first appear on an item event and may be repeated
+	// in a terminal response. Text/reasoning/audio deltas cannot contain a name
+	// that this restorer understands, so keep them off the JSON decode path.
+	switch frame.eventType {
+	case "response.output_item.added", "response.output_item.done",
+		"response.created", "response.in_progress", "response.completed", "response.done",
+		"response.failed", "response.incomplete", "response.cancelled", "response.canceled",
+		"session.created", "session.updated", "":
+	default:
+		return frame.data
+	}
+	reverse := codexToolNameReverseFromContext(c)
+	switch frame.eventType {
+	case "session.created", "session.updated":
+		reverse = codexToolNameReverseForKey(c, codexToolNameSessionKey)
+	}
+	if frame.payloadEventType != "" || frame.eventType == "" {
+		return restoreCodexToolNamesInJSON(frame.data, reverse)
+	}
+	compat := []byte(openAICompatPayloadWithEventType(string(frame.data), frame.eventType))
+	restored := restoreCodexToolNamesInJSON(compat, reverse)
+	if bytes.Equal(restored, compat) {
+		return frame.data
 	}
 	withoutSyntheticType, err := sjson.DeleteBytes(restored, "type")
 	if err != nil {

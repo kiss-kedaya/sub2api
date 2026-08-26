@@ -665,12 +665,21 @@ func (u *ClaudeUsage) hasObservedTokens() bool {
 //
 // 不变式：UpstreamFailoverError 必须保持 result=nil——failover 重试成功后按成功请求
 // 计费，若同时返回部分 usage 会造成双重计费，此处显式拦截兜底。
+//
+// 例外——流式补扣失败主动中止（ErrBalanceWithholdingFailed）：上游已交付部分输出但
+// 终帧未到故无 observed usage。若返回 nil，handler 仅执行 defer 全额退款 → 已交付
+// 输出被免费漏扣。故对该哨兵错误保留 result（即使 usage=0），使其进入结算；handler
+// 侧 observedSpend 为 true，applyObservedProviderSpendFloor 按已扣 hold 结算
+// （settle-at-hold）。failover 仍恒返回 nil，不双重计费。
 func partialStreamUsageResult(c *gin.Context, resp *http.Response, streamResult *streamingResult, model, upstreamModel string, startTime time.Time, err error) *ForwardResult {
-	if streamResult == nil || !streamResult.usage.hasObservedTokens() {
+	if streamResult == nil {
 		return nil
 	}
 	var failoverErr *UpstreamFailoverError
 	if errors.As(err, &failoverErr) {
+		return nil
+	}
+	if !streamResult.usage.hasObservedTokens() && !errors.Is(err, ErrBalanceWithholdingFailed) {
 		return nil
 	}
 	return &ForwardResult{
@@ -680,6 +689,7 @@ func partialStreamUsageResult(c *gin.Context, resp *http.Response, streamResult 
 		UpstreamModel:                 upstreamModel,
 		UpstreamResponseModel:         observedUpstreamResponseModel(c),
 		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
 		Stream:                        true,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  streamResult.firstTokenMs,
@@ -718,6 +728,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
+	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐帧仅整数
+	// 累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
+	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
 	scanner := bufio.NewScanner(resp.Body)
 	// 设置更大的buffer以处理长行
 	maxLineSize := defaultMaxLineSize
@@ -1083,6 +1096,13 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 							flusher.Flush()
 							lastDataAt = time.Now()
 							resetKeepaliveTimer()
+							// 输出块计量：累加已发字节作 token 上界，跨预扣窗口时补扣。
+							// 补扣失败中止上游流并返回错误，避免继续产生无法结算的输出
+							// 成本。tracker 为 nil 时逐块零开销。
+							if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(restored)); topUpErr != nil {
+								logger.LegacyPrintf("service.gateway", "Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)
+								return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, wrapStreamOutputHoldTopUpFailure(topUpErr)
+							}
 						}
 					}
 					if data != "" {
@@ -1236,11 +1256,11 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 			patch.hasCacheReadInput = true
 		}
 		if cc, ok := usageObj["cache_creation"].(map[string]any); ok {
-			if v, exists := parseSSEUsageInt(cc["ephemeral_5m_input_tokens"]); exists && v > 0 {
+			if v, exists := parseSSEUsageInt(cc["ephemeral_5m_input_tokens"]); exists {
 				patch.cacheCreation5mTokens = v
 				patch.hasCacheCreation5m = true
 			}
-			if v, exists := parseSSEUsageInt(cc["ephemeral_1h_input_tokens"]); exists && v > 0 {
+			if v, exists := parseSSEUsageInt(cc["ephemeral_1h_input_tokens"]); exists {
 				patch.cacheCreation1hTokens = v
 				patch.hasCacheCreation1h = true
 			}

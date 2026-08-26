@@ -21,9 +21,26 @@ func (s *AuthService) ApplyProviderDefaultSettingsOnFirstBind(
 	if s == nil || s.entClient == nil || s.settingService == nil || userID <= 0 {
 		return nil
 	}
+	providerType = strings.TrimSpace(providerType)
+	eventID := fmt.Sprintf("provider-default:%d:%s", userID, providerType)
 
-	if dbent.TxFromContext(ctx) != nil {
-		return s.applyProviderDefaultSettingsOnFirstBind(ctx, userID, providerType)
+	if existingTx := dbent.TxFromContext(ctx); existingTx != nil {
+		balanceDelta, err := s.applyProviderDefaultSettingsOnFirstBind(ctx, userID, providerType)
+		if err != nil {
+			return err
+		}
+		if balanceDelta != 0 {
+			existingTx.OnCommit(func(next dbent.Committer) dbent.Committer {
+				return dbent.CommitFunc(func(commitCtx context.Context, tx *dbent.Tx) error {
+					if err := next.Commit(commitCtx, tx); err != nil {
+						return err
+					}
+					syncCommittedLiveBalanceAdjustment(s.billingCacheService, userID, eventID, balanceDelta)
+					return nil
+				})
+			})
+		}
+		return nil
 	}
 
 	tx, err := s.entClient.Tx(ctx)
@@ -33,23 +50,30 @@ func (s *AuthService) ApplyProviderDefaultSettingsOnFirstBind(
 	defer func() { _ = tx.Rollback() }()
 
 	txCtx := dbent.NewTxContext(ctx, tx)
-	if err := s.applyProviderDefaultSettingsOnFirstBind(txCtx, userID, providerType); err != nil {
+	balanceDelta, err := s.applyProviderDefaultSettingsOnFirstBind(txCtx, userID, providerType)
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if balanceDelta != 0 {
+		syncCommittedLiveBalanceAdjustment(s.billingCacheService, userID, eventID, balanceDelta)
+	}
+	return nil
 }
 
 func (s *AuthService) applyProviderDefaultSettingsOnFirstBind(
 	ctx context.Context,
 	userID int64,
 	providerType string,
-) error {
+) (float64, error) {
 	providerDefaults, enabled, err := s.settingService.ResolveAuthSourceGrantSettings(ctx, providerType, true)
 	if err != nil {
-		return fmt.Errorf("load auth source defaults: %w", err)
+		return 0, fmt.Errorf("load auth source defaults: %w", err)
 	}
 	if !enabled {
-		return nil
+		return 0, nil
 	}
 
 	client := s.entClient
@@ -66,25 +90,25 @@ ON CONFLICT (user_id, provider_type, grant_reason) DO NOTHING`,
 		[]any{userID, strings.TrimSpace(providerType), "first_bind"},
 		&result,
 	); err != nil {
-		return fmt.Errorf("record first bind provider grant: %w", err)
+		return 0, fmt.Errorf("record first bind provider grant: %w", err)
 	}
 
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("read first bind provider grant result: %w", err)
+		return 0, fmt.Errorf("read first bind provider grant result: %w", err)
 	}
 	if affected == 0 {
-		return nil
+		return 0, nil
 	}
 
 	if providerDefaults.Balance != 0 {
 		if err := client.User.UpdateOneID(userID).AddBalance(providerDefaults.Balance).Exec(ctx); err != nil {
-			return fmt.Errorf("apply first bind balance default: %w", err)
+			return 0, fmt.Errorf("apply first bind balance default: %w", err)
 		}
 	}
 	if providerDefaults.Concurrency != 0 {
 		if err := client.User.UpdateOneID(userID).AddConcurrency(providerDefaults.Concurrency).Exec(ctx); err != nil {
-			return fmt.Errorf("apply first bind concurrency default: %w", err)
+			return 0, fmt.Errorf("apply first bind concurrency default: %w", err)
 		}
 	}
 	if s.defaultSubAssigner != nil {
@@ -95,10 +119,10 @@ ON CONFLICT (user_id, provider_type, grant_reason) DO NOTHING`,
 				ValidityDays: item.ValidityDays,
 				Notes:        "auto assigned by first bind defaults",
 			}); err != nil {
-				return fmt.Errorf("apply first bind subscription default: %w", err)
+				return 0, fmt.Errorf("apply first bind subscription default: %w", err)
 			}
 		}
 	}
 
-	return nil
+	return providerDefaults.Balance, nil
 }

@@ -18,11 +18,13 @@ import (
 const (
 	// reportCacheTTL keeps the expensive admin reports warm across normal panel
 	// refreshes. The underlying data is still refreshed on the next cache miss.
-	reportCacheTTL         = 5 * time.Minute
+	reportCacheTTL = 5 * time.Minute
 	// Dashboard aggregates scan a high-volume usage table on a cold cache. Keep
 	// the work alive long enough to finish after the browser retries, while the
 	// shared load budget prevents multiple cold scans from saturating Postgres.
-	reportCacheLoadTimeout = 120 * time.Second
+	// Keep expensive report scans alive for the same 180s budget exposed by the
+	// frontend.  The shared load semaphore still bounds concurrent scans.
+	reportCacheLoadTimeout = 180 * time.Second
 	reportCacheMaxEntries  = 256
 	reportCacheMaxLoads    = 2
 	reportCacheSweepEvery  = 30 * time.Second
