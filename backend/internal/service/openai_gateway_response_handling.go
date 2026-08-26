@@ -735,8 +735,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					// tracker 为 nil 时整体零开销。
 					if startsVisibleOutput && streamEarlyErr == nil {
 						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
-							streamEarlyErr = fmt.Errorf("stream output hold top-up failed: %w", topUpErr)
-							s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, topUpErr)
+							streamEarlyErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
+							s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI responses", topUpErr)
 						}
 					}
 				}

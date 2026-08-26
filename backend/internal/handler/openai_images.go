@@ -159,12 +159,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			SizeTier:     parsed.SizeTier,
 		},
 	)
-	if err != nil {
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
+	if h.handlePreauthorizationError(c, err, streamStarted) {
 		return
 	}
 	if balanceGuard != nil {

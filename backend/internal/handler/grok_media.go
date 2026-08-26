@@ -192,12 +192,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				SizeTier:     requestInfo.SizeTier,
 			},
 		)
-		if err != nil {
-			status, code, message, retryAfter := billingErrorDetails(err)
-			if retryAfter > 0 {
-				c.Header("Retry-After", strconv.Itoa(retryAfter))
-			}
-			h.errorResponse(c, status, code, message)
+		if h.handlePreauthorizationError(c, err, false) {
 			return
 		}
 		if balanceGuard != nil {

@@ -2225,7 +2225,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 				// tracker 为 nil 时逐增量零开销。
 				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(delta)); topUpErr != nil {
 					logger.LegacyPrintf("service.gemini_messages_compat", "Stream output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
-					return nil, fmt.Errorf("stream output hold top-up failed: %w", topUpErr)
+					return nil, wrapStreamOutputHoldTopUpFailure(topUpErr)
 				}
 				continue
 			}

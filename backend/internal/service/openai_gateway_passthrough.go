@@ -1774,15 +1774,19 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 // reportOpenAIStreamOutputHoldTopUpFailure surfaces a mid-stream balance
 // top-up failure to ops so an aborted long stream is observable. It records the
 // error but does not itself terminate the stream; the caller returns to close
-// the upstream connection.
-func (s *OpenAIGatewayService) reportOpenAIStreamOutputHoldTopUpFailure(c *gin.Context, account *Account, cause error) {
+// the upstream connection. origin identifies the calling path (passthrough vs
+// native /v1/responses) so log lines are attributed correctly — the previous
+// hardcoded "[OpenAI passthrough]" tag mislabeled the /v1/responses caller.
+// The stable substring "Stream output hold top-up failed" is preserved for
+// existing ops alerts/dashboards.
+func (s *OpenAIGatewayService) reportOpenAIStreamOutputHoldTopUpFailure(c *gin.Context, account *Account, origin string, cause error) {
 	accountID := int64(0)
 	if account != nil {
 		accountID = account.ID
 	}
 	logger.LegacyPrintf("service.openai_gateway",
-		"[OpenAI passthrough] Stream output hold top-up failed, aborting upstream: account=%d error=%v",
-		accountID, cause)
+		"[%s] Stream output hold top-up failed, aborting upstream: account=%d error=%v",
+		origin, accountID, cause)
 	if c != nil {
 		if errors.Is(cause, ErrBalanceWithholdingFailed) {
 			setOpsUpstreamError(c, http.StatusForbidden, "Insufficient balance, withholding failed", "")
@@ -2137,8 +2141,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				if lineStartsClientOutput {
 					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
 						flushPendingOutput()
-						s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, topUpErr)
-						return resultWithUsage(), fmt.Errorf("stream output hold top-up failed: %w", topUpErr)
+						s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI passthrough", topUpErr)
+						return resultWithUsage(), wrapStreamOutputHoldTopUpFailure(topUpErr)
 					}
 				}
 			}
