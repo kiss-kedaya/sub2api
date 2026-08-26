@@ -20,19 +20,22 @@ import (
 
 // OpenAIRecordUsageInput input for recording usage
 type OpenAIRecordUsageInput struct {
-	Result             *OpenAIForwardResult
-	APIKey             *APIKey
-	User               *User
-	Account            *Account
-	Subscription       *UserSubscription
-	InboundEndpoint    string
-	UpstreamEndpoint   string
-	UserAgent          string // 请求的 User-Agent
-	IPAddress          string // 请求的客户端 IP 地址
-	SessionID          string // 客户端显式会话标识（session_id / X-Session-Id 等请求头），仅用于用量行会话关联
-	RequestPayloadHash string
-	APIKeyService      APIKeyQuotaUpdater
-	QuotaPlatform      string // user×platform quota platform resolved by the handler before async billing.
+	Result *OpenAIForwardResult
+	// ObservedProviderSpend is an explicit handler observation: the upstream
+	// completed successfully or emitted semantic output before failing.
+	ObservedProviderSpend bool
+	APIKey                *APIKey
+	User                  *User
+	Account               *Account
+	Subscription          *UserSubscription
+	InboundEndpoint       string
+	UpstreamEndpoint      string
+	UserAgent             string // 请求的 User-Agent
+	IPAddress             string // 请求的客户端 IP 地址
+	SessionID             string // 客户端显式会话标识（session_id / X-Session-Id 等请求头），仅用于用量行会话关联
+	RequestPayloadHash    string
+	APIKeyService         APIKeyQuotaUpdater
+	QuotaPlatform         string // user×platform quota platform resolved by the handler before async billing.
 	// PricingAt 是请求级定价时刻（请求开始捕获，与利润门的 D 同源）：高峰因子
 	// 按该时刻计算，保证同一请求从准入到扣费不中途变价。零值回退记录时刻
 	//（既有行为），供未装配的路径（图片/异步/cyber 等）沿用。
@@ -146,6 +149,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if !isGrokVideoUsageResult(result, nil) {
 		ApplyOpenAIImageBillingResolution(result)
 	}
+	logServiceTierBillingDowngrade("service.openai_gateway", account, result.RequestID, ApplyOpenAIServiceTierBillingResolution(result))
 
 	// OpenAI input_tokens 是总输入，包含缓存读取和缓存写入明细。
 	// 将三类 token 拆成互斥桶，避免缓存写入同时按普通输入和 cache_write 重复计费。
@@ -459,6 +463,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	billingErr := func() error {
 		_, err := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
 			Cost:                  cost,
+			ObservedProviderSpend: input.ObservedProviderSpend && !result.NonBillableUpstreamError,
 			User:                  user,
 			APIKey:                apiKey,
 			Account:               account,
@@ -473,7 +478,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}()
 
 	if billingErr != nil {
-		usageLog.ActualCost = 0
+		// Preserve actual cost as the reconciliation source when durable billing
+		// is temporarily unavailable. Zeroing it would silently turn a retryable
+		// accounting failure into an apparently free request.
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		return billingErr
 	}
@@ -1090,7 +1097,23 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 	go func() {
 		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err != nil {
+			return
+		}
+		notifyOpenAIAutoReset(accountID)
+		if s.codexQuotaOverdraft == nil || (!codexQuotaOverdraftSnapshotPrearmReached(updates) && !codexQuotaOverdraftWasInjected(ctx, accountID)) {
+			return
+		}
+		account, err := s.accountRepo.GetByID(updateCtx, accountID)
+		if err != nil || account == nil || account.IsShadow() {
+			return
+		}
+		mergeAccountExtra(account, updates)
+		if codexQuotaOverdraftWasInjected(ctx, accountID) {
+			s.codexQuotaOverdraft.ObserveBusinessSuccess(account, "")
+		} else {
+			s.codexQuotaOverdraft.ObserveAccount(account, "")
+		}
 	}()
 }
 

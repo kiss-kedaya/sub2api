@@ -98,6 +98,13 @@ type windowStatsCache struct {
 	timestamp time.Time
 }
 
+type codexOverdraftStatsCache struct {
+	cycleKey  string
+	fiveHour  *WindowStats
+	sevenDay  *WindowStats
+	timestamp time.Time
+}
+
 // antigravityUsageCache 缓存 Antigravity 额度数据
 type antigravityUsageCache struct {
 	usageInfo *UsageInfo
@@ -117,13 +124,14 @@ const (
 
 // UsageCache 封装账户使用量相关的缓存
 type UsageCache struct {
-	apiCache          sync.Map           // accountID -> *apiUsageCache
-	windowStatsCache  sync.Map           // accountID -> *windowStatsCache
-	antigravityCache  sync.Map           // accountID -> *antigravityUsageCache
-	apiFlight         singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
-	antigravityFlight singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
-	openAIProbeCache  sync.Map           // accountID -> time.Time
-	grokProbeCache    sync.Map           // accountID -> last billing probe attempt
+	apiCache            sync.Map           // accountID -> *apiUsageCache
+	windowStatsCache    sync.Map           // accountID -> *windowStatsCache
+	antigravityCache    sync.Map           // accountID -> *antigravityUsageCache
+	apiFlight           singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
+	antigravityFlight   singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
+	openAIProbeCache    sync.Map           // accountID -> time.Time
+	grokProbeCache      sync.Map           // accountID -> last billing probe attempt
+	codexOverdraftStats sync.Map           // accountID -> *codexOverdraftStatsCache
 }
 
 // NewUsageCache 创建 UsageCache 实例
@@ -152,6 +160,10 @@ type UsageProgress struct {
 	WindowStats      *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
 	UsedRequests     int64        `json:"used_requests,omitempty"`
 	LimitRequests    int64        `json:"limit_requests,omitempty"`
+	OverdraftActive  bool         `json:"overdraft_active,omitempty"`
+	OverdraftStats   *WindowStats `json:"overdraft_stats,omitempty"`
+	OverdraftStarted *time.Time   `json:"overdraft_started_at,omitempty"`
+	OverdraftRecover *time.Time   `json:"overdraft_recover_at,omitempty"`
 }
 
 // AntigravityModelQuota Antigravity 单个模型的配额信息
@@ -181,18 +193,19 @@ type AICredit struct {
 
 // UsageInfo 账号使用量信息
 type UsageInfo struct {
-	Source             string         `json:"source,omitempty"`               // "passive" or "active"
-	UpdatedAt          *time.Time     `json:"updated_at,omitempty"`           // 更新时间
-	FiveHour           *UsageProgress `json:"five_hour"`                      // 5小时窗口
-	SevenDay           *UsageProgress `json:"seven_day,omitempty"`            // 7天窗口
-	SevenDaySonnet     *UsageProgress `json:"seven_day_sonnet,omitempty"`     // 7天Sonnet窗口
-	SevenDayFable      *UsageProgress `json:"seven_day_fable,omitempty"`      // 7天Fable窗口（响应头 7d_oi）
-	GeminiSharedDaily  *UsageProgress `json:"gemini_shared_daily,omitempty"`  // Gemini shared pool RPD (Google One / Code Assist)
-	GeminiProDaily     *UsageProgress `json:"gemini_pro_daily,omitempty"`     // Gemini Pro 日配额
-	GeminiFlashDaily   *UsageProgress `json:"gemini_flash_daily,omitempty"`   // Gemini Flash 日配额
-	GeminiSharedMinute *UsageProgress `json:"gemini_shared_minute,omitempty"` // Gemini shared pool RPM (Google One / Code Assist)
-	GeminiProMinute    *UsageProgress `json:"gemini_pro_minute,omitempty"`    // Gemini Pro RPM
-	GeminiFlashMinute  *UsageProgress `json:"gemini_flash_minute,omitempty"`  // Gemini Flash RPM
+	Source              string                         `json:"source,omitempty"`     // "passive" or "active"
+	UpdatedAt           *time.Time                     `json:"updated_at,omitempty"` // 更新时间
+	FiveHour            *UsageProgress                 `json:"five_hour"`            // 5小时窗口
+	SevenDay            *UsageProgress                 `json:"seven_day,omitempty"`  // 7天窗口
+	CodexQuotaOverdraft *CodexQuotaOverdraftProbeState `json:"codex_quota_overdraft,omitempty"`
+	SevenDaySonnet      *UsageProgress                 `json:"seven_day_sonnet,omitempty"`     // 7天Sonnet窗口
+	SevenDayFable       *UsageProgress                 `json:"seven_day_fable,omitempty"`      // 7天Fable窗口（响应头 7d_oi）
+	GeminiSharedDaily   *UsageProgress                 `json:"gemini_shared_daily,omitempty"`  // Gemini shared pool RPD (Google One / Code Assist)
+	GeminiProDaily      *UsageProgress                 `json:"gemini_pro_daily,omitempty"`     // Gemini Pro 日配额
+	GeminiFlashDaily    *UsageProgress                 `json:"gemini_flash_daily,omitempty"`   // Gemini Flash 日配额
+	GeminiSharedMinute  *UsageProgress                 `json:"gemini_shared_minute,omitempty"` // Gemini shared pool RPM (Google One / Code Assist)
+	GeminiProMinute     *UsageProgress                 `json:"gemini_pro_minute,omitempty"`    // Gemini Pro RPM
+	GeminiFlashMinute   *UsageProgress                 `json:"gemini_flash_minute,omitempty"`  // Gemini Flash RPM
 
 	// Antigravity 多模型配额
 	AntigravityQuota map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
@@ -298,6 +311,7 @@ type AccountUsageService struct {
 	grokQuotaFetcher        *GrokQuotaFetcher
 	grokQuotaService        *GrokQuotaService
 	openAIQuotaService      *OpenAIQuotaService
+	codexQuotaOverdraft     *CodexQuotaOverdraftCoordinator
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
@@ -717,7 +731,9 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 	}
 
 	applyExtraToUsage(usage, account.Extra, now)
+	usage.CodexQuotaOverdraft, _ = codexQuotaOverdraftStateFromAccount(account)
 
+	observedSnapshot := force
 	if (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldProbeOpenAICodexSnapshot(account.ID, now, force) {
 		if account.IsShadow() {
 			// Spark shadow accounts fetch usage from /wham/usage (bengalfox channel)
@@ -727,8 +743,12 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 			if s.openAIQuotaService != nil {
 				if quotaUsage, err := s.openAIQuotaService.QueryUsage(ctx, account.ID); err == nil {
 					if updates := buildCodexSparkWindowExtraUpdates(quotaUsage, now); len(updates) > 0 {
+						observedSnapshot = true
 						mergeAccountExtra(account, updates)
 						s.persistOpenAICodexProbeSnapshot(account.ID, updates)
+						if account.ParentAccountID != nil {
+							notifyOpenAIAutoReset(*account.ParentAccountID)
+						}
 						if usage.UpdatedAt == nil {
 							usage.UpdatedAt = &now
 						}
@@ -738,6 +758,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 			}
 		} else {
 			if updates, err := s.probeOpenAICodexSnapshot(ctx, account); err == nil && len(updates) > 0 {
+				observedSnapshot = true
 				mergeAccountExtra(account, updates)
 				if usage.UpdatedAt == nil {
 					usage.UpdatedAt = &now
@@ -746,6 +767,13 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 			}
 		}
 	}
+	if state, ok := codexQuotaOverdraftStateFromAccount(account); ok && state.RecoverAt != nil && !state.RecoverAt.After(now) {
+		observedSnapshot = true
+	}
+	if s.codexQuotaOverdraft != nil && observedSnapshot {
+		s.codexQuotaOverdraft.ObserveAccount(account, "")
+	}
+	usage.CodexQuotaOverdraft, _ = codexQuotaOverdraftStateFromAccount(account)
 
 	if s.usageLogRepo == nil {
 		return usage, nil
@@ -764,6 +792,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 		}
 		usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
 	}
+	s.applyCodexQuotaOverdraftUsageCached(ctx, account, usage, now)
 
 	return usage, nil
 }
@@ -782,6 +811,62 @@ func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now ti
 		return true
 	}
 	return isOpenAICodexSnapshotStale(account, now)
+}
+
+// applyCodexQuotaOverdraftUsageCached decorates the two normal Codex window
+// stats with overdraft-period stats, using a short per-account cycle cache so
+// dashboard polling cannot issue two additional usage-log scans per request.
+func (s *AccountUsageService) applyCodexQuotaOverdraftUsageCached(ctx context.Context, account *Account, usage *UsageInfo, now time.Time) {
+	if s == nil || s.cache == nil || s.usageLogRepo == nil || account == nil || usage == nil {
+		return
+	}
+	state, ok := codexQuotaOverdraftStateFromAccount(account)
+	if !ok || state.Status == codexQuotaOverdraftProbeRecovered {
+		return
+	}
+	fiveStarted, sevenStarted := codexQuotaOverdraftWindowStarts(state)
+	if fiveStarted == nil && sevenStarted == nil {
+		return
+	}
+	if cached, ok := s.cache.codexOverdraftStats.Load(account.ID); ok {
+		if entry, ok := cached.(*codexOverdraftStatsCache); ok && entry.cycleKey == state.CycleKey && now.Sub(entry.timestamp) < windowStatsCacheTTL {
+			if usage.FiveHour != nil && entry.fiveHour != nil && state.FiveHourRecoverAt != nil && state.FiveHourRecoverAt.After(now) {
+				usage.FiveHour.OverdraftActive = true
+				usage.FiveHour.OverdraftStats = entry.fiveHour
+				usage.FiveHour.OverdraftStarted = cloneTimePtr(fiveStarted)
+				usage.FiveHour.OverdraftRecover = cloneTimePtr(state.FiveHourRecoverAt)
+			}
+			if usage.SevenDay != nil && entry.sevenDay != nil && state.SevenDayRecoverAt != nil && state.SevenDayRecoverAt.After(now) {
+				usage.SevenDay.OverdraftActive = true
+				usage.SevenDay.OverdraftStats = entry.sevenDay
+				usage.SevenDay.OverdraftStarted = cloneTimePtr(sevenStarted)
+				usage.SevenDay.OverdraftRecover = cloneTimePtr(state.SevenDayRecoverAt)
+			}
+			return
+		}
+	}
+	entry := &codexOverdraftStatsCache{cycleKey: state.CycleKey, timestamp: now}
+	if usage.FiveHour != nil && fiveStarted != nil && state.FiveHourRecoverAt != nil && state.FiveHourRecoverAt.After(now) {
+		if stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, *fiveStarted); err == nil {
+			entry.fiveHour = windowStatsFromAccountStats(stats)
+			usage.FiveHour.OverdraftActive = true
+			usage.FiveHour.OverdraftStats = entry.fiveHour
+			usage.FiveHour.OverdraftStarted = cloneTimePtr(fiveStarted)
+			usage.FiveHour.OverdraftRecover = cloneTimePtr(state.FiveHourRecoverAt)
+		}
+	}
+	if usage.SevenDay != nil && sevenStarted != nil && state.SevenDayRecoverAt != nil && state.SevenDayRecoverAt.After(now) {
+		if stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, *sevenStarted); err == nil {
+			entry.sevenDay = windowStatsFromAccountStats(stats)
+			usage.SevenDay.OverdraftActive = true
+			usage.SevenDay.OverdraftStats = entry.sevenDay
+			usage.SevenDay.OverdraftStarted = cloneTimePtr(sevenStarted)
+			usage.SevenDay.OverdraftRecover = cloneTimePtr(state.SevenDayRecoverAt)
+		}
+	}
+	if entry.fiveHour != nil || entry.sevenDay != nil {
+		s.cache.codexOverdraftStats.Store(account.ID, entry)
+	}
 }
 
 func isOpenAICodexSnapshotStale(account *Account, now time.Time) bool {
@@ -921,7 +1006,9 @@ func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, u
 	go func() {
 		updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer updateCancel()
-		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err == nil {
+			notifyOpenAIAutoReset(accountID)
+		}
 	}()
 }
 
@@ -1506,7 +1593,7 @@ func buildCodexUsageProgressFromExtra(extra map[string]any, window string, now t
 
 	progress := &UsageProgress{Utilization: parseExtraFloat64(usedRaw)}
 	if resetAtRaw, ok := extra[resetAtKey]; ok {
-		if resetAt, err := parseTime(fmt.Sprint(resetAtRaw)); err == nil {
+		if resetAt := parseExtraTime(resetAtRaw); !resetAt.IsZero() {
 			progress.ResetsAt = &resetAt
 			progress.RemainingSeconds = int(time.Until(resetAt).Seconds())
 			if progress.RemainingSeconds < 0 {
@@ -1518,7 +1605,7 @@ func buildCodexUsageProgressFromExtra(extra map[string]any, window string, now t
 		if resetAfterSeconds := parseExtraInt(extra[resetAfterKey]); resetAfterSeconds > 0 {
 			base := now
 			if updatedAtRaw, ok := extra["codex_usage_updated_at"]; ok {
-				if updatedAt, err := parseTime(fmt.Sprint(updatedAtRaw)); err == nil {
+				if updatedAt := parseExtraTime(updatedAtRaw); !updatedAt.IsZero() {
 					base = updatedAt
 				}
 			}

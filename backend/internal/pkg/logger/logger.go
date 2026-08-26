@@ -467,6 +467,9 @@ func inferStdLogLevel(msg string) Level {
 	if strings.HasPrefix(lower, "[error]") || strings.HasPrefix(lower, "error:") || strings.HasPrefix(lower, "fatal:") || strings.HasPrefix(lower, "panic:") {
 		return LevelError
 	}
+	if isExpectedOperationalFailureLog(lower) {
+		return LevelWarn
+	}
 
 	if strings.Contains(lower, " failed") || strings.Contains(lower, "error") || strings.Contains(lower, "panic") || strings.Contains(lower, "fatal") {
 		return LevelError
@@ -475,6 +478,52 @@ func inferStdLogLevel(msg string) Level {
 		return LevelWarn
 	}
 	return LevelInfo
+}
+
+func isExpectedOperationalFailureLog(lower string) bool {
+	if !strings.Contains(lower, "error") && !strings.Contains(lower, "failed") {
+		for _, pattern := range []string{
+			"context deadline exceeded",
+			"context canceled",
+			"client disconnected",
+			"broken pipe",
+			"connection reset by peer",
+			"use of closed network connection",
+			"unexpected eof",
+			"i/o timeout",
+			"stream closed before",
+		} {
+			if strings.Contains(lower, pattern) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, statusPattern := range []string{
+		"status=400", "status=429", "status 400", "status 429",
+		"error 400", "error 429", "400 error", "429 error",
+	} {
+		if strings.Contains(lower, statusPattern) {
+			return true
+		}
+	}
+	for _, pattern := range []string{
+		"context deadline exceeded",
+		"context canceled",
+		"client disconnected",
+		"broken pipe",
+		"connection reset by peer",
+		"use of closed network connection",
+		"unexpected eof",
+		"i/o timeout",
+		"stream closed before",
+		"transport error: network error",
+	} {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // LegacyPrintf 用于平滑迁移历史的 printf 风格日志到结构化 logger。

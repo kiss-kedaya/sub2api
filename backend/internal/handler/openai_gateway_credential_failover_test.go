@@ -163,7 +163,7 @@ func TestCoolingGroupFailoverMappingsReturnRetryable503AcrossCompatHandlers(t *t
 	}
 }
 
-func TestOpenAICapacityFailoverExhaustionPreservesMessageAsServerError(t *testing.T) {
+func TestOpenAICapacityFailoverExhaustionReturnsNormalizedCooldownError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	message := "Our servers are currently overloaded. Please try again later."
 	failoverErr := &service.UpstreamFailoverError{
@@ -180,8 +180,8 @@ func TestOpenAICapacityFailoverExhaustionPreservesMessageAsServerError(t *testin
 		c, _ := gin.CreateTestContext(recorder)
 		(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, failoverErr, false)
 		require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
-		require.Equal(t, "server_error", gjson.Get(recorder.Body.String(), "error.type").String())
-		require.Equal(t, message, gjson.Get(recorder.Body.String(), "error.message").String())
+		require.Equal(t, "overloaded_error", gjson.Get(recorder.Body.String(), "error.type").String())
+		require.Equal(t, "Upstream providers are temporarily cooling down; please retry later", gjson.Get(recorder.Body.String(), "error.message").String())
 		require.NotContains(t, recorder.Body.String(), "server_is_overloaded")
 	})
 
@@ -191,7 +191,7 @@ func TestOpenAICapacityFailoverExhaustionPreservesMessageAsServerError(t *testin
 		(&GatewayHandler{}).handleResponsesFailoverExhausted(c, failoverErr, false)
 		require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 		require.Equal(t, "server_error", gjson.Get(recorder.Body.String(), "error.code").String())
-		require.Equal(t, message, gjson.Get(recorder.Body.String(), "error.message").String())
+		require.Equal(t, "Upstream providers are temporarily cooling down; please retry later", gjson.Get(recorder.Body.String(), "error.message").String())
 	})
 
 	t.Run("anthropic_compat", func(t *testing.T) {
@@ -200,7 +200,7 @@ func TestOpenAICapacityFailoverExhaustionPreservesMessageAsServerError(t *testin
 		(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, failoverErr, false)
 		require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 		require.Equal(t, "api_error", gjson.Get(recorder.Body.String(), "error.type").String())
-		require.Equal(t, message, gjson.Get(recorder.Body.String(), "error.message").String())
+		require.Equal(t, "Upstream providers are temporarily cooling down; please retry later", gjson.Get(recorder.Body.String(), "error.message").String())
 	})
 }
 

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -63,27 +64,56 @@ func (c *openAIImageOutputCounter) AddJSONResponse(body []byte) {
 }
 
 func (c *openAIImageOutputCounter) AddSSEData(data []byte) {
-	if c == nil || len(data) == 0 || strings.TrimSpace(string(data)) == "[DONE]" || !gjson.ValidBytes(data) {
+	if c == nil {
 		return
 	}
-	root := gjson.ParseBytes(data)
-	c.addDataArray(root.Get("data"))
-	eventType := strings.TrimSpace(root.Get("type").String())
-	switch eventType {
+	c.AddSSEFrame(parseOpenAISSEDataFrame(data, ""))
+}
+
+func (c *openAIImageOutputCounter) AddSSEFrame(frame openAISSEDataFrame) {
+	if c == nil || !frame.validJSON {
+		return
+	}
+	c.addDataArray(frame.root.Get("data"))
+	switch frame.eventType {
 	case "response.output_item.done":
-		c.addImageOutputItem(root.Get("item"))
+		c.addImageOutputItem(frame.root.Get("item"))
 	case "response.completed", "response.done":
-		c.addOutputArray(root.Get("response.output"))
+		c.addOutputArray(frame.root.Get("response.output"))
 	case "image_generation.completed":
-		if item := root.Get("item"); item.Exists() {
+		if item := frame.root.Get("item"); item.Exists() {
 			c.addImageOutputItem(item)
 			return
 		}
-		if output := root.Get("output"); output.Exists() {
+		if output := frame.root.Get("output"); output.Exists() {
 			c.addImageOutputItem(output)
 			return
 		}
-		c.addImageOutputItem(root)
+		c.addImageOutputItem(frame.root)
+	}
+}
+
+func openAISSEFrameMayContainImageOutput(frame openAISSEDataFrame) bool {
+	if !frame.validJSON {
+		return false
+	}
+	switch frame.eventType {
+	case "", "response.output_item.done", "response.completed", "response.done", "image_generation.completed":
+		return true
+	default:
+		// Preserve compatible Images API extensions that report a top-level
+		// data array under a vendor-specific event type without making every
+		// ordinary Responses delta walk the image accounting paths.
+		return bytes.Contains(frame.data, []byte(`"data"`))
+	}
+}
+
+func openAISSEEventMayNormalizeImageStatus(eventType string) bool {
+	switch eventType {
+	case "response.output_item.done", "response.completed", "response.done":
+		return true
+	default:
+		return false
 	}
 }
 

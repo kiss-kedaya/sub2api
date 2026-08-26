@@ -178,13 +178,15 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		}
 	}
 
-	if cmd.BalanceCost > 0 {
-		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
-		if err != nil {
+	if cmd.BalancePreauthorized {
+		if err := beginUsageBillingBalanceFinalization(ctx, tx, cmd); err != nil {
 			return err
 		}
-		result.NewBalance = &newBalance
-		result.BalanceOverdrafted = !sufficient
+		result.BalanceFinalizationPending = true
+	} else if cmd.BalanceCost > 0 {
+		if err := enqueueUsageBillingBalance(ctx, tx, cmd); err != nil {
+			return err
+		}
 	}
 
 	if cmd.APIKeyQuotaCost > 0 {
@@ -209,6 +211,69 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		result.QuotaState = quotaState
 	}
 
+	return nil
+}
+
+// beginUsageBillingBalanceFinalization durably fixes the actual charge before
+// the Redis reservation is settled. The row may enter settlement_pending only
+// after FinalizeLiveBalance succeeds; otherwise a crash could make both the
+// reserved amount and the later database deduction visible at the same time.
+func beginUsageBillingBalanceFinalization(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) error {
+	result, err := tx.ExecContext(ctx, `
+		UPDATE billing_balance_settlements
+		SET status = $5,
+			amount_usd = CASE WHEN status = $5 THEN amount_usd ELSE $3 END,
+			request_fingerprint = CASE WHEN status = $5 THEN request_fingerprint ELSE $4 END,
+			updated_at = CASE WHEN status = $5 THEN updated_at ELSE NOW() END
+		WHERE request_id = $1
+			AND api_key_id = $2
+			AND (
+				status = $6
+				OR (status = $5 AND amount_usd = $3 AND request_fingerprint = $4)
+			)
+	`, cmd.RequestID, cmd.APIKeyID, cmd.BalanceCost, cmd.RequestFingerprint,
+		service.BalanceSettlementFinalizationPending,
+		service.BalanceSettlementAuthorized,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return service.ErrUsageBillingRequestConflict
+	}
+	return nil
+}
+
+func enqueueUsageBillingBalance(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) error {
+	var status int16
+	err := tx.QueryRowContext(ctx, `
+		INSERT INTO billing_balance_settlements (
+			request_id,
+			api_key_id,
+			request_fingerprint,
+			user_id,
+			amount_usd,
+			status
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (request_id, api_key_id) DO NOTHING
+		RETURNING status
+	`, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint, cmd.UserID, cmd.BalanceCost,
+		service.BalanceSettlementPending,
+	).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return service.ErrUsageBillingRequestConflict
+	}
+	if err != nil {
+		return err
+	}
+	if status != service.BalanceSettlementPending {
+		return service.ErrUsageBillingRequestConflict
+	}
 	return nil
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
 	"github.com/Wei-Shaw/sub2api/internal/web"
@@ -59,7 +60,12 @@ func main() {
 	// Parse command line flags
 	setupMode := flag.Bool("setup", false, "Run setup wizard in CLI mode")
 	showVersion := flag.Bool("version", false, "Show version information")
+	migrateOnly := flag.Bool("migrate-only", false, "Apply database migrations and exit")
+	checkMigrations := flag.Bool("check-migrations", false, "Validate database migrations without changing schema and exit")
 	flag.Parse()
+	if *migrateOnly && *checkMigrations {
+		log.Fatal("-migrate-only and -check-migrations are mutually exclusive")
+	}
 
 	if *showVersion {
 		log.Printf("Sub2API %s (commit: %s, built: %s)\n", Version, Commit, Date)
@@ -71,6 +77,10 @@ func main() {
 		if err := setup.RunCLI(); err != nil {
 			log.Fatalf("Setup failed: %v", err)
 		}
+		return
+	}
+	if *migrateOnly || *checkMigrations {
+		runMigrationCommand(*checkMigrations)
 		return
 	}
 
@@ -92,6 +102,26 @@ func main() {
 
 	// Normal server mode
 	runMainServer()
+}
+
+func runMigrationCommand(validateOnly bool) {
+	cfg, err := config.LoadForBootstrap()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if err := repository.RunConfiguredMigrations(ctx, cfg, validateOnly); err != nil {
+		if validateOnly {
+			log.Fatalf("Migration validation failed: %v", err)
+		}
+		log.Fatalf("Database migration failed: %v", err)
+	}
+	if validateOnly {
+		log.Println("Database migrations are current")
+		return
+	}
+	log.Println("Database migrations applied successfully")
 }
 
 func runSetupServer() {
@@ -153,6 +183,24 @@ func runMainServer() {
 		log.Fatalf("Failed to initialize application: %v", err)
 	}
 	defer app.Cleanup()
+	profiler, err := startPprofServerFromEnv()
+	if err != nil {
+		log.Fatalf("Failed to start pprof diagnostics: %v", err)
+	}
+	if profiler != nil {
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := profiler.Shutdown(ctx); err != nil {
+				log.Printf("Failed to stop pprof diagnostics: %v", err)
+			}
+		}()
+	}
+	if app.PluginManager != nil {
+		if err := app.PluginManager.Start(context.Background()); err != nil {
+			log.Printf("Plugin manager started in degraded state: %v", err)
+		}
+	}
 	if app.PromptAudit != nil {
 		if err := app.PromptAudit.Start(context.Background()); err != nil {
 			// Startup continues so unrelated APIs stay up. Fail-closed (unavailable)

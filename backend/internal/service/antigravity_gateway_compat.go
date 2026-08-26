@@ -23,6 +23,11 @@ const (
 )
 
 const (
+	// Gemini's Antigravity compatibility endpoint rejects generation limits
+	// above this ceiling. Clamp client-provided OpenAI limits before translating
+	// the request instead of turning a valid request into an upstream 400.
+	antigravityCompatMaxTokens = 64000
+
 	// AntigravityCredentialRejectedClientMessage 是可安全返回给客户端的认证修复提示。
 	AntigravityCredentialRejectedClientMessage = "Antigravity rejected the OAuth credential after refresh; reauthorize the account and verify project_id"
 	// AntigravityCredentialRejectedReason 标识上游拒绝已刷新 OAuth 凭据。
@@ -158,7 +163,7 @@ func preserveChatCompletionTokenLimit(request *apicompat.ChatCompletionsRequest,
 		limit = request.MaxCompletionTokens
 	}
 	if limit != nil && *limit > 0 {
-		claudeRequest.MaxTokens = *limit
+		claudeRequest.MaxTokens = min(*limit, antigravityCompatMaxTokens)
 	}
 }
 

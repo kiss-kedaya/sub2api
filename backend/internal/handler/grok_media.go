@@ -177,6 +177,30 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			return
 		}
 	}
+	// 预扣：仅同步图片生成/编辑在选号前按“张数 × 尺寸档单价”精确预留余额；
+	// 结算走 RecordUsage → applyUsageBilling 的 guard.Finalize 退实际差额，兜底
+	// defer 退款在 worker 交接后自动失效。视频为异步三段（生成/查询/内容），
+	// 计费参数在状态查询到 done 才完整，故不走此同步预扣路径，留待单独提交。
+	if endpoint.IsImageGenerationRequest() {
+		balanceGuard, err := preauthorizePerRequestGatewayRequest(
+			c.Request.Context(), h.balancePreauthorizer, h.gatewayService,
+			apiKey, subscription, body,
+			service.BalancePreauthorizationBillingModel(routingModel, service.ChannelMappingResult{}),
+			time.Now(),
+			service.PerRequestPreauthorizationEstimate{
+				RequestCount: requestInfo.N,
+				SizeTier:     requestInfo.SizeTier,
+			},
+		)
+		if h.handlePreauthorizationError(c, err, false) {
+			return
+		}
+		if balanceGuard != nil {
+			defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
+			c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+		}
+	}
+
 	// Grok 媒体（图片/视频生成与视频查询）按媒体倍率计费，不在 token 利润门
 	// 范围内：显式豁免，防止 service 层防御性装门按文本 D 误过滤媒体请求，
 	// 也防止已计费的在途视频任务因绑定账号被门排除而查询返回伪 404。

@@ -14,9 +14,12 @@ import (
 )
 
 const (
-	defaultDashboardStatsFreshTTL       = 15 * time.Second
-	defaultDashboardStatsCacheTTL       = 30 * time.Second
-	defaultDashboardStatsRefreshTimeout = 30 * time.Second
+	defaultDashboardStatsFreshTTL = 15 * time.Second
+	defaultDashboardStatsCacheTTL = 30 * time.Second
+	// Dashboard aggregation may scan a large usage history.  Keep this bounded,
+	// but align it with the 180s report-request budget instead of aborting cold
+	// refreshes at the old 30s limit.
+	defaultDashboardStatsRefreshTimeout = 180 * time.Second
 )
 
 // ErrDashboardStatsCacheMiss 标记仪表盘缓存未命中。

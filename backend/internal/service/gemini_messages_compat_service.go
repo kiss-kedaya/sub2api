@@ -1066,13 +1066,34 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 
 	var usage *ClaudeUsage
 	var firstTokenMs *int
+	// streamTopUpAbortErr 记录「流式补扣失败主动中止」哨兵错误，与已交付输出的部分
+	// 结果一起在函数末尾返回给 handler（result 非 nil + err 非 nil），避免既走结算又
+	// 被误判为成功。
+	var streamTopUpAbortErr error
 	if req.Stream {
 		streamRes, err := s.handleStreamingResponse(c, resp, startTime, originalModel)
 		if err != nil {
-			return nil, err
+			// 流式补扣失败主动中止（ErrBalanceWithholdingFailed）：上游已交付部分输出
+			// 但终帧未到故无 usage。若返回 nil，handler 的 submitGeminiUsage(nil) 空操作
+			// 会跳过结算，仅剩 defer 全额退款 → 已交付输出被免费漏扣。故对该哨兵错误
+			// 保留一个零 usage 的 ForwardResult（携 err）继续走下方组装，使其进入结算；
+			// handler 侧 observedSpend=true，applyObservedProviderSpendFloor 按已扣 hold
+			// 结算（settle-at-hold）。其余错误（含 failover）仍返回 nil，不暴露部分结果。
+			if !errors.Is(err, ErrBalanceWithholdingFailed) {
+				return nil, err
+			}
+			streamTopUpAbortErr = err
+			usage = &ClaudeUsage{}
+			if streamRes != nil {
+				if streamRes.usage != nil {
+					usage = streamRes.usage
+				}
+				firstTokenMs = streamRes.firstTokenMs
+			}
+		} else {
+			usage = streamRes.usage
+			firstTokenMs = streamRes.firstTokenMs
 		}
-		usage = streamRes.usage
-		firstTokenMs = streamRes.firstTokenMs
 	} else {
 		if useUpstreamStream {
 			collected, usageObj, err := collectGeminiSSE(resp.Body, true)
@@ -1114,7 +1135,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		ImageCount:                    imageCount,
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
-	}, nil
+	}, streamTopUpAbortErr
 }
 
 func isGeminiSignatureRelatedError(respBody []byte) bool {
@@ -2104,6 +2125,13 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 	var usage ClaudeUsage
 	finishReason := ""
 	sawToolUse := false
+	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐个文本增量
+	// 仅整数累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
+	streamCtx := context.Background()
+	if c.Request != nil {
+		streamCtx = c.Request.Context()
+	}
+	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(streamCtx)
 
 	nextBlockIndex := 0
 	openBlockIndex := -1
@@ -2213,6 +2241,13 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					},
 				})
 				flusher.Flush()
+				// 文本增量计量：累加已发字节作 token 上界，跨预扣窗口时补扣。补扣
+				// 失败中止上游流并返回错误，避免继续产生无法结算的输出成本。
+				// tracker 为 nil 时逐增量零开销。
+				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(delta)); topUpErr != nil {
+					logger.LegacyPrintf("service.gemini_messages_compat", "Stream output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
+					return nil, wrapStreamOutputHoldTopUpFailure(topUpErr)
+				}
 				continue
 			}
 
@@ -3587,11 +3622,19 @@ func cleanToolSchema(schema any) any {
 			if key == "$schema" || key == "$id" || key == "$ref" ||
 				key == "$defs" || key == "definitions" ||
 				key == "additionalProperties" || key == "patternProperties" || key == "minLength" ||
-				key == "maxLength" || key == "minItems" || key == "maxItems" || key == "exclusiveMinimum" {
+				key == "maxLength" || key == "minItems" || key == "maxItems" || key == "exclusiveMinimum" ||
+				key == "deprecated" {
 				continue
 			}
 			// 递归清理嵌套对象
 			cleaned[key] = cleanToolSchema(value)
+		}
+		if enum, ok := cleaned["enum"].([]any); ok {
+			if normalized, ok := normalizeGeminiEnum(enum); ok {
+				cleaned["enum"] = normalized
+			} else {
+				delete(cleaned, "enum")
+			}
 		}
 		// 规范化 type 字段为大写
 		if typeVal, ok := cleaned["type"].(string); ok {
@@ -3625,6 +3668,28 @@ func cleanToolSchema(schema any) any {
 	default:
 		return v
 	}
+}
+
+func normalizeGeminiEnum(values []any) ([]any, bool) {
+	normalized := make([]any, len(values))
+	for i, value := range values {
+		if stringValue, ok := value.(string); ok {
+			normalized[i] = stringValue
+			continue
+		}
+
+		switch value.(type) {
+		case nil, bool, float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return nil, false
+			}
+			normalized[i] = string(encoded)
+		default:
+			return nil, false
+		}
+	}
+	return normalized, true
 }
 
 func incrementIntegralSchemaBound(value any) (any, bool) {

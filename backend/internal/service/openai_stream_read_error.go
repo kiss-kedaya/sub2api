@@ -12,7 +12,16 @@ const (
 	// when an upstream HTTP/2 response stream is reset after the request started.
 	OpenAIUpstreamHTTP2StreamErrorCode = "upstream_http2_stream_error"
 	OpenAIUpstreamStreamReadErrorCode  = "upstream_stream_read_error"
+	// OpenAIUpstreamStreamTruncatedCode is returned when an SSE stream closes
+	// before it emits any protocol terminal signal ([DONE], usage, or a
+	// non-null finish_reason).
+	OpenAIUpstreamStreamTruncatedCode = "upstream_stream_truncated"
 )
+
+// ErrOpenAIUpstreamStreamTruncated marks a clean EOF before a raw Chat
+// Completions stream emitted a terminal signal. A clean EOF has no transport
+// error to classify, so keep a sentinel for stable error handling and tests.
+var ErrOpenAIUpstreamStreamTruncated = errors.New("upstream stream ended before any terminal chunk")
 
 type openAIUpstreamStreamReadError struct {
 	cause         error
@@ -61,6 +70,9 @@ func OpenAIUpstreamStreamReadErrorDetails(err error) (code, message string, ok b
 
 func classifyOpenAIUpstreamStreamReadError(err error) (code, message string) {
 	if err != nil {
+		if errors.Is(err, ErrOpenAIUpstreamStreamTruncated) {
+			return OpenAIUpstreamStreamTruncatedCode, "Upstream response stream ended before completion"
+		}
 		lower := strings.ToLower(err.Error())
 		// net/http's HTTP/2 stream error is unexported. Its stable text contains
 		// "stream error: stream ID ..."; match only the transport signature and

@@ -9,8 +9,6 @@ import (
 
 const statusClientClosedRequest = 499
 
-const balanceWithholdingFailedMessage = "Insufficient balance, withholding failed"
-
 func concurrencyErrorResponse(err error, slotType string) (int, string, string) {
 	var waitQueueFullErr *WaitQueueFullError
 	if errors.As(err, &waitQueueFullErr) {
@@ -20,9 +18,6 @@ func concurrencyErrorResponse(err error, slotType string) (int, string, string) 
 
 	var concurrencyErr *ConcurrencyError
 	if errors.As(err, &concurrencyErr) {
-		if concurrencyErr.BalanceWithholdingFailed {
-			return http.StatusForbidden, "permission_error", balanceWithholdingFailedMessage
-		}
 		if concurrencyErr.SlotType != "" {
 			slotType = concurrencyErr.SlotType
 		}

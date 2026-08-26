@@ -18,7 +18,7 @@ const (
 // message. Other malformed payloads are left untouched for normal error paths.
 func splitOpenAIConcatenatedJSONDocuments(payload []byte) ([][]byte, bool) {
 	payload = bytes.TrimSpace(payload)
-	if len(payload) == 0 || len(payload) > maxOpenAIConcatenatedJSONBytes || json.Valid(payload) {
+	if len(payload) == 0 || len(payload) > maxOpenAIConcatenatedJSONBytes || !mayContainOpenAIConcatenatedJSONDocuments(payload) {
 		return nil, false
 	}
 
@@ -49,6 +49,32 @@ func splitOpenAIConcatenatedJSONDocuments(payload []byte) ([][]byte, bool) {
 		}
 		documents = append(documents, raw)
 	}
+}
+
+// mayContainOpenAIConcatenatedJSONDocuments is a cheap corruption prefilter.
+// Normal SSE frames no longer pay a full json.Valid scan in the repair layer;
+// the downstream frame parser performs the single authoritative validation.
+// False positives (for example, `} {` inside a string) are harmless because
+// the decoder in splitOpenAIConcatenatedJSONDocuments still proves the shape.
+func mayContainOpenAIConcatenatedJSONDocuments(payload []byte) bool {
+	for closing, current := range payload {
+		if current != '}' {
+			continue
+		}
+		next := closing + 1
+		for next < len(payload) {
+			switch payload[next] {
+			case ' ', '\t', '\r', '\n':
+				next++
+			default:
+				if payload[next] == '{' {
+					return true
+				}
+				next = len(payload)
+			}
+		}
+	}
+	return false
 }
 
 type openAISSEJSONDocumentScanner struct {

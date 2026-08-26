@@ -471,6 +471,44 @@ func TestCleanToolSchema_DropsAmbiguousExclusiveMinimumWithoutConversion(t *test
 	}
 }
 
+func TestCleanToolSchema_RemovesNestedDeprecatedAndNormalizesMixedScalarEnum(t *testing.T) {
+	schema := map[string]any{
+		"anyOf": []any{
+			map[string]any{
+				"type":       "string",
+				"deprecated": true,
+			},
+			map[string]any{
+				"enum": []any{"enabled", false, float64(1), nil},
+			},
+		},
+	}
+
+	cleaned, ok := cleanToolSchema(schema).(map[string]any)
+	require.True(t, ok)
+	anyOf, ok := cleaned["anyOf"].([]any)
+	require.True(t, ok)
+	require.Len(t, anyOf, 2)
+
+	deprecatedSchema, ok := anyOf[0].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, deprecatedSchema, "deprecated")
+
+	enumSchema, ok := anyOf[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, []any{"enabled", "false", "1", "null"}, enumSchema["enum"])
+}
+
+func TestCleanToolSchema_DropsEnumWithNonScalarValue(t *testing.T) {
+	schema := map[string]any{
+		"enum": []any{"valid", map[string]any{"invalid": true}},
+	}
+
+	cleaned, ok := cleanToolSchema(schema).(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, cleaned, "enum")
+}
+
 func TestConvertClaudeToolsToGeminiTools_PreservesWebSearchAlongsideFunctions(t *testing.T) {
 	tools := []any{
 		map[string]any{
@@ -1074,6 +1112,42 @@ func TestGeminiMessagesHandleStreamingResponse_ClosesToolBlockBeforeText(t *test
 	require.True(t, textStarted, "expected a text content block to be emitted after the tool call")
 	require.True(t, toolClosedBeforeText, "tool_use block must be closed before the text block starts")
 	require.Equal(t, -1, open, "stream ended with a content block still open")
+}
+
+// TestGeminiMessagesHandleStreamingResponse_TopUpAbortSurfacesSentinel 证明 Gemini
+// Messages 兼容流式路径在补扣失败时以 ErrBalanceWithholdingFailed 中止——这是 Forward
+// 包装层据以保留已交付输出结果（settle-at-hold）、避免免费漏扣的哨兵。补此前遗漏的
+// 第五条流式路径（预扣审查复验发现）。
+func TestGeminiMessagesHandleStreamingResponse_TopUpAbortSurfacesSentinel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// 构造一个补扣必然失败（余额不足）的预扣 guard。
+	fixture := newPreauthorizationFixture()
+	fixture.wallet.topUp = []LiveBalanceResult{{Outcome: LiveBalanceOutcomeInsufficient, State: LiveBalanceAttemptAuthorized}}
+	guard := streamingPreauthorizationGuard(t, fixture)
+
+	// 上游持续下发可见文本增量，跨预留窗口后触发补扣 → 失败中止。
+	var b strings.Builder
+	for i := 0; i < 40; i++ {
+		b.WriteString(`data: {"candidates":[{"content":{"parts":[{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}]}` + "\n\n")
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(b.String())),
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", http.NoBody)
+	c.Request = c.Request.WithContext(
+		ContextWithBalancePreauthorizationGuard(c.Request.Context(), guard),
+	)
+
+	svc := &GeminiMessagesCompatService{}
+	_, err := svc.handleStreamingResponse(c, resp, time.Now(), "claude-3-5-sonnet")
+	require.ErrorIs(t, err, ErrBalanceWithholdingFailed,
+		"Gemini-compat top-up abort must surface the withholding sentinel so Forward preserves the delivered-output result")
 }
 
 type anthropicContentBlockEvent struct {

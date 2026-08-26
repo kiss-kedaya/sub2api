@@ -121,8 +121,24 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 
 	// 分组利润控制：alpha search 文本入口请求级装门并固定 pricingAt
 	//（记录路径经 service.OpenAIPricingAtFromContext 从请求 ctx 回读）。
-	asPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
-	c.Request = c.Request.WithContext(asPricingCtx)
+	asPricingCtx, asPricingAt := h.attachTextPricingContext(c, apiKey.GroupID)
+
+	// 预扣：alpha search 按输入 token 计费，复用文本端点的 token 上限估算生命周期，
+	// 在选号（上游产生费用）之前原子预留余额；结算走 RecordUsage 的 guard.Finalize
+	// 退实际差额，兜底 defer 退款在 worker 交接后自动失效。
+	balanceGuard, err := preauthorizeTextGatewayRequest(
+		asPricingCtx, h.balancePreauthorizer, h.gatewayService,
+		apiKey, subscription, forwardBody,
+		service.BalancePreauthorizationBillingModel(requestedModel, channelMapping),
+		asPricingAt, gjson.GetBytes(forwardBody, "service_tier").String(),
+	)
+	if h.handlePreauthorizationError(c, err, false) {
+		return
+	}
+	if balanceGuard != nil {
+		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
 
 	for {
 		selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
