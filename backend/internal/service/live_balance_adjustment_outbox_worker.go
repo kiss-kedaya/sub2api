@@ -40,13 +40,17 @@ func NewLiveBalanceAdjustmentOutboxWorker(
 	return newLiveBalanceAdjustmentOutboxWorker(repo, cache)
 }
 
-// ProvideLiveBalanceAdjustmentOutboxWorker is intentionally not in ProviderSet
-// until wallet initialization persists the matching PostgreSQL watermark.
+// ProvideLiveBalanceAdjustmentOutboxWorker starts durable Redis delivery. A
+// missing wallet is rebuilt from the same PostgreSQL balance/watermark snapshot
+// used by request preauthorization before the claimed event is replayed.
 func ProvideLiveBalanceAdjustmentOutboxWorker(
 	repo LiveBalanceAdjustmentOutboxRepository,
 	cache *BillingCacheService,
+	billingRepo UsageBillingRepository,
 ) *LiveBalanceAdjustmentOutboxWorker {
-	worker := NewLiveBalanceAdjustmentOutboxWorker(repo, cache)
+	snapshotReader, _ := billingRepo.(balancePreauthorizationSnapshotReader)
+	applier := newRecoveringLiveBalanceAdjustmentApplier(cache, snapshotReader)
+	worker := newLiveBalanceAdjustmentOutboxWorker(repo, applier)
 	worker.Start()
 	return worker
 }

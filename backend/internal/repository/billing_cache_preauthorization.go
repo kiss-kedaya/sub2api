@@ -255,11 +255,14 @@ if recorded_delta ~= false then
   return {2, 0, wallet or '0', '0', recorded_delta}
 end
 
+local watermark = redis.call('GET', KEYS[2])
 if wallet == false then
-  return {3, 0, '0', '0', ARGV[1]}
+  if watermark ~= false then
+    return {3, 0, '0', '0', ARGV[1]}
+  end
+  return {4, 0, '0', '0', ARGV[1]}
 end
 
-local watermark = redis.call('GET', KEYS[2])
 if watermark == false then
   return {3, 0, wallet, '0', ARGV[1]}
 end
@@ -267,12 +270,6 @@ redis.call('PERSIST', KEYS[1])
 redis.call('PERSIST', KEYS[2])
 
 if tonumber(ARGV[3]) <= tonumber(watermark) then
-  redis.call('HSET', KEYS[3],
-    'delta', ARGV[1],
-    'event', ARGV[3],
-    'predecessor', ARGV[4],
-    'applied', '0')
-  redis.call('EXPIRE', KEYS[3], ARGV[2])
   return {2, 0, wallet, '0', ARGV[1]}
 end
 
@@ -291,6 +288,28 @@ redis.call('HSET', KEYS[3],
   'applied', '1')
 redis.call('EXPIRE', KEYS[3], ARGV[2])
 return {1, 0, tostring(wallet), '0', ARGV[1]}
+`)
+
+// Missing wallets are initialized from one authoritative PostgreSQL snapshot.
+// Existing wallet state is never overwritten because it may already include
+// an active hold or a newer outbox event from another instance.
+var initializeLiveBalanceAtWatermarkScript = redis.NewScript(`
+local wallet = redis.call('GET', KEYS[1])
+local watermark = redis.call('GET', KEYS[2])
+
+if wallet == false and watermark == false then
+  redis.call('SET', KEYS[1], ARGV[1])
+  redis.call('SET', KEYS[2], ARGV[2])
+  return {1, 0, ARGV[1], '0', '0'}
+end
+
+if wallet ~= false and watermark ~= false then
+  redis.call('PERSIST', KEYS[1])
+  redis.call('PERSIST', KEYS[2])
+  return {2, 0, wallet, '0', '0'}
+end
+
+return {3, 0, wallet or '0', '0', '0'}
 `)
 
 func (c *billingCache) GetLiveBalance(ctx context.Context, userID int64) (float64, bool, error) {
@@ -479,6 +498,33 @@ func (c *billingCache) AdjustLiveBalanceAtWatermark(
 	).Result()
 	if err != nil {
 		return service.LiveBalanceResult{}, fmt.Errorf("adjust live balance at watermark: %w", err)
+	}
+	return parseLiveBalanceResult(raw)
+}
+
+func (c *billingCache) InitializeLiveBalanceAtWatermark(
+	ctx context.Context,
+	userID int64,
+	balance float64,
+	watermark int64,
+) (service.LiveBalanceResult, error) {
+	if userID <= 0 {
+		return service.LiveBalanceResult{}, errInvalidLiveBalanceUserID
+	}
+	if watermark < 0 || watermark > maxExactLuaInteger {
+		return service.LiveBalanceResult{}, errors.New("live balance initialization watermark is invalid")
+	}
+	balanceUnits, err := liveBalanceMoneyToUnits(balance, false)
+	if err != nil {
+		return service.LiveBalanceResult{}, fmt.Errorf("live balance initialization: %w", err)
+	}
+
+	raw, err := initializeLiveBalanceAtWatermarkScript.Run(ctx, c.rdb, []string{
+		liveBalanceWalletKey(userID),
+		liveBalanceWatermarkKey(userID),
+	}, balanceUnits, watermark).Result()
+	if err != nil {
+		return service.LiveBalanceResult{}, fmt.Errorf("initialize live balance at watermark: %w", err)
 	}
 	return parseLiveBalanceResult(raw)
 }
