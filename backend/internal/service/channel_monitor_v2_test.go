@@ -11,6 +11,7 @@ import (
 
 type channelMonitorV2RepoStub struct {
 	config serviceChannelMonitorV2ConfigAlias
+	filter ChannelMonitorV2Filter
 	users  *ChannelMonitorV2List[ChannelMonitorV2UserRow]
 	matrix *ChannelMonitorV2Matrix
 	errors *ChannelMonitorV2List[ChannelMonitorV2ErrorRow]
@@ -29,10 +30,12 @@ func (s *channelMonitorV2RepoStub) GetConfig(context.Context) (*ChannelMonitorV2
 func (s *channelMonitorV2RepoStub) UpdateConfig(context.Context, ChannelMonitorV2Config, int) (*ChannelMonitorV2Config, error) {
 	return nil, nil
 }
-func (s *channelMonitorV2RepoStub) GetDimensions(context.Context, ChannelMonitorV2Filter, ChannelMonitorV2Config) (*ChannelMonitorV2Dimensions, error) {
+func (s *channelMonitorV2RepoStub) GetDimensions(_ context.Context, filter ChannelMonitorV2Filter, _ ChannelMonitorV2Config) (*ChannelMonitorV2Dimensions, error) {
+	s.filter = filter
 	return nil, nil
 }
-func (s *channelMonitorV2RepoStub) GetSnapshot(_ context.Context, _ ChannelMonitorV2Filter, _ ChannelMonitorV2Config, admin bool) (*ChannelMonitorV2Snapshot, error) {
+func (s *channelMonitorV2RepoStub) GetSnapshot(_ context.Context, filter ChannelMonitorV2Filter, _ ChannelMonitorV2Config, admin bool) (*ChannelMonitorV2Snapshot, error) {
+	s.filter = filter
 	s.admin = admin
 	if s.snap == nil {
 		return nil, nil
@@ -49,14 +52,17 @@ func (s *channelMonitorV2RepoStub) GetSnapshot(_ context.Context, _ ChannelMonit
 	out.Config = cfg
 	return &out, nil
 }
-func (s *channelMonitorV2RepoStub) GetModels(context.Context, ChannelMonitorV2Filter, ChannelMonitorV2Config, bool) (*ChannelMonitorV2List[ChannelMonitorV2ModelRow], error) {
+func (s *channelMonitorV2RepoStub) GetModels(_ context.Context, filter ChannelMonitorV2Filter, _ ChannelMonitorV2Config, _ bool) (*ChannelMonitorV2List[ChannelMonitorV2ModelRow], error) {
+	s.filter = filter
 	return nil, nil
 }
-func (s *channelMonitorV2RepoStub) GetMatrix(_ context.Context, _ ChannelMonitorV2Filter, _ ChannelMonitorV2Config, groupBy ChannelMonitorV2GroupBy, admin bool) (*ChannelMonitorV2Matrix, error) {
+func (s *channelMonitorV2RepoStub) GetMatrix(_ context.Context, filter ChannelMonitorV2Filter, _ ChannelMonitorV2Config, groupBy ChannelMonitorV2GroupBy, admin bool) (*ChannelMonitorV2Matrix, error) {
+	s.filter = filter
 	s.group, s.admin = groupBy, admin
 	return s.matrix, nil
 }
-func (s *channelMonitorV2RepoStub) GetErrors(_ context.Context, _ ChannelMonitorV2Filter, _ ChannelMonitorV2Config, admin bool) (*ChannelMonitorV2List[ChannelMonitorV2ErrorRow], error) {
+func (s *channelMonitorV2RepoStub) GetErrors(_ context.Context, filter ChannelMonitorV2Filter, _ ChannelMonitorV2Config, admin bool) (*ChannelMonitorV2List[ChannelMonitorV2ErrorRow], error) {
+	s.filter = filter
 	s.admin = admin
 	if s.errors != nil {
 		// Return a shallow copy so service redaction does not mutate the fixture.
@@ -73,7 +79,8 @@ func (s *channelMonitorV2RepoStub) GetErrors(_ context.Context, _ ChannelMonitor
 	}
 	return nil, nil
 }
-func (s *channelMonitorV2RepoStub) GetUsers(context.Context, ChannelMonitorV2Filter, ChannelMonitorV2Config, bool) (*ChannelMonitorV2List[ChannelMonitorV2UserRow], error) {
+func (s *channelMonitorV2RepoStub) GetUsers(_ context.Context, filter ChannelMonitorV2Filter, _ ChannelMonitorV2Config, _ bool) (*ChannelMonitorV2List[ChannelMonitorV2UserRow], error) {
+	s.filter = filter
 	return s.users, nil
 }
 func (s *channelMonitorV2RepoStub) RecomputeRange(context.Context, time.Time, time.Time) error {
@@ -158,6 +165,21 @@ func TestChannelMonitorV2MatrixForwardsGroupingAndAdminScope(t *testing.T) {
 
 	_, err = NewChannelMonitorV2Service(repo).Matrix(context.Background(), ChannelMonitorV2Filter{}, "bad", false)
 	require.ErrorIs(t, err, ErrChannelMonitorV2InvalidGroupBy)
+}
+
+func TestChannelMonitorV2ServicePreservesViewerGroupScope(t *testing.T) {
+	repo := &channelMonitorV2RepoStub{config: ChannelMonitorV2Config{Enabled: true}, snap: &ChannelMonitorV2Snapshot{}}
+	filter := ChannelMonitorV2Filter{
+		RestrictGroups:  true,
+		AllowedGroupIDs: []int64{7, 11},
+		GroupIDs:        []int64{11},
+	}
+	_, err := NewChannelMonitorV2Service(repo).Snapshot(context.Background(), filter, false)
+	require.NoError(t, err)
+	require.True(t, repo.filter.RestrictGroups)
+	require.Equal(t, []int64{7, 11}, repo.filter.AllowedGroupIDs)
+	require.Equal(t, []int64{11}, repo.filter.GroupIDs)
+	require.False(t, repo.admin)
 }
 
 func TestChannelMonitorV2ConfigValidation(t *testing.T) {

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -9,6 +10,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestShouldRecordStandaloneCyberUsage(t *testing.T) {
+	forwardErr := errors.New("upstream cyber rejection")
+	require.True(t, shouldRecordStandaloneCyberUsage(forwardErr, false), "no result needs the standalone money task")
+	require.False(t, shouldRecordStandaloneCyberUsage(forwardErr, true), "partial result must use normal RecordUsage exactly once")
+	require.False(t, shouldRecordStandaloneCyberUsage(nil, false), "successful forwarding never needs the error-only record")
+}
+
+func TestObservedProviderSpendRequiresSuccessOrSemanticOutput(t *testing.T) {
+	forwardErr := errors.New("upstream disconnected")
+	require.True(t, observedProviderSpend(nil, false))
+	require.True(t, observedProviderSpend(forwardErr, true))
+	require.False(t, observedProviderSpend(forwardErr, false))
+}
 
 // newTestGinContext builds a bare gin.Context backed by an httptest recorder.
 func newTestGinContext() *gin.Context {

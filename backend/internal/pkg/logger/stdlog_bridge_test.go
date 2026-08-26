@@ -16,6 +16,11 @@ func TestInferStdLogLevel(t *testing.T) {
 		{msg: "Warning: queue full", want: LevelWarn},
 		{msg: "Forward request failed: timeout", want: LevelError},
 		{msg: "[ERROR] upstream unavailable", want: LevelError},
+		{msg: "[Forward] Upstream error (non-retryable): Status=400", want: LevelWarn},
+		{msg: "Account 7: upstream error 429 after retries", want: LevelWarn},
+		{msg: "Account 7: 400 error, attempting failover", want: LevelWarn},
+		{msg: "[ERROR] upstream error Status=429", want: LevelError},
+		{msg: "database corruption error", want: LevelError},
 		{msg: "[OpenAI WS Mode] reconnect_retry account_id=22 retry=1 max_retries=5", want: LevelInfo},
 		{msg: "service started", want: LevelInfo},
 		{msg: "debug: cache miss", want: LevelDebug},
@@ -162,5 +167,31 @@ func TestLegacyPrintfRoutesLevels(t *testing.T) {
 	}
 	if !strings.Contains(stderrText, "\"component\":\"service.test\"") {
 		t.Fatalf("stderr missing component field: %s", stderrText)
+	}
+}
+
+func TestInferStdLogLevel_DowngradesExpectedOperationalFailures(t *testing.T) {
+	for _, message := range []string{
+		"Create usage log failed: context deadline exceeded",
+		"stream disconnected before completion: read tcp: i/o timeout",
+		"forward failed: connection reset by peer",
+		"upstream status=429 error: rate limited",
+		"upstream 400 error: invalid request",
+	} {
+		if got := inferStdLogLevel(message); got != LevelWarn {
+			t.Fatalf("inferStdLogLevel(%q) = %s, want warn", message, got)
+		}
+	}
+}
+
+func TestInferStdLogLevel_PreservesExplicitSevereFailures(t *testing.T) {
+	for _, message := range []string{
+		"panic: context deadline exceeded while recovering",
+		"fatal: database corruption detected",
+		"error: billing ledger invariant violated",
+	} {
+		if got := inferStdLogLevel(message); got != LevelError {
+			t.Fatalf("inferStdLogLevel(%q) = %s, want error", message, got)
+		}
 	}
 }

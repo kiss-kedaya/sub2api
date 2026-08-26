@@ -285,6 +285,21 @@ func TestAntigravityCompatPreservesChatTokenLimit(t *testing.T) {
 			body: `{"model":"gemini-3.1-pro-high","messages":[{"role":"user","content":"ok"}],"max_tokens":8,"max_completion_tokens":13}`,
 			want: 13,
 		},
+		{
+			name: "max_tokens at safe ceiling is preserved",
+			body: `{"model":"gemini-3.1-pro-high","messages":[{"role":"user","content":"ok"}],"max_tokens":64000}`,
+			want: 64000,
+		},
+		{
+			name: "max_tokens above safe ceiling is clamped",
+			body: `{"model":"gemini-3.1-pro-high","messages":[{"role":"user","content":"ok"}],"max_tokens":64001}`,
+			want: 64000,
+		},
+		{
+			name: "precedence applies before clamping",
+			body: `{"model":"gemini-3.1-pro-high","messages":[{"role":"user","content":"ok"}],"max_tokens":8,"max_completion_tokens":64001}`,
+			want: 64000,
+		},
 	}
 
 	for _, tt := range tests {

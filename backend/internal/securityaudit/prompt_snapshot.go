@@ -27,6 +27,11 @@ type promptSegment struct {
 	text string
 	user bool
 	role string
+	// tool marks structured tool calls/results as auditable content even when
+	// they are carried by an assistant/user message. Keeping this metadata
+	// private lets the narrow blocking selector retain tool output that follows
+	// the latest user turn without changing the public snapshot contract.
+	tool bool
 }
 
 func ExtractPromptSnapshot(req Request) (PromptSnapshot, error) {
@@ -151,9 +156,34 @@ func extractMessages(value any, wantedRoles ...string) []promptSegment {
 		if _, match := wanted[role]; !match {
 			continue
 		}
+		// A tool-role message is often the only content in an agent turn. The
+		// historical text-only extractor discarded structured/opaque tool output,
+		// causing ErrNoPromptText and an audit bypass. Serialize it safely before
+		// falling back to ordinary text extraction.
+		if role == "tool" {
+			if text := marshalPromptToolPayload(message["content"]); text != "" {
+				result = append(result, promptSegment{text: text, role: "tool", tool: true})
+			}
+			// Tool messages are represented by the serialized payload above; avoid
+			// duplicating a plain string through contentTexts.
+			continue
+		}
 		texts := contentTexts(message["content"])
 		for _, text := range texts {
 			result = append(result, promptSegment{text: text, user: role == "user", role: role})
+		}
+		// Anthropic tool_use/tool_result blocks (and compatible Chat payloads)
+		// live inside content rather than in a top-level tool_calls field.
+		result = append(result, extractInlineToolSegments(message["content"])...)
+		if role == "assistant" {
+			result = append(result, extractChatToolCalls(message["tool_calls"])...)
+			// Older OpenAI Chat requests may use assistant.function_call instead
+			// of tool_calls. It is still client-controlled executable intent.
+			if call := message["function_call"]; call != nil {
+				if text := marshalPromptToolInvocation("", call); text != "" {
+					result = append(result, promptSegment{text: text, role: "assistant", tool: true})
+				}
+			}
 		}
 	}
 	return result
@@ -198,6 +228,10 @@ func extractResponses(value any) []promptSegment {
 			case string:
 				result = append(result, promptSegment{text: entry, user: true, role: "user"})
 			case map[string]any:
+				if text, ok := marshalPromptResponseToolItem(entry); ok {
+					result = append(result, promptSegment{text: text, role: "tool", tool: true})
+					continue
+				}
 				role := strings.ToLower(stringValue(entry["role"]))
 				if role != "" && !isClientInstructionRole(role) {
 					continue
@@ -213,6 +247,9 @@ func extractResponses(value any) []promptSegment {
 		}
 		return result
 	case map[string]any:
+		if text, ok := marshalPromptResponseToolItem(typed); ok {
+			return []promptSegment{{text: text, role: "tool", tool: true}}
+		}
 		role := strings.ToLower(stringValue(typed["role"]))
 		if role != "" && !isClientInstructionRole(role) {
 			return nil
@@ -257,6 +294,9 @@ func extractGemini(value any) []promptSegment {
 			if object, ok := part.(map[string]any); ok {
 				if text := stringValue(object["text"]); text != "" {
 					result = append(result, promptSegment{text: text, user: role == "" || role == "user", role: role})
+				}
+				if text, ok := marshalPromptGeminiToolPart(object); ok {
+					result = append(result, promptSegment{text: text, role: "tool", tool: true})
 				}
 			}
 		}
@@ -481,6 +521,16 @@ func blockingSegmentsLatestUserAndPreviousOutput(values []promptSegment) []strin
 	// priority segment so every part of the latest input is scanned before the
 	// prior output begins.
 	selected := []promptSegment{{text: strings.Join(currentUserText, "\n\n"), user: true, role: "user"}}
+	// Tool calls/results emitted after the latest user turn are part of the
+	// same agent exchange and must not be dropped from the blocking audit. Since
+	// the legacy segment type predates message indexes, the latest user is by
+	// definition the final human turn; retaining subsequent tool segments is a
+	// safe, additive scope expansion.
+	for _, segment := range normalized[latestUserEnd:] {
+		if segment.tool {
+			selected = append(selected, segment)
+		}
+	}
 	for index := latestUserStart - 1; index >= 0; index-- {
 		if !isAssistantOutputSegment(normalized[index]) {
 			continue
@@ -525,7 +575,7 @@ func isUserSegment(segment promptSegment) bool {
 }
 
 func isAssistantOutputSegment(segment promptSegment) bool {
-	return segment.role == "assistant" || segment.role == "model"
+	return !segment.tool && (segment.role == "assistant" || segment.role == "model")
 }
 
 func promptSegmentTexts(values []promptSegment) []string {

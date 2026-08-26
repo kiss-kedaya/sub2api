@@ -10,7 +10,7 @@ docker run -d \
   -p 8080:8080 \
   -e DATABASE_URL="postgres://user:pass@host:5432/sub2api" \
   -e REDIS_URL="redis://host:6379" \
-  ghcr.io/kiss-kedaya/sub2api:0.1.186
+  ghcr.io/kiss-kedaya/sub2api:0.1.220
 ```
 
 ## Docker Compose
@@ -20,7 +20,7 @@ version: '3.8'
 
 services:
   sub2api:
-    image: ghcr.io/kiss-kedaya/sub2api:0.1.186
+    image: ghcr.io/kiss-kedaya/sub2api:0.1.220
     ports:
       - "8080:8080"
     environment:
@@ -93,7 +93,7 @@ environment:
   SUB2API_UPDATE_DOCKER_COMMAND: docker
   SUB2API_UPDATE_AUTO_DOCKER_GROUP: "true"
   # Optional when .env is mode 600 and the app runs as a non-root user.
-  SUB2API_UPDATE_HELPER_IMAGE: ghcr.io/kiss-kedaya/sub2api:0.1.190
+  SUB2API_UPDATE_HELPER_IMAGE: ghcr.io/kiss-kedaya/sub2api:0.1.220
 volumes:
   - /var/run/docker.sock:/var/run/docker.sock
   - /opt/sub2api:/opt/sub2api:ro
@@ -120,7 +120,7 @@ mounted; it never changes secret-file permissions. Compose files should use the
 version variable so the target image is unambiguous:
 
 ```yaml
-image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.190}
+image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.220}
 ```
 
 When the release image is private or the deployment uses a locally built image,

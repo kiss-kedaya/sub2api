@@ -144,15 +144,11 @@ const (
 
 // ConcurrencyError represents a concurrency limit error with context
 type ConcurrencyError struct {
-	SlotType                 string
-	IsTimeout                bool
-	BalanceWithholdingFailed bool
+	SlotType  string
+	IsTimeout bool
 }
 
 func (e *ConcurrencyError) Error() string {
-	if e.BalanceWithholdingFailed {
-		return balanceWithholdingFailedMessage
-	}
 	if e.IsTimeout {
 		return fmt.Sprintf("timeout waiting for %s concurrency slot", e.SlotType)
 	}
@@ -172,11 +168,6 @@ type ConcurrencyHelper struct {
 	concurrencyService *service.ConcurrencyService
 	pingFormat         SSEPingFormat
 	pingInterval       time.Duration
-	balanceReader      userBalanceReader
-}
-
-type userBalanceReader interface {
-	GetUserBalance(context.Context, int64) (float64, error)
 }
 
 // NewConcurrencyHelper creates a new ConcurrencyHelper
@@ -189,15 +180,6 @@ func NewConcurrencyHelper(concurrencyService *service.ConcurrencyService, pingFo
 		pingFormat:         pingFormat,
 		pingInterval:       pingInterval,
 	}
-}
-
-// SetBalanceReader enables balance-backed concurrency reservations. Keeping it
-// optional preserves lightweight in-memory handlers and existing test doubles.
-func (h *ConcurrencyHelper) SetBalanceReader(reader userBalanceReader) {
-	if h == nil {
-		return
-	}
-	h.balanceReader = reader
 }
 
 // wrapReleaseOnDone ensures release runs at most once and still triggers on context cancellation.
@@ -261,7 +243,7 @@ func (h *ConcurrencyHelper) TryAcquireUserSlotForAPIKey(ctx context.Context, use
 }
 
 // TryAcquireUserSlotForAPIKeyFromGin is the context-aware variant used by
-// WebSocket turns. It applies the same balance reservation as HTTP handlers.
+// WebSocket turns.
 func (h *ConcurrencyHelper) TryAcquireUserSlotForAPIKeyFromGin(c *gin.Context, userID int64, maxConcurrency int, apiKeyID int64) (func(), bool, error) {
 	if c == nil || c.Request == nil {
 		return h.TryAcquireUserSlotForAPIKey(context.Background(), userID, maxConcurrency, apiKeyID)
@@ -269,10 +251,6 @@ func (h *ConcurrencyHelper) TryAcquireUserSlotForAPIKeyFromGin(c *gin.Context, u
 	releaseFunc, acquired, err := h.TryAcquireUserSlot(c.Request.Context(), userID, maxConcurrency)
 	if err != nil || !acquired {
 		return releaseFunc, acquired, err
-	}
-	releaseFunc, err = h.withBalanceSlotFromGin(c, userID, releaseFunc)
-	if err != nil {
-		return nil, false, err
 	}
 	return h.withAPIKeySlotFromGin(c, releaseFunc), true, nil
 }
@@ -316,10 +294,6 @@ func (h *ConcurrencyHelper) acquireUserSlotWithWaitTimeout(c *gin.Context, userI
 	}
 
 	if acquired {
-		releaseFunc, err = h.withBalanceSlotFromGin(c, userID, releaseFunc)
-		if err != nil {
-			return nil, err
-		}
 		return h.withAPIKeySlotFromGin(c, releaseFunc), nil
 	}
 
@@ -341,66 +315,7 @@ func (h *ConcurrencyHelper) acquireUserSlotWithWaitTimeout(c *gin.Context, userI
 	if err != nil {
 		return nil, err
 	}
-	releaseFunc, err = h.withBalanceSlotFromGin(c, userID, releaseFunc)
-	if err != nil {
-		return nil, err
-	}
 	return h.withAPIKeySlotFromGin(c, releaseFunc), nil
-}
-
-// withBalanceSlotFromGin reserves the user's balance budget for the selected
-// group. Subscription groups are deliberately excluded because their quota is
-// enforced by the subscription window, not the wallet balance.
-func (h *ConcurrencyHelper) withBalanceSlotFromGin(c *gin.Context, userID int64, releaseFunc func()) (func(), error) {
-	if h == nil || h.balanceReader == nil || h.concurrencyService == nil || c == nil || c.Request == nil || userID <= 0 {
-		return releaseFunc, nil
-	}
-	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
-	if !ok || apiKey == nil || apiKey.Group == nil || apiKey.Group.ID <= 0 {
-		return releaseFunc, nil
-	}
-	if apiKey.Group.IsSubscriptionType() {
-		return releaseFunc, nil
-	}
-	platform := strings.TrimSpace(service.QuotaPlatform(c.Request.Context(), apiKey))
-	if platform == "" {
-		return releaseFunc, nil
-	}
-
-	balance, err := h.balanceReader.GetUserBalance(c.Request.Context(), userID)
-	if err != nil {
-		if releaseFunc != nil {
-			releaseFunc()
-		}
-		return nil, err
-	}
-	reserveUSD := service.BalanceConcurrencyReserveUSD(platform)
-	result, err := h.concurrencyService.AcquireUserBalanceSlot(c.Request.Context(), userID, apiKey.Group.ID, platform, reserveUSD, balance)
-	if err != nil {
-		if releaseFunc != nil {
-			releaseFunc()
-		}
-		return nil, err
-	}
-	if !result.Acquired {
-		if releaseFunc != nil {
-			releaseFunc()
-		}
-		return nil, &ConcurrencyError{
-			SlotType:                 "balance",
-			BalanceWithholdingFailed: true,
-		}
-	}
-
-	balanceRelease := result.ReleaseFunc
-	return func() {
-		if balanceRelease != nil {
-			balanceRelease()
-		}
-		if releaseFunc != nil {
-			releaseFunc()
-		}
-	}, nil
 }
 
 func (h *ConcurrencyHelper) withAPIKeySlotFromGin(c *gin.Context, releaseFunc func()) func() {

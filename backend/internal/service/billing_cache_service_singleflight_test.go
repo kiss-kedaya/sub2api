@@ -15,6 +15,7 @@ import (
 )
 
 type billingCacheMissStub struct {
+	noopLiveBalanceCacheStub
 	setBalanceCalls atomic.Int64
 }
 

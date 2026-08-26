@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 )
 
@@ -104,7 +106,7 @@ func openAIWSPassthroughPolicyModelForFrame(account *Account, payload []byte) st
 // derived from a session.update frame's session.model field. Returns "" when
 // the frame is not a session.update event or carries no session.model. Used
 // by the per-frame policy filter (client→upstream direction) to keep
-// capturedSessionModel in sync with the session-level model the client may
+// captured session model in sync with the session-level model the client may
 // rotate mid-session.
 //
 // Realtime / Responses WS lets the client change the session model after
@@ -115,7 +117,7 @@ func openAIWSPassthroughPolicyModelForFrame(account *Account, payload []byte) st
 // If we only capture the model from the very first frame, a client can ship
 // gpt-4o on the first response.create (whitelisted as pass), then
 // session.update to gpt-5.5, then send response.create without "model" so
-// the per-frame resolver returns "" and the stale capturedSessionModel falls
+// the per-frame resolver returns "" and a stale captured session model falls
 // back to gpt-4o — defeating the gpt-5.5 fast-policy filter.
 func openAIWSPassthroughPolicyModelFromSessionFrame(account *Account, payload []byte) string {
 	if account == nil || len(payload) == 0 {
@@ -327,6 +329,15 @@ func (l *openAIWSPassthroughTurnLifecycle) cancelResponseCreate() {
 	l.mu.Lock()
 	l.inFlight = false
 	l.mu.Unlock()
+}
+
+func (l *openAIWSPassthroughTurnLifecycle) hasInFlightTurn() bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.inFlight
 }
 
 func (l *openAIWSPassthroughTurnLifecycle) beginTerminalWrite() {
@@ -679,8 +690,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if err := validateOpenAIWSBearerToken(account, token); err != nil {
 		return err
 	}
-	if isOpenAIResponsesLiteWebSocketPayload(firstClientMessage) {
-		liteFirstMessage, _, liteErr := normalizeOpenAIResponsesLiteParallelToolCalls(firstClientMessage)
+	if account.IsOpenAI() && isOpenAIResponsesLiteWebSocketPayload(firstClientMessage) {
+		liteFirstMessage, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(firstClientMessage, account)
 		if liteErr != nil {
 			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, liteErr.Error(), liteErr)
 		}
@@ -700,6 +711,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 	requestModel := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "model").String())
 	requestPreviousResponseID := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "previous_response_id").String())
+	promptCacheKey := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "prompt_cache_key").String())
 	logOpenAIWSV2Passthrough(
 		"relay_start account_id=%d model=%s previous_response_id=%s first_message_type=%s first_message_bytes=%d",
 		account.ID,
@@ -756,6 +768,23 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			firstClientMessage = aliasedBody
 		}
 	}
+	accountScopedFirst, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(firstClientMessage, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+	if scopeErr != nil {
+		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket identity metadata", scopeErr)
+	}
+	if accountScoped {
+		firstClientMessage = accountScopedFirst
+	}
+	// Client→upstream filtering and relay callbacks run in separate goroutines.
+	// Keep the session model synchronized when a client sends session.update,
+	// so failure accounting and synthesized terminal events never race with the
+	// policy filter.
+	var capturedSessionModelState atomic.Value
+	capturedSessionModelState.Store(capturedSessionModel)
+	loadCapturedSessionModel := func() string {
+		model, _ := capturedSessionModelState.Load().(string)
+		return strings.TrimSpace(model)
+	}
 	usageMeta := newOpenAIWSPassthroughUsageMeta(initialRequestModel, firstClientMessage)
 	updatedFirst, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(ctx, account, capturedSessionModel, firstClientMessage)
 	if policyErr != nil {
@@ -796,8 +825,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	usageMeta.initFromFirstFrame(firstClientMessage, capturedSessionModel)
 	_, initialUpstreamModel := usageMeta.turnModels(initialRequestModel)
 	SetOpsUpstreamModel(c, initialUpstreamModel)
-	promptCacheKey := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "prompt_cache_key").String())
-
 	wsURL, err := s.buildOpenAIResponsesWSURL(account)
 	if err != nil {
 		return fmt.Errorf("build ws url: %w", err)
@@ -940,6 +967,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 
 	completedTurns := atomic.Int32{}
+	var activeResponseID atomic.Value
 	turnLifecycle := newOpenAIWSPassthroughTurnLifecycle(true)
 	var acceptedTurnStartedAt atomic.Pointer[time.Time]
 	clientFrameConn := &openAIWSClientFrameConn{
@@ -961,10 +989,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 	policyClientConn := &openAIWSPolicyEnforcingFrameConn{
 		inner: clientFrameConn,
-		// 注意线程安全：filter 仅在 runClientToUpstream 这一条
-		// goroutine 中被调用（passthrough_relay.go: ReadFrame loop），
-		// capturedSessionModel 的读写都发生在该 goroutine 内，因此无需
-		// 加锁/原子化。
+		// The filter and relay callbacks run in different goroutines; the
+		// session-level model is synchronized through capturedSessionModelState.
 		filter: func(msgType coderws.MessageType, payload []byte) (out []byte, blocked *OpenAIFastBlockedError, filterErr error) {
 			if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
 				return payload, nil, nil
@@ -1002,9 +1028,18 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					payload = aliasedBody
 				}
 			}
+			if isResponseCreate || eventType == "session.update" {
+				accountScopedPayload, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(payload, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+				if scopeErr != nil {
+					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket identity metadata", scopeErr)
+				}
+				if accountScoped {
+					payload = accountScopedPayload
+				}
+			}
 			if isResponseCreate {
-				if isOpenAIResponsesLiteWebSocketPayload(payload) {
-					litePayload, _, liteErr := normalizeOpenAIResponsesLiteParallelToolCalls(payload)
+				if account.IsOpenAI() && isOpenAIResponsesLiteWebSocketPayload(payload) {
+					litePayload, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(payload, account)
 					if liteErr != nil {
 						return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, liteErr.Error(), liteErr)
 					}
@@ -1031,7 +1066,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			if isResponseCreate {
 				requestModelForThisFrame = usageMeta.requestModelForFrame(payload)
 				if requestModelForThisFrame == "" {
-					requestModelForThisFrame = capturedSessionModel
+					requestModelForThisFrame = loadCapturedSessionModel()
 				}
 				if hooks != nil && hooks.BeforeRequest != nil {
 					if err := hooks.BeforeRequest(turnNo, payload, requestModelForThisFrame); err != nil {
@@ -1048,7 +1083,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					}
 				}
 			}
-			// 在评估策略前先刷新 capturedSessionModel：客户端可能通过
+			// 在评估策略前先刷新 captured session model：客户端可能通过
 			// session.update 修改 session-level model（Realtime /
 			// Responses WS 协议允许），如果不刷新就会出现
 			// "首帧 model=gpt-4o（pass）→ session.update 改成 gpt-5.5
@@ -1056,7 +1091,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			// 绕过路径。这里只看 session.update 事件中的 session.model
 			// 字段，response.create 自己的 model 仍然由其本帧字段决定。
 			if updated := openAIWSPassthroughPolicyModelFromSessionFrame(account, payload); updated != "" {
-				capturedSessionModel = updated
+				capturedSessionModelState.Store(updated)
 			}
 			usageMeta.updateSessionRequestModel(payload)
 			if requestModelForThisFrame == "" {
@@ -1069,7 +1104,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			// any whitelist and silently fall back to pass.
 			model := openAIWSPassthroughPolicyModelForFrame(account, payload)
 			if model == "" {
-				model = capturedSessionModel
+				model = loadCapturedSessionModel()
 			}
 			if isResponseCreate && model != "" && model != strings.TrimSpace(gjson.GetBytes(payload, "model").String()) {
 				payload = s.ReplaceModelInBody(payload, model)
@@ -1195,6 +1230,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					UpstreamModel:                 openAIWSDifferentModel(turnRequestModel, turnUpstreamModel),
 					UpstreamResponseModel:         turn.ResponseModel,
 					UpstreamResponseModelConflict: turn.ResponseModelConflict,
+					UpstreamResponseServiceTier:   normalizeObservedOpenAIServiceTier(turn.ResponseServiceTier),
 					ServiceTier:                   usageMeta.serviceTier.Load(),
 					ReasoningEffort:               usageMeta.reasoningEffort.Load(),
 					Stream:                        true,
@@ -1223,6 +1259,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 			},
 			BeforeClientWrite: func(msgType coderws.MessageType, payload []byte) {
+				if msgType == coderws.MessageText {
+					if responseID := openAIWSPassthroughResponseID(payload); responseID != "" {
+						activeResponseID.Store(responseID)
+					}
+				}
 				if msgType == coderws.MessageText && openAIWSPassthroughIsTerminalOutput(payload) {
 					turnLifecycle.beginTerminalWrite()
 				}
@@ -1234,6 +1275,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 				if msgType == coderws.MessageText && openAIWSPassthroughIsTerminalOutput(payload) {
 					turnLifecycle.finishTerminalWrite(writeErr == nil, clientFrameConn.markTurnCompleted)
+					if writeErr == nil {
+						activeResponseID.Store("")
+					}
 				}
 			},
 			BeforeRelayCancel: func(exit openaiwsv2.RelayExit) {
@@ -1243,6 +1287,17 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				status, reason, ok := openAIWSPassthroughRelayClientClose(exit, int(completedTurns.Load()))
 				if !ok {
 					return
+				}
+				// A raw upstream close while a response is in flight used to expose
+				// only a close frame. Emit the Responses terminal failure first so
+				// clients can settle the request and reconnect deterministically.
+				if openAIWSPassthroughShouldEmitFailureEvent(exit) && turnLifecycle.hasInFlightTurn() {
+					responseID, _ := activeResponseID.Load().(string)
+					if eventBytes := buildOpenAIWSPassthroughFailureEvent(responseID, loadCapturedSessionModel()); eventBytes != nil {
+						writeCtx, cancelWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
+						_ = clientConn.Write(writeCtx, coderws.MessageText, eventBytes)
+						cancelWrite()
+					}
 				}
 				_ = clientConn.Close(status, reason)
 				_ = clientConn.CloseNow()
@@ -1258,7 +1313,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(payload)
 				isPreOutputRateLimit := eventType == "error" && !wroteDownstream && isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw)
 				if (eventType == "error" || eventType == "response.failed") && !failureAccountSideEffectsApplied && !isPreOutputRateLimit {
-					failureAccountSideEffectsApplied = s.handleOpenAIWSFailureAccountSideEffects(ctx, account, capturedSessionModel, handshakeHeaders, payload)
+					failureAccountSideEffectsApplied = s.handleOpenAIWSFailureAccountSideEffects(ctx, account, loadCapturedSessionModel(), handshakeHeaders, payload)
 				}
 				if eventType != "error" {
 					return nil
@@ -1320,6 +1375,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		UpstreamModel:                 openAIWSDifferentModel(resultRequestModel, resultUpstreamModel),
 		UpstreamResponseModel:         relayResult.ResponseModel,
 		UpstreamResponseModelConflict: relayResult.ResponseModelConflict,
+		UpstreamResponseServiceTier:   normalizeObservedOpenAIServiceTier(relayResult.ResponseServiceTier),
 		ServiceTier:                   usageMeta.serviceTier.Load(),
 		ReasoningEffort:               usageMeta.reasoningEffort.Load(),
 		Stream:                        true,
@@ -1442,6 +1498,55 @@ func openAIWSPassthroughRelayClientClose(exit openaiwsv2.RelayExit, completedTur
 		return coderws.StatusInternalError, "upstream websocket proxy failed", true
 	}
 	return 0, "", false
+}
+
+// openAIWSPassthroughShouldEmitFailureEvent limits synthesized terminal
+// events to unexpected upstream read failures. Client cancellation, policy
+// closes, and graceful shutdown already have an intentional close path and
+// must not receive a duplicate response.failed event. Upstream read timeouts
+// are included because they terminate an in-flight response without a
+// protocol terminal event.
+func openAIWSPassthroughShouldEmitFailureEvent(exit openaiwsv2.RelayExit) bool {
+	if exit.Graceful || exit.Stage != "read_upstream" {
+		return false
+	}
+	var closeErr *OpenAIWSClientCloseError
+	return !errors.As(exit.Err, &closeErr)
+}
+
+func openAIWSPassthroughResponseID(payload []byte) string {
+	if responseID := strings.TrimSpace(gjson.GetBytes(payload, "response.id").String()); responseID != "" {
+		return responseID
+	}
+	return strings.TrimSpace(gjson.GetBytes(payload, "response_id").String())
+}
+
+func buildOpenAIWSPassthroughFailureEvent(responseID, model string) []byte {
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" {
+		responseID = "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	}
+	response := map[string]any{
+		"id":     responseID,
+		"object": "response",
+		"status": "failed",
+		"output": []any{},
+		"error": map[string]string{
+			"code":    "upstream_error",
+			"message": "upstream websocket disconnected before response.completed",
+		},
+	}
+	if model = strings.TrimSpace(model); model != "" {
+		response["model"] = model
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":     "response.failed",
+		"response": response,
+	})
+	if err != nil {
+		return nil
+	}
+	return payload
 }
 
 func (s *OpenAIGatewayService) mapOpenAIWSPassthroughDialError(

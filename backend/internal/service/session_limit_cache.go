@@ -6,7 +6,8 @@ import (
 )
 
 // SessionLimitCache 管理账号级别的活跃会话跟踪
-// 用于 Anthropic OAuth/SetupToken 账号的会话数量限制
+// 用于 Anthropic OAuth/SetupToken 账号及显式配置 max_sessions 的 API Key 账号
+// 的会话数量限制
 //
 // Key 格式: session_limit:account:{accountID}
 // 数据结构: Sorted Set (member=sessionUUID, score=timestamp)

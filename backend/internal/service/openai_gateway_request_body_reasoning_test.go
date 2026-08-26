@@ -271,6 +271,26 @@ func TestNormalizeOpenAIParallelToolCallsWithoutTools(t *testing.T) {
 	require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Exists())
 }
 
+// A Responses Lite body that has already been through normalizeOpenAIResponsesLiteTools
+// carries its tools in an input item of type "additional_tools" and no longer has a
+// top-level "tools" key. It still has tools, so the parallel_tool_calls:false that
+// ensureOpenAIResponsesLiteParallelToolCalls pinned must survive this normalization —
+// otherwise OpenAI applies its default of true and rejects the request.
+func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalTools(t *testing.T) {
+	liteBody := []byte(`{"input":[{"type":"message","role":"user","content":"hi"},{"type":"additional_tools","tools":[{"type":"function","name":"spawn_agent"}]}],"parallel_tool_calls":false}`)
+	normalized, changed, err := normalizeOpenAIParallelToolCallsWithoutTools(liteBody)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, gjson.False, gjson.GetBytes(normalized, "parallel_tool_calls").Type)
+
+	// An empty additional_tools item carries no tools, so the field is still dropped.
+	emptyLiteBody := []byte(`{"input":[{"type":"additional_tools","tools":[]}],"parallel_tool_calls":true}`)
+	normalized, changed, err = normalizeOpenAIParallelToolCallsWithoutTools(emptyLiteBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Exists())
+}
+
 func TestNormalizeOpenAIResponsesLiteParallelToolCalls(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -294,6 +314,18 @@ func TestNormalizeOpenAIResponsesLiteParallelToolCalls(t *testing.T) {
 }
 
 func TestOpenAIResponsesLiteParallelToolCallsError(t *testing.T) {
-	require.True(t, isOpenAIResponsesLiteParallelToolCallsError([]byte(`{"error":{"message":"X-OpenAI-Internal-Codex-Responses-Lite requires ` + "`parallel_tool_calls`" + ` to be false."}}`)))
+	require.True(t, isOpenAIResponsesLiteParallelToolCallsError([]byte(`{"error":{"message":"X-OpenAI-Internal-Codex-Responses-Lite requires `+"`parallel_tool_calls`"+` to be false."}}`)))
 	require.False(t, isOpenAIResponsesLiteParallelToolCallsError([]byte(`{"error":{"message":"parallel_tool_calls must be false"}}`)))
+}
+
+func TestNormalizeOpenAIResponsesLitePayloadForAccountOmitsParallelWithoutTools(t *testing.T) {
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	body := []byte(`{"model":"gpt-5.6-terra","parallel_tool_calls":true,"sequence":900719925474099312345}`)
+
+	normalized, changed, err := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Exists())
+	require.Equal(t, "900719925474099312345", gjson.GetBytes(normalized, "sequence").Raw)
 }
