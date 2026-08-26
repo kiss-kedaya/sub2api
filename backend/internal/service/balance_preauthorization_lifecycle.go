@@ -36,6 +36,7 @@ type balancePreauthorizationSnapshotReader interface {
 
 type balancePreauthorizationWallet interface {
 	AuthorizeLiveBalance(ctx context.Context, userID int64, attemptID string, fallbackBalance, holdAmount float64) (LiveBalanceResult, error)
+	TopUpLiveBalance(ctx context.Context, userID int64, attemptID string, targetHoldAmount float64) (LiveBalanceResult, error)
 	FinalizeLiveBalance(ctx context.Context, userID int64, attemptID string, actualAmount float64) (LiveBalanceResult, error)
 	RefundLiveBalance(ctx context.Context, userID int64, attemptID string) (LiveBalanceResult, error)
 }
@@ -187,10 +188,12 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	}
 	ctx = nonNilContext(ctx)
 
-	holdAmount, outputWindow, err := s.estimateHold(ctx, request)
+	estimate, err := s.estimateHold(ctx, request)
 	if err != nil {
 		return nil, balancePreauthorizationUnavailable(err)
 	}
+	holdAmount := estimate.HoldAmount
+	outputWindow := estimate.OutputWindow
 	requestID := strings.TrimSpace(request.RequestID)
 	fingerprint := strings.TrimSpace(request.AuthorizationFingerprint)
 	record, err := s.repo.PrepareBalancePreauthorization(ctx, &BalancePreauthorizationCommand{
@@ -263,7 +266,27 @@ func (s *BalancePreauthorizationService) Preauthorize(
 		ownerToken:    1,
 		terminalState: balancePreauthorizationGuardActive,
 	}
+	// Streaming top-up tracker: only for token-metered requests with a positive
+	// output window and non-free output. NewBillingOutputHoldTracker returns nil
+	// otherwise, so the hot path stays a no-op for per-request and free traffic.
+	core.outputHoldTracker = NewBillingOutputHoldTracker(
+		outputWindow,
+		outputWindow,
+		record.HoldAmount,
+		estimate.OutputUnitPrice,
+		1,
+	)
 	return &BalancePreauthorizationGuard{core: core, ownerToken: 1}, nil
+}
+
+// balancePreauthorizationEstimate is the frozen pricing result of a request.
+// OutputUnitPrice is the effective per-output-token price (after all pricing
+// policy), used to plan streaming top-ups; it is zero for per-request endpoints
+// and for free output, in which case no streaming tracker is created.
+type balancePreauthorizationEstimate struct {
+	HoldAmount      float64
+	OutputWindow    int
+	OutputUnitPrice float64
 }
 
 // estimateHold dispatches to the pricing strategy named by the request. Both
@@ -272,7 +295,7 @@ func (s *BalancePreauthorizationService) Preauthorize(
 func (s *BalancePreauthorizationService) estimateHold(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,
-) (float64, int, error) {
+) (balancePreauthorizationEstimate, error) {
 	switch request.EstimateKind {
 	case PreauthorizationEstimatePerRequest:
 		return s.estimatePerRequestHold(ctx, request)
@@ -288,14 +311,14 @@ func (s *BalancePreauthorizationService) estimateHold(
 func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,
-) (float64, int, error) {
+) (balancePreauthorizationEstimate, error) {
 	outputWindow := request.InitialOutputWindowTokens
 	if outputWindow == 0 {
 		outputWindow = DefaultBalancePreauthorizationOutputWindow
 	}
 	base, err := s.resolvedPricingCostInput(ctx, request.CostInput)
 	if err != nil {
-		return 0, 0, err
+		return balancePreauthorizationEstimate{}, err
 	}
 
 	scenarios := [...]UsageTokens{
@@ -309,19 +332,71 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 		},
 	}
 	maxCost := 0.0
-	for _, tokens := range scenarios {
+	firstScenarioCost := 0.0
+	for i, tokens := range scenarios {
 		input := base
 		input.Tokens = tokens
 		breakdown, err := s.costCalculator.CalculateCostUnified(input)
 		if err != nil {
-			return 0, 0, err
+			return balancePreauthorizationEstimate{}, err
 		}
 		if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
-			return 0, 0, ErrInvalidBillingPreauthorizationEstimate
+			return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
+		}
+		if i == 0 {
+			firstScenarioCost = breakdown.ActualCost
 		}
 		maxCost = math.Max(maxCost, breakdown.ActualCost)
 	}
-	return quantizeBillingHoldUpFromFloat(maxCost), outputWindow, nil
+
+	// Effective per-output-token price via difference: the output window is the
+	// only term that varies between the plain-input scenario already priced
+	// above and an output-free baseline, so (windowed - baseline) / windowTokens
+	// matches the exact policy (intervals, priority tier, long-context, time
+	// multipliers) used at settlement without reaching into pricing internals.
+	// Only one extra pricing call runs, once per request at preauthorization,
+	// never on the hot path.
+	outputUnitPrice, err := s.estimateOutputUnitPrice(base, request.BillableInputBytes, outputWindow, firstScenarioCost)
+	if err != nil {
+		return balancePreauthorizationEstimate{}, err
+	}
+	return balancePreauthorizationEstimate{
+		HoldAmount:      quantizeBillingHoldUpFromFloat(maxCost),
+		OutputWindow:    outputWindow,
+		OutputUnitPrice: outputUnitPrice,
+	}, nil
+}
+
+// estimateOutputUnitPrice derives the effective per-output-token price from the
+// windowed-minus-baseline cost difference. The windowed cost is the already
+// priced plain-input scenario (InputTokens + outputWindow), so only the
+// output-free baseline needs an extra pricing call. Output pricing is
+// independent of input disposition, so one representative scenario suffices.
+// Returns zero (top-ups disabled) for non-positive results.
+func (s *BalancePreauthorizationService) estimateOutputUnitPrice(
+	base CostInput,
+	billableInputBytes int,
+	outputWindow int,
+	windowedCost float64,
+) (float64, error) {
+	if outputWindow <= 0 {
+		return 0, nil
+	}
+	baseline := base
+	baseline.Tokens = UsageTokens{InputTokens: billableInputBytes, OutputTokens: 0}
+	baselineCost, err := s.costCalculator.CalculateCostUnified(baseline)
+	if err != nil {
+		return 0, err
+	}
+	if baselineCost == nil || invalidNonnegativeMoney(baselineCost.ActualCost) ||
+		invalidNonnegativeMoney(windowedCost) {
+		return 0, ErrInvalidBillingPreauthorizationEstimate
+	}
+	delta := windowedCost - baselineCost.ActualCost
+	if delta <= 0 {
+		return 0, nil
+	}
+	return delta / float64(outputWindow), nil
 }
 
 // estimatePerRequestHold prices count/size/duration-metered endpoints once
@@ -331,10 +406,10 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 func (s *BalancePreauthorizationService) estimatePerRequestHold(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,
-) (float64, int, error) {
+) (balancePreauthorizationEstimate, error) {
 	base, err := s.resolvedPricingCostInput(ctx, request.CostInput)
 	if err != nil {
-		return 0, 0, err
+		return balancePreauthorizationEstimate{}, err
 	}
 	base.RequestCount = request.PerRequestEstimate.RequestCount
 	base.UsageUnits = request.PerRequestEstimate.UsageUnits
@@ -342,12 +417,15 @@ func (s *BalancePreauthorizationService) estimatePerRequestHold(
 
 	breakdown, err := s.costCalculator.CalculateCostUnified(base)
 	if err != nil {
-		return 0, 0, err
+		return balancePreauthorizationEstimate{}, err
 	}
 	if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
-		return 0, 0, ErrInvalidBillingPreauthorizationEstimate
+		return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
 	}
-	return quantizeBillingHoldUpFromFloat(breakdown.ActualCost), 0, nil
+	return balancePreauthorizationEstimate{
+		HoldAmount:   quantizeBillingHoldUpFromFloat(breakdown.ActualCost),
+		OutputWindow: 0,
+	}, nil
 }
 
 // resolvedPricingCostInput freezes the pricing resolution once so an unknown

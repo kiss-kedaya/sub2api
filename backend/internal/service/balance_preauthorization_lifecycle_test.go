@@ -39,6 +39,9 @@ type preauthorizationCostCalculatorStub struct {
 	// perUnitPrice, when > 0, switches the stub to per-request pricing:
 	// cost = perUnitPrice * max(UsageUnits, RequestCount) * sizeTierMultiplier.
 	perUnitPrice float64
+	// outputUnitPrice, when > 0, adds a linear per-output-token term so tests can
+	// exercise the streaming top-up tracker via the difference-method price.
+	outputUnitPrice float64
 }
 
 func (s *preauthorizationCostCalculatorStub) CalculateCostUnified(input CostInput) (*CostBreakdown, error) {
@@ -81,27 +84,35 @@ func (s *preauthorizationCostCalculatorStub) CalculateCostUnified(input CostInpu
 			cost += 0.020
 		}
 	}
+	// Output pricing is linear in output tokens so the difference method can
+	// recover a per-output-token price. Enabled only when outputUnitPrice is set
+	// to avoid perturbing the many tests that assert exact input-only holds.
+	cost += float64(input.Tokens.OutputTokens) * s.outputUnitPrice
 	return &CostBreakdown{ActualCost: cost}, nil
 }
 
 type preauthorizationWalletStub struct {
-	recorder      *preauthorizationCallRecorder
-	authorize     LiveBalanceResult
-	authorizeErr  error
-	existing      *LiveBalanceResult
-	existingErr   error
-	finalize      []LiveBalanceResult
-	finalizeErr   error
-	refund        []LiveBalanceResult
-	refundErr     error
-	lastAttemptID string
-	lastFallback  float64
-	lastWatermark int64
-	lastAllowInit bool
-	lastHold      float64
-	lastActual    float64
-	finalizeCalls int
-	refundCalls   int
+	recorder        *preauthorizationCallRecorder
+	authorize       LiveBalanceResult
+	authorizeErr    error
+	existing        *LiveBalanceResult
+	existingErr     error
+	finalize        []LiveBalanceResult
+	finalizeErr     error
+	refund          []LiveBalanceResult
+	refundErr       error
+	topUp           []LiveBalanceResult
+	topUpErr        error
+	lastAttemptID   string
+	lastFallback    float64
+	lastWatermark   int64
+	lastAllowInit   bool
+	lastHold        float64
+	lastActual      float64
+	lastTopUpTarget float64
+	finalizeCalls   int
+	refundCalls     int
+	topUpCalls      int
 }
 
 func (s *preauthorizationWalletStub) AuthorizeExistingLiveBalance(
@@ -163,6 +174,28 @@ func (s *preauthorizationWalletStub) AuthorizeLiveBalanceAtWatermarkIfSafe(
 		result.ReservedAmount = holdAmount
 	}
 	return result, s.authorizeErr
+}
+
+func (s *preauthorizationWalletStub) TopUpLiveBalance(_ context.Context, _ int64, attemptID string, targetHoldAmount float64) (LiveBalanceResult, error) {
+	s.recorder.add("wallet_topup")
+	s.lastAttemptID = attemptID
+	s.lastTopUpTarget = targetHoldAmount
+	s.topUpCalls++
+	if s.topUpErr != nil {
+		return LiveBalanceResult{}, s.topUpErr
+	}
+	if len(s.topUp) == 0 {
+		return LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied, State: LiveBalanceAttemptAuthorized, ReservedAmount: targetHoldAmount}, nil
+	}
+	index := s.topUpCalls - 1
+	if index >= len(s.topUp) {
+		index = len(s.topUp) - 1
+	}
+	result := s.topUp[index]
+	if result.ReservedAmount == 0 && targetHoldAmount > 0 && result.State == LiveBalanceAttemptAuthorized {
+		result.ReservedAmount = targetHoldAmount
+	}
+	return result, nil
 }
 
 func (s *preauthorizationWalletStub) FinalizeLiveBalance(_ context.Context, _ int64, _ string, actualAmount float64) (LiveBalanceResult, error) {
@@ -338,23 +371,27 @@ func TestBalancePreauthorizationLifecycleUsesLargestUnifiedPricingScenario(t *te
 	require.NotNil(t, guard)
 	require.InDelta(t, 0.028, guard.HoldAmount(), 1e-12)
 	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, guard.ReservedOutputTokens())
-	require.Len(t, fixture.calculator.inputs, 4)
+	// Four hold scenarios plus one output-free baseline probe: the difference
+	// method reuses the already-priced plain-input scenario as the windowed cost.
+	require.Len(t, fixture.calculator.inputs, 5)
 	require.Equal(t, 100, fixture.calculator.inputs[0].Tokens.InputTokens)
 	require.Equal(t, 100, fixture.calculator.inputs[1].Tokens.CacheReadTokens)
 	require.Equal(t, 100, fixture.calculator.inputs[2].Tokens.CacheCreationTokens)
 	require.Equal(t, 100, fixture.calculator.inputs[3].Tokens.CacheCreationTokens)
 	require.Equal(t, 100, fixture.calculator.inputs[3].Tokens.CacheCreation1hTokens)
-	for _, input := range fixture.calculator.inputs {
+	for _, input := range fixture.calculator.inputs[:4] {
 		require.Equal(t, DefaultBalancePreauthorizationOutputWindow, input.Tokens.OutputTokens)
 		require.Equal(t, "gpt-test", input.Model)
 		require.Equal(t, 1.25, input.RateMultiplier)
 	}
+	// Difference-method baseline: output-free.
+	require.Equal(t, 0, fixture.calculator.inputs[4].Tokens.OutputTokens)
 	require.InDelta(t, 0.028, fixture.repo.prepared.HoldAmount, 1e-12)
 	require.Equal(t, "request-1:7", fixture.wallet.lastAttemptID)
 	require.Equal(t, 10.0, fixture.wallet.lastFallback)
 	require.Equal(t, int64(17), fixture.wallet.lastWatermark)
 	require.Equal(t, []string{
-		"price", "price", "price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize", "repo_authorized",
+		"price", "price", "price", "price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize", "repo_authorized",
 	}, fixture.recorder.snapshot())
 
 	err = guard.Finalize(context.Background(), 0.019999999, " actual-fingerprint ")
@@ -363,7 +400,7 @@ func TestBalancePreauthorizationLifecycleUsesLargestUnifiedPricingScenario(t *te
 	require.Equal(t, "actual-fingerprint", fixture.repo.finalizedFingerprint)
 	require.Equal(t, 0.02, fixture.wallet.lastActual)
 	require.Equal(t, []string{
-		"price", "price", "price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize", "repo_authorized",
+		"price", "price", "price", "price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize", "repo_authorized",
 		"repo_begin_finalize", "wallet_finalize", "repo_complete_settlement",
 	}, fixture.recorder.snapshot())
 
@@ -383,7 +420,7 @@ func TestBalancePreauthorizationLifecycleHotWalletSkipsPostgreSQLSnapshot(t *tes
 	require.NotContains(t, fixture.recorder.snapshot(), "balance_snapshot")
 	require.NotContains(t, fixture.recorder.snapshot(), "wallet_authorize")
 	require.Equal(t, []string{
-		"price", "price", "price", "price", "repo_prepare", "wallet_authorize_existing", "repo_authorized",
+		"price", "price", "price", "price", "price", "repo_prepare", "wallet_authorize_existing", "repo_authorized",
 	}, fixture.recorder.snapshot())
 }
 
@@ -477,7 +514,7 @@ func TestBalancePreauthorizationLifecycleInsufficientReturnsRequired403AndCompen
 	require.Equal(t, 403, infraerrors.Code(err))
 	require.Equal(t, "Insufficient balance, withholding failed", infraerrors.Message(err))
 	require.Equal(t, []string{
-		"price", "price", "price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize",
+		"price", "price", "price", "price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize",
 		"repo_begin_refund", "wallet_refund", "repo_complete_refund",
 	}, fixture.recorder.snapshot())
 }
@@ -723,4 +760,68 @@ func TestRecoverBalancePreauthorizationFailsClosedOnWalletConflict(t *testing.T)
 	})
 	require.ErrorIs(t, err, ErrBillingServiceUnavailable)
 	require.NotContains(t, fixture.recorder.snapshot(), "repo_complete_refund")
+}
+
+// streamingPreauthorizationGuard builds a guard whose tracker is active by
+// giving the cost stub a positive per-output-token price, so the difference
+// method recovers a non-zero output unit price at preauthorization.
+func streamingPreauthorizationGuard(t *testing.T, fixture *preauthorizationFixture) *BalancePreauthorizationGuard {
+	t.Helper()
+	fixture.calculator.outputUnitPrice = 0.001
+	existing := LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied, State: LiveBalanceAttemptAuthorized}
+	fixture.wallet.existing = &existing
+	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
+	require.NoError(t, err)
+	require.NotNil(t, guard)
+	return guard
+}
+
+// TestObserveStreamingOutputTopsUpOncePerWindowCrossing proves streaming output
+// raises the hold only when a reserved output window is crossed, calling the
+// wallet top-up a bounded number of times rather than per frame.
+func TestObserveStreamingOutputTopsUpOncePerWindowCrossing(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	guard := streamingPreauthorizationGuard(t, fixture)
+	beforeTopUps := fixture.wallet.topUpCalls
+
+	// Default window is 256 tokens; emit well beyond one window in small frames.
+	for i := 0; i < 40; i++ {
+		require.NoError(t, guard.ObserveStreamingOutput(context.Background(), 32))
+	}
+	require.Greater(t, fixture.wallet.topUpCalls, beforeTopUps, "crossing a window must top up")
+	// 40*32 = 1280 observed bytes over a 256-token window: a handful of top-ups,
+	// never one per frame.
+	require.LessOrEqual(t, fixture.wallet.topUpCalls-beforeTopUps, 8)
+	require.Greater(t, fixture.wallet.lastTopUpTarget, guard.HoldAmount()-0.0001)
+}
+
+// TestObserveStreamingOutputAbortsOnInsufficientBalance proves a failed top-up
+// surfaces the 403 withholding error so the caller aborts the upstream stream.
+func TestObserveStreamingOutputAbortsOnInsufficientBalance(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	fixture.wallet.topUp = []LiveBalanceResult{{Outcome: LiveBalanceOutcomeInsufficient, State: LiveBalanceAttemptAuthorized}}
+	guard := streamingPreauthorizationGuard(t, fixture)
+
+	var err error
+	for i := 0; i < 40 && err == nil; i++ {
+		err = guard.ObserveStreamingOutput(context.Background(), 64)
+	}
+	require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
+}
+
+// TestObserveStreamingOutputNoopWithoutTracker proves per-request (image) guards
+// carry no tracker and never attempt streaming top-ups.
+func TestObserveStreamingOutputNoopWithoutTracker(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	fixture.calculator.perUnitPrice = 0.04
+	existing := LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied, State: LiveBalanceAttemptAuthorized}
+	fixture.wallet.existing = &existing
+	guard, err := fixture.service.Preauthorize(context.Background(), perRequestPreauthorizationRequest(3, "2K"))
+	require.NoError(t, err)
+	require.NotNil(t, guard)
+
+	for i := 0; i < 100; i++ {
+		require.NoError(t, guard.ObserveStreamingOutput(context.Background(), 1024))
+	}
+	require.Zero(t, fixture.wallet.topUpCalls)
 }
