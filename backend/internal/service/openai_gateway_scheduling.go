@@ -386,6 +386,19 @@ func isOpenAICompatibleAccountEligibleForRequestBeforeProfit(ctx context.Context
 	return openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx, account, platform, requestedModel, requireCompact, requiredCapability) == ""
 }
 
+func openAIModelCooldownSelectionFailureReason(ctx context.Context, account *Account, requestedModel string) string {
+	reason, _ := account.activeModelRateLimitReasonWithContext(ctx, requestedModel)
+	normalizedReason := strings.ToLower(strings.TrimSpace(reason))
+	switch normalizedReason {
+	case upstreamModelNotFoundReason:
+		return "model_not_supported"
+	case upstreamCodexPlanGatedModelReason:
+		return "model_plan_gated"
+	default:
+		return "model_rate_limited"
+	}
+}
+
 func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Context, account *Account, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability) string {
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 	if account == nil {
@@ -396,7 +409,7 @@ func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Con
 	}
 	if !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 		if account.IsSchedulable() {
-			return "model_rate_limited"
+			return openAIModelCooldownSelectionFailureReason(ctx, account, requestedModel)
 		}
 		return "not_schedulable"
 	}
