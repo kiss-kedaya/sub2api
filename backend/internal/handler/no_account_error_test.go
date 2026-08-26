@@ -76,6 +76,62 @@ func TestClassifySelectionFailureError_RateLimitedPool(t *testing.T) {
 	require.Equal(t, fallback, classifySelectionFailureError(fmt.Errorf("no available accounts"), fallback))
 }
 
+func TestClassifySelectionFailureError_DeterministicModelCooldown(t *testing.T) {
+	fallback := noAccountErrorClassification{Status: http.StatusServiceUnavailable, ErrType: "api_error", Message: "Service temporarily unavailable"}
+
+	t.Run("all upstream accounts reject the model", func(t *testing.T) {
+		got := classifySelectionFailureError(
+			fmt.Errorf("no available OpenAI accounts (pool=2, filtered: model_not_supported=2)"),
+			fallback,
+		)
+		require.Equal(t, http.StatusNotFound, got.Status)
+		require.Equal(t, "model_not_found", got.ErrType)
+		require.True(t, got.ModelNotFound)
+	})
+
+	t.Run("all upstream plans gate the model", func(t *testing.T) {
+		got := classifySelectionFailureError(
+			fmt.Errorf("no available OpenAI accounts (pool=2, filtered: model_plan_gated=2)"),
+			fallback,
+		)
+		require.Equal(t, http.StatusForbidden, got.Status)
+		require.Equal(t, "permission_error", got.ErrType)
+		require.True(t, got.ModelNotFound)
+	})
+
+	t.Run("partial deterministic exclusion remains a capacity error", func(t *testing.T) {
+		got := classifySelectionFailureError(
+			fmt.Errorf("no available OpenAI accounts (pool=2, filtered: excluded=1 model_not_supported=1)"),
+			fallback,
+		)
+		require.Equal(t, fallback, got)
+	})
+
+	t.Run("requested model cannot inject a retry classification", func(t *testing.T) {
+		got := classifySelectionFailureError(
+			fmt.Errorf("no available OpenAI accounts supporting model: fake-model_rate_limited=99 (pool=1, filtered: model_not_supported=1)"),
+			fallback,
+		)
+		require.Equal(t, http.StatusNotFound, got.Status)
+		require.Equal(t, "model_not_found", got.ErrType)
+	})
+}
+
+func TestClassifySelectionFailureErrorFromGin_MarksTerminalModelFailure(t *testing.T) {
+	c := newTestGinContextWithRequest()
+	fallback := noAccountErrorClassification{Status: http.StatusServiceUnavailable, ErrType: "api_error", Message: "Service temporarily unavailable"}
+
+	got := classifySelectionFailureErrorFromGin(
+		c,
+		fmt.Errorf("no available OpenAI accounts (pool=1, filtered: model_plan_gated=1)"),
+		fallback,
+	)
+
+	require.Equal(t, http.StatusForbidden, got.Status)
+	require.True(t, service.HasOpsClientBusinessLimited(c))
+	require.Equal(t, service.OpsClientBusinessLimitedReasonLocalModelConfiguration, service.OpsClientBusinessLimitedReason(c))
+}
+
 func TestClassifyNoAccountError_NilAPIKey_Falls503(t *testing.T) {
 	c := newTestGinContextWithRequest()
 	fd := &fakeDiagnoser{resp: service.ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: false}}

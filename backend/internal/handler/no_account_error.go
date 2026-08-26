@@ -28,33 +28,94 @@ import (
 //     after a backoff can plausibly succeed (or, in the empty-pool case, the
 //     operator may be in the middle of adding accounts).
 type noAccountErrorClassification struct {
-	Status        int
-	ErrType       string
-	Message       string
-	ModelNotFound bool // true when this is a 404 model_not_found classification
+	Status  int
+	ErrType string
+	Message string
+	// ModelNotFound also acts as the existing non-capacity routing flag. A
+	// plan-gated model uses it to prevent handlers from replacing the precise
+	// 403 with a generic retryable capacity message.
+	ModelNotFound bool
 }
 
 var selectionModelRateLimitedPattern = regexp.MustCompile(`(?:model_rate_limited|rate_limited)=(\d+)`)
+var selectionPoolPattern = regexp.MustCompile(`pool=(\d+)`)
+var selectionModelNotSupportedPattern = regexp.MustCompile(`model_not_supported=(\d+)`)
+var selectionModelPlanGatedPattern = regexp.MustCompile(`model_plan_gated=(\d+)`)
 
-// classifySelectionFailureError preserves the scheduler's compact reason when
-// every model-capable account is temporarily rate limited.
+func selectionFailureCount(pattern *regexp.Regexp, message string) int {
+	match := pattern.FindStringSubmatch(strings.ToLower(message))
+	if len(match) != 2 {
+		return 0
+	}
+	count, err := strconv.Atoi(match[1])
+	if err != nil || count <= 0 {
+		return 0
+	}
+	return count
+}
+
+func selectionFailureDetails(message string) string {
+	message = strings.TrimSpace(message)
+	if !strings.HasSuffix(message, ")") {
+		return ""
+	}
+	start := strings.LastIndex(message, "(")
+	if start < 0 || start+1 >= len(message)-1 {
+		return ""
+	}
+	return message[start+1 : len(message)-1]
+}
+
+// classifySelectionFailureError uses the scheduler-owned diagnostic suffix to
+// distinguish real model rate limits from deterministic upstream model or plan
+// rejection. It never parses the user-controlled model portion of the error.
 func classifySelectionFailureError(err error, fallback noAccountErrorClassification) noAccountErrorClassification {
 	if err == nil {
 		return fallback
 	}
-	match := selectionModelRateLimitedPattern.FindStringSubmatch(strings.ToLower(err.Error()))
-	if len(match) != 2 {
+	details := selectionFailureDetails(err.Error())
+	if details == "" {
 		return fallback
 	}
-	count, parseErr := strconv.Atoi(match[1])
-	if parseErr != nil || count <= 0 {
+	if selectionFailureCount(selectionModelRateLimitedPattern, details) > 0 {
+		return noAccountErrorClassification{
+			Status:  http.StatusTooManyRequests,
+			ErrType: "rate_limit_error",
+			Message: "All available accounts are currently rate-limited. Please retry later.",
+		}
+	}
+
+	pool := selectionFailureCount(selectionPoolPattern, details)
+	unsupported := selectionFailureCount(selectionModelNotSupportedPattern, details)
+	planGated := selectionFailureCount(selectionModelPlanGatedPattern, details)
+	if pool <= 0 || unsupported+planGated < pool {
 		return fallback
 	}
-	return noAccountErrorClassification{
-		Status:  http.StatusTooManyRequests,
-		ErrType: "rate_limit_error",
-		Message: "All available accounts are currently rate-limited. Please retry later.",
+	if planGated == pool {
+		return noAccountErrorClassification{
+			Status:        http.StatusForbidden,
+			ErrType:       "permission_error",
+			Message:       "The requested model is not available under the configured upstream plans.",
+			ModelNotFound: true,
+		}
 	}
+	if unsupported == pool {
+		return noAccountErrorClassification{
+			Status:        http.StatusNotFound,
+			ErrType:       "model_not_found",
+			Message:       "The requested model is not supported by any currently configured upstream account.",
+			ModelNotFound: true,
+		}
+	}
+	return fallback
+}
+
+func classifySelectionFailureErrorFromGin(c *gin.Context, err error, fallback noAccountErrorClassification) noAccountErrorClassification {
+	classification := classifySelectionFailureError(err, fallback)
+	if classification.ModelNotFound && !fallback.ModelNotFound {
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+	}
+	return classification
 }
 
 // classifyNoAccountError decides between 404 model_not_found and 503
