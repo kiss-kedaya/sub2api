@@ -34,6 +34,7 @@ services:
         max-file: "${DOCKER_LOG_MAX_FILE:-4}"
     mem_limit: ${SUB2API_MEM_LIMIT:-12g}
     memswap_limit: ${SUB2API_MEMSWAP_LIMIT:-12g}
+    stop_grace_period: 610s
     command: ["${SUB2API_COMMAND:-/app/sub2api}"]
     security_opt:
       - no-new-privileges:true
@@ -61,6 +62,7 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
       - SERVER_MODE=${SERVER_MODE:-release}
+      - SERVER_SHUTDOWN_TIMEOUT_SECONDS=${SERVER_SHUTDOWN_TIMEOUT_SECONDS:-600}
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}
       - GOGC=${SUB2API_GOGC:-100}
@@ -186,6 +188,7 @@ services:
       - SUB2API_UPDATE_RESTART_COMMAND=${SUB2API_UPDATE_RESTART_COMMAND:-}
       - SUB2API_UPDATE_HELPER_IMAGE=${SUB2API_UPDATE_HELPER_IMAGE:-}
       - SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS=${SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS:-120}
+      - SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS=${SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS:-610}
       - SUB2API_UPDATE_VERSION_ENV=${SUB2API_UPDATE_VERSION_ENV:-SUB2API_VERSION}
 
       # =======================================================================
