@@ -103,6 +103,20 @@ func wrapStreamOutputHoldTopUpFailure(err error) error {
 	return fmt.Errorf("stream output hold top-up failed: %w", err)
 }
 
+// detachedBalancePreauthorizationWalletContext keeps a money mutation alive
+// when the client or upstream stream context is canceled, while retaining a
+// strict bound for an unhealthy wallet backend. A delivered output chunk must
+// either extend its hold or fail closed; inheriting request cancellation here
+// turns a client disconnect into a false billing-service outage and can leave
+// the wallet behind already-emitted output.
+func detachedBalancePreauthorizationWalletContext(parent context.Context) (context.Context, context.CancelFunc) {
+	base := context.Background()
+	if parent != nil {
+		base = context.WithoutCancel(parent)
+	}
+	return context.WithTimeout(base, balancePreauthorizationWalletTimeout)
+}
+
 // ObserveStreamingOutput records additionalBytes of emitted output and raises
 // the live hold when the reserved output window is about to be exceeded. It is
 // a no-op (nil) when no tracker exists (per-request/free/non-stream requests),
@@ -118,8 +132,6 @@ func (g *BalancePreauthorizationGuard) ObserveStreamingOutput(ctx context.Contex
 	if !decision.Required {
 		return nil
 	}
-	ctx = nonNilContext(ctx)
-
 	g.core.mu.Lock()
 	defer g.core.mu.Unlock()
 	// Ownership/terminal checks mirror Finalize: a transferred or settled guard
@@ -131,8 +143,10 @@ func (g *BalancePreauthorizationGuard) ObserveStreamingOutput(ctx context.Contex
 		return nil
 	}
 
+	walletCtx, cancel := detachedBalancePreauthorizationWalletContext(ctx)
+	defer cancel()
 	result, err := g.core.service.wallet.TopUpLiveBalance(
-		ctx, g.core.userID, g.core.attemptID, decision.TargetHoldAmount,
+		walletCtx, g.core.userID, g.core.attemptID, decision.TargetHoldAmount,
 	)
 	if err != nil {
 		return balancePreauthorizationUnavailable(err)
