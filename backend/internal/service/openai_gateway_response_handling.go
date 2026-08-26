@@ -162,6 +162,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	usage := &OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
 	responseID := ""
+	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐帧仅整数
+	// 累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
+	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
 	var firstOutputScanGuard atomic.Bool
 	firstOutputScanGuard.Store(stageFirstOutput)
 	scanner := bufio.NewScanner(resp.Body)
@@ -726,6 +729,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					handlePendingWriteError(err)
 				} else {
 					eventInProgress = true
+					// 可见输出帧计量：累加已承诺字节作 token 上界，跨预扣窗口时补扣。
+					// 补扣失败通过 streamEarlyErr 中止：后续行被 processSSELine 顶部的
+					// 守卫跳过，scanner 循环结束后按该错误返回并关闭上游连接。
+					// tracker 为 nil 时整体零开销。
+					if startsVisibleOutput && streamEarlyErr == nil {
+						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
+							streamEarlyErr = fmt.Errorf("stream output hold top-up failed: %w", topUpErr)
+							s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, topUpErr)
+						}
+					}
 				}
 			}
 
