@@ -2104,6 +2104,13 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 	var usage ClaudeUsage
 	finishReason := ""
 	sawToolUse := false
+	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐个文本增量
+	// 仅整数累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
+	streamCtx := context.Background()
+	if c.Request != nil {
+		streamCtx = c.Request.Context()
+	}
+	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(streamCtx)
 
 	nextBlockIndex := 0
 	openBlockIndex := -1
@@ -2213,6 +2220,13 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					},
 				})
 				flusher.Flush()
+				// 文本增量计量：累加已发字节作 token 上界，跨预扣窗口时补扣。补扣
+				// 失败中止上游流并返回错误，避免继续产生无法结算的输出成本。
+				// tracker 为 nil 时逐增量零开销。
+				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(delta)); topUpErr != nil {
+					logger.LegacyPrintf("service.gemini_messages_compat", "Stream output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
+					return nil, fmt.Errorf("stream output hold top-up failed: %w", topUpErr)
+				}
 				continue
 			}
 
