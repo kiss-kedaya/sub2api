@@ -111,7 +111,7 @@ COMMENT ON TABLE live_balance_adjustment_heads IS
 COMMENT ON COLUMN live_balance_adjustment_outbox.predecessor_id IS
     'Previous event for this user; Redis applies only when its wallet watermark matches this value';
 COMMENT ON COLUMN live_balance_adjustment_outbox.user_id IS
-    'Intentionally not a foreign key: delivery remains recoverable if a user is concurrently soft/hard deleted';
+    'Intentionally not a foreign key: delivery remains recoverable when a user is soft/hard deleted in parallel';
 COMMENT ON COLUMN live_balance_adjustment_outbox.delivered_at IS
     'Redis accepted the stable outbox event id; delivered rows are retained briefly for operations visibility';
 COMMENT ON COLUMN billing_balance_settlements.wallet_preapplied IS
