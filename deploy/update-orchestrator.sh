@@ -13,9 +13,9 @@ COMPOSE_PROJECT="${SUB2API_UPDATE_PROJECT:-}"
 SERVICES_RAW="${SUB2API_UPDATE_SERVICES:-sub2api}"
 HEALTH_URLS_RAW="${SUB2API_UPDATE_HEALTH_URLS:-${SUB2API_UPDATE_HEALTH_URL:-}}"
 HEALTH_TIMEOUT="${SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS:-120}"
-DRAIN_TIMEOUT="${SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS:-35}"
+DRAIN_TIMEOUT="${SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS:-610}"
 if ! [[ "$DRAIN_TIMEOUT" =~ ^[0-9]+$ ]] || [ "$DRAIN_TIMEOUT" -lt 5 ]; then
-  DRAIN_TIMEOUT=35
+  DRAIN_TIMEOUT=610
 fi
 ENV_FILE="${SUB2API_UPDATE_ENV_FILE:-}"
 UPDATE_MODE="${SUB2API_UPDATE_MODE:-image}"
@@ -89,7 +89,7 @@ Optional environment:
   SUB2API_UPDATE_HELPER_IMAGE    Root helper image for image mode when the env
                                   file is not readable by the application user
   SUB2API_UPDATE_HEALTH_TIMEOUT_SECONDS (default: 120)
-  SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS Health drain/stop grace period (default: 35)
+  SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS Health drain/stop grace period (default: 610)
   SUB2API_UPDATE_VERSION_ENV     Variable name used by the image tag (default: SUB2API_VERSION)
 EOF
 }
@@ -361,9 +361,11 @@ graceful_restart_container() {
   local container="$1"
   local timeout="$DRAIN_TIMEOUT"
   if ! [[ "$timeout" =~ ^[0-9]+$ ]] || [ "$timeout" -lt 5 ]; then
-    timeout=35
+    timeout=610
   fi
-  # SIGTERM lets the Go server drain active streams before the hard deadline.
+  # SIGTERM makes the Go server close its listener first, so the load balancer
+  # sends new requests to another replica while existing streams drain. Keep
+  # this hard deadline above SERVER_SHUTDOWN_TIMEOUT_SECONDS.
   docker_cli stop --time "$timeout" "$container" >/dev/null
   docker_cli start "$container" >/dev/null
 }
