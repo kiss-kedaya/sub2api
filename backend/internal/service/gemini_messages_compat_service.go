@@ -1066,13 +1066,34 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 
 	var usage *ClaudeUsage
 	var firstTokenMs *int
+	// streamTopUpAbortErr 记录「流式补扣失败主动中止」哨兵错误，与已交付输出的部分
+	// 结果一起在函数末尾返回给 handler（result 非 nil + err 非 nil），避免既走结算又
+	// 被误判为成功。
+	var streamTopUpAbortErr error
 	if req.Stream {
 		streamRes, err := s.handleStreamingResponse(c, resp, startTime, originalModel)
 		if err != nil {
-			return nil, err
+			// 流式补扣失败主动中止（ErrBalanceWithholdingFailed）：上游已交付部分输出
+			// 但终帧未到故无 usage。若返回 nil，handler 的 submitGeminiUsage(nil) 空操作
+			// 会跳过结算，仅剩 defer 全额退款 → 已交付输出被免费漏扣。故对该哨兵错误
+			// 保留一个零 usage 的 ForwardResult（携 err）继续走下方组装，使其进入结算；
+			// handler 侧 observedSpend=true，applyObservedProviderSpendFloor 按已扣 hold
+			// 结算（settle-at-hold）。其余错误（含 failover）仍返回 nil，不暴露部分结果。
+			if !errors.Is(err, ErrBalanceWithholdingFailed) {
+				return nil, err
+			}
+			streamTopUpAbortErr = err
+			usage = &ClaudeUsage{}
+			if streamRes != nil {
+				if streamRes.usage != nil {
+					usage = streamRes.usage
+				}
+				firstTokenMs = streamRes.firstTokenMs
+			}
+		} else {
+			usage = streamRes.usage
+			firstTokenMs = streamRes.firstTokenMs
 		}
-		usage = streamRes.usage
-		firstTokenMs = streamRes.firstTokenMs
 	} else {
 		if useUpstreamStream {
 			collected, usageObj, err := collectGeminiSSE(resp.Body, true)
@@ -1114,7 +1135,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		ImageCount:                    imageCount,
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
-	}, nil
+	}, streamTopUpAbortErr
 }
 
 func isGeminiSignatureRelatedError(respBody []byte) bool {
