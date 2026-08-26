@@ -25,9 +25,9 @@ func newPartialStreamResp() *http.Response {
 }
 
 // TestPartialStreamUsageResult_KeepsTopUpAbort 证明 Anthropic/Gemini 流式补扣失败主动
-// 中止（ErrBalanceWithholdingFailed）即使无 observed usage 也保留 ForwardResult，使已
-// 交付输出进入结算（handler observedSpend=true → applyObservedProviderSpendFloor 按已扣
-// hold 结算），而非返回 nil 走 defer 全额退款的免费漏扣。
+// 中止（ErrBalanceWithholdingFailed）即使无 observed usage 也保留 ForwardResult，
+// 让统一计费任务记录诊断信息并完成幂等结算。若上游未返回 usage，
+// actual=0 必须释放预扣，不得把 hold 伪造成实际消费。
 func TestPartialStreamUsageResult_KeepsTopUpAbort(t *testing.T) {
 	c := newPartialStreamUsageContext(t)
 	resp := newPartialStreamResp()

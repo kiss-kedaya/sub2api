@@ -523,7 +523,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if accountReleaseFunc != nil {
 				accountReleaseFunc()
 			}
-			submitGeminiUsage := func(partial *service.ForwardResult, observedSpend bool) {
+			submitGeminiUsage := func(partial *service.ForwardResult) {
 				if partial == nil {
 					return
 				}
@@ -548,23 +548,22 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, partial.UpstreamModel)
 				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 					if recordErr := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-						Result:                partial,
-						ObservedProviderSpend: observedSpend,
-						QuotaPlatform:         quotaPlatform,
-						APIKey:                apiKey,
-						User:                  apiKey.User,
-						Account:               account,
-						Subscription:          subscription,
-						PricingAt:             pricingAt,
-						InboundEndpoint:       inboundEndpoint,
-						UpstreamEndpoint:      upstreamEndpoint,
-						UserAgent:             userAgent,
-						IPAddress:             clientIP,
-						SessionID:             sessionID,
-						RequestPayloadHash:    requestPayloadHash,
-						ForceCacheBilling:     forceCacheBilling,
-						APIKeyService:         h.apiKeyService,
-						ChannelUsageFields:    channelUsageFields,
+						Result:             partial,
+						QuotaPlatform:      quotaPlatform,
+						APIKey:             apiKey,
+						User:               apiKey.User,
+						Account:            account,
+						Subscription:       subscription,
+						PricingAt:          pricingAt,
+						InboundEndpoint:    inboundEndpoint,
+						UpstreamEndpoint:   upstreamEndpoint,
+						UserAgent:          userAgent,
+						IPAddress:          clientIP,
+						SessionID:          sessionID,
+						RequestPayloadHash: requestPayloadHash,
+						ForceCacheBilling:  forceCacheBilling,
+						APIKeyService:      h.apiKeyService,
+						ChannelUsageFields: channelUsageFields,
 					}); recordErr != nil {
 						logger.L().With(
 							zap.String("component", "handler.gateway.messages"),
@@ -582,7 +581,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				if errors.As(err, &failoverErr) {
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化
 					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
-						submitGeminiUsage(result, true)
+						submitGeminiUsage(result)
 						h.handleFailoverExhausted(c, failoverErr, service.PlatformGemini, true)
 						return
 					}
@@ -591,11 +590,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					case FailoverContinue:
 						continue
 					case FailoverExhausted:
-						submitGeminiUsage(result, false)
+						submitGeminiUsage(result)
 						h.handleFailoverExhausted(c, fs.LastFailoverErr, service.PlatformGemini, streamStarted)
 						return
 					case FailoverCanceled:
-						submitGeminiUsage(result, false)
+						submitGeminiUsage(result)
 						failoverClientGone(c)
 						return
 					}
@@ -623,7 +622,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					forwardFailedFields = append(forwardFailedFields, zap.Int64p("proxy_id", account.ProxyID))
 				}
 				logGatewayForwardFailure(reqLog, c, "gateway.forward_failed", err, forwardFailedFields...)
-				submitGeminiUsage(result, observedProviderSpend(err, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward))
+				submitGeminiUsage(result)
 				return
 			}
 
@@ -636,7 +635,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 
-			submitGeminiUsage(result, true)
+			submitGeminiUsage(result)
 			return
 		}
 	}
@@ -947,26 +946,24 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				forceCacheBilling := fs.ForceCacheBilling
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), currentAPIKey)
 				sessionID := service.ExtractClientSessionID(c)
-				observedSpend := observedProviderSpend(err, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward)
 				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 					if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-						Result:                result,
-						ObservedProviderSpend: observedSpend,
-						QuotaPlatform:         quotaPlatform,
-						APIKey:                currentAPIKey,
-						User:                  currentAPIKey.User,
-						Account:               account,
-						Subscription:          currentSubscription,
-						PricingAt:             pricingAt,
-						InboundEndpoint:       inboundEndpoint,
-						UpstreamEndpoint:      upstreamEndpoint,
-						UserAgent:             userAgent,
-						IPAddress:             clientIP,
-						SessionID:             sessionID,
-						RequestPayloadHash:    requestPayloadHash,
-						ForceCacheBilling:     forceCacheBilling,
-						APIKeyService:         h.apiKeyService,
-						ChannelUsageFields:    clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+						Result:             result,
+						QuotaPlatform:      quotaPlatform,
+						APIKey:             currentAPIKey,
+						User:               currentAPIKey.User,
+						Account:            account,
+						Subscription:       currentSubscription,
+						PricingAt:          pricingAt,
+						InboundEndpoint:    inboundEndpoint,
+						UpstreamEndpoint:   upstreamEndpoint,
+						UserAgent:          userAgent,
+						IPAddress:          clientIP,
+						SessionID:          sessionID,
+						RequestPayloadHash: requestPayloadHash,
+						ForceCacheBilling:  forceCacheBilling,
+						APIKeyService:      h.apiKeyService,
+						ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
 					}); err != nil {
 						logger.L().With(
 							zap.String("component", "handler.gateway.messages"),
