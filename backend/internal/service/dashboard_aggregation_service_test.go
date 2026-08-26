@@ -188,7 +188,7 @@ func (c *dashboardAggregationLeaderLockRecordingCache) ReleaseLeaderLock(ctx con
 	return c.delegate.ReleaseLeaderLock(ctx, key, owner)
 }
 
-func TestDashboardAggregationService_StartupGroupSyncUsesIndependentLongLivedLeaderLock(t *testing.T) {
+func TestDashboardAggregationService_StartupGroupSyncUsesSharedLongLivedLeaderLock(t *testing.T) {
 	delegate := &fakeLeaderLockCache{}
 	_, err := delegate.TryAcquireLeaderLock(context.Background(), dashboardAggregationLeaderLockKey, "periodic-peer", time.Hour)
 	require.NoError(t, err)
@@ -203,10 +203,35 @@ func TestDashboardAggregationService_StartupGroupSyncUsesIndependentLongLivedLea
 	svc.runStartupGroupUsageSync()
 
 	require.Len(t, cache.acquireKeys, 1)
+	require.Equal(t, dashboardAggregationGroupUsageLeaderLockKey, cache.acquireKeys[0])
 	require.NotEqual(t, dashboardAggregationLeaderLockKey, cache.acquireKeys[0])
 	require.Len(t, cache.acquireTTLs, 1)
 	require.Greater(t, cache.acquireTTLs[0], defaultDashboardAggregationBackfillTimeout)
 	require.Equal(t, 1, repo.groupRollupCalls)
+}
+
+func TestDashboardAggregationService_ScheduledGroupSyncSkipsWhileStartupSyncOwnsLock(t *testing.T) {
+	cache := &fakeLeaderLockCache{}
+	_, err := cache.TryAcquireLeaderLock(
+		context.Background(),
+		dashboardAggregationGroupUsageLeaderLockKey,
+		"startup-peer",
+		dashboardAggregationGroupUsageLeaderLockTTL,
+	)
+	require.NoError(t, err)
+
+	repo := &dashboardAggregationRollupRepoTestStub{
+		dashboardAggregationRepoTestStub: &dashboardAggregationRepoTestStub{},
+	}
+	svc := &DashboardAggregationService{
+		repo:       repo,
+		lockCache:  cache,
+		instanceID: "scheduled-instance",
+	}
+
+	svc.runScheduledGroupUsageSync()
+
+	require.Zero(t, repo.groupRollupCalls)
 }
 
 func TestDashboardAggregationService_CleanupRetentionFailure_DoesNotRecord(t *testing.T) {

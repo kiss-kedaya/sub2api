@@ -23,9 +23,12 @@ const (
 	// TTL 必须覆盖 dashboard 聚合与分组日汇总两个有界阶段，避免任务中途失锁。
 	dashboardAggregationLeaderLockTTL = 5 * time.Minute
 
-	// 启动回填耗时可能远长于周期聚合，因此使用独立锁并让 TTL 严格大于回填超时。
-	dashboardAggregationGroupUsageBackfillLeaderLockKey = "dashboard:aggregation:group-usage-backfill:leader"
-	dashboardAggregationGroupUsageBackfillLeaderLockTTL = defaultDashboardAggregationBackfillTimeout + time.Minute
+	// Startup and periodic group-usage syncs share this lock. They have different
+	// entry points and may overlap during rolling restarts, but both rebuild the
+	// same watermark and historical buckets. The TTL covers the longer startup
+	// deadline; successful jobs release it immediately.
+	dashboardAggregationGroupUsageLeaderLockKey = "dashboard:aggregation:group-usage:leader"
+	dashboardAggregationGroupUsageLeaderLockTTL = defaultDashboardAggregationBackfillTimeout + time.Minute
 )
 
 var (
@@ -276,6 +279,18 @@ func (s *DashboardAggregationService) runScheduledAggregation() {
 func (s *DashboardAggregationService) runScheduledGroupUsageSync() {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationTimeout)
 	defer cancel()
+	release, ok := tryAcquireSingletonLeaderLock(
+		ctx,
+		s.lockCache,
+		s.db,
+		dashboardAggregationGroupUsageLeaderLockKey,
+		s.instanceID,
+		dashboardAggregationGroupUsageLeaderLockTTL,
+	)
+	if !ok {
+		return
+	}
+	defer release()
 	if err := s.syncGroupUsageRollups(ctx, time.Now().UTC()); err != nil {
 		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 分组用量日汇总失败: %v", err)
 	}
@@ -284,7 +299,14 @@ func (s *DashboardAggregationService) runScheduledGroupUsageSync() {
 func (s *DashboardAggregationService) runStartupGroupUsageSync() {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationBackfillTimeout)
 	defer cancel()
-	release, ok := tryAcquireSingletonLeaderLock(ctx, s.lockCache, s.db, dashboardAggregationGroupUsageBackfillLeaderLockKey, s.instanceID, dashboardAggregationGroupUsageBackfillLeaderLockTTL)
+	release, ok := tryAcquireSingletonLeaderLock(
+		ctx,
+		s.lockCache,
+		s.db,
+		dashboardAggregationGroupUsageLeaderLockKey,
+		s.instanceID,
+		dashboardAggregationGroupUsageLeaderLockTTL,
+	)
 	if !ok {
 		return
 	}
