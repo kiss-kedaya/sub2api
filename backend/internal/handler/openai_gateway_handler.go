@@ -744,26 +744,24 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-			observedSpend := observedProviderSpend(err, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward)
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:                res,
-					ObservedProviderSpend: observedSpend,
-					APIKey:                apiKey,
-					User:                  apiKey.User,
-					Account:               account,
-					Subscription:          subscription,
-					InboundEndpoint:       inboundEndpoint,
-					UpstreamEndpoint:      upstreamEndpoint,
-					UserAgent:             userAgent,
-					IPAddress:             clientIP,
-					RequestPayloadHash:    requestPayloadHash,
-					APIKeyService:         h.apiKeyService,
-					QuotaPlatform:         quotaPlatform,
-					SessionID:             sessionID,
-					ChannelUsageFields:    clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
-					PricingAt:             pricingAt,
-					CyberBlocked:          cyberBlocked,
+					Result:             res,
+					APIKey:             apiKey,
+					User:               apiKey.User,
+					Account:            account,
+					Subscription:       subscription,
+					InboundEndpoint:    inboundEndpoint,
+					UpstreamEndpoint:   upstreamEndpoint,
+					UserAgent:          userAgent,
+					IPAddress:          clientIP,
+					RequestPayloadHash: requestPayloadHash,
+					APIKeyService:      h.apiKeyService,
+					QuotaPlatform:      quotaPlatform,
+					SessionID:          sessionID,
+					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
+					PricingAt:          pricingAt,
+					CyberBlocked:       cyberBlocked,
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.responses"),
@@ -1342,26 +1340,24 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-			observedSpend := observedProviderSpend(err, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward)
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-					Result:                res,
-					ObservedProviderSpend: observedSpend,
-					APIKey:                apiKey,
-					User:                  apiKey.User,
-					Account:               account,
-					Subscription:          subscription,
-					InboundEndpoint:       inboundEndpoint,
-					UpstreamEndpoint:      upstreamEndpoint,
-					UserAgent:             userAgent,
-					IPAddress:             clientIP,
-					RequestPayloadHash:    requestPayloadHash,
-					APIKeyService:         h.apiKeyService,
-					QuotaPlatform:         quotaPlatform,
-					SessionID:             sessionID,
-					ChannelUsageFields:    clientRequestedUsageFields(c, channelMappingMsg, reqModel, res.UpstreamModel),
-					PricingAt:             pricingAt,
-					CyberBlocked:          cyberBlocked,
+					Result:             res,
+					APIKey:             apiKey,
+					User:               apiKey.User,
+					Account:            account,
+					Subscription:       subscription,
+					InboundEndpoint:    inboundEndpoint,
+					UpstreamEndpoint:   upstreamEndpoint,
+					UserAgent:          userAgent,
+					IPAddress:          clientIP,
+					RequestPayloadHash: requestPayloadHash,
+					APIKeyService:      h.apiKeyService,
+					QuotaPlatform:      quotaPlatform,
+					SessionID:          sessionID,
+					ChannelUsageFields: clientRequestedUsageFields(c, channelMappingMsg, reqModel, res.UpstreamModel),
+					PricingAt:          pricingAt,
+					CyberBlocked:       cyberBlocked,
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.messages"),
@@ -2511,26 +2507,24 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				sessionID := service.ExtractClientSessionID(c)
 				turnRecordPricingAt := turnPricing.currentOr(turnStart)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-				observedSpend := observedProviderSpend(turnErr, result.FirstTokenMs != nil || result.SucceededForScheduling())
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
-						Result:                result,
-						ObservedProviderSpend: observedSpend,
-						APIKey:                apiKey,
-						User:                  apiKey.User,
-						Account:               account,
-						Subscription:          subscription,
-						InboundEndpoint:       inboundEndpoint,
-						UpstreamEndpoint:      upstreamEndpoint,
-						UserAgent:             userAgent,
-						IPAddress:             clientIP,
-						RequestPayloadHash:    requestPayloadHash,
-						APIKeyService:         h.apiKeyService,
-						QuotaPlatform:         quotaPlatform,
-						SessionID:             sessionID,
-						ChannelUsageFields:    turnUsageFields,
-						PricingAt:             turnRecordPricingAt,
-						CyberBlocked:          cyberBlocked,
+						Result:             result,
+						APIKey:             apiKey,
+						User:               apiKey.User,
+						Account:            account,
+						Subscription:       subscription,
+						InboundEndpoint:    inboundEndpoint,
+						UpstreamEndpoint:   upstreamEndpoint,
+						UserAgent:          userAgent,
+						IPAddress:          clientIP,
+						RequestPayloadHash: requestPayloadHash,
+						APIKeyService:      h.apiKeyService,
+						QuotaPlatform:      quotaPlatform,
+						SessionID:          sessionID,
+						ChannelUsageFields: turnUsageFields,
+						PricingAt:          turnRecordPricingAt,
+						CyberBlocked:       cyberBlocked,
 					}); err != nil {
 						reqLog.Error("openai.websocket_record_usage_failed",
 							zap.Int64("account_id", account.ID),
