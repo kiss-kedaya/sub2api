@@ -335,7 +335,12 @@ func newPreauthorizationFixture() *preauthorizationFixture {
 	}
 	return &preauthorizationFixture{
 		service: &BalancePreauthorizationService{
-			cfg:             &config.Config{RunMode: config.RunModeStandard},
+			cfg: &config.Config{
+				RunMode: config.RunModeStandard,
+				Billing: config.BillingConfig{
+					BalancePreauthorizationEnabled: true,
+				},
+			},
 			costCalculator:  calculator,
 			snapshotReader:  repo,
 			wallet:          wallet,
@@ -582,6 +587,14 @@ func TestBalancePreauthorizationRequirementMatchesLifecycleModes(t *testing.T) {
 	require.True(t, fixture.service.RequiresPreauthorization(BillingTypeBalance))
 	require.False(t, fixture.service.RequiresPreauthorization(BillingTypeSubscription))
 
+	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = false
+	require.False(t, fixture.service.RequiresPreauthorization(BillingTypeBalance))
+	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
+	require.NoError(t, err)
+	require.Nil(t, guard)
+	require.Empty(t, fixture.recorder.snapshot())
+
+	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = true
 	fixture.service.cfg.RunMode = config.RunModeSimple
 	require.False(t, fixture.service.RequiresPreauthorization(BillingTypeBalance))
 }
