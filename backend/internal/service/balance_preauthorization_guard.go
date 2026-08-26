@@ -151,6 +151,10 @@ func (g *BalancePreauthorizationGuard) Finalize(ctx context.Context, actual floa
 
 	g.core.mu.Lock()
 	defer g.core.mu.Unlock()
+	// owner 校验必须保留：Finalize/Refund/ObserveStreamingOutput 三处共享同一所有权不变量。
+	// TransferToWorker 递增 core.ownerToken 后旧 handle 失配。此处（结算）与 ObserveStreamingOutput
+	// （补扣）对失配返回 ErrBalancePreauthorizationOwnershipTransferred；Refund 对失配刻意返回 nil
+	// （陈旧 handler defer 的 no-op）。三者共同防止对同一预扣重复结算或撤销 worker 已产生的计费。
 	if g.core.ownerToken != g.ownerToken {
 		return ErrBalancePreauthorizationOwnershipTransferred
 	}
