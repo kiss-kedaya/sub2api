@@ -91,6 +91,18 @@ func (g *BalancePreauthorizationGuard) ReservedOutputTokens() int {
 	return g.core.outputWindow
 }
 
+// wrapStreamOutputHoldTopUpFailure 为流式中途补扣失败统一包装错误，供四条流式
+// 路径（passthrough/responses/Anthropic/Gemini）共用，消除各路径逐字复制的包装串。
+// 必须用 %w 包装：reporter 依赖 errors.Is(cause, ErrBalanceWithholdingFailed) 识别
+// 余额不足并发 403 信号，降级为 %v/%s 会断链、静默丢失该信号。err==nil 时返回 nil，
+// 故调用点无需额外守卫；本函数只包装错误，绝不触碰钱包/中止/上报，中止仍由各调用点自行 return。
+func wrapStreamOutputHoldTopUpFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("stream output hold top-up failed: %w", err)
+}
+
 // ObserveStreamingOutput records additionalBytes of emitted output and raises
 // the live hold when the reserved output window is about to be exceeded. It is
 // a no-op (nil) when no tracker exists (per-request/free/non-stream requests),
