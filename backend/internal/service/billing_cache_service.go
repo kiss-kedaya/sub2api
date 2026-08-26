@@ -320,23 +320,31 @@ func (s *BillingCacheService) logCacheWriteDrop(task cacheWriteTask, reason stri
 // 余额缓存方法
 // ============================================
 
-// GetUserBalance returns the persistent live wallet when one exists. The
-// short-lived legacy cache and PostgreSQL are only initialization fallbacks;
-// they may lag behind in-flight holds and asynchronously aggregated usage.
+// GetUserBalance returns the persistent live wallet only while request-time
+// preauthorization is enabled. With preauthorization disabled, that wallet is
+// no longer updated by new requests and must not participate in admission;
+// use the normal balance cache and PostgreSQL fallback instead.
 func (s *BillingCacheService) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
 	if s.cache == nil {
 		// Redis不可用，直接查询数据库
 		return s.getUserBalanceFromDB(ctx, userID)
 	}
 
-	liveBalance, exists, err := s.cache.GetLiveBalance(ctx, userID)
-	if err != nil {
-		// Falling back to PostgreSQL here would ignore active holds and can
-		// authorize spend twice. Redis transport failures therefore fail closed.
-		return 0, fmt.Errorf("get live user balance: %w", err)
-	}
-	if exists {
-		return liveBalance, nil
+	// A nil config is retained as the legacy strict mode for focused tests and
+	// lightweight embeddings. Production always supplies cfg, so the feature
+	// switch is authoritative there.
+	useLiveBalance := s.cfg == nil ||
+		(s.cfg.RunMode != config.RunModeSimple && s.cfg.Billing.BalancePreauthorizationEnabled)
+	if useLiveBalance {
+		liveBalance, exists, err := s.cache.GetLiveBalance(ctx, userID)
+		if err != nil {
+			// Falling back to PostgreSQL here would ignore active holds and can
+			// authorize spend twice while preauthorization is active.
+			return 0, fmt.Errorf("get live user balance: %w", err)
+		}
+		if exists {
+			return liveBalance, nil
+		}
 	}
 
 	// 尝试从缓存读取
