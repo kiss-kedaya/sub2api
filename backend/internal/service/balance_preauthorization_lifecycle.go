@@ -20,9 +20,10 @@ const (
 
 // 余额不足导致预扣/流式续扣失败时映射为 403，而非 402/429，这是刻意的计费决策：
 // 属于客户端无法靠重试或等待消除的确定性拒绝（额度不足即拒绝本次请求）。
-// - 不用 429：429 会诱导客户端退避后重试，放大无法结算的无效请求负载；
-// - 不用 402：402 虽不诱导退避，但语义上暗示"充值即可放行本次"，与此处的确定性拒绝
-//   不符，且用 403 与上游权限类拒绝语义保持一致。
+//   - 不用 429：429 会诱导客户端退避后重试，放大无法结算的无效请求负载；
+//   - 不用 402：402 虽不诱导退避，但语义上暗示"充值即可放行本次"，与此处的确定性拒绝
+//     不符，且用 403 与上游权限类拒绝语义保持一致。
+//
 // 注意：该 sentinel 同时用于入口预扣(lifecycle line 243)与流式续扣(guard.go:130、
 // passthrough:1787)两条路径；两处返回前均已执行 compensateAuthorizationFailure/退款，
 // 不会漏扣或残留 hold——修改状态码不得改变这一补偿前置。
@@ -39,16 +40,6 @@ type balancePreauthorizationCostCalculator interface {
 
 type balancePreauthorizationSnapshotReader interface {
 	LoadLiveBalanceInitializationSnapshot(ctx context.Context, userID int64) (LiveBalanceInitializationSnapshot, error)
-}
-
-// balancePreauthorizationCacheHitRateProvider supplies prompt-cache hit-rate
-// history so preauthorization hold can weight input pricing between full-price
-// and cache-read scenarios. Optional — nil-safe fallback to conservative.
-type balancePreauthorizationCacheHitRateProvider interface {
-	// RecentCacheHitRate returns the fraction (0..1) of input tokens that were
-	// cache_read (not full-price input) for this API key over a recent window,
-	// along with ok=false when there is insufficient history to trust it.
-	RecentCacheHitRate(ctx context.Context, apiKeyID int64) (rate float64, ok bool, err error)
 }
 
 type balancePreauthorizationWallet interface {
@@ -100,7 +91,6 @@ type BalancePreauthorizationService struct {
 	cfg             *config.Config
 	costCalculator  balancePreauthorizationCostCalculator
 	snapshotReader  balancePreauthorizationSnapshotReader
-	cacheHitRate    balancePreauthorizationCacheHitRateProvider
 	wallet          balancePreauthorizationWallet
 	watermarkWallet balancePreauthorizationWatermarkedWallet
 	repo            balancePreauthorizationRepository
@@ -118,7 +108,6 @@ func NewBalancePreauthorizationService(
 		repo:           repo,
 	}
 	service.snapshotReader, _ = repo.(balancePreauthorizationSnapshotReader)
-	service.cacheHitRate, _ = repo.(balancePreauthorizationCacheHitRateProvider)
 	if billingCacheService != nil {
 		service.wallet = billingCacheService.cache
 		service.watermarkWallet, _ = billingCacheService.cache.(balancePreauthorizationWatermarkedWallet)
@@ -169,6 +158,7 @@ type BalancePreauthorizationRequest struct {
 	AuthorizationFingerprint  string
 	BillingType               int8
 	BillableInputBytes        int
+	EstimatedInputTokens      int
 	InitialOutputWindowTokens int
 	CostInput                 CostInput
 	EstimateKind              PreauthorizationEstimateKind
@@ -330,10 +320,10 @@ func (s *BalancePreauthorizationService) estimateHold(
 	}
 }
 
-// estimateTokenUpperBoundHold prices chat/text traffic. A text token cannot
-// encode fewer than one source byte, so transformed payload bytes are a safe
-// token upper bound; the largest of the input/cache-read/cache-creation
-// scenarios plus a bounded output window is reserved.
+// estimateTokenUpperBoundHold prices chat/text traffic from the current
+// request's local token estimate. The reserve uses the normal input price and
+// an explicit output limit (or bounded window), then finalization reconciles it
+// to provider-reported usage. No historical usage query belongs on this path.
 func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,
@@ -346,66 +336,18 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	if err != nil {
 		return balancePreauthorizationEstimate{}, err
 	}
-
-	// Cache-aware hold: when recent prompt-cache usage history exists, weight
-	// input pricing between cache_read (discounted) and full-price input based
-	// on the key's actual hit rate, with a conservative buffer. This addresses
-	// the 50-100× hold-vs-actual gap for Responses-API users whose requests are
-	// designed to hit cache. Finalize always settles to real cost, so an
-	// imperfect estimate affects only the reserved amount, never the charge.
-	var inputCost float64
-	hitRate, hitRateOK := 0.0, false
-	if s.cacheHitRate != nil && request.APIKeyID > 0 {
-		hitRate, hitRateOK, _ = s.cacheHitRate.RecentCacheHitRate(ctx, request.APIKeyID)
+	inputTokens := request.EstimatedInputTokens
+	if inputTokens <= 0 {
+		inputTokens = request.BillableInputBytes
 	}
-	if hitRateOK && hitRate > 0 {
-		// Apply 15% buffer: treat observed 95% hit as 80% for hold. Protects
-		// against short-term hit-rate drops; finalize reconciles any shortfall.
-		const hitRateBufferFraction = 0.15
-		bufferedRate := hitRate - hitRateBufferFraction
-		if bufferedRate < 0 {
-			bufferedRate = 0
-		}
-		// Weight BillableInputBytes between cache_read and input price. Derive the
-		// input remainder by subtraction (not a second truncation) so the two
-		// parts always sum to exactly BillableInputBytes — no token is lost or
-		// double-counted to rounding.
-		cacheReadPart := int(float64(request.BillableInputBytes) * bufferedRate)
-		if cacheReadPart > request.BillableInputBytes {
-			cacheReadPart = request.BillableInputBytes
-		}
-		weightedTokens := UsageTokens{
-			CacheReadTokens: cacheReadPart,
-			InputTokens:     request.BillableInputBytes - cacheReadPart,
-			OutputTokens:    outputWindow,
-		}
-		input := base
-		input.Tokens = weightedTokens
-		breakdown, err := s.costCalculator.CalculateCostUnified(input)
-		if err != nil {
-			return balancePreauthorizationEstimate{}, err
-		}
-		if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
-			return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
-		}
-		inputCost = breakdown.ActualCost
-	} else {
-		// Fallback: no history or low confidence. Use plain-input scenario,
-		// already more conservative than the old max(input/cache_write).
-		fallbackTokens := UsageTokens{
-			InputTokens:  request.BillableInputBytes,
-			OutputTokens: outputWindow,
-		}
-		input := base
-		input.Tokens = fallbackTokens
-		breakdown, err := s.costCalculator.CalculateCostUnified(input)
-		if err != nil {
-			return balancePreauthorizationEstimate{}, err
-		}
-		if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
-			return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
-		}
-		inputCost = breakdown.ActualCost
+	input := base
+	input.Tokens = UsageTokens{InputTokens: inputTokens, OutputTokens: outputWindow}
+	breakdown, err := s.costCalculator.CalculateCostUnified(input)
+	if err != nil {
+		return balancePreauthorizationEstimate{}, err
+	}
+	if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
+		return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
 	}
 
 	// Effective per-output-token price via difference: the output window is the
@@ -415,12 +357,12 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	// multipliers) used at settlement without reaching into pricing internals.
 	// Only one extra pricing call runs, once per request at preauthorization,
 	// never on the hot path.
-	outputUnitPrice, err := s.estimateOutputUnitPrice(base, request.BillableInputBytes, outputWindow)
+	outputUnitPrice, err := s.estimateOutputUnitPrice(base, inputTokens, outputWindow)
 	if err != nil {
 		return balancePreauthorizationEstimate{}, err
 	}
 	return balancePreauthorizationEstimate{
-		HoldAmount:      quantizeBillingHoldUpFromFloat(inputCost),
+		HoldAmount:      quantizeBillingHoldUpFromFloat(breakdown.ActualCost),
 		OutputWindow:    outputWindow,
 		OutputUnitPrice: outputUnitPrice,
 	}, nil
@@ -555,7 +497,7 @@ func validateBalancePreauthorizationRequest(request *BalancePreauthorizationRequ
 	if request == nil || strings.TrimSpace(request.RequestID) == "" ||
 		strings.TrimSpace(request.AuthorizationFingerprint) == "" ||
 		request.APIKeyID <= 0 || request.UserID <= 0 ||
-		request.BillableInputBytes < 0 || request.InitialOutputWindowTokens < 0 {
+		request.BillableInputBytes < 0 || request.EstimatedInputTokens < 0 || request.InitialOutputWindowTokens < 0 {
 		return ErrInvalidBillingPreauthorizationEstimate
 	}
 	if request.BillingType != BillingTypeBalance {

@@ -308,28 +308,12 @@ func (s *preauthorizationRepositoryStub) CompleteBalancePreauthorizationRefund(c
 	return s.completeRefundErr
 }
 
-// preauthorizationCacheHitRateStub feeds a canned prompt-cache hit rate so
-// tests can exercise the cache-aware hold path. Defaults to ok=false (no
-// history) so existing tests take the conservative fallback.
-type preauthorizationCacheHitRateStub struct {
-	rate         float64
-	ok           bool
-	err          error
-	lastAPIKeyID int64
-}
-
-func (s *preauthorizationCacheHitRateStub) RecentCacheHitRate(_ context.Context, apiKeyID int64) (float64, bool, error) {
-	s.lastAPIKeyID = apiKeyID
-	return s.rate, s.ok, s.err
-}
-
 type preauthorizationFixture struct {
-	service      *BalancePreauthorizationService
-	recorder     *preauthorizationCallRecorder
-	calculator   *preauthorizationCostCalculatorStub
-	wallet       *preauthorizationWalletStub
-	repo         *preauthorizationRepositoryStub
-	cacheHitRate *preauthorizationCacheHitRateStub
+	service    *BalancePreauthorizationService
+	recorder   *preauthorizationCallRecorder
+	calculator *preauthorizationCostCalculatorStub
+	wallet     *preauthorizationWalletStub
+	repo       *preauthorizationRepositoryStub
 }
 
 func newPreauthorizationFixture() *preauthorizationFixture {
@@ -345,22 +329,19 @@ func newPreauthorizationFixture() *preauthorizationFixture {
 		recorder: recorder,
 		snapshot: LiveBalanceInitializationSnapshot{Balance: 10, Watermark: 17},
 	}
-	cacheHitRate := &preauthorizationCacheHitRateStub{}
 	return &preauthorizationFixture{
 		service: &BalancePreauthorizationService{
 			cfg:             &config.Config{RunMode: config.RunModeStandard},
 			costCalculator:  calculator,
 			snapshotReader:  repo,
-			cacheHitRate:    cacheHitRate,
 			wallet:          wallet,
 			watermarkWallet: wallet,
 			repo:            repo,
 		},
-		recorder:     recorder,
-		calculator:   calculator,
-		wallet:       wallet,
-		repo:         repo,
-		cacheHitRate: cacheHitRate,
+		recorder:   recorder,
+		calculator: calculator,
+		wallet:     wallet,
+		repo:       repo,
 	}
 }
 
@@ -383,13 +364,9 @@ func balancePreauthorizationTestRequest() BalancePreauthorizationRequest {
 	}
 }
 
-// TestBalancePreauthorizationLifecycleFallsBackToPlainInputWithoutCacheHistory
-// proves that without prompt-cache hit-rate history the hold uses the
-// plain-input scenario (no longer the max of input/cache_read/cache_creation),
-// pricing input once plus two output-unit-price probes (windowed + baseline).
-// This is the conservative fallback: still >= real cost so no under-hold, but
-// far below the old cache_creation-max that over-held cache-heavy users.
-func TestBalancePreauthorizationLifecycleFallsBackToPlainInputWithoutCacheHistory(t *testing.T) {
+// TestBalancePreauthorizationLifecycleUsesRequestLocalPlainInput proves the
+// hold prices the current request once and never reads historical usage.
+func TestBalancePreauthorizationLifecycleUsesRequestLocalPlainInput(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
 	require.NoError(t, err)
@@ -428,34 +405,6 @@ func TestBalancePreauthorizationLifecycleFallsBackToPlainInputWithoutCacheHistor
 	// A retry after all three finalization steps is a local idempotent no-op.
 	require.NoError(t, guard.Finalize(context.Background(), 0.02, "actual-fingerprint"))
 	require.Equal(t, 1, fixture.wallet.finalizeCalls)
-}
-
-// TestBalancePreauthorizationLifecycleCacheAwareHoldUsesHitRate proves that with
-// prompt-cache hit-rate history the hold weights input between cache_read and
-// full input price (via the buffered rate), producing a hold far below the
-// plain-input fallback for a cache-heavy key — fixing the over-hold that
-// falsely rejected such users.
-func TestBalancePreauthorizationLifecycleCacheAwareHoldUsesHitRate(t *testing.T) {
-	fixture := newPreauthorizationFixture()
-	// 95% observed hit rate -> buffered to 80% (0.95 - 0.15). The stub's switch
-	// prices whichever token field is non-zero with priority InputTokens first,
-	// so a mix still exercises the weighted-token path; assert the weighting is
-	// applied to the CostInput rather than the exact stub cost.
-	fixture.cacheHitRate.rate = 0.95
-	fixture.cacheHitRate.ok = true
-
-	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
-	require.NoError(t, err)
-	require.NotNil(t, guard)
-	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, guard.ReservedOutputTokens())
-	// Hold pricing call [0] must carry the weighted token split: 80% cache_read,
-	// 20% input of the 100 billable bytes.
-	require.Len(t, fixture.calculator.inputs, 3)
-	require.Equal(t, 80, fixture.calculator.inputs[0].Tokens.CacheReadTokens)
-	require.Equal(t, 20, fixture.calculator.inputs[0].Tokens.InputTokens)
-	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, fixture.calculator.inputs[0].Tokens.OutputTokens)
-	// The hit-rate provider was consulted for this API key.
-	require.Equal(t, int64(7), fixture.cacheHitRate.lastAPIKeyID)
 }
 
 func TestBalancePreauthorizationLifecycleHotWalletSkipsPostgreSQLSnapshot(t *testing.T) {
