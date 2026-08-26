@@ -85,7 +85,6 @@ func TestParseSSEUsage_DeltaOverwritesWithNonZero(t *testing.T) {
 func TestParseSSEUsage_DeltaAuthoritativelyUpdatesCacheCreationBreakdown(t *testing.T) {
 	svc := newMinimalGatewayService()
 	usage := &ClaudeUsage{}
-
 	// The upstream can switch TTL buckets in message_delta; explicit zero is
 	// authoritative and must clear the previous bucket.
 	svc.parseSSEUsage(`{"type":"message_start","message":{"usage":{"cache_creation_input_tokens":463184,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":463184}}}}`, usage)

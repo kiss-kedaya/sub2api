@@ -96,24 +96,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			body = reasoningBody
 		}
 	}
-	if account.IsOpenAIOAuthLike() && responsesLite {
-		liteBody, changed, liteErr := normalizeOpenAIResponsesLiteToolsPayload(body)
-		if liteErr != nil {
-			param := "tools"
-			var validationErr *openAIResponsesLiteValidationError
-			if errors.As(liteErr, &validationErr) {
-				param = validationErr.param
-			}
-			setOpsUpstreamError(c, http.StatusBadRequest, liteErr.Error(), "")
-			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
-				"type": "invalid_request_error", "message": liteErr.Error(), "param": param,
-			}})
-			return nil, liteErr
-		}
-		if changed {
-			body = liteBody
-		}
-	}
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
 	// 仅允许 WS 入站请求走 WS 上游，避免出现 HTTP -> WS 协议混用。
 	wsDecision = resolveOpenAIWSDecisionByClientTransport(wsDecision, GetOpenAIClientTransport(c))
@@ -171,7 +153,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, reqModel)
 	}
 	if account.IsOpenAIApiKey() {
-		if normalized, changed, normalizeErr := normalizeOpenAIParallelToolCallsWithoutTools(body); normalizeErr != nil {
+		if normalized, changed, normalizeErr := normalizeOpenAIParallelToolCallsWithoutTools(body, responsesLite); normalizeErr != nil {
 			return nil, normalizeErr
 		} else if changed {
 			body = normalized
