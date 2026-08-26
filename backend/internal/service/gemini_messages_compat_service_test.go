@@ -1114,6 +1114,42 @@ func TestGeminiMessagesHandleStreamingResponse_ClosesToolBlockBeforeText(t *test
 	require.Equal(t, -1, open, "stream ended with a content block still open")
 }
 
+// TestGeminiMessagesHandleStreamingResponse_TopUpAbortSurfacesSentinel 证明 Gemini
+// Messages 兼容流式路径在补扣失败时以 ErrBalanceWithholdingFailed 中止——这是 Forward
+// 包装层据以保留已交付输出结果（settle-at-hold）、避免免费漏扣的哨兵。补此前遗漏的
+// 第五条流式路径（预扣审查复验发现）。
+func TestGeminiMessagesHandleStreamingResponse_TopUpAbortSurfacesSentinel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// 构造一个补扣必然失败（余额不足）的预扣 guard。
+	fixture := newPreauthorizationFixture()
+	fixture.wallet.topUp = []LiveBalanceResult{{Outcome: LiveBalanceOutcomeInsufficient, State: LiveBalanceAttemptAuthorized}}
+	guard := streamingPreauthorizationGuard(t, fixture)
+
+	// 上游持续下发可见文本增量，跨预留窗口后触发补扣 → 失败中止。
+	var b strings.Builder
+	for i := 0; i < 40; i++ {
+		b.WriteString(`data: {"candidates":[{"content":{"parts":[{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}]}` + "\n\n")
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(b.String())),
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", http.NoBody)
+	c.Request = c.Request.WithContext(
+		ContextWithBalancePreauthorizationGuard(c.Request.Context(), guard),
+	)
+
+	svc := &GeminiMessagesCompatService{}
+	_, err := svc.handleStreamingResponse(c, resp, time.Now(), "claude-3-5-sonnet")
+	require.ErrorIs(t, err, ErrBalanceWithholdingFailed,
+		"Gemini-compat top-up abort must surface the withholding sentinel so Forward preserves the delivered-output result")
+}
+
 type anthropicContentBlockEvent struct {
 	event     string
 	index     int
