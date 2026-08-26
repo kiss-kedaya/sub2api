@@ -4087,11 +4087,17 @@ const syncPreviewCredentials = computed(() => {
   const baseUrl = isCNPlatform.value && apiProtocol.value === 'adaptive'
     ? adaptiveBaseUrls.value.chat_completions.trim() || apiKeyBaseUrl.value.trim()
     : apiKeyBaseUrl.value.trim()
+  const modelMapping = buildModelMappingObject(
+    modelRestrictionMode.value,
+    allowedModels.value,
+    modelMappings.value
+  )
   return {
     platform: form.platform,
     type: form.type,
     base_url: baseUrl || undefined,
-    api_key: apiKeyValue.value
+    api_key: apiKeyValue.value,
+    ...(modelMapping ? { model_mapping: modelMapping } : {})
   }
 })
 
@@ -4987,7 +4993,14 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
   submitting.value = true
   try {
     const account = await adminAPI.accounts.create(withAntigravityConfirmFlag(payload))
-    if (upstreamModelsPreviewed.value) {
+    const modelMapping = payload.credentials.model_mapping
+    const hasConcreteMappedTarget = payload.type === 'apikey' &&
+      typeof modelMapping === 'object' &&
+      modelMapping !== null &&
+      Object.values(modelMapping).some((target) =>
+        typeof target === 'string' && target.trim() !== '' && !target.includes('*')
+      )
+    if (upstreamModelsPreviewed.value || hasConcreteMappedTarget) {
       try {
         const result = await adminAPI.accounts.syncUpstreamModels(account.id)
         if (result.warnings?.some(warning => warning.code === 'upstream_model_metadata_incomplete')) {

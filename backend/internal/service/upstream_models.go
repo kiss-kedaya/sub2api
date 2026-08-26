@@ -1241,7 +1241,7 @@ func normalizeReasoningLevel(level string) string {
 		return "none"
 	case "extra-high", "extra_high":
 		return "xhigh"
-	case "none", "minimal", "low", "medium", "high", "xhigh", "max":
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
 		return level
 	default:
 		return ""

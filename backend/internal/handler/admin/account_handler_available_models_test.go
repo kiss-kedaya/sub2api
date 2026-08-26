@@ -74,6 +74,7 @@ func setupSyncUpstreamModelsRouter(adminSvc service.AdminService, upstream servi
 	)
 	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, accountTestSvc, nil, nil, nil, nil, nil)
 	router.POST("/api/v1/admin/accounts/:id/models/sync-upstream", handler.SyncUpstreamModels)
+	router.POST("/api/v1/admin/accounts/models/sync-upstream-preview", handler.SyncUpstreamModelsPreview)
 	return router
 }
 
@@ -391,6 +392,59 @@ func TestAccountHandlerSyncUpstreamModelsReturnsCapabilityMetadata(t *testing.T)
 	require.True(t, *metadata.Reasoning)
 	require.Equal(t, []string{"low", "high"}, metadata.SupportedReasoningLevels)
 	require.Equal(t, []string{"text", "image"}, metadata.InputModalities)
+}
+
+// Scenario: 创建账号 preview 将具体 mapping 传给 404/405 配置回退。
+func TestAccountHandlerSyncUpstreamModelsPreviewUsesProvidedModelMapping(t *testing.T) {
+	upstream := &syncUpstreamHTTPUpstream{responses: []*http.Response{
+		{
+			StatusCode: http.StatusNotFound,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":"not found"}`)),
+		},
+		{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{
+				"configured-provider": {
+					"api": "https://provider.example/v1",
+					"models": {
+						"glm-5.3": {
+							"id": "glm-5.3",
+							"reasoning": true,
+							"reasoning_options": [{"type":"effort","values":["low","high"]}],
+							"modalities": {"input":["text"],"output":["text"]},
+							"limit": {"context":1000000,"output":131072}
+						}
+					}
+				}
+			}`)),
+		},
+	}}
+	router := setupSyncUpstreamModelsRouter(newStubAdminService(), upstream)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/admin/accounts/models/sync-upstream-preview",
+		strings.NewReader(`{
+			"platform":"openai",
+			"type":"apikey",
+			"base_url":"https://provider.example/v1",
+			"api_key":"key",
+			"model_mapping":{"public-glm":"glm-5.3"}
+		}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Data service.UpstreamModelCatalog `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, []string{"glm-5.3"}, resp.Data.Models)
+	require.Equal(t, []string{"low", "high"}, resp.Data.Metadata["glm-5.3"].SupportedReasoningLevels)
 }
 
 func TestAccountHandlerSyncUpstreamModels_UpstreamErrorDoesNotExposeBody(t *testing.T) {

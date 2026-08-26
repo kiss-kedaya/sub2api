@@ -204,6 +204,11 @@ export default {
         codexConfigTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
         codexNote: '启动 Codex 前先导出 SUB2API_API_KEY；分组会根据目录中选中的模型路由请求。'
       },
+      routedCodex: {
+        description: '使用当前路由分组的完整模型目录配置 Codex。',
+        configTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        note: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
+      },
       codexModelCatalog: {
         title: 'Codex 模型目录',
         description: '使用当前 API Key 获取目录，并保存到 config.toml 引用的路径。',
