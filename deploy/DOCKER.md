@@ -88,6 +88,9 @@ environment:
   SUB2API_UPDATE_SERVICES: sub2api-1,sub2api-2,sub2api-3
   SUB2API_UPDATE_HEALTH_URLS: http://127.0.0.1:7101/health,http://127.0.0.1:7102/health,http://127.0.0.1:7103/health
   SUB2API_UPDATE_PROJECT: sub2api
+  SERVER_SHUTDOWN_TIMEOUT_SECONDS: "600"
+  # Keep Docker's hard stop above the application drain window.
+  SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS: "610"
   # Optional command wrapper when the container cannot use the socket group.
   # Example: sudo -n docker (requires a narrowly-scoped host sudo rule).
   SUB2API_UPDATE_DOCKER_COMMAND: docker
@@ -122,6 +125,14 @@ version variable so the target image is unambiguous:
 ```yaml
 image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.220}
 ```
+
+During each replacement the updater sends `SIGTERM` to exactly one replica.
+The Go server closes its listener immediately, which prevents new requests
+from entering that replica, and then waits for active HTTP/SSE requests to
+finish. Docker applies `SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS` as the hard stop;
+it must remain greater than `SERVER_SHUTDOWN_TIMEOUT_SECONDS`. Only after the
+replica exits, starts on the new version, and passes its health check does the
+updater continue to the next service.
 
 When the release image is private or the deployment uses a locally built image,
 use `runtime` mode instead. It downloads and verifies the matching release
