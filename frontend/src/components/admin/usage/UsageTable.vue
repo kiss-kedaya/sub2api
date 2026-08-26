@@ -718,7 +718,9 @@ const formatOutputRate = (
     || generationDuration < MIN_GENERATION_WINDOW_MS_FOR_RATE
     || durationsRoundToSameDisplay
   ) return '-'
-  return `${(tokens * 1000 / generationDuration).toFixed(1)} t/s`
+  const outputRate = tokens * 1000 / generationDuration
+  if (outputRate > tokens) return '-'
+  return `${outputRate.toFixed(1)} t/s`
 }
 
 // Cost tooltip functions
