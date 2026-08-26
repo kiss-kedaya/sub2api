@@ -3201,6 +3201,35 @@ func (h *OpenAIGatewayHandler) errorResponse(c *gin.Context, status int, errType
 	})
 }
 
+// attachTextPricingContext 安装请求级 OpenAI 定价上下文（分组利润门 + 冻结的
+// pricingAt）到 c.Request，并返回派生 ctx 与 pricingAt。文本端点（embeddings、
+// alpha search）把返回的 ctx 显式传入预扣，使预扣与结算按同一时刻定价；结算路径
+// 经 service.OpenAIPricingAtFromContext 从请求 ctx 回读 pricingAt。
+func (h *OpenAIGatewayHandler) attachTextPricingContext(c *gin.Context, groupID *int64) (context.Context, time.Time) {
+	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), groupID)
+	c.Request = c.Request.WithContext(pricingCtx)
+	return pricingCtx, pricingAt
+}
+
+// handlePreauthorizationError 渲染预扣失败响应并返回调用方是否需要 return，集中
+// 五个付费端点共享的计费错误 → HTTP 映射（403"余额不足"；429 类限流带 Retry-After），
+// 使各调用点保持一致。它只渲染错误响应——成功路径的 guard 装载与兜底退款仍留在调用点。
+// err==nil 返回 false，故调用点可写 `if h.handlePreauthorizationError(...) { return }`。
+// 分发走 handleStreamingAwareError：预扣时刻无 compact keepalive 提交，streamStarted
+// 保持 false 且内部 code=="" 分支，与 errorResponse(c, status, code, message) 逐字节等价；
+// 流式端点（images）传入其真实 streamStarted。
+func (h *OpenAIGatewayHandler) handlePreauthorizationError(c *gin.Context, err error, streamStarted bool) bool {
+	if err == nil {
+		return false
+	}
+	status, code, message, retryAfter := billingErrorDetails(err)
+	if retryAfter > 0 {
+		c.Header("Retry-After", strconv.Itoa(retryAfter))
+	}
+	h.handleStreamingAwareError(c, status, code, message, streamStarted)
+	return true
+}
+
 // openAICompactKeepaliveInterval 复用流式 keepalive 配置作为 compact 下游
 // 心跳间隔；0 表示禁用（与流式路径语义一致）。
 func (h *OpenAIGatewayHandler) openAICompactKeepaliveInterval() time.Duration {

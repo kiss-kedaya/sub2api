@@ -119,8 +119,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 	routingStart := time.Now()
 
 	// 分组利润控制：embeddings 文本入口请求级装门并固定 pricingAt。
-	embPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
-	c.Request = c.Request.WithContext(embPricingCtx)
+	embPricingCtx, pricingAt := h.attachTextPricingContext(c, apiKey.GroupID)
 
 	// 预扣：embeddings 按输入 token 计费，复用文本端点的 token 上限估算生命周期，
 	// 在选号（上游产生费用）之前原子预留余额；结算走 RecordUsage → applyUsageBilling
@@ -135,12 +134,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		service.BalancePreauthorizationBillingModel(reqModel, channelMapping),
 		pricingAt, gjson.GetBytes(preauthorizationBody, "service_tier").String(),
 	)
-	if err != nil {
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.errorResponse(c, status, code, message)
+	if h.handlePreauthorizationError(c, err, false) {
 		return
 	}
 	if balanceGuard != nil {

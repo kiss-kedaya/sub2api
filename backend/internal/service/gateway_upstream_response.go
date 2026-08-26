@@ -1092,7 +1092,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 							// 成本。tracker 为 nil 时逐块零开销。
 							if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(restored)); topUpErr != nil {
 								logger.LegacyPrintf("service.gateway", "Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)
-								return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream output hold top-up failed: %w", topUpErr)
+								return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 							}
 						}
 					}
