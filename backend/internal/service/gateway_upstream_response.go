@@ -719,6 +719,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
+	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐帧仅整数
+	// 累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
+	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
 	scanner := bufio.NewScanner(resp.Body)
 	// 设置更大的buffer以处理长行
 	maxLineSize := defaultMaxLineSize
@@ -1084,6 +1087,13 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 							flusher.Flush()
 							lastDataAt = time.Now()
 							resetKeepaliveTimer()
+							// 输出块计量：累加已发字节作 token 上界，跨预扣窗口时补扣。
+							// 补扣失败中止上游流并返回错误，避免继续产生无法结算的输出
+							// 成本。tracker 为 nil 时逐块零开销。
+							if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(restored)); topUpErr != nil {
+								logger.LegacyPrintf("service.gateway", "Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)
+								return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream output hold top-up failed: %w", topUpErr)
+							}
 						}
 					}
 					if data != "" {
