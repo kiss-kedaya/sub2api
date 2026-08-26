@@ -378,7 +378,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.CacheCreationCost = cost.CacheCreationCost
 		usageLog.CacheReadCost = cost.CacheReadCost
 		usageLog.TotalCost = cost.TotalCost
-		usageLog.ActualCost = cost.ActualCost
+		usageLog.ActualCost = canonicalUsageActualCost(cost)
 		usageLog.LongContextBillingApplied = cost.LongContextBillingApplied
 	}
 	if isVideoUsage && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
