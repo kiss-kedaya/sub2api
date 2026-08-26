@@ -1034,6 +1034,19 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		require.Equal(t, FailoverExhausted, action)
 		require.Len(t, fs.FailedAccountIDs, 2)
 	})
+
+	t.Run("填充调度不在候选耗尽后绕过账号重试预算", func(t *testing.T) {
+		fs := NewFillFailoverState(10, false)
+		fs.LastFailoverErr = newTestFailoverErr(http.StatusServiceUnavailable, false, false)
+		fs.FailedAccountIDs[100] = struct{}{}
+
+		start := time.Now()
+		action := fs.HandleSelectionExhausted(context.Background())
+
+		require.Equal(t, FailoverExhausted, action)
+		require.Contains(t, fs.FailedAccountIDs, int64(100))
+		require.Less(t, time.Since(start), 100*time.Millisecond, "retry_count=0 后不得再等待并重放同一账号")
+	})
 }
 
 // ---------------------------------------------------------------------------
