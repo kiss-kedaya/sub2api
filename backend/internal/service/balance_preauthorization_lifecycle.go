@@ -172,7 +172,7 @@ func (s *BalancePreauthorizationService) RequiresPreauthorization(billingType in
 	if s == nil || billingType != BillingTypeBalance {
 		return false
 	}
-	return s.cfg == nil || s.cfg.RunMode != config.RunModeSimple
+	return s.cfg == nil || (s.cfg.RunMode != config.RunModeSimple && s.cfg.Billing.BalancePreauthorizationEnabled)
 }
 
 // Preauthorize returns nil without touching billing state in simple or
@@ -184,7 +184,7 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	if s == nil {
 		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization service is nil"))
 	}
-	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+	if s.cfg != nil && (s.cfg.RunMode == config.RunModeSimple || !s.cfg.Billing.BalancePreauthorizationEnabled) {
 		return nil, nil
 	}
 	if request.BillingType == BillingTypeSubscription {

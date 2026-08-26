@@ -902,6 +902,9 @@ func normalizeProxyProbeURLs(targets []ProbeURLConfig) ([]ProbeURLConfig, error)
 
 type BillingConfig struct {
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
+	// BalancePreauthorizationEnabled controls request-time balance holds. When
+	// disabled, completed usage is still charged by the normal settlement path.
+	BalancePreauthorizationEnabled bool `mapstructure:"balance_preauthorization_enabled"`
 	// MinimumBalanceReserve is the conservative preflight floor for balance billing.
 	// Requests in balance mode are rejected when the cached balance is below this
 	// amount, even if it is still positive. Set to 0 to keep the legacy balance > 0 gate.
@@ -2092,6 +2095,7 @@ func setDefaults() {
 	viper.SetDefault("billing.circuit_breaker.failure_threshold", 5)
 	viper.SetDefault("billing.circuit_breaker.reset_timeout_seconds", 30)
 	viper.SetDefault("billing.circuit_breaker.half_open_requests", 3)
+	viper.SetDefault("billing.balance_preauthorization_enabled", false)
 	viper.SetDefault("billing.minimum_balance_reserve", 0.000001)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
