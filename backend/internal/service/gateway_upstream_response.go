@@ -665,12 +665,21 @@ func (u *ClaudeUsage) hasObservedTokens() bool {
 //
 // 不变式：UpstreamFailoverError 必须保持 result=nil——failover 重试成功后按成功请求
 // 计费，若同时返回部分 usage 会造成双重计费，此处显式拦截兜底。
+//
+// 例外——流式补扣失败主动中止（ErrBalanceWithholdingFailed）：上游已交付部分输出但
+// 终帧未到故无 observed usage。若返回 nil，handler 仅执行 defer 全额退款 → 已交付
+// 输出被免费漏扣。故对该哨兵错误保留 result（即使 usage=0），使其进入结算；handler
+// 侧 observedSpend 为 true，applyObservedProviderSpendFloor 按已扣 hold 结算
+// （settle-at-hold）。failover 仍恒返回 nil，不双重计费。
 func partialStreamUsageResult(c *gin.Context, resp *http.Response, streamResult *streamingResult, model, upstreamModel string, startTime time.Time, err error) *ForwardResult {
-	if streamResult == nil || !streamResult.usage.hasObservedTokens() {
+	if streamResult == nil {
 		return nil
 	}
 	var failoverErr *UpstreamFailoverError
 	if errors.As(err, &failoverErr) {
+		return nil
+	}
+	if !streamResult.usage.hasObservedTokens() && !errors.Is(err, ErrBalanceWithholdingFailed) {
 		return nil
 	}
 	return &ForwardResult{
