@@ -45,6 +45,31 @@ func (a *Account) isModelRateLimitedWithContext(ctx context.Context, requestedMo
 	return false
 }
 
+// activeModelRateLimitReasonWithContext returns the persisted upstream reason
+// for an active model cooldown. The bool distinguishes an active cooldown with
+// no legacy reason from no cooldown at all.
+func (a *Account) activeModelRateLimitReasonWithContext(ctx context.Context, requestedModel string) (string, bool) {
+	active := false
+	for _, key := range a.modelRateLimitKeysForRequest(ctx, requestedModel) {
+		if !a.isRateLimitActiveForKey(key) {
+			continue
+		}
+		active = true
+		rawLimits, ok := a.Extra[modelRateLimitsKey].(map[string]any)
+		if !ok {
+			continue
+		}
+		rawLimit, ok := rawLimits[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		if reason, ok := rawLimit["reason"].(string); ok && strings.TrimSpace(reason) != "" {
+			return strings.TrimSpace(reason), true
+		}
+	}
+	return "", active
+}
+
 // GetModelRateLimitRemainingTime 获取模型限流剩余时间
 // 返回 0 表示未限流或已过期
 func (a *Account) GetModelRateLimitRemainingTime(requestedModel string) time.Duration {

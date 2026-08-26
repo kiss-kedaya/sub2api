@@ -236,6 +236,7 @@ func TestIsModelRateLimited(t *testing.T) {
 			}
 		})
 	}
+
 }
 
 func TestIsModelRateLimited_OpenAIImageGenerationIntentBlocksTextModelImageTool(t *testing.T) {
@@ -253,6 +254,74 @@ func TestIsModelRateLimited_OpenAIImageGenerationIntentBlocksTextModelImageTool(
 
 	require.False(t, account.isModelRateLimitedWithContext(context.Background(), "gpt-5.4"))
 	require.True(t, account.isModelRateLimitedWithContext(WithOpenAIImageGenerationIntent(context.Background()), "gpt-5.4"))
+}
+
+func TestOpenAIModelCooldownSelectionReason(t *testing.T) {
+	future := time.Now().Add(10 * time.Minute).Format(time.RFC3339)
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+
+	tests := []struct {
+		name       string
+		reason     string
+		wantReason string
+	}{
+		{name: "real rate limit remains retryable", reason: "upstream_429_rate_limit", wantReason: "model_rate_limited"},
+		{name: "model not found is terminal", reason: "upstream_404_model_not_found", wantReason: "model_not_supported"},
+		{name: "plan gated model is terminal", reason: "upstream_400_codex_plan_gated_model", wantReason: "model_plan_gated"},
+		{name: "legacy cooldown without reason remains retryable", reason: "", wantReason: "model_rate_limited"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			limit := map[string]any{"rate_limit_reset_at": future}
+			if tt.reason != "" {
+				limit["reason"] = tt.reason
+			}
+			account.Extra = map[string]any{
+				modelRateLimitsKey: map[string]any{"gpt-5.4-mini": limit},
+			}
+
+			got := openAICompatibleAccountEligibilityFailureReasonBeforeProfit(
+				context.Background(), account, PlatformOpenAI, "gpt-5.4-mini", false, "",
+			)
+			require.Equal(t, tt.wantReason, got)
+
+			scheduler := &defaultOpenAIAccountScheduler{}
+			compatible, schedulerReason := scheduler.isAccountRequestCompatibleReason(
+				context.Background(), account, OpenAIAccountScheduleRequest{
+					Platform:       PlatformOpenAI,
+					RequestedModel: "gpt-5.4-mini",
+				},
+			)
+			require.False(t, compatible)
+			require.Equal(t, tt.wantReason, schedulerReason)
+		})
+	}
+}
+
+func TestOpenAIModelCooldownSelectionReason_GlobalCooldown(t *testing.T) {
+	globalReset := time.Now().Add(10 * time.Minute)
+	account := &Account{
+		Platform:         PlatformOpenAI,
+		Status:           StatusActive,
+		Schedulable:      true,
+		RateLimitResetAt: &globalReset,
+	}
+	scheduler := &defaultOpenAIAccountScheduler{}
+
+	compatible, reason := scheduler.isAccountRequestCompatibleReason(
+		context.Background(), account, OpenAIAccountScheduleRequest{
+			Platform:       PlatformOpenAI,
+			RequestedModel: "gpt-5.4-mini",
+		},
+	)
+
+	require.False(t, compatible)
+	require.Equal(t, "not_schedulable", reason)
 }
 
 func TestIsModelRateLimited_Antigravity_ThinkingAffectsModelKey(t *testing.T) {
