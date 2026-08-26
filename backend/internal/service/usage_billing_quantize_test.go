@@ -1,12 +1,23 @@
 package service
 
 import (
+	"context"
 	"math"
 	"testing"
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
+
+type canonicalUsageBillingRepoStub struct {
+	UsageBillingRepository
+	cmd *UsageBillingCommand
+}
+
+func (s *canonicalUsageBillingRepoStub) Apply(_ context.Context, cmd *UsageBillingCommand) (*UsageBillingApplyResult, error) {
+	s.cmd = cmd
+	return &UsageBillingApplyResult{Applied: false}, nil
+}
 
 // decimalPlaces 返回 float64 最短十进制表示的小数位数，
 // 即 PostgreSQL 把 float8 参数转成 numeric 时看到的刻度。
@@ -191,4 +202,52 @@ func TestQuantizeUsageBillingAmountHandlesNegativeAmounts(t *testing.T) {
 	require.Equal(t, want, got)
 	require.Equal(t, -QuantizeUsageBillingAmount(0.000078125), got,
 		"正负金额必须对称量化")
+}
+
+func TestApplyUsageBillingCanonicalizesAllPostFingerprintConsumers(t *testing.T) {
+	const rawActualCost = 0.000078125
+
+	cost := &CostBreakdown{TotalCost: rawActualCost, ActualCost: rawActualCost}
+	usageLog := &UsageLog{
+		Model:       "priced-model",
+		BillingType: BillingTypeBalance,
+		ActualCost:  rawActualCost,
+	}
+	repo := &canonicalUsageBillingRepoStub{}
+	p := &postUsageBillingParams{
+		Cost:    cost,
+		User:    &User{ID: 1},
+		APIKey:  &APIKey{ID: 2},
+		Account: &Account{ID: 3},
+	}
+	deps := &billingDeps{deferredService: &DeferredService{}}
+	expectedFingerprint := buildUsageBillingFingerprint(&UsageBillingCommand{
+		RequestID:   "req-canonical-cost",
+		APIKeyID:    2,
+		UserID:      1,
+		AccountID:   3,
+		Model:       "priced-model",
+		BillingType: BillingTypeBalance,
+		BalanceCost: rawActualCost,
+	})
+
+	applied, err := applyUsageBilling(
+		context.Background(),
+		"req-canonical-cost",
+		usageLog,
+		p,
+		deps,
+		repo,
+	)
+
+	require.NoError(t, err)
+	require.False(t, applied)
+	require.NotNil(t, repo.cmd)
+	canonical := QuantizeUsageBillingAmount(rawActualCost)
+	require.Equal(t, expectedFingerprint, repo.cmd.RequestFingerprint,
+		"the idempotency fingerprint must remain derived from the raw pre-upgrade amount")
+	require.Equal(t, canonical, repo.cmd.BalanceCost)
+	require.Equal(t, canonical, cost.ActualCost)
+	require.Equal(t, canonical, usageLog.ActualCost)
+	require.Equal(t, rawActualCost, cost.TotalCost, "diagnostic component precision must remain unchanged")
 }

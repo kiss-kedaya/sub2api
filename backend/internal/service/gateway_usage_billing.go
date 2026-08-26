@@ -345,6 +345,16 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	// zero actual cost therefore finalizes through the refund transition even
 	// when the request completed or emitted output without a usage frame.
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
+	// buildUsageBillingCommand fingerprints the raw calculated amount before it
+	// quantizes the database command. Preserve that ordering for cross-version
+	// retries, then make every post-command consumer use the same NUMERIC(20,8)
+	// amount as PostgreSQL settlement.
+	if p.Cost != nil {
+		p.Cost.ActualCost = canonicalUsageActualCost(p.Cost)
+		if usageLog != nil {
+			usageLog.ActualCost = p.Cost.ActualCost
+		}
+	}
 	if balancePreauthorized && cmd != nil {
 		cmd.BalancePreauthorized = true
 		cmd.Normalize()
@@ -1289,7 +1299,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		usageLog.CacheCreationCost = cost.CacheCreationCost
 		usageLog.CacheReadCost = cost.CacheReadCost
 		usageLog.TotalCost = cost.TotalCost
-		usageLog.ActualCost = cost.ActualCost
+		usageLog.ActualCost = canonicalUsageActualCost(cost)
 		usageLog.LongContextBillingApplied = cost.LongContextBillingApplied
 	}
 
