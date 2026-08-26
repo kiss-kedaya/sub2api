@@ -971,6 +971,38 @@ func TestBuildGroupConfiguredCodexModelsManifestUsesAdministratorConfiguration(t
 	require.Equal(t, manifest.ETag, notModified.ETag)
 }
 
+// Scenario: OpenAI 通配映射展开组内精确选择，但不发布通配符 slug。
+func TestBuildGroupConfiguredCodexModelsManifestExpandsSelectedModelCoveredByWildcardMapping(t *testing.T) {
+	t.Parallel()
+
+	const groupID int64 = 80
+	svc := &OpenAIGatewayService{accountRepo: codexModelsVisibilityAccountRepo{
+		byGroup: map[int64][]Account{
+			groupID: {{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"gpt-*": "gpt-5.6-sol"},
+				},
+			}},
+		},
+	}}
+	group := &Group{
+		ID:       groupID,
+		Platform: PlatformOpenAI,
+		ModelsListConfig: GroupModelsListConfig{
+			Enabled: true,
+			Models:  []string{"gpt-5.6"},
+		},
+	}
+
+	manifest, configured, err := svc.BuildGroupConfiguredCodexModelsManifest(context.Background(), group, "")
+	require.NoError(t, err)
+	require.True(t, configured)
+	require.Equal(t, []string{"gpt-5.6"}, codexManifestModelSlugs(t, manifest.Body))
+	require.NotContains(t, string(manifest.Body), "gpt-*")
+}
+
 // Scenario: OpenAI 配置目录对暂时不可调度账号取能力交集，且不发布其独有模型。
 func TestBuildGroupConfiguredCodexModelsManifestIntersectsUnschedulableMappedAccounts(t *testing.T) {
 	t.Parallel()
@@ -1630,6 +1662,41 @@ func TestFetchCodexModelsManifestAPIKeyCustomUpstream(t *testing.T) {
 	require.Equal(t, `W/"api-key-manifest"`, manifest.upstreamETag)
 }
 
+// Scenario: 完整上游清单没有 ETag 时，最终正文仍生成强 ETag 并支持 304。
+func TestFetchCodexModelsManifestAPIKeyCompleteBodyWithoutUpstreamETagUsesFinalBodyETag(t *testing.T) {
+	completeBody, err := BuildCodexModelsManifest([]string{"custom-complete-model"})
+	require.NoError(t, err)
+
+	var calls atomic.Int32
+	upstream := &codexModelsHTTPUpstreamStub{do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(bytes.NewReader(completeBody)),
+		}, nil
+	}}
+	svc := newCodexModelsAPIKeyTestService(upstream)
+	svc.accountRepo = codexModelsVisibilityAccountRepo{}
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example/v1")
+	group := &Group{ID: 82, Platform: PlatformOpenAI}
+
+	first, err := svc.FetchCodexModelsManifest(context.Background(), account, "0.150.0", "")
+	require.NoError(t, err)
+	require.NoError(t, svc.CompleteAPIKeyCodexModelsManifestForClient(first, account))
+	require.NoError(t, svc.MergeGroupConfiguredCodexModels(context.Background(), group, first, ""))
+	require.Equal(t, codexModelsManifestBodyETag(first.Body), first.ETag)
+	require.NotEmpty(t, first.ETag)
+
+	second, err := svc.FetchCodexModelsManifest(context.Background(), account, "0.150.0", "")
+	require.NoError(t, err)
+	require.NoError(t, svc.CompleteAPIKeyCodexModelsManifestForClient(second, account))
+	require.NoError(t, svc.MergeGroupConfiguredCodexModels(context.Background(), group, second, first.ETag))
+	require.True(t, second.NotModified)
+	require.Empty(t, second.Body)
+	require.Equal(t, int32(1), calls.Load())
+}
+
 func TestFetchCodexModelsManifestAPIKeyConvertsStandardOpenAIModelList(t *testing.T) {
 	upstreamBody := `{"object":"list","data":[{"id":"gpt-5.6","object":"model"},{"id":"  ","object":"model"},{"id":"gpt-5.6-codex","object":"model"}]}`
 	upstream := &codexModelsHTTPUpstreamStub{do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
@@ -1700,6 +1767,134 @@ func TestCompleteAPIKeyCodexModelsManifestForClientPreservesProviderMetadata(t *
 	var envelope map[string]any
 	require.NoError(t, json.Unmarshal(manifest.Body, &envelope))
 	require.Equal(t, map[string]any{"source": "upstream"}, envelope["metadata"])
+}
+
+// Scenario: 标准 /models 型号列表优先使用已同步账号能力，再使用本地 descriptor 兜底。
+func TestCompleteAPIKeyCodexModelsManifestForClientUsesSyncedMetadataForConvertedModelList(t *testing.T) {
+	t.Parallel()
+
+	reasoning := true
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example/v1")
+	account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
+		"future-reasoner": {
+			ID: "future-reasoner", DisplayName: "Future Reasoner", Description: "Synced upstream capability",
+			Reasoning: &reasoning, DefaultReasoningLevel: "ultra",
+			SupportedReasoningLevels: []string{"low", "high", "ultra"},
+			InputModalities:          []string{"text", "image"},
+			ContextWindow:            999_000,
+		},
+	}})
+	upstream := &codexModelsHTTPUpstreamStub{do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"object":"list","data":[{"id":"future-reasoner","object":"model"}]}`)),
+		}, nil
+	}}
+	svc := newCodexModelsAPIKeyTestService(upstream)
+
+	manifest, err := svc.FetchCodexModelsManifest(context.Background(), account, "0.150.0", "")
+	require.NoError(t, err)
+	require.NoError(t, svc.CompleteAPIKeyCodexModelsManifestForClient(manifest, account))
+
+	models := decodeCodexManifestModels(t, manifest.Body)
+	require.Len(t, models, 1)
+	require.Equal(t, "Future Reasoner", models[0]["display_name"])
+	require.Equal(t, "Synced upstream capability", models[0]["description"])
+	require.Equal(t, "ultra", models[0]["default_reasoning_level"])
+	require.Equal(t, []string{"low", "high", "ultra"}, effortsFromManifestModel(t, models[0]))
+	require.Equal(t, []any{"text", "image"}, models[0]["input_modalities"])
+	require.EqualValues(t, 999_000, models[0]["context_window"])
+	require.EqualValues(t, 999_000, models[0]["max_context_window"])
+}
+
+func TestCompleteAPIKeyCodexModelsManifestForClientFillsMissingProviderFieldsWithoutOverwritingExplicitMetadata(t *testing.T) {
+	t.Parallel()
+
+	reasoning := true
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example/v1")
+	account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
+		"provider-model": {
+			ID: "provider-model", DisplayName: "Synced Display", Description: "Synced description",
+			Reasoning: &reasoning, DefaultReasoningLevel: "ultra",
+			SupportedReasoningLevels: []string{"high", "ultra"},
+			InputModalities:          []string{"text", "image"},
+			ContextWindow:            999_000,
+		},
+	}})
+	manifest := &CodexModelsManifest{Body: []byte(`{"models":[{
+		"slug":"provider-model",
+		"description":"Provider supplied",
+		"context_window":64000,
+		"max_context_window":64000
+	}]}`)}
+	svc := &OpenAIGatewayService{}
+
+	require.NoError(t, svc.CompleteAPIKeyCodexModelsManifestForClient(manifest, account))
+	models := decodeCodexManifestModels(t, manifest.Body)
+	require.Len(t, models, 1)
+	require.Equal(t, "Synced Display", models[0]["display_name"])
+	require.Equal(t, "Provider supplied", models[0]["description"])
+	require.Equal(t, "ultra", models[0]["default_reasoning_level"])
+	require.Equal(t, []string{"high", "ultra"}, effortsFromManifestModel(t, models[0]))
+	require.Equal(t, []any{"text", "image"}, models[0]["input_modalities"])
+	require.EqualValues(t, 64_000, models[0]["context_window"])
+	require.EqualValues(t, 64_000, models[0]["max_context_window"])
+}
+
+// Scenario: 原生 manifest 的缺失字段在命中缓存后仍使用账号当前同步快照，而不是缓存中的本地默认值。
+func TestCompleteAPIKeyCodexModelsManifestForClientUsesCurrentSnapshotForCachedNativeManifest(t *testing.T) {
+	t.Parallel()
+
+	reasoning := true
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example/v1")
+	setSnapshot := func(displayName string, contextWindow int64) {
+		account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
+			"deepseek-v4-pro": {
+				ID: "deepseek-v4-pro", DisplayName: displayName,
+				Reasoning: &reasoning, DefaultReasoningLevel: "ultra",
+				SupportedReasoningLevels: []string{"high", "ultra"},
+				InputModalities:          []string{"text", "image"},
+				ContextWindow:            contextWindow,
+			},
+		}})
+	}
+	setSnapshot("Synced DeepSeek", 256_000)
+
+	var calls atomic.Int32
+	upstream := &codexModelsHTTPUpstreamStub{do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"models":[{
+				"slug":"deepseek-v4-pro",
+				"description":"Provider supplied"
+			}]}`)),
+		}, nil
+	}}
+	svc := newCodexModelsAPIKeyTestService(upstream)
+
+	first, err := svc.FetchCodexModelsManifest(context.Background(), account, "0.150.0", "")
+	require.NoError(t, err)
+	require.NoError(t, svc.CompleteAPIKeyCodexModelsManifestForClient(first, account))
+	firstModel := decodeCodexManifestModels(t, first.Body)[0]
+	require.Equal(t, "Synced DeepSeek", firstModel["display_name"])
+	require.Equal(t, "Provider supplied", firstModel["description"])
+	require.Equal(t, "ultra", firstModel["default_reasoning_level"])
+	require.Equal(t, []string{"high", "ultra"}, effortsFromManifestModel(t, firstModel))
+	require.Equal(t, []any{"text", "image"}, firstModel["input_modalities"])
+	require.EqualValues(t, 256_000, firstModel["context_window"])
+
+	setSnapshot("Refreshed DeepSeek", 512_000)
+	second, err := svc.FetchCodexModelsManifest(context.Background(), account, "0.150.0", "")
+	require.NoError(t, err)
+	require.NoError(t, svc.CompleteAPIKeyCodexModelsManifestForClient(second, account))
+	secondModel := decodeCodexManifestModels(t, second.Body)[0]
+	require.Equal(t, "Refreshed DeepSeek", secondModel["display_name"])
+	require.Equal(t, "Provider supplied", secondModel["description"])
+	require.EqualValues(t, 512_000, secondModel["context_window"])
+	require.Equal(t, int32(1), calls.Load(), "second response should use the cached upstream source body")
 }
 
 func TestCompleteAPIKeyCodexModelsManifestForClientMarksOnlyOfficialVisionGPTImageInput(t *testing.T) {
@@ -2288,7 +2483,10 @@ func TestFetchCodexModelsManifestAPIKeyCacheBoundsEntriesAndBodySize(t *testing.
 	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 		calls.Add(1)
 		body := `{"models":[]}`
-		if strings.Contains(req.URL.Host, "large") {
+		switch {
+		case strings.Contains(req.URL.Host, "large-source"):
+			body = `{"object":"list","data":[{"id":"model-a","padding":"` + strings.Repeat("x", 1<<20) + `"}]}`
+		case strings.Contains(req.URL.Host, "large"):
 			body = `{"models":[],"padding":"` + strings.Repeat("x", (1<<20)+1) + `"}`
 		}
 		return &http.Response{
@@ -2312,8 +2510,12 @@ func TestFetchCodexModelsManifestAPIKeyCacheBoundsEntriesAndBodySize(t *testing.
 	large.ID = 3
 	fetch(large)
 	fetch(large)
-	if got := calls.Load(); got != 3 {
-		t.Fatalf("body-size bounded cache calls: got %d, want 3", got)
+	largeSource := newCodexModelsAPIKeyTestAccount("https://large-source.example")
+	largeSource.ID = 4
+	fetch(largeSource)
+	fetch(largeSource)
+	if got := calls.Load(); got != 5 {
+		t.Fatalf("body-size bounded cache calls: got %d, want 5", got)
 	}
 
 	for i := int64(10); i < 75; i++ {
@@ -2324,14 +2526,14 @@ func TestFetchCodexModelsManifestAPIKeyCacheBoundsEntriesAndBodySize(t *testing.
 	last := newCodexModelsAPIKeyTestAccount("https://bounded.example")
 	last.ID = 74
 	fetch(last)
-	if got := calls.Load(); got != 68 {
-		t.Fatalf("most recent cache entry was not retained: calls=%d, want 68", got)
+	if got := calls.Load(); got != 70 {
+		t.Fatalf("most recent cache entry was not retained: calls=%d, want 70", got)
 	}
 	first := newCodexModelsAPIKeyTestAccount("https://bounded.example")
 	first.ID = 10
 	fetch(first)
-	if got := calls.Load(); got != 69 {
-		t.Errorf("oldest cache entry was not evicted: calls=%d, want 69", got)
+	if got := calls.Load(); got != 71 {
+		t.Errorf("oldest cache entry was not evicted: calls=%d, want 71", got)
 	}
 }
 

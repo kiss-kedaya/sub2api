@@ -94,10 +94,12 @@ func codexProviderQualifiedModelID(modelID string) string {
 
 // CodexModelsManifest carries the client representation plus caching metadata.
 type CodexModelsManifest struct {
-	Body         []byte
-	ETag         string
-	upstreamETag string
-	NotModified  bool
+	Body                         []byte
+	ETag                         string
+	upstreamETag                 string
+	upstreamSourceBody           []byte
+	convertedFromOpenAIModelList bool
+	NotModified                  bool
 }
 
 // BuildGroupConfiguredCodexModelsManifest builds a Codex catalog exclusively
@@ -117,7 +119,7 @@ func (s *OpenAIGatewayService) BuildGroupConfiguredCodexModelsManifest(
 	if err != nil {
 		return nil, false, fmt.Errorf("load group configured Codex models: %w", err)
 	}
-	configuredModels := openAIConfiguredCodexModelIDs(visible)
+	configuredModels := openAIConfiguredCodexModelIDsForGroup(visible, group)
 	if len(configuredModels) == 0 {
 		return nil, false, nil
 	}
@@ -169,7 +171,7 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 		return nil
 	}
 
-	configuredModels, err := s.groupConfiguredCodexModelIDs(ctx, group.ID)
+	configuredModels, err := s.groupConfiguredCodexModelIDs(ctx, group)
 	if err != nil {
 		return fmt.Errorf("load group configured Codex models: %w", err)
 	}
@@ -193,12 +195,15 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 	return nil
 }
 
-func (s *OpenAIGatewayService) groupConfiguredCodexModelIDs(ctx context.Context, groupID int64) ([]string, error) {
-	accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, groupID)
+func (s *OpenAIGatewayService) groupConfiguredCodexModelIDs(ctx context.Context, group *Group) ([]string, error) {
+	if group == nil {
+		return nil, nil
+	}
+	accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, group.ID)
 	if err != nil {
 		return nil, err
 	}
-	return openAIConfiguredCodexModelIDs(accounts), nil
+	return openAIConfiguredCodexModelIDsForGroup(accounts, group), nil
 }
 
 // loadCodexGroupCatalogAccounts separates picker membership from capability
@@ -242,6 +247,41 @@ func openAIConfiguredCodexModelIDs(accounts []Account) []string {
 			}
 			seen[modelID] = struct{}{}
 			models = append(models, modelID)
+		}
+	}
+	sort.Strings(models)
+	return models
+}
+
+func openAIConfiguredCodexModelIDsForGroup(accounts []Account, group *Group) []string {
+	models := openAIConfiguredCodexModelIDs(accounts)
+	if group == nil || !group.CustomModelsListEnabled() {
+		return models
+	}
+
+	seen := make(map[string]struct{}, len(models)+len(group.ModelsListConfig.Models))
+	for _, modelID := range models {
+		seen[modelID] = struct{}{}
+	}
+	for _, selectedModel := range group.ModelsListConfig.Models {
+		selectedModel = strings.TrimSpace(selectedModel)
+		if selectedModel == "" || strings.Contains(selectedModel, "*") {
+			continue
+		}
+		for i := range accounts {
+			account := &accounts[i]
+			if account.Platform != PlatformOpenAI {
+				continue
+			}
+			mappedModel, matched := account.ResolveMappedModel(selectedModel)
+			if !matched || strings.TrimSpace(mappedModel) == "" {
+				continue
+			}
+			if _, exists := seen[selectedModel]; !exists {
+				seen[selectedModel] = struct{}{}
+				models = append(models, selectedModel)
+			}
+			break
 		}
 	}
 	sort.Strings(models)
@@ -1342,6 +1382,10 @@ func (c *codexModelsManifestCache) set(key string, manifest *CodexModelsManifest
 	if manifest == nil || len(manifest.Body) > codexModelsManifestCacheBodyLimit {
 		return
 	}
+	remainingBodyBudget := codexModelsManifestCacheBodyLimit - len(manifest.Body)
+	if len(manifest.upstreamSourceBody) > remainingBodyBudget {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.entries == nil {
@@ -1669,8 +1713,11 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 		}
 	}
 	upstreamBody := body
+	convertedFromOpenAIModelList := false
 	if request.useAPIKeyUpstream {
-		body = convertOpenAIModelListToCodexManifest(body)
+		convertedBody := convertOpenAIModelListToCodexManifest(body)
+		convertedFromOpenAIModelList = !bytes.Equal(convertedBody, body)
+		body = convertedBody
 	}
 	if err := validateCodexModelsManifestEnvelope(body); err != nil {
 		return nil, &codexModelsManifestUpstreamError{
@@ -1714,7 +1761,12 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 		}
 	}
 	etag := resp.Header.Get("ETag")
-	manifest := &CodexModelsManifest{Body: body, ETag: etag}
+	manifest := &CodexModelsManifest{
+		Body:                         body,
+		ETag:                         etag,
+		upstreamSourceBody:           append([]byte(nil), upstreamBody...),
+		convertedFromOpenAIModelList: convertedFromOpenAIModelList,
+	}
 	if request.useAPIKeyUpstream {
 		manifest.upstreamETag = etag
 		if !bytes.Equal(body, upstreamBody) {
@@ -1848,19 +1900,138 @@ func (s *OpenAIGatewayService) CompleteAPIKeyCodexModelsManifestForClient(manife
 	if manifest == nil || account == nil || !account.IsOpenAIApiKey() || manifest.NotModified || len(manifest.Body) == 0 {
 		return nil
 	}
-	body, err := completeAPIKeyCodexModelsManifestMetadata(
-		manifest.Body,
+	body := manifest.Body
+	if len(manifest.upstreamSourceBody) > 0 {
+		body = append([]byte(nil), manifest.upstreamSourceBody...)
+		if manifest.convertedFromOpenAIModelList {
+			body = convertOpenAIModelListToCodexManifest(body)
+		}
+	}
+	var err error
+	body, err = applySyncedAPIKeyCodexModelMetadata(body, account, manifest.convertedFromOpenAIModelList)
+	if err != nil {
+		return err
+	}
+	body, err = completeAPIKeyCodexModelsManifestMetadata(
+		body,
 		true,
 		isOfficialOpenAIModelsBaseURL(account.GetOpenAIBaseURL()),
 	)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(body, manifest.Body) {
-		manifest.Body = body
-		manifest.ETag = codexModelsManifestBodyETag(body)
+	body, err = adjustAPIKeyCodexModelsManifest(body)
+	if err != nil {
+		return err
 	}
+	manifest.Body = body
+	manifest.ETag = codexModelsManifestBodyETag(manifest.Body)
 	return nil
+}
+
+func applySyncedAPIKeyCodexModelMetadata(body []byte, account *Account, overwriteLocalDefaults bool) ([]byte, error) {
+	snapshot := account.GetUpstreamModelMetadataSnapshot()
+	if snapshot == nil || len(snapshot.Models) == 0 {
+		return body, nil
+	}
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("decode JSON object: %w", err)
+	}
+	var models []json.RawMessage
+	if err := json.Unmarshal(envelope["models"], &models); err != nil {
+		return nil, fmt.Errorf("decode top-level models array: %w", err)
+	}
+
+	changed := false
+	for i, rawModel := range models {
+		var model map[string]json.RawMessage
+		if err := json.Unmarshal(rawModel, &model); err != nil || model == nil {
+			continue
+		}
+		var slug string
+		if err := json.Unmarshal(model["slug"], &slug); err != nil {
+			continue
+		}
+		slug = strings.TrimSpace(slug)
+		metadata, ok := snapshot.Models[slug]
+		if !ok {
+			continue
+		}
+
+		descriptor := newConfiguredCodexModelDescriptor(slug)
+		applyUpstreamModelMetadataToCodexDescriptor(
+			&descriptor,
+			codexModelMetadataOverride{UpstreamModelMetadata: metadata},
+		)
+		descriptorBody, err := json.Marshal(descriptor)
+		if err != nil {
+			return nil, fmt.Errorf("encode synced model %q: %w", slug, err)
+		}
+		var syncedFields map[string]json.RawMessage
+		if err := json.Unmarshal(descriptorBody, &syncedFields); err != nil {
+			return nil, fmt.Errorf("decode synced model %q: %w", slug, err)
+		}
+
+		fields := make([]string, 0, 7)
+		if strings.TrimSpace(metadata.DisplayName) != "" {
+			fields = append(fields, "display_name")
+		}
+		if strings.TrimSpace(metadata.Description) != "" {
+			fields = append(fields, "description")
+		}
+		if metadata.Reasoning != nil {
+			fields = append(fields, "default_reasoning_level", "supported_reasoning_levels")
+		}
+		if len(normalizeCodexInputModalities(metadata.InputModalities)) > 0 {
+			fields = append(fields, "input_modalities")
+		}
+		if metadata.ContextWindow > 0 {
+			fields = append(fields, "context_window", "max_context_window")
+		}
+
+		modelChanged := false
+		for _, field := range fields {
+			value, exists := syncedFields[field]
+			if !exists {
+				continue
+			}
+			current, currentExists := model[field]
+			current = bytes.TrimSpace(current)
+			if !overwriteLocalDefaults && currentExists && len(current) > 0 && !bytes.Equal(current, []byte("null")) {
+				continue
+			}
+			if bytes.Equal(current, bytes.TrimSpace(value)) {
+				continue
+			}
+			model[field] = value
+			modelChanged = true
+		}
+		if !modelChanged {
+			continue
+		}
+		encoded, err := json.Marshal(model)
+		if err != nil {
+			return nil, fmt.Errorf("encode model %q with synced metadata: %w", slug, err)
+		}
+		models[i] = encoded
+		changed = true
+	}
+	if !changed {
+		return body, nil
+	}
+
+	encodedModels, err := json.Marshal(models)
+	if err != nil {
+		return nil, fmt.Errorf("encode models with synced metadata: %w", err)
+	}
+	envelope["models"] = encodedModels
+	updated, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("encode manifest with synced metadata: %w", err)
+	}
+	return updated, nil
 }
 
 func completeAPIKeyCodexModelsManifestMetadata(body []byte, completeAll, officialOpenAI bool) ([]byte, error) {
@@ -2058,6 +2229,9 @@ func cloneCodexModelsManifest(manifest *CodexModelsManifest) *CodexModelsManifes
 	cloned := *manifest
 	if manifest.Body != nil {
 		cloned.Body = append([]byte(nil), manifest.Body...)
+	}
+	if manifest.upstreamSourceBody != nil {
+		cloned.upstreamSourceBody = append([]byte(nil), manifest.upstreamSourceBody...)
 	}
 	return &cloned
 }

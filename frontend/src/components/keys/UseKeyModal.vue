@@ -315,8 +315,8 @@ let codexModelManifestRequestID = 0
 
 const showCodexModelCatalog = computed(() =>
   props.show &&
-  ((props.platform === 'openai' && (activeClientTab.value === 'codex' || activeClientTab.value === 'codex-ws')) ||
-    ((props.platform === 'grok' || props.platform === 'deepseek' || props.platform === 'composite') && activeClientTab.value === 'codex'))
+  (activeClientTab.value === 'codex' ||
+    (props.platform === 'openai' && activeClientTab.value === 'codex-ws'))
 )
 
 const codexModelCatalogPath = computed(() => {
@@ -451,12 +451,14 @@ const clientTabs = computed((): TabConfig[] => {
     case 'gemini':
       return [
         { id: 'gemini', label: t('keys.useKeyModal.cliTabs.geminiCli'), icon: SparkleIcon },
+        { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
     case 'antigravity':
       return [
         { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
         { id: 'gemini', label: t('keys.useKeyModal.cliTabs.geminiCli'), icon: SparkleIcon },
+        { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
     case 'grok':
@@ -476,6 +478,7 @@ const clientTabs = computed((): TabConfig[] => {
     default:
       return [
         { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
+        { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
   }
@@ -510,6 +513,13 @@ const currentTabs = computed(() => {
 })
 
 const platformDescription = computed(() => {
+  if (activeClientTab.value === 'codex' &&
+    props.platform !== 'openai' &&
+    props.platform !== 'grok' &&
+    props.platform !== 'deepseek' &&
+    props.platform !== 'composite') {
+    return t('keys.useKeyModal.routedCodex.description')
+  }
   switch (props.platform) {
     case 'openai':
       if (activeClientTab.value === 'claude') {
@@ -542,6 +552,13 @@ const platformDescription = computed(() => {
 })
 
 const platformNote = computed(() => {
+  if (activeClientTab.value === 'codex' &&
+    props.platform !== 'openai' &&
+    props.platform !== 'grok' &&
+    props.platform !== 'deepseek' &&
+    props.platform !== 'composite') {
+    return t('keys.useKeyModal.routedCodex.note')
+  }
   switch (props.platform) {
     case 'openai':
       if (activeClientTab.value === 'claude') {
@@ -715,8 +732,14 @@ const currentFiles = computed((): FileConfig[] => {
       }
       return generateOpenAIFiles(baseUrl, apiKey)
     case 'gemini':
+      if (activeClientTab.value === 'codex') {
+        return generateRoutedCodexFiles(apiBase, apiKey, 'gemini')
+      }
       return [generateGeminiCliContent(baseUrl, apiKey)]
     case 'antigravity':
+      if (activeClientTab.value === 'codex') {
+        return generateRoutedCodexFiles(apiBase, apiKey, 'antigravity')
+      }
       if (activeClientTab.value === 'gemini') {
         return [generateGeminiCliContent(`${baseUrl}/antigravity`, apiKey)]
       }
@@ -740,6 +763,9 @@ const currentFiles = computed((): FileConfig[] => {
       }
       return generateAnthropicFiles(baseRoot, apiKey)
     default:
+      if (activeClientTab.value === 'codex' && props.platform) {
+        return generateRoutedCodexFiles(apiBase, apiKey, props.platform)
+      }
       return generateAnthropicFiles(baseUrl, apiKey)
   }
 })
@@ -1176,13 +1202,35 @@ supports_websockets = false
 function generateRoutedCodexFiles(
   baseUrl: string,
   apiKey: string,
-  platform: 'deepseek' | 'composite'
+  platform: GroupPlatform
 ): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
-  const preferredModel = platform === 'deepseek' ? 'deepseek-v4-pro' : 'gpt-5.5'
+  const preferredModels: Partial<Record<GroupPlatform, string>> = {
+    openai: 'gpt-5.5',
+    anthropic: 'claude-sonnet-4-6',
+    gemini: 'gemini-2.5-pro',
+    antigravity: 'claude-sonnet-4-6',
+    grok: 'grok-4.5',
+    kimi: 'kimi-k2.5',
+    zhipu: 'glm-4.7',
+    deepseek: 'deepseek-v4-pro',
+    composite: 'gpt-5.5'
+  }
+  const preferredModel = preferredModels[platform] || ''
   const model = selectCodexCatalogModel(preferredModel)
-  const label = platform === 'deepseek' ? 'DeepSeek' : 'Composite'
+  const labels: Record<GroupPlatform, string> = {
+    anthropic: 'Anthropic',
+    openai: 'OpenAI',
+    gemini: 'Gemini',
+    antigravity: 'Antigravity',
+    grok: 'Grok',
+    kimi: 'Kimi',
+    zhipu: 'Zhipu',
+    deepseek: 'DeepSeek',
+    composite: 'Composite'
+  }
+  const label = labels[platform]
   const envContent = isWindows
     ? `$env:SUB2API_API_KEY="${apiKey}"`
     : `export SUB2API_API_KEY="${apiKey}"`
@@ -1195,7 +1243,7 @@ disable_response_storage = true
 model_catalog_json = "${escapeTomlBasicString(codexModelCatalogPath.value)}"
 
 [model_providers.sub2api]
-name = "OpenAI"
+name = "Sub2API ${label}"
 base_url = "${baseUrl}"
 env_key = "SUB2API_API_KEY"
 wire_api = "responses"
@@ -1207,7 +1255,11 @@ supports_websockets = false`
     {
       path: joinConfigPath(configDir, 'config.toml', isWindows),
       content: configContent,
-      hint: t(`keys.useKeyModal.${platform}.codexConfigTomlHint`)
+      hint: t(
+        platform === 'deepseek' || platform === 'composite'
+          ? `keys.useKeyModal.${platform}.codexConfigTomlHint`
+          : 'keys.useKeyModal.routedCodex.configTomlHint'
+      )
     }
   ]
 }
