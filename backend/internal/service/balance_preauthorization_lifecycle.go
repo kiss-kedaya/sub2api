@@ -16,6 +16,7 @@ import (
 const (
 	DefaultBalancePreauthorizationOutputWindow = 256
 	balancePreauthorizationCompensationTimeout = 3 * time.Second
+	balancePreauthorizationWalletTimeout       = 3 * time.Second
 )
 
 // 余额不足导致预扣/流式续扣失败时映射为 403，而非 402/429，这是刻意的计费决策：

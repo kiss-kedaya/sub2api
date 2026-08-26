@@ -92,27 +92,29 @@ func (s *preauthorizationCostCalculatorStub) CalculateCostUnified(input CostInpu
 }
 
 type preauthorizationWalletStub struct {
-	recorder        *preauthorizationCallRecorder
-	authorize       LiveBalanceResult
-	authorizeErr    error
-	existing        *LiveBalanceResult
-	existingErr     error
-	finalize        []LiveBalanceResult
-	finalizeErr     error
-	refund          []LiveBalanceResult
-	refundErr       error
-	topUp           []LiveBalanceResult
-	topUpErr        error
-	lastAttemptID   string
-	lastFallback    float64
-	lastWatermark   int64
-	lastAllowInit   bool
-	lastHold        float64
-	lastActual      float64
-	lastTopUpTarget float64
-	finalizeCalls   int
-	refundCalls     int
-	topUpCalls      int
+	recorder         *preauthorizationCallRecorder
+	authorize        LiveBalanceResult
+	authorizeErr     error
+	existing         *LiveBalanceResult
+	existingErr      error
+	finalize         []LiveBalanceResult
+	finalizeErr      error
+	refund           []LiveBalanceResult
+	refundErr        error
+	topUp            []LiveBalanceResult
+	topUpErr         error
+	lastAttemptID    string
+	lastFallback     float64
+	lastWatermark    int64
+	lastAllowInit    bool
+	lastHold         float64
+	lastActual       float64
+	lastTopUpTarget  float64
+	topUpContextErr  error
+	topUpHasDeadline bool
+	finalizeCalls    int
+	refundCalls      int
+	topUpCalls       int
 }
 
 func (s *preauthorizationWalletStub) AuthorizeExistingLiveBalance(
@@ -176,10 +178,12 @@ func (s *preauthorizationWalletStub) AuthorizeLiveBalanceAtWatermarkIfSafe(
 	return result, s.authorizeErr
 }
 
-func (s *preauthorizationWalletStub) TopUpLiveBalance(_ context.Context, _ int64, attemptID string, targetHoldAmount float64) (LiveBalanceResult, error) {
+func (s *preauthorizationWalletStub) TopUpLiveBalance(ctx context.Context, _ int64, attemptID string, targetHoldAmount float64) (LiveBalanceResult, error) {
 	s.recorder.add("wallet_topup")
 	s.lastAttemptID = attemptID
 	s.lastTopUpTarget = targetHoldAmount
+	s.topUpContextErr = ctx.Err()
+	_, s.topUpHasDeadline = ctx.Deadline()
 	s.topUpCalls++
 	if s.topUpErr != nil {
 		return LiveBalanceResult{}, s.topUpErr
@@ -791,6 +795,21 @@ func TestObserveStreamingOutputTopsUpOncePerWindowCrossing(t *testing.T) {
 	// never one per frame.
 	require.LessOrEqual(t, fixture.wallet.topUpCalls-beforeTopUps, 8)
 	require.Greater(t, fixture.wallet.lastTopUpTarget, guard.HoldAmount()-0.0001)
+}
+
+func TestObserveStreamingOutputDetachesWalletTopUpFromCanceledRequest(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	guard := streamingPreauthorizationGuard(t, fixture)
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	cancelRequest()
+
+	for i := 0; i < 40 && fixture.wallet.topUpCalls == 0; i++ {
+		require.NoError(t, guard.ObserveStreamingOutput(requestCtx, 64))
+	}
+
+	require.Positive(t, fixture.wallet.topUpCalls)
+	require.NoError(t, fixture.wallet.topUpContextErr)
+	require.True(t, fixture.wallet.topUpHasDeadline, "detached wallet mutation must remain time-bounded")
 }
 
 // TestObserveStreamingOutputAbortsOnInsufficientBalance proves a failed top-up
