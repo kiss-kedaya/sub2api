@@ -123,7 +123,7 @@ func TestGroupUsageRollupTriggerSerializesLateHistoricalInsertWithPublish(t *tes
 	require.Equal(t, "2020-01-02", closedBefore)
 }
 
-func TestGroupUsageRollupTriggerSerializesInsertTransactionAcrossMidnight(t *testing.T) {
+func TestGroupUsageRollupTriggerDoesNotBlockCurrentDayInsertDuringHistoricalPublish(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -152,8 +152,6 @@ func TestGroupUsageRollupTriggerSerializesInsertTransactionAcrossMidnight(t *tes
 	insertTx := beginGroupUsageRollupTriggerTestTx(t, ctx, schema)
 	defer func() { _ = insertTx.Rollback() }()
 	require.NoError(t, setGroupUsageRollupTriggerTimeZone(ctx, insertTx, "Asia/Shanghai"))
-	var insertBackendPID int
-	require.NoError(t, insertTx.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&insertBackendPID))
 
 	insertResult := make(chan error, 1)
 	go func() {
@@ -164,41 +162,22 @@ func TestGroupUsageRollupTriggerSerializesInsertTransactionAcrossMidnight(t *tes
 		insertResult <- insertErr
 	}()
 
-	blocked, err := waitForGroupUsageRollupStateLock(ctx, insertBackendPID, insertResult)
-	if err != nil || !blocked {
-		_ = syncTx.Rollback()
-		_ = insertTx.Rollback()
-		require.NoError(t, err)
-		require.True(t, blocked, "跨越零点的在途写入必须与水位发布串行化")
-	}
-
-	_, err = syncTx.ExecContext(ctx, `
-		UPDATE usage_group_rollup_state
-		SET closed_before = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date + 1
-		WHERE id = 1
-	`)
-	require.NoError(t, err)
-	require.NoError(t, syncTx.Commit())
-
 	select {
 	case err = <-insertResult:
 		require.NoError(t, err)
 	case <-ctx.Done():
-		t.Fatal("等待跨零点写入完成超时")
+		t.Fatal("current-day insert waited for the historical rollup watermark lock")
 	}
 	require.NoError(t, insertTx.Commit())
+	require.NoError(t, syncTx.Rollback())
 
-	var currentDate string
-	require.NoError(t, integrationDB.QueryRowContext(ctx, `
-		SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date::text
-	`).Scan(&currentDate))
-	var closedBefore string
+	var inserted int
 	err = integrationDB.QueryRowContext(ctx, fmt.Sprintf(
-		"SELECT closed_before::text FROM %s.usage_group_rollup_state WHERE id = 1",
+		"SELECT COUNT(*) FROM %s.usage_logs WHERE id = 1",
 		pq.QuoteIdentifier(schema),
-	)).Scan(&closedBefore)
+	)).Scan(&inserted)
 	require.NoError(t, err)
-	require.Equal(t, currentDate, closedBefore)
+	require.Equal(t, 1, inserted)
 }
 
 func TestGroupUsageRollupTriggerKeepsWatermarkForTodayInsert(t *testing.T) {
@@ -451,6 +430,7 @@ func createGroupUsageRollupTriggerTestSchema(t *testing.T, ctx context.Context, 
 	for _, migrationName := range []string{
 		"222_group_usage_daily_rollups.sql",
 		"223_group_usage_rollup_timezone.sql",
+		"234_group_usage_rollup_current_day_fast_path.sql",
 	} {
 		migrationSQL, readErr := migrations.FS.ReadFile(migrationName)
 		require.NoError(t, readErr)

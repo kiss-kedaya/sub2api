@@ -50,3 +50,15 @@ func TestMigration223TracksConfiguredTimezone(t *testing.T) {
 	require.Contains(t, sql, "CREATE OR REPLACE FUNCTION invalidate_group_usage_rollup_state")
 	require.Contains(t, sql, "CREATE OR REPLACE FUNCTION invalidate_group_usage_rollup_state_after_insert")
 }
+
+func TestMigration234SkipsWatermarkLockForCurrentDayInserts(t *testing.T) {
+	content, err := FS.ReadFile("234_group_usage_rollup_current_day_fast_path.sql")
+	require.NoError(t, err)
+
+	sql := string(content)
+	require.Contains(t, sql, "current_date_in_timezone")
+	require.Contains(t, sql, "affected_date >= current_date_in_timezone")
+	require.Contains(t, sql, "RETURN NULL")
+	require.Contains(t, sql, "FOR KEY SHARE")
+	require.Contains(t, sql, "closed_before = LEAST(closed_before, affected_date)")
+}
