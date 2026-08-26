@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,10 +30,12 @@ type liveBalanceReadCacheStub struct {
 	liveBalance float64
 	liveExists  bool
 	liveErr     error
+	liveCalls   int
 	legacyCalls int
 }
 
 func (s *liveBalanceReadCacheStub) GetLiveBalance(context.Context, int64) (float64, bool, error) {
+	s.liveCalls++
 	return s.liveBalance, s.liveExists, s.liveErr
 }
 
@@ -158,5 +161,51 @@ func TestGetUserBalanceDoesNotBypassLiveWalletRedisFailure(t *testing.T) {
 
 	_, err := service.GetUserBalance(context.Background(), 7)
 	require.ErrorContains(t, err, "get live user balance")
+	require.Zero(t, cache.legacyCalls)
+}
+
+func TestGetUserBalanceSkipsStaleLiveWalletWhenPreauthorizationDisabled(t *testing.T) {
+	tests := []struct {
+		name  string
+		cache *liveBalanceReadCacheStub
+	}{
+		{
+			name:  "stale negative wallet",
+			cache: &liveBalanceReadCacheStub{liveBalance: -25, liveExists: true},
+		},
+		{
+			name:  "live wallet redis failure",
+			cache: &liveBalanceReadCacheStub{liveErr: errors.New("redis unavailable")},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &BillingCacheService{
+				cache: test.cache,
+				cfg:   &config.Config{},
+			}
+
+			balance, err := service.GetUserBalance(context.Background(), 7)
+			require.NoError(t, err)
+			require.Equal(t, float64(999), balance)
+			require.Zero(t, test.cache.liveCalls)
+			require.Equal(t, 1, test.cache.legacyCalls)
+		})
+	}
+}
+
+func TestGetUserBalanceKeepsLiveWalletFailClosedWhenPreauthorizationEnabled(t *testing.T) {
+	cache := &liveBalanceReadCacheStub{liveErr: errors.New("redis unavailable")}
+	service := &BillingCacheService{
+		cache: cache,
+		cfg: &config.Config{Billing: config.BillingConfig{
+			BalancePreauthorizationEnabled: true,
+		}},
+	}
+
+	_, err := service.GetUserBalance(context.Background(), 7)
+	require.ErrorContains(t, err, "get live user balance")
+	require.Equal(t, 1, cache.liveCalls)
 	require.Zero(t, cache.legacyCalls)
 }
