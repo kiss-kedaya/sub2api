@@ -39,11 +39,13 @@ func TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletion
 		cfg:          rawChatCompletionsTestConfig(),
 		httpUpstream: upstream,
 	}
+	SetActualOpenAIUpstreamEndpoint(c, "/v1/responses")
 
 	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "http://upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
+	require.Equal(t, "/v1/chat/completions", GetActualOpenAIUpstreamEndpoint(c))
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
 	require.Equal(t, "hello", gjson.GetBytes(upstream.lastBody, "messages.0.content").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
