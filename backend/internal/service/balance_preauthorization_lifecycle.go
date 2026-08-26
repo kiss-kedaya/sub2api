@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -40,6 +39,16 @@ type balancePreauthorizationCostCalculator interface {
 
 type balancePreauthorizationSnapshotReader interface {
 	LoadLiveBalanceInitializationSnapshot(ctx context.Context, userID int64) (LiveBalanceInitializationSnapshot, error)
+}
+
+// balancePreauthorizationCacheHitRateProvider supplies prompt-cache hit-rate
+// history so preauthorization hold can weight input pricing between full-price
+// and cache-read scenarios. Optional — nil-safe fallback to conservative.
+type balancePreauthorizationCacheHitRateProvider interface {
+	// RecentCacheHitRate returns the fraction (0..1) of input tokens that were
+	// cache_read (not full-price input) for this API key over a recent window,
+	// along with ok=false when there is insufficient history to trust it.
+	RecentCacheHitRate(ctx context.Context, apiKeyID int64) (rate float64, ok bool, err error)
 }
 
 type balancePreauthorizationWallet interface {
@@ -91,6 +100,7 @@ type BalancePreauthorizationService struct {
 	cfg             *config.Config
 	costCalculator  balancePreauthorizationCostCalculator
 	snapshotReader  balancePreauthorizationSnapshotReader
+	cacheHitRate    balancePreauthorizationCacheHitRateProvider
 	wallet          balancePreauthorizationWallet
 	watermarkWallet balancePreauthorizationWatermarkedWallet
 	repo            balancePreauthorizationRepository
@@ -108,6 +118,7 @@ func NewBalancePreauthorizationService(
 		repo:           repo,
 	}
 	service.snapshotReader, _ = repo.(balancePreauthorizationSnapshotReader)
+	service.cacheHitRate, _ = repo.(balancePreauthorizationCacheHitRateProvider)
 	if billingCacheService != nil {
 		service.wallet = billingCacheService.cache
 		service.watermarkWallet, _ = billingCacheService.cache.(balancePreauthorizationWatermarkedWallet)
@@ -336,21 +347,40 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 		return balancePreauthorizationEstimate{}, err
 	}
 
-	scenarios := [...]UsageTokens{
-		{InputTokens: request.BillableInputBytes, OutputTokens: outputWindow},
-		{CacheReadTokens: request.BillableInputBytes, OutputTokens: outputWindow},
-		{CacheCreationTokens: request.BillableInputBytes, OutputTokens: outputWindow},
-		{
-			CacheCreationTokens:   request.BillableInputBytes,
-			CacheCreation1hTokens: request.BillableInputBytes,
-			OutputTokens:          outputWindow,
-		},
+	// Cache-aware hold: when recent prompt-cache usage history exists, weight
+	// input pricing between cache_read (discounted) and full-price input based
+	// on the key's actual hit rate, with a conservative buffer. This addresses
+	// the 50-100× hold-vs-actual gap for Responses-API users whose requests are
+	// designed to hit cache. Finalize always settles to real cost, so an
+	// imperfect estimate affects only the reserved amount, never the charge.
+	var inputCost float64
+	hitRate, hitRateOK := 0.0, false
+	if s.cacheHitRate != nil && request.APIKeyID > 0 {
+		hitRate, hitRateOK, _ = s.cacheHitRate.RecentCacheHitRate(ctx, request.APIKeyID)
 	}
-	maxCost := 0.0
-	firstScenarioCost := 0.0
-	for i, tokens := range scenarios {
+	if hitRateOK && hitRate > 0 {
+		// Apply 15% buffer: treat observed 95% hit as 80% for hold. Protects
+		// against short-term hit-rate drops; finalize reconciles any shortfall.
+		const hitRateBufferFraction = 0.15
+		bufferedRate := hitRate - hitRateBufferFraction
+		if bufferedRate < 0 {
+			bufferedRate = 0
+		}
+		// Weight BillableInputBytes between cache_read and input price. Derive the
+		// input remainder by subtraction (not a second truncation) so the two
+		// parts always sum to exactly BillableInputBytes — no token is lost or
+		// double-counted to rounding.
+		cacheReadPart := int(float64(request.BillableInputBytes) * bufferedRate)
+		if cacheReadPart > request.BillableInputBytes {
+			cacheReadPart = request.BillableInputBytes
+		}
+		weightedTokens := UsageTokens{
+			CacheReadTokens: cacheReadPart,
+			InputTokens:     request.BillableInputBytes - cacheReadPart,
+			OutputTokens:    outputWindow,
+		}
 		input := base
-		input.Tokens = tokens
+		input.Tokens = weightedTokens
 		breakdown, err := s.costCalculator.CalculateCostUnified(input)
 		if err != nil {
 			return balancePreauthorizationEstimate{}, err
@@ -358,10 +388,24 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 		if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
 			return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
 		}
-		if i == 0 {
-			firstScenarioCost = breakdown.ActualCost
+		inputCost = breakdown.ActualCost
+	} else {
+		// Fallback: no history or low confidence. Use plain-input scenario,
+		// already more conservative than the old max(input/cache_write).
+		fallbackTokens := UsageTokens{
+			InputTokens:  request.BillableInputBytes,
+			OutputTokens: outputWindow,
 		}
-		maxCost = math.Max(maxCost, breakdown.ActualCost)
+		input := base
+		input.Tokens = fallbackTokens
+		breakdown, err := s.costCalculator.CalculateCostUnified(input)
+		if err != nil {
+			return balancePreauthorizationEstimate{}, err
+		}
+		if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
+			return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
+		}
+		inputCost = breakdown.ActualCost
 	}
 
 	// Effective per-output-token price via difference: the output window is the
@@ -371,31 +415,39 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	// multipliers) used at settlement without reaching into pricing internals.
 	// Only one extra pricing call runs, once per request at preauthorization,
 	// never on the hot path.
-	outputUnitPrice, err := s.estimateOutputUnitPrice(base, request.BillableInputBytes, outputWindow, firstScenarioCost)
+	outputUnitPrice, err := s.estimateOutputUnitPrice(base, request.BillableInputBytes, outputWindow)
 	if err != nil {
 		return balancePreauthorizationEstimate{}, err
 	}
 	return balancePreauthorizationEstimate{
-		HoldAmount:      quantizeBillingHoldUpFromFloat(maxCost),
+		HoldAmount:      quantizeBillingHoldUpFromFloat(inputCost),
 		OutputWindow:    outputWindow,
 		OutputUnitPrice: outputUnitPrice,
 	}, nil
 }
 
-// estimateOutputUnitPrice derives the effective per-output-token price from the
-// windowed-minus-baseline cost difference. The windowed cost is the already
-// priced plain-input scenario (InputTokens + outputWindow), so only the
-// output-free baseline needs an extra pricing call. Output pricing is
-// independent of input disposition, so one representative scenario suffices.
+// estimateOutputUnitPrice derives the effective per-output-token price from a
+// windowed-minus-baseline cost difference. Both the windowed and baseline
+// prices are computed here over the SAME plain-input disposition (InputTokens
+// only), differing solely in the output window, so the difference isolates the
+// output marginal price regardless of how the hold itself weights cache_read vs
+// input. This keeps output-unit-price derivation self-contained and decoupled
+// from the cache-aware hold estimate. Output pricing is independent of input
+// disposition, so one representative input scenario suffices.
 // Returns zero (top-ups disabled) for non-positive results.
 func (s *BalancePreauthorizationService) estimateOutputUnitPrice(
 	base CostInput,
 	billableInputBytes int,
 	outputWindow int,
-	windowedCost float64,
 ) (float64, error) {
 	if outputWindow <= 0 {
 		return 0, nil
+	}
+	windowed := base
+	windowed.Tokens = UsageTokens{InputTokens: billableInputBytes, OutputTokens: outputWindow}
+	windowedBreakdown, err := s.costCalculator.CalculateCostUnified(windowed)
+	if err != nil {
+		return 0, err
 	}
 	baseline := base
 	baseline.Tokens = UsageTokens{InputTokens: billableInputBytes, OutputTokens: 0}
@@ -403,11 +455,11 @@ func (s *BalancePreauthorizationService) estimateOutputUnitPrice(
 	if err != nil {
 		return 0, err
 	}
-	if baselineCost == nil || invalidNonnegativeMoney(baselineCost.ActualCost) ||
-		invalidNonnegativeMoney(windowedCost) {
+	if windowedBreakdown == nil || invalidNonnegativeMoney(windowedBreakdown.ActualCost) ||
+		baselineCost == nil || invalidNonnegativeMoney(baselineCost.ActualCost) {
 		return 0, ErrInvalidBillingPreauthorizationEstimate
 	}
-	delta := windowedCost - baselineCost.ActualCost
+	delta := windowedBreakdown.ActualCost - baselineCost.ActualCost
 	// delta<=0 表示在当前定价下，输出窗口未产生额外边际成本（免费输出，或已并入
 	// 打包/按次价，由 maxCost 场景 hold 覆盖）。此时返回 0 会使 OutputUnitPrice=0，
 	// NewBillingOutputHoldTracker 返回 nil（见 billing_output_hold_tracker.go），
