@@ -122,6 +122,11 @@ func transferBalancePreauthorizationUsageTask(
 	return service.TransferBalancePreauthorizationToUsageTask(guard, task)
 }
 
+// observedProviderSpend 判定上游是否已产生费用，据此在"结算"与"全额退款"间二选一：
+// forwardErr==nil（转发成功）或 semanticOutputWritten（keepalive 校正后确有语义输出，
+// 心跳填充不计）即视为上游已消费——客户端随后断开也按已产出结算、不退款（"客户端断开按实际
+// 结算"）；两者皆否才判定上游未产生费用而全额退款。结算口径见 RecordUsageInput.
+// ObservedProviderSpend 字段注释及 applyObservedProviderSpendFloor（零成本时下限到 hold）。
 func observedProviderSpend(forwardErr error, semanticOutputWritten bool) bool {
 	return forwardErr == nil || semanticOutputWritten
 }

@@ -19,6 +19,14 @@ const (
 	balancePreauthorizationCompensationTimeout = 3 * time.Second
 )
 
+// 余额不足导致预扣/流式续扣失败时映射为 403，而非 402/429，这是刻意的计费决策：
+// 属于客户端无法靠重试或等待消除的确定性拒绝（额度不足即拒绝本次请求）。
+// - 不用 429：429 会诱导客户端退避后重试，放大无法结算的无效请求负载；
+// - 不用 402：402 虽不诱导退避，但语义上暗示"充值即可放行本次"，与此处的确定性拒绝
+//   不符，且用 403 与上游权限类拒绝语义保持一致。
+// 注意：该 sentinel 同时用于入口预扣(lifecycle line 243)与流式续扣(guard.go:130、
+// passthrough:1787)两条路径；两处返回前均已执行 compensateAuthorizationFailure/退款，
+// 不会漏扣或残留 hold——修改状态码不得改变这一补偿前置。
 var (
 	ErrBalanceWithholdingFailed = infraerrors.Forbidden(
 		"BALANCE_WITHHOLDING_FAILED",
@@ -219,6 +227,13 @@ func (s *BalancePreauthorizationService) Preauthorize(
 		attemptID,
 		record.HoldAmount,
 	)
+	// 活期钱包缓存缺失（冷启动或被驱逐）时，从 PG 权威快照按其 watermark
+	//（外部调整 outbox 的重放边界）在水位处初始化后再授权。
+	// allowInitialize 传 !HasUnsettled 是关键守恒条件：HasUnsettled 表示存在
+	// Authorized/FinalizationPending/Pending 的用量结算（在途 hold），此时 PG
+	// u.balance 未必反映这些在途扣减，用快照重建会漏扣（掩盖在途占用）或重扣
+	//（已扣金额被恢复后再次结算），故仅在无未结算时才允许初始化；存在未结算时
+	// 本调用返回 NotFound，随后走 compensate + unavailable 失败闭合，绝不带病初始化。
 	if err == nil && authorized.Outcome == LiveBalanceOutcomeNotFound {
 		var snapshot LiveBalanceInitializationSnapshot
 		snapshot, err = s.snapshotReader.LoadLiveBalanceInitializationSnapshot(ctx, request.UserID)
@@ -393,6 +408,17 @@ func (s *BalancePreauthorizationService) estimateOutputUnitPrice(
 		return 0, ErrInvalidBillingPreauthorizationEstimate
 	}
 	delta := windowedCost - baselineCost.ActualCost
+	// delta<=0 表示在当前定价下，输出窗口未产生额外边际成本（免费输出，或已并入
+	// 打包/按次价，由 maxCost 场景 hold 覆盖）。此时返回 0 会使 OutputUnitPrice=0，
+	// NewBillingOutputHoldTracker 返回 nil（见 billing_output_hold_tracker.go），
+	// 从而禁用流式补扣——这是安全的：既然输出无边际计价，长流不会随长度增加欠扣，
+	// 结算时仍按实际用量退差。
+	// 前提1（守恒关键）：差分必须用与 baseline 同一输入处置（plain-input）的 windowed
+	// 成本（firstScenarioCost / scenarios[0]），否则会把输入/缓存侧价差混入输出单价，
+	// 污染补扣目标额。切勿对真实计费的输出误禁补扣。
+	// 前提2：差分仅在 outputWindow 处单点采样边际价，故"长流不欠扣"依赖输出边际价在
+	// 整段流长上均匀；若将来出现阶梯/阈值型输出定价（窗口内免费、越过阈值才计费），
+	// 该分支需改为不在此禁用补扣，否则长流会欠扣。
 	if delta <= 0 {
 		return 0, nil
 	}
@@ -431,6 +457,10 @@ func (s *BalancePreauthorizationService) estimatePerRequestHold(
 // resolvedPricingCostInput freezes the pricing resolution once so an unknown
 // paid model fails closed before any wallet mutation. A missing resolver is
 // left untouched: CalculateCostUnified falls back to its legacy pricing path.
+// resolvedPricingCostInput 冻结一次 Resolver.Resolve 调用，确保后续 4 个 scenario +
+// output baseline 共 5 次定价对齐到同一定价快照，避免请求内定价缓存刷新导致跨
+// scenario 取 max 不一致。明确禁止未来 optimizer 按 scenario 重新 Resolve，以防
+// 重新引入每 scenario 的 I/O 往返与快照漂移。
 func (s *BalancePreauthorizationService) resolvedPricingCostInput(
 	ctx context.Context,
 	base CostInput,
@@ -449,6 +479,13 @@ func (s *BalancePreauthorizationService) resolvedPricingCostInput(
 	return base, nil
 }
 
+// compensateAuthorizationFailure 在授权阶段任何不确定结果（授权报错/余额不足/结果校验失败/
+// MarkAuthorized 失败）时回滚。此路径必发生在上游请求之前且记录仍处 Prepared 态，故"全额退回
+// 钱包 hold + 将 PG 预扣转入退款态"是守恒安全的：上游未产生费用则全额退款，用户不会被扣款却无对应请求。
+// 该补偿是尽力而为：用独立后台 ctx（不随请求 ctx 取消，保证客户端断开仍退款）+ 3s 有界超时，
+// 且忽略 begin/refund/complete 的错误——因为 PG 记录持久，失败时记录仍停留在可恢复的非终态，
+// balance preauthorization 恢复 worker 会将其重新全额退款收敛（仅 Prepared 态才允许放弃授权退款；
+// 已 Authorized 的记录由恢复路径改为全额结算，避免把崩溃窗口变成免费调用），因此这里既不阻塞也不永久卡死请求路径。
 func (s *BalancePreauthorizationService) compensateAuthorizationFailure(requestID string, apiKeyID, userID int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), balancePreauthorizationCompensationTimeout)
 	defer cancel()
