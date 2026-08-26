@@ -112,7 +112,7 @@ func TestAdjustLiveBalanceAtWatermarkAppliesOnlyExactSuccessor(t *testing.T) {
 }
 
 func TestAdjustLiveBalanceAtWatermarkSkipsSnapshotIncludedEvent(t *testing.T) {
-	cache, _ := newLiveBalanceTestCache(t)
+	cache, client := newLiveBalanceTestCache(t)
 	ctx := context.Background()
 
 	_, err := cache.AuthorizeLiveBalanceAtWatermark(ctx, 52, "request", 8, 42, 1)
@@ -122,6 +122,8 @@ func TestAdjustLiveBalanceAtWatermarkSkipsSnapshotIncludedEvent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, LiveBalanceOutcomeIdempotent, result.Outcome)
 	require.Equal(t, 7.0, result.AvailableBalance)
+	require.Zero(t, client.Exists(ctx, liveBalanceAdjustmentKey(52, "outbox:42")).Val(),
+		"the wallet watermark is sufficient replay evidence; snapshot-included events need no marker key")
 }
 
 func TestAdjustLiveBalanceAtWatermarkFailsClosedWithoutInitializationWatermark(t *testing.T) {
@@ -143,7 +145,7 @@ func TestAdjustLiveBalanceAtWatermarkMissingWalletWaitsForInitialization(t *test
 
 	result, err := cache.AdjustLiveBalanceAtWatermark(ctx, 54, "outbox:9", 9, 0, 200000000)
 	require.NoError(t, err)
-	require.Equal(t, LiveBalanceOutcomeConflict, result.Outcome)
+	require.Equal(t, LiveBalanceOutcomeNotFound, result.Outcome)
 
 	// If the DB snapshot preceded event 9, initialization starts at predecessor
 	// 0 and the still-pending event is applied exactly once afterwards.
@@ -161,7 +163,7 @@ func TestAdjustLiveBalanceAtWatermarkMissingWalletSnapshotCanIncludePendingEvent
 
 	missing, err := cache.AdjustLiveBalanceAtWatermark(ctx, 56, "outbox:9", 9, 0, 200000000)
 	require.NoError(t, err)
-	require.Equal(t, LiveBalanceOutcomeConflict, missing.Outcome)
+	require.Equal(t, LiveBalanceOutcomeNotFound, missing.Outcome)
 
 	_, err = cache.AuthorizeLiveBalanceAtWatermark(ctx, 56, "request-new-snapshot", 12, 9, 1)
 	require.NoError(t, err)
@@ -169,6 +171,41 @@ func TestAdjustLiveBalanceAtWatermarkMissingWalletSnapshotCanIncludePendingEvent
 	require.NoError(t, err)
 	require.Equal(t, LiveBalanceOutcomeIdempotent, replay.Outcome)
 	require.Equal(t, 11.0, replay.AvailableBalance)
+}
+
+func TestInitializeLiveBalanceAtWatermarkIsAtomicAndNeverOverwrites(t *testing.T) {
+	cache, client := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+
+	initialized, err := cache.InitializeLiveBalanceAtWatermark(ctx, 59, 12.5, 17)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeApplied, initialized.Outcome)
+	require.Equal(t, 12.5, initialized.AvailableBalance)
+	require.Equal(t, "17", client.Get(ctx, liveBalanceWatermarkKey(59)).Val())
+
+	existing, err := cache.InitializeLiveBalanceAtWatermark(ctx, 59, 99, 42)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeIdempotent, existing.Outcome)
+	require.Equal(t, 12.5, existing.AvailableBalance)
+	require.Equal(t, "17", client.Get(ctx, liveBalanceWatermarkKey(59)).Val())
+}
+
+func TestInitializeLiveBalanceAtWatermarkRejectsPartialState(t *testing.T) {
+	cache, client := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+
+	require.NoError(t, client.Set(ctx, liveBalanceWalletKey(60), 500000000, 0).Err())
+	walletOnly, err := cache.InitializeLiveBalanceAtWatermark(ctx, 60, 9, 3)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeConflict, walletOnly.Outcome)
+	require.Equal(t, "500000000", client.Get(ctx, liveBalanceWalletKey(60)).Val())
+
+	require.NoError(t, client.Del(ctx, liveBalanceWalletKey(60)).Err())
+	require.NoError(t, client.Set(ctx, liveBalanceWatermarkKey(60), 2, 0).Err())
+	watermarkOnly, err := cache.InitializeLiveBalanceAtWatermark(ctx, 60, 9, 3)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeConflict, watermarkOnly.Outcome)
+	require.Equal(t, "2", client.Get(ctx, liveBalanceWatermarkKey(60)).Val())
 }
 
 func TestAdjustLiveBalanceAtWatermarkValidatesSequence(t *testing.T) {

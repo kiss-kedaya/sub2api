@@ -11,18 +11,40 @@ import (
 
 type liveBalanceAdjustmentCacheStub struct {
 	billingCacheWorkerStub
-	result          LiveBalanceResult
-	adjustErr       error
-	invalidateErr   error
-	invalidateCalls int
-	adjustCalls     int
-	userID          int64
-	eventID         string
-	delta           float64
-	deltaUnits      int64
-	watermark       int64
-	predecessor     int64
-	watermarkCalls  int
+	result              LiveBalanceResult
+	watermarkResults    []LiveBalanceResult
+	adjustErr           error
+	initializeResult    LiveBalanceResult
+	initializeErr       error
+	invalidateErr       error
+	invalidateCalls     int
+	adjustCalls         int
+	userID              int64
+	eventID             string
+	delta               float64
+	deltaUnits          int64
+	watermark           int64
+	predecessor         int64
+	watermarkCalls      int
+	initializeCalls     int
+	initializeBalance   float64
+	initializeWatermark int64
+}
+
+type liveBalanceSnapshotReaderStub struct {
+	snapshot LiveBalanceInitializationSnapshot
+	err      error
+	calls    int
+	userID   int64
+}
+
+func (s *liveBalanceSnapshotReaderStub) LoadLiveBalanceInitializationSnapshot(
+	_ context.Context,
+	userID int64,
+) (LiveBalanceInitializationSnapshot, error) {
+	s.calls++
+	s.userID = userID
+	return s.snapshot, s.err
 }
 
 type liveBalanceReadCacheStub struct {
@@ -71,7 +93,24 @@ func (s *liveBalanceAdjustmentCacheStub) AdjustLiveBalanceAtWatermark(
 	s.watermark = watermark
 	s.predecessor = predecessor
 	s.deltaUnits = deltaUnits
+	if len(s.watermarkResults) > 0 {
+		result := s.watermarkResults[0]
+		s.watermarkResults = s.watermarkResults[1:]
+		return result, s.adjustErr
+	}
 	return s.result, s.adjustErr
+}
+
+func (s *liveBalanceAdjustmentCacheStub) InitializeLiveBalanceAtWatermark(
+	_ context.Context,
+	_ int64,
+	balance float64,
+	watermark int64,
+) (LiveBalanceResult, error) {
+	s.initializeCalls++
+	s.initializeBalance = balance
+	s.initializeWatermark = watermark
+	return s.initializeResult, s.initializeErr
 }
 
 func TestApplyExternalBalanceAdjustmentInvalidatesLegacyCacheThenAdjusts(t *testing.T) {
@@ -132,6 +171,65 @@ func TestApplyExternalBalanceOutboxAdjustmentFailsClosedOnWatermarkConflict(t *t
 	})
 
 	require.ErrorContains(t, err, "watermark conflict")
+}
+
+func TestRecoveringLiveBalanceAdjustmentInitializesFromSnapshotAndReplays(t *testing.T) {
+	cache := &liveBalanceAdjustmentCacheStub{
+		watermarkResults: []LiveBalanceResult{
+			{Outcome: LiveBalanceOutcomeNotFound},
+			{Outcome: LiveBalanceOutcomeIdempotent},
+		},
+		initializeResult: LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied},
+	}
+	reader := &liveBalanceSnapshotReaderStub{
+		snapshot: LiveBalanceInitializationSnapshot{Balance: 12.5, Watermark: 17},
+	}
+	applier := newRecoveringLiveBalanceAdjustmentApplier(&BillingCacheService{cache: cache}, reader)
+	event := LiveBalanceAdjustmentEvent{ID: 17, UserID: 42, PredecessorID: 11, DeltaUnits: 100000000}
+
+	err := applier.ApplyExternalBalanceOutboxAdjustment(context.Background(), event)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, cache.watermarkCalls)
+	require.Equal(t, 1, cache.initializeCalls)
+	require.Equal(t, 12.5, cache.initializeBalance)
+	require.Equal(t, int64(17), cache.initializeWatermark)
+	require.Equal(t, 1, reader.calls)
+	require.Equal(t, int64(42), reader.userID)
+}
+
+func TestRecoveringLiveBalanceAdjustmentWaitsForUnsettledBilling(t *testing.T) {
+	cache := &liveBalanceAdjustmentCacheStub{
+		watermarkResults: []LiveBalanceResult{{Outcome: LiveBalanceOutcomeNotFound}},
+	}
+	reader := &liveBalanceSnapshotReaderStub{
+		snapshot: LiveBalanceInitializationSnapshot{Balance: 12.5, Watermark: 17, HasUnsettled: true},
+	}
+	applier := newRecoveringLiveBalanceAdjustmentApplier(&BillingCacheService{cache: cache}, reader)
+
+	err := applier.ApplyExternalBalanceOutboxAdjustment(context.Background(), LiveBalanceAdjustmentEvent{
+		ID: 17, UserID: 42, PredecessorID: 11, DeltaUnits: 100000000,
+	})
+
+	require.ErrorContains(t, err, "has unsettled billing")
+	require.Equal(t, 1, cache.watermarkCalls)
+	require.Zero(t, cache.initializeCalls)
+}
+
+func TestRecoveringLiveBalanceAdjustmentDoesNotMaskRealConflict(t *testing.T) {
+	cache := &liveBalanceAdjustmentCacheStub{
+		watermarkResults: []LiveBalanceResult{{Outcome: LiveBalanceOutcomeConflict}},
+	}
+	reader := &liveBalanceSnapshotReaderStub{}
+	applier := newRecoveringLiveBalanceAdjustmentApplier(&BillingCacheService{cache: cache}, reader)
+
+	err := applier.ApplyExternalBalanceOutboxAdjustment(context.Background(), LiveBalanceAdjustmentEvent{
+		ID: 17, UserID: 42, PredecessorID: 11, DeltaUnits: 100000000,
+	})
+
+	require.ErrorContains(t, err, "watermark conflict")
+	require.Zero(t, reader.calls)
+	require.Zero(t, cache.initializeCalls)
 }
 
 func TestCommittedBalanceSyncOnlyInvalidatesLegacyCache(t *testing.T) {
