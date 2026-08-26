@@ -26,15 +26,16 @@ const (
 type balancePreauthorizationGuardCore struct {
 	mu sync.Mutex
 
-	service       *BalancePreauthorizationService
-	requestID     string
-	apiKeyID      int64
-	userID        int64
-	attemptID     string
-	holdAmount    float64
-	outputWindow  int
-	ownerToken    uint64
-	terminalState balancePreauthorizationGuardState
+	service           *BalancePreauthorizationService
+	requestID         string
+	apiKeyID          int64
+	userID            int64
+	attemptID         string
+	holdAmount        float64
+	outputWindow      int
+	outputHoldTracker *BillingOutputHoldTracker
+	ownerToken        uint64
+	terminalState     balancePreauthorizationGuardState
 }
 
 // BalancePreauthorizationGuard is an ownership handle, not a copyable money
@@ -88,6 +89,53 @@ func (g *BalancePreauthorizationGuard) ReservedOutputTokens() int {
 		return 0
 	}
 	return g.core.outputWindow
+}
+
+// ObserveStreamingOutput records additionalBytes of emitted output and raises
+// the live hold when the reserved output window is about to be exceeded. It is
+// a no-op (nil) when no tracker exists (per-request/free/non-stream requests),
+// when the guard is not the active owner, or when the observation stays within
+// the reserved lead — so the hot path pays only an integer add in the common
+// case. A returned error means the wallet top-up failed and the caller MUST
+// abort the upstream stream rather than emit more billable output.
+func (g *BalancePreauthorizationGuard) ObserveStreamingOutput(ctx context.Context, additionalBytes int) error {
+	if g == nil || g.core == nil || g.core.outputHoldTracker == nil || additionalBytes <= 0 {
+		return nil
+	}
+	decision := g.core.outputHoldTracker.ObserveOutputBytes(additionalBytes)
+	if !decision.Required {
+		return nil
+	}
+	ctx = nonNilContext(ctx)
+
+	g.core.mu.Lock()
+	defer g.core.mu.Unlock()
+	// Ownership/terminal checks mirror Finalize: a transferred or settled guard
+	// must not keep mutating the wallet from a stale hot-path goroutine.
+	if g.core.ownerToken != g.ownerToken {
+		return ErrBalancePreauthorizationOwnershipTransferred
+	}
+	if g.core.terminalState != balancePreauthorizationGuardActive {
+		return nil
+	}
+
+	result, err := g.core.service.wallet.TopUpLiveBalance(
+		ctx, g.core.userID, g.core.attemptID, decision.TargetHoldAmount,
+	)
+	if err != nil {
+		return balancePreauthorizationUnavailable(err)
+	}
+	if !liveBalanceOperationSucceeded(result, LiveBalanceAttemptAuthorized) {
+		if result.Outcome == LiveBalanceOutcomeInsufficient {
+			return ErrBalanceWithholdingFailed
+		}
+		return balancePreauthorizationUnavailable(fmt.Errorf(
+			"top up streaming output hold returned outcome=%d state=%d",
+			result.Outcome, result.State,
+		))
+	}
+	g.core.holdAmount = decision.TargetHoldAmount
+	return nil
 }
 
 func (g *BalancePreauthorizationGuard) Finalize(ctx context.Context, actual float64, requestFingerprint string) error {

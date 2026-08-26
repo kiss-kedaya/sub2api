@@ -1771,6 +1771,25 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 	return failoverErr
 }
 
+// reportOpenAIStreamOutputHoldTopUpFailure surfaces a mid-stream balance
+// top-up failure to ops so an aborted long stream is observable. It records the
+// error but does not itself terminate the stream; the caller returns to close
+// the upstream connection.
+func (s *OpenAIGatewayService) reportOpenAIStreamOutputHoldTopUpFailure(c *gin.Context, account *Account, cause error) {
+	accountID := int64(0)
+	if account != nil {
+		accountID = account.ID
+	}
+	logger.LegacyPrintf("service.openai_gateway",
+		"[OpenAI passthrough] Stream output hold top-up failed, aborting upstream: account=%d error=%v",
+		accountID, cause)
+	if c != nil {
+		if errors.Is(cause, ErrBalanceWithholdingFailed) {
+			setOpsUpstreamError(c, http.StatusForbidden, "Insufficient balance, withholding failed", "")
+		}
+	}
+}
+
 func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	ctx context.Context,
 	resp *http.Response,
@@ -1824,6 +1843,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	// 流式预扣补扣：仅当请求持有活动的预扣 guard 且带输出补扣 tracker 时非空。
+	// 逐帧仅做整数累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
+	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
 	pendingLines := make([]string, 0, 8)
 	// flushPending 表示已写入但未到 SSE 空行边界的脏状态；defer 兜底函数退出前的残留，断连后不再 Flush。
@@ -2107,6 +2129,17 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				flushPending = true
 				if line == "" {
 					flushPendingOutput()
+				}
+				// 语义输出帧计量：累加已发字节作 token 上界，跨预扣窗口时补扣。
+				// 补扣失败（钱包不足或不可用）主动中止上游流，避免继续产生无法
+				// 结算的输出成本。非语义控制帧与 [DONE] 不计量，tracker 为 nil 时
+				// 整体是零开销的空操作。
+				if lineStartsClientOutput {
+					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
+						flushPendingOutput()
+						s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, topUpErr)
+						return resultWithUsage(), fmt.Errorf("stream output hold top-up failed: %w", topUpErr)
+					}
 				}
 			}
 		}
