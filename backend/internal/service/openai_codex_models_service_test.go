@@ -137,6 +137,16 @@ func newCodexCatalogMappedAccount(
 	return account
 }
 
+func TestFilterCodexModelIDsForGroupOmitsWildcardKeys(t *testing.T) {
+	t.Parallel()
+
+	got := FilterCodexModelIDsForGroup(
+		[]string{"deepseek-v4-pro", "foo-*", "  bar-*  ", "gpt-5.5"},
+		&Group{Platform: PlatformDeepseek},
+	)
+	require.Equal(t, []string{"deepseek-v4-pro", "gpt-5.5"}, got)
+}
+
 func decodeCodexManifestModels(t *testing.T, body []byte) []map[string]any {
 	t.Helper()
 
@@ -2149,6 +2159,77 @@ func TestFetchCodexModelsManifestAPIKeyFreshCacheHandlesETagLocally(t *testing.T
 	if got := calls.Load(); got != 1 {
 		t.Errorf("upstream calls: got %d, want 1", got)
 	}
+}
+
+func TestFetchCodexModelsManifestAPIKeyCacheSurvivesClientMutation(t *testing.T) {
+	var calls atomic.Int32
+	upstream := &codexModelsHTTPUpstreamStub{do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"object":"list","data":[{"id":"model-a"},{"id":"model-b"}]}`)),
+		}, nil
+	}}
+	s := newCodexModelsAPIKeyTestService(upstream)
+	s.accountRepo = codexModelsVisibilityAccountRepo{}
+	account := newCodexModelsAPIKeyTestAccount("https://upstream.example")
+
+	first, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+	require.NoError(t, err)
+	require.Contains(t, string(first.Body), "model-a")
+	require.Contains(t, string(first.Body), "model-b")
+
+	require.NoError(t, s.CompleteAPIKeyCodexModelsManifestForClient(first, account))
+	require.NoError(t, s.MergeGroupConfiguredCodexModels(
+		context.Background(),
+		&Group{
+			ID:       81,
+			Platform: PlatformOpenAI,
+			ModelsListConfig: GroupModelsListConfig{
+				Enabled: true,
+				Models:  []string{"model-a"},
+			},
+		},
+		first,
+		"",
+	))
+	require.Equal(t, []string{"model-a"}, codexManifestModelSlugs(t, first.Body))
+
+	second, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+	require.NoError(t, err)
+	require.Equal(t, []string{"model-a", "model-b"}, codexManifestModelSlugs(t, second.Body))
+	require.Equal(t, int32(1), calls.Load())
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			manifest, fetchErr := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+			require.NoError(t, fetchErr)
+			require.NoError(t, s.MergeGroupConfiguredCodexModels(
+				context.Background(),
+				&Group{
+					ID:       82,
+					Platform: PlatformOpenAI,
+					ModelsListConfig: GroupModelsListConfig{
+						Enabled: true,
+						Models:  []string{"model-b"},
+					},
+				},
+				manifest,
+				"",
+			))
+			require.Equal(t, []string{"model-b"}, codexManifestModelSlugs(t, manifest.Body))
+		}()
+	}
+	wg.Wait()
+
+	third, err := s.FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
+	require.NoError(t, err)
+	require.Equal(t, []string{"model-a", "model-b"}, codexManifestModelSlugs(t, third.Body))
+	require.Equal(t, int32(1), calls.Load())
 }
 
 func TestFetchCodexModelsManifestAPIKeyCacheKeyIsolatesRequestIdentity(t *testing.T) {

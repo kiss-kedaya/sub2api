@@ -38,10 +38,12 @@ const (
 	codexAutoModelPrefix               = "codex-auto-"
 )
 
-// FilterCodexModelIDsForGroup removes dedicated media-generation models and
-// Codex automatic modes from a client catalog. Automatic modes are retained
-// only when the group's enabled custom model list explicitly selects the exact
-// slug; account model mappings describe routing and are not feature opt-ins.
+// FilterCodexModelIDsForGroup removes dedicated media-generation models,
+// wildcard mapping keys, and Codex automatic modes from a client catalog.
+// Automatic modes are retained only when the group's enabled custom model list
+// explicitly selects the exact slug; account model mappings describe routing
+// and are not feature opt-ins. Wildcard keys such as "foo-*" are routing
+// patterns, not concrete Codex models.
 func FilterCodexModelIDsForGroup(modelIDs []string, group *Group) []string {
 	explicitlyEnabled := make(map[string]struct{})
 	if group != nil && group.CustomModelsListEnabled() {
@@ -60,6 +62,9 @@ func FilterCodexModelIDsForGroup(modelIDs []string, group *Group) []string {
 			continue
 		}
 		if isCodexDedicatedMediaModel(modelID) {
+			continue
+		}
+		if strings.Contains(modelID, "*") {
 			continue
 		}
 		if strings.HasPrefix(modelID, codexAutoModelPrefix) {
@@ -2046,6 +2051,17 @@ func buildCodexModelsManifestCacheKey(request codexModelsManifestRequest) string
 	return fmt.Sprintf("%x", hasher.Sum(nil))
 }
 
+func cloneCodexModelsManifest(manifest *CodexModelsManifest) *CodexModelsManifest {
+	if manifest == nil {
+		return nil
+	}
+	cloned := *manifest
+	if manifest.Body != nil {
+		cloned.Body = append([]byte(nil), manifest.Body...)
+	}
+	return &cloned
+}
+
 func codexModelsManifestForClient(manifest *CodexModelsManifest, ifNoneMatch string) *CodexModelsManifest {
 	if manifest == nil {
 		return nil
@@ -2053,7 +2069,7 @@ func codexModelsManifestForClient(manifest *CodexModelsManifest, ifNoneMatch str
 	if codexModelsManifestETagMatches(ifNoneMatch, manifest.ETag) {
 		return &CodexModelsManifest{ETag: manifest.ETag, NotModified: true}
 	}
-	return manifest
+	return cloneCodexModelsManifest(manifest)
 }
 
 func codexModelsManifestETagMatches(ifNoneMatch, etag string) bool {
