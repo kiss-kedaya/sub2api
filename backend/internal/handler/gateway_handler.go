@@ -1188,7 +1188,7 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	}
 	if platform == service.PlatformComposite {
 		availableModels := h.compositeAvailableModels(ctx, groupID)
-		fallbackModels := defaultModelIDsForPlatform(service.PlatformComposite)
+		fallbackModels := defaultCodexModelIDsForPlatform(service.PlatformComposite)
 		if group.CustomModelsListEnabled() {
 			return filterModelsByCustomList(availableModels, fallbackModels, group.ModelsListConfig.Models)
 		}
@@ -1199,7 +1199,7 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	}
 
 	availableModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
-	fallbackModels := defaultModelIDsForPlatform(platform)
+	fallbackModels := defaultCodexModelIDsForPlatform(platform)
 	if group.CustomModelsListEnabled() {
 		return filterModelsByCustomList(
 			customModelsListSource(platform, availableModels, fallbackModels),
@@ -1422,6 +1422,15 @@ func customModelsListAllowsModel(availablePatterns []string, model string) bool 
 		}
 	}
 	return false
+}
+
+func defaultCodexModelIDsForPlatform(platform string) []string {
+	switch platform {
+	case service.PlatformDeepseek:
+		return []string{"deepseek-v4-pro", "deepseek-v4-flash"}
+	default:
+		return defaultModelIDsForPlatform(platform)
+	}
 }
 
 func defaultModelIDsForPlatform(platform string) []string {
