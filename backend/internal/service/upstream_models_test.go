@@ -617,7 +617,7 @@ func TestSyncUpstreamModelCatalogPrefersDirectUpstreamMetadata(t *testing.T) {
 			"display_name":"Upstream Display",
 			"description":"Upstream description",
 			"default_reasoning_level":"high",
-			"supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}],
+			"supported_reasoning_levels":[{"effort":"low"},{"effort":"high"},{"effort":"ultra"}],
 			"input_modalities":["text","image"],
 			"context_window":256000
 		}]}`)),
@@ -634,9 +634,57 @@ func TestSyncUpstreamModelCatalogPrefersDirectUpstreamMetadata(t *testing.T) {
 	metadata := catalog.Metadata["custom-thinking-model"]
 	require.Equal(t, "Upstream Display", metadata.DisplayName)
 	require.Equal(t, "high", metadata.DefaultReasoningLevel)
-	require.Equal(t, []string{"low", "high"}, metadata.SupportedReasoningLevels)
+	require.Equal(t, []string{"low", "high", "ultra"}, metadata.SupportedReasoningLevels)
 	require.Equal(t, []string{"text", "image"}, metadata.InputModalities)
 	require.Equal(t, int64(256_000), metadata.ContextWindow)
+}
+
+// Scenario: 上游 /models 增删型号后，正式同步用最新清单替换能力快照。
+func TestSyncUpstreamModelCatalogReplacesSnapshotWhenUpstreamModelsChange(t *testing.T) {
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"data":[
+				{"id":"old-model","reasoning":false,"input_modalities":["text"],"context_window":128000},
+				{"id":"kept-model","reasoning":false,"input_modalities":["text"],"context_window":128000}
+			]}`)),
+		},
+		{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"data":[
+				{"id":"kept-model","reasoning":false,"input_modalities":["text"],"context_window":128000},
+				{"id":"new-model","reasoning":false,"input_modalities":["text"],"context_window":256000}
+			]}`)),
+		},
+	}}
+	repo := &upstreamModelMetadataRepoStub{}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream, cfg: upstreamModelSyncTestConfig()}
+	account := &Account{
+		ID: 101, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "key",
+			"base_url": "https://provider.example/v1",
+		},
+	}
+
+	first, err := svc.SyncUpstreamModelCatalog(context.Background(), account)
+	require.NoError(t, err)
+	require.Equal(t, []string{"kept-model", "old-model"}, first.Models)
+
+	second, err := svc.SyncUpstreamModelCatalog(context.Background(), account)
+	require.NoError(t, err)
+	require.Equal(t, []string{"kept-model", "new-model"}, second.Models)
+	require.NotContains(t, second.Metadata, "old-model")
+	require.Contains(t, second.Metadata, "new-model")
+
+	encoded, err := json.Marshal(repo.updates[UpstreamModelMetadataExtraKey])
+	require.NoError(t, err)
+	var snapshot UpstreamModelMetadataSnapshot
+	require.NoError(t, json.Unmarshal(encoded, &snapshot))
+	require.NotContains(t, snapshot.Models, "old-model")
+	require.Contains(t, snapshot.Models, "new-model")
 }
 
 // Scenario: 上游明确声明无推理能力时保存 false。
