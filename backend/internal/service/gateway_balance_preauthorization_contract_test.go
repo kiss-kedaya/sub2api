@@ -134,7 +134,7 @@ func TestDuplicateUsageTaskTransferRemainsRunnableWithStaleGuard(t *testing.T) {
 	require.False(t, duplicateGuard.IsCurrentOwner())
 }
 
-func TestApplyUsageBillingObservedProviderSpendWithoutUsageSettlesHold(t *testing.T) {
+func TestApplyUsageBillingZeroUsageRefundsHold(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	handlerGuard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
 	require.NoError(t, err)
@@ -142,40 +142,52 @@ func TestApplyUsageBillingObservedProviderSpendWithoutUsageSettlesHold(t *testin
 	require.True(t, ok)
 
 	usageLog, params, deps := guardedUsageBillingParams(0)
-	params.ObservedProviderSpend = true
+	usageLog.InputTokens = 0
+	usageLog.OutputTokens = 0
 	repo := &guardedUsageBillingApplyRepoStub{result: &UsageBillingApplyResult{Applied: false}}
 	ctx := ContextWithBalancePreauthorizationGuard(context.Background(), workerGuard)
 	_, err = applyUsageBilling(ctx, "request-1", usageLog, params, deps, repo)
 
 	require.NoError(t, err)
 	require.NotNil(t, repo.lastCmd)
-	require.InDelta(t, handlerGuard.HoldAmount(), repo.lastCmd.BalanceCost, 1e-12)
-	require.InDelta(t, handlerGuard.HoldAmount(), usageLog.ActualCost, 1e-12)
-	require.InDelta(t, handlerGuard.HoldAmount(), fixture.wallet.lastActual, 1e-12)
-	require.Zero(t, fixture.wallet.refundCalls)
-}
-
-func TestApplyUsageBillingZeroUsageWithoutObservedSpendRefundsHold(t *testing.T) {
-	fixture := newPreauthorizationFixture()
-	handlerGuard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
-	require.NoError(t, err)
-	workerGuard, ok := handlerGuard.TransferToWorker()
-	require.True(t, ok)
-
-	usageLog, params, deps := guardedUsageBillingParams(0)
-	repo := &guardedUsageBillingApplyRepoStub{result: &UsageBillingApplyResult{Applied: false}}
-	ctx := ContextWithBalancePreauthorizationGuard(context.Background(), workerGuard)
-	_, err = applyUsageBilling(ctx, "request-1", usageLog, params, deps, repo)
-
-	require.NoError(t, err)
-	require.NotNil(t, repo.lastCmd)
+	require.Greater(t, handlerGuard.HoldAmount(), 0.0)
 	require.Zero(t, repo.lastCmd.BalanceCost)
 	require.Zero(t, usageLog.ActualCost)
 	require.Equal(t, 1, fixture.wallet.refundCalls)
 	require.Zero(t, fixture.wallet.finalizeCalls)
 }
 
-func TestApplyUsageBillingObservedSpendKeepsTrulyFreeZeroHoldFree(t *testing.T) {
+func TestApplyUsageBillingZeroUsageRefundsStreamingTopUps(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	fixture.calculator.outputUnitPrice = 0.001
+	handlerGuard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
+	require.NoError(t, err)
+	initialHold := handlerGuard.HoldAmount()
+
+	for i := 0; i < 24; i++ {
+		require.NoError(t, handlerGuard.ObserveStreamingOutput(context.Background(), 64))
+	}
+	require.Greater(t, handlerGuard.HoldAmount(), initialHold)
+	require.Greater(t, fixture.wallet.topUpCalls, 0)
+
+	workerGuard, ok := handlerGuard.TransferToWorker()
+	require.True(t, ok)
+	usageLog, params, deps := guardedUsageBillingParams(0)
+	usageLog.InputTokens = 0
+	usageLog.OutputTokens = 0
+	repo := &guardedUsageBillingApplyRepoStub{result: &UsageBillingApplyResult{Applied: false}}
+	ctx := ContextWithBalancePreauthorizationGuard(context.Background(), workerGuard)
+
+	_, err = applyUsageBilling(ctx, "request-1", usageLog, params, deps, repo)
+
+	require.NoError(t, err)
+	require.Zero(t, repo.lastCmd.BalanceCost)
+	require.Zero(t, usageLog.ActualCost)
+	require.Equal(t, 1, fixture.wallet.refundCalls)
+	require.Zero(t, fixture.wallet.finalizeCalls)
+}
+
+func TestApplyUsageBillingKeepsTrulyFreeZeroHoldFree(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	fixture.calculator.zero = true
 	handlerGuard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
@@ -185,7 +197,6 @@ func TestApplyUsageBillingObservedSpendKeepsTrulyFreeZeroHoldFree(t *testing.T) 
 	require.True(t, ok)
 
 	usageLog, params, deps := guardedUsageBillingParams(0)
-	params.ObservedProviderSpend = true
 	repo := &guardedUsageBillingApplyRepoStub{result: &UsageBillingApplyResult{Applied: false}}
 	ctx := ContextWithBalancePreauthorizationGuard(context.Background(), workerGuard)
 	_, err = applyUsageBilling(ctx, "request-1", usageLog, params, deps, repo)

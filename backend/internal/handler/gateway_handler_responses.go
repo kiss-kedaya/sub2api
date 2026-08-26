@@ -319,25 +319,23 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, partial.UpstreamModel)
-			observedSpend := observedProviderSpend(err, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward)
 			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-					Result:                partial,
-					ObservedProviderSpend: observedSpend,
-					QuotaPlatform:         quotaPlatform,
-					APIKey:                apiKey,
-					User:                  apiKey.User,
-					Account:               account,
-					Subscription:          subscription,
-					PricingAt:             pricingAt,
-					InboundEndpoint:       inboundEndpoint,
-					UpstreamEndpoint:      upstreamEndpoint,
-					UserAgent:             userAgent,
-					IPAddress:             clientIP,
-					RequestPayloadHash:    requestPayloadHash,
-					APIKeyService:         h.apiKeyService,
-					SessionID:             sessionID,
-					ChannelUsageFields:    channelUsageFields,
+					Result:             partial,
+					QuotaPlatform:      quotaPlatform,
+					APIKey:             apiKey,
+					User:               apiKey.User,
+					Account:            account,
+					Subscription:       subscription,
+					PricingAt:          pricingAt,
+					InboundEndpoint:    inboundEndpoint,
+					UpstreamEndpoint:   upstreamEndpoint,
+					UserAgent:          userAgent,
+					IPAddress:          clientIP,
+					RequestPayloadHash: requestPayloadHash,
+					APIKeyService:      h.apiKeyService,
+					SessionID:          sessionID,
+					ChannelUsageFields: channelUsageFields,
 				}); err != nil {
 					reqLog.Error("gateway.responses.record_usage_failed",
 						zap.Int64("account_id", account.ID),

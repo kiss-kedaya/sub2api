@@ -18,13 +18,6 @@ func TestShouldRecordStandaloneCyberUsage(t *testing.T) {
 	require.False(t, shouldRecordStandaloneCyberUsage(nil, false), "successful forwarding never needs the error-only record")
 }
 
-func TestObservedProviderSpendRequiresSuccessOrSemanticOutput(t *testing.T) {
-	forwardErr := errors.New("upstream disconnected")
-	require.True(t, observedProviderSpend(nil, false))
-	require.True(t, observedProviderSpend(forwardErr, true))
-	require.False(t, observedProviderSpend(forwardErr, false))
-}
-
 // newTestGinContext builds a bare gin.Context backed by an httptest recorder.
 func newTestGinContext() *gin.Context {
 	gin.SetMode(gin.TestMode)

@@ -171,16 +171,15 @@ func TestPreserveOpenAIStreamingResultOnError_DropsFailoverAndZeroUsage(t *testi
 }
 
 // TestPreserveOpenAIStreamingResultOnError_KeepsTopUpAbort 证明流式补扣失败主动中止
-// （ErrBalanceWithholdingFailed）即使无 observed usage 也保留 result，使已交付输出进入
-// 结算（handler observedSpend=true → applyObservedProviderSpendFloor 按已扣 hold 结算），
-// 而非返回 nil 走 defer 全额退款的免费漏扣。
+// （ErrBalanceWithholdingFailed）即使无 observed usage 也保留 result，使请求进入
+// 统一计费任务。若上游未返回 usage，actual=0 必须释放预扣。
 func TestPreserveOpenAIStreamingResultOnError_KeepsTopUpAbort(t *testing.T) {
 	// 无 observed usage（终帧未到）但补扣中止：必须保留，避免免费漏扣。
 	result := &OpenAIForwardResult{}
 	abortErr := wrapStreamOutputHoldTopUpFailure(ErrBalanceWithholdingFailed)
 	kept, err := preserveOpenAIStreamingResultOnError(result, abortErr)
 	require.Error(t, err)
-	require.Same(t, result, kept, "top-up abort must keep the result so delivered output settles at hold")
+	require.Same(t, result, kept, "top-up abort must keep the result for unified zero-usage settlement")
 
 	// result==nil 时无可结算对象，仍返回 nil（不构造伪结果）。
 	kept, err = preserveOpenAIStreamingResultOnError(nil, abortErr)
