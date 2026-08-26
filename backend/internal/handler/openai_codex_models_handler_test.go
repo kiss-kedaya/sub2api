@@ -17,6 +17,7 @@ import (
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 type codexModelsFailoverAccountRepo struct {
@@ -193,6 +194,96 @@ func TestCodexModelsAppliesLocalFiltersBeforeClientETag(t *testing.T) {
 	if third.Body.Len() != 0 {
 		t.Fatalf("third body: got %q, want empty", third.Body.String())
 	}
+}
+
+func TestCodexModelsAPIKeyCacheDoesNotLeakGroupFilters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &codexModelsFailoverAccountRepo{accounts: []service.Account{
+		{
+			ID:          1,
+			Name:        "shared-api-key",
+			Platform:    service.PlatformOpenAI,
+			Type:        service.AccountTypeAPIKey,
+			Status:      service.StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"api_key":  "sk-shared",
+				"base_url": "https://upstream.example/v1",
+			},
+		},
+	}}
+	upstream := &codexModelsFailoverHTTPUpstream{
+		firstBody: `{"object":"list","data":[{"id":"model-a"},{"id":"model-b"}]}`,
+	}
+	gatewayService := service.NewOpenAIGatewayService(
+		repo,
+		nil, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeSimple}, nil, nil, nil, nil, nil,
+		upstream,
+		nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	handler := &OpenAIGatewayHandler{gatewayService: gatewayService}
+	groupA := &service.Group{
+		ID:       91,
+		Platform: service.PlatformOpenAI,
+		ModelsListConfig: service.GroupModelsListConfig{
+			Enabled: true,
+			Models:  []string{"model-a"},
+		},
+	}
+	groupB := &service.Group{
+		ID:       92,
+		Platform: service.PlatformOpenAI,
+		ModelsListConfig: service.GroupModelsListConfig{
+			Enabled: true,
+			Models:  []string{"model-b"},
+		},
+	}
+
+	firstA := performCodexModelsRequestForGroup(t, handler, groupA, "")
+	require.Equal(t, http.StatusOK, firstA.Code, firstA.Body.String())
+	require.Equal(t, []string{"model-a"}, codexHandlerManifestSlugs(t, firstA))
+
+	firstB := performCodexModelsRequestForGroup(t, handler, groupB, "")
+	require.Equal(t, http.StatusOK, firstB.Code, firstB.Body.String())
+	require.Equal(t, []string{"model-b"}, codexHandlerManifestSlugs(t, firstB))
+
+	etagA := firstA.Header().Get("ETag")
+	require.NotEmpty(t, etagA)
+
+	var wg sync.WaitGroup
+	results := make([]*httptest.ResponseRecorder, 8)
+	for i := range results {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			if index%2 == 0 {
+				results[index] = performCodexModelsRequestForGroup(t, handler, groupA, etagA)
+				return
+			}
+			results[index] = performCodexModelsRequestForGroup(t, handler, groupB, "")
+		}(i)
+	}
+	wg.Wait()
+
+	sawGroupB := false
+	for _, recorder := range results {
+		require.NotNil(t, recorder)
+		switch recorder.Code {
+		case http.StatusNotModified:
+			require.Empty(t, recorder.Body.Bytes())
+		case http.StatusOK:
+			slugs := codexHandlerManifestSlugs(t, recorder)
+			if len(slugs) == 1 && slugs[0] == "model-b" {
+				sawGroupB = true
+				continue
+			}
+			require.Equal(t, []string{"model-a"}, slugs)
+		default:
+			t.Fatalf("unexpected status %d body=%s", recorder.Code, recorder.Body.String())
+		}
+	}
+	require.True(t, sawGroupB)
 }
 
 // Scenario: OpenAI 分组内混用 OAuth 和第三方 API Key 时，管理员模型配置优先。
@@ -483,6 +574,24 @@ func performCodexModelsRequestForGroup(t *testing.T, handler *OpenAIGatewayHandl
 
 	handler.CodexModels(c)
 	return recorder
+}
+
+func codexHandlerManifestSlugs(t *testing.T, recorder *httptest.ResponseRecorder) []string {
+	t.Helper()
+
+	var envelope struct {
+		Models []struct {
+			Slug string `json:"slug"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode body: %v; body=%s", err, recorder.Body.String())
+	}
+	slugs := make([]string, 0, len(envelope.Models))
+	for _, model := range envelope.Models {
+		slugs = append(slugs, model.Slug)
+	}
+	return slugs
 }
 
 func requireCompleteCodexModelsHandlerResponse(t *testing.T, recorder *httptest.ResponseRecorder, slug string) {
