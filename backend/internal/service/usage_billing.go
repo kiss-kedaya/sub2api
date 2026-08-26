@@ -118,6 +118,15 @@ func QuantizeUsageBillingAmount(v float64) float64 {
 	return quantized
 }
 
+// canonicalUsageActualCost returns the exact database charge scale while the
+// detailed pricing components retain their higher diagnostic precision.
+func canonicalUsageActualCost(cost *CostBreakdown) float64 {
+	if cost == nil {
+		return 0
+	}
+	return QuantizeUsageBillingAmount(cost.ActualCost)
+}
+
 func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 	if c == nil {
 		return ""
