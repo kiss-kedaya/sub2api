@@ -81,7 +81,7 @@ func TestOpenAIRequestBodyHasToolsPreservesSingleObjectInputCompatibility(t *tes
 	body := []byte(`{"input":{"type":"additional_tools","tools":[{"type":"function","name":"spawn_agent"}]},"parallel_tool_calls":false}`)
 
 	require.True(t, openAIRequestBodyHasTools(body))
-	normalized, changed, err := normalizeOpenAIParallelToolCallsWithoutTools(body)
+	normalized, changed, err := normalizeOpenAIParallelToolCallsWithoutTools(body, false)
 	require.NoError(t, err)
 	require.False(t, changed)
 	require.Equal(t, body, normalized)
