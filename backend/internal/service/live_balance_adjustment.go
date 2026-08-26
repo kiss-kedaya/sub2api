@@ -21,6 +21,8 @@ const (
 
 var liveBalanceAdjustmentFallbackSequence atomic.Uint64
 
+var errLiveBalanceWalletNotInitialized = errors.New("live balance wallet is not initialized")
+
 // ApplyExternalBalanceAdjustment publishes one already-committed, non-usage
 // balance delta to the persistent Redis wallet. The legacy short-lived balance
 // cache is invalidated first so a later wallet initialization does not reuse a
@@ -74,6 +76,8 @@ func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustment(
 	switch result.Outcome {
 	case LiveBalanceOutcomeApplied, LiveBalanceOutcomeIdempotent:
 		return nil
+	case LiveBalanceOutcomeNotFound:
+		return fmt.Errorf("%w: user_id=%d", errLiveBalanceWalletNotInitialized, event.UserID)
 	case LiveBalanceOutcomeConflict:
 		return fmt.Errorf(
 			"live balance outbox watermark conflict: user_id=%d event_id=%d predecessor_id=%d",
