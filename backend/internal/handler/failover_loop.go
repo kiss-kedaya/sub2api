@@ -49,10 +49,6 @@ const (
 	// 取值与 maxAccountSwitches 默认值一致：混合定价的大分组仍有充分重选机会，
 	// 同时把整池越线时的无谓选号开销限制在常数级。
 	maxProfitVetoAttempts = 10
-	// A single-account capacity pool may be retried briefly after the account
-	// is exhausted.  Fill scheduling must not turn that special case into a
-	// 1024-switch, multi-minute loop.
-	maxFillSingleAccountBackoffs = 3
 	// fillSchedulingSafetySwitchLimit is an emergency guard for the production
 	// fill-scheduling loops.  The configured max_account_switches value used to
 	// be a hard stop, which could return before the scheduler had tried all
@@ -192,9 +188,8 @@ type FailoverState struct {
 	// SwitchCount 也不前进的活锁。清空后必须把它们放回排除集。
 	profitVetoedAccountIDs map[int64]struct{}
 	// profitVetoCount 本次请求累计的利润否决次数，用于 maxProfitVetoAttempts 上限。
-	profitVetoCount       int
-	fillScheduling        bool
-	selectionBackoffCount int
+	profitVetoCount int
+	fillScheduling  bool
 }
 
 // NewFailoverState 创建 failover 状态
@@ -353,6 +348,14 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 	if ctx.Err() != nil {
 		return FailoverCanceled
 	}
+	// Fill scheduling already applies each account's explicit same-account
+	// retry budget in HandleFailoverError and keeps failed accounts excluded.
+	// Clearing that exclusion set here silently revisits the same account after
+	// its configured budget (including an explicit zero) is exhausted. Once the
+	// candidate query is empty, the pool has therefore reached its real end.
+	if s.fillScheduling {
+		return FailoverExhausted
+	}
 
 	if s.LastFailoverErr != nil &&
 		s.LastFailoverErr.StatusCode == http.StatusServiceUnavailable &&
@@ -364,13 +367,6 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 		// real failure is required to preserve the existing profit-gate recovery
 		// behavior.
 		(len(s.FailedAccountIDs) <= 1 || s.hasMixedProfitVetoExclusions()) {
-		if s.fillScheduling && s.selectionBackoffCount >= maxFillSingleAccountBackoffs {
-			return FailoverExhausted
-		}
-		if s.fillScheduling {
-			s.selectionBackoffCount++
-		}
-
 		// 排除列表全由利润门否决贡献时，清空后会被原样恢复：退避重试拿不到
 		// 任何新候选，而利润否决不推进 SwitchCount，退避条件将永远成立。
 		// 这里直接判定耗尽，避免每 2s 空转一轮的活锁。
