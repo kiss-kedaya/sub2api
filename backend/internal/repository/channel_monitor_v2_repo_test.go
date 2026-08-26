@@ -183,14 +183,36 @@ func TestChannelMonitorV2ErrorAggregationResolvesCompositePlatform(t *testing.T)
 	require.Contains(t, query, "a.platform")
 }
 
-func TestChannelMonitorV2UsageSuccessExcludesCyberBillingRows(t *testing.T) {
+func TestChannelMonitorV2UsageSamplesUseSubstantialStreamingTextRequests(t *testing.T) {
 	for _, query := range []string{channelMonitorV2UsageMetricsSQL, channelMonitorV2UserMetricsSQL} {
-		require.Contains(t, query, "COALESCE(ul.request_type, 0) NOT IN (4, 6)")
-		require.Contains(t, query, "ul.actual_cost > 0")
+		for _, condition := range []string{
+			"ul.actual_cost > 0",
+			"ul.stream IS TRUE",
+			"COALESCE(ul.request_type, 0) NOT IN (4, 6)",
+			"COALESCE(ul.billing_mode, 'token') <> 'image'",
+			"COALESCE(ul.image_count, 0) = 0",
+			"COALESCE(ul.image_input_tokens, 0) = 0",
+			"COALESCE(ul.image_output_tokens, 0) = 0",
+			"COALESCE(ul.input_tokens, 0)",
+			"COALESCE(ul.cache_creation_tokens, 0)",
+			"COALESCE(ul.cache_read_tokens, 0) > 10000",
+		} {
+			require.Contains(t, query, condition)
+		}
 	}
 	require.Contains(t, channelMonitorV2PlatformSQL, "g.platform = 'composite'")
 	require.Contains(t, channelMonitorV2PlatformSQL, "a.platform")
-	require.Contains(t, channelMonitorV2HistogramSQL, "ul.actual_cost > 0")
+	require.Contains(t, channelMonitorV2HistogramSQL, channelMonitorV2UsageSampleFilterUL)
+}
+
+func TestChannelMonitorV2ErrorSamplesExcludeNonStreamingAndImageRequests(t *testing.T) {
+	for _, condition := range []string{
+		"current_error.stream IS TRUE",
+		"COALESCE(current_error.request_type, 0) NOT IN (4, 6)",
+		"NOT LIKE '/v1/images%'",
+	} {
+		require.Contains(t, channelMonitorV2ErrorAggregationSQL, condition)
+	}
 }
 
 func TestChannelMonitorV2RatesUseCoveredWindow(t *testing.T) {
