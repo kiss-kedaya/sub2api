@@ -1423,22 +1423,46 @@ func TestNormalizeCacheCreationBreakdown_BillingSafetyInvariant(t *testing.T) {
 			want1h: 60,
 		},
 		{
-			name:   "negative details clamped",
+			name:   "absent 5m detail unchanged",
+			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation1hTokens: 60},
+			want5m: 0,
+			want1h: 60,
+		},
+		{
+			name:   "absent 1h detail unchanged",
+			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: 30},
+			want5m: 30,
+			want1h: 0,
+		},
+		{
+			name:   "negative detail clamped",
+			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: -50, CacheCreation1hTokens: 60},
+			want5m: 0,
+			want1h: 60,
+		},
+		{
+			name:   "negative detail cannot hide oversized positive detail",
 			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: -50, CacheCreation1hTokens: 150},
 			want5m: 0,
 			want1h: 100,
 		},
 		{
-			name:   "zero aggregate keeps available detail",
-			tokens: UsageTokens{CacheCreation5mTokens: 90, CacheCreation1hTokens: 60},
-			want5m: 90,
-			want1h: 60,
+			name:   "integer boundary details capped without overflow",
+			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: maxInt, CacheCreation1hTokens: maxInt},
+			want5m: 50,
+			want1h: 50,
 		},
 		{
-			name:   "large integer details remain bounded",
+			name:   "integer boundary aggregate avoids float conversion overflow",
 			tokens: UsageTokens{CacheCreationTokens: maxInt, CacheCreation5mTokens: maxInt, CacheCreation1hTokens: 1},
 			want5m: maxInt,
 			want1h: 0,
+		},
+		{
+			name:   "zero aggregate unchanged",
+			tokens: UsageTokens{CacheCreation5mTokens: 90, CacheCreation1hTokens: 60},
+			want5m: 90,
+			want1h: 60,
 		},
 	}
 
@@ -1451,16 +1475,28 @@ func TestNormalizeCacheCreationBreakdown_BillingSafetyInvariant(t *testing.T) {
 	}
 }
 
-func TestComputeCacheCreationCost_PreservesAggregateFallback(t *testing.T) {
+func TestComputeCacheCreationCost_PreservesZeroDetailFallback(t *testing.T) {
 	svc := &BillingService{}
 	pricing := &ModelPricing{
 		SupportsCacheBreakdown: true,
 		CacheCreation5mPrice:   4e-6,
 		CacheCreation1hPrice:   5e-6,
 	}
+	tests := []struct {
+		name   string
+		tokens UsageTokens
+	}{
+		{name: "zero details", tokens: UsageTokens{CacheCreationTokens: 100}},
+		{name: "one negative detail", tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: -25}},
+		{name: "both negative details", tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: -25, CacheCreation1hTokens: -75}},
+	}
 
-	cost := svc.computeCacheCreationCost(pricing, UsageTokens{CacheCreationTokens: 100}, 0, 1)
-	require.InDelta(t, 100*4e-6, cost, 1e-12)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cost := svc.computeCacheCreationCost(pricing, tt.tokens, 0, 1)
+			require.InDelta(t, 100*4e-6, cost, 1e-12)
+		})
+	}
 }
 
 func TestCalculateCost_LargeTokenCount(t *testing.T) {
