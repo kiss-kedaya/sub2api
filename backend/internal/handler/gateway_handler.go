@@ -921,6 +921,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			// 提交 usage 记录。成功路径与"流中断但 Forward 已观测到 usage 的部分结果"
 			// 错误路径共用：后者若不入账，上游已计量的请求会完全漏记漏计费（#5148）。
 			submitForwardUsage := func(result *service.ForwardResult) {
+				// Failover errors can legitimately return no usage result. In that case
+				// there is nothing to persist, and dereferencing result would turn an
+				// upstream failure into a request-level panic.
+				if result == nil {
+					return
+				}
 				// 捕获请求信息（用于异步记录，避免在 goroutine 中访问 gin.Context）
 				userAgent := c.GetHeader("User-Agent")
 				clientIP := ip.GetClientIP(c)
