@@ -80,6 +80,10 @@ func (s *RedeemCodeRepoSuite) TestCreateBatch() {
 
 	err := s.repo.CreateBatch(s.ctx, codes)
 	s.Require().NoError(err, "CreateBatch")
+	s.Require().NotZero(codes[0].ID)
+	s.Require().NotZero(codes[1].ID)
+	s.Require().False(codes[0].CreatedAt.IsZero())
+	s.Require().False(codes[1].CreatedAt.IsZero())
 
 	got1, err := s.repo.GetByCode(s.ctx, "BATCH-1")
 	s.Require().NoError(err)

@@ -79,7 +79,8 @@ type stubAdminService struct {
 		sortOrder string
 		calls     int
 	}
-	mu sync.Mutex
+	lastGenerateRedeemCodesInput *service.GenerateRedeemCodesInput
+	mu                           sync.Mutex
 }
 
 func newStubAdminService() *stubAdminService {
@@ -698,6 +699,10 @@ func (s *stubAdminService) GetRedeemCode(ctx context.Context, id int64) (*servic
 }
 
 func (s *stubAdminService) GenerateRedeemCodes(ctx context.Context, input *service.GenerateRedeemCodesInput) ([]service.RedeemCode, error) {
+	if input != nil {
+		copied := *input
+		s.lastGenerateRedeemCodesInput = &copied
+	}
 	return s.redeems, nil
 }
 

@@ -3,16 +3,38 @@ package admin
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRedeemGenerationStoredResponseLimitCoversMaximumBatch(t *testing.T) {
+	now := time.Now().UTC()
+	out := make([]dto.AdminRedeemCode, 0, service.MaxRedeemCodesPerBatch)
+	for i := 0; i < service.MaxRedeemCodesPerBatch; i++ {
+		code := service.RedeemCode{
+			ID:        int64(i + 1),
+			Code:      fmt.Sprintf("%032d", i),
+			Type:      service.RedeemTypeBalance,
+			Value:     10,
+			Status:    service.StatusUnused,
+			CreatedAt: now,
+		}
+		out = append(out, *dto.RedeemCodeFromServiceAdmin(&code))
+	}
+
+	raw, err := json.Marshal(out)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(raw), redeemGenerationStoredResponseLimit)
+}
 
 // newCreateAndRedeemHandler creates a RedeemHandler with a non-nil (but minimal)
 // RedeemService so that CreateAndRedeem's nil guard passes and we can test the

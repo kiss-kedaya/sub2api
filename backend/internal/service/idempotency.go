@@ -79,14 +79,16 @@ func DefaultIdempotencyConfig() IdempotencyConfig {
 }
 
 type IdempotencyExecuteOptions struct {
-	Scope          string
-	ActorScope     string
-	Method         string
-	Route          string
-	IdempotencyKey string
-	Payload        any
-	TTL            time.Duration
-	RequireKey     bool
+	Scope                  string
+	ActorScope             string
+	Method                 string
+	Route                  string
+	IdempotencyKey         string
+	Payload                any
+	TTL                    time.Duration
+	RequireKey             bool
+	MaxStoredResponseLen   int
+	PreserveStoredResponse bool
 }
 
 type IdempotencyExecuteResult struct {
@@ -417,7 +419,7 @@ func (c *IdempotencyCoordinator) Execute(
 		return nil, execErr
 	}
 
-	storedBody, marshalErr := c.marshalStoredResponse(data)
+	storedBody, marshalErr := c.marshalStoredResponseWithOptions(data, opts.MaxStoredResponseLen, opts.PreserveStoredResponse)
 	if marshalErr != nil {
 		RecordIdempotencyStoreUnavailable(opts.Route, opts.Scope, "marshal_response_error")
 		logIdempotencyAudit(opts.Route, opts.Scope, keyHash, "processing->store_unavailable", false, map[string]string{
@@ -449,15 +451,26 @@ func (c *IdempotencyCoordinator) conflictWithRetryAfter(base *infraerrors.Applic
 }
 
 func (c *IdempotencyCoordinator) marshalStoredResponse(data any) (string, error) {
+	return c.marshalStoredResponseWithOptions(data, 0, false)
+}
+
+func (c *IdempotencyCoordinator) marshalStoredResponseWithOptions(data any, overrideLimit int, preserve bool) (string, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return "", err
 	}
-	redacted := logredact.RedactText(string(raw))
-	if c.cfg.MaxStoredResponseLen > 0 && len(redacted) > c.cfg.MaxStoredResponseLen {
-		redacted = truncateUTF8(redacted, c.cfg.MaxStoredResponseLen) + "...(truncated)"
+	stored := string(raw)
+	if !preserve {
+		stored = logredact.RedactText(stored)
 	}
-	return redacted, nil
+	limit := c.cfg.MaxStoredResponseLen
+	if overrideLimit > 0 {
+		limit = overrideLimit
+	}
+	if limit > 0 && len(stored) > limit {
+		stored = truncateUTF8(stored, limit) + "...(truncated)"
+	}
+	return stored, nil
 }
 
 func truncateUTF8(s string, maxBytes int) string {

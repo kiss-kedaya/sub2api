@@ -202,8 +202,8 @@ func (s *RedeemService) GenerateCodes(ctx context.Context, req GenerateCodesRequ
 		return nil, errors.New("value must not be zero")
 	}
 
-	if req.Count > 1000 {
-		return nil, errors.New("cannot generate more than 1000 codes at once")
+	if req.Count > MaxRedeemCodesPerBatch {
+		return nil, fmt.Errorf("cannot generate more than %d codes at once", MaxRedeemCodesPerBatch)
 	}
 
 	codeType := req.Type

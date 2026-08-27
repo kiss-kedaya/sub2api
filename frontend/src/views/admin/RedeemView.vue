@@ -48,7 +48,7 @@
               <Icon name="edit" size="md" class="mr-2" />
               {{ t('admin.redeem.batchUpdate') }}
             </button>
-            <button @click="showGenerateDialog = true" class="btn btn-primary">
+            <button data-test="generate-open" @click="showGenerateDialog = true" class="btn btn-primary">
               {{ t('admin.redeem.generateCodes') }}
             </button>
           </div>
@@ -282,7 +282,7 @@
           <h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
             {{ t('admin.redeem.generateCodesTitle') }}
           </h2>
-          <form @submit.prevent="handleGenerateCodes" class="space-y-4">
+          <form data-test="generate-form" @submit.prevent="handleGenerateCodes" class="space-y-4">
             <div>
               <label class="input-label">{{ t('admin.redeem.codeType') }}</label>
               <Select v-model="generateForm.type" :options="typeOptions" />
@@ -388,10 +388,11 @@
             <div>
               <label class="input-label">{{ t('admin.redeem.count') }}</label>
               <input
+                data-test="generate-count"
                 v-model.number="generateForm.count"
                 type="number"
                 min="1"
-                max="100"
+                :max="MAX_REDEEM_CODES_PER_BATCH"
                 required
                 class="input"
               />
@@ -638,6 +639,8 @@ import Icon from '@/components/icons/Icon.vue'
 const { t } = useI18n()
 const appStore = useAppStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
+
+const MAX_REDEEM_CODES_PER_BATCH = 1000
 
 interface GroupOption {
   value: number
