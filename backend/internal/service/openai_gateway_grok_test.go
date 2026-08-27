@@ -398,7 +398,7 @@ func TestSanitizeGrokResponsesToolsRemovesDeferredFlagsWithToolSearch(t *testing
 func TestSanitizeGrokResponsesToolsSimplifiesInvalidRootUnion(t *testing.T) {
 	body := []byte(`{"tools":[
 		{"type":"function","name":"mcp__codex_app__automation_update","strict":true,"parameters":{"oneOf":[{"type":"object","properties":{"id":{"type":"string"}}},{"type":"null"}]}},
-		{"type":"function","name":"object_only","strict":true,"parameters":{"anyOf":[{"type":"object","properties":{"a":{"type":"string"}}},{"type":"object","properties":{"b":{"type":"integer"}}}]}}
+		{"type":"function","name":"object_only","strict":true,"parameters":{"type":"object","anyOf":[{"type":"object","properties":{"a":{"type":"string"}}},{"type":"object","properties":{"b":{"type":"integer"}}}]}}
 	]}`)
 
 	patched, err := sanitizeGrokResponsesTools(body)
@@ -415,6 +415,40 @@ func TestSanitizeGrokResponsesToolsSimplifiesInvalidRootUnion(t *testing.T) {
 	objectOnly := gjson.GetBytes(patched, `tools.#(name=="object_only")`)
 	require.True(t, objectOnly.Get("parameters.anyOf").Exists())
 	require.Equal(t, gjson.True, objectOnly.Get("strict").Type)
+}
+
+func TestPatchGrokResponsesBodySimplifiesTypedInvalidRootUnion(t *testing.T) {
+	body := []byte(`{
+		"model":"grok-4.6",
+		"metadata":{"session_id":"abc"},
+		"tools":[{
+			"type":"namespace",
+			"name":"mcp__codex_app",
+			"tools":[{
+				"type":"function",
+				"name":"automation_update",
+				"strict":true,
+				"parameters":{
+					"type":"object",
+					"oneOf":[{"$ref":"#/$defs/update"},{"type":"null"}],
+					"$defs":{"update":{"type":"object","properties":{"id":{"type":"string"}}}}
+				}
+			}]
+		}]
+	}`)
+
+	patched, _, err := patchGrokResponsesBodyWithClientTools(body, "grok-4.6")
+	require.NoError(t, err)
+	require.True(t, json.Valid(patched))
+	require.False(t, gjson.GetBytes(patched, "metadata").Exists())
+
+	tool := gjson.GetBytes(patched, `tools.#(name=="mcp__codex_app__automation_update")`)
+	require.Equal(t, "object", tool.Get("parameters.type").String())
+	require.True(t, tool.Get("parameters.properties").IsObject())
+	require.True(t, tool.Get("parameters.additionalProperties").Bool())
+	require.False(t, tool.Get("parameters.oneOf").Exists())
+	require.False(t, tool.Get("parameters.$defs").Exists())
+	require.Equal(t, gjson.False, tool.Get("strict").Type)
 }
 
 func TestSanitizeGrokResponsesToolsKeepsToolChoiceOnlyWithSupportedTools(t *testing.T) {
