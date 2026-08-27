@@ -114,26 +114,20 @@ func sameAccountRetryAllowed(failoverErr *service.UpstreamFailoverError, retryCo
 	if failoverErr == nil || !failoverErr.RetryableOnSameAccount {
 		return false
 	}
-	if !sameAccountRetryDeadlineAllows(failoverErr) {
+	// The account setting is the attempt budget. A deadline only shortens the
+	// time in which those attempts may start; it must never turn an explicit
+	// zero into an unbounded retry loop.
+	if retryLimit <= 0 || !sameAccountRetryDeadlineAllows(failoverErr) {
 		return false
 	}
 	// Error-specific caps (Grok capacity/stream-idle) remain hard limits even
 	// when the error also carries a freshly reconstructed deadline.
 	if failoverErr.SameAccountRetryMax > 0 {
-		if retryLimit <= 0 {
-			return false
-		}
 		if failoverErr.SameAccountRetryMax < retryLimit {
 			retryLimit = failoverErr.SameAccountRetryMax
 		}
-		return retryCount < retryLimit
 	}
-	// OAuth 429 explicitly opts into a deadline window. It is intentionally not
-	// bounded by the ordinary/default pool retry count.
-	if !failoverErr.SameAccountRetryDeadline.IsZero() {
-		return true
-	}
-	return retryLimit > 0 && retryCount < retryLimit
+	return retryCount < retryLimit
 }
 
 // sameAccountRetryDeadlineAllows prevents a retry from starting after the
