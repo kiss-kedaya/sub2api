@@ -1057,6 +1057,8 @@ var grokResponsesSupportedToolTypes = map[string]struct{}{
 	"x_search":           {},
 }
 
+const grokSafeFunctionParameters = `{"type":"object","properties":{},"additionalProperties":true}`
+
 func sanitizeGrokResponsesTools(body []byte) ([]byte, error) {
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.Exists() {
@@ -1091,6 +1093,19 @@ func sanitizeGrokResponsesTools(body []byte) ([]byte, error) {
 					return nil, err
 				}
 				raw = encoded
+				toolsChanged = true
+			} else if toolType == "function" && grokFunctionParametersHaveInvalidUnionRoot(tool.Get("parameters")) {
+				var err error
+				raw, err = sjson.SetRawBytes(raw, "parameters", []byte(grokSafeFunctionParameters))
+				if err != nil {
+					return nil, err
+				}
+				if strict := tool.Get("strict"); strict.Exists() && strict.Bool() {
+					raw, err = sjson.SetBytes(raw, "strict", false)
+					if err != nil {
+						return nil, err
+					}
+				}
 				toolsChanged = true
 			}
 			filteredTools = append(filteredTools, raw)
@@ -1141,6 +1156,29 @@ func sanitizeGrokResponsesTools(body []byte) ([]byte, error) {
 		}
 	}
 	return body, nil
+}
+
+func grokFunctionParametersHaveInvalidUnionRoot(parameters gjson.Result) bool {
+	if !parameters.Exists() || !parameters.IsObject() ||
+		strings.EqualFold(strings.TrimSpace(parameters.Get("type").String()), "object") {
+		return false
+	}
+	for _, keyword := range []string{"anyOf", "oneOf"} {
+		branches := parameters.Get(keyword)
+		if !branches.IsArray() {
+			continue
+		}
+		values := branches.Array()
+		if len(values) == 0 {
+			continue
+		}
+		for _, branch := range values {
+			if !strings.EqualFold(strings.TrimSpace(branch.Get("type").String()), "object") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func grokRawToolsContainType(tools []json.RawMessage, want string) bool {

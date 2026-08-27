@@ -395,6 +395,28 @@ func TestSanitizeGrokResponsesToolsRemovesDeferredFlagsWithToolSearch(t *testing
 	require.True(t, gjson.GetBytes(patched, `tools.#(name=="apply_patch")`).Exists())
 }
 
+func TestSanitizeGrokResponsesToolsSimplifiesInvalidRootUnion(t *testing.T) {
+	body := []byte(`{"tools":[
+		{"type":"function","name":"mcp__codex_app__automation_update","strict":true,"parameters":{"oneOf":[{"type":"object","properties":{"id":{"type":"string"}}},{"type":"null"}]}},
+		{"type":"function","name":"object_only","strict":true,"parameters":{"anyOf":[{"type":"object","properties":{"a":{"type":"string"}}},{"type":"object","properties":{"b":{"type":"integer"}}}]}}
+	]}`)
+
+	patched, err := sanitizeGrokResponsesTools(body)
+	require.NoError(t, err)
+	require.True(t, json.Valid(patched))
+
+	mixed := gjson.GetBytes(patched, `tools.#(name=="mcp__codex_app__automation_update")`)
+	require.Equal(t, "object", mixed.Get("parameters.type").String())
+	require.True(t, mixed.Get("parameters.properties").IsObject())
+	require.True(t, mixed.Get("parameters.additionalProperties").Bool())
+	require.False(t, mixed.Get("parameters.oneOf").Exists())
+	require.Equal(t, gjson.False, mixed.Get("strict").Type)
+
+	objectOnly := gjson.GetBytes(patched, `tools.#(name=="object_only")`)
+	require.True(t, objectOnly.Get("parameters.anyOf").Exists())
+	require.Equal(t, gjson.True, objectOnly.Get("strict").Type)
+}
+
 func TestSanitizeGrokResponsesToolsKeepsToolChoiceOnlyWithSupportedTools(t *testing.T) {
 	t.Parallel()
 
