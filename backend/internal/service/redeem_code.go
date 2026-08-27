@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const MaxRedeemCodesPerBatch = 1000
+
 type RedeemCode struct {
 	ID        int64
 	Code      string

@@ -488,6 +488,42 @@ func TestIdempotencyCoordinator_TruncatedStoredResponseRemainsUTF8(t *testing.T)
 	require.Contains(t, *stored.ResponseBody, "...(truncated)")
 }
 
+func TestIdempotencyCoordinator_PerRequestResponseLimitSupportsReplay(t *testing.T) {
+	repo := newInMemoryIdempotencyRepo()
+	cfg := DefaultIdempotencyConfig()
+	cfg.MaxStoredResponseLen = 32
+	coordinator := NewIdempotencyCoordinator(repo, cfg)
+
+	opts := IdempotencyExecuteOptions{
+		Scope:                  "test.scope.large_response",
+		Method:                 "POST",
+		Route:                  "/api/v1/admin/redeem-codes/generate",
+		ActorScope:             "admin:1",
+		RequireKey:             true,
+		IdempotencyKey:         "large-redeem-response",
+		Payload:                map[string]any{"count": 1000},
+		MaxStoredResponseLen:   1024,
+		PreserveStoredResponse: true,
+	}
+	executions := 0
+	execute := func(context.Context) (any, error) {
+		executions++
+		return map[string]any{"code": strings.Repeat("a", 256)}, nil
+	}
+
+	first, err := coordinator.Execute(context.Background(), opts, execute)
+	require.NoError(t, err)
+	require.False(t, first.Replayed)
+
+	second, err := coordinator.Execute(context.Background(), opts, execute)
+	require.NoError(t, err)
+	require.True(t, second.Replayed)
+	require.Equal(t, 1, executions)
+	replayed, ok := second.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, strings.Repeat("a", 256), replayed["code"])
+}
+
 func TestDefaultIdempotencyCoordinatorAndTTLs(t *testing.T) {
 	SetDefaultIdempotencyCoordinator(nil)
 	require.Nil(t, DefaultIdempotencyCoordinator())

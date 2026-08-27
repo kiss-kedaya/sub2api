@@ -34,7 +34,7 @@ func NewRedeemHandler(adminService service.AdminService, redeemService *service.
 
 // GenerateRedeemCodesRequest represents generate redeem codes request
 type GenerateRedeemCodesRequest struct {
-	Count         int        `json:"count" binding:"required,min=1,max=100"`
+	Count         int        `json:"count" binding:"required,min=1,max=1000"`
 	Type          string     `json:"type" binding:"required,oneof=balance concurrency subscription invitation"`
 	Value         float64    `json:"value"`
 	GroupID       *int64     `json:"group_id"`      // 订阅类型必填
@@ -42,6 +42,8 @@ type GenerateRedeemCodesRequest struct {
 	ExpiresAt     *time.Time `json:"expires_at"`
 	ExpiresInDays *int       `json:"expires_in_days" binding:"omitempty,min=1,max=3650"`
 }
+
+const redeemGenerationStoredResponseLimit = 512 * 1024
 
 // CreateAndRedeemCodeRequest represents creating a fixed code and redeeming it for a target user.
 // Type 为 omitempty 而非 required 是为了向后兼容旧版调用方（不传 type 时默认 balance）。
@@ -142,7 +144,9 @@ func (h *RedeemHandler) Generate(c *gin.Context) {
 		return
 	}
 
-	executeAdminIdempotentJSON(c, "admin.redeem_codes.generate", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+	// Generated codes are the response payload and already exist in redeem_codes.
+	// Preserve this response exactly so an idempotent replay returns the same codes.
+	executeAdminIdempotentJSONWithResponseStorage(c, "admin.redeem_codes.generate", req, service.DefaultWriteIdempotencyTTL(), redeemGenerationStoredResponseLimit, true, func(ctx context.Context) (any, error) {
 		codes, execErr := h.adminService.GenerateRedeemCodes(ctx, &service.GenerateRedeemCodesInput{
 			Count:        req.Count,
 			Type:         req.Type,
