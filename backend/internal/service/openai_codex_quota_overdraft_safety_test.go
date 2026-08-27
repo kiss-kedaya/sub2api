@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -57,13 +58,87 @@ func TestCodexQuotaOverdraftRejectsClientSuppliedMarker(t *testing.T) {
 		CodexQuotaOverdraftBusinessInjectionEnabled: true,
 	}}}
 	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
-	body := []byte(`{"model":"gpt-5.5","input":[{"type":"custom_tool_call","call_id":"call_sub2api_overdraft_fake"},{"type":"message","role":"user"}]}`)
+	body := []byte(`{"model":"gpt-5.5","input":[{"type":"custom_tool_call","name":"exec","call_id":"call_sub2api_overdraft_fake","input":"{}"},{"type":"custom_tool_call_output","call_id":"call_sub2api_overdraft_fake","output":"ok"},{"type":"message","role":"user"}]}`)
 	got := svc.prepareCodexQuotaOverdraftBody(ctx, codexOverdraftTestAccount(time.Now().Add(time.Hour)), false, body)
 	if !codexQuotaOverdraftWasInjected(ctx, 42) {
 		t.Fatal("only a server-generated marker should establish business evidence")
 	}
 	if len(got) <= len(body) {
 		t.Fatal("a client marker must not suppress the server-generated pair")
+	}
+}
+
+func TestCodexQuotaOverdraftInjectionUsesCompletedCustomToolPair(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":"hello"}]}`)
+	updated, changed, err := injectCodexQuotaOverdraft(body)
+	if err != nil {
+		t.Fatalf("injectCodexQuotaOverdraft() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("expected payload injection")
+	}
+
+	var document struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(updated, &document); err != nil {
+		t.Fatalf("decode injected payload: %v", err)
+	}
+	if len(document.Input) != 3 {
+		t.Fatalf("input length = %d, want 3", len(document.Input))
+	}
+	call, output := document.Input[1], document.Input[2]
+	if call["type"] != "custom_tool_call" || output["type"] != "custom_tool_call_output" {
+		t.Fatalf("unexpected pair types: call=%v output=%v", call["type"], output["type"])
+	}
+	if call["name"] != codexQuotaOverdraftToolName || call["status"] != "completed" {
+		t.Fatalf("unexpected custom call shape: %#v", call)
+	}
+	if call["input"] != codexQuotaOverdraftExecInput {
+		t.Fatalf("custom input = %v", call["input"])
+	}
+	if _, exists := call["arguments"]; exists {
+		t.Fatal("custom call must not contain legacy arguments")
+	}
+	if output["call_id"] != call["call_id"] {
+		t.Fatalf("pair call IDs differ: call=%v output=%v", call["call_id"], output["call_id"])
+	}
+	if _, exists := output["status"]; exists {
+		t.Fatal("custom tool output must not contain status")
+	}
+}
+
+func TestCodexQuotaOverdraftInjectionRecognizesCompleteLegacyAndCustomPairs(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		callType   string
+		outputType string
+		inputField string
+	}{
+		{name: "custom", callType: "custom_tool_call", outputType: "custom_tool_call_output", inputField: `"input":"{}"`},
+		{name: "legacy", callType: "function_call", outputType: "function_call_output", inputField: `"arguments":"{}"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"input":[{"type":"message","role":"user"},{"type":"` + tc.callType + `","name":"exec","call_id":"call_sub2api_overdraft_known",` + tc.inputField + `},{"type":"` + tc.outputType + `","call_id":"call_sub2api_overdraft_known","output":"ok"}]}`)
+			updated, changed, err := injectCodexQuotaOverdraft(body)
+			if err != nil {
+				t.Fatalf("injectCodexQuotaOverdraft() error = %v", err)
+			}
+			if changed || string(updated) != string(body) {
+				t.Fatalf("complete %s pair was injected twice: %s", tc.name, updated)
+			}
+		})
+	}
+}
+
+func TestCodexQuotaOverdraftInjectionDoesNotTrustOrphanCall(t *testing.T) {
+	body := []byte(`{"input":[{"type":"custom_tool_call","name":"exec","call_id":"call_sub2api_overdraft_orphan","input":"{}"},{"type":"message","role":"user"}]}`)
+	updated, changed, err := injectCodexQuotaOverdraft(body)
+	if err != nil {
+		t.Fatalf("injectCodexQuotaOverdraft() error = %v", err)
+	}
+	if !changed || len(updated) <= len(body) {
+		t.Fatal("an orphan marker must not suppress a complete server pair")
 	}
 }
 
