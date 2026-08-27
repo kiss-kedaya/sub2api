@@ -692,6 +692,9 @@ func estimateOpenAIInputTokensForInputItems(codec tokenizer.Codec, items []apico
 		if err := countText(item.Arguments); err != nil {
 			return 0, err
 		}
+		if err := countText(item.Input); err != nil {
+			return 0, err
+		}
 		if err := countText(item.Output); err != nil {
 			return 0, err
 		}

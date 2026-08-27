@@ -241,6 +241,21 @@ func TestEstimateOpenAIInputTokens_RequestSamples(t *testing.T) {
 	}
 }
 
+func TestEstimateOpenAIInputTokensCountsCustomToolInput(t *testing.T) {
+	withoutInput := openAIInputTokensCountRequest{
+		Model: "gpt-5.4",
+		Input: json.RawMessage(`[{"type":"custom_tool_call","call_id":"call_1","name":"exec"}]`),
+	}
+	withInput := withoutInput
+	withInput.Input = json.RawMessage(`[{"type":"custom_tool_call","call_id":"call_1","name":"exec","input":"a deliberately long custom tool payload that must be counted"}]`)
+
+	base, err := estimateOpenAIInputTokens(withoutInput)
+	require.NoError(t, err)
+	got, err := estimateOpenAIInputTokens(withInput)
+	require.NoError(t, err)
+	require.Greater(t, got, base, "custom_tool_call.input must contribute to the local token estimate")
+}
+
 func TestEstimateGrokCountTokens_AnthropicRequests(t *testing.T) {
 	cases := []struct {
 		name string

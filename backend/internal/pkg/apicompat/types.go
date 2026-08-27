@@ -270,10 +270,11 @@ type ResponsesInputItem struct {
 	// type=reasoning (multi-turn replay of encrypted reasoning)
 	EncryptedContent string `json:"encrypted_content,omitempty"`
 
-	// type=function_call
+	// type=function_call or type=custom_tool_call
 	CallID    string `json:"call_id,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
+	Input     string `json:"input,omitempty"`
 	ID        string `json:"id,omitempty"`
 
 	// type=function_call_output
