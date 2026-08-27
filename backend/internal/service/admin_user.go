@@ -1243,6 +1243,12 @@ func (s *adminServiceImpl) GetRedeemCode(ctx context.Context, id int64) (*Redeem
 }
 
 func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *GenerateRedeemCodesInput) ([]RedeemCode, error) {
+	if input == nil || input.Count < 1 {
+		return nil, errors.New("count must be greater than 0")
+	}
+	if input.Count > MaxRedeemCodesPerBatch {
+		return nil, fmt.Errorf("cannot generate more than %d codes at once", MaxRedeemCodesPerBatch)
+	}
 	if input.ExpiresAt != nil && !input.ExpiresAt.After(time.Now()) {
 		return nil, ErrRedeemCodeExpired
 	}
@@ -1283,10 +1289,10 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 				code.ValidityDays = 30 // 默认30天
 			}
 		}
-		if err := s.redeemCodeRepo.Create(ctx, &code); err != nil {
-			return nil, err
-		}
 		codes = append(codes, code)
+	}
+	if err := s.redeemCodeRepo.CreateBatch(ctx, codes); err != nil {
+		return nil, fmt.Errorf("create batch redeem codes: %w", err)
 	}
 	return codes, nil
 }
