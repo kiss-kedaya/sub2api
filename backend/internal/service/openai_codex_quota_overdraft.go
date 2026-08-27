@@ -16,6 +16,7 @@ import (
 
 const (
 	codexQuotaOverdraftCallIDPrefix  = "call_sub2api_overdraft_"
+	codexQuotaOverdraftToolName      = "exec"
 	codexQuotaOverdraftExecInput     = `const r = await tools.exec_command({"cmd":"true","yield_time_ms":1000,"max_output_tokens":1000}); text(r.output);`
 	codexQuotaOverdraftMaxBodyBytes  = 32 << 20
 	codexQuotaOverdraftPrearmPercent = 95
@@ -356,6 +357,7 @@ type codexQuotaOverdraftInputItem struct {
 	Type   string `json:"type"`
 	Role   string `json:"role"`
 	CallID string `json:"call_id"`
+	Name   string `json:"name"`
 }
 
 func codexQuotaOverdraftBodyHasInjection(body []byte) bool {
@@ -367,35 +369,42 @@ func codexQuotaOverdraftBodyHasInjection(body []byte) bool {
 }
 
 func codexQuotaOverdraftInputHasInjection(input []json.RawMessage) bool {
-	for _, raw := range input {
-		var item codexQuotaOverdraftInputItem
-		if err := json.Unmarshal(raw, &item); err == nil &&
-			item.Type == "custom_tool_call" &&
-			strings.HasPrefix(item.CallID, codexQuotaOverdraftCallIDPrefix) {
-			return true
-		}
-	}
-	return false
+	return len(codexQuotaOverdraftInputInjectionIDs(input)) > 0
 }
 
-func codexQuotaOverdraftInputInjectionIDs(body []byte) []string {
+func codexQuotaOverdraftBodyInjectionIDs(body []byte) []string {
 	var document codexQuotaOverdraftDocument
 	if len(body) == 0 || json.Unmarshal(body, &document) != nil {
 		return nil
 	}
+	return codexQuotaOverdraftInputInjectionIDs(document.Input)
+}
+
+// codexQuotaOverdraftInputInjectionIDs recognizes only complete adjacent tool
+// pairs. This keeps retries idempotent across the current custom-tool wire
+// shape and the legacy function-call shape without trusting an orphan marker.
+func codexQuotaOverdraftInputInjectionIDs(input []json.RawMessage) []string {
 	ids := make([]string, 0, 1)
-	for _, raw := range document.Input {
-		var item codexQuotaOverdraftInputItem
-		if err := json.Unmarshal(raw, &item); err == nil && item.Type == "custom_tool_call" &&
-			strings.HasPrefix(item.CallID, codexQuotaOverdraftCallIDPrefix) {
-			ids = append(ids, item.CallID)
+	for i := 0; i+1 < len(input); i++ {
+		var call, output codexQuotaOverdraftInputItem
+		if json.Unmarshal(input[i], &call) != nil || json.Unmarshal(input[i+1], &output) != nil {
+			continue
+		}
+		customPair := call.Type == "custom_tool_call" && output.Type == "custom_tool_call_output"
+		legacyPair := call.Type == "function_call" && output.Type == "function_call_output"
+		if (customPair || legacyPair) &&
+			call.Name == codexQuotaOverdraftToolName &&
+			call.CallID == output.CallID &&
+			strings.HasPrefix(call.CallID, codexQuotaOverdraftCallIDPrefix) {
+			ids = append(ids, call.CallID)
+			i++
 		}
 	}
 	return ids
 }
 
 func codexQuotaOverdraftBodyHasKnownInjection(ctx context.Context, body []byte) bool {
-	for _, callID := range codexQuotaOverdraftInputInjectionIDs(body) {
+	for _, callID := range codexQuotaOverdraftBodyInjectionIDs(body) {
 		if codexQuotaOverdraftCallIDKnown(ctx, callID) {
 			return true
 		}
@@ -425,7 +434,7 @@ func injectCodexQuotaOverdraftForRequest(body []byte, knownCallID func(string) b
 		return body, false, "", nil
 	}
 
-	for _, id := range codexQuotaOverdraftInputInjectionIDs(body) {
+	for _, id := range codexQuotaOverdraftBodyInjectionIDs(body) {
 		if knownCallID != nil && knownCallID(id) {
 			return body, false, id, nil
 		}
@@ -442,9 +451,10 @@ func injectCodexQuotaOverdraftForRequest(body []byte, knownCallID func(string) b
 	}
 	call, err := json.Marshal(map[string]any{
 		"type":    "custom_tool_call",
-		"name":    "exec",
+		"name":    codexQuotaOverdraftToolName,
 		"call_id": callID,
 		"input":   codexQuotaOverdraftExecInput,
+		"status":  "completed",
 	})
 	if err != nil {
 		return body, false, "", nil
