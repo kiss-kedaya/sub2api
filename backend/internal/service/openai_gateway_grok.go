@@ -1159,8 +1159,7 @@ func sanitizeGrokResponsesTools(body []byte) ([]byte, error) {
 }
 
 func grokFunctionParametersHaveInvalidUnionRoot(parameters gjson.Result) bool {
-	if !parameters.Exists() || !parameters.IsObject() ||
-		strings.EqualFold(strings.TrimSpace(parameters.Get("type").String()), "object") {
+	if !parameters.Exists() || !parameters.IsObject() {
 		return false
 	}
 	for _, keyword := range []string{"anyOf", "oneOf"} {
