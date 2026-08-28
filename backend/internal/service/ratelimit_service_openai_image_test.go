@@ -120,7 +120,11 @@ func TestOpenAIGatewayServiceForwardImages_ImageRateLimitReturnsFailoverAndCools
 	require.Equal(t, openAIImageGenerationRateLimitKey, repo.modelRateLimitCalls[0].scope)
 }
 
-func TestOpenAIGatewayServiceForwardImages_TextFallbackCoolsImageCapability(t *testing.T) {
+// issue #6171：上游"回文字没回图"是**这一轮**的结果（模型选择了说话），不是账号能力
+// 失效。它同时被判为可重试（502）并驱动 failover，若还写 30 分钟账号级冷却，一次闲聊
+// 回复就会沿号池把每个被重试到的账号依次冷却掉。冷却仍保留给结构化上游证据，见
+// TestOpenAIGatewayServiceForwardImages_StructuredUnavailableCoolsImageCapability。
+func TestOpenAIGatewayServiceForwardImages_TextFallbackDoesNotCoolImageCapability(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &modelNotFoundAccountRepoStub{}
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
@@ -154,7 +158,6 @@ func TestOpenAIGatewayServiceForwardImages_TextFallbackCoolsImageCapability(t *t
 		},
 	}
 
-	before := time.Now()
 	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
 
 	require.Nil(t, result)
@@ -162,6 +165,56 @@ func TestOpenAIGatewayServiceForwardImages_TextFallbackCoolsImageCapability(t *t
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.False(t, failoverErr.RetryableOnSameAccount)
+	// 换号行为不变：该判据仍足以放弃本账号重试这一次请求……
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	// ……但不再写任何账号级状态，否则重试会把冷却一路刷到整个号池。
+	require.Empty(t, repo.modelRateLimitCalls,
+		"模型回文字只说明这一轮没出图，不构成账号 30 分钟不可用的证据")
+}
+
+// 对照不变式：上游 error 帧点名 image_generation_unavailable 时仍写冷却，
+// 保证 #6171 的修复没有把这项能力保护整个废掉。
+func TestOpenAIGatewayServiceForwardImages_StructuredUnavailableCoolsImageCapability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &modelNotFoundAccountRepoStub{}
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
+	upstreamSSE := "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"r\",\"error\":" +
+		"{\"type\":\"upstream_error\",\"code\":\"image_generation_unavailable\"," +
+		"\"message\":\"image generation tool is not available for this account\"}}}\n\n"
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{
+		accountRepo: repo,
+		httpUpstream: &httpUpstreamRecorder{
+			resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(upstreamSSE)),
+			},
+		},
+	}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	account := &Account{
+		ID:       206,
+		Name:     "openai-oauth",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token-123",
+		},
+	}
+
+	before := time.Now()
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+
+	require.Nil(t, result)
+	require.Error(t, err)
 	require.Len(t, repo.modelRateLimitCalls, 1)
 	call := repo.modelRateLimitCalls[0]
 	require.Equal(t, account.ID, call.accountID)
