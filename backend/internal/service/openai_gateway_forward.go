@@ -182,6 +182,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
+		normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
+		if reasoningErr != nil {
+			return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
+		}
+		if reasoningChanged {
+			body = normalizedReasoningBody
+			originalBody = normalizedReasoningBody
+			requestView = newOpenAIRequestView(normalizedReasoningBody)
+			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
+			originalModel = reqModel
+		}
 		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
 		if sanitizeErr != nil {
 			return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs: %w", sanitizeErr)
