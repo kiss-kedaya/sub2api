@@ -55,6 +55,69 @@ func buildOpenAIResponsesURLForPlatform(platform string, base string) string {
 	return buildOpenAIResponsesURL(base)
 }
 
+func shouldPreserveOpenAIResponsesNoneReasoningEffort(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	if account.IsOpenAIOAuthLike() {
+		return true
+	}
+	if !account.IsOpenAIApiKey() {
+		return false
+	}
+	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+	return baseURL == "" || isOfficialOpenAIModelsBaseURL(baseURL)
+}
+
+// Codex 0.149.0 needs a single advertised effort to directly select a visible
+// non-reasoning model. Treat that catalog-only "none" value as omission for
+// compatible upstreams, while preserving official OpenAI request semantics.
+func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body []byte) ([]byte, error) {
+	if len(body) == 0 || shouldPreserveOpenAIResponsesNoneReasoningEffort(account) {
+		return body, nil
+	}
+
+	out := body
+	for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
+		effort := gjson.GetBytes(out, path)
+		if effort.Type != gjson.String || !strings.EqualFold(strings.TrimSpace(effort.String()), "none") {
+			continue
+		}
+		next, err := sjson.DeleteBytes(out, path)
+		if err != nil {
+			return body, fmt.Errorf("strip %s none placeholder: %w", path, err)
+		}
+		out = next
+	}
+	if reasoning := gjson.GetBytes(out, "reasoning"); reasoning.IsObject() && len(reasoning.Map()) == 0 {
+		next, err := sjson.DeleteBytes(out, "reasoning")
+		if err != nil {
+			return body, fmt.Errorf("strip empty reasoning object: %w", err)
+		}
+		out = next
+	}
+	return out, nil
+}
+
+func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body map[string]any) {
+	if body == nil || shouldPreserveOpenAIResponsesNoneReasoningEffort(account) {
+		return
+	}
+	if effort, ok := body["reasoning_effort"].(string); ok && strings.EqualFold(strings.TrimSpace(effort), "none") {
+		delete(body, "reasoning_effort")
+	}
+	reasoning, ok := body["reasoning"].(map[string]any)
+	if !ok {
+		return
+	}
+	if effort, ok := reasoning["effort"].(string); ok && strings.EqualFold(strings.TrimSpace(effort), "none") {
+		delete(reasoning, "effort")
+	}
+	if len(reasoning) == 0 {
+		delete(body, "reasoning")
+	}
+}
+
 // normalizeDeepSeekResponsesRequestBody 适配 DeepSeek 无状态 Responses 端点：
 // 强制 store=false 并清除 previous_response_id（官方 /responses 不支持服务端
 // 状态存储，携带这些字段会被拒绝）。非 deepseek responses 协议账号原样返回。
@@ -393,6 +456,67 @@ func openAIRequestBodyHasTools(body []byte) bool {
 		}
 	}
 	return false
+}
+
+// normalizeOpenAIResponsesReasoningContentReplay removes non-portable
+// reasoning.content arrays before history is sent to a real OpenAI Responses
+// endpoint. Compatible providers may return visible reasoning blocks there,
+// while OpenAI accepts only an empty array when the item is replayed.
+//
+// Keep the reasoning item and its portable fields (summary, encrypted_content,
+// ids, and opaque extensions). Callers scope this normalization to OpenAI
+// destinations; compatible providers may still consume their own content.
+func normalizeOpenAIResponsesReasoningContentReplay(body []byte) ([]byte, bool, error) {
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return body, false, nil
+	}
+
+	needsNormalization := false
+	input.ForEach(func(_, item gjson.Result) bool {
+		if strings.TrimSpace(item.Get("type").String()) != "reasoning" {
+			return true
+		}
+		content := item.Get("content")
+		if content.IsArray() && len(content.Array()) > 0 {
+			needsNormalization = true
+			return false
+		}
+		return true
+	})
+	if !needsNormalization {
+		return body, false, nil
+	}
+
+	var reqBody map[string]any
+	if err := decodeOpenAIJSONUseNumber(body, &reqBody); err != nil {
+		return body, false, fmt.Errorf("normalize OpenAI reasoning content replay: %w", err)
+	}
+	items, ok := reqBody["input"].([]any)
+	if !ok {
+		return body, false, nil
+	}
+	changed := false
+	for _, rawItem := range items {
+		item, ok := rawItem.(map[string]any)
+		if !ok || strings.TrimSpace(firstNonEmptyString(item["type"])) != "reasoning" {
+			continue
+		}
+		content, ok := item["content"].([]any)
+		if !ok || len(content) == 0 {
+			continue
+		}
+		delete(item, "content")
+		changed = true
+	}
+	if !changed {
+		return body, false, nil
+	}
+	normalized, err := marshalOpenAIUpstreamJSON(reqBody)
+	if err != nil {
+		return body, false, fmt.Errorf("serialize normalized OpenAI reasoning content replay: %w", err)
+	}
+	return normalized, true, nil
 }
 
 func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body []byte, knownStoreFalse bool) ([]byte, bool, error) {
@@ -954,6 +1078,12 @@ func normalizeOpenAIResponsesWebSocketCompatibilityBody(body []byte, account *Ac
 		if err != nil {
 			return body, false, err
 		}
+	}
+	if next, normalizedReasoningContent, err := normalizeOpenAIResponsesReasoningContentReplay(normalized); err != nil {
+		return body, false, err
+	} else if normalizedReasoningContent {
+		normalized = next
+		changed = true
 	}
 	if account.IsOpenAIApiKey() {
 		if next, normalizedParallel, err := normalizeOpenAIParallelToolCallsWithoutTools(normalized, responsesLite); err != nil {
