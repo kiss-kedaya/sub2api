@@ -222,3 +222,120 @@ func TestOpenAIGatewayServiceForwardImages_StructuredUnavailableCoolsImageCapabi
 	require.Equal(t, openAIImagesOAuthUnavailableReason, call.reason)
 	require.WithinDuration(t, before.Add(openAIImagesOAuthUnavailableCooldown), call.resetAt, time.Second)
 }
+
+func TestOpenAIGatewayServiceForwardImages_CapabilityLossCoolsImageScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &modelNotFoundAccountRepoStub{}
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
+	errorBody := `{"error":{"message":"Tool choice 'image_generation' not found in 'tools' parameter.","param":"tool_choice","type":"invalid_request_error"}}`
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{
+		rateLimitService: &RateLimitService{accountRepo: repo},
+		httpUpstream: &httpUpstreamRecorder{
+			resp: &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{"X-Request-Id": []string{"req_img_capability_lost"}},
+				Body:       io.NopCloser(strings.NewReader(errorBody)),
+			},
+		},
+	}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	account := &Account{
+		ID:       205,
+		Name:     "openai-oauth",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token-123",
+		},
+	}
+
+	before := time.Now()
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	call := repo.modelRateLimitCalls[0]
+	require.Equal(t, account.ID, call.accountID)
+	require.Equal(t, openAIImageGenerationRateLimitKey, call.scope)
+	require.Equal(t, openAIImageCapabilityLossReason, call.reason)
+	require.WithinDuration(t, before.Add(openAIImageCapabilityLossCooldown), call.resetAt, time.Second)
+}
+
+func TestOpenAIGatewayServiceHandleUpstreamError_PassthroughCapabilityLossDoesNotCool(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &OpenAIGatewayService{rateLimitService: &RateLimitService{accountRepo: repo}}
+	account := &Account{ID: 206, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	body := []byte(`{"error":{"message":"Tool choice 'image_generation' not found in 'tools' parameter.","param":"tool_choice","type":"invalid_request_error"}}`)
+
+	disabled := svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusBadRequest, http.Header{}, body, "gpt-5.5")
+
+	require.False(t, disabled)
+	require.Empty(t, repo.modelRateLimitCalls)
+	_, wholeAccountBlocked := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.False(t, wholeAccountBlocked)
+}
+
+func TestRateLimitServiceHandleOpenAIImageCapabilityLoss_IgnoresGenericBadRequest(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &RateLimitService{accountRepo: repo}
+	account := &Account{ID: 207, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	body := []byte(`{"error":{"message":"Invalid type for input[0].arguments"}}`)
+
+	handled := svc.HandleOpenAIImageCapabilityLoss(context.Background(), account, http.StatusBadRequest, body)
+
+	require.False(t, handled)
+	require.Empty(t, repo.modelRateLimitCalls)
+}
+
+func TestRateLimitServiceHandleOpenAIImageCapabilityLoss_RespectsPlatformAndErrorCodePolicy(t *testing.T) {
+	body := []byte(`{"error":{"message":"Tool choice 'image_generation' not found in 'tools' parameter.","param":"tool_choice","type":"invalid_request_error"}}`)
+
+	t.Run("non_openai_platform", func(t *testing.T) {
+		repo := &modelNotFoundAccountRepoStub{}
+		svc := &RateLimitService{accountRepo: repo}
+		account := &Account{ID: 208, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+
+		handled := svc.HandleOpenAIImageCapabilityLoss(context.Background(), account, http.StatusBadRequest, body)
+
+		require.False(t, handled)
+		require.Empty(t, repo.modelRateLimitCalls)
+	})
+
+	t.Run("custom_error_code_policy_excludes_400", func(t *testing.T) {
+		repo := &modelNotFoundAccountRepoStub{}
+		svc := &RateLimitService{accountRepo: repo}
+		account := &Account{
+			ID:       209,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"custom_error_codes_enabled": true,
+				"custom_error_codes":         []any{float64(http.StatusTooManyRequests)},
+			},
+		}
+
+		require.False(t, account.ShouldHandleErrorCode(http.StatusBadRequest))
+		handled := svc.HandleOpenAIImageCapabilityLoss(context.Background(), account, http.StatusBadRequest, body)
+
+		require.False(t, handled)
+		require.Empty(t, repo.modelRateLimitCalls)
+	})
+}
+
+func TestIsOpenAIImageCapabilityLossError(t *testing.T) {
+	capabilityLossBody := []byte(`{"error":{"message":"Tool choice 'image_generation' not found in 'tools' parameter.","param":"tool_choice","type":"invalid_request_error"}}`)
+	genericBadRequestBody := []byte(`{"error":{"message":"Invalid type for input[0].arguments"}}`)
+
+	require.True(t, isOpenAIImageCapabilityLossError(http.StatusBadRequest, capabilityLossBody))
+	require.False(t, isOpenAIImageCapabilityLossError(http.StatusBadRequest, genericBadRequestBody))
+	require.False(t, isOpenAIImageCapabilityLossError(http.StatusTooManyRequests, capabilityLossBody))
+}
