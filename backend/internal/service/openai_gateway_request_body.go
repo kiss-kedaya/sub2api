@@ -1350,6 +1350,65 @@ func extractOpenAIReasoningEffortFromBody(body []byte, modelCandidates ...string
 	return &value
 }
 
+func explicitRequestedReasoningEffortFromBody(body []byte) string {
+	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
+	if raw == "" {
+		raw = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(gjson.GetBytes(body, "output_config.effort").String())
+	}
+	return raw
+}
+
+// CanonicalRequestedReasoningEffort extracts the client-requested effort before
+// group policy rewriting and before model-family remapping (max -> xhigh).
+// Empty or unknown values return nil. "max" is preserved even for models that
+// later persist "xhigh".
+func CanonicalRequestedReasoningEffort(body []byte, modelCandidates ...string) *string {
+	if raw := explicitRequestedReasoningEffortFromBody(body); raw != "" {
+		canonical := NormalizeMaxReasoningEffort(raw)
+		if canonical == "" {
+			return nil
+		}
+		return &canonical
+	}
+	for _, model := range modelCandidates {
+		if value := canonicalReasoningEffortFromModelSuffix(model); value != "" {
+			return &value
+		}
+	}
+	if model := strings.TrimSpace(gjson.GetBytes(body, "model").String()); model != "" {
+		if value := canonicalReasoningEffortFromModelSuffix(model); value != "" {
+			return &value
+		}
+	}
+	return nil
+}
+
+func canonicalReasoningEffortFromModelSuffix(model string) string {
+	if strings.TrimSpace(model) == "" {
+		return ""
+	}
+	modelID := strings.TrimSpace(model)
+	if strings.Contains(modelID, "/") {
+		parts := strings.Split(modelID, "/")
+		modelID = parts[len(parts)-1]
+	}
+	parts := strings.FieldsFunc(strings.ToLower(modelID), func(r rune) bool {
+		switch r {
+		case '-', '_', ' ':
+			return true
+		default:
+			return false
+		}
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	return NormalizeMaxReasoningEffort(parts[len(parts)-1])
+}
+
 func extractOpenAIServiceTier(reqBody map[string]any) *string {
 	if reqBody == nil {
 		return nil
@@ -2017,6 +2076,31 @@ func extractOpenAIReasoningEffort(reqBody map[string]any, modelCandidates ...str
 		return nil
 	}
 	return &value
+}
+
+func CanonicalRequestedReasoningEffortFromReqBody(reqBody map[string]any, modelCandidates ...string) *string {
+	if reqBody == nil {
+		return CanonicalRequestedReasoningEffort(nil, modelCandidates...)
+	}
+	raw := ""
+	if reasoning, ok := reqBody["reasoning"].(map[string]any); ok {
+		if effort, ok := reasoning["effort"].(string); ok {
+			raw = strings.TrimSpace(effort)
+		}
+	}
+	if raw == "" {
+		if effort, ok := reqBody["reasoning_effort"].(string); ok {
+			raw = strings.TrimSpace(effort)
+		}
+	}
+	if raw != "" {
+		canonical := NormalizeMaxReasoningEffort(raw)
+		if canonical == "" {
+			return nil
+		}
+		return &canonical
+	}
+	return CanonicalRequestedReasoningEffort(nil, modelCandidates...)
 }
 
 func normalizeOpenAIReasoningEffort(raw string) string {
