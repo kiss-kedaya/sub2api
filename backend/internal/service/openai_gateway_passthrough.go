@@ -1660,7 +1660,11 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 			// carried by a stream terminal event.
 			accountHeaders = nil
 		}
-		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload, firstNonEmpty(canonicalModel...))
+		model := firstNonEmpty(canonicalModel...)
+		if model == "" {
+			model = firstNonEmpty(gjson.GetBytes(payload, "model").String(), gjson.GetBytes(payload, "response.model").String())
+		}
+		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload, model)
 	default:
 		return statusCode, false
 	}
