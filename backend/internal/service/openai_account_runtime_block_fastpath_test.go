@@ -123,6 +123,123 @@ func TestOpenAI429FastPath_SparkQuotaOnlyBlocksSparkModel(t *testing.T) {
 	require.Greater(t, time.Until(repo.lastModelRateLimitedUntil), 6*24*time.Hour)
 }
 
+func TestOpenAI429FastPath_SparkTransient429UsesShortFallback(t *testing.T) {
+	repo := &oauth429RateLimitRepo{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
+	rateLimits.SetAccountRuntimeBlocker(svc)
+	account := &Account{ID: 428, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "37")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	headers.Set("x-codex-secondary-used-percent", "20")
+	headers.Set("x-codex-secondary-reset-after-seconds", "3600")
+	headers.Set("x-codex-secondary-window-minutes", "300")
+
+	shouldDisable := svc.handleOpenAIAccountUpstreamError(
+		context.Background(), account, http.StatusTooManyRequests, headers,
+		[]byte(`{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`),
+		"gpt-5.3-codex-spark",
+	)
+
+	require.False(t, shouldDisable)
+	require.Equal(t, 1, repo.setModelRateLimitCalls)
+	require.Less(t, time.Until(repo.lastModelRateLimitedUntil), time.Minute)
+	require.Greater(t, time.Until(repo.lastModelRateLimitedUntil), time.Second)
+}
+
+func TestOpenAIStream429_SparkQuotaUsesQuotaHeaders(t *testing.T) {
+	repo := &oauth429RateLimitRepo{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
+	rateLimits.SetAccountRuntimeBlocker(svc)
+	account := &Account{ID: 429, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "100")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	headers.Set("x-codex-secondary-used-percent", "20")
+	headers.Set("x-codex-secondary-reset-after-seconds", "3600")
+	headers.Set("x-codex-secondary-window-minutes", "300")
+	payload := []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
+
+	status, shouldDisable := svc.handleOpenAIStreamTerminalAccountSideEffects(
+		nil, account, payload, "quota exhausted", headers, "gpt-5.3-codex-spark",
+	)
+
+	require.Equal(t, http.StatusTooManyRequests, status)
+	require.False(t, shouldDisable)
+	require.Equal(t, 1, repo.setModelRateLimitCalls)
+	require.Equal(t, "gpt-5.3-codex-spark", repo.lastModelRateLimitKey)
+	require.Greater(t, time.Until(repo.lastModelRateLimitedUntil), 6*24*time.Hour)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestOpenAIStreamFailover_Spark429KeepsModelScope(t *testing.T) {
+	repo := &oauth429RateLimitRepo{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
+	rateLimits.SetAccountRuntimeBlocker(svc)
+	account := &Account{ID: 432, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "100")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	headers.Set("x-codex-secondary-used-percent", "20")
+	headers.Set("x-codex-secondary-reset-after-seconds", "3600")
+	headers.Set("x-codex-secondary-window-minutes", "300")
+	payload := []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
+
+	failoverErr := svc.newOpenAIStreamFailoverErrorWithModel(
+		nil, account, false, "", payload, "quota exhausted", "gpt-5.3-codex-spark", headers,
+	)
+
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+	require.Equal(t, 0, repo.setRateLimitedCalls)
+	require.Equal(t, 1, repo.setModelRateLimitCalls)
+	require.Equal(t, "gpt-5.3-codex-spark", repo.lastModelRateLimitKey)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestOpenAIWSErrorEvent_OrdinaryModelIgnoresHandshakeQuotaHeaders(t *testing.T) {
+	repo := &oauth429RateLimitRepo{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
+	rateLimits.SetAccountRuntimeBlocker(svc)
+	account := &Account{ID: 430, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "100")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	payload := []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
+
+	svc.persistOpenAIWSRateLimitSignal(context.Background(), account, headers, payload, "rate_limit_exceeded", "rate_limit_error", "quota exhausted", "gpt-5.3-codex")
+
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Zero(t, repo.setRateLimitedCalls)
+}
+
+func TestOpenAIWSErrorEvent_SparkQuotaUsesHandshakeQuotaHeaders(t *testing.T) {
+	repo := &oauth429RateLimitRepo{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
+	rateLimits.SetAccountRuntimeBlocker(svc)
+	account := &Account{ID: 431, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "100")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	payload := []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
+
+	svc.persistOpenAIWSRateLimitSignal(context.Background(), account, headers, payload, "rate_limit_exceeded", "rate_limit_error", "quota exhausted", "gpt-5.3-codex-spark")
+
+	require.Equal(t, 1, repo.setModelRateLimitCalls)
+	require.Equal(t, "gpt-5.3-codex-spark", repo.lastModelRateLimitKey)
+	require.Greater(t, time.Until(repo.lastModelRateLimitedUntil), 6*24*time.Hour)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
 func TestOpenAI429FastPath_SparkShadowQuotaStaysModelScoped(t *testing.T) {
 	repo := &oauth429RateLimitRepo{}
 	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
