@@ -1577,10 +1577,10 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 			model = firstNonEmpty(gjson.GetBytes(payload, "model").String(), gjson.GetBytes(payload, "response.model").String())
 		}
 		accountHeaders := headers
-		if statusCode == http.StatusTooManyRequests && !(isCodexSparkModel(model) && isOpenAIOAuthAccount(account)) {
+		if statusCode == http.StatusTooManyRequests {
 			// 普通模型的流式 429 不能继承外层 HTTP 200 的全局 quota 快照；
 			// 只有 OAuth/SetupToken 的 Spark 配额 429 才需要保留 headers 读取明确的 5h/7d reset。
-			accountHeaders = nil
+			accountHeaders = openAIWSSemantic429Headers(account, model, headers)
 		}
 		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload, model)
 	default:
