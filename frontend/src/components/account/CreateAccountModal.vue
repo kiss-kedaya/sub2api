@@ -547,6 +547,36 @@
         </div>
       </div>
 
+      <!-- Zhipu 团队版 Coding Plan：组织/项目 ID（可选，填写后额度探测走团队版端点） -->
+      <div v-if="form.platform === 'zhipu' && accountMode === 'coding'" class="mt-4">
+        <div class="flex items-center">
+          <label class="input-label">{{ t('admin.accounts.cnProviders.zhipuTeam.title') }}</label>
+          <HelpTooltip trigger="click" width-class="w-80">
+            <p class="mb-1 font-medium">{{ t('admin.accounts.cnProviders.zhipuTeam.help.title') }}</p>
+            <ol class="list-decimal space-y-1 pl-4">
+              <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step1') }}</li>
+              <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step2') }}</li>
+              <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step3') }}</li>
+              <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step4') }}</li>
+            </ol>
+            <p class="mt-2 break-all rounded bg-black/20 p-1.5 font-mono text-[11px] leading-relaxed">
+              {{ t('admin.accounts.cnProviders.zhipuTeam.help.example') }}
+            </p>
+          </HelpTooltip>
+        </div>
+        <div class="mt-2 grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.cnProviders.zhipuTeam.organization') }}</label>
+            <input v-model="zhipuOrganization" type="text" class="input" :placeholder="t('admin.accounts.cnProviders.zhipuTeam.organizationPlaceholder')" />
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.cnProviders.zhipuTeam.project') }}</label>
+            <input v-model="zhipuProject" type="text" class="input" :placeholder="t('admin.accounts.cnProviders.zhipuTeam.projectPlaceholder')" />
+          </div>
+        </div>
+        <p class="input-hint mt-2">{{ t('admin.accounts.cnProviders.zhipuTeam.hint') }}</p>
+      </div>
+
       <!-- Account Type Selection (Gemini) -->
       <div v-if="form.platform === 'gemini'">
         <div class="flex items-center justify-between">
@@ -3764,6 +3794,7 @@ import type {
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
+import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -3969,6 +4000,9 @@ const accountMode = ref<CnAccountMode>('payg')
 // API 协议决定转发端点与格式：cc=现有转换链，anthropic=原生直通（Claude Code），
 // responses=deepseek 原生 Responses 端点（Codex）。与账号类型正交。
 const apiProtocol = ref<CnApiProtocol>('adaptive')
+// 智谱团队版 Coding Plan：组织/项目 ID，写入 credentials 供额度探测切换团队端点
+const zhipuOrganization = ref('')
+const zhipuProject = ref('')
 const adaptiveBaseUrls = ref<Record<CnNativeApiProtocol, string>>({
   chat_completions: '',
   anthropic: '',
@@ -5543,6 +5577,11 @@ const handleSubmit = async () => {
     ).trim()
     if (apiProtocol.value !== 'adaptive' && resolvedCNBase) {
       credentials.base_url = resolvedCNBase
+    }
+    // 智谱团队版 Coding Plan：组织/项目 ID 写入凭据（非空才写）
+    if (form.platform === 'zhipu' && accountMode.value === 'coding') {
+      if (zhipuOrganization.value.trim()) credentials.zhipu_organization = zhipuOrganization.value.trim()
+      if (zhipuProject.value.trim()) credentials.zhipu_project = zhipuProject.value.trim()
     }
   }
 
