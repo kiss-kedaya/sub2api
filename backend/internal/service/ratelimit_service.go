@@ -2192,6 +2192,38 @@ func (s *RateLimitService) HandleOpenAIImageRateLimit(ctx context.Context, accou
 	return true
 }
 
+// HandleOpenAICodexSparkRateLimit 将 Spark 独立配额窗口记录为模型级限流。
+// Spark 的 x-codex-* 使用率和 reset 时间只代表 Spark 模型维度，不能写入账号级
+// RateLimitResetAt，否则同一 OAuth 账号上的其他模型也会被错误停调。
+func (s *RateLimitService) HandleOpenAICodexSparkRateLimit(ctx context.Context, account *Account, requestedModel string, statusCode int, headers http.Header, responseBody []byte) bool {
+	if s == nil || account == nil || s.accountRepo == nil || statusCode != http.StatusTooManyRequests || !isOpenAIOAuthAccount(account) {
+		return false
+	}
+	if !isCodexSparkModel(requestedModel) || !account.ShouldHandleErrorCode(statusCode) {
+		return false
+	}
+
+	modelKey := normalizeCodexModel(modelRateLimitKeyForUpstreamModelNotFound(ctx, account, requestedModel))
+	if modelKey == "" {
+		return false
+	}
+	now := time.Now()
+	_, resetAt := classifyOpenAIOAuth429(headers, responseBody)
+	if resetAt == nil || !resetAt.After(now) {
+		cooldown, ok := s.get429FallbackCooldown(ctx, account)
+		if !ok || cooldown <= 0 {
+			cooldown = time.Duration(defaultRateLimit429CooldownSeconds) * time.Second
+		}
+		reset := now.Add(cooldown)
+		resetAt = &reset
+	}
+	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, modelKey, *resetAt, openAICodexSparkRateLimitReason); err != nil {
+		slog.Warn("openai_codex_spark_model_rate_limit_set_failed", "account_id", account.ID, "model", modelKey, "error", err)
+	}
+	slog.Info("openai_codex_spark_model_rate_limited", "account_id", account.ID, "model", modelKey, "reset_at", *resetAt)
+	return true
+}
+
 func (s *RateLimitService) HandleOpenAIImageCapabilityLoss(ctx context.Context, account *Account, statusCode int, responseBody []byte) bool {
 	if s == nil || account == nil || s.accountRepo == nil {
 		return false

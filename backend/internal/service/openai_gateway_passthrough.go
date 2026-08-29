@@ -1558,6 +1558,7 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 	payload []byte,
 	message string,
 	headers http.Header,
+	canonicalModel ...string,
 ) (int, bool) {
 	statusCode := openAIStreamFailureStatus(payload, message)
 	switch statusCode {
@@ -1578,7 +1579,11 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 			// carried by a stream terminal event.
 			accountHeaders = nil
 		}
-		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload)
+		model := firstNonEmpty(canonicalModel...)
+		if model == "" {
+			model = firstNonEmpty(gjson.GetBytes(payload, "model").String(), gjson.GetBytes(payload, "response.model").String())
+		}
+		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload, model)
 	default:
 		return statusCode, false
 	}
@@ -1873,7 +1878,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return
 		}
 		if bareErrorAccountSideEffectsPending {
-			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, bareErrorPayload, failedMessage, resp.Header)
+			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, bareErrorPayload, failedMessage, resp.Header, mappedModel)
 			bareErrorAccountSideEffectsPending = false
 		}
 		if clientDisconnected || !writePendingLines() {
@@ -2005,7 +2010,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						// account health; EOF synthesis applies the pending effect.
 						bareErrorAccountSideEffectsPending = true
 					} else {
-						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header)
+						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header, mappedModel)
 						bareErrorAccountSideEffectsPending = false
 					}
 				}
