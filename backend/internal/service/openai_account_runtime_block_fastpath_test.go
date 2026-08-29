@@ -176,6 +176,32 @@ func TestOpenAIStream429_SparkQuotaUsesQuotaHeaders(t *testing.T) {
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
+func TestOpenAIStreamFailover_Spark429KeepsModelScope(t *testing.T) {
+	repo := &oauth429RateLimitRepo{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
+	rateLimits.SetAccountRuntimeBlocker(svc)
+	account := &Account{ID: 432, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "100")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	headers.Set("x-codex-secondary-used-percent", "20")
+	headers.Set("x-codex-secondary-reset-after-seconds", "3600")
+	headers.Set("x-codex-secondary-window-minutes", "300")
+	payload := []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
+
+	failoverErr := svc.newOpenAIStreamFailoverErrorWithModel(
+		nil, account, false, "", payload, "quota exhausted", "gpt-5.3-codex-spark", headers,
+	)
+
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+	require.Equal(t, 0, repo.setRateLimitedCalls)
+	require.Equal(t, 1, repo.setModelRateLimitCalls)
+	require.Equal(t, "gpt-5.3-codex-spark", repo.lastModelRateLimitKey)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
 func TestOpenAIWSErrorEvent_OrdinaryModelIgnoresHandshakeQuotaHeaders(t *testing.T) {
 	repo := &oauth429RateLimitRepo{}
 	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
