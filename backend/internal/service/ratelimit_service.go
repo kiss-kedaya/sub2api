@@ -2208,7 +2208,12 @@ func (s *RateLimitService) HandleOpenAICodexSparkRateLimit(ctx context.Context, 
 		return false
 	}
 	now := time.Now()
-	_, resetAt := classifyOpenAIOAuth429(headers, responseBody)
+	disposition, resetAt := classifyOpenAIOAuth429(headers, responseBody)
+	// Spark 只有明确耗尽 5h/7d 窗口时才能使用上游长 reset；普通瞬时 429
+	// 即使携带全局 reset 头，也只能使用短时回避，避免错误冷却数天。
+	if disposition != openAIOAuth429Quota5h && disposition != openAIOAuth429Quota7d {
+		resetAt = nil
+	}
 	if resetAt == nil || !resetAt.After(now) {
 		cooldown, ok := s.get429FallbackCooldown(ctx, account)
 		if !ok || cooldown <= 0 {
