@@ -1394,6 +1394,9 @@ func (s *AccountRepoSuite) TestClearError_SyncSchedulerSnapshotOnRecovery() {
 	})
 	cacheRecorder := &schedulerCacheRecorder{}
 	s.repo.schedulerCache = cacheRecorder
+	// Reproduce the state written by SetError: an errored account is removed
+	// from scheduling and must be fully restored by ClearError.
+	s.Require().NoError(s.client.Account.UpdateOneID(account.ID).SetSchedulable(false).Exec(s.ctx))
 
 	s.Require().NoError(s.repo.ClearError(s.ctx, account.ID))
 
@@ -1401,9 +1404,29 @@ func (s *AccountRepoSuite) TestClearError_SyncSchedulerSnapshotOnRecovery() {
 	s.Require().NoError(err)
 	s.Require().Equal(service.StatusActive, got.Status)
 	s.Require().Empty(got.ErrorMessage)
+	s.Require().True(got.Schedulable)
 	s.Require().Len(cacheRecorder.setAccounts, 1)
 	s.Require().Equal(account.ID, cacheRecorder.setAccounts[0].ID)
 	s.Require().Equal(service.StatusActive, cacheRecorder.setAccounts[0].Status)
+	s.Require().True(cacheRecorder.setAccounts[0].Schedulable)
+}
+
+func (s *AccountRepoSuite) TestClearError_DoesNotOverrideActiveManualUnschedulable() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:         "acc-manual-unschedulable",
+		Status:       service.StatusActive,
+		ErrorMessage: "stale diagnostic",
+	})
+	s.Require().NoError(s.client.Account.UpdateOneID(account.ID).
+		SetSchedulable(false).
+		Exec(s.ctx))
+
+	s.Require().NoError(s.repo.ClearError(s.ctx, account.ID))
+
+	got, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(service.StatusActive, got.Status)
+	s.Require().False(got.Schedulable)
 }
 
 // --- UpdateSessionWindow ---
