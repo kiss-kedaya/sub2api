@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -156,12 +157,14 @@ func (c *openAIWSToolCallReplayCollector) AddEvent(eventType string, message []b
 	}
 }
 
+// Items/AllItems 返回浅拷贝头数组；正文由 collector 独立分配且此后不可变，
+// 调用方按 replay 所有权不变式共享持有。
 func (c *openAIWSToolCallReplayCollector) Items() []json.RawMessage {
-	return cloneOpenAIWSRawMessages(c.items)
+	return slices.Clone(c.items)
 }
 
 func (c *openAIWSToolCallReplayCollector) AllItems() []json.RawMessage {
-	return cloneOpenAIWSRawMessages(c.allItems)
+	return slices.Clone(c.allItems)
 }
 
 func (c *openAIWSToolCallReplayCollector) addAllItem(item gjson.Result) {
