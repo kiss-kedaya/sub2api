@@ -309,6 +309,12 @@ type configuredCodexTruncationPolicy struct {
 	Limit int64  `json:"limit"`
 }
 
+type configuredCodexServiceTier struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 type configuredCodexModelMessages struct {
 	InstructionsTemplate  string `json:"instructions_template"`
 	InstructionsVariables any    `json:"instructions_variables"`
@@ -336,7 +342,7 @@ type configuredCodexModelDescriptor struct {
 	SupportedInAPI                    bool                            `json:"supported_in_api"`
 	Priority                          int                             `json:"priority"`
 	AdditionalSpeedTiers              []string                        `json:"additional_speed_tiers"`
-	ServiceTiers                      []any                           `json:"service_tiers"`
+	ServiceTiers                      []configuredCodexServiceTier    `json:"service_tiers"`
 	DefaultServiceTier                any                             `json:"default_service_tier"`
 	AvailabilityNUX                   any                             `json:"availability_nux"`
 	Upgrade                           any                             `json:"upgrade"`
@@ -392,7 +398,7 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 		SupportedInAPI:                    true,
 		Priority:                          configuredCodexModelPriority,
 		AdditionalSpeedTiers:              []string{},
-		ServiceTiers:                      []any{},
+		ServiceTiers:                      []configuredCodexServiceTier{},
 		ModelMessages:                     configuredCodexModelMessages{InstructionsTemplate: openai.CodexBaseInstructionsForModel(modelID)},
 		SupportsReasoningSummaryParameter: true,
 		DefaultReasoningSummary:           "auto",
@@ -448,6 +454,15 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 		descriptor.DisplayName = openaiCodexDisplayName(modelID)
 		descriptor.Description = "OpenAI GPT coding model routed through Sub2API."
 		descriptor.SupportsParallelToolCalls = true
+		if configuredCodexSupportsPriorityServiceTier(modelID) {
+			descriptor.ServiceTiers = []configuredCodexServiceTier{
+				{
+					ID:          "priority",
+					Name:        "Fast",
+					Description: "Priority processing for lower latency.",
+				},
+			}
+		}
 		if isOpenAICodexReasoningGPTModel(modelID) {
 			defaultReasoningLevel := "medium"
 			if getNormalizedCodexModel(modelID) == "gpt-5.6-sol" {
@@ -469,6 +484,16 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 	}
 
 	return descriptor
+}
+
+func configuredCodexSupportsPriorityServiceTier(modelID string) bool {
+	normalized := canonicalizeOpenAIModelAliasSpelling(modelID)
+	for _, family := range []string{"gpt-5.4", "gpt-5.5", "gpt-5.6"} {
+		if normalized == family || strings.HasPrefix(normalized, family+"-") {
+			return true
+		}
+	}
+	return false
 }
 
 func configuredCodexGrokReasoningLevels(modelID string) []configuredCodexReasoningLevel {
