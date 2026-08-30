@@ -35,6 +35,12 @@ func TestResolveBillingServiceTier(t *testing.T) {
 }
 
 func TestApplyServiceTierBillingResolutionOnlyRewritesDowngrades(t *testing.T) {
+	t.Run("codex exception only covers OpenAI default", func(t *testing.T) {
+		require.True(t, codexOAuthResponseTierIsNonAuthoritative("default"))
+		require.False(t, codexOAuthResponseTierIsNonAuthoritative("standard"))
+		require.False(t, codexOAuthResponseTierIsNonAuthoritative("flex"))
+	})
+
 	t.Run("openai downgrade rewrites tier", func(t *testing.T) {
 		requested := "priority"
 		result := &OpenAIForwardResult{ServiceTier: &requested, UpstreamResponseServiceTier: "default"}
