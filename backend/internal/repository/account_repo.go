@@ -1745,9 +1745,13 @@ func (r *accountRepository) syncSchedulerAccountSnapshots(ctx context.Context, a
 
 func (r *accountRepository) ClearError(ctx context.Context, id int64) error {
 	_, err := r.client.Account.Update().
-		Where(dbaccount.IDEQ(id)).
+		// SetError marks an errored account unschedulable. Restrict the
+		// restoration to that state so clearing a stale message on an
+		// otherwise active account cannot override an operator's manual switch.
+		Where(dbaccount.IDEQ(id), dbaccount.StatusEQ(service.StatusError)).
 		SetStatus(service.StatusActive).
 		SetErrorMessage("").
+		SetSchedulable(true).
 		Save(ctx)
 	if err != nil {
 		return err

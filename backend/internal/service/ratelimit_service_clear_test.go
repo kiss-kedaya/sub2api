@@ -39,6 +39,11 @@ func (r *rateLimitClearRepoStub) GetByID(ctx context.Context, id int64) (*Accoun
 
 func (r *rateLimitClearRepoStub) ClearError(ctx context.Context, id int64) error {
 	r.clearErrorCalls++
+	if r.clearErrorErr == nil && r.getByIDAccount != nil && r.getByIDAccount.Status == StatusError {
+		r.getByIDAccount.Status = StatusActive
+		r.getByIDAccount.ErrorMessage = ""
+		r.getByIDAccount.Schedulable = true
+	}
 	return r.clearErrorErr
 }
 
@@ -206,6 +211,7 @@ func TestRateLimitService_RecoverAccountAfterSuccessfulTest_ClearsErrorAndRateLi
 		getByIDAccount: &Account{
 			ID:                     42,
 			Status:                 StatusError,
+			Schedulable:            false,
 			RateLimitedAt:          &now,
 			TempUnschedulableUntil: &now,
 			Extra: map[string]any{
@@ -228,6 +234,7 @@ func TestRateLimitService_RecoverAccountAfterSuccessfulTest_ClearsErrorAndRateLi
 	require.NotNil(t, result)
 	require.True(t, result.ClearedError)
 	require.True(t, result.ClearedRateLimit)
+	require.True(t, repo.getByIDAccount.Schedulable, "clearing an automatic error must restore scheduling")
 
 	require.Equal(t, 1, repo.getByIDCalls)
 	require.Equal(t, 1, repo.clearErrorCalls)
