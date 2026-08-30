@@ -3001,6 +3001,50 @@ func TestOpenAIGatewayServiceRecordUsage_CodexDefaultEchoKeepsFastBilling(t *tes
 	}
 }
 
+func TestOpenAIGatewayServiceRecordUsage_ShadowUsesParentCredentialTierContract(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(
+		usageRepo,
+		&openAIRecordUsageUserRepoStub{},
+		&openAIRecordUsageSubRepoStub{},
+		nil,
+	)
+	parentID := int64(9001)
+	accountRepo := &openAIRecordUsageAccountRepoStub{account: &Account{
+		ID: parentID, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+	}}
+	svc.accountRepo = accountRepo
+	serviceTier := "priority"
+	tokens := UsageTokens{InputTokens: 100, OutputTokens: 50}
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:                   "resp_shadow_codex_default_echo",
+			ServiceTier:                 &serviceTier,
+			UpstreamResponseServiceTier: "default",
+			Usage:                       OpenAIUsage{InputTokens: tokens.InputTokens, OutputTokens: tokens.OutputTokens},
+			Model:                       "gpt-5.6-sol",
+			Duration:                    time.Second,
+		},
+		APIKey: &APIKey{ID: 1020},
+		User:   &User{ID: 2020},
+		Account: &Account{
+			ID: 3020, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			ParentAccountID: &parentID,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, accountRepo.calls)
+	require.NotNil(t, usageRepo.lastLog)
+	require.NotNil(t, usageRepo.lastLog.ServiceTier)
+	require.Equal(t, "priority", *usageRepo.lastLog.ServiceTier)
+
+	fastCost, calcErr := svc.billingService.CalculateCostWithServiceTier("gpt-5.6-sol", tokens, 1.0, "priority")
+	require.NoError(t, calcErr)
+	require.InDelta(t, fastCost.TotalCost, usageRepo.lastLog.TotalCost, 1e-10)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_ServiceTierNeverRaisedByUpstreamResponse(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}
