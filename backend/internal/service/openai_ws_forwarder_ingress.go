@@ -581,6 +581,26 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if turnState != "" && c != nil && c.Request != nil {
 				c.Request.Header.Set(openAIWSTurnStateHeader, turnState)
 			}
+			if c != nil && sessionHash != "" {
+				c.Set(openAIWSIngressSessionHashContextKey, sessionHash)
+			}
+			// 剥离本会话已知失效的加密项，阻断同一失效密文随历史反复触发上游拒绝。
+			// 历史序列须同步剥离，否则与已剥离的当前 input 项错位，prefix 复用失配。
+			if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, sessionHash); len(invalidDigests) > 0 {
+				strippedPayload, strippedCount := s.stripSessionInvalidEncryptedContentLogged(
+					currentBridgePayload.payloadRaw, invalidDigests, "ingress_ws_http_bridge_invalid_encrypted_lineage_strip", account.ID, turn,
+				)
+				if strippedCount > 0 {
+					currentBridgePayload.payloadRaw = strippedPayload
+					currentBridgePayload.payloadBytes = len(strippedPayload)
+				}
+				if bridgeReplayInputExists {
+					bridgeReplayInput, _ = stripOpenAIInvalidEncryptedContentFromReplayItems(bridgeReplayInput, invalidDigests)
+				}
+				if bridgeAccountFailoverInputExists {
+					bridgeAccountFailoverInput, _ = stripOpenAIInvalidEncryptedContentFromReplayItems(bridgeAccountFailoverInput, invalidDigests)
+				}
+			}
 			bridgePayloadRaw := currentBridgePayload.payloadRaw
 			bridgePayloadBytes := currentBridgePayload.payloadBytes
 			toolOutputCoverage := AnalyzeToolCallOutputContextCoverageBytes(currentBridgePayload.payloadRaw)
@@ -1026,6 +1046,18 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 				s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw, mappedModel)
 				fallbackReason, _ := classifyOpenAIWSErrorEventFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
+				if fallbackReason == openAIWSFallbackReasonInvalidEncryptedContent {
+					// 记录被上游拒绝的密文摘要；错误照旧透传，下一轮进场时按摘要预剥离。
+					if digests := collectOpenAIEncryptedContentDigestsRaw(payload); len(digests) > 0 {
+						s.markOpenAIWSInvalidEncryptedContentLineage(groupID, sessionHash, digests)
+						logOpenAIWSModeInfo(
+							"ingress_ws_invalid_encrypted_lineage_mark account_id=%d turn=%d digests=%d",
+							account.ID,
+							turn,
+							len(digests),
+						)
+					}
+				}
 				errCode, errType, errMessage := summarizeOpenAIWSErrorEventFieldsFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
 				recoverablePrevNotFound := fallbackReason == openAIWSIngressStagePreviousResponseNotFound &&
 					turnPreviousResponseID != "" &&
@@ -1411,6 +1443,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 		}
 		skipBeforeTurn = false
+		// 剥离本会话已知失效的加密项，阻断同一失效密文随历史反复触发上游拒绝。
+		// 历史序列须同步剥离，否则与已剥离的当前 input 项错位，prefix 复用失配。
+		if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, sessionHash); len(invalidDigests) > 0 {
+			strippedPayload, strippedCount := s.stripSessionInvalidEncryptedContentLogged(
+				currentPayload, invalidDigests, "ingress_ws_invalid_encrypted_lineage_strip", account.ID, turn,
+			)
+			if strippedCount > 0 {
+				currentPayload = strippedPayload
+				currentPayloadBytes = len(strippedPayload)
+			}
+			if lastTurnReplayInputExists {
+				lastTurnReplayInput, _ = stripOpenAIInvalidEncryptedContentFromReplayItems(lastTurnReplayInput, invalidDigests)
+			}
+		}
 		currentPreviousResponseID := openAIWSPayloadStringFromRaw(currentPayload, "previous_response_id")
 		expectedPrev := strings.TrimSpace(lastTurnResponseID)
 		toolSignals := ToolContinuationSignals{
