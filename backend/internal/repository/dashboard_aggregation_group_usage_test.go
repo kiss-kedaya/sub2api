@@ -149,6 +149,8 @@ func TestDashboardAggregationRepositoryRecomputeRangeRebuildsGroupRollupsBeforeC
 	for _, query := range []string{
 		`DELETE FROM usage_dashboard_hourly WHERE`,
 		`DELETE FROM usage_dashboard_hourly_users WHERE`,
+		`DELETE FROM usage_dashboard_hourly_dimensions WHERE`,
+		`DELETE FROM usage_dashboard_hourly_dimension_coverage WHERE`,
 		`DELETE FROM usage_dashboard_daily WHERE`,
 		`DELETE FROM usage_dashboard_daily_users WHERE`,
 		`INSERT INTO usage_dashboard_hourly_users`,

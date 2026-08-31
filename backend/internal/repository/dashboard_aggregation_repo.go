@@ -193,13 +193,14 @@ func (r *dashboardAggregationRepository) recomputeRangeInTx(ctx context.Context,
 	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_users WHERE bucket_start >= $1 AND bucket_start < $2", hourStart, hourEnd); err != nil {
 		return err
 	}
-	if r.dimensionRollupsEnabled.Load() {
-		if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_dimensions WHERE bucket_start >= $1 AND bucket_start < $2", hourStart, hourEnd); err != nil {
-			return err
-		}
-		if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_dimension_coverage WHERE bucket_start >= $1 AND bucket_start < $2", hourStart, hourEnd); err != nil {
-			return err
-		}
+	// Recompute must invalidate dimension rows regardless of the current write
+	// flag. A rollout can be paused after historical rows were written, and
+	// leaving those rows behind would allow stale data to be reused later.
+	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_dimensions WHERE bucket_start >= $1 AND bucket_start < $2", hourStart, hourEnd); err != nil {
+		return err
+	}
+	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_dimension_coverage WHERE bucket_start >= $1 AND bucket_start < $2", hourStart, hourEnd); err != nil {
+		return err
 	}
 	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_daily WHERE bucket_date >= $1::date AND bucket_date < $2::date", dayStart, dayEnd); err != nil {
 		return err
