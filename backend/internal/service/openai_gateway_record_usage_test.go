@@ -2866,6 +2866,30 @@ func TestGatewayServiceCalculateRecordUsageCost_GroupImagePriceOverridesChannelI
 	require.InDelta(t, 0.042, cost.ActualCost, 1e-12)
 }
 
+func TestRecordUsageKeepsCompactionSemanticFlagOrthogonalToTransport(t *testing.T) {
+	logStub := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(logStub, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	apiKey := &APIKey{ID: 20, UserID: 21, Group: &Group{RateMultiplier: 1}}
+	require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		NativeCompactionV2: true,
+		Result: &OpenAIForwardResult{
+			Model:    "gpt-5",
+			Stream:   true,
+			Duration: time.Second,
+			Usage:    OpenAIUsage{InputTokens: 100, OutputTokens: 10},
+		},
+		APIKey:  apiKey,
+		User:    &User{ID: 21},
+		Account: &Account{ID: 22},
+	}))
+
+	require.NotNil(t, logStub.lastLog)
+	require.True(t, logStub.lastLog.Stream)
+	require.True(t, logStub.lastLog.NativeCompactionV2)
+	require.Equal(t, RequestTypeStream, RequestTypeFromLegacy(logStub.lastLog.Stream, logStub.lastLog.OpenAIWSMode))
+}
+
 func TestRecordUsageMarksCyberRequestType(t *testing.T) {
 	logStub := &openAIRecordUsageLogRepoStub{inserted: true}
 	userStub := &openAIRecordUsageUserRepoStub{}
@@ -2874,7 +2898,8 @@ func TestRecordUsageMarksCyberRequestType(t *testing.T) {
 	svc := newOpenAIRecordUsageServiceForTest(logStub, userStub, subStub, rateStub)
 
 	in := &OpenAIRecordUsageInput{
-		CyberBlocked: true,
+		CyberBlocked:       true,
+		NativeCompactionV2: true,
 		Result: &OpenAIForwardResult{
 			Model:    "gpt-5",
 			Duration: time.Second,
@@ -2887,6 +2912,7 @@ func TestRecordUsageMarksCyberRequestType(t *testing.T) {
 	require.NoError(t, svc.RecordUsage(context.Background(), in))
 	require.NotNil(t, logStub.lastLog)
 	require.Equal(t, RequestTypeCyberBlocked, logStub.lastLog.RequestType)
+	require.True(t, logStub.lastLog.NativeCompactionV2)
 	require.Equal(t, 100, logStub.lastLog.InputTokens, "计费 token 不变(正常计费)")
 }
 
