@@ -943,6 +943,7 @@ export default {
       billingRateMultiplierHint: '0 = free, affects account billing only',
       expiresAt: 'Expires At',
       expiresAtHint: 'Leave empty for no expiration',
+      expiresAtTimezoneHint: 'Input is interpreted in your browser time zone ({timezone}).',
       higherPriorityFirst: 'Lower value means higher priority',
       mixedScheduling: 'Use in /v1/messages',
       mixedSchedulingHint: 'Enable to participate in Anthropic/Gemini group scheduling',
