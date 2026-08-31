@@ -22,9 +22,9 @@ import (
 )
 
 const (
-	maxDatabaseInitializationAttempts = 8
-	databaseInitializationRetryBase   = time.Second
-	databaseInitializationRetryMax    = 30 * time.Second
+	maxDatabaseInitializationRetries = 8
+	databaseInitializationRetryBase  = time.Second
+	databaseInitializationRetryMax   = 30 * time.Second
 )
 
 // initializeDatabaseWithRetry retries only errors that indicate PostgreSQL is
@@ -39,32 +39,29 @@ func initializeDatabaseWithRetryWithWait(
 	initialize func(context.Context) error,
 	wait func(context.Context, time.Duration) error,
 ) error {
-	var lastErr error
-	for attempt := 1; attempt <= maxDatabaseInitializationAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
 		if err := initialize(ctx); err == nil {
 			return nil
 		} else {
-			lastErr = err
-			if !isTransientDatabaseInitializationError(err) || attempt == maxDatabaseInitializationAttempts {
+			if !isTransientDatabaseInitializationError(err) || attempt > maxDatabaseInitializationRetries {
+				return err
+			}
+
+			delay := databaseInitializationRetryBase * time.Duration(1<<(attempt-1))
+			if delay > databaseInitializationRetryMax {
+				delay = databaseInitializationRetryMax
+			}
+			slog.Warn("database initialization temporarily unavailable; retrying",
+				"retry", attempt,
+				"max_retries", maxDatabaseInitializationRetries,
+				"retry_in", delay,
+				"error", err,
+			)
+			if err := wait(ctx, delay); err != nil {
 				return err
 			}
 		}
-
-		delay := databaseInitializationRetryBase * time.Duration(1<<(attempt-1))
-		if delay > databaseInitializationRetryMax {
-			delay = databaseInitializationRetryMax
-		}
-		slog.Warn("database initialization temporarily unavailable; retrying",
-			"attempt", attempt,
-			"max_attempts", maxDatabaseInitializationAttempts,
-			"retry_in", delay,
-			"error", lastErr,
-		)
-		if err := wait(ctx, delay); err != nil {
-			return err
-		}
 	}
-	return lastErr
 }
 
 func waitForDatabaseInitializationRetry(ctx context.Context, delay time.Duration) error {

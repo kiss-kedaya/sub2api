@@ -99,8 +99,8 @@ func TestInitializeDatabaseWithRetryReturnsLastErrorAfterLimit(t *testing.T) {
 	})
 
 	require.ErrorIs(t, err, lastErr)
-	require.Equal(t, maxDatabaseInitializationAttempts, attempts)
-	require.Len(t, delays, maxDatabaseInitializationAttempts-1)
+	require.Equal(t, maxDatabaseInitializationRetries+1, attempts)
+	require.Len(t, delays, maxDatabaseInitializationRetries)
 	require.Equal(t, databaseInitializationRetryMax, delays[len(delays)-1])
 }
 
