@@ -1097,19 +1097,20 @@ func TestAdminService_CreateGroup_NormalizesForceOpenAIFastByPlatform(t *testing
 			svc := &adminServiceImpl{groupRepo: repo}
 
 			group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
-				Name: "fast-" + tt.name, Platform: tt.platform, RateMultiplier: 1, ForceOpenAIFast: true,
+				Name: "fast-" + tt.name, Platform: tt.platform, RateMultiplier: 1, ForceOpenAIFast: true, FreeOpenAIFast: true,
 			})
 
 			require.NoError(t, err)
 			require.NotNil(t, group)
 			require.Equal(t, tt.want, repo.created.ForceOpenAIFast)
+			require.Equal(t, tt.want, repo.created.FreeOpenAIFast)
 		})
 	}
 }
 
 func TestAdminService_UpdateGroup_ClearsForceOpenAIFastWhenPlatformChanges(t *testing.T) {
 	existingGroup := &Group{
-		ID: 1, Name: "existing-fast", Platform: PlatformOpenAI, Status: StatusActive, ForceOpenAIFast: true,
+		ID: 1, Name: "existing-fast", Platform: PlatformOpenAI, Status: StatusActive, ForceOpenAIFast: true, FreeOpenAIFast: true,
 	}
 	repo := &groupRepoStubForAdmin{getByID: existingGroup}
 	svc := &adminServiceImpl{groupRepo: repo}
@@ -1121,6 +1122,7 @@ func TestAdminService_UpdateGroup_ClearsForceOpenAIFastWhenPlatformChanges(t *te
 	require.NoError(t, err)
 	require.NotNil(t, group)
 	require.False(t, repo.updated.ForceOpenAIFast)
+	require.False(t, repo.updated.FreeOpenAIFast)
 }
 
 func TestAdminService_UpdateGroup_ForceOpenAIFastInvalidatesAuthCache(t *testing.T) {
@@ -1134,11 +1136,13 @@ func TestAdminService_UpdateGroup_ForceOpenAIFastInvalidatesAuthCache(t *testing
 
 	group, err := svc.UpdateGroup(context.Background(), existingGroup.ID, &UpdateGroupInput{
 		ForceOpenAIFast: &enabled,
+		FreeOpenAIFast:  &enabled,
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, group)
 	require.True(t, repo.updated.ForceOpenAIFast)
+	require.True(t, repo.updated.FreeOpenAIFast)
 	require.Equal(t, []int64{existingGroup.ID}, invalidator.groupIDs)
 }
 
