@@ -156,7 +156,7 @@ type CreateGroupRequest struct {
 	RPMLimit int `json:"rpm_limit"`
 	// OpenAI/Codex 请求推理强度上限，空字符串表示不限制。
 	MaxReasoningEffort string `json:"max_reasoning_effort"`
-	// OpenAI/Codex 推理强度精确映射。
+	// OpenAI/Codex 推理强度映射，可按模型精确名、前缀或后缀限定。
 	ReasoningEffortMappings []service.ReasoningEffortMapping `json:"reasoning_effort_mappings"`
 	// 从指定分组复制账号（创建后自动绑定）
 	CopyAccountsFromGroupIDs []int64 `json:"copy_accounts_from_group_ids"`
