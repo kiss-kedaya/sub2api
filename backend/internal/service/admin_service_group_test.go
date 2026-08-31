@@ -886,6 +886,20 @@ func TestAdminService_UpdateGroup_ReasoningEffortMappingsTriState(t *testing.T) 
 			}(),
 			want: []ReasoningEffortMapping{{From: "xhigh", To: "high"}},
 		},
+		{
+			name: "model scoped mappings are canonicalized independently",
+			input: func() *UpdateGroupInput {
+				replacement := []ReasoningEffortMapping{
+					{From: " MAX ", To: " low ", MatchType: "PREFIX", Model: " gpt "},
+					{From: "max", To: "medium", Model: "gpt-5.4"},
+				}
+				return &UpdateGroupInput{ReasoningEffortMappings: &replacement}
+			}(),
+			want: []ReasoningEffortMapping{
+				{From: "max", To: "low", MatchType: "prefix", Model: "gpt"},
+				{From: "max", To: "medium", MatchType: "exact", Model: "gpt-5.4"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
