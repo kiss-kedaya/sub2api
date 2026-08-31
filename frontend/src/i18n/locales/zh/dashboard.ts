@@ -477,7 +477,6 @@ export default {
     // 配额快照展示（MonitorQuotaView，管理端与用户端共用）
     quota: {
       unavailable: '配额信息不可用',
-      resetSoon: '即将重置',
       windows: {
         '5h': '5 小时',
         '7d': '7 天',
