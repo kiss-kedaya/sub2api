@@ -827,6 +827,126 @@ func TestParsePricingData_ExplicitZeroThresholdDisablesLadder(t *testing.T) {
 	require.Zero(t, data["gpt-5.5"].LongContextInputCostMultiplier)
 }
 
+// cache 侧 above 档随输入倍率计费、不单独折算；缺基础价的 cache above 字段无法参与计费，
+// 该缓存分项按 0 计，属于数据契约违规，必须有哨兵 WARN。服务档变体缺基础价时回落
+// 标准基础价，不算孤儿。
+func TestParsePricingData_WarnsOrphanCacheTierFields(t *testing.T) {
+	logSink, restore := captureStructuredLog(t)
+	defer restore()
+
+	svc := &PricingService{}
+	data, err := svc.parsePricingData([]byte(`{
+		"gemini-orphan": {"litellm_provider": "vertex_ai-language-models", "mode": "chat",
+			"input_cost_per_token": 1.25e-06, "output_cost_per_token": 1e-05,
+			"cache_read_input_token_cost": 1.25e-07,
+			"input_cost_per_token_above_200k_tokens": 2.5e-06,
+			"output_cost_per_token_above_200k_tokens": 1.5e-05,
+			"cache_read_input_token_cost_above_200k_tokens": 2.5e-07,
+			"cache_creation_input_token_cost_above_200k_tokens": 2.5e-07},
+		"gemini-complete": {"litellm_provider": "vertex_ai-language-models", "mode": "chat",
+			"input_cost_per_token": 1.25e-06, "output_cost_per_token": 1e-05,
+			"cache_read_input_token_cost": 1.25e-07,
+			"cache_creation_input_token_cost": 1.25e-06,
+			"input_cost_per_token_above_200k_tokens": 2.5e-06,
+			"output_cost_per_token_above_200k_tokens": 1.5e-05,
+			"cache_read_input_token_cost_above_200k_tokens": 2.5e-07,
+			"cache_creation_input_token_cost_above_200k_tokens": 2.5e-06},
+		"priority-variant-without-own-base": {"litellm_provider": "openai", "mode": "chat",
+			"input_cost_per_token": 5e-06, "output_cost_per_token": 3e-05,
+			"cache_read_input_token_cost": 5e-07,
+			"input_cost_per_token_above_272k_tokens": 1e-05,
+			"output_cost_per_token_above_272k_tokens": 4.5e-05,
+			"cache_read_input_token_cost_above_272k_tokens_priority": 2e-06},
+		"priority-variant-orphan": {"litellm_provider": "openai", "mode": "chat",
+			"input_cost_per_token": 5e-06, "output_cost_per_token": 3e-05,
+			"cache_creation_input_token_cost_above_272k_tokens_priority": 2.5e-05},
+		"hourly-tier-with-5m-base": {"litellm_provider": "anthropic", "mode": "chat",
+			"input_cost_per_token": 3e-06, "output_cost_per_token": 1.5e-05,
+			"cache_creation_input_token_cost": 3.75e-06,
+			"cache_creation_input_token_cost_above_1hr_above_200k_tokens": 1.2e-05},
+		"hourly-tier-orphan": {"litellm_provider": "anthropic", "mode": "chat",
+			"input_cost_per_token": 3e-06, "output_cost_per_token": 1.5e-05,
+			"cache_creation_input_token_cost_above_1hr_above_200k_tokens": 1.2e-05}
+	}`))
+	require.NoError(t, err)
+
+	require.Equal(t, 200000, data["gemini-orphan"].LongContextInputTokenThreshold, "孤儿 cache 字段不影响 input/output 阶梯折算")
+	require.Zero(t, data["gemini-orphan"].CacheCreationInputTokenCost)
+	require.InDelta(t, 1.25e-6, data["gemini-complete"].CacheCreationInputTokenCost, 1e-12)
+
+	require.True(t, logSink.ContainsMessageAtLevel("gemini-orphan(cache_creation_input_token_cost_above_200k_tokens)", "warn"))
+	require.True(t, logSink.ContainsMessage("priority-variant-orphan(cache_creation_input_token_cost_above_272k_tokens_priority)"))
+	require.True(t, logSink.ContainsMessage("hourly-tier-orphan(cache_creation_input_token_cost_above_1hr_above_200k_tokens)"))
+	require.False(t, logSink.ContainsMessage("gemini-complete"))
+	require.False(t, logSink.ContainsMessage("priority-variant-without-own-base"))
+	require.False(t, logSink.ContainsMessage("hourly-tier-with-5m-base"), "1h 档缺 above_1hr 基础价时计费回落 5m 价，不算孤儿")
+}
+
+// 基础价与 above 档来自不同价格版本时（如基础价被手工 pin、above 档随上游更新）会折算出
+// 只有一侧带附加费的阶梯，必须有哨兵 WARN；显式 long_context_* 字段是部署方意图，不告警。
+func TestParsePricingData_WarnsLopsidedLongContextLadder(t *testing.T) {
+	logSink, restore := captureStructuredLog(t)
+	defer restore()
+
+	svc := &PricingService{}
+	data, err := svc.parsePricingData([]byte(`{
+		"mixed-versions": {"litellm_provider": "openai", "mode": "chat",
+			"input_cost_per_token": 5e-06, "output_cost_per_token": 3e-05,
+			"input_cost_per_token_above_272k_tokens": 8e-06,
+			"output_cost_per_token_above_272k_tokens": 3e-05},
+		"consistent": {"litellm_provider": "openai", "mode": "chat",
+			"input_cost_per_token": 4e-06, "output_cost_per_token": 2e-05,
+			"input_cost_per_token_above_272k_tokens": 8e-06,
+			"output_cost_per_token_above_272k_tokens": 3e-05},
+		"explicit-input-only": {"litellm_provider": "openai", "mode": "chat",
+			"input_cost_per_token": 4e-06, "output_cost_per_token": 2e-05,
+			"long_context_input_token_threshold": 272000,
+			"long_context_input_cost_multiplier": 2}
+	}`))
+	require.NoError(t, err)
+
+	require.Equal(t, 272000, data["mixed-versions"].LongContextInputTokenThreshold, "单侧阶梯仍按折算结果计费，只告警不丢弃")
+	require.InDelta(t, 1.6, data["mixed-versions"].LongContextInputCostMultiplier, 1e-12)
+	require.True(t, logSink.ContainsMessageAtLevel("mixed-versions(input x1.60, output x1.00)", "warn"))
+	require.False(t, logSink.ContainsMessage("consistent"))
+	require.False(t, logSink.ContainsMessage("explicit-input-only"))
+}
+
+// 出厂回退快照必须满足数据契约：没有孤儿 cache above 字段、没有单侧阶梯，且 Gemini pro 系的
+// 缓存写入基础价等于标准输入价（含 priority 变体）。快照是随目录同步刷新的文本，这里防止刷新时静默回退。
+func TestDefaultCatalogSnapshot_CacheTierContract(t *testing.T) {
+	logSink, restore := captureStructuredLog(t)
+	defer restore()
+
+	body, err := os.ReadFile(filepath.Join("..", "..", "resources", "model-pricing", "model_prices_and_context_window.json"))
+	require.NoError(t, err)
+
+	var rawEntries map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(body, &rawEntries))
+	for name, raw := range rawEntries {
+		require.Empty(t, orphanCacheTierFields(raw), "快照条目 %s 带孤儿 cache above 字段", name)
+	}
+
+	svc := &PricingService{}
+	data, err := svc.parsePricingData(body)
+	require.NoError(t, err)
+	require.False(t, logSink.ContainsMessage("carry cache above-tier prices"), "快照不应触发孤儿 cache 字段哨兵")
+	require.False(t, logSink.ContainsMessage("one-sided long-context ladder"), "快照不应触发单侧阶梯哨兵")
+	for _, model := range []string{
+		"gemini-2.5-pro", "gemini-3-pro-preview", "gemini-3.1-pro-preview",
+		"gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-3.1-pro-preview-customtools",
+	} {
+		pricing := data[model]
+		require.NotNil(t, pricing, model)
+		require.Positive(t, pricing.InputCostPerToken, model)
+		require.InDelta(t, pricing.InputCostPerToken, pricing.CacheCreationInputTokenCost, 1e-15, "%s 缓存写入基础价应等于标准输入价", model)
+		require.Equal(t, 200000, pricing.LongContextInputTokenThreshold, model)
+		if pricing.InputCostPerTokenPriority > 0 {
+			require.InDelta(t, pricing.InputCostPerTokenPriority, pricing.CacheCreationInputTokenCostPriority, 1e-15, "%s priority 缓存写入价应等于 priority 输入价", model)
+		}
+	}
+}
+
 // F1：显式字段只写了一侧倍率时，缺失侧按 1 计而不是乘 0 免费。
 func TestCalculateCost_PartialLongContextMultiplierDefaultsToOne(t *testing.T) {
 	tokens := UsageTokens{InputTokens: 300000, OutputTokens: 1000, CacheReadTokens: 10000}
