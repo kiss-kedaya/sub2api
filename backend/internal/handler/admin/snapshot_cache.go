@@ -53,6 +53,13 @@ func reportCacheLoadContext(parent context.Context) (context.Context, context.Ca
 	return context.WithTimeout(base, reportCacheLoadTimeout)
 }
 
+// reportCacheVersion rotates keys every minute so cached rollup responses do
+// not outlive the configured freshness window even while retaining the longer
+// five-minute TTL for request bursts.
+func reportCacheVersion() string {
+	return time.Now().UTC().Truncate(time.Minute).Format(time.RFC3339)
+}
+
 type snapshotCacheEntry struct {
 	ETag      string
 	Payload   any

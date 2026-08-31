@@ -527,13 +527,15 @@ func (h *DashboardHandler) GetUserSpendingRanking(c *gin.Context) {
 	limit := parseRankingLimit(c.DefaultQuery("limit", "12"))
 
 	keyRaw, _ := json.Marshal(struct {
-		Start string `json:"start"`
-		End   string `json:"end"`
-		Limit int    `json:"limit"`
+		RollupVersion string `json:"rollup_version"`
+		Start         string `json:"start"`
+		End           string `json:"end"`
+		Limit         int    `json:"limit"`
 	}{
-		Start: startTime.UTC().Format(time.RFC3339),
-		End:   endTime.UTC().Format(time.RFC3339),
-		Limit: limit,
+		RollupVersion: reportCacheVersion(),
+		Start:         startTime.UTC().Format(time.RFC3339),
+		End:           endTime.UTC().Format(time.RFC3339),
+		Limit:         limit,
 	})
 	cacheKey := string(keyRaw)
 	if cached, ok := dashboardUsersRankingCache.Get(cacheKey); ok {
