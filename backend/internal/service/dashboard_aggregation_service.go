@@ -35,8 +35,9 @@ var (
 	// ErrDashboardBackfillDisabled 当配置禁用回填时返回。
 	ErrDashboardBackfillDisabled = errors.New("仪表盘聚合回填已禁用")
 	// ErrDashboardBackfillTooLarge 当回填跨度超过限制时返回。
-	ErrDashboardBackfillTooLarge   = errors.New("回填时间跨度过大")
-	errDashboardAggregationRunning = errors.New("聚合作业正在运行")
+	ErrDashboardBackfillTooLarge            = errors.New("回填时间跨度过大")
+	ErrDashboardRollupStorageBudgetExceeded = errors.New("仪表盘维度汇总超过存储预算")
+	errDashboardAggregationRunning          = errors.New("聚合作业正在运行")
 )
 
 // DashboardAggregationRepository 定义仪表盘预聚合仓储接口。
@@ -71,6 +72,9 @@ func NewDashboardAggregationService(repo DashboardAggregationRepository, timingW
 	var aggCfg config.DashboardAggregationConfig
 	if cfg != nil {
 		aggCfg = cfg.DashboardAgg
+	}
+	if setter, ok := repo.(interface{ SetDashboardDimensionRollupsEnabled(bool) }); ok {
+		setter.SetDashboardDimensionRollupsEnabled(aggCfg.DimensionRollupsEnabled)
 	}
 	return &DashboardAggregationService{
 		repo:        repo,
@@ -329,6 +333,11 @@ func (s *DashboardAggregationService) backfillRange(ctx context.Context, start, 
 		return errDashboardAggregationRunning
 	}
 	defer atomic.StoreInt32(&s.running, 0)
+	release, ok := tryAcquireSingletonLeaderLock(ctx, s.lockCache, s.db, dashboardAggregationLeaderLockKey, s.instanceID, dashboardAggregationLeaderLockTTL)
+	if !ok {
+		return errDashboardAggregationRunning
+	}
+	defer release()
 
 	jobStart := time.Now().UTC()
 	startUTC := start.UTC()
@@ -337,13 +346,25 @@ func (s *DashboardAggregationService) backfillRange(ctx context.Context, start, 
 		return errors.New("回填时间范围无效")
 	}
 
-	cursor := truncateToDayUTC(startUTC)
+	cursor := startUTC.Truncate(time.Hour)
+	batchHours := s.cfg.BackfillBatchHours
+	if batchHours <= 0 {
+		batchHours = 1
+	}
+	// Bound user-provided configuration before converting to time.Duration;
+	// an overflowing duration would move the cursor backwards indefinitely.
+	if batchHours > 24*365 {
+		batchHours = 24 * 365
+	}
 	for cursor.Before(endUTC) {
-		windowEnd := cursor.Add(24 * time.Hour)
+		windowEnd := cursor.Add(time.Duration(batchHours) * time.Hour)
 		if windowEnd.After(endUTC) {
 			windowEnd = endUTC
 		}
 		if err := s.aggregateRange(ctx, cursor, windowEnd); err != nil {
+			return err
+		}
+		if err := s.ensureDimensionRollupStorageBudget(ctx); err != nil {
 			return err
 		}
 		cursor = windowEnd
@@ -361,6 +382,27 @@ func (s *DashboardAggregationService) backfillRange(ctx context.Context, start, 
 	)
 
 	s.maybeCleanupRetention(ctx, endUTC)
+	return nil
+}
+
+func (s *DashboardAggregationService) ensureDimensionRollupStorageBudget(ctx context.Context) error {
+	if !s.cfg.DimensionRollupsEnabled || s.cfg.RollupStorageBudgetGB <= 0 {
+		return nil
+	}
+	sizer, ok := s.repo.(interface {
+		GetDashboardDimensionRollupSizeBytes(context.Context) (int64, error)
+	})
+	if !ok {
+		return nil
+	}
+	size, err := sizer.GetDashboardDimensionRollupSizeBytes(ctx)
+	if err != nil {
+		return err
+	}
+	limit := int64(s.cfg.RollupStorageBudgetGB) << 30
+	if size > limit {
+		return ErrDashboardRollupStorageBudgetExceeded
+	}
 	return nil
 }
 

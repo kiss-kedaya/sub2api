@@ -91,6 +91,17 @@ func NewDashboardService(usageRepo UsageLogRepository, aggRepo DashboardAggregat
 	if aggRepo == nil {
 		aggEnabled = false
 	}
+	if cfg != nil {
+		if setter, ok := usageRepo.(interface{ SetDashboardRollupReadEnabled(bool) }); ok {
+			setter.SetDashboardRollupReadEnabled(cfg.DashboardAgg.ReadRollupsEnabled)
+		}
+		if setter, ok := usageRepo.(interface{ SetDashboardRollupStaleness(time.Duration) }); ok {
+			staleness := time.Duration(cfg.DashboardAgg.RollupStalenessSeconds) * time.Second
+			if staleness > 0 {
+				setter.SetDashboardRollupStaleness(staleness)
+			}
+		}
+	}
 	return &DashboardService{
 		usageRepo:      usageRepo,
 		aggRepo:        aggRepo,

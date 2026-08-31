@@ -23,6 +23,24 @@ type UserUsageTrendPoint = usagestats.UserUsageTrendPoint
 type UserSpendingRankingItem = usagestats.UserSpendingRankingItem
 type UserSpendingRankingResponse = usagestats.UserSpendingRankingResponse
 
+func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]UserUsageTrendPoint, error) {
+	if r.rollupReadEnabled.Load() {
+		if trend, covered, err := r.GetUserUsageTrendWithRollups(ctx, startTime, endTime, granularity, limit); err == nil && covered {
+			return trend, nil
+		}
+	}
+	return r.getUserUsageTrendRaw(ctx, startTime, endTime, granularity, limit)
+}
+
+func (r *usageLogRepository) GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (*UserSpendingRankingResponse, error) {
+	if r.rollupReadEnabled.Load() {
+		if ranking, covered, err := r.GetUserSpendingRankingWithRollups(ctx, startTime, endTime, limit); err == nil && covered {
+			return ranking, nil
+		}
+	}
+	return r.getUserSpendingRankingRaw(ctx, startTime, endTime, limit)
+}
+
 // APIKeyUsageTrendPoint represents API key usage trend data point
 type APIKeyUsageTrendPoint = usagestats.APIKeyUsageTrendPoint
 
@@ -82,7 +100,7 @@ func (r *usageLogRepository) GetAPIKeyUsageTrend(ctx context.Context, startTime,
 }
 
 // GetUserUsageTrend returns usage trend data grouped by user and date
-func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) (results []UserUsageTrendPoint, err error) {
+func (r *usageLogRepository) getUserUsageTrendRaw(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) (results []UserUsageTrendPoint, err error) {
 	dateFormat := safeDateFormat(granularity)
 
 	query := fmt.Sprintf(`
@@ -140,7 +158,7 @@ func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, e
 }
 
 // GetUserSpendingRanking returns user spending ranking aggregated within the time range.
-func (r *usageLogRepository) GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (result *UserSpendingRankingResponse, err error) {
+func (r *usageLogRepository) getUserSpendingRankingRaw(ctx context.Context, startTime, endTime time.Time, limit int) (result *UserSpendingRankingResponse, err error) {
 	if limit <= 0 {
 		limit = 12
 	}
@@ -224,6 +242,11 @@ func (r *usageLogRepository) GetUserSpendingRanking(ctx context.Context, startTi
 
 // GetUserUsageTrendByUserID 获取指定用户的使用趋势
 func (r *usageLogRepository) GetUserUsageTrendByUserID(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) (results []TrendDataPoint, err error) {
+	if r.rollupReadEnabled.Load() {
+		if trend, covered, rollupErr := r.GetUsageTrendWithRollups(ctx, startTime, endTime, granularity, UsageLogFilters{UserID: userID}); rollupErr == nil && covered {
+			return trend, nil
+		}
+	}
 	dateFormat := safeDateFormat(granularity)
 
 	query := fmt.Sprintf(`
@@ -270,15 +293,29 @@ func (r *usageLogRepository) GetUserModelStats(ctx context.Context, userID int64
 
 // GetUsageTrendWithFilters returns usage trend data with optional filters
 func (r *usageLogRepository) GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) (results []TrendDataPoint, err error) {
+	if r.rollupReadEnabled.Load() {
+		filters := UsageLogFilters{UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID, Model: model, RequestType: requestType, Stream: stream, BillingType: billingType}
+		if trend, covered, rollupErr := r.GetUsageTrendWithRollups(ctx, startTime, endTime, granularity, filters); rollupErr == nil && covered {
+			return trend, nil
+		}
+	}
 	return r.getUsageTrendWithFilters(ctx, startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, "", requestType, stream, billingType, "", nil)
 }
 
 func (r *usageLogRepository) GetUsageTrendWithUsageFilters(ctx context.Context, startTime, endTime time.Time, granularity string, filters UsageLogFilters) (results []TrendDataPoint, err error) {
+	if r.rollupReadEnabled.Load() {
+		if trend, covered, rollupErr := r.GetUsageTrendWithRollups(ctx, startTime, endTime, granularity, filters); rollupErr == nil && covered {
+			return trend, nil
+		}
+	}
 	return r.getUsageTrendWithFilters(ctx, startTime, endTime, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch)
 }
 
 func (r *usageLogRepository) getUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string, upstreamModelMismatch *bool) (results []TrendDataPoint, err error) {
-	if shouldUsePreaggregatedTrend(granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, billingMode, upstreamModelMismatch) {
+	// When dimension rollup reads are enabled, a coverage miss must fall back to
+	// the raw query. The legacy hourly aggregate has no watermark/tail contract
+	// and could otherwise return stale data for unsupported filters.
+	if !r.rollupReadEnabled.Load() && shouldUsePreaggregatedTrend(granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, billingMode, upstreamModelMismatch) {
 		aggregated, aggregatedErr := r.getUsageTrendFromAggregates(ctx, startTime, endTime, granularity)
 		if aggregatedErr == nil && len(aggregated) > 0 {
 			return aggregated, nil
@@ -429,16 +466,33 @@ func (r *usageLogRepository) getUsageTrendFromAggregates(ctx context.Context, st
 
 // GetModelStatsWithFilters returns model statistics with optional filters
 func (r *usageLogRepository) GetModelStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8) (results []ModelStat, err error) {
+	if r.rollupReadEnabled.Load() {
+		filters := UsageLogFilters{UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID, RequestType: requestType, Stream: stream, BillingType: billingType}
+		if stats, covered, rollupErr := r.GetModelStatsWithRollups(ctx, startTime, endTime, filters, usagestats.ModelSourceRequested); rollupErr == nil && covered {
+			return stats, nil
+		}
+	}
 	return r.getModelStatsWithFiltersBySource(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, "", requestType, stream, billingType, usagestats.ModelSourceRequested, "", nil)
 }
 
 // GetModelStatsWithFiltersBySource returns model statistics with optional filters and model source dimension.
 // source: requested | upstream | mapping.
 func (r *usageLogRepository) GetModelStatsWithFiltersBySource(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8, source string) (results []ModelStat, err error) {
+	if r.rollupReadEnabled.Load() {
+		filters := UsageLogFilters{UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID, RequestType: requestType, Stream: stream, BillingType: billingType}
+		if stats, covered, rollupErr := r.GetModelStatsWithRollups(ctx, startTime, endTime, filters, source); rollupErr == nil && covered {
+			return stats, nil
+		}
+	}
 	return r.getModelStatsWithFiltersBySource(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, "", requestType, stream, billingType, source, "", nil)
 }
 
 func (r *usageLogRepository) GetModelStatsWithUsageFiltersBySource(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters, source string) (results []ModelStat, err error) {
+	if r.rollupReadEnabled.Load() {
+		if stats, covered, rollupErr := r.GetModelStatsWithRollups(ctx, startTime, endTime, filters, source); rollupErr == nil && covered {
+			return stats, nil
+		}
+	}
 	return r.getModelStatsWithFiltersBySource(ctx, startTime, endTime, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, source, filters.BillingMode, filters.UpstreamModelMismatch)
 }
 
@@ -521,10 +575,21 @@ func (r *usageLogRepository) getModelStatsWithFiltersBySource(ctx context.Contex
 
 // GetGroupStatsWithFilters returns group usage statistics with optional filters
 func (r *usageLogRepository) GetGroupStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8) (results []usagestats.GroupStat, err error) {
+	if r.rollupReadEnabled.Load() {
+		filters := UsageLogFilters{UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID, RequestType: requestType, Stream: stream, BillingType: billingType}
+		if stats, covered, rollupErr := r.GetGroupStatsWithRollups(ctx, startTime, endTime, filters); rollupErr == nil && covered {
+			return stats, nil
+		}
+	}
 	return r.getGroupStatsWithFilters(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, "", requestType, stream, billingType, "", nil)
 }
 
 func (r *usageLogRepository) GetGroupStatsWithUsageFilters(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters) (results []usagestats.GroupStat, err error) {
+	if r.rollupReadEnabled.Load() {
+		if stats, covered, rollupErr := r.GetGroupStatsWithRollups(ctx, startTime, endTime, filters); rollupErr == nil && covered {
+			return stats, nil
+		}
+	}
 	return r.getGroupStatsWithFilters(ctx, startTime, endTime, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch)
 }
 

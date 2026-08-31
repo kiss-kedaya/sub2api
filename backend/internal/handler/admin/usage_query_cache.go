@@ -12,6 +12,7 @@ import (
 var usageStatsCache = newNamedSnapshotCache("usage-stats", reportCacheTTL)
 
 type usageStatsCacheKeyData struct {
+	RollupVersion         string `json:"rollup_version"`
 	StartTime             string `json:"start_time"`
 	EndTime               string `json:"end_time"`
 	UserID                int64  `json:"user_id"`
@@ -36,6 +37,7 @@ func usageStatsCacheKey(filters usagestats.UsageLogFilters) string {
 		end = filters.EndTime.UTC().Format(time.RFC3339)
 	}
 	return mustMarshalDashboardCacheKey(usageStatsCacheKeyData{
+		RollupVersion:         reportCacheVersion(),
 		StartTime:             start,
 		EndTime:               end,
 		UserID:                filters.UserID,

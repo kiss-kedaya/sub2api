@@ -654,8 +654,18 @@ func (r *usageLogRepository) GetGlobalStats(ctx context.Context, startTime, endT
 	return stats, nil
 }
 
-// GetStatsWithFilters gets usage statistics with optional filters
+// GetStatsWithFilters gets usage statistics with optional filters.
 func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters UsageLogFilters) (*UsageStats, error) {
+	if r.rollupReadEnabled.Load() {
+		if stats, covered, err := r.GetStatsWithRollups(ctx, filters); err == nil && covered {
+			return stats, nil
+		}
+	}
+	return r.getStatsWithFiltersRaw(ctx, filters)
+}
+
+// getStatsWithFiltersRaw gets usage statistics with optional filters.
+func (r *usageLogRepository) getStatsWithFiltersRaw(ctx context.Context, filters UsageLogFilters) (*UsageStats, error) {
 	conditions := make([]string, 0, 9)
 	args := make([]any, 0, 9)
 

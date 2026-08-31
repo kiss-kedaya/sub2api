@@ -6,6 +6,13 @@
         <LoadingSpinner />
       </div>
 
+      <div v-else-if="dashboardError" class="flex flex-col items-center justify-center gap-4 py-12 text-sm text-gray-500 dark:text-gray-400">
+        <p>{{ t('admin.dashboard.failedToLoad') }}</p>
+        <button type="button" class="btn btn-secondary" @click="loadDashboardStats">
+          {{ t('common.refresh') }}
+        </button>
+      </div>
+
       <template v-else-if="stats">
         <!-- Row 1: Core Stats -->
         <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -392,6 +399,7 @@ const router = useRouter()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 const stats = ref<DashboardStats | null>(null)
 const loading = ref(false)
+const dashboardError = ref(false)
 const chartsLoading = ref(false)
 const userTrendLoading = ref(false)
 const rankingLoading = ref(false)
@@ -650,6 +658,7 @@ const loadDashboardSnapshot = async (includeStats: boolean) => {
     loading.value = true
   }
   chartsLoading.value = true
+  if (includeStats) dashboardError.value = false
   try {
     const response = await adminAPI.dashboard.getSnapshotV2({
       start_date: startDate.value,
@@ -670,6 +679,7 @@ const loadDashboardSnapshot = async (includeStats: boolean) => {
   } catch (error) {
     if (currentSeq !== chartLoadSeq) return
     appStore.showError(t('admin.dashboard.failedToLoad'))
+    if (includeStats) dashboardError.value = true
     console.error('Error loading dashboard snapshot:', error)
   } finally {
     if (currentSeq === chartLoadSeq) {
