@@ -237,8 +237,9 @@ func scheduleScenarios() []scheduleScenario {
 			group: enabledGroup(PlatformGemini), catalog: mustCatalogFromJSON(geminiLadderCatalogJSON), wantBasis: ContextPricingBasisWholeRequest,
 			check: func(t *testing.T, s *ContextPricingSchedule) {
 				require.Len(t, s.Tiers, 2)
-				requireTier(t, s.Tiers[0], 0, intPtr(200000), "≤200K", p(1.25e-6), p(10e-6), nil, p(0.3125e-6))
-				requireTier(t, s.Tiers[1], 200000, nil, ">200K", p(2.5e-6), p(15e-6), nil, p(0.625e-6))
+				// 缓存写入按标准输入价，与 input 一同整单换档
+				requireTier(t, s.Tiers[0], 0, intPtr(200000), "≤200K", p(1.25e-6), p(10e-6), p(1.25e-6), p(0.125e-6))
+				requireTier(t, s.Tiers[1], 200000, nil, ">200K", p(2.5e-6), p(15e-6), p(2.5e-6), p(0.25e-6))
 			},
 		},
 		{
