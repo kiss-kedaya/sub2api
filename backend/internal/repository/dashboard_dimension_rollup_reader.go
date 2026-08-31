@@ -107,16 +107,12 @@ func (r *usageLogRepository) rollupBoundsForDimension(ctx context.Context, start
 		FROM usage_dashboard_hourly
 		WHERE bucket_start >= $1 AND bucket_start < $2 AND total_requests > 0
 	`
-	staleness := time.Duration(r.rollupStalenessNanos.Load())
-	if staleness <= 0 {
-		staleness = time.Minute
-	}
-	args := []any{start.UTC(), cutoff.UTC(), dimensionType, staleness.Seconds()}
+	args := []any{start.UTC(), cutoff.UTC(), dimensionType}
 	if userID > 0 {
 		expected = `
 			SELECT bucket_start
 			FROM usage_dashboard_hourly_dimensions
-			WHERE dimension_type = 'user' AND user_id = $5
+			WHERE dimension_type = 'user' AND user_id = $4
 			  AND bucket_start >= $1 AND bucket_start < $2
 		`
 		args = append(args, userID)
@@ -129,7 +125,6 @@ func (r *usageLogRepository) rollupBoundsForDimension(ctx context.Context, start
 				WHERE NOT EXISTS (
 					SELECT 1 FROM usage_dashboard_hourly_dimension_coverage c
 					WHERE c.bucket_start = hours.bucket_start
-					  AND c.computed_at >= NOW() - ($4::double precision * interval '1 second')
 				)
 			)
 			AND NOT EXISTS (
@@ -145,7 +140,7 @@ func (r *usageLogRepository) rollupBoundsForDimension(ctx context.Context, start
 			)
 		)`, expected, func() string {
 		if userID > 0 {
-			return " AND d.user_id = $5"
+			return " AND d.user_id = $4"
 		}
 		return ""
 	}())
