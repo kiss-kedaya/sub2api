@@ -1157,6 +1157,12 @@ func TestLoadDefaultDashboardAggregationConfig(t *testing.T) {
 	if cfg.DashboardAgg.RecomputeDays != 2 {
 		t.Fatalf("DashboardAgg.RecomputeDays = %d, want 2", cfg.DashboardAgg.RecomputeDays)
 	}
+	if cfg.DashboardAgg.DimensionRollupsEnabled || cfg.DashboardAgg.ReadRollupsEnabled {
+		t.Fatalf("dimension rollup flags must default to disabled")
+	}
+	if cfg.DashboardAgg.RollupStalenessSeconds != 60 || cfg.DashboardAgg.BackfillBatchHours != 1 || cfg.DashboardAgg.RollupStorageBudgetGB != 30 {
+		t.Fatalf("unexpected dimension rollup defaults: %+v", cfg.DashboardAgg)
+	}
 }
 
 func TestValidateDashboardAggregationConfigDisabled(t *testing.T) {

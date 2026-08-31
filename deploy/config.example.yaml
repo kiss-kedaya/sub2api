@@ -756,6 +756,21 @@ dashboard_aggregation:
   # Recompute recent N days on startup
   # 启动时重算最近 N 天
   recompute_days: 2
+  # Write dimension-level rollups
+  # 写入维度级汇总
+  dimension_rollups_enabled: false
+  # Read dimension-level rollups; stale or unsupported queries fall back to raw SQL
+  # 读取维度级汇总；过期或不支持的查询自动回退原始 SQL
+  read_rollups_enabled: false
+  # Maximum tolerated rollup lag (seconds)
+  # 汇总允许的最大延迟（秒）
+  rollup_staleness_seconds: 60
+  # Backfill query window (hours)
+  # 回填单次查询窗口（小时）
+  backfill_batch_hours: 1
+  # Maximum dimension-rollup table size (GB)
+  # 维度汇总表最大占用（GB）
+  rollup_storage_budget_gb: 30
   # Retention windows (days)
   # 保留窗口（天）
   retention:

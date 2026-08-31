@@ -18,6 +18,7 @@ var (
 )
 
 type dashboardTrendCacheKey struct {
+	RollupVersion         string `json:"rollup_version"`
 	StartTime             string `json:"start_time"`
 	EndTime               string `json:"end_time"`
 	Granularity           string `json:"granularity"`
@@ -33,6 +34,7 @@ type dashboardTrendCacheKey struct {
 }
 
 type dashboardModelGroupCacheKey struct {
+	RollupVersion         string `json:"rollup_version"`
 	StartTime             string `json:"start_time"`
 	EndTime               string `json:"end_time"`
 	UserID                int64  `json:"user_id"`
@@ -47,10 +49,11 @@ type dashboardModelGroupCacheKey struct {
 }
 
 type dashboardEntityTrendCacheKey struct {
-	StartTime   string `json:"start_time"`
-	EndTime     string `json:"end_time"`
-	Granularity string `json:"granularity"`
-	Limit       int    `json:"limit"`
+	RollupVersion string `json:"rollup_version"`
+	StartTime     string `json:"start_time"`
+	EndTime       string `json:"end_time"`
+	Granularity   string `json:"granularity"`
+	Limit         int    `json:"limit"`
 }
 
 func cacheStatusValue(hit bool) string {
@@ -97,6 +100,7 @@ func (h *DashboardHandler) getUsageTrendCached(
 	upstreamModelMismatch *bool,
 ) ([]usagestats.TrendDataPoint, bool, error) {
 	key := mustMarshalDashboardCacheKey(dashboardTrendCacheKey{
+		RollupVersion:         reportCacheVersion(),
 		StartTime:             startTime.UTC().Format(time.RFC3339),
 		EndTime:               endTime.UTC().Format(time.RFC3339),
 		Granularity:           granularity,
@@ -137,6 +141,7 @@ func (h *DashboardHandler) getModelStatsCached(
 	upstreamModelMismatch *bool,
 ) ([]usagestats.ModelStat, bool, error) {
 	key := mustMarshalDashboardCacheKey(dashboardModelGroupCacheKey{
+		RollupVersion:         reportCacheVersion(),
 		StartTime:             startTime.UTC().Format(time.RFC3339),
 		EndTime:               endTime.UTC().Format(time.RFC3339),
 		UserID:                userID,
@@ -175,6 +180,7 @@ func (h *DashboardHandler) getGroupStatsCached(
 	upstreamModelMismatch *bool,
 ) ([]usagestats.GroupStat, bool, error) {
 	key := mustMarshalDashboardCacheKey(dashboardModelGroupCacheKey{
+		RollupVersion:         reportCacheVersion(),
 		StartTime:             startTime.UTC().Format(time.RFC3339),
 		EndTime:               endTime.UTC().Format(time.RFC3339),
 		UserID:                userID,
@@ -204,10 +210,11 @@ func (h *DashboardHandler) getGroupStatsCached(
 
 func (h *DashboardHandler) getAPIKeyUsageTrendCached(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.APIKeyUsageTrendPoint, bool, error) {
 	key := mustMarshalDashboardCacheKey(dashboardEntityTrendCacheKey{
-		StartTime:   startTime.UTC().Format(time.RFC3339),
-		EndTime:     endTime.UTC().Format(time.RFC3339),
-		Granularity: granularity,
-		Limit:       limit,
+		RollupVersion: reportCacheVersion(),
+		StartTime:     startTime.UTC().Format(time.RFC3339),
+		EndTime:       endTime.UTC().Format(time.RFC3339),
+		Granularity:   granularity,
+		Limit:         limit,
 	})
 	entry, hit, err := dashboardAPIKeysTrendCache.GetOrLoadContext(ctx, key, func() (any, error) {
 		return h.dashboardService.GetAPIKeyUsageTrend(ctx, startTime, endTime, granularity, limit)
@@ -221,10 +228,11 @@ func (h *DashboardHandler) getAPIKeyUsageTrendCached(ctx context.Context, startT
 
 func (h *DashboardHandler) getUserUsageTrendCached(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.UserUsageTrendPoint, bool, error) {
 	key := mustMarshalDashboardCacheKey(dashboardEntityTrendCacheKey{
-		StartTime:   startTime.UTC().Format(time.RFC3339),
-		EndTime:     endTime.UTC().Format(time.RFC3339),
-		Granularity: granularity,
-		Limit:       limit,
+		RollupVersion: reportCacheVersion(),
+		StartTime:     startTime.UTC().Format(time.RFC3339),
+		EndTime:       endTime.UTC().Format(time.RFC3339),
+		Granularity:   granularity,
+		Limit:         limit,
 	})
 	entry, hit, err := dashboardUsersTrendCache.GetOrLoadContext(ctx, key, func() (any, error) {
 		return h.dashboardService.GetUserUsageTrend(ctx, startTime, endTime, granularity, limit)

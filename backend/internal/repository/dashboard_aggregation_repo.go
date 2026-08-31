@@ -7,6 +7,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
@@ -15,8 +16,9 @@ import (
 )
 
 type dashboardAggregationRepository struct {
-	sql   sqlExecutor
-	clock func() time.Time
+	sql                     sqlExecutor
+	clock                   func() time.Time
+	dimensionRollupsEnabled atomic.Bool
 }
 
 const usageLogsCleanupBatchSize = 10000
@@ -36,6 +38,23 @@ func NewDashboardAggregationRepository(sqlDB *sql.DB) service.DashboardAggregati
 
 func newDashboardAggregationRepositoryWithSQL(sqlq sqlExecutor) *dashboardAggregationRepository {
 	return &dashboardAggregationRepository{sql: sqlq, clock: time.Now}
+}
+
+func (r *dashboardAggregationRepository) SetDashboardDimensionRollupsEnabled(enabled bool) {
+	if r != nil {
+		r.dimensionRollupsEnabled.Store(enabled)
+	}
+}
+
+func (r *dashboardAggregationRepository) GetDashboardDimensionRollupSizeBytes(ctx context.Context) (int64, error) {
+	if r == nil || r.sql == nil {
+		return 0, nil
+	}
+	var size int64
+	if err := scanSingleRow(ctx, r.sql, `SELECT COALESCE(pg_total_relation_size('usage_dashboard_hourly_dimensions'::regclass), 0)`, nil, &size); err != nil {
+		return 0, err
+	}
+	return size, nil
 }
 
 func (r *dashboardAggregationRepository) now() time.Time {
@@ -82,6 +101,7 @@ func (r *dashboardAggregationRepository) AggregateRange(ctx context.Context, sta
 			return err
 		}
 		txRepo := newDashboardAggregationRepositoryWithSQL(tx)
+		txRepo.SetDashboardDimensionRollupsEnabled(r.dimensionRollupsEnabled.Load())
 		if err := txRepo.aggregateRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd); err != nil {
 			_ = tx.Rollback()
 			return err
@@ -101,6 +121,11 @@ func (r *dashboardAggregationRepository) aggregateRangeInTx(ctx context.Context,
 	}
 	if err := r.upsertHourlyAggregates(ctx, hourStart, hourEnd); err != nil {
 		return err
+	}
+	if r.dimensionRollupsEnabled.Load() {
+		if err := r.upsertDimensionAggregates(ctx, hourStart, hourEnd); err != nil {
+			return err
+		}
 	}
 	if err := r.upsertDailyAggregates(ctx, dayStart, dayEnd); err != nil {
 		return err
@@ -146,6 +171,7 @@ func (r *dashboardAggregationRepository) RecomputeRange(ctx context.Context, sta
 			return err
 		}
 		txRepo := newDashboardAggregationRepositoryWithSQL(tx)
+		txRepo.SetDashboardDimensionRollupsEnabled(r.dimensionRollupsEnabled.Load())
 		if err := txRepo.recomputeRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd); err != nil {
 			_ = tx.Rollback()
 			return err
@@ -167,6 +193,14 @@ func (r *dashboardAggregationRepository) recomputeRangeInTx(ctx context.Context,
 	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_users WHERE bucket_start >= $1 AND bucket_start < $2", hourStart, hourEnd); err != nil {
 		return err
 	}
+	if r.dimensionRollupsEnabled.Load() {
+		if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_dimensions WHERE bucket_start >= $1 AND bucket_start < $2", hourStart, hourEnd); err != nil {
+			return err
+		}
+		if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_dimension_coverage WHERE bucket_start >= $1 AND bucket_start < $2", hourStart, hourEnd); err != nil {
+			return err
+		}
+	}
 	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_daily WHERE bucket_date >= $1::date AND bucket_date < $2::date", dayStart, dayEnd); err != nil {
 		return err
 	}
@@ -182,6 +216,11 @@ func (r *dashboardAggregationRepository) recomputeRangeInTx(ctx context.Context,
 	}
 	if err := r.upsertHourlyAggregates(ctx, hourStart, hourEnd); err != nil {
 		return err
+	}
+	if r.dimensionRollupsEnabled.Load() {
+		if err := r.upsertDimensionAggregates(ctx, hourStart, hourEnd); err != nil {
+			return err
+		}
 	}
 	if err := r.upsertDailyAggregates(ctx, dayStart, dayEnd); err != nil {
 		return err
@@ -206,7 +245,9 @@ func (r *dashboardAggregationRepository) UpdateAggregationWatermark(ctx context.
 		INSERT INTO usage_dashboard_aggregation_watermark (id, last_aggregated_at, updated_at)
 		VALUES (1, $1, NOW())
 		ON CONFLICT (id)
-		DO UPDATE SET last_aggregated_at = EXCLUDED.last_aggregated_at, updated_at = EXCLUDED.updated_at
+		DO UPDATE SET
+			last_aggregated_at = GREATEST(usage_dashboard_aggregation_watermark.last_aggregated_at, EXCLUDED.last_aggregated_at),
+			updated_at = EXCLUDED.updated_at
 	`
 	_, err := r.sql.ExecContext(ctx, query, aggregatedAt.UTC())
 	return err
@@ -219,6 +260,16 @@ func (r *dashboardAggregationRepository) CleanupAggregates(ctx context.Context, 
 		return err
 	}
 	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_users WHERE bucket_start < $1", hourlyCutoffUTC); err != nil {
+		return err
+	}
+	// Retention cleanup is independent from the read/write feature flags. Once
+	// migration 235 is present, stale rollup rows must be removed even when a
+	// rollout has been paused; otherwise a later re-enable could reuse expired
+	// dimensions and the table would grow without bound.
+	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_dimensions WHERE bucket_start < $1", hourlyCutoffUTC); err != nil {
+		return err
+	}
+	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_dimension_coverage WHERE bucket_start < $1", hourlyCutoffUTC); err != nil {
 		return err
 	}
 	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_daily WHERE bucket_date < $1::date", dailyCutoffUTC); err != nil {
@@ -393,13 +444,35 @@ func (r *dashboardAggregationRepository) EnsureUsageLogsPartitions(ctx context.C
 func (r *dashboardAggregationRepository) insertHourlyActiveUsers(ctx context.Context, start, end time.Time) error {
 	tzName := timezone.Name()
 	query := `
-		INSERT INTO usage_dashboard_hourly_users (bucket_start, user_id)
-		SELECT DISTINCT
+		INSERT INTO usage_dashboard_hourly_users (
+			bucket_start, user_id, total_requests, input_tokens, output_tokens,
+			cache_creation_tokens, cache_read_tokens, total_cost, actual_cost,
+			account_cost, total_duration_ms, duration_count, computed_at
+		)
+		SELECT
 			date_trunc('hour', created_at AT TIME ZONE $3) AT TIME ZONE $3 AS bucket_start,
-			user_id
+			user_id,
+			COUNT(*), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+			COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
+			COALESCE(SUM(total_cost), 0), COALESCE(SUM(actual_cost), 0),
+			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0),
+			COALESCE(SUM(COALESCE(duration_ms, 0)), 0), COUNT(duration_ms), NOW()
 		FROM usage_logs
 		WHERE created_at >= $1 AND created_at < $2
-		ON CONFLICT DO NOTHING
+		GROUP BY 1, 2
+		ON CONFLICT (bucket_start, user_id)
+		DO UPDATE SET
+			total_requests = EXCLUDED.total_requests,
+			input_tokens = EXCLUDED.input_tokens,
+			output_tokens = EXCLUDED.output_tokens,
+			cache_creation_tokens = EXCLUDED.cache_creation_tokens,
+			cache_read_tokens = EXCLUDED.cache_read_tokens,
+			total_cost = EXCLUDED.total_cost,
+			actual_cost = EXCLUDED.actual_cost,
+			account_cost = EXCLUDED.account_cost,
+			total_duration_ms = EXCLUDED.total_duration_ms,
+			duration_count = EXCLUDED.duration_count,
+			computed_at = EXCLUDED.computed_at
 	`
 	_, err := r.sql.ExecContext(ctx, query, start, end, tzName)
 	return err
@@ -434,6 +507,7 @@ func (r *dashboardAggregationRepository) upsertHourlyAggregates(ctx context.Cont
 				COALESCE(SUM(total_cost), 0) AS total_cost,
 				COALESCE(SUM(actual_cost), 0) AS actual_cost,
 				COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) AS account_cost,
+				COUNT(duration_ms) AS duration_count,
 				COALESCE(SUM(COALESCE(duration_ms, 0)), 0) AS total_duration_ms
 			FROM usage_logs
 			WHERE created_at >= $1 AND created_at < $2
@@ -456,6 +530,7 @@ func (r *dashboardAggregationRepository) upsertHourlyAggregates(ctx context.Cont
 			actual_cost,
 			account_cost,
 			total_duration_ms,
+			duration_count,
 			active_users,
 			computed_at
 		)
@@ -470,6 +545,7 @@ func (r *dashboardAggregationRepository) upsertHourlyAggregates(ctx context.Cont
 			hourly.actual_cost,
 			hourly.account_cost,
 			hourly.total_duration_ms,
+			hourly.duration_count,
 			COALESCE(user_counts.active_users, 0) AS active_users,
 			NOW()
 		FROM hourly
@@ -485,10 +561,193 @@ func (r *dashboardAggregationRepository) upsertHourlyAggregates(ctx context.Cont
 			actual_cost = EXCLUDED.actual_cost,
 			account_cost = EXCLUDED.account_cost,
 			total_duration_ms = EXCLUDED.total_duration_ms,
+			duration_count = EXCLUDED.duration_count,
 			active_users = EXCLUDED.active_users,
 			computed_at = EXCLUDED.computed_at
 	`
 	_, err := r.sql.ExecContext(ctx, query, start, end, tzName)
+	return err
+}
+
+// upsertDimensionAggregates materializes the dimensions used by dashboard and
+// user usage reports in one bounded scan. The expressions intentionally mirror
+// the raw report queries so rollup reads remain semantically interchangeable.
+func (r *dashboardAggregationRepository) upsertDimensionAggregates(ctx context.Context, start, end time.Time) error {
+	tzName := timezone.Name()
+	requestedExpr := "COALESCE(NULLIF(TRIM(requested_model), ''), model)"
+	upstreamExpr := "COALESCE(NULLIF(TRIM(upstream_model), ''), model)"
+	base := fmt.Sprintf(`
+		WITH base AS (
+			SELECT
+				date_trunc('hour', created_at AT TIME ZONE $1) AT TIME ZONE $1 AS bucket_start,
+				user_id,
+				COALESCE(group_id, 0) AS group_id,
+				%s AS requested_model,
+				%s AS upstream_model,
+				COALESCE(NULLIF(TRIM(inbound_endpoint), ''), 'unknown') AS inbound_endpoint,
+				COALESCE(NULLIF(TRIM(upstream_endpoint), ''), 'unknown') AS upstream_endpoint,
+				input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+				total_cost, actual_cost,
+				COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1) AS account_cost,
+				duration_ms
+			FROM usage_logs
+			WHERE created_at >= $2 AND created_at < $3
+		), dims AS (
+			SELECT bucket_start, 'user'::text AS dimension_type, user_id::text AS dimension_key,
+				user_id, 0::bigint AS group_id, ''::text AS endpoint_type,
+				total_requests, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+				total_cost, actual_cost, account_cost, duration_count, total_duration_ms FROM (
+				SELECT bucket_start, user_id, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+					SUM(cache_creation_tokens) AS cache_creation_tokens, SUM(cache_read_tokens) AS cache_read_tokens,
+					COUNT(*) AS total_requests, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+					SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, user_id
+			) u
+			UNION ALL
+			SELECT bucket_start, 'model', requested_model, 0, 0, '', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, requested_model, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, requested_model) m
+			UNION ALL
+			SELECT bucket_start, 'model_upstream', upstream_model, 0, 0, '', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, upstream_model, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, upstream_model) m
+			UNION ALL
+			SELECT bucket_start, 'model_mapping', requested_model || ' -> ' || upstream_model, 0, 0, '', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, requested_model, upstream_model, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, requested_model, upstream_model) m
+			UNION ALL
+			SELECT bucket_start, 'user_model', requested_model, user_id, 0, '', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, user_id, requested_model, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, user_id, requested_model) m
+			UNION ALL
+			SELECT bucket_start, 'user_model_upstream', upstream_model, user_id, 0, '', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, user_id, upstream_model, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, user_id, upstream_model) m
+			UNION ALL
+			SELECT bucket_start, 'user_model_mapping', requested_model || ' -> ' || upstream_model, user_id, 0, '', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, user_id, requested_model, upstream_model, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, user_id, requested_model, upstream_model) m
+			UNION ALL
+			SELECT bucket_start, 'group', group_id::text, 0, group_id, '', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, group_id, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, group_id) g
+			UNION ALL
+			SELECT bucket_start, 'user_group', group_id::text, user_id, group_id, '', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, user_id, group_id, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, user_id, group_id) g
+			UNION ALL
+			SELECT bucket_start, 'endpoint', inbound_endpoint, 0, 0, 'inbound', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, inbound_endpoint, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, inbound_endpoint) e
+			UNION ALL
+			SELECT bucket_start, 'endpoint', upstream_endpoint, 0, 0, 'upstream', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, upstream_endpoint, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, upstream_endpoint) e
+			UNION ALL
+			SELECT bucket_start, 'endpoint', inbound_endpoint || ' -> ' || upstream_endpoint, 0, 0, 'path', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, inbound_endpoint, upstream_endpoint, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, inbound_endpoint, upstream_endpoint) e
+			UNION ALL
+			SELECT bucket_start, 'user_endpoint', inbound_endpoint, user_id, 0, 'inbound', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, user_id, inbound_endpoint, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, user_id, inbound_endpoint) e
+			UNION ALL
+			SELECT bucket_start, 'user_endpoint', upstream_endpoint, user_id, 0, 'upstream', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, user_id, upstream_endpoint, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, user_id, upstream_endpoint) e
+			UNION ALL
+			SELECT bucket_start, 'user_endpoint', inbound_endpoint || ' -> ' || upstream_endpoint, user_id, 0, 'path', total_requests, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, total_cost, actual_cost, account_cost, duration_count, total_duration_ms
+			FROM (SELECT bucket_start, user_id, inbound_endpoint, upstream_endpoint, COUNT(*) AS total_requests, SUM(input_tokens) AS input_tokens,
+				SUM(output_tokens) AS output_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens,
+				SUM(cache_read_tokens) AS cache_read_tokens, SUM(total_cost) AS total_cost, SUM(actual_cost) AS actual_cost,
+				SUM(account_cost) AS account_cost, COUNT(duration_ms) AS duration_count, COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+				FROM base GROUP BY bucket_start, user_id, inbound_endpoint, upstream_endpoint) e
+		)
+		INSERT INTO usage_dashboard_hourly_dimensions (
+			bucket_start, dimension_type, dimension_key, user_id, group_id, endpoint_type,
+			total_requests, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+			total_cost, actual_cost, account_cost, duration_count, total_duration_ms, computed_at
+		)
+		SELECT bucket_start, dimension_type, dimension_key, user_id, group_id, endpoint_type,
+			total_requests, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+			total_cost, actual_cost, account_cost, duration_count, total_duration_ms, NOW()
+		FROM dims
+		ON CONFLICT (bucket_start, dimension_type, dimension_key, user_id, group_id, endpoint_type)
+		DO UPDATE SET
+			total_requests = EXCLUDED.total_requests,
+			input_tokens = EXCLUDED.input_tokens,
+			output_tokens = EXCLUDED.output_tokens,
+			cache_creation_tokens = EXCLUDED.cache_creation_tokens,
+			cache_read_tokens = EXCLUDED.cache_read_tokens,
+			total_cost = EXCLUDED.total_cost,
+			actual_cost = EXCLUDED.actual_cost,
+			account_cost = EXCLUDED.account_cost,
+			duration_count = EXCLUDED.duration_count,
+			total_duration_ms = EXCLUDED.total_duration_ms,
+			computed_at = EXCLUDED.computed_at
+	`, requestedExpr, upstreamExpr)
+	if _, err := r.sql.ExecContext(ctx, base, tzName, start, end); err != nil {
+		return err
+	}
+	_, err := r.sql.ExecContext(ctx, `
+		INSERT INTO usage_dashboard_hourly_dimension_coverage (bucket_start, computed_at)
+		SELECT bucket_start, NOW()
+		FROM generate_series($1::timestamptz, ($2::timestamptz - interval '1 microsecond'), interval '1 hour') AS hours(bucket_start)
+		ON CONFLICT (bucket_start) DO UPDATE SET computed_at = EXCLUDED.computed_at
+	`, start, end)
 	return err
 }
 

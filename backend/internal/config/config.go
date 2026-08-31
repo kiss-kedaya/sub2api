@@ -1756,6 +1756,16 @@ type DashboardAggregationConfig struct {
 	Retention DashboardAggregationRetentionConfig `mapstructure:"retention"`
 	// RecomputeDays: 启动时重算最近 N 天
 	RecomputeDays int `mapstructure:"recompute_days"`
+	// DimensionRollupsEnabled controls writing dimension-level usage rollups.
+	DimensionRollupsEnabled bool `mapstructure:"dimension_rollups_enabled"`
+	// ReadRollupsEnabled controls reading dimension-level usage rollups.
+	ReadRollupsEnabled bool `mapstructure:"read_rollups_enabled"`
+	// RollupStalenessSeconds is the maximum tolerated rollup lag before falling back to raw logs.
+	RollupStalenessSeconds int `mapstructure:"rollup_staleness_seconds"`
+	// BackfillBatchHours bounds each dimension-rollup backfill query.
+	BackfillBatchHours int `mapstructure:"backfill_batch_hours"`
+	// RollupStorageBudgetGB prevents backfill from consuming excessive disk.
+	RollupStorageBudgetGB int `mapstructure:"rollup_storage_budget_gb"`
 }
 
 // DashboardAggregationRetentionConfig 预聚合保留窗口
@@ -2361,6 +2371,11 @@ func setDefaults() {
 	viper.SetDefault("dashboard_aggregation.retention.hourly_days", 180)
 	viper.SetDefault("dashboard_aggregation.retention.daily_days", 730)
 	viper.SetDefault("dashboard_aggregation.recompute_days", 2)
+	viper.SetDefault("dashboard_aggregation.dimension_rollups_enabled", false)
+	viper.SetDefault("dashboard_aggregation.read_rollups_enabled", false)
+	viper.SetDefault("dashboard_aggregation.rollup_staleness_seconds", 60)
+	viper.SetDefault("dashboard_aggregation.backfill_batch_hours", 1)
+	viper.SetDefault("dashboard_aggregation.rollup_storage_budget_gb", 30)
 
 	// Usage cleanup task
 	viper.SetDefault("usage_cleanup.enabled", true)
@@ -3220,6 +3235,15 @@ func (c *Config) Validate() error {
 		if c.DashboardAgg.RecomputeDays < 0 {
 			return fmt.Errorf("dashboard_aggregation.recompute_days must be non-negative")
 		}
+		if c.DashboardAgg.RollupStalenessSeconds <= 0 {
+			return fmt.Errorf("dashboard_aggregation.rollup_staleness_seconds must be positive")
+		}
+		if c.DashboardAgg.BackfillBatchHours <= 0 {
+			return fmt.Errorf("dashboard_aggregation.backfill_batch_hours must be positive")
+		}
+		if c.DashboardAgg.RollupStorageBudgetGB <= 0 {
+			return fmt.Errorf("dashboard_aggregation.rollup_storage_budget_gb must be positive")
+		}
 	} else {
 		if c.DashboardAgg.IntervalSeconds < 0 {
 			return fmt.Errorf("dashboard_aggregation.interval_seconds must be non-negative")
@@ -3249,6 +3273,15 @@ func (c *Config) Validate() error {
 		}
 		if c.DashboardAgg.RecomputeDays < 0 {
 			return fmt.Errorf("dashboard_aggregation.recompute_days must be non-negative")
+		}
+		if c.DashboardAgg.RollupStalenessSeconds < 0 {
+			return fmt.Errorf("dashboard_aggregation.rollup_staleness_seconds must be non-negative")
+		}
+		if c.DashboardAgg.BackfillBatchHours < 0 {
+			return fmt.Errorf("dashboard_aggregation.backfill_batch_hours must be non-negative")
+		}
+		if c.DashboardAgg.RollupStorageBudgetGB < 0 {
+			return fmt.Errorf("dashboard_aggregation.rollup_storage_budget_gb must be non-negative")
 		}
 	}
 	if c.UsageCleanup.Enabled {
