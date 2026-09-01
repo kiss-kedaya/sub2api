@@ -41,6 +41,18 @@ type ingressRejectOpsRepo struct {
 	entries     []*service.OpsInsertErrorLogInput
 }
 
+type failingOpsErrorRepo struct {
+	ingressRejectOpsRepo
+}
+
+func (r *failingOpsErrorRepo) InsertErrorLog(_ context.Context, _ *service.OpsInsertErrorLogInput) (int64, error) {
+	return 0, context.DeadlineExceeded
+}
+
+func (r *failingOpsErrorRepo) BatchInsertErrorLogs(_ context.Context, _ []*service.OpsInsertErrorLogInput) (int64, error) {
+	return 0, context.DeadlineExceeded
+}
+
 func (r *ingressRejectOpsRepo) InsertErrorLog(_ context.Context, entry *service.OpsInsertErrorLogInput) (int64, error) {
 	r.insertCalls++
 	r.entries = append(r.entries, entry)
@@ -75,6 +87,18 @@ func TestOpsErrorLogQueueByteBudget(t *testing.T) {
 	if got := OpsErrorLogQueueLength(); got != 1 {
 		t.Fatalf("queue length = %d, want 1", got)
 	}
+}
+
+func TestFlushOpsErrorLogBatchCountsPersistenceFailure(t *testing.T) {
+	resetOpsErrorLoggerStateForTest(t)
+	repo := &failingOpsErrorRepo{}
+	ops := service.NewOpsService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	entry := &service.OpsInsertErrorLogInput{ErrorPhase: "upstream", ErrorType: "upstream_error"}
+
+	flushOpsErrorLogBatch([]opsErrorLogJob{{ops: ops, entry: entry}})
+
+	require.Zero(t, OpsErrorLogProcessedTotal())
+	require.Equal(t, int64(1), OpsErrorLogFailedTotal())
 }
 
 func TestEstimateOpsErrorLogJobBytesIncludesVariablePayloads(t *testing.T) {
@@ -119,6 +143,7 @@ func resetOpsErrorLoggerStateForTest(t *testing.T) {
 	opsErrorLogEnqueued.Store(0)
 	opsErrorLogDropped.Store(0)
 	opsErrorLogProcessed.Store(0)
+	opsErrorLogFailed.Store(0)
 	opsErrorLogSanitized.Store(0)
 	opsErrorLogLastDropLogAt.Store(0)
 

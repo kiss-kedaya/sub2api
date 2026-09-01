@@ -108,6 +108,7 @@ var (
 	opsErrorLogEnqueued   atomic.Int64
 	opsErrorLogDropped    atomic.Int64
 	opsErrorLogProcessed  atomic.Int64
+	opsErrorLogFailed     atomic.Int64
 	opsErrorLogSanitized  atomic.Int64
 
 	opsErrorLogLastDropLogAt atomic.Int64
@@ -189,27 +190,39 @@ func flushOpsErrorLogBatch(batch []opsErrorLogJob) {
 	}()
 
 	grouped := make(map[*service.OpsService][]*service.OpsInsertErrorLogInput, len(batch))
-	var processed int64
+	var queued int64
 	for _, job := range batch {
 		if job.ops == nil || job.entry == nil {
 			continue
 		}
 		grouped[job.ops] = append(grouped[job.ops], job.entry)
-		processed++
+		queued++
 	}
-	if processed == 0 {
+	if queued == 0 {
 		return
 	}
 
+	var persisted int64
 	for opsSvc, entries := range grouped {
 		if opsSvc == nil || len(entries) == 0 {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), opsErrorLogTimeout)
-		_ = opsSvc.RecordErrorBatch(ctx, entries)
+		err := opsSvc.RecordErrorBatch(ctx, entries)
 		cancel()
+		if err != nil {
+			// RecordErrorBatch is atomic for a batch. Do not report failed writes
+			// as processed: otherwise the canary dashboard hides telemetry loss
+			// exactly while PostgreSQL is unhealthy. Retrying here could duplicate
+			// a batch after an ambiguous commit, so leave retry policy to the
+			// durable writer instead of adding an unsafe blind retry.
+			opsErrorLogFailed.Add(int64(len(entries)))
+			log.Printf("[OpsErrorLogger] persist batch failed (entries=%d): %v", len(entries), err)
+			continue
+		}
+		persisted += int64(len(entries))
 	}
-	opsErrorLogProcessed.Add(processed)
+	opsErrorLogProcessed.Add(persisted)
 }
 
 func enqueueOpsErrorLog(ops *service.OpsService, entry *service.OpsInsertErrorLogInput) {
@@ -349,6 +362,10 @@ func OpsErrorLogProcessedTotal() int64 {
 	return opsErrorLogProcessed.Load()
 }
 
+func OpsErrorLogFailedTotal() int64 {
+	return opsErrorLogFailed.Load()
+}
+
 func OpsErrorLogSanitizedTotal() int64 {
 	return opsErrorLogSanitized.Load()
 }
@@ -371,7 +388,7 @@ func maybeLogOpsErrorLogDrop() {
 	queueCap := OpsErrorLogQueueCapacity()
 
 	log.Printf(
-		"[OpsErrorLogger] queue is full; dropping logs (queued=%d cap=%d queued_bytes=%d bytes_cap=%d enqueued_total=%d dropped_total=%d processed_total=%d sanitized_total=%d)",
+		"[OpsErrorLogger] queue is full; dropping logs (queued=%d cap=%d queued_bytes=%d bytes_cap=%d enqueued_total=%d dropped_total=%d processed_total=%d failed_total=%d sanitized_total=%d)",
 		queued,
 		queueCap,
 		queuedBytes,
@@ -379,6 +396,7 @@ func maybeLogOpsErrorLogDrop() {
 		opsErrorLogEnqueued.Load(),
 		opsErrorLogDropped.Load(),
 		opsErrorLogProcessed.Load(),
+		opsErrorLogFailed.Load(),
 		opsErrorLogSanitized.Load(),
 	)
 }
