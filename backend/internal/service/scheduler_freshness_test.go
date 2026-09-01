@@ -139,3 +139,28 @@ func TestSchedulerFreshnessLookupResultDoesNotAllowFallbackAfterProjectionFailur
 		t.Fatalf("calls projection=%d fallback=%d, want 1/1", repo.projectionCalls, repo.fallbackCalls)
 	}
 }
+
+func TestPrepareSchedulerRequestContextReusesProjectionAcrossRetries(t *testing.T) {
+	repo := &schedulerFreshnessRepoStub{projection: map[int64]SchedulerFreshness{
+		41: schedulerFreshnessTestValue(41, nil),
+	}}
+	snapshot := &SchedulerSnapshotService{}
+	svc := &GatewayService{accountRepo: repo, schedulerSnapshot: snapshot}
+	accounts := []Account{{ID: 41, Platform: PlatformOpenAI, Type: AccountTypeOAuth}}
+
+	ctx := svc.PrepareSchedulerRequestContext(context.Background())
+	ctx = withSchedulerFreshnessAccounts(ctx, repo, snapshot, accounts)
+	// A failover attempt derives its own context from the request context. The
+	// projection must remain shared so the retry cannot issue another batch.
+	retryCtx := svc.PrepareSchedulerRequestContext(ctx)
+	retryCtx = withSchedulerFreshnessAccounts(retryCtx, repo, snapshot, accounts)
+	if got := applySchedulerFreshnessAccounts(retryCtx, accounts); len(got) != 1 {
+		t.Fatalf("retry candidates = %d, want 1", len(got))
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if repo.projectionCalls != 1 {
+		t.Fatalf("projection calls = %d, want 1 across initial selection and retry", repo.projectionCalls)
+	}
+}
