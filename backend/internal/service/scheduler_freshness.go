@@ -97,6 +97,7 @@ type schedulerFreshnessRequest struct {
 	missing     map[int64]struct{}
 	failed      map[int64]struct{}
 	accounts    map[int64]SchedulerFreshness
+	hydrated    map[int64]Account
 }
 
 func withSchedulerFreshness(ctx context.Context, accountRepo AccountRepository, snapshot *SchedulerSnapshotService, ids ...int64) context.Context {
@@ -113,6 +114,7 @@ func withSchedulerFreshness(ctx context.Context, accountRepo AccountRepository, 
 		missing:     make(map[int64]struct{}),
 		failed:      make(map[int64]struct{}),
 		accounts:    make(map[int64]SchedulerFreshness),
+		hydrated:    make(map[int64]Account),
 	}
 	schedulerFreshnessMetrics.requestTotal.Add(1)
 	state.addIDs(ids...)
@@ -129,6 +131,36 @@ func schedulerFreshnessFromContext(ctx context.Context) *schedulerFreshnessReque
 
 func (r *schedulerFreshnessRequest) enabled() bool {
 	return r != nil && r.snapshot != nil && r.accountRepo != nil
+}
+
+// schedulerHydratedAccount returns a private copy of an account that was
+// already loaded from the scheduler snapshot during this request. Selection
+// commonly validates a sticky account before the final result is built; the
+// final hydration step must not read the same snapshot entry again.
+func schedulerHydratedAccount(ctx context.Context, accountID int64) (*Account, bool) {
+	state := schedulerFreshnessFromContext(ctx)
+	if state == nil || !state.enabled() || accountID <= 0 {
+		return nil, false
+	}
+	state.mu.Lock()
+	account, ok := state.hydrated[accountID]
+	state.mu.Unlock()
+	if !ok {
+		return nil, false
+	}
+	clone := cloneSnapshotAccount(&account)
+	return &clone, true
+}
+
+func rememberSchedulerHydratedAccount(ctx context.Context, account *Account) {
+	state := schedulerFreshnessFromContext(ctx)
+	if state == nil || !state.enabled() || account == nil || account.ID <= 0 {
+		return
+	}
+	clone := cloneSnapshotAccount(account)
+	state.mu.Lock()
+	state.hydrated[account.ID] = clone
+	state.mu.Unlock()
 }
 
 // withSchedulerFreshnessAccounts extends an existing request projection (or
