@@ -3423,6 +3423,8 @@ func (r *accountRepository) loadAccountGroups(ctx context.Context, accountIDs []
 		return groupsByAccount, groupIDsByAccount, accountGroupsByAccount, nil
 	}
 
+	entriesByAccount := make([]*dbent.AccountGroup, 0)
+	allGroupIDs := make([]int64, 0)
 	for start := 0; start < len(accountIDs); start += postgresParameterBatchSize {
 		end := start + postgresParameterBatchSize
 		if end > len(accountIDs) {
@@ -3435,29 +3437,34 @@ func (r *accountRepository) loadAccountGroups(ctx context.Context, accountIDs []
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		groupIDs := make([]int64, 0, len(entries))
 		for _, ag := range entries {
-			groupIDs = append(groupIDs, ag.GroupID)
+			entriesByAccount = append(entriesByAccount, ag)
+			allGroupIDs = append(allGroupIDs, ag.GroupID)
 		}
-		groupMap, err := r.loadGroups(ctx, groupIDs)
-		if err != nil {
-			return nil, nil, nil, err
-		}
+	}
 
-		for _, ag := range entries {
-			groupSvc := groupMap[ag.GroupID]
-			agSvc := service.AccountGroup{
-				AccountID: ag.AccountID,
-				GroupID:   ag.GroupID,
-				Priority:  ag.Priority,
-				CreatedAt: ag.CreatedAt,
-				Group:     groupSvc,
-			}
-			accountGroupsByAccount[ag.AccountID] = append(accountGroupsByAccount[ag.AccountID], agSvc)
-			groupIDsByAccount[ag.AccountID] = append(groupIDsByAccount[ag.AccountID], ag.GroupID)
-			if groupSvc != nil {
-				groupsByAccount[ag.AccountID] = append(groupsByAccount[ag.AccountID], groupSvc)
-			}
+	// Load shared groups once after all account-group chunks have been read.
+	// The previous per-chunk load repeated the same group query whenever many
+	// accounts belonged to the same groups, which made large scheduler pools
+	// pay an avoidable SQL cost.
+	groupMap, err := r.loadGroups(ctx, allGroupIDs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	for _, ag := range entriesByAccount {
+		groupSvc := groupMap[ag.GroupID]
+		agSvc := service.AccountGroup{
+			AccountID: ag.AccountID,
+			GroupID:   ag.GroupID,
+			Priority:  ag.Priority,
+			CreatedAt: ag.CreatedAt,
+			Group:     groupSvc,
+		}
+		accountGroupsByAccount[ag.AccountID] = append(accountGroupsByAccount[ag.AccountID], agSvc)
+		groupIDsByAccount[ag.AccountID] = append(groupIDsByAccount[ag.AccountID], ag.GroupID)
+		if groupSvc != nil {
+			groupsByAccount[ag.AccountID] = append(groupsByAccount[ag.AccountID], groupSvc)
 		}
 	}
 
