@@ -52,3 +52,22 @@ func TestDashboardRollupReadDisabledFallsBackToRawPath(t *testing.T) {
 	_, _, ok := repo.rollupBounds(context.Background(), time.Now().Add(-time.Hour), time.Now())
 	require.False(t, ok)
 }
+
+func TestMergeUsageStatsLeavesAverageDurationForExplicitSummary(t *testing.T) {
+	dst := &UsageStats{
+		TotalRequests:     10,
+		AverageDurationMs: 100,
+	}
+	src := &UsageStats{
+		TotalRequests:     10,
+		AverageDurationMs: 200,
+	}
+
+	mergeUsageStats(dst, src)
+
+	// Requests with NULL duration are included in TotalRequests but excluded
+	// from the duration denominator. The caller must use duration sum/count,
+	// rather than reverse-engineering an average from request totals.
+	require.Equal(t, int64(20), dst.TotalRequests)
+	require.Equal(t, 100.0, dst.AverageDurationMs)
+}

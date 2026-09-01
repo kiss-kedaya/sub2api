@@ -774,7 +774,6 @@ func mergeUsageStats(dst, src *UsageStats) {
 	if src == nil {
 		return
 	}
-	baseDuration := int64(dst.AverageDurationMs * float64(dst.TotalRequests))
 	addUsageMetric(dst, dashboardRollupMetric{Requests: src.TotalRequests, InputTokens: src.TotalInputTokens, OutputTokens: src.TotalOutputTokens, CacheCreation: src.TotalCacheCreationTokens, CacheRead: src.TotalCacheReadTokens, Cost: src.TotalCost, ActualCost: src.TotalActualCost, AccountCost: derefFloat64(src.TotalAccountCost)})
 	dst.Endpoints = append(dst.Endpoints, src.Endpoints...)
 	dst.UpstreamEndpoints = append(dst.UpstreamEndpoints, src.UpstreamEndpoints...)
@@ -782,9 +781,10 @@ func mergeUsageStats(dst, src *UsageStats) {
 	dst.Endpoints = consolidateEndpointStats(dst.Endpoints)
 	dst.UpstreamEndpoints = consolidateEndpointStats(dst.UpstreamEndpoints)
 	dst.EndpointPaths = consolidateEndpointStats(dst.EndpointPaths)
-	if src.TotalRequests > 0 {
-		dst.AverageDurationMs = float64(baseDuration+int64(src.AverageDurationMs*float64(src.TotalRequests))) / float64(dst.TotalRequests)
-	}
+	// AverageDurationMs cannot be merged from UsageStats alone: its denominator
+	// is COUNT(duration_ms), while TotalRequests also includes rows with a NULL
+	// duration. Callers that combine rollups and raw tails must use the explicit
+	// duration sum/count query below and assign the final average once.
 }
 
 func derefFloat64(value *float64) float64 {
