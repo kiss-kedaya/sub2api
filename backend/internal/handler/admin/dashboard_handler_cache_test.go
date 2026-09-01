@@ -116,3 +116,40 @@ func TestDashboardHandler_GetUserUsageTrend_UsesCache(t *testing.T) {
 	require.Equal(t, "hit", rec2.Header().Get("X-Snapshot-Cache"))
 	require.Equal(t, int32(1), repo.usersTrendCalls.Load())
 }
+
+func TestDashboardSnapshotBuildDoesNotAcquireNestedReportLoadSlot(t *testing.T) {
+	// GetSnapshotV2 already owns one report-load slot while it builds the
+	// response. Filling the shared budget reproduces the old nested-cache
+	// deadlock without waiting for the production 180 second timeout.
+	for i := 0; i < cap(reportCacheLoadSlots); i++ {
+		reportCacheLoadSlots <- struct{}{}
+	}
+	defer func() {
+		for i := 0; i < cap(reportCacheLoadSlots); i++ {
+			<-reportCacheLoadSlots
+		}
+	}()
+
+	repo := &dashboardUsageRepoCacheProbe{}
+	dashboardSvc := service.NewDashboardService(repo, nil, nil, nil)
+	handler := NewDashboardHandler(dashboardSvc, nil)
+	start := time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := handler.buildSnapshotV2Response(
+			context.Background(), start, end, "day", &dashboardSnapshotV2Filters{},
+			false, true, false, false, false, 12,
+		)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+		require.Equal(t, int32(1), repo.trendCalls.Load())
+	case <-time.After(time.Second):
+		t.Fatal("snapshot build blocked while report load slots were occupied")
+	}
+}
