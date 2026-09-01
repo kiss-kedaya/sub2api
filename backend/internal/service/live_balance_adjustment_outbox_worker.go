@@ -92,19 +92,30 @@ func (w *LiveBalanceAdjustmentOutboxWorker) Stop() {
 func (w *LiveBalanceAdjustmentOutboxWorker) run() {
 	defer w.wg.Done()
 	defer w.running.Store(false)
-	pollTicker := time.NewTicker(liveBalanceOutboxPollInterval)
 	cleanupTicker := time.NewTicker(liveBalanceOutboxCleanupInterval)
-	defer pollTicker.Stop()
 	defer cleanupTicker.Stop()
+	pollTimer := time.NewTimer(0)
+	defer pollTimer.Stop()
+	pollDelay := liveBalanceOutboxPollInterval
 
 	for {
-		if err := w.processBatch(w.ctx); err != nil && w.ctx.Err() == nil {
-			w.recordFailure("claim", 0, err)
-		}
 		select {
 		case <-w.ctx.Done():
 			return
-		case <-pollTicker.C:
+		case <-pollTimer.C:
+			events, err := w.processBatchWithResult(w.ctx)
+			if err != nil && w.ctx.Err() == nil {
+				w.recordFailure("claim", 0, err)
+			}
+			if err != nil || events == 0 {
+				pollDelay *= 2
+				if pollDelay > liveBalanceOutboxPollMaxInterval {
+					pollDelay = liveBalanceOutboxPollMaxInterval
+				}
+			} else {
+				pollDelay = liveBalanceOutboxPollInterval
+			}
+			pollTimer.Reset(pollDelay)
 		case <-cleanupTicker.C:
 			w.cleanup(w.ctx)
 		}
@@ -112,9 +123,14 @@ func (w *LiveBalanceAdjustmentOutboxWorker) run() {
 }
 
 func (w *LiveBalanceAdjustmentOutboxWorker) processBatch(ctx context.Context) error {
+	_, err := w.processBatchWithResult(ctx)
+	return err
+}
+
+func (w *LiveBalanceAdjustmentOutboxWorker) processBatchWithResult(ctx context.Context) (int, error) {
 	events, err := w.repo.Claim(ctx, w.workerID, liveBalanceOutboxBatchSize, liveBalanceOutboxLease)
 	if err != nil {
-		return fmt.Errorf("claim live balance adjustments: %w", err)
+		return 0, fmt.Errorf("claim live balance adjustments: %w", err)
 	}
 
 	semaphore := make(chan struct{}, liveBalanceOutboxConcurrency)
@@ -123,7 +139,7 @@ func (w *LiveBalanceAdjustmentOutboxWorker) processBatch(ctx context.Context) er
 		select {
 		case <-ctx.Done():
 			wg.Wait()
-			return ctx.Err()
+			return len(events), ctx.Err()
 		case semaphore <- struct{}{}:
 		}
 		wg.Add(1)
@@ -134,7 +150,7 @@ func (w *LiveBalanceAdjustmentOutboxWorker) processBatch(ctx context.Context) er
 		}(events[i])
 	}
 	wg.Wait()
-	return nil
+	return len(events), nil
 }
 
 func (w *LiveBalanceAdjustmentOutboxWorker) processEvent(parent context.Context, event LiveBalanceAdjustmentEvent) {
