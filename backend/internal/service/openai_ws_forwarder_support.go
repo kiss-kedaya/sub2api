@@ -468,6 +468,7 @@ func (s *OpenAIGatewayService) SelectAccountByPreviousResponseID(
 ) (*AccountSelectionResult, error) {
 	// 分组利润控制：公共入口装门，保证不经 selectAccountWithScheduler
 	// 的调用方也无法绕过利润准入（scheduler 内部路径已在唯一调度入口装门）。
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	ctx = s.withOpenAIProfitControlGate(ctx, groupID)
 	return s.selectAccountByPreviousResponseIDForCapability(ctx, groupID, previousResponseID, requestedModel, excludedIDs, "", requireCompact)
 }
@@ -544,6 +545,7 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	if s == nil {
 		return 0, nil, "", nil
 	}
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	responseID := strings.TrimSpace(previousResponseID)
 	if responseID == "" {
 		return 0, nil, "", nil
@@ -603,10 +605,21 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		return 0, nil, "", nil
 	}
 	if s.schedulerSnapshot != nil && s.accountRepo != nil {
-		latest, latestErr := s.accountRepo.GetByID(ctx, account.ID)
-		if latestErr != nil || latest == nil {
-			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-			return 0, nil, "", nil
+		latest := account
+		if state := schedulerFreshnessFromContext(ctx); state != nil && state.enabled() {
+			var ok bool
+			latest, ok = state.apply(ctx, account)
+			if !ok {
+				_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+				return 0, nil, "", nil
+			}
+		} else {
+			var latestErr error
+			latest, latestErr = s.accountRepo.GetByID(ctx, account.ID)
+			if latestErr != nil || latest == nil {
+				_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+				return 0, nil, "", nil
+			}
 		}
 		if shouldClearStickySession(latest, requestedModel) || !latest.IsOpenAI() || !latest.IsSchedulable() {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
