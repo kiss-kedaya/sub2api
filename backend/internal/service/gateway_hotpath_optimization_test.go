@@ -78,8 +78,10 @@ type sessionLimitCacheHotpathStub struct {
 	batchData map[int64]float64
 	batchErr  error
 
-	setData map[int64]float64
-	setErr  error
+	setData       map[int64]float64
+	setErr        error
+	setCalls      atomic.Int64
+	batchSetCalls atomic.Int64
 }
 
 func (s *sessionLimitCacheHotpathStub) GetWindowCostBatch(ctx context.Context, accountIDs []int64) (map[int64]float64, error) {
@@ -96,6 +98,7 @@ func (s *sessionLimitCacheHotpathStub) GetWindowCostBatch(ctx context.Context, a
 }
 
 func (s *sessionLimitCacheHotpathStub) SetWindowCost(ctx context.Context, accountID int64, cost float64) error {
+	s.setCalls.Add(1)
 	if s.setErr != nil {
 		return s.setErr
 	}
@@ -103,6 +106,20 @@ func (s *sessionLimitCacheHotpathStub) SetWindowCost(ctx context.Context, accoun
 		s.setData = make(map[int64]float64)
 	}
 	s.setData[accountID] = cost
+	return nil
+}
+
+func (s *sessionLimitCacheHotpathStub) SetWindowCostBatch(ctx context.Context, costs map[int64]float64) error {
+	s.batchSetCalls.Add(1)
+	if s.setErr != nil {
+		return s.setErr
+	}
+	if s.setData == nil {
+		s.setData = make(map[int64]float64)
+	}
+	for accountID, cost := range costs {
+		s.setData[accountID] = cost
+	}
 	return nil
 }
 
@@ -389,6 +406,8 @@ func TestWithWindowCostPrefetch_BatchReadAndContextReuse(t *testing.T) {
 
 	require.Equal(t, int64(1), repo.batchCalls.Load())
 	require.Equal(t, 22.0, cache.setData[2])
+	require.Equal(t, int64(1), cache.batchSetCalls.Load())
+	require.Equal(t, int64(0), cache.setCalls.Load())
 
 	hit, miss, batchSQL, fallback, errCount := GatewayWindowCostPrefetchStats()
 	require.Equal(t, int64(1), hit)
@@ -490,6 +509,57 @@ func TestWithWindowCostPrefetch_BatchErrorFallbackSingleQuery(t *testing.T) {
 	_, _, _, fallback, errCount := GatewayWindowCostPrefetchStats()
 	require.Equal(t, int64(1), fallback)
 	require.Equal(t, int64(1), errCount)
+}
+
+func TestWithWindowCostPrefetch_BatchErrorFallsBackPerAccount(t *testing.T) {
+	resetGatewayHotpathStatsForTest()
+
+	windowStart := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
+	windowEnd := windowStart.Add(5 * time.Hour)
+	accounts := make([]Account, 20)
+	singleResults := make(map[int64]*usagestats.AccountStats, len(accounts))
+	for i := range accounts {
+		accountID := int64(i + 1)
+		accounts[i] = Account{
+			ID:                 accountID,
+			Platform:           PlatformAnthropic,
+			Type:               AccountTypeOAuth,
+			Extra:              map[string]any{"window_cost_limit": 100.0},
+			SessionWindowStart: &windowStart,
+			SessionWindowEnd:   &windowEnd,
+		}
+		singleResults[accountID] = &usagestats.AccountStats{StandardCost: float64(accountID)}
+	}
+
+	cache := &sessionLimitCacheHotpathStub{}
+	repo := &usageLogWindowBatchRepoStub{
+		batchErr:     errors.New("batch failed"),
+		singleResult: singleResults,
+	}
+	svc := &GatewayService{
+		sessionLimitCache: cache,
+		usageLogRepo:      repo,
+	}
+
+	outCtx := svc.withWindowCostPrefetch(context.Background(), accounts)
+	require.Equal(t, int64(1), repo.batchCalls.Load())
+	require.Equal(t, int64(len(accounts)), repo.singleCalls.Load())
+	require.Equal(t, int64(1), cache.batchSetCalls.Load())
+	require.Equal(t, int64(0), cache.setCalls.Load())
+
+	known := 0
+	failOpen := 0
+	for i := range accounts {
+		account := &accounts[i]
+		if _, ok := windowCostFromPrefetchContext(outCtx, account.ID); ok {
+			known++
+			continue
+		}
+		failOpen++
+	}
+	require.Equal(t, len(accounts), known)
+	require.Equal(t, 0, failOpen)
+	require.Equal(t, int64(len(accounts)), repo.singleCalls.Load())
 }
 
 func TestGetAvailableModels_UsesShortCacheAndSupportsInvalidation(t *testing.T) {
