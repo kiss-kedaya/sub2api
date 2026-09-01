@@ -66,13 +66,17 @@ const (
 	opsErrorLogDrainTimeout = 10 * time.Second
 	opsErrorLogBatchWindow  = 200 * time.Millisecond
 
-	opsErrorLogMinWorkerCount = 4
-	opsErrorLogMaxWorkerCount = 32
+	// Error logging is best-effort telemetry. Keep the writer deliberately
+	// small because every API instance has its own queue and worker pool; a
+	// large per-process pool multiplies PostgreSQL transactions during an
+	// upstream error storm.
+	opsErrorLogMinWorkerCount = 1
+	opsErrorLogMaxWorkerCount = 2
 
 	opsErrorLogQueueSizePerWorker = 128
 	opsErrorLogMinQueueSize       = 256
 	opsErrorLogMaxQueueSize       = 8192
-	opsErrorLogBatchSize          = 32
+	opsErrorLogBatchSize          = 128
 	opsErrorLogMaxQueueBytes      = 32 * 1024 * 1024
 	opsErrorLogMaxUserAgentBytes  = 512
 )
@@ -420,7 +424,7 @@ func estimateOpsErrorLogJobBytes(entry *service.OpsInsertErrorLogInput) int64 {
 }
 
 func opsErrorLogConfig() (workerCount int, queueSize int) {
-	workerCount = runtime.GOMAXPROCS(0) * 2
+	workerCount = runtime.GOMAXPROCS(0) / 4
 	if workerCount < opsErrorLogMinWorkerCount {
 		workerCount = opsErrorLogMinWorkerCount
 	}
