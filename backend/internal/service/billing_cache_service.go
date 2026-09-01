@@ -121,6 +121,7 @@ type BillingCacheService struct {
 	cacheWriteMu       sync.RWMutex
 	stopped            atomic.Bool
 	balanceLoadSF      singleflight.Group
+	rateLimitLoadSF    singleflight.Group
 	quotaLoadSF        singleflight.Group
 	// 丢弃日志节流计数器（减少高负载下日志噪音）
 	cacheWriteDropFullCount     uint64
@@ -652,7 +653,7 @@ func (s *BillingCacheService) checkAPIKeyRateLimits(ctx context.Context, apiKey 
 		if s.apiKeyRateLimitLoader == nil {
 			return nil
 		}
-		data, err := s.apiKeyRateLimitLoader.GetRateLimitData(ctx, apiKey.ID)
+		data, err := s.loadAPIKeyRateLimitFromDB(ctx, apiKey.ID)
 		if err != nil {
 			return nil // Don't block requests on DB errors
 		}
@@ -666,27 +667,11 @@ func (s *BillingCacheService) checkAPIKeyRateLimits(ctx context.Context, apiKey 
 		if s.apiKeyRateLimitLoader == nil {
 			return nil
 		}
-		dbData, dbErr := s.apiKeyRateLimitLoader.GetRateLimitData(ctx, apiKey.ID)
+		dbData, dbErr := s.loadAPIKeyRateLimitFromDB(ctx, apiKey.ID)
 		if dbErr != nil {
 			return nil // Don't block requests on DB errors
 		}
-		// Build cache entry from DB data
-		cacheEntry := &APIKeyRateLimitCacheData{
-			Usage5h: dbData.Usage5h,
-			Usage1d: dbData.Usage1d,
-			Usage7d: dbData.Usage7d,
-		}
-		if dbData.Window5hStart != nil {
-			cacheEntry.Window5h = dbData.Window5hStart.Unix()
-		}
-		if dbData.Window1dStart != nil {
-			cacheEntry.Window1d = dbData.Window1dStart.Unix()
-		}
-		if dbData.Window7dStart != nil {
-			cacheEntry.Window7d = dbData.Window7dStart.Unix()
-		}
-		_ = s.cache.SetAPIKeyRateLimit(ctx, apiKey.ID, cacheEntry)
-		cacheData = cacheEntry
+		cacheData = apiKeyRateLimitCacheDataFromDB(dbData)
 	}
 
 	var w5h, w1d, w7d *time.Time
@@ -703,6 +688,57 @@ func (s *BillingCacheService) checkAPIKeyRateLimits(ctx context.Context, apiKey 
 		w7d = &t
 	}
 	return s.evaluateRateLimits(ctx, apiKey, cacheData.Usage5h, cacheData.Usage1d, cacheData.Usage7d, w5h, w1d, w7d)
+}
+
+func (s *BillingCacheService) loadAPIKeyRateLimitFromDB(ctx context.Context, keyID int64) (*APIKeyRateLimitData, error) {
+	if s.apiKeyRateLimitLoader == nil {
+		return nil, fmt.Errorf("api key rate limit loader unavailable")
+	}
+	value, err, _ := s.rateLimitLoadSF.Do(strconv.FormatInt(keyID, 10), func() (any, error) {
+		loadCtx, cancel := context.WithTimeout(context.Background(), balanceLoadTimeout)
+		defer cancel()
+
+		data, err := s.apiKeyRateLimitLoader.GetRateLimitData(loadCtx, keyID)
+		if err != nil {
+			return nil, err
+		}
+		if data == nil {
+			return nil, fmt.Errorf("api key rate limit data is nil")
+		}
+		if s.cache != nil {
+			_ = s.cache.SetAPIKeyRateLimit(loadCtx, keyID, apiKeyRateLimitCacheDataFromDB(data))
+		}
+		return data, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	data, ok := value.(*APIKeyRateLimitData)
+	if !ok || data == nil {
+		return nil, fmt.Errorf("unexpected api key rate limit data type: %T", value)
+	}
+	return data, nil
+}
+
+func apiKeyRateLimitCacheDataFromDB(data *APIKeyRateLimitData) *APIKeyRateLimitCacheData {
+	if data == nil {
+		return nil
+	}
+	cacheEntry := &APIKeyRateLimitCacheData{
+		Usage5h: data.Usage5h,
+		Usage1d: data.Usage1d,
+		Usage7d: data.Usage7d,
+	}
+	if data.Window5hStart != nil {
+		cacheEntry.Window5h = data.Window5hStart.Unix()
+	}
+	if data.Window1dStart != nil {
+		cacheEntry.Window1d = data.Window1dStart.Unix()
+	}
+	if data.Window7dStart != nil {
+		cacheEntry.Window7d = data.Window7dStart.Unix()
+	}
+	return cacheEntry
 }
 
 // evaluateRateLimits checks usage against limits, triggering async resets for expired windows.
