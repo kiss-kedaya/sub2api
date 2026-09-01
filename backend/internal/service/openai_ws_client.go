@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -38,6 +39,25 @@ type openAIWSClientConn interface {
 	ReadMessage(ctx context.Context) ([]byte, error)
 	Ping(ctx context.Context) error
 	Close() error
+}
+
+// openAIWSRawFrameWriter is optional so existing test and provider-specific
+// connection implementations keep the JSON fallback. The native coder/websocket
+// connection implements it to avoid marshaling an already encoded payload.
+type openAIWSRawFrameWriter interface {
+	WriteFrame(ctx context.Context, messageType coderws.MessageType, payload []byte) error
+}
+
+func writeOpenAIWSJSON(ctx context.Context, conn openAIWSClientConn, value any) error {
+	if conn == nil {
+		return errOpenAIWSConnClosed
+	}
+	if raw, ok := value.(json.RawMessage); ok && len(raw) > 0 && json.Valid(raw) {
+		if writer, supportsRaw := conn.(openAIWSRawFrameWriter); supportsRaw {
+			return writer.WriteFrame(ctx, coderws.MessageText, raw)
+		}
+	}
+	return conn.WriteJSON(ctx, value)
 }
 
 // openAIWSIdlePingCapable is intentionally separate from openAIWSClientConn.

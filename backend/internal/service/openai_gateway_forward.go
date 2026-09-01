@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -722,6 +723,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		agentTaskRecoveryTried := false
 		wsPrevResponseRecoveryTried := false
 		wsInvalidEncryptedContentRecoveryTried := false
+		wsRetryBodyDirty := false
 		recoverPrevResponseNotFound := func(attempt int) bool {
 			if wsPrevResponseRecoveryTried {
 				return false
@@ -745,6 +747,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			delete(wsReqBody, "previous_response_id")
 			wsPrevResponseRecoveryTried = true
+			wsRetryBodyDirty = true
 			logOpenAIWSModeInfo(
 				"reconnect_prev_response_recovery account_id=%d attempt=%d action=drop_previous_response_id retry=1 previous_response_id=%s previous_response_id_kind=%s",
 				account.ID,
@@ -773,6 +776,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				delete(wsReqBody, "previous_response_id")
 			}
 			wsInvalidEncryptedContentRecoveryTried = true
+			wsRetryBodyDirty = true
 			logOpenAIWSModeInfo(
 				"reconnect_invalid_encrypted_content_recovery account_id=%d attempt=%d action=drop_encrypted_reasoning_items retry=1 previous_response_id_present=%v previous_response_id=%s previous_response_id_kind=%s has_function_call_output=%v dropped_previous_response_id=%v",
 				account.ID,
@@ -790,11 +794,23 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	wsRetryLoop:
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
 			wsAttempts = attempt
+			forwardBody := body
+			if wsRetryBodyDirty {
+				// Recovery callbacks update wsReqBody in place. Re-encode only retry
+				// attempts so the first, overwhelmingly common request keeps the raw
+				// payload fast path while retries observe those map mutations.
+				forwardBody, err = json.Marshal(wsReqBody)
+				if err != nil {
+					wsErr = wrapOpenAIWSFallback("serialize_ws_retry_body", err)
+					break
+				}
+			}
 			wsResult, wsErr = s.forwardOpenAIWSV2(
 				ctx,
 				c,
 				account,
 				wsReqBody,
+				forwardBody,
 				clientPromptCacheKey,
 				token,
 				wsDecision,
