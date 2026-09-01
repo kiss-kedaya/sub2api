@@ -3,6 +3,7 @@
 package service
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
@@ -675,4 +676,49 @@ func TestAccountGetModelMapping_CacheInvalidatesOnInPlaceValueChange(t *testing.
 	if second["claude-sonnet"] != "sonnet-b" {
 		t.Fatalf("expected cache invalidated after in-place value change, got: %v", second)
 	}
+}
+
+// Account values are routinely copied when repositories and scheduler snapshots
+// return []Account. The model mapping memo must remain safe when a copy is made
+// after the original has already populated its cache (atomic.Value itself must
+// never be copied after first use).
+func TestAccountGetModelMapping_ValueCopySafe(t *testing.T) {
+	original := &Account{Credentials: map[string]any{
+		"model_mapping": map[string]any{"model-a": "upstream-a"},
+	}}
+	if got := original.GetMappedModel("model-a"); got != "upstream-a" {
+		t.Fatalf("unexpected original mapping: %q", got)
+	}
+
+	copy := *original
+	copy.Credentials = map[string]any{
+		"model_mapping": map[string]any{"model-a": "upstream-b"},
+	}
+	if got := copy.GetMappedModel("model-a"); got != "upstream-b" {
+		t.Fatalf("unexpected copied mapping: %q", got)
+	}
+	if got := original.GetMappedModel("model-a"); got != "upstream-a" {
+		t.Fatalf("copy mutation changed original mapping: %q", got)
+	}
+}
+
+func TestAccountGetModelMapping_ConcurrentReaders(t *testing.T) {
+	account := &Account{Credentials: map[string]any{
+		"model_mapping": map[string]any{"model-a": "upstream-a"},
+	}}
+	const workers = 32
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 1000; j++ {
+				if got := account.GetMappedModel("model-a"); got != "upstream-a" {
+					t.Errorf("unexpected mapping: %q", got)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
