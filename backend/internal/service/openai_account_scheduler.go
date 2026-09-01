@@ -2241,6 +2241,19 @@ func (s *OpenAIGatewayService) SelectAccountWithScheduler(
 	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, "", "", requireCompact, PlatformOpenAI, false, true)
 }
 
+// PrepareSchedulerRequestContext installs the request-scoped freshness
+// projection used by every scheduling attempt derived from ctx. Handlers call
+// this once before entering a failover loop so retries reuse the same
+// projection instead of creating a new PostgreSQL freshness lookup state.
+// When the snapshot path is unavailable this is a no-op and preserves the
+// repository compatibility fallback behavior.
+func (s *OpenAIGatewayService) PrepareSchedulerRequestContext(ctx context.Context) context.Context {
+	if s == nil || ctx == nil {
+		return ctx
+	}
+	return withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+}
+
 // SelectAccountWithSchedulerForCapability 按能力要求调度账号。
 // previousResponseCanMove 表示首包 input 可自行重建工具续链，previous_response_id 允许跨账号迁移
 // （粘性加权模式下改为加权偏好而非硬粘连）。
