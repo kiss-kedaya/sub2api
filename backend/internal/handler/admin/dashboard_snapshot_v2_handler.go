@@ -178,20 +178,18 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 	}
 
 	if includeTrend {
-		trend, _, err := h.getUsageTrendCached(
+		trend, err := h.dashboardService.GetUsageTrendWithUsageFilters(
 			ctx,
 			startTime,
 			endTime,
 			granularity,
-			filters.UserID,
-			filters.APIKeyID,
-			filters.AccountID,
-			filters.GroupID,
-			filters.Model,
-			filters.RequestType,
-			filters.Stream,
-			filters.BillingType,
-			filters.UpstreamModelMismatch,
+			usagestats.UsageLogFilters{
+				UserID: filters.UserID, APIKeyID: filters.APIKeyID,
+				AccountID: filters.AccountID, GroupID: filters.GroupID,
+				Model: filters.Model, RequestType: filters.RequestType,
+				Stream: filters.Stream, BillingType: filters.BillingType,
+				UpstreamModelMismatch: filters.UpstreamModelMismatch,
+			},
 		)
 		if err != nil {
 			return nil, errors.New("failed to get usage trend")
@@ -200,19 +198,18 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 	}
 
 	if includeModels {
-		models, _, err := h.getModelStatsCached(
+		models, err := h.dashboardService.GetModelStatsWithUsageFiltersBySource(
 			ctx,
 			startTime,
 			endTime,
-			filters.UserID,
-			filters.APIKeyID,
-			filters.AccountID,
-			filters.GroupID,
+			usagestats.UsageLogFilters{
+				UserID: filters.UserID, APIKeyID: filters.APIKeyID,
+				AccountID: filters.AccountID, GroupID: filters.GroupID,
+				RequestType: filters.RequestType, Stream: filters.Stream,
+				BillingType:           filters.BillingType,
+				UpstreamModelMismatch: filters.UpstreamModelMismatch,
+			},
 			usagestats.ModelSourceRequested,
-			filters.RequestType,
-			filters.Stream,
-			filters.BillingType,
-			filters.UpstreamModelMismatch,
 		)
 		if err != nil {
 			return nil, errors.New("failed to get model statistics")
@@ -221,18 +218,17 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 	}
 
 	if includeGroups {
-		groups, _, err := h.getGroupStatsCached(
+		groups, err := h.dashboardService.GetGroupStatsWithUsageFilters(
 			ctx,
 			startTime,
 			endTime,
-			filters.UserID,
-			filters.APIKeyID,
-			filters.AccountID,
-			filters.GroupID,
-			filters.RequestType,
-			filters.Stream,
-			filters.BillingType,
-			filters.UpstreamModelMismatch,
+			usagestats.UsageLogFilters{
+				UserID: filters.UserID, APIKeyID: filters.APIKeyID,
+				AccountID: filters.AccountID, GroupID: filters.GroupID,
+				RequestType: filters.RequestType, Stream: filters.Stream,
+				BillingType:           filters.BillingType,
+				UpstreamModelMismatch: filters.UpstreamModelMismatch,
+			},
 		)
 		if err != nil {
 			return nil, errors.New("failed to get group statistics")
@@ -241,7 +237,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 	}
 
 	if includeUsersTrend {
-		usersTrend, _, err := h.getUserUsageTrendCached(ctx, startTime, endTime, granularity, usersTrendLimit)
+		usersTrend, err := h.dashboardService.GetUserUsageTrend(ctx, startTime, endTime, granularity, usersTrendLimit)
 		if err != nil {
 			return nil, errors.New("failed to get user usage trend")
 		}
