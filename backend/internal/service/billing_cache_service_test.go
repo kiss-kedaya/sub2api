@@ -15,6 +15,7 @@ type billingCacheWorkerStub struct {
 	noopLiveBalanceCacheStub
 	balanceUpdates      int64
 	subscriptionUpdates int64
+	rateLimitUpdates    int64
 }
 
 func (b *billingCacheWorkerStub) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
@@ -62,6 +63,7 @@ func (b *billingCacheWorkerStub) SetAPIKeyRateLimit(ctx context.Context, keyID i
 }
 
 func (b *billingCacheWorkerStub) UpdateAPIKeyRateLimitUsage(ctx context.Context, keyID int64, cost float64) error {
+	atomic.AddInt64(&b.rateLimitUpdates, 1)
 	return nil
 }
 
@@ -130,4 +132,19 @@ func TestBillingCacheServiceEnqueueAfterStopReturnsFalse(t *testing.T) {
 		amount: 1,
 	})
 	require.False(t, enqueued)
+}
+
+func TestBillingCacheServiceRateLimitUpdateFallsBackWhenQueueIsFull(t *testing.T) {
+	cache := &billingCacheWorkerStub{}
+	svc := &BillingCacheService{
+		cache:          cache,
+		cacheWriteChan: make(chan cacheWriteTask, 1),
+	}
+	svc.cacheWriteChan <- cacheWriteTask{kind: cacheWriteDeductBalance}
+
+	before := atomic.LoadInt64(&cache.rateLimitUpdates)
+	svc.QueueUpdateAPIKeyRateLimitUsage(42, 1.25)
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt64(&cache.rateLimitUpdates) > before
+	}, 2*time.Second, 10*time.Millisecond)
 }
