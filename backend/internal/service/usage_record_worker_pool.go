@@ -99,20 +99,24 @@ type UsageRecordWorkerPool struct {
 	droppedQueueFull      atomic.Uint64
 	droppedPoolStopped    atomic.Uint64
 	syncFallback          atomic.Uint64
-	lastDropLogNanos      atomic.Int64
-	autoScaleEnabled      bool
-	autoScaleMinWorkers   int
-	autoScaleMaxWorkers   int
-	autoScaleUpPercent    int
-	autoScaleDownPercent  int
-	autoScaleUpStep       int
-	autoScaleDownStep     int
-	autoScaleInterval     time.Duration
-	autoScaleCooldown     time.Duration
-	lastScaleNanos        atomic.Int64
-	autoScaleCancel       context.CancelFunc
-	lifecycleWg           sync.WaitGroup
-	stopOnce              sync.Once
+	// Pond counts the initial non-blocking probe as dropped when the queue is
+	// full, even though sync fallback executes the task inline. Track accepted
+	// fallbacks so Stats can expose actual drops only.
+	syncFallbackAccepted atomic.Uint64
+	lastDropLogNanos     atomic.Int64
+	autoScaleEnabled     bool
+	autoScaleMinWorkers  int
+	autoScaleMaxWorkers  int
+	autoScaleUpPercent   int
+	autoScaleDownPercent int
+	autoScaleUpStep      int
+	autoScaleDownStep    int
+	autoScaleInterval    time.Duration
+	autoScaleCooldown    time.Duration
+	lastScaleNanos       atomic.Int64
+	autoScaleCancel      context.CancelFunc
+	lifecycleWg          sync.WaitGroup
+	stopOnce             sync.Once
 }
 
 // NewUsageRecordWorkerPool 从配置构建使用量记录池。
@@ -177,12 +181,17 @@ func (p *UsageRecordWorkerPool) Submit(task UsageRecordTask) UsageRecordSubmitMo
 
 	switch p.overflowPolicy {
 	case config.UsageRecordOverflowPolicySync:
+		// Execute directly on overflow. Using pond.Go here would block forever
+		// when a long-running task keeps both the worker and bounded queue full,
+		// which is unacceptable on a request path carrying billing state.
 		p.syncFallback.Add(1)
+		p.syncFallbackAccepted.Add(1)
 		p.execute(task)
 		return UsageRecordSubmitModeSync
 	case config.UsageRecordOverflowPolicySample:
 		if p.shouldSyncFallback() {
 			p.syncFallback.Add(1)
+			p.syncFallbackAccepted.Add(1)
 			p.execute(task)
 			return UsageRecordSubmitModeSync
 		}
@@ -198,6 +207,16 @@ func (p *UsageRecordWorkerPool) Stats() UsageRecordWorkerPoolStats {
 	if p == nil || p.pool == nil {
 		return UsageRecordWorkerPoolStats{}
 	}
+	droppedTasks := p.pool.DroppedTasks()
+	// A full-queue TrySubmit probe increments Pond's dropped counter before an
+	// inline sync fallback accepts the same task. Remove only the accepted
+	// fallbacks; explicit drop/sample failures remain real drops.
+	acceptedFallbacks := p.syncFallbackAccepted.Load()
+	if droppedTasks >= acceptedFallbacks {
+		droppedTasks -= acceptedFallbacks
+	} else {
+		droppedTasks = 0
+	}
 	return UsageRecordWorkerPoolStats{
 		MaxConcurrency:     p.pool.MaxConcurrency(),
 		RunningWorkers:     p.pool.RunningWorkers(),
@@ -206,7 +225,7 @@ func (p *UsageRecordWorkerPool) Stats() UsageRecordWorkerPoolStats {
 		CompletedTasks:     p.pool.CompletedTasks(),
 		SuccessfulTasks:    p.pool.SuccessfulTasks(),
 		FailedTasks:        p.pool.FailedTasks(),
-		DroppedTasks:       p.pool.DroppedTasks(),
+		DroppedTasks:       droppedTasks,
 		DroppedQueueFull:   p.droppedQueueFull.Load(),
 		DroppedPoolStopped: p.droppedPoolStopped.Load(),
 		SyncFallbackTasks:  p.syncFallback.Load(),
