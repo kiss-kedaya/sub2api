@@ -766,11 +766,27 @@ func (s *BillingCacheService) QueueUpdateAPIKeyRateLimitUsage(apiKeyID int64, co
 	if s.cache == nil {
 		return
 	}
-	s.enqueueCacheWrite(cacheWriteTask{
+	task := cacheWriteTask{
 		kind:     cacheWriteUpdateRateLimitUsage,
 		apiKeyID: apiKeyID,
 		amount:   cost,
-	})
+	}
+	if s.enqueueCacheWrite(task) {
+		return
+	}
+
+	// Rate-limit cache updates are a write-through mirror of the durable
+	// billing result. Do not silently lose them when the async queue is full:
+	// perform one bounded synchronous retry so the next request can observe
+	// the latest usage without turning Redis backpressure into an unbounded
+	// request stall.
+	ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
+	defer cancel()
+	if err := s.cache.UpdateAPIKeyRateLimitUsage(ctx, apiKeyID, cost); err != nil {
+		logger.LegacyPrintf("service.billing_cache",
+			"Warning: synchronous rate limit cache update fallback failed for api key %d: %v",
+			apiKeyID, err)
+	}
 }
 
 // IncrementUserPlatformQuotaUsage 同步累加 user × platform usage 到 Redis 缓存。
