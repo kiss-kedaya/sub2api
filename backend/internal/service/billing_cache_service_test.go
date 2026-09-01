@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +17,28 @@ type billingCacheWorkerStub struct {
 	balanceUpdates      int64
 	subscriptionUpdates int64
 	rateLimitUpdates    int64
+}
+
+type rateLimitLoadStub struct {
+	APIKeyRepository
+	calls atomic.Int64
+	delay time.Duration
+}
+
+func (s *rateLimitLoadStub) GetRateLimitData(ctx context.Context, keyID int64) (*APIKeyRateLimitData, error) {
+	s.calls.Add(1)
+	select {
+	case <-time.After(s.delay):
+		started := time.Now().Add(-time.Minute)
+		return &APIKeyRateLimitData{
+			Usage5h:       1,
+			Window5hStart: &started,
+			Window1dStart: &started,
+			Window7dStart: &started,
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (b *billingCacheWorkerStub) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
@@ -147,4 +170,33 @@ func TestBillingCacheServiceRateLimitUpdateFallsBackWhenQueueIsFull(t *testing.T
 	require.Eventually(t, func() bool {
 		return atomic.LoadInt64(&cache.rateLimitUpdates) > before
 	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestBillingCacheServiceRateLimitDBMissUsesSingleflight(t *testing.T) {
+	cache := &billingCacheWorkerStub{}
+	loader := &rateLimitLoadStub{delay: 50 * time.Millisecond}
+	svc := NewBillingCacheService(cache, nil, nil, loader, nil, nil, &config.Config{}, nil)
+	t.Cleanup(svc.Stop)
+
+	apiKey := &APIKey{ID: 73, RateLimit5h: 10}
+	const callers = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- svc.checkAPIKeyRateLimits(context.Background(), apiKey)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.Equal(t, int64(1), loader.calls.Load(), "并发 Redis miss 应合并为一次 rate-limit DB 回源")
 }
