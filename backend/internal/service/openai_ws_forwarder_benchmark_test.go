@@ -1,10 +1,12 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/tidwall/gjson"
 )
 
 var (
@@ -15,6 +17,11 @@ var (
 )
 
 func BenchmarkOpenAIWSForwarderHotPath(b *testing.B) {
+	b.Run("Map", benchmarkOpenAIWSForwarderHotPathMap)
+	b.Run("Raw", benchmarkOpenAIWSForwarderHotPathRaw)
+}
+
+func benchmarkOpenAIWSForwarderHotPathMap(b *testing.B) {
 	cfg := &config.Config{}
 	svc := &OpenAIGatewayService{cfg: cfg}
 	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
@@ -25,14 +32,44 @@ func BenchmarkOpenAIWSForwarderHotPath(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		payload := svc.buildOpenAIWSCreatePayload(reqBody, account)
-		_, _ = applyOpenAIWSRetryPayloadStrategy(payload, 2)
+		strategy, removed := applyOpenAIWSRetryPayloadStrategy(payload, 1)
 		setOpenAIWSTurnMetadata(payload, `{"trace":"bench","turn":"1"}`)
 
 		benchmarkOpenAIWSStringSink = openAIWSPayloadString(payload, "previous_response_id")
 		benchmarkOpenAIWSBoolSink = payload["tools"] != nil
-		benchmarkOpenAIWSStringSink = summarizeOpenAIWSPayloadKeySizes(payload, openAIWSPayloadKeySizeTopN)
-		benchmarkOpenAIWSStringSink = summarizeOpenAIWSInput(payload["input"])
-		benchmarkOpenAIWSPayloadJSONSink = payloadAsJSON(payload)
+		benchmarkOpenAIWSStringSink = openAIWSPayloadString(payload, "model")
+		benchmarkOpenAIWSPayloadJSONSink = strategy
+		benchmarkOpenAIWSBoolSink = benchmarkOpenAIWSBoolSink || len(removed) > 0
+		benchmarkOpenAIWSBytesSink = payloadAsJSONBytes(payload)
+	}
+}
+
+func benchmarkOpenAIWSForwarderHotPathRaw(b *testing.B) {
+	cfg := &config.Config{}
+	svc := &OpenAIGatewayService{cfg: cfg}
+	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	reqBody := benchmarkOpenAIWSHotPathRequest()
+	rawBody, err := json.Marshal(reqBody)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		payload, strategy, removed, _, err := svc.prepareOpenAIWSForwardPayload(
+			reqBody, rawBody, account, 1, `{"trace":"bench","turn":"1"}`, nil,
+		)
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchmarkOpenAIWSStringSink = openAIWSPayloadStringFromRaw(payload, "previous_response_id")
+		benchmarkOpenAIWSBoolSink = gjson.GetBytes(payload, "tools").Exists()
+		benchmarkOpenAIWSStringSink = openAIWSPayloadStringFromRaw(payload, "model")
+		benchmarkOpenAIWSStringSink = strategy
+		benchmarkOpenAIWSBoolSink = benchmarkOpenAIWSBoolSink || len(removed) > 0
+		benchmarkOpenAIWSBytesSink = payload
 	}
 }
 

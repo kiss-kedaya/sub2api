@@ -31,6 +31,24 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
 	stateStore OpenAIWSStateStore,
 	groupID int64,
 ) error {
+	prewarmPayload := payloadAsJSONBytes(payload)
+	return s.performOpenAIWSGeneratePrewarmRaw(
+		ctx, lease, decision, prewarmPayload, previousResponseID, reqBody,
+		account, stateStore, groupID,
+	)
+}
+
+func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarmRaw(
+	ctx context.Context,
+	lease *openAIWSConnLease,
+	decision OpenAIWSProtocolDecision,
+	payload []byte,
+	previousResponseID string,
+	reqBody map[string]any,
+	account *Account,
+	stateStore OpenAIWSStateStore,
+	groupID int64,
+) error {
 	if s == nil {
 		return nil
 	}
@@ -71,14 +89,12 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
 	prewarmStart := time.Now()
 	logOpenAIWSModeInfo("prewarm_start account_id=%d conn_id=%s", account.ID, connID)
 
-	prewarmPayload := make(map[string]any, len(payload)+1)
-	for k, v := range payload {
-		prewarmPayload[k] = v
+	prewarmPayloadJSON, err := sjson.SetBytes(payload, "generate", false)
+	if err != nil {
+		return wrapOpenAIWSFallback("prewarm_payload", err)
 	}
-	prewarmPayload["generate"] = false
-	prewarmPayloadJSON := payloadAsJSONBytes(prewarmPayload)
 
-	if err := lease.WriteJSONWithContextTimeout(ctx, prewarmPayload, s.openAIWSWriteTimeout()); err != nil {
+	if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(prewarmPayloadJSON), s.openAIWSWriteTimeout()); err != nil {
 		lease.MarkBroken()
 		logOpenAIWSModeInfo(
 			"prewarm_write_fail account_id=%d conn_id=%s cause=%s",

@@ -22,6 +22,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	c *gin.Context,
 	account *Account,
 	reqBody map[string]any,
+	rawBody []byte,
 	clientPromptCacheKey string,
 	token string,
 	decision OpenAIWSProtocolDecision,
@@ -61,52 +62,58 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		wsPath,
 	)
 
-	payload := s.buildOpenAIWSCreatePayload(reqBody, account)
-	payloadStrategy, removedKeys := applyOpenAIWSRetryPayloadStrategy(payload, attempt)
 	turnState := ""
 	turnMetadata := ""
 	if c != nil && c.Request != nil {
 		turnState = strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))
 		turnMetadata = strings.TrimSpace(c.GetHeader(openAIWSTurnMetadataHeader))
 	}
-	setOpenAIWSTurnMetadata(payload, turnMetadata)
-	applyStagedCodexFingerprintClientMetadata(c, account, payload)
-	previousResponseID := openAIWSPayloadString(payload, "previous_response_id")
+	payload, payloadStrategy, removedKeys, _, err := s.prepareOpenAIWSForwardPayload(
+		reqBody, rawBody, account, attempt, turnMetadata, c,
+	)
+	if err != nil {
+		return nil, wrapOpenAIWSFallback("build_payload", err)
+	}
+	previousResponseID := openAIWSPayloadStringFromRaw(payload, "previous_response_id")
 	previousResponseIDKind := ClassifyOpenAIPreviousResponseIDKind(previousResponseID)
 	promptCacheKey := strings.TrimSpace(clientPromptCacheKey)
 	if promptCacheKey == "" {
 		// Fingerprint convergence may inject a default key when the client did
 		// not send one; retain that fallback without replacing an explicit raw key.
-		promptCacheKey = openAIWSPayloadString(payload, "prompt_cache_key")
+		promptCacheKey = openAIWSPayloadStringFromRaw(payload, "prompt_cache_key")
 	}
-	_, hasTools := payload["tools"]
+	hasTools := gjson.GetBytes(payload, "tools").Exists()
 	debugEnabled := isOpenAIWSModeDebugEnabled()
 	payloadBytes := -1
 	resolvePayloadBytes := func() int {
 		if payloadBytes >= 0 {
 			return payloadBytes
 		}
-		payloadBytes = len(payloadAsJSONBytes(payload))
+		payloadBytes = len(payload)
 		return payloadBytes
 	}
 	streamValue := "-"
-	if raw, ok := payload["stream"]; ok {
-		streamValue = normalizeOpenAIWSLogValue(strings.TrimSpace(fmt.Sprintf("%v", raw)))
+	if stream := gjson.GetBytes(payload, "stream"); stream.Exists() {
+		streamValue = normalizeOpenAIWSLogValue(strings.TrimSpace(stream.String()))
 	}
-	payloadEventType := openAIWSPayloadString(payload, "type")
+	payloadEventType := openAIWSPayloadStringFromRaw(payload, "type")
 	if payloadEventType == "" {
 		payloadEventType = "response.create"
 	}
 	if s.shouldEmitOpenAIWSPayloadSchema(attempt) {
+		var debugPayload map[string]any
+		if decodeErr := decodeOpenAIJSONUseNumber(payload, &debugPayload); decodeErr != nil {
+			return nil, wrapOpenAIWSFallback("decode_payload_debug", decodeErr)
+		}
 		logOpenAIWSModeInfo(
 			"[debug] payload_schema account_id=%d attempt=%d event=%s payload_keys=%s payload_bytes=%d payload_key_sizes=%s input_summary=%s stream=%s payload_strategy=%s removed_keys=%s has_previous_response_id=%v has_prompt_cache_key=%v has_tools=%v",
 			account.ID,
 			attempt,
 			payloadEventType,
-			normalizeOpenAIWSLogValue(strings.Join(sortedKeys(payload), ",")),
+			normalizeOpenAIWSLogValue(strings.Join(sortedKeys(debugPayload), ",")),
 			resolvePayloadBytes(),
-			normalizeOpenAIWSLogValue(summarizeOpenAIWSPayloadKeySizes(payload, openAIWSPayloadKeySizeTopN)),
-			normalizeOpenAIWSLogValue(summarizeOpenAIWSInput(payload["input"])),
+			normalizeOpenAIWSLogValue(summarizeOpenAIWSPayloadKeySizes(debugPayload, openAIWSPayloadKeySizeTopN)),
+			normalizeOpenAIWSLogValue(summarizeOpenAIWSInput(debugPayload["input"])),
 			streamValue,
 			normalizeOpenAIWSLogValue(payloadStrategy),
 			normalizeOpenAIWSLogValue(strings.Join(removedKeys, ",")),
@@ -154,8 +161,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		turnState,
 		turnMetadata,
 		promptCacheKey,
-		openAIWSPayloadString(payload, "model"),
-		openAIWSPayloadString(payload, "service_tier"),
+		openAIWSPayloadStringFromRaw(payload, "model"),
+		openAIWSPayloadStringFromRaw(payload, "service_tier"),
 	)
 	if buildHdrErr != nil {
 		return nil, fmt.Errorf("build ws headers: %w", buildHdrErr)
@@ -318,7 +325,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 
-	if err := s.performOpenAIWSGeneratePrewarm(
+	if err := s.performOpenAIWSGeneratePrewarmRaw(
 		ctx,
 		lease,
 		decision,
@@ -332,7 +339,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		return nil, err
 	}
 
-	if err := lease.WriteJSONWithContextTimeout(ctx, payload, s.openAIWSWriteTimeout()); err != nil {
+	if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payload), s.openAIWSWriteTimeout()); err != nil {
 		lease.MarkBroken()
 		logOpenAIWSModeInfo(
 			"write_request_fail account_id=%d conn_id=%s cause=%s payload_bytes=%d",
