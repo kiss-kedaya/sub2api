@@ -119,3 +119,11 @@ type SchedulerCache interface {
 	// SetOutboxWatermark 保存 outbox 水位。
 	SetOutboxWatermark(ctx context.Context, id int64) error
 }
+
+// SchedulerAccountBatchWriter is an optional capability for repositories that
+// can publish several account snapshots in one Redis pipeline. Keeping this
+// separate from SchedulerCache preserves compatibility with lightweight cache
+// implementations and older rolling-upgrade peers.
+type SchedulerAccountBatchWriter interface {
+	SetAccounts(ctx context.Context, accounts []Account) error
+}

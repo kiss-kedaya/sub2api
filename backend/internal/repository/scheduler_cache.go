@@ -599,6 +599,17 @@ func (c *schedulerCache) SetAccount(ctx context.Context, account *service.Accoun
 	return nil
 }
 
+// SetAccounts publishes account and metadata payloads using the same bounded
+// pipeline as snapshot rebuilds. Last-used side keys remain untouched, so a
+// lagging refresh cannot overwrite a newer scheduler update.
+func (c *schedulerCache) SetAccounts(ctx context.Context, accounts []service.Account) error {
+	if len(accounts) == 0 {
+		return nil
+	}
+	_, err := c.writeAccountIDs(ctx, accounts)
+	return err
+}
+
 func (c *schedulerCache) DeleteAccount(ctx context.Context, accountID int64) error {
 	if accountID <= 0 {
 		return nil
