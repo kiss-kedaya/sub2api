@@ -114,6 +114,23 @@ func TestSanitizeAnthropicBodyForBetaTokens_EmptyBody(t *testing.T) {
 	require.Empty(t, out)
 }
 
+func TestSanitizeAnthropicFallbackFields_StripsWithoutCapabilityBetas(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-6","fallbacks":["default"],"fallback_credit_token":"credit","messages":[]}`)
+	out, changed := sanitizeAnthropicFallbackFields(body, "oauth-2025-04-20")
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(out, "fallbacks").Exists())
+	require.False(t, gjson.GetBytes(out, "fallback_credit_token").Exists())
+}
+
+func TestSanitizeAnthropicFallbackFieldsPreservesAuthorizedFields(t *testing.T) {
+	body := []byte(`{"fallbacks":["default"],"fallback_credit_token":"credit","messages":[]}`)
+	out, changed := sanitizeAnthropicFallbackFields(body,
+		"oauth-2025-04-20,"+claude.BetaServerSideFallback)
+	require.False(t, changed)
+	require.True(t, gjson.GetBytes(out, "fallbacks").Exists())
+	require.True(t, gjson.GetBytes(out, "fallback_credit_token").Exists())
+}
+
 // ★ 关键回归断言：能力维度 sanitize 解决了 "真 CC + haiku" 路径的过度删除问题。
 // 真实 Claude Code CLI 2.1.87+ 客户端 header 含 context-management beta；
 // 即使 model 是 haiku，sanitize 也不应剥离功能字段。

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -928,6 +929,46 @@ func sanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 				"body and final anthropic-beta header may be out of sync.", err, len(body))
 	}
 	return body, false
+}
+
+// sanitizeAnthropicFallbackFields removes server-side fallback fields unless
+// the final beta header explicitly authorizes them. It is kept separate from
+// the existing context-management sanitizer so the latter's established
+// early-return behavior remains unchanged during rolling upgrades.
+func sanitizeAnthropicFallbackFields(body []byte, anthropicBetaHeader string) ([]byte, bool) {
+	changed := false
+	if updated, deleted := stripAnthropicBodyFieldUnlessBeta(
+		body, "fallbacks", anthropicBetaHeader, claude.BetaServerSideFallback,
+	); deleted {
+		body, changed = updated, true
+	}
+	if updated, deleted := stripAnthropicBodyFieldUnlessBeta(
+		body, "fallback_credit_token", anthropicBetaHeader,
+		claude.BetaServerSideFallback, claude.BetaFallbackCredit, claude.BetaFallbackCreditLegacy,
+	); deleted {
+		body, changed = updated, true
+	}
+	return body, changed
+}
+
+// stripAnthropicBodyFieldUnlessBeta removes a beta-only body field unless the
+// final header contains any token that authorizes that field.
+func stripAnthropicBodyFieldUnlessBeta(body []byte, field, header string, requiredTokens ...string) ([]byte, bool) {
+	if !gjson.GetBytes(body, field).Exists() {
+		return body, false
+	}
+	for _, token := range requiredTokens {
+		if anthropicBetaTokensContains(header, token) {
+			return body, false
+		}
+	}
+	updated, err := sjson.DeleteBytes(body, field)
+	if err != nil {
+		logger.LegacyPrintf("service.gateway",
+			"[BetaFieldSanitize] sjson.DeleteBytes(%s) failed: %v (body len=%d)", field, err, len(body))
+		return body, false
+	}
+	return updated, true
 }
 
 // anthropicBetaTokensContains 检测逗号分隔的 anthropic-beta header 是否含指定 token。
