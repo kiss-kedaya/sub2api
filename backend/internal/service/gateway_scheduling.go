@@ -32,6 +32,7 @@ func (s *GatewayService) SelectAccountForModel(ctx context.Context, groupID *int
 
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 优先检查 context 中的强制平台（/antigravity 路由）
 	var platform string
 	forcePlatform, hasForcePlatform := ctx.Value(ctxkey.ForcePlatform).(string)
@@ -1135,20 +1136,69 @@ type usageLogWindowStatsBatchProvider interface {
 	GetAccountWindowStatsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]*usagestats.AccountStats, error)
 }
 
+type windowCostBatchCacheWriter interface {
+	SetWindowCostBatch(ctx context.Context, costs map[int64]float64) error
+}
+
 type windowCostPrefetchContextKeyType struct{}
 
 var windowCostPrefetchContextKey = windowCostPrefetchContextKeyType{}
+
+type windowCostPrefetchState struct {
+	costs    map[int64]float64
+	failOpen map[int64]struct{}
+}
 
 func windowCostFromPrefetchContext(ctx context.Context, accountID int64) (float64, bool) {
 	if ctx == nil || accountID <= 0 {
 		return 0, false
 	}
-	m, ok := ctx.Value(windowCostPrefetchContextKey).(map[int64]float64)
-	if !ok || len(m) == 0 {
-		return 0, false
+	switch state := ctx.Value(windowCostPrefetchContextKey).(type) {
+	case *windowCostPrefetchState:
+		if state == nil {
+			return 0, false
+		}
+		v, exists := state.costs[accountID]
+		return v, exists
+	case map[int64]float64:
+		// Keep compatibility with contexts created before the prefetch state gained
+		// explicit fail-open tracking.
+		v, exists := state[accountID]
+		return v, exists
 	}
-	v, exists := m[accountID]
-	return v, exists
+	return 0, false
+}
+
+func windowCostPrefetchFailedOpen(ctx context.Context, accountID int64) bool {
+	if ctx == nil || accountID <= 0 {
+		return false
+	}
+	state, ok := ctx.Value(windowCostPrefetchContextKey).(*windowCostPrefetchState)
+	if !ok || state == nil {
+		return false
+	}
+	_, exists := state.failOpen[accountID]
+	return exists
+}
+
+func withWindowCostPrefetchState(ctx context.Context, costs map[int64]float64, failOpen map[int64]struct{}) context.Context {
+	return context.WithValue(ctx, windowCostPrefetchContextKey, &windowCostPrefetchState{
+		costs:    costs,
+		failOpen: failOpen,
+	})
+}
+
+func (s *GatewayService) setWindowCostCacheBatch(ctx context.Context, costs map[int64]float64) {
+	if s.sessionLimitCache == nil || len(costs) == 0 {
+		return
+	}
+	if writer, ok := s.sessionLimitCache.(windowCostBatchCacheWriter); ok {
+		_ = writer.SetWindowCostBatch(ctx, costs)
+		return
+	}
+	for accountID, cost := range costs {
+		_ = s.sessionLimitCache.SetWindowCost(ctx, accountID, cost)
+	}
 }
 
 func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []Account) context.Context {
@@ -1174,6 +1224,8 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 	}
 
 	costs := make(map[int64]float64, len(accountIDs))
+	failOpen := make(map[int64]struct{})
+	cacheWrites := make(map[int64]float64, len(accountIDs))
 	cacheValues, err := s.sessionLimitCache.GetWindowCostBatch(ctx, accountIDs)
 	if err == nil {
 		for accountID, cost := range cacheValues {
@@ -1206,7 +1258,7 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 		startTimes[startKey] = startTime
 	}
 	if len(missingByStart) == 0 {
-		return context.WithValue(ctx, windowCostPrefetchContextKey, costs)
+		return withWindowCostPrefetchState(ctx, costs, failOpen)
 	}
 
 	batchReader, hasBatch := s.usageLogRepo.(usageLogWindowStatsBatchProvider)
@@ -1229,7 +1281,7 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 						cost = stats.StandardCost
 					}
 					costs[accountID] = cost
-					_ = s.sessionLimitCache.SetWindowCost(ctx, accountID, cost)
+					cacheWrites[accountID] = cost
 				}
 				continue
 			}
@@ -1243,15 +1295,17 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 			stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, accountID, startTime)
 			if err != nil {
 				windowCostPrefetchErrorTotal.Add(1)
+				failOpen[accountID] = struct{}{}
 				continue
 			}
 			cost := stats.StandardCost
 			costs[accountID] = cost
-			_ = s.sessionLimitCache.SetWindowCost(ctx, accountID, cost)
+			cacheWrites[accountID] = cost
 		}
 	}
 
-	return context.WithValue(ctx, windowCostPrefetchContextKey, costs)
+	s.setWindowCostCacheBatch(ctx, cacheWrites)
+	return withWindowCostPrefetchState(ctx, costs, failOpen)
 }
 
 // isAccountSchedulableForQuota 检查账号是否在配额限制内
@@ -1282,6 +1336,9 @@ func (s *GatewayService) isAccountSchedulableForWindowCost(ctx context.Context, 
 	if cost, ok := windowCostFromPrefetchContext(ctx, account.ID); ok {
 		currentCost = cost
 		goto checkSchedulability
+	}
+	if windowCostPrefetchFailedOpen(ctx, account.ID) {
+		return true
 	}
 	if s.sessionLimitCache != nil {
 		if cost, hit, err := s.sessionLimitCache.GetWindowCost(ctx, account.ID); err == nil && hit {
@@ -1450,6 +1507,13 @@ func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID in
 	}
 	if err != nil || account == nil {
 		return account, err
+	}
+	if state := schedulerFreshnessFromContext(ctx); state != nil && state.enabled() {
+		fresh, ok := state.apply(ctx, account)
+		if !ok {
+			return nil, nil
+		}
+		account = fresh
 	}
 	if s.isAccountBlockedBySchedulingThreshold(ctx, account) {
 		return nil, nil
@@ -1823,7 +1887,9 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 	// require_privacy_set: 获取分组信息
 	var schedGroup *Group
 	if groupID != nil && s.groupRepo != nil {
-		schedGroup, _ = s.groupRepo.GetByID(ctx, *groupID)
+		// Routing only needs privacy policy and group name. Avoid the account-count
+		// aggregation performed by GetByID on every request.
+		schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
 	}
 
 	var accounts []Account
@@ -1871,6 +1937,8 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
 		accountsLoaded = true
+		ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+		accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 
 		// 提前预取窗口费用+RPM 计数，确保 routing 段内的调度检查调用能命中缓存
 		ctx = s.withWindowCostPrefetch(ctx, accounts)
@@ -1991,6 +2059,8 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
 	}
+	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 
 	// 批量预取窗口费用+RPM 计数，避免逐个账号查询（N+1）
 	ctx = s.withWindowCostPrefetch(ctx, accounts)
@@ -2089,7 +2159,9 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 	// require_privacy_set: 获取分组信息
 	var schedGroup *Group
 	if groupID != nil && s.groupRepo != nil {
-		schedGroup, _ = s.groupRepo.GetByID(ctx, *groupID)
+		// Routing only needs privacy policy and group name. Avoid the account-count
+		// aggregation performed by GetByID on every request.
+		schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
 	}
 
 	var accounts []Account
@@ -2133,6 +2205,8 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
 		accountsLoaded = true
+		ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+		accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 
 		// 提前预取窗口费用+RPM 计数，确保 routing 段内的调度检查调用能命中缓存
 		ctx = s.withWindowCostPrefetch(ctx, accounts)
@@ -2255,6 +2329,8 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
 	}
+	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 
 	// 批量预取窗口费用+RPM 计数，避免逐个账号查询（N+1）
 	ctx = s.withWindowCostPrefetch(ctx, accounts)
