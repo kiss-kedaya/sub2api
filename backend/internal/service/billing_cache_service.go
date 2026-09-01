@@ -122,6 +122,7 @@ type BillingCacheService struct {
 	stopped            atomic.Bool
 	balanceLoadSF      singleflight.Group
 	rateLimitLoadSF    singleflight.Group
+	subscriptionLoadSF singleflight.Group
 	quotaLoadSF        singleflight.Group
 	// 丢弃日志节流计数器（减少高负载下日志噪音）
 	cacheWriteDropFullCount     uint64
@@ -488,30 +489,47 @@ func (s *BillingCacheService) InvalidateUserBalance(ctx context.Context, userID 
 
 // GetSubscriptionStatus 获取订阅状态（优先从缓存读取）
 func (s *BillingCacheService) GetSubscriptionStatus(ctx context.Context, userID, groupID int64) (*subscriptionCacheData, error) {
-	if s.cache == nil {
-		return s.getSubscriptionFromDB(ctx, userID, groupID)
+	if s.cache != nil {
+		// 尝试从缓存读取
+		cacheData, err := s.cache.GetSubscriptionCache(ctx, userID, groupID)
+		if err == nil && cacheData != nil {
+			return s.convertFromPortsData(cacheData), nil
+		}
 	}
 
-	// 尝试从缓存读取
-	cacheData, err := s.cache.GetSubscriptionCache(ctx, userID, groupID)
-	if err == nil && cacheData != nil {
-		return s.convertFromPortsData(cacheData), nil
-	}
+	return s.loadSubscriptionFromDB(ctx, userID, groupID)
+}
 
-	// 缓存未命中，从数据库读取
-	data, err := s.getSubscriptionFromDB(ctx, userID, groupID)
+func (s *BillingCacheService) loadSubscriptionFromDB(ctx context.Context, userID, groupID int64) (*subscriptionCacheData, error) {
+	if s.subRepo == nil {
+		return nil, fmt.Errorf("subscription repository unavailable")
+	}
+	key := fmt.Sprintf("%d:%d", userID, groupID)
+	value, err, _ := s.subscriptionLoadSF.Do(key, func() (any, error) {
+		loadCtx, cancel := context.WithTimeout(context.Background(), balanceLoadTimeout)
+		defer cancel()
+
+		data, err := s.getSubscriptionFromDB(loadCtx, userID, groupID)
+		if err != nil {
+			return nil, err
+		}
+		if s.cache != nil {
+			_ = s.enqueueCacheWrite(cacheWriteTask{
+				kind:             cacheWriteSetSubscription,
+				userID:           userID,
+				groupID:          groupID,
+				subscriptionData: data,
+			})
+		}
+		return data, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	// 异步建立缓存
-	_ = s.enqueueCacheWrite(cacheWriteTask{
-		kind:             cacheWriteSetSubscription,
-		userID:           userID,
-		groupID:          groupID,
-		subscriptionData: data,
-	})
-
+	data, ok := value.(*subscriptionCacheData)
+	if !ok || data == nil {
+		return nil, fmt.Errorf("unexpected subscription cache data type: %T", value)
+	}
 	return data, nil
 }
 

@@ -19,6 +19,29 @@ type billingCacheMissStub struct {
 	setBalanceCalls atomic.Int64
 }
 
+type subscriptionLoadRepoStub struct {
+	UserSubscriptionRepository
+	calls atomic.Int64
+	delay time.Duration
+}
+
+func (s *subscriptionLoadRepoStub) GetActiveByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*UserSubscription, error) {
+	s.calls.Add(1)
+	select {
+	case <-time.After(s.delay):
+		expiresAt := time.Now().Add(time.Hour)
+		return &UserSubscription{
+			ID:        1,
+			UserID:    userID,
+			GroupID:   groupID,
+			Status:    SubscriptionStatusActive,
+			ExpiresAt: expiresAt,
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func (s *billingCacheMissStub) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
 	return 0, errors.New("cache miss")
 }
@@ -165,4 +188,33 @@ func TestBillingCacheServiceGetUserBalance_Singleflight(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return cache.setBalanceCalls.Load() >= 1
 	}, time.Second, 10*time.Millisecond)
+}
+
+func TestBillingCacheServiceGetSubscriptionStatus_Singleflight(t *testing.T) {
+	cache := &billingCacheMissStub{}
+	subRepo := &subscriptionLoadRepoStub{delay: 50 * time.Millisecond}
+	svc := NewBillingCacheService(cache, nil, subRepo, nil, nil, nil, &config.Config{}, nil)
+	t.Cleanup(svc.Stop)
+
+	const callers = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errCh := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := svc.GetSubscriptionStatus(context.Background(), 99, 7)
+			errCh <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+	require.Equal(t, int64(1), subRepo.calls.Load(), "并发订阅缓存 miss 应合并为一次 DB 回源")
 }
