@@ -1510,6 +1510,17 @@ func (s *GatewayService) checkAndRegisterSession(ctx context.Context, account *A
 }
 
 func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
+	if account, ok := schedulerHydratedAccount(ctx, accountID); ok {
+		if s.isAccountBlockedBySchedulingThreshold(ctx, account) {
+			return nil, nil
+		}
+		if account.IsGrok() {
+			if gated := s.filterGrokFreeQuotaAccountsForGateway(ctx, []Account{*account}); len(gated) == 0 {
+				return nil, nil
+			}
+		}
+		return account, nil
+	}
 	var (
 		account *Account
 		err     error
@@ -1538,6 +1549,7 @@ func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID in
 			return nil, nil
 		}
 	}
+	rememberSchedulerHydratedAccount(ctx, account)
 	return account, nil
 }
 
@@ -1567,6 +1579,9 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 	if account == nil || s.schedulerSnapshot == nil {
 		return account, nil
 	}
+	if hydrated, ok := schedulerHydratedAccount(ctx, account.ID); ok {
+		return hydrated, nil
+	}
 	hydrated, err := s.schedulerSnapshot.GetAccount(ctx, account.ID)
 	if err != nil {
 		return nil, err
@@ -1581,6 +1596,7 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 		}
 		hydrated = fresh
 	}
+	rememberSchedulerHydratedAccount(ctx, hydrated)
 	return hydrated, nil
 }
 

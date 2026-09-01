@@ -1752,6 +1752,17 @@ func (s *OpenAIGatewayService) openAIAccountMatchesSchedulingGroup(account *Acco
 }
 
 func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
+	if account, ok := schedulerHydratedAccount(ctx, accountID); ok {
+		if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, account) {
+			return nil, nil
+		}
+		if account.IsGrok() {
+			if gated := s.filterGrokFreeQuotaAccountsForOpenAI(ctx, []Account{*account}); len(gated) == 0 {
+				return nil, nil
+			}
+		}
+		return account, nil
+	}
 	var (
 		account *Account
 		err     error
@@ -1780,6 +1791,7 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 			return nil, nil
 		}
 	}
+	rememberSchedulerHydratedAccount(ctx, account)
 	return account, nil
 }
 
@@ -1821,6 +1833,16 @@ func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, accou
 	if account == nil || s.schedulerSnapshot == nil {
 		return account, nil
 	}
+	if hydrated, ok := schedulerHydratedAccount(ctx, account.ID); ok {
+		if codexQuotaOverdraftCandidateKnown(ctx, hydrated.ID) {
+			if normalized, ok := normalizeCodexQuotaOverdraftHydratedAccount(ctx, hydrated, time.Now().UTC()); !ok {
+				return nil, fmt.Errorf("selected openai account %d is no longer schedulable", hydrated.ID)
+			} else {
+				return normalized, nil
+			}
+		}
+		return hydrated, nil
+	}
 	hydrated, err := s.schedulerSnapshot.GetAccount(ctx, account.ID)
 	if err == nil && hydrated != nil {
 		if state := schedulerFreshnessFromContext(ctx); state != nil && state.enabled() {
@@ -1847,6 +1869,7 @@ func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, accou
 			// before rejecting the candidate.
 		}
 		if !codexQuotaOverdraftCandidateKnown(ctx, account.ID) {
+			rememberSchedulerHydratedAccount(ctx, hydrated)
 			return hydrated, nil
 		}
 	}
@@ -1865,6 +1888,7 @@ func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, accou
 		cancel()
 		if fetchErr == nil && fresh != nil {
 			if normalized, ok := normalizeCodexQuotaOverdraftHydratedAccount(ctx, fresh, time.Now().UTC()); ok {
+				rememberSchedulerHydratedAccount(ctx, normalized)
 				return normalized, nil
 			}
 			return nil, fmt.Errorf("selected openai account %d is no longer schedulable", account.ID)
