@@ -10,6 +10,7 @@ import (
 const (
 	liveBalanceOutboxBatchSize       = 200
 	liveBalanceOutboxPollInterval    = 250 * time.Millisecond
+	liveBalanceOutboxPollMaxInterval = 5 * time.Second
 	liveBalanceOutboxLease           = 30 * time.Second
 	liveBalanceOutboxRedisTimeout    = 2 * time.Second
 	liveBalanceOutboxConcurrency     = 16
