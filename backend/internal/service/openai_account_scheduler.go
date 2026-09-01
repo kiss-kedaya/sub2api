@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -1549,10 +1550,13 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	// require_privacy_set: 获取分组信息
 	var schedGroup *Group
 	if req.GroupID != nil && s.service.schedulerSnapshot != nil {
-		// Privacy eligibility only needs group configuration. The full group
-		// loader also aggregates account counts, which is unnecessary work on
-		// every load-aware selection and failover attempt.
-		schedGroup, _ = s.service.schedulerSnapshot.GetGroupByIDLite(ctx, *req.GroupID)
+		schedGroup = openAIGroupFromContext(ctx, req.GroupID)
+		if schedGroup == nil {
+			// Privacy eligibility only needs group configuration. The full group
+			// loader also aggregates account counts, which is unnecessary work on
+			// every load-aware selection and failover attempt.
+			schedGroup, _ = s.service.schedulerSnapshot.GetGroupByIDLite(ctx, *req.GroupID)
+		}
 	}
 
 	filterStats := openAISelectionFilterStats{pool: len(accounts)}
@@ -2348,6 +2352,17 @@ type openAIGroupPrivacyRequirement struct {
 	required bool
 }
 
+func openAIGroupFromContext(ctx context.Context, groupID *int64) *Group {
+	if ctx == nil || groupID == nil {
+		return nil
+	}
+	group, ok := ctx.Value(ctxkey.Group).(*Group)
+	if !ok || !IsGroupContextValid(group) || group.ID != *groupID {
+		return nil
+	}
+	return group
+}
+
 func (s *OpenAIGatewayService) withOpenAIGroupPrivacyRequirement(ctx context.Context, groupID *int64) context.Context {
 	return context.WithValue(ctx, openAIGroupPrivacyRequirementContextKey{}, openAIGroupPrivacyRequirement{
 		groupID:  derefGroupID(groupID),
@@ -2365,6 +2380,9 @@ func (s *OpenAIGatewayService) openAIGroupRequiresPrivacySet(ctx context.Context
 func (s *OpenAIGatewayService) loadOpenAIGroupRequiresPrivacySet(ctx context.Context, groupID *int64) bool {
 	if s == nil || groupID == nil || s.schedulerSnapshot == nil {
 		return false
+	}
+	if group := openAIGroupFromContext(ctx, groupID); group != nil {
+		return group.RequirePrivacySet
 	}
 	group, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, *groupID)
 	if err != nil {
