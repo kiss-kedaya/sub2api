@@ -118,12 +118,12 @@ func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body m
 	}
 }
 
-// normalizeDeepSeekResponsesRequestBody 适配 DeepSeek 无状态 Responses 端点：
-// 强制 store=false 并清除 previous_response_id（官方 /responses 不支持服务端
-// 状态存储，携带这些字段会被拒绝）。非 deepseek responses 协议账号原样返回。
+// normalizeDeepSeekResponsesRequestBody 适配无状态 CN Responses 端点：
+// 强制 store=false 并清除 previous_response_id（DeepSeek / Kimi 官方
+// Responses 均不支持服务端状态存储，携带这些字段会被拒绝）。
+// 非原生 Responses 协议账号原样返回。
 func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte {
-	if account == nil || account.Platform != PlatformDeepseek ||
-		(account.GetAPIProtocol() != APIProtocolResponses && !account.IsAdaptiveAPIProtocol()) {
+	if account == nil || !account.UsesNativeCNResponses() {
 		return body
 	}
 	normalized, err := sjson.SetBytes(body, "store", false)
