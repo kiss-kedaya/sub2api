@@ -527,7 +527,7 @@ type ContentModerationService struct {
 	lastCleanupDeletedNonHit atomic.Int64
 	runtimeSnapshot          atomic.Pointer[contentModerationRuntimeSnapshot]
 	runtimeRefreshMu         sync.Mutex
-	runtimeCacheTTL          time.Duration
+	runtimeCacheTTL          atomic.Int64
 	runtimeRefreshRetryAt    atomic.Int64
 	keyHealthMu              sync.Mutex
 	keyHealth                map[string]*contentModerationKeyHealth
@@ -1531,8 +1531,10 @@ func (s *ContentModerationService) loadRuntimeSnapshot(ctx context.Context) (*co
 }
 
 func (s *ContentModerationService) runtimeSnapshotTTL() time.Duration {
-	if s != nil && s.runtimeCacheTTL > 0 {
-		return s.runtimeCacheTTL
+	if s != nil {
+		if ttl := time.Duration(s.runtimeCacheTTL.Load()); ttl > 0 {
+			return ttl
+		}
 	}
 	return contentModerationRuntimeCacheTTL
 }
