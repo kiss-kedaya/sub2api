@@ -167,6 +167,19 @@ func TestBillingCacheService_CheckRPM_NilOverrideFallsThroughToGroup(t *testing.
 	require.EqualValues(t, 1, atomic.LoadInt32(&cache.userCalls), "group 未超时 user 也应检查；group 超时直接返回")
 }
 
+func TestBillingCacheService_CheckRPM_ConfirmedNilOverrideSkipsDatabase(t *testing.T) {
+	cache := &userRPMCacheStub{userGroupCounts: []int{1}}
+	repo := &rpmOverrideRepoStub{err: errors.New("unexpected database lookup")}
+	svc := newBillingServiceForRPM(t, cache, repo)
+
+	user := &User{ID: 1, UserGroupRPMOverrideLoaded: true}
+	group := &Group{ID: 10, RPMLimit: 2}
+
+	require.NoError(t, svc.checkRPM(context.Background(), user, group))
+	require.EqualValues(t, 0, atomic.LoadInt32(&repo.calls), "a cached nil override must not query PostgreSQL")
+	require.EqualValues(t, 1, atomic.LoadInt32(&cache.userGroupCalls), "group RPM remains enforced")
+}
+
 func TestBillingCacheService_CheckRPM_OverrideLookupErrorFallsThroughToGroup(t *testing.T) {
 	cache := &userRPMCacheStub{userGroupCounts: []int{3}}
 	repo := &rpmOverrideRepoStub{err: errors.New("db down")}
