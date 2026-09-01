@@ -211,6 +211,7 @@ func (r *groupRepository) CreateFromSource(ctx context.Context, groupIn *service
 			return err
 		}
 	}
+	invalidateModelAvailabilityCachesAfterCommit(ctx)
 	return nil
 }
 
@@ -792,6 +793,9 @@ func (r *groupRepository) DeleteAccountGroupsByGroupID(ctx context.Context, grou
 		return 0, err
 	}
 	affected, _ := res.RowsAffected()
+	if affected > 0 {
+		invalidateModelAvailabilityCachesAfterCommit(ctx)
+	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupID, nil); err != nil {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group account clear failed: group=%d err=%v", groupID, err)
 	}
@@ -897,6 +901,7 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 			return nil, err
 		}
 	}
+	invalidateModelAvailabilityCachesAfterCommit(ctx)
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &id, nil); err != nil {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group cascade delete failed: group=%d err=%v", id, err)
 	}
@@ -1013,7 +1018,7 @@ func (r *groupRepository) BindAccountsToGroup(ctx context.Context, groupID int64
 	}
 
 	// 使用 INSERT ... ON CONFLICT DO NOTHING 忽略已存在的绑定
-	_, err := r.sql.ExecContext(
+	result, err := r.sql.ExecContext(
 		ctx,
 		`INSERT INTO account_groups (account_id, group_id, priority, created_at)
 		 SELECT unnest($1::bigint[]), $2, 50, NOW()
@@ -1023,6 +1028,9 @@ func (r *groupRepository) BindAccountsToGroup(ctx context.Context, groupID int64
 	)
 	if err != nil {
 		return err
+	}
+	if affected, affectedErr := result.RowsAffected(); affectedErr == nil && affected > 0 {
+		invalidateModelAvailabilityCachesAfterCommit(ctx)
 	}
 
 	// 发送调度器事件
