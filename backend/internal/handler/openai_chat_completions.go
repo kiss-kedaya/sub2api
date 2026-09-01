@@ -25,6 +25,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	defer h.recoverResponsesPanic(c, &streamStarted)
 
 	requestStart := time.Now()
+	c.Request = c.Request.WithContext(h.gatewayService.PrepareSchedulerRequestContext(c.Request.Context()))
 
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok {

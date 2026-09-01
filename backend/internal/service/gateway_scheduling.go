@@ -25,6 +25,19 @@ func (s *GatewayService) SelectAccount(ctx context.Context, groupID *int64, sess
 	return s.SelectAccountForModel(ctx, groupID, sessionHash, "")
 }
 
+// PrepareSchedulerRequestContext installs the request-scoped freshness
+// projection used by every scheduling attempt derived from ctx. Handlers call
+// this once before entering a failover loop so retries reuse the same
+// projection instead of creating a new PostgreSQL freshness lookup state.
+// When the snapshot path is unavailable this is a no-op and preserves the
+// repository compatibility fallback behavior.
+func (s *GatewayService) PrepareSchedulerRequestContext(ctx context.Context) context.Context {
+	if s == nil || ctx == nil {
+		return ctx
+	}
+	return withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+}
+
 // SelectAccountForModel 选择支持指定模型的账号（粘性会话+优先级+模型映射）
 func (s *GatewayService) SelectAccountForModel(ctx context.Context, groupID *int64, sessionHash string, requestedModel string) (*Account, error) {
 	return s.SelectAccountForModelWithExclusions(ctx, groupID, sessionHash, requestedModel, nil)
