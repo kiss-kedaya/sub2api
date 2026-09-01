@@ -113,6 +113,9 @@ type Group struct {
 	// MaxReasoningEffort limits the effective OpenAI/Codex reasoning effort.
 	// Empty means unlimited; supported values are minimal/low/medium/high/xhigh/max.
 	MaxReasoningEffort string
+	// MaxReasoningEffortOverLimit is the access control when an explicit effort
+	// exceeds the ceiling: downgrade (default) or deny.
+	MaxReasoningEffortOverLimit string
 	// ReasoningEffortMappings rewrites explicit request values before applying the ceiling.
 	ReasoningEffortMappings []ReasoningEffortMapping
 

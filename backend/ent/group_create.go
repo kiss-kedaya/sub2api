@@ -802,6 +802,20 @@ func (_c *GroupCreate) SetNillableMaxReasoningEffort(v *string) *GroupCreate {
 	return _c
 }
 
+// SetMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field.
+func (_c *GroupCreate) SetMaxReasoningEffortOverLimit(v string) *GroupCreate {
+	_c.mutation.SetMaxReasoningEffortOverLimit(v)
+	return _c
+}
+
+// SetNillableMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableMaxReasoningEffortOverLimit(v *string) *GroupCreate {
+	if v != nil {
+		_c.SetMaxReasoningEffortOverLimit(*v)
+	}
+	return _c
+}
+
 // SetReasoningEffortMappings sets the "reasoning_effort_mappings" field.
 func (_c *GroupCreate) SetReasoningEffortMappings(v []domain.ReasoningEffortMapping) *GroupCreate {
 	_c.mutation.SetReasoningEffortMappings(v)
@@ -1123,6 +1137,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultMaxReasoningEffort
 		_c.mutation.SetMaxReasoningEffort(v)
 	}
+	if _, ok := _c.mutation.MaxReasoningEffortOverLimit(); !ok {
+		v := group.DefaultMaxReasoningEffortOverLimit
+		_c.mutation.SetMaxReasoningEffortOverLimit(v)
+	}
 	if _, ok := _c.mutation.ReasoningEffortMappings(); !ok {
 		v := group.DefaultReasoningEffortMappings
 		_c.mutation.SetReasoningEffortMappings(v)
@@ -1315,6 +1333,14 @@ func (_c *GroupCreate) check() error {
 	if v, ok := _c.mutation.MaxReasoningEffort(); ok {
 		if err := group.MaxReasoningEffortValidator(v); err != nil {
 			return &ValidationError{Name: "max_reasoning_effort", err: fmt.Errorf(`ent: validator failed for field "Group.max_reasoning_effort": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.MaxReasoningEffortOverLimit(); !ok {
+		return &ValidationError{Name: "max_reasoning_effort_over_limit", err: errors.New(`ent: missing required field "Group.max_reasoning_effort_over_limit"`)}
+	}
+	if v, ok := _c.mutation.MaxReasoningEffortOverLimit(); ok {
+		if err := group.MaxReasoningEffortOverLimitValidator(v); err != nil {
+			return &ValidationError{Name: "max_reasoning_effort_over_limit", err: fmt.Errorf(`ent: validator failed for field "Group.max_reasoning_effort_over_limit": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.ReasoningEffortMappings(); !ok {
@@ -1587,6 +1613,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.MaxReasoningEffort(); ok {
 		_spec.SetField(group.FieldMaxReasoningEffort, field.TypeString, value)
 		_node.MaxReasoningEffort = value
+	}
+	if value, ok := _c.mutation.MaxReasoningEffortOverLimit(); ok {
+		_spec.SetField(group.FieldMaxReasoningEffortOverLimit, field.TypeString, value)
+		_node.MaxReasoningEffortOverLimit = value
 	}
 	if value, ok := _c.mutation.ReasoningEffortMappings(); ok {
 		_spec.SetField(group.FieldReasoningEffortMappings, field.TypeJSON, value)
@@ -2705,6 +2735,18 @@ func (u *GroupUpsert) SetMaxReasoningEffort(v string) *GroupUpsert {
 // UpdateMaxReasoningEffort sets the "max_reasoning_effort" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateMaxReasoningEffort() *GroupUpsert {
 	u.SetExcluded(group.FieldMaxReasoningEffort)
+	return u
+}
+
+// SetMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field.
+func (u *GroupUpsert) SetMaxReasoningEffortOverLimit(v string) *GroupUpsert {
+	u.Set(group.FieldMaxReasoningEffortOverLimit, v)
+	return u
+}
+
+// UpdateMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateMaxReasoningEffortOverLimit() *GroupUpsert {
+	u.SetExcluded(group.FieldMaxReasoningEffortOverLimit)
 	return u
 }
 
@@ -3919,6 +3961,20 @@ func (u *GroupUpsertOne) SetMaxReasoningEffort(v string) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateMaxReasoningEffort() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateMaxReasoningEffort()
+	})
+}
+
+// SetMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field.
+func (u *GroupUpsertOne) SetMaxReasoningEffortOverLimit(v string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetMaxReasoningEffortOverLimit(v)
+	})
+}
+
+// UpdateMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateMaxReasoningEffortOverLimit() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateMaxReasoningEffortOverLimit()
 	})
 }
 
@@ -5309,6 +5365,20 @@ func (u *GroupUpsertBulk) SetMaxReasoningEffort(v string) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateMaxReasoningEffort() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateMaxReasoningEffort()
+	})
+}
+
+// SetMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field.
+func (u *GroupUpsertBulk) SetMaxReasoningEffortOverLimit(v string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetMaxReasoningEffortOverLimit(v)
+	})
+}
+
+// UpdateMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateMaxReasoningEffortOverLimit() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateMaxReasoningEffortOverLimit()
 	})
 }
 
