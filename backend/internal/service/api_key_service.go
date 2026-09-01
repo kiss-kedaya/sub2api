@@ -712,7 +712,6 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 			if err != nil {
 				return nil, fmt.Errorf("get api key: %w", err)
 			}
-			s.compileAPIKeyIPRules(apiKey)
 			return apiKey, nil
 		}
 	}
@@ -729,7 +728,6 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 			if err != nil {
 				return nil, fmt.Errorf("get api key: %w", err)
 			}
-			s.compileAPIKeyIPRules(apiKey)
 			return apiKey, nil
 		}
 	} else {
@@ -741,7 +739,6 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 			if err != nil {
 				return nil, fmt.Errorf("get api key: %w", err)
 			}
-			s.compileAPIKeyIPRules(apiKey)
 			return apiKey, nil
 		}
 	}
