@@ -214,6 +214,54 @@ func (s *OpenAIGatewayService) buildOpenAIWSCreatePayload(reqBody map[string]any
 	return payload
 }
 
+// buildOpenAIWSCreatePayloadRaw applies the small set of WS envelope changes
+// without decoding the request body. The large input/tools values remain in
+// their original byte representation and are only copied when a field really
+// changes.
+func (s *OpenAIGatewayService) buildOpenAIWSCreatePayloadRaw(reqBody []byte, account *Account) ([]byte, error) {
+	payload := bytes.TrimSpace(reqBody)
+	if len(payload) == 0 {
+		payload = []byte("{}")
+	}
+	if !gjson.ValidBytes(payload) || !gjson.ParseBytes(payload).IsObject() {
+		return nil, errors.New("openai websocket payload must be a JSON object")
+	}
+
+	if gjson.GetBytes(payload, "background").Exists() {
+		updated, err := sjson.DeleteBytes(payload, "background")
+		if err != nil {
+			return nil, err
+		}
+		payload = updated
+	}
+	if !gjson.GetBytes(payload, "stream").Exists() {
+		updated, err := sjson.SetBytes(payload, "stream", true)
+		if err != nil {
+			return nil, err
+		}
+		payload = updated
+	}
+	typeValue := gjson.GetBytes(payload, "type")
+	if typeValue.Type != gjson.String || typeValue.String() != "response.create" {
+		updated, err := sjson.SetBytes(payload, "type", "response.create")
+		if err != nil {
+			return nil, err
+		}
+		payload = updated
+	}
+	if account != nil && account.UsesOpenAICodexProtocol() && !s.isOpenAIWSStoreRecoveryAllowed(account) {
+		store := gjson.GetBytes(payload, "store")
+		if store.Type != gjson.False {
+			updated, err := sjson.SetBytes(payload, "store", false)
+			if err != nil {
+				return nil, err
+			}
+			payload = updated
+		}
+	}
+	return payload, nil
+}
+
 func setOpenAIWSTurnMetadata(payload map[string]any, turnMetadata string) {
 	if len(payload) == 0 {
 		return
@@ -239,6 +287,97 @@ func setOpenAIWSTurnMetadata(payload map[string]any, turnMetadata string) {
 			openAIWSTurnMetadataHeader: metadata,
 		}
 	}
+}
+
+func setOpenAIWSTurnMetadataRaw(payload []byte, turnMetadata string) ([]byte, bool, error) {
+	metadata := strings.TrimSpace(turnMetadata)
+	if len(payload) == 0 || metadata == "" {
+		return payload, false, nil
+	}
+
+	existing := gjson.GetBytes(payload, "client_metadata")
+	var clientMetadata []byte
+	if existing.IsObject() {
+		updated, err := sjson.SetBytes([]byte(existing.Raw), openAIWSTurnMetadataHeader, metadata)
+		if err != nil {
+			return payload, false, err
+		}
+		clientMetadata = updated
+	} else {
+		var err error
+		clientMetadata, err = json.Marshal(map[string]string{openAIWSTurnMetadataHeader: metadata})
+		if err != nil {
+			return payload, false, err
+		}
+	}
+
+	updated, err := sjson.SetRawBytes(payload, "client_metadata", clientMetadata)
+	if err != nil {
+		return payload, false, err
+	}
+	return updated, true, nil
+}
+
+func applyOpenAIWSRetryPayloadStrategyRaw(payload []byte, attempt int) ([]byte, string, []string, error) {
+	if len(bytes.TrimSpace(payload)) == 0 {
+		return payload, "empty", nil, nil
+	}
+	if attempt <= 1 || !gjson.GetBytes(payload, "include").Exists() {
+		return payload, "full", nil, nil
+	}
+	updated, err := sjson.DeleteBytes(payload, "include")
+	if err != nil {
+		return payload, "full", nil, err
+	}
+	return updated, "trim_optional_fields", []string{"include"}, nil
+}
+
+// prepareOpenAIWSForwardPayload prefers the request bytes already normalized by
+// Forward. The map path is retained as a compatibility fallback for malformed
+// or otherwise unpatchable JSON and is intentionally the only path that
+// re-encodes the complete request object.
+func (s *OpenAIGatewayService) prepareOpenAIWSForwardPayload(
+	reqBody map[string]any,
+	rawBody []byte,
+	account *Account,
+	attempt int,
+	turnMetadata string,
+	c *gin.Context,
+) ([]byte, string, []string, bool, error) {
+	if len(bytes.TrimSpace(rawBody)) > 0 {
+		payload, rawErr := s.buildOpenAIWSCreatePayloadRaw(rawBody, account)
+		if rawErr == nil {
+			payload, strategy, removedKeys, retryErr := applyOpenAIWSRetryPayloadStrategyRaw(payload, attempt)
+			if retryErr == nil {
+				if updated, changed, metadataErr := setOpenAIWSTurnMetadataRaw(payload, turnMetadata); metadataErr == nil {
+					if changed {
+						payload = updated
+					}
+					if fpIDs := stagedCodexFingerprintIDs(c, account); fpIDs != nil {
+						updated, fingerprintChanged, fingerprintErr := applyCodexFingerprintClientMetadataRaw(payload, fpIDs)
+						if fingerprintErr == nil {
+							if fingerprintChanged {
+								payload = updated
+							}
+							return payload, strategy, removedKeys, true, nil
+						}
+					} else {
+						return payload, strategy, removedKeys, true, nil
+					}
+				}
+			}
+		}
+	}
+
+	payload := s.buildOpenAIWSCreatePayload(reqBody, account)
+	strategy, removedKeys := applyOpenAIWSRetryPayloadStrategy(payload, attempt)
+	setOpenAIWSTurnMetadata(payload, turnMetadata)
+	applyStagedCodexFingerprintClientMetadata(c, account, payload)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, strategy, removedKeys, false, err
+	}
+	return payloadBytes, strategy, removedKeys, false, nil
 }
 
 func (s *OpenAIGatewayService) isOpenAIWSStoreRecoveryAllowed(account *Account) bool {

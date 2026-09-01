@@ -394,7 +394,7 @@ func (c *openAIWSConn) writeJSON(value any, writeCtx context.Context) error {
 	if writeCtx == nil {
 		writeCtx = context.Background()
 	}
-	if err := c.ws.WriteJSON(writeCtx, value); err != nil {
+	if err := writeOpenAIWSJSON(writeCtx, c.ws, value); err != nil {
 		return err
 	}
 	c.touch()
