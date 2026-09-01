@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"math/rand/v2"
 	"strconv"
 	"strings"
@@ -217,30 +218,50 @@ func (c *billingCache) parseSubscriptionCache(data map[string]string) (*service.
 		return nil, errors.New("invalid cache: missing status")
 	}
 
-	if expiresStr, ok := data[subFieldExpiresAt]; ok {
-		expiresAt, err := strconv.ParseInt(expiresStr, 10, 64)
-		if err == nil {
-			result.ExpiresAt = time.Unix(expiresAt, 0)
-		}
+	expiresStr, ok := data[subFieldExpiresAt]
+	if !ok || strings.TrimSpace(expiresStr) == "" {
+		return nil, errors.New("invalid cache: missing expires_at")
 	}
-
-	if dailyStr, ok := data[subFieldDailyUsage]; ok {
-		result.DailyUsage, _ = strconv.ParseFloat(dailyStr, 64)
+	expiresAt, err := strconv.ParseInt(expiresStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid cache: expires_at: %w", err)
 	}
+	result.ExpiresAt = time.Unix(expiresAt, 0)
 
-	if weeklyStr, ok := data[subFieldWeeklyUsage]; ok {
-		result.WeeklyUsage, _ = strconv.ParseFloat(weeklyStr, 64)
+	var parseErr error
+	if result.DailyUsage, parseErr = parseBillingCacheFloat(data, subFieldDailyUsage); parseErr != nil {
+		return nil, parseErr
 	}
-
-	if monthlyStr, ok := data[subFieldMonthlyUsage]; ok {
-		result.MonthlyUsage, _ = strconv.ParseFloat(monthlyStr, 64)
+	if result.WeeklyUsage, parseErr = parseBillingCacheFloat(data, subFieldWeeklyUsage); parseErr != nil {
+		return nil, parseErr
 	}
-
-	if versionStr, ok := data[subFieldVersion]; ok {
-		result.Version, _ = strconv.ParseInt(versionStr, 10, 64)
+	if result.MonthlyUsage, parseErr = parseBillingCacheFloat(data, subFieldMonthlyUsage); parseErr != nil {
+		return nil, parseErr
+	}
+	versionStr, ok := data[subFieldVersion]
+	if !ok || strings.TrimSpace(versionStr) == "" {
+		return nil, errors.New("invalid cache: missing version")
+	}
+	if result.Version, parseErr = strconv.ParseInt(versionStr, 10, 64); parseErr != nil {
+		return nil, fmt.Errorf("invalid cache: version: %w", parseErr)
 	}
 
 	return result, nil
+}
+
+func parseBillingCacheFloat(data map[string]string, field string) (float64, error) {
+	raw, ok := data[field]
+	if !ok || strings.TrimSpace(raw) == "" {
+		return 0, fmt.Errorf("invalid cache: missing %s", field)
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		if err == nil {
+			err = errors.New("non-finite value")
+		}
+		return 0, fmt.Errorf("invalid cache: %s: %w", field, err)
+	}
+	return value, nil
 }
 
 func (c *billingCache) SetSubscriptionCache(ctx context.Context, userID, groupID int64, data *service.SubscriptionCacheData) error {
@@ -329,26 +350,43 @@ func (c *billingCache) GetAPIKeyRateLimit(ctx context.Context, keyID int64) (*se
 	if len(result) == 0 {
 		return nil, redis.Nil
 	}
+	return parseAPIKeyRateLimitCache(result)
+}
+
+func parseAPIKeyRateLimitCache(result map[string]string) (*service.APIKeyRateLimitCacheData, error) {
 	data := &service.APIKeyRateLimitCacheData{}
-	if v, ok := result[rateLimitFieldUsage5h]; ok {
-		data.Usage5h, _ = strconv.ParseFloat(v, 64)
+	var parseErr error
+	if data.Usage5h, parseErr = parseBillingCacheFloat(result, rateLimitFieldUsage5h); parseErr != nil {
+		return nil, parseErr
 	}
-	if v, ok := result[rateLimitFieldUsage1d]; ok {
-		data.Usage1d, _ = strconv.ParseFloat(v, 64)
+	if data.Usage1d, parseErr = parseBillingCacheFloat(result, rateLimitFieldUsage1d); parseErr != nil {
+		return nil, parseErr
 	}
-	if v, ok := result[rateLimitFieldUsage7d]; ok {
-		data.Usage7d, _ = strconv.ParseFloat(v, 64)
+	if data.Usage7d, parseErr = parseBillingCacheFloat(result, rateLimitFieldUsage7d); parseErr != nil {
+		return nil, parseErr
 	}
-	if v, ok := result[rateLimitFieldWindow5h]; ok {
-		data.Window5h, _ = strconv.ParseInt(v, 10, 64)
+	if data.Window5h, parseErr = parseBillingCacheInt64(result, rateLimitFieldWindow5h); parseErr != nil {
+		return nil, parseErr
 	}
-	if v, ok := result[rateLimitFieldWindow1d]; ok {
-		data.Window1d, _ = strconv.ParseInt(v, 10, 64)
+	if data.Window1d, parseErr = parseBillingCacheInt64(result, rateLimitFieldWindow1d); parseErr != nil {
+		return nil, parseErr
 	}
-	if v, ok := result[rateLimitFieldWindow7d]; ok {
-		data.Window7d, _ = strconv.ParseInt(v, 10, 64)
+	if data.Window7d, parseErr = parseBillingCacheInt64(result, rateLimitFieldWindow7d); parseErr != nil {
+		return nil, parseErr
 	}
 	return data, nil
+}
+
+func parseBillingCacheInt64(data map[string]string, field string) (int64, error) {
+	raw, ok := data[field]
+	if !ok || strings.TrimSpace(raw) == "" {
+		return 0, fmt.Errorf("invalid cache: missing %s", field)
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid cache: %s: %w", field, err)
+	}
+	return value, nil
 }
 
 func (c *billingCache) SetAPIKeyRateLimit(ctx context.Context, keyID int64, data *service.APIKeyRateLimitCacheData) error {

@@ -109,3 +109,56 @@ func TestJitteredTTL_HasVariation(t *testing.T) {
 	// 50 次调用中应该至少有 2 个不同的值
 	require.Greater(t, len(seen), 1, "jitteredTTL() 应产生不同的 TTL 值")
 }
+
+func TestParseSubscriptionCache_RejectsMalformedNumericFields(t *testing.T) {
+	valid := map[string]string{
+		subFieldStatus:       "active",
+		subFieldExpiresAt:    "1760000000",
+		subFieldDailyUsage:   "1.25",
+		subFieldWeeklyUsage:  "2.5",
+		subFieldMonthlyUsage: "3.75",
+		subFieldVersion:      "42",
+	}
+
+	for _, field := range []string{subFieldDailyUsage, subFieldWeeklyUsage, subFieldMonthlyUsage} {
+		t.Run(field, func(t *testing.T) {
+			malformed := cloneStringMap(valid)
+			malformed[field] = "not-a-number"
+			_, err := (&billingCache{}).parseSubscriptionCache(malformed)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestParseAPIKeyRateLimitCache_RejectsMissingOrNonFiniteFields(t *testing.T) {
+	valid := map[string]string{
+		rateLimitFieldUsage5h:  "1.25",
+		rateLimitFieldUsage1d:  "2.5",
+		rateLimitFieldUsage7d:  "3.75",
+		rateLimitFieldWindow5h: "1760000000",
+		rateLimitFieldWindow1d: "1760000000",
+		rateLimitFieldWindow7d: "1760000000",
+	}
+
+	for _, field := range []string{rateLimitFieldUsage5h, rateLimitFieldUsage1d, rateLimitFieldUsage7d} {
+		t.Run(field+"_nan", func(t *testing.T) {
+			malformed := cloneStringMap(valid)
+			malformed[field] = "NaN"
+			_, err := parseAPIKeyRateLimitCache(malformed)
+			require.Error(t, err)
+		})
+	}
+
+	malformed := cloneStringMap(valid)
+	delete(malformed, rateLimitFieldWindow7d)
+	_, err := parseAPIKeyRateLimitCache(malformed)
+	require.Error(t, err)
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	clone := make(map[string]string, len(input))
+	for key, value := range input {
+		clone[key] = value
+	}
+	return clone
+}
