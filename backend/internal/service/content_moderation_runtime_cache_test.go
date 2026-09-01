@@ -140,11 +140,12 @@ func runtimeCacheTestConfig(t *testing.T, keywords ...string) string {
 }
 
 func runtimeCacheTestService(repo *contentModerationRuntimeSettingRepo, ttl time.Duration) *ContentModerationService {
-	return &ContentModerationService{
-		settingRepo:     repo,
-		repo:            &contentModerationTestRepo{},
-		runtimeCacheTTL: ttl,
+	svc := &ContentModerationService{
+		settingRepo: repo,
+		repo:        &contentModerationTestRepo{},
 	}
+	svc.runtimeCacheTTL.Store(int64(ttl))
+	return svc
 }
 
 func runtimeCacheTestInput(text string) ContentModerationCheckInput {
