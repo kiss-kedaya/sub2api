@@ -387,6 +387,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if cappedBody, changed := applyOpenAIReasoningEffortPolicyForRequest(c, apiKey, body); changed {
 		body = cappedBody
 	}
+	if normalizedBody, changed := normalizeCodexAutomationBootstrap(body); changed {
+		body = normalizedBody
+		reqLog.Info("openai.codex_automation_bootstrap_normalized",
+			zap.String("normalization", "call_output_to_user_message"),
+		)
+	}
 	if normalizedBody, changed := normalizeCodexDelegationBootstrap(body); changed {
 		body = normalizedBody
 		reqLog.Info("openai.codex_delegation_bootstrap_normalized",
