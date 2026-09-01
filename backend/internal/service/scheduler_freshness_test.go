@@ -123,3 +123,19 @@ func TestSchedulerFreshness_ProjectionFailureUsesOneBatchFallbackAndFailsClosed(
 		t.Fatalf("calls projection=%d fallback=%d, want 1/1", repo.projectionCalls, repo.fallbackCalls)
 	}
 }
+
+func TestSchedulerFreshnessLookupResultDoesNotAllowFallbackAfterProjectionFailure(t *testing.T) {
+	repo := &schedulerFreshnessRepoStub{projectionErr: errors.New("database unavailable")}
+	ctx := withSchedulerFreshness(context.Background(), repo, &SchedulerSnapshotService{}, 31)
+
+	account, known := schedulerFreshnessLookupResult(ctx, 31)
+	if account != nil || !known {
+		t.Fatalf("lookup result = (%#v, %v), want (nil, true)", account, known)
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if repo.projectionCalls != 1 || repo.fallbackCalls != 1 {
+		t.Fatalf("calls projection=%d fallback=%d, want 1/1", repo.projectionCalls, repo.fallbackCalls)
+	}
+}

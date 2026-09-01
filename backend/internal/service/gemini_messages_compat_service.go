@@ -104,6 +104,7 @@ func (s *GeminiMessagesCompatService) SelectAccountForModel(ctx context.Context,
 }
 
 func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 1. 确定目标平台和调度模式
 	// Determine target platform and scheduling mode
 	platform, useMixedScheduling, hasForcePlatform, err := s.resolvePlatformAndSchedulingMode(ctx, groupID)
@@ -132,6 +133,8 @@ func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx co
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
 	}
+	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 
 	// 4. 按优先级 + LRU 选择最佳账号
 	// Select best account by priority + LRU
@@ -423,8 +426,20 @@ func (s *GeminiMessagesCompatService) GetAntigravityGatewayService() *Antigravit
 }
 
 func (s *GeminiMessagesCompatService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	if s.schedulerSnapshot != nil {
-		return s.schedulerSnapshot.GetAccount(ctx, accountID)
+		account, err := s.schedulerSnapshot.GetAccount(ctx, accountID)
+		if err != nil || account == nil {
+			return account, err
+		}
+		if state := schedulerFreshnessFromContext(ctx); state != nil && state.enabled() {
+			fresh, ok := state.apply(ctx, account)
+			if !ok {
+				return nil, nil
+			}
+			return fresh, nil
+		}
+		return account, nil
 	}
 	return s.accountRepo.GetByID(ctx, accountID)
 }
@@ -439,6 +454,13 @@ func (s *GeminiMessagesCompatService) hydrateSelectedAccount(ctx context.Context
 	}
 	if hydrated == nil {
 		return nil, fmt.Errorf("selected gemini account %d not found during hydration", account.ID)
+	}
+	if state := schedulerFreshnessFromContext(ctx); state != nil && state.enabled() {
+		fresh, ok := state.apply(ctx, hydrated)
+		if !ok {
+			return nil, fmt.Errorf("selected gemini account %d failed freshness validation", account.ID)
+		}
+		hydrated = fresh
 	}
 	return hydrated, nil
 }
@@ -505,6 +527,11 @@ func (s *GeminiMessagesCompatService) SelectAccountForAIStudioEndpoints(ctx cont
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
+	if len(accounts) == 0 {
+		return nil, errors.New("no available Gemini accounts")
+	}
+	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 	if len(accounts) == 0 {
 		return nil, errors.New("no available Gemini accounts")
 	}
