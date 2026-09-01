@@ -62,3 +62,14 @@ func TestMigration234SkipsWatermarkLockForCurrentDayInserts(t *testing.T) {
 	require.Contains(t, sql, "FOR KEY SHARE")
 	require.Contains(t, sql, "closed_before = LEAST(closed_before, affected_date)")
 }
+
+func TestMigration236AddsCoveringIndexForGroupUsageRollups(t *testing.T) {
+	content, err := FS.ReadFile("236_usage_logs_group_rollup_covering_index_notx.sql")
+	require.NoError(t, err)
+
+	sql := string(content)
+	require.Contains(t, sql, "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_usage_logs_rollup_created_group_cost")
+	require.Contains(t, sql, "ON usage_logs (created_at, group_id)")
+	require.Contains(t, sql, "INCLUDE (actual_cost)")
+	require.Contains(t, sql, "WHERE group_id IS NOT NULL")
+}
