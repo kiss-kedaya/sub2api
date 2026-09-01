@@ -1879,7 +1879,7 @@ func (s *defaultOpenAIAccountScheduler) lookupShadowParentAccount(ctx context.Co
 	if s == nil || s.service == nil {
 		return nil
 	}
-	if account := schedulerFreshnessLookup(ctx, id); account != nil {
+	if account, known := schedulerFreshnessLookupResult(ctx, id); known {
 		return account
 	}
 	if s.service.schedulerSnapshot != nil {

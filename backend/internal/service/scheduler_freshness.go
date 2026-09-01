@@ -100,6 +100,10 @@ type schedulerFreshnessRequest struct {
 }
 
 func withSchedulerFreshness(ctx context.Context, accountRepo AccountRepository, snapshot *SchedulerSnapshotService, ids ...int64) context.Context {
+	if existing := schedulerFreshnessFromContext(ctx); existing != nil && existing.enabled() {
+		existing.addIDs(ids...)
+		return ctx
+	}
 	state := &schedulerFreshnessRequest{
 		accountRepo: accountRepo,
 		snapshot:    snapshot,
@@ -372,30 +376,35 @@ func copyAccountJSONMap(values map[string]any) map[string]any {
 }
 
 func schedulerFreshnessLookup(ctx context.Context, accountID int64) *Account {
+	account, _ := schedulerFreshnessLookupResult(ctx, accountID)
+	return account
+}
+
+// schedulerFreshnessLookupResult distinguishes an unavailable projection from
+// a request projection that positively knows an account is missing or failed.
+// Callers must not fall back to GetByID after the latter.
+func schedulerFreshnessLookupResult(ctx context.Context, accountID int64) (*Account, bool) {
 	state := schedulerFreshnessFromContext(ctx)
 	if state == nil || !state.enabled() || accountID <= 0 {
-		return nil
+		return nil, false
 	}
 	state.addIDs(accountID)
 	state.prime(ctx)
 	state.mu.Lock()
 	fresh, ok := state.accounts[accountID]
-	failed := false
-	if _, exists := state.failed[accountID]; exists {
-		failed = true
-	}
+	_, failed := state.failed[accountID]
 	state.mu.Unlock()
 	if failed || !ok {
 		schedulerFreshnessMetrics.parentMisses.Add(1)
 		if failed {
 			schedulerFreshnessMetrics.parentFailures.Add(1)
 		}
-		return nil
+		return nil, true
 	}
 	schedulerFreshnessMetrics.parentHits.Add(1)
 	// Parent-health checks only consume the durable projection. Returning it
 	// directly avoids rehydrating the same shared parent for every shadow.
-	return schedulerFreshnessAccount(fresh)
+	return schedulerFreshnessAccount(fresh), true
 }
 
 func schedulerFreshnessAccount(fresh SchedulerFreshness) *Account {
