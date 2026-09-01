@@ -105,7 +105,6 @@ func TestUsageRecordWorkerPool_OverflowSync(t *testing.T) {
 	})
 	require.Equal(t, UsageRecordSubmitModeSync, mode)
 	require.True(t, syncExecuted.Load())
-
 	close(block)
 	select {
 	case <-secondDone:
@@ -114,7 +113,8 @@ func TestUsageRecordWorkerPool_OverflowSync(t *testing.T) {
 	}
 
 	require.Eventually(t, func() bool {
-		return pool.Stats().SyncFallbackTasks >= 1
+		stats := pool.Stats()
+		return stats.SyncFallbackTasks >= 1 && stats.DroppedTasks == 0
 	}, time.Second, 10*time.Millisecond)
 }
 
@@ -148,11 +148,12 @@ func TestUsageRecordWorkerPool_OverflowSample(t *testing.T) {
 	})
 	require.Equal(t, UsageRecordSubmitModeSync, firstOverflow)
 	require.True(t, syncExecuted.Load())
-
+	// The next overflow sample is intentionally dropped while the worker and
+	// queue remain saturated; this keeps the drop-policy assertion deterministic.
 	secondOverflow := pool.Submit(func(ctx context.Context) {})
 	require.Equal(t, UsageRecordSubmitModeDropped, secondOverflow)
-
 	close(block)
+
 	select {
 	case <-secondDone:
 	case <-time.After(time.Second):
@@ -161,7 +162,7 @@ func TestUsageRecordWorkerPool_OverflowSample(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		stats := pool.Stats()
-		return stats.SyncFallbackTasks >= 1 && stats.DroppedQueueFull >= 1
+		return stats.SyncFallbackTasks >= 1 && stats.DroppedQueueFull >= 1 && stats.DroppedTasks >= 1
 	}, time.Second, 10*time.Millisecond)
 }
 
