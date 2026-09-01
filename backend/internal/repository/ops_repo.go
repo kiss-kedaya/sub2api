@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,9 +57,18 @@ INSERT INTO ops_error_logs (
   time_to_first_token_ms,
   created_at,
   api_key_prefix
-) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38
 )`
+
+const opsErrorLogInsertColumnCount = 38
+const opsErrorLogInsertChunkSize = 128
+
+func opsErrorLogValuePlaceholders(base int) string {
+	values := make([]string, opsErrorLogInsertColumnCount)
+	for i := range values {
+		values[i] = "$" + strconv.Itoa(base+i+1)
+	}
+	return "(" + strings.Join(values, ",") + ")"
+}
 
 func NewOpsRepository(db *sql.DB) service.OpsRepository {
 	return &opsRepository{db: db}
@@ -75,7 +85,7 @@ func (r *opsRepository) InsertErrorLog(ctx context.Context, input *service.OpsIn
 	var id int64
 	err := r.db.QueryRowContext(
 		ctx,
-		insertOpsErrorLogSQL+" RETURNING id",
+		insertOpsErrorLogSQL+" VALUES "+opsErrorLogValuePlaceholders(0)+" RETURNING id",
 		opsInsertErrorLogArgs(input)...,
 	).Scan(&id)
 	if err != nil {
@@ -92,6 +102,16 @@ func (r *opsRepository) BatchInsertErrorLogs(ctx context.Context, inputs []*serv
 		return 0, nil
 	}
 
+	valid := make([]*service.OpsInsertErrorLogInput, 0, len(inputs))
+	for _, input := range inputs {
+		if input != nil {
+			valid = append(valid, input)
+		}
+	}
+	if len(valid) == 0 {
+		return 0, nil
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -102,29 +122,26 @@ func (r *opsRepository) BatchInsertErrorLogs(ctx context.Context, inputs []*serv
 		}
 	}()
 
-	stmt, err := tx.PrepareContext(ctx, insertOpsErrorLogSQL)
-	if err != nil {
-		return 0, err
-	}
-	defer func() {
-		_ = stmt.Close()
-	}()
-
-	var inserted int64
-	for _, input := range inputs {
-		if input == nil {
-			continue
+	for start := 0; start < len(valid); start += opsErrorLogInsertChunkSize {
+		end := start + opsErrorLogInsertChunkSize
+		if end > len(valid) {
+			end = len(valid)
 		}
-		if _, err = stmt.ExecContext(ctx, opsInsertErrorLogArgs(input)...); err != nil {
-			return inserted, err
+		values := make([]string, 0, end-start)
+		args := make([]any, 0, (end-start)*opsErrorLogInsertColumnCount)
+		for i, input := range valid[start:end] {
+			values = append(values, opsErrorLogValuePlaceholders(i*opsErrorLogInsertColumnCount))
+			args = append(args, opsInsertErrorLogArgs(input)...)
 		}
-		inserted++
+		if _, err = tx.ExecContext(ctx, insertOpsErrorLogSQL+" VALUES "+strings.Join(values, ","), args...); err != nil {
+			return int64(start), err
+		}
 	}
 
 	if err = tx.Commit(); err != nil {
-		return inserted, err
+		return int64(len(valid)), err
 	}
-	return inserted, nil
+	return int64(len(valid)), nil
 }
 
 func opsInsertErrorLogArgs(input *service.OpsInsertErrorLogInput) []any {
