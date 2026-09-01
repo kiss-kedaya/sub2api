@@ -49,6 +49,11 @@ type accountRepository struct {
 	// Used to proactively sync account snapshot to cache when status changes,
 	// ensuring sticky sessions can promptly detect unavailable accounts.
 	schedulerCache service.SchedulerCache
+
+	// modelAvailabilityCache caches the persistently eligible account pool used
+	// only for 404-vs-503 model-miss diagnosis. It is short-lived and does not
+	// participate in normal scheduling or billing decisions.
+	modelAvailabilityCache *modelAvailabilityCandidateCache
 }
 
 var schedulerNeutralExtraKeyPrefixes = []string{
@@ -120,7 +125,19 @@ func NewAdminAccountRepository(client *dbent.Client, sqlDB *sql.DB, schedulerCac
 // newAccountRepositoryWithSQL 是内部构造函数，支持依赖注入 SQL 执行器。
 // 这种设计便于单元测试时注入 mock 对象。
 func newAccountRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, schedulerCache service.SchedulerCache) *accountRepository {
-	return &accountRepository{client: client, sql: sqlq, schedulerCache: schedulerCache}
+	return &accountRepository{
+		client:                 client,
+		sql:                    sqlq,
+		schedulerCache:         schedulerCache,
+		modelAvailabilityCache: newModelAvailabilityCandidateCache(),
+	}
+}
+
+func (r *accountRepository) invalidateModelAvailabilityCache() {
+	if r == nil || r.modelAvailabilityCache == nil {
+		return
+	}
+	r.modelAvailabilityCache.clear()
 }
 
 func (r *accountRepository) Create(ctx context.Context, account *service.Account) error {
@@ -130,6 +147,7 @@ func (r *accountRepository) Create(ctx context.Context, account *service.Account
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, buildSchedulerGroupPayload(account.GroupIDs)); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue account create failed: account=%d err=%v", account.ID, err)
 	}
+	invalidateModelAvailabilityCachesAfterCommit(ctx)
 	return nil
 }
 
@@ -253,6 +271,7 @@ func (r *accountRepository) CreateWithAccountGroups(ctx context.Context, account
 			return err
 		}
 	}
+	invalidateModelAvailabilityCachesAfterCommit(ctx)
 	return nil
 }
 
@@ -270,6 +289,74 @@ func (r *accountRepository) GetByID(ctx context.Context, id int64) (*service.Acc
 		return nil, service.ErrAccountNotFound
 	}
 	return &accounts[0], nil
+}
+
+// ReadSchedulerFreshness returns only the durable fields that can invalidate a
+// scheduler snapshot. It deliberately excludes credentials, proxy settings,
+// model mappings and ranking data; the request continues to use those from the
+// snapshot after this projection has confirmed the account remains eligible.
+func (r *accountRepository) ReadSchedulerFreshness(ctx context.Context, ids []int64) (map[int64]service.SchedulerFreshness, error) {
+	uniqueIDs := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		return map[int64]service.SchedulerFreshness{}, nil
+	}
+
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT
+			a.id, a.platform, a.type, a.status, a.schedulable,
+			a.expires_at, a.auto_pause_on_expired,
+			a.rate_limited_at, a.rate_limit_reset_at, a.overload_until,
+			a.temp_unschedulable_until, COALESCE(a.temp_unschedulable_reason, ''),
+			a.parent_account_id, a.extra->>'privacy_mode',
+			COALESCE(array_agg(ag.group_id) FILTER (WHERE ag.group_id IS NOT NULL), '{}'::bigint[])
+		FROM accounts a
+		LEFT JOIN account_groups ag ON ag.account_id = a.id
+		WHERE a.id = ANY($1) AND a.deleted_at IS NULL
+		GROUP BY a.id
+	`, pq.Array(uniqueIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	freshness := make(map[int64]service.SchedulerFreshness, len(uniqueIDs))
+	for rows.Next() {
+		var (
+			value  service.SchedulerFreshness
+			parent sql.NullInt64
+			groups pq.Int64Array
+		)
+		if err := rows.Scan(
+			&value.ID, &value.Platform, &value.Type, &value.Status, &value.Schedulable,
+			&value.ExpiresAt, &value.AutoPauseOnExpired,
+			&value.RateLimitedAt, &value.RateLimitResetAt, &value.OverloadUntil,
+			&value.TempUnschedulableUntil, &value.TempUnschedulableReason,
+			&parent, &value.PrivacyMode, &groups,
+		); err != nil {
+			return nil, err
+		}
+		if parent.Valid {
+			parentID := parent.Int64
+			value.ParentAccountID = &parentID
+		}
+		value.GroupIDs = append([]int64(nil), groups...)
+		freshness[value.ID] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return freshness, nil
 }
 
 func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*service.Account, error) {
@@ -505,6 +592,7 @@ func (r *accountRepository) updateAccount(
 	if contextTx == nil {
 		r.syncSchedulerAccountSnapshot(baseCtx, account.ID)
 	}
+	invalidateModelAvailabilityCachesAfterCommit(baseCtx)
 	return nil
 }
 
@@ -861,6 +949,7 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 	if contextTx == nil {
 		r.syncSchedulerAccountSnapshot(baseCtx, id)
 	}
+	invalidateModelAvailabilityCachesAfterCommit(baseCtx)
 	return nil
 }
 
@@ -900,6 +989,7 @@ func (r *accountRepository) Delete(ctx context.Context, id int64) error {
 		}
 	}
 	r.deleteSchedulerAccountSnapshot(ctx, id)
+	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, buildSchedulerGroupPayload(groupIDs)); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue account delete failed: account=%d err=%v", id, err)
 	}
@@ -1371,6 +1461,7 @@ func (r *accountRepository) SetError(ctx context.Context, id int64, errorMsg str
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue set error failed: account=%d err=%v", id, err)
 	}
 	r.syncSchedulerAccountSnapshot(ctx, id)
+	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	return nil
 }
 
@@ -1419,6 +1510,7 @@ func (r *accountRepository) SetGrokCredentialErrorIfMatch(
 		return false, err
 	}
 	r.syncSchedulerAccountSnapshotDetached(ctx, id)
+	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	return true, nil
 }
 
@@ -1479,6 +1571,7 @@ func (r *accountRepository) SetGrokOAuthErrorIfCredentialsUnchanged(
 		return false, nil
 	}
 	r.syncSchedulerAccountSnapshotDetached(ctx, id)
+	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	return true, nil
 }
 
@@ -1540,6 +1633,7 @@ func (r *accountRepository) UpdateGrokOAuthCredentialsIfUnchanged(
 		return false, nil
 	}
 	r.syncSchedulerAccountSnapshotDetached(ctx, id)
+	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	return true, nil
 }
 
@@ -1601,6 +1695,7 @@ func (r *accountRepository) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 		return false, nil
 	}
 	r.syncSchedulerAccountSnapshotDetached(ctx, id)
+	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	return true, nil
 }
 
@@ -1760,6 +1855,7 @@ func (r *accountRepository) ClearError(ctx context.Context, id int64) error {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue clear error failed: account=%d err=%v", id, err)
 	}
 	r.syncSchedulerAccountSnapshot(ctx, id)
+	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	return nil
 }
 
@@ -1776,6 +1872,7 @@ func (r *accountRepository) AddToGroup(ctx context.Context, accountID, groupID i
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountGroupsChanged, &accountID, nil, payload); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue add to group failed: account=%d group=%d err=%v", accountID, groupID, err)
 	}
+	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	return nil
 }
 
@@ -1793,6 +1890,7 @@ func (r *accountRepository) RemoveFromGroup(ctx context.Context, accountID, grou
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountGroupsChanged, &accountID, nil, payload); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue remove from group failed: account=%d group=%d err=%v", accountID, groupID, err)
 	}
+	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	return nil
 }
 
@@ -1839,8 +1937,11 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 
 	if len(groupIDs) == 0 {
 		if tx != nil {
-			return tx.Commit()
+			if err := tx.Commit(); err != nil {
+				return err
+			}
 		}
+		r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 		return nil
 	}
 
@@ -1866,6 +1967,7 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountGroupsChanged, &accountID, nil, payload); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue bind groups failed: account=%d err=%v", accountID, err)
 	}
+	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	return nil
 }
 
@@ -2132,6 +2234,65 @@ func (r *accountRepository) ListModelAvailabilityCandidates(
 	if len(platforms) == 0 {
 		return []service.Account{}, nil
 	}
+	// The diagnosis endpoint is on the model-miss error path and is safe to
+	// serve from a short-lived projection cache. Keep the original Ent query as
+	// a fallback for repositories constructed without a raw SQL executor (tests
+	// and lightweight callers), preserving historical behavior exactly there.
+	if r != nil && r.sql != nil && r.modelAvailabilityCache != nil {
+		key := makeModelAvailabilityCandidateCacheKey(groupID, platforms, includeGrouped)
+		if cached, ok := r.modelAvailabilityCache.get(key); ok {
+			return cached, nil
+		}
+		return r.loadModelAvailabilityCandidatesCached(ctx, key, groupID, platforms, includeGrouped)
+	}
+
+	return r.listModelAvailabilityCandidatesEnt(ctx, groupID, platforms, includeGrouped)
+}
+
+// loadModelAvailabilityCandidatesCached is deliberately split from the hot
+// cache-hit function above. Keeping the singleflight closure in this cold-path
+// helper prevents its captured context from escaping on every cache hit.
+func (r *accountRepository) loadModelAvailabilityCandidatesCached(
+	ctx context.Context,
+	key modelAvailabilityCandidateCacheKey,
+	groupID *int64,
+	platforms []string,
+	includeGrouped bool,
+) ([]service.Account, error) {
+	resultCh := r.modelAvailabilityCache.sf.DoChan(modelAvailabilityCandidatesSFKey(key), func() (any, error) {
+		generation := r.modelAvailabilityCache.currentGeneration()
+		// The first caller is only a waiter; its cancellation or short
+		// deadline must not abort the shared refresh for other callers.
+		// Bound the detached leader independently to avoid a stuck database
+		// query holding the singleflight key forever.
+		queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), modelAvailabilityCandidatesQueryTimeout)
+		defer cancel()
+		accounts, err := r.queryModelAvailabilityCandidatesProjected(queryCtx, groupID, platforms, includeGrouped)
+		if err != nil {
+			return nil, err
+		}
+		r.modelAvailabilityCache.setIfGeneration(key, accounts, generation)
+		return accounts, nil
+	})
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		return result.Val.([]service.Account), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// listModelAvailabilityCandidatesEnt is the original full-Ent implementation
+// retained as a correctness fallback when projection caching is unavailable.
+func (r *accountRepository) listModelAvailabilityCandidatesEnt(
+	ctx context.Context,
+	groupID *int64,
+	platforms []string,
+	includeGrouped bool,
+) ([]service.Account, error) {
 	if groupID != nil {
 		return r.queryAccountsByGroup(ctx, *groupID, accountGroupQueryOptions{
 			status:               service.StatusActive,
@@ -2513,6 +2674,7 @@ func (r *accountRepository) SetSchedulable(ctx context.Context, id int64, schedu
 	if !schedulable {
 		r.syncSchedulerAccountSnapshot(ctx, id)
 	}
+	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	return nil
 }
 
@@ -2553,6 +2715,7 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, payload); err != nil {
 			logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue auto pause account changes failed: err=%v", err)
 		}
+		r.invalidateModelAvailabilityCacheAfterCommit(ctx)
 	}
 	return int64(len(accountIDs)), nil
 }
@@ -2630,6 +2793,9 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 		if dbent.TxFromContext(ctx) == nil {
 			r.syncSchedulerAccountSnapshot(ctx, id)
 		}
+	}
+	if modelAvailabilityExtraUpdatesRelevant(updates) {
+		r.invalidateModelAvailabilityCacheAfterCommit(baseCtx)
 	}
 	return nil
 }
@@ -2814,6 +2980,29 @@ func isSchedulerNeutralExtraKey(key string) bool {
 		}
 	}
 	return false
+}
+
+// modelAvailabilityExtraUpdatesRelevant reports whether an extra JSONB patch
+// can change the 404-vs-503 model diagnosis. Telemetry, quota, probe and
+// session-window keys are intentionally ignored because they are updated on
+// request/runtime paths and do not participate in model support decisions.
+func modelAvailabilityExtraUpdatesRelevant(updates map[string]any) bool {
+	for key := range updates {
+		switch strings.TrimSpace(key) {
+		case "openai_passthrough", "openai_oauth_passthrough", "mixed_scheduling":
+			return true
+		}
+	}
+	return false
+}
+
+// bulkUpdateAffectsModelAvailability narrows cache invalidation to fields used
+// by ListModelAvailabilityCandidates and the subsequent account support check.
+func bulkUpdateAffectsModelAvailability(updates service.AccountBulkUpdate) bool {
+	if updates.Status != nil || updates.Schedulable != nil || len(updates.Credentials) > 0 {
+		return true
+	}
+	return modelAvailabilityExtraUpdatesRelevant(updates.Extra)
 }
 
 func upstreamBillingProbeExplicitlyDisabled(extra map[string]any) bool {
@@ -3046,6 +3235,9 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		if shouldSync {
 			r.syncSchedulerAccountSnapshots(baseCtx, ids)
 		}
+	}
+	if rows > 0 && bulkUpdateAffectsModelAvailability(updates) {
+		r.invalidateModelAvailabilityCacheAfterCommit(baseCtx)
 	}
 	return rows, nil
 }

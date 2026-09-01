@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"log/slog"
 	"net/url"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
@@ -67,14 +68,11 @@ type Account struct {
 	GroupIDs      []int64
 	Groups        []*Group
 
-	// model_mapping 热路径缓存（非持久化字段）
-	modelMappingCache               map[string]string
-	modelMappingCacheReady          bool
-	modelMappingCacheCredentialsPtr uintptr
-	modelMappingCacheRawPtr         uintptr
-	modelMappingCacheRawLen         int
-	modelMappingCacheRawSig         uint64
-	modelMappingCacheRuntimeVersion uint64
+	// model_mapping 热路径缓存（非持久化字段）。字段本身只保存指针，避免
+	// Account 作为值复制时复制 atomic.Value（atomic.Value 明确禁止复制）；
+	// state 内部再以 atomic.Value 整体发布不可变 memo，命中路径直接复用已
+	// 解析 map，避免每次模型判定重新分配/复制。
+	modelMappingCache unsafe.Pointer // *modelMappingCacheState
 
 	// header_overrides 热路径缓存（非持久化字段，同 model_mapping 缓存先例）
 	headerOverrideCache               map[string]string
@@ -83,6 +81,39 @@ type Account struct {
 	headerOverrideCacheRawPtr         uintptr
 	headerOverrideCacheRawLen         int
 	headerOverrideCacheRawSig         uint64
+}
+
+// modelMappingMemo 是 model_mapping 热路径缓存的不可变快照。指纹字段用于
+// 检测 Credentials 整体替换（map 指针变化）或 mapping 就地修改（长度/签名
+// 变化），runtimeVersion 用于使运行时默认映射变更立即失效。
+type modelMappingMemo struct {
+	credentialsPtr uintptr
+	rawPtr         uintptr
+	rawLen         int
+	rawSig         uint64
+	runtimeVersion uint64
+	mapping        map[string]string
+}
+
+// modelMappingCacheState is allocated lazily and shared by Account value copies
+// that occur after the first cache access. Keeping atomic.Value behind a pointer
+// preserves its no-copy contract while retaining lock-free reads.
+type modelMappingCacheState struct {
+	value atomic.Value // stores *modelMappingMemo
+}
+
+func (a *Account) modelMappingState() *modelMappingCacheState {
+	if a == nil {
+		return nil
+	}
+	if p := atomic.LoadPointer(&a.modelMappingCache); p != nil {
+		return (*modelMappingCacheState)(p)
+	}
+	state := &modelMappingCacheState{}
+	if atomic.CompareAndSwapPointer(&a.modelMappingCache, nil, unsafe.Pointer(state)) {
+		return state
+	}
+	return (*modelMappingCacheState)(atomic.LoadPointer(&a.modelMappingCache))
 }
 
 type OpenAIEndpointCapability string
@@ -585,38 +616,34 @@ func stringMappingFromRaw(raw any) map[string]string {
 }
 
 func (a *Account) GetModelMapping() map[string]string {
+	if a == nil {
+		return nil
+	}
 	runtimeVersion := xai.RuntimeModelMappingVersion()
 	credentialsPtr := mapPtr(a.Credentials)
 	rawMapping, _ := a.Credentials["model_mapping"].(map[string]any)
 	rawPtr := mapPtr(rawMapping)
 	rawLen := len(rawMapping)
-	rawSig := uint64(0)
-	rawSigReady := false
-
-	if a.modelMappingCacheReady &&
-		a.modelMappingCacheCredentialsPtr == credentialsPtr &&
-		a.modelMappingCacheRawPtr == rawPtr &&
-		a.modelMappingCacheRawLen == rawLen &&
-		a.modelMappingCacheRuntimeVersion == runtimeVersion {
-		rawSig = modelMappingSignature(rawMapping)
-		rawSigReady = true
-		if a.modelMappingCacheRawSig == rawSig {
-			return a.modelMappingCache
-		}
+	rawSig := modelMappingSignature(rawMapping)
+	state := a.modelMappingState()
+	if cached, ok := state.value.Load().(*modelMappingMemo); ok &&
+		cached.credentialsPtr == credentialsPtr &&
+		cached.rawPtr == rawPtr &&
+		cached.rawLen == rawLen &&
+		cached.rawSig == rawSig &&
+		cached.runtimeVersion == runtimeVersion {
+		return cached.mapping
 	}
 
 	mapping := a.resolveModelMapping(rawMapping)
-	if !rawSigReady {
-		rawSig = modelMappingSignature(rawMapping)
-	}
-
-	a.modelMappingCache = mapping
-	a.modelMappingCacheReady = true
-	a.modelMappingCacheCredentialsPtr = credentialsPtr
-	a.modelMappingCacheRawPtr = rawPtr
-	a.modelMappingCacheRawLen = rawLen
-	a.modelMappingCacheRawSig = rawSig
-	a.modelMappingCacheRuntimeVersion = runtimeVersion
+	state.value.Store(&modelMappingMemo{
+		credentialsPtr: credentialsPtr,
+		rawPtr:         rawPtr,
+		rawLen:         rawLen,
+		rawSig:         rawSig,
+		runtimeVersion: runtimeVersion,
+		mapping:        mapping,
+	})
 	return mapping
 }
 
@@ -689,28 +716,43 @@ func mapPtr(m map[string]any) uintptr {
 	return reflect.ValueOf(m).Pointer()
 }
 
+// modelMappingSignature computes an order-independent, allocation-free FNV-like
+// fingerprint. The map pointer/length checks catch common replacements; this
+// signature additionally invalidates the memo when callers mutate a mapping in
+// place (a legacy compatibility path in the account cache).
 func modelMappingSignature(rawMapping map[string]any) uint64 {
 	if len(rawMapping) == 0 {
 		return 0
 	}
-	keys := make([]string, 0, len(rawMapping))
-	for k := range rawMapping {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	h := fnv.New64a()
-	for _, k := range keys {
-		_, _ = h.Write([]byte(k))
-		_, _ = h.Write([]byte{0})
-		if v, ok := rawMapping[k].(string); ok {
-			_, _ = h.Write([]byte(v))
+	var sig uint64
+	for k, v := range rawMapping {
+		h := fnvOffsetBasis64
+		h = fnvAddString(h, k)
+		h = fnvAddByte(h, 0)
+		if s, ok := v.(string); ok {
+			h = fnvAddString(h, s)
 		} else {
-			_, _ = h.Write([]byte{1})
+			h = fnvAddByte(h, 1)
 		}
-		_, _ = h.Write([]byte{0xff})
+		h = fnvAddByte(h, 0xff)
+		sig ^= h
 	}
-	return h.Sum64()
+	return sig
+}
+
+const fnvOffsetBasis64 = uint64(14695981039346656037)
+
+func fnvAddString(h uint64, s string) uint64 {
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= 1099511628211
+	}
+	return h
+}
+
+func fnvAddByte(h uint64, b byte) uint64 {
+	h ^= uint64(b)
+	return h * 1099511628211
 }
 
 func ensureAntigravityDefaultPassthrough(mapping map[string]string, model string) {
