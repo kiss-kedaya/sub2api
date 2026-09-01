@@ -271,6 +271,10 @@ func (Group) Fields() []ent.Field {
 			MaxLen(20).
 			Default("").
 			Comment("OpenAI reasoning effort 上限；可选 minimal/low/medium/high/xhigh/max"),
+		field.String("max_reasoning_effort_over_limit").
+			MaxLen(20).
+			Default("downgrade").
+			Comment("超过推理强度上限时的访问控制：downgrade 自动降档，deny 拒绝访问"),
 		field.JSON("reasoning_effort_mappings", []domain.ReasoningEffortMapping{}).
 			Default([]domain.ReasoningEffortMapping{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
