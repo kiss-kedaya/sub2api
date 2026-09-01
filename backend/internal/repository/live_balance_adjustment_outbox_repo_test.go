@@ -16,8 +16,8 @@ func TestLiveBalanceAdjustmentOutboxClaimUsesLeasedOrderedSkipLockedBatch(t *tes
 	t.Cleanup(func() { _ = db.Close() })
 
 	createdAt := time.Now().UTC()
-	mock.ExpectQuery(`(?s)WITH candidates AS .*NOT EXISTS \(.*predecessor.user_id = candidate.user_id.*predecessor.id < candidate.id.*LIMIT \$2.*FOR UPDATE SKIP LOCKED.*UPDATE live_balance_adjustment_outbox`).
-		WithArgs("worker-1", 200, int64(30)).
+	mock.ExpectQuery(`(?s)WITH claim_lock AS .*pg_try_advisory_xact_lock.*candidates AS .*NOT EXISTS \(.*predecessor.user_id = candidate.user_id.*predecessor.id < candidate.id.*LIMIT \$2.*FOR UPDATE SKIP LOCKED.*UPDATE live_balance_adjustment_outbox`).
+		WithArgs("worker-1", 200, int64(30), liveBalanceOutboxClaimLockKey).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "predecessor_id", "delta", "attempts", "created_at"}).
 			AddRow(17, 42, 11, "-1.25000000", 2, createdAt))
 

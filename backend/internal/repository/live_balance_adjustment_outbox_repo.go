@@ -11,6 +11,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const liveBalanceOutboxClaimLockKey int64 = 0x535542324f555442
+
 type liveBalanceAdjustmentOutboxRepository struct {
 	db *sql.DB
 }
@@ -37,10 +39,14 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		WITH candidates AS (
+		WITH claim_lock AS (
+			SELECT pg_try_advisory_xact_lock($4::bigint) AS acquired
+		), candidates AS (
 			SELECT candidate.id
 			FROM live_balance_adjustment_outbox AS candidate
+			CROSS JOIN claim_lock
 			WHERE candidate.delivered_at IS NULL
+				AND claim_lock.acquired
 				AND candidate.available_at <= NOW()
 				AND (candidate.claimed_at IS NULL OR candidate.claimed_at < NOW() - ($3 * INTERVAL '1 second'))
 				AND NOT EXISTS (
@@ -61,7 +67,7 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 		FROM candidates AS c
 		WHERE o.id = c.id
 		RETURNING o.id, o.user_id, o.predecessor_id, o.delta::text, o.attempts, o.created_at
-	`, workerID, limit, leaseSeconds)
+	`, workerID, limit, leaseSeconds, liveBalanceOutboxClaimLockKey)
 	if err != nil {
 		return nil, err
 	}
