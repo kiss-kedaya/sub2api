@@ -164,3 +164,36 @@ func TestPrepareSchedulerRequestContextReusesProjectionAcrossRetries(t *testing.
 		t.Fatalf("projection calls = %d, want 1 across initial selection and retry", repo.projectionCalls)
 	}
 }
+
+func TestSchedulerHydratedAccount_ReusesPrivateSnapshotCopyWithinRequest(t *testing.T) {
+	repo := &schedulerFreshnessRepoStub{}
+	snapshot := &SchedulerSnapshotService{}
+	ctx := withSchedulerFreshness(context.Background(), repo, snapshot)
+
+	original := &Account{
+		ID:          51,
+		Credentials: map[string]any{"token": "secret"},
+		Extra:       map[string]any{"nested": map[string]any{"enabled": true}},
+	}
+	rememberSchedulerHydratedAccount(ctx, original)
+	original.Credentials["token"] = "mutated-after-store"
+	original.Extra["nested"].(map[string]any)["enabled"] = false
+
+	first, ok := schedulerHydratedAccount(ctx, original.ID)
+	if !ok || first == nil {
+		t.Fatal("scheduler hydration cache miss")
+	}
+	if got := first.Credentials["token"]; got != "secret" {
+		t.Fatalf("cached credentials token = %v, want secret", got)
+	}
+	nested := first.Extra["nested"].(map[string]any)
+	if got := nested["enabled"]; got != true {
+		t.Fatalf("cached nested extra = %v, want true", got)
+	}
+
+	first.Credentials["token"] = "mutated-after-read"
+	second, ok := schedulerHydratedAccount(ctx, original.ID)
+	if !ok || second == nil || second.Credentials["token"] != "secret" {
+		t.Fatalf("hydration cache returned shared mutable state: %#v", second)
+	}
+}
