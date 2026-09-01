@@ -60,7 +60,7 @@ RUN chmod +x /app/docker-entrypoint.sh /usr/local/bin/sub2api-update
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:${SERVER_PORT:-8080}/health || exit 1
+    CMD curl -f http://localhost:${SERVER_PORT:-8080}/readyz || exit 1
 
 # Run the application (entrypoint fixes /app/data ownership then execs as sub2api)
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

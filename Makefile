@@ -15,8 +15,9 @@ FRONTEND_CRITICAL_VITEST := \
 	src/features/channel-monitor-v2/__tests__/monitorFormat.spec.ts \
 	src/features/channel-monitor-v2/__tests__/monitorZoom.spec.ts
 
-# 一键编译前后端
-build: build-backend build-frontend
+# 一键编译前后端。前端必须先生成，后端 release build 才能把 dist
+# 嵌入二进制；否则服务会正常启动但根路径静默返回 404。
+build: build-frontend build-backend
 
 # 编译后端（复用 backend/Makefile）
 build-backend:
