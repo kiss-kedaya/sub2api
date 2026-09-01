@@ -254,6 +254,7 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		ops.GET("/ingress-rejections/health", h.Admin.Ops.GetIngressRejectHealth)
 		ops.GET("/auth-cache-invalidation/health", h.Admin.Ops.GetAuthCacheInvalidationHealth)
 		ops.GET("/live-balance-outbox/health", h.Admin.Ops.GetLiveBalanceAdjustmentOutboxHealth)
+		ops.GET("/scheduler-freshness/health", h.Admin.Ops.GetSchedulerFreshnessHealth)
 
 		// Upstream errors (independent upstream failures)
 		ops.GET("/upstream-errors", h.Admin.Ops.ListUpstreamErrors)
