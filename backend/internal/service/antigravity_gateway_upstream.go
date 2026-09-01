@@ -52,6 +52,9 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, clientBeta); changed {
 		body = sanitized
 	}
+	if sanitized, changed := sanitizeAnthropicFallbackFields(body, clientBeta); changed {
+		body = sanitized
+	}
 
 	// 创建请求
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))

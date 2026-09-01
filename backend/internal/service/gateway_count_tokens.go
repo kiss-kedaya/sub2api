@@ -390,6 +390,9 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, clientBeta); changed {
 		body = sanitized
 	}
+	if sanitized, changed := sanitizeAnthropicFallbackFields(body, clientBeta); changed {
+		body = sanitized
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -500,6 +503,9 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 
 	// 能力维度 body sanitize：与最终 anthropic-beta header 对称
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, finalBetaHeader); changed {
+		body = sanitized
+	}
+	if sanitized, changed := sanitizeAnthropicFallbackFields(body, finalBetaHeader); changed {
 		body = sanitized
 	}
 

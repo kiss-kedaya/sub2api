@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -642,12 +643,28 @@ func sanitizeBedrockFieldsForBetaTokens(body []byte, betaTokens []string) []byte
 	if !containsBedrockBetaToken(betaTokens, bedrockContextManagementBetaToken) && gjson.GetBytes(body, "context_management").Exists() {
 		body, _ = sjson.DeleteBytes(body, "context_management")
 	}
+	if !containsBedrockBetaToken(betaTokens, claude.BetaServerSideFallback) && gjson.GetBytes(body, "fallbacks").Exists() {
+		body, _ = sjson.DeleteBytes(body, "fallbacks")
+	}
+	if !containsAnyBedrockBetaToken(betaTokens, claude.BetaServerSideFallback, claude.BetaFallbackCredit, claude.BetaFallbackCreditLegacy) &&
+		gjson.GetBytes(body, "fallback_credit_token").Exists() {
+		body, _ = sjson.DeleteBytes(body, "fallback_credit_token")
+	}
 	return body
 }
 
 func containsBedrockBetaToken(tokens []string, target string) bool {
 	for _, token := range tokens {
 		if token == target {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAnyBedrockBetaToken(tokens []string, targets ...string) bool {
+	for _, target := range targets {
+		if containsBedrockBetaToken(tokens, target) {
 			return true
 		}
 	}
@@ -771,6 +788,12 @@ func sanitizeBedrockCCFields(body []byte) []byte {
 	}
 	if gjson.GetBytes(body, "context_management").Exists() {
 		body, _ = sjson.DeleteBytes(body, "context_management")
+	}
+	if gjson.GetBytes(body, "fallbacks").Exists() {
+		body, _ = sjson.DeleteBytes(body, "fallbacks")
+	}
+	if gjson.GetBytes(body, "fallback_credit_token").Exists() {
+		body, _ = sjson.DeleteBytes(body, "fallback_credit_token")
 	}
 	if !gjson.GetBytes(body, "max_tokens").Exists() {
 		body, _ = sjson.SetBytes(body, "max_tokens", defaultCCMaxTokens)
