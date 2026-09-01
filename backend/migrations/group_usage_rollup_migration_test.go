@@ -73,3 +73,13 @@ func TestMigration236AddsCoveringIndexForGroupUsageRollups(t *testing.T) {
 	require.Contains(t, sql, "INCLUDE (actual_cost)")
 	require.Contains(t, sql, "WHERE group_id IS NOT NULL")
 }
+
+func TestMigration237RepairsInterruptedCoveringIndex(t *testing.T) {
+	content, err := FS.ReadFile("237_repair_usage_logs_group_rollup_covering_index_notx.sql")
+	require.NoError(t, err)
+
+	sql := string(content)
+	require.Contains(t, sql, "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_usage_logs_rollup_created_group_cost")
+	require.Contains(t, sql, "INCLUDE (actual_cost)")
+	require.Contains(t, sql, "WHERE group_id IS NOT NULL")
+}
