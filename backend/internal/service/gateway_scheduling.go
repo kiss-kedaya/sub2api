@@ -1924,9 +1924,15 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 	// require_privacy_set: 获取分组信息
 	var schedGroup *Group
 	if groupID != nil && s.groupRepo != nil {
-		// Routing only needs privacy policy and group name. Avoid the account-count
-		// aggregation performed by GetByID on every request.
-		schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
+		// The normal /v1 path has already resolved this group and stored it in the
+		// request context. Reuse it instead of issuing another PostgreSQL query;
+		// keep the lite lookup only for direct legacy callers without that context.
+		schedGroup = s.groupFromContext(ctx, *groupID)
+		if schedGroup == nil {
+			// Routing only needs privacy policy and group name. Avoid the account-count
+			// aggregation performed by GetByID on every request.
+			schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
+		}
 	}
 
 	var accounts []Account
@@ -2196,9 +2202,15 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 	// require_privacy_set: 获取分组信息
 	var schedGroup *Group
 	if groupID != nil && s.groupRepo != nil {
-		// Routing only needs privacy policy and group name. Avoid the account-count
-		// aggregation performed by GetByID on every request.
-		schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
+		// Reuse the group resolved by the request-level scheduling context. This
+		// removes a redundant PostgreSQL round trip from every mixed-scheduling
+		// request while preserving the direct-caller fallback below.
+		schedGroup = s.groupFromContext(ctx, *groupID)
+		if schedGroup == nil {
+			// Routing only needs privacy policy and group name. Avoid the account-count
+			// aggregation performed by GetByID on every request.
+			schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
+		}
 	}
 
 	var accounts []Account
