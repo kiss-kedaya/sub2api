@@ -1143,6 +1143,7 @@ func (s *OpenAIGatewayService) isBetterAccount(candidate, current *Account) bool
 func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*AccountSelectionResult, error) {
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 分组利润控制：legacy 公共入口同样装门，保证不经
 	// selectAccountWithScheduler 的调用方也无法绕过利润准入。
 	ctx = s.withOpenAIProfitControlGate(ctx, groupID)
@@ -1201,6 +1202,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 	if len(accounts) == 0 {
 		return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}.summary(""))
+	}
+	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
+	if len(accounts) == 0 {
+		return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}.summary("freshness_unavailable"))
 	}
 
 	isExcluded := func(accountID int64) bool {
@@ -1271,6 +1277,10 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	parentCacheL2 := make(map[int64]*Account)
 	parentLookupL2 := func(id int64) *Account {
 		if a, ok := parentCacheL2[id]; ok {
+			return a
+		}
+		if a := schedulerFreshnessLookup(ctx, id); a != nil {
+			parentCacheL2[id] = a
 			return a
 		}
 		if s.accountRepo == nil {
@@ -1639,6 +1649,9 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccountBeforeProfit(
 // L2 候选循环改用带 per-pass 缓存的 parentLookupL2,不走此方法。
 func (s *OpenAIGatewayService) parentAccountLookup(ctx context.Context) func(int64) *Account {
 	return func(id int64) *Account {
+		if account := schedulerFreshnessLookup(ctx, id); account != nil {
+			return account
+		}
 		if s.accountRepo == nil {
 			return nil
 		}
@@ -1682,9 +1695,19 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDBBeforeProfit(ct
 		return account
 	}
 
-	latest, err := s.accountRepo.GetByID(ctx, account.ID)
-	if err != nil || latest == nil {
-		return nil
+	latest := account
+	if state := schedulerFreshnessFromContext(ctx); state != nil && state.enabled() {
+		var ok bool
+		latest, ok = state.apply(ctx, account)
+		if !ok {
+			return nil
+		}
+	} else {
+		var err error
+		latest, err = s.accountRepo.GetByID(ctx, account.ID)
+		if err != nil || latest == nil {
+			return nil
+		}
 	}
 	if !s.openAIAccountMatchesSchedulingGroup(latest, groupID) {
 		return nil
@@ -1736,6 +1759,13 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	}
 	if err != nil || account == nil {
 		return account, err
+	}
+	if state := schedulerFreshnessFromContext(ctx); state != nil && state.enabled() {
+		fresh, ok := state.apply(ctx, account)
+		if !ok {
+			return nil, nil
+		}
+		account = fresh
 	}
 	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, account) {
 		return nil, nil
