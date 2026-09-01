@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -143,6 +145,56 @@ type SchedulerSnapshotService struct {
 	fullRebuildRequested uint64
 	fullRebuildCompleted uint64
 	fullRebuildLastErr   error
+
+	// decodeCache avoids decoding every account JSON payload on every request.
+	// Scheduler snapshots are immutable in this cache; derefAccounts clones the
+	// request-mutable JSON maps while preserving ordering and overlay semantics.
+	decodeCache sync.Map // bucket.String() -> *schedulerSnapshotDecodeCacheEntry
+
+	// snapshotVersionCache bounds the number of cache-version reads to one per
+	// bucket per second when a cache implementation exposes GetSnapshotVersion.
+	// The current Redis cache does not require that optional method, so a local
+	// generation is also maintained and TTL remains the cross-instance safety net.
+	snapshotVersionCacheTTL time.Duration
+	snapshotVersionCache    sync.Map // bucket.String() -> *schedulerSnapshotVersionCacheEntry
+	snapshotGenerationMu    sync.Mutex
+	snapshotGenerations     map[string]uint64
+
+	// A cold bucket can be observed as a miss by many concurrent requests.  Keep
+	// the database fallback and cache write single-flight per bucket; callers
+	// still receive their own context cancellation after the shared work ends.
+	snapshotFallbackGroup singleflight.Group
+}
+
+const (
+	// Versioned entries are invalidated by a successful local publication (or by
+	// an optional remote version reader).  The TTL is the correctness fallback
+	// for cache implementations without version introspection and for writes from
+	// another process.
+	snapshotDecodeCacheTTL     = 5 * time.Second
+	snapshotDecodeVersionedTTL = 30 * time.Second
+	snapshotVersionCacheWindow = time.Second
+	snapshotVersionReadTimeout = 2 * time.Second
+	snapshotFallbackHardLimit  = 30 * time.Second
+)
+
+type schedulerSnapshotDecodeCacheEntry struct {
+	accounts []*Account
+	version  string
+	exp      time.Time
+}
+
+type schedulerSnapshotVersionCacheEntry struct {
+	version string
+	readAt  time.Time
+}
+
+// snapshotVersionReader is intentionally optional so SchedulerCache remains
+// backwards compatible with test and third-party implementations.  The Redis
+// implementation can add this method independently; without it, local
+// generation + TTL still provide bounded stale reads.
+type snapshotVersionReader interface {
+	GetSnapshotVersion(context.Context, SchedulerBucket) (string, error)
 }
 
 func NewSchedulerSnapshotService(
@@ -157,13 +209,15 @@ func NewSchedulerSnapshotService(
 		maxQPS = cfg.Gateway.Scheduling.DbFallbackMaxQPS
 	}
 	return &SchedulerSnapshotService{
-		cache:         cache,
-		outboxRepo:    outboxRepo,
-		accountRepo:   accountRepo,
-		groupRepo:     groupRepo,
-		cfg:           cfg,
-		stopCh:        make(chan struct{}),
-		fallbackLimit: newFallbackLimiter(maxQPS),
+		cache:                   cache,
+		outboxRepo:              outboxRepo,
+		accountRepo:             accountRepo,
+		groupRepo:               groupRepo,
+		cfg:                     cfg,
+		stopCh:                  make(chan struct{}),
+		fallbackLimit:           newFallbackLimiter(maxQPS),
+		snapshotVersionCacheTTL: snapshotVersionCacheWindow,
+		snapshotGenerations:     make(map[string]uint64),
 	}
 }
 
@@ -211,13 +265,48 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	mode := s.resolveMode(platform, hasForcePlatform)
 	bucket := s.bucketFor(groupID, platform, mode)
-	var writeToken SchedulerBucketWriteToken
-	canPublish := false
 	if err := ctx.Err(); err != nil {
 		return nil, useMixed, err
 	}
 
 	if s.cache != nil {
+		cacheKey := bucket.String()
+		// Fast path: reuse the decoded snapshot locally.  A local publication
+		// bumps the generation immediately; other instances are covered by the
+		// short TTL when the cache has no version introspection method.
+		if entry, ok := s.decodeCache.Load(cacheKey); ok {
+			if e, ok := entry.(*schedulerSnapshotDecodeCacheEntry); ok && time.Now().Before(e.exp) {
+				if version, fresh := s.cachedSnapshotVersion(cacheKey, time.Now()); fresh {
+					if e.version == version {
+						if err := ctx.Err(); err != nil {
+							return nil, useMixed, err
+						}
+						return derefAccounts(e.accounts), useMixed, nil
+					}
+				} else if version, ok := s.readSnapshotVersion(ctx, bucket); ok {
+					s.storeSnapshotVersion(cacheKey, version, time.Now())
+					if e.version == version {
+						if err := ctx.Err(); err != nil {
+							return nil, useMixed, err
+						}
+						return derefAccounts(e.accounts), useMixed, nil
+					}
+				} else if e.version == "" {
+					// A cache implementation without version support can still
+					// safely use an unversioned entry until its short TTL expires.
+					if err := ctx.Err(); err != nil {
+						return nil, useMixed, err
+					}
+					return derefAccounts(e.accounts), useMixed, nil
+				}
+			}
+		}
+
+		version, versionAvailable := s.readSnapshotVersion(ctx, bucket)
+		versioned := snapshotVersionHasRemoteAuthority(version)
+		if versionAvailable {
+			s.storeSnapshotVersion(cacheKey, version, time.Now())
+		}
 		cached, hit, err := s.cache.GetSnapshot(ctx, bucket)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, useMixed, ctxErr
@@ -225,50 +314,239 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 		if err != nil {
 			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache read failed: bucket=%s err=%v", bucket.String(), err)
 		} else if hit {
+			ttl := snapshotDecodeCacheTTL
+			if versioned {
+				ttl = snapshotDecodeVersionedTTL
+			}
+			s.decodeCache.Store(cacheKey, &schedulerSnapshotDecodeCacheEntry{
+				accounts: cached,
+				version:  version,
+				exp:      time.Now().Add(ttl),
+			})
 			return derefAccounts(cached), useMixed, nil
 		}
-		token, err := s.cache.CaptureBucketWriteToken(ctx, bucket)
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, useMixed, ctxErr
+	}
+
+	// Cold misses are a shared slow path.  Only one caller performs the DB
+	// query and fenced cache publication for this bucket; waiters reuse its
+	// result and retain their own cancellation semantics.
+	resultCh := s.snapshotFallbackGroup.DoChan(bucket.String(), func() (any, error) {
+		if err := s.guardFallback(ctx); err != nil {
+			return nil, err
 		}
-		if err != nil {
-			if errors.Is(err, ErrSchedulerBucketRetired) || errors.Is(err, ErrSchedulerBucketWriteFenced) {
-				slog.Debug("[Scheduler] cache publish fenced", "bucket", bucket.String())
-			} else {
-				logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache publish token failed: bucket=%s err=%v", bucket.String(), err)
+		fallbackCtx, cancel := s.fallbackQueryContext(ctx)
+		defer cancel()
+
+		// A caller can arrive just after the previous leader completed. Recheck
+		// the shared cache inside the flight before touching the database so that
+		// such a late overlap observes the published snapshot instead of causing
+		// a second rebuild.
+		if s.cache != nil {
+			if cached, hit, cacheErr := s.cache.GetSnapshot(fallbackCtx, bucket); cacheErr == nil && hit {
+				return derefAccounts(cached), nil
 			}
-		} else {
-			writeToken = token
-			canPublish = true
 		}
-	}
 
-	if err := s.guardFallback(ctx); err != nil {
-		return nil, useMixed, err
-	}
+		var token SchedulerBucketWriteToken
+		canPublish := false
+		if s.cache != nil {
+			captured, captureErr := s.cache.CaptureBucketWriteToken(fallbackCtx, bucket)
+			if captureErr != nil {
+				if errors.Is(captureErr, ErrSchedulerBucketRetired) || errors.Is(captureErr, ErrSchedulerBucketWriteFenced) {
+					slog.Debug("[Scheduler] cache publish fenced", "bucket", bucket.String())
+				} else {
+					logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache publish token failed: bucket=%s err=%v", bucket.String(), captureErr)
+				}
+			} else {
+				token = captured
+				canPublish = true
+			}
+		}
 
-	fallbackCtx, cancel := s.withFallbackTimeout(ctx)
-	defer cancel()
-
-	accounts, err := s.loadAccountsFromDB(fallbackCtx, bucket, useMixed)
-	if err != nil {
-		return nil, useMixed, err
+		accounts, loadErr := s.loadAccountsFromDB(fallbackCtx, bucket, useMixed)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if canPublish {
+			if publishErr := s.publishSnapshot(fallbackCtx, bucket, token, accounts); publishErr != nil {
+				if errors.Is(publishErr, ErrSchedulerBucketRetired) || errors.Is(publishErr, ErrSchedulerBucketWriteFenced) {
+					slog.Debug("[Scheduler] cache publish fenced", "bucket", bucket.String())
+				} else {
+					logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache write failed: bucket=%s err=%v", bucket.String(), publishErr)
+				}
+			}
+		}
+		return accounts, nil
+	})
+	var value any
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, useMixed, result.Err
+		}
+		value = result.Val
+	case <-ctx.Done():
+		return nil, useMixed, ctx.Err()
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, useMixed, ctxErr
 	}
+	accounts, _ := value.([]Account)
+	// singleflight publishes the same result value to every waiter. Keep that
+	// shared value immutable: gateway request paths may update nested Extra or
+	// Credentials values while handling rate limits and token refreshes.
+	return cloneSnapshotAccounts(accounts), useMixed, nil
+}
 
-	if s.cache != nil && canPublish {
-		if err := s.cache.SetSnapshot(fallbackCtx, bucket, writeToken, accounts); err != nil {
-			if errors.Is(err, ErrSchedulerBucketRetired) || errors.Is(err, ErrSchedulerBucketWriteFenced) {
-				slog.Debug("[Scheduler] cache publish fenced", "bucket", bucket.String())
-			} else {
-				logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache write failed: bucket=%s err=%v", bucket.String(), err)
-			}
+// publishSnapshot wraps the fenced cache write so successful local rebuilds
+// immediately invalidate any decoded entry for the bucket.  Keeping this in
+// the service avoids changing the SchedulerCache interface (and therefore all
+// existing test/third-party cache stubs).
+func (s *SchedulerSnapshotService) publishSnapshot(ctx context.Context, bucket SchedulerBucket, token SchedulerBucketWriteToken, accounts []Account) error {
+	if s == nil || s.cache == nil {
+		return ErrSchedulerCacheNotReady
+	}
+	if err := s.cache.SetSnapshot(ctx, bucket, token, accounts); err != nil {
+		return err
+	}
+	s.bumpSnapshotGeneration(bucket)
+	// Seed the local decode cache with the exact data that was just published;
+	// the next request need not perform a Redis round trip or JSON decode.
+	s.storeDecodedSnapshot(bucket, accounts)
+	return nil
+}
+
+func (s *SchedulerSnapshotService) storeDecodedSnapshot(bucket SchedulerBucket, accounts []Account) {
+	if s == nil {
+		return
+	}
+	key := bucket.String()
+	// Publishing a snapshot must not inherit an unbounded cache-version read:
+	// optional third-party readers may perform network I/O. A short detached
+	// timeout keeps the local decode seed fast while the normal TTL remains the
+	// cross-instance consistency fallback.
+	versionCtx, versionCancel := context.WithTimeout(context.Background(), snapshotVersionReadTimeout)
+	version, versionAvailable := s.readSnapshotVersion(versionCtx, bucket)
+	versionCancel()
+	versioned := snapshotVersionHasRemoteAuthority(version)
+	if !versionAvailable {
+		version = s.localSnapshotVersion(key)
+	}
+	ttl := snapshotDecodeCacheTTL
+	if versioned {
+		ttl = snapshotDecodeVersionedTTL
+	}
+	s.decodeCache.Store(key, &schedulerSnapshotDecodeCacheEntry{
+		accounts: accountsToPointers(accounts),
+		version:  version,
+		exp:      time.Now().Add(ttl),
+	})
+}
+
+func accountsToPointers(accounts []Account) []*Account {
+	if len(accounts) == 0 {
+		return nil
+	}
+	out := make([]*Account, len(accounts))
+	for i := range accounts {
+		account := accounts[i]
+		out[i] = &account
+	}
+	return out
+}
+
+func cloneSnapshotAccounts(accounts []Account) []Account {
+	if len(accounts) == 0 {
+		return nil
+	}
+	out := make([]Account, len(accounts))
+	for i := range accounts {
+		out[i] = cloneSnapshotAccount(&accounts[i])
+	}
+	return out
+}
+
+func (s *SchedulerSnapshotService) cachedSnapshotVersion(cacheKey string, now time.Time) (string, bool) {
+	if s == nil || s.snapshotVersionCacheTTL <= 0 {
+		return "", false
+	}
+	if raw, ok := s.snapshotVersionCache.Load(cacheKey); ok {
+		if entry, ok := raw.(*schedulerSnapshotVersionCacheEntry); ok && entry.version != "" && now.Sub(entry.readAt) < s.snapshotVersionCacheTTL {
+			return entry.version, true
 		}
 	}
+	return "", false
+}
 
-	return accounts, useMixed, nil
+func (s *SchedulerSnapshotService) storeSnapshotVersion(cacheKey, version string, now time.Time) {
+	if s == nil || s.snapshotVersionCacheTTL <= 0 || version == "" {
+		return
+	}
+	s.snapshotVersionCache.Store(cacheKey, &schedulerSnapshotVersionCacheEntry{version: version, readAt: now})
+}
+
+// readSnapshotVersion uses an optional remote version reader when available;
+// otherwise it returns a process-local generation.  The latter is bumped only
+// after successful fenced writes, while the decode entry TTL bounds staleness
+// for writes performed by another instance.
+func (s *SchedulerSnapshotService) readSnapshotVersion(ctx context.Context, bucket SchedulerBucket) (string, bool) {
+	if s == nil {
+		return "", false
+	}
+	if reader, ok := s.cache.(snapshotVersionReader); ok {
+		version, err := reader.GetSnapshotVersion(ctx, bucket)
+		if err == nil && version != "" {
+			return "remote:" + version, true
+		}
+		if err != nil {
+			slog.Debug("[Scheduler] snapshot version read failed", "bucket", bucket.String(), "err", err)
+		}
+	}
+	// A zero TTL is used by tests and legacy direct struct construction to
+	// preserve the pre-cache behavior; keep those entries short-lived and do not
+	// claim a durable version source.
+	if s.snapshotVersionCacheTTL <= 0 {
+		return "", false
+	}
+	return s.localSnapshotVersion(bucket.String()), true
+}
+
+func snapshotVersionHasRemoteAuthority(version string) bool {
+	return strings.HasPrefix(version, "remote:")
+}
+
+func (s *SchedulerSnapshotService) localSnapshotVersion(cacheKey string) string {
+	s.snapshotGenerationMu.Lock()
+	version := s.snapshotGenerations[cacheKey]
+	s.snapshotGenerationMu.Unlock()
+	return "local:" + strconv.FormatUint(version, 10)
+}
+
+func (s *SchedulerSnapshotService) bumpSnapshotGeneration(bucket SchedulerBucket) {
+	if s == nil {
+		return
+	}
+	key := bucket.String()
+	s.snapshotGenerationMu.Lock()
+	if s.snapshotGenerations == nil {
+		s.snapshotGenerations = make(map[string]uint64)
+	}
+	s.snapshotGenerations[key]++
+	version := "local:" + strconv.FormatUint(s.snapshotGenerations[key], 10)
+	s.snapshotGenerationMu.Unlock()
+	// Refresh the version cache timestamp so the just-published generation is
+	// immediately visible to concurrent readers without a Redis lookup.
+	s.storeSnapshotVersion(key, version, time.Now())
+}
+
+func (s *SchedulerSnapshotService) invalidateSnapshotDecodeCache() {
+	if s == nil {
+		return
+	}
+	s.decodeCache.Range(func(key, _ any) bool {
+		s.decodeCache.Delete(key)
+		return true
+	})
 }
 
 func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int64) (*Account, error) {
@@ -322,7 +600,11 @@ func (s *SchedulerSnapshotService) UpdateAccountInCache(ctx context.Context, acc
 	if s.cache == nil || account == nil {
 		return nil
 	}
-	return s.cache.SetAccount(ctx, account)
+	err := s.cache.SetAccount(ctx, account)
+	if err == nil {
+		s.invalidateSnapshotDecodeCache()
+	}
+	return err
 }
 
 func (s *SchedulerSnapshotService) runInitialRebuild() {
@@ -506,7 +788,13 @@ func (s *SchedulerSnapshotService) handleLastUsedEvent(ctx context.Context, payl
 	if len(updates) == 0 {
 		return nil
 	}
-	return s.cache.UpdateLastUsed(ctx, updates)
+	err := s.cache.UpdateLastUsed(ctx, updates)
+	if err == nil {
+		// GetSnapshot overlays the side-key values onto decoded accounts.  Drop
+		// local entries after a successful update to preserve ordering semantics.
+		s.invalidateSnapshotDecodeCache()
+	}
+	return err
 }
 
 func (s *SchedulerSnapshotService) handleBulkAccountEvent(ctx context.Context, payload map[string]any, seen map[batchSeenKey]struct{}) error {
@@ -537,6 +825,10 @@ func (s *SchedulerSnapshotService) handleBulkAccountEvent(ctx context.Context, p
 	if len(ids) == 0 {
 		return nil
 	}
+	// Account metadata is embedded in every bucket snapshot that contains the
+	// account.  Invalidate decoded entries before applying the event so a
+	// concurrent request cannot reuse an old account struct after publication.
+	s.invalidateSnapshotDecodeCache()
 
 	preloadGroupIDs := parseInt64Slice(payload["group_ids"])
 	accounts, err := s.accountRepo.GetByIDs(ctx, ids)
@@ -656,6 +948,7 @@ func (s *SchedulerSnapshotService) handleAccountEvent(ctx context.Context, accou
 	if s.accountRepo == nil {
 		return nil
 	}
+	s.invalidateSnapshotDecodeCache()
 
 	var groupIDs []int64
 	if payload != nil {
@@ -721,6 +1014,11 @@ func (s *SchedulerSnapshotService) prepareGroupLifecycle(ctx context.Context, gr
 	if groupID <= 0 || s.isRunModeSimple() {
 		return schedulerGroupLifecyclePlan{}, nil
 	}
+	// Group lifecycle changes retire/reopen buckets and may rebuild their
+	// membership. Drop decoded local snapshots before touching Redis so a
+	// concurrent request cannot reuse members from the previous lifecycle while
+	// the authoritative state is being changed.
+	s.invalidateSnapshotDecodeCache()
 	if s.cache == nil || s.groupRepo == nil {
 		return schedulerGroupLifecyclePlan{}, ErrSchedulerCacheNotReady
 	}
@@ -759,6 +1057,11 @@ func (s *SchedulerSnapshotService) prepareGroupLifecycle(ctx context.Context, gr
 			if err != nil {
 				return schedulerGroupLifecyclePlan{}, err
 			}
+			// Reopen changes the authoritative bucket generation before the
+			// subsequent rebuild publishes a new snapshot. Invalidate this bucket
+			// now so a request racing the rebuild cannot reuse a pre-retirement
+			// decoded entry.
+			s.bumpSnapshotGeneration(bucket)
 			plan.tasks = append(plan.tasks, schedulerBucketWriteTask{bucket: bucket, token: token})
 		}
 	} else {
@@ -779,6 +1082,10 @@ func (s *SchedulerSnapshotService) prepareGroupLifecycle(ctx context.Context, gr
 			if err := s.cache.RetireBucket(lifecycleCtx, bucket); err != nil {
 				return schedulerGroupLifecyclePlan{}, err
 			}
+			// Retired buckets are not rebuilt. Bump the local generation after the
+			// successful fenced mutation so cached account membership cannot remain
+			// visible until the decode TTL expires.
+			s.bumpSnapshotGeneration(bucket)
 		}
 	}
 
@@ -995,14 +1302,19 @@ func (s *SchedulerSnapshotService) setRebuildSnapshot(
 	writer, ok := s.cache.(schedulerSnapshotAccountIDWriter)
 	key, reusable := schedulerAccountQueryKeyForBucket(task.bucket)
 	if !ok || queries == nil || !reusable {
-		return s.cache.SetSnapshot(ctx, task.bucket, task.token, accounts)
+		return s.publishSnapshot(ctx, task.bucket, task.token, accounts)
 	}
 
 	if accountIDs, exists := queries.snapshotAccountIDs[key]; exists {
-		return writer.SetSnapshotByAccountIDs(ctx, task.bucket, task.token, accountIDs)
+		if err := writer.SetSnapshotByAccountIDs(ctx, task.bucket, task.token, accountIDs); err != nil {
+			return err
+		}
+		s.bumpSnapshotGeneration(task.bucket)
+		s.storeDecodedSnapshot(task.bucket, accounts)
+		return nil
 	}
 	if queries.remaining[key] <= 1 {
-		return s.cache.SetSnapshot(ctx, task.bucket, task.token, accounts)
+		return s.publishSnapshot(ctx, task.bucket, task.token, accounts)
 	}
 
 	accountIDs, err := writer.SetSnapshotAndReturnAccountIDs(ctx, task.bucket, task.token, accounts)
@@ -1015,6 +1327,8 @@ func (s *SchedulerSnapshotService) setRebuildSnapshot(
 		// 返回切片由当前批次独占，直接接管可避免 10k 账号场景再次复制。
 		queries.snapshotAccountIDs[key] = accountIDs
 	}
+	s.bumpSnapshotGeneration(task.bucket)
+	s.storeDecodedSnapshot(task.bucket, accounts)
 	return nil
 }
 
@@ -1600,6 +1914,23 @@ func (s *SchedulerSnapshotService) withFallbackTimeout(ctx context.Context) (con
 	return context.WithTimeout(ctx, timeout)
 }
 
+// fallbackQueryContext detaches the singleflight leader's database work from
+// the first request's cancellation.  A client disconnect must not cancel the
+// shared refresh for other waiters; a hard bound still prevents a stuck DB from
+// holding the bucket flight forever when no explicit timeout is configured.
+func (s *SchedulerSnapshotService) fallbackQueryContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	// Keep request values, but detach both cancellation and the request deadline:
+	// the first caller is only one waiter and must not own the shared flight's
+	// lifetime. The configured fallback timeout and hard limit bound the work.
+	base := context.WithoutCancel(ctx)
+	bounded, boundedCancel := context.WithTimeout(base, snapshotFallbackHardLimit)
+	fallbackCtx, fallbackCancel := s.withFallbackTimeout(bounded)
+	return fallbackCtx, func() {
+		fallbackCancel()
+		boundedCancel()
+	}
+}
+
 func (s *SchedulerSnapshotService) isRunModeSimple() bool {
 	return s.cfg != nil && s.cfg.RunMode == config.RunModeSimple
 }
@@ -1649,9 +1980,68 @@ func derefAccounts(accounts []*Account) []Account {
 		if account == nil {
 			continue
 		}
-		out = append(out, *account)
+		out = append(out, cloneSnapshotAccount(account))
 	}
 	return out
+}
+
+// cloneSnapshotAccount keeps the scheduler decode cache immutable from request
+// handlers. Account is intentionally copied by value for the hot path, but its
+// JSON maps can be updated by rate-limit, quota and token-refresh code. Clone
+// JSON-shaped values recursively while preserving typed runtime observations
+// that are treated as immutable by the scheduler.
+func cloneSnapshotAccount(account *Account) Account {
+	if account == nil {
+		return Account{}
+	}
+	clone := *account
+	clone.Credentials = cloneSnapshotJSONMap(account.Credentials)
+	clone.Extra = cloneSnapshotJSONMap(account.Extra)
+	// Credentials/Extra now belong exclusively to this request object. Reset
+	// non-persistent memo fields instead of sharing a model-mapping atomic state
+	// or a header override map whose fingerprints refer to the old map identity.
+	clone.modelMappingCache = nil
+	clone.headerOverrideCache = nil
+	clone.headerOverrideCacheReady = false
+	clone.headerOverrideCacheCredentialsPtr = 0
+	clone.headerOverrideCacheRawPtr = 0
+	clone.headerOverrideCacheRawLen = 0
+	clone.headerOverrideCacheRawSig = 0
+	return clone
+}
+
+func cloneSnapshotJSONMap(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = cloneSnapshotJSONValue(value)
+	}
+	return output
+}
+
+func cloneSnapshotJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneSnapshotJSONMap(typed)
+	case map[string]string:
+		output := make(map[string]string, len(typed))
+		for key, item := range typed {
+			output[key] = item
+		}
+		return output
+	case []any:
+		output := make([]any, len(typed))
+		for index, item := range typed {
+			output[index] = cloneSnapshotJSONValue(item)
+		}
+		return output
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
 }
 
 func parseInt64Slice(value any) []int64 {

@@ -4,8 +4,11 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,4 +79,91 @@ func TestSchedulerSnapshotGetAccountStopsAfterRequestCancellation(t *testing.T) 
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, account)
 	require.Zero(t, repo.getByIDCalls, "canceled requests must not fall back to the database")
+}
+
+func TestSchedulerSnapshotFallbackQueryContextDoesNotInheritRequestDeadline(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.DbFallbackTimeoutSeconds = 1
+	svc := NewSchedulerSnapshotService(nil, nil, nil, nil, cfg)
+
+	requestCtx, requestCancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer requestCancel()
+	fallbackCtx, fallbackCancel := svc.fallbackQueryContext(requestCtx)
+	defer fallbackCancel()
+
+	<-requestCtx.Done()
+	require.ErrorIs(t, requestCtx.Err(), context.DeadlineExceeded)
+	require.NoError(t, fallbackCtx.Err(), "the first waiter's deadline must not cancel shared fallback work")
+
+	deadline, ok := fallbackCtx.Deadline()
+	require.True(t, ok, "shared fallback work must remain bounded")
+	require.Greater(t, time.Until(deadline), 500*time.Millisecond)
+	require.LessOrEqual(t, time.Until(deadline), time.Second)
+}
+
+type schedulerSharedFallbackRepo struct {
+	AccountRepository
+
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (r *schedulerSharedFallbackRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, _ string) ([]Account, error) {
+	r.once.Do(func() { close(r.started) })
+	select {
+	case <-r.release:
+		return []Account{{ID: 42, Platform: PlatformOpenAI, Status: StatusActive}}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestSchedulerSnapshotFallbackWaiterCanCancelIndependently(t *testing.T) {
+	repo := &schedulerSharedFallbackRepo{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	svc := NewSchedulerSnapshotService(nil, nil, repo, nil, nil)
+
+	leaderResult := make(chan error, 1)
+	go func() {
+		_, _, err := svc.ListSchedulableAccounts(context.Background(), nil, PlatformOpenAI, false)
+		leaderResult <- err
+	}()
+
+	select {
+	case <-repo.started:
+	case <-time.After(time.Second):
+		t.Fatal("shared fallback query did not start")
+	}
+
+	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
+	waiterResult := make(chan error, 1)
+	waiterStarted := make(chan struct{})
+	go func() {
+		close(waiterStarted)
+		_, _, err := svc.ListSchedulableAccounts(waiterCtx, nil, PlatformOpenAI, false)
+		waiterResult <- err
+	}()
+	<-waiterStarted
+	// Give the waiter a chance to join the already-running flight before it is
+	// canceled. A blocking singleflight.Do implementation would then hang here.
+	time.Sleep(10 * time.Millisecond)
+	cancelWaiter()
+
+	select {
+	case err := <-waiterResult:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("canceled waiter remained blocked on the shared fallback query")
+	}
+
+	close(repo.release)
+	select {
+	case err := <-leaderResult:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("leader did not complete after the database query was released")
+	}
 }
