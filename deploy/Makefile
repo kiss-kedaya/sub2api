@@ -9,9 +9,9 @@ wire:
 	@echo "Wire 代码生成完成"
 
 build:
-	@echo "构建后端（不嵌入前端）..."
-	@go build -ldflags="$(LDFLAGS)" -o bin/server ./cmd/server
-	@echo "构建完成: bin/server"
+	@echo "构建后端（嵌入前端）..."
+	@go build -tags embed -ldflags="$(LDFLAGS)" -o bin/server ./cmd/server
+	@echo "构建完成: bin/server (with embedded frontend)"
 
 build-embed:
 	@echo "构建后端（嵌入前端）..."
