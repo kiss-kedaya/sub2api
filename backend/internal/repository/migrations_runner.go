@@ -62,6 +62,9 @@ const usageLogsUpstreamModelMismatchIndex = "idx_usage_logs_upstream_model_misma
 const usageLogsEffectiveModelIndexesMigration = "226_add_usage_log_effective_model_indexes_notx.sql"
 const usageLogsEffectiveRequestedModelIndex = "idx_usage_logs_effective_requested_model_created"
 const usageLogsEffectiveUpstreamModelIndex = "idx_usage_logs_effective_upstream_model_created"
+const usageLogsGroupRollupCoveringIndexMigration = "236_usage_logs_group_rollup_covering_index_notx.sql"
+const usageLogsGroupRollupCoveringIndexRepairMigration = "237_repair_usage_logs_group_rollup_covering_index_notx.sql"
+const usageLogsGroupRollupCoveringIndex = "idx_usage_logs_rollup_created_group_cost"
 
 type migrationChecksumCompatibilityRule struct {
 	fileChecksum       string
@@ -373,6 +376,8 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 			}
 		}
 		return nil
+	case usageLogsGroupRollupCoveringIndexMigration, usageLogsGroupRollupCoveringIndexRepairMigration:
+		return dropInvalidIndexIfPresent(ctx, db, usageLogsGroupRollupCoveringIndex)
 	default:
 		return nil
 	}
