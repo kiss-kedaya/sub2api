@@ -1828,6 +1828,22 @@ func (r *accountRepository) syncSchedulerAccountSnapshots(ctx context.Context, a
 		return
 	}
 
+	if batchWriter, ok := r.schedulerCache.(service.SchedulerAccountBatchWriter); ok {
+		batch := make([]service.Account, 0, len(accounts))
+		for _, account := range accounts {
+			if account != nil {
+				batch = append(batch, *account)
+			}
+		}
+		if len(batch) == 0 {
+			return
+		}
+		if err := batchWriter.SetAccounts(ctx, batch); err != nil {
+			logger.LegacyPrintf("repository.account", "[Scheduler] batch sync account snapshot write failed: count=%d err=%v", len(batch), err)
+		}
+		return
+	}
+
 	for _, account := range accounts {
 		if account == nil {
 			continue
