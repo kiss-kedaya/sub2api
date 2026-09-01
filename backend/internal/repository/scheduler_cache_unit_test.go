@@ -70,6 +70,41 @@ func TestSchedulerCacheSetAccountClearsUnencodablePayload(t *testing.T) {
 	require.Nil(t, cached)
 }
 
+func TestSchedulerCacheSetAccountsPublishesAllEncodablePayloads(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	accounts := []service.Account{
+		{ID: 115, Name: "first", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+		{ID: 116, Name: "second", Platform: service.PlatformAnthropic, Type: service.AccountTypeOAuth},
+	}
+
+	require.NoError(t, cache.SetAccounts(ctx, accounts))
+	for _, want := range accounts {
+		got, err := cache.GetAccount(ctx, want.ID)
+		require.NoError(t, err)
+		require.Equal(t, want.Name, got.Name)
+		require.Equal(t, want.Platform, got.Platform)
+	}
+}
+
+func TestSchedulerCacheSetAccountsSkipsOnlyUnencodablePayload(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	invalidTime := time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	accounts := []service.Account{
+		{ID: 117, Name: "valid", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey},
+		{ID: 118, Name: "invalid", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, ExpiresAt: &invalidTime},
+	}
+
+	require.NoError(t, cache.SetAccounts(ctx, accounts))
+	valid, err := cache.GetAccount(ctx, 117)
+	require.NoError(t, err)
+	require.NotNil(t, valid)
+	invalid, err := cache.GetAccount(ctx, 118)
+	require.NoError(t, err)
+	require.Nil(t, invalid)
+}
+
 func TestSchedulerCacheUpdateLastUsedClearsUnencodablePayload(t *testing.T) {
 	ctx := context.Background()
 	cache := newSchedulerCacheUnit(t)
