@@ -7,6 +7,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
+type gatewayProfitControlGroupResolvedContextKey struct{}
+
 // withGatewayProfitControlGate installs the gate only for explicitly marked
 // token requests. This keeps media, metadata, and models-list paths outside
 // the profit-control surface by construction.
@@ -14,17 +16,26 @@ func (s *GatewayService) withGatewayProfitControlGate(ctx context.Context, group
 	if _, ok := gatewayTokenRequestPricingAtFromContext(ctx); !ok || groupID == nil || *groupID <= 0 {
 		return ctx
 	}
-	if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil && existing.groupID == *groupID {
+	// Selection/failover can re-enter this helper with the same request context.
+	// Remember that the group policy was already resolved, including the
+	// disabled/error case where no gate object is installed; otherwise every
+	// retry repeats the same GetByIDLite query.
+	if resolved, ok := ctx.Value(gatewayProfitControlGroupResolvedContextKey{}).(int64); ok && resolved == *groupID {
 		return ctx
+	}
+	if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil && existing.groupID == *groupID {
+		return context.WithValue(ctx, gatewayProfitControlGroupResolvedContextKey{}, *groupID)
 	}
 
 	group, err := s.resolveProfitControlGroup(ctx, *groupID)
 	if err != nil {
 		slog.Warn("profit_control_group_load_failed", "group_id", *groupID, "error", err)
-		return s.clearForeignProfitControlGate(ctx, groupID)
+		ctx = s.clearForeignProfitControlGate(ctx, groupID)
+		return context.WithValue(ctx, gatewayProfitControlGroupResolvedContextKey{}, *groupID)
 	}
 	if group == nil || !group.ProfitControlEnabled || !profitControlPlatformSupported(group.Platform) {
-		return s.clearForeignProfitControlGate(ctx, groupID)
+		ctx = s.clearForeignProfitControlGate(ctx, groupID)
+		return context.WithValue(ctx, gatewayProfitControlGroupResolvedContextKey{}, *groupID)
 	}
 
 	pricingAt, _ := gatewayTokenRequestPricingAtFromContext(ctx)
@@ -51,7 +62,8 @@ func (s *GatewayService) withGatewayProfitControlGate(ctx context.Context, group
 		pricingAt: pricingAt,
 	}
 	openAIProfitControlObserverInstance.recordInstall(gate.groupID, gate.platform, gate.threshold)
-	return context.WithValue(ctx, openAIProfitControlGateCtxKey{}, gate)
+	ctx = context.WithValue(ctx, openAIProfitControlGateCtxKey{}, gate)
+	return context.WithValue(ctx, gatewayProfitControlGroupResolvedContextKey{}, *groupID)
 }
 
 func (s *GatewayService) clearForeignProfitControlGate(ctx context.Context, groupID *int64) context.Context {

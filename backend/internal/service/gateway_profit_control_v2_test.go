@@ -148,6 +148,17 @@ type profitControlFailingGroupRepo struct {
 	GroupRepository
 }
 
+type countingGatewayProfitGroupRepo struct {
+	GroupRepository
+	group *Group
+	calls int
+}
+
+func (r *countingGatewayProfitGroupRepo) GetByIDLite(context.Context, int64) (*Group, error) {
+	r.calls++
+	return r.group, nil
+}
+
 func (profitControlFailingGroupRepo) GetByIDLite(context.Context, int64) (*Group, error) {
 	return nil, errors.New("group cache unavailable")
 }
@@ -155,6 +166,19 @@ func (profitControlFailingGroupRepo) GetByIDLite(context.Context, int64) (*Group
 // 见 profitControlGroupRepo.GetByID：利润门必须走不带账号计数聚合的 lite 读取。
 func (profitControlFailingGroupRepo) GetByID(context.Context, int64) (*Group, error) {
 	panic("profit control gate must read groups via GetByIDLite (no account-count aggregation)")
+}
+
+func TestGatewayProfitControlCachesDisabledGroupResolution(t *testing.T) {
+	group := &Group{ID: 811, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true}
+	repo := &countingGatewayProfitGroupRepo{group: group}
+	svc := &GatewayService{
+		schedulerSnapshot: NewSchedulerSnapshotService(nil, nil, nil, repo, nil),
+	}
+	groupID := group.ID
+	ctx, _ := WithGatewayTokenRequestPricing(context.Background())
+	ctx = svc.withGatewayProfitControlGate(ctx, &groupID)
+	ctx = svc.withGatewayProfitControlGate(ctx, &groupID)
+	require.Equal(t, 1, repo.calls, "disabled group policy should be resolved once per request")
 }
 
 func TestGatewayProfitControlLegacyMixedAndRoutedSelection(t *testing.T) {

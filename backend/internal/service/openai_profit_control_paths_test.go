@@ -266,6 +266,17 @@ type profitControlGroupRepo struct {
 	group *Group
 }
 
+type countingPrivacyGroupRepo struct {
+	GroupRepository
+	group *Group
+	calls int
+}
+
+func (r *countingPrivacyGroupRepo) GetByIDLite(context.Context, int64) (*Group, error) {
+	r.calls++
+	return r.group, nil
+}
+
 func (r profitControlGroupRepo) GetByIDLite(context.Context, int64) (*Group, error) {
 	return r.group, nil
 }
@@ -275,6 +286,31 @@ func (r profitControlGroupRepo) GetByIDLite(context.Context, int64) (*Group, err
 // 每 turn 一次）上多打一条聚合，且发生在「是否启用利润控制」判定之前。
 func (r profitControlGroupRepo) GetByID(context.Context, int64) (*Group, error) {
 	panic("profit control gate must read groups via GetByIDLite (no account-count aggregation)")
+}
+
+func TestOpenAIGroupPrivacyRequirementReusesRequestContext(t *testing.T) {
+	groupID := int64(701)
+	repo := &countingPrivacyGroupRepo{group: &Group{ID: groupID, RequirePrivacySet: true}}
+	svc := &OpenAIGatewayService{
+		schedulerSnapshot: &SchedulerSnapshotService{groupRepo: repo},
+	}
+
+	ctx := svc.withOpenAIGroupPrivacyRequirement(context.Background(), &groupID)
+	ctx = svc.withOpenAIGroupPrivacyRequirement(ctx, &groupID)
+
+	require.True(t, svc.openAIGroupRequiresPrivacySet(ctx, &groupID))
+	require.Equal(t, 1, repo.calls, "request-scoped privacy policy should issue one GetByIDLite query")
+}
+
+func TestOpenAIProfitControlCachesDisabledGroupResolution(t *testing.T) {
+	groupID := int64(702)
+	repo := &countingPrivacyGroupRepo{group: &Group{ID: groupID, Platform: PlatformOpenAI}}
+	svc := &OpenAIGatewayService{
+		schedulerSnapshot: &SchedulerSnapshotService{groupRepo: repo},
+	}
+	ctx := svc.withOpenAIProfitControlGate(context.Background(), &groupID)
+	ctx = svc.withOpenAIProfitControlGate(ctx, &groupID)
+	require.Equal(t, 1, repo.calls, "disabled group policy should be resolved once per request")
 }
 
 // composite 路由：门配置取被调度成员分组，D 取请求真实计费分组（ctx 认证分组）。

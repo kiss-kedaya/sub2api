@@ -602,7 +602,17 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 		if err := s.guardFallback(fallbackCtx); err != nil {
 			return nil, err
 		}
-		return s.accountRepo.GetByID(fallbackCtx, accountID)
+		account, err := s.accountRepo.GetByID(fallbackCtx, accountID)
+		if err == nil && account != nil && s.cache != nil {
+			// A successful DB fallback is authoritative until the next scheduler
+			// invalidation. Publish it back to the account cache so a Redis miss
+			// does not turn every subsequent request for the same account into a
+			// full GetByID + proxy/groups hydration query.
+			if cacheErr := s.cache.SetAccount(fallbackCtx, account); cacheErr != nil {
+				slog.Debug("scheduler account fallback cache write failed", "account_id", accountID, "err", cacheErr)
+			}
+		}
+		return account, err
 	})
 	select {
 	case result := <-resultCh:
