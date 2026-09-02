@@ -68,6 +68,24 @@ func TestPreauthorizeTextPassesRequestLocalTokenEstimate(t *testing.T) {
 	require.Equal(t, 1536, preauthorizer.captured.InitialOutputWindowTokens)
 }
 
+func TestPreauthorizeTextPassesGeminiTokenEstimateAndOutputLimit(t *testing.T) {
+	preauthorizer := &preauthorizerStub{requires: true}
+	pricing := &pricingProviderStub{}
+	body := []byte(`{"model":"gemini-2.5-pro","contents":[{"role":"user","parts":[{"text":"Explain this request"}]}],"generationConfig":{"maxOutputTokens":1024}}`)
+
+	_, err := preauthorizeTextGatewayRequest(
+		context.Background(), preauthorizer, pricing,
+		perRequestTestAPIKey(), nil, body, "gemini-2.5-pro", time.Unix(1000, 0), "",
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, preauthorizer.captured)
+	require.Equal(t, len(body), preauthorizer.captured.BillableInputBytes)
+	require.Greater(t, preauthorizer.captured.EstimatedInputTokens, 0)
+	require.Equal(t, 1024, preauthorizer.captured.InitialOutputWindowTokens)
+	require.Equal(t, "gemini-2.5-pro", pricing.lastModel)
+}
+
 // TestPreauthorizePerRequestPassesBillingUnits proves the per-request helper
 // forwards the parsed count/size tier and per-request estimate kind so image
 // endpoints reserve the exact request price rather than a token upper bound.
