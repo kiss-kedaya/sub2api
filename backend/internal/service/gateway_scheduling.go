@@ -1304,9 +1304,20 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 			logger.LegacyPrintf("service.gateway", "window_cost batch db query failed: start=%s err=%v", startTime.Format(time.RFC3339), err)
 		}
 
-		// 回退路径：缺少批量仓储能力或批量查询失败时，按账号单查（失败开放）。
-		windowCostPrefetchFallbackTotal.Add(int64(len(ids)))
-		for _, accountID := range ids {
+		// 回退路径：缺少批量仓储能力或批量查询失败时，只允许有限
+		// 数量的兼容单查。数据库异常时不能把一次请求重新放大成候选
+		// 数量级的查询风暴；其余账号保持既有 fail-open 语义。
+		const maxWindowCostFallbackAccounts = 8
+		fallbackCount := len(ids)
+		if fallbackCount > maxWindowCostFallbackAccounts {
+			fallbackCount = maxWindowCostFallbackAccounts
+		}
+		windowCostPrefetchFallbackTotal.Add(int64(fallbackCount))
+		for i, accountID := range ids {
+			if i >= fallbackCount {
+				failOpen[accountID] = struct{}{}
+				continue
+			}
 			stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, accountID, startTime)
 			if err != nil {
 				windowCostPrefetchErrorTotal.Add(1)
