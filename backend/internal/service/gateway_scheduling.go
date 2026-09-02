@@ -1277,6 +1277,8 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 	}
 
 	batchReader, hasBatch := s.usageLogRepo.(usageLogWindowStatsBatchProvider)
+	const maxWindowCostFallbackAccounts = 8
+	remainingFallbackBudget := maxWindowCostFallbackAccounts
 	for startKey, ids := range missingByStart {
 		startTime := startTimes[startKey]
 
@@ -1307,11 +1309,14 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 		// 回退路径：缺少批量仓储能力或批量查询失败时，只允许有限
 		// 数量的兼容单查。数据库异常时不能把一次请求重新放大成候选
 		// 数量级的查询风暴；其余账号保持既有 fail-open 语义。
-		const maxWindowCostFallbackAccounts = 8
 		fallbackCount := len(ids)
-		if fallbackCount > maxWindowCostFallbackAccounts {
-			fallbackCount = maxWindowCostFallbackAccounts
+		if fallbackCount > remainingFallbackBudget {
+			fallbackCount = remainingFallbackBudget
 		}
+		if fallbackCount < 0 {
+			fallbackCount = 0
+		}
+		remainingFallbackBudget -= fallbackCount
 		windowCostPrefetchFallbackTotal.Add(int64(fallbackCount))
 		for i, accountID := range ids {
 			if i >= fallbackCount {
