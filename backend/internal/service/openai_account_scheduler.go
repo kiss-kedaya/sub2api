@@ -2427,6 +2427,13 @@ func (s *OpenAIGatewayService) loadOpenAIGroupRequiresPrivacySet(ctx context.Con
 	if s == nil || groupID == nil || s.schedulerSnapshot == nil {
 		return false
 	}
+	// withOpenAIGroupPrivacyRequirement is invoked by every scheduler pass,
+	// including failover retries. Reuse the request-scoped decision here before
+	// consulting the snapshot/group repository; otherwise each retry performs
+	// another GetByIDLite query for the same immutable request policy.
+	if cached, ok := ctx.Value(openAIGroupPrivacyRequirementContextKey{}).(openAIGroupPrivacyRequirement); ok && cached.groupID == *groupID {
+		return cached.required
+	}
 	if group := openAIGroupFromContext(ctx, groupID); group != nil {
 		return group.RequirePrivacySet
 	}

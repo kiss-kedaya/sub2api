@@ -177,6 +177,64 @@ type schedulerAccountFallbackRepo struct {
 	calls   atomic.Int32
 }
 
+type schedulerFallbackCachingCache struct {
+	snapshotHydrationCache
+	mu       sync.Mutex
+	accounts map[int64]*Account
+	setCalls atomic.Int32
+}
+
+type schedulerFallbackSeedRepo struct {
+	AccountRepository
+	calls atomic.Int32
+}
+
+func (r *schedulerFallbackSeedRepo) GetByID(context.Context, int64) (*Account, error) {
+	r.calls.Add(1)
+	return &Account{ID: 42, Platform: PlatformOpenAI, Status: StatusActive}, nil
+}
+
+func (c *schedulerFallbackCachingCache) GetAccount(_ context.Context, accountID int64) (*Account, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	account := c.accounts[accountID]
+	if account == nil {
+		return nil, nil
+	}
+	clone := cloneSnapshotAccount(account)
+	return &clone, nil
+}
+
+func (c *schedulerFallbackCachingCache) SetAccount(_ context.Context, account *Account) error {
+	if account == nil {
+		return nil
+	}
+	c.mu.Lock()
+	if c.accounts == nil {
+		c.accounts = make(map[int64]*Account)
+	}
+	clone := cloneSnapshotAccount(account)
+	c.accounts[account.ID] = &clone
+	c.mu.Unlock()
+	c.setCalls.Add(1)
+	return nil
+}
+
+func TestSchedulerSnapshotAccountFallbackPublishesSuccessfulHydration(t *testing.T) {
+	repo := &schedulerFallbackSeedRepo{}
+	cache := &schedulerFallbackCachingCache{}
+	svc := NewSchedulerSnapshotService(cache, nil, repo, nil, nil)
+
+	first, err := svc.GetAccount(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	second, err := svc.GetAccount(context.Background(), 42)
+	require.NoError(t, err)
+	require.NotNil(t, second)
+	require.Equal(t, int32(1), cache.setCalls.Load(), "one successful DB fallback should seed the account cache")
+	require.Equal(t, int32(1), repo.calls.Load(), "the seeded account cache should prevent a second GetByID")
+}
+
 func (r *schedulerAccountFallbackRepo) GetByID(ctx context.Context, _ int64) (*Account, error) {
 	r.calls.Add(1)
 	r.once.Do(func() { close(r.started) })

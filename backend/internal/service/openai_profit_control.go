@@ -71,6 +71,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
+type openAIProfitControlGroupResolvedContextKey struct{}
+
 const (
 	// profitControlRateEpsilon 吸收 decimal(10,4) 落库与浮点乘法的边界误差：
 	// U 与阈值的相对差在该量级内视为相等（即 U == 阈值 判定为合格）。
@@ -196,8 +198,11 @@ func (s *OpenAIGatewayService) withOpenAIProfitControlGate(ctx context.Context, 
 		return ctx
 	}
 	if groupID != nil {
-		if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil && existing.groupID == *groupID {
+		if resolved, ok := ctx.Value(openAIProfitControlGroupResolvedContextKey{}).(int64); ok && resolved == *groupID {
 			return ctx
+		}
+		if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil && existing.groupID == *groupID {
+			return context.WithValue(ctx, openAIProfitControlGroupResolvedContextKey{}, *groupID)
 		}
 	}
 	gate := s.resolveOpenAIProfitControlGate(ctx, groupID)
@@ -206,12 +211,16 @@ func (s *OpenAIGatewayService) withOpenAIProfitControlGate(ctx context.Context, 
 		// 请求门时清除之：门配置取被调度分组，父分组阈值不得泄漏到成员分组
 		//（composite/模型路由等跨分组调度）。typed-nil 覆盖值由否决点按无门放行。
 		if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil && groupID != nil && existing.groupID != *groupID {
-			return context.WithValue(ctx, openAIProfitControlGateCtxKey{}, (*openAIProfitControlGate)(nil))
+			ctx = context.WithValue(ctx, openAIProfitControlGateCtxKey{}, (*openAIProfitControlGate)(nil))
 		}
-		return ctx
+		if groupID == nil {
+			return ctx
+		}
+		return context.WithValue(ctx, openAIProfitControlGroupResolvedContextKey{}, *groupID)
 	}
 	openAIProfitControlObserverInstance.recordInstall(gate.groupID, gate.platform, gate.threshold)
-	return context.WithValue(ctx, openAIProfitControlGateCtxKey{}, gate)
+	ctx = context.WithValue(ctx, openAIProfitControlGateCtxKey{}, gate)
+	return context.WithValue(ctx, openAIProfitControlGroupResolvedContextKey{}, gate.groupID)
 }
 
 func (s *OpenAIGatewayService) resolveOpenAIProfitControlGate(ctx context.Context, groupID *int64) *openAIProfitControlGate {
