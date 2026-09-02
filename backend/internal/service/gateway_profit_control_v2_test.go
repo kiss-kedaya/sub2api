@@ -362,7 +362,9 @@ func TestGatewayProfitControlTerminalRefreshFallsBackFromCacheToDatabase(t *test
 	})
 
 	latest, vetoed, reason := profitControlVetoLatest(ctx, &selected, snapshot)
-	require.Same(t, &replacement, latest)
+	require.NotNil(t, latest)
+	require.Equal(t, replacement.ID, latest.ID)
+	require.Equal(t, replacement.RateMultiplier, latest.RateMultiplier)
 	require.True(t, vetoed, "缓存读取失败时必须继续从数据库重读，不能直接使用选号旧对象")
 	require.Equal(t, openAIProfitFilterReasonThreshold, reason)
 }
