@@ -336,9 +336,6 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 	// query and fenced cache publication for this bucket; waiters reuse its
 	// result and retain their own cancellation semantics.
 	resultCh := s.snapshotFallbackGroup.DoChan(bucket.String(), func() (any, error) {
-		if err := s.guardFallback(ctx); err != nil {
-			return nil, err
-		}
 		fallbackCtx, cancel := s.fallbackQueryContext(ctx)
 		defer cancel()
 
@@ -350,6 +347,13 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 			if cached, hit, cacheErr := s.cache.GetSnapshot(fallbackCtx, bucket); cacheErr == nil && hit {
 				return derefAccounts(cached), nil
 			}
+		}
+		// Only charge the fallback budget after the shared-cache recheck has
+		// confirmed that a database read is still necessary. A late waiter must
+		// not be rejected merely because another instance published the snapshot
+		// between the initial miss and this flight.
+		if err := s.guardFallback(fallbackCtx); err != nil {
+			return nil, err
 		}
 
 		var token SchedulerBucketWriteToken
