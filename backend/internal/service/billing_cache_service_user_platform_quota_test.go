@@ -101,6 +101,7 @@ type fakeFullCache struct {
 	entry       *UserPlatformQuotaCacheEntry
 	deleteCalls int
 	setCalls    int           // SetUserPlatformQuotaCache 调用次数
+	getCalls    int           // GetUserPlatformQuotaCache 调用次数
 	lastSetTTL  time.Duration // 最近一次 Set 的 ttl
 	getErr      error         // 非 nil 时 Get 先返回 (nil,false,getErr)
 	setErr      error         // 非 nil 时 Set 返回该 err(setCalls 仍+1)
@@ -139,6 +140,7 @@ func (f *fakeFullCache) getLastSetTTL() time.Duration {
 func (f *fakeFullCache) GetUserPlatformQuotaCache(_ context.Context, _ int64, _ string) (*UserPlatformQuotaCacheEntry, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.getCalls++
 	if f.getErr != nil {
 		return nil, false, f.getErr
 	}
@@ -146,6 +148,12 @@ func (f *fakeFullCache) GetUserPlatformQuotaCache(_ context.Context, _ int64, _ 
 		return nil, false, nil
 	}
 	return f.entry, true, nil
+}
+
+func (f *fakeFullCache) getGetCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.getCalls
 }
 
 func (f *fakeFullCache) SetUserPlatformQuotaCache(_ context.Context, _ int64, _ string, e *UserPlatformQuotaCacheEntry, ttl time.Duration) error {
@@ -769,9 +777,9 @@ func TestHasUserPlatformQuotaLimit(t *testing.T) {
 	daily := 5.0
 
 	tests := []struct {
-		name    string
-		setup   func() *BillingCacheService
-		want    bool
+		name  string
+		setup func() *BillingCacheService
+		want  bool
 	}{
 		{
 			name: "has_limit",
@@ -828,5 +836,26 @@ func TestHasUserPlatformQuotaLimit(t *testing.T) {
 				t.Errorf("HasUserPlatformQuotaLimit() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestUserPlatformQuotaRequestStateReusesPreflightForPostBillingGuard(t *testing.T) {
+	daily := 5.0
+	cache := &fakeFullCache{entry: &UserPlatformQuotaCacheEntry{
+		DailyLimitUSD:    &daily,
+		DailyWindowStart: currentDayStart(),
+		SchemaVersion:    UserPlatformQuotaCacheSchemaV1,
+	}}
+	svc := newServiceForPreflight(t, &fakeQuotaRepo{}, cache)
+	ctx := withUserPlatformQuotaRequestContext(context.Background())
+
+	if err := svc.checkUserPlatformQuotaEligibility(ctx, 1, "anthropic"); err != nil {
+		t.Fatalf("preflight returned error: %v", err)
+	}
+	if !svc.HasUserPlatformQuotaLimit(ctx, 1, "anthropic") {
+		t.Fatal("expected request state to retain the detected quota limit")
+	}
+	if got := cache.getGetCalls(); got != 1 {
+		t.Fatalf("expected one Redis quota read across preflight and post-billing guard, got %d", got)
 	}
 }

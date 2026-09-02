@@ -35,7 +35,8 @@ func (s *GatewayService) PrepareSchedulerRequestContext(ctx context.Context) con
 	if s == nil || ctx == nil {
 		return ctx
 	}
-	return withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	return withUserPlatformQuotaRequestContext(ctx)
 }
 
 // SelectAccountForModel 选择支持指定模型的账号（粘性会话+优先级+模型映射）
