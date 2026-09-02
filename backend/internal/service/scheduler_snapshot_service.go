@@ -164,6 +164,11 @@ type SchedulerSnapshotService struct {
 	// the database fallback and cache write single-flight per bucket; callers
 	// still receive their own context cancellation after the shared work ends.
 	snapshotFallbackGroup singleflight.Group
+
+	// A selected account can be hydrated by many concurrent requests after a
+	// snapshot/cache miss.  Coalesce that per-account database fallback so a
+	// Redis outage does not turn into one GetByID query per request.
+	accountFallbackGroup singleflight.Group
 }
 
 const (
@@ -571,9 +576,29 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 	if err := s.guardFallback(ctx); err != nil {
 		return nil, err
 	}
-	fallbackCtx, cancel := s.withFallbackTimeout(ctx)
-	defer cancel()
-	return s.accountRepo.GetByID(fallbackCtx, accountID)
+
+	resultCh := s.accountFallbackGroup.DoChan(strconv.FormatInt(accountID, 10), func() (any, error) {
+		// The first request to observe the miss must not own the shared
+		// database query's cancellation or deadline.  Other waiters still
+		// retain independent cancellation while waiting below.
+		fallbackCtx, cancel := s.fallbackQueryContext(ctx)
+		defer cancel()
+		return s.accountRepo.GetByID(fallbackCtx, accountID)
+	})
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		account, _ := result.Val.(*Account)
+		if account == nil {
+			return nil, nil
+		}
+		cloned := cloneSnapshotAccount(account)
+		return &cloned, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // GetGroupByID 获取分组信息（供调度器使用）
