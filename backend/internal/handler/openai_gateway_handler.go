@@ -2426,6 +2426,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				setOpsRequestContext(c, model, true)
 				mapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, model)
+				freshAccount, freshOK := h.gatewayService.RefreshSchedulerAccountFreshness(ctx, account, mapping.MappedModel)
+				if !freshOK {
+					return "", service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer schedulable for this model, please reconnect", nil)
+				}
+				account = freshAccount
+				selection.Account = freshAccount
+				if freshAccount.Concurrency > 0 {
+					accountMaxConcurrency = freshAccount.Concurrency
+				}
 				mappedModelUnchanged := false
 				if previous := turnChannelMapping.Load(); previous != nil && previous.turn < turn {
 					mappedModelUnchanged = strings.TrimSpace(previous.mapping.MappedModel) == strings.TrimSpace(mapping.MappedModel)
@@ -2440,6 +2449,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if turn > 1 {
 					ctx = h.gatewayService.RefreshSchedulerRequestContext(ctx)
 					c.Request = c.Request.WithContext(ctx)
+					freshAccount, freshOK := h.gatewayService.RefreshSchedulerAccountFreshness(ctx, account, "")
+					if !freshOK {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer schedulable, please reconnect", nil)
+					}
+					account = freshAccount
+					selection.Account = freshAccount
+					if freshAccount.Concurrency > 0 {
+						accountMaxConcurrency = freshAccount.Concurrency
+					}
 				}
 				// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
 				if cyberBlockedThisConn {
