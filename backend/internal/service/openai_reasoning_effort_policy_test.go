@@ -147,9 +147,9 @@ func TestNormalizeReasoningEffortMappings(t *testing.T) {
 	})
 
 	t.Run("rejects mappings for non OpenAI platforms", func(t *testing.T) {
-		for _, platform := range []string{PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformGrok} {
+		for _, platform := range []string{PlatformGemini, PlatformAntigravity, PlatformGrok} {
 			_, err := NormalizeReasoningEffortMappings(platform, []ReasoningEffortMapping{{From: "low", To: "high"}})
-			require.ErrorContains(t, err, "only supported for platforms \"openai\" and \"composite\"")
+			require.ErrorContains(t, err, "only supported for platforms")
 		}
 
 		_, err := NormalizeReasoningEffortMappings(PlatformOpenAI, []ReasoningEffortMapping{{From: "none", To: "low"}})
@@ -157,6 +157,15 @@ func TestNormalizeReasoningEffortMappings(t *testing.T) {
 
 		_, err = NormalizeReasoningEffortMappings(PlatformOpenAI, []ReasoningEffortMapping{{From: "ultra", To: "high"}})
 		require.ErrorContains(t, err, "empty or unknown")
+	})
+
+	t.Run("supports Anthropic values except minimal", func(t *testing.T) {
+		got, err := NormalizeReasoningEffortMappings(PlatformAnthropic, []ReasoningEffortMapping{{From: " MAX ", To: " x-high "}})
+		require.NoError(t, err)
+		require.Equal(t, []ReasoningEffortMapping{{From: "max", To: "xhigh"}}, got)
+
+		_, err = NormalizeReasoningEffortMappings(PlatformAnthropic, []ReasoningEffortMapping{{From: "minimal", To: "low"}})
+		require.ErrorContains(t, err, "not supported for platform \"anthropic\"")
 	})
 }
 
@@ -168,9 +177,15 @@ func TestNormalizeMaxReasoningEffortForPlatform(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "max", value)
 
-	for _, platform := range []string{PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformGrok} {
+	value, err = normalizeMaxReasoningEffortForPlatform(PlatformAnthropic, "xhigh")
+	require.NoError(t, err)
+	require.Equal(t, "xhigh", value)
+	_, err = normalizeMaxReasoningEffortForPlatform(PlatformAnthropic, "minimal")
+	require.ErrorContains(t, err, "not supported")
+
+	for _, platform := range []string{PlatformGemini, PlatformAntigravity, PlatformGrok} {
 		_, err = normalizeMaxReasoningEffortForPlatform(platform, "low")
-		require.ErrorContains(t, err, "only supported for platforms \"openai\" and \"composite\"")
+		require.ErrorContains(t, err, "only supported for platforms")
 	}
 
 	_, err = normalizeMaxReasoningEffortForPlatform(PlatformOpenAI, "none")
@@ -197,8 +212,9 @@ func TestNormalizeMaxReasoningEffortOverLimitForPlatform(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ReasoningEffortOverLimitDowngrade, value)
 
-	_, err = normalizeMaxReasoningEffortOverLimitForPlatform(PlatformAnthropic, "deny")
-	require.ErrorContains(t, err, "only supported for platforms \"openai\" and \"composite\"")
+	value, err = normalizeMaxReasoningEffortOverLimitForPlatform(PlatformAnthropic, "deny")
+	require.NoError(t, err)
+	require.Equal(t, ReasoningEffortOverLimitDeny, value)
 
 	_, err = normalizeMaxReasoningEffortOverLimitForPlatform(PlatformOpenAI, "block")
 	require.ErrorContains(t, err, "not supported")
@@ -243,6 +259,8 @@ func TestApplyOpenAIReasoningEffortPolicy(t *testing.T) {
 	}{
 		{name: "nested caps high", body: `{"reasoning":{"effort":"xhigh"}}`, max: "medium", path: "reasoning.effort", want: "medium", changed: true},
 		{name: "flat caps high", body: `{"reasoning_effort":"high"}`, max: "low", path: "reasoning_effort", want: "low", changed: true},
+		{name: "Anthropic output config caps max", body: `{"output_config":{"effort":"max"}}`, max: "xhigh", path: "output_config.effort", want: "xhigh", changed: true},
+		{name: "Anthropic output config maps before cap", body: `{"output_config":{"effort":"max"}}`, max: "high", mappings: []ReasoningEffortMapping{{From: "max", To: "xhigh"}}, path: "output_config.effort", want: "high", changed: true},
 		{name: "does not raise omitted", body: `{"model":"gpt-5"}`, max: "low", path: "reasoning_effort", want: "", changed: false},
 		{name: "keeps lower value", body: `{"reasoning_effort":"low"}`, max: "high", path: "reasoning_effort", want: "low", changed: false},
 		{name: "normalizes request alias", body: `{"reasoning_effort":"x-high"}`, max: "xhigh", path: "reasoning_effort", want: "xhigh", changed: true},
