@@ -428,8 +428,10 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		if deps.billingCacheService.HasUserPlatformQuotaLimit(ctx, p.User.ID, p.Platform) {
 			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, p.Cost.ActualCost)
 			if deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled {
-				// 降级路径:flusher 未启用时保留原有异步直写 DB
-				dbCtx, dbCancel := detachUpstreamContext(ctx)
+				// 降级路径:flusher 未启用时保留异步直写 DB，但必须绑定
+				// 独立的 billing 超时，避免数据库卡住时每个请求永久
+				// 保留一个 goroutine。
+				dbCtx, dbCancel := detachedBillingContext(ctx)
 				userID, platform, cost := p.User.ID, p.Platform, p.Cost.ActualCost
 				go func() {
 					defer func() {
