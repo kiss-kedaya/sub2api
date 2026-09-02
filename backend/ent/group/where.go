@@ -290,6 +290,11 @@ func AllowLive(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAllowLive, v))
 }
 
+// ForceOpenaiFast applies equality check predicate on the "force_openai_fast" field. It's identical to ForceOpenaiFastEQ.
+func ForceOpenaiFast(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldForceOpenaiFast, v))
+}
+
 // RequireOauthOnly applies equality check predicate on the "require_oauth_only" field. It's identical to RequireOauthOnlyEQ.
 func RequireOauthOnly(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRequireOauthOnly, v))
@@ -2268,6 +2273,16 @@ func AllowLiveEQ(v bool) predicate.Group {
 // AllowLiveNEQ applies the NEQ predicate on the "allow_live" field.
 func AllowLiveNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldAllowLive, v))
+}
+
+// ForceOpenaiFastEQ applies the EQ predicate on the "force_openai_fast" field.
+func ForceOpenaiFastEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldForceOpenaiFast, v))
+}
+
+// ForceOpenaiFastNEQ applies the NEQ predicate on the "force_openai_fast" field.
+func ForceOpenaiFastNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldForceOpenaiFast, v))
 }
 
 // RequireOauthOnlyEQ applies the EQ predicate on the "require_oauth_only" field.

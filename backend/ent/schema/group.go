@@ -242,6 +242,9 @@ func (Group) Fields() []ent.Field {
 		field.Bool("allow_live").
 			Default(false).
 			Comment("是否允许此 OpenAI 分组访问 Live 接口"),
+		field.Bool("force_openai_fast").
+			Default(false).
+			Comment("是否强制此 OpenAI/Composite 分组请求使用 service_tier=priority"),
 		field.Bool("require_oauth_only").
 			Default(false).
 			Comment("仅允许非 apikey 类型账号关联到此分组"),
