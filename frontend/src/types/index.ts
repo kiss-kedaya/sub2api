@@ -557,6 +557,7 @@ export interface Group {
   rate_multiplier: number
   rpm_limit?: number // Group-level RPM cap (0 = unlimited); overrides user-level rpm_limit when set
   max_reasoning_effort?: string // OpenAI/Codex reasoning ceiling; empty means unlimited
+  max_reasoning_effort_over_limit?: string // downgrade (default) or deny when over the ceiling
   reasoning_effort_mappings?: ReasoningEffortMapping[]
   is_exclusive: boolean
   status: 'active' | 'inactive'
@@ -820,6 +821,7 @@ export interface CreateGroupRequest {
   model_routing_enabled?: boolean
   rpm_limit?: number
   max_reasoning_effort?: string
+  max_reasoning_effort_over_limit?: string
   reasoning_effort_mappings?: ReasoningEffortMapping[]
   require_oauth_only?: boolean
   require_privacy_set?: boolean
@@ -883,6 +885,7 @@ export interface UpdateGroupRequest {
   model_routing_enabled?: boolean
   rpm_limit?: number
   max_reasoning_effort?: string
+  max_reasoning_effort_over_limit?: string
   reasoning_effort_mappings?: ReasoningEffortMapping[]
   require_oauth_only?: boolean
   require_privacy_set?: boolean

@@ -153,6 +153,8 @@ type Group struct {
 	RPMLimit int `json:"rpm_limit"`
 	// MaxReasoningEffort OpenAI/Codex 请求的推理强度上限，空字符串表示不限制。
 	MaxReasoningEffort string `json:"max_reasoning_effort"`
+	// MaxReasoningEffortOverLimit 超过上限时的访问控制：downgrade（默认）或 deny。
+	MaxReasoningEffortOverLimit string `json:"max_reasoning_effort_over_limit"`
 	// ReasoningEffortMappings OpenAI/Codex 推理强度精确映射。
 	ReasoningEffortMappings []domain.ReasoningEffortMapping `json:"reasoning_effort_mappings"`
 
