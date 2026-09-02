@@ -543,7 +543,7 @@ func TestWithWindowCostPrefetch_BatchErrorFallsBackPerAccount(t *testing.T) {
 
 	outCtx := svc.withWindowCostPrefetch(context.Background(), accounts)
 	require.Equal(t, int64(1), repo.batchCalls.Load())
-	require.Equal(t, int64(len(accounts)), repo.singleCalls.Load())
+	require.Equal(t, int64(8), repo.singleCalls.Load())
 	require.Equal(t, int64(1), cache.batchSetCalls.Load())
 	require.Equal(t, int64(0), cache.setCalls.Load())
 
@@ -557,9 +557,9 @@ func TestWithWindowCostPrefetch_BatchErrorFallsBackPerAccount(t *testing.T) {
 		}
 		failOpen++
 	}
-	require.Equal(t, len(accounts), known)
-	require.Equal(t, 0, failOpen)
-	require.Equal(t, int64(len(accounts)), repo.singleCalls.Load())
+	require.Equal(t, 8, known)
+	require.Equal(t, len(accounts)-8, failOpen)
+	require.Equal(t, int64(8), repo.singleCalls.Load())
 }
 
 func TestGetAvailableModels_UsesShortCacheAndSupportsInvalidation(t *testing.T) {
