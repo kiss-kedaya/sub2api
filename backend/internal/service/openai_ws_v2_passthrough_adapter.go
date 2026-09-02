@@ -602,12 +602,25 @@ func (c *openAIWSClientFrameConn) ReadFrame(ctx context.Context) (coderws.Messag
 	if c == nil || c.conn == nil {
 		return coderws.MessageText, nil, errOpenAIWSConnClosed
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	controlCtx := ctx
 	if c.controlCtx != nil {
 		controlCtx = c.controlCtx
 	}
+	// The relay owns the per-turn context, while controlCtx represents the
+	// ingress lifetime. Both must be able to stop the single client reader.
+	// Without this join, relay cancellation could leave conn.Read blocked until
+	// the outer request ended, allowing a failover path to overlap readers.
+	readCtx, cancel := context.WithCancel(controlCtx)
+	stopRelayCancel := context.AfterFunc(ctx, cancel)
+	defer func() {
+		stopRelayCancel()
+		cancel()
+	}()
 	msgType, payload, err := readOpenAIWSClientMessageWithTimeoutStart(
-		controlCtx,
+		readCtx,
 		c.conn,
 		c.interTurnIdleTimeout,
 		coderws.StatusNormalClosure,
