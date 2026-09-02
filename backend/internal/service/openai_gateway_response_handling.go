@@ -801,7 +801,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// Terminal 事件完整写出后直接结束，不等上游 EOF（见下方异步循环同款说明）。
 			// Codex bare error 序列（error 后可能跟 response.failed 或翻盘的 completed）
 			// 必须继续读取，不适用提前结束。
-			if sawTerminalEvent && !eventInProgress && !(codexFailureTerminal && sawBareError) {
+			if sawTerminalEvent && !eventInProgress && (!codexFailureTerminal || !sawBareError) {
 				return finalizeStream()
 			}
 		}
@@ -888,7 +888,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// 靠 keepalive 维持，白白拉长尾延迟。usage 已在 terminal 事件中解析。
 			// Codex bare error 序列（error 后可能跟 response.failed 或翻盘的 completed）
 			// 必须继续读取，不适用提前结束。
-			if sawTerminalEvent && !eventInProgress && !(codexFailureTerminal && sawBareError) {
+			if sawTerminalEvent && !eventInProgress && (!codexFailureTerminal || !sawBareError) {
 				_ = resp.Body.Close()
 				return finalizeStream()
 			}
