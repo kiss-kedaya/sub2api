@@ -544,9 +544,13 @@ export interface OpenAIMessagesDispatchModelConfig {
   exact_model_mappings?: Record<string, string>
 }
 
+export type ReasoningEffortMatchType = 'exact' | 'prefix' | 'suffix'
+
 export interface ReasoningEffortMapping {
   from: string
   to: string
+  match_type?: ReasoningEffortMatchType
+  model?: string
 }
 
 export interface Group {
