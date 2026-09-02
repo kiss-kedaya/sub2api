@@ -1978,7 +1978,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
-	ctx = c.Request.Context()
+	ctx = h.gatewayService.PrepareSchedulerRequestContext(c.Request.Context())
+	c.Request = c.Request.WithContext(ctx)
 	if apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
 		platform, ok := service.ResolvedTargetPlatformFromContext(ctx)
 		if !ok || !isResponsesWebSocketCompositePlatform(platform) {
@@ -2304,6 +2305,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 		// 准入完成：门并入连接 ctx，turn 级复核与 failover 重选共用。
 		ctx = admissionCtx
+		c.Request = c.Request.WithContext(ctx)
 		// Account selection starts a fresh upstream attempt. Clear any model
 		// captured by the previous failover account before credential lookup.
 		setOpsSelectedAccount(c, account.ID, account.Platform)
@@ -2410,6 +2412,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return mapping.MappedModel, nil
 			},
 			BeforeTurn: func(turn int) error {
+				if turn > 1 {
+					ctx = h.gatewayService.RefreshSchedulerRequestContext(ctx)
+					c.Request = c.Request.WithContext(ctx)
+				}
 				// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
 				if cyberBlockedThisConn {
 					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
