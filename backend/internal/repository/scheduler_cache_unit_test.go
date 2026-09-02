@@ -364,6 +364,23 @@ func TestBuildSchedulerMetadataAccount_KeepsOpenAIWSFlags(t *testing.T) {
 	require.Nil(t, got.Extra["unused_large_field"])
 }
 
+func TestBuildSchedulerMetadataAccount_KeepsOpenAIPassthroughFlags(t *testing.T) {
+	account := service.Account{
+		ID:       45,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Extra: map[string]any{
+			"openai_passthrough":       true,
+			"openai_oauth_passthrough": true,
+		},
+	}
+
+	got := buildSchedulerMetadataAccount(account)
+
+	require.Equal(t, true, got.Extra["openai_passthrough"])
+	require.Equal(t, true, got.Extra["openai_oauth_passthrough"])
+}
+
 func TestBuildSchedulerMetadataAccount_KeepsGrokMediaEligibility(t *testing.T) {
 	t.Run("explicit override", func(t *testing.T) {
 		account := service.Account{

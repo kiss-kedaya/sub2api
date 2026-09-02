@@ -1011,6 +1011,12 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_ws_force_http",
 		"openai_responses_mode",
 		"openai_responses_supported",
+		// Passthrough accounts intentionally accept models outside the cached
+		// model_mapping whitelist. These flags are consumed during scheduling,
+		// so omitting them makes a valid account look unsupported after a snapshot
+		// round-trip even though forwarding still treats it as passthrough.
+		"openai_passthrough",
+		"openai_oauth_passthrough",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
 		"codex_5h_used_percent",
