@@ -62,6 +62,24 @@ func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
 	return err != nil && !errors.Is(err, errOpenAIWSUnsupportedModelSwitch) && !service.IsOpenAIWSSessionPreemptedError(err)
 }
 
+// openAIWSIngressEndedByClient recognizes clean client-side WebSocket
+// termination before account-health attribution.  coder/websocket may return
+// a bare CloseError for a normal close, while a disconnect during a turn is
+// represented by context.Canceled wrapped in a gateway close error.
+func openAIWSIngressEndedByClient(err error) bool {
+	if err == nil {
+		return true
+	}
+	var closeErr *service.OpenAIWSClientCloseError
+	if errors.As(err, &closeErr) && closeErr.StatusCode() == coderws.StatusNormalClosure {
+		return true
+	}
+	if coderws.CloseStatus(err) == coderws.StatusNormalClosure {
+		return true
+	}
+	return errors.Is(err, context.Canceled)
+}
+
 func openAIWSTurnBillingModel(result *service.OpenAIForwardResult, mapping service.ChannelMappingResult, requestedModel, upstreamModel string) string {
 	billingModel := ""
 	if result != nil {
@@ -2639,12 +2657,22 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			}
 
 			var closeErr *service.OpenAIWSClientCloseError
-			if errors.As(err, &closeErr) && closeErr.StatusCode() == coderws.StatusNormalClosure {
+			hasClientCloseErr := errors.As(err, &closeErr)
+			if openAIWSIngressEndedByClient(err) {
+				closedFields := []zap.Field{zap.Int64("account_id", account.ID)}
+				if hasClientCloseErr {
+					closedFields = append(closedFields, zap.String("reason", closeErr.Reason()))
+				} else {
+					closedFields = append(closedFields, zap.Error(err))
+				}
 				reqLog.Info("openai.websocket_ingress_closed_normally",
-					zap.Int64("account_id", account.ID),
-					zap.String("reason", closeErr.Reason()),
+					closedFields...,
 				)
-				closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
+				if hasClientCloseErr {
+					closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
+				} else {
+					closeOpenAIClientWS(wsConn, coderws.StatusNormalClosure, "")
+				}
 				return
 			}
 
@@ -2669,7 +2697,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				proxyFailedFields = append(proxyFailedFields, zap.Int64p("proxy_id", account.ProxyID))
 			}
 			reqLog.Warn("openai.websocket_proxy_failed", proxyFailedFields...)
-			if errors.As(err, &closeErr) {
+			if hasClientCloseErr {
 				closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
 				return
 			}
