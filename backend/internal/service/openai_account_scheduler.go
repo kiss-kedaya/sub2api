@@ -2262,6 +2262,18 @@ func (s *OpenAIGatewayService) PrepareSchedulerRequestContext(ctx context.Contex
 	return withUserPlatformQuotaRequestContext(ctx)
 }
 
+// RefreshSchedulerRequestContext starts a new freshness scope for a new turn
+// on a long-lived WebSocket while retaining the surrounding request values.
+// The scope is intentionally not reused across turns because account status
+// and parent health can change while the connection is idle.
+func (s *OpenAIGatewayService) RefreshSchedulerRequestContext(ctx context.Context) context.Context {
+	if s == nil || ctx == nil {
+		return ctx
+	}
+	ctx = refreshSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	return withUserPlatformQuotaRequestContext(ctx)
+}
+
 // SelectAccountWithSchedulerForCapability 按能力要求调度账号。
 // previousResponseCanMove 表示首包 input 可自行重建工具续链，previous_response_id 允许跨账号迁移
 // （粘性加权模式下改为加权偏好而非硬粘连）。
