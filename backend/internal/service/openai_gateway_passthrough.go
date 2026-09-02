@@ -400,6 +400,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if actualModel == "" {
 			actualModel = reqModel
 		}
+		// Keep the model used for account-side effects in sync with the body
+		// actually sent upstream. This is normally reqModel, but can change on
+		// the compact fallback retry. Leaving it empty makes passthrough
+		// transient failures update a broad account cooldown instead of the
+		// canonical model scope.
+		upstreamPassthroughModel = actualModel
 		SetOpsUpstreamModel(c, actualModel)
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
