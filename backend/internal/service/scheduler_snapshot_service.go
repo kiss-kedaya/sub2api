@@ -608,7 +608,7 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 			// invalidation. Publish it back to the account cache so a Redis miss
 			// does not turn every subsequent request for the same account into a
 			// full GetByID + proxy/groups hydration query.
-			if cacheErr := s.cache.SetAccount(fallbackCtx, account); cacheErr != nil {
+			if cacheErr := setSchedulerAccountCacheBestEffort(s.cache, fallbackCtx, account); cacheErr != nil {
 				slog.Debug("scheduler account fallback cache write failed", "account_id", accountID, "err", cacheErr)
 			}
 		}
@@ -628,6 +628,22 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// setSchedulerAccountCacheBestEffort keeps compatibility with read-only or
+// partially implemented SchedulerCache adapters used during rolling upgrades.
+// A cache seed is an optimization only; a panic or write error must never turn
+// a successful DB fallback into a failed account selection.
+func setSchedulerAccountCacheBestEffort(cache SchedulerCache, ctx context.Context, account *Account) (err error) {
+	if cache == nil || account == nil {
+		return nil
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("scheduler account cache write panic: %v", recovered)
+		}
+	}()
+	return cache.SetAccount(ctx, account)
 }
 
 // GetGroupByID 获取分组信息（供调度器使用）
