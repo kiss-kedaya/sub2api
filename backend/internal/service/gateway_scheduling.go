@@ -1189,10 +1189,10 @@ func windowCostBatchKey(accountIDs []int64, startTime time.Time) string {
 	ids := append([]int64(nil), accountIDs...)
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	var b strings.Builder
-	b.WriteString(startTime.UTC().Format(time.RFC3339Nano))
+	_, _ = b.WriteString(startTime.UTC().Format(time.RFC3339Nano))
 	for _, id := range ids {
-		b.WriteByte(':')
-		b.WriteString(strconv.FormatInt(id, 10))
+		_ = b.WriteByte(':')
+		_, _ = b.WriteString(strconv.FormatInt(id, 10))
 	}
 	return b.String()
 }
