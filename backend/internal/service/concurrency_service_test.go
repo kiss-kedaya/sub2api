@@ -502,6 +502,23 @@ func TestGetAccountsLoadBatch_UsesShortTTLCache(t *testing.T) {
 	require.Equal(t, int64(1), cache.loadBatchCalls.Load())
 }
 
+func TestAccountLoadBatchCacheKeyIsOrderIndependent(t *testing.T) {
+	first := []AccountWithConcurrency{
+		{ID: 22, MaxConcurrency: 8},
+		{ID: 11, MaxConcurrency: 4},
+	}
+	second := []AccountWithConcurrency{
+		{ID: 11, MaxConcurrency: 4},
+		{ID: 22, MaxConcurrency: 8},
+	}
+	require.Equal(t, accountLoadBatchCacheKey(first), accountLoadBatchCacheKey(second))
+
+	// The key must still distinguish the effective capacity used to calculate
+	// load rate, even when account IDs are the same.
+	third := []AccountWithConcurrency{{ID: 11, MaxConcurrency: 5}}
+	require.NotEqual(t, accountLoadBatchCacheKey(second[:1]), accountLoadBatchCacheKey(third))
+}
+
 func TestGetAccountsLoadBatchFresh_BypassesShortTTLCache(t *testing.T) {
 	cache := &stubConcurrencyCacheForTest{
 		loadBatch: map[int64]*AccountLoadInfo{
