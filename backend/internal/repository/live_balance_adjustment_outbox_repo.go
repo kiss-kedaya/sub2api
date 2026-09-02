@@ -38,15 +38,26 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 		leaseSeconds = 30
 	}
 
-	rows, err := r.db.QueryContext(ctx, `
-		WITH claim_lock AS (
-			SELECT pg_try_advisory_xact_lock($4::bigint) AS acquired
-		), candidates AS (
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	rollback := func() { _ = tx.Rollback() }
+	var acquired bool
+	if err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1::bigint)`, liveBalanceOutboxClaimLockKey).Scan(&acquired); err != nil {
+		rollback()
+		return nil, err
+	}
+	if !acquired {
+		rollback()
+		return []service.LiveBalanceAdjustmentEvent{}, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+		WITH candidates AS (
 			SELECT candidate.id
 			FROM live_balance_adjustment_outbox AS candidate
-			CROSS JOIN claim_lock
 			WHERE candidate.delivered_at IS NULL
-				AND claim_lock.acquired
 				AND candidate.available_at <= NOW()
 				AND (candidate.claimed_at IS NULL OR candidate.claimed_at < NOW() - ($3 * INTERVAL '1 second'))
 				AND NOT EXISTS (
@@ -67,11 +78,11 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 		FROM candidates AS c
 		WHERE o.id = c.id
 		RETURNING o.id, o.user_id, o.predecessor_id, o.delta::text, o.attempts, o.created_at
-	`, workerID, limit, leaseSeconds, liveBalanceOutboxClaimLockKey)
+	`, workerID, limit, leaseSeconds)
 	if err != nil {
+		rollback()
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
 
 	events := make([]service.LiveBalanceAdjustmentEvent, 0, limit)
 	for rows.Next() {
@@ -85,22 +96,36 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 			&event.Attempts,
 			&event.CreatedAt,
 		); err != nil {
+			_ = rows.Close()
+			rollback()
 			return nil, err
 		}
 		delta, err := decimal.NewFromString(deltaText)
 		if err != nil {
+			_ = rows.Close()
+			rollback()
 			return nil, fmt.Errorf("parse live balance adjustment %d: %w", event.ID, err)
 		}
 		deltaUnits := delta.Shift(liveBalanceMoneyScale)
 		if !deltaUnits.Equal(deltaUnits.Truncate(0)) || deltaUnits.IsZero() ||
 			deltaUnits.GreaterThan(decimal.NewFromInt(maxExactLuaInteger)) ||
 			deltaUnits.LessThan(decimal.NewFromInt(-maxExactLuaInteger)) {
+			_ = rows.Close()
+			rollback()
 			return nil, fmt.Errorf("live balance adjustment %d exceeds exact Redis money range", event.ID)
 		}
 		event.DeltaUnits = deltaUnits.IntPart()
 		events = append(events, event)
 	}
+	if err := rows.Close(); err != nil {
+		rollback()
+		return nil, err
+	}
 	if err := rows.Err(); err != nil {
+		rollback()
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return events, nil
