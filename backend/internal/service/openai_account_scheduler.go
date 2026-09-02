@@ -2274,6 +2274,39 @@ func (s *OpenAIGatewayService) RefreshSchedulerRequestContext(ctx context.Contex
 	return withUserPlatformQuotaRequestContext(ctx)
 }
 
+// RefreshSchedulerAccountFreshness reapplies the durable scheduler projection
+// to an account held by a long-lived connection. A WS connection may outlive
+// the snapshot entry it was selected from, so subsequent turns must fail closed
+// when the account disappears, is paused, or its shadow parent is no longer
+// usable. Credentials and routing fields remain on the selected snapshot copy.
+func (s *OpenAIGatewayService) RefreshSchedulerAccountFreshness(ctx context.Context, account *Account, requestedModel string) (*Account, bool) {
+	if s == nil || account == nil {
+		return nil, false
+	}
+	state := schedulerFreshnessFromContext(ctx)
+	if state == nil || !state.enabled() {
+		if !account.IsSchedulable() {
+			return nil, false
+		}
+		return account, true
+	}
+	fresh, ok := state.apply(ctx, account)
+	if !ok || !fresh.IsSchedulable() {
+		return nil, false
+	}
+	if requestedModel != "" && !fresh.IsSchedulableForModelWithContext(ctx, requestedModel) {
+		return nil, false
+	}
+	if !parentHealthyForShadow(fresh, s.parentAccountLookup(ctx)) {
+		return nil, false
+	}
+	if s.isOpenAIAccountRequestRuntimeBlocked(fresh, requestedModel) || s.isOpenAIProxyStreamQuarantined(ctx, fresh) || s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, fresh) {
+		return nil, false
+	}
+	rememberSchedulerHydratedAccount(ctx, fresh)
+	return fresh, true
+}
+
 // SelectAccountWithSchedulerForCapability 按能力要求调度账号。
 // previousResponseCanMove 表示首包 input 可自行重建工具续链，previous_response_id 允许跨账号迁移
 // （粘性加权模式下改为加权偏好而非硬粘连）。
