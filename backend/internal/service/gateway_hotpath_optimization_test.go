@@ -562,6 +562,46 @@ func TestWithWindowCostPrefetch_BatchErrorFallsBackPerAccount(t *testing.T) {
 	require.Equal(t, int64(8), repo.singleCalls.Load())
 }
 
+func TestWithWindowCostPrefetch_BatchErrorUsesOneBudgetAcrossWindows(t *testing.T) {
+	resetGatewayHotpathStatsForTest()
+
+	firstWindow := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
+	secondWindow := firstWindow.Add(-24 * time.Hour)
+	accounts := make([]Account, 16)
+	for i := range accounts {
+		windowStart := firstWindow
+		if i >= 8 {
+			windowStart = secondWindow
+		}
+		windowEnd := windowStart.Add(5 * time.Hour)
+		accounts[i] = Account{
+			ID:                 int64(i + 1),
+			Platform:           PlatformAnthropic,
+			Type:               AccountTypeOAuth,
+			Extra:              map[string]any{"window_cost_limit": 100.0},
+			SessionWindowStart: &windowStart,
+			SessionWindowEnd:   &windowEnd,
+		}
+	}
+
+	repo := &usageLogWindowBatchRepoStub{batchErr: errors.New("batch failed")}
+	svc := &GatewayService{
+		sessionLimitCache: &sessionLimitCacheHotpathStub{},
+		usageLogRepo:      repo,
+	}
+
+	outCtx := svc.withWindowCostPrefetch(context.Background(), accounts)
+	require.Equal(t, int64(2), repo.batchCalls.Load())
+	require.Equal(t, int64(8), repo.singleCalls.Load())
+	known := 0
+	for _, account := range accounts {
+		if _, ok := windowCostFromPrefetchContext(outCtx, account.ID); ok {
+			known++
+		}
+	}
+	require.Equal(t, 8, known)
+}
+
 func TestGetAvailableModels_UsesShortCacheAndSupportsInvalidation(t *testing.T) {
 	resetGatewayHotpathStatsForTest()
 
