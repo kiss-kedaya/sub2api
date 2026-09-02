@@ -60,12 +60,19 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 			WHERE candidate.delivered_at IS NULL
 				AND candidate.available_at <= NOW()
 				AND (candidate.claimed_at IS NULL OR candidate.claimed_at < NOW() - ($3 * INTERVAL '1 second'))
-				AND NOT EXISTS (
-					SELECT 1
-					FROM live_balance_adjustment_outbox AS predecessor
-					WHERE predecessor.user_id = candidate.user_id
-						AND predecessor.delivered_at IS NULL
-						AND predecessor.id < candidate.id
+				-- Events are linked by predecessor_id. Checking only that
+				-- predecessor row avoids scanning every older event for the same
+				-- user (the previous anti-join was O(backlog per user)). A missing
+				-- predecessor is treated as already cleaned up, preserving the
+				-- existing recoverability behavior after retention deletes.
+				AND (
+					candidate.predecessor_id = 0
+					OR NOT EXISTS (
+						SELECT 1
+						FROM live_balance_adjustment_outbox AS predecessor
+						WHERE predecessor.id = candidate.predecessor_id
+							AND predecessor.delivered_at IS NULL
+					)
 				)
 			ORDER BY candidate.available_at, candidate.id
 			LIMIT $2
