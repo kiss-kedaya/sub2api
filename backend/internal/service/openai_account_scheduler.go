@@ -2258,7 +2258,8 @@ func (s *OpenAIGatewayService) PrepareSchedulerRequestContext(ctx context.Contex
 	if s == nil || ctx == nil {
 		return ctx
 	}
-	return withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	return withUserPlatformQuotaRequestContext(ctx)
 }
 
 // SelectAccountWithSchedulerForCapability 按能力要求调度账号。

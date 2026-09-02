@@ -1229,6 +1229,11 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 	if platform == "" || s.userPlatformQuotaRepo == nil {
 		return nil
 	}
+	rememberLimit := func(hasLimit bool) {
+		if state := userPlatformQuotaRequestStateFromContext(ctx); state != nil {
+			state.rememberLimit(userID, platform, hasLimit)
+		}
+	}
 
 	// cache 未配置（如简化部署 / 单测路径）→ 直接走 DB 查询，避免 nil panic。
 	// 其他 check* 方法（balance/subscription/rate-limit）也有类似守卫。
@@ -1246,6 +1251,7 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 
 	// --- cache HIT with current schema → 直接用 entry，不查 DB ---
 	if cacheErr == nil && ok && entry != nil && entry.SchemaVersion == UserPlatformQuotaCacheSchemaV1 {
+		rememberLimit(entry.DailyLimitUSD != nil || entry.WeeklyLimitUSD != nil || entry.MonthlyLimitUSD != nil)
 		now := time.Now()
 		dailyUsage := entry.DailyUsageUSD
 		weeklyUsage := entry.WeeklyUsageUSD
@@ -1343,10 +1349,12 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 	case <-ctx.Done():
 		// 当前 caller 的 ctx 被取消：fail-open，不阻断 (此请求已无意义)。
 		logger.LegacyPrintf("service.billing_cache", "Warning: user platform quota check ctx cancelled user=%d platform=%s: %v (fail-open)", userID, platform, ctx.Err())
+		rememberLimit(true)
 		return nil
 	}
 	if dbErr != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: load user platform quota failed user=%d platform=%s: %v (fail-open)", userID, platform, dbErr)
+		rememberLimit(true)
 		return nil
 	}
 	rec, _ := v.(*UserPlatformQuotaRecord)
@@ -1378,6 +1386,7 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 			}
 			setCancel()
 		}
+		rememberLimit(cacheErr != nil)
 		return nil
 	}
 
@@ -1397,6 +1406,7 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 
 	// Redis 故障时 fail-open：不回填，直接用 DB 数据做一次性检查
 	if cacheErr != nil {
+		rememberLimit(true)
 		if rec.DailyLimitUSD != nil && dailyUsage >= *rec.DailyLimitUSD {
 			return withWindowResetsMetadata(ErrUserPlatformDailyQuotaExhausted, nextDailyReset(now))
 		}
@@ -1433,6 +1443,7 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 		}
 		setCancel()
 	}
+	rememberLimit(rec.DailyLimitUSD != nil || rec.WeeklyLimitUSD != nil || rec.MonthlyLimitUSD != nil)
 
 	if rec.DailyLimitUSD != nil && dailyUsage >= *rec.DailyLimitUSD {
 		return withWindowResetsMetadata(ErrUserPlatformDailyQuotaExhausted, nextDailyReset(now))
@@ -1507,6 +1518,11 @@ func (s *BillingCacheService) HasUserPlatformQuotaLimit(ctx context.Context, use
 	}
 	if s.cache == nil {
 		return true
+	}
+	if state := userPlatformQuotaRequestStateFromContext(ctx); state != nil {
+		if hasLimit, ok := state.limit(userID, platform); ok {
+			return hasLimit
+		}
 	}
 	entry, ok, err := s.cache.GetUserPlatformQuotaCache(ctx, userID, platform)
 	if err != nil || !ok || entry == nil {
