@@ -176,7 +176,7 @@ func TestOpenAIResponsesRequiredCapability(t *testing.T) {
 func TestResolveOpenAIMessagesMetadataSession_DoesNotDerivePromptCacheKey(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-5","metadata":{"user_id":"claude-code-session"},"messages":[{"role":"user","content":"hello"}]}`)
 
-	sessionHash, promptCacheKey := resolveOpenAIMessagesMetadataSession("", "", "claude-sonnet-4-5", body)
+	sessionHash, promptCacheKey := resolveOpenAIMessagesMetadataSession(nil, "", "", "claude-sonnet-4-5", body)
 
 	require.NotEmpty(t, sessionHash)
 	require.Empty(t, promptCacheKey)
@@ -185,9 +185,35 @@ func TestResolveOpenAIMessagesMetadataSession_DoesNotDerivePromptCacheKey(t *tes
 func TestResolveOpenAIMessagesMetadataSession_PreservesExplicitPromptCacheKey(t *testing.T) {
 	body := []byte(`{"metadata":{"user_id":"claude-code-session"}}`)
 
-	sessionHash, promptCacheKey := resolveOpenAIMessagesMetadataSession("", "explicit-cache", "claude-sonnet-4-5", body)
+	sessionHash, promptCacheKey := resolveOpenAIMessagesMetadataSession(nil, "", "explicit-cache", "claude-sonnet-4-5", body)
 
 	require.NotEmpty(t, sessionHash)
+	require.Equal(t, "explicit-cache", promptCacheKey)
+}
+
+func TestResolveOpenAIMessagesMetadataSession_UsesClaudeCodeHeaderForStickyRouting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("X-Claude-Code-Session-Id", "claude-session-001")
+
+	hash, promptCacheKey := resolveOpenAIMessagesMetadataSession(
+		c, "content-fallback", "", "gpt-5.6-sol", []byte(`{"metadata":{"user_id":"other"}}`),
+	)
+	require.Equal(t, service.DeriveSessionHashFromSeed("claude-session-001"), hash)
+	require.Empty(t, promptCacheKey)
+}
+
+func TestResolveOpenAIMessagesMetadataSession_PreservesExplicitSessionPriority(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("X-Claude-Code-Session-Id", "claude-session-001")
+
+	hash, promptCacheKey := resolveOpenAIMessagesMetadataSession(
+		c, "explicit-session", "explicit-cache", "gpt-5.6-sol", nil,
+	)
+	require.Equal(t, "explicit-session", hash)
 	require.Equal(t, "explicit-cache", promptCacheKey)
 }
 
