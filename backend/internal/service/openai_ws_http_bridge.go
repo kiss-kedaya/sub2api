@@ -698,7 +698,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 				if account.Platform == PlatformGrok {
 					return nil, newOpenAIUpstreamFailoverError(statusCode, resp.Header, upstreamMessage, errMessage, false)
 				}
-				return nil, s.newOpenAIStreamFailoverError(c, account, true, resp.Header.Get("x-request-id"), upstreamMessage, errMessage, resp.Header)
+				return nil, s.newOpenAIStreamFailoverErrorWithModel(c, account, true, resp.Header.Get("x-request-id"), upstreamMessage, errMessage, mappedModel, resp.Header)
 			}
 			if account.Platform != PlatformGrok && !failureAccountSideEffectsApplied {
 				if eventType == "response.failed" || (!officialOpenAIResponses && shouldFailover && !requestScopedCapacity) {
@@ -738,13 +738,14 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 				isOpenAIWSTerminalEvent(eventType)
 			if stageBeforeSemanticOutput && !commitStagedMessages {
 				if pendingClientMessageBytes+int64(len(clientMessage)) > openAIFirstOutputStageMaxBytes {
-					return nil, s.newOpenAIStreamFailoverError(
+					return nil, s.newOpenAIStreamFailoverErrorWithModel(
 						c,
 						account,
 						true,
 						resp.Header.Get("x-request-id"),
 						nil,
 						"OpenAI WS HTTP bridge first-output staging limit exceeded",
+						mappedModel,
 						resp.Header,
 					)
 				}
