@@ -387,6 +387,59 @@ func (r *usageLogRepository) GetAccountWindowStatsBatch(ctx context.Context, acc
 	return result, nil
 }
 
+// GetAccountWindowCostsBatch returns only the standard (pre-multiplier)
+// window cost used by scheduler admission. Keeping this projection narrow
+// avoids aggregating request/token/user-cost columns on the gateway hot path.
+func (r *usageLogRepository) GetAccountWindowCostsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]float64, error) {
+	result := make(map[int64]float64, len(accountIDs))
+	if len(accountIDs) == 0 {
+		return result, nil
+	}
+	uniqueIDs := make([]int64, 0, len(accountIDs))
+	seen := make(map[int64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if accountID <= 0 {
+			continue
+		}
+		if _, ok := seen[accountID]; ok {
+			continue
+		}
+		seen[accountID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, accountID)
+	}
+	if len(uniqueIDs) == 0 {
+		return result, nil
+	}
+
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT account_id, COALESCE(SUM(total_cost), 0)
+		FROM usage_logs
+		WHERE account_id = ANY($1) AND created_at >= $2
+		GROUP BY account_id
+	`, pq.Array(uniqueIDs), startTime)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var accountID int64
+		var cost float64
+		if err := rows.Scan(&accountID, &cost); err != nil {
+			return nil, err
+		}
+		result[accountID] = cost
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, accountID := range uniqueIDs {
+		if _, ok := result[accountID]; !ok {
+			result[accountID] = 0
+		}
+	}
+	return result, nil
+}
+
 // GetGeminiUsageTotalsBatch 批量聚合 Gemini 账号在窗口内的 Pro/Flash 请求与用量。
 // 模型分类规则与 service.geminiModelClassFromName 一致：model 包含 flash/lite 视为 flash，其余视为 pro。
 func (r *usageLogRepository) GetGeminiUsageTotalsBatch(ctx context.Context, accountIDs []int64, startTime, endTime time.Time) (map[int64]service.GeminiUsageTotals, error) {
