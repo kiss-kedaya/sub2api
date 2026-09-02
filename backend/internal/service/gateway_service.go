@@ -788,6 +788,12 @@ type GatewayService struct {
 	tlsFPProfileService   *TLSFingerprintProfileService
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+
+	// windowCostPrefetchSF coalesces identical usage-log window lookups across
+	// concurrent gateway requests. windowCostQuerySlots adds a process-wide
+	// ceiling for distinct windows so a cold cache cannot fan out into an
+	// unbounded number of PostgreSQL aggregates.
+	windowCostPrefetchSF singleflight.Group
 }
 
 // NewGatewayService creates a new GatewayService

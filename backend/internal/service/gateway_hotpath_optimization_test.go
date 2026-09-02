@@ -47,6 +47,33 @@ type usageLogWindowBatchRepoStub struct {
 	singleCalls  atomic.Int64
 }
 
+type usageLogWindowCostRepoStub struct {
+	UsageLogRepository
+	calls atomic.Int64
+	costs map[int64]float64
+	wait  <-chan struct{}
+}
+
+type windowCostNoopCache struct{ SessionLimitCache }
+
+func (windowCostNoopCache) GetWindowCostBatch(context.Context, []int64) (map[int64]float64, error) {
+	return map[int64]float64{}, nil
+}
+
+func (windowCostNoopCache) SetWindowCostBatch(context.Context, map[int64]float64) error { return nil }
+
+func (s *usageLogWindowCostRepoStub) GetAccountWindowCostsBatch(_ context.Context, accountIDs []int64, _ time.Time) (map[int64]float64, error) {
+	s.calls.Add(1)
+	if s.wait != nil {
+		<-s.wait
+	}
+	out := make(map[int64]float64, len(accountIDs))
+	for _, id := range accountIDs {
+		out[id] = s.costs[id]
+	}
+	return out, nil
+}
+
 func (s *usageLogWindowBatchRepoStub) GetAccountWindowStatsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]*usagestats.AccountStats, error) {
 	s.batchCalls.Add(1)
 	if s.batchErr != nil {
@@ -415,6 +442,42 @@ func TestWithWindowCostPrefetch_BatchReadAndContextReuse(t *testing.T) {
 	require.Equal(t, int64(1), batchSQL)
 	require.Equal(t, int64(0), fallback)
 	require.Equal(t, int64(0), errCount)
+}
+
+func TestWithWindowCostPrefetch_CoalescesConcurrentBatchQueries(t *testing.T) {
+	windowStart := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
+	windowEnd := windowStart.Add(5 * time.Hour)
+	accounts := []Account{
+		{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeOAuth, Extra: map[string]any{"window_cost_limit": 100.0}, SessionWindowStart: &windowStart, SessionWindowEnd: &windowEnd},
+		{ID: 2, Platform: PlatformAnthropic, Type: AccountTypeSetupToken, Extra: map[string]any{"window_cost_limit": 100.0}, SessionWindowStart: &windowStart, SessionWindowEnd: &windowEnd},
+	}
+	release := make(chan struct{})
+	repo := &usageLogWindowCostRepoStub{costs: map[int64]float64{1: 11, 2: 22}, wait: release}
+	svc := &GatewayService{sessionLimitCache: windowCostNoopCache{}, usageLogRepo: repo}
+
+	const callers = 8
+	var wg sync.WaitGroup
+	results := make([]context.Context, callers)
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func(index int) {
+			defer wg.Done()
+			results[index] = svc.withWindowCostPrefetch(context.Background(), accounts)
+		}(i)
+	}
+	deadline := time.Now().Add(time.Second)
+	for repo.calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	close(release)
+	wg.Wait()
+
+	require.Equal(t, int64(1), repo.calls.Load())
+	for _, ctx := range results {
+		cost, ok := windowCostFromPrefetchContext(ctx, 2)
+		require.True(t, ok)
+		require.Equal(t, 22.0, cost)
+	}
 }
 
 func TestWithWindowCostPrefetch_AllHitNoSQL(t *testing.T) {
