@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -165,5 +166,76 @@ func TestSchedulerSnapshotFallbackWaiterCanCancelIndependently(t *testing.T) {
 		require.NoError(t, err)
 	case <-time.After(time.Second):
 		t.Fatal("leader did not complete after the database query was released")
+	}
+}
+
+type schedulerAccountFallbackRepo struct {
+	AccountRepository
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+	calls   atomic.Int32
+}
+
+func (r *schedulerAccountFallbackRepo) GetByID(ctx context.Context, _ int64) (*Account, error) {
+	r.calls.Add(1)
+	r.once.Do(func() { close(r.started) })
+	select {
+	case <-r.release:
+		return &Account{ID: 42, Platform: PlatformOpenAI, Status: StatusActive}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestSchedulerSnapshotAccountFallbackSingleflightCoalescesConcurrentMisses(t *testing.T) {
+	repo := &schedulerAccountFallbackRepo{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	svc := NewSchedulerSnapshotService(&snapshotHydrationCache{}, nil, repo, nil, nil)
+
+	firstResult := make(chan *Account, 1)
+	firstErr := make(chan error, 1)
+	go func() {
+		account, err := svc.GetAccount(context.Background(), 42)
+		firstResult <- account
+		firstErr <- err
+	}()
+
+	select {
+	case <-repo.started:
+	case <-time.After(time.Second):
+		t.Fatal("account fallback query did not start")
+	}
+
+	secondResult := make(chan *Account, 1)
+	secondErr := make(chan error, 1)
+	go func() {
+		account, err := svc.GetAccount(context.Background(), 42)
+		secondResult <- account
+		secondErr <- err
+	}()
+
+	// The second caller must join the existing flight before it is released.
+	time.Sleep(10 * time.Millisecond)
+	close(repo.release)
+
+	firstAccount := <-firstResult
+	if err := <-firstErr; err != nil {
+		t.Fatalf("first GetAccount returned error: %v", err)
+	}
+	secondAccount := <-secondResult
+	if err := <-secondErr; err != nil {
+		t.Fatalf("second GetAccount returned error: %v", err)
+	}
+	if got := repo.calls.Load(); got != 1 {
+		t.Fatalf("expected one shared GetByID call, got %d", got)
+	}
+	if firstAccount == nil || secondAccount == nil {
+		t.Fatal("expected both callers to receive the hydrated account")
+	}
+	if firstAccount == secondAccount {
+		t.Fatal("shared fallback result must be cloned per caller")
 	}
 }
