@@ -7,6 +7,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/stretchr/testify/require"
 )
 
 type decodeCacheProbe struct {
@@ -168,6 +171,42 @@ func TestSchedulerSnapshotFallbackSingleflightPerBucket(t *testing.T) {
 	if sets != 1 {
 		t.Fatalf("expected one cache publication for concurrent bucket misses, got %d", sets)
 	}
+}
+
+type schedulerLateSnapshotCache struct {
+	SchedulerCache
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *schedulerLateSnapshotCache) GetSnapshot(context.Context, SchedulerBucket) ([]*Account, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls++
+	if c.calls == 1 {
+		return nil, false, nil
+	}
+	return []*Account{{ID: 44, Platform: PlatformOpenAI, Status: StatusActive}}, true, nil
+}
+
+func TestSchedulerSnapshotFallbackRechecksCacheBeforeLimiter(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.DbFallbackEnabled = true
+	cfg.Gateway.Scheduling.DbFallbackMaxQPS = 1
+	cache := &schedulerLateSnapshotCache{}
+	svc := NewSchedulerSnapshotService(cache, nil, nil, nil, cfg)
+	// Exhaust the current fallback window. A cache hit observed by the
+	// singleflight recheck must not need a database fallback token.
+	require.True(t, svc.fallbackLimit.Allow())
+
+	accounts, _, err := svc.ListSchedulableAccounts(context.Background(), nil, PlatformOpenAI, false)
+	require.NoError(t, err)
+	require.Len(t, accounts, 1)
+	require.Equal(t, int64(44), accounts[0].ID)
+	cache.mu.Lock()
+	calls := cache.calls
+	cache.mu.Unlock()
+	require.Equal(t, 2, calls, "the shared fallback must recheck the cache before consuming the limiter")
 }
 
 func TestSchedulerSnapshotFallbackSingleflightDoesNotShareMutableAccountMaps(t *testing.T) {
