@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	mathrand "math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,16 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
+
+const (
+	windowCostQueryTimeout = 30 * time.Second
+	windowCostQuerySlotsN  = 4
+)
+
+// Bound concurrent usage-log aggregates even when every request has a
+// different account/window key. This is deliberately process-wide because
+// multiple GatewayService instances share the same PostgreSQL pool.
+var windowCostQuerySlots = make(chan struct{}, windowCostQuerySlotsN)
 
 // SelectAccount 选择账号（粘性会话+优先级）
 func (s *GatewayService) SelectAccount(ctx context.Context, groupID *int64, sessionHash string) (*Account, error) {
@@ -1151,6 +1162,13 @@ type usageLogWindowStatsBatchProvider interface {
 	GetAccountWindowStatsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]*usagestats.AccountStats, error)
 }
 
+// usageLogWindowCostBatchProvider is the narrow projection needed by the
+// scheduler. Implementations can avoid aggregating token/count/cost columns
+// that are not consumed by window-cost admission.
+type usageLogWindowCostBatchProvider interface {
+	GetAccountWindowCostsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]float64, error)
+}
+
 type windowCostBatchCacheWriter interface {
 	SetWindowCostBatch(ctx context.Context, costs map[int64]float64) error
 }
@@ -1162,6 +1180,104 @@ var windowCostPrefetchContextKey = windowCostPrefetchContextKeyType{}
 type windowCostPrefetchState struct {
 	costs    map[int64]float64
 	failOpen map[int64]struct{}
+}
+
+func windowCostBatchKey(accountIDs []int64, startTime time.Time) string {
+	// Callers already provide stable account order, but sort a copy so the
+	// singleflight key remains identical when a different caller builds the
+	// same candidate set in another order.
+	ids := append([]int64(nil), accountIDs...)
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	var b strings.Builder
+	b.WriteString(startTime.UTC().Format(time.RFC3339Nano))
+	for _, id := range ids {
+		b.WriteByte(':')
+		b.WriteString(strconv.FormatInt(id, 10))
+	}
+	return b.String()
+}
+
+func acquireWindowCostQuerySlot(ctx context.Context) error {
+	select {
+	case windowCostQuerySlots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func releaseWindowCostQuerySlot() { <-windowCostQuerySlots }
+
+func (s *GatewayService) loadWindowCostBatchCoalesced(
+	ctx context.Context,
+	accountIDs []int64,
+	startTime time.Time,
+	reader usageLogWindowCostBatchProvider,
+) (map[int64]float64, error) {
+	if reader == nil || len(accountIDs) == 0 {
+		return nil, fmt.Errorf("window cost batch reader unavailable")
+	}
+	key := windowCostBatchKey(accountIDs, startTime)
+	resultCh := s.windowCostPrefetchSF.DoChan(key, func() (any, error) {
+		base := context.Background()
+		if ctx != nil {
+			base = context.WithoutCancel(ctx)
+		}
+		queryCtx, cancel := context.WithTimeout(base, windowCostQueryTimeout)
+		defer cancel()
+		if err := acquireWindowCostQuerySlot(queryCtx); err != nil {
+			return nil, err
+		}
+		defer releaseWindowCostQuerySlot()
+		return reader.GetAccountWindowCostsBatch(queryCtx, accountIDs, startTime)
+	})
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		costs, ok := result.Val.(map[int64]float64)
+		if !ok {
+			return nil, fmt.Errorf("invalid window cost batch result")
+		}
+		return costs, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *GatewayService) loadWindowCostStatCoalesced(
+	ctx context.Context,
+	accountID int64,
+	startTime time.Time,
+) (*usagestats.AccountStats, error) {
+	key := fmt.Sprintf("single:%d:%s", accountID, startTime.UTC().Format(time.RFC3339Nano))
+	resultCh := s.windowCostPrefetchSF.DoChan(key, func() (any, error) {
+		base := context.Background()
+		if ctx != nil {
+			base = context.WithoutCancel(ctx)
+		}
+		queryCtx, cancel := context.WithTimeout(base, windowCostQueryTimeout)
+		defer cancel()
+		if err := acquireWindowCostQuerySlot(queryCtx); err != nil {
+			return nil, err
+		}
+		defer releaseWindowCostQuerySlot()
+		return s.usageLogRepo.GetAccountWindowStats(queryCtx, accountID, startTime)
+	})
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		stats, ok := result.Val.(*usagestats.AccountStats)
+		if !ok {
+			return nil, fmt.Errorf("invalid window cost stat result")
+		}
+		return stats, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func windowCostFromPrefetchContext(ctx context.Context, accountID int64) (float64, bool) {
@@ -1276,6 +1392,7 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 		return withWindowCostPrefetchState(ctx, costs, failOpen)
 	}
 
+	costBatchReader, hasCostBatch := s.usageLogRepo.(usageLogWindowCostBatchProvider)
 	batchReader, hasBatch := s.usageLogRepo.(usageLogWindowStatsBatchProvider)
 	const maxWindowCostFallbackAccounts = 8
 	remainingFallbackBudget := maxWindowCostFallbackAccounts
@@ -1295,10 +1412,57 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 		startTime := startTimes[startKey]
 
-		if hasBatch {
+		if hasCostBatch {
 			windowCostPrefetchBatchSQLTotal.Add(1)
 			queryStart := time.Now()
-			statsByAccount, err := batchReader.GetAccountWindowStatsBatch(ctx, ids, startTime)
+			costsByAccount, err := s.loadWindowCostBatchCoalesced(ctx, ids, startTime, costBatchReader)
+			if err == nil {
+				slog.Debug("window_cost_batch_query_ok",
+					"accounts", len(ids),
+					"window_start", startTime.Format(time.RFC3339),
+					"duration_ms", time.Since(queryStart).Milliseconds(),
+					"projection", "standard_cost")
+				for _, accountID := range ids {
+					cost := costsByAccount[accountID]
+					costs[accountID] = cost
+					cacheWrites[accountID] = cost
+				}
+				continue
+			}
+			windowCostPrefetchErrorTotal.Add(1)
+			logger.LegacyPrintf("service.gateway", "window_cost batch db query failed: start=%s err=%v", startTime.Format(time.RFC3339), err)
+		} else if hasBatch {
+			windowCostPrefetchBatchSQLTotal.Add(1)
+			queryStart := time.Now()
+			statsByAccount, err := func() (map[int64]*usagestats.AccountStats, error) {
+				key := windowCostBatchKey(ids, startTime)
+				resultCh := s.windowCostPrefetchSF.DoChan("stats:"+key, func() (any, error) {
+					base := context.Background()
+					if ctx != nil {
+						base = context.WithoutCancel(ctx)
+					}
+					queryCtx, cancel := context.WithTimeout(base, windowCostQueryTimeout)
+					defer cancel()
+					if err := acquireWindowCostQuerySlot(queryCtx); err != nil {
+						return nil, err
+					}
+					defer releaseWindowCostQuerySlot()
+					return batchReader.GetAccountWindowStatsBatch(queryCtx, ids, startTime)
+				})
+				select {
+				case result := <-resultCh:
+					if result.Err != nil {
+						return nil, result.Err
+					}
+					stats, ok := result.Val.(map[int64]*usagestats.AccountStats)
+					if !ok {
+						return nil, fmt.Errorf("invalid window stats batch result")
+					}
+					return stats, nil
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}()
 			if err == nil {
 				slog.Debug("window_cost_batch_query_ok",
 					"accounts", len(ids),
@@ -1336,7 +1500,7 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 				failOpen[accountID] = struct{}{}
 				continue
 			}
-			stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, accountID, startTime)
+			stats, err := s.loadWindowCostStatCoalesced(ctx, accountID, startTime)
 			if err != nil {
 				windowCostPrefetchErrorTotal.Add(1)
 				failOpen[accountID] = struct{}{}
