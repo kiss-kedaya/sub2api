@@ -1103,6 +1103,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 
 	return &ForwardResult{
 		RequestID:                     requestID,
+		UpstreamHeaders:               resp.Header,
 		Usage:                         *usage,
 		Model:                         originalModel,
 		UpstreamModel:                 mappedModel,
@@ -1451,13 +1452,14 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			estimated := estimateGeminiCountTokens(body)
 			c.JSON(http.StatusOK, map[string]any{"totalTokens": estimated})
 			return &ForwardResult{
-				RequestID:     requestID,
-				Usage:         ClaudeUsage{},
-				Model:         originalModel,
-				UpstreamModel: mappedModel,
-				Stream:        false,
-				Duration:      time.Since(startTime),
-				FirstTokenMs:  nil,
+				RequestID:       requestID,
+				UpstreamHeaders: resp.Header,
+				Usage:           ClaudeUsage{},
+				Model:           originalModel,
+				UpstreamModel:   mappedModel,
+				Stream:          false,
+				Duration:        time.Since(startTime),
+				FirstTokenMs:    nil,
 			}, nil
 		}
 
@@ -1604,6 +1606,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 	return &ForwardResult{
 		RequestID:                     requestID,
+		UpstreamHeaders:               resp.Header,
 		Usage:                         *usage,
 		Model:                         originalModel,
 		UpstreamModel:                 mappedModel,
