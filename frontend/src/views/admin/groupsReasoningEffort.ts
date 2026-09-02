@@ -19,6 +19,9 @@ const reasoningEffortMatchTypes: readonly ReasoningEffortMatchType[] = [
   "suffix",
 ];
 
+export const reasoningEffortOverLimitDowngrade = "downgrade";
+export const reasoningEffortOverLimitDeny = "deny";
+
 const reasoningEffortValuesForPlatform = (
   platform: GroupPlatform,
 ): readonly string[] =>
@@ -58,6 +61,14 @@ export function normalizeReasoningEffortMatchType(
   return reasoningEffortMatchTypes.some((allowed) => allowed === normalized)
     ? (normalized as ReasoningEffortMatchType)
     : "";
+}
+
+export function normalizeReasoningEffortOverLimit(
+  value: string | null | undefined,
+): string {
+  return value?.trim().toLowerCase() === reasoningEffortOverLimitDeny
+    ? reasoningEffortOverLimitDeny
+    : reasoningEffortOverLimitDowngrade;
 }
 
 export interface ReasoningEffortMappingPair {

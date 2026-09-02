@@ -17,6 +17,22 @@
       <p class="input-hint">{{ t("admin.groups.form.maxReasoningEffortHint") }}</p>
     </div>
 
+    <div>
+      <label :for="`${idPrefix}-over-limit`" class="input-label">
+        {{ t("admin.groups.form.maxReasoningEffortOverLimit") }}
+      </label>
+      <Select
+        :id="`${idPrefix}-over-limit`"
+        :model-value="overLimit"
+        :options="overLimitOptions"
+        :aria-label="t('admin.groups.form.maxReasoningEffortOverLimit')"
+        :searchable="false"
+        :disabled="!maxEffort"
+        @update:model-value="updateOverLimit"
+      />
+      <p class="input-hint">{{ t("admin.groups.form.maxReasoningEffortOverLimitHint") }}</p>
+    </div>
+
     <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
       <div class="mb-3 flex items-center justify-between gap-3">
         <div>
@@ -201,6 +217,8 @@ import {
   createReasoningEffortMappingRow,
   normalizeReasoningEffortMatchType,
   reasoningEffortOptionsForPlatform,
+  reasoningEffortOverLimitDeny,
+  reasoningEffortOverLimitDowngrade,
   validateReasoningEffortMappings,
   type ReasoningEffortMappingErrorCode,
   type ReasoningEffortMappingRow,
@@ -210,11 +228,13 @@ const props = defineProps<{
   idPrefix: string;
   platform: GroupPlatform;
   maxEffort: string;
+  overLimit: string;
   mappings: ReasoningEffortMappingRow[];
 }>();
 
 const emit = defineEmits<{
   (event: "update:maxEffort", value: string): void;
+  (event: "update:overLimit", value: string): void;
   (event: "update:mappings", value: ReasoningEffortMappingRow[]): void;
 }>();
 
@@ -237,6 +257,16 @@ const matchTypeOptions = computed(() => [
     label: t("admin.groups.form.reasoningEffortMatchSuffix"),
   },
 ]);
+const overLimitOptions = computed(() => [
+  {
+    value: reasoningEffortOverLimitDowngrade,
+    label: t("admin.groups.form.maxReasoningEffortOverLimitDowngrade"),
+  },
+  {
+    value: reasoningEffortOverLimitDeny,
+    label: t("admin.groups.form.maxReasoningEffortOverLimitDeny"),
+  },
+]);
 const validationErrors = computed(() =>
   validateReasoningEffortMappings(props.mappings, props.platform),
 );
@@ -249,6 +279,13 @@ const pairErrors = (id: string) => validationErrors.value[id] ?? {};
 
 const updateMaxEffort = (value: string | number | boolean | null) => {
   emit("update:maxEffort", asString(value));
+};
+
+const updateOverLimit = (value: string | number | boolean | null) => {
+  emit(
+    "update:overLimit",
+    asString(value) || reasoningEffortOverLimitDowngrade,
+  );
 };
 
 const updateGroup = (

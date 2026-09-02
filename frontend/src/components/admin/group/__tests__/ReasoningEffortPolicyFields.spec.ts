@@ -25,6 +25,7 @@ describe("ReasoningEffortPolicyFields", () => {
         idPrefix: "create-group-reasoning",
         platform: "openai",
         maxEffort: "",
+        overLimit: "downgrade",
         mappings: [mapping],
       },
       global: {
@@ -60,6 +61,7 @@ describe("ReasoningEffortPolicyFields", () => {
         idPrefix: "edit-group-reasoning",
         platform: "openai",
         maxEffort: "",
+        overLimit: "downgrade",
         mappings: [],
       },
       global: {
