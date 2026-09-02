@@ -254,6 +254,32 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		return
 	}
 
+	// Reserve the user's live balance before selecting an account or forwarding
+	// to Gemini. This native entrypoint shares the same request-local hold guard
+	// as OpenAI/Anthropic compatibility routes; the usage worker later transfers
+	// that guard and finalizes it against provider-reported usage. Keeping the
+	// reservation here (after eligibility and before account selection) closes
+	// the race where concurrent low-balance Gemini requests all pass the legacy
+	// snapshot check and incur upstream cost before asynchronous settlement.
+	balanceGuard, err := preauthorizeTextGatewayRequest(
+		c.Request.Context(), h.balancePreauthorizer, h.gatewayService,
+		apiKey, subscription, body,
+		service.BalancePreauthorizationBillingModel(reqModel, channelMapping),
+		pricingAt, "",
+	)
+	if err != nil {
+		status, _, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		googleError(c, status, message)
+		return
+	}
+	if balanceGuard != nil {
+		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
+
 	// 3) select account (sticky session based on request body)
 	// 优先使用 Gemini CLI 的会话标识（privileged-user-id + tmp 目录哈希）
 	sessionHash := extractGeminiCLISessionHash(c, body)
