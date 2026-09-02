@@ -472,7 +472,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 
 	finalResponse, usage, acc, err := s.readOpenAICompatBufferedTerminal(resp, c, "openai chat_completions buffered", requestID)
 	if err != nil {
-		return nil, s.newOpenAICompatBufferedReadFailoverError(c, account, resp, requestID, err)
+		return nil, s.newOpenAICompatBufferedReadFailoverError(c, account, resp, requestID, upstreamModel, err)
 	}
 
 	if finalResponse == nil {
@@ -578,6 +578,7 @@ func (s *OpenAIGatewayService) newOpenAICompatBufferedReadFailoverError(
 	account *Account,
 	resp *http.Response,
 	requestID string,
+	canonicalModel string,
 	err error,
 ) error {
 	var readErr *openAICompatBufferedReadError
@@ -608,7 +609,7 @@ func (s *OpenAIGatewayService) newOpenAICompatBufferedReadFailoverError(
 	if resp != nil {
 		responseHeaders = resp.Header
 	}
-	failoverErr := s.newOpenAIStreamFailoverError(c, account, false, requestID, payload, message, responseHeaders)
+	failoverErr := s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, payload, message, canonicalModel, responseHeaders)
 	// 保留稳定错误码，确保重试耗尽后客户端和错误透传规则仍能识别传输故障。
 	failoverErr.ResponseBody = payload
 	return failoverErr
