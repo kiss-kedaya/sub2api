@@ -660,6 +660,23 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		c.Request = c.Request.WithContext(ctx)
 	}
 
+	// 会话槽失败释放：failover 链上每个选中的 Anthropic OAuth 账号都注册过同一会话
+	// （checkAndRegisterSession）。若请求最终失败（转发失败/客户端中断/换号耗尽），
+	// 须立即释放本次会话注册——上游从未真正服务该会话，继续占槽会让 max_sessions
+	// 受限的账号被失败请求的 session hash 卡满整个空闲窗口，后续新会话全部被拒。
+	// 成功请求保持既有空闲超时语义（会话按最后活动时间过期）。
+	sessionSlotAccounts := make(map[int64]*service.Account)
+	upstreamServedSession := false
+	defer func() {
+		if upstreamServedSession {
+			return
+		}
+		// 客户端可能已断开、请求 ctx 已取消，用独立 ctx 执行释放
+		for _, acc := range sessionSlotAccounts {
+			h.gatewayService.ReleaseAccountSession(context.Background(), acc, sessionKey)
+		}
+	}()
+
 	for {
 		fs := NewFillFailoverState(h.maxAccountSwitches, hasBoundSession)
 		retryWithFallback := false
@@ -816,10 +833,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", profitVetoExhaustedMessage, streamStarted)
 					return
 				}
+				// 尝试被否决（从未转发），立即释放该账号的会话注册
+				h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionKey)
+				delete(sessionSlotAccounts, account.ID)
 				continue
 			}
 			account = latest
 			selection.Account = latest
+			// 记录本请求注册过会话槽的账号（profit 准入后账号已定）
+			sessionSlotAccounts[account.ID] = account
 			// 等待路径保持既有 eager 绑定（无门时 helper 直接绑定）；调度器已
 			// 抢槽的直达路径无门时由选号内部绑定，这里只在门下补准入后绑定。
 			if selection.ProfitGateActive() || !selection.Acquired {
@@ -1048,6 +1070,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						currentSubscription = nil
 						fallbackUsed = true
 						retryWithFallback = true
+						// 原分组账号已确定性失败（prompt too long），先释放其会话注册再走兜底分组
+						for _, acc := range sessionSlotAccounts {
+							h.gatewayService.ReleaseAccountSession(context.Background(), acc, sessionKey)
+						}
+						sessionSlotAccounts = make(map[int64]*service.Account)
 						break
 					}
 					_ = h.antigravityGatewayService.WriteMappedClaudeError(c, account, promptTooLongErr.StatusCode, promptTooLongErr.RequestID, promptTooLongErr.Body)
@@ -1064,6 +1091,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
 					switch action {
 					case FailoverContinue:
+						// 本次尝试已确定性失败，立即释放该账号的会话注册
+						h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionKey)
+						delete(sessionSlotAccounts, account.ID)
 						continue
 					case FailoverExhausted:
 						submitForwardUsage(result)
@@ -1103,6 +1133,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				// 不会走到这里重复计费。
 				if result != nil {
 					submitForwardUsage(result)
+					// 上游已接受并计量本次会话（流中断），会话槽保持既有语义
+					upstreamServedSession = true
 				}
 				return
 			}
@@ -1128,6 +1160,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 
 			submitForwardUsage(result)
+			// 转发成功，会话槽保持既有空闲超时语义
+			upstreamServedSession = true
 			return
 		}
 		if !retryWithFallback {
