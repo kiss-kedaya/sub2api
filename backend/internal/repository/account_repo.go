@@ -15,8 +15,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -29,6 +31,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
+	"golang.org/x/sync/singleflight"
 
 	entsql "entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqljson"
@@ -54,6 +57,21 @@ type accountRepository struct {
 	// only for 404-vs-503 model-miss diagnosis. It is short-lived and does not
 	// participate in normal scheduling or billing decisions.
 	modelAvailabilityCache *modelAvailabilityCandidateCache
+
+	// freshnessCache keeps the small durable scheduler projection out of the
+	// per-request PostgreSQL hot path. Entries are intentionally short-lived;
+	// account mutations still invalidate the scheduler snapshot immediately.
+	freshnessMu    sync.Mutex
+	freshnessCache map[int64]schedulerFreshnessCacheEntry
+	freshnessSF    singleflight.Group
+}
+
+const schedulerFreshnessCacheTTL = time.Second
+
+type schedulerFreshnessCacheEntry struct {
+	value     service.SchedulerFreshness
+	found     bool
+	expiresAt time.Time
 }
 
 var schedulerNeutralExtraKeyPrefixes = []string{
@@ -130,6 +148,7 @@ func newAccountRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, schedul
 		sql:                    sqlq,
 		schedulerCache:         schedulerCache,
 		modelAvailabilityCache: newModelAvailabilityCandidateCache(),
+		freshnessCache:         make(map[int64]schedulerFreshnessCacheEntry),
 	}
 }
 
@@ -296,6 +315,17 @@ func (r *accountRepository) GetByID(ctx context.Context, id int64) (*service.Acc
 // model mappings and ranking data; the request continues to use those from the
 // snapshot after this projection has confirmed the account remains eligible.
 func (r *accountRepository) ReadSchedulerFreshness(ctx context.Context, ids []int64) (map[int64]service.SchedulerFreshness, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if r == nil || r.sql == nil {
+		return nil, errors.New("account freshness database is unavailable")
+	}
+	r.freshnessMu.Lock()
+	if r.freshnessCache == nil {
+		r.freshnessCache = make(map[int64]schedulerFreshnessCacheEntry)
+	}
+	r.freshnessMu.Unlock()
 	uniqueIDs := make([]int64, 0, len(ids))
 	seen := make(map[int64]struct{}, len(ids))
 	for _, id := range ids {
@@ -308,6 +338,75 @@ func (r *accountRepository) ReadSchedulerFreshness(ctx context.Context, ids []in
 		seen[id] = struct{}{}
 		uniqueIDs = append(uniqueIDs, id)
 	}
+	if len(uniqueIDs) == 0 {
+		return map[int64]service.SchedulerFreshness{}, nil
+	}
+
+	result := make(map[int64]service.SchedulerFreshness, len(uniqueIDs))
+	missing := make([]int64, 0, len(uniqueIDs))
+	now := time.Now()
+	r.freshnessMu.Lock()
+	for _, id := range uniqueIDs {
+		entry, ok := r.freshnessCache[id]
+		if ok && now.Before(entry.expiresAt) {
+			if entry.found {
+				result[id] = entry.value
+			}
+			continue
+		}
+		delete(r.freshnessCache, id)
+		missing = append(missing, id)
+	}
+	r.freshnessMu.Unlock()
+	if len(missing) == 0 {
+		return result, nil
+	}
+	sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
+
+	keyParts := make([]string, len(missing))
+	for i, id := range missing {
+		keyParts[i] = strconv.FormatInt(id, 10)
+	}
+	flightKey := strings.Join(keyParts, ",")
+	resultCh := r.freshnessSF.DoChan(flightKey, func() (any, error) {
+		queryCtx := context.Background()
+		if ctx != nil {
+			queryCtx = context.WithoutCancel(ctx)
+		}
+		queryCtx, cancel := context.WithTimeout(queryCtx, 2*time.Second)
+		defer cancel()
+		loaded, err := r.readSchedulerFreshnessDB(queryCtx, missing)
+		if err != nil {
+			return nil, err
+		}
+		expiresAt := time.Now().Add(schedulerFreshnessCacheTTL)
+		r.freshnessMu.Lock()
+		for _, id := range missing {
+			value, found := loaded[id]
+			r.freshnessCache[id] = schedulerFreshnessCacheEntry{value: value, found: found, expiresAt: expiresAt}
+		}
+		r.freshnessMu.Unlock()
+		return loaded, nil
+	})
+	select {
+	case flight := <-resultCh:
+		if flight.Err != nil {
+			return nil, flight.Err
+		}
+		loaded, ok := flight.Val.(map[int64]service.SchedulerFreshness)
+		if !ok {
+			return nil, errors.New("invalid scheduler freshness result")
+		}
+		for id, value := range loaded {
+			result[id] = value
+		}
+		return result, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (r *accountRepository) readSchedulerFreshnessDB(ctx context.Context, uniqueIDs []int64) (map[int64]service.SchedulerFreshness, error) {
 	if len(uniqueIDs) == 0 {
 		return map[int64]service.SchedulerFreshness{}, nil
 	}
