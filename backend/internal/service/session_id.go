@@ -20,6 +20,17 @@ var clientSessionIDHeaders = append(
 	claudeCodeSessionHeader,
 )
 
+// ClaudeCodeSessionIDFromHeader returns the stable Claude Code conversation
+// identifier used by the OpenAI-compatible Messages routing path.  It is
+// intentionally separate from ExtractClientSessionID so persistence and
+// sticky-routing semantics cannot accidentally become coupled.
+func ClaudeCodeSessionIDFromHeader(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	return sanitizeSessionID(c.GetHeader(claudeCodeSessionHeader))
+}
+
 // ExtractClientSessionID resolves the explicit client-provided session identifier from
 // request headers for usage-log correlation and returns it sanitized. It is
 // protocol-agnostic and shared by every gateway handler so all supported protocols
