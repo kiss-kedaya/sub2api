@@ -590,6 +590,9 @@ func (s *ConcurrencyService) GetAccountsLoadBatchFresh(ctx context.Context, acco
 }
 
 func (s *ConcurrencyService) getAccountsLoadBatch(ctx context.Context, accounts []AccountWithConcurrency, allowCache bool) (map[int64]*AccountLoadInfo, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(accounts) == 0 {
 		return map[int64]*AccountLoadInfo{}, nil
 	}
@@ -607,7 +610,7 @@ func (s *ConcurrencyService) getAccountsLoadBatch(ctx context.Context, accounts 
 		return cached, nil
 	}
 
-	value, err, _ := s.accountLoadGroup.Do(key, func() (any, error) {
+	resultCh := s.accountLoadGroup.DoChan(key, func() (any, error) {
 		now := time.Now()
 		if cached, ok := s.getCachedAccountLoadBatch(key, now); ok {
 			return cached, nil
@@ -620,8 +623,15 @@ func (s *ConcurrencyService) getAccountsLoadBatch(ctx context.Context, accounts 
 		s.storeCachedAccountLoadBatch(key, cached, now.Add(ttl))
 		return cached, nil
 	})
-	if err != nil {
-		return nil, err
+	var value any
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		value = result.Val
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 	loadMap, _ := value.(map[int64]*AccountLoadInfo)
 	if loadMap == nil {
