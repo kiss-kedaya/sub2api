@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -687,9 +688,22 @@ func (s *ConcurrencyService) storeCachedAccountLoadBatch(key string, loadMap map
 }
 
 func accountLoadBatchCacheKey(accounts []AccountWithConcurrency) string {
+	// Load results are keyed by account ID and max concurrency, not by the
+	// scheduler's candidate order.  Canonicalizing a copy lets sticky/fallback
+	// paths share the 200ms cache entry when they present the same set in a
+	// different order, without mutating the caller's scheduling slice.
+	canonical := make([]AccountWithConcurrency, len(accounts))
+	copy(canonical, accounts)
+	sort.Slice(canonical, func(i, j int) bool {
+		if canonical[i].ID != canonical[j].ID {
+			return canonical[i].ID < canonical[j].ID
+		}
+		return canonical[i].MaxConcurrency < canonical[j].MaxConcurrency
+	})
+
 	hash := sha256.New()
 	var buf [16]byte
-	for _, account := range accounts {
+	for _, account := range canonical {
 		binary.LittleEndian.PutUint64(buf[:8], uint64(account.ID))
 		binary.LittleEndian.PutUint64(buf[8:], uint64(int64(account.MaxConcurrency)))
 		_, _ = hash.Write(buf[:])
