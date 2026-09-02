@@ -2191,7 +2191,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		// 空等期间只能靠 keepalive 维持，白白拉长尾延迟。usage 已在 terminal 事件中解析。
 		// Codex bare error 序列（error 后可能跟 response.failed 或翻盘的 completed）
 		// 必须继续读取，不适用提前结束。
-		if (sawDone || sawTerminalEvent) && line == "" && !(codexFailureTerminal && sawBareError) {
+		if (sawDone || sawTerminalEvent) && line == "" && (!codexFailureTerminal || !sawBareError) {
 			break
 		}
 	}
