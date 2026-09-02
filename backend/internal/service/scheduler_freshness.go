@@ -105,6 +105,18 @@ func withSchedulerFreshness(ctx context.Context, accountRepo AccountRepository, 
 		existing.addIDs(ids...)
 		return ctx
 	}
+	return newSchedulerFreshnessContext(ctx, accountRepo, snapshot, ids...)
+}
+
+// refreshSchedulerFreshness starts a new projection scope while preserving
+// the other request context values.  Long-lived WebSocket connections use it
+// at the beginning of each turn so a failover within that turn is coalesced,
+// without carrying durable account state across the whole connection.
+func refreshSchedulerFreshness(ctx context.Context, accountRepo AccountRepository, snapshot *SchedulerSnapshotService, ids ...int64) context.Context {
+	return newSchedulerFreshnessContext(ctx, accountRepo, snapshot, ids...)
+}
+
+func newSchedulerFreshnessContext(ctx context.Context, accountRepo AccountRepository, snapshot *SchedulerSnapshotService, ids ...int64) context.Context {
 	state := &schedulerFreshnessRequest{
 		accountRepo: accountRepo,
 		snapshot:    snapshot,
