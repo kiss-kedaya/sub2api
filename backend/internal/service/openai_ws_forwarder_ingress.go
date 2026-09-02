@@ -133,8 +133,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
 				return fmt.Errorf("websocket ingress requires ws_v2 transport, got=%s", wsDecision.Transport)
 			}
-			// 透传 relay 通过 TurnStarted 记录每个 turn 的开始时刻，但不触发
-			// BeforeTurn；因此仍只有建连时的利润准入门，没有 turn 级复核。
+			// 透传首帧沿用握手层准入；后续 response.create 帧在 relay
+			// filter 中触发 BeforeTurn，复用每 turn 的 freshness/准入门。
 			// handler 计费在 turn 定价未冻结时回退到对应的 turn 开始时刻。
 			return s.proxyResponsesWebSocketV2Passthrough(
 				ctx,
@@ -1018,7 +1018,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 						}
 					}
 				}
-				s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw)
+				s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw, mappedModel)
 				fallbackReason, _ := classifyOpenAIWSErrorEventFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
 				errCode, errType, errMessage := summarizeOpenAIWSErrorEventFieldsFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
 				recoverablePrevNotFound := fallbackReason == openAIWSIngressStagePreviousResponseNotFound &&

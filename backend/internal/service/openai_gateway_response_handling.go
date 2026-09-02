@@ -279,7 +279,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				message = "OpenAI first-output staging limit exceeded"
 			}
 			logger.LegacyPrintf("service.openai_gateway", "%s: account=%d model=%s error=%v", message, account.ID, originalModel, err)
-			failoverErr := s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, nil, message)
+			failoverErr := s.newOpenAIStreamFailoverErrorWithModel(c, account, false, upstreamRequestID, nil, message, mappedModel)
 			failoverErr.SafeToFailoverAfterWrite = true
 			streamEarlyErr = failoverErr
 			_ = resp.Body.Close()
@@ -384,7 +384,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			completeGuardedEvent(true)
 		}
 		if codexFailureTerminal && sawBareError && !sawResponseFailed && bareErrorAccountSideEffectsPending {
-			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, bareErrorPayload, failedMessage, resp.Header)
+			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, bareErrorPayload, failedMessage, resp.Header, mappedModel)
 			bareErrorAccountSideEffectsPending = false
 		}
 		if codexFailureTerminal && sawBareError && !sawResponseFailed && !clientDisconnected {
@@ -399,13 +399,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			s.clearOpenAIProxyStreamDisconnect(account)
 		}
 		if !sawTerminalEvent && !openAIStreamClientOutputStarted(c, clientOutputStarted) && !eventShouldFlush {
-			return resultWithUsage(), s.newOpenAIStreamFailoverError(
+			return resultWithUsage(), s.newOpenAIStreamFailoverErrorWithModel(
 				c,
 				account,
 				false,
 				upstreamRequestID,
 				nil,
 				"OpenAI stream ended before a terminal event",
+				mappedModel,
 			)
 		}
 		flushPending("Client disconnected during final flush, returning collected usage")
@@ -427,18 +428,20 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		if errors.Is(scanErr, errOpenAIFirstOutputScannerLimit) && !firstOutputProgressObserved {
 			logger.LegacyPrintf("service.openai_gateway", "SSE token exceeded guarded first-output limit: account=%d limit=%d error=%v", account.ID, openAIFirstOutputStageMaxBytes+openAIFirstOutputScannerFramingAllowance, scanErr)
-			failoverErr := s.newOpenAIStreamFailoverError(
+			failoverErr := s.newOpenAIStreamFailoverErrorWithModel(
 				c, account, false, upstreamRequestID, nil,
 				"OpenAI SSE line exceeds guarded first-output limit",
+				mappedModel,
 			)
 			failoverErr.SafeToFailoverAfterWrite = true
 			return resultWithUsage(), failoverErr, true
 		}
 		if errors.Is(scanErr, bufio.ErrTooLong) && stageFirstOutput && !firstOutputProgressObserved {
 			logger.LegacyPrintf("service.openai_gateway", "SSE line too long before first output: account=%d max_size=%d error=%v", account.ID, maxLineSize, scanErr)
-			failoverErr := s.newOpenAIStreamFailoverError(
+			failoverErr := s.newOpenAIStreamFailoverErrorWithModel(
 				c, account, false, upstreamRequestID, nil,
 				"OpenAI SSE line exceeds guarded first-output limit",
+				mappedModel,
 			)
 			failoverErr.SafeToFailoverAfterWrite = true
 			return resultWithUsage(), failoverErr, true
@@ -469,7 +472,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if errText := strings.TrimSpace(scanErr.Error()); errText != "" {
 				msg += ": " + errText
 			}
-			return resultWithUsage(), s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, nil, msg), true
+			return resultWithUsage(), s.newOpenAIStreamFailoverErrorWithModel(c, account, false, upstreamRequestID, nil, msg, mappedModel), true
 		}
 		// 客户端已断开时，上游出错仅影响体验，不影响计费；返回已收集 usage
 		if clientDisconnected {
@@ -573,7 +576,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 						// Defer account health updates so the pair is applied once.
 						bareErrorAccountSideEffectsPending = true
 					} else {
-						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header)
+						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header, mappedModel)
 						bareErrorAccountSideEffectsPending = false
 					}
 				}
@@ -588,7 +591,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					}
 					if shouldFailover {
 						sawFailedEvent = true
-						streamEarlyErr = s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, dataBytes, failedMessage, resp.Header)
+						streamEarlyErr = s.newOpenAIStreamFailoverErrorWithModel(c, account, false, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
 						return
 					}
 					if !cyberHit && !sawBareError {
@@ -1731,6 +1734,9 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		}
 		if compactErr := newOpenAICompactFallbackSignal(c, terminalPayload, msg); compactErr != nil {
 			return nil, compactErr
+		}
+		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, false, terminalType, terminalPayload, msg, mappedModel); failoverErr != nil {
+			return nil, failoverErr
 		}
 		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 	}

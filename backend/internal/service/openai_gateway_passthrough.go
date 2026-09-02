@@ -1633,6 +1633,7 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 	payload []byte,
 	message string,
 	headers http.Header,
+	canonicalModel ...string,
 ) (int, bool) {
 	statusCode := openAIStreamFailureStatus(payload, message)
 	switch statusCode {
@@ -1653,7 +1654,7 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 			// carried by a stream terminal event.
 			accountHeaders = nil
 		}
-		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload)
+		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload, firstNonEmpty(canonicalModel...))
 	default:
 		return statusCode, false
 	}
@@ -1730,6 +1731,19 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 	message string,
 	responseHeaders ...http.Header,
 ) *UpstreamFailoverError {
+	return s.newOpenAIStreamFailoverErrorWithModel(c, account, passthrough, upstreamRequestID, payload, message, "", responseHeaders...)
+}
+
+func (s *OpenAIGatewayService) newOpenAIStreamFailoverErrorWithModel(
+	c *gin.Context,
+	account *Account,
+	passthrough bool,
+	upstreamRequestID string,
+	payload []byte,
+	message string,
+	canonicalModel string,
+	responseHeaders ...http.Header,
+) *UpstreamFailoverError {
 	message = sanitizeUpstreamErrorMessage(strings.TrimSpace(message))
 	if message == "" {
 		message = "OpenAI stream disconnected before completion"
@@ -1738,7 +1752,7 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 	if len(responseHeaders) > 0 && responseHeaders[0] != nil {
 		headers = responseHeaders[0].Clone()
 	}
-	statusCode, shouldDisable := s.handleOpenAIStreamTerminalAccountSideEffects(c, account, payload, message, headers)
+	statusCode, shouldDisable := s.handleOpenAIStreamTerminalAccountSideEffects(c, account, payload, message, headers, canonicalModel)
 	// 流内 failed 事件承载于 HTTP 200；使用事件的语义状态更新账号健康，
 	// 再由 failover 引擎按 StatusCode/RetryableOnSameAccount 决定恢复策略。
 	message = s.recordOpenAIStreamUpstreamError(c, account, passthrough, upstreamRequestID, "failover", payload, message)
@@ -1768,6 +1782,39 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 	// only typed access/capacity failures need the original payload downstream.
 	failoverErr.ResponseBody = body
 	return failoverErr
+}
+
+// nonStreamingTerminalFailureFailover keeps stream=false compatible with the
+// streaming path when an upstream returns HTTP 200 SSE containing a terminal
+// error. The body is fully buffered and no response bytes have been committed,
+// so the handler can safely retry another account.
+func (s *OpenAIGatewayService) nonStreamingTerminalFailureFailover(
+	c *gin.Context,
+	resp *http.Response,
+	account *Account,
+	passthrough bool,
+	terminalType string,
+	payload []byte,
+	message string,
+	canonicalModel ...string,
+) *UpstreamFailoverError {
+	if account == nil || IsResponseCommitted(c) {
+		return nil
+	}
+	shouldFailover := openAIStreamFailedEventShouldFailover(payload, message)
+	if terminalType == "error" {
+		shouldFailover = openAIStreamErrorEventShouldFailover(payload, message)
+	}
+	if !shouldFailover {
+		return nil
+	}
+	var headers http.Header
+	upstreamRequestID := ""
+	if resp != nil {
+		headers = resp.Header
+		upstreamRequestID = strings.TrimSpace(resp.Header.Get("x-request-id"))
+	}
+	return s.newOpenAIStreamFailoverErrorWithModel(c, account, passthrough, upstreamRequestID, payload, message, firstNonEmpty(canonicalModel...), headers)
 }
 
 // reportOpenAIStreamOutputHoldTopUpFailure surfaces a mid-stream balance
@@ -1878,7 +1925,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return
 		}
 		if bareErrorAccountSideEffectsPending {
-			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, bareErrorPayload, failedMessage, resp.Header)
+			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, bareErrorPayload, failedMessage, resp.Header, mappedModel)
 			bareErrorAccountSideEffectsPending = false
 		}
 		if clientDisconnected || !writePendingLines() {
@@ -2023,7 +2070,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						// account health; EOF synthesis applies the pending effect.
 						bareErrorAccountSideEffectsPending = true
 					} else {
-						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header)
+						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header, mappedModel)
 						bareErrorAccountSideEffectsPending = false
 					}
 				}
@@ -2038,7 +2085,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					}
 					if shouldFailover {
 						return resultWithUsage(),
-							s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, dataBytes, failedMessage, resp.Header)
+							s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
 					}
 					if !cyberHit && !sawBareError {
 						if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
@@ -2299,6 +2346,9 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		}
 		if compactErr := newOpenAICompactFallbackSignal(c, terminalPayload, msg); compactErr != nil {
 			return nil, compactErr
+		}
+		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, true, terminalType, terminalPayload, msg, mappedModel); failoverErr != nil {
+			return nil, failoverErr
 		}
 		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 	}
