@@ -10,7 +10,7 @@ docker run -d \
   -p 8080:8080 \
   -e DATABASE_URL="postgres://user:pass@host:5432/sub2api" \
   -e REDIS_URL="redis://host:6379" \
-  ghcr.io/kiss-kedaya/sub2api:0.1.236
+  ghcr.io/kiss-kedaya/sub2api:0.1.237
 ```
 
 ## Docker Compose
@@ -20,7 +20,7 @@ version: '3.8'
 
 services:
   sub2api:
-    image: ghcr.io/kiss-kedaya/sub2api:0.1.236
+    image: ghcr.io/kiss-kedaya/sub2api:0.1.237
     ports:
       - "8080:8080"
     environment:
@@ -96,7 +96,7 @@ environment:
   SUB2API_UPDATE_DOCKER_COMMAND: docker
   SUB2API_UPDATE_AUTO_DOCKER_GROUP: "true"
   # Optional when .env is mode 600 and the app runs as a non-root user.
-  SUB2API_UPDATE_HELPER_IMAGE: ghcr.io/kiss-kedaya/sub2api:0.1.236
+  SUB2API_UPDATE_HELPER_IMAGE: ghcr.io/kiss-kedaya/sub2api:0.1.237
 volumes:
   - /var/run/docker.sock:/var/run/docker.sock
   - /opt/sub2api:/opt/sub2api:ro
@@ -123,7 +123,7 @@ mounted; it never changes secret-file permissions. Compose files should use the
 version variable so the target image is unambiguous:
 
 ```yaml
-image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.236}
+image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.237}
 ```
 
 During each replacement the updater sends `SIGTERM` to exactly one replica.
