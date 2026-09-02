@@ -385,9 +385,10 @@ func TestBalancePreauthorizationLifecycleUsesRequestLocalPlainInput(t *testing.T
 	// 0.028 (cache_creation+1h max).
 	require.InDelta(t, 0.013, guard.HoldAmount(), 1e-4)
 	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, guard.ReservedOutputTokens())
-	// Three pricing calls: plain-input hold, then output-unit-price windowed +
-	// baseline (both plain-input, decoupled from the hold's input disposition).
-	require.Len(t, fixture.calculator.inputs, 3)
+	// Two pricing calls: the windowed hold and one output-free baseline. The
+	// output-unit-price derivation reuses the first breakdown instead of
+	// recalculating the same windowed amount.
+	require.Len(t, fixture.calculator.inputs, 2)
 	require.Equal(t, 100, fixture.calculator.inputs[0].Tokens.InputTokens)
 	require.Equal(t, 0, fixture.calculator.inputs[0].Tokens.CacheReadTokens)
 	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, fixture.calculator.inputs[0].Tokens.OutputTokens)
@@ -395,14 +396,13 @@ func TestBalancePreauthorizationLifecycleUsesRequestLocalPlainInput(t *testing.T
 	require.Equal(t, 1.25, fixture.calculator.inputs[0].RateMultiplier)
 	// Output-unit-price probes: windowed has the output window, baseline is
 	// output-free; both plain-input.
-	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, fixture.calculator.inputs[1].Tokens.OutputTokens)
-	require.Equal(t, 0, fixture.calculator.inputs[2].Tokens.OutputTokens)
+	require.Equal(t, 0, fixture.calculator.inputs[1].Tokens.OutputTokens)
 	require.InDelta(t, 0.013, fixture.repo.prepared.HoldAmount, 1e-4)
 	require.Equal(t, "request-1:7", fixture.wallet.lastAttemptID)
 	require.Equal(t, 10.0, fixture.wallet.lastFallback)
 	require.Equal(t, int64(17), fixture.wallet.lastWatermark)
 	require.Equal(t, []string{
-		"price", "price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize", "repo_authorized",
+		"price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize", "repo_authorized",
 	}, fixture.recorder.snapshot())
 
 	err = guard.Finalize(context.Background(), 0.019999999, " actual-fingerprint ")
@@ -427,7 +427,7 @@ func TestBalancePreauthorizationLifecycleHotWalletSkipsPostgreSQLSnapshot(t *tes
 	require.NotContains(t, fixture.recorder.snapshot(), "balance_snapshot")
 	require.NotContains(t, fixture.recorder.snapshot(), "wallet_authorize")
 	require.Equal(t, []string{
-		"price", "price", "price", "repo_prepare", "wallet_authorize_existing", "repo_authorized",
+		"price", "price", "repo_prepare", "wallet_authorize_existing", "repo_authorized",
 	}, fixture.recorder.snapshot())
 }
 
@@ -521,7 +521,7 @@ func TestBalancePreauthorizationLifecycleInsufficientReturnsRequired403AndCompen
 	require.Equal(t, 403, infraerrors.Code(err))
 	require.Equal(t, "Insufficient balance, withholding failed", infraerrors.Message(err))
 	require.Equal(t, []string{
-		"price", "price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize",
+		"price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize",
 		"repo_begin_refund", "wallet_refund", "repo_complete_refund",
 	}, fixture.recorder.snapshot())
 }

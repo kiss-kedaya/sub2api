@@ -123,9 +123,9 @@ func NewBalancePreauthorizationService(
 type PreauthorizationEstimateKind uint8
 
 const (
-	// PreauthorizationEstimateTokenUpperBound treats BillableInputBytes as a
-	// conservative token upper bound and holds the largest of the input,
-	// cache-read, and cache-creation pricing scenarios plus an output window.
+	// PreauthorizationEstimateTokenUpperBound prices a request-local input-token
+	// estimate plus an explicit or bounded output window. Provider usage remains
+	// authoritative at settlement; this estimate is only the initial hold.
 	PreauthorizationEstimateTokenUpperBound PreauthorizationEstimateKind = iota
 	// PreauthorizationEstimatePerRequest prices the request once from explicit
 	// per-request billing units (image count, size tier, video seconds) using
@@ -147,11 +147,10 @@ type PerRequestPreauthorizationEstimate struct {
 }
 
 // BalancePreauthorizationRequest carries the exact pricing context frozen for
-// the request. For the token upper-bound estimate kind, Tokens in CostInput are
-// ignored: the service prices the same conservative byte upper bound as input,
-// cache-read, and cache-creation and holds the largest result. For the
-// per-request estimate kind, PerRequestEstimate supplies the billing units and
-// the output window is unused.
+// the request. For the token estimate kind, EstimatedInputTokens (falling back
+// to BillableInputBytes) and InitialOutputWindowTokens determine the initial
+// hold; CostInput.Tokens is ignored. For the per-request estimate kind,
+// PerRequestEstimate supplies the billing units and the output window is unused.
 type BalancePreauthorizationRequest struct {
 	RequestID                 string
 	APIKeyID                  int64
@@ -356,9 +355,11 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	// above and an output-free baseline, so (windowed - baseline) / windowTokens
 	// matches the exact policy (intervals, priority tier, long-context, time
 	// multipliers) used at settlement without reaching into pricing internals.
-	// Only one extra pricing call runs, once per request at preauthorization,
-	// never on the hot path.
-	outputUnitPrice, err := s.estimateOutputUnitPrice(base, inputTokens, outputWindow)
+	// Reuse the already-computed windowed breakdown. Only the output-free
+	// baseline requires another pricing call; recomputing the same windowed
+	// amount here added an avoidable resolver/calculator pass on every paid
+	// streaming request.
+	outputUnitPrice, err := s.estimateOutputUnitPrice(base, inputTokens, outputWindow, breakdown)
 	if err != nil {
 		return balancePreauthorizationEstimate{}, err
 	}
@@ -380,20 +381,18 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 // Returns zero (top-ups disabled) for non-positive results.
 func (s *BalancePreauthorizationService) estimateOutputUnitPrice(
 	base CostInput,
-	billableInputBytes int,
+	inputTokens int,
 	outputWindow int,
+	windowedBreakdown *CostBreakdown,
 ) (float64, error) {
 	if outputWindow <= 0 {
 		return 0, nil
 	}
-	windowed := base
-	windowed.Tokens = UsageTokens{InputTokens: billableInputBytes, OutputTokens: outputWindow}
-	windowedBreakdown, err := s.costCalculator.CalculateCostUnified(windowed)
-	if err != nil {
-		return 0, err
+	if windowedBreakdown == nil || invalidNonnegativeMoney(windowedBreakdown.ActualCost) {
+		return 0, ErrInvalidBillingPreauthorizationEstimate
 	}
 	baseline := base
-	baseline.Tokens = UsageTokens{InputTokens: billableInputBytes, OutputTokens: 0}
+	baseline.Tokens = UsageTokens{InputTokens: inputTokens, OutputTokens: 0}
 	baselineCost, err := s.costCalculator.CalculateCostUnified(baseline)
 	if err != nil {
 		return 0, err
@@ -452,10 +451,9 @@ func (s *BalancePreauthorizationService) estimatePerRequestHold(
 // resolvedPricingCostInput freezes the pricing resolution once so an unknown
 // paid model fails closed before any wallet mutation. A missing resolver is
 // left untouched: CalculateCostUnified falls back to its legacy pricing path.
-// resolvedPricingCostInput 冻结一次 Resolver.Resolve 调用，确保后续 4 个 scenario +
-// output baseline 共 5 次定价对齐到同一定价快照，避免请求内定价缓存刷新导致跨
-// scenario 取 max 不一致。明确禁止未来 optimizer 按 scenario 重新 Resolve，以防
-// 重新引入每 scenario 的 I/O 往返与快照漂移。
+// resolvedPricingCostInput freezes Resolver.Resolve once so the hold and the
+// output-baseline probe use one pricing snapshot. Re-resolving per probe would
+// add I/O and could make a single request observe different prices.
 func (s *BalancePreauthorizationService) resolvedPricingCostInput(
 	ctx context.Context,
 	base CostInput,

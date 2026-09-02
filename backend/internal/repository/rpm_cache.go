@@ -85,7 +85,10 @@ func (c *RPMCacheImpl) currentMinuteSuffix(ctx context.Context) (string, error) 
 	// backwards across a minute boundary.
 	if c.cachedMinuteSuffix == "" || suffix >= c.cachedMinuteSuffix {
 		c.cachedMinuteSuffix = suffix
-		c.cachedUntil = now.Add(time.Second)
+		// Start the short cache window after the Redis round trip. Using the
+		// timestamp captured before TIME could make a slow refresh expire
+		// immediately and turn one miss into a serialized burst of refreshes.
+		c.cachedUntil = time.Now().Add(time.Second)
 	}
 	result := c.cachedMinuteSuffix
 	return result, nil

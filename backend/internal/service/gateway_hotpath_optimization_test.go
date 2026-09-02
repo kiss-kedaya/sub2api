@@ -567,13 +567,13 @@ func TestWithWindowCostPrefetch_BatchErrorUsesOneBudgetAcrossWindows(t *testing.
 
 	firstWindow := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
 	secondWindow := firstWindow.Add(-24 * time.Hour)
+	windowEnd := time.Now().Add(5 * time.Hour)
 	accounts := make([]Account, 16)
 	for i := range accounts {
 		windowStart := firstWindow
 		if i >= 8 {
 			windowStart = secondWindow
 		}
-		windowEnd := windowStart.Add(5 * time.Hour)
 		accounts[i] = Account{
 			ID:                 int64(i + 1),
 			Platform:           PlatformAnthropic,
@@ -595,7 +595,15 @@ func TestWithWindowCostPrefetch_BatchErrorUsesOneBudgetAcrossWindows(t *testing.
 	require.Equal(t, int64(8), repo.singleCalls.Load())
 	known := 0
 	for _, account := range accounts {
-		if _, ok := windowCostFromPrefetchContext(outCtx, account.ID); ok {
+		_, ok := windowCostFromPrefetchContext(outCtx, account.ID)
+		// The fallback budget is deterministic: the newer active window (IDs
+		// 1..8) is serviced before the older window (IDs 9..16).
+		if account.ID <= 8 {
+			require.True(t, ok, "newer window account %d should receive fallback budget", account.ID)
+		} else {
+			require.False(t, ok, "older window account %d should fail-open after budget exhaustion", account.ID)
+		}
+		if ok {
 			known++
 		}
 	}
