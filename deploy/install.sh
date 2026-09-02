@@ -728,6 +728,7 @@ User=sub2api
 Group=sub2api
 WorkingDirectory=/opt/sub2api
 ExecStart=/opt/sub2api/sub2api
+EnvironmentFile=-/etc/sub2api/sub2api.env
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -745,6 +746,7 @@ ReadWritePaths=/opt/sub2api
 Environment=GIN_MODE=release
 Environment=SERVER_HOST=${SERVER_HOST}
 Environment=SERVER_PORT=${SERVER_PORT}
+Environment=DATA_DIR=/opt/sub2api/data
 
 [Install]
 WantedBy=multi-user.target
