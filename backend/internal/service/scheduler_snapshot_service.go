@@ -573,8 +573,8 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 		}
 	}
 
-	if err := s.guardFallback(ctx); err != nil {
-		return nil, err
+	if s.accountRepo == nil {
+		return nil, ErrSchedulerCacheNotReady
 	}
 
 	resultCh := s.accountFallbackGroup.DoChan(strconv.FormatInt(accountID, 10), func() (any, error) {
@@ -583,6 +583,21 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 		// retain independent cancellation while waiting below.
 		fallbackCtx, cancel := s.fallbackQueryContext(ctx)
 		defer cancel()
+		// A cache publisher may have repaired the account between the caller's
+		// miss and execution of this flight.  Recheck before consuming the DB
+		// fallback budget or issuing a query.
+		if s.cache != nil {
+			account, err := s.cache.GetAccount(fallbackCtx, accountID)
+			if err == nil && account != nil {
+				return account, nil
+			}
+			if err := fallbackCtx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.guardFallback(fallbackCtx); err != nil {
+			return nil, err
+		}
 		return s.accountRepo.GetByID(fallbackCtx, accountID)
 	})
 	select {
