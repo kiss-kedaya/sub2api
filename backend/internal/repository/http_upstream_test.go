@@ -643,7 +643,7 @@ func (s *HTTPUpstreamSuite) TestLongStreamProfileUsesSharedHTTP2KeepAlive() {
 	require.True(s.T(), ok, "expected *http.Transport")
 	require.Equal(s.T(), 600*time.Second, transport.ResponseHeaderTimeout, "long-stream profile should retain the generic header timeout")
 	require.True(s.T(), transport.ForceAttemptHTTP2, "long-stream profile must enable HTTP/2 independently of OpenAI settings")
-	require.NotNil(s.T(), transport.TLSNextProto["h2"], "long-stream profile must install HTTP/2 PING health checks")
+	require.True(s.T(), transport.Protocols.HTTP2(), "long-stream profile must install HTTP/2 PING health checks")
 	require.Equal(s.T(), upstreamProtocolModeLongStreamH2, entry.protocolMode)
 }
 
