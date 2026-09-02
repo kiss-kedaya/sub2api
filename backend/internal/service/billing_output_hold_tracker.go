@@ -94,12 +94,9 @@ func (t *BillingOutputHoldTracker) ObserveOutputBytes(additionalBytes int) Billi
 	t.observedOutputBytes += int64(additionalBytes)
 
 	// One token is at least one byte, so emitted bytes bound emitted tokens
-	// from above. Cap at MaxInt to keep the plan's int arithmetic well defined.
-	// 该 cap 是 int64→int 窄化的 32 位安全护栏，不可删除：64 位构建下 math.MaxInt
-	// == MaxInt64 且 observedOutputBytes 已是 int64，此分支为不可达死代码（需 9.2 EB
-	// 流输出才触发）；仅 32 位构建下真正生效。注意即便触发，cap 后的值传入
-	// PlanBillingOutputHoldTopUp 会因其 target := observed + windowTokens 溢出为负而
-	// 静默返回 no-op（既有、不可达的 code-smell），故只影响 hold 上限、不影响结算守恒。
+	// from above. Cap at MaxInt to keep the int conversion well-defined; the
+	// planner rejects any subsequent arithmetic overflow instead of silently
+	// turning a required top-up into a no-op.
 	observedUpperBound := t.observedOutputBytes
 	if observedUpperBound > int64(math.MaxInt) {
 		observedUpperBound = int64(math.MaxInt)

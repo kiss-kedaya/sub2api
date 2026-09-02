@@ -71,3 +71,12 @@ func TestBillingPreauthorizationEstimateRejectsInvalidValues(t *testing.T) {
 	_, err = PlanBillingOutputHoldTopUp(1, 1, 0, 1, 1)
 	require.ErrorIs(t, err, ErrInvalidBillingPreauthorizationEstimate)
 }
+
+func TestPlanBillingOutputHoldTopUpRejectsIntegerOverflow(t *testing.T) {
+	_, err := PlanBillingOutputHoldTopUp(0, math.MaxInt, 1, 1, 1)
+	require.ErrorIs(t, err, ErrInvalidBillingPreauthorizationEstimate)
+
+	window := math.MaxInt / 2
+	_, err = PlanBillingOutputHoldTopUp(0, math.MaxInt-window, window, 1, 1)
+	require.ErrorIs(t, err, ErrInvalidBillingPreauthorizationEstimate)
+}

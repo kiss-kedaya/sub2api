@@ -1279,7 +1279,20 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 	batchReader, hasBatch := s.usageLogRepo.(usageLogWindowStatsBatchProvider)
 	const maxWindowCostFallbackAccounts = 8
 	remainingFallbackBudget := maxWindowCostFallbackAccounts
-	for startKey, ids := range missingByStart {
+	// Map iteration order is deliberately random in Go. When the batch query is
+	// unavailable, that used to make the request-wide fallback budget land on a
+	// different window on every request, so otherwise identical traffic could
+	// make different accounts fail-open. Prefer the most recently started
+	// window (the one most likely to be active now), then keep account order
+	// stable within each window.
+	startKeys := make([]int64, 0, len(missingByStart))
+	for startKey := range missingByStart {
+		startKeys = append(startKeys, startKey)
+	}
+	sort.Slice(startKeys, func(i, j int) bool { return startKeys[i] > startKeys[j] })
+	for _, startKey := range startKeys {
+		ids := missingByStart[startKey]
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 		startTime := startTimes[startKey]
 
 		if hasBatch {

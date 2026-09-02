@@ -105,12 +105,22 @@ func PlanBillingOutputHoldTopUp(reservedTokens, observedTokenUpperBound, windowT
 		return BillingOutputHoldTopUp{}, ErrInvalidBillingPreauthorizationEstimate
 	}
 
+	if observedTokenUpperBound > math.MaxInt-windowTokens {
+		return BillingOutputHoldTopUp{}, ErrInvalidBillingPreauthorizationEstimate
+	}
 	target := observedTokenUpperBound + windowTokens
 	if target <= reservedTokens {
 		return BillingOutputHoldTopUp{}, nil
 	}
 	additional := target - reservedTokens
-	additional = ((additional + windowTokens - 1) / windowTokens) * windowTokens
+	if additional > math.MaxInt-(windowTokens-1) {
+		return BillingOutputHoldTopUp{}, ErrInvalidBillingPreauthorizationEstimate
+	}
+	windowCount := (additional + windowTokens - 1) / windowTokens
+	if windowCount > math.MaxInt/windowTokens {
+		return BillingOutputHoldTopUp{}, ErrInvalidBillingPreauthorizationEstimate
+	}
+	additional = windowCount * windowTokens
 	amount := decimal.NewFromInt(int64(additional)).
 		Mul(decimal.NewFromFloat(outputPricePerToken)).
 		Mul(decimal.NewFromFloat(rateMultiplier))
