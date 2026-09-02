@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -537,6 +538,64 @@ func TestGetAccountsLoadBatchFresh_BypassesShortTTLCache(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 4, fresh[int64(1)].CurrentConcurrency)
 	require.Equal(t, int64(2), cache.loadBatchCalls.Load())
+}
+
+type blockingAccountLoadCache struct {
+	ConcurrencyCache
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (c *blockingAccountLoadCache) GetAccountsLoadBatch(context.Context, []AccountWithConcurrency) (map[int64]*AccountLoadInfo, error) {
+	c.once.Do(func() { close(c.started) })
+	<-c.release
+	return map[int64]*AccountLoadInfo{}, nil
+}
+
+func TestGetAccountsLoadBatch_CanceledWaiterDoesNotBlockOnSharedFetch(t *testing.T) {
+	cache := &blockingAccountLoadCache{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	svc := NewConcurrencyService(cache)
+	svc.SetAccountLoadBatchCacheTTL(time.Second)
+	accounts := []AccountWithConcurrency{{ID: 1, MaxConcurrency: 1}}
+
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, err := svc.GetAccountsLoadBatch(context.Background(), accounts)
+		leaderDone <- err
+	}()
+	select {
+	case <-cache.started:
+	case <-time.After(time.Second):
+		t.Fatal("shared account load did not start")
+	}
+
+	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
+	waiterDone := make(chan error, 1)
+	go func() {
+		_, err := svc.GetAccountsLoadBatch(waiterCtx, accounts)
+		waiterDone <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	cancelWaiter()
+
+	select {
+	case err := <-waiterDone:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("canceled waiter remained blocked on shared account load")
+	}
+
+	close(cache.release)
+	select {
+	case err := <-leaderDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("shared account load leader did not complete")
+	}
 }
 
 func TestIncrementWaitCount_Success(t *testing.T) {
