@@ -144,6 +144,7 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 // POST /v1beta/models/{model}:generateContent
 // POST /v1beta/models/{model}:streamGenerateContent?alt=sse
 func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
+	c.Request = c.Request.WithContext(h.gatewayService.PrepareSchedulerRequestContext(c.Request.Context()))
 	apiKey, ok := middleware.GetAPIKeyFromContext(c)
 	if !ok || apiKey == nil {
 		googleError(c, http.StatusUnauthorized, "Invalid API key")
