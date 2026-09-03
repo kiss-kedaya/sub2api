@@ -55,26 +55,36 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 
 	rows, err := tx.QueryContext(ctx, `
 		WITH candidates AS (
-			SELECT candidate.id
-			FROM live_balance_adjustment_outbox AS candidate
-			WHERE candidate.delivered_at IS NULL
-				AND candidate.available_at <= NOW()
-				AND (candidate.claimed_at IS NULL OR candidate.claimed_at < NOW() - ($3 * INTERVAL '1 second'))
-				-- Events are linked by predecessor_id. Checking only that
-				-- predecessor row avoids scanning every older event for the same
-				-- user (the previous anti-join was O(backlog per user)). A missing
-				-- predecessor is treated as already cleaned up, preserving the
-				-- existing recoverability behavior after retention deletes.
+			-- Every balance mutation creates/advances a per-user head. Pick only
+			-- that user's oldest pending event before applying predecessor checks;
+			-- scanning the global pending index makes a long chain (millions of
+			-- rows) walk and reject every successor on every poll. The lateral
+			-- lookup is backed by idx_live_balance_adjustment_outbox_user_order and
+			-- keeps claim cost proportional to active users, not backlog size.
+			SELECT next_event.id
+			FROM live_balance_adjustment_heads AS h
+			CROSS JOIN LATERAL (
+				SELECT o.id, o.available_at, o.predecessor_id, o.claimed_at
+				FROM live_balance_adjustment_outbox AS o
+				WHERE o.user_id = h.user_id
+					AND o.delivered_at IS NULL
+				ORDER BY o.id
+				LIMIT 1
+			) AS next_event
+			WHERE next_event.available_at <= NOW()
+				AND (next_event.claimed_at IS NULL OR next_event.claimed_at < NOW() - ($3 * INTERVAL '1 second'))
+				-- A missing predecessor is treated as already cleaned up, preserving
+				-- recoverability after retention deletes.
 				AND (
-					candidate.predecessor_id = 0
+					next_event.predecessor_id = 0
 					OR NOT EXISTS (
 						SELECT 1
 						FROM live_balance_adjustment_outbox AS predecessor
-						WHERE predecessor.id = candidate.predecessor_id
+						WHERE predecessor.id = next_event.predecessor_id
 							AND predecessor.delivered_at IS NULL
 					)
 				)
-			ORDER BY candidate.available_at, candidate.id
+			ORDER BY next_event.available_at, next_event.id
 			LIMIT $2
 			FOR UPDATE SKIP LOCKED
 		)
