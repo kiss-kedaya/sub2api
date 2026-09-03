@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,27 @@ type openAIAPIKeyHealthSettingRepo struct {
 	SettingRepository
 	value    string
 	getCalls int
+}
+
+type blockingOpenAIAPIKeyHealthSettingRepo struct {
+	openAIAPIKeyHealthSettingRepo
+	calls   atomic.Int64
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingOpenAIAPIKeyHealthSettingRepo) GetValue(ctx context.Context, key string) (string, error) {
+	r.calls.Add(1)
+	select {
+	case r.entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-r.release:
+		return r.value, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func (r *openAIAPIKeyHealthSettingRepo) GetValue(context.Context, string) (string, error) {
@@ -137,4 +159,40 @@ func TestOpenAIAPIKeyHealthSuccessDoesNotTouchSettingsOrCache(t *testing.T) {
 	svc.ObserveOpenAIAPIKeyHealthSuccess(context.Background(), &Account{ID: 43, Platform: PlatformOpenAI, Type: AccountTypeAPIKey})
 	require.Zero(t, settingRepo.getCalls)
 	require.Zero(t, cache.recordCalls)
+}
+
+func TestOpenAIAPIKeyHealthSettingsSnapshotOnlyDoesNotWaitForRepository(t *testing.T) {
+	repo := &blockingOpenAIAPIKeyHealthSettingRepo{
+		openAIAPIKeyHealthSettingRepo: openAIAPIKeyHealthSettingRepo{value: `{"enabled":true,"window_minutes":1,"failure_threshold":3,"cooldown_minutes":5}`},
+		entered:                       make(chan struct{}, 1),
+		release:                       make(chan struct{}),
+	}
+	settings := NewSettingService(repo, &config.Config{})
+	done := make(chan *OpenAIAPIKeyHealthBreakerSettings, 1)
+	go func() {
+		value, err := settings.GetOpenAIAPIKeyHealthBreakerSettings(WithSchedulerSnapshotOnly(context.Background()))
+		if err != nil {
+			done <- nil
+			return
+		}
+		done <- value
+	}()
+	select {
+	case got := <-done:
+		require.NotNil(t, got)
+		require.False(t, got.Enabled, "cold snapshot should use the safe disabled default")
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("snapshot-only health setting waited for repository")
+	}
+	select {
+	case <-repo.entered:
+	case <-time.After(time.Second):
+		t.Fatal("expected background refresh to reach repository")
+	}
+	close(repo.release)
+	require.Eventually(t, func() bool {
+		got, err := settings.GetOpenAIAPIKeyHealthBreakerSettings(WithSchedulerSnapshotOnly(context.Background()))
+		return err == nil && got != nil && got.Enabled
+	}, time.Second, time.Millisecond*5)
+	require.Equal(t, int64(1), repo.calls.Load())
 }

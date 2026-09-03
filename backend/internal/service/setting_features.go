@@ -821,15 +821,95 @@ func (s *SettingService) GetStreamTimeoutSettings(ctx context.Context) (*StreamT
 
 // IsUngroupedKeySchedulingAllowed 查询是否允许未分组 Key 调度
 func (s *SettingService) IsUngroupedKeySchedulingAllowed(ctx context.Context) bool {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyAllowUngroupedKeyScheduling)
-	if err != nil {
-		return false // fail-closed: 查询失败时默认不允许
+	if s == nil || s.settingRepo == nil {
+		return false
 	}
-	return value == "true"
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if cached, ok := s.ungroupedKeySchedulingCache.Load().(*cachedUngroupedKeyScheduling); ok && cached != nil {
+		if hotSettingCacheFresh(cached.expiresAt, time.Now()) {
+			return cached.allowed
+		}
+		if schedulerSnapshotOnlyFromContext(ctx) {
+			s.refreshUngroupedKeySchedulingAsync()
+			return cached.allowed
+		}
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		s.refreshUngroupedKeySchedulingAsync()
+		return false
+	}
+	value, _, _ := s.ungroupedKeySchedulingSF.Do(SettingKeyAllowUngroupedKeyScheduling, func() (any, error) {
+		return s.loadUngroupedKeyScheduling(ctx)
+	})
+	allowed, _ := value.(bool)
+	return allowed
+}
+
+func (s *SettingService) loadUngroupedKeyScheduling(ctx context.Context) (bool, error) {
+	if s == nil || s.settingRepo == nil {
+		return false, nil
+	}
+	if cached, ok := s.ungroupedKeySchedulingCache.Load().(*cachedUngroupedKeyScheduling); ok && cached != nil && hotSettingCacheFresh(cached.expiresAt, time.Now()) {
+		return cached.allowed, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), hotSettingDBTimeout)
+	defer cancel()
+	raw, err := s.settingRepo.GetValue(loadCtx, SettingKeyAllowUngroupedKeyScheduling)
+	allowed := err == nil && strings.EqualFold(strings.TrimSpace(raw), "true")
+	ttl := hotSettingCacheTTL
+	if err != nil && !errors.Is(err, ErrSettingNotFound) {
+		ttl = settingRefreshBackoffBase
+	}
+	s.ungroupedKeySchedulingCache.Store(&cachedUngroupedKeyScheduling{allowed: allowed, expiresAt: time.Now().Add(ttl).UnixNano()})
+	if errors.Is(err, ErrSettingNotFound) {
+		return false, nil
+	}
+	return allowed, err
+}
+
+func (s *SettingService) refreshUngroupedKeySchedulingAsync() {
+	if s == nil || s.settingRepo == nil || !s.ungroupedKeySchedulingRefresh.tryStart(time.Now()) {
+		return
+	}
+	resultCh := s.ungroupedKeySchedulingSF.DoChan(SettingKeyAllowUngroupedKeyScheduling, func() (any, error) {
+		return s.loadUngroupedKeyScheduling(context.Background())
+	})
+	go func() {
+		result := <-resultCh
+		s.ungroupedKeySchedulingRefresh.finish(result.Err)
+	}()
 }
 
 // GetRectifierSettings 获取请求整流器配置
 func (s *SettingService) GetRectifierSettings(ctx context.Context) (*RectifierSettings, error) {
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.rectifierSettingsSnapshotOnly(), nil
+	}
+	settings, err := s.loadRectifierSettings(ctx)
+	if s != nil && err == nil && settings != nil {
+		s.rectifierCache.Store(&cachedRectifierSettings{
+			settings:  cloneRectifierSettings(settings),
+			expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano(),
+		})
+	}
+	return settings, err
+}
+
+// loadRectifierSettings preserves the historical synchronous repository
+// semantics for admin/recovery callers. Snapshot-only gateway requests use
+// rectifierSettingsSnapshotOnly above and never enter this function inline.
+func (s *SettingService) loadRectifierSettings(ctx context.Context) (*RectifierSettings, error) {
+	if s == nil || s.settingRepo == nil {
+		return DefaultRectifierSettings(), nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRectifierSettings)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
@@ -860,7 +940,12 @@ func (s *SettingService) SetRectifierSettings(ctx context.Context, settings *Rec
 		return fmt.Errorf("marshal rectifier settings: %w", err)
 	}
 
-	return s.settingRepo.Set(ctx, SettingKeyRectifierSettings, string(data))
+	if err := s.settingRepo.Set(ctx, SettingKeyRectifierSettings, string(data)); err != nil {
+		return err
+	}
+	s.rectifierSF.Forget(hotSettingRectifierKey)
+	s.rectifierCache.Store(&cachedRectifierSettings{settings: cloneRectifierSettings(settings), expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano()})
+	return nil
 }
 
 // IsSignatureRectifierEnabled 判断签名整流是否启用（总开关 && 签名子开关）
@@ -883,6 +968,28 @@ func (s *SettingService) IsBudgetRectifierEnabled(ctx context.Context) bool {
 
 // GetBetaPolicySettings 获取 Beta 策略配置
 func (s *SettingService) GetBetaPolicySettings(ctx context.Context) (*BetaPolicySettings, error) {
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.betaPolicySettingsSnapshotOnly(), nil
+	}
+	settings, err := s.loadBetaPolicySettings(ctx)
+	if s != nil && err == nil && settings != nil {
+		s.betaPolicyCache.Store(&cachedBetaPolicySettings{
+			settings:  cloneBetaPolicySettings(settings),
+			expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano(),
+		})
+	}
+	return settings, err
+}
+
+// loadBetaPolicySettings is the synchronous repository loader used by
+// non-gateway callers and by the asynchronous snapshot refresh worker.
+func (s *SettingService) loadBetaPolicySettings(ctx context.Context) (*BetaPolicySettings, error) {
+	if s == nil || s.settingRepo == nil {
+		return DefaultBetaPolicySettings(), nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyBetaPolicySettings)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
@@ -944,11 +1051,38 @@ func (s *SettingService) SetBetaPolicySettings(ctx context.Context, settings *Be
 		return fmt.Errorf("marshal beta policy settings: %w", err)
 	}
 
-	return s.settingRepo.Set(ctx, SettingKeyBetaPolicySettings, string(data))
+	if err := s.settingRepo.Set(ctx, SettingKeyBetaPolicySettings, string(data)); err != nil {
+		return err
+	}
+	s.betaPolicySF.Forget(hotSettingBetaPolicyKey)
+	s.betaPolicyCache.Store(&cachedBetaPolicySettings{settings: cloneBetaPolicySettings(settings), expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano()})
+	return nil
 }
 
 // GetOpenAIFastPolicySettings 获取 OpenAI fast 策略配置
 func (s *SettingService) GetOpenAIFastPolicySettings(ctx context.Context) (*OpenAIFastPolicySettings, error) {
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.openAIFastPolicySettingsSnapshotOnly(), nil
+	}
+	settings, err := s.loadOpenAIFastPolicySettings(ctx)
+	if s != nil && err == nil && settings != nil {
+		s.openAIFastPolicyCache.Store(&cachedOpenAIFastPolicySettings{
+			settings:  cloneOpenAIFastPolicySettings(settings),
+			expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano(),
+		})
+	}
+	return settings, err
+}
+
+// loadOpenAIFastPolicySettings is the synchronous repository loader used by
+// non-gateway callers and by the asynchronous snapshot refresh worker.
+func (s *SettingService) loadOpenAIFastPolicySettings(ctx context.Context) (*OpenAIFastPolicySettings, error) {
+	if s == nil || s.settingRepo == nil {
+		return DefaultOpenAIFastPolicySettings(), nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIFastPolicySettings)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
@@ -1033,7 +1167,12 @@ func (s *SettingService) SetOpenAIFastPolicySettings(ctx context.Context, settin
 		return fmt.Errorf("marshal openai fast policy settings: %w", err)
 	}
 
-	return s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data))
+	if err := s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data)); err != nil {
+		return err
+	}
+	s.openAIFastPolicySF.Forget(hotSettingOpenAIFastPolicyKey)
+	s.openAIFastPolicyCache.Store(&cachedOpenAIFastPolicySettings{settings: cloneOpenAIFastPolicySettings(settings), expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano()})
+	return nil
 }
 
 // SetStreamTimeoutSettings 设置流超时处理配置
@@ -1101,6 +1240,19 @@ func (s *SettingService) GetAccountSchedulingThresholds(ctx context.Context) map
 	if s == nil || s.settingRepo == nil {
 		return defaultAccountSchedulingThresholds()
 	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		// Thresholds are control-plane settings. Serve the last known value (or
+		// conservative defaults) and refresh asynchronously; a model request must
+		// never block on this settings query.
+		if cached, ok := accountSchedulingThresholdsCache.Load().(*cachedAccountSchedulingThresholds); ok && cached != nil && len(cached.thresholds) > 0 {
+			if time.Now().UnixNano() >= cached.expiresAt {
+				refreshAccountSchedulingThresholdsAsync(s)
+			}
+			return cloneAccountSchedulingThresholds(cached.thresholds)
+		}
+		refreshAccountSchedulingThresholdsAsync(s)
+		return defaultAccountSchedulingThresholds()
+	}
 	if cached, ok := accountSchedulingThresholdsCache.Load().(*cachedAccountSchedulingThresholds); ok {
 		if cached != nil && len(cached.thresholds) > 0 && time.Now().UnixNano() < cached.expiresAt {
 			return cloneAccountSchedulingThresholds(cached.thresholds)
@@ -1156,6 +1308,17 @@ func (s *SettingService) GetAccountSchedulingThresholds(ctx context.Context) map
 		return cloneAccountSchedulingThresholds(thresholds)
 	}
 	return defaultAccountSchedulingThresholds()
+}
+
+func refreshAccountSchedulingThresholdsAsync(s *SettingService) {
+	if s == nil || s.settingRepo == nil {
+		return
+	}
+	// Use a separate singleflight key so the refresh can safely call the normal
+	// synchronous loader without recursively joining the same flight.
+	accountSchedulingThresholdsSF.DoChan(SettingKeyAccountSchedulingThresholds+":refresh", func() (any, error) {
+		return s.GetAccountSchedulingThresholds(context.Background()), nil
+	})
 }
 
 // GetAuthSourcePlatformQuotas 读取指定 auth source 的 platform quota 覆盖（仅返回有配置的平台，override 语义）。
