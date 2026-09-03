@@ -276,6 +276,50 @@ describe('decidePaymentLaunch', () => {
     expect(decision.kind).toBe('qr_waiting')
   })
 
+  it('keeps QR flow when instance payment_mode is qrcode even if pay_url is present', () => {
+    const decision = decidePaymentLaunch(createOrderResult({
+      pay_url: 'https://pay.example.com/hosted/session',
+      qr_code: 'https://pay.example.com/qr/session',
+      payment_mode: 'qrcode',
+    }), {
+      visibleMethod: 'alipay',
+      orderType: 'balance',
+      isMobile: false,
+    })
+
+    expect(decision.kind).toBe('qr_waiting')
+    expect(decision.paymentState.qrCode).toBe('https://pay.example.com/qr/session')
+  })
+
+  it('uses pay_url as QR payload when payment_mode is qrcode but qr_code is empty', () => {
+    const decision = decidePaymentLaunch(createOrderResult({
+      pay_url: 'https://pay.example.com/hosted/session',
+      payment_mode: 'qrcode',
+    }), {
+      visibleMethod: 'alipay',
+      orderType: 'balance',
+      isMobile: false,
+    })
+
+    expect(decision.kind).toBe('qr_waiting')
+    expect(decision.paymentState.qrCode).toBe('https://pay.example.com/hosted/session')
+  })
+
+  it('does not open a hosted popup on mobile when payment_mode is qrcode', () => {
+    const decision = decidePaymentLaunch(createOrderResult({
+      pay_url: 'https://pay.example.com/mobile/session',
+      qr_code: 'https://pay.example.com/qr/session',
+      payment_mode: 'qrcode',
+    }), {
+      visibleMethod: 'alipay',
+      orderType: 'balance',
+      isMobile: true,
+    })
+
+    expect(decision.kind).toBe('qr_waiting')
+    expect(decision.paymentState.qrCode).toBe('https://pay.example.com/qr/session')
+  })
+
   it('does not affect non-alipay methods when forceQRCode is enabled', () => {
     const decision = decidePaymentLaunch(createOrderResult({
       pay_url: 'https://pay.example.com/mobile/session',
