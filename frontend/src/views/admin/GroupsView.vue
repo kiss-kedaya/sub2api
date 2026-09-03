@@ -36,6 +36,7 @@
               @change="loadGroups"
             />
             <Select
+              v-if="!authStore.isSimpleMode"
               v-model="filters.is_exclusive"
               :options="exclusiveOptions"
               :placeholder="t('admin.groups.allGroups')"
@@ -93,6 +94,7 @@
               </div>
             </div>
             <button
+              v-if="!authStore.isSimpleMode"
               @click="openSortModal"
               class="btn btn-secondary"
               :title="t('admin.groups.sortOrder')"
@@ -4863,9 +4865,9 @@ const saveColumnsToStorage = () => {
 
 const isColumnVisible = (key: string) => !hiddenColumns.has(key);
 const hasVisibleUsageSummaryConsumer = computed(
-  () => isColumnVisible("usage") || isColumnVisible("billing_type"),
+  () => !authStore.isSimpleMode && (isColumnVisible("usage") || isColumnVisible("billing_type")),
 );
-const hasVisibleCapacityColumn = computed(() => isColumnVisible("capacity"));
+const hasVisibleCapacityColumn = computed(() => !authStore.isSimpleMode && isColumnVisible("capacity"));
 
 const toggleColumn = (key: string) => {
   const validKeys = getValidHiddenColumnKeys();
@@ -5496,6 +5498,7 @@ const loadModelsListCandidates = async (
   groupID: number,
   platform: GroupPlatform,
 ) => {
+  if (authStore.isSimpleMode) return;
   const request = { mode, groupID, platform };
   const requestID = modelsListCandidatesTracker.next(request);
   const state = mode === "create" ? createModelsListState : editModelsListState;
@@ -5878,7 +5881,7 @@ const loadGroups = async () => {
       {
         platform: (filters.platform as GroupPlatform) || undefined,
         status: filters.status as any,
-        is_exclusive: filters.is_exclusive
+        is_exclusive: !authStore.isSimpleMode && filters.is_exclusive
           ? filters.is_exclusive === "true"
           : undefined,
         search: searchQuery.value.trim() || undefined,
@@ -6270,7 +6273,14 @@ const handleCreateGroup = async () => {
     requestData.peak_rate_multiplier = normalizeRateMultiplier(
       createForm.peak_rate_multiplier,
     );
-    await adminAPI.groups.create(requestData);
+    const payload = authStore.isSimpleMode
+      ? {
+          name: createForm.name,
+          description: createForm.description,
+          platform: createForm.platform,
+        }
+      : requestData;
+    await adminAPI.groups.create(payload);
     appStore.showSuccess(t("admin.groups.groupCreated"));
     closeCreateModal();
     loadGroups();
@@ -6605,7 +6615,13 @@ const handleUpdateGroup = async () => {
     payload.peak_rate_multiplier = normalizeRateMultiplier(
       editForm.peak_rate_multiplier,
     );
-    await adminAPI.groups.update(editingGroup.value.id, payload);
+    const requestData = authStore.isSimpleMode
+      ? {
+          name: editForm.name,
+          description: editForm.description,
+        }
+      : payload;
+    await adminAPI.groups.update(editingGroup.value.id, requestData);
     appStore.showSuccess(t("admin.groups.groupUpdated"));
     closeEditModal();
     loadGroups();
@@ -7097,8 +7113,10 @@ const saveSortOrder = async () => {
 
 onMounted(() => {
   loadGroups();
-  void loadLiveCapability();
-  loadModelsListCandidates("create", 0, createForm.platform);
+  if (!authStore.isSimpleMode) {
+    void loadLiveCapability();
+    loadModelsListCandidates("create", 0, createForm.platform);
+  }
   document.addEventListener("click", handleClickOutside);
 });
 

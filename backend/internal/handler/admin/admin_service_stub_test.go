@@ -27,6 +27,7 @@ type stubAdminService struct {
 	createdGroups                       []*service.CreateGroupInput
 	updatedGroups                       []*service.UpdateGroupInput
 	advancedGroupOperationCalls         int
+	lastListGroupsIsExclusive           *bool
 	createdProxies                      []*service.CreateProxyInput
 	updatedProxyIDs                     []int64
 	updatedProxies                      []*service.UpdateProxyInput
@@ -270,6 +271,7 @@ func (s *stubAdminService) BindUserAuthIdentity(ctx context.Context, userID int6
 }
 
 func (s *stubAdminService) ListGroups(ctx context.Context, page, pageSize int, platform, status, search string, isExclusive *bool, sortBy, sortOrder string) ([]service.Group, int64, error) {
+	s.lastListGroupsIsExclusive = isExclusive
 	return s.groups, int64(len(s.groups)), nil
 }
 
