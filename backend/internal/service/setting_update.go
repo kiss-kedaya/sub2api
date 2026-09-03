@@ -702,6 +702,12 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		value:     settings.BackendModeEnabled,
 		expiresAt: time.Now().Add(backendModeCacheTTL).UnixNano(),
 	})
+	s.ungroupedKeySchedulingSF.Forget(SettingKeyAllowUngroupedKeyScheduling)
+	s.ungroupedKeySchedulingCache.Store(&cachedUngroupedKeyScheduling{
+		allowed:   settings.AllowUngroupedKeyScheduling,
+		expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano(),
+	})
+	s.publishGrokDefaultBaseURLMode(settings.GrokDefaultBaseURLMode)
 	gatewayForwardingSF.Forget("gateway_forwarding")
 	gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
 		fingerprintUnification:           settings.EnableFingerprintUnification,
