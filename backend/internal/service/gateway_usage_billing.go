@@ -30,6 +30,28 @@ func (s *GatewayService) getUserGroupRateMultiplier(ctx context.Context, userID,
 	return resolver.Resolve(ctx, userID, groupID, groupDefaultMultiplier)
 }
 
+// getUserGroupRateMultiplierSnapshotOnly is used by request admission code
+// that has opted into the immutable scheduler snapshot contract. It reuses a
+// warm local override but never falls through to PostgreSQL. Usage billing
+// continues to call getUserGroupRateMultiplier so its durable pricing lookup
+// semantics remain unchanged.
+func (s *GatewayService) getUserGroupRateMultiplierSnapshotOnly(userID, groupID int64, groupDefaultMultiplier float64) float64 {
+	if s == nil {
+		return groupDefaultMultiplier
+	}
+	resolver := s.userGroupRateResolver
+	if resolver == nil {
+		resolver = newUserGroupRateResolver(
+			s.userGroupRateRepo,
+			s.userGroupRateCache,
+			resolveUserGroupRateCacheTTL(s.cfg),
+			&s.userGroupRateSF,
+			"service.gateway",
+		)
+	}
+	return resolver.ResolveSnapshotOnly(userID, groupID, groupDefaultMultiplier)
+}
+
 // ResolveUserGroupRateMultiplier resolves the same cached multiplier used by usage billing.
 func (s *GatewayService) ResolveUserGroupRateMultiplier(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) float64 {
 	return s.getUserGroupRateMultiplier(ctx, userID, groupID, groupDefaultMultiplier)

@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
 // SchedulerFreshness is the small durable projection used to validate an
@@ -87,6 +89,150 @@ func SnapshotSchedulerFreshnessMetrics() SchedulerFreshnessMetricsSnapshot {
 
 type schedulerFreshnessContextKey struct{}
 
+// schedulerSnapshotOnlyContextKey marks a normal gateway request as being
+// served exclusively from the published scheduler snapshot.  The marker is
+// deliberately separate from schedulerFreshnessContextKey: the latter is an
+// explicit, opt-in durable revalidation scope used by cold-start/recovery
+// paths.  Keeping the two concerns separate lets normal requests retain the
+// snapshot data without silently adding a PostgreSQL round trip.
+type schedulerSnapshotOnlyContextKey struct{}
+
+// schedulerSnapshotServiceContextKey carries the request's scheduler snapshot
+// owner to lower-level credential/token helpers.  Keeping this private avoids
+// widening repository interfaces while allowing those helpers to honor the
+// same snapshot-only contract as account selection.
+type schedulerSnapshotServiceContextKey struct{}
+
+// schedulerFreshnessFallbackContextKey opts a request into the durable
+// freshness projection.  It is intentionally private; production callers
+// should use the explicit recovery helpers below rather than enabling this on
+// the ordinary scheduling path.
+type schedulerFreshnessFallbackContextKey struct{}
+
+func withSchedulerSnapshotOnly(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// An explicitly-created freshness scope (emergency compatibility mode or a
+	// focused recovery path) must flow through downstream helpers unchanged.
+	// Otherwise the marker would make the strict snapshot API suppress its
+	// intended durable fallback.
+	// Preserve an explicitly installed, usable durable scope. A disabled or
+	// partially constructed state must not suppress the snapshot marker: doing
+	// so would let downstream GetAccount helpers silently take their DB fallback.
+	if state := schedulerFreshnessFromContext(ctx); state != nil && state.enabled() {
+		return ctx
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return ctx
+	}
+	return context.WithValue(ctx, schedulerSnapshotOnlyContextKey{}, true)
+}
+
+// WithSchedulerSnapshotOnly marks a request as snapshot-authoritative.  The
+// gateway router uses this for middleware that runs before a concrete service
+// handler (for example composite model-route resolution), so those adapters
+// cannot accidentally issue a synchronous PostgreSQL read.
+func WithSchedulerSnapshotOnly(ctx context.Context) context.Context {
+	return withSchedulerSnapshotOnly(ctx)
+}
+
+// WithSchedulerSnapshotContext transfers the immutable scheduler request
+// contract to a detached background context.  Usage/billing workers cannot
+// inherit the request context directly (the client may cancel it), but losing
+// the snapshot marker there would make token-cache misses and shadow-parent
+// resolution silently fall back to PostgreSQL.  Only the marker and snapshot
+// owner are copied; request-scoped mutable freshness state is intentionally not
+// shared across goroutines.
+func WithSchedulerSnapshotContext(parent, base context.Context) context.Context {
+	if base == nil {
+		base = context.Background()
+	}
+	if parent == nil {
+		return base
+	}
+	if schedulerSnapshotOnlyFromContext(parent) {
+		base = withSchedulerSnapshotOnly(base)
+	}
+	if snapshot := schedulerSnapshotServiceFromContext(parent); snapshot != nil {
+		base = withSchedulerSnapshotService(base, snapshot)
+	}
+	return base
+}
+
+func withSchedulerSnapshotService(ctx context.Context, snapshot *SchedulerSnapshotService) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if snapshot == nil {
+		return ctx
+	}
+	if existing, ok := ctx.Value(schedulerSnapshotServiceContextKey{}).(*SchedulerSnapshotService); ok && existing == snapshot {
+		return ctx
+	}
+	return context.WithValue(ctx, schedulerSnapshotServiceContextKey{}, snapshot)
+}
+
+func schedulerSnapshotServiceFromContext(ctx context.Context) *SchedulerSnapshotService {
+	if ctx == nil {
+		return nil
+	}
+	snapshot, _ := ctx.Value(schedulerSnapshotServiceContextKey{}).(*SchedulerSnapshotService)
+	return snapshot
+}
+
+// withSchedulerRequestMode chooses the configured request contract. Fully
+// wired production services always carry Config, whose default is the strict
+// snapshot-only mode. A nil Config is retained as a legacy compatibility mode
+// for lightweight direct callers/tests; it is never used by the production
+// dependency graph.
+func withSchedulerRequestMode(ctx context.Context, accountRepo AccountRepository, snapshot *SchedulerSnapshotService) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if snapshot == nil {
+		// No scheduler snapshot means the caller is on the legacy repository
+		// path; preserve its existing fallback semantics rather than pretending
+		// that an in-memory snapshot exists.
+		return ctx
+	}
+	ctx = withSchedulerSnapshotService(ctx, snapshot)
+	if group, ok := ctx.Value(ctxkey.Group).(*Group); ok && IsGroupContextValid(group) {
+		snapshot.seedCachedGroup(group)
+	}
+	if snapshot != nil && snapshot.requestFreshnessEnabled() {
+		return withSchedulerFreshness(ctx, accountRepo, snapshot)
+	}
+	return withSchedulerSnapshotOnly(ctx)
+}
+
+func schedulerSnapshotOnlyFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	marked, _ := ctx.Value(schedulerSnapshotOnlyContextKey{}).(bool)
+	return marked
+}
+
+// withSchedulerFreshnessFallback creates an explicit durable revalidation
+// scope.  It is reserved for recovery/cold-start paths and tests that need to
+// exercise the projection; normal requests must stay snapshot-only.
+func withSchedulerFreshnessFallback(ctx context.Context, accountRepo AccountRepository, snapshot *SchedulerSnapshotService, ids ...int64) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = context.WithValue(ctx, schedulerFreshnessFallbackContextKey{}, true)
+	return withSchedulerFreshness(ctx, accountRepo, snapshot, ids...)
+}
+
+func schedulerFreshnessFallbackFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	marked, _ := ctx.Value(schedulerFreshnessFallbackContextKey{}).(bool)
+	return marked
+}
+
 type schedulerFreshnessRequest struct {
 	mu          sync.Mutex
 	accountRepo AccountRepository
@@ -101,6 +247,13 @@ type schedulerFreshnessRequest struct {
 }
 
 func withSchedulerFreshness(ctx context.Context, accountRepo AccountRepository, snapshot *SchedulerSnapshotService, ids ...int64) context.Context {
+	ctx = withSchedulerSnapshotService(ctx, snapshot)
+	// A request carrying the snapshot-only marker must not lazily create a
+	// durable projection.  An already-created state is preserved so explicit
+	// recovery scopes can safely flow through normal selection helpers.
+	if schedulerSnapshotOnlyFromContext(ctx) && !schedulerFreshnessFallbackFromContext(ctx) && schedulerFreshnessFromContext(ctx) == nil {
+		return ctx
+	}
 	if existing := schedulerFreshnessFromContext(ctx); existing != nil && existing.enabled() {
 		existing.addIDs(ids...)
 		return ctx
@@ -113,6 +266,12 @@ func withSchedulerFreshness(ctx context.Context, accountRepo AccountRepository, 
 // at the beginning of each turn so a failover within that turn is coalesced,
 // without carrying durable account state across the whole connection.
 func refreshSchedulerFreshness(ctx context.Context, accountRepo AccountRepository, snapshot *SchedulerSnapshotService, ids ...int64) context.Context {
+	if schedulerSnapshotOnlyFromContext(ctx) && !schedulerFreshnessFallbackFromContext(ctx) {
+		// A normal long-lived connection remains snapshot-authoritative on each
+		// turn.  Recreating a durable projection here would reintroduce one DB
+		// JOIN per turn and defeat the request-path contract.
+		return ctx
+	}
 	return newSchedulerFreshnessContext(ctx, accountRepo, snapshot, ids...)
 }
 
@@ -181,6 +340,9 @@ func rememberSchedulerHydratedAccount(ctx context.Context, account *Account) {
 func withSchedulerFreshnessAccounts(ctx context.Context, accountRepo AccountRepository, snapshot *SchedulerSnapshotService, accounts []Account) context.Context {
 	state := schedulerFreshnessFromContext(ctx)
 	if state == nil {
+		if schedulerSnapshotOnlyFromContext(ctx) && !schedulerFreshnessFallbackFromContext(ctx) {
+			return ctx
+		}
 		ctx = withSchedulerFreshness(ctx, accountRepo, snapshot)
 		state = schedulerFreshnessFromContext(ctx)
 	}
@@ -192,6 +354,19 @@ func withSchedulerFreshnessAccounts(ctx context.Context, accountRepo AccountRepo
 	}
 	state.prime(ctx)
 	return ctx
+}
+
+// applySchedulerFreshnessForRequest runs the compatibility projection only
+// when a caller explicitly installed a freshness state (for example via the
+// emergency request_freshness_enabled switch). Snapshot-only requests carry no
+// state, so this is a branch-only no-op and cannot reach PostgreSQL.
+func applySchedulerFreshnessForRequest(ctx context.Context, accountRepo AccountRepository, snapshot *SchedulerSnapshotService, accounts []Account) []Account {
+	state := schedulerFreshnessFromContext(ctx)
+	if state == nil || !state.enabled() {
+		return accounts
+	}
+	withSchedulerFreshnessAccounts(ctx, accountRepo, snapshot, accounts)
+	return applySchedulerFreshnessAccounts(ctx, accounts)
 }
 
 // applySchedulerFreshnessAccounts overlays a preloaded request projection and

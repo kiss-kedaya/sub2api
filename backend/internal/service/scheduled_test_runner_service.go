@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"os"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 const (
 	scheduledTestDefaultMaxWorkers = 10
+	disableScheduledTestRunnerEnv  = "SUB2API_DISABLE_SCHEDULED_TEST_RUNNER"
 	// The runner is instantiated by every API/worker process. Keep the lock
 	// longer than the five-minute execution context so a slow run cannot lose
 	// leadership before its plans have finished.
@@ -76,6 +78,10 @@ func (s *ScheduledTestRunnerService) SetLeaderLock(lockCache LeaderLockCache, db
 // Start begins the cron ticker (every minute).
 func (s *ScheduledTestRunnerService) Start() {
 	if s == nil {
+		return
+	}
+	if parseDebugEnvBool(os.Getenv(disableScheduledTestRunnerEnv)) {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] disabled by %s", disableScheduledTestRunnerEnv)
 		return
 	}
 	s.startOnce.Do(func() {

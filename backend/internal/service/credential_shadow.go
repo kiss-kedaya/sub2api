@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -14,7 +15,26 @@ func resolveCredentialAccount(ctx context.Context, repo AccountRepository, accou
 	if account == nil || !account.IsShadow() {
 		return account, nil
 	}
-	parent, err := repo.GetByID(ctx, *account.ParentAccountID)
+	var (
+		parent *Account
+		err    error
+	)
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		// Credential resolution is reached after account selection, but it used to
+		// bypass the scheduler contract and issue a full GetByID for every shadow
+		// request.  Read the immutable parent entry published with the scheduler
+		// snapshot; a missing entry fails closed and is repaired by the background
+		// rebuild instead of synchronously hitting PostgreSQL.
+		if snapshot := schedulerSnapshotServiceFromContext(ctx); snapshot != nil {
+			parent, err = snapshot.GetAccountSnapshot(ctx, *account.ParentAccountID)
+		} else {
+			err = ErrSchedulerCacheNotReady
+		}
+	} else if repo != nil {
+		parent, err = repo.GetByID(ctx, *account.ParentAccountID)
+	} else {
+		err = errors.New("account repository unavailable")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve spark shadow parent %d: %w", *account.ParentAccountID, err)
 	}

@@ -50,7 +50,11 @@ func (s *GatewayService) withGatewayProfitControlGate(ctx context.Context, group
 
 	downstream := billingGroup.RateMultiplier
 	if userID, _ := ctx.Value(ctxkey.UserID).(int64); userID > 0 {
-		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
+		if schedulerSnapshotOnlyFromContext(ctx) {
+			downstream = s.getUserGroupRateMultiplierSnapshotOnly(userID, billingGroup.ID, billingGroup.RateMultiplier)
+		} else {
+			downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
+		}
 	}
 	downstream *= billingGroup.PeakMultiplierAt(pricingAt)
 	threshold := clampProfitControlThreshold(downstream * (1 - group.ProfitMinMargin - group.ProfitSafetyBuffer))
@@ -78,6 +82,12 @@ func (s *GatewayService) resolveProfitControlGroup(ctx context.Context, groupID 
 	if group, ok := ctx.Value(ctxkey.Group).(*Group); ok && IsGroupContextValid(group) && group.ID == groupID {
 		return group, nil
 	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		if s.schedulerSnapshot != nil {
+			return s.schedulerSnapshot.GetGroupByIDLite(ctx, groupID)
+		}
+		return nil, ErrSchedulerCacheNotReady
+	}
 	if s.schedulerSnapshot != nil {
 		// Lite 读取：门只用平台/倍率/利润/高峰字段，不需要账号计数聚合。
 		return s.schedulerSnapshot.GetGroupByIDLite(ctx, groupID)
@@ -99,7 +109,17 @@ func profitControlVetoLatest(ctx context.Context, selected *Account, snapshot *S
 	}
 	latest := selected
 	if snapshot != nil {
-		refreshed, err := snapshot.GetAccount(ctx, selected.ID)
+		// Normal gateway requests are snapshot-authoritative.  GetAccount keeps a
+		// compatibility PostgreSQL fallback for explicit recovery callers, but
+		// using it here on the terminal profit check would silently reintroduce a
+		// per-request GetByID whenever Redis is cold or briefly unavailable.
+		var refreshed *Account
+		var err error
+		if schedulerSnapshotOnlyFromContext(ctx) {
+			refreshed, err = snapshot.GetAccountSnapshot(ctx, selected.ID)
+		} else {
+			refreshed, err = snapshot.GetAccount(ctx, selected.ID)
+		}
 		if err != nil || refreshed == nil {
 			slog.Warn("profit_control_account_refresh_failed", "group_id", gate.groupID, "platform", gate.platform, "account_id", selected.ID, "error", err)
 			openAIProfitControlObserverInstance.recordRefreshFailure(gate.groupID, gate.platform, gate.threshold)

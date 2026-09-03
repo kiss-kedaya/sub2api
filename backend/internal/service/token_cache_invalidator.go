@@ -76,11 +76,29 @@ func (c *CompositeTokenCacheInvalidator) InvalidateToken(ctx context.Context, ac
 //   - latestAccount: 从 DB 获取的最新 account（如果查询失败则返回 nil）
 //   - isStale: true 表示 token 已过时（应使用 latestAccount），false 表示可以使用当前 account
 func CheckTokenVersion(ctx context.Context, account *Account, repo AccountRepository) (latestAccount *Account, isStale bool) {
-	if account == nil || repo == nil {
+	if account == nil {
 		return nil, false
 	}
 
-	currentVersion := account.GetCredentialAsInt64("_token_version")
+	// Normal gateway requests carry the published scheduler snapshot marker.
+	// Token-cache population used to bypass that contract and call GetByID for
+	// every cache miss, which made an otherwise in-memory selection perform a
+	// full account/group/proxy query.  Use the same snapshot entry when it is
+	// available; a cold entry is treated as "version unknown" and the caller's
+	// already-selected credentials are retained until the background rebuild
+	// publishes the account.
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		if snapshot := schedulerSnapshotServiceFromContext(ctx); snapshot != nil {
+			latest, err := snapshot.GetAccountSnapshot(ctx, account.ID)
+			if err == nil && latest != nil {
+				return compareTokenVersions(account, latest)
+			}
+		}
+		return nil, false
+	}
+	if repo == nil {
+		return nil, false
+	}
 
 	latestAccount, err := repo.GetByID(ctx, account.ID)
 	if err != nil || latestAccount == nil {
@@ -88,6 +106,14 @@ func CheckTokenVersion(ctx context.Context, account *Account, repo AccountReposi
 		return nil, false
 	}
 
+	return compareTokenVersions(account, latestAccount)
+}
+
+func compareTokenVersions(account, latestAccount *Account) (*Account, bool) {
+	if account == nil || latestAccount == nil {
+		return latestAccount, false
+	}
+	currentVersion := account.GetCredentialAsInt64("_token_version")
 	latestVersion := latestAccount.GetCredentialAsInt64("_token_version")
 
 	// 情况1: 当前 account 没有版本号，但 DB 中已有版本号
