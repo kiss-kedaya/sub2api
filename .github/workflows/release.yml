@@ -24,33 +24,92 @@ on:
 # tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
 env:
   SIMPLE_RELEASE: ${{ github.event.inputs.simple_release == 'true' || vars.SIMPLE_RELEASE == 'true' }}
-  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name || github.event.ref }}
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event_name == 'create' && github.event.ref || github.ref_name }}
   # Forks may not have write access to an existing GHCR package. Enable only after
   # the repository/package has been granted write:packages access.
   PUBLISH_GHCR: ${{ vars.PUBLISH_GHCR == 'true' }}
 
 permissions:
-  contents: write
-  packages: write
+  # Build and tag-resolution jobs only need to read the repository. Publish
+  # and branch-sync permissions are granted narrowly on the jobs that need
+  # them below.
+  contents: read
 
 concurrency:
-  group: release-${{ github.event.inputs.tag || github.ref_name || github.event.ref }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event_name == 'create' && github.event.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
+  # Resolve the tag once and make every artifact-producing job use the same
+  # immutable commit. This is important for workflow_dispatch and create
+  # events, where actions/checkout's implicit ref can be the default branch.
+  resolve_release_ref:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.resolve.outputs.commit_sha }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+    steps:
+      - name: Checkout default branch for tag resolution
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Resolve release tag to commit
+        id: resolve
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+
+          # Tag names are untrusted workflow input. Keep the existing v* release
+          # convention, but reject control characters and invalid Git refs before
+          # using the value in any Git command.
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+(\.[0-9]+){2}([+-][0-9A-Za-z.+-]+)?$ ]]; then
+            echo "::error::RELEASE_TAG must be a valid semantic v-prefixed tag"
+            exit 1
+          fi
+
+          git fetch --force --tags --prune origin
+          if ! git check-ref-format --allow-onelevel "refs/tags/$RELEASE_TAG"; then
+            echo "::error::RELEASE_TAG is not a valid tag ref"
+            exit 1
+          fi
+          if ! git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            echo "::error::Requested release tag does not exist"
+            exit 1
+          fi
+
+          commit_sha="$(git rev-parse --verify --end-of-options "refs/tags/$RELEASE_TAG^{commit}")"
+          printf 'commit_sha=%s\n' "$commit_sha" >> "$GITHUB_OUTPUT"
+          printf 'release_tag=%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved $RELEASE_TAG to $commit_sha"
+
   # Update VERSION file with tag version
   update-version:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
+    needs: [resolve_release_ref]
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve_release_ref.outputs.commit_sha }}
+          persist-credentials: false
 
       - name: Update VERSION file
+        env:
+          RELEASE_TAG: ${{ needs.resolve_release_ref.outputs.release_tag }}
         run: |
-          VERSION="${{ env.RELEASE_TAG }}"
+          set -euo pipefail
+          VERSION="$RELEASE_TAG"
           VERSION=${VERSION#v}
-          echo "$VERSION" > backend/cmd/server/VERSION
+          printf '%s\n' "$VERSION" > backend/cmd/server/VERSION
           echo "Updated VERSION file to: $VERSION"
 
       - name: Upload VERSION artifact
@@ -62,10 +121,16 @@ jobs:
 
   build-frontend:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
+    needs: [resolve_release_ref]
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve_release_ref.outputs.commit_sha }}
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -96,14 +161,19 @@ jobs:
 
   release:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
-    needs: [update-version, build-frontend]
+    needs: [resolve_release_ref, update-version, build-frontend]
+    permissions:
+      # GoReleaser creates the GitHub release and publishes GHCR images.
+      contents: write
+      packages: write
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve_release_ref.outputs.commit_sha }}
+          persist-credentials: false
 
       - name: Download VERSION artifact
         uses: actions/download-artifact@v8
@@ -159,26 +229,53 @@ jobs:
 
       - name: Get tag message
         id: tag_message
+        env:
+          RELEASE_TAG: ${{ needs.resolve_release_ref.outputs.release_tag }}
+          EXPECTED_COMMIT_SHA: ${{ needs.resolve_release_ref.outputs.commit_sha }}
         run: |
-          TAG_NAME="${{ env.RELEASE_TAG }}"
+          set -euo pipefail
+          TAG_NAME="$RELEASE_TAG"
           echo "Processing tag: $TAG_NAME"
 
+          # The tag may be force-moved while the workflow is queued. Verify the
+          # fetched tag still names the immutable commit resolved by the first
+          # job before consuming its metadata or invoking GoReleaser.
+          actual_commit_sha="$(git rev-parse --verify --end-of-options "refs/tags/$TAG_NAME^{commit}")"
+          if [[ "$actual_commit_sha" != "$EXPECTED_COMMIT_SHA" ]]; then
+            echo "::error::Tag moved during release: expected $EXPECTED_COMMIT_SHA, got $actual_commit_sha"
+            exit 1
+          fi
+
           # 获取完整的 tag message（跳过第一行标题）
-          TAG_MESSAGE=$(git tag -l --format='%(contents:body)' "$TAG_NAME")
+          TAG_REF="refs/tags/$TAG_NAME"
+          TAG_MESSAGE="$(git for-each-ref --format='%(contents:body)' "$TAG_REF")"
 
-          # 调试输出
+          # Keep untrusted release notes out of workflow-command logs.
           echo "Tag message length: ${#TAG_MESSAGE}"
-          echo "Tag message preview:"
-          echo "$TAG_MESSAGE" | head -10
 
-          # 使用 EOF 分隔符处理多行内容
-          echo "message<<EOF" >> $GITHUB_OUTPUT
-          echo "$TAG_MESSAGE" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # Use a random delimiter and verify it is absent from the message.
+          # A fixed EOF delimiter lets tag authors inject extra GITHUB_OUTPUT
+          # records (and is therefore not safe for workflow_dispatch releases).
+          while :; do
+            delimiter="gha_tag_message_$(openssl rand -hex 32)"
+            if ! grep -Fqx -- "$delimiter" <<< "$TAG_MESSAGE"; then
+              break
+            fi
+          done
+          {
+            printf 'message<<%s\n' "$delimiter"
+            printf '%s\n' "$TAG_MESSAGE"
+            printf '%s\n' "$delimiter"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set lowercase owner for GHCR
         id: lowercase
-        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+        env:
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "$REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          printf 'owner=%s\n' "$owner" >> "$GITHUB_OUTPUT"
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
@@ -213,22 +310,25 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          RELEASE_TAG: ${{ needs.resolve_release_ref.outputs.release_tag }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_MESSAGE: ${{ steps.tag_message.outputs.message }}
         continue-on-error: true
         run: |
+          set -euo pipefail
           # 检查必要的环境变量
           if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
             echo "Telegram credentials not configured, skipping notification"
             exit 0
           fi
 
-          TAG_NAME="${{ env.RELEASE_TAG }}"
+          TAG_NAME="$RELEASE_TAG"
           VERSION=${TAG_NAME#v}
-          REPO="${{ github.repository }}"
+          REPO="$REPOSITORY"
           GHCR_IMAGE="ghcr.io/${REPO,,}"  # ${,,} converts to lowercase
 
           # 获取 tag message 内容并转义 Markdown 特殊字符
-          TAG_MESSAGE='${{ steps.tag_message.outputs.message }}'
-          TAG_MESSAGE=$(echo "$TAG_MESSAGE" | sed 's/\([_*`\[]\)/\\\1/g')
+          TAG_MESSAGE="$(printf '%s' "$TAG_MESSAGE" | sed 's/\([_*`\[]\)/\\\1/g')"
 
           # 限制消息长度（Telegram 消息限制 4096 字符，预留空间给头尾固定内容）
           if [ ${#TAG_MESSAGE} -gt 3500 ]; then
@@ -277,18 +377,27 @@ jobs:
               }')"
 
   sync-version-file:
-    needs: [release]
-    if: ${{ needs.release.result == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v'))) }}
+    needs: [resolve_release_ref, release]
+    if: ${{ needs.release.result == 'success' && needs.resolve_release_ref.result == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v'))) }}
+    permissions:
+      # This maintenance job commits the released VERSION to the default branch.
+      contents: write
     runs-on: ubuntu-latest
     steps:
+      # This maintenance job intentionally targets the default branch; it does
+      # not contribute files to the release artifacts produced above.
       - name: Checkout default branch
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.repository.default_branch }}
 
       - name: Sync VERSION file to released tag
+        env:
+          RELEASE_TAG: ${{ needs.resolve_release_ref.outputs.release_tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          VERSION="${{ env.RELEASE_TAG }}"
+          set -euo pipefail
+          VERSION="$RELEASE_TAG"
           VERSION=${VERSION#v}
 
           CURRENT_VERSION=$(tr -d '\r\n' < backend/cmd/server/VERSION || true)
@@ -303,4 +412,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add backend/cmd/server/VERSION
           git commit -m "chore: sync VERSION to ${VERSION} [skip ci]"
-          git push origin HEAD:${{ github.event.repository.default_branch }}
+          git push origin "HEAD:${DEFAULT_BRANCH}"
