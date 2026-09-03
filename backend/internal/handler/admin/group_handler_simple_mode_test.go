@@ -18,16 +18,28 @@ func newSimpleModeGroupRouter(svc *stubAdminService) *gin.Engine {
 	r := gin.New()
 	r.GET("/groups", h.List)
 	r.GET("/groups/all", h.GetAll)
+	r.GET("/groups/live-capability", h.GetLiveCapability)
+	r.GET("/groups/usage-summary", h.GetUsageSummary)
+	r.GET("/groups/capacity-summary", h.GetCapacitySummary)
+	r.PUT("/groups/sort-order", h.UpdateSortOrder)
 	r.GET("/groups/:id", h.GetByID)
+	r.GET("/groups/:id/stats", h.GetStats)
+	r.GET("/groups/:id/api-keys", h.GetGroupAPIKeys)
 	r.GET("/groups/:id/models-list-candidates", h.GetModelsListCandidates)
 	r.POST("/groups", h.Create)
 	r.PUT("/groups/:id", h.Update)
 	r.POST("/groups/:id/duplicate", h.Duplicate)
 	r.GET("/groups/:id/composite-routes", h.ListCompositeRoutes)
 	r.POST("/groups/:id/composite-routes", h.CreateCompositeRoute)
+	r.POST("/groups/:id/composite-routes/preview", h.PreviewCompositeRoute)
+	r.PUT("/groups/:id/composite-routes/:route_id", h.UpdateCompositeRoute)
+	r.DELETE("/groups/:id/composite-routes/:route_id", h.DeleteCompositeRoute)
+	r.GET("/groups/:id/rate-multipliers", h.GetGroupRateMultipliers)
 	r.PUT("/groups/:id/rate-multipliers", h.BatchSetGroupRateMultipliers)
 	r.DELETE("/groups/:id/rate-multipliers", h.ClearGroupRateMultipliers)
 	r.PUT("/groups/:id/rpm-overrides", h.BatchSetGroupRPMOverrides)
+	r.DELETE("/groups/:id/rpm-overrides", h.ClearGroupRPMOverrides)
+	r.DELETE("/groups/:id", h.Delete)
 	return r
 }
 
@@ -83,6 +95,26 @@ func TestGroupHandlerSimpleModeSanitizesCommercialFields(t *testing.T) {
 	require.Nil(t, updated.RPMLimit)
 }
 
+func TestGroupHandlerSimpleModeRejectsCompositeBeforeService(t *testing.T) {
+	svc := newStubAdminService()
+	r := newSimpleModeGroupRouter(svc)
+	req := httptest.NewRequest(http.MethodPost, "/groups", bytes.NewBufferString(`{"name":"composite","platform":"composite"}`))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	r.ServeHTTP(res, req)
+	require.Equal(t, http.StatusBadRequest, res.Code)
+	require.Empty(t, svc.createdGroups)
+}
+
+func TestGroupHandlerSimpleModeIgnoresExclusiveFilter(t *testing.T) {
+	svc := newStubAdminService()
+	r := newSimpleModeGroupRouter(svc)
+	res := httptest.NewRecorder()
+	r.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/groups?is_exclusive=true", nil))
+	require.Equal(t, http.StatusOK, res.Code)
+	require.Nil(t, svc.lastListGroupsIsExclusive)
+}
+
 func float64PtrForSimpleModeTest(value float64) *float64 { return &value }
 
 func TestGroupHandlerSimpleModeResponseUsesFieldAllowlist(t *testing.T) {
@@ -90,6 +122,7 @@ func TestGroupHandlerSimpleModeResponseUsesFieldAllowlist(t *testing.T) {
 	svc := newStubAdminService()
 	svc.groups = []service.Group{{
 		ID: 1, Name: "basic", Description: "allowed", Platform: service.PlatformAnthropic,
+		AccountCount: 3, ActiveAccountCount: 2, RateLimitedAccountCount: 1,
 		Status: service.StatusActive, RateMultiplier: 9, RPMLimit: 42,
 		LongContextPricingEnabled: true,
 		ModelPricing:              []service.ChannelModelPricing{{Models: []string{"claude"}}},
@@ -113,6 +146,11 @@ func TestGroupHandlerSimpleModeResponseUsesFieldAllowlist(t *testing.T) {
 	require.Equal(t, "basic", item["name"])
 	require.Equal(t, "allowed", item["description"])
 	require.Equal(t, "anthropic", item["platform"])
+	require.Equal(t, float64(3), item["account_count"])
+	require.ElementsMatch(t, []string{
+		"id", "name", "description", "platform", "status", "account_count",
+		"active_account_count", "rate_limited_account_count", "sort_order", "created_at", "updated_at",
+	}, mapKeys(item))
 	for _, forbidden := range []string{
 		"rate_multiplier", "rpm_limit", "long_context_pricing_enabled", "model_pricing",
 		"allow_batch_image_generation", "video_price_720p", "web_search_price_per_call",
@@ -123,11 +161,19 @@ func TestGroupHandlerSimpleModeResponseUsesFieldAllowlist(t *testing.T) {
 	}
 }
 
+func mapKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 func TestGroupHandlerSimpleModeAllReadAndWriteResponsesUseFieldAllowlist(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newStubAdminService()
 	svc.groups = []service.Group{{
-		ID: 1, Name: "basic", Description: "allowed", Platform: service.PlatformAnthropic,
+		ID: 1, Name: "basic", Description: "allowed", Platform: service.PlatformAnthropic, AccountCount: 3,
 		Status: service.StatusActive, RateMultiplier: 9, RPMLimit: 42,
 		LongContextPricingEnabled: true,
 		ModelPricing:              []service.ChannelModelPricing{{Models: []string{"claude"}}},
@@ -194,9 +240,20 @@ func TestGroupHandlerSimpleModeBlocksAdvancedOperations(t *testing.T) {
 		{http.MethodGet, "/groups/1/models-list-candidates", ""},
 		{http.MethodGet, "/groups/1/composite-routes", ""},
 		{http.MethodPost, "/groups/1/composite-routes", `{"public_model":"x","target_platform":"openai"}`},
+		{http.MethodPost, "/groups/1/composite-routes/preview", `{"model":"x"}`},
+		{http.MethodPut, "/groups/1/composite-routes/2", `{"public_model":"x","target_platform":"openai"}`},
+		{http.MethodDelete, "/groups/1/composite-routes/2", ""},
+		{http.MethodGet, "/groups/1/rate-multipliers", ""},
 		{http.MethodPut, "/groups/1/rate-multipliers", `{"entries":[]}`},
 		{http.MethodDelete, "/groups/1/rate-multipliers", ""},
 		{http.MethodPut, "/groups/1/rpm-overrides", `{"entries":[]}`},
+		{http.MethodDelete, "/groups/1/rpm-overrides", ""},
+		{http.MethodGet, "/groups/1/stats", ""},
+		{http.MethodGet, "/groups/1/api-keys", ""},
+		{http.MethodGet, "/groups/live-capability", ""},
+		{http.MethodGet, "/groups/usage-summary", ""},
+		{http.MethodGet, "/groups/capacity-summary", ""},
+		{http.MethodPut, "/groups/sort-order", `{"updates":[{"id":1,"sort_order":1}]}`},
 	}
 
 	for _, tt := range tests {
