@@ -1495,6 +1495,12 @@ type GatewaySchedulingConfig struct {
 
 	// 受控回源配置
 	DbFallbackEnabled bool `mapstructure:"db_fallback_enabled"`
+	// RequestFreshnessEnabled enables the legacy per-request PostgreSQL
+	// freshness projection. The normal scheduler path receives durable state
+	// through the outbox-backed snapshot; keeping this disabled makes the
+	// request hot path database-free. Enable only as an emergency compatibility
+	// switch while diagnosing snapshot propagation.
+	RequestFreshnessEnabled bool `mapstructure:"request_freshness_enabled"`
 	// 受控回源超时（秒），0 表示不额外收紧超时
 	DbFallbackTimeoutSeconds int `mapstructure:"db_fallback_timeout_seconds"`
 	// 受控回源限流（实例级 QPS），0 表示不限制
@@ -2535,6 +2541,10 @@ func setDefaults() {
 	viper.SetDefault("gateway.scheduling.snapshot_write_chunk_size", 256)
 	viper.SetDefault("gateway.scheduling.slot_cleanup_interval", 30*time.Second)
 	viper.SetDefault("gateway.scheduling.db_fallback_enabled", true)
+	// Scheduler snapshots are the source of truth on the request hot path.
+	// The old per-request freshness SQL projection is opt-in for emergency
+	// rollback only; default false is required for the 0-DB invariant.
+	viper.SetDefault("gateway.scheduling.request_freshness_enabled", false)
 	viper.SetDefault("gateway.scheduling.db_fallback_timeout_seconds", 0)
 	viper.SetDefault("gateway.scheduling.db_fallback_max_qps", 0)
 	viper.SetDefault("gateway.scheduling.outbox_poll_interval_seconds", 1)

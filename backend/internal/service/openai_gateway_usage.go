@@ -117,6 +117,21 @@ func (s *OpenAIGatewayService) ResolveUserGroupRateMultiplier(ctx context.Contex
 	return resolver.Resolve(ctx, userID, groupID, groupDefaultMultiplier)
 }
 
+// resolveUserGroupRateMultiplierSnapshotOnly reads only a warm local override
+// for scheduler admission. It intentionally has no repository fallback; the
+// final usage-billing path still uses ResolveUserGroupRateMultiplier for the
+// durable pricing lookup.
+func (s *OpenAIGatewayService) resolveUserGroupRateMultiplierSnapshotOnly(userID, groupID int64, groupDefaultMultiplier float64) float64 {
+	if s == nil {
+		return groupDefaultMultiplier
+	}
+	resolver := s.userGroupRateResolver
+	if resolver == nil {
+		resolver = newUserGroupRateResolver(nil, nil, resolveUserGroupRateCacheTTL(s.cfg), nil, "service.openai_gateway")
+	}
+	return resolver.ResolveSnapshotOnly(userID, groupID, groupDefaultMultiplier)
+}
+
 // openAIUsagePricingAt 返回本次用量记录使用的定价时刻：优先请求级 PricingAt
 // （与利润门 D 同源同刻），未装配时回退记录时刻（既有行为）。
 func openAIUsagePricingAt(input *OpenAIRecordUsageInput) time.Time {
@@ -822,6 +837,12 @@ func (s *OpenAIGatewayService) apiKeyWithFreshGroupMediaPricing(ctx context.Cont
 		return apiKey
 	}
 	if s == nil || s.channelService == nil || s.channelService.groupRepo == nil {
+		return apiKey
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		// Media pricing is advisory on the request path; a cache-cold auth group
+		// must not trigger a hidden GetByIDLite query. The background snapshot/
+		// invalidation flow will publish the complete group for later requests.
 		return apiKey
 	}
 	group, err := s.channelService.groupRepo.GetByIDLite(ctx, *apiKey.GroupID)

@@ -124,6 +124,9 @@ func (s *adminServiceImpl) CreateCompositeRoute(ctx context.Context, groupID int
 	if err := s.compositeRouteRepo.Create(ctx, route); err != nil {
 		return nil, err
 	}
+	if s.compositeResolver != nil {
+		s.compositeResolver.InvalidateGroup(groupID)
+	}
 	return route, nil
 }
 
@@ -147,6 +150,9 @@ func (s *adminServiceImpl) UpdateCompositeRoute(ctx context.Context, groupID, ro
 	if err := s.compositeRouteRepo.Update(ctx, route); err != nil {
 		return nil, err
 	}
+	if s.compositeResolver != nil {
+		s.compositeResolver.InvalidateGroup(groupID)
+	}
 	return route, nil
 }
 
@@ -162,7 +168,13 @@ func (s *adminServiceImpl) DeleteCompositeRoute(ctx context.Context, groupID, ro
 	} else if !ok {
 		return ErrCompositeRouteNotFound
 	}
-	return s.compositeRouteRepo.Delete(ctx, routeID)
+	if err := s.compositeRouteRepo.Delete(ctx, routeID); err != nil {
+		return err
+	}
+	if s.compositeResolver != nil {
+		s.compositeResolver.InvalidateGroup(groupID)
+	}
+	return nil
 }
 
 func (s *adminServiceImpl) PreviewCompositeRoute(ctx context.Context, groupID int64, input CompositeRoutePreviewRequest) (*CompositeRouteDecision, error) {

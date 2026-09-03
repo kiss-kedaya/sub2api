@@ -29,7 +29,11 @@ const (
 )
 
 const (
-	openAIAdvancedSchedulerSettingCacheTTL  = 5 * time.Second
+	// Runtime scheduler settings are immutable for normal request bursts and
+	// are invalidated immediately on local writes. A minute TTL bounds stale
+	// cross-instance reads while avoiding a synchronized PostgreSQL read every
+	// five seconds on every replica.
+	openAIAdvancedSchedulerSettingCacheTTL  = 60 * time.Second
 	openAIAdvancedSchedulerSettingDBTimeout = 2 * time.Second
 	// ponytail: cap probes added when cost ordering expands configured Top-K;
 	// use bulk acquisition if a measured workload needs a higher ceiling.
@@ -67,6 +71,7 @@ type openAIAdvancedSchedulerRuntimeSettings struct {
 
 var openAIAdvancedSchedulerSettingCache atomic.Value // *cachedOpenAIAdvancedSchedulerSetting
 var openAIAdvancedSchedulerSettingSF singleflight.Group
+var openAIAdvancedSchedulerSettingRefreshing atomic.Bool
 
 type OpenAIAccountScheduleRequest struct {
 	GroupID                 *int64
@@ -1522,8 +1527,10 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	if len(accounts) == 0 {
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary(""))
 	}
-	ctx = withSchedulerFreshnessAccounts(ctx, s.service.accountRepo, s.service.schedulerSnapshot, accounts)
-	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
+	accounts = applySchedulerFreshnessForRequest(ctx, s.service.accountRepo, s.service.schedulerSnapshot, accounts)
+	if len(accounts) == 0 {
+		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary("freshness_unavailable"))
+	}
 	// Local free-tier soft gate on the Grok scheduling path only (not admin probe).
 	accounts = s.filterGrokFreeQuotaAccounts(ctx, accounts)
 	if len(accounts) == 0 {
@@ -1554,7 +1561,8 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		if schedGroup == nil {
 			// Privacy eligibility only needs group configuration. The full group
 			// loader also aggregates account counts, which is unnecessary work on
-			// every load-aware selection and failover attempt.
+			// every load-aware selection and failover attempt. GetGroupByIDLite is
+			// cache-only under snapshot mode and preserves the 0-DB contract.
 			schedGroup, _ = s.service.schedulerSnapshot.GetGroupByIDLite(ctx, *req.GroupID)
 		}
 	}
@@ -1890,9 +1898,19 @@ func (s *defaultOpenAIAccountScheduler) lookupShadowParentAccount(ctx context.Co
 		return account
 	}
 	if s.service.schedulerSnapshot != nil {
-		if account, err := s.service.schedulerSnapshot.GetAccount(ctx, id); err == nil && account != nil {
+		var account *Account
+		var err error
+		if schedulerSnapshotOnlyFromContext(ctx) {
+			account, err = s.service.schedulerSnapshot.getAccountForRequest(ctx, id)
+		} else {
+			account, err = s.service.schedulerSnapshot.GetAccount(ctx, id)
+		}
+		if err == nil && account != nil {
 			return account
 		}
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return nil
 	}
 	if s.service.accountRepo == nil {
 		return nil
@@ -2022,6 +2040,9 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerSettingRepo() SettingRepos
 }
 
 func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx context.Context) openAIAdvancedSchedulerRuntimeSettings {
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.openAIAdvancedSchedulerRuntimeSettingsSnapshotOnly()
+	}
 	if cached, ok := openAIAdvancedSchedulerSettingCache.Load().(*cachedOpenAIAdvancedSchedulerSetting); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
 			return openAIAdvancedSchedulerRuntimeSettings{
@@ -2113,6 +2134,47 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 
 	settings, _ := result.(openAIAdvancedSchedulerRuntimeSettings)
 	return settings
+}
+
+// openAIAdvancedSchedulerRuntimeSettingsSnapshotOnly serves the last known
+// scheduler settings (or conservative local defaults) without waiting on the
+// settings repository. An expired/missing value is refreshed in the
+// background, preserving a database-free model-request path.
+func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettingsSnapshotOnly() openAIAdvancedSchedulerRuntimeSettings {
+	if cached, ok := openAIAdvancedSchedulerSettingCache.Load().(*cachedOpenAIAdvancedSchedulerSetting); ok && cached != nil {
+		if time.Now().UnixNano() >= cached.expiresAt {
+			s.refreshOpenAIAdvancedSchedulerSettingsAsync()
+		}
+		return openAIAdvancedSchedulerRuntimeSettings{
+			lowUpstreamRatePriorityEnabled: cached.lowUpstreamRatePriorityEnabled,
+			oauthSchedulingRateMultiplier:  cached.oauthSchedulingRateMultiplier,
+			enabled:                        cached.enabled,
+			stickyWeightedEnabled:          cached.stickyWeightedEnabled,
+			subscriptionPriorityEnabled:    cached.subscriptionPriorityEnabled,
+			lbTopKOverride:                 cached.lbTopKOverride,
+			weightOverrides:                cloneOpenAIAdvancedSchedulerWeightOverrides(cached.weightOverrides),
+		}
+	}
+	s.refreshOpenAIAdvancedSchedulerSettingsAsync()
+	return openAIAdvancedSchedulerRuntimeSettings{
+		lowUpstreamRatePriorityEnabled: false,
+		oauthSchedulingRateMultiplier:  defaultOpenAIOAuthSchedulingRateMultiplier,
+		enabled:                        false,
+		stickyWeightedEnabled:          false,
+		subscriptionPriorityEnabled:    false,
+	}
+}
+
+func (s *OpenAIGatewayService) refreshOpenAIAdvancedSchedulerSettingsAsync() {
+	if s == nil || !openAIAdvancedSchedulerSettingRefreshing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer openAIAdvancedSchedulerSettingRefreshing.Store(false)
+		// Use a clean context so the refresh cannot inherit the snapshot-only
+		// marker and recurse back into this non-blocking branch.
+		_ = s.openAIAdvancedSchedulerRuntimeSettings(context.Background())
+	}()
 }
 
 func (s *OpenAIGatewayService) isOpenAIAdvancedSchedulerEnabled(ctx context.Context) bool {
@@ -2233,6 +2295,7 @@ func (s *OpenAIGatewayService) getOpenAIAccountScheduler(ctx context.Context) Op
 func resetOpenAIAdvancedSchedulerSettingCacheForTest() {
 	openAIAdvancedSchedulerSettingCache = atomic.Value{}
 	openAIAdvancedSchedulerSettingSF = singleflight.Group{}
+	openAIAdvancedSchedulerSettingRefreshing = atomic.Bool{}
 }
 
 func (s *OpenAIGatewayService) SelectAccountWithScheduler(
@@ -2258,7 +2321,11 @@ func (s *OpenAIGatewayService) PrepareSchedulerRequestContext(ctx context.Contex
 	if s == nil || ctx == nil {
 		return ctx
 	}
-	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	// Keep ordinary requests on the published scheduler snapshot. Durable
+	// freshness revalidation is opt-in through the emergency compatibility
+	// switch; installing it by default issues a PostgreSQL projection query for
+	// every scheduling pass.
+	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	return withUserPlatformQuotaRequestContext(ctx)
 }
 
@@ -2270,7 +2337,13 @@ func (s *OpenAIGatewayService) RefreshSchedulerRequestContext(ctx context.Contex
 	if s == nil || ctx == nil {
 		return ctx
 	}
-	ctx = refreshSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	if s.schedulerSnapshot != nil && s.schedulerSnapshot.requestFreshnessEnabled() {
+		ctx = refreshSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	} else {
+		// A new WebSocket turn reads the latest published snapshot without a
+		// synchronous PostgreSQL projection.
+		ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
+	}
 	return withUserPlatformQuotaRequestContext(ctx)
 }
 
@@ -2284,6 +2357,18 @@ func (s *OpenAIGatewayService) RefreshSchedulerAccountFreshness(ctx context.Cont
 		return nil, false
 	}
 	state := schedulerFreshnessFromContext(ctx)
+	if state == nil && schedulerSnapshotOnlyFromContext(ctx) && s.schedulerSnapshot != nil {
+		// Long-lived WS turns do not create a durable freshness projection. Re-read
+		// the selected account from the published snapshot instead, so status,
+		// model mappings, and transient pauses advance between turns without a
+		// PostgreSQL fallback. A missing snapshot entry is treated as no longer
+		// schedulable and asks the client to reconnect.
+		latest, err := s.schedulerSnapshot.GetAccountSnapshot(ctx, account.ID)
+		if err != nil || latest == nil {
+			return nil, false
+		}
+		account = latest
+	}
 	if state == nil || !state.enabled() {
 		if !account.IsSchedulable() {
 			return nil, false
@@ -2437,6 +2522,15 @@ func (s *OpenAIGatewayService) loadOpenAIGroupRequiresPrivacySet(ctx context.Con
 	if group := openAIGroupFromContext(ctx, groupID); group != nil {
 		return group.RequirePrivacySet
 	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		// Consult the local group-policy projection before failing closed. A cold
+		// projection returns the conservative privacy requirement without issuing
+		// a synchronous PostgreSQL query.
+		if group, groupErr := s.schedulerSnapshot.GetGroupByIDLite(ctx, *groupID); groupErr == nil && group != nil {
+			return group.RequirePrivacySet
+		}
+		return true
+	}
 	group, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, *groupID)
 	if err != nil {
 		return true
@@ -2459,9 +2553,9 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
-	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 分组利润控制：唯一文本调度入口的防御性装门。handler 文本
 	// 入口已在请求开始经 WithOpenAIRequestPricingContext 装门并固定 pricingAt，
 	// 此处对同分组门直接复用（failover 重入阈值稳定），仅为不经 handler 装配的
@@ -2659,10 +2753,18 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 	accountID := account.ID
 	healthTripped := false
 	if s != nil && s.rateLimitService != nil {
+		// This reporting hook predates request-context plumbing and is called by
+		// several failover paths with no context. Carry the production scheduler
+		// marker explicitly so an expired health-breaker setting is served from
+		// its SWR cache instead of synchronously querying PostgreSQL on a failure.
+		healthCtx := context.Background()
+		if s.schedulerSnapshot != nil {
+			healthCtx = withSchedulerSnapshotService(withSchedulerSnapshotOnly(healthCtx), s.schedulerSnapshot)
+		}
 		if success {
-			s.rateLimitService.ObserveOpenAIAPIKeyHealthSuccess(context.Background(), account)
+			s.rateLimitService.ObserveOpenAIAPIKeyHealthSuccess(healthCtx, account)
 		} else if len(observedErr) > 0 && observedErr[0] != nil {
-			healthTripped = s.rateLimitService.ObserveOpenAIAPIKeyHealthFailure(context.Background(), account, observedErr[0])
+			healthTripped = s.rateLimitService.ObserveOpenAIAPIKeyHealthFailure(healthCtx, account, observedErr[0])
 		}
 	}
 	if success {

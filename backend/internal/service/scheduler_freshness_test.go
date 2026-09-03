@@ -5,8 +5,21 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 )
+
+type tokenVersionRepoStub struct {
+	AccountRepository
+	calls atomic.Int64
+}
+
+func (r *tokenVersionRepoStub) GetByID(context.Context, int64) (*Account, error) {
+	r.calls.Add(1)
+	return &Account{ID: 1}, nil
+}
 
 type schedulerFreshnessRepoStub struct {
 	AccountRepository
@@ -144,7 +157,9 @@ func TestPrepareSchedulerRequestContextReusesProjectionAcrossRetries(t *testing.
 	repo := &schedulerFreshnessRepoStub{projection: map[int64]SchedulerFreshness{
 		41: schedulerFreshnessTestValue(41, nil),
 	}}
-	snapshot := &SchedulerSnapshotService{}
+	snapshot := &SchedulerSnapshotService{cfg: &config.Config{
+		Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{RequestFreshnessEnabled: true}},
+	}}
 	svc := &GatewayService{accountRepo: repo, schedulerSnapshot: snapshot}
 	accounts := []Account{{ID: 41, Platform: PlatformOpenAI, Type: AccountTypeOAuth}}
 
@@ -162,6 +177,69 @@ func TestPrepareSchedulerRequestContextReusesProjectionAcrossRetries(t *testing.
 	defer repo.mu.Unlock()
 	if repo.projectionCalls != 1 {
 		t.Fatalf("projection calls = %d, want 1 across initial selection and retry", repo.projectionCalls)
+	}
+}
+
+func TestPrepareSchedulerRequestContextSnapshotOnlySkipsFreshnessProjection(t *testing.T) {
+	repo := &schedulerFreshnessRepoStub{projection: map[int64]SchedulerFreshness{
+		61: schedulerFreshnessTestValue(61, nil),
+	}}
+	svc := &GatewayService{
+		accountRepo: repo,
+		schedulerSnapshot: &SchedulerSnapshotService{cfg: &config.Config{
+			Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{RequestFreshnessEnabled: false}},
+		}},
+	}
+	accounts := []Account{{ID: 61, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true}}
+
+	ctx := svc.PrepareSchedulerRequestContext(context.Background())
+	if schedulerFreshnessFromContext(ctx) != nil {
+		t.Fatal("snapshot-only request must not install a durable freshness state")
+	}
+	ctx = withSchedulerFreshnessAccounts(ctx, repo, svc.schedulerSnapshot, accounts)
+	got := applySchedulerFreshnessAccounts(ctx, accounts)
+	if len(got) != 1 || got[0].ID != accounts[0].ID {
+		t.Fatalf("snapshot-only candidates = %#v, want original snapshot account", got)
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if repo.projectionCalls != 0 {
+		t.Fatalf("snapshot-only scheduling issued %d freshness queries", repo.projectionCalls)
+	}
+}
+
+func TestSchedulerFreshnessFallbackRemainsExplicit(t *testing.T) {
+	repo := &schedulerFreshnessRepoStub{projection: map[int64]SchedulerFreshness{
+		62: schedulerFreshnessTestValue(62, nil),
+	}}
+	ctx := withSchedulerSnapshotOnly(context.Background())
+	ctx = withSchedulerFreshnessFallback(ctx, repo, &SchedulerSnapshotService{}, 62)
+	state := schedulerFreshnessFromContext(ctx)
+	if state == nil || !state.enabled() {
+		t.Fatal("explicit fallback must install a durable freshness state")
+	}
+	state.prime(ctx)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if repo.projectionCalls != 1 {
+		t.Fatalf("explicit fallback projection calls = %d, want 1", repo.projectionCalls)
+	}
+}
+
+func TestWithSchedulerSnapshotContextPreservesZeroDBMarkerForDetachedBilling(t *testing.T) {
+	repo := &tokenVersionRepoStub{}
+	account := &Account{ID: 1, Credentials: map[string]any{"_token_version": int64(1)}}
+	parent := withSchedulerSnapshotOnly(context.Background())
+	workerCtx := WithSchedulerSnapshotContext(parent, context.Background())
+
+	latest, stale := CheckTokenVersion(workerCtx, account, repo)
+	if latest != nil || stale {
+		t.Fatalf("detached snapshot-only token check = (%#v, %v), want (nil, false)", latest, stale)
+	}
+	if got := repo.calls.Load(); got != 0 {
+		t.Fatalf("detached billing token check issued %d PostgreSQL reads", got)
 	}
 }
 

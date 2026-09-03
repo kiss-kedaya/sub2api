@@ -185,6 +185,11 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if parent == nil {
 		return base
 	}
+	// Billing runs after the client response on a detached worker context. Keep
+	// the immutable scheduler snapshot contract while deliberately dropping
+	// cancellation/deadlines; otherwise token-cache misses and Spark shadow
+	// parent resolution can re-enter PostgreSQL once the worker starts.
+	base = service.WithSchedulerSnapshotContext(parent, base)
 	if clientRequestID, _ := parent.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
 		base = context.WithValue(base, ctxkey.ClientRequestID, strings.TrimSpace(clientRequestID))
 	}

@@ -169,6 +169,21 @@ type SchedulerSnapshotService struct {
 	// snapshot/cache miss.  Coalesce that per-account database fallback so a
 	// Redis outage does not turn into one GetByID query per request.
 	accountFallbackGroup singleflight.Group
+
+	// groupCache stores the small routing-policy projection used by gateway
+	// admission (platform, privacy, profit and model-routing fields). It is
+	// refreshed by group outbox events and serves stale-while-revalidate on the
+	// request path, so a group lookup cannot become a hidden PostgreSQL hotspot.
+	groupCacheMu   sync.RWMutex
+	groupCache     map[int64]schedulerGroupCacheEntry
+	groupSF        singleflight.Group
+	groupRefreshSF singleflight.Group
+	// groupRefreshState bounds retries after a failed stale-while-revalidate
+	// load. Without a backoff, every request that observes an expired group
+	// entry can launch a new PostgreSQL query as soon as the previous attempt
+	// returns an error, recreating a DB retry storm during an outage.
+	groupRefreshStateMu sync.Mutex
+	groupRefreshState   map[int64]schedulerGroupRefreshState
 }
 
 const (
@@ -193,6 +208,23 @@ type schedulerSnapshotVersionCacheEntry struct {
 	version string
 	readAt  time.Time
 }
+
+type schedulerGroupCacheEntry struct {
+	group     *Group
+	expiresAt time.Time
+}
+
+type schedulerGroupRefreshState struct {
+	failures int
+	nextTry  time.Time
+}
+
+const schedulerGroupCacheTTL = 10 * time.Minute
+
+const (
+	schedulerGroupRefreshRetryBase = 5 * time.Second
+	schedulerGroupRefreshRetryMax  = time.Minute
+)
 
 // snapshotVersionReader is intentionally optional so SchedulerCache remains
 // backwards compatible with test and third-party implementations.  The Redis
@@ -223,6 +255,8 @@ func NewSchedulerSnapshotService(
 		fallbackLimit:           newFallbackLimiter(maxQPS),
 		snapshotVersionCacheTTL: snapshotVersionCacheWindow,
 		snapshotGenerations:     make(map[string]uint64),
+		groupCache:              make(map[int64]schedulerGroupCacheEntry),
+		groupRefreshState:       make(map[int64]schedulerGroupRefreshState),
 	}
 }
 
@@ -266,7 +300,43 @@ func (s *SchedulerSnapshotService) Stop() {
 	s.wg.Wait()
 }
 
+// requestFreshnessEnabled reports whether the legacy request-level durable
+// projection is enabled. A fully wired production service always has Config;
+// nil is kept enabled for old lightweight callers and tests that construct the
+// snapshot service directly and explicitly exercise the projection helpers.
+func (s *SchedulerSnapshotService) requestFreshnessEnabled() bool {
+	if s == nil || s.cfg == nil {
+		return true
+	}
+	return s.cfg.Gateway.Scheduling.RequestFreshnessEnabled
+}
+
+// ListSchedulableAccounts returns a published scheduler snapshot when
+// available and retains the legacy database fallback for explicit callers
+// (startup/recovery and compatibility paths).
 func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {
+	return s.listSchedulableAccounts(ctx, groupID, platform, hasForcePlatform, true)
+}
+
+// ListSchedulableAccountsSnapshot is the normal request-path API.  It is
+// snapshot-authoritative: a cache miss or unavailable cache is surfaced to the
+// caller instead of implicitly scanning PostgreSQL.  The explicit
+// ListSchedulableAccounts method remains available for cold-start/recovery.
+func (s *SchedulerSnapshotService) ListSchedulableAccountsSnapshot(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {
+	return s.listSchedulableAccounts(ctx, groupID, platform, hasForcePlatform, false)
+}
+
+// listSchedulableAccountsForRequest selects the strict snapshot path for a
+// normal request while preserving the legacy fallback for explicit callers
+// that did not opt into snapshot-only mode.
+func (s *SchedulerSnapshotService) listSchedulableAccountsForRequest(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.ListSchedulableAccountsSnapshot(ctx, groupID, platform, hasForcePlatform)
+	}
+	return s.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
+}
+
+func (s *SchedulerSnapshotService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool, allowDBFallback bool) ([]Account, bool, error) {
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	mode := s.resolveMode(platform, hasForcePlatform)
 	bucket := s.bucketFor(groupID, platform, mode)
@@ -330,6 +400,9 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 			})
 			return derefAccounts(cached), useMixed, nil
 		}
+	}
+	if !allowDBFallback || schedulerSnapshotOnlyFromContext(ctx) {
+		return nil, useMixed, ErrSchedulerCacheNotReady
 	}
 
 	// Cold misses are a shared slow path.  Only one caller performs the DB
@@ -562,6 +635,9 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 	if accountID <= 0 {
 		return nil, nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -630,6 +706,48 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 	}
 }
 
+// GetAccountSnapshot reads one account from the published scheduler cache
+// without invoking the PostgreSQL compatibility fallback.  Normal scheduling
+// uses this variant so a Redis/cache miss cannot fan out into per-candidate
+// GetByID queries.  Callers that explicitly need durable recovery should use
+// GetAccount, whose historical fallback behavior is retained.
+func (s *SchedulerSnapshotService) GetAccountSnapshot(ctx context.Context, accountID int64) (*Account, error) {
+	if accountID <= 0 {
+		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s == nil || s.cache == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	account, err := s.cache.GetAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if account == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	// Scheduler cache adapters are allowed to reuse decoded objects internally.
+	// Never expose that pointer to request code: rate-limit/credential refresh
+	// paths mutate Account and its nested JSON maps, so sharing it would both
+	// corrupt the published snapshot and introduce a data race between turns.
+	cloned := cloneSnapshotAccount(account)
+	return &cloned, nil
+}
+
+// getAccountForRequest mirrors listSchedulableAccountsForRequest for single
+// account hydration and sticky lookups.
+func (s *SchedulerSnapshotService) getAccountForRequest(ctx context.Context, accountID int64) (*Account, error) {
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.GetAccountSnapshot(ctx, accountID)
+	}
+	return s.GetAccount(ctx, accountID)
+}
+
 // setSchedulerAccountCacheBestEffort keeps compatibility with read-only or
 // partially implemented SchedulerCache adapters used during rolling upgrades.
 // A cache seed is an optimization only; a panic or write error must never turn
@@ -648,8 +766,11 @@ func setSchedulerAccountCacheBestEffort(cache SchedulerCache, ctx context.Contex
 
 // GetGroupByID 获取分组信息（供调度器使用）
 func (s *SchedulerSnapshotService) GetGroupByID(ctx context.Context, groupID int64) (*Group, error) {
-	if s.groupRepo == nil {
+	if s == nil || s.groupRepo == nil {
 		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	return s.groupRepo.GetByID(ctx, groupID)
 }
@@ -659,10 +780,226 @@ func (s *SchedulerSnapshotService) GetGroupByID(ctx context.Context, groupID int
 // 查询纯属浪费——composite / 模型路由 / fallback 每次装门都要付一次，WS 更是
 // 每个 turn 一次，且发生在「是否启用利润控制」判定之前。
 func (s *SchedulerSnapshotService) GetGroupByIDLite(ctx context.Context, groupID int64) (*Group, error) {
+	if s == nil || groupID <= 0 {
+		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if cached, ok := s.loadCachedGroup(groupID); ok {
+		if time.Now().Before(cached.expiresAt) {
+			return cloneSchedulerGroup(cached.group), nil
+		}
+		if schedulerSnapshotOnlyFromContext(ctx) {
+			// Keep the last known routing policy while a background refresh picks
+			// up the outbox change/TTL expiry.
+			s.refreshGroupCacheAsync(groupID)
+			return cloneSchedulerGroup(cached.group), nil
+		}
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		// A cold snapshot is a startup/readiness condition, not a reason to
+		// synchronously scan PostgreSQL from a model request.  Kick off one
+		// coalesced control-plane refresh so a process that restarted with warm
+		// account buckets but an empty local group-policy cache can recover
+		// without waiting for a new outbox event.
+		s.refreshGroupCacheAsync(groupID)
+		return nil, ErrSchedulerCacheNotReady
+	}
 	if s.groupRepo == nil {
 		return nil, nil
 	}
-	return s.groupRepo.GetByIDLite(ctx, groupID)
+	value, err, _ := s.groupSF.Do(strconv.FormatInt(groupID, 10), func() (any, error) {
+		group, loadErr := s.groupRepo.GetByIDLite(ctx, groupID)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		s.storeCachedGroup(group)
+		return group, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	group, _ := value.(*Group)
+	return cloneSchedulerGroup(group), nil
+}
+
+func (s *SchedulerSnapshotService) loadCachedGroup(groupID int64) (schedulerGroupCacheEntry, bool) {
+	s.groupCacheMu.RLock()
+	entry, ok := s.groupCache[groupID]
+	s.groupCacheMu.RUnlock()
+	return entry, ok && entry.group != nil
+}
+
+func (s *SchedulerSnapshotService) storeCachedGroup(group *Group) {
+	s.storeCachedGroupWithMode(group, false)
+}
+
+// seedCachedGroup publishes a request-authenticated group only when it is
+// newer than the existing control-plane entry (or when no entry exists). It
+// intentionally does not extend an existing entry's TTL on every request;
+// otherwise a busy tenant could keep an out-of-date group policy alive
+// forever, defeating outbox/TTL refresh.
+func (s *SchedulerSnapshotService) seedCachedGroup(group *Group) {
+	s.storeCachedGroupWithMode(group, true)
+}
+
+func (s *SchedulerSnapshotService) storeCachedGroupWithMode(group *Group, seedOnly bool) {
+	if s == nil || group == nil || group.ID <= 0 {
+		return
+	}
+	copy := cloneSchedulerGroup(group)
+	s.groupCacheMu.Lock()
+	if s.groupCache == nil {
+		s.groupCache = make(map[int64]schedulerGroupCacheEntry)
+	}
+	if seedOnly {
+		if existing, ok := s.groupCache[group.ID]; ok && existing.group != nil {
+			// UpdatedAt is the authoritative version when available. For legacy
+			// zero timestamps, retain the first seed until it expires rather than
+			// extending it on every request.
+			if !group.UpdatedAt.IsZero() && !existing.group.UpdatedAt.IsZero() && !group.UpdatedAt.After(existing.group.UpdatedAt) {
+				s.groupCacheMu.Unlock()
+				return
+			}
+			if group.UpdatedAt.IsZero() && existing.expiresAt.After(time.Now()) {
+				s.groupCacheMu.Unlock()
+				return
+			}
+		}
+	}
+	s.groupCache[group.ID] = schedulerGroupCacheEntry{group: copy, expiresAt: time.Now().Add(schedulerGroupCacheTTL)}
+	s.groupCacheMu.Unlock()
+	s.clearGroupRefreshBackoff(group.ID)
+}
+
+func (s *SchedulerSnapshotService) deleteCachedGroup(groupID int64) {
+	if s == nil || groupID <= 0 {
+		return
+	}
+	s.groupCacheMu.Lock()
+	delete(s.groupCache, groupID)
+	s.groupCacheMu.Unlock()
+}
+
+func (s *SchedulerSnapshotService) refreshGroupCacheAsync(groupID int64) {
+	if s == nil || s.groupRepo == nil || groupID <= 0 {
+		return
+	}
+	if !s.groupRefreshRetryAllowed(groupID, time.Now()) {
+		return
+	}
+	key := strconv.FormatInt(groupID, 10)
+	// DoChan launches the refresh without making the request wait. The
+	// per-group singleflight key prevents a burst of stale reads from creating
+	// one database query per request.
+	s.groupRefreshSF.DoChan(key, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		group, err := s.groupRepo.GetByIDLite(ctx, groupID)
+		if err != nil {
+			if errors.Is(err, ErrGroupNotFound) {
+				s.deleteCachedGroup(groupID)
+			}
+			s.recordGroupRefreshFailure(groupID)
+			return nil, err
+		}
+		if group == nil {
+			s.recordGroupRefreshFailure(groupID)
+			return nil, ErrGroupNotFound
+		}
+		s.storeCachedGroup(group)
+		return nil, nil
+	})
+}
+
+func (s *SchedulerSnapshotService) groupRefreshRetryAllowed(groupID int64, now time.Time) bool {
+	if s == nil || groupID <= 0 {
+		return false
+	}
+	s.groupRefreshStateMu.Lock()
+	defer s.groupRefreshStateMu.Unlock()
+	if s.groupRefreshState == nil {
+		s.groupRefreshState = make(map[int64]schedulerGroupRefreshState)
+	}
+	state, ok := s.groupRefreshState[groupID]
+	return !ok || state.nextTry.IsZero() || !now.Before(state.nextTry)
+}
+
+func (s *SchedulerSnapshotService) recordGroupRefreshFailure(groupID int64) {
+	if s == nil || groupID <= 0 {
+		return
+	}
+	now := time.Now()
+	s.groupRefreshStateMu.Lock()
+	defer s.groupRefreshStateMu.Unlock()
+	if s.groupRefreshState == nil {
+		s.groupRefreshState = make(map[int64]schedulerGroupRefreshState)
+	}
+	state := s.groupRefreshState[groupID]
+	state.failures++
+	delay := schedulerGroupRefreshRetryBase
+	for i := 1; i < state.failures && delay < schedulerGroupRefreshRetryMax; i++ {
+		delay *= 2
+		if delay >= schedulerGroupRefreshRetryMax {
+			delay = schedulerGroupRefreshRetryMax
+			break
+		}
+	}
+	state.nextTry = now.Add(delay)
+	s.groupRefreshState[groupID] = state
+}
+
+func (s *SchedulerSnapshotService) clearGroupRefreshBackoff(groupID int64) {
+	if s == nil || groupID <= 0 {
+		return
+	}
+	s.groupRefreshStateMu.Lock()
+	if s.groupRefreshState != nil {
+		delete(s.groupRefreshState, groupID)
+	}
+	s.groupRefreshStateMu.Unlock()
+}
+
+func cloneSchedulerGroup(group *Group) *Group {
+	if group == nil {
+		return nil
+	}
+	cp := *group
+	cp.DailyLimitUSD = cloneGroupValuePointer(group.DailyLimitUSD)
+	cp.WeeklyLimitUSD = cloneGroupValuePointer(group.WeeklyLimitUSD)
+	cp.MonthlyLimitUSD = cloneGroupValuePointer(group.MonthlyLimitUSD)
+	cp.ImagePrice1K = cloneGroupValuePointer(group.ImagePrice1K)
+	cp.ImagePrice2K = cloneGroupValuePointer(group.ImagePrice2K)
+	cp.ImagePrice4K = cloneGroupValuePointer(group.ImagePrice4K)
+	cp.VideoPrice480P = cloneGroupValuePointer(group.VideoPrice480P)
+	cp.VideoPrice720P = cloneGroupValuePointer(group.VideoPrice720P)
+	cp.VideoPrice1080P = cloneGroupValuePointer(group.VideoPrice1080P)
+	cp.WebSearchPricePerCall = cloneGroupValuePointer(group.WebSearchPricePerCall)
+	cp.SearchPricePer1k = cloneGroupValuePointer(group.SearchPricePer1k)
+	cp.AudioRealtimePricePerMin = cloneGroupValuePointer(group.AudioRealtimePricePerMin)
+	cp.AudioTTSPricePerMillionChars = cloneGroupValuePointer(group.AudioTTSPricePerMillionChars)
+	cp.AudioSTTPricePerHour = cloneGroupValuePointer(group.AudioSTTPricePerHour)
+	cp.FallbackGroupID = cloneGroupValuePointer(group.FallbackGroupID)
+	cp.FallbackGroupIDOnInvalidRequest = cloneGroupValuePointer(group.FallbackGroupIDOnInvalidRequest)
+	cp.ModelRouting = cloneGroupModelRouting(group.ModelRouting)
+	cp.VideoModelPrices = cloneGroupVideoModelPrices(group.VideoModelPrices)
+	cp.SupportedModelScopes = append([]string(nil), group.SupportedModelScopes...)
+	if group.ModelPricing != nil {
+		cp.ModelPricing = make([]ChannelModelPricing, len(group.ModelPricing))
+		for i := range group.ModelPricing {
+			// Group policy snapshots are published once and then read concurrently
+			// by request goroutines. Clone nested model/interval/time-pricing slices
+			// as well as the outer slice so a later admin update or caller mutation
+			// cannot race with a hot-path pricing lookup.
+			cp.ModelPricing[i] = group.ModelPricing[i].Clone()
+		}
+	}
+	cp.ReasoningEffortMappings = append([]ReasoningEffortMapping(nil), group.ReasoningEffortMappings...)
+	cp.AccountGroups = append([]AccountGroup(nil), group.AccountGroups...)
+	cp.MessagesDispatchModelConfig = cloneGroupMessagesDispatchModelConfig(group.MessagesDispatchModelConfig)
+	cp.ModelsListConfig.Models = append([]string(nil), group.ModelsListConfig.Models...)
+	return &cp
 }
 
 // UpdateAccountInCache 立即更新 Redis 中单个账号的数据（用于模型限流后立即生效）
@@ -1116,6 +1453,11 @@ func (s *SchedulerSnapshotService) prepareGroupLifecycle(ctx context.Context, gr
 	}
 	if err == nil && (group == nil || group.ID != groupID || !group.Hydrated) {
 		return schedulerGroupLifecyclePlan{}, fmt.Errorf("untrusted scheduler group lifecycle state: group=%d", groupID)
+	}
+	if missing {
+		s.deleteCachedGroup(groupID)
+	} else {
+		s.storeCachedGroup(group)
 	}
 
 	plan = schedulerGroupLifecyclePlan{active: !missing && group.IsActive()}

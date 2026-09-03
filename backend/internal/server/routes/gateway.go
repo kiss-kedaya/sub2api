@@ -38,8 +38,13 @@ func RegisterGatewayRoutes(
 	clientRequestID := middleware.ClientRequestID()
 	opsErrorLogger := handler.OpsErrorLoggerMiddleware(opsService)
 	endpointNorm := handler.InboundEndpointMiddleware()
-	compositeTarget := compositeTargetPlatformMiddleware(compositeResolver)
-	compositeGeminiTarget := compositeGeminiTargetPlatformMiddleware(compositeResolver)
+	// Composite routing runs before the concrete gateway handler. Install the
+	// same request mode here so a route/model-list lookup cannot bypass the
+	// scheduler snapshot and synchronously query PostgreSQL on a cold/expired
+	// cache. The variadic service argument keeps lightweight route tests and
+	// alternate embedders source-compatible.
+	compositeTarget := compositeTargetPlatformMiddleware(compositeResolver, true)
+	compositeGeminiTarget := compositeGeminiTargetPlatformMiddleware(compositeResolver, true)
 
 	// 未分组 Key 拦截中间件（按协议格式区分错误响应）
 	requireGroupAnthropic := middleware.RequireGroupAssignment(settingService, middleware.AnthropicErrorWriter)
@@ -518,7 +523,7 @@ func getGroupPlatform(c *gin.Context) string {
 	return apiKey.Group.Platform
 }
 
-func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver) gin.HandlerFunc {
+func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver, snapshotOnly ...bool) gin.HandlerFunc {
 	if resolver == nil {
 		resolver = service.NewCompositeRouteResolver(nil)
 	}
@@ -531,6 +536,9 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 		if c.Request == nil || c.Request.Method == http.MethodGet {
 			c.Next()
 			return
+		}
+		if len(snapshotOnly) > 0 && snapshotOnly[0] {
+			c.Request = c.Request.WithContext(service.WithSchedulerSnapshotOnly(c.Request.Context()))
 		}
 
 		body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
@@ -551,7 +559,16 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 		if model != "" {
 			decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, compositeRouteEndpointForPath(c.Request.URL.Path))
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
+				status := http.StatusInternalServerError
+				if errors.Is(err, service.ErrCompositeRouteCacheNotReady) {
+					// A cold immutable projection is a transient readiness condition.
+					// Returning 503 lets clients retry after the background refresh,
+					// while avoiding accidental detector routing that could bypass an
+					// explicit administrator route.
+					status = http.StatusServiceUnavailable
+					c.Header("Retry-After", "1")
+				}
+				c.JSON(status, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
 				c.Abort()
 				return
 			}
@@ -628,18 +645,26 @@ func compositeMultipartModelFromBody(contentType string, body []byte) string {
 	}
 }
 
-func compositeGeminiTargetPlatformMiddleware(resolver *service.CompositeRouteResolver) gin.HandlerFunc {
+func compositeGeminiTargetPlatformMiddleware(resolver *service.CompositeRouteResolver, snapshotOnly ...bool) gin.HandlerFunc {
 	if resolver == nil {
 		resolver = service.NewCompositeRouteResolver(nil)
 	}
 	return func(c *gin.Context) {
+		if len(snapshotOnly) > 0 && snapshotOnly[0] && c.Request != nil {
+			c.Request = c.Request.WithContext(service.WithSchedulerSnapshotOnly(c.Request.Context()))
+		}
 		apiKey, ok := middleware.GetAPIKeyFromContext(c)
 		if ok && apiKey != nil && apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
 			model := compositeGeminiModelFromParams(c)
 			if model != "" {
 				decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, service.CompositeRouteEndpointGemini)
 				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
+					status := http.StatusInternalServerError
+					if errors.Is(err, service.ErrCompositeRouteCacheNotReady) {
+						status = http.StatusServiceUnavailable
+						c.Header("Retry-After", "1")
+					}
+					c.JSON(status, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
 					c.Abort()
 					return
 				}

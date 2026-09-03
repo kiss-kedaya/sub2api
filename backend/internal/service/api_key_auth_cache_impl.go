@@ -375,8 +375,17 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		if err == nil {
 			snapshot.User.UserGroupRPMOverride = override
 			snapshot.User.UserGroupRPMOverrideLoaded = true
+		} else {
+			// Mark the optional override as resolved even when the control-plane
+			// lookup is temporarily unavailable.  Leaving this bit false causes
+			// every request that hits the auth snapshot to repeat the same
+			// PostgreSQL query in BillingCacheService.checkRPM, turning a transient
+			// database error into a per-request retry storm.  The auth snapshot TTL
+			// and invalidation path provide a bounded retry window; during that
+			// window the existing group/user RPM limits remain enforced (fail-open
+			// only for the missing optional override, matching the old error path).
+			snapshot.User.UserGroupRPMOverrideLoaded = true
 		}
-		// 查询失败时留 false，checkRPM 会回退到 DB 查询。
 	}
 	if apiKey.Group != nil {
 		snapshot.Group = &APIKeyAuthGroupSnapshot{

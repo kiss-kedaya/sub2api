@@ -205,7 +205,12 @@ func (p *ChannelModelPricing) GetTierByLabel(label string) *PricingInterval {
 	return nil
 }
 
-// Clone 返回 ChannelModelPricing 的拷贝（切片独立，指针字段共享，调用方只读安全）
+// Clone 返回 ChannelModelPricing 的深拷贝。
+//
+// Pricing entries are published inside immutable channel/group snapshots. A
+// shallow copy of interval/pointer fields would let a caller mutate the
+// published view (or race with a concurrent reader), so clone every mutable
+// slice and pointer-bearing field here.
 func (p ChannelModelPricing) Clone() ChannelModelPricing {
 	cp := p
 	if p.Models != nil {
@@ -214,7 +219,9 @@ func (p ChannelModelPricing) Clone() ChannelModelPricing {
 	}
 	if p.Intervals != nil {
 		cp.Intervals = make([]PricingInterval, len(p.Intervals))
-		copy(cp.Intervals, p.Intervals)
+		for i := range p.Intervals {
+			cp.Intervals[i] = clonePricingInterval(p.Intervals[i])
+		}
 	}
 	if p.TimePricing != nil {
 		cp.TimePricing = &ChannelTimePricing{
@@ -225,7 +232,46 @@ func (p ChannelModelPricing) Clone() ChannelModelPricing {
 			cp.TimePricing.Periods = append([]ChannelTimePricingPeriod(nil), p.TimePricing.Periods...)
 		}
 	}
+	cp.InputPrice = clonePricingFloat64(p.InputPrice)
+	cp.OutputPrice = clonePricingFloat64(p.OutputPrice)
+	cp.CacheWritePrice = clonePricingFloat64(p.CacheWritePrice)
+	cp.CacheReadPrice = clonePricingFloat64(p.CacheReadPrice)
+	cp.FastMultiplier = clonePricingFloat64(p.FastMultiplier)
+	cp.FlexMultiplier = clonePricingFloat64(p.FlexMultiplier)
+	cp.ImageInputPrice = clonePricingFloat64(p.ImageInputPrice)
+	cp.ImageOutputPrice = clonePricingFloat64(p.ImageOutputPrice)
+	cp.PerRequestPrice = clonePricingFloat64(p.PerRequestPrice)
 	return cp
+}
+
+func clonePricingFloat64(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func clonePricingInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func clonePricingInterval(value PricingInterval) PricingInterval {
+	value.MaxTokens = clonePricingInt(value.MaxTokens)
+	value.InputPrice = clonePricingFloat64(value.InputPrice)
+	value.OutputPrice = clonePricingFloat64(value.OutputPrice)
+	value.CacheWritePrice = clonePricingFloat64(value.CacheWritePrice)
+	value.CacheReadPrice = clonePricingFloat64(value.CacheReadPrice)
+	value.InputMultiplier = clonePricingFloat64(value.InputMultiplier)
+	value.OutputMultiplier = clonePricingFloat64(value.OutputMultiplier)
+	value.CacheWriteMultiplier = clonePricingFloat64(value.CacheWriteMultiplier)
+	value.CacheReadMultiplier = clonePricingFloat64(value.CacheReadMultiplier)
+	value.PerRequestPrice = clonePricingFloat64(value.PerRequestPrice)
+	return value
 }
 
 // Clone 返回 Channel 的深拷贝

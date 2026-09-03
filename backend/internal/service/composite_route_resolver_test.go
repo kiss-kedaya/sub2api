@@ -2,10 +2,77 @@ package service
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+type compositeRouteCountingRepo struct {
+	routes []CompositeModelRoute
+	calls  atomic.Int64
+	wait   <-chan struct{}
+}
+
+func (r *compositeRouteCountingRepo) ListByGroup(_ context.Context, groupID int64, includeDisabled bool) ([]CompositeModelRoute, error) {
+	r.calls.Add(1)
+	if r.wait != nil {
+		<-r.wait
+	}
+	out := make([]CompositeModelRoute, 0, len(r.routes))
+	for _, route := range r.routes {
+		if route.GroupID == groupID && (includeDisabled || route.Enabled) {
+			out = append(out, route)
+		}
+	}
+	return out, nil
+}
+func (*compositeRouteCountingRepo) Create(context.Context, *CompositeModelRoute) error { return nil }
+func (*compositeRouteCountingRepo) Update(context.Context, *CompositeModelRoute) error { return nil }
+func (*compositeRouteCountingRepo) Delete(context.Context, int64) error                { return nil }
+func (*compositeRouteCountingRepo) DeleteByGroup(context.Context, int64) error         { return nil }
+
+func TestCompositeRouteResolverSnapshotOnlyColdPathDoesNotQueryDB(t *testing.T) {
+	release := make(chan struct{})
+	repo := &compositeRouteCountingRepo{wait: release, routes: []CompositeModelRoute{{GroupID: 9, PublicModel: "custom", MatchType: CompositeRouteMatchExact, TargetPlatform: PlatformOpenAI, Enabled: true}}}
+	resolver := NewCompositeRouteResolver(repo)
+	ctx := withSchedulerSnapshotOnly(context.Background())
+	done := make(chan struct{})
+	var decision CompositeRouteDecision
+	var err error
+	go func() {
+		decision, err = resolver.Resolve(ctx, 9, "custom", CompositeRouteEndpointAny)
+		close(done)
+	}()
+	select {
+	case <-done:
+		// The resolver must return before the background DB refresh completes.
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("snapshot-only composite route lookup blocked on database")
+	}
+	require.ErrorIs(t, err, errCompositeRouteCacheNotReady)
+	// A cold snapshot must not synchronously scan composite_model_routes or
+	// silently ignore an explicit route.
+	require.False(t, decision.Matched)
+	close(release)
+}
+
+func TestCompositeRouteResolverCachesExplicitRoutes(t *testing.T) {
+	repo := &compositeRouteCountingRepo{routes: []CompositeModelRoute{{GroupID: 9, PublicModel: "custom", MatchType: CompositeRouteMatchExact, TargetPlatform: PlatformOpenAI, Enabled: true}}}
+	resolver := NewCompositeRouteResolver(repo)
+	first, err := resolver.Resolve(context.Background(), 9, "custom", CompositeRouteEndpointAny)
+	require.NoError(t, err)
+	second, err := resolver.Resolve(context.Background(), 9, "custom", CompositeRouteEndpointAny)
+	require.NoError(t, err)
+	require.True(t, first.Matched)
+	require.True(t, second.Matched)
+	require.Equal(t, int64(1), repo.calls.Load())
+	resolver.InvalidateGroup(9)
+	_, err = resolver.Resolve(context.Background(), 9, "custom", CompositeRouteEndpointAny)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), repo.calls.Load())
+}
 
 type compositeRouteRepoStub struct {
 	routes []CompositeModelRoute

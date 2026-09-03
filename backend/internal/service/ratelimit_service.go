@@ -194,6 +194,15 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 	account.TempUnschedulableUntil = cloneTimePtr(decision.Until)
 	account.TempUnschedulableReason = reason
 	s.notifyCodexQuotaOverdraftAwareSchedulingBlock(ctx, account, *decision.Until)
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		// Threshold admission is derived from advisory usage projections. Keep
+		// the decision in the process-local runtime blocker and the request's
+		// snapshot copy, but do not synchronously UPDATE accounts from the model
+		// request path. The scheduler/outbox refresh will persist the state during
+		// its normal background cycle.
+		slog.Debug("account_scheduling_threshold_snapshot_only", "account_id", account.ID, "until", decision.Until.UTC())
+		return true
+	}
 
 	if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, *decision.Until, reason); err != nil {
 		slog.Warn("account_scheduling_threshold_set_temp_unsched_failed",
