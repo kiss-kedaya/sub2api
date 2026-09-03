@@ -32937,26 +32937,30 @@ func (m *PaymentOrderMutation) ResetEdge(name string) error {
 // PaymentProviderInstanceMutation represents an operation that mutates the PaymentProviderInstance nodes in the graph.
 type PaymentProviderInstanceMutation struct {
 	config
-	op                Op
-	typ               string
-	id                *int64
-	provider_key      *string
-	name              *string
-	_config           *string
-	supported_types   *string
-	enabled           *bool
-	payment_mode      *string
-	sort_order        *int
-	addsort_order     *int
-	limits            *string
-	refund_enabled    *bool
-	allow_user_refund *bool
-	created_at        *time.Time
-	updated_at        *time.Time
-	clearedFields     map[string]struct{}
-	done              bool
-	oldValue          func(context.Context) (*PaymentProviderInstance, error)
-	predicates        []predicate.PaymentProviderInstance
+	op                             Op
+	typ                            string
+	id                             *int64
+	provider_key                   *string
+	name                           *string
+	_config                        *string
+	supported_types                *string
+	enabled                        *bool
+	payment_mode                   *string
+	sort_order                     *int
+	addsort_order                  *int
+	limits                         *string
+	refund_enabled                 *bool
+	allow_user_refund              *bool
+	recharge_fee_rate              *float64
+	addrecharge_fee_rate           *float64
+	balance_recharge_multiplier    *float64
+	addbalance_recharge_multiplier *float64
+	created_at                     *time.Time
+	updated_at                     *time.Time
+	clearedFields                  map[string]struct{}
+	done                           bool
+	oldValue                       func(context.Context) (*PaymentProviderInstance, error)
+	predicates                     []predicate.PaymentProviderInstance
 }
 
 var _ ent.Mutation = (*PaymentProviderInstanceMutation)(nil)
@@ -33437,6 +33441,146 @@ func (m *PaymentProviderInstanceMutation) ResetAllowUserRefund() {
 	m.allow_user_refund = nil
 }
 
+// SetRechargeFeeRate sets the "recharge_fee_rate" field.
+func (m *PaymentProviderInstanceMutation) SetRechargeFeeRate(f float64) {
+	m.recharge_fee_rate = &f
+	m.addrecharge_fee_rate = nil
+}
+
+// RechargeFeeRate returns the value of the "recharge_fee_rate" field in the mutation.
+func (m *PaymentProviderInstanceMutation) RechargeFeeRate() (r float64, exists bool) {
+	v := m.recharge_fee_rate
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRechargeFeeRate returns the old "recharge_fee_rate" field's value of the PaymentProviderInstance entity.
+// If the PaymentProviderInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentProviderInstanceMutation) OldRechargeFeeRate(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRechargeFeeRate is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRechargeFeeRate requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRechargeFeeRate: %w", err)
+	}
+	return oldValue.RechargeFeeRate, nil
+}
+
+// AddRechargeFeeRate adds f to the "recharge_fee_rate" field.
+func (m *PaymentProviderInstanceMutation) AddRechargeFeeRate(f float64) {
+	if m.addrecharge_fee_rate != nil {
+		*m.addrecharge_fee_rate += f
+	} else {
+		m.addrecharge_fee_rate = &f
+	}
+}
+
+// AddedRechargeFeeRate returns the value that was added to the "recharge_fee_rate" field in this mutation.
+func (m *PaymentProviderInstanceMutation) AddedRechargeFeeRate() (r float64, exists bool) {
+	v := m.addrecharge_fee_rate
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearRechargeFeeRate clears the value of the "recharge_fee_rate" field.
+func (m *PaymentProviderInstanceMutation) ClearRechargeFeeRate() {
+	m.recharge_fee_rate = nil
+	m.addrecharge_fee_rate = nil
+	m.clearedFields[paymentproviderinstance.FieldRechargeFeeRate] = struct{}{}
+}
+
+// RechargeFeeRateCleared returns if the "recharge_fee_rate" field was cleared in this mutation.
+func (m *PaymentProviderInstanceMutation) RechargeFeeRateCleared() bool {
+	_, ok := m.clearedFields[paymentproviderinstance.FieldRechargeFeeRate]
+	return ok
+}
+
+// ResetRechargeFeeRate resets all changes to the "recharge_fee_rate" field.
+func (m *PaymentProviderInstanceMutation) ResetRechargeFeeRate() {
+	m.recharge_fee_rate = nil
+	m.addrecharge_fee_rate = nil
+	delete(m.clearedFields, paymentproviderinstance.FieldRechargeFeeRate)
+}
+
+// SetBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field.
+func (m *PaymentProviderInstanceMutation) SetBalanceRechargeMultiplier(f float64) {
+	m.balance_recharge_multiplier = &f
+	m.addbalance_recharge_multiplier = nil
+}
+
+// BalanceRechargeMultiplier returns the value of the "balance_recharge_multiplier" field in the mutation.
+func (m *PaymentProviderInstanceMutation) BalanceRechargeMultiplier() (r float64, exists bool) {
+	v := m.balance_recharge_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBalanceRechargeMultiplier returns the old "balance_recharge_multiplier" field's value of the PaymentProviderInstance entity.
+// If the PaymentProviderInstance object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentProviderInstanceMutation) OldBalanceRechargeMultiplier(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBalanceRechargeMultiplier is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBalanceRechargeMultiplier requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBalanceRechargeMultiplier: %w", err)
+	}
+	return oldValue.BalanceRechargeMultiplier, nil
+}
+
+// AddBalanceRechargeMultiplier adds f to the "balance_recharge_multiplier" field.
+func (m *PaymentProviderInstanceMutation) AddBalanceRechargeMultiplier(f float64) {
+	if m.addbalance_recharge_multiplier != nil {
+		*m.addbalance_recharge_multiplier += f
+	} else {
+		m.addbalance_recharge_multiplier = &f
+	}
+}
+
+// AddedBalanceRechargeMultiplier returns the value that was added to the "balance_recharge_multiplier" field in this mutation.
+func (m *PaymentProviderInstanceMutation) AddedBalanceRechargeMultiplier() (r float64, exists bool) {
+	v := m.addbalance_recharge_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearBalanceRechargeMultiplier clears the value of the "balance_recharge_multiplier" field.
+func (m *PaymentProviderInstanceMutation) ClearBalanceRechargeMultiplier() {
+	m.balance_recharge_multiplier = nil
+	m.addbalance_recharge_multiplier = nil
+	m.clearedFields[paymentproviderinstance.FieldBalanceRechargeMultiplier] = struct{}{}
+}
+
+// BalanceRechargeMultiplierCleared returns if the "balance_recharge_multiplier" field was cleared in this mutation.
+func (m *PaymentProviderInstanceMutation) BalanceRechargeMultiplierCleared() bool {
+	_, ok := m.clearedFields[paymentproviderinstance.FieldBalanceRechargeMultiplier]
+	return ok
+}
+
+// ResetBalanceRechargeMultiplier resets all changes to the "balance_recharge_multiplier" field.
+func (m *PaymentProviderInstanceMutation) ResetBalanceRechargeMultiplier() {
+	m.balance_recharge_multiplier = nil
+	m.addbalance_recharge_multiplier = nil
+	delete(m.clearedFields, paymentproviderinstance.FieldBalanceRechargeMultiplier)
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *PaymentProviderInstanceMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -33543,7 +33687,7 @@ func (m *PaymentProviderInstanceMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *PaymentProviderInstanceMutation) Fields() []string {
-	fields := make([]string, 0, 12)
+	fields := make([]string, 0, 14)
 	if m.provider_key != nil {
 		fields = append(fields, paymentproviderinstance.FieldProviderKey)
 	}
@@ -33573,6 +33717,12 @@ func (m *PaymentProviderInstanceMutation) Fields() []string {
 	}
 	if m.allow_user_refund != nil {
 		fields = append(fields, paymentproviderinstance.FieldAllowUserRefund)
+	}
+	if m.recharge_fee_rate != nil {
+		fields = append(fields, paymentproviderinstance.FieldRechargeFeeRate)
+	}
+	if m.balance_recharge_multiplier != nil {
+		fields = append(fields, paymentproviderinstance.FieldBalanceRechargeMultiplier)
 	}
 	if m.created_at != nil {
 		fields = append(fields, paymentproviderinstance.FieldCreatedAt)
@@ -33608,6 +33758,10 @@ func (m *PaymentProviderInstanceMutation) Field(name string) (ent.Value, bool) {
 		return m.RefundEnabled()
 	case paymentproviderinstance.FieldAllowUserRefund:
 		return m.AllowUserRefund()
+	case paymentproviderinstance.FieldRechargeFeeRate:
+		return m.RechargeFeeRate()
+	case paymentproviderinstance.FieldBalanceRechargeMultiplier:
+		return m.BalanceRechargeMultiplier()
 	case paymentproviderinstance.FieldCreatedAt:
 		return m.CreatedAt()
 	case paymentproviderinstance.FieldUpdatedAt:
@@ -33641,6 +33795,10 @@ func (m *PaymentProviderInstanceMutation) OldField(ctx context.Context, name str
 		return m.OldRefundEnabled(ctx)
 	case paymentproviderinstance.FieldAllowUserRefund:
 		return m.OldAllowUserRefund(ctx)
+	case paymentproviderinstance.FieldRechargeFeeRate:
+		return m.OldRechargeFeeRate(ctx)
+	case paymentproviderinstance.FieldBalanceRechargeMultiplier:
+		return m.OldBalanceRechargeMultiplier(ctx)
 	case paymentproviderinstance.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case paymentproviderinstance.FieldUpdatedAt:
@@ -33724,6 +33882,20 @@ func (m *PaymentProviderInstanceMutation) SetField(name string, value ent.Value)
 		}
 		m.SetAllowUserRefund(v)
 		return nil
+	case paymentproviderinstance.FieldRechargeFeeRate:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRechargeFeeRate(v)
+		return nil
+	case paymentproviderinstance.FieldBalanceRechargeMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBalanceRechargeMultiplier(v)
+		return nil
 	case paymentproviderinstance.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -33749,6 +33921,12 @@ func (m *PaymentProviderInstanceMutation) AddedFields() []string {
 	if m.addsort_order != nil {
 		fields = append(fields, paymentproviderinstance.FieldSortOrder)
 	}
+	if m.addrecharge_fee_rate != nil {
+		fields = append(fields, paymentproviderinstance.FieldRechargeFeeRate)
+	}
+	if m.addbalance_recharge_multiplier != nil {
+		fields = append(fields, paymentproviderinstance.FieldBalanceRechargeMultiplier)
+	}
 	return fields
 }
 
@@ -33759,6 +33937,10 @@ func (m *PaymentProviderInstanceMutation) AddedField(name string) (ent.Value, bo
 	switch name {
 	case paymentproviderinstance.FieldSortOrder:
 		return m.AddedSortOrder()
+	case paymentproviderinstance.FieldRechargeFeeRate:
+		return m.AddedRechargeFeeRate()
+	case paymentproviderinstance.FieldBalanceRechargeMultiplier:
+		return m.AddedBalanceRechargeMultiplier()
 	}
 	return nil, false
 }
@@ -33775,6 +33957,20 @@ func (m *PaymentProviderInstanceMutation) AddField(name string, value ent.Value)
 		}
 		m.AddSortOrder(v)
 		return nil
+	case paymentproviderinstance.FieldRechargeFeeRate:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRechargeFeeRate(v)
+		return nil
+	case paymentproviderinstance.FieldBalanceRechargeMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddBalanceRechargeMultiplier(v)
+		return nil
 	}
 	return fmt.Errorf("unknown PaymentProviderInstance numeric field %s", name)
 }
@@ -33782,7 +33978,14 @@ func (m *PaymentProviderInstanceMutation) AddField(name string, value ent.Value)
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
 func (m *PaymentProviderInstanceMutation) ClearedFields() []string {
-	return nil
+	var fields []string
+	if m.FieldCleared(paymentproviderinstance.FieldRechargeFeeRate) {
+		fields = append(fields, paymentproviderinstance.FieldRechargeFeeRate)
+	}
+	if m.FieldCleared(paymentproviderinstance.FieldBalanceRechargeMultiplier) {
+		fields = append(fields, paymentproviderinstance.FieldBalanceRechargeMultiplier)
+	}
+	return fields
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
@@ -33795,6 +33998,14 @@ func (m *PaymentProviderInstanceMutation) FieldCleared(name string) bool {
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
 func (m *PaymentProviderInstanceMutation) ClearField(name string) error {
+	switch name {
+	case paymentproviderinstance.FieldRechargeFeeRate:
+		m.ClearRechargeFeeRate()
+		return nil
+	case paymentproviderinstance.FieldBalanceRechargeMultiplier:
+		m.ClearBalanceRechargeMultiplier()
+		return nil
+	}
 	return fmt.Errorf("unknown PaymentProviderInstance nullable field %s", name)
 }
 
@@ -33831,6 +34042,12 @@ func (m *PaymentProviderInstanceMutation) ResetField(name string) error {
 		return nil
 	case paymentproviderinstance.FieldAllowUserRefund:
 		m.ResetAllowUserRefund()
+		return nil
+	case paymentproviderinstance.FieldRechargeFeeRate:
+		m.ResetRechargeFeeRate()
+		return nil
+	case paymentproviderinstance.FieldBalanceRechargeMultiplier:
+		m.ResetBalanceRechargeMultiplier()
 		return nil
 	case paymentproviderinstance.FieldCreatedAt:
 		m.ResetCreatedAt()

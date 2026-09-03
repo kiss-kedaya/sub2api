@@ -51,6 +51,42 @@
             >{{ mode.label }}</button>
           </div>
         </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="input-label">{{ t('admin.settings.payment.instanceRechargeFeeRate') }}</label>
+          <div class="relative">
+            <input
+              :value="form.recharge_fee_rate ?? ''"
+              @input="onFeeRateInput(($event.target as HTMLInputElement).value)"
+              type="number"
+              step="0.01"
+              min="0"
+              max="100"
+              class="input pr-8"
+              :placeholder="t('admin.settings.payment.instanceRechargeFeeRatePlaceholder')"
+            />
+            <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400">%</span>
+          </div>
+          <p class="mt-0.5 text-xs text-gray-400">{{ t('admin.settings.payment.instanceRechargeFeeRateHint') }}</p>
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.settings.payment.instanceBalanceMultiplier') }}</label>
+          <input
+            :value="form.balance_recharge_multiplier ?? ''"
+            @input="onMultiplierInput(($event.target as HTMLInputElement).value)"
+            type="number"
+            step="0.01"
+            min="0.01"
+            class="input"
+            :placeholder="t('admin.settings.payment.instanceBalanceMultiplierPlaceholder')"
+          />
+          <p class="mt-0.5 text-xs text-gray-400">{{ t('admin.settings.payment.instanceBalanceMultiplierHint') }}</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
         <div v-if="availableTypes.length > 1" class="flex items-center gap-2">
           <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.supportedTypes') }}</span>
           <div class="flex flex-wrap gap-1.5">
@@ -378,6 +414,8 @@ const emit = defineEmits<{
     payment_mode: string
     refund_enabled: boolean
     allow_user_refund: boolean
+    recharge_fee_rate: number | null
+    balance_recharge_multiplier: number | null
     config: Record<string, string>
     limits: string
   }]
@@ -407,6 +445,8 @@ const form = reactive({
   payment_mode: PAYMENT_MODE_QRCODE,
   refund_enabled: false,
   allow_user_refund: false,
+  recharge_fee_rate: null as number | null,
+  balance_recharge_multiplier: null as number | null,
 })
 const config = reactive<Record<string, string>>({})
 const limits = reactive<Record<string, Record<string, number>>>({})
@@ -728,9 +768,39 @@ function handleSave() {
     payment_mode: supportsPaymentMode.value ? form.payment_mode : '',
     refund_enabled: form.refund_enabled,
     allow_user_refund: form.refund_enabled ? form.allow_user_refund : false,
+    recharge_fee_rate: form.recharge_fee_rate,
+    balance_recharge_multiplier: form.balance_recharge_multiplier,
     config: filteredConfig,
     limits: serializeLimits(),
   })
+}
+
+function onFeeRateInput(raw: string) {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    form.recharge_fee_rate = null
+    return
+  }
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed)) {
+    form.recharge_fee_rate = null
+    return
+  }
+  form.recharge_fee_rate = Math.min(100, Math.max(0, Math.round(parsed * 100) / 100))
+}
+
+function onMultiplierInput(raw: string) {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    form.balance_recharge_multiplier = null
+    return
+  }
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    form.balance_recharge_multiplier = null
+    return
+  }
+  form.balance_recharge_multiplier = parsed
 }
 
 function syncEasyPayCustomMethods(): string[] {
@@ -798,6 +868,8 @@ function reset(defaultKey: string) {
   form.payment_mode = defaultPaymentMode(defaultKey)
   form.refund_enabled = false
   form.allow_user_refund = false
+  form.recharge_fee_rate = null
+  form.balance_recharge_multiplier = null
   clearConfig()
   applyDefaults()
 }
@@ -817,6 +889,8 @@ function loadProvider(provider: ProviderInstance) {
     : defaultPaymentMode(provider.provider_key)
   form.refund_enabled = provider.refund_enabled
   form.allow_user_refund = provider.allow_user_refund
+  form.recharge_fee_rate = provider.recharge_fee_rate ?? null
+  form.balance_recharge_multiplier = provider.balance_recharge_multiplier ?? null
   clearConfig()
   // Pre-fill config from API response. Backend omits sensitive fields entirely,
   // so those inputs stay blank — submitting blank preserves the stored secret.

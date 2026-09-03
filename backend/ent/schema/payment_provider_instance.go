@@ -55,6 +55,14 @@ func (PaymentProviderInstance) Fields() []ent.Field {
 			Default(false),
 		field.Bool("allow_user_refund").
 			Default(false),
+		field.Float("recharge_fee_rate").
+			Optional().
+			Nillable().
+			Comment("nil inherits the global RECHARGE_FEE_RATE setting"),
+		field.Float("balance_recharge_multiplier").
+			Optional().
+			Nillable().
+			Comment("nil inherits the global BALANCE_RECHARGE_MULTIPLIER setting"),
 		field.Time("created_at").
 			Immutable().
 			Default(time.Now).
