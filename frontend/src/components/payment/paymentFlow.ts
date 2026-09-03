@@ -215,20 +215,30 @@ export function decidePaymentLaunch(
   }
 
   const normalizedPaymentMode = baseState.paymentMode.trim().toLowerCase()
+  const forceQrMode = normalizedPaymentMode === 'qrcode' || normalizedPaymentMode === 'native'
   // When forceQRCode is on for alipay, treat the device as desktop so the mobile-redirect
   // branch is bypassed and we fall through to qr_waiting.
   const effectiveMobile = (context.forceQRCode && !context.mobilePrecreateDeepLink && visibleMethod === 'alipay')
     ? false
     : context.isMobile
-  const prefersRedirect = normalizedPaymentMode === 'redirect'
+  const prefersRedirect = !forceQrMode && (
+    normalizedPaymentMode === 'redirect'
     || normalizedPaymentMode === 'popup'
     || (effectiveMobile && !!baseState.payUrl)
-  const prefersQr = normalizedPaymentMode === 'qrcode'
-    || normalizedPaymentMode === 'native'
+  )
+  const prefersQr = forceQrMode
     || (!prefersRedirect && !!baseState.qrCode)
 
-  if (visibleMethod === 'wxpay' && context.isWechatBrowser && baseState.payUrl && !baseState.qrCode) {
+  if (visibleMethod === 'wxpay' && context.isWechatBrowser && baseState.payUrl && !baseState.qrCode && !forceQrMode) {
     return { kind: 'redirect_waiting', paymentState: baseState, recovery: baseState }
+  }
+
+  if (forceQrMode) {
+    const qrPayload = baseState.qrCode || baseState.payUrl
+    if (qrPayload) {
+      const paymentState = { ...baseState, qrCode: qrPayload }
+      return { kind: 'qr_waiting', paymentState, recovery: paymentState }
+    }
   }
 
   if (prefersRedirect && baseState.payUrl) {
