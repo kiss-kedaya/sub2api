@@ -97,6 +97,7 @@ func recordOpenAIRawStreamTruncation(c *gin.Context, account *Account, requestID
 		event.AccountID = account.ID
 		event.AccountName = account.Name
 	}
+	event.ProxyID, event.ProxyName = opsUpstreamProxyAttribution(account)
 	setOpsUpstreamError(c, http.StatusBadGateway, message, "")
 	appendOpsUpstreamError(c, event)
 }
