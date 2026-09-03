@@ -6,13 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"golang.org/x/sync/singleflight"
-	"sync"
 )
 
 const (
@@ -56,16 +57,80 @@ func GrokBaseURLForMode(mode string) string {
 }
 
 func (s *SettingService) GetGrokDefaultBaseURLMode(ctx context.Context) string {
-	if s == nil || s.settingRepo == nil {
+	if s == nil {
 		return GrokDefaultBaseURLModeCLI
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.grokDefaultBaseURLModeSnapshotOnly()
+	}
+	if s.settingRepo == nil {
+		return GrokDefaultBaseURLModeCLI
+	}
+	mode, err := s.loadGrokDefaultBaseURLModeCached(ctx)
+	if err != nil {
+		return GrokDefaultBaseURLModeCLI
+	}
+	return mode
+}
+
+// loadGrokDefaultBaseURLMode is the legacy synchronous loader.  Keep it
+// separate from the snapshot-only wrapper so background refreshes can bypass
+// the request marker without recursively taking the non-blocking branch.
+func (s *SettingService) loadGrokDefaultBaseURLMode(ctx context.Context) (string, error) {
+	if s == nil || s.settingRepo == nil {
+		return GrokDefaultBaseURLModeCLI, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), gatewayForwardingDBTimeout)
 	defer cancel()
 	raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyGrokDefaultBaseURLMode)
 	if err != nil {
-		return GrokDefaultBaseURLModeCLI
+		if errors.Is(err, ErrSettingNotFound) {
+			return GrokDefaultBaseURLModeCLI, nil
+		}
+		return GrokDefaultBaseURLModeCLI, err
 	}
-	return normalizeGrokDefaultBaseURLMode(raw)
+	return normalizeGrokDefaultBaseURLMode(raw), nil
+}
+
+func (s *SettingService) loadGrokDefaultBaseURLModeCached(ctx context.Context) (string, error) {
+	if s == nil {
+		return GrokDefaultBaseURLModeCLI, nil
+	}
+	now := time.Now()
+	if cached, ok := s.grokDefaultBaseURLModeCache.Load().(*cachedGrokDefaultBaseURLMode); ok && cached != nil && cached.mode != "" && hotSettingCacheFresh(cached.expiresAt, now) {
+		return cached.mode, nil
+	}
+	value, err, _ := s.grokDefaultBaseURLModeSF.Do(hotSettingGrokModeKey, func() (any, error) {
+		if cached, ok := s.grokDefaultBaseURLModeCache.Load().(*cachedGrokDefaultBaseURLMode); ok && cached != nil && cached.mode != "" && hotSettingCacheFresh(cached.expiresAt, time.Now()) {
+			return cached.mode, nil
+		}
+		mode, loadErr := s.loadGrokDefaultBaseURLMode(ctx)
+		ttl := hotSettingCacheTTL
+		if loadErr != nil {
+			ttl = settingRefreshBackoffBase
+		}
+		s.grokDefaultBaseURLModeCache.Store(&cachedGrokDefaultBaseURLMode{mode: mode, expiresAt: time.Now().Add(ttl).UnixNano()})
+		return mode, loadErr
+	})
+	mode, ok := value.(string)
+	if !ok || mode == "" {
+		mode = GrokDefaultBaseURLModeCLI
+	}
+	return mode, err
+}
+
+func (s *SettingService) publishGrokDefaultBaseURLMode(mode string) {
+	if s == nil {
+		return
+	}
+	s.grokDefaultBaseURLModeSF.Forget(hotSettingGrokModeKey)
+	s.grokDefaultBaseURLModeCache.Store(&cachedGrokDefaultBaseURLMode{
+		mode:      normalizeGrokDefaultBaseURLMode(mode),
+		expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano(),
+	})
 }
 
 func (s *SettingService) GetGrokDefaultBaseURL(ctx context.Context) string {
@@ -117,24 +182,29 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 
 // SettingService 系统设置服务
 type SettingService struct {
-	settingRepo                 SettingRepository
-	defaultSubGroupReader       DefaultSubscriptionGroupReader
-	proxyRepo                   ProxyRepository // for resolving websearch provider proxy URLs
-	cfg                         *config.Config
-	onUpdate                    func() // Callback when settings are updated (for cache invalidation)
-	version                     string // Application version
-	webSearchManagerBuilder     WebSearchManagerBuilder
-	antigravityUAVersionCache   atomic.Value // *cachedAntigravityUserAgentVersion
-	antigravityUAVersionSF      singleflight.Group
-	openAICodexUACache          atomic.Value // *cachedOpenAICodexUserAgent
-	openAICodexUASF             singleflight.Group
-	openAICodexVersionCache     atomic.Value // *cachedOpenAICodexClientVersion
-	openAICodexVersionSF        singleflight.Group
-	codexRestrictionPolicyCache atomic.Value // *cachedCodexRestrictionPolicy
-	codexRestrictionPolicySF    singleflight.Group
+	settingRepo                   SettingRepository
+	defaultSubGroupReader         DefaultSubscriptionGroupReader
+	proxyRepo                     ProxyRepository // for resolving websearch provider proxy URLs
+	cfg                           *config.Config
+	onUpdate                      func() // Callback when settings are updated (for cache invalidation)
+	version                       string // Application version
+	webSearchManagerBuilder       WebSearchManagerBuilder
+	antigravityUAVersionCache     atomic.Value // *cachedAntigravityUserAgentVersion
+	antigravityUAVersionSF        singleflight.Group
+	antigravityUAVersionRefresh   settingRefreshBackoff
+	openAICodexUACache            atomic.Value // *cachedOpenAICodexUserAgent
+	openAICodexUASF               singleflight.Group
+	openAICodexUARefresh          settingRefreshBackoff
+	openAICodexVersionCache       atomic.Value // *cachedOpenAICodexClientVersion
+	openAICodexVersionSF          singleflight.Group
+	openAICodexVersionRefresh     settingRefreshBackoff
+	codexRestrictionPolicyCache   atomic.Value // *cachedCodexRestrictionPolicy
+	codexRestrictionPolicySF      singleflight.Group
+	codexRestrictionPolicyRefresh settingRefreshBackoff
 
 	cyberSessionBlockRuntimeCache atomic.Value // *cachedCyberSessionBlockRuntime
 	cyberSessionBlockRuntimeSF    singleflight.Group
+	cyberSessionBlockRefresh      settingRefreshBackoff
 
 	// panelRateLimitCache 面板 API 限流配置进程内缓存（*cachedPanelRateLimitSettings）。
 	// 面板每个认证请求都会读取，禁止在热路径上直接访问 DB。
@@ -150,6 +220,11 @@ type SettingService struct {
 	openAIQuotaAutoPauseSettingsCache atomic.Value // *cachedOpenAIQuotaAutoPauseSettings
 	openAIQuotaAutoPauseSettingsSF    singleflight.Group
 	openAIAPIKeyHealthBreakerCache    atomic.Value // *cachedOpenAIAPIKeyHealthBreakerSettings
+	openAIAPIKeyHealthBreakerSF       singleflight.Group
+	openAIAPIKeyHealthBreakerRefresh  settingRefreshBackoff
+	ungroupedKeySchedulingCache       atomic.Value // *cachedUngroupedKeyScheduling
+	ungroupedKeySchedulingSF          singleflight.Group
+	ungroupedKeySchedulingRefresh     settingRefreshBackoff
 
 	// codexQuotaOverdraftRuntimeCache is a short stale-while-revalidate cache
 	// for the two admin-controlled Codex overdraft gates.  It avoids a database
@@ -161,6 +236,118 @@ type SettingService struct {
 
 	channelMonitorRuntimeListenersMu sync.Mutex
 	channelMonitorRuntimeListeners   []func()
+	// Package-level forwarding/version caches retain their legacy API. These
+	// gates keep snapshot-only callers non-blocking when those caches expire.
+	gatewayForwardingRefresh settingRefreshBackoff
+	versionBoundsRefresh     settingRefreshBackoff
+
+	// Gateway request settings are read at very high frequency.  Keep a
+	// per-service immutable copy so snapshot-authoritative requests can serve a
+	// stale value (or the documented safe default) while a single background
+	// refresh talks to PostgreSQL.  The backoff state prevents a database outage
+	// from turning every request into a new refresh goroutine.
+	grokDefaultBaseURLModeCache   atomic.Value // *cachedGrokDefaultBaseURLMode
+	grokDefaultBaseURLModeSF      singleflight.Group
+	grokDefaultBaseURLModeRefresh settingRefreshBackoff
+
+	betaPolicyCache   atomic.Value // *cachedBetaPolicySettings
+	betaPolicySF      singleflight.Group
+	betaPolicyRefresh settingRefreshBackoff
+
+	openAIFastPolicyCache   atomic.Value // *cachedOpenAIFastPolicySettings
+	openAIFastPolicySF      singleflight.Group
+	openAIFastPolicyRefresh settingRefreshBackoff
+
+	rectifierCache   atomic.Value // *cachedRectifierSettings
+	rectifierSF      singleflight.Group
+	rectifierRefresh settingRefreshBackoff
+}
+
+// settingRefreshBackoff gates stale-while-revalidate attempts.  It is kept
+// separate from singleflight: singleflight coalesces callers that arrive at
+// the same instant, while this state also suppresses retries after a failed
+// refresh for an exponentially increasing interval.
+type settingRefreshBackoff struct {
+	mu        sync.Mutex
+	inFlight  bool
+	failures  int
+	nextTryAt time.Time
+}
+
+type cachedGrokDefaultBaseURLMode struct {
+	mode      string
+	expiresAt int64
+}
+
+type cachedBetaPolicySettings struct {
+	settings  *BetaPolicySettings
+	expiresAt int64
+}
+
+type cachedOpenAIFastPolicySettings struct {
+	settings  *OpenAIFastPolicySettings
+	expiresAt int64
+}
+
+type cachedRectifierSettings struct {
+	settings  *RectifierSettings
+	expiresAt int64
+}
+
+type cachedUngroupedKeyScheduling struct {
+	allowed   bool
+	expiresAt int64
+}
+
+const (
+	hotSettingCacheTTL  = 60 * time.Second
+	hotSettingDBTimeout = 5 * time.Second
+)
+
+func hotSettingCacheFresh(expiresAt int64, now time.Time) bool {
+	return expiresAt > now.UnixNano()
+}
+
+const (
+	settingRefreshBackoffBase = 5 * time.Second
+	settingRefreshBackoffMax  = time.Minute
+)
+
+func (b *settingRefreshBackoff) tryStart(now time.Time) bool {
+	if b == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.inFlight || (!b.nextTryAt.IsZero() && now.Before(b.nextTryAt)) {
+		return false
+	}
+	b.inFlight = true
+	return true
+}
+
+func (b *settingRefreshBackoff) finish(err error) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.inFlight = false
+	if err == nil {
+		b.failures = 0
+		b.nextTryAt = time.Time{}
+		return
+	}
+	b.failures++
+	delay := settingRefreshBackoffBase
+	for i := 1; i < b.failures && delay < settingRefreshBackoffMax; i++ {
+		delay *= 2
+		if delay >= settingRefreshBackoffMax {
+			delay = settingRefreshBackoffMax
+			break
+		}
+	}
+	b.nextTryAt = time.Now().Add(delay)
 }
 
 // DefaultPlatformQuotaSetting 单 platform 三档限额（nil = 沿用上层；0 = 显式禁用；>0 = 上限）
