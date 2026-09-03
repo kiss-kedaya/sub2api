@@ -22,6 +22,14 @@ func (confirmedNilRPMOverrideRepo) GetRPMOverrideByUserAndGroup(context.Context,
 	return nil, nil
 }
 
+type failedRPMOverrideRepo struct {
+	UserGroupRateRepository
+}
+
+func (failedRPMOverrideRepo) GetRPMOverrideByUserAndGroup(context.Context, int64, int64) (*int, error) {
+	return nil, context.Canceled
+}
+
 func profitAuthTestAPIKey() *APIKey {
 	groupID := int64(50)
 	return &APIKey{
@@ -104,6 +112,20 @@ func TestAPIKeyAuthSnapshotCarriesConfirmedNilRPMOverride(t *testing.T) {
 	require.NotNil(t, materialized.User)
 	require.Nil(t, materialized.User.UserGroupRPMOverride)
 	require.True(t, materialized.User.UserGroupRPMOverrideLoaded)
+}
+
+func TestAPIKeyAuthSnapshotMarksRPMOverrideResolvedAfterLookupFailure(t *testing.T) {
+	groupID := int64(50)
+	apiKey := profitAuthTestAPIKey()
+	apiKey.GroupID = &groupID
+
+	svc := &APIKeyService{userGroupRateRepo: failedRPMOverrideRepo{}}
+	snapshot := svc.snapshotFromAPIKey(context.Background(), apiKey)
+	require.NotNil(t, snapshot)
+	require.Nil(t, snapshot.User.UserGroupRPMOverride)
+	// A transient lookup failure must not make every request repeat the same
+	// optional override query; auth-cache TTL/invalidation bounds the retry.
+	require.True(t, snapshot.User.UserGroupRPMOverrideLoaded)
 }
 
 // 旧版本快照（v16 及更早，无利润字段保真保证）必须被淘汰回源，不得复用。

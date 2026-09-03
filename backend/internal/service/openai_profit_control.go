@@ -234,6 +234,18 @@ func (s *OpenAIGatewayService) resolveOpenAIProfitControlGate(ctx context.Contex
 	var group *Group
 	if ctxGroup, ok := ctx.Value(ctxkey.Group).(*Group); ok && IsGroupContextValid(ctxGroup) && ctxGroup.ID == *groupID {
 		group = ctxGroup
+	} else if schedulerSnapshotOnlyFromContext(ctx) {
+		// The local group-policy projection is still safe to consult. A cold
+		// projection simply disables this optional gate for the request; it must
+		// never fall through to the durable repository from the hot path.
+		if s.schedulerSnapshot != nil {
+			loaded, loadErr := s.schedulerSnapshot.GetGroupByIDLite(ctx, *groupID)
+			if loadErr == nil {
+				group = loaded
+			} else {
+				return nil
+			}
+		}
 	} else if s.schedulerSnapshot != nil {
 		// Lite 读取：门只用平台/倍率/利润/高峰字段，不需要账号计数聚合。
 		loaded, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, *groupID)
@@ -264,7 +276,11 @@ func (s *OpenAIGatewayService) resolveOpenAIProfitControlGate(ctx context.Contex
 	}
 	downstream := billingGroup.RateMultiplier
 	if userID, _ := ctx.Value(ctxkey.UserID).(int64); userID > 0 {
-		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
+		if schedulerSnapshotOnlyFromContext(ctx) {
+			downstream = s.resolveUserGroupRateMultiplierSnapshotOnly(userID, billingGroup.ID, billingGroup.RateMultiplier)
+		} else {
+			downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
+		}
 	}
 	downstream *= billingGroup.PeakMultiplierAt(pricingAt)
 

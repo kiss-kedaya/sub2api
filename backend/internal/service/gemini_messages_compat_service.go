@@ -104,7 +104,7 @@ func (s *GeminiMessagesCompatService) SelectAccountForModel(ctx context.Context,
 }
 
 func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
-	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 1. 确定目标平台和调度模式
 	// Determine target platform and scheduling mode
 	platform, useMixedScheduling, hasForcePlatform, err := s.resolvePlatformAndSchedulingMode(ctx, groupID)
@@ -133,9 +133,7 @@ func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx co
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
 	}
-	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
-	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
-
+	accounts = applySchedulerFreshnessForRequest(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
 	// 4. 按优先级 + LRU 选择最佳账号
 	// Select best account by priority + LRU
 	selected := s.selectBestGeminiAccount(ctx, accounts, requestedModel, excludedIDs, platform, useMixedScheduling)
@@ -173,6 +171,17 @@ func (s *GeminiMessagesCompatService) resolvePlatformAndSchedulingMode(ctx conte
 		var group *Group
 		if ctxGroup, ok := ctx.Value(ctxkey.Group).(*Group); ok && IsGroupContextValid(ctxGroup) && ctxGroup.ID == *groupID {
 			group = ctxGroup
+		} else if schedulerSnapshotOnlyFromContext(ctx) {
+			if s.schedulerSnapshot == nil {
+				return "", false, false, ErrSchedulerCacheNotReady
+			}
+			group, err = s.schedulerSnapshot.GetGroupByIDLite(ctx, *groupID)
+			if err != nil || group == nil {
+				if err == nil {
+					err = ErrSchedulerCacheNotReady
+				}
+				return "", false, false, err
+			}
 		} else {
 			group, err = s.groupRepo.GetByIDLite(ctx, *groupID)
 			if err != nil {
@@ -426,9 +435,8 @@ func (s *GeminiMessagesCompatService) GetAntigravityGatewayService() *Antigravit
 }
 
 func (s *GeminiMessagesCompatService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
-	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	if s.schedulerSnapshot != nil {
-		account, err := s.schedulerSnapshot.GetAccount(ctx, accountID)
+		account, err := s.schedulerSnapshot.getAccountForRequest(ctx, accountID)
 		if err != nil || account == nil {
 			return account, err
 		}
@@ -448,7 +456,7 @@ func (s *GeminiMessagesCompatService) hydrateSelectedAccount(ctx context.Context
 	if account == nil || s.schedulerSnapshot == nil {
 		return account, nil
 	}
-	hydrated, err := s.schedulerSnapshot.GetAccount(ctx, account.ID)
+	hydrated, err := s.schedulerSnapshot.getAccountForRequest(ctx, account.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +475,7 @@ func (s *GeminiMessagesCompatService) hydrateSelectedAccount(ctx context.Context
 
 func (s *GeminiMessagesCompatService) listSchedulableAccountsOnce(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, error) {
 	if s.schedulerSnapshot != nil {
-		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
+		accounts, _, err := s.schedulerSnapshot.listSchedulableAccountsForRequest(ctx, groupID, platform, hasForcePlatform)
 		return accounts, err
 	}
 
@@ -507,6 +515,7 @@ func (s *GeminiMessagesCompatService) validateUpstreamBaseURL(raw string) (strin
 
 // HasAntigravityAccounts 检查是否有可用的 antigravity 账户
 func (s *GeminiMessagesCompatService) HasAntigravityAccounts(ctx context.Context, groupID *int64) (bool, error) {
+	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	accounts, err := s.listSchedulableAccountsOnce(ctx, groupID, PlatformAntigravity, false)
 	if err != nil {
 		return false, err
@@ -523,6 +532,7 @@ func (s *GeminiMessagesCompatService) HasAntigravityAccounts(ctx context.Context
 // 3) OAuth accounts explicitly marked as ai_studio
 // 4) Any remaining Gemini accounts (fallback)
 func (s *GeminiMessagesCompatService) SelectAccountForAIStudioEndpoints(ctx context.Context, groupID *int64) (*Account, error) {
+	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	accounts, err := s.listSchedulableAccountsOnce(ctx, groupID, PlatformGemini, true)
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
@@ -530,11 +540,12 @@ func (s *GeminiMessagesCompatService) SelectAccountForAIStudioEndpoints(ctx cont
 	if len(accounts) == 0 {
 		return nil, errors.New("no available Gemini accounts")
 	}
-	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
-	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
+	accounts = applySchedulerFreshnessForRequest(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
 	if len(accounts) == 0 {
-		return nil, errors.New("no available Gemini accounts")
+		return nil, errors.New("no available Gemini accounts after freshness validation")
 	}
+	// The candidate list is normally a published scheduler snapshot; the helper
+	// above is a no-op unless the emergency durable-validation switch is enabled.
 
 	rank := func(a *Account) int {
 		if a == nil {

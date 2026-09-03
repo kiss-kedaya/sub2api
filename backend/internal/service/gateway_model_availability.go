@@ -68,6 +68,12 @@ func (s *GatewayService) DiagnoseModelAvailabilityForPlatform(
 	if s.accountRepo == nil {
 		return ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}
 	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		// Model availability is an error-path diagnostic. A request that already
+		// opted into the scheduler snapshot contract must not turn a 503 burst
+		// into repeated account/group scans; keep the conservative 503 result.
+		return ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}
+	}
 
 	useMixed := platform == PlatformAnthropic || platform == PlatformGemini
 	platforms := []string{platform}

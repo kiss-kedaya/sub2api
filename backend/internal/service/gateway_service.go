@@ -777,6 +777,14 @@ type GatewayService struct {
 	userGroupRateSF       singleflight.Group
 	modelsListCache       *gocache.Cache
 	modelsListCacheTTL    time.Duration
+	modelsListSF          singleflight.Group
+	platformsListCache    *gocache.Cache
+	platformsListCacheTTL time.Duration
+	platformsListSF       singleflight.Group
+	// usageQuotaFlushSF coalesces best-effort platform-quota persistence. Redis
+	// remains the request-time source; the durable write is intentionally bounded
+	// and cannot create one goroutine/transaction per completed request.
+	usageQuotaFlushSF     singleflight.Group
 	settingService        *SettingService
 	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
 	debugModelRouting     atomic.Bool
@@ -856,6 +864,8 @@ func NewGatewayService(
 		settingService:        settingService,
 		modelsListCache:       gocache.New(modelsListTTL, time.Minute),
 		modelsListCacheTTL:    modelsListTTL,
+		platformsListCache:    gocache.New(modelsListTTL, time.Minute),
+		platformsListCacheTTL: modelsListTTL,
 		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
 		tlsFPProfileService:   tlsFPProfileService,
 		channelService:        channelService,
@@ -1370,6 +1380,9 @@ func (s *GatewayService) DoGrokNativeResponsesJSON(ctx context.Context, account 
 }
 
 func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64, platform string) []string {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	cacheKey := modelsListCacheKey(groupID, platform)
 	if s.modelsListCache != nil {
 		if cached, found := s.modelsListCache.Get(cacheKey); found {
@@ -1380,23 +1393,75 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		}
 	}
 	modelsListCacheMissTotal.Add(1)
+	resultCh := s.modelsListSF.DoChan(cacheKey, func() (any, error) {
+		// DoChan executes the shared function in its own goroutine.  Create the
+		// detached timeout inside that function so a canceled waiter cannot
+		// cancel the leader's refresh before it publishes the cache entry.
+		leaderCtx := context.Background()
+		if ctx != nil {
+			leaderCtx = context.WithoutCancel(ctx)
+		}
+		leaderCtx, leaderCancel := context.WithTimeout(leaderCtx, 5*time.Second)
+		defer leaderCancel()
+		// Recheck after joining the flight; a concurrent leader may have filled
+		// the short cache between the caller's initial read and this function.
+		if s.modelsListCache != nil {
+			if cached, found := s.modelsListCache.Get(cacheKey); found {
+				if models, ok := cached.([]string); ok {
+					return cloneStringSlice(models), nil
+				}
+			}
+		}
+		models := s.loadAvailableModels(leaderCtx, groupID, platform)
+		if s.modelsListCache != nil {
+			s.modelsListCache.Set(cacheKey, cloneStringSlice(models), s.modelsListCacheTTL)
+			modelsListCacheStoreTotal.Add(1)
+		}
+		return models, nil
+	})
+	var result singleflight.Result
+	select {
+	case result = <-resultCh:
+	case <-ctx.Done():
+		return nil
+	}
+	if result.Err != nil {
+		return nil
+	}
+	models, _ := result.Val.([]string)
+	return cloneStringSlice(models)
+}
 
-	var accounts []Account
-	var err error
-
-	if groupID != nil {
+// loadAvailableModels computes a model whitelist from the scheduler snapshot
+// when one is configured. Snapshot-only callers receive nil on a cold bucket;
+// the handler then serves its static provider defaults. The repository path is
+// retained only for legacy services without a scheduler snapshot or for an
+// explicit freshness/recovery context.
+func (s *GatewayService) loadAvailableModels(ctx context.Context, groupID *int64, platform string) []string {
+	if s == nil || s.accountRepo == nil {
+		return nil
+	}
+	var (
+		accounts []Account
+		err      error
+	)
+	if s.schedulerSnapshot != nil {
+		requestCtx := withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
+		accounts, _, err = s.schedulerSnapshot.listSchedulableAccountsForRequest(requestCtx, groupID, platform, false)
+		if err != nil {
+			return nil
+		}
+	} else if groupID != nil {
 		accounts, err = s.accountRepo.ListSchedulableByGroupID(ctx, *groupID)
 	} else {
 		accounts, err = s.accountRepo.ListSchedulable(ctx)
 	}
-
 	if err != nil || len(accounts) == 0 {
 		return nil
 	}
 
-	// Filter by platform if specified
 	if platform != "" {
-		filtered := make([]Account, 0)
+		filtered := make([]Account, 0, len(accounts))
 		for _, acc := range accounts {
 			if acc.Platform == platform {
 				filtered = append(filtered, acc)
@@ -1404,81 +1469,117 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		}
 		accounts = filtered
 	}
-
-	// Collect unique models from all accounts
 	modelSet := make(map[string]struct{})
-	hasAnyMapping := false
-
 	for _, acc := range accounts {
-		// Passthrough routing accepts models independently of model_mapping. A stale
-		// mapping on any eligible passthrough account therefore cannot define the
-		// public whitelist; return nil so the handler uses its default model set.
+		// Passthrough routing accepts models independently of model_mapping.
 		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
-			if s.modelsListCache != nil {
-				s.modelsListCache.Set(cacheKey, []string(nil), s.modelsListCacheTTL)
-				modelsListCacheStoreTotal.Add(1)
-			}
 			return nil
 		}
-
-		mapping := acc.GetModelMapping()
-		if len(mapping) > 0 {
-			hasAnyMapping = true
-			for model := range mapping {
-				modelSet[model] = struct{}{}
-			}
+		for model := range acc.GetModelMapping() {
+			modelSet[model] = struct{}{}
 		}
 	}
-
-	// If no account has model_mapping, return nil (use default)
-	if !hasAnyMapping {
-		if s.modelsListCache != nil {
-			s.modelsListCache.Set(cacheKey, []string(nil), s.modelsListCacheTTL)
-			modelsListCacheStoreTotal.Add(1)
-		}
+	if len(modelSet) == 0 {
 		return nil
 	}
-
-	// Convert to slice
 	models := make([]string, 0, len(modelSet))
 	for model := range modelSet {
 		models = append(models, model)
 	}
 	sort.Strings(models)
-
-	if s.modelsListCache != nil {
-		s.modelsListCache.Set(cacheKey, cloneStringSlice(models), s.modelsListCacheTTL)
-		modelsListCacheStoreTotal.Add(1)
-	}
-	return cloneStringSlice(models)
+	return models
 }
 
 // GetSchedulablePlatforms returns the concrete platforms that currently have
 // schedulable accounts in the target group.
 func (s *GatewayService) GetSchedulablePlatforms(ctx context.Context, groupID *int64) map[string]struct{} {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	platforms := make(map[string]struct{})
 	if s == nil || s.accountRepo == nil {
 		return platforms
 	}
-
-	var accounts []Account
-	var err error
-	if groupID != nil {
-		accounts, err = s.accountRepo.ListSchedulableByGroupID(ctx, *groupID)
-	} else {
-		accounts, err = s.accountRepo.ListSchedulable(ctx)
-	}
-	if err != nil {
-		return platforms
-	}
-
-	for _, acc := range accounts {
-		platform := strings.TrimSpace(acc.Platform)
-		if platform != "" {
-			platforms[platform] = struct{}{}
+	cacheKey := fmt.Sprintf("%d", derefGroupID(groupID))
+	if s.platformsListCache != nil {
+		if cached, found := s.platformsListCache.Get(cacheKey); found {
+			if values, ok := cached.(map[string]struct{}); ok {
+				return clonePlatformSet(values)
+			}
 		}
 	}
+	resultCh := s.platformsListSF.DoChan(cacheKey, func() (any, error) {
+		// Keep the shared refresh independent from the first caller's deadline;
+		// the context must live for the whole DoChan function, not the waiter.
+		leaderCtx := context.Background()
+		if ctx != nil {
+			leaderCtx = context.WithoutCancel(ctx)
+		}
+		leaderCtx, leaderCancel := context.WithTimeout(leaderCtx, 5*time.Second)
+		defer leaderCancel()
+		if s.platformsListCache != nil {
+			if cached, found := s.platformsListCache.Get(cacheKey); found {
+				if values, ok := cached.(map[string]struct{}); ok {
+					return values, nil
+				}
+			}
+		}
+		if s.schedulerSnapshot != nil {
+			requestCtx := withSchedulerRequestMode(leaderCtx, s.accountRepo, s.schedulerSnapshot)
+			for _, candidatePlatform := range schedulerSnapshotPlatforms() {
+				accounts, _, err := s.schedulerSnapshot.listSchedulableAccountsForRequest(requestCtx, groupID, candidatePlatform, false)
+				if err != nil {
+					continue
+				}
+				for _, account := range accounts {
+					if platform := strings.TrimSpace(account.Platform); platform != "" {
+						platforms[platform] = struct{}{}
+					}
+				}
+			}
+		} else {
+			var accounts []Account
+			var err error
+			if groupID != nil {
+				accounts, err = s.accountRepo.ListSchedulableByGroupID(leaderCtx, *groupID)
+			} else {
+				accounts, err = s.accountRepo.ListSchedulable(leaderCtx)
+			}
+			if err != nil {
+				return platforms, nil
+			}
+			for _, account := range accounts {
+				if platform := strings.TrimSpace(account.Platform); platform != "" {
+					platforms[platform] = struct{}{}
+				}
+			}
+		}
+		if s.platformsListCache != nil {
+			s.platformsListCache.Set(cacheKey, clonePlatformSet(platforms), s.platformsListCacheTTL)
+		}
+		return platforms, nil
+	})
+	var result singleflight.Result
+	select {
+	case result = <-resultCh:
+	case <-ctx.Done():
+		return platforms
+	}
+	if cached, ok := result.Val.(map[string]struct{}); ok {
+		return clonePlatformSet(cached)
+	}
 	return platforms
+}
+
+func clonePlatformSet(values map[string]struct{}) map[string]struct{} {
+	if len(values) == 0 {
+		return map[string]struct{}{}
+	}
+	cloned := make(map[string]struct{}, len(values))
+	for key := range values {
+		cloned[key] = struct{}{}
+	}
+	return cloned
 }
 
 func (s *GatewayService) InvalidateAvailableModelsCache(groupID *int64, platform string) {
@@ -1490,6 +1591,9 @@ func (s *GatewayService) InvalidateAvailableModelsCache(groupID *int64, platform
 	// 完整匹配时精准失效；否则按维度批量失效。
 	if groupID != nil && normalizedPlatform != "" {
 		s.modelsListCache.Delete(modelsListCacheKey(groupID, normalizedPlatform))
+		if s.platformsListCache != nil {
+			s.platformsListCache.Delete(fmt.Sprintf("%d", derefGroupID(groupID)))
+		}
 		return
 	}
 
@@ -1510,6 +1614,13 @@ func (s *GatewayService) InvalidateAvailableModelsCache(groupID *int64, platform
 			continue
 		}
 		s.modelsListCache.Delete(key)
+	}
+	if s.platformsListCache != nil {
+		if groupID == nil {
+			s.platformsListCache.Flush()
+		} else {
+			s.platformsListCache.Delete(fmt.Sprintf("%d", targetGroup))
+		}
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -158,6 +159,15 @@ type ChannelService struct {
 
 	cache   atomic.Value // *channelCache
 	cacheSF singleflight.Group
+	// refreshInFlight keeps stale channel metadata usable while an expired
+	// snapshot is refreshed in the background. Normal gateway requests must not
+	// synchronously rebuild this cache from PostgreSQL.
+	refreshInFlight atomic.Bool
+	// refreshRetryAt/refreshFailures prevent a failed stale-while-revalidate
+	// attempt from being retried once per request during a database outage.
+	refreshStateMu  sync.Mutex
+	refreshFailures int
+	refreshRetryAt  time.Time
 }
 
 // NewChannelService 创建渠道服务实例。
@@ -179,6 +189,21 @@ func (s *ChannelService) loadCache(ctx context.Context) (*channelCache, error) {
 		if time.Since(cached.loadedAt) < channelCacheTTL {
 			return cached, nil
 		}
+		if schedulerSnapshotOnlyFromContext(ctx) {
+			// Serve stale channel mappings on the request path and refresh them
+			// out-of-band. Channel changes are already propagated through the
+			// admin invalidation path; this stale window prevents an expired local
+			// TTL from turning every model request into a ListAll query.
+			s.refreshCacheAsync()
+			return cached, nil
+		}
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		// A truly cold process has no channel snapshot yet. Kick off one bounded
+		// background load and return a neutral cache immediately; never make the
+		// model request wait for ListAll/GetGroupPlatforms PostgreSQL work.
+		s.refreshCacheAsync()
+		return newEmptyChannelCache(), nil
 	}
 
 	result, err, _ := s.cacheSF.Do("channel_cache", func() (any, error) {
@@ -198,6 +223,60 @@ func (s *ChannelService) loadCache(ctx context.Context) (*channelCache, error) {
 		return nil, fmt.Errorf("unexpected cache type")
 	}
 	return cache, nil
+}
+
+func (s *ChannelService) refreshCacheAsync() {
+	if s == nil || s.repo == nil || !s.refreshRetryAllowed(time.Now()) || !s.refreshInFlight.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer s.refreshInFlight.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), channelCacheDBTimeout)
+		defer cancel()
+		if _, err := s.buildCache(ctx); err != nil {
+			s.recordRefreshFailure()
+			slog.Warn("failed to refresh stale channel cache", "error", err)
+		} else {
+			s.clearRefreshFailure()
+		}
+	}()
+}
+
+func (s *ChannelService) refreshRetryAllowed(now time.Time) bool {
+	if s == nil {
+		return false
+	}
+	s.refreshStateMu.Lock()
+	defer s.refreshStateMu.Unlock()
+	return s.refreshRetryAt.IsZero() || !now.Before(s.refreshRetryAt)
+}
+
+func (s *ChannelService) recordRefreshFailure() {
+	if s == nil {
+		return
+	}
+	s.refreshStateMu.Lock()
+	defer s.refreshStateMu.Unlock()
+	s.refreshFailures++
+	delay := 5 * time.Second
+	for i := 1; i < s.refreshFailures && delay < time.Minute; i++ {
+		delay *= 2
+		if delay >= time.Minute {
+			delay = time.Minute
+			break
+		}
+	}
+	s.refreshRetryAt = time.Now().Add(delay)
+}
+
+func (s *ChannelService) clearRefreshFailure() {
+	if s == nil {
+		return
+	}
+	s.refreshStateMu.Lock()
+	s.refreshFailures = 0
+	s.refreshRetryAt = time.Time{}
+	s.refreshStateMu.Unlock()
 }
 
 // newEmptyChannelCache 创建空的渠道缓存（所有 map 已初始化）
@@ -265,10 +344,23 @@ func expandMappingToCache(cache *channelCache, ch *Channel, gid int64, platform 
 	}
 }
 
-// storeErrorCache 存入短 TTL 空缓存，防止 DB 错误后紧密重试。
-// 通过回退 loadedAt 使剩余 TTL = channelErrorTTL。
+// storeErrorCache records a short retry window without discarding a previously
+// published channel snapshot.  c3api-style reload semantics keep the last
+// known-good immutable view during a database outage; replacing it with an
+// empty cache would silently remove model mappings/prices for every request.
+// When no snapshot exists yet, an empty cache is still installed to prevent a
+// cold-start request storm.  loadedAt is moved back so the remaining TTL is
+// exactly channelErrorTTL.
 func (s *ChannelService) storeErrorCache() {
-	errorCache := newEmptyChannelCache()
+	errorCache, ok := s.cache.Load().(*channelCache)
+	if !ok || errorCache == nil {
+		errorCache = newEmptyChannelCache()
+	} else {
+		// channelCache maps are immutable after publication; shallow-copy only the
+		// timestamp so readers holding the previous pointer remain race-free.
+		copy := *errorCache
+		errorCache = &copy
+	}
 	errorCache.loadedAt = time.Now().Add(-(channelCacheTTL - channelErrorTTL))
 	s.cache.Store(errorCache)
 }

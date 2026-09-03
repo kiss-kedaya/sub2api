@@ -33,6 +33,12 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 	if s.accountRepo == nil {
 		return ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}
 	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		// Keep diagnostics conservative without bypassing the request-path 0-DB
+		// invariant. The caller will return the generic service-unavailable branch
+		// and the background snapshot refresh can restore precise classification.
+		return ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}
+	}
 
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 	queryGroupID := groupID

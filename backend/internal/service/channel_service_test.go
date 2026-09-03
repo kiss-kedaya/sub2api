@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -1382,6 +1383,61 @@ func TestInvalidateCache(t *testing.T) {
 	result = svc.GetChannelModelPricing(context.Background(), 10, "claude-opus-4")
 	require.NotNil(t, result)
 	require.Equal(t, 2, callCount) // rebuilt
+}
+
+func TestLoadCacheSnapshotOnlyColdStartDoesNotBlockOnDatabase(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	repo := &mockChannelRepository{
+		listAllFn: func(context.Context) ([]Channel, error) {
+			close(started)
+			<-release
+			return nil, nil
+		},
+	}
+	svc := newTestChannelService(repo)
+	ctx := withSchedulerSnapshotOnly(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_, _ = svc.GetChannelForGroup(ctx, 99)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("snapshot-only cold lookup blocked on channel database refresh")
+	}
+	close(release)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("expected background channel refresh")
+	}
+}
+
+func TestLoadCacheSnapshotOnlyRefreshFailureBacksOff(t *testing.T) {
+	var calls int
+	repo := &mockChannelRepository{
+		listAllFn: func(context.Context) ([]Channel, error) {
+			calls++
+			return nil, errors.New("database down")
+		},
+	}
+	svc := newTestChannelService(repo)
+	ctx := withSchedulerSnapshotOnly(context.Background())
+
+	// Cold snapshot starts one detached refresh but returns immediately.
+	_, err := svc.GetChannelForGroup(ctx, 99)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return calls == 1 }, time.Second, time.Millisecond*5)
+
+	// Repeated requests while the refresh is failing must not launch another
+	// database query before the retry backoff expires.
+	for i := 0; i < 20; i++ {
+		_, _ = svc.GetChannelForGroup(ctx, 99)
+	}
+	time.Sleep(25 * time.Millisecond)
+	require.Equal(t, 1, calls)
 }
 
 // ===========================================================================

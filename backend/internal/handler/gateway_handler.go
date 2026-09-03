@@ -1002,7 +1002,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.Bool("fallback_used", fallbackUsed),
 					)
 					if !fallbackUsed && fallbackGroupID != nil && *fallbackGroupID > 0 {
-						fallbackGroup, err := h.gatewayService.ResolveGroupByID(c.Request.Context(), *fallbackGroupID)
+						// This is an explicit, operator-configured failover branch. It is
+						// allowed to resolve the fallback group's control-plane policy from
+						// PostgreSQL; ordinary model scheduling remains snapshot-only.
+						fallbackGroup, err := h.gatewayService.ResolveGroupByIDForFallback(c.Request.Context(), *fallbackGroupID)
 						if err != nil {
 							reqLog.Warn("gateway.resolve_fallback_group_failed", zap.Int64("fallback_group_id", *fallbackGroupID), zap.Error(err))
 							_ = h.antigravityGatewayService.WriteMappedClaudeError(c, account, promptTooLongErr.StatusCode, promptTooLongErr.RequestID, promptTooLongErr.Body)
@@ -1030,6 +1033,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						}
 						// 兜底重试按"直接请求兜底分组"处理：清除强制平台，允许按分组平台调度
 						ctx := context.WithValue(c.Request.Context(), ctxkey.ForcePlatform, "")
+						// The fallback group was resolved explicitly above. Publish it in
+						// the request context before re-entering scheduling so the
+						// snapshot-only resolver does not attempt a second group lookup.
+						ctx = context.WithValue(ctx, ctxkey.Group, fallbackGroup)
 						c.Request = c.Request.WithContext(ctx)
 						currentAPIKey = fallbackAPIKey
 						currentSubscription = nil
@@ -1128,6 +1135,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 // Returns models based on account configurations (model_mapping whitelist)
 // Falls back to default models if no whitelist is configured
 func (h *GatewayHandler) Models(c *gin.Context) {
+	// Model-list polling is part of the gateway request surface. Install the
+	// scheduler request mode before the cache lookup so a models-list miss cannot
+	// bypass the published snapshot and scan the accounts table.
+	if h != nil && h.gatewayService != nil && c != nil && c.Request != nil {
+		c.Request = c.Request.WithContext(h.gatewayService.PrepareSchedulerRequestContext(c.Request.Context()))
+	}
 	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
 
 	var groupID *int64
