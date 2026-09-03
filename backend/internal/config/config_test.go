@@ -45,6 +45,21 @@ func TestLoadDefaultsDatabaseMigrationModeToApply(t *testing.T) {
 	require.Equal(t, DatabaseMigrationModeApply, cfg.Database.MigrationMode)
 }
 
+func TestLoadDefaultsSchedulerRequestFreshnessDisabled(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.False(t, cfg.Gateway.Scheduling.RequestFreshnessEnabled)
+}
+
+func TestLoadSchedulerRequestFreshnessCanBeEnabledForEmergencyCompatibility(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_SCHEDULING_REQUEST_FRESHNESS_ENABLED", "true")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Gateway.Scheduling.RequestFreshnessEnabled)
+}
+
 func TestLoadNormalizesDatabaseMigrationModeFromEnv(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("DATABASE_MIGRATION_MODE", " VaLiDaTe ")

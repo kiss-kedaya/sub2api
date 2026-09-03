@@ -46,7 +46,10 @@ func (s *GatewayService) PrepareSchedulerRequestContext(ctx context.Context) con
 	if s == nil || ctx == nil {
 		return ctx
 	}
-	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	// Normal gateway requests are snapshot-authoritative. The legacy durable
+	// projection remains available as an explicit emergency switch for rollback
+	// diagnostics, but is disabled by default to preserve the 0-DB invariant.
+	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	return withUserPlatformQuotaRequestContext(ctx)
 }
 
@@ -57,7 +60,7 @@ func (s *GatewayService) SelectAccountForModel(ctx context.Context, groupID *int
 
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
-	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 优先检查 context 中的强制平台（/antigravity 路由）
 	var platform string
 	forcePlatform, hasForcePlatform := ctx.Value(ctxkey.ForcePlatform).(string)
@@ -124,7 +127,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 // metadataUserID: 用于客户端亲和调度，从中提取客户端 ID
 // sub2apiUserID: 系统用户 ID，用于二维亲和调度
 func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (*AccountSelectionResult, error) {
-	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 调试日志：记录调度入口参数
 	excludedIDsList := make([]int64, 0, len(excludedIDs))
 	for id := range excludedIDs {
@@ -837,6 +840,9 @@ func (s *GatewayService) withGroupContext(ctx context.Context, group *Group) con
 	if !IsGroupContextValid(group) {
 		return ctx
 	}
+	if s != nil && s.schedulerSnapshot != nil {
+		s.schedulerSnapshot.seedCachedGroup(group)
+	}
 	if existing, ok := ctx.Value(ctxkey.Group).(*Group); ok && existing != nil && existing.ID == group.ID && IsGroupContextValid(existing) {
 		return ctx
 	}
@@ -854,6 +860,18 @@ func (s *GatewayService) resolveGroupByID(ctx context.Context, groupID int64) (*
 	if group := s.groupFromContext(ctx, groupID); group != nil {
 		return group, nil
 	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		// The scheduler owns a small immutable group-policy projection (platform,
+		// privacy, fallback and pricing fields).  Consult it before declaring the
+		// group unavailable; this keeps callers that do not carry the API-key
+		// group object on the same 0-DB contract as account scheduling.  A cold
+		// projection returns ErrSchedulerCacheNotReady and is refreshed by the
+		// control-plane worker rather than synchronously scanning PostgreSQL.
+		if s.schedulerSnapshot != nil {
+			return s.schedulerSnapshot.GetGroupByIDLite(ctx, groupID)
+		}
+		return nil, ErrSchedulerCacheNotReady
+	}
 	group, err := s.groupRepo.GetByIDLite(ctx, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("get group failed: %w", err)
@@ -863,6 +881,23 @@ func (s *GatewayService) resolveGroupByID(ctx context.Context, groupID int64) (*
 
 func (s *GatewayService) ResolveGroupByID(ctx context.Context, groupID int64) (*Group, error) {
 	return s.resolveGroupByID(ctx, groupID)
+}
+
+// ResolveGroupByIDForFallback is an explicit control-plane lookup used when a
+// handler intentionally switches to a configured fallback group after an
+// upstream error. Normal scheduling must use ResolveGroupByID (and its
+// snapshot-only marker); this method documents and isolates the exceptional
+// PostgreSQL read so it cannot be reached accidentally from the model hot path.
+func (s *GatewayService) ResolveGroupByIDForFallback(ctx context.Context, groupID int64) (*Group, error) {
+	if s == nil || s.groupRepo == nil || groupID <= 0 {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return s.groupRepo.GetByIDLite(lookupCtx, groupID)
 }
 
 func (s *GatewayService) routingAccountIDsForRequest(ctx context.Context, groupID *int64, requestedModel string, platform string) []int64 {
@@ -986,7 +1021,7 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, gr
 
 func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {
 	if s.schedulerSnapshot != nil {
-		accounts, useMixed, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
+		accounts, useMixed, err := s.schedulerSnapshot.listSchedulableAccountsForRequest(ctx, groupID, platform, hasForcePlatform)
 		if err == nil {
 			accounts = s.filterAccountsBySchedulingThreshold(ctx, accounts)
 			if platform == PlatformGrok || strings.EqualFold(platform, PlatformGrok) {
@@ -1099,6 +1134,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 // 用于 Handler 层在首次请求时提前设置 SingleAccountRetry context，
 // 避免单账号分组收到 503 时错误地设置模型限流标记导致后续请求连续快速失败。
 func (s *GatewayService) IsSingleAntigravityAccountGroup(ctx context.Context, groupID *int64) bool {
+	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	accounts, _, err := s.listSchedulableAccounts(ctx, groupID, PlatformAntigravity, true)
 	if err != nil {
 		return false
@@ -1391,6 +1427,19 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 	if len(missingByStart) == 0 {
 		return withWindowCostPrefetchState(ctx, costs, failOpen)
 	}
+	// In snapshot-only request mode a usage-log aggregate is outside the hot
+	// path contract. Window-cost values are advisory cache state; when a value
+	// is cold, fail open for this request and let the next background refresh (or
+	// an already-warm Redis value) restore the limit. This prevents a cache miss
+	// from turning one model request into a scan over the usage_logs table.
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		for _, ids := range missingByStart {
+			for _, accountID := range ids {
+				failOpen[accountID] = struct{}{}
+			}
+		}
+		return withWindowCostPrefetchState(ctx, costs, failOpen)
+	}
 
 	costBatchReader, hasCostBatch := s.usageLogRepo.(usageLogWindowCostBatchProvider)
 	batchReader, hasBatch := s.usageLogRepo.(usageLogWindowStatsBatchProvider)
@@ -1553,6 +1602,13 @@ func (s *GatewayService) isAccountSchedulableForWindowCost(ctx context.Context, 
 			currentCost = cost
 			goto checkSchedulability
 		}
+	}
+	// A snapshot-authoritative request must never synchronously fall back to an
+	// aggregate over usage_logs. Treat a cold advisory value as unknown and keep
+	// the request available; the scheduler's background/cache refresh will
+	// eventually repopulate it.
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return true
 	}
 
 	// 缓存未命中，从数据库查询
@@ -1720,7 +1776,7 @@ func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID in
 		err     error
 	)
 	if s.schedulerSnapshot != nil {
-		account, err = s.schedulerSnapshot.GetAccount(ctx, accountID)
+		account, err = s.schedulerSnapshot.getAccountForRequest(ctx, accountID)
 	} else {
 		account, err = s.accountRepo.GetByID(ctx, accountID)
 	}
@@ -1776,7 +1832,7 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 	if hydrated, ok := schedulerHydratedAccount(ctx, account.ID); ok {
 		return hydrated, nil
 	}
-	hydrated, err := s.schedulerSnapshot.GetAccount(ctx, account.ID)
+	hydrated, err := s.schedulerSnapshot.getAccountForRequest(ctx, account.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -2122,7 +2178,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 		// request context. Reuse it instead of issuing another PostgreSQL query;
 		// keep the lite lookup only for direct legacy callers without that context.
 		schedGroup = s.groupFromContext(ctx, *groupID)
-		if schedGroup == nil {
+		if schedGroup == nil && !schedulerSnapshotOnlyFromContext(ctx) {
 			// Routing only needs privacy policy and group name. Avoid the account-count
 			// aggregation performed by GetByID on every request.
 			schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
@@ -2174,8 +2230,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
 		accountsLoaded = true
-		ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
-		accounts = applySchedulerFreshnessAccounts(ctx, accounts)
+		accounts = applySchedulerFreshnessForRequest(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
 
 		// 提前预取窗口费用+RPM 计数，确保 routing 段内的调度检查调用能命中缓存
 		ctx = s.withWindowCostPrefetch(ctx, accounts)
@@ -2207,8 +2262,15 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 			}
 			// require_privacy_set: 跳过 privacy 未设置的账号并标记异常
 			if schedGroup != nil && schedGroup.RequirePrivacySet && !acc.IsPrivacySet() {
-				_ = s.accountRepo.SetError(ctx, acc.ID,
-					fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
+				// Snapshot-only requests must not perform a synchronous account write
+				// while filtering candidates. The immutable snapshot already excludes
+				// this account for the current request; an operator can inspect/fix the
+				// privacy state through the admin path. Keep the legacy marker write for
+				// explicit durable-validation callers.
+				if !schedulerSnapshotOnlyFromContext(ctx) && s.accountRepo != nil {
+					_ = s.accountRepo.SetError(ctx, acc.ID,
+						fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
+				}
 				continue
 			}
 			if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
@@ -2296,8 +2358,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
 	}
-	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
-	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
+	accounts = applySchedulerFreshnessForRequest(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
 
 	// 批量预取窗口费用+RPM 计数，避免逐个账号查询（N+1）
 	ctx = s.withWindowCostPrefetch(ctx, accounts)
@@ -2323,8 +2384,10 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 		}
 		// require_privacy_set: 跳过 privacy 未设置的账号并标记异常
 		if schedGroup != nil && schedGroup.RequirePrivacySet && !acc.IsPrivacySet() {
-			_ = s.accountRepo.SetError(ctx, acc.ID,
-				fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
+			if !schedulerSnapshotOnlyFromContext(ctx) && s.accountRepo != nil {
+				_ = s.accountRepo.SetError(ctx, acc.ID,
+					fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
+			}
 			continue
 		}
 		if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
@@ -2400,7 +2463,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 		// removes a redundant PostgreSQL round trip from every mixed-scheduling
 		// request while preserving the direct-caller fallback below.
 		schedGroup = s.groupFromContext(ctx, *groupID)
-		if schedGroup == nil {
+		if schedGroup == nil && !schedulerSnapshotOnlyFromContext(ctx) {
 			// Routing only needs privacy policy and group name. Avoid the account-count
 			// aggregation performed by GetByID on every request.
 			schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
@@ -2448,8 +2511,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
 		accountsLoaded = true
-		ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
-		accounts = applySchedulerFreshnessAccounts(ctx, accounts)
+		accounts = applySchedulerFreshnessForRequest(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
 
 		// 提前预取窗口费用+RPM 计数，确保 routing 段内的调度检查调用能命中缓存
 		ctx = s.withWindowCostPrefetch(ctx, accounts)
@@ -2481,8 +2543,10 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			}
 			// require_privacy_set: 跳过 privacy 未设置的账号并标记异常
 			if schedGroup != nil && schedGroup.RequirePrivacySet && !acc.IsPrivacySet() {
-				_ = s.accountRepo.SetError(ctx, acc.ID,
-					fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
+				if !schedulerSnapshotOnlyFromContext(ctx) && s.accountRepo != nil {
+					_ = s.accountRepo.SetError(ctx, acc.ID,
+						fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
+				}
 				continue
 			}
 			// 过滤：原生平台直接通过，antigravity 需要启用混合调度
@@ -2572,8 +2636,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
 	}
-	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
-	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
+	accounts = applySchedulerFreshnessForRequest(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
 
 	// 批量预取窗口费用+RPM 计数，避免逐个账号查询（N+1）
 	ctx = s.withWindowCostPrefetch(ctx, accounts)
@@ -2598,8 +2661,10 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 		}
 		// require_privacy_set: 跳过 privacy 未设置的账号并标记异常
 		if schedGroup != nil && schedGroup.RequirePrivacySet && !acc.IsPrivacySet() {
-			_ = s.accountRepo.SetError(ctx, acc.ID,
-				fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
+			if !schedulerSnapshotOnlyFromContext(ctx) && s.accountRepo != nil {
+				_ = s.accountRepo.SetError(ctx, acc.ID,
+					fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
+			}
 			continue
 		}
 		// 过滤：原生平台直接通过，antigravity 需要启用混合调度

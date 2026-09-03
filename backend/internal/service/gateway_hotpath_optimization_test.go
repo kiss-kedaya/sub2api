@@ -161,6 +161,32 @@ type modelsListAccountRepoStub struct {
 	listAllCalls     atomic.Int64
 }
 
+type groupLookupHotpathRepoStub struct {
+	GroupRepository
+	group   *Group
+	err     error
+	calls   atomic.Int64
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *groupLookupHotpathRepoStub) GetByIDLite(_ context.Context, _ int64) (*Group, error) {
+	s.calls.Add(1)
+	if s.started != nil {
+		select {
+		case s.started <- struct{}{}:
+		default:
+		}
+	}
+	if s.release != nil {
+		<-s.release
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.group, nil
+}
+
 type stickyGatewayCacheHotpathStub struct {
 	GatewayCache
 
@@ -534,6 +560,35 @@ func TestWithWindowCostPrefetch_AllHitNoSQL(t *testing.T) {
 	require.Equal(t, int64(0), errCount)
 }
 
+func TestWithWindowCostPrefetch_SnapshotOnlyNeverQueriesUsageLogs(t *testing.T) {
+	windowStart := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
+	windowEnd := windowStart.Add(5 * time.Hour)
+	accounts := []Account{{
+		ID:                 101,
+		Platform:           PlatformAnthropic,
+		Type:               AccountTypeOAuth,
+		Extra:              map[string]any{"window_cost_limit": 100.0},
+		SessionWindowStart: &windowStart,
+		SessionWindowEnd:   &windowEnd,
+	}}
+	repo := &usageLogWindowBatchRepoStub{}
+	svc := &GatewayService{
+		sessionLimitCache: &sessionLimitCacheHotpathStub{},
+		usageLogRepo:      repo,
+	}
+	ctx := withSchedulerSnapshotOnly(context.Background())
+	outCtx := svc.withWindowCostPrefetch(ctx, accounts)
+	if !windowCostPrefetchFailedOpen(outCtx, accounts[0].ID) {
+		t.Fatal("cold window cost should be marked fail-open in snapshot-only mode")
+	}
+	if got := repo.batchCalls.Load() + repo.singleCalls.Load(); got != 0 {
+		t.Fatalf("snapshot-only window cost issued %d usage-log queries", got)
+	}
+	if !svc.isAccountSchedulableForWindowCost(outCtx, &accounts[0], false) {
+		t.Fatal("unknown advisory window cost must not block snapshot-only request")
+	}
+}
+
 func TestWithWindowCostPrefetch_BatchErrorFallbackSingleQuery(t *testing.T) {
 	resetGatewayHotpathStatsForTest()
 
@@ -743,6 +798,120 @@ func TestGetAvailableModels_UsesShortCacheAndSupportsInvalidation(t *testing.T) 
 	require.Equal(t, int64(2), hit)
 	require.Equal(t, int64(2), miss)
 	require.Equal(t, int64(2), store)
+}
+
+func TestGetAvailableModels_SchedulerSnapshotHitSkipsAccountRepository(t *testing.T) {
+	groupID := int64(91)
+	repo := &modelsListAccountRepoStub{}
+	cache := &openAISnapshotCacheStub{
+		snapshotAccounts: []*Account{{
+			ID:          1,
+			Platform:    PlatformOpenAI,
+			Status:      StatusActive,
+			Schedulable: true,
+			Credentials: map[string]any{
+				"model_mapping": map[string]any{
+					"gpt-snapshot": "gpt-upstream",
+				},
+			},
+		}},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.RequestFreshnessEnabled = false
+	snapshot := NewSchedulerSnapshotService(cache, nil, repo, nil, cfg)
+	svc := &GatewayService{
+		accountRepo:        repo,
+		schedulerSnapshot:  snapshot,
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+	}
+
+	got := svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI)
+	require.Equal(t, []string{"gpt-snapshot"}, got)
+	require.Zero(t, repo.listByGroupCalls.Load(), "snapshot hit must not list accounts from PostgreSQL")
+	require.Zero(t, repo.listAllCalls.Load(), "snapshot hit must not list global accounts from PostgreSQL")
+}
+
+func TestGetAvailableModels_SchedulerSnapshotColdDoesNotFallbackToDatabase(t *testing.T) {
+	groupID := int64(92)
+	repo := &modelsListAccountRepoStub{}
+	cache := &openAISnapshotCacheStub{}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.RequestFreshnessEnabled = false
+	snapshot := NewSchedulerSnapshotService(cache, nil, repo, nil, cfg)
+	svc := &GatewayService{
+		accountRepo:        repo,
+		schedulerSnapshot:  snapshot,
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+	}
+
+	require.Nil(t, svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI))
+	require.Zero(t, repo.listByGroupCalls.Load(), "cold snapshot must not issue a PostgreSQL account scan")
+	require.Zero(t, repo.listAllCalls.Load(), "cold snapshot must not issue a global PostgreSQL account scan")
+}
+
+func TestResolveGroupByID_SnapshotCacheHitSkipsRepository(t *testing.T) {
+	groupID := int64(93)
+	repo := &groupLookupHotpathRepoStub{group: &Group{ID: groupID, Platform: PlatformOpenAI, Status: StatusActive}}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.RequestFreshnessEnabled = false
+	snapshot := NewSchedulerSnapshotService(nil, nil, nil, repo, cfg)
+	snapshot.seedCachedGroup(repo.group)
+	svc := &GatewayService{groupRepo: repo, schedulerSnapshot: snapshot}
+
+	ctx := withSchedulerSnapshotOnly(context.Background())
+	got, err := svc.resolveGroupByID(ctx, groupID)
+	require.NoError(t, err)
+	require.Equal(t, groupID, got.ID)
+	require.Zero(t, repo.calls.Load(), "snapshot group hit must not query PostgreSQL")
+}
+
+func TestResolveGroupByID_SnapshotColdReturnsNotReadyWithoutRepository(t *testing.T) {
+	groupID := int64(94)
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	repo := &groupLookupHotpathRepoStub{
+		group:   &Group{ID: groupID, Platform: PlatformOpenAI, Status: StatusActive},
+		started: started,
+		release: release,
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.RequestFreshnessEnabled = false
+	snapshot := NewSchedulerSnapshotService(nil, nil, nil, repo, cfg)
+	svc := &GatewayService{groupRepo: repo, schedulerSnapshot: snapshot}
+
+	_, err := svc.resolveGroupByID(withSchedulerSnapshotOnly(context.Background()), groupID)
+	require.ErrorIs(t, err, ErrSchedulerCacheNotReady)
+	select {
+	case <-started:
+		// The refresh is deliberately asynchronous; reaching this point after
+		// resolveGroupByID returned proves the request itself did not wait on DB.
+	case <-time.After(time.Second):
+		t.Fatal("expected a background group refresh")
+	}
+	close(release)
+}
+
+func TestResolveGroupByID_SnapshotRefreshFailureBacksOff(t *testing.T) {
+	groupID := int64(95)
+	repo := &groupLookupHotpathRepoStub{err: errors.New("database unavailable")}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.RequestFreshnessEnabled = false
+	snapshot := NewSchedulerSnapshotService(nil, nil, nil, repo, cfg)
+	svc := &GatewayService{groupRepo: repo, schedulerSnapshot: snapshot}
+
+	_, err := svc.resolveGroupByID(withSchedulerSnapshotOnly(context.Background()), groupID)
+	require.ErrorIs(t, err, ErrSchedulerCacheNotReady)
+	require.Eventually(t, func() bool { return repo.calls.Load() == 1 }, time.Second, time.Millisecond*5)
+
+	// A burst of subsequent cold requests during the database outage must not
+	// launch another refresh immediately after the failed attempt.
+	for i := 0; i < 20; i++ {
+		_, _ = svc.resolveGroupByID(withSchedulerSnapshotOnly(context.Background()), groupID)
+	}
+	time.Sleep(25 * time.Millisecond)
+	require.Equal(t, int64(1), repo.calls.Load(), "failed refresh should be protected by retry backoff")
 }
 
 func TestGetAvailableModels_ErrorAndGlobalListBranches(t *testing.T) {

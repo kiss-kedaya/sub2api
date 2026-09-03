@@ -558,6 +558,8 @@ gateway:
     slot_cleanup_interval: 30s
     # 是否允许受控回源到 DB（默认 true，保持现有行为）
     db_fallback_enabled: true
+    # 请求热路径旧版 freshness SQL 校验（默认关闭；仅应急兼容开关）
+    request_freshness_enabled: false
     # 受控回源超时（秒），0 表示不额外收紧超时
     db_fallback_timeout_seconds: 0
     # 受控回源限流（实例级 QPS），0 表示不限制

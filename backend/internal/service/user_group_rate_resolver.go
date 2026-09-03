@@ -101,3 +101,26 @@ func (r *userGroupRateResolver) Resolve(ctx context.Context, userID, groupID int
 	}
 	return multiplier
 }
+
+// ResolveSnapshotOnly returns a user-specific multiplier only when it is
+// already present in the process-local cache. It deliberately never invokes
+// the repository. Scheduler/profit admission uses this variant on the
+// snapshot-authoritative request path so a cold user×group override cannot
+// turn an otherwise database-free model request into a PostgreSQL query.
+// Billing paths must continue to use Resolve, which may perform the explicit
+// durable lookup needed to calculate the final charge.
+func (r *userGroupRateResolver) ResolveSnapshotOnly(userID, groupID int64, groupDefaultMultiplier float64) float64 {
+	if r == nil || userID <= 0 || groupID <= 0 {
+		return groupDefaultMultiplier
+	}
+	key := fmt.Sprintf("%d:%d", userID, groupID)
+	if r.cache != nil {
+		if cached, ok := r.cache.Get(key); ok {
+			if multiplier, castOK := cached.(float64); castOK {
+				userGroupRateCacheHitTotal.Add(1)
+				return multiplier
+			}
+		}
+	}
+	return groupDefaultMultiplier
+}
