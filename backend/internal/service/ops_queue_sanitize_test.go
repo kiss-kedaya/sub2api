@@ -107,13 +107,13 @@ func TestSanitizeOpsUpstreamErrorsForQueueHardBoundsSerializedBytes(t *testing.T
 	const total = opsUpstreamErrorsMaxEvents
 	for i := 0; i < total; i++ {
 		entry.UpstreamErrors = append(entry.UpstreamErrors, &OpsUpstreamErrorEvent{
-			AtUnixMs:             int64(i + 1),
-			Platform:             strings.Repeat("p", 40),
-			AccountName:          strings.Repeat("a", 200),
-			ProxyName:            strings.Repeat("n", 200),
-			UpstreamRequestID:    strings.Repeat("r", 200),
-			UpstreamStatusCode:   502,
-			UpstreamURL:          "https://example.com/" + strings.Repeat("u", 3000),
+			AtUnixMs:           int64(i + 1),
+			Platform:           strings.Repeat("p", 40),
+			AccountName:        strings.Repeat("a", 200),
+			ProxyName:          strings.Repeat("n", 200),
+			UpstreamRequestID:  strings.Repeat("r", 200),
+			UpstreamStatusCode: 502,
+			UpstreamURL:        "https://example.com/" + strings.Repeat("u", 3000),
 			// Plain-text payloads are truncated, not JSON-trimmed, so they keep
 			// their full queue-limit weight.
 			UpstreamResponseBody: strings.Repeat("b", 10_000),
