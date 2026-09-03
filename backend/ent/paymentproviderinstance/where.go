@@ -104,6 +104,16 @@ func AllowUserRefund(v bool) predicate.PaymentProviderInstance {
 	return predicate.PaymentProviderInstance(sql.FieldEQ(FieldAllowUserRefund, v))
 }
 
+// RechargeFeeRate applies equality check predicate on the "recharge_fee_rate" field. It's identical to RechargeFeeRateEQ.
+func RechargeFeeRate(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldEQ(FieldRechargeFeeRate, v))
+}
+
+// BalanceRechargeMultiplier applies equality check predicate on the "balance_recharge_multiplier" field. It's identical to BalanceRechargeMultiplierEQ.
+func BalanceRechargeMultiplier(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldEQ(FieldBalanceRechargeMultiplier, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.PaymentProviderInstance {
 	return predicate.PaymentProviderInstance(sql.FieldEQ(FieldCreatedAt, v))
@@ -572,6 +582,106 @@ func AllowUserRefundEQ(v bool) predicate.PaymentProviderInstance {
 // AllowUserRefundNEQ applies the NEQ predicate on the "allow_user_refund" field.
 func AllowUserRefundNEQ(v bool) predicate.PaymentProviderInstance {
 	return predicate.PaymentProviderInstance(sql.FieldNEQ(FieldAllowUserRefund, v))
+}
+
+// RechargeFeeRateEQ applies the EQ predicate on the "recharge_fee_rate" field.
+func RechargeFeeRateEQ(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldEQ(FieldRechargeFeeRate, v))
+}
+
+// RechargeFeeRateNEQ applies the NEQ predicate on the "recharge_fee_rate" field.
+func RechargeFeeRateNEQ(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldNEQ(FieldRechargeFeeRate, v))
+}
+
+// RechargeFeeRateIn applies the In predicate on the "recharge_fee_rate" field.
+func RechargeFeeRateIn(vs ...float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldIn(FieldRechargeFeeRate, vs...))
+}
+
+// RechargeFeeRateNotIn applies the NotIn predicate on the "recharge_fee_rate" field.
+func RechargeFeeRateNotIn(vs ...float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldNotIn(FieldRechargeFeeRate, vs...))
+}
+
+// RechargeFeeRateGT applies the GT predicate on the "recharge_fee_rate" field.
+func RechargeFeeRateGT(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldGT(FieldRechargeFeeRate, v))
+}
+
+// RechargeFeeRateGTE applies the GTE predicate on the "recharge_fee_rate" field.
+func RechargeFeeRateGTE(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldGTE(FieldRechargeFeeRate, v))
+}
+
+// RechargeFeeRateLT applies the LT predicate on the "recharge_fee_rate" field.
+func RechargeFeeRateLT(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldLT(FieldRechargeFeeRate, v))
+}
+
+// RechargeFeeRateLTE applies the LTE predicate on the "recharge_fee_rate" field.
+func RechargeFeeRateLTE(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldLTE(FieldRechargeFeeRate, v))
+}
+
+// RechargeFeeRateIsNil applies the IsNil predicate on the "recharge_fee_rate" field.
+func RechargeFeeRateIsNil() predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldIsNull(FieldRechargeFeeRate))
+}
+
+// RechargeFeeRateNotNil applies the NotNil predicate on the "recharge_fee_rate" field.
+func RechargeFeeRateNotNil() predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldNotNull(FieldRechargeFeeRate))
+}
+
+// BalanceRechargeMultiplierEQ applies the EQ predicate on the "balance_recharge_multiplier" field.
+func BalanceRechargeMultiplierEQ(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldEQ(FieldBalanceRechargeMultiplier, v))
+}
+
+// BalanceRechargeMultiplierNEQ applies the NEQ predicate on the "balance_recharge_multiplier" field.
+func BalanceRechargeMultiplierNEQ(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldNEQ(FieldBalanceRechargeMultiplier, v))
+}
+
+// BalanceRechargeMultiplierIn applies the In predicate on the "balance_recharge_multiplier" field.
+func BalanceRechargeMultiplierIn(vs ...float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldIn(FieldBalanceRechargeMultiplier, vs...))
+}
+
+// BalanceRechargeMultiplierNotIn applies the NotIn predicate on the "balance_recharge_multiplier" field.
+func BalanceRechargeMultiplierNotIn(vs ...float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldNotIn(FieldBalanceRechargeMultiplier, vs...))
+}
+
+// BalanceRechargeMultiplierGT applies the GT predicate on the "balance_recharge_multiplier" field.
+func BalanceRechargeMultiplierGT(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldGT(FieldBalanceRechargeMultiplier, v))
+}
+
+// BalanceRechargeMultiplierGTE applies the GTE predicate on the "balance_recharge_multiplier" field.
+func BalanceRechargeMultiplierGTE(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldGTE(FieldBalanceRechargeMultiplier, v))
+}
+
+// BalanceRechargeMultiplierLT applies the LT predicate on the "balance_recharge_multiplier" field.
+func BalanceRechargeMultiplierLT(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldLT(FieldBalanceRechargeMultiplier, v))
+}
+
+// BalanceRechargeMultiplierLTE applies the LTE predicate on the "balance_recharge_multiplier" field.
+func BalanceRechargeMultiplierLTE(v float64) predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldLTE(FieldBalanceRechargeMultiplier, v))
+}
+
+// BalanceRechargeMultiplierIsNil applies the IsNil predicate on the "balance_recharge_multiplier" field.
+func BalanceRechargeMultiplierIsNil() predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldIsNull(FieldBalanceRechargeMultiplier))
+}
+
+// BalanceRechargeMultiplierNotNil applies the NotNil predicate on the "balance_recharge_multiplier" field.
+func BalanceRechargeMultiplierNotNil() predicate.PaymentProviderInstance {
+	return predicate.PaymentProviderInstance(sql.FieldNotNull(FieldBalanceRechargeMultiplier))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

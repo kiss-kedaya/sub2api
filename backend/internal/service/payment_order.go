@@ -80,15 +80,21 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if err := s.validateSelectedCreateOrderInstance(ctx, req, sel); err != nil {
 		return nil, err
 	}
+	feeRate, multiplier := resolveInstanceRechargeTerms(cfg, sel)
+	if plan == nil && req.OrderType == payment.OrderTypeBalance {
+		orderAmount = calculateCreditedBalance(req.Amount, multiplier)
+	}
 	selectedCurrency := payment.DefaultPaymentCurrency
 	if sel != nil {
 		selectedCurrency = paymentProviderConfigCurrency(sel.ProviderKey, sel.Config)
 	}
-	if selectedCurrency != methodCurrency {
-		payAmountStr, payAmount, err = calculateCreateOrderPayAmountForOrderType(limitAmount, feeRate, selectedCurrency, req.OrderType, cfg.SubscriptionUSDToCNYRate)
-		if err != nil {
-			return nil, err
-		}
+	payCurrency := methodCurrency
+	if selectedCurrency != "" {
+		payCurrency = selectedCurrency
+	}
+	payAmountStr, payAmount, err = calculateCreateOrderPayAmountForOrderType(limitAmount, feeRate, payCurrency, req.OrderType, cfg.SubscriptionUSDToCNYRate)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateSelectedCreateOrderAmountCurrency(payAmountStr, sel); err != nil {
 		return nil, err

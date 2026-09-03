@@ -37,6 +37,10 @@ type PaymentProviderInstance struct {
 	RefundEnabled bool `json:"refund_enabled,omitempty"`
 	// AllowUserRefund holds the value of the "allow_user_refund" field.
 	AllowUserRefund bool `json:"allow_user_refund,omitempty"`
+	// nil inherits the global RECHARGE_FEE_RATE setting
+	RechargeFeeRate *float64 `json:"recharge_fee_rate,omitempty"`
+	// nil inherits the global BALANCE_RECHARGE_MULTIPLIER setting
+	BalanceRechargeMultiplier *float64 `json:"balance_recharge_multiplier,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -51,6 +55,8 @@ func (*PaymentProviderInstance) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case paymentproviderinstance.FieldEnabled, paymentproviderinstance.FieldRefundEnabled, paymentproviderinstance.FieldAllowUserRefund:
 			values[i] = new(sql.NullBool)
+		case paymentproviderinstance.FieldRechargeFeeRate, paymentproviderinstance.FieldBalanceRechargeMultiplier:
+			values[i] = new(sql.NullFloat64)
 		case paymentproviderinstance.FieldID, paymentproviderinstance.FieldSortOrder:
 			values[i] = new(sql.NullInt64)
 		case paymentproviderinstance.FieldProviderKey, paymentproviderinstance.FieldName, paymentproviderinstance.FieldConfig, paymentproviderinstance.FieldSupportedTypes, paymentproviderinstance.FieldPaymentMode, paymentproviderinstance.FieldLimits:
@@ -138,6 +144,20 @@ func (_m *PaymentProviderInstance) assignValues(columns []string, values []any) 
 			} else if value.Valid {
 				_m.AllowUserRefund = value.Bool
 			}
+		case paymentproviderinstance.FieldRechargeFeeRate:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field recharge_fee_rate", values[i])
+			} else if value.Valid {
+				_m.RechargeFeeRate = new(float64)
+				*_m.RechargeFeeRate = value.Float64
+			}
+		case paymentproviderinstance.FieldBalanceRechargeMultiplier:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field balance_recharge_multiplier", values[i])
+			} else if value.Valid {
+				_m.BalanceRechargeMultiplier = new(float64)
+				*_m.BalanceRechargeMultiplier = value.Float64
+			}
 		case paymentproviderinstance.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
@@ -215,6 +235,16 @@ func (_m *PaymentProviderInstance) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("allow_user_refund=")
 	builder.WriteString(fmt.Sprintf("%v", _m.AllowUserRefund))
+	builder.WriteString(", ")
+	if v := _m.RechargeFeeRate; v != nil {
+		builder.WriteString("recharge_fee_rate=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.BalanceRechargeMultiplier; v != nil {
+		builder.WriteString("balance_recharge_multiplier=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

@@ -160,6 +160,8 @@ export interface ProviderInstance {
   payment_mode: string
   refund_enabled: boolean
   allow_user_refund: boolean
+  recharge_fee_rate: number | null
+  balance_recharge_multiplier: number | null
   limits: string
   sort_order: number
 }

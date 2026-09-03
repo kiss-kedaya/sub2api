@@ -33,6 +33,10 @@ const (
 	FieldRefundEnabled = "refund_enabled"
 	// FieldAllowUserRefund holds the string denoting the allow_user_refund field in the database.
 	FieldAllowUserRefund = "allow_user_refund"
+	// FieldRechargeFeeRate holds the string denoting the recharge_fee_rate field in the database.
+	FieldRechargeFeeRate = "recharge_fee_rate"
+	// FieldBalanceRechargeMultiplier holds the string denoting the balance_recharge_multiplier field in the database.
+	FieldBalanceRechargeMultiplier = "balance_recharge_multiplier"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -54,6 +58,8 @@ var Columns = []string{
 	FieldLimits,
 	FieldRefundEnabled,
 	FieldAllowUserRefund,
+	FieldRechargeFeeRate,
+	FieldBalanceRechargeMultiplier,
 	FieldCreatedAt,
 	FieldUpdatedAt,
 }
@@ -157,6 +163,16 @@ func ByRefundEnabled(opts ...sql.OrderTermOption) OrderOption {
 // ByAllowUserRefund orders the results by the allow_user_refund field.
 func ByAllowUserRefund(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAllowUserRefund, opts...).ToFunc()
+}
+
+// ByRechargeFeeRate orders the results by the recharge_fee_rate field.
+func ByRechargeFeeRate(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRechargeFeeRate, opts...).ToFunc()
+}
+
+// ByBalanceRechargeMultiplier orders the results by the balance_recharge_multiplier field.
+func ByBalanceRechargeMultiplier(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldBalanceRechargeMultiplier, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

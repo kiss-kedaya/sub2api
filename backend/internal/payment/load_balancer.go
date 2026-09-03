@@ -306,11 +306,13 @@ func (lb *DefaultLoadBalancer) buildSelection(selected *dbent.PaymentProviderIns
 	}
 
 	return &InstanceSelection{
-		InstanceID:     fmt.Sprintf("%d", selected.ID),
-		ProviderKey:    selected.ProviderKey,
-		Config:         config,
-		SupportedTypes: selected.SupportedTypes,
-		PaymentMode:    selected.PaymentMode,
+		InstanceID:                fmt.Sprintf("%d", selected.ID),
+		ProviderKey:               selected.ProviderKey,
+		Config:                    config,
+		SupportedTypes:            selected.SupportedTypes,
+		PaymentMode:               selected.PaymentMode,
+		RechargeFeeRate:           selected.RechargeFeeRate,
+		BalanceRechargeMultiplier: selected.BalanceRechargeMultiplier,
 	}, nil
 }
 
