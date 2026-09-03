@@ -155,60 +155,293 @@ const openAIQuotaAutoPauseSettingsDBTimeout = 5 * time.Second
 
 const openAIQuotaAutoPauseSettingsRefreshKey = "openai_quota_auto_pause_settings"
 
+const (
+	hotSettingGrokModeKey         = "grok_default_base_url_mode"
+	hotSettingBetaPolicyKey       = "beta_policy_settings"
+	hotSettingOpenAIFastPolicyKey = "openai_fast_policy_settings"
+	hotSettingRectifierKey        = "rectifier_settings"
+)
+
+// Snapshot-only gateway requests must never synchronously read settingRepo.
+// The helpers below implement stale-while-revalidate for the small set of
+// settings consulted directly by model forwarding.  Each cache is owned by a
+// SettingService instance (rather than a package global), so tests and
+// multiple embedded servers cannot leak policy state into one another.
+
+func (s *SettingService) grokDefaultBaseURLModeSnapshotOnly() string {
+	if s == nil {
+		return GrokDefaultBaseURLModeCLI
+	}
+	now := time.Now()
+	if cached, ok := s.grokDefaultBaseURLModeCache.Load().(*cachedGrokDefaultBaseURLMode); ok && cached != nil && cached.mode != "" {
+		if !hotSettingCacheFresh(cached.expiresAt, now) {
+			s.refreshGrokDefaultBaseURLModeAsync()
+		}
+		return cached.mode
+	}
+	s.refreshGrokDefaultBaseURLModeAsync()
+	return GrokDefaultBaseURLModeCLI
+}
+
+func (s *SettingService) refreshGrokDefaultBaseURLModeAsync() {
+	if s == nil || s.settingRepo == nil || !s.grokDefaultBaseURLModeRefresh.tryStart(time.Now()) {
+		return
+	}
+	resultCh := s.grokDefaultBaseURLModeSF.DoChan(hotSettingGrokModeKey, func() (any, error) {
+		mode, err := s.loadGrokDefaultBaseURLMode(context.Background())
+		if err == nil {
+			s.grokDefaultBaseURLModeCache.Store(&cachedGrokDefaultBaseURLMode{
+				mode:      mode,
+				expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano(),
+			})
+		}
+		return mode, err
+	})
+	go func() {
+		result := <-resultCh
+		s.grokDefaultBaseURLModeRefresh.finish(result.Err)
+	}()
+}
+
+func (s *SettingService) betaPolicySettingsSnapshotOnly() *BetaPolicySettings {
+	if s == nil {
+		return DefaultBetaPolicySettings()
+	}
+	now := time.Now()
+	if cached, ok := s.betaPolicyCache.Load().(*cachedBetaPolicySettings); ok && cached != nil && cached.settings != nil {
+		if !hotSettingCacheFresh(cached.expiresAt, now) {
+			s.refreshBetaPolicySettingsAsync()
+		}
+		return cloneBetaPolicySettings(cached.settings)
+	}
+	s.refreshBetaPolicySettingsAsync()
+	return DefaultBetaPolicySettings()
+}
+
+func (s *SettingService) refreshBetaPolicySettingsAsync() {
+	if s == nil || s.settingRepo == nil || !s.betaPolicyRefresh.tryStart(time.Now()) {
+		return
+	}
+	resultCh := s.betaPolicySF.DoChan(hotSettingBetaPolicyKey, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), hotSettingDBTimeout)
+		defer cancel()
+		settings, err := s.loadBetaPolicySettings(ctx)
+		if err == nil && settings != nil {
+			s.betaPolicyCache.Store(&cachedBetaPolicySettings{
+				settings:  cloneBetaPolicySettings(settings),
+				expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano(),
+			})
+		}
+		return settings, err
+	})
+	go func() {
+		result := <-resultCh
+		s.betaPolicyRefresh.finish(result.Err)
+	}()
+}
+
+func (s *SettingService) openAIFastPolicySettingsSnapshotOnly() *OpenAIFastPolicySettings {
+	if s == nil {
+		return DefaultOpenAIFastPolicySettings()
+	}
+	now := time.Now()
+	if cached, ok := s.openAIFastPolicyCache.Load().(*cachedOpenAIFastPolicySettings); ok && cached != nil && cached.settings != nil {
+		if !hotSettingCacheFresh(cached.expiresAt, now) {
+			s.refreshOpenAIFastPolicySettingsAsync()
+		}
+		return cloneOpenAIFastPolicySettings(cached.settings)
+	}
+	s.refreshOpenAIFastPolicySettingsAsync()
+	return DefaultOpenAIFastPolicySettings()
+}
+
+func (s *SettingService) refreshOpenAIFastPolicySettingsAsync() {
+	if s == nil || s.settingRepo == nil || !s.openAIFastPolicyRefresh.tryStart(time.Now()) {
+		return
+	}
+	resultCh := s.openAIFastPolicySF.DoChan(hotSettingOpenAIFastPolicyKey, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), hotSettingDBTimeout)
+		defer cancel()
+		settings, err := s.loadOpenAIFastPolicySettings(ctx)
+		if err == nil && settings != nil {
+			s.openAIFastPolicyCache.Store(&cachedOpenAIFastPolicySettings{
+				settings:  cloneOpenAIFastPolicySettings(settings),
+				expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano(),
+			})
+		}
+		return settings, err
+	})
+	go func() {
+		result := <-resultCh
+		s.openAIFastPolicyRefresh.finish(result.Err)
+	}()
+}
+
+func (s *SettingService) rectifierSettingsSnapshotOnly() *RectifierSettings {
+	if s == nil {
+		return DefaultRectifierSettings()
+	}
+	now := time.Now()
+	if cached, ok := s.rectifierCache.Load().(*cachedRectifierSettings); ok && cached != nil && cached.settings != nil {
+		if !hotSettingCacheFresh(cached.expiresAt, now) {
+			s.refreshRectifierSettingsAsync()
+		}
+		return cloneRectifierSettings(cached.settings)
+	}
+	s.refreshRectifierSettingsAsync()
+	return DefaultRectifierSettings()
+}
+
+func (s *SettingService) refreshRectifierSettingsAsync() {
+	if s == nil || s.settingRepo == nil || !s.rectifierRefresh.tryStart(time.Now()) {
+		return
+	}
+	resultCh := s.rectifierSF.DoChan(hotSettingRectifierKey, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), hotSettingDBTimeout)
+		defer cancel()
+		settings, err := s.loadRectifierSettings(ctx)
+		if err == nil && settings != nil {
+			s.rectifierCache.Store(&cachedRectifierSettings{
+				settings:  cloneRectifierSettings(settings),
+				expiresAt: time.Now().Add(hotSettingCacheTTL).UnixNano(),
+			})
+		}
+		return settings, err
+	})
+	go func() {
+		result := <-resultCh
+		s.rectifierRefresh.finish(result.Err)
+	}()
+}
+
+func cloneBetaPolicySettings(in *BetaPolicySettings) *BetaPolicySettings {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if len(in.Rules) > 0 {
+		out.Rules = make([]BetaPolicyRule, len(in.Rules))
+		for i := range in.Rules {
+			out.Rules[i] = in.Rules[i]
+			out.Rules[i].ModelWhitelist = append([]string(nil), in.Rules[i].ModelWhitelist...)
+		}
+	} else {
+		out.Rules = nil
+	}
+	return &out
+}
+
+func cloneOpenAIFastPolicySettings(in *OpenAIFastPolicySettings) *OpenAIFastPolicySettings {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if len(in.Rules) > 0 {
+		out.Rules = make([]OpenAIFastPolicyRule, len(in.Rules))
+		for i := range in.Rules {
+			out.Rules[i] = in.Rules[i]
+			out.Rules[i].UserIDs = append([]int64(nil), in.Rules[i].UserIDs...)
+			out.Rules[i].ModelWhitelist = append([]string(nil), in.Rules[i].ModelWhitelist...)
+		}
+	} else {
+		out.Rules = nil
+	}
+	return &out
+}
+
+func cloneRectifierSettings(in *RectifierSettings) *RectifierSettings {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.APIKeySignaturePatterns = append([]string(nil), in.APIKeySignaturePatterns...)
+	return &out
+}
+
 // GetCyberSessionBlockRuntime 返回 (开关, TTL)，进程内缓存 ~60s，
 // 供网关热路径读取时避免 DB 往返。
 // 两个 setting key 在单次 singleflight 里一起读取，减少 DB 往返。
 // 默认值：开关 false，TTL 1h（与粘性会话对齐）。
 func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool, time.Duration) {
+	if s == nil {
+		return false, time.Hour
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.cyberSessionBlockRuntimeSnapshotOnly()
+	}
 	if cached, ok := s.cyberSessionBlockRuntimeCache.Load().(*cachedCyberSessionBlockRuntime); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
 			return cached.enabled, cached.ttl
 		}
 	}
 	result, _, _ := s.cyberSessionBlockRuntimeSF.Do("cyber_session_block_runtime", func() (any, error) {
-		if cached, ok := s.cyberSessionBlockRuntimeCache.Load().(*cachedCyberSessionBlockRuntime); ok && cached != nil {
-			if time.Now().UnixNano() < cached.expiresAt {
-				return cached, nil
-			}
-		}
-		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cyberSessionBlockRuntimeDBTimeout)
-		defer cancel()
-
-		enabledVal, enabledErr := s.settingRepo.GetValue(dbCtx, SettingKeyCyberSessionBlockEnabled)
-		ttlVal, ttlErr := s.settingRepo.GetValue(dbCtx, SettingKeyCyberSessionBlockTTLSeconds)
-
-		if enabledErr != nil && !errors.Is(enabledErr, ErrSettingNotFound) {
-			slog.Warn("failed to get cyber_session_block_enabled setting", "error", enabledErr)
-			entry := &cachedCyberSessionBlockRuntime{
-				enabled:   false,
-				ttl:       time.Hour,
-				expiresAt: time.Now().Add(cyberSessionBlockRuntimeErrorTTL).UnixNano(),
-			}
-			s.cyberSessionBlockRuntimeCache.Store(entry)
-			return entry, nil
-		}
-
-		enabled := enabledErr == nil && strings.TrimSpace(enabledVal) == "true"
-
-		ttl := time.Hour
-		if ttlErr == nil {
-			if n, perr := strconv.Atoi(strings.TrimSpace(ttlVal)); perr == nil && n > 0 {
-				ttl = time.Duration(n) * time.Second
-			}
-		}
-
-		entry := &cachedCyberSessionBlockRuntime{
-			enabled:   enabled,
-			ttl:       ttl,
-			expiresAt: time.Now().Add(cyberSessionBlockRuntimeCacheTTL).UnixNano(),
-		}
-		s.cyberSessionBlockRuntimeCache.Store(entry)
-		return entry, nil
+		return s.loadCyberSessionBlockRuntime(ctx)
 	})
 	if entry, ok := result.(*cachedCyberSessionBlockRuntime); ok && entry != nil {
 		return entry.enabled, entry.ttl
 	}
 	return false, time.Hour
+}
+
+func (s *SettingService) loadCyberSessionBlockRuntime(ctx context.Context) (any, error) {
+	if s == nil || s.settingRepo == nil {
+		return &cachedCyberSessionBlockRuntime{enabled: false, ttl: time.Hour, expiresAt: time.Now().Add(cyberSessionBlockRuntimeErrorTTL).UnixNano()}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if cached, ok := s.cyberSessionBlockRuntimeCache.Load().(*cachedCyberSessionBlockRuntime); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached, nil
+	}
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cyberSessionBlockRuntimeDBTimeout)
+	defer cancel()
+
+	enabledVal, enabledErr := s.settingRepo.GetValue(dbCtx, SettingKeyCyberSessionBlockEnabled)
+	ttlVal, ttlErr := s.settingRepo.GetValue(dbCtx, SettingKeyCyberSessionBlockTTLSeconds)
+	if enabledErr != nil && !errors.Is(enabledErr, ErrSettingNotFound) {
+		slog.Warn("failed to get cyber_session_block_enabled setting", "error", enabledErr)
+		entry := &cachedCyberSessionBlockRuntime{enabled: false, ttl: time.Hour, expiresAt: time.Now().Add(cyberSessionBlockRuntimeErrorTTL).UnixNano()}
+		s.cyberSessionBlockRuntimeCache.Store(entry)
+		return entry, enabledErr
+	}
+
+	enabled := enabledErr == nil && strings.TrimSpace(enabledVal) == "true"
+	ttl := time.Hour
+	if ttlErr == nil {
+		if n, perr := strconv.Atoi(strings.TrimSpace(ttlVal)); perr == nil && n > 0 {
+			ttl = time.Duration(n) * time.Second
+		}
+	}
+	entry := &cachedCyberSessionBlockRuntime{enabled: enabled, ttl: ttl, expiresAt: time.Now().Add(cyberSessionBlockRuntimeCacheTTL).UnixNano()}
+	s.cyberSessionBlockRuntimeCache.Store(entry)
+	return entry, nil
+}
+
+func (s *SettingService) cyberSessionBlockRuntimeSnapshotOnly() (bool, time.Duration) {
+	cached, _ := s.cyberSessionBlockRuntimeCache.Load().(*cachedCyberSessionBlockRuntime)
+	if cached != nil {
+		if time.Now().UnixNano() >= cached.expiresAt {
+			s.refreshCyberSessionBlockRuntimeAsync()
+		}
+		return cached.enabled, cached.ttl
+	}
+	s.refreshCyberSessionBlockRuntimeAsync()
+	return false, time.Hour
+}
+
+func (s *SettingService) refreshCyberSessionBlockRuntimeAsync() {
+	if s == nil || s.settingRepo == nil || !s.cyberSessionBlockRefresh.tryStart(time.Now()) {
+		return
+	}
+	go func() {
+		_, err, _ := s.cyberSessionBlockRuntimeSF.Do("cyber_session_block_runtime", func() (any, error) {
+			return s.loadCyberSessionBlockRuntime(context.Background())
+		})
+		s.cyberSessionBlockRefresh.finish(err)
+	}()
 }
 
 // GetAntigravityUserAgentVersion 返回 Antigravity 上游请求使用的版本号。
@@ -218,6 +451,12 @@ func (s *SettingService) GetAntigravityUserAgentVersion(ctx context.Context) str
 	if s == nil || s.settingRepo == nil {
 		return fallback
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.antigravityUserAgentVersionSnapshotOnly(fallback)
+	}
 	if cached, ok := s.antigravityUAVersionCache.Load().(*cachedAntigravityUserAgentVersion); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
 			return cached.version
@@ -225,39 +464,67 @@ func (s *SettingService) GetAntigravityUserAgentVersion(ctx context.Context) str
 	}
 
 	result, _, _ := s.antigravityUAVersionSF.Do("antigravity_user_agent_version", func() (any, error) {
-		if cached, ok := s.antigravityUAVersionCache.Load().(*cachedAntigravityUserAgentVersion); ok && cached != nil {
-			if time.Now().UnixNano() < cached.expiresAt {
-				return cached.version, nil
-			}
-		}
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), antigravityUserAgentVersionDBTimeout)
-		defer cancel()
-		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyAntigravityUserAgentVersion)
-		if err != nil && !errors.Is(err, ErrSettingNotFound) {
-			slog.Warn("failed to get antigravity user agent version setting", "error", err)
-			s.antigravityUAVersionCache.Store(&cachedAntigravityUserAgentVersion{
-				version:   fallback,
-				expiresAt: time.Now().Add(antigravityUserAgentVersionErrorTTL).UnixNano(),
-			})
-			return fallback, nil
-		}
-		version := antigravity.NormalizeUserAgentVersion(value)
-		if version == "" {
-			version = fallback
-		}
-		s.antigravityUAVersionCache.Store(&cachedAntigravityUserAgentVersion{
-			version:   version,
-			expiresAt: time.Now().Add(antigravityUserAgentVersionCacheTTL).UnixNano(),
-		})
-		return version, nil
+		return s.loadAntigravityUserAgentVersion(ctx, fallback)
 	})
 	if version, ok := result.(string); ok && version != "" {
 		return version
 	}
 	return fallback
+}
+
+func (s *SettingService) loadAntigravityUserAgentVersion(ctx context.Context, fallback string) (string, error) {
+	if cached, ok := s.antigravityUAVersionCache.Load().(*cachedAntigravityUserAgentVersion); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached.version, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), antigravityUserAgentVersionDBTimeout)
+	defer cancel()
+	value, err := s.settingRepo.GetValue(dbCtx, SettingKeyAntigravityUserAgentVersion)
+	if err != nil && !errors.Is(err, ErrSettingNotFound) {
+		slog.Warn("failed to get antigravity user agent version setting", "error", err)
+		s.antigravityUAVersionCache.Store(&cachedAntigravityUserAgentVersion{
+			version:   fallback,
+			expiresAt: time.Now().Add(antigravityUserAgentVersionErrorTTL).UnixNano(),
+		})
+		return fallback, err
+	}
+	version := antigravity.NormalizeUserAgentVersion(value)
+	if version == "" {
+		version = fallback
+	}
+	s.antigravityUAVersionCache.Store(&cachedAntigravityUserAgentVersion{
+		version:   version,
+		expiresAt: time.Now().Add(antigravityUserAgentVersionCacheTTL).UnixNano(),
+	})
+	return version, nil
+}
+
+func (s *SettingService) antigravityUserAgentVersionSnapshotOnly(fallback string) string {
+	if cached, ok := s.antigravityUAVersionCache.Load().(*cachedAntigravityUserAgentVersion); ok && cached != nil {
+		if time.Now().UnixNano() >= cached.expiresAt {
+			s.refreshAntigravityUserAgentVersionAsync(fallback)
+		}
+		if cached.version != "" {
+			return cached.version
+		}
+	}
+	s.refreshAntigravityUserAgentVersionAsync(fallback)
+	return fallback
+}
+
+func (s *SettingService) refreshAntigravityUserAgentVersionAsync(fallback string) {
+	if s == nil || s.settingRepo == nil || !s.antigravityUAVersionRefresh.tryStart(time.Now()) {
+		return
+	}
+	resultCh := s.antigravityUAVersionSF.DoChan("antigravity_user_agent_version", func() (any, error) {
+		return s.loadAntigravityUserAgentVersion(context.Background(), fallback)
+	})
+	go func() {
+		result := <-resultCh
+		s.antigravityUAVersionRefresh.finish(result.Err)
+	}()
 }
 
 // GetOpenAICodexUserAgent 返回 OpenAI Codex 上游请求使用的 User-Agent。
@@ -267,6 +534,12 @@ func (s *SettingService) GetOpenAICodexUserAgent(ctx context.Context) string {
 	if s == nil || s.settingRepo == nil {
 		return fallback
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.openAICodexUserAgentSnapshotOnly(fallback)
+	}
 	if cached, ok := s.openAICodexUACache.Load().(*cachedOpenAICodexUserAgent); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
 			return cached.value
@@ -274,39 +547,67 @@ func (s *SettingService) GetOpenAICodexUserAgent(ctx context.Context) string {
 	}
 
 	result, _, _ := s.openAICodexUASF.Do("openai_codex_user_agent", func() (any, error) {
-		if cached, ok := s.openAICodexUACache.Load().(*cachedOpenAICodexUserAgent); ok && cached != nil {
-			if time.Now().UnixNano() < cached.expiresAt {
-				return cached.value, nil
-			}
-		}
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAICodexUserAgentDBTimeout)
-		defer cancel()
-		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexUserAgent)
-		if err != nil && !errors.Is(err, ErrSettingNotFound) {
-			slog.Warn("failed to get openai codex user agent setting", "error", err)
-			s.openAICodexUACache.Store(&cachedOpenAICodexUserAgent{
-				value:     fallback,
-				expiresAt: time.Now().Add(openAICodexUserAgentErrorTTL).UnixNano(),
-			})
-			return fallback, nil
-		}
-		ua := strings.TrimSpace(value)
-		if ua == "" {
-			ua = fallback
-		}
-		s.openAICodexUACache.Store(&cachedOpenAICodexUserAgent{
-			value:     ua,
-			expiresAt: time.Now().Add(openAICodexUserAgentCacheTTL).UnixNano(),
-		})
-		return ua, nil
+		return s.loadOpenAICodexUserAgent(ctx, fallback)
 	})
 	if ua, ok := result.(string); ok && ua != "" {
 		return ua
 	}
 	return fallback
+}
+
+func (s *SettingService) loadOpenAICodexUserAgent(ctx context.Context, fallback string) (string, error) {
+	if cached, ok := s.openAICodexUACache.Load().(*cachedOpenAICodexUserAgent); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached.value, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAICodexUserAgentDBTimeout)
+	defer cancel()
+	value, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexUserAgent)
+	if err != nil && !errors.Is(err, ErrSettingNotFound) {
+		slog.Warn("failed to get openai codex user agent setting", "error", err)
+		s.openAICodexUACache.Store(&cachedOpenAICodexUserAgent{
+			value:     fallback,
+			expiresAt: time.Now().Add(openAICodexUserAgentErrorTTL).UnixNano(),
+		})
+		return fallback, err
+	}
+	ua := strings.TrimSpace(value)
+	if ua == "" {
+		ua = fallback
+	}
+	s.openAICodexUACache.Store(&cachedOpenAICodexUserAgent{
+		value:     ua,
+		expiresAt: time.Now().Add(openAICodexUserAgentCacheTTL).UnixNano(),
+	})
+	return ua, nil
+}
+
+func (s *SettingService) openAICodexUserAgentSnapshotOnly(fallback string) string {
+	if cached, ok := s.openAICodexUACache.Load().(*cachedOpenAICodexUserAgent); ok && cached != nil {
+		if time.Now().UnixNano() >= cached.expiresAt {
+			s.refreshOpenAICodexUserAgentAsync(fallback)
+		}
+		if cached.value != "" {
+			return cached.value
+		}
+	}
+	s.refreshOpenAICodexUserAgentAsync(fallback)
+	return fallback
+}
+
+func (s *SettingService) refreshOpenAICodexUserAgentAsync(fallback string) {
+	if s == nil || s.settingRepo == nil || !s.openAICodexUARefresh.tryStart(time.Now()) {
+		return
+	}
+	resultCh := s.openAICodexUASF.DoChan("openai_codex_user_agent", func() (any, error) {
+		return s.loadOpenAICodexUserAgent(context.Background(), fallback)
+	})
+	go func() {
+		result := <-resultCh
+		s.openAICodexUARefresh.finish(result.Err)
+	}()
 }
 
 // GetOpenAICodexClientVersion 返回出站声明的 Codex 客户端版本号。
@@ -318,6 +619,12 @@ func (s *SettingService) GetOpenAICodexClientVersion(ctx context.Context) string
 	if s == nil || s.settingRepo == nil {
 		return fallback
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.openAICodexClientVersionSnapshotOnly(fallback)
+	}
 	if cached, ok := s.openAICodexVersionCache.Load().(*cachedOpenAICodexClientVersion); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
 			return cached.version
@@ -325,45 +632,73 @@ func (s *SettingService) GetOpenAICodexClientVersion(ctx context.Context) string
 	}
 
 	result, _, _ := s.openAICodexVersionSF.Do(openAICodexClientVersionSFKey, func() (any, error) {
-		if cached, ok := s.openAICodexVersionCache.Load().(*cachedOpenAICodexClientVersion); ok && cached != nil {
-			if time.Now().UnixNano() < cached.expiresAt {
-				return cached.version, nil
-			}
-		}
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAICodexClientVersionDBTimeout)
-		defer cancel()
-		values, err := s.settingRepo.GetMultiple(dbCtx, []string{
-			SettingKeyOpenAICodexClientVersion,
-			SettingKeyOpenAICodexClientVersionSynced,
-		})
-		if err != nil {
-			slog.Warn("failed to get openai codex client version setting", "error", err)
-			s.openAICodexVersionCache.Store(&cachedOpenAICodexClientVersion{
-				version:   fallback,
-				expiresAt: time.Now().Add(openAICodexClientVersionErrorTTL).UnixNano(),
-			})
-			return fallback, nil
-		}
-		version := NormalizeCodexClientVersion(values[SettingKeyOpenAICodexClientVersion])
-		if version == "" {
-			version = NormalizeCodexClientVersion(values[SettingKeyOpenAICodexClientVersionSynced])
-		}
-		if version == "" {
-			version = fallback
-		}
-		s.openAICodexVersionCache.Store(&cachedOpenAICodexClientVersion{
-			version:   version,
-			expiresAt: time.Now().Add(openAICodexClientVersionCacheTTL).UnixNano(),
-		})
-		return version, nil
+		return s.loadOpenAICodexClientVersion(ctx, fallback)
 	})
 	if version, ok := result.(string); ok && version != "" {
 		return version
 	}
 	return fallback
+}
+
+func (s *SettingService) loadOpenAICodexClientVersion(ctx context.Context, fallback string) (string, error) {
+	if cached, ok := s.openAICodexVersionCache.Load().(*cachedOpenAICodexClientVersion); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached.version, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAICodexClientVersionDBTimeout)
+	defer cancel()
+	values, err := s.settingRepo.GetMultiple(dbCtx, []string{
+		SettingKeyOpenAICodexClientVersion,
+		SettingKeyOpenAICodexClientVersionSynced,
+	})
+	if err != nil {
+		slog.Warn("failed to get openai codex client version setting", "error", err)
+		s.openAICodexVersionCache.Store(&cachedOpenAICodexClientVersion{
+			version:   fallback,
+			expiresAt: time.Now().Add(openAICodexClientVersionErrorTTL).UnixNano(),
+		})
+		return fallback, err
+	}
+	version := NormalizeCodexClientVersion(values[SettingKeyOpenAICodexClientVersion])
+	if version == "" {
+		version = NormalizeCodexClientVersion(values[SettingKeyOpenAICodexClientVersionSynced])
+	}
+	if version == "" {
+		version = fallback
+	}
+	s.openAICodexVersionCache.Store(&cachedOpenAICodexClientVersion{
+		version:   version,
+		expiresAt: time.Now().Add(openAICodexClientVersionCacheTTL).UnixNano(),
+	})
+	return version, nil
+}
+
+func (s *SettingService) openAICodexClientVersionSnapshotOnly(fallback string) string {
+	if cached, ok := s.openAICodexVersionCache.Load().(*cachedOpenAICodexClientVersion); ok && cached != nil {
+		if time.Now().UnixNano() >= cached.expiresAt {
+			s.refreshOpenAICodexClientVersionAsync(fallback)
+		}
+		if cached.version != "" {
+			return cached.version
+		}
+	}
+	s.refreshOpenAICodexClientVersionAsync(fallback)
+	return fallback
+}
+
+func (s *SettingService) refreshOpenAICodexClientVersionAsync(fallback string) {
+	if s == nil || s.settingRepo == nil || !s.openAICodexVersionRefresh.tryStart(time.Now()) {
+		return
+	}
+	resultCh := s.openAICodexVersionSF.DoChan(openAICodexClientVersionSFKey, func() (any, error) {
+		return s.loadOpenAICodexClientVersion(context.Background(), fallback)
+	})
+	go func() {
+		result := <-resultCh
+		s.openAICodexVersionRefresh.finish(result.Err)
+	}()
 }
 
 // InvalidateOpenAICodexClientVersionCache 丢弃版本号缓存，下次读取回源。
@@ -582,6 +917,15 @@ func normalizedCodexClientMarkers(markers []string) map[string]struct{} {
 // 仅在调用方已确认账号 codex_cli_only 开启时读取；进程内 atomic.Value 缓存（60s TTL）避免热路径访问 DB。
 // 任意键缺失/解析失败 → 安全默认：空名单、空版本、默认种子指纹信号。
 func (s *SettingService) GetCodexRestrictionPolicy(ctx context.Context) CodexRestrictionPolicy {
+	if s == nil {
+		return CodexRestrictionPolicy{EngineFingerprintSignals: openai.DefaultEngineFingerprintSignals}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.codexRestrictionPolicySnapshotOnly()
+	}
 	if cached, ok := s.codexRestrictionPolicyCache.Load().(*cachedCodexRestrictionPolicy); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
 			return cached.value
@@ -620,6 +964,47 @@ func (s *SettingService) GetCodexRestrictionPolicy(ctx context.Context) CodexRes
 		return pol
 	}
 	return CodexRestrictionPolicy{EngineFingerprintSignals: openai.DefaultEngineFingerprintSignals}
+}
+
+func cloneCodexRestrictionPolicy(policy CodexRestrictionPolicy) CodexRestrictionPolicy {
+	policy.Whitelist = append([]openai.AllowedClientEntry(nil), policy.Whitelist...)
+	for i := range policy.Whitelist {
+		policy.Whitelist[i].UAContains = append([]string(nil), policy.Whitelist[i].UAContains...)
+	}
+	policy.Blacklist = append([]openai.AllowedClientEntry(nil), policy.Blacklist...)
+	for i := range policy.Blacklist {
+		policy.Blacklist[i].UAContains = append([]string(nil), policy.Blacklist[i].UAContains...)
+	}
+	policy.EngineFingerprintSignals = append([]openai.EngineFingerprintSignal(nil), policy.EngineFingerprintSignals...)
+	for i := range policy.EngineFingerprintSignals {
+		policy.EngineFingerprintSignals[i].Match = append([]string(nil), policy.EngineFingerprintSignals[i].Match...)
+	}
+	return policy
+}
+
+func (s *SettingService) codexRestrictionPolicySnapshotOnly() CodexRestrictionPolicy {
+	cached, _ := s.codexRestrictionPolicyCache.Load().(*cachedCodexRestrictionPolicy)
+	if cached != nil {
+		if time.Now().UnixNano() >= cached.expiresAt {
+			s.refreshCodexRestrictionPolicyAsync()
+		}
+		return cloneCodexRestrictionPolicy(cached.value)
+	}
+	s.refreshCodexRestrictionPolicyAsync()
+	return CodexRestrictionPolicy{EngineFingerprintSignals: append([]openai.EngineFingerprintSignal(nil), openai.DefaultEngineFingerprintSignals...)}
+}
+
+func (s *SettingService) refreshCodexRestrictionPolicyAsync() {
+	if s == nil || s.settingRepo == nil || !s.codexRestrictionPolicyRefresh.tryStart(time.Now()) {
+		return
+	}
+	go func() {
+		// GetCodexRestrictionPolicy intentionally fails open and does not expose a
+		// repository error. The refresh itself is still bounded by the policy
+		// cache TTL, so finish the gate after the singleflight completes.
+		_ = s.GetCodexRestrictionPolicy(context.Background())
+		s.codexRestrictionPolicyRefresh.finish(nil)
+	}()
 }
 
 // loadCodexClientEntries 读取并解析 []openai.AllowedClientEntry JSON 设置；缺失/空/非法 → nil（安全忽略）。
@@ -741,7 +1126,60 @@ type gatewayForwardingSettingsResult struct {
 	claudeOAuthSystemPrompt, claudeOAuthSystemPromptBlocks                                string
 }
 
+func gatewayForwardingSettingsFromCache(cached *cachedGatewayForwardingSettings) gatewayForwardingSettingsResult {
+	if cached == nil {
+		return gatewayForwardingSettingsResult{fp: true, claudeOAuthSystemPromptInjection: true, clientDatelineNormalization: true}
+	}
+	return gatewayForwardingSettingsResult{
+		fp:                               cached.fingerprintUnification,
+		mp:                               cached.metadataPassthrough,
+		cch:                              cached.cchSigning,
+		claudeOAuthSystemPromptInjection: cached.claudeOAuthSystemPromptInjection,
+		claudeOAuthSystemPrompt:          cached.claudeOAuthSystemPrompt,
+		claudeOAuthSystemPromptBlocks:    cached.claudeOAuthSystemPromptBlocks,
+		cacheTTL1h:                       cached.anthropicCacheTTL1hInjection,
+		rewriteMessageCacheControl:       cached.rewriteMessageCacheControl,
+		clientDatelineNormalization:      cached.clientDatelineNormalization,
+	}
+}
+
+// gatewayForwardingSettingsSnapshotOnly serves the last published forwarding
+// policy without synchronously touching PostgreSQL. The package-level cache is
+// retained for compatibility with existing setting writers; the per-service
+// backoff limits one detached refresh when the entry expires.
+func (s *SettingService) gatewayForwardingSettingsSnapshotOnly() gatewayForwardingSettingsResult {
+	cached, _ := gatewayForwardingCache.Load().(*cachedGatewayForwardingSettings)
+	if cached != nil {
+		if time.Now().UnixNano() >= cached.expiresAt {
+			s.refreshGatewayForwardingSettingsAsync()
+		}
+		return gatewayForwardingSettingsFromCache(cached)
+	}
+	s.refreshGatewayForwardingSettingsAsync()
+	return gatewayForwardingSettingsFromCache(nil)
+}
+
+func (s *SettingService) refreshGatewayForwardingSettingsAsync() {
+	if s == nil || s.settingRepo == nil || !s.gatewayForwardingRefresh.tryStart(time.Now()) {
+		return
+	}
+	go func() {
+		// The synchronous loader owns the global singleflight and cache. This
+		// detached goroutine only gates retries for snapshot-only callers. Its
+		// loader fail-opens into a short error TTL, so the gate can be released
+		// after the shared refresh completes without a second finish call.
+		_ = s.getGatewayForwardingSettingsCached(context.Background())
+		s.gatewayForwardingRefresh.finish(nil)
+	}()
+}
+
 func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context) gatewayForwardingSettingsResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.gatewayForwardingSettingsSnapshotOnly()
+	}
 	if cached, ok := gatewayForwardingCache.Load().(*cachedGatewayForwardingSettings); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
 			return gatewayForwardingSettingsResult{
@@ -888,6 +1326,12 @@ func (s *SettingService) GetClaudeOAuthSystemPromptInjectionSettings(ctx context
 // singleflight 防止缓存过期时 thundering herd
 // 返回空字符串表示不做对应方向的版本检查
 func (s *SettingService) GetClaudeCodeVersionBounds(ctx context.Context) (min, max string) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if schedulerSnapshotOnlyFromContext(ctx) {
+		return s.claudeCodeVersionBoundsSnapshotOnly()
+	}
 	if cached, ok := versionBoundsCache.Load().(*cachedVersionBounds); ok {
 		if time.Now().UnixNano() < cached.expiresAt {
 			return cached.min, cached.max
@@ -938,6 +1382,28 @@ func (s *SettingService) GetClaudeCodeVersionBounds(ctx context.Context) (min, m
 		return "", ""
 	}
 	return b.min, b.max
+}
+
+func (s *SettingService) claudeCodeVersionBoundsSnapshotOnly() (min, max string) {
+	cached, _ := versionBoundsCache.Load().(*cachedVersionBounds)
+	if cached != nil {
+		if time.Now().UnixNano() >= cached.expiresAt {
+			s.refreshClaudeCodeVersionBoundsAsync()
+		}
+		return cached.min, cached.max
+	}
+	s.refreshClaudeCodeVersionBoundsAsync()
+	return "", ""
+}
+
+func (s *SettingService) refreshClaudeCodeVersionBoundsAsync() {
+	if s == nil || s.settingRepo == nil || !s.versionBoundsRefresh.tryStart(time.Now()) {
+		return
+	}
+	go func() {
+		_, _ = s.GetClaudeCodeVersionBounds(context.Background())
+		s.versionBoundsRefresh.finish(nil)
+	}()
 }
 
 // GetOpenAIQuotaAutoPauseSettings returns the current global default quota auto-pause

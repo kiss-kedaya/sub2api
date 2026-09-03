@@ -129,7 +129,11 @@ func RequireGroupAssignment(settingService *service.SettingService, writeError G
 			return
 		}
 		// 未分组 Key — 检查系统设置
-		if settingService.IsUngroupedKeySchedulingAllowed(c.Request.Context()) {
+		// This gate runs before concrete gateway handlers install their scheduler
+		// context. Treat the setting as control-plane data here as well: use the
+		// last known value and let SettingService refresh it asynchronously so a
+		// cold settings cache cannot add a PostgreSQL read to request ingress.
+		if settingService.IsUngroupedKeySchedulingAllowed(service.WithSchedulerSnapshotOnly(c.Request.Context())) {
 			c.Next()
 			return
 		}
