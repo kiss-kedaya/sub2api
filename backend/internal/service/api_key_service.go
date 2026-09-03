@@ -309,6 +309,10 @@ type APIKeyService struct {
 	authInvalidationFailures  atomic.Uint64
 	lastUsedTouchL1           sync.Map // keyID -> nextAllowedAt(time.Time)
 	lastUsedTouchSF           singleflight.Group
+	// lastUsedScheduler is installed by the production wiring after the shared
+	// DeferredService is constructed. Keeping it optional preserves the
+	// synchronous behavior of lightweight embedders and unit-test stubs.
+	lastUsedScheduler func(int64)
 }
 
 type APIKeyAuthLookupMetrics struct {
@@ -367,6 +371,15 @@ func (s *APIKeyService) SetRateLimitCacheInvalidator(inv RateLimitCacheInvalidat
 
 func (s *APIKeyService) SetConcurrencyService(concurrencyService *ConcurrencyService) {
 	s.concurrencyService = concurrencyService
+}
+
+// SetLastUsedScheduler routes authentication activity timestamps to the
+// process-wide deferred batcher. It is intentionally a narrow callback so the
+// API-key service does not depend on the DeferredService concrete type.
+func (s *APIKeyService) SetLastUsedScheduler(schedule func(int64)) {
+	if s != nil {
+		s.lastUsedScheduler = schedule
+	}
 }
 
 func (s *APIKeyService) compileAPIKeyIPRules(apiKey *APIKey) {
@@ -969,6 +982,24 @@ func (s *APIKeyService) ValidateKey(ctx context.Context, key string) (*APIKey, *
 func (s *APIKeyService) TouchLastUsed(ctx context.Context, keyID int64) error {
 	if keyID <= 0 {
 		return nil
+	}
+	if s != nil && s.lastUsedScheduler != nil {
+		// last_used_at is metadata only. Keep the existing per-key debounce, but
+		// enqueue the timestamp instead of making a successful authenticated
+		// request wait for PostgreSQL. DeferredService coalesces keys and flushes
+		// them with one bounded batch UPDATE.
+		_, err, _ := s.lastUsedTouchSF.Do(strconv.FormatInt(keyID, 10), func() (any, error) {
+			now := time.Now()
+			if v, ok := s.lastUsedTouchL1.Load(keyID); ok {
+				if nextAllowedAt, ok := v.(time.Time); ok && now.Before(nextAllowedAt) {
+					return nil, nil
+				}
+			}
+			s.lastUsedTouchL1.Store(keyID, now.Add(apiKeyLastUsedMinTouch))
+			s.lastUsedScheduler(keyID)
+			return nil, nil
+		})
+		return err
 	}
 
 	now := time.Now()

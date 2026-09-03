@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -804,6 +805,39 @@ func (r *apiKeyRepository) UpdateLastUsed(ctx context.Context, id int64, usedAt 
 		return service.ErrAPIKeyNotFound
 	}
 	return nil
+}
+
+// BatchUpdateLastUsed persists activity timestamps for multiple API keys in a
+// single statement. Authentication treats last_used_at as advisory metadata,
+// so the production request path queues these updates in DeferredService
+// rather than waiting on one UPDATE per key.
+func (r *apiKeyRepository) BatchUpdateLastUsed(ctx context.Context, updates map[int64]time.Time) error {
+	if r == nil || r.sql == nil || len(updates) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(updates))
+	for id := range updates {
+		if id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	times := make([]time.Time, len(ids))
+	for i, id := range ids {
+		times[i] = updates[id]
+	}
+	_, err := r.sql.ExecContext(ctx, `
+		UPDATE api_keys AS k
+		SET last_used_at = GREATEST(COALESCE(k.last_used_at, '-infinity'::timestamptz), v.last_used_at),
+		    updated_at = GREATEST(COALESCE(k.updated_at, '-infinity'::timestamptz), v.last_used_at)
+		FROM unnest($1::bigint[], $2::timestamptz[]) AS v(id, last_used_at)
+		WHERE k.id = v.id AND k.deleted_at IS NULL
+		  AND (k.last_used_at IS NULL OR k.last_used_at < v.last_used_at)
+	`, pq.Array(ids), pq.Array(times))
+	return err
 }
 
 // IncrementRateLimitUsage atomically increments all rate limit usage counters and initializes
