@@ -49,7 +49,13 @@ func TestAccountHandlerListLiteUsesCompactDTOAndETag(t *testing.T) {
 	require.Equal(t, true, liteItem["schedulable"])
 	require.NotContains(t, liteItem, "groups")
 	require.NotContains(t, liteItem, "account_groups")
-	require.NotContains(t, liteItem, "access_token")
+	credentials, ok := liteItem["credentials"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "compact@example.com", credentials["email"])
+	require.NotContains(t, credentials, "access_token")
+	credentialsStatus, ok := liteItem["credentials_status"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, true, credentialsStatus["has_access_token"])
 
 	// The ETag must represent the same compact body and return 304 on refresh.
 	rec304 := httptest.NewRecorder()
