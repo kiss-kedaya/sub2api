@@ -168,7 +168,8 @@ func TestNewOpenAIFirstOutputTimeoutErrorRecordsCallerProxyAttribution(t *testin
 
 	raw, ok := c.Get(OpsUpstreamErrorsKey)
 	require.True(t, ok)
-	events := raw.([]*OpsUpstreamErrorEvent)
+	events, ok := raw.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
 	require.Len(t, events, 2)
 	require.Equal(t, "first_output_timeout", events[0].Kind)
 	require.Nil(t, events[0].ProxyID)
