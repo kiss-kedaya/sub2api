@@ -195,7 +195,8 @@ func TestWriteOpenAIWSFallbackErrorResponseKeepsManagedProxy(t *testing.T) {
 
 	raw, ok := c.Get(OpsUpstreamErrorsKey)
 	require.True(t, ok)
-	events := raw.([]*OpsUpstreamErrorEvent)
+	events, ok := raw.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
 	require.Len(t, events, 1)
 	require.NotNil(t, events[0].ProxyID)
 	require.Equal(t, proxyID, *events[0].ProxyID)
