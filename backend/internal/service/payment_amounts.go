@@ -25,6 +25,24 @@ func normalizeSubscriptionUSDToCNYRate(rate float64) float64 {
 	return rate
 }
 
+func resolveInstanceRechargeTerms(cfg *PaymentConfig, sel *payment.InstanceSelection) (feeRate, multiplier float64) {
+	if cfg != nil {
+		feeRate = cfg.RechargeFeeRate
+		multiplier = normalizeBalanceRechargeMultiplier(cfg.BalanceRechargeMultiplier)
+	} else {
+		multiplier = defaultBalanceRechargeMultiplier
+	}
+	if sel != nil {
+		if sel.RechargeFeeRate != nil {
+			feeRate = *sel.RechargeFeeRate
+		}
+		if sel.BalanceRechargeMultiplier != nil {
+			multiplier = normalizeBalanceRechargeMultiplier(*sel.BalanceRechargeMultiplier)
+		}
+	}
+	return feeRate, multiplier
+}
+
 func calculateCreditedBalance(paymentAmount, multiplier float64) float64 {
 	return decimal.NewFromFloat(paymentAmount).
 		Mul(decimal.NewFromFloat(normalizeBalanceRechargeMultiplier(multiplier))).

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -138,29 +139,77 @@ type MethodLimitsResponse struct {
 	GlobalMax float64                 `json:"global_max"` // 0 = no maximum
 }
 
+// optionalFloat distinguishes JSON omit / null / number so instance recharge
+// overrides can inherit the global setting without colliding with a literal 0.
+type optionalFloat struct {
+	Present bool
+	Value   *float64
+}
+
+func (n *optionalFloat) UnmarshalJSON(b []byte) error {
+	n.Present = true
+	if string(b) == "null" {
+		n.Value = nil
+		return nil
+	}
+	var v float64
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	n.Value = &v
+	return nil
+}
+
+func validateOptionalRechargeFeeRate(v *float64) error {
+	if v == nil {
+		return nil
+	}
+	if math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0 || *v > 100 {
+		return infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate must be between 0 and 100")
+	}
+	if math.Round(*v*100) != *v*100 {
+		return infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate allows at most 2 decimal places")
+	}
+	return nil
+}
+
+func validateOptionalBalanceRechargeMultiplier(v *float64) error {
+	if v == nil {
+		return nil
+	}
+	if math.IsNaN(*v) || math.IsInf(*v, 0) || *v <= 0 {
+		return infraerrors.BadRequest("INVALID_BALANCE_RECHARGE_MULTIPLIER", "balance recharge multiplier must be greater than 0")
+	}
+	return nil
+}
+
 type CreateProviderInstanceRequest struct {
-	ProviderKey     string            `json:"provider_key"`
-	Name            string            `json:"name"`
-	Config          map[string]string `json:"config"`
-	SupportedTypes  []string          `json:"supported_types"`
-	Enabled         bool              `json:"enabled"`
-	PaymentMode     string            `json:"payment_mode"`
-	SortOrder       int               `json:"sort_order"`
-	Limits          string            `json:"limits"`
-	RefundEnabled   bool              `json:"refund_enabled"`
-	AllowUserRefund bool              `json:"allow_user_refund"`
+	ProviderKey               string            `json:"provider_key"`
+	Name                      string            `json:"name"`
+	Config                    map[string]string `json:"config"`
+	SupportedTypes            []string          `json:"supported_types"`
+	Enabled                   bool              `json:"enabled"`
+	PaymentMode               string            `json:"payment_mode"`
+	SortOrder                 int               `json:"sort_order"`
+	Limits                    string            `json:"limits"`
+	RefundEnabled             bool              `json:"refund_enabled"`
+	AllowUserRefund           bool              `json:"allow_user_refund"`
+	RechargeFeeRate           optionalFloat     `json:"recharge_fee_rate"`
+	BalanceRechargeMultiplier optionalFloat     `json:"balance_recharge_multiplier"`
 }
 
 type UpdateProviderInstanceRequest struct {
-	Name            *string           `json:"name"`
-	Config          map[string]string `json:"config"`
-	SupportedTypes  []string          `json:"supported_types"`
-	Enabled         *bool             `json:"enabled"`
-	PaymentMode     *string           `json:"payment_mode"`
-	SortOrder       *int              `json:"sort_order"`
-	Limits          *string           `json:"limits"`
-	RefundEnabled   *bool             `json:"refund_enabled"`
-	AllowUserRefund *bool             `json:"allow_user_refund"`
+	Name                      *string           `json:"name"`
+	Config                    map[string]string `json:"config"`
+	SupportedTypes            []string          `json:"supported_types"`
+	Enabled                   *bool             `json:"enabled"`
+	PaymentMode               *string           `json:"payment_mode"`
+	SortOrder                 *int              `json:"sort_order"`
+	Limits                    *string           `json:"limits"`
+	RefundEnabled             *bool             `json:"refund_enabled"`
+	AllowUserRefund           *bool             `json:"allow_user_refund"`
+	RechargeFeeRate           optionalFloat     `json:"recharge_fee_rate"`
+	BalanceRechargeMultiplier optionalFloat     `json:"balance_recharge_multiplier"`
 }
 type CreatePlanRequest struct {
 	GroupID       int64    `json:"group_id"`

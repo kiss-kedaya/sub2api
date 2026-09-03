@@ -146,6 +146,34 @@ func (_c *PaymentProviderInstanceCreate) SetNillableAllowUserRefund(v *bool) *Pa
 	return _c
 }
 
+// SetRechargeFeeRate sets the "recharge_fee_rate" field.
+func (_c *PaymentProviderInstanceCreate) SetRechargeFeeRate(v float64) *PaymentProviderInstanceCreate {
+	_c.mutation.SetRechargeFeeRate(v)
+	return _c
+}
+
+// SetNillableRechargeFeeRate sets the "recharge_fee_rate" field if the given value is not nil.
+func (_c *PaymentProviderInstanceCreate) SetNillableRechargeFeeRate(v *float64) *PaymentProviderInstanceCreate {
+	if v != nil {
+		_c.SetRechargeFeeRate(*v)
+	}
+	return _c
+}
+
+// SetBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field.
+func (_c *PaymentProviderInstanceCreate) SetBalanceRechargeMultiplier(v float64) *PaymentProviderInstanceCreate {
+	_c.mutation.SetBalanceRechargeMultiplier(v)
+	return _c
+}
+
+// SetNillableBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field if the given value is not nil.
+func (_c *PaymentProviderInstanceCreate) SetNillableBalanceRechargeMultiplier(v *float64) *PaymentProviderInstanceCreate {
+	if v != nil {
+		_c.SetBalanceRechargeMultiplier(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *PaymentProviderInstanceCreate) SetCreatedAt(v time.Time) *PaymentProviderInstanceCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -376,6 +404,14 @@ func (_c *PaymentProviderInstanceCreate) createSpec() (*PaymentProviderInstance,
 		_spec.SetField(paymentproviderinstance.FieldAllowUserRefund, field.TypeBool, value)
 		_node.AllowUserRefund = value
 	}
+	if value, ok := _c.mutation.RechargeFeeRate(); ok {
+		_spec.SetField(paymentproviderinstance.FieldRechargeFeeRate, field.TypeFloat64, value)
+		_node.RechargeFeeRate = &value
+	}
+	if value, ok := _c.mutation.BalanceRechargeMultiplier(); ok {
+		_spec.SetField(paymentproviderinstance.FieldBalanceRechargeMultiplier, field.TypeFloat64, value)
+		_node.BalanceRechargeMultiplier = &value
+	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(paymentproviderinstance.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
@@ -559,6 +595,54 @@ func (u *PaymentProviderInstanceUpsert) SetAllowUserRefund(v bool) *PaymentProvi
 // UpdateAllowUserRefund sets the "allow_user_refund" field to the value that was provided on create.
 func (u *PaymentProviderInstanceUpsert) UpdateAllowUserRefund() *PaymentProviderInstanceUpsert {
 	u.SetExcluded(paymentproviderinstance.FieldAllowUserRefund)
+	return u
+}
+
+// SetRechargeFeeRate sets the "recharge_fee_rate" field.
+func (u *PaymentProviderInstanceUpsert) SetRechargeFeeRate(v float64) *PaymentProviderInstanceUpsert {
+	u.Set(paymentproviderinstance.FieldRechargeFeeRate, v)
+	return u
+}
+
+// UpdateRechargeFeeRate sets the "recharge_fee_rate" field to the value that was provided on create.
+func (u *PaymentProviderInstanceUpsert) UpdateRechargeFeeRate() *PaymentProviderInstanceUpsert {
+	u.SetExcluded(paymentproviderinstance.FieldRechargeFeeRate)
+	return u
+}
+
+// AddRechargeFeeRate adds v to the "recharge_fee_rate" field.
+func (u *PaymentProviderInstanceUpsert) AddRechargeFeeRate(v float64) *PaymentProviderInstanceUpsert {
+	u.Add(paymentproviderinstance.FieldRechargeFeeRate, v)
+	return u
+}
+
+// ClearRechargeFeeRate clears the value of the "recharge_fee_rate" field.
+func (u *PaymentProviderInstanceUpsert) ClearRechargeFeeRate() *PaymentProviderInstanceUpsert {
+	u.SetNull(paymentproviderinstance.FieldRechargeFeeRate)
+	return u
+}
+
+// SetBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field.
+func (u *PaymentProviderInstanceUpsert) SetBalanceRechargeMultiplier(v float64) *PaymentProviderInstanceUpsert {
+	u.Set(paymentproviderinstance.FieldBalanceRechargeMultiplier, v)
+	return u
+}
+
+// UpdateBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field to the value that was provided on create.
+func (u *PaymentProviderInstanceUpsert) UpdateBalanceRechargeMultiplier() *PaymentProviderInstanceUpsert {
+	u.SetExcluded(paymentproviderinstance.FieldBalanceRechargeMultiplier)
+	return u
+}
+
+// AddBalanceRechargeMultiplier adds v to the "balance_recharge_multiplier" field.
+func (u *PaymentProviderInstanceUpsert) AddBalanceRechargeMultiplier(v float64) *PaymentProviderInstanceUpsert {
+	u.Add(paymentproviderinstance.FieldBalanceRechargeMultiplier, v)
+	return u
+}
+
+// ClearBalanceRechargeMultiplier clears the value of the "balance_recharge_multiplier" field.
+func (u *PaymentProviderInstanceUpsert) ClearBalanceRechargeMultiplier() *PaymentProviderInstanceUpsert {
+	u.SetNull(paymentproviderinstance.FieldBalanceRechargeMultiplier)
 	return u
 }
 
@@ -763,6 +847,62 @@ func (u *PaymentProviderInstanceUpsertOne) SetAllowUserRefund(v bool) *PaymentPr
 func (u *PaymentProviderInstanceUpsertOne) UpdateAllowUserRefund() *PaymentProviderInstanceUpsertOne {
 	return u.Update(func(s *PaymentProviderInstanceUpsert) {
 		s.UpdateAllowUserRefund()
+	})
+}
+
+// SetRechargeFeeRate sets the "recharge_fee_rate" field.
+func (u *PaymentProviderInstanceUpsertOne) SetRechargeFeeRate(v float64) *PaymentProviderInstanceUpsertOne {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.SetRechargeFeeRate(v)
+	})
+}
+
+// AddRechargeFeeRate adds v to the "recharge_fee_rate" field.
+func (u *PaymentProviderInstanceUpsertOne) AddRechargeFeeRate(v float64) *PaymentProviderInstanceUpsertOne {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.AddRechargeFeeRate(v)
+	})
+}
+
+// UpdateRechargeFeeRate sets the "recharge_fee_rate" field to the value that was provided on create.
+func (u *PaymentProviderInstanceUpsertOne) UpdateRechargeFeeRate() *PaymentProviderInstanceUpsertOne {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.UpdateRechargeFeeRate()
+	})
+}
+
+// ClearRechargeFeeRate clears the value of the "recharge_fee_rate" field.
+func (u *PaymentProviderInstanceUpsertOne) ClearRechargeFeeRate() *PaymentProviderInstanceUpsertOne {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.ClearRechargeFeeRate()
+	})
+}
+
+// SetBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field.
+func (u *PaymentProviderInstanceUpsertOne) SetBalanceRechargeMultiplier(v float64) *PaymentProviderInstanceUpsertOne {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.SetBalanceRechargeMultiplier(v)
+	})
+}
+
+// AddBalanceRechargeMultiplier adds v to the "balance_recharge_multiplier" field.
+func (u *PaymentProviderInstanceUpsertOne) AddBalanceRechargeMultiplier(v float64) *PaymentProviderInstanceUpsertOne {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.AddBalanceRechargeMultiplier(v)
+	})
+}
+
+// UpdateBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field to the value that was provided on create.
+func (u *PaymentProviderInstanceUpsertOne) UpdateBalanceRechargeMultiplier() *PaymentProviderInstanceUpsertOne {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.UpdateBalanceRechargeMultiplier()
+	})
+}
+
+// ClearBalanceRechargeMultiplier clears the value of the "balance_recharge_multiplier" field.
+func (u *PaymentProviderInstanceUpsertOne) ClearBalanceRechargeMultiplier() *PaymentProviderInstanceUpsertOne {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.ClearBalanceRechargeMultiplier()
 	})
 }
 
@@ -1135,6 +1275,62 @@ func (u *PaymentProviderInstanceUpsertBulk) SetAllowUserRefund(v bool) *PaymentP
 func (u *PaymentProviderInstanceUpsertBulk) UpdateAllowUserRefund() *PaymentProviderInstanceUpsertBulk {
 	return u.Update(func(s *PaymentProviderInstanceUpsert) {
 		s.UpdateAllowUserRefund()
+	})
+}
+
+// SetRechargeFeeRate sets the "recharge_fee_rate" field.
+func (u *PaymentProviderInstanceUpsertBulk) SetRechargeFeeRate(v float64) *PaymentProviderInstanceUpsertBulk {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.SetRechargeFeeRate(v)
+	})
+}
+
+// AddRechargeFeeRate adds v to the "recharge_fee_rate" field.
+func (u *PaymentProviderInstanceUpsertBulk) AddRechargeFeeRate(v float64) *PaymentProviderInstanceUpsertBulk {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.AddRechargeFeeRate(v)
+	})
+}
+
+// UpdateRechargeFeeRate sets the "recharge_fee_rate" field to the value that was provided on create.
+func (u *PaymentProviderInstanceUpsertBulk) UpdateRechargeFeeRate() *PaymentProviderInstanceUpsertBulk {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.UpdateRechargeFeeRate()
+	})
+}
+
+// ClearRechargeFeeRate clears the value of the "recharge_fee_rate" field.
+func (u *PaymentProviderInstanceUpsertBulk) ClearRechargeFeeRate() *PaymentProviderInstanceUpsertBulk {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.ClearRechargeFeeRate()
+	})
+}
+
+// SetBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field.
+func (u *PaymentProviderInstanceUpsertBulk) SetBalanceRechargeMultiplier(v float64) *PaymentProviderInstanceUpsertBulk {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.SetBalanceRechargeMultiplier(v)
+	})
+}
+
+// AddBalanceRechargeMultiplier adds v to the "balance_recharge_multiplier" field.
+func (u *PaymentProviderInstanceUpsertBulk) AddBalanceRechargeMultiplier(v float64) *PaymentProviderInstanceUpsertBulk {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.AddBalanceRechargeMultiplier(v)
+	})
+}
+
+// UpdateBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field to the value that was provided on create.
+func (u *PaymentProviderInstanceUpsertBulk) UpdateBalanceRechargeMultiplier() *PaymentProviderInstanceUpsertBulk {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.UpdateBalanceRechargeMultiplier()
+	})
+}
+
+// ClearBalanceRechargeMultiplier clears the value of the "balance_recharge_multiplier" field.
+func (u *PaymentProviderInstanceUpsertBulk) ClearBalanceRechargeMultiplier() *PaymentProviderInstanceUpsertBulk {
+	return u.Update(func(s *PaymentProviderInstanceUpsert) {
+		s.ClearBalanceRechargeMultiplier()
 	})
 }
 

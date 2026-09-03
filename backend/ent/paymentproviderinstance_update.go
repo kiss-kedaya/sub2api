@@ -175,6 +175,60 @@ func (_u *PaymentProviderInstanceUpdate) SetNillableAllowUserRefund(v *bool) *Pa
 	return _u
 }
 
+// SetRechargeFeeRate sets the "recharge_fee_rate" field.
+func (_u *PaymentProviderInstanceUpdate) SetRechargeFeeRate(v float64) *PaymentProviderInstanceUpdate {
+	_u.mutation.ResetRechargeFeeRate()
+	_u.mutation.SetRechargeFeeRate(v)
+	return _u
+}
+
+// SetNillableRechargeFeeRate sets the "recharge_fee_rate" field if the given value is not nil.
+func (_u *PaymentProviderInstanceUpdate) SetNillableRechargeFeeRate(v *float64) *PaymentProviderInstanceUpdate {
+	if v != nil {
+		_u.SetRechargeFeeRate(*v)
+	}
+	return _u
+}
+
+// AddRechargeFeeRate adds value to the "recharge_fee_rate" field.
+func (_u *PaymentProviderInstanceUpdate) AddRechargeFeeRate(v float64) *PaymentProviderInstanceUpdate {
+	_u.mutation.AddRechargeFeeRate(v)
+	return _u
+}
+
+// ClearRechargeFeeRate clears the value of the "recharge_fee_rate" field.
+func (_u *PaymentProviderInstanceUpdate) ClearRechargeFeeRate() *PaymentProviderInstanceUpdate {
+	_u.mutation.ClearRechargeFeeRate()
+	return _u
+}
+
+// SetBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field.
+func (_u *PaymentProviderInstanceUpdate) SetBalanceRechargeMultiplier(v float64) *PaymentProviderInstanceUpdate {
+	_u.mutation.ResetBalanceRechargeMultiplier()
+	_u.mutation.SetBalanceRechargeMultiplier(v)
+	return _u
+}
+
+// SetNillableBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field if the given value is not nil.
+func (_u *PaymentProviderInstanceUpdate) SetNillableBalanceRechargeMultiplier(v *float64) *PaymentProviderInstanceUpdate {
+	if v != nil {
+		_u.SetBalanceRechargeMultiplier(*v)
+	}
+	return _u
+}
+
+// AddBalanceRechargeMultiplier adds value to the "balance_recharge_multiplier" field.
+func (_u *PaymentProviderInstanceUpdate) AddBalanceRechargeMultiplier(v float64) *PaymentProviderInstanceUpdate {
+	_u.mutation.AddBalanceRechargeMultiplier(v)
+	return _u
+}
+
+// ClearBalanceRechargeMultiplier clears the value of the "balance_recharge_multiplier" field.
+func (_u *PaymentProviderInstanceUpdate) ClearBalanceRechargeMultiplier() *PaymentProviderInstanceUpdate {
+	_u.mutation.ClearBalanceRechargeMultiplier()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *PaymentProviderInstanceUpdate) SetUpdatedAt(v time.Time) *PaymentProviderInstanceUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -291,6 +345,24 @@ func (_u *PaymentProviderInstanceUpdate) sqlSave(ctx context.Context) (_node int
 	}
 	if value, ok := _u.mutation.AllowUserRefund(); ok {
 		_spec.SetField(paymentproviderinstance.FieldAllowUserRefund, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.RechargeFeeRate(); ok {
+		_spec.SetField(paymentproviderinstance.FieldRechargeFeeRate, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedRechargeFeeRate(); ok {
+		_spec.AddField(paymentproviderinstance.FieldRechargeFeeRate, field.TypeFloat64, value)
+	}
+	if _u.mutation.RechargeFeeRateCleared() {
+		_spec.ClearField(paymentproviderinstance.FieldRechargeFeeRate, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.BalanceRechargeMultiplier(); ok {
+		_spec.SetField(paymentproviderinstance.FieldBalanceRechargeMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedBalanceRechargeMultiplier(); ok {
+		_spec.AddField(paymentproviderinstance.FieldBalanceRechargeMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.BalanceRechargeMultiplierCleared() {
+		_spec.ClearField(paymentproviderinstance.FieldBalanceRechargeMultiplier, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(paymentproviderinstance.FieldUpdatedAt, field.TypeTime, value)
@@ -462,6 +534,60 @@ func (_u *PaymentProviderInstanceUpdateOne) SetNillableAllowUserRefund(v *bool) 
 	return _u
 }
 
+// SetRechargeFeeRate sets the "recharge_fee_rate" field.
+func (_u *PaymentProviderInstanceUpdateOne) SetRechargeFeeRate(v float64) *PaymentProviderInstanceUpdateOne {
+	_u.mutation.ResetRechargeFeeRate()
+	_u.mutation.SetRechargeFeeRate(v)
+	return _u
+}
+
+// SetNillableRechargeFeeRate sets the "recharge_fee_rate" field if the given value is not nil.
+func (_u *PaymentProviderInstanceUpdateOne) SetNillableRechargeFeeRate(v *float64) *PaymentProviderInstanceUpdateOne {
+	if v != nil {
+		_u.SetRechargeFeeRate(*v)
+	}
+	return _u
+}
+
+// AddRechargeFeeRate adds value to the "recharge_fee_rate" field.
+func (_u *PaymentProviderInstanceUpdateOne) AddRechargeFeeRate(v float64) *PaymentProviderInstanceUpdateOne {
+	_u.mutation.AddRechargeFeeRate(v)
+	return _u
+}
+
+// ClearRechargeFeeRate clears the value of the "recharge_fee_rate" field.
+func (_u *PaymentProviderInstanceUpdateOne) ClearRechargeFeeRate() *PaymentProviderInstanceUpdateOne {
+	_u.mutation.ClearRechargeFeeRate()
+	return _u
+}
+
+// SetBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field.
+func (_u *PaymentProviderInstanceUpdateOne) SetBalanceRechargeMultiplier(v float64) *PaymentProviderInstanceUpdateOne {
+	_u.mutation.ResetBalanceRechargeMultiplier()
+	_u.mutation.SetBalanceRechargeMultiplier(v)
+	return _u
+}
+
+// SetNillableBalanceRechargeMultiplier sets the "balance_recharge_multiplier" field if the given value is not nil.
+func (_u *PaymentProviderInstanceUpdateOne) SetNillableBalanceRechargeMultiplier(v *float64) *PaymentProviderInstanceUpdateOne {
+	if v != nil {
+		_u.SetBalanceRechargeMultiplier(*v)
+	}
+	return _u
+}
+
+// AddBalanceRechargeMultiplier adds value to the "balance_recharge_multiplier" field.
+func (_u *PaymentProviderInstanceUpdateOne) AddBalanceRechargeMultiplier(v float64) *PaymentProviderInstanceUpdateOne {
+	_u.mutation.AddBalanceRechargeMultiplier(v)
+	return _u
+}
+
+// ClearBalanceRechargeMultiplier clears the value of the "balance_recharge_multiplier" field.
+func (_u *PaymentProviderInstanceUpdateOne) ClearBalanceRechargeMultiplier() *PaymentProviderInstanceUpdateOne {
+	_u.mutation.ClearBalanceRechargeMultiplier()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *PaymentProviderInstanceUpdateOne) SetUpdatedAt(v time.Time) *PaymentProviderInstanceUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -608,6 +734,24 @@ func (_u *PaymentProviderInstanceUpdateOne) sqlSave(ctx context.Context) (_node 
 	}
 	if value, ok := _u.mutation.AllowUserRefund(); ok {
 		_spec.SetField(paymentproviderinstance.FieldAllowUserRefund, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.RechargeFeeRate(); ok {
+		_spec.SetField(paymentproviderinstance.FieldRechargeFeeRate, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedRechargeFeeRate(); ok {
+		_spec.AddField(paymentproviderinstance.FieldRechargeFeeRate, field.TypeFloat64, value)
+	}
+	if _u.mutation.RechargeFeeRateCleared() {
+		_spec.ClearField(paymentproviderinstance.FieldRechargeFeeRate, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.BalanceRechargeMultiplier(); ok {
+		_spec.SetField(paymentproviderinstance.FieldBalanceRechargeMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedBalanceRechargeMultiplier(); ok {
+		_spec.AddField(paymentproviderinstance.FieldBalanceRechargeMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.BalanceRechargeMultiplierCleared() {
+		_spec.ClearField(paymentproviderinstance.FieldBalanceRechargeMultiplier, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(paymentproviderinstance.FieldUpdatedAt, field.TypeTime, value)
