@@ -42,6 +42,17 @@ func TestIsFingerprintedEmbeddedAssetPath(t *testing.T) {
 	}
 }
 
+func TestIsEmbeddedStaticAssetPath(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, isEmbeddedStaticAssetPath("assets/DashboardView-CRpF0aUO.js"))
+	assert.True(t, isEmbeddedStaticAssetPath("/assets/index-AbCd1234.js"))
+	assert.True(t, isEmbeddedStaticAssetPath("assets/index.js"))
+	assert.False(t, isEmbeddedStaticAssetPath("dashboard"))
+	assert.False(t, isEmbeddedStaticAssetPath("index.html"))
+	assert.False(t, isEmbeddedStaticAssetPath("assets-backup/x.js"))
+}
+
 func TestApplyStaticAssetCacheHeaders(t *testing.T) {
 	t.Parallel()
 

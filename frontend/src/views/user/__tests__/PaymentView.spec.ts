@@ -700,3 +700,93 @@ describe('PaymentView WeChat JSAPI flow', () => {
     expect(window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)).toContain('weixin://wxpay/bizpayurl?pr=fallback-native')
   })
 })
+
+describe('PaymentView instance recharge terms', () => {
+  async function mountRechargeConfirm(options: {
+    checkout?: Partial<CheckoutInfoResponse>
+    method?: Partial<MethodLimit>
+    amount?: number
+  } = {}) {
+    vi.useRealTimers()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    routerReplace.mockReset().mockResolvedValue(undefined)
+    routerPush.mockReset().mockResolvedValue(undefined)
+    routerResolve.mockClear()
+    createOrder.mockReset()
+    refreshUser.mockReset()
+    fetchActiveSubscriptions.mockReset().mockResolvedValue(undefined)
+    showError.mockReset()
+    showInfo.mockReset()
+    showWarning.mockReset()
+    const base = checkoutInfoFixture(options.checkout).data
+    getCheckoutInfo.mockReset().mockResolvedValue({
+      data: {
+        ...base,
+        methods: {
+          wxpay: {
+            ...base.methods.wxpay,
+            ...options.method,
+          },
+        },
+      },
+    })
+    bridgeInvoke.mockReset()
+    window.localStorage.clear()
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: {
+            template: '<div><slot /></div>',
+          },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    await flushPromises()
+    if (options.amount != null) {
+      ;(wrapper.vm as unknown as { amount: number | null }).amount = options.amount
+      await flushPromises()
+    }
+    return wrapper
+  }
+
+  it('shows fee and actual pay from the selected provider override when global fee is 0', async () => {
+    const wrapper = await mountRechargeConfirm({
+      checkout: { recharge_fee_rate: 0 },
+      method: { recharge_fee_rate: 2 },
+      amount: 2000,
+    })
+    const text = wrapper.text()
+    expect(text).toContain('payment.fee')
+    expect(text).toContain(formatPaymentAmount(40, 'CNY'))
+    expect(text).toContain('payment.actualPay')
+    expect(text).toContain(formatPaymentAmount(2040, 'CNY'))
+  })
+
+  it('shows credited balance from the selected provider multiplier when global multiplier is 1', async () => {
+    const wrapper = await mountRechargeConfirm({
+      checkout: { balance_recharge_multiplier: 1, recharge_fee_rate: 0 },
+      method: { balance_recharge_multiplier: 1.02 },
+      amount: 2000,
+    })
+    const text = wrapper.text()
+    expect(text).toContain('payment.creditedBalance')
+    expect(text).toContain('2040.00')
+    expect(text).toContain('payment.rechargeRatePreview')
+  })
+
+  it('keeps using the global fee when the selected provider does not override it', async () => {
+    const wrapper = await mountRechargeConfirm({
+      checkout: { recharge_fee_rate: 2.5 },
+      amount: 100,
+    })
+    const text = wrapper.text()
+    expect(text).toContain('payment.fee')
+    expect(text).toContain(formatPaymentAmount(2.5, 'CNY'))
+    expect(text).toContain(formatPaymentAmount(102.5, 'CNY'))
+  })
+})

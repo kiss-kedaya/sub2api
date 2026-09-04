@@ -291,13 +291,20 @@ func unionFloat(agg float64, limited bool, val float64, wantMin bool) (float64, 
 //   - SingleMax: highest ceiling across instances; 0 if any is unlimited
 //   - DailyLimit: highest cap across instances; 0 if any is unlimited
 func pcAggregateMethodLimits(pt string, instances []*dbent.PaymentProviderInstance) MethodLimits {
+	fee, mult := pcAggregateRechargeOverrides(instances)
+	attach := func(ml MethodLimits) MethodLimits {
+		ml.RechargeFeeRate = fee
+		ml.BalanceRechargeMultiplier = mult
+		return ml
+	}
+
 	ml := MethodLimits{PaymentType: pt}
 	minLimited, maxLimited, dailyLimited := true, true, true
 
 	for _, inst := range instances {
 		cl, hasLimits := pcInstanceTypeLimits(inst, pt)
 		if !hasLimits {
-			return MethodLimits{PaymentType: pt} // any unlimited instance → all zeros
+			return attach(MethodLimits{PaymentType: pt}) // any unlimited instance → all zeros
 		}
 		ml.SingleMin, minLimited = unionFloat(ml.SingleMin, minLimited, cl.SingleMin, true)
 		ml.SingleMax, maxLimited = unionFloat(ml.SingleMax, maxLimited, cl.SingleMax, false)
@@ -313,7 +320,34 @@ func pcAggregateMethodLimits(pt string, instances []*dbent.PaymentProviderInstan
 	if !dailyLimited {
 		ml.DailyLimit = 0
 	}
-	return ml
+	return attach(ml)
+}
+
+func pcAggregateRechargeOverrides(instances []*dbent.PaymentProviderInstance) (fee, mult *float64) {
+	if len(instances) == 0 {
+		return nil, nil
+	}
+	fee = instances[0].RechargeFeeRate
+	mult = instances[0].BalanceRechargeMultiplier
+	for _, inst := range instances[1:] {
+		if !ptrFloatEqual(fee, inst.RechargeFeeRate) {
+			fee = nil
+		}
+		if !ptrFloatEqual(mult, inst.BalanceRechargeMultiplier) {
+			mult = nil
+		}
+	}
+	return fee, mult
+}
+
+func ptrFloatEqual(a, b *float64) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
 }
 
 // pcComputeGlobalRange computes the widest [min, max] across all methods.

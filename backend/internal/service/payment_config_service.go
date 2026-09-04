@@ -129,6 +129,12 @@ type MethodLimits struct {
 	DailyLimit  float64 `json:"daily_limit"`
 	SingleMin   float64 `json:"single_min"`
 	SingleMax   float64 `json:"single_max"`
+	// RechargeFeeRate, when non-nil, overrides the global recharge fee for this method.
+	// nil means inherit the checkout-info global rate. 0 is an explicit override.
+	RechargeFeeRate *float64 `json:"recharge_fee_rate"`
+	// BalanceRechargeMultiplier, when non-nil, overrides the global balance multiplier.
+	// nil means inherit the checkout-info global multiplier.
+	BalanceRechargeMultiplier *float64 `json:"balance_recharge_multiplier"`
 }
 
 // MethodLimitsResponse is the full response for the user-facing /limits API.
