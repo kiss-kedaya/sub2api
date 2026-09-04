@@ -51,6 +51,10 @@ export interface MethodLimit {
   single_max: number
   fee_rate: number
   available: boolean
+  /** null/undefined inherits checkout recharge_fee_rate; 0 is an explicit override */
+  recharge_fee_rate?: number | null
+  /** null/undefined inherits checkout balance_recharge_multiplier */
+  balance_recharge_multiplier?: number | null
 }
 
 /** Response from /payment/limits API */

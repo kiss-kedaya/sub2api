@@ -43,6 +43,15 @@ func isFingerprintedEmbeddedAssetPath(cleanPath string) bool {
 	return true
 }
 
+// isEmbeddedStaticAssetPath reports whether a cleaned URL path is a bundled
+// frontend asset. Missing files under assets/ must 404 rather than fall back
+// to index.html, otherwise browsers fail dynamic imports with
+// "Failed to fetch dynamically imported module".
+func isEmbeddedStaticAssetPath(cleanPath string) bool {
+	cleanPath = strings.TrimPrefix(cleanPath, "/")
+	return strings.HasPrefix(cleanPath, "assets/")
+}
+
 // applyStaticAssetCacheHeaders sets Cache-Control for long-cacheable static paths.
 // index.html / SPA routes must keep no-cache and are not handled here.
 func applyStaticAssetCacheHeaders(header http.Header, cleanPath string) {

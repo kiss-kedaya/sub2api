@@ -121,8 +121,15 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 			cleanPath = "index.html"
 		}
 
-		// For index.html or SPA routes, serve with injected settings
+		// For index.html or SPA routes, serve with injected settings.
+		// Hashed /assets/* must 404 when missing so Vue lazy imports do not
+		// receive HTML and fail with "Failed to fetch dynamically imported module".
 		if cleanPath == "index.html" || !s.fileExists(cleanPath) {
+			if isEmbeddedStaticAssetPath(cleanPath) {
+				c.Status(http.StatusNotFound)
+				c.Abort()
+				return
+			}
 			s.serveIndexHTML(c)
 			return
 		}
@@ -454,6 +461,12 @@ func ServeEmbeddedFrontend() gin.HandlerFunc {
 			}
 			applyStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)
 			fileServer.ServeHTTP(c.Writer, c.Request)
+			c.Abort()
+			return
+		}
+
+		if isEmbeddedStaticAssetPath(cleanPath) {
+			c.Status(http.StatusNotFound)
 			c.Abort()
 			return
 		}
