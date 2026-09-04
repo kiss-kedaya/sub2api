@@ -914,6 +914,83 @@ func TestResolveGroupByID_SnapshotRefreshFailureBacksOff(t *testing.T) {
 	require.Equal(t, int64(1), repo.calls.Load(), "failed refresh should be protected by retry backoff")
 }
 
+func TestSchedulingGroupForRequest_SnapshotHitSkipsRepository(t *testing.T) {
+	groupID := int64(96)
+	repo := &groupLookupHotpathRepoStub{group: &Group{ID: groupID, Platform: PlatformOpenAI, Status: StatusActive, RequirePrivacySet: true}}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.RequestFreshnessEnabled = false
+	snapshot := NewSchedulerSnapshotService(nil, nil, nil, repo, cfg)
+	snapshot.seedCachedGroup(repo.group)
+	svc := &GatewayService{groupRepo: repo, schedulerSnapshot: snapshot}
+
+	got := svc.schedulingGroupForRequest(withSchedulerSnapshotOnly(context.Background()), &groupID)
+	require.NotNil(t, got)
+	require.Equal(t, groupID, got.ID)
+	require.True(t, got.RequirePrivacySet)
+	require.Zero(t, repo.calls.Load(), "warm group projection must not query PostgreSQL")
+}
+
+func TestSchedulingGroupForRequest_SnapshotColdDoesNotQueryRepository(t *testing.T) {
+	groupID := int64(97)
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	repo := &groupLookupHotpathRepoStub{
+		group:   &Group{ID: groupID, Platform: PlatformOpenAI, Status: StatusActive},
+		started: started,
+		release: release,
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.RequestFreshnessEnabled = false
+	snapshot := NewSchedulerSnapshotService(nil, nil, nil, repo, cfg)
+	svc := &GatewayService{groupRepo: repo, schedulerSnapshot: snapshot}
+
+	got := svc.schedulingGroupForRequest(withSchedulerSnapshotOnly(context.Background()), &groupID)
+	require.Nil(t, got)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("expected a background group refresh")
+	}
+	close(release)
+}
+
+func TestResolveProfitControlGroup_SnapshotHitSkipsRepository(t *testing.T) {
+	groupID := int64(98)
+	repo := &groupLookupHotpathRepoStub{group: &Group{ID: groupID, Platform: PlatformOpenAI, Status: StatusActive, ProfitControlEnabled: true}}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.RequestFreshnessEnabled = false
+	snapshot := NewSchedulerSnapshotService(nil, nil, nil, repo, cfg)
+	snapshot.seedCachedGroup(repo.group)
+	svc := &GatewayService{groupRepo: repo, schedulerSnapshot: snapshot}
+
+	got, err := svc.resolveProfitControlGroup(withSchedulerSnapshotOnly(context.Background()), groupID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, groupID, got.ID)
+	require.Zero(t, repo.calls.Load(), "profit-control snapshot hit must not query PostgreSQL")
+}
+
+func TestGatewayStickyAccountEligible_RejectsWrongGroupAndNil(t *testing.T) {
+	svc := &GatewayService{}
+	require.False(t, svc.gatewayStickyAccountEligible(context.Background(), nil, nil, ""))
+
+	groupID := int64(11)
+	account := &Account{
+		ID:          21,
+		Platform:    PlatformOpenAI,
+		Status:      StatusActive,
+		Schedulable: true,
+		AccountGroups: []AccountGroup{
+			{AccountID: 21, GroupID: groupID},
+		},
+	}
+	require.True(t, svc.gatewayStickyAccountEligible(context.Background(), account, &groupID, ""))
+	other := int64(12)
+	require.False(t, svc.gatewayStickyAccountEligible(context.Background(), account, &other, ""))
+	require.True(t, gatewayStickyMixedPlatformOK(account, PlatformOpenAI))
+	require.False(t, gatewayStickyMixedPlatformOK(account, PlatformAnthropic))
+}
+
 func TestGetAvailableModels_ErrorAndGlobalListBranches(t *testing.T) {
 	resetGatewayHotpathStatsForTest()
 
