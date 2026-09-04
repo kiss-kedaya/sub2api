@@ -856,6 +856,32 @@ func (s *GatewayService) groupFromContext(ctx context.Context, groupID int64) *G
 	return nil
 }
 
+// schedulingGroupForRequest returns the group policy used by account selection.
+// Snapshot-only requests never call groupRepo: they reuse the request context
+// or the scheduler's process-local projection. A cold projection leaves the
+// group unset so this optional filter is skipped instead of blocking the
+// request on PostgreSQL.
+func (s *GatewayService) schedulingGroupForRequest(ctx context.Context, groupID *int64) *Group {
+	if groupID == nil || *groupID <= 0 {
+		return nil
+	}
+	if group := s.groupFromContext(ctx, *groupID); group != nil {
+		return group
+	}
+	if s != nil && s.schedulerSnapshot != nil {
+		group, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, *groupID)
+		if err == nil {
+			return group
+		}
+		return nil
+	}
+	if s == nil || s.groupRepo == nil || schedulerSnapshotOnlyFromContext(ctx) {
+		return nil
+	}
+	group, _ := s.groupRepo.GetByIDLite(ctx, *groupID)
+	return group
+}
+
 func (s *GatewayService) resolveGroupByID(ctx context.Context, groupID int64) (*Group, error) {
 	if group := s.groupFromContext(ctx, groupID); group != nil {
 		return group, nil
@@ -2166,24 +2192,52 @@ func shuffleWithinPriority(accounts []*Account) {
 	}
 }
 
+// gatewayStickyAccountEligible is the shared sticky-session admission used by
+// the legacy (non-load-aware) selection paths. Channel upstream restriction is
+// included so a sticky binding cannot keep serving a model the group's channel
+// no longer prices.
+func (s *GatewayService) gatewayStickyAccountEligible(ctx context.Context, account *Account, groupID *int64, requestedModel string) bool {
+	if account == nil {
+		return false
+	}
+	if !s.isGatewayAccountProfitEligible(ctx, account) {
+		return false
+	}
+	if !s.isAccountInGroup(account, groupID) {
+		return false
+	}
+	if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, account, requestedModel) {
+		return false
+	}
+	if !s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) {
+		return false
+	}
+	if !s.isAccountSchedulableForQuota(account) {
+		return false
+	}
+	if !s.isAccountSchedulableForWindowCost(ctx, account, true) {
+		return false
+	}
+	if !s.isAccountSchedulableForRPM(ctx, account, true) {
+		return false
+	}
+	return !s.isStickyAccountUpstreamRestricted(ctx, groupID, account, requestedModel)
+}
+
+func gatewayStickyMixedPlatformOK(account *Account, nativePlatform string) bool {
+	if account == nil {
+		return false
+	}
+	return account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled())
+}
+
 // selectAccountForModelWithPlatform 选择单平台账户（完全隔离）
 func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, platform string) (*Account, error) {
 	preferOAuth := platform == PlatformGemini
 	routingAccountIDs := s.routingAccountIDsForRequest(ctx, groupID, requestedModel, platform)
 
 	// require_privacy_set: 获取分组信息
-	var schedGroup *Group
-	if groupID != nil && s.groupRepo != nil {
-		// The normal /v1 path has already resolved this group and stored it in the
-		// request context. Reuse it instead of issuing another PostgreSQL query;
-		// keep the lite lookup only for direct legacy callers without that context.
-		schedGroup = s.groupFromContext(ctx, *groupID)
-		if schedGroup == nil && !schedulerSnapshotOnlyFromContext(ctx) {
-			// Routing only needs privacy policy and group name. Avoid the account-count
-			// aggregation performed by GetByID on every request.
-			schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
-		}
-	}
+	schedGroup := s.schedulingGroupForRequest(ctx, groupID)
 
 	var accounts []Account
 	accountsLoaded := false
@@ -2208,7 +2262,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 						}
-						if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) && !s.isStickyAccountUpstreamRestricted(ctx, groupID, account, requestedModel) {
+						if !clearSticky && s.gatewayStickyAccountEligible(ctx, account, groupID, requestedModel) && account.Platform == platform {
 							if s.debugModelRoutingEnabled() {
 								logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy routed sticky hit: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), accountID)
 							}
@@ -2338,7 +2392,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 					if clearSticky {
 						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 					}
-					if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) {
+					if !clearSticky && s.gatewayStickyAccountEligible(ctx, account, groupID, requestedModel) && account.Platform == platform {
 						return account, nil
 					}
 				}
@@ -2457,18 +2511,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 	routingAccountIDs := s.routingAccountIDsForRequest(ctx, groupID, requestedModel, nativePlatform)
 
 	// require_privacy_set: 获取分组信息
-	var schedGroup *Group
-	if groupID != nil && s.groupRepo != nil {
-		// Reuse the group resolved by the request-level scheduling context. This
-		// removes a redundant PostgreSQL round trip from every mixed-scheduling
-		// request while preserving the direct-caller fallback below.
-		schedGroup = s.groupFromContext(ctx, *groupID)
-		if schedGroup == nil && !schedulerSnapshotOnlyFromContext(ctx) {
-			// Routing only needs privacy policy and group name. Avoid the account-count
-			// aggregation performed by GetByID on every request.
-			schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
-		}
-	}
+	schedGroup := s.schedulingGroupForRequest(ctx, groupID)
 
 	var accounts []Account
 	accountsLoaded := false
@@ -2491,13 +2534,11 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 						}
-						if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) {
-							if account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
-								if s.debugModelRoutingEnabled() {
-									logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy mixed routed sticky hit: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), accountID)
-								}
-								return account, nil
+						if !clearSticky && s.gatewayStickyAccountEligible(ctx, account, groupID, requestedModel) && gatewayStickyMixedPlatformOK(account, nativePlatform) {
+							if s.debugModelRoutingEnabled() {
+								logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy mixed routed sticky hit: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), accountID)
 							}
+							return account, nil
 						}
 					}
 				}
@@ -2618,10 +2659,8 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 					if clearSticky {
 						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 					}
-					if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) && !s.isStickyAccountUpstreamRestricted(ctx, groupID, account, requestedModel) {
-						if account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
-							return account, nil
-						}
+					if !clearSticky && s.gatewayStickyAccountEligible(ctx, account, groupID, requestedModel) && gatewayStickyMixedPlatformOK(account, nativePlatform) {
+						return account, nil
 					}
 				}
 			}
