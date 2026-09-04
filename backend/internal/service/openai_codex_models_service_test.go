@@ -434,7 +434,7 @@ func TestBuildCodexModelsManifestAdvertisesPriorityServiceTierForFastGPTModels(t
 	body, err := BuildCodexModelsManifest([]string{
 		"gpt-5.4-mini",
 		"gpt-5.5",
-		"gpt-5.6-sol",
+		"gpt-5.6-terra",
 	})
 	require.NoError(t, err)
 	models := decodeCodexManifestModels(t, body)
@@ -448,6 +448,36 @@ func TestBuildCodexModelsManifestAdvertisesPriorityServiceTierForFastGPTModels(t
 				"description": "Priority processing for lower latency.",
 			},
 		}, model["service_tiers"])
+		require.Nil(t, model["default_service_tier"])
+	}
+}
+
+// Scenario: GPT-5.6 Sol 在 Fast 之外额外声明 ultrafast service tier。
+func TestBuildCodexModelsManifestAdvertisesUltrafastServiceTierForSol(t *testing.T) {
+	t.Parallel()
+
+	body, err := BuildCodexModelsManifest([]string{
+		"gpt-5.6-sol",
+		"gpt-5.6",
+	})
+	require.NoError(t, err)
+	models := decodeCodexManifestModels(t, body)
+	require.Len(t, models, 2)
+
+	wantTiers := []any{
+		map[string]any{
+			"id":          "priority",
+			"name":        "Fast",
+			"description": "Priority processing for lower latency.",
+		},
+		map[string]any{
+			"id":          "ultrafast",
+			"name":        "Ultrafast",
+			"description": "Ultra-low latency processing.",
+		},
+	}
+	for _, model := range models {
+		require.Equal(t, wantTiers, model["service_tiers"])
 		require.Nil(t, model["default_service_tier"])
 	}
 }
