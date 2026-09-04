@@ -30,6 +30,7 @@ const messages: Record<string, string> = {
   'usage.perMillionTokens': '/ 1M tokens',
   'usage.serviceTier': 'Service tier',
   'usage.serviceTierPriority': 'Fast',
+  'usage.serviceTierUltrafast': 'Ultrafast',
   'usage.serviceTierFlex': 'Flex',
   'usage.serviceTierStandard': 'Standard',
   'usage.rate': 'Rate',
