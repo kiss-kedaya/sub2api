@@ -251,6 +251,7 @@ import type {
 } from '@/types'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { clearAllAffiliateReferralCodes } from '@/utils/oauthAffiliate'
+import { isChunkLoadError, pushOrReload, recoverFromChunkLoadError } from '@/utils/chunkLoadError'
 
 const { t } = useI18n()
 const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
@@ -602,8 +603,12 @@ async function handleLogin(): Promise<void> {
 
     // Redirect to dashboard or intended route
     const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
-    await router.push(redirectTo)
+    await pushOrReload(router, redirectTo)
   } catch (error: unknown) {
+    if (isChunkLoadError(error)) {
+      recoverFromChunkLoadError((router.currentRoute.value.query.redirect as string) || '/dashboard')
+      return
+    }
     errorMessage.value = extractI18nErrorMessage(error, t, 'auth.errors', t('auth.loginFailed'))
 
     // Also show error toast
@@ -643,8 +648,12 @@ async function handlePasskeyLogin(): Promise<void> {
     clearAllAffiliateReferralCodes()
     appStore.showSuccess(t('auth.loginSuccess'))
     const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
-    await router.push(redirectTo)
+    await pushOrReload(router, redirectTo)
   } catch (error: unknown) {
+    if (isChunkLoadError(error)) {
+      recoverFromChunkLoadError((router.currentRoute.value.query.redirect as string) || '/dashboard')
+      return
+    }
     const fallback = error instanceof DOMException && error.name === 'NotAllowedError'
       ? t('auth.passkeyCancelled')
       : t('auth.passkeyFailed')
@@ -712,8 +721,12 @@ async function handle2FAVerify(code: string): Promise<void> {
 
     // Redirect to dashboard or intended route
     const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
-    await router.push(redirectTo)
+    await pushOrReload(router, redirectTo)
   } catch (error: unknown) {
+    if (isChunkLoadError(error)) {
+      recoverFromChunkLoadError((router.currentRoute.value.query.redirect as string) || '/dashboard')
+      return
+    }
     const err = error as { message?: string; response?: { data?: { message?: string } } }
     const message = err.response?.data?.message || err.message || t('profile.totp.loginFailed')
 

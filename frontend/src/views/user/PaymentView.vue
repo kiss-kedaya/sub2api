@@ -560,10 +560,25 @@ const tabs = computed(() => {
 const visibleMethods = computed(() => getVisibleMethods(checkout.value.methods))
 const enabledMethods = computed(() => Object.keys(visibleMethods.value))
 const validAmount = computed(() => amount.value ?? 0)
-const balanceRechargeMultiplier = computed(() => {
-  const multiplier = checkout.value.balance_recharge_multiplier
-  return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1
-})
+
+function inheritRechargeFeeRate(override: number | null | undefined, fallback: number): number {
+  return override == null || Number.isNaN(override) ? fallback : override
+}
+
+function methodRechargeFeeRate(methodType: string): number {
+  const ml = visibleMethods.value[methodType]
+  return inheritRechargeFeeRate(ml?.recharge_fee_rate, checkout.value?.recharge_fee_rate ?? 0)
+}
+
+function methodBalanceRechargeMultiplier(methodType: string): number {
+  const ml = visibleMethods.value[methodType]
+  const override = ml?.balance_recharge_multiplier
+  if (override != null && Number.isFinite(override) && override > 0) return override
+  const fallback = checkout.value.balance_recharge_multiplier
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : 1
+}
+
+const balanceRechargeMultiplier = computed(() => methodBalanceRechargeMultiplier(selectedMethod.value))
 // 订阅 CNY 换算汇率（1 USD = X CNY）。0 = 未配置，订阅保持 price 直付（与后端 opt-in 条件严格镜像）。
 const subscriptionUsdToCnyRate = computed(() => {
   const rate = checkout.value.subscription_usd_to_cny_rate
@@ -691,13 +706,13 @@ const methodOptions = computed<PaymentMethodOption[]>(() =>
     return {
       type,
       display_name: ml?.display_name,
-      fee_rate: ml?.fee_rate ?? 0,
+      fee_rate: methodRechargeFeeRate(type),
       available: ml?.available !== false && amountFitsMethod(validAmount.value, type),
     }
   })
 )
 
-const feeRate = computed(() => checkout.value?.recharge_fee_rate ?? 0)
+const feeRate = computed(() => methodRechargeFeeRate(selectedMethod.value))
 const feeAmount = computed(() =>
   feeRate.value > 0 && validAmount.value > 0
     ? Math.ceil(((validAmount.value * feeRate.value) / 100) * 100) / 100
@@ -761,7 +776,7 @@ const subMethodOptions = computed<PaymentMethodOption[]>(() => {
     return {
       type,
       display_name: ml?.display_name,
-      fee_rate: ml?.fee_rate ?? 0,
+      fee_rate: methodRechargeFeeRate(type),
       available: ml?.available !== false && amountFitsMethod(subscriptionTotalAmountForCurrency(price, currency), type),
     }
   })

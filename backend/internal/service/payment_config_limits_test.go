@@ -147,6 +147,41 @@ func TestPcAggregateMethodLimits(t *testing.T) {
 			t.Fatalf("DailyLimit = %v, want 1000 (highest cap)", ml.DailyLimit)
 		}
 	})
+
+	t.Run("same instance recharge overrides are kept", func(t *testing.T) {
+		t.Parallel()
+		fee := 2.0
+		mult := 1.02
+		inst := makeInstance(1, "easypay", "alipay", `{"alipay":{"singleMin":1,"singleMax":100}}`)
+		inst.RechargeFeeRate = &fee
+		inst.BalanceRechargeMultiplier = &mult
+		ml := pcAggregateMethodLimits("alipay", []*dbent.PaymentProviderInstance{inst})
+		require.NotNil(t, ml.RechargeFeeRate)
+		require.Equal(t, 2.0, *ml.RechargeFeeRate)
+		require.NotNil(t, ml.BalanceRechargeMultiplier)
+		require.Equal(t, 1.02, *ml.BalanceRechargeMultiplier)
+	})
+
+	t.Run("mixed instance recharge overrides inherit global", func(t *testing.T) {
+		t.Parallel()
+		fee := 2.0
+		inst1 := makeInstance(1, "easypay", "alipay", `{"alipay":{"singleMin":1,"singleMax":100}}`)
+		inst1.RechargeFeeRate = &fee
+		inst2 := makeInstance(2, "easypay", "alipay", `{"alipay":{"singleMin":1,"singleMax":100}}`)
+		ml := pcAggregateMethodLimits("alipay", []*dbent.PaymentProviderInstance{inst1, inst2})
+		require.Nil(t, ml.RechargeFeeRate)
+		require.Nil(t, ml.BalanceRechargeMultiplier)
+	})
+
+	t.Run("unlimited instance still keeps matching recharge overrides", func(t *testing.T) {
+		t.Parallel()
+		fee := 2.0
+		inst := makeInstance(1, "easypay", "alipay", "")
+		inst.RechargeFeeRate = &fee
+		ml := pcAggregateMethodLimits("alipay", []*dbent.PaymentProviderInstance{inst})
+		require.NotNil(t, ml.RechargeFeeRate)
+		require.Equal(t, 2.0, *ml.RechargeFeeRate)
+	})
 }
 
 func TestPcGroupByPaymentType(t *testing.T) {
