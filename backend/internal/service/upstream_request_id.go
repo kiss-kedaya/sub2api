@@ -3,6 +3,7 @@ package service
 import (
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"golang.org/x/net/http/httpguts"
@@ -51,6 +52,12 @@ func usageUpstreamRequestIDPtr(account *Account, h http.Header, wsMode bool) *st
 	}
 	if len(id) > maxUsageUpstreamRequestIDLen {
 		id = id[:maxUsageUpstreamRequestIDLen]
+		for len(id) > 0 && !utf8.ValidString(id) {
+			id = id[:len(id)-1]
+		}
+	}
+	if id == "" {
+		return nil
 	}
 	return &id
 }
