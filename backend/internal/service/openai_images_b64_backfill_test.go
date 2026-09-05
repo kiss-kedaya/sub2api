@@ -150,6 +150,14 @@ func TestBackfillOpenAIImagesB64JSON(t *testing.T) {
 			wantDownloads: 1,
 		},
 		{
+			name:          "响应头声明图片但字节不是图片时保留原样",
+			enabled:       true,
+			body:          `{"created":1,"data":[{"url":"https://cdn.example.com/a.png"}]}`,
+			upstream:      &httpUpstreamRecorder{resp: b64BackfillImageResponse(http.StatusOK, "image/svg+xml", []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))},
+			wantB64:       []string{""},
+			wantDownloads: 1,
+		},
+		{
 			name:          "非 http(s) 协议的 url 不下载",
 			enabled:       true,
 			body:          `{"created":1,"data":[{"url":"ftp://cdn.example.com/a.png"}]}`,
@@ -206,6 +214,67 @@ func TestBackfillOpenAIImagesB64JSON_DownloadRequestShape(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:7890", upstream.lastProxyURL)
 	_, hasDeadline := req.Context().Deadline()
 	require.True(t, hasDeadline)
+	// 目的地与重定向各跳都必须解析到公网地址；重定向本身保持跟随。
+	require.True(t, HTTPUpstreamPublicHostsOnly(req.Context()))
+	require.False(t, HTTPUpstreamRedirectsDisabled(req.Context()))
+}
+
+func TestBackfillOpenAIImagesB64JSON_RejectsPrivateHosts(t *testing.T) {
+	upstream := &httpUpstreamRecorder{resp: b64BackfillImageResponse(http.StatusOK, "image/png", b64BackfillPNGBytes)}
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
+	account := b64BackfillAccount(true)
+
+	for _, rawURL := range []string{
+		"http://localhost:8080/api/v1/admin/accounts",
+		"http://Foo.LocalHost/a.png",
+		"http://127.0.0.1:8080/a.png",
+		"https://127.0.0.1/a.png",
+		"http://[::1]:8080/a.png",
+		"http://10.0.0.5/a.png",
+		"http://172.16.0.9:9000/bucket/a.png",
+		"http://192.168.1.10:9000/bucket/a.png",
+		"http://169.254.169.254/latest/meta-data/",
+		"http://0.0.0.0:8080/a.png",
+		"http://[fe80::1]/a.png",
+		"http://[::ffff:127.0.0.1]/a.png",
+	} {
+		body := `{"created":1,"data":[{"url":"` + rawURL + `"}]}`
+		got := svc.backfillOpenAIImagesB64JSON(context.Background(), account, nil, []byte(body))
+		require.Equal(t, body, string(got), "url=%s", rawURL)
+	}
+	require.Empty(t, upstream.requests, "private destinations must never be requested")
+
+	// 同一配置下公网主机照常下载，证明拒绝依据是目的地而非协议。
+	got := svc.backfillOpenAIImagesB64JSON(context.Background(), account, nil, []byte(`{"created":1,"data":[{"url":"http://cdn.example.com/a.png"}]}`))
+	require.Equal(t, base64.StdEncoding.EncodeToString(b64BackfillPNGBytes), gjson.GetBytes(got, "data.0.b64_json").String())
+	require.Len(t, upstream.requests, 1)
+}
+
+func TestIsBackfillImageContent(t *testing.T) {
+	webp := append([]byte("RIFF\x24\x00\x00\x00WEBPVP8 "), make([]byte, 8)...)
+	tests := []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{name: "png", data: b64BackfillPNGBytes, want: true},
+		{name: "jpeg", data: []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00}, want: true},
+		{name: "webp", data: webp, want: true},
+		{name: "gif", data: []byte("GIF89a\x01\x00\x01\x00"), want: true},
+		{name: "bmp 不在允许列表", data: []byte("BM\x00\x00\x00\x00\x00\x00\x00\x00"), want: false},
+		{name: "ico 不在允许列表", data: []byte{0x00, 0x00, 0x01, 0x00, 0x01, 0x00}, want: false},
+		{name: "svg 文本", data: []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`), want: false},
+		{name: "html", data: []byte("<html>login required</html>"), want: false},
+		{name: "json", data: []byte(`{"error":"unauthorized"}`), want: false},
+		{name: "空", data: nil, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, isBackfillImageContent(tt.data))
+		})
+	}
 }
 
 func TestBackfillOpenAIImagesB64JSON_NonObjectBodies(t *testing.T) {
@@ -263,6 +332,7 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyBackfillsB64JSONFromURL(t *test
 	require.Equal(t, "https://relay.example.com/v1/images/generations", upstream.requests[0].URL.String())
 	require.Equal(t, http.MethodGet, upstream.requests[1].Method)
 	require.Equal(t, "https://cdn.example.com/cat.png", upstream.requests[1].URL.String())
+	require.True(t, HTTPUpstreamPublicHostsOnly(upstream.requests[1].Context()))
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	wantB64 := base64.StdEncoding.EncodeToString(b64BackfillPNGBytes)
