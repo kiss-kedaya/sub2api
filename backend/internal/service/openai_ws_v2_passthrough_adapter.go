@@ -1317,6 +1317,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				if eventType == "response.created" {
 					failureAccountSideEffectsApplied = false
 				}
+				if (eventType == "error" || eventType == "response.failed") && markOpenAIWSV2PassthroughCyberPolicy(c, payload) {
+					return nil
+				}
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(payload)
 				isPreOutputRateLimit := eventType == "error" && !wroteDownstream && isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw)
 				if (eventType == "error" || eventType == "response.failed") && !failureAccountSideEffectsApplied && !isPreOutputRateLimit {
@@ -1554,6 +1557,12 @@ func buildOpenAIWSPassthroughFailureEvent(responseID, model string) []byte {
 		return nil
 	}
 	return payload
+}
+
+func markOpenAIWSV2PassthroughCyberPolicy(c *gin.Context, payload []byte) bool {
+	usage := OpenAIUsage{}
+	parseOpenAIWSResponseUsageFromCompletedEvent(payload, &usage)
+	return markOpenAICyberPolicyEvent(c, payload, http.StatusOK, &usage)
 }
 
 func (s *OpenAIGatewayService) mapOpenAIWSPassthroughDialError(
