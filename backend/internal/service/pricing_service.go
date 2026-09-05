@@ -427,10 +427,6 @@ func (s *PricingService) reloadIfCustomFilesChanged() {
 	if unchanged {
 		return
 	}
-	if err := s.validateCustomPricingFiles(); err != nil {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Custom pricing file changed but previous data kept: %v", err)
-		return
-	}
 	if err := s.reloadCustomPricingLayers(); err != nil {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Custom pricing file changed but reload failed: %v", err)
 	}
@@ -440,13 +436,34 @@ func (s *PricingService) reloadIfCustomFilesChanged() {
 // 与叠加层指纹。
 func (s *PricingService) reloadCustomPricingLayers() error {
 	pricingFile := s.getPricingFilePath()
-	body, err := os.ReadFile(pricingFile)
-	if err != nil {
-		return fmt.Errorf("read file failed: %w", err)
-	}
-	data, fingerprint, err := s.buildPricingData(body)
-	if err != nil {
-		return fmt.Errorf("parse pricing data: %w", err)
+	// 定价层文件可能在读取期间被替换。只有构建前后指纹一致时才提交，
+	// 否则丢弃这次混合快照并重试，避免短暂应用不匹配的 fallback/override。
+	var data map[string]*LiteLLMModelPricing
+	var fingerprint string
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if validateErr := s.validateCustomPricingFiles(); validateErr != nil {
+			return fmt.Errorf("validate custom pricing files: %w", validateErr)
+		}
+		before := s.customPricingFilesFingerprint()
+		body, readErr := os.ReadFile(pricingFile)
+		if readErr != nil {
+			return fmt.Errorf("read file failed: %w", readErr)
+		}
+		data, fingerprint, err = s.buildPricingData(body)
+		if err != nil {
+			return fmt.Errorf("parse pricing data: %w", err)
+		}
+		after := s.customPricingFilesFingerprint()
+		if validateErr := s.validateCustomPricingFiles(); validateErr != nil {
+			return fmt.Errorf("validate custom pricing files: %w", validateErr)
+		}
+		if before == after && after == fingerprint {
+			break
+		}
+		if attempt == 2 {
+			return fmt.Errorf("custom pricing files changed during reload")
+		}
 	}
 
 	s.mu.Lock()
