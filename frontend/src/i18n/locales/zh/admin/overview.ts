@@ -1075,6 +1075,19 @@ export default {
         selectAll: '全选',
         invertSelection: '反选'
       },
+      codexModelsManifest: {
+        title: '固定账号获取 Codex Model Manifest',
+        hint: '开启后，该分组的 Codex 客户端 /models 请求只用选定账号向上游拉取并按 slug 合并，不经过调度器；限流/过载中的选定账号仍会被使用。',
+        enable: '使用特定账号获取 manifest',
+        enabledHint: '账号来源限定为当前分组内的 OpenAI 账号，最多选择 10 个。',
+        disabledHint: '未启用：manifest 请求经由调度器选账。',
+        accounts: '选定账号',
+        searchPlaceholder: '搜索账号（当前分组内 OpenAI 账号）',
+        searchEmpty: '未找到匹配账号',
+        fallback: '选定账号全部不可用时回退调度器',
+        fallbackHint: '关闭时返回 503 / 上游错误；开启时回退到现有调度器选账路径。',
+        selectAtLeastOne: '开启固定账号后至少选择一个账号'
+      },
       compositeRoutes: {
         action: '路由',
         title: 'Composite 路由',

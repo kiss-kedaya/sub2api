@@ -1078,6 +1078,19 @@ export default {
         selectAll: 'Select all',
         invertSelection: 'Invert'
       },
+      codexModelsManifest: {
+        title: 'Pinned Accounts for Codex Model Manifest',
+        hint: 'When enabled, Codex client /models requests for this group are fetched only from the pinned accounts and merged by slug, bypassing the scheduler. Pinned accounts in rate-limit or overload windows are still used.',
+        enable: 'Fetch manifest with specific accounts',
+        enabledHint: 'Accounts are limited to OpenAI accounts bound to this group, at most 10.',
+        disabledHint: 'Not enabled: manifest requests go through scheduler account selection.',
+        accounts: 'Pinned accounts',
+        searchPlaceholder: 'Search accounts (OpenAI accounts in this group)',
+        searchEmpty: 'No matching accounts',
+        fallback: 'Fall back to the scheduler when all pinned accounts are unavailable',
+        fallbackHint: 'Off: return 503 / the upstream error. On: fall back to the existing scheduler path.',
+        selectAtLeastOne: 'Select at least one account after enabling pinned accounts'
+      },
       compositeRoutes: {
         action: 'Routes',
         title: 'Composite Routes',
