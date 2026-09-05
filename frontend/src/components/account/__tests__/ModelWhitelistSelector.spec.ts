@@ -153,6 +153,21 @@ describe('ModelWhitelistSelector', () => {
     expect(showSuccess).not.toHaveBeenCalled()
   })
 
+  it('reports partial capability sync without discarding discovered models', async () => {
+    syncUpstreamModels.mockResolvedValue({
+      models: ['gpt-6-astra', 'unknown-model'],
+      warnings: [{ code: 'upstream_model_metadata_partial', message: 'Partial metadata' }]
+    })
+    const wrapper = mountSelector({ accountId: 42, platform: 'openai' })
+    const syncButton = wrapper.findAll('button').find(button => button.text() === 'admin.accounts.syncUpstreamModels')
+    expect(syncButton).toBeDefined()
+    await syncButton!.trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toEqual(['gpt-6-astra', 'unknown-model'])
+    expect(showSuccess).toHaveBeenCalled()
+    expect(showWarning).toHaveBeenCalledWith('admin.accounts.syncUpstreamModelsMetadataPartial')
+  })
+
   it('reports a successful preview so account creation can persist metadata', async () => {
     syncUpstreamModelsPreview.mockResolvedValue({
       models: ['x-preview-f-free'],
