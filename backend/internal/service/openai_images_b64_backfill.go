@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -90,8 +92,9 @@ func (s *OpenAIGatewayService) backfillOpenAIImagesB64JSON(
 }
 
 // fetchOpenAIImageURLBase64 取得图片 url 内容的标准 base64 编码。
-// data: 形式的 url 直接取其 base64 载荷；其余 url 沿用 base_url 的出站 URL 策略校验后，
-// 经账户代理下载，大小上限与 OAuth 路径的单图下载一致，且必须是图片内容。
+// data: 形式的 url 直接取其 base64 载荷；其余 url 先沿用 base_url 的出站 URL 策略校验，
+// 再无条件拒绝回环、私网、链路本地等目的地（含重定向的每一跳），经账户代理下载，
+// 大小上限与 OAuth 路径的单图下载一致，且前 512 字节须嗅探为 png/jpeg/webp/gif。
 func (s *OpenAIGatewayService) fetchOpenAIImageURLBase64(ctx context.Context, account *Account, rawURL string) (string, error) {
 	if strings.HasPrefix(strings.ToLower(rawURL), "data:") {
 		if encoded := normalizeOpenAIImageBase64(rawURL); encoded != "" {
@@ -106,7 +109,10 @@ func (s *OpenAIGatewayService) fetchOpenAIImageURLBase64(ctx context.Context, ac
 	if err != nil {
 		return "", fmt.Errorf("invalid image url: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, openAIImageURLDownloadTimeout)
+	if err := rejectPrivateImageHost(downloadURL); err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(WithHTTPUpstreamPublicHostsOnly(ctx), openAIImageURLDownloadTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
@@ -135,17 +141,36 @@ func (s *OpenAIGatewayService) fetchOpenAIImageURLBase64(ctx context.Context, ac
 	if len(data) == 0 {
 		return "", errors.New("download image: empty body")
 	}
-	if !isImageContent(resp.Header.Get("Content-Type"), data) {
-		return "", errors.New("download image: content is not an image")
+	if !isBackfillImageContent(data) {
+		return "", errors.New("download image: content is not an allowed image format")
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-// isImageContent 由响应头声明或字节嗅探判定内容是否为图片。
-func isImageContent(contentType string, data []byte) bool {
-	declared := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
-	if strings.HasPrefix(declared, "image/") {
-		return true
+// rejectPrivateImageHost 拒绝主机为 localhost 或回环、私网、链路本地、未指定地址字面量的下载 URL。
+// 不受 security.url_allowlist 配置影响；域名的解析结果与重定向的每一跳由上游客户端按
+// WithHTTPUpstreamPublicHostsOnly 标记校验。
+func rejectPrivateImageHost(downloadURL string) error {
+	parsed, err := url.Parse(downloadURL)
+	if err != nil {
+		return fmt.Errorf("invalid image url: %w", err)
 	}
-	return detectedImageContentType(data) != ""
+	if host := parsed.Hostname(); urlvalidator.IsBlockedHost(host) {
+		return fmt.Errorf("image url host is not allowed: %s", host)
+	}
+	return nil
+}
+
+// openAIImageBackfillContentTypes 是允许回填的图片格式，以字节嗅探结果为准，响应头不作为依据。
+var openAIImageBackfillContentTypes = map[string]struct{}{
+	"image/png":  {},
+	"image/jpeg": {},
+	"image/webp": {},
+	"image/gif":  {},
+}
+
+// isBackfillImageContent 报告 data 的前 512 字节是否嗅探为允许回填的图片格式。
+func isBackfillImageContent(data []byte) bool {
+	_, ok := openAIImageBackfillContentTypes[detectedImageContentType(data)]
+	return ok
 }
