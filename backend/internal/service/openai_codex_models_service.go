@@ -30,12 +30,20 @@ import (
 var chatgptCodexModelsURL = "https://chatgpt.com/backend-api/codex/models"
 
 const (
-	codexModelsManifestCacheBodyLimit  = 1 << 20
-	codexModelsManifestCacheMaxEntries = 64
-	codexModelsManifestCacheTTL        = 30 * time.Second
-	codexModelsManifestCacheStaleTTL   = 5 * time.Minute
-	codexModelsManifestRequestTimeout  = 15 * time.Second
-	codexAutoModelPrefix               = "codex-auto-"
+	codexModelsManifestCacheBodyLimit = 1 << 20
+	// codexModelsManifestCacheMaxEntries 上限按「账号数 × 客户端版本数 × 代理形态」
+	// 估算：缓存同时覆盖 OAuth 与 API Key 账号，且缓存键含 Authorization 与
+	// Version 头，不同客户端版本各自占一条；64 条在大规模部署下会被淘汰导致
+	// 额外上游请求。单条清单通常几十 KB，512 条最坏内存占用在几十 MB 量级。
+	codexModelsManifestCacheMaxEntries = 512
+	// 三段时效：≤TTL 为新鲜（直接返回缓存，零上游请求）；TTL 到 StaleTTL 之间
+	// 乐观返回旧值并后台单飞刷新（携带上游 ETag，304 续期）；超过 StaleTTL 丢弃
+	// 缓存同步等待刷新。TTL 取 1 分钟：manifest 变化低频，1 分钟内同账号重复
+	// 请求完全吸收；StaleTTL 取 5 分钟，控制旧内容最长可见时间在分钟级。
+	codexModelsManifestCacheTTL       = 60 * time.Second
+	codexModelsManifestCacheStaleTTL  = 5 * time.Minute
+	codexModelsManifestRequestTimeout = 15 * time.Second
+	codexAutoModelPrefix              = "codex-auto-"
 )
 
 // FilterCodexModelIDsForGroup removes dedicated media-generation models,
@@ -743,7 +751,7 @@ func claudeCodexDisplayName(modelID string) string {
 // routed through a custom provider. The response is also suitable for saving
 // as model_catalog_json in clients that do not refresh custom-provider catalogs.
 func BuildCodexModelsManifest(modelIDs []string) ([]byte, error) {
-	return buildCodexModelsManifest(modelIDs, nil, nil, nil)
+	return buildCodexModelsManifest(modelIDs, nil, nil, nil, nil)
 }
 
 // BuildCodexModelsManifestForGroup derives input capabilities from the
@@ -798,6 +806,7 @@ func buildCodexModelsManifestForAccounts(
 	compositeRoutesAvailable bool,
 ) ([]byte, error) {
 	imageInputModels := make(map[string]bool, len(modelIDs))
+	searchToolModels := make(map[string]bool, len(modelIDs))
 	metadataModels := codexCatalogMetadataModels(
 		effectivePlatform,
 		modelIDs,
@@ -817,6 +826,15 @@ func buildCodexModelsManifestForAccounts(
 		) {
 			imageInputModels[modelID] = true
 		}
+		if groupCodexModelSupportsSearchTool(
+			effectivePlatform,
+			modelID,
+			accounts,
+			compositeRoutes,
+			compositeRoutesAvailable,
+		) {
+			searchToolModels[modelID] = true
+		}
 		if metadata, ok := groupCodexModelMetadata(
 			effectivePlatform,
 			modelID,
@@ -827,12 +845,13 @@ func buildCodexModelsManifestForAccounts(
 			modelMetadata[modelID] = metadata
 		}
 	}
-	return buildCodexModelsManifest(modelIDs, imageInputModels, metadataModels, modelMetadata)
+	return buildCodexModelsManifest(modelIDs, imageInputModels, searchToolModels, metadataModels, modelMetadata)
 }
 
 func buildCodexModelsManifest(
 	modelIDs []string,
 	imageInputModels map[string]bool,
+	searchToolModels map[string]bool,
 	metadataModels map[string]string,
 	modelMetadata map[string]codexModelMetadataOverride,
 ) ([]byte, error) {
@@ -859,6 +878,7 @@ func buildCodexModelsManifest(
 		if imageInputModels[modelID] {
 			descriptor.InputModalities = []string{"text", "image"}
 		}
+		descriptor.SupportsSearchTool = searchToolModels[modelID]
 		if metadata, ok := modelMetadata[modelID]; ok {
 			applyUpstreamModelMetadataToCodexDescriptor(&descriptor, metadata)
 		}
@@ -1008,6 +1028,52 @@ func groupCodexModelSupportsImageInput(
 		}
 		candidates++
 		if !accountCodexModelSupportsImageInput(account, account.GetMappedModel(upstreamModel)) {
+			return false
+		}
+	}
+	return candidates > 0
+}
+
+// groupCodexModelSupportsSearchTool advertises client-side tool discovery only
+// when every account that may serve the model uses the gateway's Responses to
+// Chat Completions bridge. Native Responses routes must declare the capability
+// in their upstream Codex manifest instead of having it inferred here.
+func groupCodexModelSupportsSearchTool(
+	platform string,
+	modelID string,
+	accounts []Account,
+	compositeRoutes []CompositeModelRoute,
+	compositeRoutesAvailable bool,
+) bool {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return false
+	}
+	upstreamModel := modelID
+	if platform == PlatformComposite {
+		var resolved bool
+		platform, upstreamModel, resolved = resolveCodexCompositeModelTarget(
+			modelID,
+			accounts,
+			compositeRoutes,
+			compositeRoutesAvailable,
+		)
+		if !resolved {
+			return false
+		}
+	}
+	if platform != PlatformOpenAI {
+		return false
+	}
+
+	candidates := 0
+	for i := range accounts {
+		account := &accounts[i]
+		if account.Platform != platform || !account.IsModelSupported(upstreamModel) {
+			continue
+		}
+		candidates++
+		if !shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 			return false
 		}
 	}
@@ -1577,30 +1643,35 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 		useAPIKeyUpstream:   useAPIKeyUpstream,
 	}
 	if useAPIKeyUpstream {
-		return s.fetchCachedAPIKeyCodexModelsManifest(ctx, request, ifNoneMatch)
+		return s.fetchCachedCodexModelsManifest(ctx, request, s.fetchCodexModelsManifestUpstreamForRequest(request), ifNoneMatch)
 	}
-	manifest, fetchErr := s.fetchCodexModelsManifestUpstream(ctx, request, ifNoneMatch)
-	if !credAccount.IsOpenAIAgentIdentity() || !isAgentIdentityTaskInvalidCodexModelsError(fetchErr) {
-		s.handleCodexModelsManifestAccountAuthError(ctx, account, credAccount, fetchErr)
-		return manifest, fetchErr
-	}
-	expectedTaskID := strings.TrimSpace(credAccount.GetCredential("task_id"))
-	if recoverErr := s.recoverAgentIdentityTask(ctx, credAccount, expectedTaskID); recoverErr != nil {
-		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_AUTH_FAILED", "agent identity task recovery failed: %v", recoverErr)
-	}
-	authHeaders, authErr := s.buildOpenAIAuthenticationHeaders(ctx, credAccount, "")
-	if authErr != nil {
-		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_AUTH_FAILED", "build Codex models authentication after task recovery: %v", authErr)
-	}
-	request.headers.Del("Authorization")
-	request.headers.Del("ChatGPT-Account-ID")
-	for key, values := range authHeaders {
-		for _, value := range values {
-			request.headers.Add(key, value)
+	// OAuth 账号同样经过账号级缓存；闭包保留 agent identity 任务恢复逻辑，
+	// 错误时仍交给 handleCodexModelsManifestAccountAuthError 处理账号状态。
+	oauthFetch := func(fetchCtx context.Context, ifNoneMatch string) (*CodexModelsManifest, error) {
+		manifest, fetchErr := s.fetchCodexModelsManifestUpstream(fetchCtx, request, ifNoneMatch)
+		if !credAccount.IsOpenAIAgentIdentity() || !isAgentIdentityTaskInvalidCodexModelsError(fetchErr) {
+			s.handleCodexModelsManifestAccountAuthError(fetchCtx, account, credAccount, fetchErr)
+			return manifest, fetchErr
 		}
+		expectedTaskID := strings.TrimSpace(credAccount.GetCredential("task_id"))
+		if recoverErr := s.recoverAgentIdentityTask(fetchCtx, credAccount, expectedTaskID); recoverErr != nil {
+			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_AUTH_FAILED", "agent identity task recovery failed: %v", recoverErr)
+		}
+		authHeaders, authErr := s.buildOpenAIAuthenticationHeaders(fetchCtx, credAccount, "")
+		if authErr != nil {
+			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_AUTH_FAILED", "build Codex models authentication after task recovery: %v", authErr)
+		}
+		request.headers.Del("Authorization")
+		request.headers.Del("ChatGPT-Account-ID")
+		for key, values := range authHeaders {
+			for _, value := range values {
+				request.headers.Add(key, value)
+			}
+		}
+		setOpenAIChatGPTAccountHeaders(request.headers, credAccount)
+		return s.fetchCodexModelsManifestUpstream(fetchCtx, request, ifNoneMatch)
 	}
-	setOpenAIChatGPTAccountHeaders(request.headers, credAccount)
-	return s.fetchCodexModelsManifestUpstream(ctx, request, ifNoneMatch)
+	return s.fetchCachedCodexModelsManifest(ctx, request, oauthFetch, ifNoneMatch)
 }
 
 func isAgentIdentityTaskInvalidCodexModelsError(err error) bool {
@@ -1640,7 +1711,7 @@ func (s *OpenAIGatewayService) handleCodexModelsManifestAccountAuthError(ctx con
 	s.handleOpenAIAccountUpstreamError(ctx, account, upstreamErr.statusCode, headers, upstreamErr.body)
 }
 
-func (s *OpenAIGatewayService) fetchCachedAPIKeyCodexModelsManifest(ctx context.Context, request codexModelsManifestRequest, ifNoneMatch string) (*CodexModelsManifest, error) {
+func (s *OpenAIGatewayService) fetchCachedCodexModelsManifest(ctx context.Context, request codexModelsManifestRequest, fetch func(ctx context.Context, ifNoneMatch string) (*CodexModelsManifest, error), ifNoneMatch string) (*CodexModelsManifest, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -1649,7 +1720,7 @@ func (s *OpenAIGatewayService) fetchCachedAPIKeyCodexModelsManifest(ctx context.
 	if state == codexModelsManifestCacheFresh {
 		return codexModelsManifestForClient(manifest, ifNoneMatch), nil
 	}
-	resultCh := s.refreshCachedAPIKeyCodexModelsManifest(cacheKey, request)
+	resultCh := s.refreshCachedCodexModelsManifest(cacheKey, request, fetch)
 	if state == codexModelsManifestCacheStale {
 		return codexModelsManifestForClient(manifest, ifNoneMatch), nil
 	}
@@ -1668,14 +1739,16 @@ func (s *OpenAIGatewayService) fetchCachedAPIKeyCodexModelsManifest(ctx context.
 	}
 }
 
-func (s *OpenAIGatewayService) refreshCachedAPIKeyCodexModelsManifest(cacheKey string, request codexModelsManifestRequest) <-chan singleflight.Result {
+func (s *OpenAIGatewayService) refreshCachedCodexModelsManifest(cacheKey string, request codexModelsManifestRequest, fetch func(ctx context.Context, ifNoneMatch string) (*CodexModelsManifest, error)) <-chan singleflight.Result {
 	return s.codexModelsManifestCache.refresh.DoChan(cacheKey, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), codexModelsManifestRequestTimeout)
+		defer cancel()
 		cached, _ := s.codexModelsManifestCache.get(cacheKey, time.Now())
 		ifNoneMatch := ""
 		if cached != nil {
 			ifNoneMatch = cached.upstreamETag
 		}
-		manifest, err := s.fetchCodexModelsManifestUpstream(context.Background(), request, ifNoneMatch)
+		manifest, err := fetch(ctx, ifNoneMatch)
 		if err != nil {
 			return nil, err
 		}
@@ -1688,6 +1761,12 @@ func (s *OpenAIGatewayService) refreshCachedAPIKeyCodexModelsManifest(cacheKey s
 		}
 		return manifest, nil
 	})
+}
+
+func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstreamForRequest(request codexModelsManifestRequest) func(ctx context.Context, ifNoneMatch string) (*CodexModelsManifest, error) {
+	return func(ctx context.Context, ifNoneMatch string) (*CodexModelsManifest, error) {
+		return s.fetchCodexModelsManifestUpstream(ctx, request, ifNoneMatch)
+	}
 }
 
 func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Context, request codexModelsManifestRequest, ifNoneMatch string) (*CodexModelsManifest, error) {
@@ -1819,14 +1898,12 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 	manifest := &CodexModelsManifest{
 		Body:                         body,
 		ETag:                         etag,
+		upstreamETag:                 etag,
 		upstreamSourceBody:           append([]byte(nil), upstreamBody...),
 		convertedFromOpenAIModelList: convertedFromOpenAIModelList,
 	}
-	if request.useAPIKeyUpstream {
-		manifest.upstreamETag = etag
-		if !bytes.Equal(body, upstreamBody) {
-			manifest.ETag = codexModelsManifestBodyETag(body)
-		}
+	if request.useAPIKeyUpstream && !bytes.Equal(body, upstreamBody) {
+		manifest.ETag = codexModelsManifestBodyETag(body)
 	}
 	return manifest, nil
 }
@@ -1949,7 +2026,13 @@ func convertOpenAIModelListToCodexManifestForAccount(body []byte, account *Accou
 			imageInputModels[modelID] = true
 		}
 	}
-	converted, err := buildCodexModelsManifest(modelIDs, imageInputModels, nil, nil)
+	searchToolModels := make(map[string]bool, len(modelIDs))
+	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
+		for _, modelID := range modelIDs {
+			searchToolModels[modelID] = true
+		}
+	}
+	converted, err := buildCodexModelsManifest(modelIDs, imageInputModels, searchToolModels, nil, nil)
 	if err != nil {
 		return body
 	}
@@ -2151,6 +2234,7 @@ func completeAPIKeyCodexModelsManifestMetadata(body []byte, completeAll bool, ac
 		}
 
 		descriptor := newConfiguredCodexModelDescriptor(slug)
+		descriptor.SupportsSearchTool = shouldForwardOpenAIResponsesViaRawChatCompletions(account)
 		if accountCodexModelSupportsImageInput(account, slug) {
 			descriptor.InputModalities = []string{"text", "image"}
 		}
