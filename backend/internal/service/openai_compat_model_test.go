@@ -494,6 +494,66 @@ func TestForwardAsAnthropic_AutoDerivesPromptCacheKeyWhenMessagesDispatchHasNoSe
 	require.Equal(t, generateSessionUUID(isolateOpenAISessionID(0, cacheKey)), upstream.lastReq.Header.Get("session_id"))
 }
 
+func TestForwardAsAnthropic_GPT6AstraPromptCacheIdentityStableAcrossAppendedTurns(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	for _, mappedModel := range []string{"gpt-6-astra", "gpt-6"} {
+		mappedModel := mappedModel
+		t.Run(mappedModel, func(t *testing.T) {
+			t.Parallel()
+
+			upstream := &httpUpstreamRecorder{responses: []*http.Response{
+				openAICompatSSECompletedResponse("resp_gpt6_first", mappedModel),
+				openAICompatSSECompletedResponse("resp_gpt6_second", mappedModel),
+			}}
+			svc := &OpenAIGatewayService{
+				httpUpstream: upstream,
+				cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+			}
+			account := &Account{
+				ID:          6615,
+				Name:        "openai-apikey",
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":  "sk-test",
+					"base_url": "https://api.openai.com/v1",
+				},
+			}
+
+			bodies := [][]byte{
+				[]byte(`{"model":"claude-sonnet-4-5","max_tokens":16,"system":"You are helpful.","messages":[{"role":"user","content":"Inspect the repository"}],"stream":false}`),
+				[]byte(`{"model":"claude-sonnet-4-5","max_tokens":16,"system":"You are helpful.","messages":[{"role":"user","content":"Inspect the repository"},{"role":"assistant","content":"Done."},{"role":"user","content":"Run the tests"}],"stream":false}`),
+			}
+			for _, body := range bodies {
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+				c.Request.Header.Set("Content-Type", "application/json")
+
+				result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", mappedModel)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+			}
+
+			require.Len(t, upstream.bodies, 2)
+			require.Len(t, upstream.requests, 2)
+			require.Equal(t, mappedModel, gjson.GetBytes(upstream.bodies[0], "model").String())
+			require.Equal(t, mappedModel, gjson.GetBytes(upstream.bodies[1], "model").String())
+			firstCacheKey := gjson.GetBytes(upstream.bodies[0], "prompt_cache_key").String()
+			secondCacheKey := gjson.GetBytes(upstream.bodies[1], "prompt_cache_key").String()
+			require.NotEmpty(t, firstCacheKey)
+			require.Equal(t, firstCacheKey, secondCacheKey)
+			firstSessionID := upstream.requests[0].Header.Get("session_id")
+			secondSessionID := upstream.requests[1].Header.Get("session_id")
+			require.NotEmpty(t, firstSessionID)
+			require.Equal(t, firstSessionID, secondSessionID)
+		})
+	}
+}
+
 func TestForwardAsAnthropic_DoesNotAutoDerivePromptCacheKeyForNonCodexModel(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
