@@ -516,15 +516,13 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 
 func configuredCodexSupportsPriorityServiceTier(modelID string) bool {
 	normalized := canonicalizeOpenAIModelAliasSpelling(modelID)
-	if isOpenAIGPT6AstraModel(normalized) {
-		return true
-	}
 	for _, family := range []string{"gpt-5.4", "gpt-5.5", "gpt-5.6"} {
 		if normalized == family || strings.HasPrefix(normalized, family+"-") {
 			return true
 		}
 	}
-	return false
+	// GPT-6 Astra advertises Fast via service_tier=priority in public model metadata.
+	return isOpenAIGPT6AstraModel(modelID)
 }
 
 func configuredCodexGrokReasoningLevels(modelID string) []configuredCodexReasoningLevel {
@@ -583,7 +581,7 @@ func configuredCodexGPTReasoningLevels(modelID string) []configuredCodexReasonin
 		{Effort: "xhigh", Description: "Extra-high reasoning depth for difficult tasks"},
 	}
 	normalized := getNormalizedCodexModel(modelID)
-	if isOpenAIGPT6AstraModel(modelID) || isOpenAIGPT56Model(modelID) {
+	if isOpenAIGPT56Model(modelID) || isOpenAIGPT6AstraModel(modelID) {
 		levels = append(levels, configuredCodexReasoningLevel{
 			Effort:      "max",
 			Description: "Maximum reasoning depth for complex tasks",
