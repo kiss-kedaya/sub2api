@@ -26,6 +26,9 @@ type stubAdminService struct {
 	createdAccounts                     []*service.CreateAccountInput
 	createdGroups                       []*service.CreateGroupInput
 	updatedGroups                       []*service.UpdateGroupInput
+	deletedGroupIDs                     []int64
+	guardedDeletedGroupIDs              []int64
+	deleteGroupIfEmptyErr               error
 	advancedGroupOperationCalls         int
 	lastListGroupsIsExclusive           *bool
 	createdProxies                      []*service.CreateProxyInput
@@ -385,7 +388,13 @@ func (s *stubAdminService) UpdateGroup(ctx context.Context, id int64, input *ser
 }
 
 func (s *stubAdminService) DeleteGroup(ctx context.Context, id int64) error {
+	s.deletedGroupIDs = append(s.deletedGroupIDs, id)
 	return nil
+}
+
+func (s *stubAdminService) DeleteGroupIfEmpty(ctx context.Context, id int64) error {
+	s.guardedDeletedGroupIDs = append(s.guardedDeletedGroupIDs, id)
+	return s.deleteGroupIfEmptyErr
 }
 
 func (s *stubAdminService) GetGroupAPIKeys(ctx context.Context, groupID int64, page, pageSize int) ([]service.APIKey, int64, error) {

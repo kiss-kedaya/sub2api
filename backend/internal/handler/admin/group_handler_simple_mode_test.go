@@ -106,6 +106,31 @@ func TestGroupHandlerSimpleModeRejectsCompositeBeforeService(t *testing.T) {
 	require.Empty(t, svc.createdGroups)
 }
 
+func TestGroupHandlerSimpleModeDeleteRejectsNonEmptyGroupBeforeCascade(t *testing.T) {
+	svc := newStubAdminService()
+	svc.deleteGroupIfEmptyErr = service.ErrGroupNotEmpty
+	r := newSimpleModeGroupRouter(svc)
+	res := httptest.NewRecorder()
+
+	r.ServeHTTP(res, httptest.NewRequest(http.MethodDelete, "/groups/7", nil))
+
+	require.Equal(t, http.StatusConflict, res.Code)
+	require.Equal(t, []int64{7}, svc.guardedDeletedGroupIDs)
+	require.Empty(t, svc.deletedGroupIDs)
+}
+
+func TestGroupHandlerSimpleModeDeletePermitsEmptyGroup(t *testing.T) {
+	svc := newStubAdminService()
+	r := newSimpleModeGroupRouter(svc)
+	res := httptest.NewRecorder()
+
+	r.ServeHTTP(res, httptest.NewRequest(http.MethodDelete, "/groups/8", nil))
+
+	require.Equal(t, http.StatusOK, res.Code)
+	require.Equal(t, []int64{8}, svc.guardedDeletedGroupIDs)
+	require.Empty(t, svc.deletedGroupIDs)
+}
+
 func TestGroupHandlerSimpleModeIgnoresExclusiveFilter(t *testing.T) {
 	svc := newStubAdminService()
 	r := newSimpleModeGroupRouter(svc)

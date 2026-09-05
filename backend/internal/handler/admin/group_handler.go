@@ -889,7 +889,11 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	err = h.adminService.DeleteGroup(c.Request.Context(), groupID)
+	if h.isSimpleMode() {
+		err = h.adminService.DeleteGroupIfEmpty(c.Request.Context(), groupID)
+	} else {
+		err = h.adminService.DeleteGroup(c.Request.Context(), groupID)
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
