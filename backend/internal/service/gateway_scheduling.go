@@ -1462,6 +1462,28 @@ func (s *GatewayService) checkAndRegisterSession(ctx context.Context, account *A
 	return allowed
 }
 
+// ReleaseAccountSession 立即释放会话槽（不等待空闲超时）
+// 供 handler 在请求最终失败（选号成功但转发失败/客户端中断）时调用：
+// 上游从未真正服务该会话，若继续占槽，max_sessions 受限的账号会被失败请求的
+// session hash 卡满整个空闲窗口，后续新会话全部被拒。
+// 适用条件与 checkAndRegisterSession 对齐；不适用账号为 no-op，幂等可安全重复调用。
+func (s *GatewayService) ReleaseAccountSession(ctx context.Context, account *Account, sessionID string) {
+	if s == nil || s.sessionLimitCache == nil || account == nil || sessionID == "" {
+		return
+	}
+	if !account.IsAnthropicOAuthOrSetupToken() {
+		return
+	}
+	if account.GetMaxSessions() <= 0 {
+		return
+	}
+	if err := s.sessionLimitCache.UnregisterSession(ctx, account.ID, sessionID); err != nil {
+		slog.Debug("session_limit.release_failed",
+			"account_id", account.ID,
+			"error", err)
+	}
+}
+
 func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
 	var (
 		account *Account
