@@ -135,7 +135,7 @@ func TestBuildOAuthRequest_BillingMatchesWireUserAgent(t *testing.T) {
 						body, "test-token", "oauth", "claude-haiku-4-5", tc.mimic)
 				}
 				require.NoError(t, err)
-				defer req.Body.Close()
+				defer func() { require.NoError(t, req.Body.Close()) }()
 				wantUA := cachedUA
 				if tc.mimic {
 					wantUA = claude.DefaultHeaders["User-Agent"]
