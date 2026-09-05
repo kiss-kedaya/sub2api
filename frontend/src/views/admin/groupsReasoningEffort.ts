@@ -12,6 +12,10 @@ const openAIReasoningEffortValues = [
   "xhigh",
   "max",
 ] as const;
+const openAIReasoningEffortSourceValues = [
+  "none",
+  ...openAIReasoningEffortValues,
+] as const;
 
 const reasoningEffortMatchTypes: readonly ReasoningEffortMatchType[] = [
   "exact",
@@ -42,6 +46,15 @@ export function reasoningEffortOptionsForPlatform(platform: GroupPlatform) {
   }));
 }
 
+export function reasoningEffortSourceOptionsForPlatform(
+  platform: GroupPlatform,
+) {
+  return (supportsReasoningEffortPolicyPlatform(platform)
+    ? openAIReasoningEffortSourceValues
+    : []
+  ).map((value) => ({ value, label: value }));
+}
+
 export function normalizeReasoningEffortForPlatform(
   platform: GroupPlatform,
   value: string | null | undefined,
@@ -52,6 +65,17 @@ export function normalizeReasoningEffortForPlatform(
   )
     ? normalized
     : "";
+}
+
+export function normalizeReasoningEffortSourceForPlatform(
+  platform: GroupPlatform,
+  value: string | null | undefined,
+): string {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return supportsReasoningEffortPolicyPlatform(platform) &&
+    normalized === "none"
+    ? "none"
+    : normalizeReasoningEffortForPlatform(platform, value);
 }
 
 export function normalizeReasoningEffortMatchType(
@@ -154,7 +178,10 @@ export function reasoningEffortMappingsToRows(
   const indexByScope = new Map<string, number>();
 
   (mappings ?? []).forEach((mapping) => {
-    const from = normalizeReasoningEffortForPlatform(platform, mapping.from);
+    const from = normalizeReasoningEffortSourceForPlatform(
+      platform,
+      mapping.from,
+    );
     const to = normalizeReasoningEffortForPlatform(platform, mapping.to);
     if (!from || !to) return;
 
@@ -225,7 +252,7 @@ export function validateReasoningEffortMappings(
       const to = pair.to.trim();
       if (!from) {
         errors[pair.id] = { ...errors[pair.id], from: "fromRequired" };
-      } else if (!normalizeReasoningEffortForPlatform(platform, from)) {
+      } else if (!normalizeReasoningEffortSourceForPlatform(platform, from)) {
         errors[pair.id] = { ...errors[pair.id], from: "unsupportedFrom" };
       } else {
         const key = `${scope}\0${from.toLowerCase()}`;
