@@ -767,7 +767,9 @@ export default {
       syncUpstreamModelsFailed: 'Failed to sync upstream models',
       syncUpstreamModelsError: 'Failed to sync upstream models: {message}',
       syncUpstreamModelsMetadataIncomplete:
-        'Model IDs were synced, but capability metadata is incomplete and was not updated.',
+        'Model IDs were synced, but no capability metadata could be updated.',
+      syncUpstreamModelsMetadataPartial:
+        'Some model capabilities were updated; remaining models are still incomplete.',
       clearAllModels: 'Clear all models',
       customModelName: 'Custom model name',
       enterCustomModelName: 'Enter custom model name',
