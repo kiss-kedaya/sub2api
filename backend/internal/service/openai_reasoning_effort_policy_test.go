@@ -152,10 +152,18 @@ func TestNormalizeReasoningEffortMappings(t *testing.T) {
 			require.ErrorContains(t, err, "only supported for platforms \"openai\" and \"composite\"")
 		}
 
-		_, err := NormalizeReasoningEffortMappings(PlatformOpenAI, []ReasoningEffortMapping{{From: "none", To: "low"}})
+		_, err := NormalizeReasoningEffortMappings(PlatformOpenAI, []ReasoningEffortMapping{{From: "ultra", To: "high"}})
 		require.ErrorContains(t, err, "empty or unknown")
+	})
 
-		_, err = NormalizeReasoningEffortMappings(PlatformOpenAI, []ReasoningEffortMapping{{From: "ultra", To: "high"}})
+	t.Run("allows none only as a source for OpenAI routes", func(t *testing.T) {
+		for _, platform := range []string{PlatformOpenAI, PlatformComposite} {
+			got, err := NormalizeReasoningEffortMappings(platform, []ReasoningEffortMapping{{From: " NONE ", To: "low"}})
+			require.NoError(t, err)
+			require.Equal(t, []ReasoningEffortMapping{{From: "none", To: "low"}}, got)
+		}
+
+		_, err := NormalizeReasoningEffortMappings(PlatformOpenAI, []ReasoningEffortMapping{{From: "low", To: "none"}})
 		require.ErrorContains(t, err, "empty or unknown")
 	})
 }
@@ -252,6 +260,15 @@ func TestApplyOpenAIReasoningEffortPolicy(t *testing.T) {
 		{name: "caps both shapes", body: `{"reasoning":{"effort":"high"},"reasoning_effort":"xhigh"}`, max: "low", path: "reasoning.effort", want: "low", changed: true},
 		{name: "maps before cap", body: `{"reasoning":{"effort":"MAX"}}`, max: "medium", mappings: []ReasoningEffortMapping{{From: "max", To: "xhigh"}}, path: "reasoning.effort", want: "medium", changed: true},
 		{name: "does not chain mappings", body: `{"reasoning_effort":"max"}`, mappings: []ReasoningEffortMapping{{From: "max", To: "xhigh"}, {From: "xhigh", To: "low"}}, path: "reasoning_effort", want: "xhigh", changed: true},
+		{name: "maps nested none", body: `{"reasoning":{"effort":"none"}}`, mappings: []ReasoningEffortMapping{{From: "none", To: "low"}}, path: "reasoning.effort", want: "low", changed: true},
+		{name: "maps flat none", body: `{"reasoning_effort":"none"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "low"}}, path: "reasoning_effort", want: "low", changed: true},
+		{name: "none mapping runs before cap", body: `{"reasoning_effort":"none"}`, max: "low", mappings: []ReasoningEffortMapping{{From: "none", To: "high"}}, path: "reasoning_effort", want: "low", changed: true},
+		{name: "keeps none byte for byte without mappings", body: `{ "reasoning_effort": " none " }`, max: "low", path: "reasoning_effort", want: " none ", changed: false},
+		{name: "keeps none byte for byte when scope does not match", body: `{ "model":"o3", "reasoning_effort":"none" }`, mappings: []ReasoningEffortMapping{{From: "none", To: "low", MatchType: domain.ReasoningEffortMatchExact, Model: "gpt-5"}}, path: "reasoning_effort", want: "none", changed: false},
+		{name: "exact scope maps none", body: `{"model":"gpt-5","reasoning_effort":"none"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "low", MatchType: domain.ReasoningEffortMatchExact, Model: "gpt-5"}}, path: "reasoning_effort", want: "low", changed: true},
+		{name: "prefix scope maps none", body: `{"model":"gpt-5-mini","reasoning_effort":"none"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "low", MatchType: domain.ReasoningEffortMatchPrefix, Model: "gpt-5"}}, path: "reasoning_effort", want: "low", changed: true},
+		{name: "suffix scope maps none", body: `{"model":"gpt-5-mini","reasoning_effort":"none"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "low", MatchType: domain.ReasoningEffortMatchSuffix, Model: "mini"}}, path: "reasoning_effort", want: "low", changed: true},
+		{name: "global scope maps none", body: `{"model":"o3","reasoning_effort":"none"}`, mappings: []ReasoningEffortMapping{{From: "none", To: "low"}}, path: "reasoning_effort", want: "low", changed: true},
 		{name: "keeps unknown without mapping", body: `{"reasoning_effort":"future"}`, max: "low", path: "reasoning_effort", want: "future", changed: false},
 		{name: "keeps non string value", body: `{"reasoning_effort":{"level":"high"}}`, max: "low", path: "reasoning_effort.level", want: "high", changed: false},
 		{
@@ -398,6 +415,9 @@ func TestApplyOpenAIReasoningEffortPolicy(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, tt.changed, changed)
+			if !tt.changed {
+				require.Equal(t, tt.body, string(got))
+			}
 			if tt.path != "" {
 				require.Equal(t, tt.want, gjson.GetBytes(got, tt.path).String())
 			}
