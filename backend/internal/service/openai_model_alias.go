@@ -124,6 +124,14 @@ func isOpenAIGPT56Model(model string) bool {
 	return false
 }
 
+// isOpenAIGPT6AstraModel reports GPT-6 Astra and dated/provider-prefixed variants.
+// Bare "gpt-6" and other future gpt-6-* models are intentionally excluded until
+// their capabilities are confirmed (see #6622).
+func isOpenAIGPT6AstraModel(model string) bool {
+	normalized := canonicalizeOpenAIModelAliasSpelling(model)
+	return normalized == "gpt-6-astra" || strings.HasPrefix(normalized, "gpt-6-astra-")
+}
+
 func appendUsageBillingModelCandidate(candidates []string, seen map[string]struct{}, model string) []string {
 	trimmed := strings.TrimSpace(model)
 	if trimmed == "" {
