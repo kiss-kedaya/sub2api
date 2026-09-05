@@ -545,8 +545,12 @@ func TestSyncUpstreamModelCatalogUsesConfiguredModelsWhenListEndpointUnsupported
 		},
 	}
 
+	account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
+		"old-live-model": {ID: "old-live-model", ContextWindow: 256000},
+	}})
 	catalog, err := svc.SyncUpstreamModelCatalog(context.Background(), account)
 	require.NoError(t, err)
+	require.Contains(t, account.GetUpstreamModelMetadataSnapshot().Models, "old-live-model", "an unavailable model-list endpoint is not evidence of removal")
 	require.Equal(t, []string{"glm-5.3"}, catalog.Models)
 	require.Empty(t, catalog.Warnings)
 	require.Len(t, upstream.requests, 2)
