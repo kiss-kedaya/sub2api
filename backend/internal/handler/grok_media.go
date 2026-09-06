@@ -228,9 +228,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		if failoverClientGone(c) {
 			return
 		}
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
+		selection, scheduleDecision, routedKey, err := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(
 			requestCtx,
-			apiKey.GroupID,
+			apiKey,
 			"",
 			sessionHash,
 			routingModel,
@@ -242,6 +242,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			false,
 			service.PlatformGrok,
 		)
+		if routedKey != nil {
+			apiKey = routedKey
+		}
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("grok_media.account_select_aborted_client_disconnected", zap.Error(err))

@@ -101,8 +101,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 
-	// Claude Code only restriction
-	if apiKey.Group != nil && apiKey.Group.ClaudeCodeOnly {
+	if apiKey.Group != nil && apiKey.Group.ClaudeCodeOnly && len(apiKey.CandidateGroupIDs()) <= 1 {
 		h.chatCompletionsErrorResponse(c, http.StatusForbidden, "permission_error",
 			"This group is restricted to Claude Code clients (/v1/messages only)")
 		return
@@ -202,7 +201,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if c.Request.Context().Err() != nil {
 			return
 		}
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, selectionSessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
+		selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, selectionSessionHash, reqModel, fs.FailedAccountIDs, "", int64(0), groupPlatform)
+		if routedKey != nil {
+			apiKey = routedKey
+		}
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, groupPlatform)
