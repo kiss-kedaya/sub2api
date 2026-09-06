@@ -187,7 +187,7 @@ func (e *EPUSDT) CreatePayment(ctx context.Context, req payment.CreatePaymentReq
 		return nil, err
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"pid":          e.config["pid"],
 		"order_id":     orderID,
 		"currency":     e.config["currency"],
@@ -236,7 +236,7 @@ func (e *EPUSDT) QueryOrder(ctx context.Context, tradeNo string) (*payment.Query
 		return nil, fmt.Errorf("epusdt query order: %w", err)
 	}
 
-	status := payment.ProviderStatusPending
+	var status payment.ProviderStatus
 	switch data.Status {
 	case 1, 4:
 		status = payment.ProviderStatusPending
@@ -369,7 +369,7 @@ func (e *EPUSDT) doJSON(ctx context.Context, method, path string, payload interf
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	limited := io.LimitReader(resp.Body, epusdtMaxResponseSize+1)
 	data, err := io.ReadAll(limited)

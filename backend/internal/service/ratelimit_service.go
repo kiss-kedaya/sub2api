@@ -2243,8 +2243,9 @@ func (s *RateLimitService) HandleOpenAICodexSparkRateLimit(ctx context.Context, 
 		return false
 	}
 	now := time.Now()
-	_, resetAt := classifyOpenAIOAuth429(headers, responseBody)
-	if resetAt == nil || !resetAt.After(now) {
+	disposition, resetAt := classifyOpenAIOAuth429(headers, responseBody)
+	useQuotaWindow := disposition == openAIOAuth429Quota5h || disposition == openAIOAuth429Quota7d
+	if !useQuotaWindow || resetAt == nil || !resetAt.After(now) {
 		cooldown, ok := s.get429FallbackCooldown(ctx, account)
 		if !ok || cooldown <= 0 {
 			cooldown = time.Duration(defaultRateLimit429CooldownSeconds) * time.Second

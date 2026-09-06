@@ -172,7 +172,7 @@ func (r *usageLogRepository) queryRollupMetrics(ctx context.Context, start, end 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	metrics := make([]dashboardRollupMetric, 0)
 	for rows.Next() {
 		var m dashboardRollupMetric
@@ -383,7 +383,7 @@ func (r *usageLogRepository) populateUserNames(ctx context.Context, values any) 
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	names := make(map[int64][2]string)
 	for rows.Next() {
 		var id int64
@@ -420,7 +420,7 @@ func (r *usageLogRepository) getUserUsageTrendRawAll(ctx context.Context, startT
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]UserUsageTrendPoint, 0)
 	for rows.Next() {
 		var p UserUsageTrendPoint

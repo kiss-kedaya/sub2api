@@ -19,7 +19,7 @@ func TestCheckMigrationsNilDB(t *testing.T) {
 func TestCheckMigrationsFSCurrentAndAllowsHistoricalRows(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	first := "CREATE TABLE first_table(id bigint);"
 	second := "ALTER TABLE first_table ADD COLUMN name text;"
@@ -41,7 +41,7 @@ func TestCheckMigrationsFSCurrentAndAllowsHistoricalRows(t *testing.T) {
 func TestCheckMigrationsFSPendingFailsClosed(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	first := "SELECT 1;"
 	mock.ExpectQuery("SELECT filename, checksum FROM schema_migrations").
@@ -61,7 +61,7 @@ func TestCheckMigrationsFSPendingFailsClosed(t *testing.T) {
 func TestCheckMigrationsFSChecksumMismatchFailsClosed(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery("SELECT filename, checksum FROM schema_migrations").
 		WillReturnRows(sqlmock.NewRows([]string{"filename", "checksum"}).
@@ -78,7 +78,7 @@ func TestCheckMigrationsFSChecksumMismatchFailsClosed(t *testing.T) {
 func TestCheckMigrationsFSHistoryReadFailure(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery("SELECT filename, checksum FROM schema_migrations").
 		WillReturnError(errors.New("relation does not exist"))
