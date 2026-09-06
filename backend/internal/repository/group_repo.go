@@ -875,6 +875,10 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 		}
 	}
 
+	if _, err := exec.ExecContext(ctx, "DELETE FROM api_key_group_routes WHERE group_id = $1", id); err != nil && !isMissingRelationError(err) {
+		return nil, err
+	}
+
 	// 2. Remove the group id from user_allowed_groups join table.
 	// Legacy users.allowed_groups 列已弃用，不再同步。
 	if _, err := exec.ExecContext(ctx, "DELETE FROM user_allowed_groups WHERE group_id = $1", id); err != nil {

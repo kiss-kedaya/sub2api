@@ -140,9 +140,13 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 
 	// First attempt + up to 3 failover accounts (max 4 total).
 	for attempt := 0; attempt < 4; attempt++ {
-		selected, selectErr := h.gatewayService.SelectAccountWithLoadAwareness(
-			c.Request.Context(), groupID, "", searchModel, failedAccounts, "", 0,
+		selected, routedKey, selectErr := h.gatewayService.SelectAccountAlongKeyRoutes(
+			c.Request.Context(), apiKey, "", searchModel, failedAccounts, "", 0, service.PlatformFromAPIKey(apiKey),
 		)
+		if routedKey != nil {
+			apiKey = routedKey
+			groupID = routedKey.GroupID
+		}
 		if selectErr != nil {
 			if attempt == 0 {
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
