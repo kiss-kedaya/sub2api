@@ -1,6 +1,18 @@
 # 本地杂项文档、测试数据和外部项目副本
 /docs-local/
 .codex
+.artifacts/
+
+# 会话/本地规划文件，不进仓库
+findings.md
+progress.md
+task_plan.md
+HANDOFF_*.md
+LOCAL_HANDOFF_CONTEXT.md
+
+# 本地编译出来的发行包
+backend/dist/
+backend/backend/
 
 # ===================
 # Go 后端
