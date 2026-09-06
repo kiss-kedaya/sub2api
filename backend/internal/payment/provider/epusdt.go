@@ -275,12 +275,12 @@ func (e *EPUSDT) VerifyNotification(_ context.Context, rawBody string, _ map[str
 		return nil, fmt.Errorf("epusdt webhook: pid mismatch")
 	}
 
-	values := make(map[string]interface{}, len(raw))
+	values := make(map[string]any, len(raw))
 	for key, value := range raw {
 		if key == "signature" {
 			continue
 		}
-		var decoded interface{}
+		var decoded any
 		fieldDecoder := json.NewDecoder(bytes.NewReader(value))
 		fieldDecoder.UseNumber()
 		if err := fieldDecoder.Decode(&decoded); err != nil {
@@ -348,7 +348,7 @@ func (e *EPUSDT) normalizePaymentURL(raw string) (string, error) {
 	return parsed.String(), nil
 }
 
-func (e *EPUSDT) doJSON(ctx context.Context, method, path string, payload interface{}, out interface{}) error {
+func (e *EPUSDT) doJSON(ctx context.Context, method, path string, payload any, out any) error {
 	var body io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
@@ -399,7 +399,7 @@ func (e *EPUSDT) doJSON(ctx context.Context, method, path string, payload interf
 	return nil
 }
 
-func epusdtSign(values map[string]interface{}, secret string) string {
+func epusdtSign(values map[string]any, secret string) string {
 	keys := make([]string, 0, len(values))
 	for key, value := range values {
 		if key == "signature" || value == nil {
@@ -423,7 +423,7 @@ func epusdtSign(values map[string]interface{}, secret string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func epusdtValue(value interface{}) (string, bool) {
+func epusdtValue(value any) (string, bool) {
 	switch typed := value.(type) {
 	case string:
 		return typed, true
