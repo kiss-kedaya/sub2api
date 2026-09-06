@@ -15,7 +15,7 @@ import (
 func TestGetUserDashboardStatsUsesHourlyUsersNotFullTable(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := newUsageLogRepositoryWithSQL(nil, db)
 	userID := int64(42)
@@ -62,7 +62,7 @@ func TestGetUserDashboardStatsUsesHourlyUsersNotFullTable(t *testing.T) {
 func TestGetUserDashboardStatsFallsBackToWindowedUsageLogs(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := newUsageLogRepositoryWithSQL(nil, db)
 	userID := int64(7)
@@ -111,7 +111,7 @@ func TestGetUserDashboardStatsFallsBackToWindowedUsageLogs(t *testing.T) {
 func TestGetUserDashboardStatsIgnoresZeroUsageHourlyRows(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := newUsageLogRepositoryWithSQL(nil, db)
 	userID := int64(11)
@@ -159,7 +159,7 @@ func TestGetUserDashboardStatsIgnoresZeroUsageHourlyRows(t *testing.T) {
 func TestGetAPIKeyDashboardStatsUsesCreatedAtWindow(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := newUsageLogRepositoryWithSQL(nil, db)
 	apiKeyID := int64(9)
@@ -186,7 +186,7 @@ func TestGetAPIKeyDashboardStatsUsesCreatedAtWindow(t *testing.T) {
 func TestFillDashboardUsageStatsFromHourlyUsesRollupThenTail(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	repo := newUsageLogRepositoryWithSQL(nil, db)
 	now := time.Date(2026, 9, 6, 12, 30, 0, 0, time.UTC)
