@@ -102,25 +102,6 @@ func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body [
 	return out, nil
 }
 
-func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body map[string]any) {
-	if body == nil || shouldPreserveOpenAIResponsesNoneReasoningEffort(account) {
-		return
-	}
-	if effort, ok := body["reasoning_effort"].(string); ok && strings.EqualFold(strings.TrimSpace(effort), "none") {
-		delete(body, "reasoning_effort")
-	}
-	reasoning, ok := body["reasoning"].(map[string]any)
-	if !ok {
-		return
-	}
-	if effort, ok := reasoning["effort"].(string); ok && strings.EqualFold(strings.TrimSpace(effort), "none") {
-		delete(reasoning, "effort")
-	}
-	if len(reasoning) == 0 {
-		delete(body, "reasoning")
-	}
-}
-
 // normalizeDeepSeekResponsesRequestBody 适配 DeepSeek 无状态 Responses 端点：
 // 强制 store=false 并清除 previous_response_id（官方 /responses 不支持服务端
 // 状态存储，携带这些字段会被拒绝）。非 deepseek responses 协议账号原样返回。
