@@ -125,6 +125,11 @@ type apiKeyAllByUserIDLister interface {
 	ListAllByUserID(ctx context.Context, userID int64, filters APIKeyListFilters) ([]APIKey, error)
 }
 
+type apiKeyGroupRouteStore interface {
+	ReplaceGroupRoutes(ctx context.Context, apiKeyID int64, groupIDs []int64) error
+	ListGroupRoutes(ctx context.Context, apiKeyIDs []int64) (map[int64][]int64, error)
+}
+
 // APIKeyRateLimitData holds rate limit usage and window state for an API key.
 type APIKeyRateLimitData struct {
 	Usage5h       float64
@@ -211,6 +216,7 @@ type APIKeyAuthCacheInvalidator interface {
 type CreateAPIKeyRequest struct {
 	Name        string   `json:"name"`
 	GroupID     *int64   `json:"group_id"`
+	GroupIDs    []int64  `json:"group_ids"`
 	CustomKey   *string  `json:"custom_key"`   // 可选的自定义key
 	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单
 	IPBlacklist []string `json:"ip_blacklist"` // IP 黑名单
@@ -229,6 +235,7 @@ type CreateAPIKeyRequest struct {
 type UpdateAPIKeyRequest struct {
 	Name        *string   `json:"name"`
 	GroupID     *int64    `json:"group_id"`
+	GroupIDs    *[]int64  `json:"group_ids"`
 	Status      *string   `json:"status"`
 	IPWhitelist *[]string `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
 	IPBlacklist *[]string `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
@@ -495,18 +502,11 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
-	// 验证分组权限（如果指定了分组）
-	if req.GroupID != nil {
-		group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
-		if err != nil {
-			return nil, fmt.Errorf("get group: %w", err)
-		}
-
-		// 检查用户是否可以绑定该分组
-		if !s.canUserBindGroup(ctx, user, group) {
-			return nil, ErrGroupNotAllowed
-		}
+	routeIDs, primaryGroupID, err := s.validateAPIKeyGroupRoutes(ctx, user, req.GroupID, req.GroupIDs)
+	if err != nil {
+		return nil, err
 	}
+	req.GroupID = primaryGroupID
 
 	var key string
 
@@ -568,6 +568,13 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 	if err := s.apiKeyRepo.Create(ctx, apiKey); err != nil {
 		return nil, fmt.Errorf("create api key: %w", err)
 	}
+	if err := s.replaceAPIKeyGroupRoutes(ctx, apiKey.ID, routeIDs); err != nil {
+		if delErr := s.apiKeyRepo.DeleteWithAudit(ctx, apiKey.ID); delErr != nil {
+			return nil, fmt.Errorf("%w (also failed to roll back created api key: %v)", err, delErr)
+		}
+		return nil, err
+	}
+	apiKey.RouteGroupIDs = persistedRouteGroupIDs(routeIDs)
 
 	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	s.compileAPIKeyIPRules(apiKey)
@@ -807,24 +814,30 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		fields.Name = true
 	}
 
-	if req.GroupID != nil {
-		// 验证分组权限
+	if req.GroupID != nil || req.GroupIDs != nil {
 		user, err := s.userRepo.GetByID(ctx, userID)
 		if err != nil {
 			return nil, fmt.Errorf("get user: %w", err)
 		}
-
-		group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
+		if req.GroupIDs == nil && len(apiKey.RouteGroupIDs) > 1 {
+			return nil, infraerrors.BadRequest("API_KEY_SMART_ROUTES_REQUIRE_GROUP_IDS", "smart-routing keys require group_ids to change groups")
+		}
+		incomingIDs := []int64(nil)
+		if req.GroupIDs != nil {
+			incomingIDs = *req.GroupIDs
+		}
+		routeIDs, primaryGroupID, err := s.validateAPIKeyGroupRoutes(ctx, user, req.GroupID, incomingIDs)
 		if err != nil {
-			return nil, fmt.Errorf("get group: %w", err)
+			return nil, err
 		}
-
-		if !s.canUserBindGroup(ctx, user, group) {
-			return nil, ErrGroupNotAllowed
+		if primaryGroupID != nil {
+			apiKey.GroupID = primaryGroupID
+			fields.GroupID = true
 		}
-
-		apiKey.GroupID = req.GroupID
-		fields.GroupID = true
+		if err := s.replaceAPIKeyGroupRoutes(ctx, apiKey.ID, routeIDs); err != nil {
+			return nil, err
+		}
+		apiKey.RouteGroupIDs = persistedRouteGroupIDs(routeIDs)
 	}
 
 	if req.Status != nil {
@@ -909,6 +922,7 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	}
 
 	if err := s.apiKeyRepo.Update(ctx, apiKey, fields); err != nil {
+		s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
 
