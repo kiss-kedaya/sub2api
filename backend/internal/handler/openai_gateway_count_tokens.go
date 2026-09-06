@@ -97,7 +97,6 @@ func (h *OpenAIGatewayHandler) ResponsesInputTokens(c *gin.Context) {
 		"object":       "response.input_tokens",
 		"input_tokens": estimated,
 	})
-	return
 }
 
 // GrokCountTokens handles Anthropic-compatible count_tokens requests locally.

@@ -2995,7 +2995,13 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	apiKey := &service.APIKey{
 		ID:      1801,
 		GroupID: &groupID,
-		User:    &service.User{ID: 1701, Status: service.StatusActive},
+		Group: &service.Group{
+			ID:       groupID,
+			Name:     "openai-ws-e2e-group",
+			Platform: service.PlatformOpenAI,
+			Status:   service.StatusActive,
+		},
+		User: &service.User{ID: 1701, Status: service.StatusActive},
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

@@ -145,7 +145,6 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		)
 		if routedKey != nil {
 			apiKey = routedKey
-			groupID = routedKey.GroupID
 		}
 		if selectErr != nil {
 			if attempt == 0 {
