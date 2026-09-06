@@ -4,6 +4,7 @@
 .artifacts/
 
 # 会话/本地规划文件，不进仓库
+plan.md
 findings.md
 progress.md
 task_plan.md
