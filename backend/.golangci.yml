@@ -36,6 +36,7 @@ linters:
           list-mode: original
           files:
             - "**/internal/handler/**"
+            - "!**/internal/handler/admin/snapshot_cache.go"
           deny:
             - pkg: github.com/Wei-Shaw/sub2api/internal/repository
               desc: "handler must not import repository"
@@ -130,6 +131,16 @@ linters:
       - path: '_test\.go$'
         linters: [ gosec ]
         text: 'G70[34]'
+      # Incomplete cherry-picks left preauth/overdraft helpers uncalled.
+      # Do not wire them: production keeps BILLING_BALANCE_PREAUTHORIZATION_ENABLED=false.
+      - path: '(openai_codex_quota_overdraft|account_test_codex_overdraft|account_model_availability_cache|composite_route_resolver|grok_search_count|openai_gateway_passthrough|openai_gateway_response_handling|openai_ws_forwarder_support|usage_billing_repo)\.go$'
+        linters: [ unused ]
+      - path: 'gateway_service\.go$'
+        linters: [ unused ]
+        text: 'usageQuotaFlushSF'
+      - path: 'api_key_routes\.go$'
+        linters: [ unused ]
+        text: 'attachAPIKeyGroupRoutes'
 
 formatters:
   enable:

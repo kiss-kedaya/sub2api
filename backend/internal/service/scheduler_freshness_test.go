@@ -255,7 +255,11 @@ func TestSchedulerHydratedAccount_ReusesPrivateSnapshotCopyWithinRequest(t *test
 	}
 	rememberSchedulerHydratedAccount(ctx, original)
 	original.Credentials["token"] = "mutated-after-store"
-	original.Extra["nested"].(map[string]any)["enabled"] = false
+	nestedExtra, ok := original.Extra["nested"].(map[string]any)
+	if !ok {
+		t.Fatal("nested extra is not a map")
+	}
+	nestedExtra["enabled"] = false
 
 	first, ok := schedulerHydratedAccount(ctx, original.ID)
 	if !ok || first == nil {
@@ -264,7 +268,10 @@ func TestSchedulerHydratedAccount_ReusesPrivateSnapshotCopyWithinRequest(t *test
 	if got := first.Credentials["token"]; got != "secret" {
 		t.Fatalf("cached credentials token = %v, want secret", got)
 	}
-	nested := first.Extra["nested"].(map[string]any)
+	nested, ok := first.Extra["nested"].(map[string]any)
+	if !ok {
+		t.Fatal("cached nested extra is not a map")
+	}
 	if got := nested["enabled"]; got != true {
 		t.Fatalf("cached nested extra = %v, want true", got)
 	}

@@ -1658,15 +1658,16 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 			ctx = c.Request.Context()
 		}
 		accountHeaders := headers
-		if statusCode == http.StatusTooManyRequests {
-			// The enclosing HTTP response succeeded. Its quota snapshot describes
-			// normal account state and must not become the reset for a semantic 429
-			// carried by a stream terminal event.
-			accountHeaders = nil
-		}
 		model := firstNonEmpty(canonicalModel...)
 		if model == "" {
 			model = firstNonEmpty(gjson.GetBytes(payload, "model").String(), gjson.GetBytes(payload, "response.model").String())
+		}
+		if statusCode == http.StatusTooManyRequests && !isCodexSparkModel(model) {
+			// The enclosing HTTP response succeeded. Its quota snapshot describes
+			// normal account state and must not become the reset for a semantic 429
+			// carried by a stream terminal event. Spark quota windows are model-
+			// scoped and must keep the Codex percent headers.
+			accountHeaders = nil
 		}
 		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload, model)
 	default:
