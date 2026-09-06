@@ -748,7 +748,8 @@ describe('PaymentView instance recharge terms', () => {
     await flushPromises()
     await flushPromises()
     if (options.amount != null) {
-      ;(wrapper.vm as unknown as { amount: number | null }).amount = options.amount
+      const vm = wrapper.vm as unknown as { amount: number | null }
+      vm.amount = options.amount
       await flushPromises()
     }
     return wrapper
