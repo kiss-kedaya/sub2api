@@ -62,12 +62,6 @@ func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
 	return err != nil && !errors.Is(err, errOpenAIWSUnsupportedModelSwitch) && !service.IsOpenAIWSSessionPreemptedError(err)
 }
 
-<<<<<<< HEAD
-// openAIWSIngressEndedByClient recognizes clean client-side WebSocket
-// termination before account-health attribution.  coder/websocket may return
-// a bare CloseError for a normal close, while a disconnect during a turn is
-// represented by context.Canceled wrapped in a gateway close error.
-=======
 // openAIWSIngressEndedByClient reports whether a finished ingress WebSocket turn
 // ended the way a healthy client ends one, rather than through an upstream or
 // account fault.
@@ -103,7 +97,6 @@ func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
 // context.DeadlineExceeded is left out as well — the idle-timeout path wraps it
 // in a 1000 close error and stays benign through the first check, while any
 // other deadline is a genuine stall worth reporting.
->>>>>>> c83dced4b (fix(openai): 入站 WS 的客户端正常关闭与断开不再计为账号故障)
 func openAIWSIngressEndedByClient(err error) bool {
 	if err == nil {
 		return true
@@ -2742,16 +2735,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				} else {
 					closedFields = append(closedFields, zap.Error(err))
 				}
-<<<<<<< HEAD
-				reqLog.Info("openai.websocket_ingress_closed_normally",
-					closedFields...,
-				)
-=======
 				reqLog.Info("openai.websocket_ingress_closed_normally", closedFields...)
 				// A bare coderws.CloseError or a plain cancellation carries no
 				// gateway-chosen close frame; mirror the client's clean 1000
 				// rather than the 1011 the proxy-failure tail would have sent.
->>>>>>> c83dced4b (fix(openai): 入站 WS 的客户端正常关闭与断开不再计为账号故障)
 				if hasClientCloseErr {
 					closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
 				} else {
