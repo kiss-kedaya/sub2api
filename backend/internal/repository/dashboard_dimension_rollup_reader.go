@@ -640,7 +640,7 @@ func (r *usageLogRepository) populateGroupNames(ctx context.Context, values []us
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	names := make(map[int64]string)
 	for rows.Next() {
 		var id int64
@@ -829,7 +829,7 @@ func (r *usageLogRepository) queryGlobalHourlyMetrics(ctx context.Context, start
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]dashboardRollupMetric, 0)
 	for rows.Next() {
 		var m dashboardRollupMetric
