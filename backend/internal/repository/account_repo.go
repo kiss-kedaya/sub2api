@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -2394,7 +2395,11 @@ func (r *accountRepository) loadModelAvailabilityCandidatesCached(
 		if result.Err != nil {
 			return nil, result.Err
 		}
-		return result.Val.([]service.Account), nil
+		accounts, ok := result.Val.([]service.Account)
+		if !ok {
+			return nil, fmt.Errorf("list model availability candidates: unexpected result type")
+		}
+		return accounts, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

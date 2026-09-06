@@ -22,7 +22,7 @@ func RunConfiguredMigrations(ctx context.Context, cfg *config.Config, validateOn
 		return fmt.Errorf("create database connector: %w", err)
 	}
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	applyDBPoolSettings(db, cfg)
 
 	if err := db.PingContext(ctx); err != nil {
