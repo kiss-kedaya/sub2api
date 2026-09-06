@@ -1555,8 +1555,8 @@ const smartRoutingAddOptions = computed(() => {
   return groupOptions.value.filter((opt) => !selected.has(opt.value))
 })
 
-const addSmartRoute = (value: number | null) => {
-  if (value == null) return
+const addSmartRoute = (value: string | number | boolean | null) => {
+  if (typeof value !== 'number') return
   if (formData.value.group_ids.includes(value)) return
   if (formData.value.group_ids.length >= 10) {
     appStore.showError(t('keys.smartRoutingMax'))
