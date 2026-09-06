@@ -33,9 +33,7 @@ func (s *UserRepoSuite) SetupTest() {
 	// 清理测试数据，确保每个测试从干净状态开始
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM auth_identity_channels")
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM auth_identities")
-	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM user_subscriptions")
-	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM user_allowed_groups")
-	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM users")
+	_, _ = integrationDB.ExecContext(s.ctx, "TRUNCATE TABLE users RESTART IDENTITY CASCADE")
 }
 
 func TestUserRepoSuite(t *testing.T) {
