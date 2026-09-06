@@ -888,6 +888,16 @@ func (s *GatewayService) groupFromContext(ctx context.Context, groupID int64) *G
 // or the scheduler's process-local projection. A cold projection leaves the
 // group unset so this optional filter is skipped instead of blocking the
 // request on PostgreSQL.
+// GroupPolicyForRequest returns the group used for listing and routing policy.
+// Listing callers must not treat this as a billing group: usage is charged
+// against the group selected at request time after hydrateAPIKeyGroup.
+func (s *GatewayService) GroupPolicyForRequest(ctx context.Context, groupID int64) *Group {
+	if groupID <= 0 {
+		return nil
+	}
+	return s.schedulingGroupForRequest(ctx, &groupID)
+}
+
 func (s *GatewayService) schedulingGroupForRequest(ctx context.Context, groupID *int64) *Group {
 	if groupID == nil || *groupID <= 0 {
 		return nil

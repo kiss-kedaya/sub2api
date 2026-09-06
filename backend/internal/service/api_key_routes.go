@@ -38,6 +38,21 @@ func (k *APIKey) CandidateGroupIDs() []int64 {
 	return nil
 }
 
+// UsesRequestTargetPlatform reports whether this key should dispatch and
+// schedule from the requested model rather than the primary group's platform.
+// Composite groups already do this; smart-routing keys with more than one
+// bound group need the same treatment so a later OpenAI group is reachable
+// when the primary group is Claude (and the reverse).
+func (k *APIKey) UsesRequestTargetPlatform() bool {
+	if k == nil {
+		return false
+	}
+	if k.Group != nil && k.Group.Platform == PlatformComposite {
+		return true
+	}
+	return len(k.CandidateGroupIDs()) > 1
+}
+
 func groupAllowsRequestedModel(group *Group, model string) bool {
 	if group == nil {
 		return true

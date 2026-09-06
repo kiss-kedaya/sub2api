@@ -1174,6 +1174,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 // GET /v1/models
 // Returns models based on account configurations (model_mapping whitelist)
 // Falls back to default models if no whitelist is configured
+//
+// Smart-routing keys union models from every bound group. This list is not a
+// billing surface: usage is charged against the group selected at request time.
 func (h *GatewayHandler) Models(c *gin.Context) {
 	// Model-list polling is part of the gateway request surface. Install the
 	// scheduler request mode before the cache lookup so a models-list miss cannot
@@ -1183,48 +1186,32 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	}
 	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
 
-	var groupID *int64
-	var platform string
-
-	if apiKey != nil && apiKey.Group != nil {
-		groupID = &apiKey.Group.ID
-		platform = apiKey.Group.Platform
+	forcedPlatform := ""
+	if platform, ok := middleware2.GetForcePlatformFromContext(c); ok {
+		forcedPlatform = strings.TrimSpace(platform)
 	}
-	if forcedPlatform, ok := middleware2.GetForcePlatformFromContext(c); ok && strings.TrimSpace(forcedPlatform) != "" {
-		platform = forcedPlatform
+	responsePlatform := forcedPlatform
+	if responsePlatform == "" && apiKey != nil && apiKey.Group != nil {
+		responsePlatform = apiKey.Group.Platform
 	}
 
-	if platform == service.PlatformComposite {
-		availableModels := h.compositeAvailableModels(c.Request.Context(), groupID)
-		if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
-			availableModels = filterModelsByCustomList(availableModels, defaultModelIDsForPlatform(service.PlatformComposite), apiKey.Group.ModelsListConfig.Models)
-			writeCustomModelsList(c, service.PlatformComposite, availableModels)
-			return
-		}
-		if len(availableModels) > 0 {
-			writeModelsList(c, service.PlatformComposite, availableModels)
-			return
-		}
-		writeModelsList(c, service.PlatformComposite, defaultModelIDsForPlatform(service.PlatformComposite))
-		return
-	}
+	availableModels := h.availableModelsForAPIKey(c.Request.Context(), apiKey, forcedPlatform)
 
-	// Get available models from account configurations for the selected group platform.
-	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
+	// Custom list on the primary group only changes the OpenAI/Claude wire
+	// shape. Filtering already happened per bound group so a later group's
+	// models are not re-filtered by the first group's whitelist.
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
-		fallbackModels := defaultModelIDsForPlatform(platform)
-		availableModels = filterModelsByCustomList(customModelsListSource(platform, availableModels, fallbackModels), fallbackModels, apiKey.Group.ModelsListConfig.Models)
-		writeCustomModelsList(c, platform, availableModels)
+		writeCustomModelsList(c, responsePlatform, availableModels)
 		return
 	}
 
 	if len(availableModels) > 0 {
-		writeModelsList(c, platform, availableModels)
+		writeModelsList(c, responsePlatform, availableModels)
 		return
 	}
 
 	// Fallback to default models
-	if platform == service.PlatformOpenAI {
+	if responsePlatform == service.PlatformOpenAI {
 		c.JSON(http.StatusOK, gin.H{
 			"object": "list",
 			"data":   openai.DefaultModels,
@@ -1232,14 +1219,14 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		return
 	}
 
-	if platform == service.PlatformGemini {
+	if responsePlatform == service.PlatformGemini {
 		c.JSON(http.StatusOK, gin.H{
 			"object": "list",
 			"data":   geminicli.DefaultModels,
 		})
 		return
 	}
-	if platform == service.PlatformGrok {
+	if responsePlatform == service.PlatformGrok {
 		writeGrokModelsList(c, xai.DefaultModelIDs())
 		return
 	}
@@ -1248,6 +1235,82 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		"object": "list",
 		"data":   claude.DefaultModels,
 	})
+}
+
+func apiKeyModelsListGroupIDs(apiKey *service.APIKey) []int64 {
+	if apiKey == nil {
+		return nil
+	}
+	if ids := apiKey.CandidateGroupIDs(); len(ids) > 0 {
+		return ids
+	}
+	if apiKey.Group != nil && apiKey.Group.ID > 0 {
+		return []int64{apiKey.Group.ID}
+	}
+	return nil
+}
+
+func (h *GatewayHandler) groupForModelsList(ctx context.Context, apiKey *service.APIKey, groupID int64) *service.Group {
+	if apiKey != nil && apiKey.Group != nil && apiKey.Group.ID == groupID {
+		return apiKey.Group
+	}
+	if h != nil && h.gatewayService != nil {
+		return h.gatewayService.GroupPolicyForRequest(ctx, groupID)
+	}
+	return nil
+}
+
+func (h *GatewayHandler) availableModelsForAPIKey(ctx context.Context, apiKey *service.APIKey, forcedPlatform string) []string {
+	groupIDs := apiKeyModelsListGroupIDs(apiKey)
+	if len(groupIDs) == 0 {
+		return h.modelsForGroupID(ctx, nil, nil, forcedPlatform, false)
+	}
+	injectDefaults := len(groupIDs) > 1
+	var models []string
+	for _, id := range groupIDs {
+		gid := id
+		group := h.groupForModelsList(ctx, apiKey, gid)
+		models = mergeModelIDs(models, h.modelsForGroupID(ctx, &gid, group, forcedPlatform, injectDefaults))
+	}
+	return models
+}
+
+func (h *GatewayHandler) modelsForGroupID(ctx context.Context, groupID *int64, group *service.Group, forcedPlatform string, injectDefaults bool) []string {
+	platform := strings.TrimSpace(forcedPlatform)
+	if platform == "" && group != nil {
+		platform = group.Platform
+	}
+
+	var models []string
+	if platform == service.PlatformComposite {
+		models = h.compositeAvailableModels(ctx, groupID)
+	} else if h != nil && h.gatewayService != nil {
+		models = h.gatewayService.GetAvailableModels(ctx, groupID, platform)
+	}
+
+	if group != nil && group.CustomModelsListEnabled() {
+		fallbackModels := defaultModelIDsForPlatform(platform)
+		if platform == service.PlatformComposite {
+			return filterModelsByCustomList(models, fallbackModels, group.ModelsListConfig.Models)
+		}
+		return filterModelsByCustomList(customModelsListSource(platform, models, fallbackModels), fallbackModels, group.ModelsListConfig.Models)
+	}
+	if len(models) > 0 {
+		return models
+	}
+	if platform == service.PlatformComposite {
+		return defaultModelIDsForPlatform(platform)
+	}
+	if platform == "" && groupID != nil {
+		// Bound group with no hydrated policy: expose every mapped/default
+		// model the group's accounts can actually serve, without dumping the
+		// Claude catalog for a missing platform.
+		return h.compositeAvailableModels(ctx, groupID)
+	}
+	if injectDefaults && platform != "" {
+		return defaultModelIDsForPlatform(platform)
+	}
+	return nil
 }
 
 func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *int64) []string {

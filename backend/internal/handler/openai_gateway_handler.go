@@ -316,6 +316,19 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 			return true
 		}
 	}
+	// Smart-routing keys keep the primary group's Claude/OpenAI switch, but a
+	// request already resolved onto an OpenAI-compatible later group must not
+	// inherit the primary Claude group's messages-dispatch prohibition.
+	if apiKey.UsesRequestTargetPlatform() && apiKey.Group.Platform != service.PlatformComposite &&
+		c != nil && c.Request != nil {
+		if platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
+			switch platform {
+			case service.PlatformOpenAI, service.PlatformGrok,
+				service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek:
+				return true
+			}
+		}
+	}
 	return apiKey.Group.AllowMessagesDispatch
 }
 
