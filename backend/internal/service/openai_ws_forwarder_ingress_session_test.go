@@ -1206,15 +1206,18 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughBridg
 					return
 				}
 				defer func() { _ = conn.CloseNow() }()
-				_, firstMessage, err := conn.Read(r.Context())
+				// After hijack, r.Context() can cancel independently of the
+				// websocket lifetime. Keep the relay on a detached context so
+				// the client can still read the completed event.
+				_, firstMessage, err := conn.Read(context.Background())
 				if err != nil {
 					errCh <- err
 					return
 				}
 				rec := httptest.NewRecorder()
 				ginCtx, _ := gin.CreateTestContext(rec)
-				ginCtx.Request = r
-				errCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "sk-test", firstMessage, nil)
+				ginCtx.Request = r.Clone(context.Background())
+				errCh <- svc.ProxyResponsesWebSocketFromClient(context.Background(), ginCtx, conn, account, "sk-test", firstMessage, nil)
 			}))
 			defer wsServer.Close()
 
@@ -1222,7 +1225,9 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughBridg
 			require.NoError(t, err)
 			defer func() { _ = clientConn.CloseNow() }()
 			require.NoError(t, clientConn.Write(context.Background(), coderws.MessageText, []byte(tt.payload)))
-			_, event, err := clientConn.Read(context.Background())
+			readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+			_, event, err := clientConn.Read(readCtx)
+			cancelRead()
 			if tt.wantRelayReject {
 				require.Error(t, err)
 			} else {
