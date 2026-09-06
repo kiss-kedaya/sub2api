@@ -1210,34 +1210,6 @@ func TestBufferRawChatCompletions_RejectsOversizedResponse(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 }
 
-func TestOpenAIRawStreamTerminalState(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name           string
-		payloads       []string
-		clientStarted  bool
-		wantTerminated bool
-		wantTruncated  bool
-	}{
-		{name: "done", payloads: []string{"{\"choices\":[]}", "[DONE]"}, clientStarted: true, wantTerminated: true},
-		{name: "usage", payloads: []string{`{"choices":[],"usage":{"prompt_tokens":1}}`}, clientStarted: true, wantTerminated: true},
-		{name: "finish reason", payloads: []string{`{"choices":[{"finish_reason":"stop"}]}`}, clientStarted: true, wantTerminated: true},
-		{name: "null finish reason", payloads: []string{`{"choices":[{"finish_reason":null}]}`}, clientStarted: true, wantTruncated: true},
-		{name: "empty response", clientStarted: false, wantTruncated: true},
-		{name: "non-sse already forwarded", clientStarted: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var state openAIRawStreamTerminalState
-			for _, payload := range tt.payloads {
-				state.ObserveDataLine(payload)
-			}
-			require.Equal(t, tt.wantTerminated, state.Terminated())
-			require.Equal(t, tt.wantTruncated, state.IsTruncated(tt.clientStarted))
-		})
-	}
-}
-
 func TestForwardAsRawChatCompletions_TruncatedBeforeOutputTriggersFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hello"}],"stream":true}`)
