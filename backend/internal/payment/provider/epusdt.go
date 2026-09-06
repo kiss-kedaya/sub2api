@@ -236,7 +236,7 @@ func (e *EPUSDT) QueryOrder(ctx context.Context, tradeNo string) (*payment.Query
 		return nil, fmt.Errorf("epusdt query order: %w", err)
 	}
 
-	var status payment.ProviderStatus
+	var status string
 	switch data.Status {
 	case 1, 4:
 		status = payment.ProviderStatusPending
