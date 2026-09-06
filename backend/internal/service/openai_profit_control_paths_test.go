@@ -309,7 +309,7 @@ func TestOpenAIProfitControlCachesDisabledGroupResolution(t *testing.T) {
 		schedulerSnapshot: &SchedulerSnapshotService{groupRepo: repo},
 	}
 	ctx := svc.withOpenAIProfitControlGate(context.Background(), &groupID)
-	ctx = svc.withOpenAIProfitControlGate(ctx, &groupID)
+	_ = svc.withOpenAIProfitControlGate(ctx, &groupID)
 	require.Equal(t, 1, repo.calls, "disabled group policy should be resolved once per request")
 }
 
