@@ -16,6 +16,33 @@ func TestCandidateGroupIDs(t *testing.T) {
 	require.Equal(t, []int64{7}, plain.CandidateGroupIDs())
 }
 
+func TestUsesRequestTargetPlatform(t *testing.T) {
+	id := int64(7)
+	require.False(t, (*APIKey)(nil).UsesRequestTargetPlatform())
+	require.False(t, (&APIKey{GroupID: &id, Group: &Group{ID: 7, Platform: PlatformAnthropic}}).UsesRequestTargetPlatform())
+	require.True(t, (&APIKey{
+		GroupID:       &id,
+		RouteGroupIDs: []int64{7, 8},
+		Group:         &Group{ID: 7, Platform: PlatformAnthropic},
+	}).UsesRequestTargetPlatform())
+	require.True(t, (&APIKey{Group: &Group{Platform: PlatformComposite}}).UsesRequestTargetPlatform())
+}
+
+func TestGroupUsableForRequest(t *testing.T) {
+	require.True(t, groupUsableForRequest(nil, PlatformOpenAI, "gpt-5"))
+	require.True(t, groupUsableForRequest(&Group{Platform: PlatformAnthropic}, PlatformAnthropic, "claude-sonnet-4-6"))
+	require.False(t, groupUsableForRequest(&Group{Platform: PlatformAnthropic}, PlatformOpenAI, "gpt-5"))
+	require.True(t, groupUsableForRequest(&Group{Platform: PlatformOpenAI}, PlatformOpenAI, "gpt-5"))
+	require.True(t, groupUsableForRequest(&Group{Platform: PlatformComposite}, PlatformOpenAI, "gpt-5"))
+
+	restricted := &Group{
+		Platform:         PlatformOpenAI,
+		ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5"}},
+	}
+	require.True(t, groupUsableForRequest(restricted, PlatformOpenAI, "gpt-5"))
+	require.False(t, groupUsableForRequest(restricted, PlatformOpenAI, "gpt-5.4"))
+}
+
 func TestGroupAllowsRequestedModel(t *testing.T) {
 	require.True(t, groupAllowsRequestedModel(nil, "gpt-5"))
 	require.True(t, groupAllowsRequestedModel(&Group{}, "gpt-5"))

@@ -5,17 +5,23 @@ import (
 )
 
 func (s *GatewayService) hydrateAPIKeyGroup(ctx context.Context, apiKey *APIKey, groupID int64) (*APIKey, error) {
-	var getGroup func(context.Context, int64) (*Group, error)
-	if s != nil && s.schedulerSnapshot != nil {
-		getGroup = s.schedulerSnapshot.GetGroupByIDLite
-	}
-	return hydrateAPIKeyGroup(ctx, apiKey, groupID, getGroup)
+	return hydrateAPIKeyGroup(ctx, apiKey, groupID, func(ctx context.Context, id int64) (*Group, error) {
+		if s == nil {
+			return nil, ErrSchedulerCacheNotReady
+		}
+		group := s.GroupPolicyForRequest(ctx, id)
+		if group == nil {
+			return nil, ErrSchedulerCacheNotReady
+		}
+		return group, nil
+	})
 }
 
 // SelectAccountAlongKeyRoutes tries the key's ordered groups one by one.
 // ErrNoAvailableAccounts and other per-group unavailability errors continue to
 // the next group. Protocol-incompatible groups are skipped so an OpenAI account
-// is never returned to an Anthropic/Gemini forwarder.
+// is never returned to an Anthropic/Gemini forwarder. Billing uses the hydrated
+// group returned with a successful selection, not the primary group.
 func (s *GatewayService) SelectAccountAlongKeyRoutes(
 	ctx context.Context,
 	apiKey *APIKey,
@@ -38,12 +44,8 @@ func (s *GatewayService) SelectAccountAlongKeyRoutes(
 	var lastErr error
 	for _, groupID := range candidates {
 		gid := groupID
-		if s.schedulerSnapshot != nil {
-			if group, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, gid); err == nil && group != nil {
-				if !groupPlatformFitsRequest(group.Platform, platform) {
-					continue
-				}
-			}
+		if group := s.GroupPolicyForRequest(ctx, gid); !groupUsableForRequest(group, platform, requestedModel) {
+			continue
 		}
 		result, err := s.SelectAccountWithLoadAwareness(ctx, &gid, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
 		if err == nil {

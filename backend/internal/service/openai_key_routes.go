@@ -16,6 +16,7 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 	ctx context.Context,
 	apiKey *APIKey,
 	platformOverride []string,
+	requestedModel string,
 	selectOne func(groupID *int64, groupPlatform []string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error),
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
 	candidates := apiKey.CandidateGroupIDs()
@@ -31,6 +32,9 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 		if s.schedulerSnapshot != nil {
 			if group, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, gid); err == nil && group != nil {
 				if !isOpenAICompatibleUpstreamPlatform(group.Platform) {
+					continue
+				}
+				if !groupAllowsRequestedModel(group, requestedModel) {
 					continue
 				}
 				groupPlatform = []string{group.Platform}
@@ -76,7 +80,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForCapabilityAlongKeyRo
 	useUpstreamTokenCost bool,
 	platformOverride ...string,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
-	return s.selectAlongKeyRoutes(ctx, apiKey, platformOverride, func(groupID *int64, groupPlatform []string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	return s.selectAlongKeyRoutes(ctx, apiKey, platformOverride, requestedModel, func(groupID *int64, groupPlatform []string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 		return s.SelectAccountWithSchedulerForCapability(
 			ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs,
 			requiredTransport, requiredCapability, requireCompact, previousResponseCanMove, useUpstreamTokenCost, groupPlatform...,
@@ -92,7 +96,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImagesAlongKeyRoutes
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
-	return s.selectAlongKeyRoutes(ctx, apiKey, []string{PlatformOpenAI}, func(groupID *int64, _ []string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	return s.selectAlongKeyRoutes(ctx, apiKey, []string{PlatformOpenAI}, requestedModel, func(groupID *int64, _ []string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 		return s.SelectAccountWithSchedulerForImages(ctx, groupID, sessionHash, requestedModel, excludedIDs, requiredCapability)
 	})
 }
