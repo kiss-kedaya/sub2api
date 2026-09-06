@@ -774,7 +774,7 @@ func (r *apiKeyRepository) ListKeysByGroupID(ctx context.Context, groupID int64)
 		}
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	seen := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
 		seen[key] = struct{}{}
@@ -1185,7 +1185,7 @@ func (r *apiKeyRepository) ListGroupRoutes(ctx context.Context, apiKeyIDs []int6
 		}
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var apiKeyID, groupID int64
 		if err := rows.Scan(&apiKeyID, &groupID); err != nil {
