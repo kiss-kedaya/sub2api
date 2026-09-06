@@ -138,7 +138,7 @@ func checkMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	if err != nil {
 		return fmt.Errorf("read schema_migrations (run migrations before starting in validate mode): %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	applied := make(map[string]string)
 	for rows.Next() {

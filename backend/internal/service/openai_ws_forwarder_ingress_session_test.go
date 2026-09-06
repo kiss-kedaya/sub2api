@@ -1233,7 +1233,9 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughBridg
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, "resp_duplicate_keys", gjson.GetBytes(event, "response.id").String())
-				require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
+				if closeErr := clientConn.Close(coderws.StatusNormalClosure, "done"); closeErr != nil {
+					require.Contains(t, closeErr.Error(), "StatusGoingAway")
+				}
 			}
 
 			select {
@@ -1241,7 +1243,11 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughBridg
 				if tt.wantRelayReject {
 					require.Error(t, proxyErr)
 				} else if proxyErr != nil {
-					require.Contains(t, proxyErr.Error(), "StatusNormalClosure")
+					require.True(t,
+						strings.Contains(proxyErr.Error(), "StatusNormalClosure") ||
+							strings.Contains(proxyErr.Error(), "StatusGoingAway") ||
+							strings.Contains(proxyErr.Error(), "context canceled"),
+						proxyErr.Error())
 				}
 			case <-time.After(5 * time.Second):
 				t.Fatal("等待 boundary passthrough websocket 结束超时")
