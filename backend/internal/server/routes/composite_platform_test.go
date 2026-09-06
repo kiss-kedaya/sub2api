@@ -312,3 +312,76 @@ func TestCompositeGeminiTargetPlatformMiddlewareUsesPathRoute(t *testing.T) {
 
 	require.Equal(t, http.StatusNoContent, w.Code)
 }
+
+func TestSmartRoutingTargetPlatformMiddlewareDetectsOpenAIModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	primaryID := int64(1)
+	secondID := int64(2)
+	router.Use(gin.HandlerFunc(servermiddleware.APIKeyAuthMiddleware(func(c *gin.Context) {
+		c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{
+			GroupID:       &primaryID,
+			RouteGroupIDs: []int64{primaryID, secondID},
+			Group:         &service.Group{ID: primaryID, Platform: service.PlatformAnthropic},
+		})
+		c.Next()
+	})))
+	router.Use(compositeTargetPlatformMiddleware(nil))
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context())
+		require.True(t, ok)
+		require.Equal(t, service.PlatformOpenAI, platform)
+		require.Equal(t, service.PlatformOpenAI, getGroupPlatform(c))
+
+		body, err := io.ReadAll(c.Request.Body)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"model":"gpt-5"}`, string(body))
+		c.Status(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusNoContent, w.Code)
+}
+
+func TestGetGroupPlatformKeepsPrimaryWhenSmartRoutingModelUnresolved(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	primaryID := int64(1)
+	secondID := int64(2)
+	c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{
+		GroupID:       &primaryID,
+		RouteGroupIDs: []int64{primaryID, secondID},
+		Group:         &service.Group{ID: primaryID, Platform: service.PlatformAnthropic},
+	})
+	require.Equal(t, service.PlatformAnthropic, getGroupPlatform(c))
+}
+
+func TestSingleGroupKeyDoesNotResolveTargetPlatformFromModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	groupID := int64(1)
+	router.Use(gin.HandlerFunc(servermiddleware.APIKeyAuthMiddleware(func(c *gin.Context) {
+		c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{
+			GroupID: &groupID,
+			Group:   &service.Group{ID: groupID, Platform: service.PlatformAnthropic},
+		})
+		c.Next()
+	})))
+	router.Use(compositeTargetPlatformMiddleware(nil))
+	router.POST("/", func(c *gin.Context) {
+		_, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context())
+		require.False(t, ok)
+		require.Equal(t, service.PlatformAnthropic, getGroupPlatform(c))
+		c.Status(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"model":"gpt-5"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusNoContent, w.Code)
+}
