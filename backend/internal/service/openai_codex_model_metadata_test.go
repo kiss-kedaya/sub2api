@@ -9,6 +9,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAstraUltraCatalogPreservesWorkflowMetadata(t *testing.T) {
+	// Ultra is a Codex workflow. Its inference effort must survive catalog sync,
+	// aliases and group generation instead of silently falling back to max.
+	_, metadata, err := extractUpstreamModelCatalog([]byte(`{"models":[{
+		"slug":"gpt-6-astra","supported_reasoning_levels":[{"effort":"high"},{"effort":"ultra"}],
+		"multi_agent_reasoning_effort":"high","multi_agent_version":"v2"
+	}]}`), false)
+	require.NoError(t, err)
+	account := Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{
+		"base_url": "https://relay.example/v1", "model_mapping": map[string]any{"public-astra": "gpt-6-astra"},
+	}}
+	account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: metadata})
+	body, err := buildCodexModelsManifestForAccounts(PlatformOpenAI, []string{"public-astra"}, []Account{account}, nil, nil, true)
+	require.NoError(t, err)
+	model := decodeCodexManifestModels(t, body)[0]
+	require.Equal(t, "high", model["multi_agent_reasoning_effort"])
+	require.Equal(t, "v2", model["multi_agent_version"])
+	require.Equal(t, []string{"high", "ultra"}, effortsFromManifestModel(t, model))
+
+	peer := Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: account.Credentials}
+	body, err = buildCodexModelsManifestForAccounts(PlatformOpenAI, []string{"public-astra"}, []Account{account, peer}, nil, nil, true)
+	require.NoError(t, err)
+	model = decodeCodexManifestModels(t, body)[0]
+	require.Nil(t, model["multi_agent_reasoning_effort"], "do not advertise one account's override for all peers")
+	require.Nil(t, model["multi_agent_version"])
+}
+
+func TestAstraUltraCatalogPreservesExplicitWorkflowOverrides(t *testing.T) {
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"base_url": "https://relay.example/v1"}}
+	for _, fields := range []string{
+		`"multi_agent_reasoning_effort":"high","multi_agent_version":"v1"`,
+		`"multi_agent_reasoning_effort":null,"multi_agent_version":null`,
+	} {
+		for _, source := range []string{
+			`{"models":[{"slug":"gpt-6-astra",` + fields + `}]}`,
+			`{"data":[{"id":"gpt-6-astra",` + fields + `}]}`,
+		} {
+			converted := convertOpenAIModelListToCodexManifestForAccount([]byte(source), account)
+			body, err := completeAPIKeyCodexModelsManifestMetadata(converted, true, account)
+			require.NoError(t, err)
+			model := decodeCodexManifestModels(t, body)[0]
+			var expected map[string]any
+			require.NoError(t, json.Unmarshal([]byte(`{`+fields+`}`), &expected))
+			for key, value := range expected {
+				require.Contains(t, model, key)
+				require.Equal(t, value, model[key])
+			}
+		}
+	}
+}
+
 func TestAstraCodexToolCapabilitiesUseAccountScopeAndSharedDeclarations(t *testing.T) {
 	newAccount := func(baseURL string) Account {
 		return Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{
@@ -645,7 +697,8 @@ func TestCodexAliasFailoverMappingHonorsModelRouting(t *testing.T) {
 		levels, def, modalities := manifestFieldsOf(t, nil)
 		require.Empty(t, levels, "ambiguous alias target must not advertise reasoning levels")
 		require.Nil(t, def)
-		require.Equal(t, []any{"text"}, modalities)
+		require.Equal(t, []any{"text", "image"}, modalities,
+			"image input is resolved per-account independently of routing rules")
 	})
 
 	t.Run("routing rule resolves the alias", func(t *testing.T) {
@@ -657,7 +710,7 @@ func TestCodexAliasFailoverMappingHonorsModelRouting(t *testing.T) {
 		}
 		levels, def, modalities := manifestFieldsOf(t, group)
 		require.Equal(t,
-			[]string{"low", "medium", "high", "xhigh", "max"},
+			[]string{"low", "medium", "high", "xhigh", "max", "ultra"},
 			levels,
 			"routed alias must keep a movable reasoning slider",
 		)

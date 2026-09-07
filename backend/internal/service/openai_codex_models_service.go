@@ -116,8 +116,8 @@ type OpenAIModelsResponse struct {
 	NotModified                  bool
 }
 
-// BuildGroupConfiguredCodexModelsManifest builds a Codex catalog exclusively
-// from the public model names configured on accounts in an OpenAI group. The
+// BuildGroupConfiguredCodexModelsManifest builds a Codex catalog from configured
+// public model names, supplemented by defaults for unmapped OpenAI accounts. The
 // boolean result distinguishes "no explicit configuration" from a configured
 // catalog that becomes empty after group-level filtering.
 func (s *OpenAIGatewayService) BuildGroupConfiguredCodexModelsManifest(
@@ -295,7 +295,7 @@ func openAIConfiguredCodexModelIDs(accounts []Account) []string {
 }
 
 func openAIConfiguredCodexModelIDsForGroup(accounts []Account, group *Group) []string {
-	models := openAIConfiguredCodexModelIDs(accounts)
+	models := supplementUnmappedOpenAIModels(accounts, openAIConfiguredCodexModelIDs(accounts))
 	if group == nil || !group.ModelAllowlistEnabled() {
 		return models
 	}
@@ -379,6 +379,7 @@ type configuredCodexModelDescriptor struct {
 	Description                       string                          `json:"description"`
 	DefaultReasoningLevel             *string                         `json:"default_reasoning_level,omitempty"`
 	SupportedReasoningLevels          []configuredCodexReasoningLevel `json:"supported_reasoning_levels"`
+	MultiAgentReasoningEffort         *string                         `json:"multi_agent_reasoning_effort,omitempty"`
 	ShellType                         string                          `json:"shell_type"`
 	Visibility                        string                          `json:"visibility"`
 	SupportedInAPI                    bool                            `json:"supported_in_api"`
@@ -510,6 +511,11 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 				descriptor.MaxContextWindow = configuredCodexGPT56MaxContext
 			}
 			if isOpenAIGPT6AstraModel(modelID) {
+				// Codex resolves the Ultra workflow to this effort before inference.
+				// openai/codex a9896da3: codex-rs/models-manager/models.json.
+				multiAgentEffort := "xhigh"
+				descriptor.MultiAgentReasoningEffort = &multiAgentEffort
+				descriptor.MultiAgentVersion = "v2"
 				descriptor.ContextWindow = configuredCodexGPT6AstraContext
 				descriptor.MaxContextWindow = configuredCodexGPT6AstraContext
 			}
@@ -620,7 +626,7 @@ func configuredCodexGPTReasoningLevels(modelID string) []configuredCodexReasonin
 			Description: "Maximum reasoning depth for complex tasks",
 		})
 	}
-	if normalized == "gpt-5.6-sol" || normalized == "gpt-5.6-terra" {
+	if isOpenAIGPT6AstraModel(modelID) || normalized == "gpt-5.6-sol" || normalized == "gpt-5.6-terra" {
 		levels = append(levels, configuredCodexReasoningLevel{
 			Effort:      "ultra",
 			Description: "Maximum reasoning with automatic task delegation",
@@ -909,12 +915,14 @@ func buildCodexModelsManifest(
 		seen[modelID] = struct{}{}
 		descriptor := newConfiguredCodexModelDescriptor(metadataModelID)
 		descriptor.Slug = modelID
-		if imageInputModels[modelID] {
-			descriptor.InputModalities = []string{"text", "image"}
-		}
 		descriptor.SupportsSearchTool = searchToolModels[modelID]
 		if metadata, ok := modelMetadata[modelID]; ok {
 			applyUpstreamModelMetadataToCodexDescriptor(&descriptor, metadata)
+		}
+		if imageInputModels[modelID] {
+			// Apply the capability-derived modality after upstream metadata so
+			// a stale official Astra snapshot cannot downgrade the catalog.
+			descriptor.InputModalities = []string{"text", "image"}
 		}
 		if metadataModelID != modelID {
 			descriptor.DisplayName = modelID
@@ -1207,6 +1215,13 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 	case PlatformOpenAI:
 		if metadata, ok := account.GetUpstreamModelMetadata(upstreamModel); ok {
 			if modalities := normalizeCodexInputModalities(metadata.InputModalities); len(modalities) > 0 {
+				// Official GPT-6 Astra metadata briefly shipped with a stale
+				// text-only modality list. Keep explicit provider metadata
+				// authoritative for compatible hosts, but repair that stale
+				// official snapshot at the capability boundary.
+				if isOpenAIGPT6AstraModel(upstreamModel) && isOfficialOpenAICodexAccount(account) {
+					return true
+				}
 				return stringSliceContains(modalities, "image")
 			}
 		}
@@ -1231,6 +1246,16 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 	default:
 		return false
 	}
+}
+
+func isOfficialOpenAICodexAccount(account *Account) bool {
+	if account == nil || account.Platform != PlatformOpenAI {
+		return false
+	}
+	if account.IsOpenAIOAuth() {
+		return true
+	}
+	return account.IsOpenAIApiKey() && isOfficialOpenAIModelsBaseURL(account.GetOpenAIBaseURL())
 }
 
 func isGrokCodexImageInputModel(model string) bool {
