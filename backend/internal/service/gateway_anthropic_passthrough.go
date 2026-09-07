@@ -325,6 +325,10 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 		body = sanitized
 	}
 
+	// Ollama Cloud DeepSeek 出站 max_tokens clamp：判定与上方 targetURL 的
+	// base 取值同源（GetBaseURL），详见 helper 注释。
+	body = clampOllamaCloudAnthropicMessagesMaxTokens(account, account.GetBaseURL(), body)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, err
