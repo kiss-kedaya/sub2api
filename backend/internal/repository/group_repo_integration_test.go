@@ -718,6 +718,22 @@ func (s *GroupRepoSuite) TestListActive() {
 	s.Require().True(found, "active1 group should be in results")
 }
 
+func (s *GroupRepoSuite) TestListBindableWithFiltersAppliesFilterBeforePagination() {
+	for _, g := range []*service.Group{
+		{Name: "bindable-a", Platform: service.PlatformAnthropic, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard},
+		{Name: "composite-hidden", Platform: service.PlatformComposite, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard},
+		{Name: "bindable-b", Platform: service.PlatformOpenAI, RateMultiplier: 1, Status: service.StatusActive, SubscriptionType: service.SubscriptionTypeStandard},
+	} {
+		s.Require().NoError(s.repo.Create(s.ctx, g))
+	}
+
+	groups, page, err := s.repo.ListBindableWithFilters(s.ctx, pagination.PaginationParams{Page: 2, PageSize: 1, SortBy: "name", SortOrder: "asc"}, "", service.StatusActive, "bindable-", nil)
+	s.Require().NoError(err)
+	s.Require().Equal(int64(2), page.Total)
+	s.Require().Len(groups, 1)
+	s.Require().NotEqual(service.PlatformComposite, groups[0].Platform)
+}
+
 func (s *GroupRepoSuite) TestListActiveByPlatform() {
 	s.Require().NoError(s.repo.Create(s.ctx, &service.Group{
 		Name:             "g1",

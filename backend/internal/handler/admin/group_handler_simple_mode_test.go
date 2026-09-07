@@ -186,6 +186,19 @@ func TestGroupHandlerSimpleModeResponseUsesFieldAllowlist(t *testing.T) {
 	}
 }
 
+func TestGroupHandlerSimpleModeListsOnlyBindableGroups(t *testing.T) {
+	svc := newStubAdminService()
+	svc.groups = []service.Group{{ID: 1, Name: "basic", Platform: service.PlatformAnthropic}, {ID: 2, Name: "composite", Platform: service.PlatformComposite}}
+	r := newSimpleModeGroupRouter(svc)
+	for _, path := range []string{"/groups", "/groups/all"} {
+		res := httptest.NewRecorder()
+		r.ServeHTTP(res, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, res.Code)
+		require.Contains(t, res.Body.String(), `"name":"basic"`)
+		require.NotContains(t, res.Body.String(), `"name":"composite"`)
+	}
+}
+
 func mapKeys(values map[string]any) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
