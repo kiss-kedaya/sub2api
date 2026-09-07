@@ -562,7 +562,7 @@
             {{ t('admin.accounts.gemini.helpButton') }}
           </button>
         </div>
-        <div class="mt-2 grid grid-cols-3 gap-3" data-tour="account-form-type">
+        <div class="mt-2 grid grid-cols-2 gap-3 lg:grid-cols-4" data-tour="account-form-type">
           <button
             type="button"
             @click="accountCategory = 'oauth-based'"
@@ -637,6 +637,36 @@
 
           <button
             type="button"
+            @click="accountCategory = 'openai-responses'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'openai-responses'
+                ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20'
+                : 'border-gray-200 hover:border-emerald-300 dark:border-dark-600 dark:hover:border-emerald-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'openai-responses'
+                  ? 'bg-emerald-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="terminal" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                {{ t('admin.accounts.gemini.accountType.responsesTitle') }}
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.gemini.accountType.responsesDesc') }}
+              </span>
+            </div>
+          </button>
+
+          <button
+            type="button"
             @click="accountCategory = 'service_account'"
             :class="[
               'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
@@ -664,6 +694,13 @@
               </span>
             </div>
           </button>
+        </div>
+
+        <div
+          v-if="accountCategory === 'openai-responses'"
+          class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-800/40 dark:bg-emerald-900/20 dark:text-emerald-200"
+        >
+          <p>{{ t('admin.accounts.gemini.accountType.responsesNote') }}</p>
         </div>
 
         <div
@@ -1249,7 +1286,7 @@
       </div>
 
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
-      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
+      <div v-if="(form.type === 'apikey' || isGeminiOpenAIResponses) && form.platform !== 'antigravity'" class="space-y-4">
         <div v-if="!isCNPlatform || apiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -1323,7 +1360,7 @@
         </div>
 
         <!-- Gemini API Key tier selection -->
-        <div v-if="form.platform === 'gemini'">
+        <div v-if="form.platform === 'gemini' && !isGeminiOpenAIResponses">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
           <select v-model="geminiTierAIStudio" class="input">
             <option value="aistudio_free">{{ t('admin.accounts.gemini.tier.aiStudio.free') }}</option>
@@ -3211,7 +3248,7 @@
 
       <!-- OpenAI APIKey Responses API support mode -->
       <div
-        v-if="form.platform === 'openai' && accountCategory === 'apikey'"
+        v-if="(form.platform === 'openai' && accountCategory === 'apikey') || isGeminiOpenAIResponses"
         class="space-y-4 border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -3350,7 +3387,7 @@
           v-if="!authStore.isSimpleMode"
           v-model="form.group_ids"
           :groups="groups"
-          :platform="form.platform"
+          :platform="effectiveAccountPlatform"
           :mixed-scheduling="mixedScheduling"
           data-tour="account-form-groups"
         />
@@ -3817,6 +3854,7 @@ const oauthStepTitle = computed(() => {
 
 // Platform-specific hints for API Key type
 const baseUrlHint = computed(() => {
+  if (isGeminiOpenAIResponses.value) return t('admin.accounts.gemini.accountType.responsesNote')
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   if (form.platform === 'grok') return ''
@@ -3824,6 +3862,7 @@ const baseUrlHint = computed(() => {
 })
 
 const apiKeyHint = computed(() => {
+  if (isGeminiOpenAIResponses.value) return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
   if (form.platform === 'grok') return ''
@@ -3832,6 +3871,9 @@ const apiKeyHint = computed(() => {
 
 // Base URL / API Key 占位符：国产供应商随账号类型变化。
 const apiKeyBaseUrlPlaceholder = computed(() => {
+  if (isGeminiOpenAIResponses.value) {
+    return 'https://your-upstream/v1'
+  }
   if (isCNPlatform.value) {
     return defaultCNBaseUrl(form.platform, accountMode.value, apiProtocol.value) || 'https://api.example.com'
   }
@@ -3943,7 +3985,11 @@ interface TempUnschedRuleForm {
 // State
 const step = ref(1)
 const submitting = ref(false)
-const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
+const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account' | 'openai-responses'>('oauth-based') // UI selection for account category
+const isGeminiOpenAIResponses = computed(
+  () => form.platform === 'gemini' && accountCategory.value === 'openai-responses'
+)
+const effectiveAccountPlatform = computed(() => (isGeminiOpenAIResponses.value ? 'openai' : form.platform))
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
@@ -4391,7 +4437,7 @@ const openAIWSModeConcurrencyHintKey = computed(() =>
 )
 
 const isOpenAIModelRestrictionDisabled = computed(() =>
-  form.platform === 'openai' && openaiPassthroughEnabled.value
+  (form.platform === 'openai' || isGeminiOpenAIResponses.value) && openaiPassthroughEnabled.value
 )
 
 const mixedChannelWarningMessageText = computed(() => {
@@ -4559,6 +4605,20 @@ watch(
   },
   { immediate: true }
 )
+
+watch(accountCategory, (category) => {
+  if (form.platform !== 'gemini' || category !== 'openai-responses') {
+    return
+  }
+  if (!apiKeyBaseUrl.value.trim() || apiKeyBaseUrl.value.includes('generativelanguage.googleapis.com')) {
+    apiKeyBaseUrl.value = 'https://api.openai.com'
+  }
+  openAIResponsesMode.value = 'force_responses'
+  const geminiGroupIds = props.groups.filter((group) => group.platform === 'gemini').map((group) => group.id)
+  if (geminiGroupIds.length > 0 && form.group_ids.length === 0) {
+    form.group_ids = geminiGroupIds
+  }
+})
 
 // Reset platform-specific settings when platform changes
 watch(
@@ -5120,7 +5180,7 @@ const handleClose = () => {
 }
 
 const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknown> | undefined => {
-  if (form.platform !== 'openai') {
+  if (form.platform !== 'openai' && !isGeminiOpenAIResponses.value) {
     return base
   }
 
@@ -5128,7 +5188,7 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   if (accountCategory.value === 'oauth-based') {
     extra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
     extra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiOAuthResponsesWebSocketV2Mode.value)
-  } else if (accountCategory.value === 'apikey') {
+  } else if (accountCategory.value === 'apikey' || isGeminiOpenAIResponses.value) {
     extra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
     extra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
   }
@@ -5178,7 +5238,7 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   }
 
   if (
-    accountCategory.value === 'apikey' &&
+    (accountCategory.value === 'apikey' || isGeminiOpenAIResponses.value) &&
     openAITextGenerationCapabilityEnabled.value &&
     openAIResponsesMode.value !== 'auto'
   ) {
@@ -5464,8 +5524,9 @@ const handleSubmit = async () => {
   }
 
   // Determine default base URL based on platform
-  const defaultBaseUrl =
-    form.platform === 'openai'
+  const defaultBaseUrl = isGeminiOpenAIResponses.value
+    ? 'https://api.openai.com'
+    : form.platform === 'openai'
       ? 'https://api.openai.com'
       : form.platform === 'gemini'
         ? 'https://generativelanguage.googleapis.com'
@@ -5478,7 +5539,7 @@ const handleSubmit = async () => {
     base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
     api_key: apiKeyValue.value.trim()
   }
-  if (form.platform === 'gemini') {
+  if (form.platform === 'gemini' && !isGeminiOpenAIResponses.value) {
     credentials.tier_id = geminiTierAIStudio.value
   }
 
@@ -5512,7 +5573,7 @@ const handleSubmit = async () => {
       credentials.model_mapping = modelMapping
     }
   }
-  if (form.platform === 'openai') {
+  if (form.platform === 'openai' || isGeminiOpenAIResponses.value) {
     applyOpenAIEndpointCapabilities(credentials)
     const compactModelMapping = buildOpenAICompactModelMapping()
     if (compactModelMapping) {
@@ -5537,7 +5598,7 @@ const handleSubmit = async () => {
   }
 
   // Add header override if enabled for this API-key platform
-  if (isHeaderOverrideCapable(form.platform, 'apikey')) {
+  if (isHeaderOverrideCapable(isGeminiOpenAIResponses.value ? 'openai' : form.platform, 'apikey')) {
     if (headerOverrideEnabled.value) {
       const headerError = validateHeaderOverrideRows(headerOverrideRows.value)
       if (headerError) {
@@ -5558,6 +5619,8 @@ const handleSubmit = async () => {
 
   await doCreateAccount({
     ...form,
+    platform: isGeminiOpenAIResponses.value ? 'openai' : form.platform,
+    type: isGeminiOpenAIResponses.value ? 'apikey' : form.type,
     group_ids: form.group_ids,
     extra,
     upstream_billing_probe_enabled: upstreamBillingAutoProbeEnabled.value,
