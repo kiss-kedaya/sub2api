@@ -267,7 +267,7 @@ func (s *GatewayService) UpstreamPlatformForModel(ctx context.Context, apiKey *A
 		return "", false
 	}
 	if s == nil || apiKey == nil {
-		return DetectModelPlatform(model)
+		return "", false
 	}
 	ids := apiKey.CandidateGroupIDs()
 	if len(ids) == 0 && apiKey.Group != nil && apiKey.Group.ID > 0 {
@@ -277,6 +277,7 @@ func (s *GatewayService) UpstreamPlatformForModel(ctx context.Context, apiKey *A
 		PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek,
 		PlatformAnthropic, PlatformGemini, PlatformAntigravity,
 	}
+	sawCatalog := false
 	for _, gid := range ids {
 		gid := gid
 		group := s.GroupPolicyForRequest(ctx, gid)
@@ -287,14 +288,28 @@ func (s *GatewayService) UpstreamPlatformForModel(ctx context.Context, apiKey *A
 			continue
 		}
 		for _, platform := range prefer {
-			for _, id := range s.GetAvailableModels(ctx, &gid, platform) {
-				if strings.EqualFold(strings.TrimSpace(id), model) {
-					return platform, true
-				}
+			models := s.GetAvailableModels(ctx, &gid, platform)
+			if models == nil {
+				continue
+			}
+			sawCatalog = true
+			if modelsAdmitRequestedModel(models, model) {
+				return platform, true
 			}
 		}
 	}
-	return DetectModelPlatform(model)
+	if sawCatalog {
+		return "", false
+	}
+	for _, gid := range ids {
+		gid := gid
+		for platform := range s.GetSchedulablePlatforms(ctx, &gid) {
+			if isOpenAICompatibleUpstreamPlatform(platform) {
+				return platform, true
+			}
+		}
+	}
+	return "", false
 }
 
 func shouldContinueAlongKeyRoutes(err error) bool {

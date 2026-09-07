@@ -184,3 +184,51 @@ func TestGroupCatalogUsableForRequest_OpenAICompatibleGrokDoesNotClaimGemini(t *
 	require.False(t, svc.groupCatalogUsableForRequest(context.Background(), grokID, PlatformOpenAI, ""))
 	require.False(t, svc.groupCatalogUsableForRequest(context.Background(), grokID, PlatformOpenAI, "__mirasim_wire_probe_model__"))
 }
+
+func TestUpstreamPlatformForModel_DoesNotGuessFromModelName(t *testing.T) {
+	openaiID := int64(1)
+	svc := &GatewayService{
+		accountRepo: &modelsListAccountRepoStub{
+			byGroup: map[int64][]Account{
+				openaiID: {{
+					ID:       10,
+					Platform: PlatformOpenAI,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"gpt-5.4": "gpt-5.4"},
+					},
+				}},
+			},
+		},
+	}
+	key := &APIKey{GroupID: &openaiID, Group: &Group{ID: openaiID, Platform: PlatformOpenAI}}
+
+	platform, ok := svc.UpstreamPlatformForModel(context.Background(), key, "grok-imagine-video-1.5")
+	require.False(t, ok)
+	require.Empty(t, platform)
+
+	platform, ok = svc.UpstreamPlatformForModel(context.Background(), key, "gpt-5.4")
+	require.True(t, ok)
+	require.Equal(t, PlatformOpenAI, platform)
+}
+
+func TestUpstreamPlatformForModel_GeminiGroupOpenAIAccount(t *testing.T) {
+	geminiID := int64(2)
+	svc := &GatewayService{
+		accountRepo: &modelsListAccountRepoStub{
+			byGroup: map[int64][]Account{
+				geminiID: {{
+					ID:       20,
+					Platform: PlatformOpenAI,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"gemini-3.8-flash": "gemini-3.8-flash"},
+					},
+				}},
+			},
+		},
+	}
+	key := &APIKey{GroupID: &geminiID, Group: &Group{ID: geminiID, Platform: PlatformGemini}}
+
+	platform, ok := svc.UpstreamPlatformForModel(context.Background(), key, "gemini-3.8-flash")
+	require.True(t, ok)
+	require.Equal(t, PlatformOpenAI, platform)
+}
