@@ -697,7 +697,8 @@ func TestCodexAliasFailoverMappingHonorsModelRouting(t *testing.T) {
 		levels, def, modalities := manifestFieldsOf(t, nil)
 		require.Empty(t, levels, "ambiguous alias target must not advertise reasoning levels")
 		require.Nil(t, def)
-		require.Equal(t, []any{"text"}, modalities)
+		require.Equal(t, []any{"text", "image"}, modalities,
+			"image input is resolved per-account independently of routing rules")
 	})
 
 	t.Run("routing rule resolves the alias", func(t *testing.T) {
@@ -709,7 +710,7 @@ func TestCodexAliasFailoverMappingHonorsModelRouting(t *testing.T) {
 		}
 		levels, def, modalities := manifestFieldsOf(t, group)
 		require.Equal(t,
-			[]string{"low", "medium", "high", "xhigh", "max"},
+			[]string{"low", "medium", "high", "xhigh", "max", "ultra"},
 			levels,
 			"routed alias must keep a movable reasoning slider",
 		)
