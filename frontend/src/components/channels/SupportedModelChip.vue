@@ -168,7 +168,7 @@
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PricingRow from './PricingRow.vue'
-import { formatScaled } from '@/utils/pricing'
+import { formatScaled, resolveIntervalPrices } from '@/utils/pricing'
 import {
   BILLING_MODE_TOKEN,
   BILLING_MODE_PER_REQUEST,
@@ -245,22 +245,13 @@ function formatRange(min: number, max: number | null): string {
   return `(${min}, ${maxLabel}]`
 }
 
-function effectiveIntervalPrice(
-  price: number | null | undefined,
-  multiplier: number | null | undefined,
-  basePrice: number | null
-): number | null {
-  if (price != null) return price
-  if (multiplier != null && basePrice != null) return basePrice * multiplier
-  return basePrice
-}
-
 function formatInterval(iv: UserPricingInterval, pricing: UserSupportedModelPricing): string {
   if (pricing.billing_mode === BILLING_MODE_PER_REQUEST || pricing.billing_mode === BILLING_MODE_IMAGE) {
     return formatScaled(iv.per_request_price, 1)
   }
-  const input = formatScaled(effectiveIntervalPrice(iv.input_price, iv.input_multiplier, pricing.input_price), perMillionScale)
-  const output = formatScaled(effectiveIntervalPrice(iv.output_price, iv.output_multiplier, pricing.output_price), perMillionScale)
+  const resolved = resolveIntervalPrices(iv, pricing)
+  const input = formatScaled(resolved.input_price, perMillionScale)
+  const output = formatScaled(resolved.output_price, perMillionScale)
   return `${input} / ${output}`
 }
 
