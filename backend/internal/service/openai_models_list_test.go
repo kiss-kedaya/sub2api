@@ -247,7 +247,7 @@ func TestPinnedOpenAIModelsListMixedAccountsShareColdCacheAcrossGroups(t *testin
 	s.accountRepo = splitCodexModelsAccountRepo{all: map[int64][]Account{10: accounts, 11: accounts}}
 	groups := []*Group{
 		{ID: 10, Platform: PlatformOpenAI, CodexModelsManifestConfig: GroupCodexModelsManifestConfig{Enabled: true, AccountIDs: []int64{2, 1}},
-			ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"oauth-special", "shared-model"}}},
+			ModelAllowlist: GroupModelAllowlist{Enabled: true, Models: []string{"oauth-special", "shared-model"}}},
 		{ID: 11, Platform: PlatformOpenAI, CodexModelsManifestConfig: GroupCodexModelsManifestConfig{Enabled: true, AccountIDs: []int64{2, 1}}},
 	}
 	type result struct {
