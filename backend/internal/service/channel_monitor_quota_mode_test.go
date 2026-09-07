@@ -459,8 +459,17 @@ func TestMonitorAccountQuotaCapability_Matrix(t *testing.T) {
 			account: &Account{ID: 4, Platform: domain.PlatformZhipu, Credentials: map[string]any{"account_mode": AccountModeCoding}},
 		},
 		{
+			name:    "minimax coding default endpoint ok",
+			account: &Account{ID: 14, Platform: domain.PlatformMiniMax, Credentials: map[string]any{"account_mode": AccountModeCoding}},
+		},
+		{
 			name:    "zhipu payg has no balance endpoint",
 			account: &Account{ID: 5, Platform: domain.PlatformZhipu},
+			wantErr: ErrChannelMonitorAccountNotSupportable,
+		},
+		{
+			name:    "minimax payg has no balance endpoint",
+			account: &Account{ID: 15, Platform: domain.PlatformMiniMax},
 			wantErr: ErrChannelMonitorAccountNotSupportable,
 		},
 		{
