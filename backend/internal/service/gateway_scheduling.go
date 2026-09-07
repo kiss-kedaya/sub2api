@@ -216,7 +216,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return nil, err
 	}
 	preferOAuth := platform == PlatformGemini
-	if s.debugModelRoutingEnabled() && platform == PlatformAnthropic && requestedModel != "" {
+	if s.debugModelRoutingEnabled() && requestedModel != "" && modelRoutingAppliesToTargetPlatform(platform) {
 		logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] load-aware enabled: group_id=%v model=%s session=%s platform=%s", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), platform)
 	}
 
@@ -250,10 +250,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, account, requestedModel)
 	}
 
-	// 获取模型路由配置（anthropic 目标平台；composite 分组按目标平台判断）
+	// 获取模型路由配置（anthropic / openai 目标平台；composite 分组按目标平台判断）
 	var routingAccountIDs []int64
-	if group != nil && requestedModel != "" && platform == PlatformAnthropic &&
-		(group.Platform == PlatformAnthropic || group.Platform == PlatformComposite) {
+	if group != nil && requestedModel != "" &&
+		modelRoutingAppliesToPlatform(platform, group.Platform) {
 		routingAccountIDs = group.GetRoutingAccountIDs(requestedModel)
 		if s.debugModelRoutingEnabled() {
 			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] context group routing: group_id=%d model=%s enabled=%v rules=%d matched_ids=%v session=%s sticky_account=%d",
@@ -865,8 +865,35 @@ func (s *GatewayService) ResolveGroupByID(ctx context.Context, groupID int64) (*
 	return s.resolveGroupByID(ctx, groupID)
 }
 
+// modelRoutingAppliesToPlatform 判定模型路由规则是否适用于本次请求。
+//
+// 路由规则的存储与查表（Group.ModelRouting / GetRoutingAccountIDs）本身与平台无关，
+// 早期只有 Anthropic 目标平台会读取它。OpenAI 分组同样存在“同一个公开别名由不同账号
+// 映射到不同上游模型”的故障转移写法，需要显式路由来指定谁是主、谁是备，因此这里把
+// Anthropic 与 OpenAI 一并放行。
+//
+// targetPlatform 是请求解析后的目标平台；groupPlatform 是分组自身的平台。composite
+// 分组不限定自身平台，只要目标平台落在放行集合内即可复用其规则。
+func modelRoutingAppliesToPlatform(targetPlatform, groupPlatform string) bool {
+	if !modelRoutingAppliesToTargetPlatform(targetPlatform) {
+		return false
+	}
+	return groupPlatform == targetPlatform || groupPlatform == PlatformComposite
+}
+
+// modelRoutingAppliesToTargetPlatform 是放行平台集合的唯一定义处：新增平台只改这里。
+// 在只知道目标平台、还没取到分组的位置（调试日志、取分组前的短路）单独判定用。
+func modelRoutingAppliesToTargetPlatform(targetPlatform string) bool {
+	switch targetPlatform {
+	case PlatformAnthropic, PlatformOpenAI:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *GatewayService) routingAccountIDsForRequest(ctx context.Context, groupID *int64, requestedModel string, platform string) []int64 {
-	if groupID == nil || requestedModel == "" || platform != PlatformAnthropic {
+	if groupID == nil || requestedModel == "" || !modelRoutingAppliesToTargetPlatform(platform) {
 		return nil
 	}
 	group, err := s.resolveGroupByID(ctx, *groupID)
@@ -876,11 +903,11 @@ func (s *GatewayService) routingAccountIDsForRequest(ctx context.Context, groupI
 		}
 		return nil
 	}
-	// Model routing applies only to requests resolved to Anthropic. Composite
-	// groups may still use those rules once their model resolved to Anthropic.
-	if group.Platform != PlatformAnthropic && group.Platform != PlatformComposite {
+	// 路由规则适用于解析到 Anthropic 或 OpenAI 的请求；composite 分组在其模型解析到
+	// 上述平台后同样可以复用这些规则。
+	if !modelRoutingAppliesToPlatform(platform, group.Platform) {
 		if s.debugModelRoutingEnabled() {
-			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] skip: non-anthropic group platform: group_id=%d group_platform=%s model=%s", group.ID, group.Platform, requestedModel)
+			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] skip: group platform not eligible: group_id=%d group_platform=%s target_platform=%s model=%s", group.ID, group.Platform, platform, requestedModel)
 		}
 		return nil
 	}
@@ -1460,6 +1487,28 @@ func (s *GatewayService) checkAndRegisterSession(ctx context.Context, account *A
 		return true
 	}
 	return allowed
+}
+
+// ReleaseAccountSession 立即释放会话槽（不等待空闲超时）
+// 供 handler 在请求最终失败（选号成功但转发失败/客户端中断）时调用：
+// 上游从未真正服务该会话，若继续占槽，max_sessions 受限的账号会被失败请求的
+// session hash 卡满整个空闲窗口，后续新会话全部被拒。
+// 适用条件与 checkAndRegisterSession 对齐；不适用账号为 no-op，幂等可安全重复调用。
+func (s *GatewayService) ReleaseAccountSession(ctx context.Context, account *Account, sessionID string) {
+	if s == nil || s.sessionLimitCache == nil || account == nil || sessionID == "" {
+		return
+	}
+	if !account.IsAnthropicOAuthOrSetupToken() {
+		return
+	}
+	if account.GetMaxSessions() <= 0 {
+		return
+	}
+	if err := s.sessionLimitCache.UnregisterSession(ctx, account.ID, sessionID); err != nil {
+		slog.Debug("session_limit.release_failed",
+			"account_id", account.ID,
+			"error", err)
+	}
 }
 
 func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {

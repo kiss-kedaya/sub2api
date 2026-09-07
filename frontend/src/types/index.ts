@@ -560,7 +560,7 @@ export interface Group {
   platform: GroupPlatform
   rate_multiplier: number
   rpm_limit?: number // Group-level RPM cap (0 = unlimited); overrides user-level rpm_limit when set
-  max_reasoning_effort?: string // OpenAI/Codex reasoning ceiling; empty means unlimited
+  max_reasoning_effort?: string // Anthropic/OpenAI reasoning ceiling; empty means unlimited
   max_reasoning_effort_over_limit?: string // downgrade (default) or deny when over the ceiling
   reasoning_effort_mappings?: ReasoningEffortMapping[]
   is_exclusive: boolean
@@ -1286,6 +1286,10 @@ export interface Account {
   parent_subscription_expires_at?: string
   parent_chatgpt_account_id?: string
 }
+
+// The admin account list may return this compact shape when lite=1. Detail
+// operations still use Account from /admin/accounts/:id.
+export type AccountListItem = Omit<Account, 'groups'>
 
 export interface AccountSchedulerGroupScore {
   group_id?: number | null

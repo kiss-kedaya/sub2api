@@ -1054,6 +1054,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 						return payload, nil, err
 					}
 				}
+				if hooks != nil && hooks.BeforeTurn != nil {
+					if err := hooks.BeforeTurn(turnNo); err != nil {
+						return payload, nil, err
+					}
+				}
 				if hooks != nil && hooks.MapRequestModel != nil {
 					upstreamModel, err := hooks.MapRequestModel(turnNo, requestModelForThisFrame)
 					if err != nil {
@@ -1477,21 +1482,9 @@ func openAIWSPassthroughRelayClientClose(exit openaiwsv2.RelayExit, completedTur
 }
 
 func markOpenAIWSV2PassthroughCyberPolicy(c *gin.Context, payload []byte) bool {
-	hit, code, message := detectOpenAICyberPolicy(payload)
-	if !hit {
-		return false
-	}
 	usage := OpenAIUsage{}
 	parseOpenAIWSResponseUsageFromCompletedEvent(payload, &usage)
-	MarkOpsCyberPolicy(c, CyberPolicyMark{
-		Code:           code,
-		Message:        message,
-		Body:           truncateString(string(payload), 4096),
-		UpstreamStatus: http.StatusOK,
-		UpstreamInTok:  usage.InputTokens,
-		UpstreamOutTok: usage.OutputTokens,
-	})
-	return true
+	return markOpenAICyberPolicyEvent(c, payload, http.StatusOK, &usage)
 }
 
 func (s *OpenAIGatewayService) mapOpenAIWSPassthroughDialError(
