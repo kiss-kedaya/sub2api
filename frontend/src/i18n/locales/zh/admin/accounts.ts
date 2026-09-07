@@ -1337,7 +1337,10 @@ export default {
           apiKeyDesc: '最快接入方式，使用 AIza API Key。',
           apiKeyNote: '适合轻量测试。免费层限流严格，数据可能用于训练。',
           apiKeyLink: '获取 API Key',
-          quotaLink: '配额说明'
+          quotaLink: '配额说明',
+          responsesTitle: 'Responses API（OpenAI 兼容）',
+          responsesDesc: '自定义 Base URL + API Key，走 OpenAI Responses 协议。',
+          responsesNote: '会创建 OpenAI 类型账号并加入当前 Gemini 分组。请填写上游 Responses 地址，例如 https://your-upstream/v1。'
         },
         oauthType: {
           builtInTitle: '内置授权（Gemini CLI / Code Assist）',
