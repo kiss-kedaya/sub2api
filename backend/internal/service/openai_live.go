@@ -147,11 +147,12 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 	// Live 按通话时长计费，不属于 token 利润门的语义范围：显式豁免，避免
 	// 防御性装门按文本 D 过滤 Live 账号池且门与计费时刻不同源。
 	ctx = WithOpenAIProfitControlSuppressed(ctx)
+	liveKey := &APIKey{GroupID: identity.GroupID, RouteGroupIDs: identity.RouteGroupIDs}
 	var lastErr error
 	for attempt := 0; attempt <= 3; attempt++ {
-		selection, _, selectErr := s.SelectAccountWithSchedulerForCapability(
+		selection, _, routedKey, selectErr := s.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(
 			ctx,
-			identity.GroupID,
+			liveKey,
 			"",
 			uuid.NewString(),
 			"",
@@ -162,6 +163,10 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			false,
 			false,
 		)
+		if routedKey != nil && routedKey.GroupID != nil {
+			identity.GroupID = routedKey.GroupID
+			liveKey = routedKey
+		}
 		if selectErr != nil {
 			if lastErr != nil {
 				return nil, lastErr

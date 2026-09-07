@@ -679,7 +679,7 @@ func TestBalancePreauthorizationGuardContextRoundTrip(t *testing.T) {
 	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
 	require.NoError(t, err)
 
-	ctx := ContextWithBalancePreauthorizationGuard(nil, guard)
+	ctx := ContextWithBalancePreauthorizationGuard(context.TODO(), guard)
 	got, ok := BalancePreauthorizationGuardFromContext(ctx)
 	require.True(t, ok)
 	require.Same(t, guard, got)
