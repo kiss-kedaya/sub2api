@@ -1277,7 +1277,10 @@ export default {
           apiKeyNote:
             'Best for light testing. Free tier has strict rate limits and data may be used for training.',
           apiKeyLink: 'Get API Key',
-          quotaLink: 'Quota guide'
+          quotaLink: 'Quota guide',
+          responsesTitle: 'Responses API (OpenAI-compatible)',
+          responsesDesc: 'Custom base URL + API key using the OpenAI Responses protocol.',
+          responsesNote: 'Creates an OpenAI-type account and attaches it to Gemini groups. Enter the upstream Responses URL, for example https://your-upstream/v1.'
         },
         oauthType: {
           builtInTitle: 'Built-in OAuth (Gemini CLI / Code Assist)',
