@@ -764,7 +764,7 @@ func TestFulfillmentLeaseVersionRejectsStaleWorker(t *testing.T) {
 }
 
 func TestPublicRedeemStillEnforcesFailureLimit(t *testing.T) {
-	cache := &paymentFulfillmentRedeemCacheStub{count: redeemMaxErrorsPerHour}
+	cache := &paymentFulfillmentRedeemCacheStub{count: redeemMaxFailedAttempts}
 	svc := &RedeemService{cache: cache}
 
 	result, err := svc.Redeem(context.Background(), 42, "PUBLIC-CODE")
@@ -794,7 +794,7 @@ func TestPublicRedeemStillIncrementsInvalidCodeFailures(t *testing.T) {
 
 func TestPaymentRedeemDoesNotIncrementFailureLimit(t *testing.T) {
 	ctx := context.Background()
-	cache := &paymentFulfillmentRedeemCacheStub{count: redeemMaxErrorsPerHour}
+	cache := &paymentFulfillmentRedeemCacheStub{count: redeemMaxFailedAttempts}
 	redeemRepo := &redeemRejectRepo{code: RedeemCode{
 		ID:     1,
 		Code:   "PAY-EXPIRED",
@@ -835,7 +835,7 @@ func TestExecuteBalanceFulfillmentBypassesUserRedeemRateLimit(t *testing.T) {
 		credited += amount
 		return nil
 	}
-	cache := &paymentFulfillmentRedeemCacheStub{count: redeemMaxErrorsPerHour}
+	cache := &paymentFulfillmentRedeemCacheStub{count: redeemMaxFailedAttempts}
 	redeemService := NewRedeemService(redeemRepo, userRepo, nil, cache, nil, client, nil, nil)
 	svc := &PaymentService{entClient: client, redeemService: redeemService, userRepo: userRepo}
 

@@ -21,7 +21,7 @@ func TestAstraUltraCatalogPreservesWorkflowMetadata(t *testing.T) {
 		"base_url": "https://relay.example/v1", "model_mapping": map[string]any{"public-astra": "gpt-6-astra"},
 	}}
 	account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: metadata})
-	body, err := buildCodexModelsManifestForAccounts(PlatformOpenAI, []string{"public-astra"}, []Account{account}, nil, true)
+	body, err := buildCodexModelsManifestForAccounts(PlatformOpenAI, []string{"public-astra"}, []Account{account}, nil, nil, true)
 	require.NoError(t, err)
 	model := decodeCodexManifestModels(t, body)[0]
 	require.Equal(t, "high", model["multi_agent_reasoning_effort"])
@@ -29,7 +29,7 @@ func TestAstraUltraCatalogPreservesWorkflowMetadata(t *testing.T) {
 	require.Equal(t, []string{"high", "ultra"}, effortsFromManifestModel(t, model))
 
 	peer := Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: account.Credentials}
-	body, err = buildCodexModelsManifestForAccounts(PlatformOpenAI, []string{"public-astra"}, []Account{account, peer}, nil, true)
+	body, err = buildCodexModelsManifestForAccounts(PlatformOpenAI, []string{"public-astra"}, []Account{account, peer}, nil, nil, true)
 	require.NoError(t, err)
 	model = decodeCodexManifestModels(t, body)[0]
 	require.Nil(t, model["multi_agent_reasoning_effort"], "do not advertise one account's override for all peers")
@@ -697,7 +697,8 @@ func TestCodexAliasFailoverMappingHonorsModelRouting(t *testing.T) {
 		levels, def, modalities := manifestFieldsOf(t, nil)
 		require.Empty(t, levels, "ambiguous alias target must not advertise reasoning levels")
 		require.Nil(t, def)
-		require.Equal(t, []any{"text"}, modalities)
+		require.Equal(t, []any{"text", "image"}, modalities,
+			"image input is resolved per-account independently of routing rules")
 	})
 
 	t.Run("routing rule resolves the alias", func(t *testing.T) {
@@ -709,7 +710,7 @@ func TestCodexAliasFailoverMappingHonorsModelRouting(t *testing.T) {
 		}
 		levels, def, modalities := manifestFieldsOf(t, group)
 		require.Equal(t,
-			[]string{"low", "medium", "high", "xhigh", "max"},
+			[]string{"low", "medium", "high", "xhigh", "max", "ultra"},
 			levels,
 			"routed alias must keep a movable reasoning slider",
 		)
