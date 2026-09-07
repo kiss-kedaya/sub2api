@@ -31,14 +31,19 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 		groupPlatform := append([]string(nil), platformOverride...)
 		if s.schedulerSnapshot != nil {
 			if group, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, gid); err == nil && group != nil {
-				if !isOpenAICompatibleUpstreamPlatform(group.Platform) {
-					continue
-				}
 				if !groupAllowsRequestedModel(group, requestedModel) {
 					continue
 				}
-				groupPlatform = []string{group.Platform}
+				if isOpenAICompatibleUpstreamPlatform(group.Platform) {
+					groupPlatform = []string{group.Platform}
+				}
+				// Gemini/Claude-labeled groups may still hold OpenAI-type
+				// accounts (custom Responses URL). Leave platformOverride
+				// unset so selection can pick those accounts.
 			}
+		}
+		if s.groupCatalogHasRequestedModel(ctx, gid, requestedModel) == groupCatalogModelAbsent {
+			continue
 		}
 		selection, decision, err := selectOne(&gid, groupPlatform)
 		if err == nil {
