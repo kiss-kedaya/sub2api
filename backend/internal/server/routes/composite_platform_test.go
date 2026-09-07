@@ -360,6 +360,43 @@ func TestGetGroupPlatformKeepsPrimaryWhenSmartRoutingModelUnresolved(t *testing.
 	require.Equal(t, service.PlatformAnthropic, getGroupPlatform(c))
 }
 
+type stubUpstreamResolver struct {
+	platform string
+	ok       bool
+}
+
+func (s stubUpstreamResolver) UpstreamPlatformForModel(ctx context.Context, apiKey *service.APIKey, model string) (string, bool) {
+	if s.ok {
+		return s.platform, true
+	}
+	return "", false
+}
+
+func TestGeminiLabeledGroupResolvesOpenAIAccountUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	groupID := int64(1)
+	router.Use(gin.HandlerFunc(servermiddleware.APIKeyAuthMiddleware(func(c *gin.Context) {
+		c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{
+			GroupID: &groupID,
+			Group:   &service.Group{ID: groupID, Platform: service.PlatformGemini},
+		})
+		c.Next()
+	})))
+	router.Use(compositeTargetPlatformMiddlewareResolved(nil, stubUpstreamResolver{platform: service.PlatformOpenAI, ok: true}, false))
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		require.Equal(t, service.PlatformOpenAI, getGroupPlatform(c))
+		require.True(t, service.IsOpenAICompatibleUpstreamPlatform(getGroupPlatform(c)))
+		c.Status(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gemini-3.8-flash"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusNoContent, w.Code)
+}
+
 func TestSingleGroupKeyDoesNotResolveTargetPlatformFromModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

@@ -131,6 +131,15 @@ func NewGatewayHandler(
 	}
 }
 
+// UpstreamPlatformForModel maps a request model to the account platform that
+// should handle it. Middleware uses this before picking Anthropic vs OpenAI handlers.
+func (h *GatewayHandler) UpstreamPlatformForModel(ctx context.Context, apiKey *service.APIKey, model string) (string, bool) {
+	if h == nil || h.gatewayService == nil {
+		return service.DetectModelPlatform(model)
+	}
+	return h.gatewayService.UpstreamPlatformForModel(ctx, apiKey, model)
+}
+
 // Messages handles Claude API compatible messages endpoint
 // POST /v1/messages
 func (h *GatewayHandler) Messages(c *gin.Context) {
@@ -1282,7 +1291,10 @@ func (h *GatewayHandler) modelsForGroupID(ctx context.Context, groupID *int64, g
 	}
 
 	var models []string
-	if platform == service.PlatformComposite {
+	if strings.TrimSpace(forcedPlatform) == "" || platform == service.PlatformComposite {
+		// List by the accounts actually in the group, not the group label.
+		// A Gemini-labeled group with OpenAI-type accounts must still expose
+		// those accounts' mapped models (e.g. gemini-3.8-flash).
 		models = h.compositeAvailableModels(ctx, groupID)
 	} else if h != nil && h.gatewayService != nil {
 		models = h.gatewayService.GetAvailableModels(ctx, groupID, platform)
