@@ -494,6 +494,7 @@ export default {
       leaveEmptyToKeep: '留空则保持原密码不变',
       generatePassword: '生成随机密码',
       copyPassword: '复制密码',
+      passwordCopied: '密码已复制',
       creating: '创建中...',
       updating: '更新中...',
       columns: {
@@ -841,7 +842,7 @@ export default {
         rpmLimitHint: '每用户在本分组每分钟最大请求数，0 = 不限制；一旦设置即接管该用户的限流（覆盖用户级 rpm_limit）',
         maxReasoningEffort: '推理强度上限',
         maxReasoningEffortUnlimited: '不限制（跟随请求）',
-        maxReasoningEffortHint: '仅限制客户端主动请求的 OpenAI reasoning effort；Composite 分组仅对解析到 OpenAI 的请求生效。不会为缺省请求主动开启推理。上限优先级高于推理强度映射。',
+        maxReasoningEffortHint: '仅限制客户端主动请求的 Anthropic/OpenAI 推理强度；Composite 分组按实际目标平台生效。不会为缺省请求主动开启推理。上限优先级高于推理强度映射。',
         maxReasoningEffortOverLimit: '超限访问控制',
         maxReasoningEffortOverLimitDowngrade: '超过上限时自动降档',
         maxReasoningEffortOverLimitDeny: '拒绝访问',
@@ -1085,11 +1086,11 @@ export default {
         }
       },
       codexModelsManifest: {
-        title: '固定账号获取 Codex Model Manifest',
-        hint: '开启后，该分组的 Codex 客户端 /models 请求只用选定账号向上游拉取并按 slug 合并，不经过调度器；限流/过载中的选定账号仍会被使用。',
-        enable: '使用特定账号获取 manifest',
+        title: '固定账号获取模型列表',
+        hint: '开启后，普通模型列表与 Codex Model Manifest 均优先从选定账号获取并合并，再应用账号映射和分组列表过滤；限流/过载中的选定账号仍会被使用。',
+        enable: '使用特定账号获取模型列表',
         enabledHint: '账号来源限定为当前分组内的 OpenAI 账号，最多选择 10 个。',
-        disabledHint: '未启用：manifest 请求经由调度器选账。',
+        disabledHint: '未启用：普通列表使用本地映射或默认模型；Codex 优先使用本地目录，无本地目录时由调度器选账。',
         accounts: '选定账号',
         searchPlaceholder: '搜索账号（当前分组内 OpenAI 账号）',
         searchEmpty: '未找到匹配账号',
@@ -1222,6 +1223,12 @@ export default {
         selectAccounts: '选择账号',
         noAccounts: '此分组暂无账号',
         loadingAccounts: '加载账号中...',
+        removeRule: '删除规则',
+        noRules: '暂无路由规则',
+        noRulesHint: '添加路由规则以将特定模型请求优先路由到指定账号',
+        searchAccountPlaceholder: '搜索账号...',
+        accountsHint: '选择此模型模式优先使用的账号'
+      },
       claudeMaxSimulation: {
         title: 'Claude Max 用量模拟',
         tooltip:
@@ -1229,12 +1236,6 @@ export default {
         enabled: '已启用（模拟 1h 缓存）',
         disabled: '已禁用',
         hint: '仅调整用量计费日志中的 token 类别。不会持久化每个请求的映射状态。'
-      },
-        removeRule: '删除规则',
-        noRules: '暂无路由规则',
-        noRulesHint: '添加路由规则以将特定模型请求优先路由到指定账号',
-        searchAccountPlaceholder: '搜索账号...',
-        accountsHint: '选择此模型模式优先使用的账号'
       },
       mcpXml: {
         title: 'MCP XML 协议注入',

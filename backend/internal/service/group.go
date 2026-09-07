@@ -107,7 +107,7 @@ type Group struct {
 	DefaultMappedModel          string
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig
 	ModelAllowlist              GroupModelAllowlist
-	// CodexModelsManifestConfig 开启后，该分组的 Codex /models manifest 请求只用
+	// CodexModelsManifestConfig 开启后，普通模型列表与 Codex manifest 优先使用
 	// 固定账号列表拉取并合并，不经过调度器（仅 openai 平台）。
 	CodexModelsManifestConfig GroupCodexModelsManifestConfig
 
@@ -115,7 +115,7 @@ type Group struct {
 	// 一旦设置即接管该分组用户的限流（覆盖用户级 rpm_limit），可被 user-group rpm_override 进一步覆盖。
 	RPMLimit int
 
-	// MaxReasoningEffort limits the effective OpenAI/Codex reasoning effort.
+	// MaxReasoningEffort limits the effective Anthropic/OpenAI reasoning effort.
 	// Empty means unlimited; supported values are minimal/low/medium/high/xhigh/max.
 	MaxReasoningEffort string
 	// MaxReasoningEffortOverLimit is the access control when an explicit effort
@@ -139,6 +139,12 @@ type Group struct {
 	AccountCount            int64
 	ActiveAccountCount      int64
 	RateLimitedAccountCount int64
+}
+
+// IsGroupBindableInSimpleMode is the shared policy for groups that may be
+// surfaced and bound to accounts while running in simple mode.
+func IsGroupBindableInSimpleMode(group *Group) bool {
+	return group != nil && group.Platform != PlatformComposite
 }
 
 func (g *Group) IsActive() bool {
