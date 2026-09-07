@@ -25,7 +25,7 @@ func TestAdminFulfillmentBypassesLimitAndKeepsRedeemAffiliate(t *testing.T) {
 	}
 	userRepo := &mockUserRepo{getByIDUser: &User{ID: userID}}
 	userRepo.updateBalanceFn = func(context.Context, int64, float64) error { return nil }
-	cache := &paymentFulfillmentRedeemCacheStub{count: redeemMaxErrorsPerHour}
+	cache := &paymentFulfillmentRedeemCacheStub{count: redeemMaxFailedAttempts}
 	affiliateRepo := &paymentFulfillmentAffiliateRepoStub{
 		inviteeSummary: &AffiliateSummary{
 			UserID: userID, AffCode: "INVITEE", InviterID: &inviterID, CreatedAt: time.Now().Add(-time.Hour),
