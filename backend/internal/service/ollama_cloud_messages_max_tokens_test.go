@@ -243,3 +243,100 @@ func TestBuildNativeAnthropicUpstreamRequest_ClampsOllamaCloudDeepSeekMaxTokens(
 		require.Equal(t, int64(256000), gjson.GetBytes(wireBody, "max_tokens").Int())
 	})
 }
+
+// messagesClampProductionAccount 复刻生产账号 162：platform=deepseek、type=apikey、
+// api_protocol=adaptive、base_url 与 api_base_urls 均指向 ollama.com（anthropic 地址
+// 带 trailing '/'，CC/Responses 地址带 /v1 后缀）。
+func messagesClampProductionAccount(id int64) *Account {
+	return &Account{
+		ID:       id,
+		Name:     "ollama-cloud-prod",
+		Platform: PlatformDeepseek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":      "sk-test",
+			"api_protocol": APIProtocolAdaptive,
+			"base_url":     "https://ollama.com/v1",
+			"api_base_urls": map[string]any{
+				APIProtocolAnthropic:       "https://ollama.com/",
+				APIProtocolResponses:       "https://ollama.com/v1",
+				APIProtocolChatCompletions: "https://ollama.com/v1",
+			},
+		},
+		Extra: map[string]any{},
+	}
+}
+
+// TestBuildNativeAnthropicUpstreamRequest_ClampsTrailingSlashOllamaBase 复刻生产
+// 失败：anthropic 协议地址配置为 "https://ollama.com/"（trailing '/'）。真实出站
+// URL 组装（ValidateURLFormat 与 nativeAnthropicTargetURL 均做 TrimRight "/"）会
+// 正确打到 https://ollama.com/v1/messages，因此 clamp 判定也必须对同一归一化后的
+// base 生效，max_tokens=256000 不得原样透传被上游 400。
+func TestBuildNativeAnthropicUpstreamRequest_ClampsTrailingSlashOllamaBase(t *testing.T) {
+	svc := &OpenAIGatewayService{cfg: messagesClampTestConfig()}
+	c := newMessagesClampTestContext(t)
+	account := messagesClampProductionAccount(431)
+	body := messagesClampBody("deepseek-v4-flash", 256000)
+
+	// 真实出站 URL：trailing '/' 被既有组装归一化掉，请求确实可达 ollama.com。
+	targetURL, err := svc.nativeAnthropicTargetURL(account)
+	require.NoError(t, err)
+	require.Equal(t, "https://ollama.com/v1/messages", targetURL)
+
+	req, wireBody, err := svc.buildNativeAnthropicUpstreamRequest(
+		context.Background(), c, account, body, "sk-test", targetURL,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "https://ollama.com/v1/messages", req.URL.String())
+	require.Equal(t, "deepseek-v4-flash", gjson.GetBytes(wireBody, "model").String())
+	require.Equal(t, int64(65535), gjson.GetBytes(wireBody, "max_tokens").Int(),
+		"anthropic base trailing '/' 时仍须命中 clamp（生产 400 回归）")
+}
+
+// TestBuildUpstreamRequest_ClampsTrailingSlashOllamaBase 覆盖 builder A / B 的相同
+// 场景：GetBaseURL() 原样返回 trailing '/'，而 validateUpstreamBaseURL 归一化后
+// 实际出站 URL 可达 ollama.com/v1/messages，clamp 判定须与归一化同源。
+func TestBuildUpstreamRequest_ClampsTrailingSlashOllamaBase(t *testing.T) {
+	svc := &GatewayService{cfg: messagesClampTestConfig()}
+	c := newMessagesClampTestContext(t)
+	body := messagesClampBody("deepseek-v4-flash", 256000)
+
+	newAccount := func(id int64) *Account {
+		account := messagesClampOllamaAccount(id, PlatformAnthropic)
+		account.Credentials["base_url"] = "https://ollama.com/"
+		return account
+	}
+
+	t.Run("builder A trailing slash base is clamped", func(t *testing.T) {
+		req, wireBody, err := svc.buildUpstreamRequest(
+			context.Background(), c, newAccount(441), body, "sk-test", "api_key",
+			"deepseek-v4-flash", false, false,
+		)
+		require.NoError(t, err)
+		require.Equal(t, "https://ollama.com/v1/messages?beta=true", req.URL.String())
+		require.Equal(t, int64(65535), gjson.GetBytes(wireBody, "max_tokens").Int())
+	})
+
+	t.Run("builder B trailing slash base is clamped", func(t *testing.T) {
+		req, wireBody, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(
+			context.Background(), c, newAccount(442), body, "sk-test",
+		)
+		require.NoError(t, err)
+		require.Equal(t, "https://ollama.com/v1/messages?beta=true", req.URL.String())
+		require.Equal(t, int64(65535), gjson.GetBytes(wireBody, "max_tokens").Int())
+	})
+
+	t.Run("evil suffix and custom path never match", func(t *testing.T) {
+		for _, base := range []string{"https://ollama.com.evil.com/", "https://ollama.com/anthropic/"} {
+			account := newAccount(443)
+			account.Credentials["base_url"] = base
+			_, wireBody, err := svc.buildUpstreamRequest(
+				context.Background(), c, account, body, "sk-test", "api_key",
+				"deepseek-v4-flash", false, false,
+			)
+			require.NoError(t, err)
+			require.Equal(t, int64(256000), gjson.GetBytes(wireBody, "max_tokens").Int(),
+				"base %q 不得被识别为 Ollama Cloud", base)
+		}
+	})
+}
