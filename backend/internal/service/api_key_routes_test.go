@@ -41,6 +41,11 @@ func TestGroupUsableForRequest(t *testing.T) {
 	}
 	require.True(t, groupUsableForRequest(restricted, PlatformOpenAI, "gpt-5"))
 	require.False(t, groupUsableForRequest(restricted, PlatformOpenAI, "gpt-5.4"))
+
+	geminiLabeled := &Group{Platform: PlatformGemini}
+	require.False(t, groupUsableForRequest(geminiLabeled, PlatformOpenAI, "gemini-3.8-flash"))
+	require.True(t, groupUsableForRequest(geminiLabeled, PlatformOpenAI, "gemini-3.8-flash", map[string]struct{}{PlatformOpenAI: {}}))
+	require.True(t, groupUsableForRequest(geminiLabeled, PlatformGemini, "gemini-3.8-flash"))
 }
 
 func TestGroupAllowsRequestedModel(t *testing.T) {
