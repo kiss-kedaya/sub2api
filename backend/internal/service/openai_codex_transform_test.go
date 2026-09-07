@@ -1566,6 +1566,20 @@ func TestApplyCodexOAuthTransform_GPT55SuppliesModelSpecificInstructions(t *test
 	require.True(t, result.Modified)
 }
 
+func TestApplyCodexOAuthTransform_GPT6AstraSuppliesModelSpecificInstructions(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-6-astra",
+	}
+
+	result := applyCodexOAuthTransform(reqBody, true, false)
+
+	instructions, ok := reqBody["instructions"].(string)
+	require.True(t, ok)
+	require.True(t, strings.HasPrefix(strings.TrimSpace(instructions), "You are Codex, an agent based on GPT-6."))
+	require.NotContains(t, instructions, "You are Codex, a coding agent based on GPT-5.")
+	require.True(t, result.Modified)
+}
+
 func TestApplyCodexOAuthTransform_NonCodexCLI_PreservesExistingInstructions(t *testing.T) {
 	// 非 Codex CLI 场景：已有 instructions 时保留客户端的值，不再覆盖
 
