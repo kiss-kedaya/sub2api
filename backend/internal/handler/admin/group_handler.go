@@ -125,14 +125,14 @@ var simpleModeGroupOperations = map[simpleModeGroupOperation]struct{}{
 }
 
 func (h *GroupHandler) rejectUnsupportedSimpleModeOperation(c *gin.Context, operation simpleModeGroupOperation) bool {
-	if !h.isSimpleMode() {
-		return false
-	}
 	if _, allowed := simpleModeGroupOperations[operation]; allowed {
 		return false
 	}
-	response.Forbidden(c, "This operation is not supported in simple mode")
-	return true
+	if err := service.ValidateSimpleModeGroupOperation(h.cfg, service.AdminGroupOperation(operation)); err != nil {
+		response.ErrorFrom(c, err)
+		return true
+	}
+	return false
 }
 
 type simpleModeGroupResponse struct {
@@ -379,7 +379,9 @@ func (h *GroupHandler) List(c *gin.Context) {
 	if h.isSimpleMode() {
 		simpleGroups := make([]simpleModeGroupResponse, 0, len(groups))
 		for i := range groups {
-			simpleGroups = append(simpleGroups, *groupForSimpleMode(&groups[i]))
+			if service.IsGroupBindableInSimpleMode(&groups[i]) {
+				simpleGroups = append(simpleGroups, *groupForSimpleMode(&groups[i]))
+			}
 		}
 		response.Paginated(c, simpleGroups, total, page, pageSize)
 		return
@@ -564,7 +566,9 @@ func (h *GroupHandler) GetAll(c *gin.Context) {
 	if h.isSimpleMode() {
 		simpleGroups := make([]simpleModeGroupResponse, 0, len(groups))
 		for i := range groups {
-			simpleGroups = append(simpleGroups, *groupForSimpleMode(&groups[i]))
+			if service.IsGroupBindableInSimpleMode(&groups[i]) {
+				simpleGroups = append(simpleGroups, *groupForSimpleMode(&groups[i]))
+			}
 		}
 		response.Success(c, simpleGroups)
 		return
