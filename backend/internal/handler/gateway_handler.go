@@ -135,7 +135,7 @@ func NewGatewayHandler(
 // should handle it. Middleware uses this before picking Anthropic vs OpenAI handlers.
 func (h *GatewayHandler) UpstreamPlatformForModel(ctx context.Context, apiKey *service.APIKey, model string) (string, bool) {
 	if h == nil || h.gatewayService == nil {
-		return service.DetectModelPlatform(model)
+		return "", false
 	}
 	return h.gatewayService.UpstreamPlatformForModel(ctx, apiKey, model)
 }

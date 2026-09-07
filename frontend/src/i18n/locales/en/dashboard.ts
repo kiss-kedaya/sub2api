@@ -8,6 +8,7 @@ export default {
     todayCost: 'Today Cost',
     todayTokens: 'Today Tokens',
     totalTokens: 'Tokens (30 days)',
+    last30Days: '30 days',
     cacheToday: 'Cache (Today)',
     performance: 'Performance',
     avgResponse: 'Avg Response',

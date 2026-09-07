@@ -8,6 +8,7 @@ export default {
     todayCost: '今日消费',
     todayTokens: '今日 Token',
     totalTokens: '近 30 天 Token',
+    last30Days: '近 30 天',
     cacheToday: '今日缓存',
     performance: '性能指标',
     avgResponse: '平均响应',
