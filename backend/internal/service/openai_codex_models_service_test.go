@@ -373,6 +373,7 @@ func TestNewConfiguredCodexModelDescriptorUsesProviderMetadataAndSafeFallback(t 
 	gpt6 := newConfiguredCodexModelDescriptor("gpt-6")
 	require.Equal(t, "GPT-6 (Astra)", gpt6.DisplayName)
 	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max", "ultra"}, effortsFromConfiguredCodexLevels(gpt6.SupportedReasoningLevels))
+	require.NotNil(t, gpt6.MultiAgentReasoningEffort)
 	require.Equal(t, "xhigh", *gpt6.MultiAgentReasoningEffort)
 	require.Equal(t, int64(1_050_000), gpt6.ContextWindow)
 
