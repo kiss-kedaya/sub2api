@@ -3056,7 +3056,8 @@
           v-if="editForm.platform === 'openai' && editingGroup"
           ref="editCodexManifestRef"
           :group-id="editingGroup.id"
-          v-model="editCodexManifestConfig"
+          :model-value="editCodexManifestConfig"
+          @update:model-value="Object.assign(editCodexManifestConfig, $event)"
           :account-names="editCodexManifestAccountNames"
         />
 
