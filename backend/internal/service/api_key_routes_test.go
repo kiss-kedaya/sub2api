@@ -41,6 +41,11 @@ func TestGroupUsableForRequest(t *testing.T) {
 	}
 	require.True(t, groupUsableForRequest(restricted, PlatformOpenAI, "gpt-5"))
 	require.False(t, groupUsableForRequest(restricted, PlatformOpenAI, "gpt-5.4"))
+
+	geminiLabeled := &Group{Platform: PlatformGemini}
+	require.False(t, groupUsableForRequest(geminiLabeled, PlatformOpenAI, "gemini-3.8-flash"))
+	require.True(t, groupUsableForRequest(geminiLabeled, PlatformOpenAI, "gemini-3.8-flash", map[string]struct{}{PlatformOpenAI: {}}))
+	require.True(t, groupUsableForRequest(geminiLabeled, PlatformGemini, "gemini-3.8-flash"))
 }
 
 func TestGroupAllowsRequestedModel(t *testing.T) {
@@ -118,4 +123,112 @@ func TestGroupPlatformFitsRequest(t *testing.T) {
 	require.False(t, groupPlatformFitsRequest("anthropic", "openai"))
 	require.True(t, groupPlatformFitsRequest("antigravity", "anthropic"))
 	require.True(t, groupPlatformFitsRequest("", "openai"))
+}
+
+func TestModelsAdmitRequestedModel(t *testing.T) {
+	require.True(t, modelsAdmitRequestedModel([]string{"gemini-3.8-flash"}, "gemini-3.8-flash"))
+	require.False(t, modelsAdmitRequestedModel([]string{"grok-4.6", "grok-4.5"}, "gemini-3.8-flash"))
+	require.True(t, modelsAdmitRequestedModel([]string{"gpt-*"}, "gpt-5.4"))
+	require.False(t, modelsAdmitRequestedModel(nil, "gemini-3.8-flash"))
+	require.False(t, modelsAdmitRequestedModel([]string{"grok-4.6"}, ""))
+}
+
+func TestGroupCatalogHasRequestedModel_SkipsGrokForGeminiFlash(t *testing.T) {
+	grokID := int64(1)
+	geminiID := int64(2)
+	svc := &GatewayService{
+		accountRepo: &modelsListAccountRepoStub{
+			byGroup: map[int64][]Account{
+				grokID: {{
+					ID:       10,
+					Platform: PlatformGrok,
+				}},
+				geminiID: {{
+					ID:       20,
+					Platform: PlatformOpenAI,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{
+							"gemini-3.8-flash": "gemini-3.8-flash",
+						},
+					},
+				}},
+			},
+		},
+	}
+
+	require.Equal(t, groupCatalogModelAbsent, svc.groupCatalogHasRequestedModel(context.Background(), grokID, "gemini-3.8-flash"))
+	require.Equal(t, groupCatalogModelPresent, svc.groupCatalogHasRequestedModel(context.Background(), geminiID, "gemini-3.8-flash"))
+	require.Equal(t, groupCatalogModelAbsent, svc.groupCatalogHasRequestedModel(context.Background(), grokID, "__mirasim_wire_probe_model__"))
+	require.Equal(t, groupCatalogModelAbsent, svc.groupCatalogHasRequestedModel(context.Background(), grokID, ""))
+}
+
+func TestGroupCatalogUsableForRequest_OpenAICompatibleGrokDoesNotClaimGemini(t *testing.T) {
+	grokID := int64(1)
+	svc := &GatewayService{
+		accountRepo: &modelsListAccountRepoStub{
+			byGroup: map[int64][]Account{
+				grokID: {{ID: 10, Platform: PlatformGrok}},
+			},
+		},
+		groupRepo: &groupLookupHotpathRepoStub{
+			group: &Group{
+				ID:               grokID,
+				Platform:         PlatformGrok,
+				ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"grok-4.6"}},
+			},
+		},
+	}
+
+	require.False(t, svc.groupCatalogUsableForRequest(context.Background(), grokID, PlatformOpenAI, "gemini-3.8-flash"))
+	require.True(t, svc.groupCatalogUsableForRequest(context.Background(), grokID, PlatformOpenAI, "grok-4.6"))
+	require.False(t, svc.groupCatalogUsableForRequest(context.Background(), grokID, PlatformOpenAI, ""))
+	require.False(t, svc.groupCatalogUsableForRequest(context.Background(), grokID, PlatformOpenAI, "__mirasim_wire_probe_model__"))
+}
+
+func TestUpstreamPlatformForModel_DoesNotGuessFromModelName(t *testing.T) {
+	openaiID := int64(1)
+	svc := &GatewayService{
+		accountRepo: &modelsListAccountRepoStub{
+			byGroup: map[int64][]Account{
+				openaiID: {{
+					ID:       10,
+					Platform: PlatformOpenAI,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"gpt-5.4": "gpt-5.4"},
+					},
+				}},
+			},
+		},
+	}
+	key := &APIKey{GroupID: &openaiID, Group: &Group{ID: openaiID, Platform: PlatformOpenAI}}
+
+	platform, ok := svc.UpstreamPlatformForModel(context.Background(), key, "grok-imagine-video-1.5")
+	require.False(t, ok)
+	require.Empty(t, platform)
+
+	platform, ok = svc.UpstreamPlatformForModel(context.Background(), key, "gpt-5.4")
+	require.True(t, ok)
+	require.Equal(t, PlatformOpenAI, platform)
+}
+
+func TestUpstreamPlatformForModel_GeminiGroupOpenAIAccount(t *testing.T) {
+	geminiID := int64(2)
+	svc := &GatewayService{
+		accountRepo: &modelsListAccountRepoStub{
+			byGroup: map[int64][]Account{
+				geminiID: {{
+					ID:       20,
+					Platform: PlatformOpenAI,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"gemini-3.8-flash": "gemini-3.8-flash"},
+					},
+				}},
+			},
+		},
+	}
+	key := &APIKey{GroupID: &geminiID, Group: &Group{ID: geminiID, Platform: PlatformGemini}}
+
+	platform, ok := svc.UpstreamPlatformForModel(context.Background(), key, "gemini-3.8-flash")
+	require.True(t, ok)
+	require.Equal(t, PlatformOpenAI, platform)
 }
