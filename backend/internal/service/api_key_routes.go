@@ -139,6 +139,124 @@ func groupUsableForRequest(group *Group, requestPlatform, model string, schedula
 	return false
 }
 
+type groupCatalogModelPresence int
+
+const (
+	groupCatalogModelUnknown groupCatalogModelPresence = iota
+	groupCatalogModelPresent
+	groupCatalogModelAbsent
+)
+
+func groupCatalogPlatforms() []string {
+	return []string{
+		PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity,
+		PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek,
+	}
+}
+
+func modelsAdmitRequestedModel(models []string, requestedModel string) bool {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" || len(models) == 0 {
+		return false
+	}
+	normalized := ""
+	for _, id := range models {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if strings.EqualFold(id, requestedModel) {
+			return true
+		}
+		if matchWildcard(id, requestedModel) {
+			return true
+		}
+		if normalized == "" {
+			normalized = normalizeRequestedModelForLookup("", requestedModel)
+		}
+		if normalized != "" && normalized != requestedModel {
+			if strings.EqualFold(id, normalized) || matchWildcard(id, normalized) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func accountServesRequestedModel(account *Account, requestedModel string) bool {
+	if account == nil {
+		return false
+	}
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" {
+		return false
+	}
+	return account.IsModelSupported(requestedModel)
+}
+
+func (s *GatewayService) groupCatalogHasRequestedModel(ctx context.Context, groupID int64, requestedModel string) groupCatalogModelPresence {
+	if s == nil || groupID <= 0 {
+		return groupCatalogModelUnknown
+	}
+	requestedModel = strings.TrimSpace(requestedModel)
+	gid := groupID
+	sawCatalog := false
+	for _, platform := range groupCatalogPlatforms() {
+		models := s.GetAvailableModels(ctx, &gid, platform)
+		if models == nil {
+			continue
+		}
+		sawCatalog = true
+		if modelsAdmitRequestedModel(models, requestedModel) {
+			return groupCatalogModelPresent
+		}
+	}
+	if !sawCatalog {
+		return groupCatalogModelUnknown
+	}
+	return groupCatalogModelAbsent
+}
+
+func (s *GatewayService) groupCatalogUsableForRequest(ctx context.Context, groupID int64, requestPlatform, requestedModel string) bool {
+	if s == nil {
+		return true
+	}
+	gid := groupID
+	group := s.GroupPolicyForRequest(ctx, gid)
+	if !groupUsableForRequest(group, requestPlatform, requestedModel, s.GetSchedulablePlatforms(ctx, &gid)) {
+		return false
+	}
+	return s.groupCatalogHasRequestedModel(ctx, groupID, requestedModel) != groupCatalogModelAbsent
+}
+
+func (s *OpenAIGatewayService) groupCatalogHasRequestedModel(ctx context.Context, groupID int64, requestedModel string) groupCatalogModelPresence {
+	if s == nil || s.schedulerSnapshot == nil || groupID <= 0 {
+		return groupCatalogModelUnknown
+	}
+	requestedModel = strings.TrimSpace(requestedModel)
+	gid := groupID
+	sawAccounts := false
+	for _, platform := range groupCatalogPlatforms() {
+		accounts, _, err := s.schedulerSnapshot.listSchedulableAccountsForRequest(ctx, &gid, platform, false)
+		if err != nil {
+			continue
+		}
+		if len(accounts) == 0 {
+			continue
+		}
+		sawAccounts = true
+		for i := range accounts {
+			if accountServesRequestedModel(&accounts[i], requestedModel) {
+				return groupCatalogModelPresent
+			}
+		}
+	}
+	if !sawAccounts {
+		return groupCatalogModelUnknown
+	}
+	return groupCatalogModelAbsent
+}
+
 // UpstreamPlatformForModel prefers the platform of a schedulable account that
 // actually maps the requested model, not the group label and not the model-name
 // heuristic. OpenAI-compatible accounts are checked first so a Gemini-labeled

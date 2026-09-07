@@ -103,7 +103,7 @@ export default {
     groupLabel: 'Group',
     selectGroup: 'Select a group',
     smartRouting: 'Smart routing',
-    smartRoutingHint: 'Select up to 10 groups in any platform and order them. Requests try groups in list order and move on when the current group has no schedulable account, is not ready, or cannot serve this endpoint. A request will not send a GPT account to the Claude protocol, or the reverse.',
+    smartRoutingHint: 'Select up to 10 groups in any platform and order them. Groups whose account model catalog does not include the requested model are skipped before selection. Client probes and empty-model requests are not sent to unmatched groups.',
     smartRoutingAdd: 'Add group',
     smartRoutingRoute: 'Route',
     smartRoutingMax: 'At most 10 groups',

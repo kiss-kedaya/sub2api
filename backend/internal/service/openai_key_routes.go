@@ -42,6 +42,9 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 				// unset so selection can pick those accounts.
 			}
 		}
+		if s.groupCatalogHasRequestedModel(ctx, gid, requestedModel) == groupCatalogModelAbsent {
+			continue
+		}
 		selection, decision, err := selectOne(&gid, groupPlatform)
 		if err == nil {
 			routed, hydErr := s.hydrateAPIKeyGroup(ctx, apiKey, groupID)
