@@ -23,6 +23,8 @@ type UserSubscriptionRepoSuite struct {
 
 func (s *UserSubscriptionRepoSuite) SetupTest() {
 	s.ctx = context.Background()
+	_, _ = integrationDB.ExecContext(s.ctx, "TRUNCATE TABLE users RESTART IDENTITY CASCADE")
+	_, _ = integrationDB.ExecContext(s.ctx, "TRUNCATE TABLE groups RESTART IDENTITY CASCADE")
 	tx := testEntTx(s.T())
 	s.client = tx.Client()
 	s.repo = NewUserSubscriptionRepository(s.client).(*userSubscriptionRepository)

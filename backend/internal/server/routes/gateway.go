@@ -515,7 +515,7 @@ func getGroupPlatform(c *gin.Context) string {
 	if !ok || apiKey.Group == nil {
 		return ""
 	}
-	if apiKey.Group.Platform == service.PlatformComposite {
+	if apiKey.UsesRequestTargetPlatform() {
 		if platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
 			return platform
 		}
@@ -529,7 +529,7 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver,
 	}
 	return func(c *gin.Context) {
 		apiKey, ok := middleware.GetAPIKeyFromContext(c)
-		if !ok || apiKey == nil || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformComposite {
+		if !ok || apiKey == nil || apiKey.Group == nil || !apiKey.UsesRequestTargetPlatform() {
 			c.Next()
 			return
 		}
@@ -556,31 +556,37 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver,
 		}
 
 		model := compositeRequestModelFromBody(c.GetHeader("Content-Type"), body)
-		if model != "" {
-			decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, compositeRouteEndpointForPath(c.Request.URL.Path))
-			if err != nil {
-				status := http.StatusInternalServerError
-				if errors.Is(err, service.ErrCompositeRouteCacheNotReady) {
-					// A cold immutable projection is a transient readiness condition.
-					// Returning 503 lets clients retry after the background refresh,
-					// while avoiding accidental detector routing that could bypass an
-					// explicit administrator route.
-					status = http.StatusServiceUnavailable
-					c.Header("Retry-After", "1")
+		if apiKey.Group.Platform == service.PlatformComposite {
+			if model != "" {
+				decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, compositeRouteEndpointForPath(c.Request.URL.Path))
+				if err != nil {
+					status := http.StatusInternalServerError
+					if errors.Is(err, service.ErrCompositeRouteCacheNotReady) {
+						// A cold immutable projection is a transient readiness condition.
+						// Returning 503 lets clients retry after the background refresh,
+						// while avoiding accidental detector routing that could bypass an
+						// explicit administrator route.
+						status = http.StatusServiceUnavailable
+						c.Header("Retry-After", "1")
+					}
+					c.JSON(status, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
+					c.Abort()
+					return
 				}
-				c.JSON(status, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
-				c.Abort()
-				return
-			}
-			if decision.Matched {
-				c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
-				if upstreamModel := strings.TrimSpace(decision.UpstreamModel); upstreamModel != "" && upstreamModel != model && gjson.ValidBytes(body) {
-					if _, modelPath := compositeJSONRequestModel(body); modelPath != "" {
-						if rewritten, rewriteErr := sjson.SetBytes(body, modelPath, upstreamModel); rewriteErr == nil {
-							body = rewritten
+				if decision.Matched {
+					c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
+					if upstreamModel := strings.TrimSpace(decision.UpstreamModel); upstreamModel != "" && upstreamModel != model && gjson.ValidBytes(body) {
+						if _, modelPath := compositeJSONRequestModel(body); modelPath != "" {
+							if rewritten, rewriteErr := sjson.SetBytes(body, modelPath, upstreamModel); rewriteErr == nil {
+								body = rewritten
+							}
 						}
 					}
 				}
+			}
+		} else if model != "" {
+			if platform, ok := service.DetectModelPlatform(model); ok {
+				c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
 			}
 		}
 		resetRequestBody(c, body)
@@ -654,22 +660,28 @@ func compositeGeminiTargetPlatformMiddleware(resolver *service.CompositeRouteRes
 			c.Request = c.Request.WithContext(service.WithSchedulerSnapshotOnly(c.Request.Context()))
 		}
 		apiKey, ok := middleware.GetAPIKeyFromContext(c)
-		if ok && apiKey != nil && apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
-			model := compositeGeminiModelFromParams(c)
-			if model != "" {
-				decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, service.CompositeRouteEndpointGemini)
-				if err != nil {
-					status := http.StatusInternalServerError
-					if errors.Is(err, service.ErrCompositeRouteCacheNotReady) {
-						status = http.StatusServiceUnavailable
-						c.Header("Retry-After", "1")
+		if ok && apiKey != nil && apiKey.Group != nil && apiKey.UsesRequestTargetPlatform() {
+			if apiKey.Group.Platform == service.PlatformComposite {
+				model := compositeGeminiModelFromParams(c)
+				if model != "" {
+					decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, service.CompositeRouteEndpointGemini)
+					if err != nil {
+						status := http.StatusInternalServerError
+						if errors.Is(err, service.ErrCompositeRouteCacheNotReady) {
+							status = http.StatusServiceUnavailable
+							c.Header("Retry-After", "1")
+						}
+						c.JSON(status, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
+						c.Abort()
+						return
 					}
-					c.JSON(status, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
-					c.Abort()
-					return
+					if decision.Matched {
+						c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
+					}
 				}
-				if decision.Matched {
-					c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
+			} else if model := compositeGeminiModelFromParams(c); model != "" {
+				if platform, ok := service.DetectModelPlatform(model); ok {
+					c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
 				}
 			}
 			if _, resolved := service.ResolvedTargetPlatformFromContext(c.Request.Context()); !resolved {

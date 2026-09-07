@@ -218,8 +218,20 @@ func parseOpenAIWSErrorEventFields(message []byte) (code string, errType string,
 	if len(message) == 0 {
 		return "", "", ""
 	}
-	values := gjson.GetManyBytes(message, "error.code", "error.type", "error.message")
-	return strings.TrimSpace(values[0].String()), strings.TrimSpace(values[1].String()), strings.TrimSpace(values[2].String())
+	values := gjson.GetManyBytes(message,
+		"error.code", "error.type", "error.message",
+		"response.error.code", "response.error.type", "response.error.message",
+		"code", "type", "message",
+	)
+	code = firstNonEmpty(values[0].String(), values[3].String(), values[6].String())
+	errType = firstNonEmpty(values[1].String(), values[4].String())
+	if errType == "" {
+		if topType := strings.TrimSpace(values[7].String()); topType != "" && topType != "error" {
+			errType = topType
+		}
+	}
+	errMessage = firstNonEmpty(values[2].String(), values[5].String(), values[8].String())
+	return strings.TrimSpace(code), strings.TrimSpace(errType), strings.TrimSpace(errMessage)
 }
 
 func summarizeOpenAIWSErrorEventFieldsFromRaw(codeRaw, errTypeRaw, errMessageRaw string) (code string, errType string, errMessage string) {

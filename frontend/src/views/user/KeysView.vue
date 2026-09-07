@@ -139,7 +139,7 @@
                 :ref="(el) => setGroupButtonRef(row.id, el)"
                 @click="openGroupSelector(row)"
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
-                :title="t('keys.clickToChangeGroup')"
+                :title="isSmartRoutingKey(row) ? t('keys.smartRoutingChangeInEditor') : t('keys.clickToChangeGroup')"
               >
                 <GroupBadge
                   v-if="row.group"
@@ -156,7 +156,14 @@
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
                 }}</span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
+                <span
+                  v-if="isSmartRoutingKey(row)"
+                  class="rounded-full bg-primary-50 px-1.5 py-0.5 text-[11px] font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
+                >
+                  {{ t('keys.smartRouting') }}
+                  {{ t('keys.smartRoutingMore', { count: (row.group_ids?.length || 1) - 1 }) }}
+                </span>
+                <span v-else class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
                 <svg
                   class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
                   fill="none"
@@ -466,7 +473,53 @@
 
         <div>
           <label class="input-label">{{ t('keys.groupLabel') }}</label>
+          <label class="mt-1 mb-3 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+            <input v-model="formData.smart_routing" type="checkbox" class="rounded border-gray-300" />
+            {{ t('keys.smartRouting') }}
+          </label>
+          <p v-if="formData.smart_routing" class="mb-3 text-xs text-gray-500 dark:text-dark-400">
+            {{ t('keys.smartRoutingHint') }}
+          </p>
+          <div v-if="formData.smart_routing" class="space-y-2">
+            <div
+              v-for="(groupId, index) in formData.group_ids"
+              :key="`${groupId}-${index}`"
+              class="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 dark:border-dark-600"
+            >
+              <span class="shrink-0 text-xs text-gray-400">{{ t('keys.smartRoutingRoute') }} {{ index + 1 }}</span>
+              <div class="min-w-0 flex-1">
+                <GroupBadge
+                  v-if="groupOptionById(groupId)"
+                  :name="groupOptionById(groupId)!.label"
+                  :platform="groupOptionById(groupId)!.platform"
+                  :subscription-type="groupOptionById(groupId)!.subscriptionType"
+                  :rate-multiplier="groupOptionById(groupId)!.rate"
+                  :user-rate-multiplier="groupOptionById(groupId)!.userRate"
+                  :peak-rate-enabled="groupOptionById(groupId)!.peakRateEnabled"
+                  :peak-start="groupOptionById(groupId)!.peakStart"
+                  :peak-end="groupOptionById(groupId)!.peakEnd"
+                  :peak-rate-multiplier="groupOptionById(groupId)!.peakRateMultiplier"
+                />
+                <span v-else class="text-sm text-gray-400">#{{ groupId }}</span>
+              </div>
+              <button type="button" class="text-gray-400 hover:text-gray-700" @click="moveSmartRoute(index, -1)">↑</button>
+              <button type="button" class="text-gray-400 hover:text-gray-700" @click="moveSmartRoute(index, 1)">↓</button>
+              <button type="button" class="text-gray-400 hover:text-red-600" @click="removeSmartRoute(index)">×</button>
+            </div>
+            <Select
+              v-if="formData.group_ids.length < 10"
+              :model-value="null"
+              :options="smartRoutingAddOptions"
+              :placeholder="t('keys.smartRoutingAdd')"
+              :searchable="true"
+              :search-placeholder="t('keys.searchGroup')"
+              @update:model-value="addSmartRoute"
+            />
+            <p v-if="formData.group_ids.length === 0" class="text-xs text-gray-400">{{ t('keys.smartRoutingEmpty') }}</p>
+            <p v-else-if="formData.group_ids.length >= 10" class="text-xs text-gray-400">{{ t('keys.smartRoutingMax') }}</p>
+          </div>
           <Select
+            v-else
             v-model="formData.group_id"
             :options="groupOptions"
             :placeholder="t('keys.selectGroup')"
@@ -998,48 +1051,63 @@
       @close="closeUseKeyModal"
     />
 
-    <!-- CCS Client Selection Dialog for Antigravity -->
+    <!-- CCS import: pick platform + model, then open ccswitch:// deeplink -->
     <BaseDialog
-      :show="showCcsClientSelect"
-      :title="t('keys.ccsClientSelect.title')"
+      :show="showCcsImportModal"
+      :title="t('keys.ccsImport.title')"
       width="narrow"
-      @close="closeCcsClientSelect"
+      @close="closeCcsImportModal"
     >
       <div class="space-y-4">
         <p class="text-sm text-gray-600 dark:text-gray-400">
-          {{ t('keys.ccsClientSelect.description') }}
-	        </p>
-	        <div class="grid grid-cols-2 gap-3">
-	          <button
-	            @click="handleCcsClientSelect('claude')"
-	            class="flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-gray-200 dark:border-dark-600 hover:border-primary-500 dark:hover:border-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-all"
-	          >
-	            <Icon name="terminal" size="xl" class="text-gray-600 dark:text-gray-400" />
-	            <span class="font-medium text-gray-900 dark:text-white">{{
-	              t('keys.ccsClientSelect.claudeCode')
-	            }}</span>
-	            <span class="text-xs text-gray-500 dark:text-gray-400">{{
-	              t('keys.ccsClientSelect.claudeCodeDesc')
-	            }}</span>
-	          </button>
-	          <button
-	            @click="handleCcsClientSelect('gemini')"
-	            class="flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-gray-200 dark:border-dark-600 hover:border-primary-500 dark:hover:border-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-all"
-	          >
-	            <Icon name="sparkles" size="xl" class="text-gray-600 dark:text-gray-400" />
-	            <span class="font-medium text-gray-900 dark:text-white">{{
-	              t('keys.ccsClientSelect.geminiCli')
-	            }}</span>
-	            <span class="text-xs text-gray-500 dark:text-gray-400">{{
-	              t('keys.ccsClientSelect.geminiCliDesc')
-	            }}</span>
-	          </button>
-	        </div>
-	      </div>
+          {{ t('keys.ccsImport.description') }}
+        </p>
+        <div>
+          <label class="input-label" for="ccs-import-platform">{{ t('keys.ccsImport.platform') }}</label>
+          <Select
+            id="ccs-import-platform"
+            :model-value="ccsImportApp"
+            :options="ccsAppOptions"
+            :aria-label="t('keys.ccsImport.platform')"
+            @update:model-value="onCcsAppChange"
+          />
+        </div>
+        <div>
+          <label class="input-label" for="ccs-import-model">{{ t('keys.ccsImport.model') }}</label>
+          <Select
+            id="ccs-import-model"
+            :model-value="ccsImportModel"
+            :options="ccsModelOptions"
+            :placeholder="t('keys.ccsImport.modelPlaceholder')"
+            :searchable="true"
+            :creatable="true"
+            :clearable="true"
+            :aria-label="t('keys.ccsImport.model')"
+            @update:model-value="onCcsModelChange"
+          />
+          <p class="input-hint mt-1">
+            {{ ccsModelsLoading ? t('keys.ccsImport.modelLoading') : t('keys.ccsImport.modelHint') }}
+          </p>
+        </div>
+        <p
+          v-if="ccsImportDeeplinkUnsupported"
+          class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+          {{ t('keys.ccsImport.deeplinkUnsupported') }}
+        </p>
+      </div>
       <template #footer>
-        <div class="flex justify-end">
-          <button @click="closeCcsClientSelect" class="btn btn-secondary">
+        <div class="flex justify-end gap-2">
+          <button type="button" class="btn btn-secondary" @click="closeCcsImportModal">
             {{ t('common.cancel') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="ccsImportDeeplinkUnsupported"
+            @click="confirmCcsImport"
+          >
+            {{ t('common.import') }}
           </button>
         </div>
       </template>
@@ -1117,7 +1185,7 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+	import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
@@ -1147,7 +1215,16 @@ import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
 import {
   buildCcSwitchImportDeeplink,
-  type CcSwitchClientType
+  CC_SWITCH_APP_LABEL_KEYS,
+  CC_SWITCH_APPS,
+  CC_SWITCH_MODEL_SUGGESTIONS,
+  ccSwitchProviderDeeplinkSupported,
+  defaultCcSwitchModel,
+  fetchCcSwitchModels,
+  isCcSwitchApp,
+  pickCcSwitchModel,
+  resolveCcSwitchImportConfig,
+  type CcSwitchApp
 } from '@/utils/ccswitchImport'
 
 // Helper to format date for datetime-local input
@@ -1300,9 +1377,38 @@ const showDeleteDialog = ref(false)
 const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showUseKeyModal = ref(false)
-const showCcsClientSelect = ref(false)
+const showCcsImportModal = ref(false)
 const showColumnDropdown = ref(false)
 const pendingCcsRow = ref<ApiKey | null>(null)
+const ccsImportApp = ref<CcSwitchApp>('claude')
+const ccsImportModel = ref('')
+const ccsAvailableModels = ref<string[]>([])
+const ccsModelsLoading = ref(false)
+let ccsModelsAbort: AbortController | null = null
+
+const ccsAppOptions = computed(() =>
+  CC_SWITCH_APPS.map((value) => ({
+    value,
+    label: t(`keys.ccsImport.${CC_SWITCH_APP_LABEL_KEYS[value]}`)
+  }))
+)
+
+const ccsImportDeeplinkUnsupported = computed(
+  () => !ccSwitchProviderDeeplinkSupported(ccsImportApp.value)
+)
+
+const ccsModelOptions = computed(() => {
+  const suggestions =
+    ccsAvailableModels.value.length > 0
+      ? ccsAvailableModels.value
+      : CC_SWITCH_MODEL_SUGGESTIONS[ccsImportApp.value] || []
+  const values = [...suggestions]
+  const current = ccsImportModel.value.trim()
+  if (current && !values.includes(current)) {
+    values.unshift(current)
+  }
+  return values.map((value) => ({ value, label: value }))
+})
 const selectedKey = ref<ApiKey | null>(null)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
@@ -1331,6 +1437,8 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 const formData = ref({
   name: '',
   group_id: null as number | null,
+  group_ids: [] as number[],
+  smart_routing: false,
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
   custom_key: '',
@@ -1425,6 +1533,54 @@ const groupOptions = computed(() =>
   }))
 )
 
+const groupOptionById = (id: number) => groupOptions.value.find((opt) => opt.value === id)
+
+const isSmartRoutingKey = (key: ApiKey) => (key.group_ids?.length ?? 0) > 1
+
+watch(
+  () => formData.value.smart_routing,
+  (enabled) => {
+    if (enabled) {
+      if (formData.value.group_ids.length === 0 && formData.value.group_id != null) {
+        formData.value.group_ids = [formData.value.group_id]
+      }
+      return
+    }
+    formData.value.group_ids = formData.value.group_id != null ? [formData.value.group_id] : []
+  }
+)
+
+const smartRoutingAddOptions = computed(() => {
+  const selected = new Set(formData.value.group_ids)
+  return groupOptions.value.filter((opt) => !selected.has(opt.value))
+})
+
+const addSmartRoute = (value: string | number | boolean | null) => {
+  if (typeof value !== 'number') return
+  if (formData.value.group_ids.includes(value)) return
+  if (formData.value.group_ids.length >= 10) {
+    appStore.showError(t('keys.smartRoutingMax'))
+    return
+  }
+  formData.value.group_ids = [...formData.value.group_ids, value]
+  formData.value.group_id = formData.value.group_ids[0] ?? null
+}
+
+const removeSmartRoute = (index: number) => {
+  formData.value.group_ids = formData.value.group_ids.filter((_, i) => i !== index)
+  formData.value.group_id = formData.value.group_ids[0] ?? null
+}
+
+const moveSmartRoute = (index: number, delta: number) => {
+  const next = index + delta
+  if (next < 0 || next >= formData.value.group_ids.length) return
+  const copy = [...formData.value.group_ids]
+  const [item] = copy.splice(index, 1)
+  copy.splice(next, 0, item)
+  formData.value.group_ids = copy
+  formData.value.group_id = copy[0] ?? null
+}
+
 // Group dropdown search
 const groupSearchQuery = ref('')
 const filteredGroupOptions = computed(() => {
@@ -1480,8 +1636,10 @@ const loadApiKeys = async () => {
     apiKeys.value = response.items
     pagination.value.total = response.total
     pagination.value.pages = response.pages
+    loading.value = false
 
-    // Load usage stats for all API keys in the list
+    // Usage numbers are secondary; don't keep the key table spinning while
+    // 30-day aggregates scan usage_logs.
     if (response.items.length > 0) {
       const keyIds = response.items.map((k) => k.id)
       try {
@@ -1575,6 +1733,8 @@ const editKey = (key: ApiKey) => {
   formData.value = {
     name: key.name,
     group_id: key.group_id,
+    group_ids: key.group_ids && key.group_ids.length > 0 ? [...key.group_ids] : (key.group_id ? [key.group_id] : []),
+    smart_routing: !!(key.group_ids && key.group_ids.length > 1),
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
     custom_key: '',
@@ -1608,6 +1768,10 @@ const toggleKeyStatus = async (key: ApiKey) => {
 }
 
 const openGroupSelector = (key: ApiKey) => {
+  if (isSmartRoutingKey(key)) {
+    appStore.showError(t('keys.smartRoutingChangeInEditor'))
+    return
+  }
   if (groupSelectorKeyId.value === key.id) {
     groupSelectorKeyId.value = null
     dropdownPosition.value = null
@@ -1644,6 +1808,10 @@ const openGroupSelector = (key: ApiKey) => {
 const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
   groupSelectorKeyId.value = null
   dropdownPosition.value = null
+  if (isSmartRoutingKey(key)) {
+    appStore.showError(t('keys.smartRoutingChangeInEditor'))
+    return
+  }
   if (key.group_id === newGroupId) return
 
   try {
@@ -1674,7 +1842,13 @@ const confirmDelete = (key: ApiKey) => {
 
 const handleSubmit = async () => {
   // Validate group_id is required
-  if (formData.value.group_id === null) {
+  if (formData.value.smart_routing) {
+    if (formData.value.group_ids.length === 0) {
+      appStore.showError(t('keys.groupRequired'))
+      return
+    }
+    formData.value.group_id = formData.value.group_ids[0] ?? null
+  } else if (formData.value.group_id === null) {
     appStore.showError(t('keys.groupRequired'))
     return
   }
@@ -1732,6 +1906,7 @@ const handleSubmit = async () => {
       const updates: UpdateApiKeyRequest = {
         name: formData.value.name,
         group_id: formData.value.group_id,
+        group_ids: formData.value.smart_routing ? formData.value.group_ids : (formData.value.group_id != null ? [formData.value.group_id] : []),
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
         quota: quota,
@@ -1755,7 +1930,8 @@ const handleSubmit = async () => {
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        formData.value.smart_routing ? formData.value.group_ids : undefined
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -1801,6 +1977,8 @@ const closeModals = () => {
   formData.value = {
     name: '',
     group_id: null,
+    group_ids: [],
+    smart_routing: false,
     status: 'active',
     use_custom_key: false,
     custom_key: '',
@@ -1880,21 +2058,62 @@ const resetRateLimitUsage = async () => {
   }
 }
 
-const importToCcswitch = (row: ApiKey) => {
-  const platform = row.group?.platform || 'anthropic'
-
-  // For antigravity platform, show client selection dialog
-  if (platform === 'antigravity') {
-    pendingCcsRow.value = row
-    showCcsClientSelect.value = true
-    return
-  }
-
-  // For other platforms, execute directly
-  executeCcsImport(row, platform === 'gemini' ? 'gemini' : 'claude')
+const applyCcsModelDefault = () => {
+  ccsImportModel.value = pickCcSwitchModel(
+    defaultCcSwitchModel(ccsImportApp.value),
+    ccsAvailableModels.value
+  )
 }
 
-const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
+const loadCcsModels = async (row: ApiKey) => {
+  ccsModelsAbort?.abort()
+  const abort = new AbortController()
+  ccsModelsAbort = abort
+  ccsAvailableModels.value = []
+  ccsModelsLoading.value = true
+  try {
+    const baseUrl = publicSettings.value?.api_base_url || window.location.origin
+    const ids = await fetchCcSwitchModels(baseUrl, row.key, abort.signal)
+    if (abort.signal.aborted) return
+    ccsAvailableModels.value = ids
+    applyCcsModelDefault()
+  } catch {
+    if (abort.signal.aborted) return
+    applyCcsModelDefault()
+  } finally {
+    if (ccsModelsAbort === abort) {
+      ccsModelsLoading.value = false
+    }
+  }
+}
+
+const importToCcswitch = (row: ApiKey) => {
+  const platform = row.group?.platform || 'anthropic'
+  const baseUrl = publicSettings.value?.api_base_url || window.location.origin
+  const config = resolveCcSwitchImportConfig(
+    platform,
+    platform === 'gemini' ? 'gemini' : 'claude',
+    baseUrl
+  )
+  pendingCcsRow.value = row
+  ccsImportApp.value = config.app
+  ccsImportModel.value = config.model || defaultCcSwitchModel(config.app)
+  showCcsImportModal.value = true
+  void loadCcsModels(row)
+}
+
+const onCcsAppChange = (value: string | number | boolean | null) => {
+  const app = String(value)
+  if (!isCcSwitchApp(app)) return
+  ccsImportApp.value = app
+  applyCcsModelDefault()
+}
+
+const onCcsModelChange = (value: string | number | boolean | null) => {
+  ccsImportModel.value = value == null ? '' : String(value)
+}
+
+const executeCcsImport = (row: ApiKey, app: CcSwitchApp, model: string) => {
   const baseUrl = publicSettings.value?.api_base_url || window.location.origin
   const platform = row.group?.platform || 'anthropic'
 
@@ -1918,10 +2137,11 @@ const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
   const deeplink = buildCcSwitchImportDeeplink({
     baseUrl,
     platform,
-    clientType,
     providerName,
     apiKey: row.key,
-    usageScript
+    usageScript,
+    app,
+    model
   })
 
   try {
@@ -1939,16 +2159,19 @@ const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
   }
 }
 
-const handleCcsClientSelect = (clientType: CcSwitchClientType) => {
-  if (pendingCcsRow.value) {
-    executeCcsImport(pendingCcsRow.value, clientType)
-  }
-  showCcsClientSelect.value = false
-  pendingCcsRow.value = null
+const confirmCcsImport = () => {
+  if (!pendingCcsRow.value) return
+  if (!ccSwitchProviderDeeplinkSupported(ccsImportApp.value)) return
+  executeCcsImport(pendingCcsRow.value, ccsImportApp.value, ccsImportModel.value.trim())
+  closeCcsImportModal()
 }
 
-const closeCcsClientSelect = () => {
-  showCcsClientSelect.value = false
+const closeCcsImportModal = () => {
+  ccsModelsAbort?.abort()
+  ccsModelsAbort = null
+  ccsModelsLoading.value = false
+  ccsAvailableModels.value = []
+  showCcsImportModal.value = false
   pendingCcsRow.value = null
 }
 
@@ -1978,5 +2201,6 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('click', closeGroupSelector)
   if (resetTimer) clearInterval(resetTimer)
+  ccsModelsAbort?.abort()
 })
 </script>

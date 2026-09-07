@@ -1206,6 +1206,10 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 					return nil, fmt.Errorf("commit transaction: %w", err)
 				}
 			}
+			if err := s.clearAPIKeyGroupRoutes(ctx, apiKey.ID); err != nil {
+				return nil, err
+			}
+			apiKey.RouteGroupIDs = nil
 
 			result.AutoGrantedGroupAccess = true
 			result.GrantedGroupID = &gid
@@ -1225,6 +1229,10 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	if err := s.apiKeyRepo.Update(ctx, apiKey, APIKeyUpdateFields{GroupID: true}); err != nil {
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
+	if err := s.clearAPIKeyGroupRoutes(ctx, apiKey.ID); err != nil {
+		return nil, err
+	}
+	apiKey.RouteGroupIDs = nil
 
 	// 失效认证缓存
 	if s.authCacheInvalidator != nil {
@@ -1233,6 +1241,17 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 
 	result.APIKey = apiKey
 	return result, nil
+}
+
+func (s *adminServiceImpl) clearAPIKeyGroupRoutes(ctx context.Context, apiKeyID int64) error {
+	store, ok := s.apiKeyRepo.(apiKeyGroupRouteStore)
+	if !ok {
+		return nil
+	}
+	if err := store.ReplaceGroupRoutes(ctx, apiKeyID, nil); err != nil {
+		return fmt.Errorf("replace api key group routes: %w", err)
+	}
+	return nil
 }
 
 // AdminResetAPIKeyRateLimitUsage resets all API key rate-limit usage windows.
@@ -1291,6 +1310,16 @@ func (s *adminServiceImpl) ReplaceUserGroup(ctx context.Context, userID, oldGrou
 	defer func() { _ = tx.Rollback() }()
 	opCtx := dbent.NewTxContext(ctx, tx)
 
+	var migratedIDs []int64
+	if lister, ok := s.apiKeyRepo.(interface {
+		ListIDsByUserAndGroup(context.Context, int64, int64) ([]int64, error)
+	}); ok {
+		migratedIDs, err = lister.ListIDsByUserAndGroup(opCtx, userID, oldGroupID)
+		if err != nil {
+			return nil, fmt.Errorf("list api keys to migrate: %w", err)
+		}
+	}
+
 	// 1. 授予新分组权限
 	if err := s.userRepo.AddGroupToAllowedGroups(opCtx, userID, newGroupID); err != nil {
 		return nil, fmt.Errorf("add new group to allowed groups: %w", err)
@@ -1309,6 +1338,11 @@ func (s *adminServiceImpl) ReplaceUserGroup(ctx context.Context, userID, oldGrou
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit transaction: %w", err)
+	}
+	for _, id := range migratedIDs {
+		if err := s.clearAPIKeyGroupRoutes(ctx, id); err != nil {
+			return nil, err
+		}
 	}
 
 	// 失效该用户所有 Key 的认证缓存

@@ -10,7 +10,7 @@ import (
 )
 
 func ensureCompositeTargetPlatform(c *gin.Context, apiKey *service.APIKey, model string) {
-	if c == nil || c.Request == nil || apiKey == nil || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformComposite {
+	if c == nil || c.Request == nil || apiKey == nil || !apiKey.UsesRequestTargetPlatform() {
 		return
 	}
 	if _, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
