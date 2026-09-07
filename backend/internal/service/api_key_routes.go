@@ -11,6 +11,12 @@ import (
 
 const maxAPIKeyGroupRoutes = 10
 
+// UpstreamPlatformResolver maps a request model to the concrete account
+// platform that should handle it. Used by gateway middleware before dispatch.
+type UpstreamPlatformResolver interface {
+	UpstreamPlatformForModel(ctx context.Context, apiKey *APIKey, model string) (string, bool)
+}
+
 func (k *APIKey) CandidateGroupIDs() []int64 {
 	if k == nil {
 		return nil
@@ -69,6 +75,10 @@ func groupAllowsRequestedModel(group *Group, model string) bool {
 	return false
 }
 
+func IsOpenAICompatibleUpstreamPlatform(platform string) bool {
+	return isOpenAICompatibleUpstreamPlatform(platform)
+}
+
 func isOpenAICompatibleUpstreamPlatform(platform string) bool {
 	switch strings.TrimSpace(platform) {
 	case PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek:
@@ -94,14 +104,212 @@ func groupPlatformFitsRequest(groupPlatform, requestPlatform string) bool {
 	return false
 }
 
-func groupUsableForRequest(group *Group, requestPlatform, model string) bool {
+func groupUsableForRequest(group *Group, requestPlatform, model string, schedulablePlatforms ...map[string]struct{}) bool {
 	if group == nil {
 		return true
 	}
-	if !groupPlatformFitsRequest(group.Platform, requestPlatform) {
+	if !groupAllowsRequestedModel(group, model) {
 		return false
 	}
-	return groupAllowsRequestedModel(group, model)
+	if groupPlatformFitsRequest(group.Platform, requestPlatform) {
+		return true
+	}
+	var platforms map[string]struct{}
+	if len(schedulablePlatforms) > 0 {
+		platforms = schedulablePlatforms[0]
+	}
+	if len(platforms) == 0 {
+		return false
+	}
+	if requestPlatform != "" {
+		if _, ok := platforms[requestPlatform]; ok {
+			return true
+		}
+	}
+	for platform := range platforms {
+		if groupPlatformFitsRequest(platform, requestPlatform) {
+			return true
+		}
+		// OpenAI-type accounts in a Gemini/Claude-labeled group can serve
+		// OpenAI-compatible clients and the Anthropic messages bridge.
+		if isOpenAICompatibleUpstreamPlatform(platform) {
+			return true
+		}
+	}
+	return false
+}
+
+type groupCatalogModelPresence int
+
+const (
+	groupCatalogModelUnknown groupCatalogModelPresence = iota
+	groupCatalogModelPresent
+	groupCatalogModelAbsent
+)
+
+func groupCatalogPlatforms() []string {
+	return []string{
+		PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity,
+		PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek,
+	}
+}
+
+func modelsAdmitRequestedModel(models []string, requestedModel string) bool {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" || len(models) == 0 {
+		return false
+	}
+	normalized := ""
+	for _, id := range models {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if strings.EqualFold(id, requestedModel) {
+			return true
+		}
+		if matchWildcard(id, requestedModel) {
+			return true
+		}
+		if normalized == "" {
+			normalized = normalizeRequestedModelForLookup("", requestedModel)
+		}
+		if normalized != "" && normalized != requestedModel {
+			if strings.EqualFold(id, normalized) || matchWildcard(id, normalized) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func accountServesRequestedModel(account *Account, requestedModel string) bool {
+	if account == nil {
+		return false
+	}
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" {
+		return false
+	}
+	return account.IsModelSupported(requestedModel)
+}
+
+func (s *GatewayService) groupCatalogHasRequestedModel(ctx context.Context, groupID int64, requestedModel string) groupCatalogModelPresence {
+	if s == nil || groupID <= 0 {
+		return groupCatalogModelUnknown
+	}
+	requestedModel = strings.TrimSpace(requestedModel)
+	gid := groupID
+	sawCatalog := false
+	for _, platform := range groupCatalogPlatforms() {
+		models := s.GetAvailableModels(ctx, &gid, platform)
+		if models == nil {
+			continue
+		}
+		sawCatalog = true
+		if modelsAdmitRequestedModel(models, requestedModel) {
+			return groupCatalogModelPresent
+		}
+	}
+	if !sawCatalog {
+		return groupCatalogModelUnknown
+	}
+	return groupCatalogModelAbsent
+}
+
+func (s *GatewayService) groupCatalogUsableForRequest(ctx context.Context, groupID int64, requestPlatform, requestedModel string) bool {
+	if s == nil {
+		return true
+	}
+	gid := groupID
+	group := s.GroupPolicyForRequest(ctx, gid)
+	if !groupUsableForRequest(group, requestPlatform, requestedModel, s.GetSchedulablePlatforms(ctx, &gid)) {
+		return false
+	}
+	return s.groupCatalogHasRequestedModel(ctx, groupID, requestedModel) != groupCatalogModelAbsent
+}
+
+func (s *OpenAIGatewayService) groupCatalogHasRequestedModel(ctx context.Context, groupID int64, requestedModel string) groupCatalogModelPresence {
+	if s == nil || s.schedulerSnapshot == nil || groupID <= 0 {
+		return groupCatalogModelUnknown
+	}
+	requestedModel = strings.TrimSpace(requestedModel)
+	gid := groupID
+	sawAccounts := false
+	for _, platform := range groupCatalogPlatforms() {
+		accounts, _, err := s.schedulerSnapshot.listSchedulableAccountsForRequest(ctx, &gid, platform, false)
+		if err != nil {
+			continue
+		}
+		if len(accounts) == 0 {
+			continue
+		}
+		sawAccounts = true
+		for i := range accounts {
+			if accountServesRequestedModel(&accounts[i], requestedModel) {
+				return groupCatalogModelPresent
+			}
+		}
+	}
+	if !sawAccounts {
+		return groupCatalogModelUnknown
+	}
+	return groupCatalogModelAbsent
+}
+
+// UpstreamPlatformForModel prefers the platform of a schedulable account that
+// actually maps the requested model, not the group label and not the model-name
+// heuristic. OpenAI-compatible accounts are checked first so a Gemini-labeled
+// group holding OpenAI-type accounts (custom Responses URL) resolves to OpenAI.
+func (s *GatewayService) UpstreamPlatformForModel(ctx context.Context, apiKey *APIKey, model string) (string, bool) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "", false
+	}
+	if s == nil || apiKey == nil {
+		return "", false
+	}
+	ids := apiKey.CandidateGroupIDs()
+	if len(ids) == 0 && apiKey.Group != nil && apiKey.Group.ID > 0 {
+		ids = []int64{apiKey.Group.ID}
+	}
+	prefer := []string{
+		PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek,
+		PlatformAnthropic, PlatformGemini, PlatformAntigravity,
+	}
+	sawCatalog := false
+	for _, gid := range ids {
+		gid := gid
+		group := s.GroupPolicyForRequest(ctx, gid)
+		if group == nil && apiKey.Group != nil && apiKey.Group.ID == gid {
+			group = apiKey.Group
+		}
+		if !groupAllowsRequestedModel(group, model) {
+			continue
+		}
+		for _, platform := range prefer {
+			models := s.GetAvailableModels(ctx, &gid, platform)
+			if models == nil {
+				continue
+			}
+			sawCatalog = true
+			if modelsAdmitRequestedModel(models, model) {
+				return platform, true
+			}
+		}
+	}
+	if sawCatalog {
+		return "", false
+	}
+	for _, gid := range ids {
+		gid := gid
+		for platform := range s.GetSchedulablePlatforms(ctx, &gid) {
+			if isOpenAICompatibleUpstreamPlatform(platform) {
+				return platform, true
+			}
+		}
+	}
+	return "", false
 }
 
 func shouldContinueAlongKeyRoutes(err error) bool {

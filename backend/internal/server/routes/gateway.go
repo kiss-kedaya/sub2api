@@ -43,7 +43,7 @@ func RegisterGatewayRoutes(
 	// scheduler snapshot and synchronously query PostgreSQL on a cold/expired
 	// cache. The variadic service argument keeps lightweight route tests and
 	// alternate embedders source-compatible.
-	compositeTarget := compositeTargetPlatformMiddleware(compositeResolver, true)
+	compositeTarget := compositeTargetPlatformMiddlewareResolved(compositeResolver, h.Gateway, true)
 	compositeGeminiTarget := compositeGeminiTargetPlatformMiddleware(compositeResolver, true)
 
 	// 未分组 Key 拦截中间件（按协议格式区分错误响应）
@@ -369,7 +369,7 @@ func RegisterGatewayRoutes(
 	r.GET("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, func(c *gin.Context) {
 		h.OpenAIGateway.ResponsesWebSocket(c)
 	})
-	r.GET("/models", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, modelsHandler)
+	r.GET("/models", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, modelsHandler)
 	r.POST("/messages/count_tokens", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, countTokensHandler)
 	codexDirect := r.Group("/backend-api/codex")
 	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic)
@@ -515,21 +515,27 @@ func getGroupPlatform(c *gin.Context) string {
 	if !ok || apiKey.Group == nil {
 		return ""
 	}
-	if apiKey.UsesRequestTargetPlatform() {
-		if platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
-			return platform
-		}
+	if platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
+		return platform
 	}
 	return apiKey.Group.Platform
 }
 
 func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver, snapshotOnly ...bool) gin.HandlerFunc {
+	return compositeTargetPlatformMiddlewareResolved(resolver, nil, snapshotOnly...)
+}
+
+func compositeTargetPlatformMiddlewareResolved(resolver *service.CompositeRouteResolver, upstream service.UpstreamPlatformResolver, snapshotOnly ...bool) gin.HandlerFunc {
 	if resolver == nil {
 		resolver = service.NewCompositeRouteResolver(nil)
 	}
 	return func(c *gin.Context) {
 		apiKey, ok := middleware.GetAPIKeyFromContext(c)
-		if !ok || apiKey == nil || apiKey.Group == nil || !apiKey.UsesRequestTargetPlatform() {
+		if !ok || apiKey == nil || apiKey.Group == nil {
+			c.Next()
+			return
+		}
+		if !apiKey.UsesRequestTargetPlatform() && upstream == nil {
 			c.Next()
 			return
 		}
@@ -585,7 +591,11 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver,
 				}
 			}
 		} else if model != "" {
-			if platform, ok := service.DetectModelPlatform(model); ok {
+			if upstream != nil {
+				if platform, ok := upstream.UpstreamPlatformForModel(c.Request.Context(), apiKey, model); ok {
+					c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
+				}
+			} else if platform, ok := service.DetectModelPlatform(model); ok {
 				c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
 			}
 		}

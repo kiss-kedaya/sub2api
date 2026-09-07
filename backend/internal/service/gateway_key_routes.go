@@ -44,7 +44,7 @@ func (s *GatewayService) SelectAccountAlongKeyRoutes(
 	var lastErr error
 	for _, groupID := range candidates {
 		gid := groupID
-		if group := s.GroupPolicyForRequest(ctx, gid); !groupUsableForRequest(group, platform, requestedModel) {
+		if !s.groupCatalogUsableForRequest(ctx, gid, platform, requestedModel) {
 			continue
 		}
 		result, err := s.SelectAccountWithLoadAwareness(ctx, &gid, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
