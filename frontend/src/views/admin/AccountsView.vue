@@ -1936,10 +1936,13 @@ const handleBulkResetStatus = async () => {
 }
 const handleBulkRefreshToken = async () => {
   if (!confirm(t('common.confirm'))) return
+  const accountIds = [...selIds.value]
   try {
-    const result = await adminAPI.accounts.batchRefresh(selIds.value)
+    const result = await adminAPI.accounts.batchRefresh(accountIds)
     if (result.failed > 0) {
       appStore.showError(t('admin.accounts.bulkActions.partialSuccess', { success: result.success, failed: result.failed }))
+      const failedIds = result.errors?.map(error => error.account_id) ?? []
+      setSelectedIds(failedIds.length > 0 ? failedIds : accountIds)
     } else {
       appStore.showSuccess(t('admin.accounts.bulkActions.refreshTokenSuccess', { count: result.success }))
       clearSelection()
