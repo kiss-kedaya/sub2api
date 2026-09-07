@@ -705,6 +705,11 @@ func TestEmbeddedFrontendBypassesBareVideoAPIRoutes(t *testing.T) {
 		"/videos/edits",
 		"/videos/extensions",
 		"/videos/request-123",
+		"/models",
+		"/chat/completions",
+		"/messages",
+		"/embeddings",
+		"/responses",
 	} {
 		require.True(t, shouldBypassEmbeddedFrontend(path), "path=%s", path)
 	}
