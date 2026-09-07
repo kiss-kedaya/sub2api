@@ -361,7 +361,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		}
 
 		for {
-			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
+			selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0), service.PlatformGemini) // Gemini 不使用会话限制
+			if routedKey != nil {
+				apiKey = routedKey
+			}
 			if err != nil {
 				if len(fs.FailedAccountIDs) == 0 {
 					cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformGemini)
@@ -441,7 +444,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.Int64("account_id", account.ID),
 						zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
 					)
-					h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", streamStarted)
+					h.handleStreamingAwareErrorWithCode(c, http.StatusTooManyRequests, "rate_limit_error", gatewayQueueFullCode, "Too many pending requests, please retry later", streamStarted)
 					return
 				}
 				if err == nil && canWait {
@@ -657,6 +660,23 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		c.Request = c.Request.WithContext(ctx)
 	}
 
+	// 会话槽失败释放：failover 链上每个选中的 Anthropic OAuth 账号都注册过同一会话
+	// （checkAndRegisterSession）。若请求最终失败（转发失败/客户端中断/换号耗尽），
+	// 须立即释放本次会话注册——上游从未真正服务该会话，继续占槽会让 max_sessions
+	// 受限的账号被失败请求的 session hash 卡满整个空闲窗口，后续新会话全部被拒。
+	// 成功请求保持既有空闲超时语义（会话按最后活动时间过期）。
+	sessionSlotAccounts := make(map[int64]*service.Account)
+	upstreamServedSession := false
+	defer func() {
+		if upstreamServedSession {
+			return
+		}
+		// 客户端可能已断开、请求 ctx 已取消，用独立 ctx 执行释放
+		for _, acc := range sessionSlotAccounts {
+			h.gatewayService.ReleaseAccountSession(context.Background(), acc, sessionKey)
+		}
+	}()
+
 	for {
 		fs := NewFillFailoverState(h.maxAccountSwitches, hasBoundSession)
 		retryWithFallback := false
@@ -675,7 +695,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				zap.Bool("has_bound_session", hasBoundSession),
 				zap.Int("failed_account_count", len(fs.FailedAccountIDs)),
 			)
-			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), currentAPIKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, parsedReq.MetadataUserID, subject.UserID)
+			selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), currentAPIKey, sessionKey, reqModel, fs.FailedAccountIDs, parsedReq.MetadataUserID, subject.UserID, platform)
+			if routedKey != nil {
+				currentAPIKey = routedKey
+			}
 			if err != nil {
 				if len(fs.FailedAccountIDs) == 0 {
 					cls := classifyNoAccountErrorFromGin(c, h.gatewayService, currentAPIKey, reqModel, reqModel, platform)
@@ -766,7 +789,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.Int64("account_id", account.ID),
 						zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
 					)
-					h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", streamStarted)
+					h.handleStreamingAwareErrorWithCode(c, http.StatusTooManyRequests, "rate_limit_error", gatewayQueueFullCode, "Too many pending requests, please retry later", streamStarted)
 					return
 				}
 				if err == nil && canWait {
@@ -810,10 +833,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", profitVetoExhaustedMessage, streamStarted)
 					return
 				}
+				// 尝试被否决（从未转发），立即释放该账号的会话注册
+				h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionKey)
+				delete(sessionSlotAccounts, account.ID)
 				continue
 			}
 			account = latest
 			selection.Account = latest
+			// 记录本请求注册过会话槽的账号（profit 准入后账号已定）
+			sessionSlotAccounts[account.ID] = account
 			// 等待路径保持既有 eager 绑定（无门时 helper 直接绑定）；调度器已
 			// 抢槽的直达路径无门时由选号内部绑定，这里只在门下补准入后绑定。
 			if selection.ProfitGateActive() || !selection.Acquired {
@@ -1042,6 +1070,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						currentSubscription = nil
 						fallbackUsed = true
 						retryWithFallback = true
+						// 原分组账号已确定性失败（prompt too long），先释放其会话注册再走兜底分组
+						for _, acc := range sessionSlotAccounts {
+							h.gatewayService.ReleaseAccountSession(context.Background(), acc, sessionKey)
+						}
+						sessionSlotAccounts = make(map[int64]*service.Account)
 						break
 					}
 					_ = h.antigravityGatewayService.WriteMappedClaudeError(c, account, promptTooLongErr.StatusCode, promptTooLongErr.RequestID, promptTooLongErr.Body)
@@ -1058,6 +1091,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
 					switch action {
 					case FailoverContinue:
+						// 本次尝试已确定性失败，立即释放该账号的会话注册
+						h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionKey)
+						delete(sessionSlotAccounts, account.ID)
 						continue
 					case FailoverExhausted:
 						submitForwardUsage(result)
@@ -1097,6 +1133,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				// 不会走到这里重复计费。
 				if result != nil {
 					submitForwardUsage(result)
+					// 上游已接受并计量本次会话（流中断），会话槽保持既有语义
+					upstreamServedSession = true
 				}
 				return
 			}
@@ -1122,6 +1160,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 
 			submitForwardUsage(result)
+			// 转发成功，会话槽保持既有空闲超时语义
+			upstreamServedSession = true
 			return
 		}
 		if !retryWithFallback {
@@ -1134,6 +1174,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 // GET /v1/models
 // Returns models based on account configurations (model_mapping whitelist)
 // Falls back to default models if no whitelist is configured
+//
+// Smart-routing keys union models from every bound group. This list is not a
+// billing surface: usage is charged against the group selected at request time.
 func (h *GatewayHandler) Models(c *gin.Context) {
 	// Model-list polling is part of the gateway request surface. Install the
 	// scheduler request mode before the cache lookup so a models-list miss cannot
@@ -1143,48 +1186,32 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	}
 	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
 
-	var groupID *int64
-	var platform string
-
-	if apiKey != nil && apiKey.Group != nil {
-		groupID = &apiKey.Group.ID
-		platform = apiKey.Group.Platform
+	forcedPlatform := ""
+	if platform, ok := middleware2.GetForcePlatformFromContext(c); ok {
+		forcedPlatform = strings.TrimSpace(platform)
 	}
-	if forcedPlatform, ok := middleware2.GetForcePlatformFromContext(c); ok && strings.TrimSpace(forcedPlatform) != "" {
-		platform = forcedPlatform
+	responsePlatform := forcedPlatform
+	if responsePlatform == "" && apiKey != nil && apiKey.Group != nil {
+		responsePlatform = apiKey.Group.Platform
 	}
 
-	if platform == service.PlatformComposite {
-		availableModels := h.compositeAvailableModels(c.Request.Context(), groupID)
-		if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
-			availableModels = filterModelsByCustomList(availableModels, defaultModelIDsForPlatform(service.PlatformComposite), apiKey.Group.ModelsListConfig.Models)
-			writeCustomModelsList(c, service.PlatformComposite, availableModels)
-			return
-		}
-		if len(availableModels) > 0 {
-			writeModelsList(c, service.PlatformComposite, availableModels)
-			return
-		}
-		writeModelsList(c, service.PlatformComposite, defaultModelIDsForPlatform(service.PlatformComposite))
-		return
-	}
+	availableModels := h.availableModelsForAPIKey(c.Request.Context(), apiKey, forcedPlatform)
 
-	// Get available models from account configurations for the selected group platform.
-	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
+	// Custom list on the primary group only changes the OpenAI/Claude wire
+	// shape. Filtering already happened per bound group so a later group's
+	// models are not re-filtered by the first group's whitelist.
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
-		fallbackModels := defaultModelIDsForPlatform(platform)
-		availableModels = filterModelsByCustomList(customModelsListSource(platform, availableModels, fallbackModels), fallbackModels, apiKey.Group.ModelsListConfig.Models)
-		writeCustomModelsList(c, platform, availableModels)
+		writeCustomModelsList(c, responsePlatform, availableModels)
 		return
 	}
 
 	if len(availableModels) > 0 {
-		writeModelsList(c, platform, availableModels)
+		writeModelsList(c, responsePlatform, availableModels)
 		return
 	}
 
 	// Fallback to default models
-	if platform == service.PlatformOpenAI {
+	if responsePlatform == service.PlatformOpenAI {
 		c.JSON(http.StatusOK, gin.H{
 			"object": "list",
 			"data":   openai.DefaultModels,
@@ -1192,14 +1219,14 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		return
 	}
 
-	if platform == service.PlatformGemini {
+	if responsePlatform == service.PlatformGemini {
 		c.JSON(http.StatusOK, gin.H{
 			"object": "list",
 			"data":   geminicli.DefaultModels,
 		})
 		return
 	}
-	if platform == service.PlatformGrok {
+	if responsePlatform == service.PlatformGrok {
 		writeGrokModelsList(c, xai.DefaultModelIDs())
 		return
 	}
@@ -1208,6 +1235,82 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		"object": "list",
 		"data":   claude.DefaultModels,
 	})
+}
+
+func apiKeyModelsListGroupIDs(apiKey *service.APIKey) []int64 {
+	if apiKey == nil {
+		return nil
+	}
+	if ids := apiKey.CandidateGroupIDs(); len(ids) > 0 {
+		return ids
+	}
+	if apiKey.Group != nil && apiKey.Group.ID > 0 {
+		return []int64{apiKey.Group.ID}
+	}
+	return nil
+}
+
+func (h *GatewayHandler) groupForModelsList(ctx context.Context, apiKey *service.APIKey, groupID int64) *service.Group {
+	if apiKey != nil && apiKey.Group != nil && apiKey.Group.ID == groupID {
+		return apiKey.Group
+	}
+	if h != nil && h.gatewayService != nil {
+		return h.gatewayService.GroupPolicyForRequest(ctx, groupID)
+	}
+	return nil
+}
+
+func (h *GatewayHandler) availableModelsForAPIKey(ctx context.Context, apiKey *service.APIKey, forcedPlatform string) []string {
+	groupIDs := apiKeyModelsListGroupIDs(apiKey)
+	if len(groupIDs) == 0 {
+		return h.modelsForGroupID(ctx, nil, nil, forcedPlatform, false)
+	}
+	injectDefaults := len(groupIDs) > 1
+	var models []string
+	for _, id := range groupIDs {
+		gid := id
+		group := h.groupForModelsList(ctx, apiKey, gid)
+		models = mergeModelIDs(models, h.modelsForGroupID(ctx, &gid, group, forcedPlatform, injectDefaults))
+	}
+	return models
+}
+
+func (h *GatewayHandler) modelsForGroupID(ctx context.Context, groupID *int64, group *service.Group, forcedPlatform string, injectDefaults bool) []string {
+	platform := strings.TrimSpace(forcedPlatform)
+	if platform == "" && group != nil {
+		platform = group.Platform
+	}
+
+	var models []string
+	if platform == service.PlatformComposite {
+		models = h.compositeAvailableModels(ctx, groupID)
+	} else if h != nil && h.gatewayService != nil {
+		models = h.gatewayService.GetAvailableModels(ctx, groupID, platform)
+	}
+
+	if group != nil && group.CustomModelsListEnabled() {
+		fallbackModels := defaultModelIDsForPlatform(platform)
+		if platform == service.PlatformComposite {
+			return filterModelsByCustomList(models, fallbackModels, group.ModelsListConfig.Models)
+		}
+		return filterModelsByCustomList(customModelsListSource(platform, models, fallbackModels), fallbackModels, group.ModelsListConfig.Models)
+	}
+	if len(models) > 0 {
+		return models
+	}
+	if platform == service.PlatformComposite {
+		return defaultModelIDsForPlatform(platform)
+	}
+	if platform == "" && groupID != nil {
+		// Bound group with no hydrated policy: expose every mapped/default
+		// model the group's accounts can actually serve, without dumping the
+		// Claude catalog for a missing platform.
+		return h.compositeAvailableModels(ctx, groupID)
+	}
+	if injectDefaults && platform != "" {
+		return defaultModelIDsForPlatform(platform)
+	}
+	return nil
 }
 
 func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *int64) []string {
@@ -1833,8 +1936,8 @@ func (h *GatewayHandler) calculateSubscriptionRemaining(group *service.Group, su
 
 // handleConcurrencyError handles concurrency-related acquire errors.
 func (h *GatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotType string, streamStarted bool) {
-	status, errType, message := concurrencyErrorResponse(err, slotType)
-	h.handleStreamingAwareError(c, status, errType, message, streamStarted)
+	status, errType, code, message := concurrencyErrorResponse(err, slotType)
+	h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, streamStarted)
 }
 
 func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
@@ -1914,6 +2017,10 @@ func (h *GatewayHandler) mapUpstreamError(statusCode int) (int, string, string) 
 
 // handleStreamingAwareError handles errors that may occur after streaming has started
 func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
+	h.handleStreamingAwareErrorWithCode(c, status, errType, "", message, streamStarted)
+}
+
+func (h *GatewayHandler) handleStreamingAwareErrorWithCode(c *gin.Context, status int, errType, code, message string, streamStarted bool) {
 	// A compatibility stream may have committed HTTP 200 using only the
 	// pre-header keepalive comments. Stop the producer before taking over the
 	// writer and treat that case as a stream, while leaving ordinary JSON errors
@@ -1932,7 +2039,7 @@ func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, e
 		// response.completed/failed/incomplete/cancelled 集合。
 		// Anthropic-backed Responses 路径同样会因为通用 error 帧被拒。
 		if inboundIsResponses(c) {
-			if writeResponsesFailedSSE(c, errType, message) {
+			if writeResponsesFailedSSE(c, errType, code, message) {
 				return
 			}
 		}
@@ -1940,7 +2047,11 @@ func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, e
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
 			// SSE 错误事件固定 schema，使用 Quote 直拼可避免额外 Marshal 分配。
-			errorEvent := `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
+			errorCode := ""
+			if code != "" {
+				errorCode = `,"code":` + strconv.Quote(code)
+			}
+			errorEvent := `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + errorCode + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
 			if _, err := fmt.Fprint(c.Writer, errorEvent); err != nil {
 				_ = c.Error(err)
 			}
@@ -1950,7 +2061,7 @@ func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, e
 	}
 
 	// Normal case: return JSON response with proper status code
-	h.errorResponse(c, status, errType, message)
+	h.errorResponseWithCode(c, status, errType, code, message)
 }
 
 // ensureForwardErrorResponse 在 Forward 返回错误但尚未写响应时补写统一错误响应。
@@ -2042,16 +2153,21 @@ func (h *GatewayHandler) checkClaudeCodeVersion(c *gin.Context) bool {
 
 // errorResponse 返回Claude API格式的错误响应
 func (h *GatewayHandler) errorResponse(c *gin.Context, status int, errType, message string) {
+	h.errorResponseWithCode(c, status, errType, "", message)
+}
+
+func (h *GatewayHandler) errorResponseWithCode(c *gin.Context, status int, errType, code, message string) {
 	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
-		h.handleStreamingAwareError(c, status, errType, message, true)
+		h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, true)
 		return
 	}
+	errorObject := gin.H{"type": errType, "message": message}
+	if code != "" {
+		errorObject["code"] = code
+	}
 	c.JSON(status, gin.H{
-		"type": "error",
-		"error": gin.H{
-			"type":    errType,
-			"message": message,
-		},
+		"type":  "error",
+		"error": errorObject,
 	})
 }
 

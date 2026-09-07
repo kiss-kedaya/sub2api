@@ -1129,7 +1129,7 @@ func TestGeminiMessagesHandleStreamingResponse_TopUpAbortSurfacesSentinel(t *tes
 	// 上游持续下发可见文本增量，跨预留窗口后触发补扣 → 失败中止。
 	var b strings.Builder
 	for i := 0; i < 40; i++ {
-		b.WriteString(`data: {"candidates":[{"content":{"parts":[{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}]}` + "\n\n")
+		_, _ = b.WriteString(`data: {"candidates":[{"content":{"parts":[{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}]}` + "\n\n")
 	}
 	resp := &http.Response{
 		StatusCode: http.StatusOK,

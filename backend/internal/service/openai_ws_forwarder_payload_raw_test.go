@@ -135,7 +135,7 @@ func TestApplyOpenAIWSRetryPayloadStrategyRaw_OnlyDropsInclude(t *testing.T) {
 func TestWriteOpenAIWSJSON_UsesRawWriterWithoutMarshal(t *testing.T) {
 	conn := &rawCaptureWSConn{}
 	raw := json.RawMessage(`{"model":"gpt-5.1","n":9007199254740993}`)
-	require.NoError(t, writeOpenAIWSJSON(nil, conn, raw))
+	require.NoError(t, writeOpenAIWSJSON(context.TODO(), conn, raw))
 	require.Equal(t, []byte(raw), conn.payload)
 	require.Equal(t, "9007199254740993", gjson.GetBytes(conn.payload, "n").String())
 }

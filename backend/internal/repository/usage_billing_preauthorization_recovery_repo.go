@@ -65,7 +65,7 @@ func (r *usageBillingRepository) ListRecoverableBalancePreauthorizations(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	records := make([]service.BalancePreauthorizationRecord, 0, limit)
 	for rows.Next() {

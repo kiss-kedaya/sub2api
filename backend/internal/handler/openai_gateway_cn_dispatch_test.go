@@ -75,3 +75,18 @@ func TestResolveOpenAIMessagesDispatchMappedModel_CompositeCNTargetsSkipGroupMap
 		require.Empty(t, resolveOpenAIMessagesDispatchMappedModel(c, apiKey, "claude-sonnet-4-5-20250929"), "model=%s", model)
 	}
 }
+
+func TestAllowOpenAICompatibleMessagesDispatch_SmartRoutingResolvedOpenAI(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	primaryID := int64(1)
+	secondID := int64(2)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+	apiKey := &service.APIKey{
+		GroupID:       &primaryID,
+		RouteGroupIDs: []int64{primaryID, secondID},
+		Group:         &service.Group{ID: primaryID, Platform: service.PlatformAnthropic, AllowMessagesDispatch: false},
+	}
+	ensureCompositeTargetPlatform(c, apiKey, "gpt-5")
+	require.True(t, allowOpenAICompatibleMessagesDispatch(c, apiKey))
+}

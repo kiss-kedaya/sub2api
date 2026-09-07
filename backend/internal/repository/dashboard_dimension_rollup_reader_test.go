@@ -12,7 +12,7 @@ import (
 func TestUserUsageTrendRollupReaderMergesHourlyRows(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	now := time.Now().UTC()
 	start := now.Truncate(time.Hour).Add(-time.Hour)

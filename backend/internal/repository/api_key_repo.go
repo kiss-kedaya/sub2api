@@ -87,7 +87,7 @@ func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*service.APIK
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	return r.apiKeyEntityToServiceWithRoutes(ctx, m)
 }
 
 // GetKeyAndOwnerID 根据 API Key ID 获取其 key 与所有者（用户）ID。
@@ -125,7 +125,7 @@ func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.A
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	return r.apiKeyEntityToServiceWithRoutes(ctx, m)
 }
 
 func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
@@ -236,7 +236,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	return r.apiKeyEntityToServiceWithRoutes(ctx, m)
 }
 
 func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fields service.APIKeyUpdateFields) error {
@@ -477,6 +477,9 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, param
 	for i := range keys {
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
 	}
+	if err := r.attachGroupRoutes(ctx, outKeys); err != nil {
+		return nil, nil, err
+	}
 	if err := r.attachLastUsedIPs(ctx, outKeys); err != nil {
 		return nil, nil, err
 	}
@@ -496,6 +499,9 @@ func (r *apiKeyRepository) ListAllByUserID(ctx context.Context, userID int64, fi
 	outKeys := make([]service.APIKey, 0, len(keys))
 	for i := range keys {
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
+	}
+	if err := r.attachGroupRoutes(ctx, outKeys); err != nil {
+		return nil, err
 	}
 	if err := r.attachLastUsedIPs(ctx, outKeys); err != nil {
 		return nil, err
@@ -706,6 +712,11 @@ func (r *apiKeyRepository) SearchAPIKeys(ctx context.Context, userID int64, keyw
 
 // ClearGroupIDByGroupID 将指定分组的所有 API Key 的 group_id 设为 nil
 func (r *apiKeyRepository) ClearGroupIDByGroupID(ctx context.Context, groupID int64) (int64, error) {
+	if r.sql != nil {
+		if _, err := r.sql.ExecContext(ctx, "DELETE FROM api_key_group_routes WHERE group_id = $1", groupID); err != nil {
+			return 0, err
+		}
+	}
 	n, err := r.client.APIKey.Update().
 		Where(apikey.GroupIDEQ(groupID), apikey.DeletedAtIsNil()).
 		ClearGroupID().
@@ -748,7 +759,44 @@ func (r *apiKeyRepository) ListKeysByGroupID(ctx context.Context, groupID int64)
 	if err != nil {
 		return nil, err
 	}
-	return keys, nil
+	if r.sql == nil {
+		return keys, nil
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT DISTINCT k.key
+		FROM api_keys k
+		INNER JOIN api_key_group_routes r ON r.api_key_id = k.id
+		WHERE r.group_id = $1 AND k.deleted_at IS NULL
+	`, groupID)
+	if err != nil {
+		if isMissingRelationError(err) {
+			return keys, nil
+		}
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		seen[key] = struct{}{}
+	}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+func (r *apiKeyRepository) ListIDsByUserAndGroup(ctx context.Context, userID, groupID int64) ([]int64, error) {
+	return clientFromContext(ctx, r.client).APIKey.Query().
+		Where(apikey.UserIDEQ(userID), apikey.GroupIDEQ(groupID), apikey.DeletedAtIsNil()).
+		IDs(ctx)
 }
 
 // IncrementQuotaUsed 使用 Ent 原子递增 quota_used 字段并返回新值
@@ -1066,4 +1114,102 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func (r *apiKeyRepository) apiKeyEntityToServiceWithRoutes(ctx context.Context, m *dbent.APIKey) (*service.APIKey, error) {
+	out := apiKeyEntityToService(m)
+	if out == nil {
+		return nil, nil
+	}
+	keys := []service.APIKey{*out}
+	if err := r.attachGroupRoutes(ctx, keys); err != nil {
+		return nil, err
+	}
+	out.RouteGroupIDs = keys[0].RouteGroupIDs
+	return out, nil
+}
+
+type sqlTxBeginner interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+func (r *apiKeyRepository) ReplaceGroupRoutes(ctx context.Context, apiKeyID int64, groupIDs []int64) error {
+	if r.sql == nil {
+		return nil
+	}
+	exec := r.sql
+	var tx *sql.Tx
+	if beginner, ok := r.sql.(sqlTxBeginner); ok {
+		started, err := beginner.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		tx = started
+		defer func() { _ = tx.Rollback() }()
+		exec = tx
+	}
+	if _, err := exec.ExecContext(ctx, "DELETE FROM api_key_group_routes WHERE api_key_id = $1", apiKeyID); err != nil {
+		return err
+	}
+	for i, groupID := range groupIDs {
+		if groupID <= 0 {
+			continue
+		}
+		if _, err := exec.ExecContext(ctx, `
+			INSERT INTO api_key_group_routes (api_key_id, group_id, position)
+			VALUES ($1, $2, $3)
+		`, apiKeyID, groupID, i+1); err != nil {
+			return err
+		}
+	}
+	if tx != nil {
+		return tx.Commit()
+	}
+	return nil
+}
+
+func (r *apiKeyRepository) ListGroupRoutes(ctx context.Context, apiKeyIDs []int64) (map[int64][]int64, error) {
+	out := make(map[int64][]int64, len(apiKeyIDs))
+	if r.sql == nil || len(apiKeyIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT api_key_id, group_id
+		FROM api_key_group_routes
+		WHERE api_key_id = ANY($1)
+		ORDER BY api_key_id ASC, position ASC
+	`, pq.Array(apiKeyIDs))
+	if err != nil {
+		if isMissingRelationError(err) {
+			return out, nil
+		}
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var apiKeyID, groupID int64
+		if err := rows.Scan(&apiKeyID, &groupID); err != nil {
+			return nil, err
+		}
+		out[apiKeyID] = append(out[apiKeyID], groupID)
+	}
+	return out, rows.Err()
+}
+
+func (r *apiKeyRepository) attachGroupRoutes(ctx context.Context, keys []service.APIKey) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(keys))
+	for i := range keys {
+		ids = append(ids, keys[i].ID)
+	}
+	routes, err := r.ListGroupRoutes(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range keys {
+		keys[i].RouteGroupIDs = routes[keys[i].ID]
+	}
+	return nil
 }

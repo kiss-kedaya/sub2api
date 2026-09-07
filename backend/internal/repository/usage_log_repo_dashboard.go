@@ -4,12 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
+
+// dashboardSubjectUsageLookback bounds user/API-key dashboard totals when the
+// hourly rollup has no rows for that subject. Unbounded COUNT/SUM on usage_logs
+// is what produced the 83GB full-table aggregations on the admin host.
+const dashboardSubjectUsageLookback = 30 * 24 * time.Hour
 
 // getPerformanceStats 获取 RPM 和 TPM（近5分钟平均值，可选按用户过滤）
 func (r *usageLogRepository) getPerformanceStats(ctx context.Context, userID int64) (rpm, tpm int64, err error) {
@@ -281,6 +288,204 @@ func (r *usageLogRepository) fillDashboardUsageStatsAggregated(ctx context.Conte
 
 func (r *usageLogRepository) fillDashboardUsageStatsFromUsageLogs(ctx context.Context, stats *DashboardStats, startUTC, endUTC, todayUTC, now time.Time) error {
 	todayEnd := todayUTC.Add(24 * time.Hour)
+	hourStart := now.In(timezone.Location()).Truncate(time.Hour)
+	if hourStart.Before(startUTC) {
+		hourStart = startUTC
+	}
+	usedRollup, err := r.fillDashboardUsageStatsFromHourly(ctx, stats, startUTC, endUTC, todayUTC, todayEnd, hourStart)
+	if err != nil {
+		return err
+	}
+	if usedRollup {
+		return nil
+	}
+	return r.fillDashboardUsageStatsFromUsageLogsRaw(ctx, stats, startUTC, endUTC, todayUTC, todayEnd, now)
+}
+
+func (r *usageLogRepository) fillDashboardUsageStatsFromHourly(ctx context.Context, stats *DashboardStats, startUTC, endUTC, todayUTC, todayEnd, hourStart time.Time) (bool, error) {
+	hourlyQuery := `
+		SELECT
+			COUNT(*) FILTER (WHERE bucket_start >= $1 AND bucket_start < LEAST($2::timestamptz, $5::timestamptz)) AS hourly_rows,
+			COALESCE(SUM(total_requests) FILTER (WHERE bucket_start >= $1 AND bucket_start < $2), 0),
+			COALESCE(SUM(input_tokens) FILTER (WHERE bucket_start >= $1 AND bucket_start < $2), 0),
+			COALESCE(SUM(output_tokens) FILTER (WHERE bucket_start >= $1 AND bucket_start < $2), 0),
+			COALESCE(SUM(cache_creation_tokens) FILTER (WHERE bucket_start >= $1 AND bucket_start < $2), 0),
+			COALESCE(SUM(cache_read_tokens) FILTER (WHERE bucket_start >= $1 AND bucket_start < $2), 0),
+			COALESCE(SUM(total_cost) FILTER (WHERE bucket_start >= $1 AND bucket_start < $2), 0),
+			COALESCE(SUM(actual_cost) FILTER (WHERE bucket_start >= $1 AND bucket_start < $2), 0),
+			COALESCE(SUM(account_cost) FILTER (WHERE bucket_start >= $1 AND bucket_start < $2), 0),
+			COALESCE(SUM(total_duration_ms) FILTER (WHERE bucket_start >= $1 AND bucket_start < $2), 0),
+			COALESCE(SUM(total_requests) FILTER (WHERE bucket_start >= $3 AND bucket_start < $4 AND bucket_start < $5), 0),
+			COALESCE(SUM(input_tokens) FILTER (WHERE bucket_start >= $3 AND bucket_start < $4 AND bucket_start < $5), 0),
+			COALESCE(SUM(output_tokens) FILTER (WHERE bucket_start >= $3 AND bucket_start < $4 AND bucket_start < $5), 0),
+			COALESCE(SUM(cache_creation_tokens) FILTER (WHERE bucket_start >= $3 AND bucket_start < $4 AND bucket_start < $5), 0),
+			COALESCE(SUM(cache_read_tokens) FILTER (WHERE bucket_start >= $3 AND bucket_start < $4 AND bucket_start < $5), 0),
+			COALESCE(SUM(total_cost) FILTER (WHERE bucket_start >= $3 AND bucket_start < $4 AND bucket_start < $5), 0),
+			COALESCE(SUM(actual_cost) FILTER (WHERE bucket_start >= $3 AND bucket_start < $4 AND bucket_start < $5), 0),
+			COALESCE(SUM(account_cost) FILTER (WHERE bucket_start >= $3 AND bucket_start < $4 AND bucket_start < $5), 0)
+		FROM usage_dashboard_hourly
+		WHERE bucket_start >= LEAST($1::timestamptz, $3::timestamptz)
+			AND bucket_start < $5
+	`
+	var hourlyRows, totalDurationMs int64
+	if err := scanSingleRow(
+		ctx,
+		r.sql,
+		hourlyQuery,
+		[]any{startUTC, endUTC, todayUTC, todayEnd, hourStart},
+		&hourlyRows,
+		&stats.TotalRequests,
+		&stats.TotalInputTokens,
+		&stats.TotalOutputTokens,
+		&stats.TotalCacheCreationTokens,
+		&stats.TotalCacheReadTokens,
+		&stats.TotalCost,
+		&stats.TotalActualCost,
+		&stats.TotalAccountCost,
+		&totalDurationMs,
+		&stats.TodayRequests,
+		&stats.TodayInputTokens,
+		&stats.TodayOutputTokens,
+		&stats.TodayCacheCreationTokens,
+		&stats.TodayCacheReadTokens,
+		&stats.TodayCost,
+		&stats.TodayActualCost,
+		&stats.TodayAccountCost,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		// Missing rollup table → fall back to the bounded raw scan.
+		if isMissingRelationError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if hourlyRows == 0 {
+		return false, nil
+	}
+
+	activeQuery := `
+		SELECT
+			COUNT(DISTINCT user_id) FILTER (WHERE bucket_start >= $1 AND bucket_start < $2 AND bucket_start < $3),
+			COUNT(DISTINCT user_id) FILTER (WHERE bucket_start >= $3 AND bucket_start < $4)
+		FROM usage_dashboard_hourly_users
+		WHERE bucket_start >= LEAST($1::timestamptz, $3::timestamptz)
+			AND bucket_start < GREATEST($2::timestamptz, $4::timestamptz)
+	`
+	hourEnd := hourStart.Add(time.Hour)
+	if err := scanSingleRow(ctx, r.sql, activeQuery, []any{todayUTC, todayEnd, hourStart, hourEnd}, &stats.ActiveUsers, &stats.HourlyActiveUsers); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if !isMissingRelationError(err) {
+			return false, err
+		}
+	}
+
+	if err := r.addDashboardUsageTailFromUsageLogs(ctx, stats, hourStart, endUTC, todayUTC, todayEnd, &totalDurationMs); err != nil {
+		return false, err
+	}
+
+	stats.TotalTokens = stats.TotalInputTokens + stats.TotalOutputTokens + stats.TotalCacheCreationTokens + stats.TotalCacheReadTokens
+	if stats.TotalRequests > 0 {
+		stats.AverageDurationMs = float64(totalDurationMs) / float64(stats.TotalRequests)
+	}
+	stats.TodayTokens = stats.TodayInputTokens + stats.TodayOutputTokens + stats.TodayCacheCreationTokens + stats.TodayCacheReadTokens
+	return true, nil
+}
+
+func (r *usageLogRepository) addDashboardUsageTailFromUsageLogs(ctx context.Context, stats *DashboardStats, hourStart, endUTC, todayUTC, todayEnd time.Time, totalDurationMs *int64) error {
+	if !endUTC.After(hourStart) && !todayEnd.After(hourStart) {
+		return nil
+	}
+	tailQuery := `
+		SELECT
+			COUNT(*) FILTER (WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz),
+			COALESCE(SUM(input_tokens) FILTER (WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz), 0),
+			COALESCE(SUM(output_tokens) FILTER (WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz), 0),
+			COALESCE(SUM(cache_creation_tokens) FILTER (WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz), 0),
+			COALESCE(SUM(cache_read_tokens) FILTER (WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz), 0),
+			COALESCE(SUM(total_cost) FILTER (WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz), 0),
+			COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz), 0),
+			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)) FILTER (WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz), 0),
+			COALESCE(SUM(COALESCE(duration_ms, 0)) FILTER (WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz), 0),
+			COUNT(*) FILTER (WHERE created_at >= $3::timestamptz AND created_at < $4::timestamptz),
+			COALESCE(SUM(input_tokens) FILTER (WHERE created_at >= $3::timestamptz AND created_at < $4::timestamptz), 0),
+			COALESCE(SUM(output_tokens) FILTER (WHERE created_at >= $3::timestamptz AND created_at < $4::timestamptz), 0),
+			COALESCE(SUM(cache_creation_tokens) FILTER (WHERE created_at >= $3::timestamptz AND created_at < $4::timestamptz), 0),
+			COALESCE(SUM(cache_read_tokens) FILTER (WHERE created_at >= $3::timestamptz AND created_at < $4::timestamptz), 0),
+			COALESCE(SUM(total_cost) FILTER (WHERE created_at >= $3::timestamptz AND created_at < $4::timestamptz), 0),
+			COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $3::timestamptz AND created_at < $4::timestamptz), 0),
+			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)) FILTER (WHERE created_at >= $3::timestamptz AND created_at < $4::timestamptz), 0),
+			COUNT(DISTINCT user_id) FILTER (WHERE created_at >= $3::timestamptz AND created_at < $4::timestamptz),
+			COUNT(DISTINCT user_id) FILTER (WHERE created_at >= $5::timestamptz AND created_at < $6::timestamptz)
+		FROM usage_logs
+		WHERE created_at >= $5::timestamptz
+			AND created_at < GREATEST($2::timestamptz, $4::timestamptz)
+	`
+	hourEnd := hourStart.Add(time.Hour)
+	var (
+		tailRequests, tailInput, tailOutput, tailCacheC, tailCacheR, tailDuration            int64
+		tailCost, tailActual, tailAccount                                                    float64
+		tailTodayRequests, tailTodayInput, tailTodayOutput, tailTodayCacheC, tailTodayCacheR int64
+		tailTodayCost, tailTodayActual, tailTodayAccount                                     float64
+		tailActive, tailHourlyActive                                                         int64
+	)
+	if err := scanSingleRow(
+		ctx,
+		r.sql,
+		tailQuery,
+		[]any{hourStart, endUTC, todayUTC, todayEnd, hourStart, hourEnd},
+		&tailRequests,
+		&tailInput,
+		&tailOutput,
+		&tailCacheC,
+		&tailCacheR,
+		&tailCost,
+		&tailActual,
+		&tailAccount,
+		&tailDuration,
+		&tailTodayRequests,
+		&tailTodayInput,
+		&tailTodayOutput,
+		&tailTodayCacheC,
+		&tailTodayCacheR,
+		&tailTodayCost,
+		&tailTodayActual,
+		&tailTodayAccount,
+		&tailActive,
+		&tailHourlyActive,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	stats.TotalRequests += tailRequests
+	stats.TotalInputTokens += tailInput
+	stats.TotalOutputTokens += tailOutput
+	stats.TotalCacheCreationTokens += tailCacheC
+	stats.TotalCacheReadTokens += tailCacheR
+	stats.TotalCost += tailCost
+	stats.TotalActualCost += tailActual
+	stats.TotalAccountCost += tailAccount
+	*totalDurationMs += tailDuration
+	stats.TodayRequests += tailTodayRequests
+	stats.TodayInputTokens += tailTodayInput
+	stats.TodayOutputTokens += tailTodayOutput
+	stats.TodayCacheCreationTokens += tailTodayCacheC
+	stats.TodayCacheReadTokens += tailTodayCacheR
+	stats.TodayCost += tailTodayCost
+	stats.TodayActualCost += tailTodayActual
+	stats.TodayAccountCost += tailTodayAccount
+	if tailActive > stats.ActiveUsers {
+		stats.ActiveUsers = tailActive
+	}
+	if tailHourlyActive > stats.HourlyActiveUsers {
+		stats.HourlyActiveUsers = tailHourlyActive
+	}
+	return nil
+}
+
+func (r *usageLogRepository) fillDashboardUsageStatsFromUsageLogsRaw(ctx context.Context, stats *DashboardStats, startUTC, endUTC, todayUTC, todayEnd, now time.Time) error {
 	combinedStatsQuery := `
 		WITH scoped AS (
 			SELECT
@@ -402,67 +607,12 @@ func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID i
 		return nil, err
 	}
 
-	// 累计 Token 统计
-	totalStatsQuery := `
-		SELECT
-			COUNT(*) as total_requests,
-			COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-			COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-			COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
-			COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
-			COALESCE(SUM(total_cost), 0) as total_cost,
-			COALESCE(SUM(actual_cost), 0) as total_actual_cost,
-			COALESCE(AVG(duration_ms), 0) as avg_duration_ms
-		FROM usage_logs
-		WHERE user_id = $1
-	`
-	if err := scanSingleRow(
-		ctx,
-		r.sql,
-		totalStatsQuery,
-		[]any{userID},
-		&stats.TotalRequests,
-		&stats.TotalInputTokens,
-		&stats.TotalOutputTokens,
-		&stats.TotalCacheCreationTokens,
-		&stats.TotalCacheReadTokens,
-		&stats.TotalCost,
-		&stats.TotalActualCost,
-		&stats.AverageDurationMs,
-	); err != nil {
+	now := timezone.Now()
+	hourStart := now.In(timezone.Location()).Truncate(time.Hour)
+	windowStart := dashboardSubjectWindowStart(now, today)
+	if err := r.fillUserDashboardUsage(ctx, stats, userID, windowStart, today, hourStart); err != nil {
 		return nil, err
 	}
-	stats.TotalTokens = stats.TotalInputTokens + stats.TotalOutputTokens + stats.TotalCacheCreationTokens + stats.TotalCacheReadTokens
-
-	// 今日 Token 统计
-	todayStatsQuery := `
-		SELECT
-			COUNT(*) as today_requests,
-			COALESCE(SUM(input_tokens), 0) as today_input_tokens,
-			COALESCE(SUM(output_tokens), 0) as today_output_tokens,
-			COALESCE(SUM(cache_creation_tokens), 0) as today_cache_creation_tokens,
-			COALESCE(SUM(cache_read_tokens), 0) as today_cache_read_tokens,
-			COALESCE(SUM(total_cost), 0) as today_cost,
-			COALESCE(SUM(actual_cost), 0) as today_actual_cost
-		FROM usage_logs
-		WHERE user_id = $1 AND created_at >= $2
-	`
-	if err := scanSingleRow(
-		ctx,
-		r.sql,
-		todayStatsQuery,
-		[]any{userID, today},
-		&stats.TodayRequests,
-		&stats.TodayInputTokens,
-		&stats.TodayOutputTokens,
-		&stats.TodayCacheCreationTokens,
-		&stats.TodayCacheReadTokens,
-		&stats.TodayCost,
-		&stats.TodayActualCost,
-	); err != nil {
-		return nil, err
-	}
-	stats.TodayTokens = stats.TodayInputTokens + stats.TodayOutputTokens + stats.TodayCacheCreationTokens + stats.TodayCacheReadTokens
 
 	// 性能指标：RPM 和 TPM（最近1分钟，仅统计该用户的请求）
 	rpm, tpm, err := r.getPerformanceStats(ctx, userID)
@@ -474,7 +624,7 @@ func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID i
 
 	// 按"有效平台"维度拆分（group.platform 优先，否则 account.platform）。
 	// 与 ops 路径口径一致；HAVING 过滤掉无法确定平台的行（避免出现空字符串平台）。
-	// 与上面 totalStatsQuery/todayStatsQuery 的总值可能略微差异，原因有二：
+	// 与上面 fillUserDashboardUsage 的总值可能略微差异，原因有二：
 	//   1) 无平台归属的极少数行（group/account 都没 platform）会被 HAVING 排除；
 	//   2) usageLogSuccessFilterUL 会把 actual_cost = 0 的失败 placeholder 行排除，
 	//      而 totalStatsQuery/todayStatsQuery 没有这层过滤、会把这些行的 request 计数算进去。
@@ -491,12 +641,13 @@ func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID i
 		LEFT JOIN groups g ON g.id = ul.group_id
 		LEFT JOIN accounts a ON a.id = ul.account_id
 		WHERE ul.user_id = $1
+		  AND ul.created_at >= $3
 		  AND ` + usageLogSuccessFilterUL + `
 		GROUP BY ` + usageLogEffectivePlatformExpr + `
 		HAVING ` + usageLogEffectivePlatformExpr + ` IS NOT NULL AND ` + usageLogEffectivePlatformExpr + ` <> ''
 		ORDER BY total_actual_cost DESC
 	`
-	rows, err := r.sql.QueryContext(ctx, platformQuery, userID, today)
+	rows, err := r.sql.QueryContext(ctx, platformQuery, userID, today, windowStart)
 	if err != nil {
 		return nil, err
 	}
@@ -554,67 +705,11 @@ func (r *usageLogRepository) GetAPIKeyDashboardStats(ctx context.Context, apiKey
 	stats.TotalAPIKeys = 1
 	stats.ActiveAPIKeys = 1
 
-	// 累计 Token 统计
-	totalStatsQuery := `
-		SELECT
-			COUNT(*) as total_requests,
-			COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-			COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-			COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
-			COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
-			COALESCE(SUM(total_cost), 0) as total_cost,
-			COALESCE(SUM(actual_cost), 0) as total_actual_cost,
-			COALESCE(AVG(duration_ms), 0) as avg_duration_ms
-		FROM usage_logs
-		WHERE api_key_id = $1
-	`
-	if err := scanSingleRow(
-		ctx,
-		r.sql,
-		totalStatsQuery,
-		[]any{apiKeyID},
-		&stats.TotalRequests,
-		&stats.TotalInputTokens,
-		&stats.TotalOutputTokens,
-		&stats.TotalCacheCreationTokens,
-		&stats.TotalCacheReadTokens,
-		&stats.TotalCost,
-		&stats.TotalActualCost,
-		&stats.AverageDurationMs,
-	); err != nil {
+	now := timezone.Now()
+	windowStart := dashboardSubjectWindowStart(now, today)
+	if err := r.fillSubjectDashboardUsageFromWindow(ctx, stats, "api_key_id", apiKeyID, windowStart, today); err != nil {
 		return nil, err
 	}
-	stats.TotalTokens = stats.TotalInputTokens + stats.TotalOutputTokens + stats.TotalCacheCreationTokens + stats.TotalCacheReadTokens
-
-	// 今日 Token 统计
-	todayStatsQuery := `
-		SELECT
-			COUNT(*) as today_requests,
-			COALESCE(SUM(input_tokens), 0) as today_input_tokens,
-			COALESCE(SUM(output_tokens), 0) as today_output_tokens,
-			COALESCE(SUM(cache_creation_tokens), 0) as today_cache_creation_tokens,
-			COALESCE(SUM(cache_read_tokens), 0) as today_cache_read_tokens,
-			COALESCE(SUM(total_cost), 0) as today_cost,
-			COALESCE(SUM(actual_cost), 0) as today_actual_cost
-		FROM usage_logs
-		WHERE api_key_id = $1 AND created_at >= $2
-	`
-	if err := scanSingleRow(
-		ctx,
-		r.sql,
-		todayStatsQuery,
-		[]any{apiKeyID, today},
-		&stats.TodayRequests,
-		&stats.TodayInputTokens,
-		&stats.TodayOutputTokens,
-		&stats.TodayCacheCreationTokens,
-		&stats.TodayCacheReadTokens,
-		&stats.TodayCost,
-		&stats.TodayActualCost,
-	); err != nil {
-		return nil, err
-	}
-	stats.TodayTokens = stats.TodayInputTokens + stats.TodayOutputTokens + stats.TodayCacheCreationTokens + stats.TodayCacheReadTokens
 
 	// 性能指标：RPM 和 TPM（最近5分钟，按 API Key 过滤）
 	rpm, tpm, err := r.getPerformanceStatsByAPIKey(ctx, apiKeyID)
@@ -625,4 +720,223 @@ func (r *usageLogRepository) GetAPIKeyDashboardStats(ctx context.Context, apiKey
 	stats.Tpm = tpm
 
 	return stats, nil
+}
+
+func dashboardSubjectWindowStart(now, today time.Time) time.Time {
+	start := now.Add(-dashboardSubjectUsageLookback)
+	if start.After(today) {
+		return today
+	}
+	return start
+}
+
+func isMissingRelationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) && pqErr.Code == "42P01" {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "does not exist") || strings.Contains(msg, "undefined table") || strings.Contains(msg, "no such table")
+}
+
+func (r *usageLogRepository) fillUserDashboardUsage(ctx context.Context, stats *UserDashboardStats, userID int64, windowStart, today, hourStart time.Time) error {
+	usedRollup, err := r.fillUserDashboardUsageFromHourlyUsers(ctx, stats, userID, today, hourStart)
+	if err != nil {
+		return err
+	}
+	if usedRollup {
+		return nil
+	}
+	return r.fillSubjectDashboardUsageFromWindow(ctx, stats, "user_id", userID, windowStart, today)
+}
+
+func (r *usageLogRepository) fillUserDashboardUsageFromHourlyUsers(ctx context.Context, stats *UserDashboardStats, userID int64, today, hourStart time.Time) (bool, error) {
+	hourlyQuery := `
+		SELECT
+			COUNT(*) AS hourly_rows,
+			COALESCE(SUM(total_requests), 0),
+			COALESCE(SUM(input_tokens), 0),
+			COALESCE(SUM(output_tokens), 0),
+			COALESCE(SUM(cache_creation_tokens), 0),
+			COALESCE(SUM(cache_read_tokens), 0),
+			COALESCE(SUM(total_cost), 0),
+			COALESCE(SUM(actual_cost), 0),
+			COALESCE(SUM(total_duration_ms), 0),
+			COALESCE(SUM(duration_count), 0),
+			COALESCE(SUM(total_requests) FILTER (WHERE bucket_start >= $2 AND bucket_start < $3), 0),
+			COALESCE(SUM(input_tokens) FILTER (WHERE bucket_start >= $2 AND bucket_start < $3), 0),
+			COALESCE(SUM(output_tokens) FILTER (WHERE bucket_start >= $2 AND bucket_start < $3), 0),
+			COALESCE(SUM(cache_creation_tokens) FILTER (WHERE bucket_start >= $2 AND bucket_start < $3), 0),
+			COALESCE(SUM(cache_read_tokens) FILTER (WHERE bucket_start >= $2 AND bucket_start < $3), 0),
+			COALESCE(SUM(total_cost) FILTER (WHERE bucket_start >= $2 AND bucket_start < $3), 0),
+			COALESCE(SUM(actual_cost) FILTER (WHERE bucket_start >= $2 AND bucket_start < $3), 0)
+		FROM usage_dashboard_hourly_users
+		WHERE user_id = $1
+			AND bucket_start < $3
+	`
+	var hourlyRows, totalDurationMs, durationCount int64
+	if err := scanSingleRow(
+		ctx,
+		r.sql,
+		hourlyQuery,
+		[]any{userID, today, hourStart},
+		&hourlyRows,
+		&stats.TotalRequests,
+		&stats.TotalInputTokens,
+		&stats.TotalOutputTokens,
+		&stats.TotalCacheCreationTokens,
+		&stats.TotalCacheReadTokens,
+		&stats.TotalCost,
+		&stats.TotalActualCost,
+		&totalDurationMs,
+		&durationCount,
+		&stats.TodayRequests,
+		&stats.TodayInputTokens,
+		&stats.TodayOutputTokens,
+		&stats.TodayCacheCreationTokens,
+		&stats.TodayCacheReadTokens,
+		&stats.TodayCost,
+		&stats.TodayActualCost,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) || isMissingRelationError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if hourlyRows == 0 || stats.TotalRequests == 0 {
+		// DAU-only hourly_users rows can exist with zero usage columns.
+		// Treat those as a miss so we fall back to the 30-day usage_logs window.
+		return false, nil
+	}
+
+	tailQuery := `
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(input_tokens), 0),
+			COALESCE(SUM(output_tokens), 0),
+			COALESCE(SUM(cache_creation_tokens), 0),
+			COALESCE(SUM(cache_read_tokens), 0),
+			COALESCE(SUM(total_cost), 0),
+			COALESCE(SUM(actual_cost), 0),
+			COALESCE(SUM(COALESCE(duration_ms, 0)), 0),
+			COUNT(duration_ms),
+			COUNT(*) FILTER (WHERE created_at >= $3),
+			COALESCE(SUM(input_tokens) FILTER (WHERE created_at >= $3), 0),
+			COALESCE(SUM(output_tokens) FILTER (WHERE created_at >= $3), 0),
+			COALESCE(SUM(cache_creation_tokens) FILTER (WHERE created_at >= $3), 0),
+			COALESCE(SUM(cache_read_tokens) FILTER (WHERE created_at >= $3), 0),
+			COALESCE(SUM(total_cost) FILTER (WHERE created_at >= $3), 0),
+			COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $3), 0)
+		FROM usage_logs
+		WHERE user_id = $1 AND created_at >= $2
+	`
+	var (
+		tailRequests, tailInput, tailOutput, tailCacheC, tailCacheR, tailDuration, tailDurationCount int64
+		tailCost, tailActual                                                                         float64
+		tailTodayRequests, tailTodayInput, tailTodayOutput, tailTodayCacheC, tailTodayCacheR         int64
+		tailTodayCost, tailTodayActual                                                               float64
+	)
+	if err := scanSingleRow(
+		ctx,
+		r.sql,
+		tailQuery,
+		[]any{userID, hourStart, today},
+		&tailRequests,
+		&tailInput,
+		&tailOutput,
+		&tailCacheC,
+		&tailCacheR,
+		&tailCost,
+		&tailActual,
+		&tailDuration,
+		&tailDurationCount,
+		&tailTodayRequests,
+		&tailTodayInput,
+		&tailTodayOutput,
+		&tailTodayCacheC,
+		&tailTodayCacheR,
+		&tailTodayCost,
+		&tailTodayActual,
+	); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+
+	stats.TotalRequests += tailRequests
+	stats.TotalInputTokens += tailInput
+	stats.TotalOutputTokens += tailOutput
+	stats.TotalCacheCreationTokens += tailCacheC
+	stats.TotalCacheReadTokens += tailCacheR
+	stats.TotalCost += tailCost
+	stats.TotalActualCost += tailActual
+	totalDurationMs += tailDuration
+	durationCount += tailDurationCount
+	stats.TodayRequests += tailTodayRequests
+	stats.TodayInputTokens += tailTodayInput
+	stats.TodayOutputTokens += tailTodayOutput
+	stats.TodayCacheCreationTokens += tailTodayCacheC
+	stats.TodayCacheReadTokens += tailTodayCacheR
+	stats.TodayCost += tailTodayCost
+	stats.TodayActualCost += tailTodayActual
+
+	stats.TotalTokens = stats.TotalInputTokens + stats.TotalOutputTokens + stats.TotalCacheCreationTokens + stats.TotalCacheReadTokens
+	stats.TodayTokens = stats.TodayInputTokens + stats.TodayOutputTokens + stats.TodayCacheCreationTokens + stats.TodayCacheReadTokens
+	if durationCount > 0 {
+		stats.AverageDurationMs = float64(totalDurationMs) / float64(durationCount)
+	}
+	return true, nil
+}
+
+func (r *usageLogRepository) fillSubjectDashboardUsageFromWindow(ctx context.Context, stats *UserDashboardStats, idColumn string, id int64, windowStart, today time.Time) error {
+	if idColumn != "user_id" && idColumn != "api_key_id" {
+		return errors.New("unsupported dashboard usage id column")
+	}
+	query := `
+		SELECT
+			COUNT(*) as total_requests,
+			COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+			COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
+			COALESCE(SUM(total_cost), 0) as total_cost,
+			COALESCE(SUM(actual_cost), 0) as total_actual_cost,
+			COALESCE(AVG(duration_ms), 0) as avg_duration_ms,
+			COUNT(*) FILTER (WHERE created_at >= $3) as today_requests,
+			COALESCE(SUM(input_tokens) FILTER (WHERE created_at >= $3), 0) as today_input_tokens,
+			COALESCE(SUM(output_tokens) FILTER (WHERE created_at >= $3), 0) as today_output_tokens,
+			COALESCE(SUM(cache_creation_tokens) FILTER (WHERE created_at >= $3), 0) as today_cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens) FILTER (WHERE created_at >= $3), 0) as today_cache_read_tokens,
+			COALESCE(SUM(total_cost) FILTER (WHERE created_at >= $3), 0) as today_cost,
+			COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $3), 0) as today_actual_cost
+		FROM usage_logs
+		WHERE ` + idColumn + ` = $1 AND created_at >= $2
+	`
+	if err := scanSingleRow(
+		ctx,
+		r.sql,
+		query,
+		[]any{id, windowStart, today},
+		&stats.TotalRequests,
+		&stats.TotalInputTokens,
+		&stats.TotalOutputTokens,
+		&stats.TotalCacheCreationTokens,
+		&stats.TotalCacheReadTokens,
+		&stats.TotalCost,
+		&stats.TotalActualCost,
+		&stats.AverageDurationMs,
+		&stats.TodayRequests,
+		&stats.TodayInputTokens,
+		&stats.TodayOutputTokens,
+		&stats.TodayCacheCreationTokens,
+		&stats.TodayCacheReadTokens,
+		&stats.TodayCost,
+		&stats.TodayActualCost,
+	); err != nil {
+		return err
+	}
+	stats.TotalTokens = stats.TotalInputTokens + stats.TotalOutputTokens + stats.TotalCacheCreationTokens + stats.TotalCacheReadTokens
+	stats.TodayTokens = stats.TodayInputTokens + stats.TodayOutputTokens + stats.TodayCacheCreationTokens + stats.TodayCacheReadTokens
+	return nil
 }

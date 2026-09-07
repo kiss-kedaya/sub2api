@@ -65,12 +65,15 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		// older/default text model before the upstream handshake can decide.
 		// An empty requested model keeps account selection capability-based;
 		// the actual voice model remains in the upstream WS query below.
-		candidate, _, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(), apiKey.GroupID, "", "", "", failed,
+		candidate, _, routedKey, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(
+			c.Request.Context(), apiKey, "", "", "", failed,
 			service.OpenAIUpstreamTransportHTTPSSE,
 			service.OpenAIEndpointCapabilityChatCompletions,
 			false, false, false, service.PlatformGrok,
 		)
+		if routedKey != nil {
+			apiKey = routedKey
+		}
 		if selectErr != nil || candidate == nil || candidate.Account == nil {
 			break
 		}
@@ -225,9 +228,9 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	selectionModel := "grok-4.5"
 
 	for attempts := 0; attempts < 4; attempts++ {
-		selection, _, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapability(
+		selection, _, routedKey, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(
 			c.Request.Context(),
-			apiKey.GroupID,
+			apiKey,
 			"",
 			"",
 			selectionModel,
@@ -239,6 +242,9 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 			false,
 			service.PlatformGrok,
 		)
+		if routedKey != nil {
+			apiKey = routedKey
+		}
 		if selectErr != nil || selection == nil || selection.Account == nil {
 			if last != nil {
 				h.handleFailoverExhausted(c, last, false)

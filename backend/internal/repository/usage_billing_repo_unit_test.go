@@ -16,7 +16,6 @@ import (
 const (
 	conditionalBalanceDeductSQL = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \$1\s+RETURNING balance`
 	overdraftBalanceDeductSQL   = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL\s+RETURNING balance`
-	enqueueUsageBalanceSQL      = `(?s)INSERT INTO billing_balance_settlements \(\s*request_id,\s*api_key_id,\s*request_fingerprint,\s*user_id,\s*amount_usd,\s*status\s*\)\s*VALUES \(\$1, \$2, \$3, \$4, \$5, \$6\)\s*ON CONFLICT \(request_id, api_key_id\) DO NOTHING\s*RETURNING status`
 	reserveBatchImageHoldSQL    = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) \+ \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \$1\s+RETURNING balance, frozen_balance`
 	captureBatchImageHoldSQL    = `(?s)UPDATE users\s+SET balance = balance\s+\+ CASE WHEN \$1 > \$2 THEN \$1 - \$2 ELSE 0 END\s+- CASE WHEN \$2 > \$1 THEN \$2 - \$1 ELSE 0 END,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$3 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
 	releaseBatchImageHoldSQL    = `(?s)UPDATE users\s+SET balance = balance \+ \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
@@ -70,7 +69,7 @@ func TestDeductUsageBillingBalance_RecordsOverdraftWhenGuardMisses(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestApplyUsageBillingEffects_QueuesBalanceSettlement(t *testing.T) {
+func TestApplyUsageBillingEffects_DeductsBalanceImmediately(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -79,9 +78,9 @@ func TestApplyUsageBillingEffects_QueuesBalanceSettlement(t *testing.T) {
 	mock.ExpectBegin()
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	mock.ExpectQuery(enqueueUsageBalanceSQL).
-		WithArgs("req-async-balance", int64(7), "fp-async-balance", int64(42), 10.0, service.BalanceSettlementPending).
-		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(service.BalanceSettlementPending))
+	mock.ExpectQuery(conditionalBalanceDeductSQL).
+		WithArgs(10.0, int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(90.0))
 	mock.ExpectCommit()
 
 	result := &service.UsageBillingApplyResult{Applied: true}
@@ -93,7 +92,8 @@ func TestApplyUsageBillingEffects_QueuesBalanceSettlement(t *testing.T) {
 		BalanceCost:        10,
 	}, result)
 	require.NoError(t, err)
-	require.Nil(t, result.NewBalance)
+	require.NotNil(t, result.NewBalance)
+	require.InDelta(t, 90.0, *result.NewBalance, 0.000001)
 	require.False(t, result.BalanceOverdrafted)
 	require.False(t, result.BalanceFinalizationPending)
 	require.NoError(t, tx.Commit())
