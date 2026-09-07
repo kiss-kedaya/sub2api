@@ -63,7 +63,7 @@ func TestOrdinaryPinnedModelsUsesSelectedAccountsAndFinalETag(t *testing.T) {
 
 	otherGroup := *group
 	otherGroup.ID++
-	otherGroup.ModelsListConfig = service.GroupModelsListConfig{Enabled: true, Models: []string{"text-embedding-3-large", "special-model"}}
+	otherGroup.ModelAllowlist = service.GroupModelAllowlist{Enabled: true, Models: []string{"text-embedding-3-large", "special-model"}}
 	filtered := performOrdinaryPinnedModelsRequest(t, h, &otherGroup, "/v1/models", first.Header().Get("ETag"))
 	require.Equal(t, http.StatusOK, filtered.Code)
 	require.Equal(t, []string{"text-embedding-3-large", "special-model"}, ordinaryPinnedModelIDs(t, filtered))
@@ -108,7 +108,7 @@ func TestOrdinaryPinnedModelsFailureAndEmptyPolicies(t *testing.T) {
 			upstream := &codexModelsPinnedHTTPUpstream{bodies: bodies, statuses: tc.statuses}
 			h := newPinnedCodexTestHandler(accounts, upstream, 3)
 			group := &service.Group{ID: 92, Platform: service.PlatformOpenAI,
-				ModelsListConfig:          service.GroupModelsListConfig{Enabled: len(tc.selected) > 0, Models: tc.selected},
+				ModelAllowlist:            service.GroupModelAllowlist{Enabled: len(tc.selected) > 0, Models: tc.selected},
 				CodexModelsManifestConfig: service.GroupCodexModelsManifestConfig{Enabled: true, AccountIDs: tc.accountIDs, FallbackToScheduler: tc.fallback}}
 			recorder := performOrdinaryPinnedModelsRequest(t, h, group, "/v1/models", "")
 			require.Equal(t, tc.wantStatus, recorder.Code, recorder.Body.String())
@@ -146,6 +146,37 @@ func TestOrdinaryPinnedModelsSkipsPersistentlyUnavailableAccounts(t *testing.T) 
 	require.Equal(t, []int64{1}, upstream.accountIDs())
 }
 
+func TestPinnedModelsAllowlistExpandsWildcardsForBothRepresentations(t *testing.T) {
+	for _, codex := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ordinary", true: "codex"}[codex], func(t *testing.T) {
+			accounts := []service.Account{newPinnedCodexAccount(1, service.StatusActive, true, false)}
+			accounts[0].Credentials["model_mapping"] = map[string]any{
+				"public-a": "gpt-5.5", "public-b": "gpt-5.5", "blocked": "gpt-5.5",
+			}
+			body := `{"data":[{"id":"gpt-5.5","owned_by":"provider"}]}`
+			if codex {
+				body = `{"models":[{"slug":"gpt-5.5","context_window":424242}]}`
+			}
+			upstream := &codexModelsPinnedHTTPUpstream{bodies: map[int64]string{1: body}}
+			h := newPinnedCodexTestHandler(accounts, upstream, 3)
+			group := &service.Group{ID: 95, Platform: service.PlatformOpenAI,
+				ModelAllowlist:            service.GroupModelAllowlist{Enabled: true, Models: []string{"public-b", "public-*"}},
+				CodexModelsManifestConfig: service.GroupCodexModelsManifestConfig{Enabled: true, AccountIDs: []int64{1}}}
+			if codex {
+				recorder := performPinnedCodexModelsRequest(t, h, group, "")
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				require.Equal(t, []string{"public-b", "public-a"}, codexHandlerManifestSlugs(t, recorder))
+				require.Contains(t, recorder.Body.String(), `"context_window":424242`)
+			} else {
+				recorder := performOrdinaryPinnedModelsRequest(t, h, group, "/v1/models", "")
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				require.Equal(t, []string{"public-b", "public-a"}, ordinaryPinnedModelIDs(t, recorder))
+				require.Contains(t, recorder.Body.String(), `"owned_by":"provider"`)
+			}
+		})
+	}
+}
+
 func TestPinnedModelsMappingFollowsUpstreamDiscoveryForBothRepresentations(t *testing.T) {
 	for _, codex := range []bool{false, true} {
 		t.Run(map[bool]string{false: "ordinary", true: "codex"}[codex], func(t *testing.T) {
@@ -164,7 +195,7 @@ func TestPinnedModelsMappingFollowsUpstreamDiscoveryForBothRepresentations(t *te
 			upstream := &codexModelsPinnedHTTPUpstream{bodies: map[int64]string{2: body}}
 			h := newPinnedCodexTestHandler(accounts, upstream, 3)
 			group := &service.Group{ID: 94, Platform: service.PlatformOpenAI,
-				ModelsListConfig:          service.GroupModelsListConfig{Enabled: true, Models: []string{"custom-concrete", "public-alias", "unselected-alias", "missing-alias"}},
+				ModelAllowlist:            service.GroupModelAllowlist{Enabled: true, Models: []string{"custom-concrete", "public-alias", "unselected-alias", "missing-alias"}},
 				CodexModelsManifestConfig: service.GroupCodexModelsManifestConfig{Enabled: true, AccountIDs: []int64{2}}}
 			var recorder *httptest.ResponseRecorder
 			if codex {

@@ -174,8 +174,14 @@ func projectAccountModelsBody(body []byte, account *Account, group *Group, codex
 		if id == "" || strings.Contains(id, "*") {
 			continue
 		}
-		if codex && len(FilterCodexModelIDsForGroup([]string{id}, group)) == 0 {
-			continue
+		// Apply the allowlist to public names after mapping, not upstream targets.
+		if codex {
+			if isCodexDedicatedMediaModel(id) {
+				continue
+			}
+			if strings.HasPrefix(id, codexAutoModelPrefix) && len(FilterCodexModelIDsForGroup([]string{id}, group)) == 0 {
+				continue
+			}
 		}
 		if _, ok := byID[id]; !ok {
 			byID[id] = raw
@@ -188,8 +194,8 @@ func projectAccountModelsBody(body []byte, account *Account, group *Group, codex
 	}
 	sort.Strings(aliases)
 	candidates = append(candidates, aliases...)
-	if group != nil && group.CustomModelsListEnabled() {
-		candidates = append(candidates, group.ModelsListConfig.Models...)
+	if group.ModelAllowlistEnabled() {
+		candidates = append(candidates, group.ModelAllowlist.Models...)
 	}
 	projected := make([]json.RawMessage, 0, len(candidates))
 	seen := make(map[string]struct{}, len(candidates))
@@ -262,6 +268,7 @@ func (s *OpenAIGatewayService) FetchPinnedOpenAIModelsList(ctx context.Context, 
 		return nil, nil, err
 	}
 	models := make([]json.RawMessage, 0)
+	modelIDs := make([]string, 0)
 	byID := make(map[string]json.RawMessage)
 	for _, result := range results {
 		_, entries, err := modelCatalogEntries(result.response.Body, "data")
@@ -277,12 +284,13 @@ func (s *OpenAIGatewayService) FetchPinnedOpenAIModelsList(ctx context.Context, 
 			}
 			if _, exists := byID[model.ID]; !exists {
 				byID[model.ID] = raw
+				modelIDs = append(modelIDs, model.ID)
 				models = append(models, raw)
 			}
 		}
 	}
-	if group.CustomModelsListEnabled() {
-		models = selectModelCatalogEntries(byID, group.ModelsListConfig.Models)
+	if group.ModelAllowlistEnabled() {
+		models = selectModelCatalogEntries(byID, group.ModelAllowlist.FilterForListing(modelIDs))
 	}
 	body, err := json.Marshal(struct {
 		Object string            `json:"object"`
@@ -311,12 +319,13 @@ func selectModelCatalogEntries(byID map[string]json.RawMessage, selected []strin
 	return models
 }
 
-func orderPinnedCodexModelsBySelection(body []byte, selected []string) ([]byte, error) {
+func orderPinnedCodexModelsBySelection(body []byte, allowlist GroupModelAllowlist) ([]byte, error) {
 	envelope, entries, err := modelCatalogEntries(body, "models")
 	if err != nil {
 		return nil, err
 	}
 	byID := make(map[string]json.RawMessage, len(entries))
+	modelIDs := make([]string, 0, len(entries))
 	for _, raw := range entries {
 		var entry struct {
 			Slug string `json:"slug"`
@@ -325,8 +334,9 @@ func orderPinnedCodexModelsBySelection(body []byte, selected []string) ([]byte, 
 			return nil, err
 		}
 		byID[entry.Slug] = raw
+		modelIDs = append(modelIDs, entry.Slug)
 	}
-	envelope["models"], err = json.Marshal(selectModelCatalogEntries(byID, selected))
+	envelope["models"], err = json.Marshal(selectModelCatalogEntries(byID, allowlist.FilterForListing(modelIDs)))
 	if err != nil {
 		return nil, err
 	}
