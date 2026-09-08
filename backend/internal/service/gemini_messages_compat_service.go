@@ -1771,7 +1771,7 @@ func (s *GeminiMessagesCompatService) skippedErrorPolicyFailoverError(c *gin.Con
 	return &UpstreamFailoverError{
 		StatusCode:             statusCode,
 		ResponseBody:           respBody,
-		RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode),
+		RetryableOnSameAccount: PoolModeSameAccountRetry(account, statusCode, nil, respBody),
 	}
 }
 
