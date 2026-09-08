@@ -299,7 +299,16 @@ func TestGetCodingPlanProvider_MiniMax(t *testing.T) {
 		"base_url":     "https://api.minimax.io/anthropic",
 	}}
 	require.Equal(t, PlatformMiniMax, intl.GetCodingPlanProvider())
+	// 未配 base_url 时走国内站默认域名，仍能识别官方额度端点。
+	require.Equal(t, PlatformMiniMax, (&Account{Platform: PlatformMiniMax, Type: AccountTypeAPIKey, Credentials: map[string]any{
+		"account_mode": AccountModeCoding,
+	}}).GetCodingPlanProvider())
 	require.Empty(t, (&Account{Platform: PlatformMiniMax, Credentials: map[string]any{"account_mode": AccountModePayG}}).GetCodingPlanProvider())
+	// 自定义中转不得把第三方 Key 发往官方额度端点。
+	require.Empty(t, (&Account{Platform: PlatformMiniMax, Type: AccountTypeAPIKey, Credentials: map[string]any{
+		"account_mode": AccountModeCoding,
+		"base_url":     "https://relay.example.com/v1",
+	}}).GetCodingPlanProvider())
 }
 
 // TestCNBalanceURL Kimi 固定端点；DeepSeek 基于 base_url 拼接。
@@ -376,6 +385,28 @@ func TestEvaluateAccountSchedulingThreshold_KimiCodingPlan(t *testing.T) {
 	decision := EvaluateAccountSchedulingThreshold(account, map[string]int{PlatformKimi: 80}, now)
 	require.True(t, decision.ShouldPause)
 	require.Equal(t, PlatformKimi, decision.Platform)
+	require.Equal(t, "5h", decision.Window)
+	require.InDelta(t, 90.0, decision.UsedPercent, 1e-9)
+	require.NotNil(t, decision.Until)
+	require.True(t, reset.Equal(*decision.Until))
+}
+
+func TestEvaluateAccountSchedulingThreshold_MiniMaxCodingPlan(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(3 * time.Hour)
+	account := &Account{
+		Platform: PlatformMiniMax,
+		Extra: map[string]any{
+			"minimax_5h_used_percent":     90.0,
+			"minimax_5h_reset_at":         reset.Format(time.RFC3339),
+			"minimax_weekly_used_percent": 30.0,
+			"minimax_weekly_reset_at":     now.Add(7 * 24 * time.Hour).Format(time.RFC3339),
+		},
+	}
+	decision := EvaluateAccountSchedulingThreshold(account, map[string]int{PlatformMiniMax: 80}, now)
+	require.True(t, decision.ShouldPause)
+	require.Equal(t, PlatformMiniMax, decision.Platform)
 	require.Equal(t, "5h", decision.Window)
 	require.InDelta(t, 90.0, decision.UsedPercent, 1e-9)
 	require.NotNil(t, decision.Until)
