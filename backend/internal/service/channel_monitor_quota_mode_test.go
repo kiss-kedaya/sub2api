@@ -463,6 +463,12 @@ func TestMonitorAccountQuotaCapability_Matrix(t *testing.T) {
 			account: &Account{ID: 14, Platform: domain.PlatformMiniMax, Credentials: map[string]any{"account_mode": AccountModeCoding}},
 		},
 		{
+			name: "custom-domain minimax coding unsupported",
+			account: &Account{ID: 16, Platform: domain.PlatformMiniMax, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"account_mode": AccountModeCoding, "base_url": "https://relay.example.com/v1"}},
+			wantErr: ErrChannelMonitorAccountNotSupportable,
+		},
+		{
 			name:    "zhipu payg has no balance endpoint",
 			account: &Account{ID: 5, Platform: domain.PlatformZhipu},
 			wantErr: ErrChannelMonitorAccountNotSupportable,
