@@ -12,6 +12,9 @@ func (s *ProxyExpirySuite) TestBackupReferencesAreDirectedAndShareable() {
 	s.Require().Nil(backup.BackupProxyID, "assigning a backup must not overwrite its own configuration")
 
 	secondID := s.mkProxy("second-primary", service.FallbackModeProxy, nil, &backupID)
+	// Updating the shared backup must not clear its incoming references.
+	backup.Name = "renamed-shared-backup"
+	s.Require().NoError(s.repo.Update(s.ctx, backup))
 	for _, id := range []int64{firstID, secondID} {
 		primary, err := s.repo.GetByID(s.ctx, id)
 		s.Require().NoError(err)
