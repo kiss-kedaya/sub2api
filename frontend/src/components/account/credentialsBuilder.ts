@@ -256,8 +256,12 @@ export const GROK_BASE_URL_PRESETS: GrokBaseUrlPreset[] = [
 
 export type CnAccountMode = 'payg' | 'coding'
 
-/** 仅 deepseek / Gemini 自定义上游支持原生 responses；adaptive 会按入站协议选择原生端点。 */
+/** deepseek / kimi / Gemini 自定义上游支持原生 responses；adaptive 会按入站协议选择原生端点。 */
 export type CnApiProtocol = 'adaptive' | 'chat_completions' | 'anthropic' | 'responses'
+
+export function cnSupportsNativeResponses(platform: string): boolean {
+  return platform === 'deepseek' || platform === 'kimi' || platform === 'gemini'
+}
 export type CnNativeApiProtocol = Exclude<CnApiProtocol, 'adaptive'>
 export type AdaptiveProtocolPlatform = 'kimi' | 'zhipu' | 'deepseek' | 'gemini'
 
@@ -295,8 +299,10 @@ export const CN_BASE_URL_PRESETS: Record<'kimi' | 'zhipu' | 'deepseek', CnBaseUr
   kimi: [
     { mode: 'payg', protocol: 'chat_completions', label: 'Moonshot', url: 'https://api.moonshot.cn/v1' },
     { mode: 'payg', protocol: 'anthropic', label: 'Moonshot Anthropic', url: 'https://api.moonshot.cn/anthropic' },
+    { mode: 'payg', protocol: 'responses', label: 'Moonshot Responses', url: 'https://api.moonshot.cn/v1' },
     { mode: 'coding', protocol: 'chat_completions', label: 'Kimi For Coding', url: 'https://api.kimi.com/coding/v1' },
-    { mode: 'coding', protocol: 'anthropic', label: 'Kimi Coding Anthropic', url: 'https://api.kimi.com/coding' }
+    { mode: 'coding', protocol: 'anthropic', label: 'Kimi Coding Anthropic', url: 'https://api.kimi.com/coding' },
+    { mode: 'coding', protocol: 'responses', label: 'Kimi Coding Responses', url: 'https://api.kimi.com/coding/v1' }
   ],
   zhipu: [
     { mode: 'payg', protocol: 'chat_completions', label: 'GLM PaaS', url: 'https://open.bigmodel.cn/api/paas/v4' },
@@ -331,7 +337,7 @@ export function defaultCNBaseUrl(
         return ''
     }
   }
-  // responses：deepseek 官方与 Gemini 自定义上游共用 chat 基址，路径由后端拼接。
+  // responses：Kimi / DeepSeek / Gemini 自定义上游的 base 与 chat_completions 相同（路径由后端拼接）。
   switch (platform) {
     case 'kimi':
       return mode === 'coding' ? 'https://api.kimi.com/coding/v1' : 'https://api.moonshot.cn/v1'
@@ -356,9 +362,7 @@ export function defaultCNAdaptiveBaseUrls(
   return {
     chat_completions: defaultCNBaseUrl(platform, mode, 'chat_completions'),
     anthropic: defaultCNBaseUrl(platform, mode, 'anthropic'),
-    responses: platform === 'deepseek' || platform === 'gemini'
-      ? defaultCNBaseUrl(platform, mode, 'responses')
-      : ''
+    responses: cnSupportsNativeResponses(platform) ? defaultCNBaseUrl(platform, mode, 'responses') : ''
   }
 }
 

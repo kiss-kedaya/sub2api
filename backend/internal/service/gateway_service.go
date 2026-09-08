@@ -1494,6 +1494,9 @@ func loadAvailableModelsFromStore(ctx context.Context, repo AccountRepository, s
 		models = append(models, model)
 	}
 	sort.Strings(models)
+	if platform == PlatformOpenAI {
+		models = supplementUnmappedOpenAIModels(accounts, models)
+	}
 	return models
 }
 

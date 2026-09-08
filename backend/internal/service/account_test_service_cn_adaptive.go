@@ -19,7 +19,7 @@ const accountTestSuppressCompletionContextKey = "account_test_suppress_completio
 
 // testCNProviderAdaptiveConnection verifies every native endpoint used by an
 // adaptive CN-provider account. Kimi and Zhipu use Chat Completions plus
-// Anthropic; DeepSeek additionally uses its native Responses endpoint.
+// Anthropic; DeepSeek / Kimi additionally probe the native Responses endpoint.
 func (s *AccountTestService) testCNProviderAdaptiveConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
 	testModelID := strings.TrimSpace(modelID)
 	if testModelID == "" {
@@ -44,7 +44,7 @@ func (s *AccountTestService) testCNProviderAdaptiveConnection(c *gin.Context, ac
 		return err
 	}
 
-	if account.Platform == PlatformDeepseek {
+	if account.SupportsNativeCNResponses() {
 		if err := s.testCNProviderAdaptiveResponsesConnection(c, account, testModelID, authToken); err != nil {
 			return err
 		}

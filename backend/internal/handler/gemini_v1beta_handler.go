@@ -98,8 +98,32 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		return
 	}
 
+	filterGeminiModels := func(models []gemini.Model) []gemini.Model {
+		if apiKey.Group == nil || !apiKey.Group.CustomModelsListEnabled() {
+			return models
+		}
+		filtered := make([]gemini.Model, 0, len(models))
+		for _, model := range models {
+			if service.ModelsListAllows(apiKey.Group.ModelsListConfig, model.Name) {
+				filtered = append(filtered, model)
+			}
+		}
+		return filtered
+	}
+
 	// 强制 antigravity 模式：返回 antigravity 支持的模型列表
 	if forcePlatform == service.PlatformAntigravity {
+		if apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
+			agModels := antigravity.DefaultGeminiModels()
+			filtered := make([]antigravity.GeminiModel, 0, len(agModels))
+			for _, model := range agModels {
+				if service.ModelsListAllows(apiKey.Group.ModelsListConfig, model.Name) {
+					filtered = append(filtered, model)
+				}
+			}
+			c.JSON(http.StatusOK, antigravity.GeminiModelsListResponse{Models: filtered})
+			return
+		}
 		c.JSON(http.StatusOK, antigravity.FallbackGeminiModelsList())
 		return
 	}
@@ -107,7 +131,7 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 	account, err := h.selectGeminiStudioAccount(c.Request.Context(), apiKey)
 	if err != nil {
 		if errors.Is(err, errGeminiStudioAntigravityFallback) {
-			c.JSON(http.StatusOK, gemini.FallbackModelsList())
+			c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(gemini.DefaultModels())})
 			return
 		}
 		markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
@@ -121,10 +145,56 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		return
 	}
 	if shouldFallbackGeminiModels(res) {
-		c.JSON(http.StatusOK, gemini.FallbackModelsList())
+		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(gemini.DefaultModels())})
 		return
 	}
+	if apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
+		if filtered, dropped, ok := filterUpstreamGeminiModelsBody(res.Body, apiKey.Group.ModelsListConfig); ok && dropped {
+			res.Body = filtered
+		}
+	}
 	writeUpstreamResponse(c, res)
+}
+
+func filterUpstreamGeminiModelsBody(body []byte, list service.GroupModelsListConfig) (filtered []byte, dropped bool, ok bool) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, false, false
+	}
+	rawModels, hasModels := envelope["models"]
+	if !hasModels {
+		return body, false, true
+	}
+	type geminiModelName struct {
+		Name string `json:"name"`
+	}
+	var models []json.RawMessage
+	if err := json.Unmarshal(rawModels, &models); err != nil {
+		return nil, false, false
+	}
+	kept := make([]json.RawMessage, 0, len(models))
+	for _, raw := range models {
+		var model geminiModelName
+		if err := json.Unmarshal(raw, &model); err != nil {
+			return nil, false, false
+		}
+		if service.ModelsListAllows(list, model.Name) {
+			kept = append(kept, raw)
+		}
+	}
+	if len(kept) == len(models) {
+		return body, false, true
+	}
+	mergedModels, err := json.Marshal(kept)
+	if err != nil {
+		return nil, false, false
+	}
+	envelope["models"] = mergedModels
+	merged, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, false, false
+	}
+	return merged, true, true
 }
 
 // GeminiV1BetaGetModel proxies:
@@ -151,6 +221,10 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 	// 见 service/upstream_path_guard.go。
 	if !service.IsSafeGeminiModelPathSegment(modelName) {
 		googleError(c, http.StatusBadRequest, "Invalid model in URL")
+		return
+	}
+	if apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() && !service.ModelsListAllows(apiKey.Group.ModelsListConfig, modelName) {
+		googleError(c, http.StatusNotFound, "Model is not available for this group")
 		return
 	}
 	if resolvedModel, ok := service.ResolvedUpstreamModelFromContext(c.Request.Context()); ok && strings.TrimSpace(resolvedModel) != "" {
@@ -226,6 +300,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	// 先在入口校验片段合规性，见 service/upstream_path_guard.go。
 	if !service.IsSafeGeminiModelPathSegment(modelName) {
 		googleError(c, http.StatusBadRequest, "Invalid model in URL")
+		return
+	}
+	if apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() && !service.ModelsListAllows(apiKey.Group.ModelsListConfig, modelName) {
+		googleError(c, http.StatusNotFound, "Model is not available for this group")
 		return
 	}
 	if resolvedModel, ok := service.ResolvedUpstreamModelFromContext(c.Request.Context()); ok && strings.TrimSpace(resolvedModel) != "" {

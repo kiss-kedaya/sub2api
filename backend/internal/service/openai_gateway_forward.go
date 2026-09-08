@@ -131,8 +131,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
-	nativeDeepSeekResponses := account.Platform == PlatformDeepseek &&
-		(account.GetAPIProtocol() == APIProtocolResponses || account.IsAdaptiveAPIProtocol())
+	nativeCNResponses := account.usesNativeResponsesUpstream()
+	nativeDeepSeekResponses := account.Platform == PlatformDeepseek && nativeCNResponses
 	if nativeDeepSeekResponses && account.Type == AccountTypeAPIKey && !compactPath &&
 		needsOpenAIResponsesClientToolAdaptation(body) {
 		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
@@ -348,7 +348,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	requestRoot := parseRawJSONView(body)
 	instructions := requestRoot.Get("instructions")
 	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
-	if instructionsEmpty && account.UsesOpenAICodexProtocol() && !compatMessagesBridge && !nativeDeepSeekResponses {
+	if instructionsEmpty && account.UsesOpenAICodexProtocol() && !compatMessagesBridge && !nativeCNResponses {
 		markPatchSet("instructions", defaultCodexSynthInstructions(reqModel))
 	}
 
@@ -1325,13 +1325,13 @@ func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
 		return false
 	}
 	if account.IsCNProvider() || account.IsGeminiOpenAIProtocol() {
-		// 显式协议配置优先于异步探针 Extra；adaptive 仅 DeepSeek/Gemini Responses
-		// 有原生 Responses，其余回退 Chat Completions。
+		// 显式协议配置优先于异步探针 Extra；adaptive 仅 DeepSeek / Kimi /
+		// Gemini 自定义上游有原生 Responses，其余回退 Chat Completions。
 		switch account.GetAPIProtocol() {
 		case APIProtocolChatCompletions:
 			return true
 		case APIProtocolAdaptive:
-			return account.Platform != PlatformDeepseek && !account.IsGeminiOpenAIProtocol()
+			return !account.usesNativeResponsesUpstream()
 		default:
 			return false
 		}
@@ -1356,7 +1356,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	case AccountTypeAPIKey:
 		// API Key accounts use Platform API or custom base URL
 		baseURL := account.GetOpenAIBaseURL()
-		if (account.Platform == PlatformDeepseek || account.IsGeminiOpenAIProtocol()) && account.IsAdaptiveAPIProtocol() {
+		if account.usesNativeResponsesUpstream() && account.IsAdaptiveAPIProtocol() {
 			baseURL = account.GetCNProtocolBaseURL(APIProtocolResponses)
 		}
 		if baseURL == "" {
