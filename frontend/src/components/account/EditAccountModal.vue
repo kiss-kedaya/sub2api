@@ -28,7 +28,21 @@
 
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey'" class="space-y-4">
-        <div v-if="!isCNApiKeyAccount || editApiProtocol !== 'adaptive'">
+        <div v-if="account.platform === 'gemini'" class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+          <label class="flex cursor-pointer items-start gap-2">
+            <input
+              v-model="geminiUseCustomProtocol"
+              type="checkbox"
+              class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600"
+              data-testid="gemini-custom-protocol"
+            />
+            <span>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.accounts.gemini.accountType.customProtocolTitle') }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.gemini.accountType.customProtocolDesc') }}</span>
+            </span>
+          </label>
+        </div>
+        <div v-if="!isAdaptiveProtocolAccount || editApiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
             v-model="editBaseUrl"
@@ -72,7 +86,7 @@
               <input v-model="editAdaptiveBaseUrls[item.value]" type="text" class="input" />
             </div>
           </div>
-          <p v-if="account.platform !== 'deepseek'" class="input-hint">
+          <p v-if="account.platform !== 'deepseek' && account.platform !== 'gemini'" class="input-hint">
             {{ t('admin.accounts.cnProviders.apiProtocol.responsesFallbackDesc') }}
           </p>
         </div>
@@ -98,7 +112,7 @@
           <p class="input-hint">{{ t(`admin.accounts.cnProviders.accountMode.${editAccountMode}Desc`) }}</p>
         </div>
         <!-- API Protocol Selection (CN providers) -->
-        <div v-if="isCNApiKeyAccount">
+        <div v-if="isAdaptiveProtocolAccount">
           <label class="input-label">{{ t('admin.accounts.cnProviders.apiProtocol.title') }}</label>
           <div class="mt-2 flex flex-wrap gap-2">
             <button
@@ -2878,6 +2892,8 @@ import {
   validateHeaderOverrideRows,
   defaultCNAdaptiveBaseUrls,
   defaultCNBaseUrl,
+  isAdaptiveProtocolPlatform,
+  type AdaptiveProtocolPlatform,
   HEADER_OVERRIDE_ENABLED_CREDENTIAL_KEY,
   HEADER_OVERRIDES_CREDENTIAL_KEY,
   type CnAccountMode,
@@ -2976,12 +2992,17 @@ const isCNApiKeyAccount = computed(
       props.account.platform === 'zhipu' ||
       props.account.platform === 'deepseek')
 )
+const geminiUseCustomProtocol = ref(false)
+const isGeminiProtocolAccount = computed(
+  () => props.account?.platform === 'gemini' && props.account?.type === 'apikey' && geminiUseCustomProtocol.value
+)
+const isAdaptiveProtocolAccount = computed(() => isCNApiKeyAccount.value || isGeminiProtocolAccount.value)
 // CnBaseUrlPresets 的 platform prop 是平台字面量联合类型，模板里不能写
 // `as` 断言（其中的 `|` 会被 eslint 误判为 Vue2 filter 语法），经此 computed 传递。
-const cnPresetPlatform = computed<'kimi' | 'zhipu' | 'deepseek'>(() => {
+const cnPresetPlatform = computed<AdaptiveProtocolPlatform>(() => {
   const platform = props.account?.platform
-  if (platform === 'kimi' || platform === 'zhipu' || platform === 'deepseek') {
-    return platform
+  if (isAdaptiveProtocolPlatform(platform || '')) {
+    return platform as AdaptiveProtocolPlatform
   }
   return 'kimi'
 })
@@ -3015,7 +3036,7 @@ const cnProtocolOptions = computed<Array<{ value: CnApiProtocol; labelKey: strin
     { value: 'chat_completions', labelKey: 'chatCompletions' },
     { value: 'anthropic', labelKey: 'anthropic' }
   ]
-  if (props.account?.platform === 'deepseek') {
+  if (props.account?.platform === 'deepseek' || props.account?.platform === 'gemini') {
     opts.push({ value: 'responses', labelKey: 'responses' })
   }
   return opts
@@ -3025,11 +3046,24 @@ const editAdaptiveProtocolOptions = computed<Array<{ value: CnNativeApiProtocol;
     { value: 'chat_completions', labelKey: 'chatCompletions' },
     { value: 'anthropic', labelKey: 'anthropic' }
   ]
-  if (props.account?.platform === 'deepseek') opts.push({ value: 'responses', labelKey: 'responses' })
+  if (props.account?.platform === 'deepseek' || props.account?.platform === 'gemini') opts.push({ value: 'responses', labelKey: 'responses' })
   return opts
 })
+watch(geminiUseCustomProtocol, (enabled) => {
+  if (!props.account || props.account.platform !== 'gemini' || props.account.type !== 'apikey' || syncingForm.value) return
+  if (enabled) {
+    editApiProtocol.value = 'adaptive'
+    const defaults = defaultCNAdaptiveBaseUrls('gemini', 'payg')
+    for (const item of editAdaptiveProtocolOptions.value) {
+      if (!editAdaptiveBaseUrls.value[item.value]) editAdaptiveBaseUrls.value[item.value] = defaults[item.value]
+    }
+    editBaseUrl.value = editAdaptiveBaseUrls.value.chat_completions || editAdaptiveBaseUrls.value.responses || 'https://your-upstream/v1'
+    return
+  }
+  editBaseUrl.value = 'https://generativelanguage.googleapis.com'
+})
 watch(editApiProtocol, (protocol, previousProtocol) => {
-  if (!isCNApiKeyAccount.value || syncingForm.value) return
+  if (!isAdaptiveProtocolAccount.value || syncingForm.value) return
   if (protocol === 'adaptive') {
     const defaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, editAccountMode.value)
     for (const item of editAdaptiveProtocolOptions.value) {
@@ -3895,7 +3929,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     const credentials = newAccount.credentials as Record<string, unknown>
     // 国产供应商：读取 account_mode 与 api_protocol 作为可编辑初始值
     // （编辑弹窗允许修正两者，用于修复早期存错默认值的账号）。
-    if (newAccount.platform === 'kimi' || newAccount.platform === 'zhipu' || newAccount.platform === 'deepseek') {
+    geminiUseCustomProtocol.value = false
+    if (isAdaptiveProtocolPlatform(newAccount.platform) && (newAccount.platform !== 'gemini' || typeof credentials.api_protocol === 'string')) {
       editAccountMode.value = credentials.account_mode === 'coding' ? 'coding' : 'payg'
       const storedProtocol = credentials.api_protocol
       editApiProtocol.value =
@@ -3905,10 +3940,13 @@ const syncFormFromAccount = (newAccount: Account | null) => {
         storedProtocol === 'responses'
           ? storedProtocol
           : 'chat_completions'
-      if (newAccount.platform !== 'deepseek' && editApiProtocol.value === 'responses') {
+      if (newAccount.platform === 'gemini') {
+        geminiUseCustomProtocol.value = typeof storedProtocol === 'string'
+      }
+      if (newAccount.platform !== 'deepseek' && newAccount.platform !== 'gemini' && editApiProtocol.value === 'responses') {
         editApiProtocol.value = 'chat_completions'
       }
-      const adaptiveDefaults = defaultCNAdaptiveBaseUrls(newAccount.platform, editAccountMode.value)
+      const adaptiveDefaults = defaultCNAdaptiveBaseUrls(newAccount.platform as AdaptiveProtocolPlatform, editAccountMode.value)
       const storedBaseUrls = (credentials.api_base_urls as Record<string, unknown> | undefined) || {}
       const legacyBaseUrl = typeof credentials.base_url === 'string' ? credentials.base_url.trim() : ''
       const storedChatBaseUrl = typeof storedBaseUrls.chat_completions === 'string'
@@ -4630,17 +4668,23 @@ const handleSubmit = async () => {
       }
 
       // 国产供应商：模式与协议写入凭据（决定额度/余额探测与转发端点/格式）。
-      if (isCNApiKeyAccount.value) {
-        newCredentials.account_mode = editAccountMode.value
+      if (props.account.platform === 'gemini' && !isGeminiProtocolAccount.value) {
+        delete newCredentials.api_protocol
+        delete newCredentials.api_base_urls
+      }
+      if (isAdaptiveProtocolAccount.value && isAdaptiveProtocolPlatform(props.account.platform)) {
+        if (isCNApiKeyAccount.value) {
+          newCredentials.account_mode = editAccountMode.value
+        }
         newCredentials.api_protocol = editApiProtocol.value
         if (editApiProtocol.value === 'adaptive') {
-          const defaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, editAccountMode.value)
+          const defaults = defaultCNAdaptiveBaseUrls(props.account.platform, editAccountMode.value)
           const protocolBaseUrls: Record<string, string> = {}
           for (const item of editAdaptiveProtocolOptions.value) {
             protocolBaseUrls[item.value] = (editAdaptiveBaseUrls.value[item.value] || defaults[item.value]).trim()
           }
           newCredentials.api_base_urls = protocolBaseUrls
-          newCredentials.base_url = protocolBaseUrls.chat_completions
+          newCredentials.base_url = protocolBaseUrls.chat_completions || protocolBaseUrls.responses
         } else {
           delete newCredentials.api_base_urls
         }

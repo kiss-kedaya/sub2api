@@ -493,6 +493,12 @@ func TestGetAPIProtocol(t *testing.T) {
 	require.Equal(t, APIProtocolChatCompletions, mk(PlatformZhipu, APIProtocolResponses).GetAPIProtocol(), "zhipu 无 responses 端点")
 	require.Equal(t, APIProtocolChatCompletions, mk(PlatformKimi, "bogus").GetAPIProtocol(), "非法值回退默认")
 	require.Equal(t, APIProtocolChatCompletions, (&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}).GetAPIProtocol(), "非 CN 供应商恒为默认")
+	require.Equal(t, APIProtocolChatCompletions, mk(PlatformGemini, "").GetAPIProtocol(), "未配协议的 Gemini 不是 OpenAI 兼容")
+	require.Equal(t, APIProtocolResponses, mk(PlatformGemini, APIProtocolResponses).GetAPIProtocol())
+	require.Equal(t, APIProtocolAdaptive, mk(PlatformGemini, APIProtocolAdaptive).GetAPIProtocol())
+	require.True(t, mk(PlatformGemini, APIProtocolResponses).IsGeminiOpenAIProtocol())
+	require.True(t, mk(PlatformGemini, APIProtocolResponses).IsOpenAICompatible())
+	require.False(t, mk(PlatformGemini, "").IsOpenAICompatible())
 }
 
 func TestAdaptiveProtocolBaseURLs(t *testing.T) {

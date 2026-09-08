@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 
 const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
@@ -1420,6 +1420,38 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     await wrapper.get('[data-testid="auto-reset-credit-5h-threshold"]').setValue('0')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     expect(updateAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('lets a native Gemini API key enable custom protocol without changing platform', async () => {
+    const account = buildAccount()
+    account.platform = 'gemini'
+    account.type = 'apikey'
+    account.credentials = {
+      api_key: 'AIza-test',
+      base_url: 'https://generativelanguage.googleapis.com',
+      tier_id: 'aistudio_free'
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    expect(wrapper.find('[data-testid="gemini-custom-protocol"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="gemini-custom-protocol"]').setValue(true)
+    await flushPromises()
+
+    const responsesButton = wrapper.findAll('button').find((button) =>
+      button.text() === 'admin.accounts.cnProviders.apiProtocol.responses'
+    )
+    expect(responsesButton).toBeTruthy()
+    await responsesButton!.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.platform).toBeUndefined()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
+      api_protocol: 'responses'
+    })
     wrapper.unmount()
   })
 })
