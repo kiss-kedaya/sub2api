@@ -184,11 +184,12 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		}
 		result.BalanceFinalizationPending = true
 	} else if cmd.BalanceCost > 0 {
-		newBalance, _, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
 		if err != nil {
 			return err
 		}
 		result.NewBalance = &newBalance
+		result.BalanceOverdrafted = !sufficient
 	}
 
 	if cmd.APIKeyQuotaCost > 0 {

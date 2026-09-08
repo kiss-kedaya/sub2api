@@ -174,7 +174,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
-				RetryableOnSameAccount: !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+				RetryableOnSameAccount: !shouldDisable && PoolModeSameAccountRetry(account, resp.StatusCode, resp.Header, respBody),
 			}
 		}
 

@@ -374,6 +374,13 @@ export default {
         routing: '路由',
         upstream: '上游',
         response: '响应',
+        failureKind: {
+          'cloudflare-waf': 'Cloudflare 1010 / WAF',
+          'capacity-cooling': '货源冷却',
+          'credential-forbidden': '凭证 403',
+          'rate-limit': '限流',
+          model_not_found: '模型不存在'
+        },
         classification: '错误分类',
         errorBody: '错误体',
         trimmed: '已截断',

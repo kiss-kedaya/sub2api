@@ -86,9 +86,16 @@
 
         <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
           <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.status') }}</div>
-          <div class="mt-1">
+          <div class="mt-1 flex flex-wrap items-center gap-2">
             <span :class="['inline-flex items-center rounded-lg px-2 py-1 text-xs font-black ring-1 ring-inset shadow-sm', statusClass]">
               {{ detail.status_code }}
+            </span>
+            <span
+              v-if="failureKind"
+              data-testid="upstream-failure-kind"
+              :class="['inline-flex items-center rounded-lg px-2 py-1 text-[10px] font-black uppercase tracking-wider ring-1 ring-inset', failureKindClass]"
+            >
+              {{ t(`admin.ops.errorDetail.failureKind.${failureKind}`) }}
             </span>
           </div>
         </div>
@@ -233,6 +240,7 @@ import { useAppStore } from '@/stores'
 import { opsAPI, type OpsErrorDetail } from '@/api/admin/ops'
 import { formatDateTime } from '@/utils/format'
 import { resolveUpstreamPayload } from '../utils/errorDetailResponse'
+import { classifyUpstreamFailureBody, type UpstreamFailureKind } from '@/utils/upstreamFailure'
 
 interface Props {
   show: boolean
@@ -269,6 +277,33 @@ const rootCauseMessage = computed(() => {
     if (value) return value
   }
   return ''
+})
+
+const failureKind = computed<UpstreamFailureKind>(() => {
+  const current = detail.value
+  if (!current) return ''
+  const body = [current.upstream_error_detail, current.upstream_error_message, current.error_body, current.message]
+    .map((value) => meaningfulPayload(value))
+    .filter(Boolean)
+    .join('\n')
+  return classifyUpstreamFailureBody(body, current.upstream_status_code ?? current.status_code)
+})
+
+const failureKindClass = computed(() => {
+  switch (failureKind.value) {
+    case 'cloudflare-waf':
+      return 'bg-orange-50 text-orange-800 ring-orange-200 dark:bg-orange-900/20 dark:text-orange-200 dark:ring-orange-800'
+    case 'capacity-cooling':
+      return 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-200 dark:ring-amber-800'
+    case 'credential-forbidden':
+      return 'bg-red-50 text-red-800 ring-red-200 dark:bg-red-900/20 dark:text-red-200 dark:ring-red-800'
+    case 'rate-limit':
+      return 'bg-blue-50 text-blue-800 ring-blue-200 dark:bg-blue-900/20 dark:text-blue-200 dark:ring-blue-800'
+    case 'model_not_found':
+      return 'bg-slate-50 text-slate-800 ring-slate-200 dark:bg-slate-900/20 dark:text-slate-200 dark:ring-slate-700'
+    default:
+      return 'bg-gray-50 text-gray-700 ring-gray-200 dark:bg-dark-800 dark:text-gray-200 dark:ring-dark-600'
+  }
 })
 
 const diagnosticPayloadSections = computed(() => {
