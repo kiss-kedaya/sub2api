@@ -651,7 +651,7 @@ import GrokQuotaProbeCell from './GrokQuotaProbeCell.vue'
 import CNProviderQuotaCell from './CNProviderQuotaCell.vue'
 import CNProviderBalanceCell from './CNProviderBalanceCell.vue'
 import OllamaCloudUsageCell from './OllamaCloudUsageCell.vue'
-import { cnQuotaCellVisible as cnQuotaCellVisibleFn, cnBalanceCellVisible as cnBalanceCellVisibleFn } from './credentialsBuilder'
+import { cnQuotaCellVisible as cnQuotaCellVisibleFn, cnBalanceCellVisible as cnBalanceCellVisibleFn, isGeminiOpenAIProtocolAccount } from './credentialsBuilder'
 
 // Module-level cache shared across all AccountUsageCell instances
 const _usageCache = new Map<number, { data: AccountUsageInfo; ts: number }>()
@@ -912,6 +912,7 @@ const isGeminiCodeAssist = computed(() => {
 
 const geminiChannelShort = computed((): 'ai studio' | 'gcp' | 'google one' | 'client' | null => {
   if (props.account.platform !== 'gemini') return null
+  if (isGeminiOpenAIProtocolAccount(props.account)) return null
 
   // API Key accounts are AI Studio.
   if (props.account.type === 'apikey') return 'ai studio'
@@ -926,6 +927,7 @@ const geminiChannelShort = computed((): 'ai studio' | 'gcp' | 'google one' | 'cl
 
 const geminiUserLevel = computed((): string | null => {
   if (props.account.platform !== 'gemini') return null
+  if (isGeminiOpenAIProtocolAccount(props.account)) return null
 
   const tier = (geminiTier.value || '').toString().trim()
   const tierLower = tier.toLowerCase()

@@ -265,6 +265,23 @@ export function isAdaptiveProtocolPlatform(platform: string): platform is Adapti
   return platform === 'kimi' || platform === 'zhipu' || platform === 'deepseek' || platform === 'gemini'
 }
 
+export function isGeminiOpenAIProtocolAccount(account: {
+  platform?: string
+  type?: string
+  credentials?: { api_protocol?: unknown } | null
+}): boolean {
+  if (account.platform !== 'gemini' || account.type !== 'apikey') return false
+  switch (String(account.credentials?.api_protocol ?? '').trim()) {
+    case 'adaptive':
+    case 'chat_completions':
+    case 'anthropic':
+    case 'responses':
+      return true
+    default:
+      return false
+  }
+}
+
 export interface CnBaseUrlPreset {
   mode: CnAccountMode
   protocol: CnApiProtocol
