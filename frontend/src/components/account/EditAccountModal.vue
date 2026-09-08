@@ -2999,10 +2999,10 @@ const isGeminiProtocolAccount = computed(
 const isAdaptiveProtocolAccount = computed(() => isCNApiKeyAccount.value || isGeminiProtocolAccount.value)
 // CnBaseUrlPresets 的 platform prop 是平台字面量联合类型，模板里不能写
 // `as` 断言（其中的 `|` 会被 eslint 误判为 Vue2 filter 语法），经此 computed 传递。
-const cnPresetPlatform = computed<AdaptiveProtocolPlatform>(() => {
+const cnPresetPlatform = computed<'kimi' | 'zhipu' | 'deepseek'>(() => {
   const platform = props.account?.platform
-  if (isAdaptiveProtocolPlatform(platform || '')) {
-    return platform as AdaptiveProtocolPlatform
+  if (platform === 'kimi' || platform === 'zhipu' || platform === 'deepseek') {
+    return platform
   }
   return 'kimi'
 })
