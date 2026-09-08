@@ -514,7 +514,7 @@
       </div>
 
       <!-- API Protocol Selection (Kimi / Zhipu / DeepSeek) -->
-      <div v-if="isCNPlatform" class="mt-4">
+      <div v-if="isAdaptiveProtocolAccount" class="mt-4">
         <label class="input-label">{{ t('admin.accounts.cnProviders.apiProtocol.title') }}</label>
         <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <button
@@ -562,7 +562,7 @@
             {{ t('admin.accounts.gemini.helpButton') }}
           </button>
         </div>
-        <div class="mt-2 grid grid-cols-3 gap-3" data-tour="account-form-type">
+        <div class="mt-2 grid grid-cols-2 gap-3 lg:grid-cols-3" data-tour="account-form-type">
           <button
             type="button"
             @click="accountCategory = 'oauth-based'"
@@ -1250,7 +1250,7 @@
 
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
       <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
-        <div v-if="!isCNPlatform || apiProtocol !== 'adaptive'">
+        <div v-if="!isAdaptiveProtocolAccount || apiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
             v-model="apiKeyBaseUrl"
@@ -1277,7 +1277,7 @@
         <div v-else>
           <label class="input-label">{{ t('admin.accounts.cnProviders.apiProtocol.endpoints') }}</label>
           <div class="mt-2 space-y-3">
-            <div v-for="item in cnAdaptiveProtocolOptions" :key="item.value">
+            <div v-for="item in adaptiveProtocolEndpointOptions" :key="item.value">
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
                 {{ t(`admin.accounts.cnProviders.apiProtocol.${item.labelKey}`) }}
               </label>
@@ -1289,7 +1289,7 @@
               />
             </div>
           </div>
-          <p v-if="form.platform !== 'deepseek'" class="input-hint">
+          <p v-if="form.platform !== 'deepseek' && form.platform !== 'gemini'" class="input-hint">
             {{ t('admin.accounts.cnProviders.apiProtocol.responsesFallbackDesc') }}
           </p>
         </div>
@@ -1322,8 +1322,18 @@
           />
         </div>
 
+        <div v-if="form.platform === 'gemini' && accountCategory === 'apikey'" class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+          <label class="flex cursor-pointer items-start gap-2">
+            <input v-model="geminiUseCustomProtocol" type="checkbox" class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600" />
+            <span>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.accounts.gemini.accountType.customProtocolTitle') }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.gemini.accountType.customProtocolDesc') }}</span>
+            </span>
+          </label>
+        </div>
+
         <!-- Gemini API Key tier selection -->
-        <div v-if="form.platform === 'gemini'">
+        <div v-if="form.platform === 'gemini' && accountCategory === 'apikey' && !geminiUseCustomProtocol">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
           <select v-model="geminiTierAIStudio" class="input">
             <option value="aistudio_free">{{ t('admin.accounts.gemini.tier.aiStudio.free') }}</option>
@@ -3767,8 +3777,10 @@ import {
   applyInterceptWarmup,
   defaultCNAdaptiveBaseUrls,
   defaultCNBaseUrl,
+  isAdaptiveProtocolPlatform,
   isHeaderOverrideCapable,
   validateHeaderOverrideRows,
+  type AdaptiveProtocolPlatform,
   type CnAccountMode,
   type CnApiProtocol,
   type CnNativeApiProtocol,
@@ -3817,6 +3829,7 @@ const oauthStepTitle = computed(() => {
 
 // Platform-specific hints for API Key type
 const baseUrlHint = computed(() => {
+  if (isGeminiProtocolAccount.value) return t('admin.accounts.gemini.accountType.customProtocolHint')
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   if (form.platform === 'grok') return ''
@@ -3824,6 +3837,7 @@ const baseUrlHint = computed(() => {
 })
 
 const apiKeyHint = computed(() => {
+  if (isGeminiProtocolAccount.value) return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
   if (form.platform === 'grok') return ''
@@ -3832,8 +3846,8 @@ const apiKeyHint = computed(() => {
 
 // Base URL / API Key 占位符：国产供应商随账号类型变化。
 const apiKeyBaseUrlPlaceholder = computed(() => {
-  if (isCNPlatform.value) {
-    return defaultCNBaseUrl(form.platform, accountMode.value, apiProtocol.value) || 'https://api.example.com'
+  if (isAdaptiveProtocolAccount.value) {
+    return defaultCNBaseUrl(form.platform, accountMode.value, apiProtocol.value) || 'https://your-upstream/v1'
   }
   switch (form.platform) {
     case 'openai':
@@ -3959,8 +3973,15 @@ const adaptiveBaseUrls = ref<Record<CnNativeApiProtocol, string>>({
   anthropic: '',
   responses: ''
 })
+const geminiUseCustomProtocol = ref(false)
 const isCNPlatform = computed(
   () => form.platform === 'kimi' || form.platform === 'zhipu' || form.platform === 'deepseek'
+)
+const isGeminiProtocolAccount = computed(
+  () => form.platform === 'gemini' && accountCategory.value === 'apikey' && geminiUseCustomProtocol.value
+)
+const isAdaptiveProtocolAccount = computed(
+  () => isCNPlatform.value || isGeminiProtocolAccount.value
 )
 // CnBaseUrlPresets 的 platform prop 是平台字面量联合类型，模板里不能写
 // `as` 断言（其中的 `|` 会被 eslint 误判为 Vue2 filter 语法），经此 computed 传递。
@@ -3977,21 +3998,21 @@ const cnProtocolOptions = computed<Array<{ value: CnApiProtocol; labelKey: strin
     { value: 'chat_completions', labelKey: 'chatCompletions' },
     { value: 'anthropic', labelKey: 'anthropic' }
   ]
-  if (form.platform === 'deepseek') {
+  if (form.platform === 'deepseek' || form.platform === 'gemini') {
     opts.push({ value: 'responses', labelKey: 'responses' })
   }
   return opts
 })
-const cnAdaptiveProtocolOptions = computed<Array<{ value: CnNativeApiProtocol; labelKey: string }>>(() => {
+const adaptiveProtocolEndpointOptions = computed<Array<{ value: CnNativeApiProtocol; labelKey: string }>>(() => {
   const opts: Array<{ value: CnNativeApiProtocol; labelKey: string }> = [
     { value: 'chat_completions', labelKey: 'chatCompletions' },
     { value: 'anthropic', labelKey: 'anthropic' }
   ]
-  if (form.platform === 'deepseek') opts.push({ value: 'responses', labelKey: 'responses' })
+  if (form.platform === 'deepseek' || form.platform === 'gemini') opts.push({ value: 'responses', labelKey: 'responses' })
   return opts
 })
 
-function resetAdaptiveBaseUrls(platform: 'kimi' | 'zhipu' | 'deepseek', mode: CnAccountMode) {
+function resetAdaptiveBaseUrls(platform: AdaptiveProtocolPlatform, mode: CnAccountMode) {
   adaptiveBaseUrls.value = defaultCNAdaptiveBaseUrls(platform, mode)
 }
 // 当前选中平台的品牌色（选中卡片描边 / 图标底色），与 platformColors 取色一致。
@@ -4034,11 +4055,11 @@ function selectCNPlatform(platform: 'kimi' | 'zhipu' | 'deepseek') {
 }
 // 账号类型 / 协议变更时同步默认 base url。
 watch(accountMode, (mode, previousMode) => {
-  if (!isCNPlatform.value) return
+  if (!isAdaptiveProtocolAccount.value || !isAdaptiveProtocolPlatform(form.platform)) return
   if (apiProtocol.value === 'adaptive') {
-    const previousDefaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, previousMode)
-    const nextDefaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, mode)
-    for (const item of cnAdaptiveProtocolOptions.value) {
+    const previousDefaults = defaultCNAdaptiveBaseUrls(form.platform, previousMode)
+    const nextDefaults = defaultCNAdaptiveBaseUrls(form.platform, mode)
+    for (const item of adaptiveProtocolEndpointOptions.value) {
       if (!adaptiveBaseUrls.value[item.value] || adaptiveBaseUrls.value[item.value] === previousDefaults[item.value]) {
         adaptiveBaseUrls.value[item.value] = nextDefaults[item.value]
       }
@@ -4049,16 +4070,26 @@ watch(accountMode, (mode, previousMode) => {
   apiKeyBaseUrl.value = defaultCNBaseUrl(form.platform, mode, apiProtocol.value)
 })
 watch(apiProtocol, (protocol) => {
-  if (!isCNPlatform.value) return
+  if (!isAdaptiveProtocolAccount.value || !isAdaptiveProtocolPlatform(form.platform)) return
   if (protocol === 'adaptive') {
-    const defaults = defaultCNAdaptiveBaseUrls(cnPresetPlatform.value, accountMode.value)
-    for (const item of cnAdaptiveProtocolOptions.value) {
+    const defaults = defaultCNAdaptiveBaseUrls(form.platform, accountMode.value)
+    for (const item of adaptiveProtocolEndpointOptions.value) {
       if (!adaptiveBaseUrls.value[item.value]) adaptiveBaseUrls.value[item.value] = defaults[item.value]
     }
     apiKeyBaseUrl.value = adaptiveBaseUrls.value.chat_completions
     return
   }
   apiKeyBaseUrl.value = defaultCNBaseUrl(form.platform, accountMode.value, protocol)
+})
+watch(geminiUseCustomProtocol, (enabled) => {
+  if (form.platform !== 'gemini' || accountCategory.value !== 'apikey') return
+  if (enabled) {
+    apiProtocol.value = 'adaptive'
+    resetAdaptiveBaseUrls('gemini', 'payg')
+    apiKeyBaseUrl.value = adaptiveBaseUrls.value.chat_completions || adaptiveBaseUrls.value.responses || 'https://your-upstream/v1'
+    return
+  }
+  apiKeyBaseUrl.value = 'https://generativelanguage.googleapis.com'
 })
 // 点击预设端点：同时回填 base url、账号类型与协议。
 function onCnPresetSelect(preset: { mode: CnAccountMode; protocol: CnApiProtocol; url: string }) {
@@ -4069,7 +4100,7 @@ function onCnPresetSelect(preset: { mode: CnAccountMode; protocol: CnApiProtocol
 
 const syncPreviewCredentials = computed(() => {
   if (!apiKeyValue.value) return undefined
-  const baseUrl = isCNPlatform.value && apiProtocol.value === 'adaptive'
+  const baseUrl = isAdaptiveProtocolAccount.value && apiProtocol.value === 'adaptive'
     ? adaptiveBaseUrls.value.chat_completions.trim() || apiKeyBaseUrl.value.trim()
     : apiKeyBaseUrl.value.trim()
   return {
@@ -4560,6 +4591,12 @@ watch(
   { immediate: true }
 )
 
+watch(accountCategory, (category) => {
+  if (form.platform !== 'gemini' || category !== 'apikey') {
+    geminiUseCustomProtocol.value = false
+  }
+})
+
 // Reset platform-specific settings when platform changes
 watch(
   () => form.platform,
@@ -4576,6 +4613,7 @@ watch(
             : newPlatform === 'grok'
               ? 'https://api.x.ai/v1'
               : 'https://api.anthropic.com'
+      geminiUseCustomProtocol.value = false
     }
     // Clear model-related settings
     allowedModels.value = []
@@ -5017,6 +5055,7 @@ const resetForm = () => {
   form.expires_at = null
   accountCategory.value = 'oauth-based'
   addMethod.value = 'oauth'
+  geminiUseCustomProtocol.value = false
   accountMode.value = 'payg'
   apiProtocol.value = 'adaptive'
   adaptiveBaseUrls.value = { chat_completions: '', anthropic: '', responses: '' }
@@ -5464,38 +5503,37 @@ const handleSubmit = async () => {
   }
 
   // Determine default base URL based on platform
-  const defaultBaseUrl =
-    form.platform === 'openai'
-      ? 'https://api.openai.com'
-      : form.platform === 'gemini'
-        ? 'https://generativelanguage.googleapis.com'
-        : form.platform === 'grok'
-          ? 'https://api.x.ai/v1'
-          : 'https://api.anthropic.com'
+  const defaultBaseUrl = form.platform === 'openai'
+    ? 'https://api.openai.com'
+    : form.platform === 'gemini'
+      ? 'https://generativelanguage.googleapis.com'
+      : form.platform === 'grok'
+        ? 'https://api.x.ai/v1'
+        : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
     base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
     api_key: apiKeyValue.value.trim()
   }
-  if (form.platform === 'gemini') {
+  if (form.platform === 'gemini' && !isGeminiProtocolAccount.value) {
     credentials.tier_id = geminiTierAIStudio.value
   }
 
-  // 国产供应商：账号模式 + 协议 + 对应端点写入凭据；后端按 account_mode 路由
-  // 额度/余额探测，按 api_protocol 路由转发端点与格式。注意 CN apikey 走本函数
-  // 的通用路径（直接 doCreateAccount），不经过 createAccountAndFinish。
-  if (form.platform === 'kimi' || form.platform === 'zhipu' || form.platform === 'deepseek') {
-    credentials.account_mode = accountMode.value
+  // 国产供应商 / Gemini 自定义上游：账号模式 + 协议 + 对应端点写入凭据。
+  if (isAdaptiveProtocolAccount.value && isAdaptiveProtocolPlatform(form.platform)) {
+    if (isCNPlatform.value) {
+      credentials.account_mode = accountMode.value
+    }
     credentials.api_protocol = apiProtocol.value
     if (apiProtocol.value === 'adaptive') {
       const defaults = defaultCNAdaptiveBaseUrls(form.platform, accountMode.value)
       const protocolBaseUrls: Record<string, string> = {}
-      for (const item of cnAdaptiveProtocolOptions.value) {
+      for (const item of adaptiveProtocolEndpointOptions.value) {
         protocolBaseUrls[item.value] = (adaptiveBaseUrls.value[item.value] || defaults[item.value]).trim()
       }
       credentials.api_base_urls = protocolBaseUrls
-      credentials.base_url = protocolBaseUrls.chat_completions
+      credentials.base_url = protocolBaseUrls.chat_completions || protocolBaseUrls.responses
     }
     const resolvedCNBase = (
       apiKeyBaseUrl.value.trim() || defaultCNBaseUrl(form.platform, accountMode.value, apiProtocol.value)
@@ -5558,6 +5596,8 @@ const handleSubmit = async () => {
 
   await doCreateAccount({
     ...form,
+    platform: form.platform,
+    type: form.type,
     group_ids: form.group_ids,
     extra,
     upstream_billing_probe_enabled: upstreamBillingAutoProbeEnabled.value,

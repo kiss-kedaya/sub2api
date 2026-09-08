@@ -665,6 +665,12 @@ func (c *openAIWSClientFrameConn) WriteFrame(ctx context.Context, msgType coderw
 		if c.restoreToolNames != nil {
 			payload = c.restoreToolNames(payload)
 		}
+		eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+		if eventType == "error" || eventType == "response.failed" {
+			if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(payload); changed {
+				payload = rewritten
+			}
+		}
 	}
 	return c.conn.Write(ctx, msgType, payload)
 }
@@ -1322,8 +1328,19 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(payload)
 				isPreOutputRateLimit := eventType == "error" && !wroteDownstream && isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw)
-				if (eventType == "error" || eventType == "response.failed") && !failureAccountSideEffectsApplied && !isPreOutputRateLimit {
+				requestScopedCapacity := isOpenAIUpstreamCapacityShedEvent(payload)
+				if (eventType == "error" || eventType == "response.failed") && !failureAccountSideEffectsApplied && !isPreOutputRateLimit && !requestScopedCapacity {
 					failureAccountSideEffectsApplied = s.handleOpenAIWSFailureAccountSideEffects(ctx, account, loadCapturedSessionModel(), handshakeHeaders, payload)
+				}
+				if !wroteDownstream && requestScopedCapacity {
+					logOpenAIWSV2Passthrough(
+						"relay_capacity_shed_failover account_id=%d err_code=%s err_type=%s err_message=%s",
+						account.ID,
+						truncateOpenAIWSLogValue(errCodeRaw, openAIWSLogValueMaxLen),
+						truncateOpenAIWSLogValue(errTypeRaw, openAIWSLogValueMaxLen),
+						truncateOpenAIWSLogValue(errMsgRaw, openAIWSLogValueMaxLen),
+					)
+					return s.newOpenAIWSCapacityShedFailoverError(account, handshakeHeaders, payload, errMsgRaw)
 				}
 				if eventType != "error" {
 					return nil
