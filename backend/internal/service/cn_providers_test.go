@@ -469,7 +469,7 @@ func TestBuildUpstreamModelsRequest_CNProviders(t *testing.T) {
 }
 
 // TestGetAPIProtocol 验证协议凭证维度的平台校验矩阵：
-// responses 仅 deepseek；缺失/非法值回退 chat_completions（与旧行为一致）。
+// responses 仅 deepseek / kimi / Gemini 自定义上游；缺失/非法值回退 chat_completions。
 func TestGetAPIProtocol(t *testing.T) {
 	t.Parallel()
 
@@ -489,7 +489,7 @@ func TestGetAPIProtocol(t *testing.T) {
 	require.Equal(t, APIProtocolAdaptive, mk(PlatformKimi, APIProtocolAdaptive).GetAPIProtocol())
 	require.Equal(t, APIProtocolAdaptive, mk(PlatformZhipu, APIProtocolAdaptive).GetAPIProtocol())
 	require.Equal(t, APIProtocolAdaptive, mk(PlatformDeepseek, APIProtocolAdaptive).GetAPIProtocol())
-	require.Equal(t, APIProtocolChatCompletions, mk(PlatformKimi, APIProtocolResponses).GetAPIProtocol(), "kimi 无 responses 端点")
+	require.Equal(t, APIProtocolResponses, mk(PlatformKimi, APIProtocolResponses).GetAPIProtocol(), "kimi 原生 responses")
 	require.Equal(t, APIProtocolChatCompletions, mk(PlatformZhipu, APIProtocolResponses).GetAPIProtocol(), "zhipu 无 responses 端点")
 	require.Equal(t, APIProtocolChatCompletions, mk(PlatformKimi, "bogus").GetAPIProtocol(), "非法值回退默认")
 	require.Equal(t, APIProtocolChatCompletions, (&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}).GetAPIProtocol(), "非 CN 供应商恒为默认")
@@ -499,6 +499,24 @@ func TestGetAPIProtocol(t *testing.T) {
 	require.True(t, mk(PlatformGemini, APIProtocolResponses).IsGeminiOpenAIProtocol())
 	require.True(t, mk(PlatformGemini, APIProtocolResponses).IsOpenAICompatible())
 	require.False(t, mk(PlatformGemini, "").IsOpenAICompatible())
+}
+
+func TestSupportsNativeCNResponses(t *testing.T) {
+	t.Parallel()
+	require.True(t, (&Account{Platform: PlatformDeepseek}).SupportsNativeCNResponses())
+	require.True(t, (&Account{Platform: PlatformKimi}).SupportsNativeCNResponses())
+	require.True(t, (&Account{Platform: PlatformKimi, Credentials: map[string]any{"account_mode": AccountModeCoding}}).SupportsNativeCNResponses())
+	require.False(t, (&Account{Platform: PlatformZhipu}).SupportsNativeCNResponses())
+	require.False(t, (&Account{Platform: PlatformOpenAI}).SupportsNativeCNResponses())
+	require.False(t, mkGemini("").SupportsNativeCNResponses())
+}
+
+func mkGemini(protocol string) *Account {
+	creds := map[string]any{"api_key": "sk-test"}
+	if protocol != "" {
+		creds["api_protocol"] = protocol
+	}
+	return &Account{Platform: PlatformGemini, Type: AccountTypeAPIKey, Credentials: creds}
 }
 
 func TestAdaptiveProtocolBaseURLs(t *testing.T) {
@@ -677,6 +695,14 @@ func TestNormalizeDeepSeekResponsesRequestBody(t *testing.T) {
 	// openai 账号原样返回
 	openai := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	require.Equal(t, string(body), string(normalizeDeepSeekResponsesRequestBody(openai, body)))
+
+	kimiResponses := &Account{
+		Platform: PlatformKimi, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
+	}
+	kimiNormalized := normalizeDeepSeekResponsesRequestBody(kimiResponses, body)
+	require.False(t, gjson.GetBytes(kimiNormalized, "store").Bool())
+	require.False(t, gjson.GetBytes(kimiNormalized, "previous_response_id").Exists())
 }
 
 // TestGetAnthropicAPIKeyAuthScheme_CNProvider CN 账号可经 extra 覆写鉴权方案，
