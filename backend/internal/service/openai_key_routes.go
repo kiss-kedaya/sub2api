@@ -37,13 +37,7 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 				if isOpenAICompatibleUpstreamPlatform(group.Platform) {
 					groupPlatform = []string{group.Platform}
 				}
-				// Gemini/Claude-labeled groups may still hold OpenAI-type
-				// accounts (custom Responses URL). Leave platformOverride
-				// unset so selection can pick those accounts.
 			}
-		}
-		if s.groupCatalogHasRequestedModel(ctx, gid, requestedModel) == groupCatalogModelAbsent {
-			continue
 		}
 		selection, decision, err := selectOne(&gid, groupPlatform)
 		if err == nil {

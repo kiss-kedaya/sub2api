@@ -689,10 +689,6 @@ func compositeGeminiTargetPlatformMiddleware(resolver *service.CompositeRouteRes
 						c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
 					}
 				}
-			} else if model := compositeGeminiModelFromParams(c); model != "" {
-				if platform, ok := service.DetectModelPlatform(model); ok {
-					c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
-				}
 			}
 			if _, resolved := service.ResolvedTargetPlatformFromContext(c.Request.Context()); !resolved {
 				c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), service.PlatformGemini))

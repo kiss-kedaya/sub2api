@@ -288,7 +288,18 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		forwardBody := preauthorizationBody
 		var result *service.ForwardResult
 		setActualUpstreamEndpoint(c, "")
-		if shouldUseAntigravityCompat(account) {
+		if account.IsGeminiOpenAIProtocol() {
+			if h.openAIGatewayService == nil {
+				h.responsesErrorResponse(c, http.StatusBadGateway, "upstream_error", "OpenAI gateway is not configured")
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				return
+			}
+			oaResult, oaErr := h.openAIGatewayService.Forward(requestCtx, c, account, forwardBody)
+			err = oaErr
+			result = openAIForwardResultAsGateway(oaResult)
+		} else if shouldUseAntigravityCompat(account) {
 			if h.antigravityGatewayService == nil {
 				h.responsesErrorResponse(c, http.StatusBadGateway, "upstream_error", "Antigravity compatibility service is not configured")
 				if accountReleaseFunc != nil {

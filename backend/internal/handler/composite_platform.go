@@ -16,6 +16,12 @@ func ensureCompositeTargetPlatform(c *gin.Context, apiKey *service.APIKey, model
 	if _, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
 		return
 	}
+	// Composite groups still use the built-in name detector when no explicit
+	// route matched. Smart-routing keys must not: guessing from "gemini-*" /
+	// "grok-*" overrides the account catalog (0.1.262).
+	if apiKey.Group == nil || apiKey.Group.Platform != service.PlatformComposite {
+		return
+	}
 	if platform, ok := service.DetectModelPlatform(model); ok {
 		c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
 	}
