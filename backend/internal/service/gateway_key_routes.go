@@ -41,10 +41,11 @@ func (s *GatewayService) SelectAccountAlongKeyRoutes(
 		result, err := s.SelectAccountWithLoadAwareness(ctx, apiKey.GroupID, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
 		return result, apiKey, err
 	}
+	siblingHasPresent := keyRouteSiblingHasCatalogedModel(ctx, candidates, requestedModel, s.GetAvailableModels)
 	var lastErr error
 	for _, groupID := range candidates {
 		gid := groupID
-		if !s.groupCatalogUsableForRequest(ctx, gid, platform, requestedModel) {
+		if !s.shouldTryKeyRouteGroup(ctx, gid, platform, requestedModel, siblingHasPresent) {
 			continue
 		}
 		result, err := s.SelectAccountWithLoadAwareness(ctx, &gid, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
