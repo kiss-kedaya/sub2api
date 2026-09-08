@@ -76,4 +76,41 @@ describe('OpsErrorDetailModal', () => {
     expect(wrapper.findAll('pre')).toHaveLength(2)
     expect(wrapper.text()).not.toContain('admin.ops.errorDetail.payloads.upstream_detail')
   })
+
+  it('shows a WAF chip for Cloudflare 1010 bodies', async () => {
+    mocks.getRequestErrorDetail.mockResolvedValue({
+      id: 2,
+      created_at: '2026-09-09T00:00:00Z',
+      phase: 'upstream',
+      type: 'upstream_error',
+      error_owner: 'provider',
+      error_source: 'gateway',
+      severity: 'P1',
+      status_code: 503,
+      upstream_status_code: 403,
+      platform: 'openai',
+      model: 'gemini-3.8-flash',
+      resolved: false,
+      request_id: 'rid-1010',
+      message: 'Upstream providers are temporarily cooling down; please retry later',
+      error_body: 'error code: 1010',
+      upstream_error_message: 'error code: 1010',
+      account_name: 'account',
+      group_name: 'group',
+      is_business_limited: false
+    })
+
+    const wrapper = shallowMount(OpsErrorDetailModal, {
+      props: { show: true, errorId: 2, errorType: 'upstream' },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /></div>' },
+          Icon: true
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.ops.errorDetail.failureKind.cloudflare-waf')
+  })
 })

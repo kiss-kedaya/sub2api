@@ -68,6 +68,18 @@ func (h *openAI403TestHarness) requireNoAccountPenalty(t *testing.T) {
 const openAI403HTMLBody = "<!DOCTYPE html>\n<html><head><title>403 Forbidden</title></head>" +
 	"<body><h1>403 Forbidden</h1></body></html>"
 
+func TestHandleUpstreamError_OpenAIWAF403DoesNotPenalizeAccount(t *testing.T) {
+	h := newOpenAI403TestHarness(t, 511, 1)
+	require.False(t, h.handle("error code: 1010"))
+	h.requireNoAccountPenalty(t)
+}
+
+func TestHandleUpstreamError_OpenAICooling403DoesNotPenalizeAccount(t *testing.T) {
+	h := newOpenAI403TestHarness(t, 512, 1)
+	require.False(t, h.handle(`{"code":"FORBIDDEN","message":"当前分组内支持该模型的货源均在冷却中。请稍后重试"}`))
+	h.requireNoAccountPenalty(t)
+}
+
 func TestHandleUpstreamError_OpenAIHTML403DoesNotPenalizeAccount(t *testing.T) {
 	cases := []struct {
 		name string

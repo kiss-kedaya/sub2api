@@ -283,12 +283,7 @@ func isOpenAINonBillableRequestError(upstreamMsg string, upstreamBody []byte) bo
 }
 
 func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
-	switch statusCode {
-	case 401, 402, 403, 405, 429, 529:
-		return true
-	default:
-		return statusCode >= 500
-	}
+	return ShouldFailoverUpstream(statusCode, nil, nil, nil)
 }
 
 func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Account, statusCode int, upstreamMsg string, upstreamBody []byte) bool {
@@ -365,12 +360,17 @@ func newOpenAIUpstreamFailoverError(
 	retryableOnSameAccount bool,
 ) *UpstreamFailoverError {
 	requestScopedCapacity := isOpenAIRequestScopedCapacityShed(upstreamMsg, responseBody)
+	class := ClassifyUpstreamFailure(statusCode, responseHeaders, responseBody, nil)
+	if class.Kind == UpstreamFailureWAF {
+		retryableOnSameAccount = false
+		requestScopedCapacity = false
+	}
 	failoverErr := &UpstreamFailoverError{
 		StatusCode:             statusCode,
 		ResponseBody:           responseBody,
 		ResponseHeaders:        responseHeaders.Clone(),
 		RetryableOnSameAccount: retryableOnSameAccount || requestScopedCapacity,
-		RequestScopedTransient: requestScopedCapacity,
+		RequestScopedTransient: requestScopedCapacity || class.Kind == UpstreamFailureWAF,
 	}
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, responseBody) {
 		failoverErr.RetryableOnSameAccount = false

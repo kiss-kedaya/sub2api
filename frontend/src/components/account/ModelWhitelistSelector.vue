@@ -172,6 +172,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string[]]
+  'upstream-models': [value: string[]]
 }>()
 
 const appStore = useAppStore()
@@ -322,6 +323,7 @@ const syncUpstreamModels = async () => {
     }
 
     emit('update:modelValue', newModels)
+    emit('upstream-models', upstreamModels)
     if (addedCount > 0) {
       appStore.showSuccess(t('admin.accounts.syncUpstreamModelsSuccess', { count: addedCount, total: upstreamModels.length }))
     } else {

@@ -987,11 +987,13 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 	// shouldApplyOpenAIAlphaSearchAccountErrorSideEffects 的不变式也是端点级错误
 	// 只换号、不写账号错误状态。这里只跳过账号处罚，不改变 failover 行为——
 	// 换个走不同代理的账号仍有可能成功。
-	if isHTMLResponse(responseBody) {
+	if isHTMLResponse(responseBody) || IsUpstreamWAFBody(responseBody) || IsUpstreamCapacityCoolingBody(responseBody) {
 		slog.Warn(
-			"openai_403_html_body_skips_account_penalty",
+			"openai_403_non_credential_body_skips_account_penalty",
 			"account_id", account.ID,
 			"upstream_message", upstreamMsg,
+			"waf", IsUpstreamWAFBody(responseBody),
+			"cooling", IsUpstreamCapacityCoolingBody(responseBody),
 		)
 		return false
 	}

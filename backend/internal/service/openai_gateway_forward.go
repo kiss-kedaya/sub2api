@@ -1417,6 +1417,18 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	for key, values := range c.Request.Header {
 		lowerKey := strings.ToLower(key)
 		if openaiAllowedHeaders[lowerKey] {
+			if lowerKey == "user-agent" {
+				filtered := make([]string, 0, len(values))
+				for _, v := range values {
+					if sanitized := SanitizeForwardedUserAgent(v); sanitized != "" {
+						filtered = append(filtered, sanitized)
+					}
+				}
+				if len(filtered) == 0 {
+					continue
+				}
+				values = filtered
+			}
 			for _, v := range values {
 				req.Header.Add(key, v)
 			}
@@ -1494,6 +1506,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
+	if !account.UsesOpenAICodexProtocol() {
+		EnsureNonScriptUserAgent(req.Header, account)
+	}
 	// x-codex-beta-features：按真实 Codex 的会话级行为补注（在账号级覆写之后，
 	// 保证不被覆盖丢失）。
 	applyOpenAICodexBetaFeatures(c, account, req.Header)

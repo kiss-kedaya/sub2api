@@ -177,7 +177,11 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	// Pool-mode retryable upstream errors are already bounded by the request-local
 	// same-account retry budget. Recording the generic account+model transient
 	// cooldown here would block the next approved retry before that budget is used.
-	poolModeRetryable := account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)
+	class := ClassifyUpstreamFailure(statusCode, headers, responseBody, nil)
+	if class.Kind == UpstreamFailureWAF {
+		return shouldDisable
+	}
+	poolModeRetryable := PoolModeSameAccountRetry(account, statusCode, headers, responseBody)
 	if !shouldDisable && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
 		shouldCooldownOpenAITransientUpstreamError(statusCode, responseBody) && !poolModeRetryable {
 		model := ""

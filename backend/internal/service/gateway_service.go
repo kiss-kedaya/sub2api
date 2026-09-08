@@ -1444,6 +1444,16 @@ func (s *GatewayService) loadAvailableModels(ctx context.Context, groupID *int64
 	return loadAvailableModelsFromStore(ctx, s.accountRepo, s.schedulerSnapshot, groupID, platform)
 }
 
+func listSchedulableAccountsFromRepo(ctx context.Context, repo AccountRepository, groupID *int64) ([]Account, error) {
+	if repo == nil {
+		return nil, nil
+	}
+	if groupID != nil {
+		return repo.ListSchedulableByGroupID(ctx, *groupID)
+	}
+	return repo.ListSchedulable(ctx)
+}
+
 func loadAvailableModelsFromStore(ctx context.Context, repo AccountRepository, snapshot *SchedulerSnapshotService, groupID *int64, platform string) []string {
 	if repo == nil {
 		return nil
@@ -1456,12 +1466,13 @@ func loadAvailableModelsFromStore(ctx context.Context, repo AccountRepository, s
 		requestCtx := withSchedulerRequestMode(ctx, repo, snapshot)
 		accounts, _, err = snapshot.listSchedulableAccountsForRequest(requestCtx, groupID, platform, false)
 		if err != nil {
-			return nil
+			accounts, err = listSchedulableAccountsFromRepo(ctx, repo, groupID)
+			if err != nil {
+				return nil
+			}
 		}
-	} else if groupID != nil {
-		accounts, err = repo.ListSchedulableByGroupID(ctx, *groupID)
 	} else {
-		accounts, err = repo.ListSchedulable(ctx)
+		accounts, err = listSchedulableAccountsFromRepo(ctx, repo, groupID)
 	}
 	if err != nil || len(accounts) == 0 {
 		return nil
