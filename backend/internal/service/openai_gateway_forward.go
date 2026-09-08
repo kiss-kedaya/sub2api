@@ -1324,14 +1324,14 @@ func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
 	if account == nil || account.Type != AccountTypeAPIKey {
 		return false
 	}
-	if account.IsCNProvider() {
-		// CN 的显式协议配置优先于异步探针 Extra；adaptive 仅 DeepSeek 有原生
-		// Responses，Kimi/GLM 回退 Chat Completions。
+	if account.IsCNProvider() || account.IsGeminiOpenAIProtocol() {
+		// 显式协议配置优先于异步探针 Extra；adaptive 仅 DeepSeek/Gemini Responses
+		// 有原生 Responses，其余回退 Chat Completions。
 		switch account.GetAPIProtocol() {
 		case APIProtocolChatCompletions:
 			return true
 		case APIProtocolAdaptive:
-			return account.Platform != PlatformDeepseek
+			return account.Platform != PlatformDeepseek && !account.IsGeminiOpenAIProtocol()
 		default:
 			return false
 		}
@@ -1356,7 +1356,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	case AccountTypeAPIKey:
 		// API Key accounts use Platform API or custom base URL
 		baseURL := account.GetOpenAIBaseURL()
-		if account.Platform == PlatformDeepseek && account.IsAdaptiveAPIProtocol() {
+		if (account.Platform == PlatformDeepseek || account.IsGeminiOpenAIProtocol()) && account.IsAdaptiveAPIProtocol() {
 			baseURL = account.GetCNProtocolBaseURL(APIProtocolResponses)
 		}
 		if baseURL == "" {

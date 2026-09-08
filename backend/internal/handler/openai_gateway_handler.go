@@ -324,7 +324,8 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 		if platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
 			switch platform {
 			case service.PlatformOpenAI, service.PlatformGrok,
-				service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek:
+				service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek,
+				service.PlatformGemini:
 				return true
 			}
 		}
