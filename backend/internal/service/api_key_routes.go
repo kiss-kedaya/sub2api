@@ -181,15 +181,17 @@ func modelsAdmitRequestedModel(models []string, requestedModel string) bool {
 	return false
 }
 
-func (s *GatewayService) groupCatalogHasRequestedModel(ctx context.Context, groupID int64, requestedModel string) groupCatalogModelPresence {
-	if s == nil || groupID <= 0 {
+type groupCatalogModelLookup func(ctx context.Context, groupID *int64, platform string) []string
+
+func groupCatalogHasRequestedModelWith(ctx context.Context, groupID int64, requestedModel string, getModels groupCatalogModelLookup) groupCatalogModelPresence {
+	if getModels == nil || groupID <= 0 {
 		return groupCatalogModelUnknown
 	}
 	requestedModel = strings.TrimSpace(requestedModel)
 	gid := groupID
 	sawCatalog := false
 	for _, platform := range groupCatalogPlatforms() {
-		models := s.GetAvailableModels(ctx, &gid, platform)
+		models := getModels(ctx, &gid, platform)
 		if models == nil {
 			continue
 		}
@@ -202,6 +204,48 @@ func (s *GatewayService) groupCatalogHasRequestedModel(ctx context.Context, grou
 		return groupCatalogModelUnknown
 	}
 	return groupCatalogModelAbsent
+}
+
+func skipKeyRouteForCatalog(presence groupCatalogModelPresence, siblingHasPresent bool) bool {
+	switch presence {
+	case groupCatalogModelAbsent:
+		return true
+	case groupCatalogModelUnknown:
+		return siblingHasPresent
+	default:
+		return false
+	}
+}
+
+func keyRouteSiblingHasCatalogedModel(ctx context.Context, groupIDs []int64, requestedModel string, getModels groupCatalogModelLookup) bool {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" || getModels == nil {
+		return false
+	}
+	for _, gid := range groupIDs {
+		if groupCatalogHasRequestedModelWith(ctx, gid, requestedModel, getModels) == groupCatalogModelPresent {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *GatewayService) groupCatalogHasRequestedModel(ctx context.Context, groupID int64, requestedModel string) groupCatalogModelPresence {
+	if s == nil {
+		return groupCatalogModelUnknown
+	}
+	return groupCatalogHasRequestedModelWith(ctx, groupID, requestedModel, s.GetAvailableModels)
+}
+
+func (s *GatewayService) shouldTryKeyRouteGroup(ctx context.Context, groupID int64, requestPlatform, requestedModel string, siblingHasPresent bool) bool {
+	if !s.groupCatalogUsableForRequest(ctx, groupID, requestPlatform, requestedModel) {
+		return false
+	}
+	group := s.GroupPolicyForRequest(ctx, groupID)
+	if group != nil && group.CustomModelsListEnabled() {
+		return true
+	}
+	return !skipKeyRouteForCatalog(s.groupCatalogHasRequestedModel(ctx, groupID, requestedModel), siblingHasPresent)
 }
 
 func (s *GatewayService) groupCatalogUsableForRequest(ctx context.Context, groupID int64, requestPlatform, requestedModel string) bool {
