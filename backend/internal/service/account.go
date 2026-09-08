@@ -324,10 +324,32 @@ func (a *Account) IsCNProvider() bool {
 
 // IsOpenAICompatible 报告账号是否走 OpenAI 网关（OpenAI 协议族）。
 // openai/grok 原生走 OpenAI 网关；kimi/zhipu/deepseek 同为 OpenAI Chat Completions
-// 兼容上游，也经 OpenAI 网关转发。
+// 兼容上游，也经 OpenAI 网关转发。Gemini API Key 只要显式配置了 api_protocol
+// （与 Kimi/DeepSeek 同一套自适应协议），同样走 OpenAI 网关；未配置协议的
+// AI Studio / OAuth 账号仍走原生 Gemini。
 func (a *Account) IsOpenAICompatible() bool {
-	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok ||
-		a.Platform == PlatformKimi || a.Platform == PlatformZhipu || a.Platform == PlatformDeepseek)
+	if a == nil {
+		return false
+	}
+	if a.Platform == PlatformOpenAI || a.Platform == PlatformGrok ||
+		a.Platform == PlatformKimi || a.Platform == PlatformZhipu || a.Platform == PlatformDeepseek {
+		return true
+	}
+	return a.IsGeminiOpenAIProtocol()
+}
+
+// IsGeminiOpenAIProtocol 报告 Gemini API Key 是否以 Kimi/DeepSeek 同一套
+// credentials["api_protocol"] 接入 OpenAI 兼容上游。账号平台仍是 gemini。
+func (a *Account) IsGeminiOpenAIProtocol() bool {
+	if a == nil || !a.IsGemini() || a.Type != AccountTypeAPIKey {
+		return false
+	}
+	switch strings.TrimSpace(a.GetCredential("api_protocol")) {
+	case APIProtocolAdaptive, APIProtocolChatCompletions, APIProtocolAnthropic, APIProtocolResponses:
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *Account) GeminiOAuthType() string {
@@ -891,7 +913,7 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 		if a.IsOpenAIOAuth() {
 			return isOpenAIOAuthServableModel(requestedModel)
 		}
-		return true // 无映射 = 允许所有
+		return true // 无映射 = 允许所有；Grok 空凭据已由 GetModelMapping 填入 DefaultModelMapping
 	}
 	if mappingSupportsRequestedModel(mapping, requestedModel) {
 		return true
@@ -1376,10 +1398,10 @@ func (a *Account) IsOpenAIApiKey() bool {
 // 适用 openai 与国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）；grok 走 GetGrokBaseURL，
 // 此处对 grok 返回 "" 以保持原有行为。
 func (a *Account) GetOpenAIBaseURL() string {
-	if !a.IsOpenAI() && !a.IsCNProvider() {
+	if !a.IsOpenAI() && !a.IsCNProvider() && !a.IsGeminiOpenAIProtocol() {
 		return ""
 	}
-	if a.IsCNProvider() && a.IsAdaptiveAPIProtocol() {
+	if (a.IsCNProvider() || a.IsGeminiOpenAIProtocol()) && a.IsAdaptiveAPIProtocol() {
 		if baseURLs, ok := a.Credentials["api_base_urls"].(map[string]any); ok {
 			if baseURL, ok := baseURLs[APIProtocolChatCompletions].(string); ok && strings.TrimSpace(baseURL) != "" {
 				return strings.TrimSpace(baseURL)
@@ -1428,12 +1450,11 @@ func (a *Account) IsCodingPlan() bool {
 	return a.GetAccountMode() == AccountModeCoding
 }
 
-// GetAPIProtocol 返回国产供应商账号的上游 API 协议。存储于
-// credentials["api_protocol"]；缺失或与平台不匹配时回退 chat_completions
-// （与既有行为完全一致）。responses 协议仅 deepseek 支持（官方原生 /responses
-// 端点，适配 Codex）；kimi/zhipu 无此端点。
+// GetAPIProtocol 返回账号的上游 API 协议。存储于 credentials["api_protocol"]。
+// 国产供应商与 Gemini OpenAI 兼容 API Key 共用这套协议；缺失或与平台不匹配时
+// 回退 chat_completions。responses 协议：deepseek 与 Gemini 自定义上游支持。
 func (a *Account) GetAPIProtocol() string {
-	if a == nil || !a.IsCNProvider() {
+	if a == nil || (!a.IsCNProvider() && !a.IsGeminiOpenAIProtocol()) {
 		return APIProtocolChatCompletions
 	}
 	switch strings.TrimSpace(a.GetCredential("api_protocol")) {
@@ -1442,7 +1463,7 @@ func (a *Account) GetAPIProtocol() string {
 	case APIProtocolAnthropic:
 		return APIProtocolAnthropic
 	case APIProtocolResponses:
-		if a.Platform == PlatformDeepseek {
+		if a.Platform == PlatformDeepseek || a.IsGeminiOpenAIProtocol() {
 			return APIProtocolResponses
 		}
 	case APIProtocolChatCompletions:
@@ -1460,7 +1481,7 @@ func (a *Account) IsAdaptiveAPIProtocol() bool {
 // adaptive 账号优先使用 api_base_urls 中的分协议地址，缺失时按平台和
 // account_mode 使用官方默认端点。base_url 继续作为 Chat Completions 地址兼容旧字段。
 func (a *Account) GetCNProtocolBaseURL(protocol string) string {
-	if a == nil || !a.IsCNProvider() {
+	if a == nil || (!a.IsCNProvider() && !a.IsGeminiOpenAIProtocol()) {
 		return ""
 	}
 	if a.IsAdaptiveAPIProtocol() {
@@ -1506,6 +1527,10 @@ func (a *Account) defaultCNProtocolBaseURL(protocol string) string {
 			return DefaultZhipuPayGBaseURL
 		case PlatformDeepseek:
 			return DefaultDeepseekBaseURL
+		case PlatformGemini:
+			if baseURL := strings.TrimSpace(a.GetCredential("base_url")); baseURL != "" {
+				return baseURL
+			}
 		}
 	}
 	return ""
@@ -1719,7 +1744,7 @@ func (a *Account) GetOpenAIProtocolAPIKey() string {
 	if a == nil {
 		return ""
 	}
-	if a.IsCNProvider() {
+	if a.IsCNProvider() || a.IsGeminiOpenAIProtocol() {
 		if a.Type != AccountTypeAPIKey {
 			return ""
 		}

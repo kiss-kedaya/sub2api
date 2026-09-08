@@ -338,3 +338,39 @@ func shouldUseAntigravityCompat(account *service.Account) bool {
 		account.Platform == service.PlatformAntigravity &&
 		account.Type == service.AccountTypeOAuth
 }
+
+func openAIForwardResultAsGateway(result *service.OpenAIForwardResult) *service.ForwardResult {
+	if result == nil {
+		return nil
+	}
+	return &service.ForwardResult{
+		RequestID:                     result.RequestID,
+		Usage: service.ClaudeUsage{
+			InputTokens:              result.Usage.InputTokens,
+			OutputTokens:             result.Usage.OutputTokens,
+			CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
+			CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
+			ImageOutputTokens:        result.Usage.ImageOutputTokens,
+		},
+		Model:                         result.Model,
+		UpstreamModel:                 result.UpstreamModel,
+		UpstreamResponseModel:         result.UpstreamResponseModel,
+		UpstreamResponseModelConflict: result.UpstreamResponseModelConflict,
+		UpstreamResponseServiceTier:   result.UpstreamResponseServiceTier,
+		Stream:                        result.Stream,
+		Duration:                      result.Duration,
+		FirstTokenMs:                  result.FirstTokenMs,
+		ClientDisconnect:              result.ClientDisconnect,
+		ReasoningEffort:               result.ReasoningEffort,
+		ServiceTier:                   result.ServiceTier,
+		ImageCount:                    result.ImageCount,
+		ImageSize:                     result.ImageSize,
+		ImageInputSize:                result.ImageInputSize,
+		ImageOutputSize:               result.ImageOutputSize,
+		ImageOutputSizes:              result.ImageOutputSizes,
+		ImageSizeSource:               result.ImageSizeSource,
+		ImageSizeBreakdown:            result.ImageSizeBreakdown,
+		SearchCount:                   result.SearchCount,
+		AudioUsage:                    result.AudioUsage,
+	}
+}

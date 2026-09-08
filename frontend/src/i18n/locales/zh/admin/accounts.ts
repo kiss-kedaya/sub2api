@@ -1338,9 +1338,9 @@ export default {
           apiKeyNote: '适合轻量测试。免费层限流严格，数据可能用于训练。',
           apiKeyLink: '获取 API Key',
           quotaLink: '配额说明',
-          responsesTitle: 'Responses API（OpenAI 兼容）',
-          responsesDesc: '自定义 Base URL + API Key，走 OpenAI Responses 协议。',
-          responsesNote: '会创建 OpenAI 类型账号并加入当前 Gemini 分组。请填写上游 Responses 地址，例如 https://your-upstream/v1。'
+          customProtocolTitle: '自定义上游 / 自适应协议',
+          customProtocolDesc: '和 Kimi、DeepSeek 一样选择自适应、Chat Completions、Anthropic 或 Responses。账号仍是 Gemini 平台，不自动勾选分组。',
+          customProtocolHint: '填写自定义上游地址。选 Responses 时走 OpenAI Responses 协议；账号类型仍是 Gemini。'
         },
         oauthType: {
           builtInTitle: '内置授权（Gemini CLI / Code Assist）',

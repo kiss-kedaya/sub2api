@@ -519,7 +519,18 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
-			if account.Platform == service.PlatformAntigravity {
+			if account.IsGeminiOpenAIProtocol() {
+				if h.openAIGatewayService == nil {
+					h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "OpenAI gateway is not configured", streamStarted)
+					if accountReleaseFunc != nil {
+						accountReleaseFunc()
+					}
+					return
+				}
+				oaResult, oaErr := h.openAIGatewayService.ForwardAsAnthropic(requestCtx, c, account, body, "", "")
+				err = oaErr
+				result = openAIForwardResultAsGateway(oaResult)
+			} else if account.Platform == service.PlatformAntigravity {
 				result, err = h.antigravityGatewayService.ForwardGemini(
 					requestCtx,
 					c,

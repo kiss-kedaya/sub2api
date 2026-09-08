@@ -102,6 +102,22 @@ func TestCompositeTargetPlatformResolvedAllowsConcreteGroupWithoutResolution(t *
 	require.True(t, compositeTargetPlatformResolved(c, apiKey, "llama-4-maverick"))
 }
 
+func TestEnsureCompositeTargetPlatformDoesNotGuessForSmartRoutingKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	gid := int64(1)
+	apiKey := &service.APIKey{
+		GroupID:       &gid,
+		RouteGroupIDs: []int64{1, 2},
+		Group:         &service.Group{ID: 1, Platform: service.PlatformGemini},
+	}
+
+	ensureCompositeTargetPlatform(c, apiKey, "gemini-3.8-flash")
+	_, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context())
+	require.False(t, ok)
+}
+
 func TestOpenAIReasoningEffortPolicyForCompositeTarget(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	group := &service.Group{

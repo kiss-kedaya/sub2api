@@ -32,6 +32,20 @@ func (r *capacityShedAccountRepoStub) SetTempUnschedulable(_ context.Context, _ 
 // 上游容量降载是请求级信号：故障因素（客户端身份、模型容量）与账号无关，
 // 同账号重试用尽后不得把账号临时摘掉——否则一个被降载的请求会顺着 failover
 // 把整池账号逐个封禁，而每个账号都会以同一个错误失败。
+
+func TestNewOpenAIWSCapacityShedFailoverErrorIsRequestScoped(t *testing.T) {
+	payload := []byte(`{"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`)
+	err := (*OpenAIGatewayService)(nil).newOpenAIWSCapacityShedFailoverError(
+		&Account{ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+		nil,
+		payload,
+		"Our servers are currently overloaded. Please try again later.",
+	)
+	require.True(t, err.RequestScopedTransient)
+	require.True(t, err.RetryableOnSameAccount)
+	require.Equal(t, http.StatusServiceUnavailable, err.StatusCode)
+}
+
 func TestTempUnscheduleRetryableErrorSkipsRequestScopedTransient(t *testing.T) {
 	t.Run("请求级瞬时故障不写账号状态", func(t *testing.T) {
 		repo := &capacityShedAccountRepoStub{}

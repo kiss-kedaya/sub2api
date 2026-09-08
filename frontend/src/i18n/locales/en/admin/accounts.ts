@@ -1278,9 +1278,9 @@ export default {
             'Best for light testing. Free tier has strict rate limits and data may be used for training.',
           apiKeyLink: 'Get API Key',
           quotaLink: 'Quota guide',
-          responsesTitle: 'Responses API (OpenAI-compatible)',
-          responsesDesc: 'Custom base URL + API key using the OpenAI Responses protocol.',
-          responsesNote: 'Creates an OpenAI-type account and attaches it to Gemini groups. Enter the upstream Responses URL, for example https://your-upstream/v1.'
+          customProtocolTitle: 'Custom upstream / adaptive protocol',
+          customProtocolDesc: 'Same protocol picker as Kimi and DeepSeek: adaptive, Chat Completions, Anthropic, or Responses. The account stays on the Gemini platform and groups are not auto-selected.',
+          customProtocolHint: 'Enter a custom upstream URL. Responses uses the OpenAI Responses protocol; the account type remains Gemini.'
         },
         oauthType: {
           builtInTitle: 'Built-in OAuth (Gemini CLI / Code Assist)',

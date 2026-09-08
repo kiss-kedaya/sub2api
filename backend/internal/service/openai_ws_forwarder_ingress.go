@@ -1163,6 +1163,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				// markOpenAIWSClientVisibleFailure 与 handleOpenAIWSTerminalTransientFailure
 				// 仍要按未改写的原始 payload 判定账号状态，这正是
 				// sanitizeOpenAICapacityShedErrorCodeForClient 注释里写明的前提。
+				if !wroteDownstream && isOpenAIUpstreamCapacityShedEvent(upstreamMessage) {
+					lease.MarkBroken()
+					msg := extractOpenAISSEErrorMessage(upstreamMessage)
+					return nil, s.newOpenAIWSCapacityShedFailoverError(account, lease.HandshakeHeaders(), upstreamMessage, msg)
+				}
 				clientMessage := upstreamMessage
 				if eventType == "error" || eventType == "response.failed" {
 					if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
