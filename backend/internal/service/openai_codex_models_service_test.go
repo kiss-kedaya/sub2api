@@ -501,6 +501,15 @@ func TestFetchCodexModelsManifestAPIKeyConvertsStandardOpenAIModelList(t *testin
 	require.Equal(t, `W/"openai-list"`, manifest.upstreamETag)
 }
 
+func TestIsOpenAIGPT6AstraModel(t *testing.T) {
+	require.True(t, isOpenAIGPT6AstraModel("gpt-6"))
+	require.True(t, isOpenAIGPT6AstraModel("gpt-6-astra"))
+	require.True(t, isOpenAIGPT6AstraModel("openai/gpt-6-astra"))
+	require.True(t, isOpenAIGPT6AstraModel("gpt-6-astra-2026-09-01"))
+	require.False(t, isOpenAIGPT6AstraModel("gpt-6-other"))
+	require.False(t, isOpenAIGPT6AstraModel("gpt-5.6-sol"))
+}
+
 func TestAdjustAPIKeyCodexModelsManifest(t *testing.T) {
 	tests := []struct {
 		name string
