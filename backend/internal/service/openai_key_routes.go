@@ -12,6 +12,13 @@ func (s *OpenAIGatewayService) hydrateAPIKeyGroup(ctx context.Context, apiKey *A
 	return hydrateAPIKeyGroup(ctx, apiKey, groupID, getGroup)
 }
 
+func (s *OpenAIGatewayService) catalogModels(ctx context.Context, groupID *int64, platform string) []string {
+	if s == nil {
+		return nil
+	}
+	return loadAvailableModelsFromStore(ctx, s.accountRepo, s.schedulerSnapshot, groupID, platform)
+}
+
 func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 	ctx context.Context,
 	apiKey *APIKey,
@@ -24,19 +31,28 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 		selection, decision, err := selectOne(apiKey.GroupID, append([]string(nil), platformOverride...))
 		return selection, decision, apiKey, err
 	}
+	siblingHasPresent := keyRouteSiblingHasCatalogedModel(ctx, candidates, requestedModel, s.catalogModels)
 	var lastErr error
 	var lastDecision OpenAIAccountScheduleDecision
 	for _, groupID := range candidates {
 		gid := groupID
 		groupPlatform := append([]string(nil), platformOverride...)
-		if s.schedulerSnapshot != nil {
-			if group, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, gid); err == nil && group != nil {
+		var group *Group
+		if s != nil && s.schedulerSnapshot != nil {
+			if found, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, gid); err == nil && found != nil {
+				group = found
 				if !groupAllowsRequestedModel(group, requestedModel) {
 					continue
 				}
 				if isOpenAICompatibleUpstreamPlatform(group.Platform) {
 					groupPlatform = []string{group.Platform}
 				}
+			}
+		}
+		if group == nil || !group.CustomModelsListEnabled() {
+			presence := groupCatalogHasRequestedModelWith(ctx, gid, requestedModel, s.catalogModels)
+			if skipKeyRouteForCatalog(presence, siblingHasPresent) {
+				continue
 			}
 		}
 		selection, decision, err := selectOne(&gid, groupPlatform)
