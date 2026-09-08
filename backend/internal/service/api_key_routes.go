@@ -70,7 +70,7 @@ func groupAllowsRequestedModel(group *Group, model string) bool {
 	if !group.CustomModelsListEnabled() {
 		return true
 	}
-	return modelsAdmitRequestedModel(group.ModelsListConfig.Models, model)
+	return ModelsListAllows(group.ModelsListConfig, model)
 }
 
 func IsOpenAICompatibleUpstreamPlatform(platform string) bool {
