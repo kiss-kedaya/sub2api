@@ -28,14 +28,14 @@ func TestIsUpstreamCapacityCoolingBody(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "provider request blocked",
+			name: "provider request blocked is waf not cooling",
 			body: `{"error":{"message":"Your request was blocked."}}`,
-			want: true,
+			want: false,
 		},
 		{
-			name: "cloudflare access block",
+			name: "cloudflare access block is waf not cooling",
 			body: `error code: 1010`,
-			want: true,
+			want: false,
 		},
 		{
 			name: "real credential forbidden",
@@ -48,4 +48,10 @@ func TestIsUpstreamCapacityCoolingBody(t *testing.T) {
 			require.Equal(t, tt.want, IsUpstreamCapacityCoolingBody([]byte(tt.body)))
 		})
 	}
+}
+
+func TestIsUpstreamWAFBody(t *testing.T) {
+	require.True(t, IsUpstreamWAFBody([]byte("error code: 1010")))
+	require.True(t, IsUpstreamWAFBody([]byte(`{"error":{"message":"Your request was blocked."}}`)))
+	require.False(t, IsUpstreamWAFBody([]byte(`{"error":{"message":"invalid api key"}}`)))
 }

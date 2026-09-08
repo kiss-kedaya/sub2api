@@ -141,6 +141,18 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		for key, values := range clientHeaders {
 			lowerKey := strings.ToLower(key)
 			if allowedHeaders[lowerKey] {
+				if lowerKey == "user-agent" {
+					filtered := make([]string, 0, len(values))
+					for _, v := range values {
+						if sanitized := SanitizeForwardedUserAgent(v); sanitized != "" {
+							filtered = append(filtered, sanitized)
+						}
+					}
+					if len(filtered) == 0 {
+						continue
+					}
+					values = filtered
+				}
 				wireKey := resolveWireCasing(key)
 				for _, v := range values {
 					addHeaderRaw(req.Header, wireKey, v)
@@ -191,6 +203,9 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	// 账号级请求头覆写（仅 anthropic/openai api_key 账号启用时生效；OAuth 路径 no-op）。
 	// 放在所有 header 逻辑之后，确保配置值对同名头拥有最终决定权。
 	account.ApplyHeaderOverrides(req.Header)
+	if !mimicClaudeCode {
+		EnsureNonScriptUserAgent(req.Header)
+	}
 
 	// === DEBUG: 打印上游转发请求（headers + body 摘要），与 CLIENT_ORIGINAL 对比 ===
 	s.debugLogGatewaySnapshot("UPSTREAM_FORWARD", req.Header, body, map[string]string{

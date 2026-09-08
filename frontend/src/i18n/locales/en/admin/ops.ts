@@ -374,6 +374,13 @@ export default {
         routing: 'Routing',
         upstream: 'Upstream',
         response: 'Response',
+        failureKind: {
+          'cloudflare-waf': 'Cloudflare 1010 / WAF',
+          'capacity-cooling': 'Capacity cooling',
+          'credential-forbidden': 'Credential 403',
+          'rate-limit': 'Rate limit',
+          model_not_found: 'Model not found'
+        },
         classification: 'Classification',
         errorBody: 'Error Body',
         trimmed: 'trimmed',

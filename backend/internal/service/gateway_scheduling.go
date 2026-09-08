@@ -254,6 +254,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	if err != nil {
 		return nil, err
 	}
+	accounts = accountsSupportingRequestedModel(accounts, requestedModel)
 	if len(accounts) == 0 {
 		return nil, ErrNoAvailableAccounts
 	}

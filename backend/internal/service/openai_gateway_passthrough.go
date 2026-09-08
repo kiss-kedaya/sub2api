@@ -663,6 +663,18 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 			if !isOpenAIPassthroughAllowedRequestHeader(lower, allowTimeoutHeaders) {
 				continue
 			}
+			if lower == "user-agent" {
+				filtered := make([]string, 0, len(values))
+				for _, v := range values {
+					if sanitized := SanitizeForwardedUserAgent(v); sanitized != "" {
+						filtered = append(filtered, sanitized)
+					}
+				}
+				if len(filtered) == 0 {
+					continue
+				}
+				values = filtered
+			}
 			for _, v := range values {
 				req.Header.Add(key, v)
 			}
@@ -754,6 +766,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	// （User-Agent / originator / version 同源自洽），客户端自报身份不会到达上游。
 	if account.UsesOpenAICodexProtocol() {
 		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
+	} else {
+		EnsureNonScriptUserAgent(req.Header)
 	}
 
 	if req.Header.Get("content-type") == "" {
@@ -956,7 +970,7 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 		body,
 		upstreamMsg,
 		shouldDisable,
-		!shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+		!shouldDisable && PoolModeSameAccountRetry(account, resp.StatusCode, resp.Header, body),
 	)
 }
 

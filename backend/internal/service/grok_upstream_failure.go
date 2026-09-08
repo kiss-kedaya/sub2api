@@ -403,7 +403,7 @@ func grokRetryableOnSameAccount(account *Account, statusCode int, responseBody [
 			return true
 		}
 	}
-	return account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)
+	return PoolModeSameAccountRetry(account, statusCode, nil, responseBody)
 }
 
 func grokSameAccountRetryMetadata(account *Account, statusCode int, responseBody []byte) (bool, time.Duration, time.Time, int) {
