@@ -60,7 +60,27 @@ func TestIsScriptUserAgent(t *testing.T) {
 	require.True(t, IsScriptUserAgent("Python-urllib/3.12"))
 	require.True(t, IsScriptUserAgent("Go-http-client/2.0"))
 	require.True(t, IsScriptUserAgent("curl/8.5.0"))
+	require.False(t, IsScriptUserAgent("okhttp/4.12.0"))
 	require.False(t, IsScriptUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0"))
 	require.False(t, IsScriptUserAgent("codex_cli_rs/0.1.0"))
 	require.Equal(t, "", SanitizeForwardedUserAgent("Python-urllib/3.12"))
+}
+
+func TestEnsureNonScriptUserAgentKeepsAccountOverride(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"user_agent": "curl/8.5.0",
+		},
+	}
+	h := make(http.Header)
+	h.Set("User-Agent", "curl/8.5.0")
+	EnsureNonScriptUserAgent(h, account)
+	require.Equal(t, "curl/8.5.0", h.Get("User-Agent"))
+
+	unconfigured := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	h.Set("User-Agent", "Python-urllib/3.12")
+	EnsureNonScriptUserAgent(h, unconfigured)
+	require.Equal(t, gatewayBrowserUserAgent, h.Get("User-Agent"))
 }

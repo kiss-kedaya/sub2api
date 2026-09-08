@@ -69,9 +69,7 @@ func TestDeductUsageBillingBalance_RecordsOverdraftWhenGuardMisses(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-const enqueueBalanceSettlementSQL = `(?s)INSERT INTO billing_balance_settlements`
-
-func TestApplyUsageBillingEffects_EnqueuesBalanceSettlement(t *testing.T) {
+func TestApplyUsageBillingEffects_DeductsBalanceImmediately(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -80,9 +78,9 @@ func TestApplyUsageBillingEffects_EnqueuesBalanceSettlement(t *testing.T) {
 	mock.ExpectBegin()
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	mock.ExpectQuery(enqueueBalanceSettlementSQL).
-		WithArgs("req-async-balance", int64(7), "fp-async-balance", int64(42), 10.0, service.BalanceSettlementPending).
-		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(service.BalanceSettlementPending))
+	mock.ExpectQuery(conditionalBalanceDeductSQL).
+		WithArgs(10.0, int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(90.0))
 	mock.ExpectCommit()
 
 	result := &service.UsageBillingApplyResult{Applied: true}
@@ -94,7 +92,8 @@ func TestApplyUsageBillingEffects_EnqueuesBalanceSettlement(t *testing.T) {
 		BalanceCost:        10,
 	}, result)
 	require.NoError(t, err)
-	require.Nil(t, result.NewBalance)
+	require.NotNil(t, result.NewBalance)
+	require.InDelta(t, 90.0, *result.NewBalance, 0.000001)
 	require.False(t, result.BalanceOverdrafted)
 	require.False(t, result.BalanceFinalizationPending)
 	require.NoError(t, tx.Commit())

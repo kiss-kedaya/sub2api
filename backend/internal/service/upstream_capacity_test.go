@@ -54,4 +54,5 @@ func TestIsUpstreamWAFBody(t *testing.T) {
 	require.True(t, IsUpstreamWAFBody([]byte("error code: 1010")))
 	require.True(t, IsUpstreamWAFBody([]byte(`{"error":{"message":"Your request was blocked."}}`)))
 	require.False(t, IsUpstreamWAFBody([]byte(`{"error":{"message":"invalid api key"}}`)))
+	require.False(t, IsUpstreamWAFBody([]byte(`{"error":{"message":"invalid api key"},"prompt":"just a moment"}`)))
 }

@@ -61,15 +61,6 @@ func TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling(t *testing.T) {
 
 	var balance float64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
-	require.InDelta(t, 100, balance, 0.000001)
-
-	var pending int
-	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM billing_balance_settlements WHERE request_id = $1 AND api_key_id = $2 AND status = $3", requestID, apiKey.ID, service.BalanceSettlementPending).Scan(&pending))
-	require.Equal(t, 1, pending)
-
-	_, err = NewUsageBalanceSettlementRepository(integrationDB).FlushPendingBalanceSettlements(ctx, 100)
-	require.NoError(t, err)
-	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
 	require.InDelta(t, 98.75, balance, 0.000001)
 
 	var quotaUsed float64
@@ -371,11 +362,6 @@ func TestUsageBillingRepositoryApply_DeduplicatesAgainstArchivedKey(t *testing.T
 	require.False(t, result2.Applied)
 
 	var balance float64
-	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
-	require.InDelta(t, 100, balance, 0.000001)
-
-	_, err = NewUsageBalanceSettlementRepository(integrationDB).FlushPendingBalanceSettlements(ctx, 100)
-	require.NoError(t, err)
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
 	require.InDelta(t, 98.75, balance, 0.000001)
 }

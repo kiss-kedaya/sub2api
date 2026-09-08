@@ -19,20 +19,6 @@ var scriptUserAgentMarkers = []string{
 	"go-http-client",
 	"curl/",
 	"wget/",
-	"httpie",
-	"libwww-perl",
-	"java/",
-	"okhttp",
-	"apache-httpclient",
-	"node-fetch",
-	"undici",
-	"axios/",
-	"postmanruntime",
-	"insomnia/",
-	"faraday",
-	"rest-client",
-	"powershell",
-	"scrapy",
 }
 
 // IsScriptUserAgent reports client identities that are not browsers or official
@@ -69,11 +55,29 @@ func SanitizeForwardedUserAgent(ua string) string {
 	return strings.TrimSpace(ua)
 }
 
+// accountConfiguresOutboundUserAgent reports whether the account itself chose
+// the outbound User-Agent (credential user_agent or header override).
+func accountConfiguresOutboundUserAgent(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	if strings.TrimSpace(account.GetOpenAIUserAgent()) != "" {
+		return true
+	}
+	for name := range account.GetHeaderOverrides() {
+		if strings.EqualFold(strings.TrimSpace(name), "User-Agent") {
+			return true
+		}
+	}
+	return false
+}
+
 // EnsureNonScriptUserAgent replaces missing or script User-Agents with a
-// browser identity. Codex/Claude identity enforcement should run after this
-// and may overwrite the value.
-func EnsureNonScriptUserAgent(header http.Header) {
-	if header == nil {
+// browser identity. Account-configured User-Agents are left untouched.
+// Codex/Claude identity enforcement should run after this and may overwrite
+// the value.
+func EnsureNonScriptUserAgent(header http.Header, account *Account) {
+	if header == nil || accountConfiguresOutboundUserAgent(account) {
 		return
 	}
 	current := strings.TrimSpace(header.Get("User-Agent"))

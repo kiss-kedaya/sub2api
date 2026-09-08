@@ -204,7 +204,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	// 放在所有 header 逻辑之后，确保配置值对同名头拥有最终决定权。
 	account.ApplyHeaderOverrides(req.Header)
 	if !mimicClaudeCode {
-		EnsureNonScriptUserAgent(req.Header)
+		EnsureNonScriptUserAgent(req.Header, account)
 	}
 
 	// === DEBUG: 打印上游转发请求（headers + body 摘要），与 CLIENT_ORIGINAL 对比 ===

@@ -766,8 +766,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	// （User-Agent / originator / version 同源自洽），客户端自报身份不会到达上游。
 	if account.UsesOpenAICodexProtocol() {
 		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
-	} else {
-		EnsureNonScriptUserAgent(req.Header)
 	}
 
 	if req.Header.Get("content-type") == "" {
@@ -776,6 +774,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
+	if !account.UsesOpenAICodexProtocol() {
+		EnsureNonScriptUserAgent(req.Header, account)
+	}
 	// x-codex-beta-features：按真实 Codex 的会话级行为补注（在账号级覆写之后，
 	// 保证不被覆盖丢失）。
 	applyOpenAICodexBetaFeatures(c, account, req.Header)

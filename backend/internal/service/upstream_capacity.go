@@ -6,12 +6,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// IsUpstreamCapacityCoolingBody reports request-scoped upstream capacity
-// failures that should be presented as retryable service unavailability rather
-// than as a credential/access failure. Several OpenAI-compatible providers use
-// HTTP 403 or a FORBIDDEN code for a group whose suppliers are cooling down.
 // IsUpstreamWAFBody reports Cloudflare / browser-integrity blocks. These are
-// request-identity failures, not supplier capacity cooling.
+// request-identity failures, not supplier capacity cooling. Valid JSON is
+// inspected only on error fields so echoed request text cannot trip the
+// matcher.
 func IsUpstreamWAFBody(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -31,7 +29,7 @@ func IsUpstreamWAFBody(body []byte) bool {
 	if !gjson.ValidBytes(body) {
 		return isUpstreamWAFMessage(string(body))
 	}
-	return isUpstreamWAFMessage(string(body))
+	return false
 }
 
 func isUpstreamWAFMessage(value string) bool {
@@ -58,6 +56,10 @@ func isUpstreamWAFMessage(value string) bool {
 	return false
 }
 
+// IsUpstreamCapacityCoolingBody reports request-scoped upstream capacity
+// failures that should be presented as retryable service unavailability rather
+// than as a credential/access failure. Several OpenAI-compatible providers use
+// HTTP 403 or a FORBIDDEN code for a group whose suppliers are cooling down.
 func IsUpstreamCapacityCoolingBody(body []byte) bool {
 	if IsUpstreamWAFBody(body) {
 		return false
