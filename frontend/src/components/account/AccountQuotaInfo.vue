@@ -31,6 +31,7 @@
 import { computed, ref, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Account, GeminiCredentials } from '@/types'
+import { isGeminiOpenAIProtocolAccount } from './credentialsBuilder'
 
 const props = defineProps<{
   account: Account
@@ -57,7 +58,7 @@ const isGoogleOne = computed(() => {
 
 // 是否应该显示配额信息
 const shouldShowQuota = computed(() => {
-  return props.account.platform === 'gemini'
+  return props.account.platform === 'gemini' && !isGeminiOpenAIProtocolAccount(props.account)
 })
 
 // Tier 标签文本
