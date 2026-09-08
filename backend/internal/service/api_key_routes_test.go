@@ -239,3 +239,67 @@ func TestUpstreamPlatformForModel_GeminiGroupOpenAIAccount(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, PlatformOpenAI, platform)
 }
+
+func TestSkipKeyRouteForCatalog(t *testing.T) {
+	require.True(t, skipKeyRouteForCatalog(groupCatalogModelAbsent, false))
+	require.True(t, skipKeyRouteForCatalog(groupCatalogModelAbsent, true))
+	require.False(t, skipKeyRouteForCatalog(groupCatalogModelUnknown, false))
+	require.True(t, skipKeyRouteForCatalog(groupCatalogModelUnknown, true))
+	require.False(t, skipKeyRouteForCatalog(groupCatalogModelPresent, false))
+	require.False(t, skipKeyRouteForCatalog(groupCatalogModelPresent, true))
+}
+
+func TestShouldTryKeyRouteGroup_EmptyOpenAIDoesNotStealMappedGemini(t *testing.T) {
+	emptyID := int64(1)
+	geminiID := int64(2)
+	svc := &GatewayService{
+		accountRepo: &modelsListAccountRepoStub{
+			byGroup: map[int64][]Account{
+				emptyID: {{
+					ID:       10,
+					Platform: PlatformOpenAI,
+				}},
+				geminiID: {{
+					ID:       20,
+					Platform: PlatformOpenAI,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{
+							"gemini-3.8-flash": "gemini-3.8-flash",
+						},
+					},
+				}},
+			},
+		},
+	}
+
+	require.Equal(t, groupCatalogModelUnknown, svc.groupCatalogHasRequestedModel(context.Background(), emptyID, "gemini-3.8-flash"))
+	require.Equal(t, groupCatalogModelPresent, svc.groupCatalogHasRequestedModel(context.Background(), geminiID, "gemini-3.8-flash"))
+	require.True(t, keyRouteSiblingHasCatalogedModel(context.Background(), []int64{emptyID, geminiID}, "gemini-3.8-flash", svc.GetAvailableModels))
+	require.False(t, svc.shouldTryKeyRouteGroup(context.Background(), emptyID, PlatformOpenAI, "gemini-3.8-flash", true))
+	require.True(t, svc.shouldTryKeyRouteGroup(context.Background(), geminiID, PlatformOpenAI, "gemini-3.8-flash", true))
+	require.True(t, svc.shouldTryKeyRouteGroup(context.Background(), emptyID, PlatformOpenAI, "gemini-3.8-flash", false))
+}
+
+func TestUpstreamPlatformForModel_OpenAIGroupGeminiMapping(t *testing.T) {
+	openaiID := int64(32)
+	svc := &GatewayService{
+		accountRepo: &modelsListAccountRepoStub{
+			byGroup: map[int64][]Account{
+				openaiID: {{
+					ID:       29143,
+					Platform: PlatformOpenAI,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{
+							"gemini-3.8-flash": "gemini-3.8-flash",
+						},
+					},
+				}},
+			},
+		},
+	}
+	key := &APIKey{GroupID: &openaiID, Group: &Group{ID: openaiID, Platform: PlatformOpenAI}}
+
+	platform, ok := svc.UpstreamPlatformForModel(context.Background(), key, "gemini-3.8-flash")
+	require.True(t, ok)
+	require.Equal(t, PlatformOpenAI, platform)
+}
