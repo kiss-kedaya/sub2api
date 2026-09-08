@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { defaultCNAdaptiveBaseUrls } from '../credentialsBuilder'
+import { defaultCNAdaptiveBaseUrls, isGeminiOpenAIProtocolAccount } from '../credentialsBuilder'
 
 describe('defaultCNAdaptiveBaseUrls', () => {
   it('resolves Kimi endpoints by account mode', () => {
@@ -35,5 +35,20 @@ describe('defaultCNAdaptiveBaseUrls', () => {
       anthropic: 'https://api.deepseek.com/anthropic',
       responses: 'https://api.deepseek.com'
     })
+  })
+})
+
+describe('isGeminiOpenAIProtocolAccount', () => {
+  it('treats Gemini API keys with adaptive protocol as custom upstream', () => {
+    expect(isGeminiOpenAIProtocolAccount({
+      platform: 'gemini',
+      type: 'apikey',
+      credentials: { api_protocol: 'responses' }
+    })).toBe(true)
+    expect(isGeminiOpenAIProtocolAccount({
+      platform: 'gemini',
+      type: 'apikey',
+      credentials: {}
+    })).toBe(false)
   })
 })
