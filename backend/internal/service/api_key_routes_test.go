@@ -56,6 +56,13 @@ func TestGroupAllowsRequestedModel(t *testing.T) {
 	require.True(t, groupAllowsRequestedModel(restricted, "gpt-5"))
 	require.True(t, groupAllowsRequestedModel(restricted, "GPT-5"))
 	require.False(t, groupAllowsRequestedModel(restricted, "claude-opus-4"))
+	require.False(t, groupAllowsRequestedModel(restricted, ""))
+
+	grokList := &Group{ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"grok-4.6", "grok-*"}}}
+	require.True(t, groupAllowsRequestedModel(grokList, "grok-4.6"))
+	require.True(t, groupAllowsRequestedModel(grokList, "grok-4.5"))
+	require.False(t, groupAllowsRequestedModel(grokList, "gemini-3.8-flash"))
+	require.False(t, groupAllowsRequestedModel(grokList, "__mirasim_wire_probe_model__"))
 }
 
 func TestIsOpenAICompatibleUpstreamPlatform(t *testing.T) {

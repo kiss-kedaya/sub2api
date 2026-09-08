@@ -64,15 +64,13 @@ func groupAllowsRequestedModel(group *Group, model string) bool {
 		return true
 	}
 	model = strings.TrimSpace(model)
-	if model == "" || !group.CustomModelsListEnabled() {
+	if model == "" {
+		return !group.CustomModelsListEnabled()
+	}
+	if !group.CustomModelsListEnabled() {
 		return true
 	}
-	for _, allowed := range group.ModelsListConfig.Models {
-		if strings.EqualFold(strings.TrimSpace(allowed), model) {
-			return true
-		}
-	}
-	return false
+	return modelsAdmitRequestedModel(group.ModelsListConfig.Models, model)
 }
 
 func IsOpenAICompatibleUpstreamPlatform(platform string) bool {
@@ -183,17 +181,6 @@ func modelsAdmitRequestedModel(models []string, requestedModel string) bool {
 	return false
 }
 
-func accountServesRequestedModel(account *Account, requestedModel string) bool {
-	if account == nil {
-		return false
-	}
-	requestedModel = strings.TrimSpace(requestedModel)
-	if requestedModel == "" {
-		return false
-	}
-	return account.IsModelSupported(requestedModel)
-}
-
 func (s *GatewayService) groupCatalogHasRequestedModel(ctx context.Context, groupID int64, requestedModel string) groupCatalogModelPresence {
 	if s == nil || groupID <= 0 {
 		return groupCatalogModelUnknown
@@ -223,38 +210,16 @@ func (s *GatewayService) groupCatalogUsableForRequest(ctx context.Context, group
 	}
 	gid := groupID
 	group := s.GroupPolicyForRequest(ctx, gid)
+	if group == nil {
+		return s.groupCatalogHasRequestedModel(ctx, groupID, requestedModel) != groupCatalogModelAbsent
+	}
 	if !groupUsableForRequest(group, requestPlatform, requestedModel, s.GetSchedulablePlatforms(ctx, &gid)) {
 		return false
 	}
+	if group.CustomModelsListEnabled() {
+		return true
+	}
 	return s.groupCatalogHasRequestedModel(ctx, groupID, requestedModel) != groupCatalogModelAbsent
-}
-
-func (s *OpenAIGatewayService) groupCatalogHasRequestedModel(ctx context.Context, groupID int64, requestedModel string) groupCatalogModelPresence {
-	if s == nil || s.schedulerSnapshot == nil || groupID <= 0 {
-		return groupCatalogModelUnknown
-	}
-	requestedModel = strings.TrimSpace(requestedModel)
-	gid := groupID
-	sawAccounts := false
-	for _, platform := range groupCatalogPlatforms() {
-		accounts, _, err := s.schedulerSnapshot.listSchedulableAccountsForRequest(ctx, &gid, platform, false)
-		if err != nil {
-			continue
-		}
-		if len(accounts) == 0 {
-			continue
-		}
-		sawAccounts = true
-		for i := range accounts {
-			if accountServesRequestedModel(&accounts[i], requestedModel) {
-				return groupCatalogModelPresent
-			}
-		}
-	}
-	if !sawAccounts {
-		return groupCatalogModelUnknown
-	}
-	return groupCatalogModelAbsent
 }
 
 // UpstreamPlatformForModel prefers the platform of a schedulable account that
