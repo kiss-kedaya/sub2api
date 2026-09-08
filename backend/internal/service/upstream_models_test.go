@@ -274,6 +274,20 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 	require.Equal(t, "https://xai.example.com/v1/models", grokReq.URL.String())
 	require.Equal(t, "Bearer xai-key", grokReq.Header.Get("Authorization"))
 
+	geminiProtocolReq, err := svc.buildUpstreamModelsRequest(ctx, &Account{
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":      "gemini-key",
+			"base_url":     "https://mdkj.lol",
+			"api_protocol": APIProtocolResponses,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "https://mdkj.lol/v1/models", geminiProtocolReq.URL.String())
+	require.Equal(t, "Bearer gemini-key", geminiProtocolReq.Header.Get("Authorization"))
+	require.Empty(t, geminiProtocolReq.Header.Get("x-goog-api-key"))
+
 	geminiReq, err := svc.buildGeminiUpstreamModelsRequest(ctx, &Account{
 		Platform: PlatformGemini,
 		Type:     AccountTypeAPIKey,
