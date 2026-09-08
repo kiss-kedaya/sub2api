@@ -1413,7 +1413,7 @@ var (
 		{Name: "expires_at", Type: field.TypeTime, Nullable: true},
 		{Name: "fallback_mode", Type: field.TypeString, Size: 20, Default: "none"},
 		{Name: "expiry_warn_days", Type: field.TypeInt, Default: 7},
-		{Name: "backup_proxy_id", Type: field.TypeInt64, Unique: true, Nullable: true},
+		{Name: "backup_proxy_id", Type: field.TypeInt64, Nullable: true},
 	}
 	// ProxiesTable holds the schema information for the "proxies" table.
 	ProxiesTable = &schema.Table{
