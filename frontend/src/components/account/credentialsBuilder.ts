@@ -256,9 +256,14 @@ export const GROK_BASE_URL_PRESETS: GrokBaseUrlPreset[] = [
 
 export type CnAccountMode = 'payg' | 'coding'
 
-/** 仅 deepseek 支持原生 responses；adaptive 会按入站协议选择原生端点。 */
+/** 仅 deepseek / Gemini 自定义上游支持原生 responses；adaptive 会按入站协议选择原生端点。 */
 export type CnApiProtocol = 'adaptive' | 'chat_completions' | 'anthropic' | 'responses'
 export type CnNativeApiProtocol = Exclude<CnApiProtocol, 'adaptive'>
+export type AdaptiveProtocolPlatform = 'kimi' | 'zhipu' | 'deepseek' | 'gemini'
+
+export function isAdaptiveProtocolPlatform(platform: string): platform is AdaptiveProtocolPlatform {
+  return platform === 'kimi' || platform === 'zhipu' || platform === 'deepseek' || platform === 'gemini'
+}
 
 export interface CnBaseUrlPreset {
   mode: CnAccountMode
@@ -303,11 +308,13 @@ export function defaultCNBaseUrl(
         return 'https://open.bigmodel.cn/api/anthropic'
       case 'deepseek':
         return 'https://api.deepseek.com/anthropic'
+      case 'gemini':
+        return ''
       default:
         return ''
     }
   }
-  // responses 仅 deepseek：base 与 chat_completions 相同（端点路径差异由后端处理）。
+  // responses：deepseek 官方与 Gemini 自定义上游共用 chat 基址，路径由后端拼接。
   switch (platform) {
     case 'kimi':
       return mode === 'coding' ? 'https://api.kimi.com/coding/v1' : 'https://api.moonshot.cn/v1'
@@ -317,6 +324,8 @@ export function defaultCNBaseUrl(
         : 'https://open.bigmodel.cn/api/paas/v4'
     case 'deepseek':
       return 'https://api.deepseek.com'
+    case 'gemini':
+      return ''
     default:
       return ''
   }
@@ -324,13 +333,15 @@ export function defaultCNBaseUrl(
 
 /** 返回自适应模式下需要配置的原生协议及其默认端点。 */
 export function defaultCNAdaptiveBaseUrls(
-  platform: 'kimi' | 'zhipu' | 'deepseek',
+  platform: AdaptiveProtocolPlatform,
   mode: CnAccountMode
 ): Record<CnNativeApiProtocol, string> {
   return {
     chat_completions: defaultCNBaseUrl(platform, mode, 'chat_completions'),
     anthropic: defaultCNBaseUrl(platform, mode, 'anthropic'),
-    responses: platform === 'deepseek' ? defaultCNBaseUrl(platform, mode, 'responses') : ''
+    responses: platform === 'deepseek' || platform === 'gemini'
+      ? defaultCNBaseUrl(platform, mode, 'responses')
+      : ''
   }
 }
 

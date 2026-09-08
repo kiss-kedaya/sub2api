@@ -102,6 +102,13 @@ func TestIsModelSupported_OpenAIOAuthPassthroughIgnoresLeftoverMapping(t *testin
 	require.True(t, account.IsModelSupported("deepseek-v4"), "透传应放行任意模型")
 }
 
+func TestIsModelSupported_GrokEmptyMappingUsesDefaultCatalog(t *testing.T) {
+	account := &Account{ID: 4, Platform: PlatformGrok, Type: AccountTypeAPIKey}
+	require.True(t, account.IsModelSupported("grok-4.6"))
+	require.False(t, account.IsModelSupported("gemini-3.8-flash"))
+	require.False(t, account.IsModelSupported("claude-sonnet-4-6"))
+}
+
 func TestIsModelSupported_OpenAIAPIKeyEmptyMappingAllowsAll(t *testing.T) {
 	account := &Account{
 		ID:       2,

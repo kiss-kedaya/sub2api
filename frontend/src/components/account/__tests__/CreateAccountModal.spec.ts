@@ -283,6 +283,30 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(probeUpstreamBillingMock).not.toHaveBeenCalled()
   })
 
+  it('creates a Gemini custom-protocol account without changing platform or auto-selecting groups', async () => {
+    const wrapper = mountModal([{ id: 9, platform: 'gemini' }])
+    await selectButtonByText(wrapper, 'Gemini')
+    await selectButtonByText(wrapper, 'admin.accounts.gemini.accountType.apiKeyTitle')
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await flushPromises()
+    await selectButtonByText(wrapper, 'admin.accounts.cnProviders.apiProtocol.responses')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Gemini Responses')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-gemini')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.platform).toBe('gemini')
+    expect(payload?.type).toBe('apikey')
+    expect(payload?.group_ids).toEqual([])
+    expect(payload?.credentials).toMatchObject({
+      api_protocol: 'responses',
+      api_key: 'sk-gemini'
+    })
+    expect(payload?.credentials?.tier_id).toBeUndefined()
+  })
+
   it('submits adaptive Kimi protocol endpoints', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'Kimi')

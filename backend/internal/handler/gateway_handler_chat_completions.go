@@ -284,7 +284,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
 
-		if groupPlatform == service.PlatformGemini && account.Platform != service.PlatformGemini {
+		if groupPlatform == service.PlatformGemini && account.Platform != service.PlatformGemini && !account.IsOpenAICompatible() {
 			if accountReleaseFunc != nil {
 				accountReleaseFunc()
 			}
@@ -297,7 +297,18 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		forwardBody := preauthorizationBody
 		var result *service.ForwardResult
 		setActualUpstreamEndpoint(c, "")
-		if account.Platform == service.PlatformGemini {
+		if account.IsGeminiOpenAIProtocol() {
+			if h.openAIGatewayService == nil {
+				h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "OpenAI gateway is not configured")
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				return
+			}
+			oaResult, oaErr := h.openAIGatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, "", "")
+			err = oaErr
+			result = openAIForwardResultAsGateway(oaResult)
+		} else if account.Platform == service.PlatformGemini {
 			if h.geminiCompatService == nil {
 				h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
 				if accountReleaseFunc != nil {
