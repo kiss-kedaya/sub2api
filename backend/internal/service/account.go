@@ -1452,7 +1452,8 @@ func (a *Account) IsCodingPlan() bool {
 
 // GetAPIProtocol 返回账号的上游 API 协议。存储于 credentials["api_protocol"]。
 // 国产供应商与 Gemini OpenAI 兼容 API Key 共用这套协议；缺失或与平台不匹配时
-// 回退 chat_completions。responses 协议：deepseek 与 Gemini 自定义上游支持。
+// 回退 chat_completions。responses 协议：deepseek / kimi 官方原生端点，以及
+// Gemini 自定义上游。
 func (a *Account) GetAPIProtocol() string {
 	if a == nil || (!a.IsCNProvider() && !a.IsGeminiOpenAIProtocol()) {
 		return APIProtocolChatCompletions
@@ -1463,13 +1464,58 @@ func (a *Account) GetAPIProtocol() string {
 	case APIProtocolAnthropic:
 		return APIProtocolAnthropic
 	case APIProtocolResponses:
-		if a.Platform == PlatformDeepseek || a.IsGeminiOpenAIProtocol() {
+		if a.SupportsNativeCNResponses() || a.IsGeminiOpenAIProtocol() {
 			return APIProtocolResponses
 		}
 	case APIProtocolChatCompletions:
 		return APIProtocolChatCompletions
 	}
 	return APIProtocolChatCompletions
+}
+
+// SupportsNativeCNResponses 报告该国产供应商是否提供原生 Responses 端点。
+// DeepSeek 官方为 /responses（无 /v1）；Kimi 按量付费与 Coding Plan 均为
+// /v1/responses（moonshot.cn / kimi.com/coding）。
+func (a *Account) SupportsNativeCNResponses() bool {
+	if a == nil {
+		return false
+	}
+	switch a.Platform {
+	case PlatformDeepseek, PlatformKimi:
+		return true
+	default:
+		return false
+	}
+}
+
+// UsesNativeCNResponses 报告当前账号是否应按原生 Responses 协议转发
+// （显式 responses，或 adaptive 且平台具备原生端点）。
+func (a *Account) UsesNativeCNResponses() bool {
+	if a == nil || !a.SupportsNativeCNResponses() {
+		return false
+	}
+	switch a.GetAPIProtocol() {
+	case APIProtocolResponses, APIProtocolAdaptive:
+		return true
+	default:
+		return false
+	}
+}
+
+// usesNativeResponsesUpstream 覆盖国产原生 Responses 以及 Gemini 自定义协议。
+func (a *Account) usesNativeResponsesUpstream() bool {
+	if a.UsesNativeCNResponses() {
+		return true
+	}
+	if !a.IsGeminiOpenAIProtocol() {
+		return false
+	}
+	switch a.GetAPIProtocol() {
+	case APIProtocolResponses, APIProtocolAdaptive:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsAdaptiveAPIProtocol 报告账号是否按入站协议动态选择供应商原生端点。

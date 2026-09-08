@@ -1,18 +1,28 @@
 import { describe, expect, it } from 'vitest'
 
-import { defaultCNAdaptiveBaseUrls, isGeminiOpenAIProtocolAccount } from '../credentialsBuilder'
+import { cnSupportsNativeResponses, defaultCNAdaptiveBaseUrls, isGeminiOpenAIProtocolAccount } from '../credentialsBuilder'
+
+describe('cnSupportsNativeResponses', () => {
+  it('covers DeepSeek, Kimi, and Gemini custom upstream', () => {
+    expect(cnSupportsNativeResponses('deepseek')).toBe(true)
+    expect(cnSupportsNativeResponses('kimi')).toBe(true)
+    expect(cnSupportsNativeResponses('gemini')).toBe(true)
+    expect(cnSupportsNativeResponses('zhipu')).toBe(false)
+    expect(cnSupportsNativeResponses('openai')).toBe(false)
+  })
+})
 
 describe('defaultCNAdaptiveBaseUrls', () => {
   it('resolves Kimi endpoints by account mode', () => {
     expect(defaultCNAdaptiveBaseUrls('kimi', 'payg')).toEqual({
       chat_completions: 'https://api.moonshot.cn/v1',
       anthropic: 'https://api.moonshot.cn/anthropic',
-      responses: ''
+      responses: 'https://api.moonshot.cn/v1'
     })
     expect(defaultCNAdaptiveBaseUrls('kimi', 'coding')).toEqual({
       chat_completions: 'https://api.kimi.com/coding/v1',
       anthropic: 'https://api.kimi.com/coding',
-      responses: ''
+      responses: 'https://api.kimi.com/coding/v1'
     })
   })
 
