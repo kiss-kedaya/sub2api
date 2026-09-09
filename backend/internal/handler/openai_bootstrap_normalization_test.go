@@ -18,6 +18,36 @@ func mustJSONString(t *testing.T, value string) string {
 	return string(encoded)
 }
 
+func TestCodexBootstrapInputLooksRelevant(t *testing.T) {
+	require.False(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)))
+	require.False(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5"}`)))
+	require.True(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"automation_update","output":"x"}]}`)))
+	require.True(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_tui","name":"create_thread","output":"x"}]}`)))
+}
+
+func TestApplyCodexBootstrapNormalizationsSkipsOrdinaryResponsesBodies(t *testing.T) {
+	body := []byte(`{"model":"gpt-5","previous_response_id":"","previous_response_id":"resp-1","input":[{"type":"message","role":"user"}]}`)
+	got, automationChanged, delegationChanged := applyCodexBootstrapNormalizations(body)
+	require.False(t, automationChanged)
+	require.False(t, delegationChanged)
+	require.Equal(t, body, got)
+}
+
+func TestApplyCodexBootstrapNormalizationsRewritesAutomationAndDelegation(t *testing.T) {
+	output := automationBootstrapOutput("wiki-maintenance", "never", "Review the project and report changes.")
+	autoBody := automationBootstrapBody(t, output)
+	got, automationChanged, delegationChanged := applyCodexBootstrapNormalizations(autoBody)
+	require.True(t, automationChanged)
+	require.False(t, delegationChanged)
+	require.Equal(t, "message", gjson.GetBytes(got, "input.0.type").String())
+
+	delegation := []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"create_thread","output":` + mustJSONString(t, delegationBootstrapEnvelope) + `}]}`)
+	got, automationChanged, delegationChanged = applyCodexBootstrapNormalizations(delegation)
+	require.False(t, automationChanged)
+	require.True(t, delegationChanged)
+	require.Equal(t, "message", gjson.GetBytes(got, "input.0.type").String())
+}
+
 func TestNormalizeCodexDelegationBootstrapRequiresCalllessSafeShape(t *testing.T) {
 	body := []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"create_thread","output":` + mustJSONString(t, delegationBootstrapEnvelope) + `}]}`)
 	got, changed := normalizeCodexDelegationBootstrap(body)
