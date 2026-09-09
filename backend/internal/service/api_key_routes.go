@@ -234,6 +234,9 @@ func (s *GatewayService) groupCatalogHasRequestedModel(ctx context.Context, grou
 	if s == nil {
 		return groupCatalogModelUnknown
 	}
+	if s.modelsListCache != nil {
+		return catalogHasRequestedModel(s.ensureGroupModelsCatalog(ctx, &groupID), requestedModel)
+	}
 	return groupCatalogHasRequestedModelWith(ctx, groupID, requestedModel, s.GetAvailableModels)
 }
 
