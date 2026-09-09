@@ -96,6 +96,17 @@ func ShouldFailoverUpstream(statusCode int, headers http.Header, body []byte, er
 	return ClassifyUpstreamFailure(statusCode, headers, body, err).Failover
 }
 
+// ShouldFailoverUpstreamResponse reports whether to rotate accounts for an HTTP
+// outcome. Compat-400 (thinking / tool_use / anthropic-beta) stays behind
+// failoverOn400; model_not_found failovers without that flag.
+func ShouldFailoverUpstreamResponse(statusCode int, headers http.Header, body []byte, failoverOn400 bool) bool {
+	class := ClassifyUpstreamFailure(statusCode, headers, body, nil)
+	if class.Kind == UpstreamFailureCompat {
+		return failoverOn400
+	}
+	return class.Failover
+}
+
 // PoolModeSameAccountRetry reports whether pool_mode may retry the same account.
 func PoolModeSameAccountRetry(account *Account, statusCode int, headers http.Header, body []byte) bool {
 	if account == nil || !account.IsPoolMode() || !account.IsPoolModeRetryableStatus(statusCode) {

@@ -227,7 +227,7 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+              <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -256,6 +256,13 @@
                   {{ t('admin.accounts.mapRequestModels') }}
                 </p>
               </div>
+              <ModelWhitelistSelector
+                sync-only
+                :model-value="modelMappingFromKeys"
+                :platform="account?.platform || 'anthropic'"
+                :account-id="account?.id"
+                @upstream-models="importUpstreamModelsToMapping"
+              />
 
             <!-- Model Mapping List -->
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
@@ -656,7 +663,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -672,6 +679,13 @@
                 {{ t('admin.accounts.mapRequestModels') }}
               </p>
             </div>
+            <ModelWhitelistSelector
+              sync-only
+              :model-value="modelMappingFromKeys"
+              :platform="account?.platform || 'anthropic'"
+              :account-id="account?.id"
+              @upstream-models="importUpstreamModelsToMapping"
+            />
 
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
               <div
@@ -868,7 +882,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -897,6 +911,13 @@
                 {{ t('admin.accounts.mapRequestModels') }}
               </p>
             </div>
+            <ModelWhitelistSelector
+              sync-only
+              :model-value="modelMappingFromKeys"
+              :platform="account?.platform || 'anthropic'"
+              :account-id="account?.id"
+              @upstream-models="importUpstreamModelsToMapping"
+            />
 
             <!-- Model Mapping List -->
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
@@ -1090,7 +1111,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" platform="anthropic" />
+            <ModelWhitelistSelector v-model="allowedModels" platform="anthropic" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{ t('admin.accounts.supportsAllModels') }}</span>
@@ -1099,6 +1120,13 @@
 
           <!-- Mapping Mode -->
           <div v-else class="space-y-3">
+            <ModelWhitelistSelector
+              sync-only
+              :model-value="modelMappingFromKeys"
+              platform="anthropic"
+              :account-id="account?.id"
+              @upstream-models="importUpstreamModelsToMapping"
+            />
             <div v-for="(mapping, index) in modelMappings" :key="getModelMappingKey(mapping)" class="flex items-center gap-2">
               <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.fromModel')" />
               <span class="text-gray-400">→</span>
@@ -1216,16 +1244,13 @@
             <p class="text-xs text-purple-700 dark:text-purple-400">{{ t('admin.accounts.mapRequestModels') }}</p>
           </div>
 
-          <div class="mb-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              @click="syncAntigravityUpstreamModels"
-              :disabled="isSyncingAntigravityUpstream || !account?.id"
-              class="rounded-lg border border-emerald-200 px-3 py-1.5 text-sm text-emerald-600 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
-            >
-              {{ isSyncingAntigravityUpstream ? t('admin.accounts.syncUpstreamModelsLoading') : t('admin.accounts.syncUpstreamModels') }}
-            </button>
-          </div>
+          <ModelWhitelistSelector
+            sync-only
+            :model-value="antigravityMappingFromKeys"
+            platform="antigravity"
+            :account-id="account?.id"
+            @upstream-models="importUpstreamModelsToAntigravityMapping"
+          />
 
           <div v-if="antigravityModelMappings.length > 0" class="mb-3 space-y-2">
             <div
@@ -2921,6 +2946,7 @@ import {
   commonErrorCodes,
   buildModelMappingObject,
   splitModelMappingObject,
+  mergeUpstreamIdentityMappings,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
 
@@ -3204,7 +3230,12 @@ const antigravityProjectId = ref('')
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const antigravityWhitelistModels = ref<string[]>([])
 const antigravityModelMappings = ref<ModelMapping[]>([])
-const isSyncingAntigravityUpstream = ref(false)
+const modelMappingFromKeys = computed(() =>
+  modelMappings.value.map((mapping) => mapping.from).filter(Boolean)
+)
+const antigravityMappingFromKeys = computed(() =>
+  antigravityModelMappings.value.map((mapping) => mapping.from).filter(Boolean)
+)
 const tempUnschedEnabled = ref(false)
 const accountSchedulingThresholdOverrideEnabled = ref(false)
 const accountSchedulingThresholdOverrideValue = ref(100)
@@ -4125,6 +4156,14 @@ const addPresetMapping = (from: string, to: string) => {
   modelMappings.value.push({ from, to })
 }
 
+const importUpstreamModelsToMapping = (models: string[]) => {
+  modelMappings.value = mergeUpstreamIdentityMappings(modelMappings.value, models).mappings
+}
+
+const importUpstreamModelsToAntigravityMapping = (models: string[]) => {
+  antigravityModelMappings.value = mergeUpstreamIdentityMappings(antigravityModelMappings.value, models).mappings
+}
+
 const addAntigravityModelMapping = () => {
   antigravityModelMappings.value.push({ from: '', to: '' })
 }
@@ -4148,40 +4187,6 @@ const addAntigravityPresetMapping = (from: string, to: string) => {
     return
   }
   antigravityModelMappings.value.push({ from, to })
-}
-
-const syncAntigravityUpstreamModels = async () => {
-  if (!props.account?.id || isSyncingAntigravityUpstream.value) return
-
-  isSyncingAntigravityUpstream.value = true
-  try {
-    const result = await adminAPI.accounts.syncUpstreamModels(props.account.id)
-    const upstreamModels = result.models.map((model) => model.trim()).filter(Boolean)
-    if (upstreamModels.length === 0) {
-      appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
-      return
-    }
-
-    let addedCount = 0
-    for (const model of upstreamModels) {
-      const exists = antigravityModelMappings.value.some((mapping) => mapping.from === model)
-      if (!exists) {
-        antigravityModelMappings.value.push({ from: model, to: model })
-        addedCount += 1
-      }
-    }
-
-    if (addedCount > 0) {
-      appStore.showSuccess(t('admin.accounts.syncUpstreamModelsSuccess', { count: addedCount, total: upstreamModels.length }))
-    } else {
-      appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
-    appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
-  } finally {
-    isSyncingAntigravityUpstream.value = false
-  }
 }
 
 // Error code toggle helper
