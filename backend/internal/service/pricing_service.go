@@ -42,7 +42,7 @@ var (
 	openAIGPTImage25FallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:       5e-06,
 		CacheReadInputTokenCost: 1.25e-06,
-		InputCostPerImageToken:  8e-06,
+		InputCostPerImageToken:  8e-06, CacheReadInputImageTokenCost: 2e-06,
 		OutputCostPerImageToken: 3e-05,
 		LiteLLMProvider:         "openai",
 		Mode:                    "image_generation",
