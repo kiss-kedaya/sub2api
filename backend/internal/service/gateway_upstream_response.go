@@ -209,11 +209,6 @@ func (s *GatewayService) isThinkingBlockSignatureError(respBody []byte) bool {
 	return false
 }
 
-func (s *GatewayService) shouldFailoverOn400(respBody []byte) bool {
-	class := ClassifyUpstreamFailure(http.StatusBadRequest, nil, respBody, nil)
-	return class.Kind == UpstreamFailureCompat || class.Kind == UpstreamFailureModelMissing
-}
-
 // sanitizeStreamError 返回不含网络地址的客户端可见错误描述。
 // 默认 (*net.OpError).Error() 会拼接 Source/Addr 字段，泄露内部 IP/端口与上游
 // 服务器地址（例如 "read tcp 10.0.0.1:54321->52.1.2.3:443: read: connection

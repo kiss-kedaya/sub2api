@@ -43,9 +43,15 @@ func (s *GatewayService) shouldRetryUpstreamError(account *Account, statusCode i
 	return !account.ShouldHandleErrorCode(statusCode)
 }
 
-// shouldFailoverUpstreamError determines whether an upstream error should trigger account failover.
+// shouldFailoverUpstreamError is the status-only wrapper used by tests and
+// callers that have not yet read the body. 400/404/422 stay false without a body.
 func (s *GatewayService) shouldFailoverUpstreamError(statusCode int) bool {
-	return ShouldFailoverUpstream(statusCode, nil, nil, nil)
+	return s.shouldFailoverUpstreamResponse(statusCode, nil, nil)
+}
+
+func (s *GatewayService) shouldFailoverUpstreamResponse(statusCode int, headers http.Header, body []byte) bool {
+	failoverOn400 := s != nil && s.cfg != nil && s.cfg.Gateway.FailoverOn400
+	return ShouldFailoverUpstreamResponse(statusCode, headers, body, failoverOn400)
 }
 
 func retryBackoffDelay(attempt int) time.Duration {
@@ -669,27 +675,60 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// 处理重试耗尽的情况
-	if resp.StatusCode >= 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
-		if s.shouldFailoverUpstreamError(resp.StatusCode) {
-			respBody, _ := s.readUpstreamErrorBody(resp)
-			_ = resp.Body.Close()
-			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+	if resp.StatusCode >= 400 {
+		respBody, _ := s.readUpstreamErrorBody(resp)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
-			// 调试日志：打印重试耗尽后的错误响应
-			logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (retry exhausted, failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
+		if s.shouldRetryUpstreamError(account, resp.StatusCode) {
+			if s.shouldFailoverUpstreamResponse(resp.StatusCode, resp.Header, respBody) {
+				logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (retry exhausted, failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
+					account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+
+				s.handleRetryExhaustedSideEffects(ctx, resp, account)
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					ProxyID:            opsUpstreamProxyID(account),
+					ProxyName:          opsUpstreamProxyName(account),
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "retry_exhausted_failover",
+					Message:            extractUpstreamErrorMessage(respBody),
+					Detail: func() string {
+						if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+							return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+						}
+						return ""
+					}(),
+				})
+				return nil, &UpstreamFailoverError{
+					StatusCode:             resp.StatusCode,
+					ResponseBody:           respBody,
+					RetryableOnSameAccount: PoolModeSameAccountRetry(account, resp.StatusCode, resp.Header, respBody),
+				}
+			}
+			return s.handleRetryExhaustedError(ctx, resp, c, account)
+		}
+
+		if s.shouldFailoverUpstreamResponse(resp.StatusCode, resp.Header, respBody) {
+			kind := "failover"
+			if resp.StatusCode == http.StatusBadRequest {
+				kind = "failover_on_400"
+			}
+			logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
 				account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
 
-			s.handleRetryExhaustedSideEffects(ctx, resp, account)
+			s.handleFailoverSideEffects(ctx, resp, account, reqModel)
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				ProxyID:            opsUpstreamProxyID(account),
 				ProxyName:          opsUpstreamProxyName(account),
 				Platform:           account.Platform,
 				AccountID:          account.ID,
-				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
 				UpstreamRequestID:  resp.Header.Get("x-request-id"),
-				Kind:               "retry_exhausted_failover",
+				Kind:               kind,
 				Message:            extractUpstreamErrorMessage(respBody),
 				Detail: func() string {
 					if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
@@ -702,90 +741,6 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: PoolModeSameAccountRetry(account, resp.StatusCode, resp.Header, respBody),
-			}
-		}
-		return s.handleRetryExhaustedError(ctx, resp, c, account)
-	}
-
-	// 处理可切换账号的错误
-	if resp.StatusCode >= 400 && s.shouldFailoverUpstreamError(resp.StatusCode) {
-		respBody, _ := s.readUpstreamErrorBody(resp)
-		_ = resp.Body.Close()
-		resp.Body = io.NopCloser(bytes.NewReader(respBody))
-
-		// 调试日志：打印上游错误响应
-		logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-			account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
-
-		s.handleFailoverSideEffects(ctx, resp, account, reqModel)
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			ProxyID:            opsUpstreamProxyID(account),
-			ProxyName:          opsUpstreamProxyName(account),
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
-			Kind:               "failover",
-			Message:            extractUpstreamErrorMessage(respBody),
-			Detail: func() string {
-				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
-					return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
-				}
-				return ""
-			}(),
-		})
-		return nil, &UpstreamFailoverError{
-			StatusCode:             resp.StatusCode,
-			ResponseBody:           respBody,
-			RetryableOnSameAccount: PoolModeSameAccountRetry(account, resp.StatusCode, resp.Header, respBody),
-		}
-	}
-	if resp.StatusCode >= 400 {
-		// 可选：对部分 400 触发 failover（默认关闭以保持语义）
-		if resp.StatusCode == 400 && s.cfg != nil && s.cfg.Gateway.FailoverOn400 {
-			respBody, readErr := s.readUpstreamErrorBody(resp)
-			if readErr != nil {
-				// ReadAll failed, fall back to normal error handling without consuming the stream
-				return s.handleErrorResponse(ctx, resp, c, account, reqModel)
-			}
-			_ = resp.Body.Close()
-			resp.Body = io.NopCloser(bytes.NewReader(respBody))
-
-			if s.shouldFailoverOn400(respBody) {
-				upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
-				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-				upstreamDetail := ""
-				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
-					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
-					if maxBytes <= 0 {
-						maxBytes = 2048
-					}
-					upstreamDetail = truncateString(string(respBody), maxBytes)
-				}
-				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-					ProxyID:            opsUpstreamProxyID(account),
-					ProxyName:          opsUpstreamProxyName(account),
-					Platform:           account.Platform,
-					AccountID:          account.ID,
-					AccountName:        account.Name,
-					UpstreamStatusCode: resp.StatusCode,
-					UpstreamRequestID:  resp.Header.Get("x-request-id"),
-					Kind:               "failover_on_400",
-					Message:            upstreamMsg,
-					Detail:             upstreamDetail,
-				})
-
-				if s.cfg.Gateway.LogUpstreamErrorBody {
-					logger.LegacyPrintf("service.gateway",
-						"Account %d: 400 error, attempting failover: %s",
-						account.ID,
-						truncateForLog(respBody, s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes),
-					)
-				} else {
-					logger.LegacyPrintf("service.gateway", "Account %d: 400 error, attempting failover", account.ID)
-				}
-				s.handleFailoverSideEffects(ctx, resp, account, reqModel)
-				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody}
 			}
 		}
 		return s.handleErrorResponse(ctx, resp, c, account, reqModel)

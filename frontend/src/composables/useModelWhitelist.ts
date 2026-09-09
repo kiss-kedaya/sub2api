@@ -543,3 +543,20 @@ export function buildModelMappingObject(
 
   return Object.keys(mapping).length > 0 ? mapping : null
 }
+
+export function mergeUpstreamIdentityMappings(
+  existing: ModelMappingEntry[],
+  upstreamModels: string[]
+): { mappings: ModelMappingEntry[]; added: number } {
+  const mappings = existing.map((entry) => ({ from: entry.from, to: entry.to }))
+  const fromKeys = new Set(mappings.map((entry) => entry.from.trim()).filter(Boolean))
+  let added = 0
+  for (const raw of upstreamModels) {
+    const model = raw.trim()
+    if (!model || fromKeys.has(model)) continue
+    mappings.push({ from: model, to: model })
+    fromKeys.add(model)
+    added += 1
+  }
+  return { mappings, added }
+}

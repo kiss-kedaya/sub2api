@@ -212,7 +212,7 @@ func (s *OpenAIGatewayService) shouldFailoverGrokUpstreamError(statusCode int, r
 	case GrokFailureFreeUsage, GrokFailureEmptyUpstream, GrokFailureBilling, GrokFailureModelCapacity, GrokFailureCompatibility:
 		return decision.ShouldFailover
 	}
-	return s.shouldFailoverUpstreamError(statusCode)
+	return s.shouldFailoverUpstreamResponse(statusCode, nil, responseBody)
 }
 
 func isGrokDecoderCompatibilityError(statusCode int, responseBody []byte) bool {

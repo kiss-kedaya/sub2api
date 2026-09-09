@@ -286,6 +286,11 @@ func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool 
 	return ShouldFailoverUpstream(statusCode, nil, nil, nil)
 }
 
+func (s *OpenAIGatewayService) shouldFailoverUpstreamResponse(statusCode int, headers http.Header, body []byte) bool {
+	failoverOn400 := s != nil && s.cfg != nil && s.cfg.Gateway.FailoverOn400
+	return ShouldFailoverUpstreamResponse(statusCode, headers, body, failoverOn400)
+}
+
 func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Account, statusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	// cyber_policy is request-scoped even when an intermediary wraps the
 	// provider response in a retryable 5xx status. Never punish or rotate the
@@ -302,20 +307,19 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Acc
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, upstreamBody) {
 		return true
 	}
-	// A missing model is account/provider availability, not a malformed client
-	// request. Keep this unconditional exception inside the OpenAI-compatible
-	// gateway and require an eligible account so Anthropic/Gemini paths retain
-	// their existing opt-in 400 behavior.
-	// A bare forwarding service has no account-selection owner to consume a
-	// failover sentinel. In that mode (used by direct/single-account callers),
-	// preserve the deterministic upstream 400 instead of returning an unwritten
-	// retry signal. Managed gateway instances always have an account repository;
-	// their handler can exclude this account and actually select another one.
-	if s != nil && s.accountRepo != nil && account != nil && account.IsOpenAICompatible() && statusCode == http.StatusBadRequest &&
-		isOpenAICompatibleModelNotFound400(upstreamBody) {
-		return true
+	class := ClassifyUpstreamFailure(statusCode, nil, upstreamBody, nil)
+	if class.Kind == UpstreamFailureModelMissing {
+		// A bare forwarding service has no account-selection owner to consume a
+		// failover sentinel. In that mode (used by direct/single-account callers),
+		// preserve the deterministic upstream 400 instead of returning an unwritten
+		// retry signal. Managed gateway instances always have an account repository;
+		// their handler can exclude this account and actually select another one.
+		return s != nil && s.accountRepo != nil && account != nil && account.IsOpenAICompatible()
 	}
-	if s.shouldFailoverUpstreamError(statusCode) {
+	if class.Kind == UpstreamFailureCompat {
+		return s != nil && s.cfg != nil && s.cfg.Gateway.FailoverOn400
+	}
+	if class.Failover {
 		return true
 	}
 	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)

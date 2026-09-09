@@ -424,7 +424,7 @@ func (s *AntigravityGatewayService) handleAntigravityCompatHTTPError(
 		"",
 		false,
 	)
-	if s.shouldFailoverUpstreamError(resp.StatusCode) {
+	if s.shouldFailoverUpstreamResponse(resp.StatusCode, resp.Header, body) {
 		message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractAntigravityErrorMessage(body)))
 		event := OpsUpstreamErrorEvent{
 			ProxyID:            opsUpstreamProxyID(account),

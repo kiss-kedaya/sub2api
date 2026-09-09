@@ -282,13 +282,12 @@ func (s *GatewayService) handleBedrockUpstreamErrors(
 	c *gin.Context,
 	account *Account,
 ) (*ForwardResult, error) {
-	// retry exhausted + failover
-	if s.shouldRetryUpstreamError(account, resp.StatusCode) {
-		if s.shouldFailoverUpstreamError(resp.StatusCode) {
-			respBody, _ := s.readUpstreamErrorBody(resp)
-			_ = resp.Body.Close()
-			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+	respBody, _ := s.readUpstreamErrorBody(resp)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
+	if s.shouldRetryUpstreamError(account, resp.StatusCode) {
+		if s.shouldFailoverUpstreamResponse(resp.StatusCode, resp.Header, respBody) {
 			logger.LegacyPrintf("service.gateway", "[Bedrock] Upstream error (retry exhausted, failover): Account=%d(%s) Status=%d Body=%s",
 				account.ID, account.Name, resp.StatusCode, truncateString(string(respBody), 1000))
 
@@ -312,12 +311,7 @@ func (s *GatewayService) handleBedrockUpstreamErrors(
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
 	}
 
-	// non-retryable failover
-	if s.shouldFailoverUpstreamError(resp.StatusCode) {
-		respBody, _ := s.readUpstreamErrorBody(resp)
-		_ = resp.Body.Close()
-		resp.Body = io.NopCloser(bytes.NewReader(respBody))
-
+	if s.shouldFailoverUpstreamResponse(resp.StatusCode, resp.Header, respBody) {
 		s.handleFailoverSideEffects(ctx, resp, account)
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			ProxyID:            opsUpstreamProxyID(account),
@@ -336,7 +330,6 @@ func (s *GatewayService) handleBedrockUpstreamErrors(
 		}
 	}
 
-	// other errors
 	return s.handleErrorResponse(ctx, resp, c, account)
 }
 
