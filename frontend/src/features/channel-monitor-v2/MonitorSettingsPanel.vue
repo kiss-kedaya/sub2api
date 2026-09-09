@@ -387,6 +387,9 @@ function platformLabel(value: string) {
       kiro: 'Kiro',
       gemini: 'Gemini',
       antigravity: 'Antigravity',
+      kimi: 'Kimi',
+      zhipu: 'Zhipu',
+      deepseek: 'DeepSeek',
       composite: 'Composite',
     } as Record<string, string>
   )[value] || value
