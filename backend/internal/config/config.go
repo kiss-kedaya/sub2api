@@ -2289,7 +2289,7 @@ func setDefaults() {
 	viper.SetDefault("ops.cleanup.enabled", true)
 	viper.SetDefault("ops.cleanup.schedule", "0 2 * * *")
 	// Retention days: vNext defaults to 30 days across ops datasets.
-	viper.SetDefault("ops.cleanup.error_log_retention_days", 30)
+	viper.SetDefault("ops.cleanup.error_log_retention_days", 1)
 	viper.SetDefault("ops.cleanup.minute_metrics_retention_days", 30)
 	viper.SetDefault("ops.cleanup.hourly_metrics_retention_days", 30)
 	viper.SetDefault("ops.aggregation.enabled", true)
