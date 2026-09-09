@@ -23,7 +23,8 @@ const (
 	// recovery runs can make a committed charge impossible to reconcile. Only
 	// terminal markers expire after finalize/refund.
 	liveBalanceTerminalAttemptTTL = 15 * time.Minute
-	liveBalanceAdjustmentEventTTL = 30 * 24 * time.Hour
+	// 48h is enough to dedupe outbox retries. 30d filled Redis with tens of millions of adjust keys.
+	liveBalanceAdjustmentEventTTL = 48 * time.Hour
 
 	// Redis Lua represents numbers as IEEE-754 doubles. Keeping integer money
 	// values in this range makes comparisons exact; mutations use INCRBY.
