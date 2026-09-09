@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,6 +46,38 @@ func TestClassifyUpstreamFailure_Canceled(t *testing.T) {
 	class := ClassifyUpstreamFailure(0, nil, nil, context.Canceled)
 	require.Equal(t, UpstreamFailureCanceled, class.Kind)
 	require.False(t, class.Failover)
+}
+
+func TestShouldFailoverUpstreamResponse_ModelNotFoundWithoutFlag(t *testing.T) {
+	body := []byte(`{"error":{"code":"model_not_found","message":"model not found"}}`)
+	require.True(t, ShouldFailoverUpstreamResponse(http.StatusBadRequest, nil, body, false))
+	require.True(t, ShouldFailoverUpstreamResponse(http.StatusNotFound, nil, body, false))
+}
+
+func TestShouldFailoverUpstreamResponse_CompatRequiresFlag(t *testing.T) {
+	body := []byte(`{"error":{"message":"thinking is not supported"}}`)
+	require.False(t, ShouldFailoverUpstreamResponse(http.StatusBadRequest, nil, body, false))
+	require.True(t, ShouldFailoverUpstreamResponse(http.StatusBadRequest, nil, body, true))
+}
+
+func TestShouldFailoverUpstreamResponse_StatusOnly400StaysFalse(t *testing.T) {
+	require.False(t, ShouldFailoverUpstreamResponse(http.StatusBadRequest, nil, nil, false))
+	require.False(t, ShouldFailoverUpstreamResponse(http.StatusBadRequest, nil, nil, true))
+}
+
+func TestGatewayShouldFailoverUpstreamResponse_CompatGated(t *testing.T) {
+	body := []byte(`{"error":{"message":"thinking is not supported"}}`)
+	modelMissing := []byte(`{"error":{"code":"model_not_found","message":"model not found"}}`)
+
+	svc := &GatewayService{}
+	require.False(t, svc.shouldFailoverUpstreamResponse(http.StatusBadRequest, nil, body))
+	require.True(t, svc.shouldFailoverUpstreamResponse(http.StatusBadRequest, nil, modelMissing))
+	require.False(t, svc.shouldFailoverUpstreamError(http.StatusBadRequest))
+	require.True(t, svc.shouldFailoverUpstreamError(http.StatusMethodNotAllowed))
+
+	svc.cfg = &config.Config{}
+	svc.cfg.Gateway.FailoverOn400 = true
+	require.True(t, svc.shouldFailoverUpstreamResponse(http.StatusBadRequest, nil, body))
 }
 
 func TestPoolModeSameAccountRetry_SkipsWAF(t *testing.T) {

@@ -783,7 +783,12 @@ func logPrefix(sessionID, accountName string) string {
 }
 
 func (s *AntigravityGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
-	return ShouldFailoverUpstream(statusCode, nil, nil, nil)
+	return s.shouldFailoverUpstreamResponse(statusCode, nil, nil)
+}
+
+func (s *AntigravityGatewayService) shouldFailoverUpstreamResponse(statusCode int, headers http.Header, body []byte) bool {
+	failoverOn400 := s != nil && s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.FailoverOn400
+	return ShouldFailoverUpstreamResponse(statusCode, headers, body, failoverOn400)
 }
 
 // isGoogleProjectConfigError 判断（已提取的小写）错误消息是否属于 Google 服务端配置类问题。
