@@ -800,6 +800,75 @@ func TestGetAvailableModels_UsesShortCacheAndSupportsInvalidation(t *testing.T) 
 	require.Equal(t, int64(2), store)
 }
 
+func TestGetAvailableModels_FillsGroupCatalogFromOneList(t *testing.T) {
+	resetGatewayHotpathStatsForTest()
+
+	groupID := int64(44)
+	repo := &modelsListAccountRepoStub{
+		byGroup: map[int64][]Account{
+			groupID: {
+				{
+					ID:       1,
+					Platform: PlatformAnthropic,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"claude-sonnet-4-6": "claude-sonnet-4-6"},
+					},
+				},
+				{
+					ID:       2,
+					Platform: PlatformOpenAI,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"gemini-3.8-flash": "gemini-3.8-flash"},
+					},
+				},
+			},
+		},
+	}
+	svc := &GatewayService{
+		accountRepo:        repo,
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+		platformsListCache: gocache.New(time.Minute, time.Minute),
+	}
+
+	require.Equal(t, []string{"claude-sonnet-4-6"}, svc.GetAvailableModels(context.Background(), &groupID, PlatformAnthropic))
+	require.Equal(t, []string{"gemini-3.8-flash"}, svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI))
+	require.Equal(t, map[string]struct{}{
+		PlatformAnthropic: {},
+		PlatformOpenAI:    {},
+	}, svc.GetSchedulablePlatforms(context.Background(), &groupID))
+	require.Equal(t, int64(1), repo.listByGroupCalls.Load())
+
+	require.Equal(t, groupCatalogModelPresent, svc.groupCatalogHasRequestedModel(context.Background(), groupID, "gemini-3.8-flash"))
+	require.Equal(t, groupCatalogModelAbsent, svc.groupCatalogHasRequestedModel(context.Background(), groupID, "gpt-5.4"))
+	require.Equal(t, int64(1), repo.listByGroupCalls.Load())
+}
+
+func TestGetSchedulablePlatforms_SharesGroupCatalog(t *testing.T) {
+	groupID := int64(45)
+	repo := &modelsListAccountRepoStub{
+		byGroup: map[int64][]Account{
+			groupID: {{
+				ID:       1,
+				Platform: PlatformGemini,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"gemini-2.5-flash": "gemini-2.5-flash"},
+				},
+			}},
+		},
+	}
+	svc := &GatewayService{
+		accountRepo:        repo,
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+		platformsListCache: gocache.New(time.Minute, time.Minute),
+	}
+
+	require.Equal(t, map[string]struct{}{PlatformGemini: {}}, svc.GetSchedulablePlatforms(context.Background(), &groupID))
+	require.Equal(t, []string{"gemini-2.5-flash"}, svc.GetAvailableModels(context.Background(), &groupID, PlatformGemini))
+	require.Equal(t, int64(1), repo.listByGroupCalls.Load())
+}
+
 func TestGetAvailableModels_SchedulerSnapshotHitSkipsAccountRepository(t *testing.T) {
 	groupID := int64(91)
 	repo := &modelsListAccountRepoStub{}

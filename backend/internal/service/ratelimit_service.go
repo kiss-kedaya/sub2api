@@ -512,7 +512,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			upstreamMsg,
 			truncateForLog(responseBody, 1024),
 		)
-		shouldDisable = s.handle403(ctx, account, upstreamMsg, responseBody)
+		shouldDisable = s.handle403(ctx, account, headers, upstreamMsg, responseBody)
 	case 429:
 		s.handle429(ctx, account, headers, responseBody)
 		shouldDisable = false
@@ -945,7 +945,7 @@ func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody 
 // handle403 处理 403 Forbidden 错误
 // Antigravity 平台区分 validation/violation/generic 三种类型，均 SetError 永久禁用；
 // 其他平台保持原有 SetError 行为。
-func (s *RateLimitService) handle403(ctx context.Context, account *Account, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
+func (s *RateLimitService) handle403(ctx context.Context, account *Account, headers http.Header, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
 	if account.Platform == PlatformAntigravity {
 		return s.handleAntigravity403(ctx, account, upstreamMsg, responseBody)
 	}
@@ -960,7 +960,7 @@ func (s *RateLimitService) handle403(ctx context.Context, account *Account, upst
 	// 且 403 在 failover 状态集里会被逐账号重放——直接 SetError 会让一个坏请求/
 	// 一层坏代理连环永久禁用整组账号。走 HTML 豁免 + N 次累计 + 临时冷却。
 	if account.Platform == PlatformOpenAI || IsCNProvider(account.Platform) {
-		return s.handleOpenAI403(ctx, account, upstreamMsg, responseBody)
+		return s.handleOpenAI403(ctx, account, headers, upstreamMsg, responseBody)
 	}
 	// 非 Antigravity 平台：保持原有行为
 	msg := buildForbiddenErrorMessage(
@@ -973,7 +973,7 @@ func (s *RateLimitService) handle403(ctx context.Context, account *Account, upst
 	return true
 }
 
-func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
+func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account, headers http.Header, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
 	// 上游代理 / CDN 在请求到达 OpenAI API 之前就拦下时，回的是 HTML 403 页面而不是
 	// {"error":{...}} 结构化错误。这类响应描述的是「这条链路 / 这个端点被挡了」，
 	// 不构成账号凭据或权限失效的证据——例如无效的 /v1/responses 子路径（#5334）。
@@ -987,13 +987,14 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 	// shouldApplyOpenAIAlphaSearchAccountErrorSideEffects 的不变式也是端点级错误
 	// 只换号、不写账号错误状态。这里只跳过账号处罚，不改变 failover 行为——
 	// 换个走不同代理的账号仍有可能成功。
-	if isHTMLResponse(responseBody) || IsUpstreamWAFBody(responseBody) || IsUpstreamCapacityCoolingBody(responseBody) {
+	class := ClassifyUpstreamFailure(http.StatusForbidden, headers, responseBody, nil)
+	if isHTMLResponse(responseBody) || !class.PunishAccount {
 		slog.Warn(
 			"openai_403_non_credential_body_skips_account_penalty",
 			"account_id", account.ID,
 			"upstream_message", upstreamMsg,
-			"waf", IsUpstreamWAFBody(responseBody),
-			"cooling", IsUpstreamCapacityCoolingBody(responseBody),
+			"kind", string(class.Kind),
+			"html", isHTMLResponse(responseBody),
 		)
 		return false
 	}

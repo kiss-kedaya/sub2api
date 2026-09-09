@@ -4,7 +4,7 @@ vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn()
 }))
 
-import { buildModelMappingObject, getModelsByPlatform, splitModelMappingObject } from '../useModelWhitelist'
+import { buildModelMappingObject, getModelsByPlatform, mergeUpstreamIdentityMappings, splitModelMappingObject } from '../useModelWhitelist'
 
 describe('useModelWhitelist', () => {
   it('openai 模型列表包含 GPT-5.4 官方快照', () => {
@@ -157,5 +157,20 @@ describe('useModelWhitelist', () => {
       allowedModels: ['gpt-5.4'],
       modelMappings: [{ from: 'gpt-latest', to: 'gpt-5.4' }]
     })
+  })
+
+  it('mergeUpstreamIdentityMappings 只补缺失的 from，不覆盖已有映射', () => {
+    const result = mergeUpstreamIdentityMappings(
+      [{ from: 'gpt-latest', to: 'gpt-5.4' }, { from: '  ', to: 'ignored' }],
+      [' gpt-5.4 ', 'gpt-latest', 'gemini-3.8-flash', '']
+    )
+
+    expect(result.added).toBe(2)
+    expect(result.mappings).toEqual([
+      { from: 'gpt-latest', to: 'gpt-5.4' },
+      { from: '  ', to: 'ignored' },
+      { from: 'gpt-5.4', to: 'gpt-5.4' },
+      { from: 'gemini-3.8-flash', to: 'gemini-3.8-flash' }
+    ])
   })
 })
