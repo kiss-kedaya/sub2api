@@ -203,6 +203,62 @@ func TestChannelMonitorV2ConfigValidation(t *testing.T) {
 	require.ErrorIs(t, normalizeChannelMonitorV2Config(&cfg), ErrChannelMonitorV2InvalidConfig)
 }
 
+func TestEnsureChannelMonitorV2KnownPlatformsAddsCNProviders(t *testing.T) {
+	cfg := ChannelMonitorV2Config{
+		Platforms: []ChannelMonitorV2PlatformConfig{
+			{Platform: "anthropic", Enabled: true},
+			{Platform: "openai", Enabled: true},
+			{Platform: "grok", Enabled: true},
+			{Platform: "kiro", Enabled: true},
+			{Platform: "gemini", Enabled: true},
+			{Platform: "antigravity", Enabled: true},
+		},
+	}
+	ensureChannelMonitorV2KnownPlatforms(&cfg)
+	got := make([]string, 0, len(cfg.Platforms))
+	for _, p := range cfg.Platforms {
+		got = append(got, p.Platform)
+	}
+	require.Contains(t, got, "kimi")
+	require.Contains(t, got, "zhipu")
+	require.Contains(t, got, "deepseek")
+	require.Len(t, cfg.Platforms, len(ChannelMonitorV2KnownPlatforms))
+
+	// Existing operator choices stay put.
+	for i := range cfg.Platforms {
+		if cfg.Platforms[i].Platform == "kimi" {
+			cfg.Platforms[i].Enabled = false
+			cfg.Platforms[i].Models = []string{"kimi-k2"}
+		}
+	}
+	ensureChannelMonitorV2KnownPlatforms(&cfg)
+	for _, p := range cfg.Platforms {
+		if p.Platform == "kimi" {
+			require.False(t, p.Enabled)
+			require.Equal(t, []string{"kimi-k2"}, p.Models)
+		}
+	}
+}
+
+func TestChannelMonitorV2GetConfigSurfacesKnownPlatforms(t *testing.T) {
+	repo := &channelMonitorV2RepoStub{config: ChannelMonitorV2Config{
+		Enabled: true,
+		Platforms: []ChannelMonitorV2PlatformConfig{
+			{Platform: "openai", Enabled: true},
+		},
+	}}
+	cfg, err := NewChannelMonitorV2Service(repo).GetConfig(context.Background())
+	require.NoError(t, err)
+	names := make([]string, 0, len(cfg.Platforms))
+	for _, p := range cfg.Platforms {
+		names = append(names, p.Platform)
+	}
+	require.Contains(t, names, "kimi")
+	require.Contains(t, names, "zhipu")
+	require.Contains(t, names, "deepseek")
+	require.Contains(t, names, "openai")
+}
+
 func TestChannelMonitorV2ErrorTaxonomyPriority(t *testing.T) {
 	tests := []struct {
 		name string
