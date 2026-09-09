@@ -1383,6 +1383,7 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	platform = strings.TrimSpace(platform)
 	cacheKey := modelsListCacheKey(groupID, platform)
 	if s.modelsListCache != nil {
 		if cached, found := s.modelsListCache.Get(cacheKey); found {
@@ -1393,42 +1394,16 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		}
 	}
 	modelsListCacheMissTotal.Add(1)
-	resultCh := s.modelsListSF.DoChan(cacheKey, func() (any, error) {
-		// DoChan executes the shared function in its own goroutine.  Create the
-		// detached timeout inside that function so a canceled waiter cannot
-		// cancel the leader's refresh before it publishes the cache entry.
-		leaderCtx := context.Background()
-		if ctx != nil {
-			leaderCtx = context.WithoutCancel(ctx)
-		}
-		leaderCtx, leaderCancel := context.WithTimeout(leaderCtx, 5*time.Second)
-		defer leaderCancel()
-		// Recheck after joining the flight; a concurrent leader may have filled
-		// the short cache between the caller's initial read and this function.
-		if s.modelsListCache != nil {
-			if cached, found := s.modelsListCache.Get(cacheKey); found {
-				if models, ok := cached.([]string); ok {
-					return cloneStringSlice(models), nil
-				}
-			}
-		}
-		models := s.loadAvailableModels(leaderCtx, groupID, platform)
-		if s.modelsListCache != nil {
-			s.modelsListCache.Set(cacheKey, cloneStringSlice(models), s.modelsListCacheTTL)
-			modelsListCacheStoreTotal.Add(1)
-		}
-		return models, nil
-	})
-	var result singleflight.Result
-	select {
-	case result = <-resultCh:
-	case <-ctx.Done():
+	if s.modelsListCache == nil {
+		return cloneStringSlice(s.loadAvailableModels(ctx, groupID, platform))
+	}
+	catalog := s.ensureGroupModelsCatalog(ctx, groupID)
+	if ctx.Err() != nil {
 		return nil
 	}
-	if result.Err != nil {
-		return nil
-	}
-	models, _ := result.Val.([]string)
+	models := catalog.modelsFor(platform)
+	s.modelsListCache.Set(cacheKey, storedModelList(models), s.modelsListCacheTTL)
+	modelsListCacheStoreTotal.Add(1)
 	return cloneStringSlice(models)
 }
 
@@ -1477,38 +1452,7 @@ func loadAvailableModelsFromStore(ctx context.Context, repo AccountRepository, s
 	if err != nil || len(accounts) == 0 {
 		return nil
 	}
-
-	if platform != "" {
-		filtered := make([]Account, 0, len(accounts))
-		for _, acc := range accounts {
-			if acc.Platform == platform {
-				filtered = append(filtered, acc)
-			}
-		}
-		accounts = filtered
-	}
-	modelSet := make(map[string]struct{})
-	for _, acc := range accounts {
-		// Passthrough routing accepts models independently of model_mapping.
-		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
-			return nil
-		}
-		for model := range acc.GetModelMapping() {
-			modelSet[model] = struct{}{}
-		}
-	}
-	if len(modelSet) == 0 {
-		return nil
-	}
-	models := make([]string, 0, len(modelSet))
-	for model := range modelSet {
-		models = append(models, model)
-	}
-	sort.Strings(models)
-	if platform == PlatformOpenAI {
-		models = supplementUnmappedOpenAIModels(accounts, models)
-	}
-	return models
+	return modelsFromSchedulableAccounts(accounts, platform)
 }
 
 // GetSchedulablePlatforms returns the concrete platforms that currently have
@@ -1529,65 +1473,18 @@ func (s *GatewayService) GetSchedulablePlatforms(ctx context.Context, groupID *i
 			}
 		}
 	}
-	resultCh := s.platformsListSF.DoChan(cacheKey, func() (any, error) {
-		// Keep the shared refresh independent from the first caller's deadline;
-		// the context must live for the whole DoChan function, not the waiter.
-		leaderCtx := context.Background()
-		if ctx != nil {
-			leaderCtx = context.WithoutCancel(ctx)
-		}
-		leaderCtx, leaderCancel := context.WithTimeout(leaderCtx, 5*time.Second)
-		defer leaderCancel()
-		if s.platformsListCache != nil {
-			if cached, found := s.platformsListCache.Get(cacheKey); found {
-				if values, ok := cached.(map[string]struct{}); ok {
-					return values, nil
-				}
-			}
-		}
-		if s.schedulerSnapshot != nil {
-			requestCtx := withSchedulerRequestMode(leaderCtx, s.accountRepo, s.schedulerSnapshot)
-			for _, candidatePlatform := range schedulerSnapshotPlatforms() {
-				accounts, _, err := s.schedulerSnapshot.listSchedulableAccountsForRequest(requestCtx, groupID, candidatePlatform, false)
-				if err != nil {
-					continue
-				}
-				for _, account := range accounts {
-					if platform := strings.TrimSpace(account.Platform); platform != "" {
-						platforms[platform] = struct{}{}
-					}
-				}
-			}
-		} else {
-			var accounts []Account
-			var err error
-			if groupID != nil {
-				accounts, err = s.accountRepo.ListSchedulableByGroupID(leaderCtx, *groupID)
-			} else {
-				accounts, err = s.accountRepo.ListSchedulable(leaderCtx)
-			}
-			if err != nil {
-				return platforms, nil
-			}
-			for _, account := range accounts {
-				if platform := strings.TrimSpace(account.Platform); platform != "" {
-					platforms[platform] = struct{}{}
-				}
-			}
-		}
-		if s.platformsListCache != nil {
-			s.platformsListCache.Set(cacheKey, clonePlatformSet(platforms), s.platformsListCacheTTL)
-		}
-		return platforms, nil
-	})
-	var result singleflight.Result
-	select {
-	case result = <-resultCh:
-	case <-ctx.Done():
+	if s.modelsListCache != nil {
+		return clonePlatformSet(s.ensureGroupModelsCatalog(ctx, groupID).platforms)
+	}
+
+	accounts, err := listSchedulableAccountsFromRepo(ctx, s.accountRepo, groupID)
+	if err != nil {
 		return platforms
 	}
-	if cached, ok := result.Val.(map[string]struct{}); ok {
-		return clonePlatformSet(cached)
+	for i := range accounts {
+		if platform := strings.TrimSpace(accounts[i].Platform); platform != "" {
+			platforms[platform] = struct{}{}
+		}
 	}
 	return platforms
 }
@@ -1612,6 +1509,7 @@ func (s *GatewayService) InvalidateAvailableModelsCache(groupID *int64, platform
 	// 完整匹配时精准失效；否则按维度批量失效。
 	if groupID != nil && normalizedPlatform != "" {
 		s.modelsListCache.Delete(modelsListCacheKey(groupID, normalizedPlatform))
+		s.modelsListCache.Delete(modelsListCatalogCacheKey(groupID))
 		if s.platformsListCache != nil {
 			s.platformsListCache.Delete(fmt.Sprintf("%d", derefGroupID(groupID)))
 		}
@@ -1631,7 +1529,7 @@ func (s *GatewayService) InvalidateAvailableModelsCache(groupID *int64, platform
 		if groupID != nil && groupPart != targetGroup {
 			continue
 		}
-		if normalizedPlatform != "" && parts[1] != normalizedPlatform {
+		if normalizedPlatform != "" && parts[1] != normalizedPlatform && parts[1] != modelsListCatalogMarker {
 			continue
 		}
 		s.modelsListCache.Delete(key)
