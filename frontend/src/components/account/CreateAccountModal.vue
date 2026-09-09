@@ -1142,6 +1142,13 @@
               {{ t('admin.accounts.mapRequestModels') }}
             </p>
           </div>
+          <ModelWhitelistSelector
+            sync-only
+            :model-value="antigravityMappingFromKeys"
+            platform="antigravity"
+            :sync-credentials="syncPreviewCredentials"
+            @upstream-models="importUpstreamModelsToAntigravityMapping"
+          />
 
           <div v-if="antigravityModelMappings.length > 0" class="mb-3 space-y-2">
             <div
@@ -1412,7 +1419,7 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" :sync-credentials="syncPreviewCredentials" />
+              <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" :sync-credentials="syncPreviewCredentials" @upstream-models="importUpstreamModelsToMapping" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0">{{
@@ -1441,6 +1448,13 @@
                   {{ t('admin.accounts.mapRequestModels') }}
                 </p>
               </div>
+              <ModelWhitelistSelector
+                sync-only
+                :model-value="modelMappingFromKeys"
+                :platform="form.platform"
+                :sync-credentials="syncPreviewCredentials"
+                @upstream-models="importUpstreamModelsToMapping"
+              />
 
             <!-- Model Mapping List -->
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
@@ -1894,7 +1908,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" platform="anthropic" :sync-credentials="syncPreviewCredentials" />
+            <ModelWhitelistSelector v-model="allowedModels" platform="anthropic" :sync-credentials="syncPreviewCredentials" @upstream-models="importUpstreamModelsToMapping" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0">{{ t('admin.accounts.supportsAllModels') }}</span>
@@ -1903,6 +1917,13 @@
 
           <!-- Mapping Mode -->
           <div v-else class="space-y-3">
+            <ModelWhitelistSelector
+              sync-only
+              :model-value="modelMappingFromKeys"
+              platform="anthropic"
+              :sync-credentials="syncPreviewCredentials"
+              @upstream-models="importUpstreamModelsToMapping"
+            />
             <div v-for="(mapping, index) in modelMappings" :key="index" class="flex items-center gap-2">
               <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.fromModel')" />
               <span class="text-gray-400">→</span>
@@ -2230,7 +2251,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" :sync-credentials="syncPreviewCredentials" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="form.platform" :sync-credentials="syncPreviewCredentials" @upstream-models="importUpstreamModelsToMapping" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0">{{
@@ -2246,6 +2267,13 @@
                 {{ t('admin.accounts.mapRequestModels') }}
               </p>
             </div>
+            <ModelWhitelistSelector
+              sync-only
+              :model-value="modelMappingFromKeys"
+              :platform="form.platform"
+              :sync-credentials="syncPreviewCredentials"
+              @upstream-models="importUpstreamModelsToMapping"
+            />
 
             <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
               <div
@@ -3730,6 +3758,7 @@ import {
   commonErrorCodes,
   buildModelMappingObject,
   fetchAntigravityDefaultMappings,
+  mergeUpstreamIdentityMappings,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
 import { useAuthStore } from '@/stores/auth'
@@ -4122,6 +4151,9 @@ const editWeeklyResetDay = ref<number | null>(null)
 const editWeeklyResetHour = ref<number | null>(null)
 const editResetTimezone = ref<string | null>(null)
 const modelMappings = ref<ModelMapping[]>([])
+const modelMappingFromKeys = computed(() =>
+  modelMappings.value.map((mapping) => mapping.from).filter(Boolean)
+)
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
@@ -4243,6 +4275,9 @@ const upstreamApiKey = ref('') // For upstream type: API key
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const antigravityWhitelistModels = ref<string[]>([])
 const antigravityModelMappings = ref<ModelMapping[]>([])
+const antigravityMappingFromKeys = computed(() =>
+  antigravityModelMappings.value.map((mapping) => mapping.from).filter(Boolean)
+)
 const antigravityPresetMappings = computed(() => getPresetMappingsByPlatform('antigravity'))
 const bedrockPresets = computed(() => getPresetMappingsByPlatform('bedrock'))
 
@@ -4776,6 +4811,14 @@ const addPresetMapping = (from: string, to: string) => {
     return
   }
   modelMappings.value.push({ from, to })
+}
+
+const importUpstreamModelsToMapping = (models: string[]) => {
+  modelMappings.value = mergeUpstreamIdentityMappings(modelMappings.value, models).mappings
+}
+
+const importUpstreamModelsToAntigravityMapping = (models: string[]) => {
+  antigravityModelMappings.value = mergeUpstreamIdentityMappings(antigravityModelMappings.value, models).mappings
 }
 
 const addAntigravityModelMapping = () => {

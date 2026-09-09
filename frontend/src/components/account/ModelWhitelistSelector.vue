@@ -1,7 +1,7 @@
 <template>
   <div>
     <!-- Multi-select Dropdown -->
-    <div class="relative mb-3">
+    <div v-if="!syncOnly" class="relative mb-3">
       <div
         @click="toggleDropdown"
         class="cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-2 dark:border-dark-500 dark:bg-dark-700"
@@ -93,8 +93,9 @@
     </div>
 
     <!-- Quick Actions -->
-    <div class="mb-4 flex flex-wrap gap-2">
+    <div class="mb-4 flex flex-wrap gap-2" :class="{ 'mb-3': syncOnly }">
       <button
+        v-if="!syncOnly"
         type="button"
         @click="fillRelated"
         class="rounded-lg border border-blue-200 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
@@ -104,6 +105,7 @@
       <button
         v-if="canSyncUpstream"
         type="button"
+        data-testid="sync-upstream-models"
         @click="syncUpstreamModels"
         :disabled="isSyncingUpstream"
         class="rounded-lg border border-emerald-200 px-3 py-1.5 text-sm text-emerald-600 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
@@ -111,6 +113,7 @@
         {{ isSyncingUpstream ? t('admin.accounts.syncUpstreamModelsLoading') : t('admin.accounts.syncUpstreamModels') }}
       </button>
       <button
+        v-if="!syncOnly"
         type="button"
         @click="clearAll"
         class="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/30"
@@ -120,7 +123,7 @@
     </div>
 
     <!-- Custom Model Input -->
-    <div class="mb-3">
+    <div v-if="!syncOnly" class="mb-3">
       <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.accounts.customModelName') }}</label>
       <div class="flex gap-2">
         <input
@@ -162,6 +165,7 @@ const props = defineProps<{
   platform?: string
   platforms?: string[]
   accountId?: number
+  syncOnly?: boolean
   syncCredentials?: {
     platform: string
     type: string
