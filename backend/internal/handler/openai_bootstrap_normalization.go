@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tidwall/gjson"
 )
 
 // normalizeCodexDelegationBootstrap converts the call-less tool result emitted
@@ -22,6 +24,47 @@ func normalizeCodexDelegationBootstrap(body []byte) ([]byte, bool) {
 
 func normalizeCodexAutomationBootstrap(body []byte) ([]byte, bool) {
 	return normalizeCodexCallOutputBootstrap(body, isCodexAutomationCandidate, false)
+}
+
+// applyCodexBootstrapNormalizations rewrites call-less Codex bootstrap tool
+// results. Cheap gjson scan first: typical /v1/responses bodies have no
+// automation/delegation items, and a full encoding/json Decoder walk of those
+// bodies was the hottest CPU path on production.
+func applyCodexBootstrapNormalizations(body []byte) (normalized []byte, automationChanged, delegationChanged bool) {
+	if !codexBootstrapInputLooksRelevant(body) {
+		return body, false, false
+	}
+	normalized = body
+	if next, changed := normalizeCodexAutomationBootstrap(normalized); changed {
+		normalized = next
+		automationChanged = true
+	}
+	if next, changed := normalizeCodexDelegationBootstrap(normalized); changed {
+		normalized = next
+		delegationChanged = true
+	}
+	return normalized, automationChanged, delegationChanged
+}
+
+func codexBootstrapInputLooksRelevant(body []byte) bool {
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return false
+	}
+	found := false
+	input.ForEach(func(_, item gjson.Result) bool {
+		if item.Get("type").String() != "function_call_output" {
+			return true
+		}
+		namespace := item.Get("namespace").String()
+		name := item.Get("name").String()
+		if isCodexDelegationTool(namespace, name) || (namespace == "codex_app" && name == "automation_update") {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 func normalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]any) bool, allowHistoricalContext bool) ([]byte, bool) {
