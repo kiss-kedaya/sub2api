@@ -1242,6 +1242,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_UpstreamRequest
 	// The gateway must leave response ownership to the handler so it can retry
 	// another account before committing a 502.
 	require.Zero(t, rec.Body.Len())
+	require.True(t, failoverErr.ShouldRetryNextAccount())
+	// 传输层错误交给 handler failover，service 不得写响应。
+	require.False(t, c.Writer.Written())
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_EmptyResponseBody(t *testing.T) {

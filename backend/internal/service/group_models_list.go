@@ -1,12 +1,13 @@
 package service
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
+
+// GroupModelsListConfig is the kedaya-era name for the group model allowlist.
+type GroupModelsListConfig = GroupModelAllowlist
 
 func normalizeGroupModelsListConfig(cfg GroupModelsListConfig) GroupModelsListConfig {
 	out := GroupModelsListConfig{Enabled: cfg.Enabled}
@@ -35,23 +36,7 @@ func normalizeGroupModelsListConfig(cfg GroupModelsListConfig) GroupModelsListCo
 }
 
 func (g *Group) CustomModelsListEnabled() bool {
-	return g != nil && g.ModelsListConfig.Enabled && len(g.ModelsListConfig.Models) > 0
-}
-
-// supplementUnmappedOpenAIModels ensures a partial mapping catalog does not
-// hide models from unmapped OpenAI accounts. An empty catalog is left unchanged
-// so callers retain their existing discovery fallback.
-func supplementUnmappedOpenAIModels(accounts []Account, models []string) []string {
-	if len(models) == 0 {
-		return models
-	}
-	for i := range accounts {
-		account := &accounts[i]
-		if account.Platform == PlatformOpenAI && len(account.GetModelMapping()) == 0 {
-			return dedupeAndSortModelIDs(slices.Concat(models, openai.DefaultModelIDs()))
-		}
-	}
-	return models
+	return g != nil && g.ModelAllowlist.Enabled && len(g.ModelAllowlist.Models) > 0
 }
 
 // modelsListAllows reports whether a client-requested model hits this group list.
