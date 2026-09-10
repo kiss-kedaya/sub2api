@@ -1684,16 +1684,6 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 	if failoverErr != nil {
 		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
 	}
-	if failoverErr != nil && service.IsUpstreamCapacityCoolingBody(failoverErr.ResponseBody) {
-		c.Header("Retry-After", "30")
-		h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Upstream providers are temporarily cooling down; please retry later", streamStarted)
-		return
-	}
-	if failoverErr != nil && failoverErr.IsCredentialFailure() {
-		status, message := credentialFailoverClientResponse(failoverErr)
-		h.anthropicStreamingAwareError(c, status, "api_error", message, streamStarted)
-		return
-	}
 	if failoverErr != nil && failoverErr.IsOpenAICapacityShed() && strings.TrimSpace(failoverErr.ClientMessage) != "" {
 		status := failoverErr.ClientStatusCode
 		if status <= 0 {
@@ -1702,7 +1692,22 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 		h.anthropicStreamingAwareError(c, status, "api_error", failoverErr.ClientMessage, streamStarted)
 		return
 	}
-	status, errType, errMsg := h.mapUpstreamError(failoverErr.StatusCode)
+	if failoverErr != nil && service.IsUpstreamCapacityCoolingBody(failoverErr.ResponseBody) {
+		c.Header("Retry-After", "30")
+		status, errType, message := wrapUpstreamClientError(failoverErr.StatusCode, failoverErr.ResponseBody)
+		if failoverErr.StatusCode == http.StatusUnauthorized || failoverErr.StatusCode == http.StatusForbidden {
+			status = http.StatusServiceUnavailable
+			errType = "api_error"
+		}
+		h.anthropicStreamingAwareError(c, status, errType, message, streamStarted)
+		return
+	}
+	if failoverErr != nil && failoverErr.IsCredentialFailure() {
+		status, message := credentialFailoverClientResponse(failoverErr)
+		h.anthropicStreamingAwareError(c, status, "api_error", message, streamStarted)
+		return
+	}
+	status, errType, errMsg := wrapUpstreamClientError(failoverErr.StatusCode, failoverErr.ResponseBody)
 	h.anthropicStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
@@ -3087,7 +3092,19 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	if service.IsUpstreamCapacityCoolingBody(responseBody) {
 		service.SetOpsUpstreamError(c, statusCode, service.ExtractUpstreamErrorMessage(responseBody), "")
 		c.Header("Retry-After", "30")
-		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "overloaded_error", "Upstream providers are temporarily cooling down; please retry later", streamStarted)
+		status, errType, message := wrapUpstreamClientError(statusCode, responseBody)
+		if failoverErr.IsOpenAICapacityShed() && strings.TrimSpace(failoverErr.ClientMessage) != "" {
+			status = failoverErr.ClientStatusCode
+			if status <= 0 {
+				status = http.StatusServiceUnavailable
+			}
+			errType = "overloaded_error"
+			message = strings.TrimSpace(failoverErr.ClientMessage)
+		} else if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+			status = http.StatusServiceUnavailable
+			errType = "overloaded_error"
+		}
+		h.handleStreamingAwareError(c, status, errType, message, streamStarted)
 		return
 	}
 	if failoverErr.IsCredentialFailure() {
@@ -3144,7 +3161,7 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
 
 	// 使用默认的错误映射
-	status, errType, errMsg := h.mapUpstreamError(statusCode)
+	status, errType, errMsg := wrapUpstreamClientError(statusCode, responseBody)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
@@ -3194,26 +3211,9 @@ func isSafeRetryAfter(value string) bool {
 
 // handleFailoverExhaustedSimple 简化版本，用于没有响应体的情况
 func (h *OpenAIGatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCode int, streamStarted bool) {
-	status, errType, errMsg := h.mapUpstreamError(statusCode)
+	status, errType, errMsg := wrapUpstreamClientError(statusCode, nil)
 	service.SetOpsUpstreamError(c, statusCode, errMsg, "")
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
-}
-
-func (h *OpenAIGatewayHandler) mapUpstreamError(statusCode int) (int, string, string) {
-	switch statusCode {
-	case 401:
-		return http.StatusBadGateway, "upstream_error", "Upstream authentication failed, please contact administrator"
-	case 403:
-		return http.StatusBadGateway, "upstream_error", "Upstream access forbidden, please contact administrator"
-	case 429:
-		return http.StatusTooManyRequests, "rate_limit_error", "Upstream rate limit exceeded, please retry later"
-	case 529:
-		return http.StatusServiceUnavailable, "upstream_error", "Upstream service overloaded, please retry later"
-	case 500, 502, 503, 504:
-		return http.StatusBadGateway, "upstream_error", "Upstream service temporarily unavailable"
-	default:
-		return http.StatusBadGateway, "upstream_error", "Upstream request failed"
-	}
 }
 
 // handleStreamingAwareError handles errors that may occur after streaming has started

@@ -99,7 +99,7 @@ func TestOpenAICoolingGroupForbiddenIsRetryable503(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 	require.Equal(t, "30", recorder.Header().Get("Retry-After"))
 	require.Equal(t, "overloaded_error", gjson.Get(recorder.Body.String(), "error.type").String())
-	require.Contains(t, recorder.Body.String(), "temporarily cooling down")
+	require.Contains(t, recorder.Body.String(), "货源均在冷却中")
 	require.NotContains(t, recorder.Body.String(), "access forbidden")
 }
 
@@ -219,8 +219,7 @@ func TestOpenAICapacityFailoverExhaustionReturnsNormalizedCooldownError(t *testi
 		(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, failoverErr, false)
 		require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 		require.Equal(t, "overloaded_error", gjson.Get(recorder.Body.String(), "error.type").String())
-		require.Equal(t, "Upstream providers are temporarily cooling down; please retry later", gjson.Get(recorder.Body.String(), "error.message").String())
-		require.NotContains(t, recorder.Body.String(), "server_is_overloaded")
+		require.Equal(t, "Our servers are currently overloaded. Please try again later.", gjson.Get(recorder.Body.String(), "error.message").String())
 	})
 
 	t.Run("responses_compat", func(t *testing.T) {
@@ -229,7 +228,7 @@ func TestOpenAICapacityFailoverExhaustionReturnsNormalizedCooldownError(t *testi
 		(&GatewayHandler{}).handleResponsesFailoverExhausted(c, failoverErr, false)
 		require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 		require.Equal(t, "server_error", gjson.Get(recorder.Body.String(), "error.code").String())
-		require.Equal(t, "Upstream providers are temporarily cooling down; please retry later", gjson.Get(recorder.Body.String(), "error.message").String())
+		require.Equal(t, "Our servers are currently overloaded. Please try again later.", gjson.Get(recorder.Body.String(), "error.message").String())
 	})
 
 	t.Run("anthropic_compat", func(t *testing.T) {
@@ -238,7 +237,7 @@ func TestOpenAICapacityFailoverExhaustionReturnsNormalizedCooldownError(t *testi
 		(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, failoverErr, false)
 		require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 		require.Equal(t, "api_error", gjson.Get(recorder.Body.String(), "error.type").String())
-		require.Equal(t, "Upstream providers are temporarily cooling down; please retry later", gjson.Get(recorder.Body.String(), "error.message").String())
+		require.Equal(t, "Our servers are currently overloaded. Please try again later.", gjson.Get(recorder.Body.String(), "error.message").String())
 	})
 }
 

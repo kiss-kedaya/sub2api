@@ -1448,7 +1448,7 @@ func TestGatewayModels_SmartRoutingPrimaryCustomListDoesNotHideLaterGroups(t *te
 		Group: &service.Group{
 			ID:       primaryID,
 			Platform: service.PlatformOpenAI,
-			ModelsListConfig: service.GroupModelsListConfig{
+			ModelAllowlist: service.GroupModelsListConfig{
 				Enabled: true,
 				Models:  []string{"gpt-5.5"},
 			},
