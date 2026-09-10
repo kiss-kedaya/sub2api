@@ -797,7 +797,7 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody
 	if service.IsUpstreamCapacityCoolingBody(responseBody) {
-		c.Header("Retry-After", "5")
+		c.Header("Retry-After", "30")
 		googleError(c, http.StatusServiceUnavailable, "Upstream providers are temporarily cooling down; please retry later")
 		return
 	}

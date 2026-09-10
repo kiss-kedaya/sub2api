@@ -127,7 +127,7 @@ const (
 	// backoffMultiplier 退避时间乘数（指数退避）
 	backoffMultiplier = 1.5
 	// maxBackoff 最大退避时间
-	maxBackoff = 2 * time.Second
+	maxBackoff = 30 * time.Second
 )
 
 // SSEPingFormat defines the format of SSE ping events for different platforms
@@ -477,7 +477,7 @@ func (h *ConcurrencyHelper) AcquireAccountSlotWithWaitTimeout(c *gin.Context, ac
 // nextBackoff 计算下一次退避时间
 // 性能优化：使用指数退避 + 随机抖动，避免惊群效应
 // current: 当前退避时间
-// 返回值：下一次退避时间（100ms ~ 2s 之间）
+// 返回值：下一次退避时间（100ms ~ 30s 之间）
 func nextBackoff(current time.Duration) time.Duration {
 	// 指数退避：当前时间 * 1.5
 	next := time.Duration(float64(current) * backoffMultiplier)

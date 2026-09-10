@@ -428,7 +428,7 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 	}
 	status, code, message := statusCode, "server_error", "All available accounts exhausted"
 	if lastErr != nil && service.IsUpstreamCapacityCoolingBody(lastErr.ResponseBody) {
-		c.Header("Retry-After", "5")
+		c.Header("Retry-After", "30")
 		status, code, message = http.StatusServiceUnavailable, "server_error", "Upstream providers are temporarily cooling down; please retry later"
 	} else if lastErr != nil && lastErr.IsCredentialFailure() {
 		status, message = credentialFailoverClientResponse(lastErr)

@@ -1662,7 +1662,7 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
 	}
 	if failoverErr != nil && service.IsUpstreamCapacityCoolingBody(failoverErr.ResponseBody) {
-		c.Header("Retry-After", "5")
+		c.Header("Retry-After", "30")
 		h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Upstream providers are temporarily cooling down; please retry later", streamStarted)
 		return
 	}
@@ -2014,7 +2014,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 	if !ingressLeaseAcquired {
 		reqLog.Info("openai.websocket_ingress_capacity_rejected", zap.Int("max_ingress_connections_per_api_key", maxIngressConnections))
-		c.Header("Retry-After", "5")
+		c.Header("Retry-After", "30")
 		h.errorResponse(c, http.StatusTooManyRequests, "rate_limit_error", "Too many open WebSocket connections, please retry later")
 		return
 	}
@@ -3034,7 +3034,7 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	responseBody := failoverErr.ResponseBody
 	if service.IsUpstreamCapacityCoolingBody(responseBody) {
 		service.SetOpsUpstreamError(c, statusCode, service.ExtractUpstreamErrorMessage(responseBody), "")
-		c.Header("Retry-After", "5")
+		c.Header("Retry-After", "30")
 		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "overloaded_error", "Upstream providers are temporarily cooling down; please retry later", streamStarted)
 		return
 	}
