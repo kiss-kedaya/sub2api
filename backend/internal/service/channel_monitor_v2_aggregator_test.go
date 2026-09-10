@@ -23,6 +23,19 @@ func TestChannelMonitorV2MaxChunkForDepth(t *testing.T) {
 	require.Equal(t, 15*time.Minute, channelMonitorV2MinBackfillChunk)
 }
 
+func TestChannelMonitorV2AggregatorRunBudgetOutlivesStatementTimeout(t *testing.T) {
+	require.Equal(t, 3*time.Minute, channelMonitorV2RecentOverlap)
+	require.Equal(t, 3*time.Minute, channelMonitorV2RunTimeout)
+	require.Greater(t, channelMonitorV2LockTTL, channelMonitorV2RunTimeout)
+}
+
+func TestChannelMonitorV2AggregatorSetLeaderLock(t *testing.T) {
+	s := NewChannelMonitorV2Aggregator(nil, nil, nil)
+	cache := &fakeLeaderLockCache{}
+	s.SetLeaderLock(cache, nil)
+	require.Equal(t, cache, s.lockCache)
+}
+
 func TestChannelMonitorV2AggregatorAdaptiveChunk(t *testing.T) {
 	s := NewChannelMonitorV2Aggregator(nil, nil, nil)
 	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)

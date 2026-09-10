@@ -141,6 +141,11 @@ func (r *channelMonitorV2Repository) RecomputeRange(ctx context.Context, start, 
 			_ = tx.Rollback()
 		}
 	}()
+	// Cluster default statement_timeout is 30s; error overlap scans 90 minutes
+	// of ops_error_logs and times out under load, freezing the UI watermark.
+	if _, err = tx.ExecContext(ctx, `SET LOCAL statement_timeout = '180s'`); err != nil {
+		return err
+	}
 
 	// Idempotent window rewrite: drop existing facts/rollups in [start,end) then re-insert.
 	for _, table := range []string{

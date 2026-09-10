@@ -19,7 +19,13 @@ const (
 	channelMonitorV2BootstrapFirst = 2 * time.Hour
 	// Always refresh a small trailing window so late writes land without
 	// re-aggregating large history every tick.
-	channelMonitorV2RecentOverlap = 10 * time.Minute
+	channelMonitorV2RecentOverlap = 3 * time.Minute
+	// Overlap/error SQL can exceed the 30s Postgres statement_timeout during
+	// storms; keep the Go deadline above SET LOCAL 180s in RecomputeRange.
+	channelMonitorV2RunTimeout = 3 * time.Minute
+	// Crash-safety TTL must outlive the worst-case run so the lock cannot
+	// expire while RecomputeRange is still holding the transaction.
+	channelMonitorV2LockTTL = 4 * time.Minute
 
 	// Gentle backfill: small adaptive chunks, never default 24h hammering.
 	// Initial historical chunk after the 2h seed.
@@ -44,6 +50,7 @@ type channelMonitorRuntimeSubscriber interface {
 type ChannelMonitorV2Aggregator struct {
 	repo       ChannelMonitorV2Repository
 	db         *sql.DB
+	lockCache  LeaderLockCache
 	settings   channelMonitorRuntimeReader
 	instanceID string
 	stopCh     chan struct{}
@@ -77,6 +84,18 @@ func NewChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, 
 		stopCh:        make(chan struct{}),
 		kickCh:        make(chan struct{}, 1),
 		backfillChunk: channelMonitorV2BackfillChunkInit,
+	}
+}
+
+// SetLeaderLock injects the Redis leader-lock cache (and optional DB fallback)
+// so only one gateway process aggregates channel-monitor facts each tick.
+func (s *ChannelMonitorV2Aggregator) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
+	if s == nil {
+		return
+	}
+	s.lockCache = lockCache
+	if db != nil {
+		s.db = db
 	}
 }
 
@@ -220,9 +239,9 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(parent, 55*time.Second)
+	ctx, cancel := context.WithTimeout(parent, channelMonitorV2RunTimeout)
 	defer cancel()
-	release, acquired := tryAcquireSingletonLeaderLock(ctx, nil, s.db, channelMonitorV2AggregatorLockKey, s.instanceID, 2*time.Minute)
+	release, acquired := tryAcquireSingletonLeaderLock(ctx, s.lockCache, s.db, channelMonitorV2AggregatorLockKey, s.instanceID, channelMonitorV2LockTTL)
 	if !acquired {
 		return
 	}
