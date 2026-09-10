@@ -37,23 +37,23 @@ func isOpenAIDeterministicClientError(statusCode int) bool {
 // redactAgentIdentitySensitiveBody；这里不重复清洗，也不回落读取原始 body 的
 // message，避免绕开那两道脱敏。
 func writeOpenAIUpstreamClientError(c *gin.Context, statusCode int, body []byte, upstreamMsg string) {
-	errorPayload := gin.H{"type": openAIUpstreamClientErrorFallbackType}
-	if errType := strings.TrimSpace(gjson.GetBytes(body, "error.type").String()); errType != "" {
-		errorPayload["type"] = errType
+	status, errType, errCode, message := WrapUpstreamErrorForClient(statusCode, body)
+	if strings.TrimSpace(upstreamMsg) != "" {
+		message = strings.TrimSpace(upstreamMsg)
+	} else if message == http.StatusText(status) && status == http.StatusBadRequest {
+		message = openAIUpstreamClientErrorFallbackMessage
 	}
-	if code := strings.TrimSpace(extractUpstreamErrorCode(body)); code != "" {
-		errorPayload["code"] = code
+	if errType == "api_error" && status == http.StatusBadRequest {
+		errType = openAIUpstreamClientErrorFallbackType
+	}
+	errorPayload := gin.H{"type": errType, "message": message}
+	if errCode != "" {
+		errorPayload["code"] = errCode
 	}
 	if param := strings.TrimSpace(gjson.GetBytes(body, "error.param").String()); param != "" {
 		errorPayload["param"] = param
 	}
-	message := strings.TrimSpace(upstreamMsg)
-	if message == "" {
-		message = openAIUpstreamClientErrorFallbackMessage
-	}
-	errorPayload["message"] = message
-
-	c.JSON(statusCode, gin.H{"error": errorPayload})
+	c.JSON(status, gin.H{"error": errorPayload})
 }
 
 // WriteOpenAIUpstreamClientError preserves a structured deterministic upstream
