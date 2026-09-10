@@ -311,6 +311,10 @@ type ChannelMonitorV2Repository interface {
 	// passive aggregator (and bootstrap progress). Missing row → zero value, nil error.
 	GetAggregationWatermark(ctx context.Context) (*ChannelMonitorV2AggregationWatermark, error)
 	RecomputeRange(ctx context.Context, start, end time.Time) error
+	// RecomputeLiveRange refreshes the trailing live window for the 90m page.
+	// Implementations must use a short error-dedup lookback and skip retention
+	// prune so a busy Postgres does not stall channel status.
+	RecomputeLiveRange(ctx context.Context, start, end time.Time) error
 }
 
 // ChannelMonitorV2BootstrapProductWindow is the longest UI range that must be

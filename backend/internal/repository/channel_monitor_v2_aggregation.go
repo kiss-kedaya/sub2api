@@ -120,7 +120,31 @@ func (r *channelMonitorV2Repository) pruneChannelMonitorV2Retention(ctx context.
 	return nil
 }
 
-func (r *channelMonitorV2Repository) RecomputeRange(ctx context.Context, start, end time.Time) (err error) {
+const (
+	channelMonitorV2ErrorLookbackBackfill = 90 * time.Minute
+	channelMonitorV2ErrorLookbackLive     = 5 * time.Minute
+)
+
+type channelMonitorV2RecomputeOpts struct {
+	errorLookback time.Duration
+	prune         bool
+}
+
+func (r *channelMonitorV2Repository) RecomputeRange(ctx context.Context, start, end time.Time) error {
+	return r.recomputeRange(ctx, start, end, channelMonitorV2RecomputeOpts{
+		errorLookback: channelMonitorV2ErrorLookbackBackfill,
+		prune:         true,
+	})
+}
+
+func (r *channelMonitorV2Repository) RecomputeLiveRange(ctx context.Context, start, end time.Time) error {
+	return r.recomputeRange(ctx, start, end, channelMonitorV2RecomputeOpts{
+		errorLookback: channelMonitorV2ErrorLookbackLive,
+		prune:         false,
+	})
+}
+
+func (r *channelMonitorV2Repository) recomputeRange(ctx context.Context, start, end time.Time, opts channelMonitorV2RecomputeOpts) (err error) {
 	start = start.UTC().Truncate(time.Minute)
 	end = end.UTC().Truncate(time.Minute)
 	now := time.Now().UTC().Truncate(time.Minute)
@@ -172,7 +196,11 @@ func (r *channelMonitorV2Repository) RecomputeRange(ctx context.Context, start, 
 	if _, err = tx.ExecContext(ctx, fmt.Sprintf(channelMonitorV2HistogramSQL, channelMonitorV2PlatformSQL, channelMonitorV2ModelSQL, channelMonitorV2HistogramBoundSQL("latency.value_ms")), start, end); err != nil {
 		return fmt.Errorf("aggregate channel monitor v2 histograms: %w", err)
 	}
-	if _, err = tx.ExecContext(ctx, channelMonitorV2ErrorAggregationSQL, start, end); err != nil {
+	lookback := opts.errorLookback
+	if lookback < time.Minute {
+		lookback = channelMonitorV2ErrorLookbackBackfill
+	}
+	if _, err = tx.ExecContext(ctx, channelMonitorV2ErrorAggregationSQL, start, end, int64(lookback/time.Second)); err != nil {
 		return fmt.Errorf("aggregate channel monitor v2 errors: %w", err)
 	}
 	if err = r.recomputeFixedRollups(ctx, tx, start, end); err != nil {
@@ -180,8 +208,10 @@ func (r *channelMonitorV2Repository) RecomputeRange(ctx context.Context, start, 
 	}
 	// Drop rows past per-tier TTL (1m short, coarse rollups long). Safe after rollup
 	// so a backfill chunk can build 1d rollups from temporary 1m rows then discard 1m.
-	if err = r.pruneChannelMonitorV2Retention(ctx, tx, now); err != nil {
-		return err
+	if opts.prune {
+		if err = r.pruneChannelMonitorV2Retention(ctx, tx, now); err != nil {
+			return err
+		}
 	}
 	if _, err = tx.ExecContext(ctx, channelMonitorV2WatermarkSQL, start, end); err != nil {
 		return err
@@ -302,7 +332,7 @@ WITH dedup AS (
       (NULLIF(current_error.request_id, '') IS NULL AND current_error.created_at >= $1 AND current_error.created_at < $2)
       OR (
         current_error.request_id IN (SELECT request_id FROM candidate_ids)
-        AND current_error.created_at >= $1 - INTERVAL '90 minutes'
+        AND current_error.created_at >= $1 - ($3 * INTERVAL '1 second')
         AND current_error.created_at < $2
       )
     )
