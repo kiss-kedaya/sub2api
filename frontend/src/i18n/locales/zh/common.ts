@@ -201,6 +201,7 @@ export default {
     channelPricing: '渠道定价',
     channelMonitor: '渠道监控',
     channelStatus: '渠道状态',
+    ipAllowlist: '访问白名单',
     riskControl: '风控中心',
     securityAudit: '安全审计',
     contentModeration: '内容审核',
