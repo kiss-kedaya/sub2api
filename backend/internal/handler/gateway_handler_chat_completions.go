@@ -445,22 +445,27 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 	if lastErr != nil {
 		copyFailoverRetryAfter(c, lastErr.ResponseHeaders)
 	}
-	if lastErr != nil && service.IsUpstreamCapacityCoolingBody(lastErr.ResponseBody) {
-		c.Header("Retry-After", "30")
-		h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "server_error", "Upstream providers are temporarily cooling down; please retry later")
-		return
-	}
-	if lastErr != nil && lastErr.IsCredentialFailure() {
-		status, message := credentialFailoverClientResponse(lastErr)
-		h.chatCompletionsErrorResponse(c, status, "server_error", message)
-		return
-	}
 	if lastErr != nil && lastErr.IsOpenAICapacityShed() && strings.TrimSpace(lastErr.ClientMessage) != "" {
 		status := lastErr.ClientStatusCode
 		if status <= 0 {
 			status = http.StatusServiceUnavailable
 		}
 		h.chatCompletionsErrorResponse(c, status, "server_error", lastErr.ClientMessage)
+		return
+	}
+	if lastErr != nil && service.IsUpstreamCapacityCoolingBody(lastErr.ResponseBody) {
+		c.Header("Retry-After", "30")
+		status, errType, message := wrapUpstreamClientError(lastErr.StatusCode, lastErr.ResponseBody)
+		if lastErr.StatusCode == http.StatusUnauthorized || lastErr.StatusCode == http.StatusForbidden {
+			status = http.StatusServiceUnavailable
+			errType = "server_error"
+		}
+		h.chatCompletionsErrorResponse(c, status, errType, message)
+		return
+	}
+	if lastErr != nil && lastErr.IsCredentialFailure() {
+		status, message := credentialFailoverClientResponse(lastErr)
+		h.chatCompletionsErrorResponse(c, status, "server_error", message)
 		return
 	}
 	statusCode := http.StatusBadGateway
@@ -470,6 +475,11 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 	if lastErr != nil && service.IsOpenAISilentRefusalErrorBody(lastErr.ResponseBody) {
 		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")
 		h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage())
+		return
+	}
+	if lastErr != nil && len(lastErr.ResponseBody) > 0 {
+		status, errType, message := wrapUpstreamClientError(statusCode, lastErr.ResponseBody)
+		h.chatCompletionsErrorResponse(c, status, errType, message)
 		return
 	}
 	h.chatCompletionsErrorResponse(c, statusCode, "server_error", "All available accounts exhausted")

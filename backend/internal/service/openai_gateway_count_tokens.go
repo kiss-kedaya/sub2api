@@ -383,14 +383,11 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 		}
 		setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 
-		errMsg := "Upstream request failed"
-		switch resp.StatusCode {
-		case 429:
-			errMsg = "Rate limit exceeded"
-		case 500, 502, 503, 504, 529:
-			errMsg = "Upstream service temporarily unavailable"
+		status, errType, _, errMsg := WrapUpstreamErrorForClient(resp.StatusCode, respBody)
+		if strings.TrimSpace(upstreamMsg) != "" {
+			errMsg = upstreamMsg
 		}
-		writeAnthropicCountTokensError(c, resp.StatusCode, "upstream_error", errMsg)
+		writeAnthropicCountTokensError(c, status, errType, errMsg)
 		if upstreamMsg == "" {
 			return fmt.Errorf("input_tokens upstream error: %d", resp.StatusCode)
 		}
