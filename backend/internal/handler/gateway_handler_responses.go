@@ -427,22 +427,26 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 		statusCode = lastErr.StatusCode
 	}
 	status, code, message := statusCode, "server_error", "All available accounts exhausted"
-	if lastErr != nil && service.IsUpstreamCapacityCoolingBody(lastErr.ResponseBody) {
-		c.Header("Retry-After", "30")
-		status, code, message = http.StatusServiceUnavailable, "server_error", "Upstream providers are temporarily cooling down; please retry later"
-	} else if lastErr != nil && lastErr.IsCredentialFailure() {
-		status, message = credentialFailoverClientResponse(lastErr)
-	} else if lastErr != nil && lastErr.IsOpenAICapacityShed() && strings.TrimSpace(lastErr.ClientMessage) != "" {
+	if lastErr != nil && lastErr.IsOpenAICapacityShed() && strings.TrimSpace(lastErr.ClientMessage) != "" {
 		status = lastErr.ClientStatusCode
 		if status <= 0 {
 			status = http.StatusServiceUnavailable
 		}
 		message = lastErr.ClientMessage
+	} else if lastErr != nil && service.IsUpstreamCapacityCoolingBody(lastErr.ResponseBody) {
+		c.Header("Retry-After", "30")
+		status, code, message = wrapUpstreamClientError(statusCode, lastErr.ResponseBody)
+		if lastErr.StatusCode == http.StatusUnauthorized || lastErr.StatusCode == http.StatusForbidden {
+			status = http.StatusServiceUnavailable
+			code = "server_error"
+		}
+	} else if lastErr != nil && lastErr.IsCredentialFailure() {
+		status, message = credentialFailoverClientResponse(lastErr)
 	} else if lastErr != nil && service.IsOpenAISilentRefusalErrorBody(lastErr.ResponseBody) {
 		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")
 		status, code, message = http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage()
-	} else if lastErr != nil && statusCode == http.StatusTooManyRequests {
-		status, code, message = http.StatusTooManyRequests, "rate_limit_error", "All available accounts are currently rate-limited. Please retry later."
+	} else if lastErr != nil {
+		status, code, message = wrapUpstreamClientError(statusCode, lastErr.ResponseBody)
 	}
 	if streamStarted {
 		// A slot-wait heartbeat commits HTTP 200 before any upstream response.

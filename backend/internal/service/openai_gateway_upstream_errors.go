@@ -755,42 +755,8 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
 	}
 
-	// Return appropriate error response
-	var errType, errMsg string
-	var statusCode int
-
-	switch resp.StatusCode {
-	case 401:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream authentication failed, please contact administrator"
-	case 402:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream payment required: insufficient balance or billing issue"
-	case 403:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream access forbidden, please contact administrator"
-	case 429:
-		statusCode = http.StatusTooManyRequests
-		errType = "rate_limit_error"
-		errMsg = "Upstream rate limit exceeded, please retry later"
-	default:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream request failed"
-	}
-	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
-		errMsg = upstreamMsg
-	}
-
-	c.JSON(statusCode, gin.H{
-		"error": gin.H{
-			"type":    errType,
-			"message": errMsg,
-		},
-	})
+	// 上游返回什么，就包装成 OpenAI 错误体返回什么。不要把 503 overloaded 改成 502 套话。
+	writeOpenAIUpstreamClientError(c, resp.StatusCode, body, upstreamMsg)
 
 	if upstreamMsg == "" {
 		return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
