@@ -1687,8 +1687,9 @@ type TurnstileConfig struct {
 
 // CloudflareConfig holds credentials for user IP allowlisting via IP Access Rules.
 type CloudflareConfig struct {
-	APIToken string `mapstructure:"api_token"`
-	ZoneID   string `mapstructure:"zone_id"`
+	APIToken  string `mapstructure:"api_token"`
+	ZoneID    string `mapstructure:"zone_id"`
+	AccountID string `mapstructure:"account_id"`
 }
 
 type DefaultConfig struct {
@@ -2127,6 +2128,7 @@ func setDefaults() {
 	viper.SetDefault("turnstile.required", false)
 	viper.SetDefault("cloudflare.api_token", "")
 	viper.SetDefault("cloudflare.zone_id", "")
+	viper.SetDefault("cloudflare.account_id", "")
 
 	// LinuxDo Connect OAuth 登录
 	viper.SetDefault("linuxdo_connect.enabled", false)

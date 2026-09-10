@@ -1142,6 +1142,7 @@ turnstile:
 # Users with cumulative recharge >= 100 CNY can bind 1 public IP per 100 CNY (max 5).
 cloudflare:
   api_token: ""
+  account_id: ""
   zone_id: ""
 
 # =============================================================================

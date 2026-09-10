@@ -100,8 +100,25 @@ func (s *CFAllowlistService) zoneID() string {
 	return strings.TrimSpace(s.cfg.Cloudflare.ZoneID)
 }
 
+func (s *CFAllowlistService) accountID() string {
+	if v := strings.TrimSpace(os.Getenv("CLOUDFLARE_ACCOUNT_ID")); v != "" {
+		return v
+	}
+	if s == nil || s.cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.cfg.Cloudflare.AccountID)
+}
+
 func (s *CFAllowlistService) configured() bool {
-	return s.token() != "" && s.zoneID() != ""
+	return s.token() != "" && (s.accountID() != "" || s.zoneID() != "")
+}
+
+func (s *CFAllowlistService) cfBase() string {
+	if id := s.accountID(); id != "" {
+		return "https://api.cloudflare.com/client/v4/accounts/" + id
+	}
+	return "https://api.cloudflare.com/client/v4/zones/" + s.zoneID()
 }
 
 func (s *CFAllowlistService) Status(ctx context.Context, userID int64, detectedIP string) (*CFAllowlistStatus, error) {
@@ -183,6 +200,7 @@ func (s *CFAllowlistService) Delete(ctx context.Context, userID, id int64) error
 type cfAPIEnvelope struct {
 	Success bool `json:"success"`
 	Errors  []struct {
+		Code    int    `json:"code"`
 		Message string `json:"message"`
 	} `json:"errors"`
 	Result struct {
@@ -201,6 +219,9 @@ func (s *CFAllowlistService) createCloudflareRule(ctx context.Context, userID in
 	})
 	var env cfAPIEnvelope
 	if err := s.cfDo(ctx, http.MethodPost, "/firewall/access_rules/rules", body, &env); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			return s.findExistingRuleID(ctx, ip)
+		}
 		return "", err
 	}
 	if strings.TrimSpace(env.Result.ID) == "" {
@@ -209,15 +230,39 @@ func (s *CFAllowlistService) createCloudflareRule(ctx context.Context, userID in
 	return env.Result.ID, nil
 }
 
+func (s *CFAllowlistService) findExistingRuleID(ctx context.Context, ip string) (string, error) {
+	var list struct {
+		Success bool `json:"success"`
+		Result  []struct {
+			ID string `json:"id"`
+		} `json:"result"`
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfBase()+"/firewall/access_rules/rules?configuration.value="+ip, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.token())
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", infraerrors.ServiceUnavailable("CF_ALLOWLIST_UNAVAILABLE", "无法连接 Cloudflare")
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	_ = json.Unmarshal(raw, &list)
+	if len(list.Result) == 0 || strings.TrimSpace(list.Result[0].ID) == "" {
+		return "", infraerrors.BadRequest("CF_ALLOWLIST_FAILED", "Cloudflare 已有该 IP，但未能读取规则")
+	}
+	return list.Result[0].ID, nil
+}
+
 func (s *CFAllowlistService) deleteCloudflareRule(ctx context.Context, ruleID string) error {
 	var env cfAPIEnvelope
 	return s.cfDo(ctx, http.MethodDelete, "/firewall/access_rules/rules/"+ruleID, nil, &env)
 }
 
 func (s *CFAllowlistService) cfDo(ctx context.Context, method, path string, body []byte, out *cfAPIEnvelope) error {
-	zoneID := s.zoneID()
 	token := s.token()
-	url := "https://api.cloudflare.com/client/v4/zones/" + zoneID + path
+	url := s.cfBase() + path
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
