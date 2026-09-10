@@ -44,7 +44,8 @@ func TestSameAccountRetryDelayFor(t *testing.T) {
 		{name: "third retry", retryCount: 3, want: 2 * time.Second},
 		{name: "fourth retry", retryCount: 4, want: 4 * time.Second},
 		{name: "fifth retry", retryCount: 5, want: 8 * time.Second},
-		{name: "capped retry", retryCount: 10, want: 8 * time.Second},
+		{name: "sixth retry", retryCount: 6, want: 16 * time.Second},
+		{name: "capped retry", retryCount: 10, want: 30 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, sameAccountRetryDelayFor(capacityErr, tc.retryCount))
@@ -62,6 +63,11 @@ func TestSameAccountRetryDelayFor(t *testing.T) {
 	t.Run("explicit oauth delay wins", func(t *testing.T) {
 		err := &service.UpstreamFailoverError{SameAccountRetryDelay: 3 * time.Second}
 		require.Equal(t, 3*time.Second, sameAccountRetryDelayFor(err, 1))
+	})
+
+	t.Run("explicit delay capped at 30s", func(t *testing.T) {
+		err := &service.UpstreamFailoverError{SameAccountRetryDelay: 45 * time.Second}
+		require.Equal(t, 30*time.Second, sameAccountRetryDelayFor(err, 1))
 	})
 }
 
