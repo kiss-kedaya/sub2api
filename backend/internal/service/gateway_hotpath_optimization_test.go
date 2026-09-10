@@ -1060,6 +1060,45 @@ func TestGatewayStickyAccountEligible_RejectsWrongGroupAndNil(t *testing.T) {
 	require.False(t, gatewayStickyMixedPlatformOK(account, PlatformAnthropic))
 }
 
+func TestResolveCompositeModelOwnershipUsesModelsCacheInvalidation(t *testing.T) {
+	groupID := int64(9)
+	repo := &modelsListAccountRepoStub{
+		byGroup: map[int64][]Account{
+			groupID: {{
+				ID:          1,
+				Platform:    PlatformDeepseek,
+				Credentials: map[string]any{"model_mapping": map[string]any{"company-model": "deepseek-v4-pro"}},
+			}},
+		},
+	}
+	svc := &GatewayService{
+		accountRepo:        repo,
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+	}
+
+	first, err := svc.resolveCompositeModelOwnership(context.Background(), groupID, "company-model")
+	require.NoError(t, err)
+	require.Equal(t, CompositeModelOwnership{TargetPlatform: PlatformDeepseek, Matched: true}, first)
+	require.Equal(t, int64(1), repo.listByGroupCalls.Load())
+
+	repo.byGroup[groupID] = []Account{{
+		ID:          2,
+		Platform:    PlatformOpenAI,
+		Credentials: map[string]any{"model_mapping": map[string]any{"company-model": "gpt-5"}},
+	}}
+	cached, err := svc.resolveCompositeModelOwnership(context.Background(), groupID, "company-model")
+	require.NoError(t, err)
+	require.Equal(t, first, cached)
+	require.Equal(t, int64(1), repo.listByGroupCalls.Load())
+
+	svc.InvalidateAvailableModelsCache(&groupID, PlatformDeepseek)
+	refreshed, err := svc.resolveCompositeModelOwnership(context.Background(), groupID, "company-model")
+	require.NoError(t, err)
+	require.Equal(t, CompositeModelOwnership{TargetPlatform: PlatformOpenAI, Matched: true}, refreshed)
+	require.Equal(t, int64(2), repo.listByGroupCalls.Load())
+}
+
 func TestGetAvailableModels_ErrorAndGlobalListBranches(t *testing.T) {
 	resetGatewayHotpathStatsForTest()
 

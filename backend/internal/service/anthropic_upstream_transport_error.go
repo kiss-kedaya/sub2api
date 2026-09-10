@@ -82,7 +82,7 @@ func (s *GatewayService) handleAnthropicUpstreamTransportError(
 		// accounting from the previous inline implementation.
 		scheduleOllamaCloudUsageActivity(s.deferredService, account)
 
-		if classifyOpenAITransportError(err).Persistent {
+		if classifyUpstreamTransportError(err).Persistent {
 			s.tempUnscheduleAnthropicTransportError(ctx, account, safeErr)
 		}
 	}

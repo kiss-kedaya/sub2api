@@ -139,6 +139,8 @@ func TestNormalizeOpenAIResponsesReasoningMode(t *testing.T) {
 }
 
 func TestNormalizeOpenAIResponsesReasoningMode_AstraPreservesBody(t *testing.T) {
+	// GPT-6 Astra 保留官方 reasoning.mode 与 reasoning.effort 各自原样：
+	// 不删 mode、缺失 effort 也不补 max。非 Astra 的旧兼容行为不受影响。
 	tests := []struct {
 		name string
 		body string
@@ -160,6 +162,7 @@ func TestNormalizeOpenAIResponsesReasoningMode_AstraPreservesBody(t *testing.T) 
 }
 
 func TestNormalizeOpenAIResponsesReasoningMode_NonAstraKeepsLegacyBehavior(t *testing.T) {
+	// 确保 guard 只放过 Astra，非 Astra model 字段不影响既有 strip/pro->max 语义。
 	tests := []struct {
 		name       string
 		body       string
@@ -176,6 +179,25 @@ func TestNormalizeOpenAIResponsesReasoningMode_NonAstraKeepsLegacyBehavior(t *te
 			require.False(t, gjson.GetBytes(normalized, "reasoning.mode").Exists())
 			require.Equal(t, tt.wantEffort, gjson.GetBytes(normalized, "reasoning.effort").String())
 		})
+	}
+}
+
+func TestNormalizeOpenAIPassthroughOAuthBody_AstraPreservesReasoningMode(t *testing.T) {
+	body := []byte(`{"model":"gpt-6-astra","reasoning":{"mode":"pro","effort":"max"}}`)
+
+	normalized, _, err := normalizeOpenAIPassthroughOAuthBody(body, false)
+	require.NoError(t, err)
+	require.Equal(t, "pro", gjson.GetBytes(normalized, "reasoning.mode").String())
+	require.Equal(t, "max", gjson.GetBytes(normalized, "reasoning.effort").String())
+}
+
+func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_AstraPreservesReasoningMode(t *testing.T) {
+	body := []byte(`{"type":"response.create","model":"gpt-6-astra","reasoning":{"mode":"pro","effort":"max"}}`)
+	for _, accountType := range []string{AccountTypeOAuth, AccountTypeSetupToken} {
+		normalized, _, err := normalizeOpenAIResponsesWebSocketCompatibilityBody(body, &Account{Platform: PlatformOpenAI, Type: accountType}, false)
+		require.NoError(t, err)
+		require.Equal(t, "pro", gjson.GetBytes(normalized, "reasoning.mode").String())
+		require.Equal(t, "max", gjson.GetBytes(normalized, "reasoning.effort").String())
 	}
 }
 

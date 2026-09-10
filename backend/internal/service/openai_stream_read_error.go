@@ -12,15 +12,15 @@ const (
 	// when an upstream HTTP/2 response stream is reset after the request started.
 	OpenAIUpstreamHTTP2StreamErrorCode = "upstream_http2_stream_error"
 	OpenAIUpstreamStreamReadErrorCode  = "upstream_stream_read_error"
-	// OpenAIUpstreamStreamTruncatedCode is returned when an SSE stream closes
-	// before it emits any protocol terminal signal ([DONE], usage, or a
-	// non-null finish_reason).
+	// OpenAIUpstreamStreamTruncatedCode is returned when an upstream SSE stream
+	// closes *cleanly* before delivering any terminal signal. A clean EOF carries
+	// no transport error, so without this classification a truncated generation is
+	// indistinguishable from a successful one.
 	OpenAIUpstreamStreamTruncatedCode = "upstream_stream_truncated"
 )
 
-// ErrOpenAIUpstreamStreamTruncated marks a clean EOF before a raw Chat
-// Completions stream emitted a terminal signal. A clean EOF has no transport
-// error to classify, so keep a sentinel for stable error handling and tests.
+// ErrOpenAIUpstreamStreamTruncated marks an upstream SSE stream that ended at
+// EOF — without a read error — before any terminal signal arrived.
 var ErrOpenAIUpstreamStreamTruncated = errors.New("upstream stream ended before any terminal chunk")
 
 type openAIUpstreamStreamReadError struct {
