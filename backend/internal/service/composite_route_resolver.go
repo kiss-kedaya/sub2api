@@ -28,12 +28,13 @@ type CompositeRouteResolver struct {
 	// Composite routing is consulted before account selection, so a repository
 	// read here would put a SQL query on every model request. Admin mutations
 	// call InvalidateGroup; the TTL is a cross-instance safety bound.
-	mu             sync.RWMutex
-	routesCache    map[int64]compositeRouteCacheEntry
-	generations    map[int64]uint64
-	loadSF         singleflight.Group
-	refreshStateMu sync.Mutex
-	refreshState   map[int64]compositeRouteRefreshState
+	mu                     sync.RWMutex
+	routesCache            map[int64]compositeRouteCacheEntry
+	generations            map[int64]uint64
+	loadSF                 singleflight.Group
+	refreshStateMu         sync.Mutex
+	refreshState           map[int64]compositeRouteRefreshState
+	modelOwnershipResolver CompositeModelOwnershipResolver
 }
 
 const compositeRouteCacheTTL = 60 * time.Second
@@ -59,6 +60,12 @@ func NewCompositeRouteResolver(repo CompositeModelRouteRepository) *CompositeRou
 		routesCache:  make(map[int64]compositeRouteCacheEntry),
 		generations:  make(map[int64]uint64),
 		refreshState: make(map[int64]compositeRouteRefreshState),
+	}
+}
+
+func (r *CompositeRouteResolver) SetModelOwnershipResolver(resolver CompositeModelOwnershipResolver) {
+	if r != nil {
+		r.modelOwnershipResolver = resolver
 	}
 }
 
@@ -94,6 +101,35 @@ func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, mod
 				UpstreamModel:  upstreamModel,
 				Endpoint:       endpoint,
 				Route:          &route,
+			}, nil
+		}
+	}
+
+	if r != nil && r.modelOwnershipResolver != nil && groupID > 0 {
+		ownership, err := r.modelOwnershipResolver(ctx, groupID, model)
+		if err != nil {
+			// A recognizable model can still use the existing detector when the
+			// account catalog is temporarily unavailable. Unknown aliases cannot.
+			if _, detectable := DetectModelPlatform(model); !detectable {
+				return decision, fmt.Errorf("resolve account model ownership: %w", err)
+			}
+		} else if ownership.Ambiguous {
+			decision.Reason = "model is exposed by multiple provider platforms"
+			return decision, nil
+		} else if ownership.Matched {
+			platform := strings.TrimSpace(ownership.TargetPlatform)
+			if !isConcreteRequestPlatform(platform) {
+				decision.Reason = "account model ownership has no concrete target platform"
+				return decision, nil
+			}
+			return CompositeRouteDecision{
+				Matched:        true,
+				Source:         CompositeRouteSourceAccount,
+				GroupID:        groupID,
+				PublicModel:    model,
+				TargetPlatform: platform,
+				UpstreamModel:  model,
+				Endpoint:       endpoint,
 			}, nil
 		}
 	}

@@ -447,7 +447,7 @@ func (r *usageLogRepository) GetUsageTrendWithRollups(ctx context.Context, start
 	if granularity != "hour" && granularity != "day" {
 		return nil, false, nil
 	}
-	if filters.APIKeyID != 0 || filters.AccountID != 0 || filters.GroupID != 0 || filters.Model != "" || unsupportedRollupModelSource(filters.ModelFilterSource) || filters.RequestType != nil || filters.Stream != nil || filters.BillingType != nil || filters.BillingMode != "" || filters.UpstreamModelMismatch != nil {
+	if filters.APIKeyID != 0 || filters.AccountID != 0 || filters.GroupID != 0 || filters.Model != "" || unsupportedRollupModelSource(filters.ModelFilterSource) || filters.RequestType != nil || filters.Stream != nil || filters.BillingType != nil || filters.BillingMode != "" || filters.UpstreamModelMismatch != nil || filters.NativeCompactionV2 != nil {
 		return nil, false, nil
 	}
 	var cutoff, effectiveEnd time.Time
@@ -492,7 +492,7 @@ func (r *usageLogRepository) GetUsageTrendWithRollups(ctx context.Context, start
 		}
 	}
 	if effectiveEnd.After(cutoff) {
-		tail, err := r.getUsageTrendWithFilters(ctx, cutoff, effectiveEnd, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch)
+		tail, err := r.getUsageTrendWithFilters(ctx, cutoff, effectiveEnd, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2)
 		if err != nil {
 			return nil, false, err
 		}
@@ -509,7 +509,7 @@ func (r *usageLogRepository) GetUsageTrendWithRollups(ctx context.Context, start
 }
 
 func (r *usageLogRepository) GetModelStatsWithRollups(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters, source string) ([]ModelStat, bool, error) {
-	if filters.APIKeyID != 0 || filters.AccountID != 0 || filters.GroupID != 0 || filters.Model != "" || unsupportedRollupModelSource(filters.ModelFilterSource) || filters.RequestType != nil || filters.Stream != nil || filters.BillingType != nil || filters.BillingMode != "" || filters.UpstreamModelMismatch != nil {
+	if filters.APIKeyID != 0 || filters.AccountID != 0 || filters.GroupID != 0 || filters.Model != "" || unsupportedRollupModelSource(filters.ModelFilterSource) || filters.RequestType != nil || filters.Stream != nil || filters.BillingType != nil || filters.BillingMode != "" || filters.UpstreamModelMismatch != nil || filters.NativeCompactionV2 != nil {
 		return nil, false, nil
 	}
 	userScoped := "model"
@@ -544,7 +544,7 @@ func (r *usageLogRepository) GetModelStatsWithRollups(ctx context.Context, start
 		merge(ModelStat{Model: m.DimensionKey, Requests: m.Requests, InputTokens: m.InputTokens, OutputTokens: m.OutputTokens, CacheCreationTokens: m.CacheCreation, CacheReadTokens: m.CacheRead, TotalTokens: m.InputTokens + m.OutputTokens + m.CacheCreation + m.CacheRead, Cost: m.Cost, ActualCost: m.ActualCost, AccountCost: m.AccountCost})
 	}
 	if effectiveEnd.After(cutoff) {
-		tail, err := r.getModelStatsWithFiltersBySource(ctx, cutoff, effectiveEnd, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, nil, nil, nil, source, filters.BillingMode, filters.UpstreamModelMismatch)
+		tail, err := r.getModelStatsWithFiltersBySource(ctx, cutoff, effectiveEnd, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, nil, nil, nil, source, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2)
 		if err != nil {
 			return nil, false, err
 		}
@@ -566,7 +566,7 @@ func (r *usageLogRepository) GetModelStatsWithRollups(ctx context.Context, start
 }
 
 func (r *usageLogRepository) GetGroupStatsWithRollups(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters) ([]usagestats.GroupStat, bool, error) {
-	if filters.APIKeyID != 0 || filters.AccountID != 0 || filters.GroupID != 0 || filters.Model != "" || unsupportedRollupModelSource(filters.ModelFilterSource) || filters.RequestType != nil || filters.Stream != nil || filters.BillingType != nil || filters.BillingMode != "" || filters.UpstreamModelMismatch != nil {
+	if filters.APIKeyID != 0 || filters.AccountID != 0 || filters.GroupID != 0 || filters.Model != "" || unsupportedRollupModelSource(filters.ModelFilterSource) || filters.RequestType != nil || filters.Stream != nil || filters.BillingType != nil || filters.BillingMode != "" || filters.UpstreamModelMismatch != nil || filters.NativeCompactionV2 != nil {
 		return nil, false, nil
 	}
 	userID := filters.UserID
@@ -597,7 +597,7 @@ func (r *usageLogRepository) GetGroupStatsWithRollups(ctx context.Context, start
 		merge(usagestats.GroupStat{GroupID: m.GroupID, Requests: m.Requests, TotalTokens: m.InputTokens + m.OutputTokens + m.CacheCreation + m.CacheRead, Cost: m.Cost, ActualCost: m.ActualCost, AccountCost: m.AccountCost})
 	}
 	if effectiveEnd.After(cutoff) {
-		tail, err := r.getGroupStatsWithFilters(ctx, cutoff, effectiveEnd, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch)
+		tail, err := r.getGroupStatsWithFilters(ctx, cutoff, effectiveEnd, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2)
 		if err != nil {
 			return nil, false, err
 		}
@@ -657,7 +657,7 @@ func (r *usageLogRepository) populateGroupNames(ctx context.Context, values []us
 }
 
 func (r *usageLogRepository) GetStatsWithRollups(ctx context.Context, filters UsageLogFilters) (*UsageStats, bool, error) {
-	if filters.APIKeyID != 0 || filters.AccountID != 0 || filters.GroupID != 0 || filters.Model != "" || unsupportedRollupModelSource(filters.ModelFilterSource) || filters.RequestType != nil || filters.Stream != nil || filters.BillingType != nil || filters.BillingMode != "" || filters.UpstreamModelMismatch != nil || filters.StartTime == nil || filters.EndTime == nil {
+	if filters.APIKeyID != 0 || filters.AccountID != 0 || filters.GroupID != 0 || filters.Model != "" || unsupportedRollupModelSource(filters.ModelFilterSource) || filters.RequestType != nil || filters.Stream != nil || filters.BillingType != nil || filters.BillingMode != "" || filters.UpstreamModelMismatch != nil || filters.NativeCompactionV2 != nil || filters.StartTime == nil || filters.EndTime == nil {
 		return nil, false, nil
 	}
 	start, end := filters.StartTime.UTC(), filters.EndTime.UTC()
