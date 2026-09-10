@@ -1099,15 +1099,7 @@ func groupCodexModelSupportsImageInput(
 			return false
 		}
 	}
-	if meta, ok := builtinDeepSeekModelMetadata(upstreamModel); ok {
-		for _, modality := range meta.InputModalities {
-			if strings.EqualFold(strings.TrimSpace(modality), "image") {
-				return true
-			}
-		}
-		return false
-	}
-	if platform != PlatformOpenAI && platform != PlatformGrok {
+	if platform != PlatformOpenAI && platform != PlatformGrok && platform != PlatformDeepseek {
 		return false
 	}
 
@@ -1246,7 +1238,7 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 		return false
 	}
 	switch account.Platform {
-	case PlatformOpenAI:
+	case PlatformOpenAI, PlatformDeepseek:
 		if metadata, ok := account.GetUpstreamModelMetadata(upstreamModel); ok {
 			if modalities := normalizeCodexInputModalities(metadata.InputModalities); len(modalities) > 0 {
 				// Official GPT-6 Astra metadata briefly shipped with a stale
@@ -1259,7 +1251,10 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 				return stringSliceContains(modalities, "image")
 			}
 		}
-		if !isOpenAICodexImageInputModel(upstreamModel) {
+		if metadata, ok := builtinDeepSeekModelMetadata(upstreamModel); ok {
+			return account.Type == AccountTypeAPIKey && stringSliceContains(metadata.InputModalities, "image")
+		}
+		if account.Platform != PlatformOpenAI || !isOpenAICodexImageInputModel(upstreamModel) {
 			return false
 		}
 		if account.IsOpenAIOAuth() {
