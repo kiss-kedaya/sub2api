@@ -66,17 +66,24 @@ func (s *OpenAIGatewayService) BeginOpenAIWSIngressSessionPreemption(
 		}
 	}
 
-	preemptSessionHash := ""
+	preemptScope := ""
+	preemptThreadID := ""
 	preemptGroupID := getOpenAIGroupIDFromContext(c)
+	preemptAPIKeyID := getAPIKeyIDFromContext(c)
 	if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth {
-		preemptSessionHash = s.GenerateSessionHash(c, firstClientMessage)
+		// Codex multi-agent sessions share one session-id across the parent thread
+		// and every sub-agent. Key preemption by the declared execution identity
+		// (thread first, explicit session otherwise) so siblings never cancel each
+		// other while a reconnect of the same thread still replaces it. Requests
+		// without any declared identity are not registered at all.
+		preemptScope, preemptThreadID = resolveOpenAIWSExecutionScope(c, firstClientMessage, preemptAPIKeyID)
 	}
 	preemptCtx, cleanup, armed, preemptedPrevious := s.beginOpenAIWSSessionPreemptContext(
 		ctx,
 		account,
 		preemptGroupID,
-		getAPIKeyIDFromContext(c),
-		preemptSessionHash,
+		preemptAPIKeyID,
+		preemptScope,
 		false,
 	)
 	if !armed {
@@ -84,9 +91,17 @@ func (s *OpenAIGatewayService) BeginOpenAIWSIngressSessionPreemption(
 	}
 	if preemptedPrevious {
 		if stateStore := s.getOpenAIWSStateStore(); stateStore != nil {
-			stateStore.DeleteSessionTurnState(preemptGroupID, preemptSessionHash)
-			stateStore.DeleteSessionConn(preemptGroupID, preemptSessionHash)
+			stateStore.DeleteSessionTurnState(preemptGroupID, preemptScope)
+			stateStore.DeleteSessionConn(preemptGroupID, preemptScope)
 		}
+		logOpenAIWSModeInfo(
+			"ingress_ws_session_preempted account_id=%d group_id=%d api_key_id=%d scope=%s thread_id=%s",
+			account.ID,
+			preemptGroupID,
+			preemptAPIKeyID,
+			truncateOpenAIWSLogValue(preemptScope, 12),
+			truncateOpenAIWSLogValue(preemptThreadID, openAIWSIDValueMaxLen),
+		)
 	}
 	return context.WithValue(preemptCtx, openAIWSSessionPreemptContextKey{}, true), cleanup, true
 }
