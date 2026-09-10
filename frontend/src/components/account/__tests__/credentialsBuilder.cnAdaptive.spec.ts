@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest'
 import { cnSupportsNativeResponses, defaultCNAdaptiveBaseUrls, isGeminiOpenAIProtocolAccount } from '../credentialsBuilder'
 
 describe('cnSupportsNativeResponses', () => {
-  it('covers DeepSeek, Kimi, and Gemini custom upstream', () => {
+  it('covers DeepSeek, Kimi, MiniMax, and Gemini custom upstream', () => {
     expect(cnSupportsNativeResponses('deepseek')).toBe(true)
     expect(cnSupportsNativeResponses('kimi')).toBe(true)
+    expect(cnSupportsNativeResponses('minimax')).toBe(true)
     expect(cnSupportsNativeResponses('gemini')).toBe(true)
     expect(cnSupportsNativeResponses('zhipu')).toBe(false)
     expect(cnSupportsNativeResponses('openai')).toBe(false)
@@ -45,6 +46,16 @@ describe('defaultCNAdaptiveBaseUrls', () => {
       anthropic: 'https://api.deepseek.com/anthropic',
       responses: 'https://api.deepseek.com'
     })
+  })
+
+  it('uses the same MiniMax CN endpoints for payg and coding', () => {
+    const expected = {
+      chat_completions: 'https://api.minimaxi.com/v1',
+      anthropic: 'https://api.minimaxi.com/anthropic',
+      responses: 'https://api.minimaxi.com/v1'
+    }
+    expect(defaultCNAdaptiveBaseUrls('minimax', 'payg')).toEqual(expected)
+    expect(defaultCNAdaptiveBaseUrls('minimax', 'coding')).toEqual(expected)
   })
 })
 

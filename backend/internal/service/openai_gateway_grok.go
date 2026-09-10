@@ -747,6 +747,12 @@ func grokSupportsXHighReasoningEffort(model string) bool {
 	return model == "grok-4.6" || model == "grok-4.6-latest"
 }
 
+// GrokSupportsXHighReasoningEffort reports whether the model advertises and
+// forwards the xhigh reasoning effort (Grok 4.6 and its undated alias).
+func GrokSupportsXHighReasoningEffort(model string) bool {
+	return grokSupportsXHighReasoningEffort(model)
+}
+
 func grokSupportsReasoningEffort(model string) bool {
 	model = strings.ToLower(xai.StripGrokProviderPrefix(strings.TrimSpace(model)))
 	switch model {
@@ -778,6 +784,10 @@ func sanitizeGrokResponsesUnsupportedFields(body []byte) ([]byte, error) {
 	}
 	return marshalOpenAIUpstreamJSON(payload)
 }
+
+// sanitizeGrokUnsupportedFields is the upstream name for the same Grok field stripper,
+// used by both Responses and Chat Completions.
+var sanitizeGrokUnsupportedFields = sanitizeGrokResponsesUnsupportedFields
 
 func deleteJSONFields(value any, fields map[string]struct{}) bool {
 	switch typed := value.(type) {
