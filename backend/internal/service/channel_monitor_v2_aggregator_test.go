@@ -24,9 +24,17 @@ func TestChannelMonitorV2MaxChunkForDepth(t *testing.T) {
 }
 
 func TestChannelMonitorV2AggregatorRunBudgetOutlivesStatementTimeout(t *testing.T) {
-	require.Equal(t, 3*time.Minute, channelMonitorV2RecentOverlap)
+	require.Equal(t, 2*time.Minute, channelMonitorV2RecentOverlap)
 	require.Equal(t, 3*time.Minute, channelMonitorV2RunTimeout)
 	require.Greater(t, channelMonitorV2LockTTL, channelMonitorV2RunTimeout)
+}
+
+func TestChannelMonitorV2AllowBackfill(t *testing.T) {
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	require.False(t, channelMonitorV2AllowBackfill(time.Second, time.Time{}, now))
+	require.False(t, channelMonitorV2AllowBackfill(9*time.Second, now.Add(-time.Hour), now))
+	require.False(t, channelMonitorV2AllowBackfill(time.Second, now.Add(-5*time.Minute), now))
+	require.True(t, channelMonitorV2AllowBackfill(time.Second, now.Add(-20*time.Minute), now))
 }
 
 func TestChannelMonitorV2AggregatorSetLeaderLock(t *testing.T) {
