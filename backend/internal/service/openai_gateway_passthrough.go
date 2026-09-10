@@ -646,7 +646,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	}
 	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
 
-	// DeepSeek 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
+	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
@@ -777,6 +777,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	if !account.UsesOpenAICodexProtocol() {
 		EnsureNonScriptUserAgent(req.Header, account)
 	}
+	applyOpenCodeSessionHeader(c, account, targetURL, req.Header)
 	// x-codex-beta-features：按真实 Codex 的会话级行为补注（在账号级覆写之后，
 	// 保证不被覆盖丢失）。
 	applyOpenAICodexBetaFeatures(c, account, req.Header)
@@ -1325,6 +1326,47 @@ func openAIStreamFrameStartsVisibleOutput(frame openAISSEDataFrame) bool {
 	return false
 }
 
+// openAIStreamDataStartsSemanticTTFT 保留 900194fab 之前的 first_token_ms
+// 口径：跳过 Responses preamble 后，首个语义 SSE 事件即视为首 token。
+func openAIStreamDataStartsSemanticTTFT(data, eventType string) bool {
+	trimmed := strings.TrimSpace(data)
+	if trimmed == "" || trimmed == "[DONE]" {
+		return false
+	}
+	eventType = strings.TrimSpace(eventType)
+	if eventType == "" && gjson.Valid(trimmed) {
+		eventType = strings.TrimSpace(gjson.Get(trimmed, "type").String())
+	}
+	switch eventType {
+	case "response.failed":
+		return false
+	case "error":
+		payload := []byte(trimmed)
+		return !openAIStreamFailedEventShouldFailover(payload, extractOpenAISSEErrorMessage(payload))
+	default:
+		return !openAIStreamEventIsPreamble(eventType)
+	}
+}
+
+func (s *OpenAIGatewayService) openAITTFTMode(ctx context.Context) string {
+	mode := OpenAITTFTModeSemantic
+	if s != nil && s.settingService != nil {
+		mode = s.settingService.GetOpenAITTFTMode(ctx)
+	} else if cached, ok := gatewayForwardingCache.Load().(*cachedGatewayForwardingSettings); ok && cached != nil {
+		if cached.expiresAt == 0 || time.Now().UnixNano() < cached.expiresAt {
+			mode = normalizeOpenAITTFTMode(cached.openAITTFTMode)
+		}
+	}
+	return normalizeOpenAITTFTMode(mode)
+}
+
+func openAIStreamDataStartsTTFT(data, eventType string, forceOutput bool, mode string) bool {
+	if mode == OpenAITTFTModeVisible {
+		return openAIStreamDataStartsVisibleOutput(data, eventType)
+	}
+	return forceOutput || openAIStreamDataStartsSemanticTTFT(data, eventType)
+}
+
 // openAIStreamFailedEventErrorCode 提取流内 failed 事件的错误码（小写），
 // 兼容 response.failed 的嵌套形态与裸 error 形态。
 func openAIStreamFailedEventErrorCode(payload []byte) string {
@@ -1679,17 +1721,15 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 		if c != nil && c.Request != nil {
 			ctx = c.Request.Context()
 		}
-		accountHeaders := headers
 		model := firstNonEmpty(canonicalModel...)
 		if model == "" {
 			model = firstNonEmpty(gjson.GetBytes(payload, "model").String(), gjson.GetBytes(payload, "response.model").String())
 		}
-		if statusCode == http.StatusTooManyRequests && !isCodexSparkModel(model) {
-			// The enclosing HTTP response succeeded. Its quota snapshot describes
-			// normal account state and must not become the reset for a semantic 429
-			// carried by a stream terminal event. Spark quota windows are model-
-			// scoped and must keep the Codex percent headers.
-			accountHeaders = nil
+		accountHeaders := headers
+		if statusCode == http.StatusTooManyRequests {
+			// 普通模型的流式 429 不能继承外层 HTTP 200 的全局 quota 快照；
+			// 只有 OAuth/SetupToken 的 Spark 配额 429 才需要保留 headers 读取明确的 5h/7d reset。
+			accountHeaders = openAIWSSemantic429Headers(account, model, headers)
 		}
 		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload, model)
 	default:
@@ -1823,10 +1863,37 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverErrorWithModel(
 	return failoverErr
 }
 
-// nonStreamingTerminalFailureFailover keeps stream=false compatible with the
-// streaming path when an upstream returns HTTP 200 SSE containing a terminal
-// error. The body is fully buffered and no response bytes have been committed,
-// so the handler can safely retry another account.
+// nonStreamingTerminalFailureFailover applies the streaming path's terminal-event
+// verdict to a stream=false request whose upstream answered with SSE anyway
+// (other sub2api instances and several OpenAI-compatible upstreams do this).
+//
+// Both handleSSEToJSON and handlePassthroughSSEToJSON collapsed every terminal
+// `response.failed` / `error` frame into writeOpenAINonStreamingProtocolError, a
+// fixed 502. The streaming readers sitting a few hundred lines away classify the
+// very same frame with openAIStreamFailedEventShouldFailover /
+// openAIStreamErrorEventShouldFailover and return an UpstreamFailoverError, so an
+// upstream capacity error switched accounts when stream=true and was handed to the
+// caller verbatim when stream=false — with other schedulable accounts still in the
+// pool. Same event, same upstream, opposite outcome, decided only by a request flag
+// the upstream never saw.
+//
+// Dispatching on terminalType keeps the two verdicts distinct exactly as the
+// streaming readers do: a bare `error` frame goes through the conservative
+// classifier that fails over only on positively transient markers, while
+// `response.failed` uses the fuller one.
+//
+// Replay is safe here because the body was fully buffered by
+// ReadUpstreamResponseBody and this runs before any semantic byte is written.
+// Whether a failover actually happens stays the handler's call:
+// openAIForwardMayFailover compares OpenAICompactKeepaliveAdjustedWrittenSize
+// against its pre-Forward snapshot, so a request that already emitted output is
+// refused there (#3887). This function only declines to propose failover once the
+// service has explicitly committed a response, and never re-implements the
+// keepalive accounting — a second copy of that rule would drift from the handler's.
+//
+// A nil account means there is nothing to fail over from: newOpenAIStreamFailoverError
+// records ops attribution and account health against it, so those callers keep the
+// protocol-error behaviour.
 func (s *OpenAIGatewayService) nonStreamingTerminalFailureFailover(
 	c *gin.Context,
 	resp *http.Response,
@@ -1913,6 +1980,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
 	responseID := ""
+	ttftMode := s.openAITTFTMode(ctx)
 	clientDisconnected := false
 	sawDone := false
 	sawTerminalEvent := false
@@ -1937,6 +2005,44 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
 	pendingLines := make([]string, 0, 8)
+
+	// ── 首个可见输出之前的下游 keepalive ──────────────────────────────────
+	//
+	// 与 Forward 路径同源的问题。openai_gateway_response_handling.go 里那句注释
+	// 说得最清楚：
+	//
+	//   "Track downstream writes separately from upstream reads: pre-output
+	//    failover can buffer response.created / response.in_progress, so
+	//    keepalive must be based on downstream idle time."
+	//
+	// 上面的 pendingLines 正是同一种缓冲：首个可见输出到来之前，下游【一个字节
+	// 都收不到】—— 连 HTTP 响应头都不会提交（gin 的 ResponseWriter 直到首次写入
+	// 才发送 header）。Forward 路径为此加了心跳，透传路径漏了。
+	//
+	// 推理模型在首个可见输出前思考数百秒是常态，于是中间层代理会按空闲超时把
+	// 连接判死。这不是假设：某生产部署实测 12 小时内 44 个 /v1/responses 请求在
+	// 600~900s 才产出首个可见输出（每个 3~5 万 output token，上游其实算完了），
+	// 全部被中间 nginx 的 proxy_read_timeout(600s) 判超时回 504，用户一个字没拿到。
+	//
+	// 心跳写出的 SSE 注释同时做到三件事：
+	//   1. 提交 HTTP 响应头，让下游知道连接活着；
+	//   2. 刷新中间层的空闲超时（proxy_read_timeout 衡量的是两次读之间的间隔，
+	//      不是请求总时长），长推理因此不再被误杀；
+	//   3. 不写出任何 pendingLines、不泄露账号相关的头，
+	//      且心跳字节已由 OpenAICompactKeepaliveAdjustedWrittenSize 排除，
+	//      所以 pre-output failover 的能力完全不受影响（#3887 的记账在此复用）。
+	//
+	// 用 startOpenAISSEKeepalive 而不是 StartOpenAICompactSSEKeepalive：后者会检查
+	// compact 标记，而这里是普通 /v1/responses 透传。走到这一行时上游已回
+	// text/event-stream、SSE 响应头也已设好，处于流式上下文是确定的。
+	stopKeepalive := func() {}
+	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
+		stopKeepalive = StartOpenAIStreamSSEKeepalive(c,
+			time.Duration(s.cfg.Gateway.StreamKeepaliveInterval)*time.Second)
+	}
+	// 任何返回路径都要停拍。Stop 与心跳 goroutine 之间有互斥锁，
+	// 返回后不会再有字节写出。
+	defer stopKeepalive()
 	// flushPending 表示已写入但未到 SSE 空行边界的脏状态；defer 兜底函数退出前的残留，断连后不再 Flush。
 	flushPending := false
 	pendingSSEEventType := ""
@@ -2112,6 +2218,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header, mappedModel)
 						bareErrorAccountSideEffectsPending = false
 					}
+					if eventType == "response.failed" {
+						// The stream cannot be replayed after semantic output. Preserve the
+						// terminal event, while making the upstream failure queryable.
+						s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "stream_failed", dataBytes, failedMessage)
+					}
 				}
 				if !outputStarted {
 					shouldFailover := false
@@ -2185,7 +2296,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				openAIResponsesCompletedFrameIsEmpty(frame, usage) {
 				return resultWithUsage(), newOpenAIResponsesEmptyCompletedFailoverError(c, account, upstreamRequestID)
 			}
-			if firstTokenMs == nil && openAIStreamFrameStartsVisibleOutput(frame) {
+			if firstTokenMs == nil && openAIStreamDataStartsTTFT(trimmedData, eventType, forceFlushFailedEvent, ttftMode) {
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
 			}
@@ -2204,6 +2315,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if !clientOutputStarted && !lineStartsClientOutput {
 				pendingLines = append(pendingLines, line)
 				continue
+			}
+			// 真实输出开始，心跳的使命结束。停拍是幂等的，且会与心跳 goroutine
+			// 建立 happens-before —— 之后 ResponseWriter 由本循环独占。
+			if !clientOutputStarted {
+				stopKeepalive()
 			}
 			if !clientOutputStarted && len(pendingLines) > 0 {
 				if !writePendingLines() {

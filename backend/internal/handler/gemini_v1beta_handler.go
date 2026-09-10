@@ -98,13 +98,14 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		return
 	}
 
+	// 分组级模型白名单启用时过滤 models[].name（含前缀 models/xxx）。
 	filterGeminiModels := func(models []gemini.Model) []gemini.Model {
-		if apiKey.Group == nil || !apiKey.Group.CustomModelsListEnabled() {
+		if apiKey.Group == nil || !apiKey.Group.ModelAllowlistEnabled() {
 			return models
 		}
 		filtered := make([]gemini.Model, 0, len(models))
 		for _, model := range models {
-			if service.ModelsListAllows(apiKey.Group.ModelsListConfig, model.Name) {
+			if apiKey.Group.ModelAllowlist.Allows(model.Name) {
 				filtered = append(filtered, model)
 			}
 		}
@@ -113,11 +114,11 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 
 	// 强制 antigravity 模式：返回 antigravity 支持的模型列表
 	if forcePlatform == service.PlatformAntigravity {
-		if apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
+		if apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
 			agModels := antigravity.DefaultGeminiModels()
 			filtered := make([]antigravity.GeminiModel, 0, len(agModels))
 			for _, model := range agModels {
-				if service.ModelsListAllows(apiKey.Group.ModelsListConfig, model.Name) {
+				if apiKey.Group.ModelAllowlist.Allows(model.Name) {
 					filtered = append(filtered, model)
 				}
 			}
@@ -148,15 +149,15 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(gemini.DefaultModels())})
 		return
 	}
-	if apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
-		if filtered, dropped, ok := filterUpstreamGeminiModelsBody(res.Body, apiKey.Group.ModelsListConfig); ok && dropped {
+	if apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
+		if filtered, dropped, ok := filterUpstreamGeminiModelsBody(res.Body, apiKey.Group.ModelAllowlist); ok && dropped {
 			res.Body = filtered
 		}
 	}
 	writeUpstreamResponse(c, res)
 }
 
-func filterUpstreamGeminiModelsBody(body []byte, list service.GroupModelsListConfig) (filtered []byte, dropped bool, ok bool) {
+func filterUpstreamGeminiModelsBody(body []byte, allowlist service.GroupModelAllowlist) (filtered []byte, dropped bool, ok bool) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, false, false
@@ -178,11 +179,12 @@ func filterUpstreamGeminiModelsBody(body []byte, list service.GroupModelsListCon
 		if err := json.Unmarshal(raw, &model); err != nil {
 			return nil, false, false
 		}
-		if service.ModelsListAllows(list, model.Name) {
+		if allowlist.Allows(model.Name) {
 			kept = append(kept, raw)
 		}
 	}
 	if len(kept) == len(models) {
+		// 全部过滤时直接透传原始响应。
 		return body, false, true
 	}
 	mergedModels, err := json.Marshal(kept)
@@ -223,7 +225,7 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 		googleError(c, http.StatusBadRequest, "Invalid model in URL")
 		return
 	}
-	if apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() && !service.ModelsListAllows(apiKey.Group.ModelsListConfig, modelName) {
+	if apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() && !apiKey.Group.ModelAllowlist.Allows(modelName) {
 		googleError(c, http.StatusNotFound, "Model is not available for this group")
 		return
 	}
@@ -302,7 +304,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		googleError(c, http.StatusBadRequest, "Invalid model in URL")
 		return
 	}
-	if apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() && !service.ModelsListAllows(apiKey.Group.ModelsListConfig, modelName) {
+	if apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() && !apiKey.Group.ModelAllowlist.Allows(modelName) {
 		googleError(c, http.StatusNotFound, "Model is not available for this group")
 		return
 	}
@@ -723,33 +725,25 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		forceCacheBilling := fs.ForceCacheBilling
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
-		// 长上下文规则由计费服务统一持有（模型广场展示同源），入口只负责声明自己适用该规则。
-		var longContextThreshold int
-		var longContextMultiplier float64
-		if rule := h.gatewayService.LegacyLongContextRule(service.PlatformGemini); rule != nil {
-			longContextThreshold = rule.Threshold
-			longContextMultiplier = rule.Multiplier
-		}
+		// 长上下文阶梯由目录数据驱动，统一在计费路径内生效，入口无需声明。
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-			if err := h.gatewayService.RecordUsageWithLongContext(ctx, &service.RecordUsageLongContextInput{
-				Result:                result,
-				QuotaPlatform:         quotaPlatform,
-				APIKey:                apiKey,
-				User:                  apiKey.User,
-				Account:               account,
-				Subscription:          subscription,
-				PricingAt:             pricingAt,
-				InboundEndpoint:       inboundEndpoint,
-				UpstreamEndpoint:      upstreamEndpoint,
-				UserAgent:             userAgent,
-				IPAddress:             clientIP,
-				RequestPayloadHash:    requestPayloadHash,
-				LongContextThreshold:  longContextThreshold,
-				LongContextMultiplier: longContextMultiplier,
-				ForceCacheBilling:     forceCacheBilling,
-				APIKeyService:         h.apiKeyService,
-				SessionID:             sessionID,
-				ChannelUsageFields:    clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+				Result:             result,
+				QuotaPlatform:      quotaPlatform,
+				APIKey:             apiKey,
+				User:               apiKey.User,
+				Account:            account,
+				Subscription:       subscription,
+				PricingAt:          pricingAt,
+				InboundEndpoint:    inboundEndpoint,
+				UpstreamEndpoint:   upstreamEndpoint,
+				UserAgent:          userAgent,
+				IPAddress:          clientIP,
+				RequestPayloadHash: requestPayloadHash,
+				ForceCacheBilling:  forceCacheBilling,
+				APIKeyService:      h.apiKeyService,
+				SessionID:          sessionID,
+				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.gemini_v1beta.models"),
