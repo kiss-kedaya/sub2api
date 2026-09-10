@@ -1151,6 +1151,7 @@ func TestAdminService_CreateGroup_InvalidPeakRateReturnsBadRequest(t *testing.T)
 
 	_, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
 		Name:             "subscription-group",
+		RateMultiplier:   1,
 		Platform:         PlatformOpenAI,
 		SubscriptionType: SubscriptionTypeSubscription,
 		PeakRateEnabled:  true,
