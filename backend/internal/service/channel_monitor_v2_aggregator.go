@@ -19,7 +19,7 @@ const (
 	channelMonitorV2BootstrapFirst = 2 * time.Hour
 	// Always refresh a small trailing window so late writes land without
 	// re-aggregating large history every tick.
-	channelMonitorV2RecentOverlap = 3 * time.Minute
+	channelMonitorV2RecentOverlap = 2 * time.Minute
 	// Overlap/error SQL can exceed the 30s Postgres statement_timeout during
 	// storms; keep the Go deadline above SET LOCAL 180s in RecomputeRange.
 	channelMonitorV2RunTimeout = 3 * time.Minute
@@ -39,6 +39,10 @@ const (
 	// Soft adaptive timing: grow only when a recompute is clearly cheap.
 	channelMonitorV2GrowChunkUnder = 15 * time.Second
 	channelMonitorV2MaxBackoff     = 10 * time.Minute
+	// Skip 30d/90d history on the same tick when the live 90m page was already
+	// expensive. Kedaya's default view is 90m; historical cards can wait.
+	channelMonitorV2BusyOverlap    = 8 * time.Second
+	channelMonitorV2BackfillMinGap = 15 * time.Minute
 )
 
 // channelMonitorRuntimeSubscriber is the optional settings hook that lets the
@@ -64,6 +68,9 @@ type ChannelMonitorV2Aggregator struct {
 	backfillAt       time.Time
 	backfillChunk    time.Duration
 	backfillFailures int
+	// lastBackfillAt is the last time this process attempted a historical chunk.
+	// Live 90m ticks do not update it.
+	lastBackfillAt time.Time
 	// nextWaitFloor is applied after runOnce when failures require backoff.
 	nextWaitFloor time.Duration
 	// cursorLoaded is true after the first successful watermark read (or init).
@@ -274,8 +281,23 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 	}
 
 	// Always refresh the trailing overlap so late usage/error writes land in 1m facts.
-	if err := s.repo.RecomputeRange(ctx, now.Add(-channelMonitorV2RecentOverlap), now); err != nil {
+	liveStart := now.Add(-channelMonitorV2RecentOverlap)
+	startedLive := time.Now()
+	if err := s.repo.RecomputeLiveRange(ctx, liveStart, now); err != nil {
 		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] overlap aggregation failed: %v", err)
+		return
+	}
+	s.mu.Lock()
+	lastBackfill := s.lastBackfillAt
+	s.mu.Unlock()
+	if !channelMonitorV2AllowBackfill(time.Since(startedLive), lastBackfill, now) {
+		if lastBackfill.IsZero() {
+			s.mu.Lock()
+			if s.lastBackfillAt.IsZero() {
+				s.lastBackfillAt = now
+			}
+			s.mu.Unlock()
+		}
 		return
 	}
 
@@ -337,6 +359,21 @@ func channelMonitorV2MaxChunkForDepth(now, end time.Time) time.Duration {
 	}
 }
 
+// channelMonitorV2AllowBackfill gates 30d/90d history behind a cheap live tick.
+// The default channel-status page is 90m; history can wait when Postgres is busy.
+func channelMonitorV2AllowBackfill(overlapElapsed time.Duration, lastBackfill, now time.Time) bool {
+	if overlapElapsed > channelMonitorV2BusyOverlap {
+		return false
+	}
+	if lastBackfill.IsZero() {
+		return false
+	}
+	if now.Sub(lastBackfill) < channelMonitorV2BackfillMinGap {
+		return false
+	}
+	return true
+}
+
 func (s *ChannelMonitorV2Aggregator) recordBackfillSuccess(coveredFrom time.Time, elapsed time.Duration, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -344,6 +381,7 @@ func (s *ChannelMonitorV2Aggregator) recordBackfillSuccess(coveredFrom time.Time
 	s.hasAggregated = true
 	s.backfillFailures = 0
 	s.nextWaitFloor = 0
+	s.lastBackfillAt = now
 	maxChunk := channelMonitorV2MaxChunkForDepth(now, coveredFrom)
 	// Grow slowly only when the recompute was clearly cheap.
 	if elapsed > 0 && elapsed < channelMonitorV2GrowChunkUnder {

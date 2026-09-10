@@ -86,6 +86,9 @@ func (s *channelMonitorV2RepoStub) GetUsers(_ context.Context, filter ChannelMon
 func (s *channelMonitorV2RepoStub) RecomputeRange(context.Context, time.Time, time.Time) error {
 	return nil
 }
+func (s *channelMonitorV2RepoStub) RecomputeLiveRange(context.Context, time.Time, time.Time) error {
+	return nil
+}
 func (s *channelMonitorV2RepoStub) GetAggregationWatermark(context.Context) (*ChannelMonitorV2AggregationWatermark, error) {
 	return &ChannelMonitorV2AggregationWatermark{}, nil
 }

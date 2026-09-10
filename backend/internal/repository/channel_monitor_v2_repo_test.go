@@ -168,8 +168,11 @@ func TestChannelMonitorV2ErrorAggregationCountsFinalUserErrorsOnly(t *testing.T)
 	require.Contains(t, query, "upstream_affected_requests")
 	require.Contains(t, query, "jsonb_array_length(current_error.upstream_errors) > 0")
 	// request_id dedup must be time-bounded (no full-history scan).
-	require.Contains(t, query, "interval '90 minutes'")
-	require.Contains(t, query, "current_error.created_at >= $1 - interval '90 minutes'")
+	require.Contains(t, query, "$3 * interval '1 second'")
+	require.Contains(t, query, "current_error.created_at >= $1 - ($3 * interval '1 second')")
+	require.Equal(t, 90*time.Minute, channelMonitorV2ErrorLookbackBackfill)
+	require.Equal(t, 5*time.Minute, channelMonitorV2ErrorLookbackLive)
+	require.Less(t, channelMonitorV2ErrorLookbackLive, channelMonitorV2ErrorLookbackBackfill)
 }
 
 func TestChannelMonitorV2ErrorAggregationResolvesCompositePlatform(t *testing.T) {
