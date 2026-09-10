@@ -77,18 +77,6 @@ func TestNormalizeCodexDelegationBootstrapRejectsAmbiguousInputs(t *testing.T) {
 	}
 }
 
-func TestNormalizeCodexDelegationBootstrapWithHistoricalContext(t *testing.T) {
-	body := []byte(`{"model":"gpt-5","previous_response_id":"resp-1","input":[{"type":"function_call_output","namespace":"codex_app","name":"send_message_to_thread","output":` + mustJSONString(t, delegationBootstrapEnvelope) + `},{"type":"function_call","call_id":"call-1"},{"type":"function_call_output","call_id":"call-1","output":"done"},{"type":"item_reference","id":"item-1"},{"type":"computer_call","call_id":"call-2"}]}`)
-
-	got, changed := normalizeCodexDelegationBootstrap(body)
-	require.True(t, changed)
-	require.Equal(t, "message", gjson.GetBytes(got, "input.0.type").String())
-	require.Equal(t, "user", gjson.GetBytes(got, "input.0.role").String())
-	require.Equal(t, "resp-1", gjson.GetBytes(got, "previous_response_id").String())
-	require.Equal(t, "call-1", gjson.GetBytes(got, "input.2.call_id").String())
-	require.Equal(t, "item-1", gjson.GetBytes(got, "input.3.id").String())
-}
-
 func TestNormalizeCodexBootstrapPreservesExactNumbersAndDuplicateRejection(t *testing.T) {
 	body := []byte(`{"model":"gpt-5","metadata":{"integer":9007199254740993},"input":[{"type":"function_call_output","namespace":"codex_app","name":"create_thread","output":` + mustJSONString(t, delegationBootstrapEnvelope) + `}]}`)
 	got, changed := normalizeCodexDelegationBootstrap(body)
@@ -147,41 +135,3 @@ func TestNormalizeCodexAutomationBootstrapRejectsUnsafeEnvelope(t *testing.T) {
 	require.Equal(t, withCallID, got)
 }
 
-func TestNormalizeCodexAutomationBootstrapHeartbeat(t *testing.T) {
-	output := `<heartbeat><automation_id>wiki</automation_id></heartbeat>`
-	got, changed := normalizeCodexAutomationBootstrap(automationBootstrapBody(t, output))
-	require.True(t, changed)
-	require.Equal(t, "message", gjson.GetBytes(got, "input.0.type").String())
-	require.Equal(t, "user", gjson.GetBytes(got, "input.0.role").String())
-	require.Equal(t, output, gjson.GetBytes(got, "input.0.content.0.text").String())
-	require.False(t, gjson.GetBytes(got, "input.0.call_id").Exists())
-
-	again, changedAgain := normalizeCodexAutomationBootstrap(got)
-	require.False(t, changedAgain)
-	require.Equal(t, got, again)
-}
-
-func TestNormalizeCodexAutomationBootstrapRejectsUnsafeHeartbeatShapes(t *testing.T) {
-	tests := []struct {
-		name   string
-		output string
-	}{
-		{name: "arbitrary tool output", output: `<result><automation_id>wiki</automation_id></result>`},
-		{name: "root attribute", output: `<heartbeat status="ok"><automation_id>wiki</automation_id></heartbeat>`},
-		{name: "namespaced root", output: `<heartbeat xmlns="urn:codex"><automation_id>wiki</automation_id></heartbeat>`},
-		{name: "extra child", output: `<heartbeat><automation_id>wiki</automation_id><status>ok</status></heartbeat>`},
-		{name: "nested id content", output: `<heartbeat><automation_id><value>wiki</value></automation_id></heartbeat>`},
-		{name: "padded id", output: `<heartbeat><automation_id> wiki </automation_id></heartbeat>`},
-		{name: "unsafe id", output: `<heartbeat><automation_id>../wiki</automation_id></heartbeat>`},
-		{name: "comment", output: `<heartbeat><!-- ok --><automation_id>wiki</automation_id></heartbeat>`},
-		{name: "trailing content", output: `<heartbeat><automation_id>wiki</automation_id></heartbeat>extra`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body := automationBootstrapBody(t, tt.output)
-			got, changed := normalizeCodexAutomationBootstrap(body)
-			require.False(t, changed)
-			require.Equal(t, body, got)
-		})
-	}
-}

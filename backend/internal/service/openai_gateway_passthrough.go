@@ -894,14 +894,14 @@ func writeSanitizedOpenAIPassthroughError(c *gin.Context, upstreamStatus int, up
 	message := "Upstream request failed"
 	switch upstreamStatus {
 	case http.StatusUnauthorized:
-		downstreamStatus = http.StatusBadGateway
-		message = "Upstream authentication failed"
+		message = "Unauthorized"
 	case http.StatusForbidden:
-		downstreamStatus = http.StatusBadGateway
-		message = "Upstream access denied"
+		message = "Forbidden"
 	default:
 		if upstreamStatus >= http.StatusInternalServerError {
-			message = "Upstream service temporarily unavailable"
+			if text := http.StatusText(upstreamStatus); text != "" {
+				message = text
+			}
 		}
 	}
 	writeOpenAIPassthroughErrorEnvelope(c, downstreamStatus, upstreamHeaders, message)
@@ -1039,7 +1039,11 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
 		writeOpenAIPassthroughErrorEnvelope(c, resp.StatusCode, resp.Header, upstreamMsg)
 	} else {
-		writeSanitizedOpenAIPassthroughError(c, resp.StatusCode, resp.Header)
+		status, _, _, msg := WrapUpstreamErrorForClient(resp.StatusCode, body)
+		if upstreamMsg != "" {
+			msg = upstreamMsg
+		}
+		writeOpenAIPassthroughErrorEnvelope(c, status, resp.Header, msg)
 	}
 
 	return fmt.Errorf("upstream error: %d (client response sanitized)", resp.StatusCode)

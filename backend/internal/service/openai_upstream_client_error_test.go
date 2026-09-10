@@ -210,7 +210,7 @@ func TestHandleErrorResponse_Deterministic400WithNonJSONBody(t *testing.T) {
 
 // 作用域守卫：本次只放行 400。其余落到 default 的状态码必须维持原样，
 // 避免后续有人顺手把 404/422/5xx 一起改掉。
-func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T) {
+func TestHandleErrorResponse_WrapsUpstreamStatusAndMessage(t *testing.T) {
 	cases := []struct {
 		name       string
 		statusCode int
@@ -219,20 +219,18 @@ func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T
 		wantType   string
 		wantMsg    string
 	}{
-		// 404/405 可能是上游 base_url 配错（运营方问题），不当成客户端错误暴露。
 		{"not_found", http.StatusNotFound, `{"error":{"message":"Unknown request URL"}}`,
-			http.StatusBadGateway, "upstream_error", "Upstream request failed"},
+			http.StatusNotFound, "not_found_error", "Unknown request URL"},
 		{"unprocessable", http.StatusUnprocessableEntity, `{"error":{"message":"Invalid schema for field messages"}}`,
-			http.StatusBadGateway, "upstream_error", "Upstream request failed"},
-		// 401/402/403 是网关运营方的凭据/账单问题，必须继续对客户端屏蔽上游账号状态。
-		// 403 的自由文本不能升级成 durable access-state typed failover；只有明确结构化 code 才可以。
+			http.StatusUnprocessableEntity, "api_error", "Invalid schema for field messages"},
 		{"unauthorized", http.StatusUnauthorized, `{"error":{"message":"Incorrect API key provided: sk-abc"}}`,
-			http.StatusBadGateway, "upstream_error", "Upstream authentication failed, please contact administrator"},
+			http.StatusUnauthorized, "api_error", "Incorrect API key provided: sk-abc"},
 		{"forbidden", http.StatusForbidden, `{"error":{"message":"Your account is deactivated"}}`,
-			http.StatusBadGateway, "upstream_error", "Upstream access forbidden, please contact administrator"},
-		// 429 保持独立映射。
+			http.StatusForbidden, "api_error", "Your account is deactivated"},
 		{"rate_limited", http.StatusTooManyRequests, `{"error":{"message":"Rate limit reached"}}`,
-			http.StatusTooManyRequests, "rate_limit_error", "Upstream rate limit exceeded, please retry later"},
+			http.StatusTooManyRequests, "rate_limit_error", "Rate limit reached"},
+		{"overloaded", http.StatusServiceUnavailable, `{"error":{"type":"overloaded_error","message":"Our servers are currently overloaded. Please try again later."}}`,
+			http.StatusServiceUnavailable, "overloaded_error", "Our servers are currently overloaded. Please try again later."},
 	}
 
 	for _, tc := range cases {
