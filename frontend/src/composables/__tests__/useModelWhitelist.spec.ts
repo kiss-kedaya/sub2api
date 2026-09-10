@@ -4,7 +4,7 @@ vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn()
 }))
 
-import { buildModelMappingObject, getModelsByPlatform, mergeUpstreamIdentityMappings, splitModelMappingObject } from '../useModelWhitelist'
+import { buildModelMappingObject, getModelsByPlatform, getPresetMappingsByPlatform, mergeUpstreamIdentityMappings, splitModelMappingObject } from '../useModelWhitelist'
 
 describe('useModelWhitelist', () => {
   it('openai 模型列表包含 GPT-5.4 官方快照', () => {
@@ -17,6 +17,13 @@ describe('useModelWhitelist', () => {
     expect(models).toContain('gpt-5.6')
     expect(models).toContain('gpt-6')
     expect(models).toContain('gpt-6-astra')
+  })
+
+  it('openai preset mappings include GPT-6 aliases and Astra', () => {
+    expect(getPresetMappingsByPlatform('openai')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'GPT-6', from: 'gpt-6', to: 'gpt-6' }),
+      expect.objectContaining({ label: 'GPT-6 Astra', from: 'gpt-6-astra', to: 'gpt-6-astra' })
+    ]))
   })
 
   it('openai 模型列表不再暴露已下线的 ChatGPT 登录 Codex 模型', () => {
@@ -39,6 +46,8 @@ describe('useModelWhitelist', () => {
   })
 
   it('Claude 模型列表包含新发布的 Claude 模型', () => {
+    expect(getModelsByPlatform('claude')).toContain('claude-fable-5-1')
+    expect(getModelsByPlatform('antigravity')).toContain('claude-fable-5-1')
     expect(getModelsByPlatform('claude')).toContain('claude-fable-5')
     expect(getModelsByPlatform('antigravity')).toContain('claude-fable-5')
     expect(getModelsByPlatform('claude')).toContain('claude-opus-4-8')

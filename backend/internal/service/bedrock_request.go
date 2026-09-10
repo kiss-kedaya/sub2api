@@ -639,6 +639,15 @@ func filterBedrockBetaTokens(tokens []string) []string {
 	return result
 }
 
+// sanitizeBedrockFieldsForBetaTokens 与直连路径的 sanitizeAnthropicBodyForBetaTokens
+// 对称：按最终 Bedrock beta tokens 决定是否保留 body 中的 beta 字段。
+//   - context_management 缺 context-management beta → strip
+//   - fallbacks 缺 server-side-fallback beta → strip
+//   - fallback_credit_token 缺 server-side-fallback / 任一 fallback-credit beta → strip
+//
+// 注意：fallback beta token 均不在 bedrockSupportedBetaTokens 白名单内
+// （会被 filterBedrockBetaTokens 过滤掉），因此条件 strip 实际总会剥除——这是预期：
+// Bedrock Invoke 不支持这些 beta 字段。
 func sanitizeBedrockFieldsForBetaTokens(body []byte, betaTokens []string) []byte {
 	if !containsBedrockBetaToken(betaTokens, bedrockContextManagementBetaToken) && gjson.GetBytes(body, "context_management").Exists() {
 		body, _ = sjson.DeleteBytes(body, "context_management")
@@ -662,6 +671,7 @@ func containsBedrockBetaToken(tokens []string, target string) bool {
 	return false
 }
 
+// containsAnyBedrockBetaToken 判断 tokens 是否包含 targets 中的任意一个 token。
 func containsAnyBedrockBetaToken(tokens []string, targets ...string) bool {
 	for _, target := range targets {
 		if containsBedrockBetaToken(tokens, target) {
@@ -777,6 +787,8 @@ const defaultCCMaxTokens = 81920
 //   - 移除 service_tier（Anthropic API 专有，Bedrock 不支持）
 //   - 移除 interface_geo（Anthropic API 专有，Bedrock 不支持）
 //   - 移除 context_management（Anthropic API 专有，Bedrock 不支持，CC v2.1.87+ 默认携带）
+//   - 无条件移除 fallbacks / fallback_credit_token（server-side refusal fallback，
+//     Anthropic 直连 beta API 专有；Bedrock Invoke 无对应 beta，永不支持）
 //   - 注入 max_tokens 默认值 81920（CC 可能省略，Bedrock 要求必须提供）
 //   - 注入 anthropic_version（CC 通过 HTTP 头发送，Bedrock 需要放在请求体中）
 func sanitizeBedrockCCFields(body []byte) []byte {

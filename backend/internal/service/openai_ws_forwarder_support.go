@@ -18,6 +18,29 @@ func (s *OpenAIGatewayService) isOpenAIWSGeneratePrewarmEnabled() bool {
 	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.PrewarmGenerateEnabled
 }
 
+func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarmRaw(
+	ctx context.Context,
+	lease *openAIWSConnLease,
+	decision OpenAIWSProtocolDecision,
+	payload []byte,
+	previousResponseID string,
+	reqBody map[string]any,
+	account *Account,
+	stateStore OpenAIWSStateStore,
+	groupID int64,
+) error {
+	var payloadMap map[string]any
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &payloadMap); err != nil {
+			return wrapOpenAIWSFallback("prewarm_payload", err)
+		}
+	}
+	return s.performOpenAIWSGeneratePrewarm(
+		ctx, lease, decision, payloadMap, previousResponseID, reqBody,
+		account, stateStore, groupID,
+	)
+}
+
 // performOpenAIWSGeneratePrewarm 在 WSv2 下执行可选的 generate=false 预热。
 // 预热默认关闭，仅在配置开启后生效；失败时按可恢复错误回退到 HTTP。
 func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
@@ -25,24 +48,6 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
 	lease *openAIWSConnLease,
 	decision OpenAIWSProtocolDecision,
 	payload map[string]any,
-	previousResponseID string,
-	reqBody map[string]any,
-	account *Account,
-	stateStore OpenAIWSStateStore,
-	groupID int64,
-) error {
-	prewarmPayload := payloadAsJSONBytes(payload)
-	return s.performOpenAIWSGeneratePrewarmRaw(
-		ctx, lease, decision, prewarmPayload, previousResponseID, reqBody,
-		account, stateStore, groupID,
-	)
-}
-
-func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarmRaw(
-	ctx context.Context,
-	lease *openAIWSConnLease,
-	decision OpenAIWSProtocolDecision,
-	payload []byte,
 	previousResponseID string,
 	reqBody map[string]any,
 	account *Account,
@@ -89,12 +94,14 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarmRaw(
 	prewarmStart := time.Now()
 	logOpenAIWSModeInfo("prewarm_start account_id=%d conn_id=%s", account.ID, connID)
 
-	prewarmPayloadJSON, err := sjson.SetBytes(payload, "generate", false)
-	if err != nil {
-		return wrapOpenAIWSFallback("prewarm_payload", err)
+	prewarmPayload := make(map[string]any, len(payload)+1)
+	for k, v := range payload {
+		prewarmPayload[k] = v
 	}
+	prewarmPayload["generate"] = false
+	prewarmPayloadJSON := payloadAsJSONBytes(prewarmPayload)
 
-	if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(prewarmPayloadJSON), s.openAIWSWriteTimeout()); err != nil {
+	if err := lease.WriteJSONWithContextTimeout(ctx, prewarmPayload, s.openAIWSWriteTimeout()); err != nil {
 		lease.MarkBroken()
 		logOpenAIWSModeInfo(
 			"prewarm_write_fail account_id=%d conn_id=%s cause=%s",
@@ -472,7 +479,6 @@ func (s *OpenAIGatewayService) SelectAccountByPreviousResponseID(
 ) (*AccountSelectionResult, error) {
 	// 分组利润控制：公共入口装门，保证不经 selectAccountWithScheduler
 	// 的调用方也无法绕过利润准入（scheduler 内部路径已在唯一调度入口装门）。
-	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	ctx = s.withOpenAIProfitControlGate(ctx, groupID)
 	return s.selectAccountByPreviousResponseIDForCapability(ctx, groupID, previousResponseID, requestedModel, excludedIDs, "", requireCompact)
 }
@@ -549,7 +555,6 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	if s == nil {
 		return 0, nil, "", nil
 	}
-	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	responseID := strings.TrimSpace(previousResponseID)
 	if responseID == "" {
 		return 0, nil, "", nil
@@ -609,25 +614,10 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		return 0, nil, "", nil
 	}
 	if s.schedulerSnapshot != nil && s.accountRepo != nil {
-		latest := account
-		if schedulerSnapshotOnlyFromContext(ctx) {
-			// The account was resolved from the published scheduler snapshot;
-			// avoid a per-turn durable recheck on the long-lived WS path.
-			latest = account
-		} else if state := schedulerFreshnessFromContext(ctx); state != nil && state.enabled() {
-			var ok bool
-			latest, ok = state.apply(ctx, account)
-			if !ok {
-				_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-				return 0, nil, "", nil
-			}
-		} else {
-			var latestErr error
-			latest, latestErr = s.accountRepo.GetByID(ctx, account.ID)
-			if latestErr != nil || latest == nil {
-				_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-				return 0, nil, "", nil
-			}
+		latest, latestErr := s.accountRepo.GetByID(ctx, account.ID)
+		if latestErr != nil || latest == nil {
+			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+			return 0, nil, "", nil
 		}
 		if shouldClearStickySession(latest, requestedModel) || !latest.IsOpenAI() || !latest.IsSchedulable() {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
@@ -731,6 +721,9 @@ func (s *OpenAIGatewayService) persistOpenAIWSRateLimitSignal(ctx context.Contex
 	if model == "" {
 		model = firstNonEmpty(gjson.GetBytes(responseBody, "model").String(), gjson.GetBytes(responseBody, "response.model").String())
 	}
+	// 非空 responseBody 表示已建立连接后收到的语义错误事件；握手响应头
+	// 可能只是成功连接时的全局快照，不能用于普通模型的 429 账号级限流。
+	// 实际拨号 HTTP 429 使用 nil responseBody，必须保留响应头。
 	if len(responseBody) > 0 {
 		headers = openAIWSSemantic429Headers(account, model, headers)
 	}

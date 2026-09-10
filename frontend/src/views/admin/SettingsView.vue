@@ -5296,6 +5296,32 @@
                   </p>
                 </div>
 
+              <!-- OpenAI Responses 首 token 统计 -->
+              <div class="border-b border-gray-100 pb-5 dark:border-dark-700 md:col-span-2">
+                <label
+                  for="openai-ttft-mode"
+                  class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{ t("admin.settings.gatewayForwarding.openaiTTFTMode") }}
+                </label>
+                <select
+                  id="openai-ttft-mode"
+                  v-model="form.openai_ttft_mode"
+                  class="input mt-2 w-full"
+                  data-testid="openai-ttft-mode"
+                >
+                  <option value="semantic">
+                    {{ t("admin.settings.gatewayForwarding.openaiTTFTModeSemantic") }}
+                  </option>
+                  <option value="visible">
+                    {{ t("admin.settings.gatewayForwarding.openaiTTFTModeVisible") }}
+                  </option>
+                </select>
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.gatewayForwarding.openaiTTFTModeHint") }}
+                </p>
+              </div>
+
               <!-- Fingerprint Unification -->
               <div class="flex items-center justify-between">
                 <div>
@@ -7106,16 +7132,29 @@
                 </p>
               </div>
 
-              <div v-if="form.channel_monitor_mode === 'v2'" class="flex items-start justify-between gap-4">
-                <div class="min-w-0">
-                  <p class="text-sm font-medium text-gray-900 dark:text-white">
-                    {{ t('admin.settings.features.channelMonitor.hideThroughput') }}
-                  </p>
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    {{ t('admin.settings.features.channelMonitor.hideThroughputHint') }}
-                  </p>
+              <div v-if="form.channel_monitor_mode === 'v2'" class="space-y-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium text-gray-900 dark:text-white">
+                      {{ t('admin.settings.features.channelMonitor.hideThroughput') }}
+                    </p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t('admin.settings.features.channelMonitor.hideThroughputHint') }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.channel_monitor_hide_throughput" />
                 </div>
-                <Toggle v-model="form.channel_monitor_hide_throughput" />
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium text-gray-900 dark:text-white">
+                      {{ t('admin.settings.features.channelMonitor.hideUserRanking') }}
+                    </p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t('admin.settings.features.channelMonitor.hideUserRankingHint') }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.channel_monitor_hide_user_ranking" />
+                </div>
               </div>
 
               <div v-if="form.channel_monitor_mode === 'v1'" class="flex items-start justify-between gap-4">
@@ -9485,6 +9524,7 @@ type SettingsForm = Omit<
   /** Form always binds a concrete boolean (SystemSettings marks this optional). */
   channel_monitor_hide_throughput: boolean;
   channel_monitor_show_quota: boolean;
+  channel_monitor_hide_user_ranking: boolean;
   smtp_password: string;
   turnstile_secret_key: string;
   tencent_captcha_app_secret_key: string;
@@ -9769,6 +9809,7 @@ const form = reactive<SettingsForm>({
   openai_advanced_scheduler_weight_previous_response: "",
   openai_advanced_scheduler_weight_session_sticky: "",
   // Gateway forwarding behavior
+  openai_ttft_mode: "semantic",
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
   enable_cch_signing: false,
@@ -9804,6 +9845,7 @@ const form = reactive<SettingsForm>({
   channel_monitor_default_interval_seconds: 60,
   channel_monitor_hide_throughput: false,
   channel_monitor_show_quota: false,
+  channel_monitor_hide_user_ranking: false,
   // Available Channels feature switch
   available_channels_enabled: false,
   // Model Plaza feature switches + description
@@ -10810,6 +10852,9 @@ async function loadSettings() {
     form.channel_monitor_show_quota = Boolean(
       settings.channel_monitor_show_quota
     );
+    form.channel_monitor_hide_user_ranking = Boolean(
+      settings.channel_monitor_hide_user_ranking
+    );
     form.login_agreement_updated_at =
       settings.login_agreement_updated_at || "2026-03-31";
     form.login_agreement_documents =
@@ -11342,6 +11387,8 @@ async function saveSettings() {
       min_claude_code_version: form.min_claude_code_version,
       max_claude_code_version: form.max_claude_code_version,
       allow_ungrouped_key_scheduling: form.allow_ungrouped_key_scheduling,
+      openai_ttft_mode:
+        form.openai_ttft_mode === "visible" ? "visible" : "semantic",
       enable_fingerprint_unification: form.enable_fingerprint_unification,
       enable_metadata_passthrough: form.enable_metadata_passthrough,
       enable_cch_signing: form.enable_cch_signing,
@@ -11467,6 +11514,7 @@ async function saveSettings() {
         Number(form.channel_monitor_default_interval_seconds) || 60,
       channel_monitor_hide_throughput: Boolean(form.channel_monitor_hide_throughput),
       channel_monitor_show_quota: Boolean(form.channel_monitor_show_quota),
+      channel_monitor_hide_user_ranking: Boolean(form.channel_monitor_hide_user_ranking),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
       // Model Plaza feature switches + description
@@ -12093,6 +12141,10 @@ const openaiFastPolicyTierOptions = computed(() => [
   {
     value: "priority",
     label: t("admin.settings.openaiFastPolicy.tierPriority"),
+  },
+  {
+    value: "ultrafast",
+    label: t("admin.settings.openaiFastPolicy.tierUltrafast"),
   },
   { value: "flex", label: t("admin.settings.openaiFastPolicy.tierFlex") },
 ]);

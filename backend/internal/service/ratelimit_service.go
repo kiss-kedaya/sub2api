@@ -52,8 +52,7 @@ type SuccessfulTestRecoveryResult struct {
 
 // AccountRecoveryOptions 控制账号恢复时的附加行为。
 type AccountRecoveryOptions struct {
-	InvalidateToken                  bool
-	PreserveCodexQuotaOverdraftPause bool
+	InvalidateToken bool
 }
 
 type geminiUsageCacheEntry struct {
@@ -76,6 +75,8 @@ const (
 const (
 	openAIImageRateLimitDefaultCooldown = time.Minute
 	openAIImageRateLimitReason          = "openai_image_rate_limited"
+	openAIImageCapabilityLossCooldown   = 30 * time.Minute
+	openAIImageCapabilityLossReason     = "openai_image_capability_lost"
 )
 
 var openAIImageTryAgainPattern = regexp.MustCompile(`(?i)try again in\s+([0-9]+(?:\.[0-9]+)?)\s*(ms|s|sec|secs|second|seconds|m|min|mins|minute|minutes)`)
@@ -163,14 +164,12 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 	if !account.IsActive() || !account.Schedulable {
 		return false
 	}
-	if codexQuotaOverdraftBypassesSchedulingThreshold(ctx, account) {
-		return false
-	}
 
 	now := time.Now().UTC()
 	thresholds := s.settingService.GetAccountSchedulingThresholds(ctx)
 	decision := EvaluateAccountSchedulingThreshold(account, thresholds, now)
 	if !decision.ShouldPause || decision.Until == nil || !decision.Until.After(now) {
+		s.applyAnthropicFableSchedulingThreshold(ctx, account, thresholds, now)
 		return false
 	}
 
@@ -193,16 +192,7 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 
 	account.TempUnschedulableUntil = cloneTimePtr(decision.Until)
 	account.TempUnschedulableReason = reason
-	s.notifyCodexQuotaOverdraftAwareSchedulingBlock(ctx, account, *decision.Until)
-	if schedulerSnapshotOnlyFromContext(ctx) {
-		// Threshold admission is derived from advisory usage projections. Keep
-		// the decision in the process-local runtime blocker and the request's
-		// snapshot copy, but do not synchronously UPDATE accounts from the model
-		// request path. The scheduler/outbox refresh will persist the state during
-		// its normal background cycle.
-		slog.Debug("account_scheduling_threshold_snapshot_only", "account_id", account.ID, "until", decision.Until.UTC())
-		return true
-	}
+	s.notifyAccountSchedulingBlocked(account, *decision.Until, "account_scheduling_threshold")
 
 	if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, *decision.Until, reason); err != nil {
 		slog.Warn("account_scheduling_threshold_set_temp_unsched_failed",
@@ -231,6 +221,43 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 		"used_percent", decision.UsedPercent,
 		"until", decision.Until.UTC())
 	return true
+}
+
+func (s *RateLimitService) applyAnthropicFableSchedulingThreshold(ctx context.Context, account *Account, thresholds map[string]int, now time.Time) {
+	decision := evaluateAnthropicFableSchedulingThreshold(account, thresholds, now)
+	if !decision.ShouldPause || decision.Until == nil || !decision.Until.After(now) {
+		return
+	}
+	if account.isRateLimitActiveForKey(anthropicFableRateLimitKey) {
+		return
+	}
+
+	reason := BuildDetailedAccountSchedulingThresholdReason(AccountSchedulingThresholdReasonInput{
+		Platform:         decision.Platform,
+		Window:           decision.Window,
+		Scope:            decision.Scope,
+		ThresholdPercent: decision.ThresholdPercent,
+		UsedPercent:      decision.UsedPercent,
+		Until:            *decision.Until,
+		Now:              now,
+	})
+	setAccountModelRateLimitSnapshot(account, anthropicFableRateLimitKey, *decision.Until, reason, now)
+	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, anthropicFableRateLimitKey, *decision.Until, reason); err != nil {
+		slog.Warn("anthropic_fable_scheduling_threshold_set_model_limit_failed",
+			"account_id", account.ID,
+			"threshold_percent", decision.ThresholdPercent,
+			"used_percent", decision.UsedPercent,
+			"until", decision.Until.UTC(),
+			"error", err)
+		return
+	}
+
+	slog.Info("anthropic_fable_scheduling_threshold_model_limited",
+		"account_id", account.ID,
+		"scope", anthropicFableRateLimitKey,
+		"threshold_percent", decision.ThresholdPercent,
+		"used_percent", decision.UsedPercent,
+		"until", decision.Until.UTC())
 }
 
 func accountHasSameSchedulingThresholdPause(account *Account, until time.Time, reason string) bool {
@@ -339,12 +366,16 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// otherwise a broad "rate limit" keyword rule can shorten a multi-hour
 	// cooldown to a local temporary pause.
 	if statusCode == http.StatusTooManyRequests && account.Platform == PlatformAnthropic {
+		// Fable may be rejected because the organization has no usage credits for
+		// this model. Anthropic reports that as 429, but it is a model entitlement
+		// failure rather than a shared account window exhaustion.
+		fableCreditsRequired := s.persistAnthropicFableCreditsRequired(ctx, account, headers, responseBody, firstRequestedModel(requestedModel))
 		// 7d_oi 是 Fable 模型专属的 7d 窗口：只标记模型级限流，账号对其他模型仍可调度。
 		fableLimited := s.persistAnthropicFableWindowLimit(ctx, account, headers)
 		if s.persistAnthropicExhaustedWindowLimit(ctx, account, headers) {
 			return false
 		}
-		if fableLimited {
+		if fableCreditsRequired || fableLimited {
 			return false
 		}
 	}
@@ -512,7 +543,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			upstreamMsg,
 			truncateForLog(responseBody, 1024),
 		)
-		shouldDisable = s.handle403(ctx, account, headers, upstreamMsg, responseBody)
+		shouldDisable = s.handle403(ctx, account, upstreamMsg, responseBody)
 	case 429:
 		s.handle429(ctx, account, headers, responseBody)
 		shouldDisable = false
@@ -945,7 +976,7 @@ func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody 
 // handle403 处理 403 Forbidden 错误
 // Antigravity 平台区分 validation/violation/generic 三种类型，均 SetError 永久禁用；
 // 其他平台保持原有 SetError 行为。
-func (s *RateLimitService) handle403(ctx context.Context, account *Account, headers http.Header, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
+func (s *RateLimitService) handle403(ctx context.Context, account *Account, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
 	if account.Platform == PlatformAntigravity {
 		return s.handleAntigravity403(ctx, account, upstreamMsg, responseBody)
 	}
@@ -960,7 +991,7 @@ func (s *RateLimitService) handle403(ctx context.Context, account *Account, head
 	// 且 403 在 failover 状态集里会被逐账号重放——直接 SetError 会让一个坏请求/
 	// 一层坏代理连环永久禁用整组账号。走 HTML 豁免 + N 次累计 + 临时冷却。
 	if account.Platform == PlatformOpenAI || IsCNProvider(account.Platform) {
-		return s.handleOpenAI403(ctx, account, headers, upstreamMsg, responseBody)
+		return s.handleOpenAI403(ctx, account, upstreamMsg, responseBody)
 	}
 	// 非 Antigravity 平台：保持原有行为
 	msg := buildForbiddenErrorMessage(
@@ -973,7 +1004,7 @@ func (s *RateLimitService) handle403(ctx context.Context, account *Account, head
 	return true
 }
 
-func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account, headers http.Header, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
+func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
 	// 上游代理 / CDN 在请求到达 OpenAI API 之前就拦下时，回的是 HTML 403 页面而不是
 	// {"error":{...}} 结构化错误。这类响应描述的是「这条链路 / 这个端点被挡了」，
 	// 不构成账号凭据或权限失效的证据——例如无效的 /v1/responses 子路径（#5334）。
@@ -987,14 +1018,11 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 	// shouldApplyOpenAIAlphaSearchAccountErrorSideEffects 的不变式也是端点级错误
 	// 只换号、不写账号错误状态。这里只跳过账号处罚，不改变 failover 行为——
 	// 换个走不同代理的账号仍有可能成功。
-	class := ClassifyUpstreamFailure(http.StatusForbidden, headers, responseBody, nil)
-	if isHTMLResponse(responseBody) || !class.PunishAccount {
+	if isHTMLResponse(responseBody) {
 		slog.Warn(
-			"openai_403_non_credential_body_skips_account_penalty",
+			"openai_403_html_body_skips_account_penalty",
 			"account_id", account.ID,
 			"upstream_message", upstreamMsg,
-			"kind", string(class.Kind),
-			"html", isHTMLResponse(responseBody),
 		)
 		return false
 	}
@@ -1320,20 +1348,8 @@ func calculateOpenAI429ResetTime(headers http.Header) *time.Time {
 		return &resetAt
 	}
 
-	// 都未达到100%但收到429，使用较长的重置时间
-	var maxResetSecs int
-	if normalized.Reset7dSeconds != nil && *normalized.Reset7dSeconds > maxResetSecs {
-		maxResetSecs = *normalized.Reset7dSeconds
-	}
-	if normalized.Reset5hSeconds != nil && *normalized.Reset5hSeconds > maxResetSecs {
-		maxResetSecs = *normalized.Reset5hSeconds
-	}
-	if maxResetSecs > 0 {
-		resetAt := now.Add(time.Duration(maxResetSecs) * time.Second)
-		slog.Info("openai_429_using_max_reset", "max_reset_seconds", maxResetSecs, "reset_at", resetAt)
-		return &resetAt
-	}
-
+	// 未达到100%时，reset-after 只代表窗口信息，不能证明账号配额耗尽。
+	// 这类瞬时429必须回到可配置的兜底路径，避免未耗尽账号被长时间排除。
 	return nil
 }
 
@@ -1462,7 +1478,59 @@ func (s *RateLimitService) persistAnthropicExhaustedWindowLimit(ctx context.Cont
 	return true
 }
 
-const anthropicFableWindowReason = "anthropic_7d_oi_window_exhausted"
+const (
+	anthropicFableWindowReason          = "anthropic_7d_oi_window_exhausted"
+	anthropicFableCreditsRequiredReason = "anthropic_fable_credits_required"
+)
+
+// persistAnthropicFableCreditsRequired handles Anthropic's credits_required
+// response for Fable. Although the upstream status is 429, this response only
+// says that the organization cannot use Fable; marking the whole account rate
+// limited would unnecessarily stop Sonnet, Opus, and Haiku scheduling.
+func (s *RateLimitService) persistAnthropicFableCreditsRequired(ctx context.Context, account *Account, headers http.Header, responseBody []byte, requestedModel string) bool {
+	if s == nil || s.accountRepo == nil || account == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(gjson.GetBytes(responseBody, "error.details.error_code").String()), "credits_required") {
+		return false
+	}
+
+	model := strings.TrimSpace(gjson.GetBytes(responseBody, "error.details.model").String())
+	if model == "" {
+		model = strings.TrimSpace(requestedModel)
+	}
+	if !isAnthropicFableModel(model) {
+		return false
+	}
+
+	now := time.Now()
+	resetAt, ok := parseAnthropicResetTimestamp(headers.Get("anthropic-ratelimit-unified-reset"), now, 366*24*time.Hour)
+	if !ok {
+		cooldown, enabled := s.get429FallbackCooldown(ctx, account)
+		if !enabled {
+			slog.Info("anthropic_fable_credits_required_cooldown_ignored", "account_id", account.ID)
+			return true
+		}
+		resetAt = now.Add(cooldown)
+	}
+
+	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, anthropicFableRateLimitKey, resetAt, anthropicFableCreditsRequiredReason); err != nil {
+		slog.Warn("anthropic_fable_credits_required_rate_limit_set_failed",
+			"account_id", account.ID,
+			"scope", anthropicFableRateLimitKey,
+			"reset_at", resetAt,
+			"error", err)
+		// The response is still known to be Fable-specific. Do not widen a
+		// persistence failure into an account-level rate limit.
+		return true
+	}
+	slog.Info("anthropic_fable_credits_required_model_rate_limited",
+		"account_id", account.ID,
+		"scope", anthropicFableRateLimitKey,
+		"reset_at", resetAt,
+		"reset_in", time.Until(resetAt).Truncate(time.Second))
+	return true
+}
 
 // selectAnthropicFableWindowLimit parses the Anthropic 7d_oi per-model window
 // headers (the Fable-only 7d window, e.g. anthropic-ratelimit-unified-7d_oi-*).
@@ -2050,9 +2118,7 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 		}
 	}
 
-	preserveCodexPause := options.PreserveCodexQuotaOverdraftPause &&
-		codexQuotaOverdraftPauseNeedsPreservation(account, time.Now().UTC())
-	if hasRecoverableRuntimeState(account) && !preserveCodexPause {
+	if hasRecoverableRuntimeState(account) {
 		if err := s.ClearRateLimit(ctx, accountID); err != nil {
 			return nil, err
 		}
@@ -2071,29 +2137,7 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 // RecoverAccountAfterSuccessfulTest 将一次成功测试视为正常请求，
 // 按需恢复 error / rate-limit / overload / temp-unsched / model-rate-limit 等运行时状态。
 func (s *RateLimitService) RecoverAccountAfterSuccessfulTest(ctx context.Context, accountID int64) (*SuccessfulTestRecoveryResult, error) {
-	return s.RecoverAccountState(ctx, accountID, AccountRecoveryOptions{
-		PreserveCodexQuotaOverdraftPause: true,
-	})
-}
-
-// codexQuotaOverdraftPauseNeedsPreservation prevents an ordinary successful
-// admin/scheduled test from clearing a live failed or in-flight quota probe.
-// Explicit RecoverState calls do not set the option and remain an intentional
-// operator override.
-func codexQuotaOverdraftPauseNeedsPreservation(account *Account, now time.Time) bool {
-	if !isCodexQuotaOverdraftAccount(account) {
-		return false
-	}
-	state, ok := codexQuotaOverdraftStateFromAccount(account)
-	if !ok || state.RecoverAt == nil || !state.RecoverAt.After(now) {
-		return false
-	}
-	switch state.Status {
-	case codexQuotaOverdraftProbePending, codexQuotaOverdraftProbeFailed, codexQuotaOverdraftProbeInconclusive:
-		return true
-	default:
-		return false
-	}
+	return s.RecoverAccountState(ctx, accountID, AccountRecoveryOptions{})
 }
 
 func (s *RateLimitService) ClearTempUnschedulable(ctx context.Context, accountID int64) error {
@@ -2247,8 +2291,12 @@ func (s *RateLimitService) HandleOpenAICodexSparkRateLimit(ctx context.Context, 
 	}
 	now := time.Now()
 	disposition, resetAt := classifyOpenAIOAuth429(headers, responseBody)
-	useQuotaWindow := disposition == openAIOAuth429Quota5h || disposition == openAIOAuth429Quota7d
-	if !useQuotaWindow || resetAt == nil || !resetAt.After(now) {
+	// Spark 只有明确耗尽 5h/7d 窗口时才能使用上游长 reset；普通瞬时 429
+	// 即使携带全局 reset 头，也只能使用短时回避，避免错误冷却数天。
+	if disposition != openAIOAuth429Quota5h && disposition != openAIOAuth429Quota7d {
+		resetAt = nil
+	}
+	if resetAt == nil || !resetAt.After(now) {
 		cooldown, ok := s.get429FallbackCooldown(ctx, account)
 		if !ok || cooldown <= 0 {
 			cooldown = time.Duration(defaultRateLimit429CooldownSeconds) * time.Second
@@ -2261,6 +2309,44 @@ func (s *RateLimitService) HandleOpenAICodexSparkRateLimit(ctx context.Context, 
 	}
 	slog.Info("openai_codex_spark_model_rate_limited", "account_id", account.ID, "model", modelKey, "reset_at", *resetAt)
 	return true
+}
+
+func (s *RateLimitService) HandleOpenAIImageCapabilityLoss(ctx context.Context, account *Account, statusCode int, responseBody []byte) bool {
+	if s == nil || account == nil || s.accountRepo == nil {
+		return false
+	}
+	if account.Platform != PlatformOpenAI {
+		return false
+	}
+	if !account.ShouldHandleErrorCode(statusCode) {
+		slog.Info("openai_image_capability_loss_skipped_by_error_code_policy", "account_id", account.ID, "status_code", statusCode)
+		return false
+	}
+	if !isOpenAIImageCapabilityLossError(statusCode, responseBody) {
+		return false
+	}
+
+	resetAt := time.Now().Add(openAIImageCapabilityLossCooldown)
+	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, openAIImageGenerationRateLimitKey, resetAt, openAIImageCapabilityLossReason); err != nil {
+		slog.Warn("openai_image_capability_loss_set_model_rate_limit_failed", "account_id", account.ID, "scope", openAIImageGenerationRateLimitKey, "error", err)
+		return true
+	}
+	slog.Info("openai_image_capability_lost", "account_id", account.ID, "scope", openAIImageGenerationRateLimitKey, "reset_at", resetAt, "reset_in", time.Until(resetAt).Truncate(time.Second))
+	return true
+}
+
+// isOpenAIImageCapabilityLossError reports whether upstream rejected the
+// image_generation tool choice that sub2api itself put into the request body.
+// Only meaningful for self-built images requests, where tools always carries a
+// matching image_generation entry — upstream saying otherwise means the account
+// lost the capability.
+func isOpenAIImageCapabilityLossError(statusCode int, body []byte) bool {
+	if statusCode != http.StatusBadRequest || len(body) == 0 {
+		return false
+	}
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "image_generation") &&
+		strings.Contains(lower, "not found in 'tools' parameter")
 }
 
 func isOpenAIImageRateLimitError(statusCode int, body []byte) bool {
