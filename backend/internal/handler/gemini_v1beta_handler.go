@@ -798,7 +798,11 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 	responseBody := failoverErr.ResponseBody
 	if service.IsUpstreamCapacityCoolingBody(responseBody) {
 		c.Header("Retry-After", "30")
-		googleError(c, http.StatusServiceUnavailable, "Upstream providers are temporarily cooling down; please retry later")
+		status, _, message := wrapUpstreamClientError(statusCode, responseBody)
+		if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+			status = http.StatusServiceUnavailable
+		}
+		googleError(c, status, message)
 		return
 	}
 
@@ -831,25 +835,8 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
 
 	// 使用默认的错误映射
-	status, message := mapGeminiUpstreamError(statusCode)
+	status, _, message := wrapUpstreamClientError(statusCode, responseBody)
 	googleError(c, status, message)
-}
-
-func mapGeminiUpstreamError(statusCode int) (int, string) {
-	switch statusCode {
-	case 401:
-		return http.StatusBadGateway, "Upstream authentication failed, please contact administrator"
-	case 403:
-		return http.StatusBadGateway, "Upstream access forbidden, please contact administrator"
-	case 429:
-		return http.StatusTooManyRequests, "Upstream rate limit exceeded, please retry later"
-	case 529:
-		return http.StatusServiceUnavailable, "Upstream service overloaded, please retry later"
-	case 500, 502, 503, 504:
-		return http.StatusBadGateway, "Upstream service temporarily unavailable"
-	default:
-		return http.StatusBadGateway, "Upstream request failed"
-	}
 }
 
 type pathParseError struct{ msg string }
