@@ -77,6 +77,7 @@ type Config struct {
 	Security                SecurityConfig                `mapstructure:"security"`
 	Billing                 BillingConfig                 `mapstructure:"billing"`
 	Turnstile               TurnstileConfig               `mapstructure:"turnstile"`
+	Cloudflare              CloudflareConfig              `mapstructure:"cloudflare"`
 	Database                DatabaseConfig                `mapstructure:"database"`
 	Redis                   RedisConfig                   `mapstructure:"redis"`
 	Ops                     OpsConfig                     `mapstructure:"ops"`
@@ -1684,6 +1685,12 @@ type TurnstileConfig struct {
 	Required bool `mapstructure:"required"`
 }
 
+// CloudflareConfig holds credentials for user IP allowlisting via IP Access Rules.
+type CloudflareConfig struct {
+	APIToken string `mapstructure:"api_token"`
+	ZoneID   string `mapstructure:"zone_id"`
+}
+
 type DefaultConfig struct {
 	AdminEmail      string  `mapstructure:"admin_email"`
 	AdminPassword   string  `mapstructure:"admin_password"`
@@ -2118,6 +2125,8 @@ func setDefaults() {
 
 	// Turnstile
 	viper.SetDefault("turnstile.required", false)
+	viper.SetDefault("cloudflare.api_token", "")
+	viper.SetDefault("cloudflare.zone_id", "")
 
 	// LinuxDo Connect OAuth 登录
 	viper.SetDefault("linuxdo_connect.enabled", false)

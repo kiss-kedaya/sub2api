@@ -1138,6 +1138,12 @@ turnstile:
   # 在 release 模式下要求 Turnstile 验证（启用后，若未配置则登录/注册会失败）
   required: false
 
+# Cloudflare IP Access Rules for user-submitted allowlist IPs.
+# Users with cumulative recharge >= 100 CNY can bind 1 public IP per 100 CNY (max 5).
+cloudflare:
+  api_token: ""
+  zone_id: ""
+
 # =============================================================================
 # Gemini OAuth (Required for Gemini accounts)
 # Gemini OAuth 配置（Gemini 账户必需）

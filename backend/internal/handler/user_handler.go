@@ -22,6 +22,7 @@ type UserHandler struct {
 	emailCache            service.EmailCache
 	affiliateService      *service.AffiliateService
 	userPlatformQuotaRepo service.UserPlatformQuotaRepository
+	cfAllowlist           *service.CFAllowlistService
 }
 
 // NewUserHandler creates a new UserHandler
