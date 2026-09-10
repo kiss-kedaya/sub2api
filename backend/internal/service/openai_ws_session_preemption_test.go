@@ -288,3 +288,101 @@ func TestNewOpenAIWSSessionPreemptKeyRequiresFullIsolationScope(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "sess", key.sessionHash)
 }
+
+func newOpenAIWSPreemptCodexContext(apiKeyID int64, threadID string) *gin.Context {
+	groupID := int64(7)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	c.Request.Header.Set("session-id", "root-session")
+	if threadID != "" {
+		c.Request.Header.Set(openAIWSTurnMetadataHeader, `{"session_id":"root-session","thread_id":"`+threadID+`"}`)
+	}
+	c.Set("api_key", &APIKey{ID: apiKeyID, GroupID: &groupID})
+	return c
+}
+
+func TestOpenAIWSIngressSessionPreemptionIsolatesCodexThreads(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	firstMessage := []byte(`{"type":"response.create","input":"hello"}`)
+	retryMessage := []byte(`{"type":"response.create","input":[{"role":"user","content":"hello"},{"role":"user","content":"again"}]}`)
+
+	rootCtx, rootCleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(
+		context.Background(), newOpenAIWSPreemptCodexContext(11, "root-session"), account, firstMessage,
+	)
+	require.True(t, armed)
+	defer rootCleanup()
+
+	childCtx, childCleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(
+		context.Background(), newOpenAIWSPreemptCodexContext(11, "child-thread"), account, firstMessage,
+	)
+	require.True(t, armed)
+	defer childCleanup()
+	require.NoError(t, rootCtx.Err(), "same session but different codex thread must not preempt")
+	require.NoError(t, childCtx.Err())
+
+	otherKeyCtx, otherKeyCleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(
+		context.Background(), newOpenAIWSPreemptCodexContext(12, "root-session"), account, firstMessage,
+	)
+	require.True(t, armed)
+	defer otherKeyCleanup()
+	require.NoError(t, rootCtx.Err(), "same thread under another api key must not preempt")
+	require.NoError(t, otherKeyCtx.Err())
+
+	_, rootRetryCleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(
+		context.Background(), newOpenAIWSPreemptCodexContext(11, "root-session"), account, retryMessage,
+	)
+	require.True(t, armed)
+	defer rootRetryCleanup()
+	require.True(t, IsOpenAIWSSessionPreemptedError(context.Cause(rootCtx)), "same thread reconnect with a different body must still preempt")
+	require.NoError(t, childCtx.Err(), "root reconnect must leave the child thread alone")
+	require.NoError(t, otherKeyCtx.Err())
+}
+
+func TestOpenAIWSIngressSessionPreemptionSkipsContentOnlyIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(7)
+	newContext := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+		c.Set("api_key", &APIKey{ID: 11, GroupID: &groupID})
+		return c
+	}
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	contentOnly := []byte(`{"type":"response.create","model":"gpt-5.1","instructions":"sys","input":[{"role":"user","content":"same prompt"}]}`)
+
+	firstCtx, firstCleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(context.Background(), newContext(), account, contentOnly)
+	require.False(t, armed, "content-derived seed is not an identity and must not arm preemption")
+	defer firstCleanup()
+	_, secondCleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(context.Background(), newContext(), account, contentOnly)
+	require.False(t, armed)
+	defer secondCleanup()
+	require.NoError(t, firstCtx.Err())
+}
+
+func TestOpenAIWSIngressSessionPreemptionClaimsRemoteOwnerByExecutionScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stub := &openAIWSSessionPreemptCacheStub{}
+	svc := &OpenAIGatewayService{cache: stub}
+	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	firstMessage := []byte(`{"type":"response.create","input":"hello"}`)
+	c := newOpenAIWSPreemptCodexContext(11, "thread-a")
+
+	_, cleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(context.Background(), c, account, firstMessage)
+	require.True(t, armed)
+	defer cleanup()
+
+	scope, _ := resolveOpenAIWSExecutionScope(c, firstMessage, 11)
+	legacy := svc.GenerateSessionHash(c, firstMessage)
+	require.NotEmpty(t, scope)
+	require.NotEqual(t, legacy, scope)
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	_, scoped := stub.owners[stub.key(7, openAIWSSessionPreemptCacheHash(11, scope))]
+	_, legacyKeyed := stub.owners[stub.key(7, openAIWSSessionPreemptCacheHash(11, legacy))]
+	require.True(t, scoped, "remote owner must be claimed under the execution scope")
+	require.False(t, legacyKeyed, "remote owner must not be claimed under the legacy session hash")
+}
