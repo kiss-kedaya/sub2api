@@ -37,7 +37,7 @@ func TestGroupUsableForRequest(t *testing.T) {
 
 	restricted := &Group{
 		Platform:         PlatformOpenAI,
-		ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5"}},
+		ModelAllowlist: GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5"}},
 	}
 	require.True(t, groupUsableForRequest(restricted, PlatformOpenAI, "gpt-5"))
 	require.False(t, groupUsableForRequest(restricted, PlatformOpenAI, "gpt-5.4"))
@@ -52,13 +52,13 @@ func TestGroupAllowsRequestedModel(t *testing.T) {
 	require.True(t, groupAllowsRequestedModel(nil, "gpt-5"))
 	require.True(t, groupAllowsRequestedModel(&Group{}, "gpt-5"))
 
-	restricted := &Group{ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5", "codex-mini"}}}
+	restricted := &Group{ModelAllowlist: GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5", "codex-mini"}}}
 	require.True(t, groupAllowsRequestedModel(restricted, "gpt-5"))
 	require.True(t, groupAllowsRequestedModel(restricted, "GPT-5"))
 	require.False(t, groupAllowsRequestedModel(restricted, "claude-opus-4"))
 	require.False(t, groupAllowsRequestedModel(restricted, ""))
 
-	grokList := &Group{ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"grok-4.6", "grok-*"}}}
+	grokList := &Group{ModelAllowlist: GroupModelsListConfig{Enabled: true, Models: []string{"grok-4.6", "grok-*"}}}
 	require.True(t, groupAllowsRequestedModel(grokList, "grok-4.6"))
 	require.True(t, groupAllowsRequestedModel(grokList, "grok-4.5"))
 	require.False(t, groupAllowsRequestedModel(grokList, "gemini-3.8-flash"))
@@ -181,7 +181,7 @@ func TestGroupCatalogUsableForRequest_OpenAICompatibleGrokDoesNotClaimGemini(t *
 			group: &Group{
 				ID:               grokID,
 				Platform:         PlatformGrok,
-				ModelsListConfig: GroupModelsListConfig{Enabled: true, Models: []string{"grok-4.6"}},
+				ModelAllowlist: GroupModelsListConfig{Enabled: true, Models: []string{"grok-4.6"}},
 			},
 		},
 	}
