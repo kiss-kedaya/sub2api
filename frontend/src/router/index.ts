@@ -278,6 +278,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/ip-allowlist',
+    name: 'CFAllowlist',
+    component: () => import('@/views/user/CFAllowlistView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'IP Allowlist',
+      titleKey: 'cfAllowlist.title',
+      descriptionKey: 'cfAllowlist.intro'
+    }
+  },
+  {
     path: '/profile',
     name: 'Profile',
     component: () => import('@/views/user/ProfileView.vue'),
