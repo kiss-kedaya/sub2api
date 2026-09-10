@@ -108,11 +108,13 @@ func (i *PluginPackageInstaller) Install(ctx context.Context, reader io.Reader, 
 		return nil, fmt.Errorf("插件包不是有效的 ZIP: %w", err)
 	}
 	archiveClosed := false
-	defer func() {
+	closeArchive := func() {
 		if !archiveClosed {
+			archiveClosed = true
 			_ = archive.Close()
 		}
-	}()
+	}
+	defer closeArchive()
 	manifest, _, signatureStatus, err := i.inspectArchive(&archive.Reader)
 	if err != nil {
 		return nil, err
@@ -142,14 +144,8 @@ func (i *PluginPackageInstaller) Install(ctx context.Context, reader io.Reader, 
 	if err := i.extractArchive(ctx, &archive.Reader, manifest, extractPath); err != nil {
 		return nil, err
 	}
-	// zip.OpenReader keeps the upload file descriptor open until Close. On
-	// Windows an open descriptor prevents the subsequent atomic rename of the
-	// uploaded artifact, which made otherwise valid installs fail with a
-	// sharing-violation error. Close it before committing either path.
-	if err := archive.Close(); err != nil {
-		return nil, fmt.Errorf("关闭插件包: %w", err)
-	}
-	archiveClosed = true
+	// Windows 不允许重命名仍被打开的文件，提交前先释放 ZIP 读取器。
+	closeArchive()
 	if err := os.Rename(extractPath, installPath); err != nil {
 		return nil, fmt.Errorf("提交插件安装目录: %w", err)
 	}

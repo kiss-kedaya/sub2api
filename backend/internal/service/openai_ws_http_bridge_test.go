@@ -31,7 +31,7 @@ func TestResolveOpenAIWSClientFirstMessageTimeout(t *testing.T) {
 }
 
 func TestPrepareOpenAIWSHTTPBridgeBodyStripsWSFields(t *testing.T) {
-	body, err := prepareOpenAIWSHTTPBridgeBody([]byte(`{"type":"response.create","generate":true,"model":"gpt-5","stream":false,"previous_response_id":"resp_prev","input":"hi","sequence":900719925474099312345}`))
+	body, err := prepareOpenAIWSHTTPBridgeBody(nil, []byte(`{"type":"response.create","generate":true,"model":"gpt-5","stream":false,"previous_response_id":"resp_prev","input":"hi","sequence":900719925474099312345}`))
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(body, "type").Exists())
 	require.False(t, gjson.GetBytes(body, "generate").Exists())
@@ -40,17 +40,33 @@ func TestPrepareOpenAIWSHTTPBridgeBodyStripsWSFields(t *testing.T) {
 	require.True(t, gjson.GetBytes(body, "stream").Bool())
 	require.Equal(t, "hi", gjson.GetBytes(body, "input").String())
 	require.Equal(t, "900719925474099312345", gjson.GetBytes(body, "sequence").Raw)
-	_, err = prepareOpenAIWSHTTPBridgeBody([]byte(`{"type":"response.create"}{"trailing":true}`))
+	_, err = prepareOpenAIWSHTTPBridgeBody(nil, []byte(`{"type":"response.create"}{"trailing":true}`))
 	require.Error(t, err)
 }
 
-func TestProxyOpenAIWSHTTPBridgeTurn_UpstreamDefaultServiceTierWinsOverRequest(t *testing.T) {
+func TestPrepareOpenAIWSHTTPBridgeBodyStripsNoneReasoningForCompatibleEndpoint(t *testing.T) {
+	payload := []byte(`{"type":"response.create","model":"company-coding-model","reasoning":{"effort":"none"},"input":"hi"}`)
+	compatible := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{
+		"base_url": "https://compat.example/v1",
+	}}
+
+	body, err := prepareOpenAIWSHTTPBridgeBody(compatible, payload)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(body, "reasoning.effort").Exists())
+	require.False(t, gjson.GetBytes(body, "reasoning").Exists())
+
+	officialBody, err := prepareOpenAIWSHTTPBridgeBody(&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, payload)
+	require.NoError(t, err)
+	require.Equal(t, "none", gjson.GetBytes(officialBody, "reasoning.effort").String())
+}
+
+func TestProxyOpenAIWSHTTPBridgeTurn_KeepsOutboundAndObservedServiceTiersSeparate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	// proxyOpenAIWSHTTPBridgeTurn 是 client WS→HTTP bridge，本身不 canonicalize
 	// fast→priority；生产入口的归一化在 openai_ws_forwarder_ingress.go 的 fast
-	// policy。本测试只覆盖局部 observer：canonical 请求 priority 被上游
-	// response.completed service_tier=default 覆盖。
+	// policy. This test covers the local observer while preserving the canonical
+	// outbound priority tier independently.
 	sse := strings.Join([]string{
 		`data: {"type":"response.completed","response":{"id":"resp_tier","model":"gpt-5.5","status":"completed","service_tier":"default","usage":{"input_tokens":1,"output_tokens":1}}}`,
 		``,
@@ -80,14 +96,15 @@ func TestProxyOpenAIWSHTTPBridgeTurn_UpstreamDefaultServiceTierWinsOverRequest(t
 	require.NotNil(t, result)
 	require.Equal(t, "priority", gjson.GetBytes(upstream.lastBody, "service_tier").String())
 	require.NotNil(t, result.ServiceTier)
-	require.Equal(t, "default", *result.ServiceTier)
+	require.Equal(t, "priority", *result.ServiceTier)
+	require.Equal(t, "default", result.UpstreamResponseServiceTier)
 }
 
-func TestProxyOpenAIWSHTTPBridgeTurn_UpstreamDefaultWinsOverFastAlias(t *testing.T) {
+func TestProxyOpenAIWSHTTPBridgeTurn_NormalizesFastWithoutLosingObservedDefault(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	// 客户端别名 fast 同样被上游回显的 default 覆盖：局部 observer 的
-	// ServiceTier() 是唯一计费依据，绝不回退到请求侧 fast。
+	// The client alias fast is canonicalized to priority while the local observer
+	// independently captures the upstream default declaration.
 	sse := strings.Join([]string{
 		`data: {"type":"response.completed","response":{"id":"resp_tier2","model":"gpt-5.5","status":"completed","service_tier":"default","usage":{"input_tokens":1,"output_tokens":1}}}`,
 		``,
@@ -116,8 +133,8 @@ func TestProxyOpenAIWSHTTPBridgeTurn_UpstreamDefaultWinsOverFastAlias(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.ServiceTier)
-	require.Equal(t, "default", *result.ServiceTier,
-		"local observer's upstream-echoed default must win over the fast alias")
+	require.Equal(t, "priority", *result.ServiceTier)
+	require.Equal(t, "default", result.UpstreamResponseServiceTier)
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurnAPIKeyAdaptsClientTools(t *testing.T) {

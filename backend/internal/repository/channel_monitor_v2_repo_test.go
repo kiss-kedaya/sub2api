@@ -1,10 +1,12 @@
 package repository
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
@@ -156,6 +158,107 @@ func TestChannelMonitorV2MatrixDoesNotSeedGroupsForEmptyViewerScope(t *testing.T
 		3: {name: "private"}, 9: {name: "other-private"},
 	})
 	require.Empty(t, accs)
+}
+
+func TestChannelMonitorV2EmptyRestrictedScopeReturnsEmptyInventory(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := &channelMonitorV2Repository{db: db}
+	filter := service.ChannelMonitorV2Filter{RestrictGroups: true}
+	cfg := service.ChannelMonitorV2Config{
+		Platforms: []service.ChannelMonitorV2PlatformConfig{{Platform: "openai", Enabled: true, Models: []string{"gpt-5"}}},
+		GroupIDs:  []int64{3, 9},
+	}
+
+	dimensions, err := repo.GetDimensions(context.Background(), filter, cfg)
+	require.NoError(t, err)
+	require.Empty(t, dimensions.Platforms)
+	require.Empty(t, dimensions.Groups)
+	require.Empty(t, dimensions.Models)
+	require.NotNil(t, dimensions.Platforms)
+	require.NotNil(t, dimensions.Groups)
+	require.NotNil(t, dimensions.Models)
+
+	models, err := repo.GetModels(context.Background(), filter, cfg, false)
+	require.NoError(t, err)
+	require.Empty(t, models.Items)
+	require.NotNil(t, models.Items)
+	require.Equal(t, service.ChannelMonitorV2Coverage{}, models.Coverage)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestChannelMonitorV2EmptyRestrictedScopeReturnsEmptySnapshotWithoutQueries(t *testing.T) {
+	tests := []struct {
+		name   string
+		filter service.ChannelMonitorV2Filter
+	}{
+		{
+			name:   "no allowed groups",
+			filter: service.ChannelMonitorV2Filter{RestrictGroups: true},
+		},
+		{
+			name: "requested groups exclude allowed configured scope",
+			filter: service.ChannelMonitorV2Filter{
+				GroupIDs: []int64{9}, AllowedGroupIDs: []int64{3}, RestrictGroups: true,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
+			repo := &channelMonitorV2Repository{db: db}
+			cfg := service.ChannelMonitorV2Config{
+				Enabled: true,
+				Platforms: []service.ChannelMonitorV2PlatformConfig{{
+					Platform: "openai", Enabled: true, Models: []string{"gpt-5"},
+				}},
+				GroupIDs: []int64{3},
+			}
+
+			snapshot, err := repo.GetSnapshot(context.Background(), test.filter, cfg, false)
+			require.NoError(t, err)
+			require.Equal(t, service.ChannelMonitorV2Config{}, snapshot.Config)
+			require.Equal(t, service.ChannelMonitorV2Coverage{}, snapshot.Coverage)
+			require.Equal(t, service.ChannelMonitorV2Metric{}, snapshot.Metrics)
+			require.Equal(t, service.ChannelMonitorV2Health{}, snapshot.Health)
+			require.Empty(t, snapshot.Trend)
+			require.NotNil(t, snapshot.Trend)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestChannelMonitorV2EmptyRestrictedScopeReturnsEmptyMatrixForEveryGrouping(t *testing.T) {
+	groupings := []service.ChannelMonitorV2GroupBy{
+		service.ChannelMonitorV2GroupByPlatform,
+		service.ChannelMonitorV2GroupByPlatformModel,
+		service.ChannelMonitorV2GroupByPlatformGroup,
+		service.ChannelMonitorV2GroupByPlatformGroupModel,
+	}
+	for _, groupBy := range groupings {
+		t.Run(string(groupBy), func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
+			repo := &channelMonitorV2Repository{db: db}
+			filter := service.ChannelMonitorV2Filter{RestrictGroups: true}
+			cfg := service.ChannelMonitorV2Config{
+				Platforms: []service.ChannelMonitorV2PlatformConfig{{Platform: "openai", Enabled: true, Models: []string{"gpt-5"}}},
+				GroupIDs:  []int64{3, 9},
+			}
+
+			matrix, err := repo.GetMatrix(context.Background(), filter, cfg, groupBy, false)
+			require.NoError(t, err)
+			require.Equal(t, groupBy, matrix.GroupBy)
+			require.Empty(t, matrix.Items)
+			require.NotNil(t, matrix.Items)
+			require.Equal(t, service.ChannelMonitorV2Coverage{}, matrix.Coverage)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestChannelMonitorV2ErrorAggregationCountsFinalUserErrorsOnly(t *testing.T) {

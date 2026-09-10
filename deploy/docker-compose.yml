@@ -203,6 +203,7 @@ services:
       - GATEWAY_OPENAI_COMPACT_MODEL=${GATEWAY_OPENAI_COMPACT_MODEL:-gpt-5.4}
       # Keep a bounded response-header wait so a stalled upstream cannot consume
       # the entire Cloudflare proxy timeout window. Streaming uses keepalives.
+      - SUB2API_IMAGES_MAIN_MODEL=${SUB2API_IMAGES_MAIN_MODEL:-gpt-5.6-luna}
       - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-90}
       - GATEWAY_OPENAI_WS_FORCE_HTTP=${GATEWAY_OPENAI_WS_FORCE_HTTP:-false}
       - GATEWAY_CODEX_QUOTA_OVERDRAFT_ENABLED=${GATEWAY_CODEX_QUOTA_OVERDRAFT_ENABLED:-true}
@@ -271,7 +272,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      # The application also retries transient database startup errors. This
+      # grace period keeps Compose from declaring it unhealthy during bootstrap.
+      start_period: 120s
 
   # ===========================================================================
   # PostgreSQL Database
@@ -315,12 +318,12 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-sub2api} -d ${POSTGRES_DB:-sub2api}",
+          "pg_isready -U ${POSTGRES_USER:-sub2api} -d ${POSTGRES_DB:-sub2api} && psql -U ${POSTGRES_USER:-sub2api} -d ${POSTGRES_DB:-sub2api} -Atqc 'SELECT 1' >/dev/null",
         ]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      retries: 18
+      start_period: 60s
     # 注意：不暴露端口到宿主机，应用通过内部网络连接
     # 如需调试，可临时添加：ports: ["127.0.0.1:5433:5432"]
 
