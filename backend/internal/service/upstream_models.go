@@ -808,6 +808,17 @@ func builtinCatalogModelMetadata(modelID string) (UpstreamModelMetadata, bool) {
 			ContextWindow:   grokImagineCatalogContextWindow(id),
 			MaxOutputTokens: grokImagineCatalogMaxOutput(id),
 		}, true
+	case id == "gemini-3.6-flash-tiered":
+		reasoning := true
+		return UpstreamModelMetadata{
+			ID:              "gemini-3.6-flash-tiered",
+			DisplayName:     "Gemini 3.6 Flash Tiered",
+			Description:     "Tiered pricing variant of Gemini 3.6 Flash for cost-optimized multimodal reasoning",
+			Reasoning:       &reasoning,
+			InputModalities: []string{"text", "image"},
+			ContextWindow:   1048576,
+			MaxOutputTokens: 65535,
+		}, true
 	default:
 		return UpstreamModelMetadata{}, false
 	}
