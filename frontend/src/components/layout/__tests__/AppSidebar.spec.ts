@@ -67,4 +67,9 @@ describe('AppSidebar user navigation', () => {
   it('hides the legacy subscriptions entry while keeping the route available', () => {
     expect(componentSource).not.toContain("{ path: '/subscriptions'")
   })
+
+  it('includes Infinite Canvas next to API keys', () => {
+    expect(componentSource).toContain("{ path: '/infinite-canvas'")
+    expect(componentSource).toContain("t('nav.infiniteCanvas')")
+  })
 })
