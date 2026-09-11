@@ -40,6 +40,28 @@ func resolveOpenAIWSClientThreadID(c *gin.Context, body []byte) string {
 	return codexTurnMetadataThreadID(gjson.GetBytes(body, "client_metadata."+openAIWSTurnMetadataHeader).String())
 }
 
+// openAIWSExecutionScopeBodyFromRequest 只序列化执行作用域会读取的字段，
+// 供已解析成 map 的 HTTP 请求体取键，避免为此重新编码整个请求体。
+func openAIWSExecutionScopeBodyFromRequest(reqBody map[string]any) []byte {
+	if len(reqBody) == 0 {
+		return nil
+	}
+	subset := make(map[string]any, 3)
+	for _, key := range []string{"client_metadata", "prompt_cache_key", "previous_response_id"} {
+		if value, ok := reqBody[key]; ok {
+			subset[key] = value
+		}
+	}
+	if len(subset) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(subset)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
 func codexTurnMetadataThreadID(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
