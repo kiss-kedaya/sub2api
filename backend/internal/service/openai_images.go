@@ -692,7 +692,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	imageCount := parsed.N
 	var firstTokenMs *int
 	if parsed.Stream && isEventStreamResponse(resp.Header) {
-		streamUsage, streamCount, streamSizes, ttft, err := s.handleOpenAIImagesStreamingResponse(resp, c, startTime)
+		streamUsage, streamCount, streamSizes, ttft, err := s.handleOpenAIImagesStreamingResponse(resp, c, startTime, nil)
 		if err != nil {
 			if streamCount > 0 {
 				return &OpenAIForwardResult{
@@ -934,12 +934,8 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	resp *http.Response,
 	c *gin.Context,
 	startTime time.Time,
-	directRequests ...*OpenAIImagesRequest,
+	direct *OpenAIImagesRequest,
 ) (OpenAIUsage, int, []string, *int, error) {
-	var direct *OpenAIImagesRequest
-	if len(directRequests) > 0 {
-		direct = directRequests[0]
-	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if contentType == "" {
@@ -972,13 +968,16 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 		if streamErr != nil {
 			return streamErr
 		}
-		if !seenSSEData || imageCounter.Count() < max(direct.N, 1) {
+		if !seenSSEData || imageCounter.Count() == 0 {
 			return newOpenAIUpstreamStreamReadError(ErrOpenAIUpstreamStreamTruncated)
 		}
 		return nil
 	}
 
 	processSSEData := func(dataBytes []byte) {
+		if streamErr != nil {
+			return
+		}
 		seenSSEData = true
 		fallbackBody.Reset()
 		fallbackBytes = 0
@@ -1000,12 +999,18 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 		}
 		if upstreamErr := openAIImagesUpstreamErrorFromSSEPayload(dataBytes); upstreamErr != nil {
 			streamErr = upstreamErr
+			if IsOpenAIImagesRetryableUpstreamError(upstreamErr) && imageCounter.Count() == 0 {
+				return
+			}
 		}
 		if !gjson.ValidBytes(dataBytes) {
 			streamErr = newOpenAIUpstreamStreamReadError(fmt.Errorf("invalid image stream JSON"))
 			return
 		}
 		eventType := gjson.GetBytes(dataBytes, "type").String()
+		if direct != nil && strings.TrimSpace(direct.Model) != "" {
+			dataBytes, _ = sjson.SetBytes(dataBytes, "model", strings.TrimSpace(direct.Model))
+		}
 		// 原生编辑事件可能仍使用 image_generation 前缀；对外维持既有编辑事件名。
 		if strings.HasPrefix(eventType, "image_generation.") && direct.IsEdits() {
 			eventType = strings.Replace(eventType, "image_generation.", "image_edit.", 1)
