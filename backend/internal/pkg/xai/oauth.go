@@ -735,6 +735,25 @@ func BuildVideoURLWithValidator(baseURL, requestID string, validator BaseURLVali
 	return validatedBaseURL + "/videos/" + url.PathEscape(requestID), nil
 }
 
+func BuildVideoGenerationsStatusURL(baseURL, requestID string) (string, error) {
+	return BuildVideoGenerationsStatusURLWithValidator(baseURL, requestID, nil)
+}
+
+func BuildVideoGenerationsStatusURLWithValidator(baseURL, requestID string, validator BaseURLValidator) (string, error) {
+	validatedBaseURL, err := validatedBaseURLWithValidator(baseURL, validator)
+	if err != nil {
+		return "", fmt.Errorf("invalid base url: %w", err)
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return "", fmt.Errorf("request id is required")
+	}
+	if requestID == "." || requestID == ".." || strings.ContainsAny(requestID, "\x00\r\n") {
+		return "", fmt.Errorf("invalid request id")
+	}
+	return validatedBaseURL + "/videos/generations/" + url.PathEscape(requestID), nil
+}
+
 // TokenResponse represents xAI OAuth token responses.
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
