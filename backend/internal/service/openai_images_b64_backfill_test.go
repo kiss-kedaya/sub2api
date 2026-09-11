@@ -32,7 +32,7 @@ func b64BackfillImageResponse(status int, contentType string, payload []byte) *h
 }
 
 func b64BackfillAccount(enabled bool) *Account {
-	account := &Account{
+	return &Account{
 		ID:       7,
 		Name:     "openai-apikey",
 		Platform: PlatformOpenAI,
@@ -41,17 +41,14 @@ func b64BackfillAccount(enabled bool) *Account {
 			"api_key":  "sk-test",
 			"base_url": "https://relay.example.com/v1",
 		},
+		Extra: map[string]any{AccountExtraImagesURLToB64JSON: enabled},
 	}
-	if enabled {
-		account.Extra = map[string]any{AccountExtraImagesURLToB64JSON: true}
-	}
-	return account
 }
 
 func TestImagesURLToB64JSONEnabled(t *testing.T) {
-	require.False(t, ImagesURLToB64JSONEnabled(nil))
-	require.False(t, ImagesURLToB64JSONEnabled(&Account{}))
-	require.False(t, ImagesURLToB64JSONEnabled(&Account{Extra: map[string]any{AccountExtraImagesURLToB64JSON: "true"}}))
+	require.True(t, ImagesURLToB64JSONEnabled(nil))
+	require.True(t, ImagesURLToB64JSONEnabled(&Account{}))
+	require.True(t, ImagesURLToB64JSONEnabled(&Account{Extra: map[string]any{AccountExtraImagesURLToB64JSON: "true"}}))
 	require.False(t, ImagesURLToB64JSONEnabled(&Account{Extra: map[string]any{AccountExtraImagesURLToB64JSON: false}}))
 	require.True(t, ImagesURLToB64JSONEnabled(&Account{Extra: map[string]any{AccountExtraImagesURLToB64JSON: true}}))
 }
@@ -77,7 +74,7 @@ func TestBackfillOpenAIImagesB64JSON(t *testing.T) {
 			wantDownloads: 0,
 		},
 		{
-			name:          "缺少 b64_json 且有 url 时下载回填并保留 url",
+			name:          "缺少 b64_json 且有 url 时下载回填并删除 url",
 			enabled:       true,
 			body:          `{"created":1,"data":[{"url":"https://cdn.example.com/a.png","revised_prompt":"a cat"}]}`,
 			upstream:      &httpUpstreamRecorder{resp: b64BackfillImageResponse(http.StatusOK, "image/png", b64BackfillPNGBytes)},
@@ -178,11 +175,14 @@ func TestBackfillOpenAIImagesB64JSON(t *testing.T) {
 				require.Equal(t, want, items[i].Get("b64_json").String(), "data.%d.b64_json", i)
 			}
 			require.Len(t, tt.upstream.requests, tt.wantDownloads)
-			// 除 b64_json 外的字段必须原样保留。
 			original := gjson.Parse(tt.body)
 			original.Get("data").ForEach(func(key, item gjson.Result) bool {
 				item.ForEach(func(field, value gjson.Result) bool {
 					if field.String() == "b64_json" {
+						return true
+					}
+					if field.String() == "url" && tt.enabled && items[key.Int()].Get("b64_json").String() != "" && item.Get("b64_json").String() == "" {
+						require.Equal(t, "", gjson.GetBytes(got, "data."+key.String()+".url").String())
 						return true
 					}
 					require.Equal(t, value.Raw, gjson.GetBytes(got, "data."+key.String()+"."+field.String()).Raw)
