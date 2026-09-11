@@ -43,12 +43,20 @@ func (h *OpenAIGatewayHandler) GrokVideoExtension(c *gin.Context) {
 
 // GrokVideoStatus handles xAI video status retrieval through Grok groups.
 func (h *OpenAIGatewayHandler) GrokVideoStatus(c *gin.Context) {
-	h.handleGrokMedia(c, service.GrokMediaEndpointVideoStatus, c.Param("request_id"))
+	endpoint := service.GrokMediaEndpointVideoStatus
+	if strings.Contains(c.Request.URL.Path, "/videos/generations/") {
+		endpoint = service.GrokMediaEndpointVideoGenerationsStatus
+	}
+	h.handleGrokMedia(c, endpoint, c.Param("request_id"))
 }
 
 // GrokVideoContent proxies downloadable video content through the task's upstream account.
 func (h *OpenAIGatewayHandler) GrokVideoContent(c *gin.Context) {
-	h.handleGrokMedia(c, service.GrokMediaEndpointVideoContent, c.Param("request_id"))
+	endpoint := service.GrokMediaEndpointVideoContent
+	if strings.Contains(c.Request.URL.Path, "/videos/generations/") {
+		endpoint = service.GrokMediaEndpointVideoGenerationsContent
+	}
+	h.handleGrokMedia(c, endpoint, c.Param("request_id"))
 }
 
 func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.GrokMediaEndpoint, requestID string) {
@@ -491,7 +499,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 		// Status poll OR content download can observe official done+video.url.
 		// Both paths share the same claim key so the customer is charged once.
-		if endpoint == service.GrokMediaEndpointVideoStatus || endpoint == service.GrokMediaEndpointVideoContent {
+		if endpoint.IsVideoLookupRequest() {
 			taskID := strings.TrimSpace(requestID)
 			if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
 				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
