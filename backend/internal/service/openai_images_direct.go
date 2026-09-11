@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,6 +12,20 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
+
+type openAIImagesForceResponsesContextKey struct{}
+
+func withOpenAIImagesForceResponses(ctx context.Context) context.Context {
+	return context.WithValue(ctx, openAIImagesForceResponsesContextKey{}, true)
+}
+
+func isOpenAIImagesForceResponses(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	forced, _ := ctx.Value(openAIImagesForceResponsesContextKey{}).(bool)
+	return forced
+}
 
 // 显式列出已接入的模型，不把未来模型或未知快照自动送到直调端点。
 func usesCodexDirectImages(model string) bool {
@@ -35,47 +51,50 @@ func buildOpenAIImagesOAuthPayload(parsed *OpenAIImagesRequest, model string) ([
 	if strings.TrimSpace(parsed.Prompt) == "" {
 		return nil, "", fmt.Errorf("prompt is required")
 	}
-	// JSON 参数保持透传；multipart 则将已校验的字段与上传图片转换为 JSON。
-	body := []byte(`{}`)
+	// 只把已解析并校验的图片字段发送给上游，避免客户端注入任意 JSON 字段。
+	payload := make(map[string]any, 16)
+	payload["model"] = model
+	prompt := parsed.Prompt
 	if !parsed.Multipart && gjson.ValidBytes(parsed.Body) {
-		body = append([]byte(nil), parsed.Body...)
+		if rawPrompt := gjson.GetBytes(parsed.Body, "prompt").String(); rawPrompt != "" {
+			prompt = rawPrompt
+		}
 	}
-	body, _ = sjson.SetBytes(body, "model", model)
-	if !gjson.GetBytes(body, "prompt").Exists() {
-		body, _ = sjson.SetBytes(body, "prompt", parsed.Prompt)
-	}
-	for _, field := range []struct{ key, value string }{
+	payload["prompt"] = prompt
+	for _, field := range []struct {
+		key   string
+		value string
+	}{
 		{"size", parsed.Size}, {"quality", parsed.Quality},
 		{"background", parsed.Background}, {"output_format", parsed.OutputFormat},
 		{"moderation", parsed.Moderation}, {"input_fidelity", parsed.InputFidelity},
 		{"style", parsed.Style},
 	} {
-		if field.value != "" && !gjson.GetBytes(body, field.key).Exists() {
-			body, _ = sjson.SetBytes(body, field.key, field.value)
+		if value := strings.TrimSpace(field.value); value != "" {
+			payload[field.key] = value
 		}
 	}
-	if parsed.N > 0 {
-		body, _ = sjson.SetBytes(body, "n", parsed.N)
+	if parsed.N > 1 {
+		payload["n"] = parsed.N
 	}
 	if parsed.OutputCompression != nil {
-		body, _ = sjson.SetBytes(body, "output_compression", *parsed.OutputCompression)
+		payload["output_compression"] = *parsed.OutputCompression
 	}
 	if parsed.PartialImages != nil {
-		body, _ = sjson.SetBytes(body, "partial_images", *parsed.PartialImages)
+		payload["partial_images"] = *parsed.PartialImages
 	}
-	// GPT Image 原生返回 base64；对外 url 格式由网关转换为 data URL。
-	body, _ = sjson.DeleteBytes(body, "response_format")
 	if parsed.Stream {
-		body, _ = sjson.SetBytes(body, "stream", true)
-	} else {
-		body, _ = sjson.DeleteBytes(body, "stream")
+		payload["stream"] = true
 	}
+
 	endpoint := "/images/generations"
 	if parsed.IsEdits() {
 		endpoint = "/images/edits"
 		images := make([]map[string]string, 0, len(parsed.InputImageURLs)+len(parsed.Uploads))
-		for _, url := range parsed.InputImageURLs {
-			images = append(images, map[string]string{"image_url": url})
+		for _, imageURL := range parsed.InputImageURLs {
+			if imageURL = strings.TrimSpace(imageURL); imageURL != "" {
+				images = append(images, map[string]string{"image_url": imageURL})
+			}
 		}
 		for _, upload := range parsed.Uploads {
 			url, err := openAIImageUploadToDataURL(upload)
@@ -87,8 +106,8 @@ func buildOpenAIImagesOAuthPayload(parsed *OpenAIImagesRequest, model string) ([
 		if len(images) == 0 {
 			return nil, "", fmt.Errorf("image input is required")
 		}
-		body, _ = sjson.SetBytes(body, "images", images)
-		mask := parsed.MaskImageURL
+		payload["images"] = images
+		mask := strings.TrimSpace(parsed.MaskImageURL)
 		if parsed.MaskUpload != nil {
 			var err error
 			mask, err = openAIImageUploadToDataURL(*parsed.MaskUpload)
@@ -97,8 +116,12 @@ func buildOpenAIImagesOAuthPayload(parsed *OpenAIImagesRequest, model string) ([
 			}
 		}
 		if mask != "" {
-			body, _ = sjson.SetBytes(body, "mask.image_url", mask)
+			payload["mask"] = map[string]string{"image_url": mask}
 		}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, "", fmt.Errorf("marshal Codex Images request: %w", err)
 	}
 	return body, strings.TrimSuffix(chatgptCodexURL, "/responses") + endpoint, nil
 }
@@ -149,8 +172,13 @@ func codexDirectImageURL(body []byte, path, outputFormat string) []byte {
 }
 
 func isOpenAIImagesMainModelError(status int, body []byte) bool {
-	return isOpenAICodexPlanGatedModelError(status, body) &&
-		strings.Contains(extractUpstreamErrorMessage(body), openAIImagesResponsesMainModel)
+	if !isOpenAICodexPlanGatedModelError(status, body) {
+		return false
+	}
+	message := extractUpstreamErrorMessage(body)
+	model := openAIImagesResponsesMainModelValue()
+	return strings.Contains(message, "'"+model+"'") ||
+		strings.Contains(message, `"`+model+`"`)
 }
 
 // Images 端点只输出图片；未提供输出分类时，output_tokens 全部是图片 token。
@@ -195,6 +223,12 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp 
 			observer.Observe(result.Model, true)
 		}
 	}
+	clientModel := strings.TrimSpace(parsed.Model)
+	if clientModel != "" {
+		for i := range gjson.GetBytes(body, "data").Array() {
+			body, _ = sjson.SetBytes(body, fmt.Sprintf("data.%d.model", i), clientModel)
+		}
+	}
 	for i, item := range gjson.GetBytes(body, "data").Array() {
 		if actualSize := detectOpenAIImageResultSize(item.Get("b64_json").String()); actualSize != "" {
 			body, _ = sjson.SetBytes(body, fmt.Sprintf("data.%d.size", i), actualSize)
@@ -216,6 +250,12 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp 
 		}
 	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
-	c.Data(resp.StatusCode, "application/json", body)
+	contentType := "application/json"
+	if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled {
+		if upstreamType := strings.TrimSpace(resp.Header.Get("Content-Type")); upstreamType != "" {
+			contentType = upstreamType
+		}
+	}
+	c.Data(resp.StatusCode, contentType, body)
 	return usage, len(results), openAIResponsesImageResultSizes(results), nil
 }
