@@ -876,6 +876,9 @@ func TestSyncUpstreamModelCatalogIgnoresDedicatedMediaModelsForCompleteness(t *t
 	require.Contains(t, snapshot.Models, "gpt-6-astra")
 	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max"}, snapshot.Models["gpt-6-astra"].SupportedReasoningLevels)
 	require.NotContains(t, snapshot.Models, "gpt-image-2")
+	require.True(t, upstreamModelMetadataIsComplete(catalog.Metadata["gpt-image-2"]))
+	require.Equal(t, int64(16384), catalog.Metadata["gpt-image-2"].ContextWindow)
+	require.Equal(t, int64(16384), catalog.Metadata["gpt-image-2"].MaxOutputTokens)
 }
 
 func TestFetchUpstreamSupportedModelsUsesConfiguredBodyLimit(t *testing.T) {
@@ -1229,10 +1232,102 @@ func TestBuiltinDeepSeekModelMetadataCompletesV4IDs(t *testing.T) {
 			} else {
 				require.Equal(t, []string{"text"}, got.InputModalities)
 			}
+			require.NotEmpty(t, got.Description)
 		})
 	}
 	_, ok := builtinDeepSeekModelMetadata("glm-4.6")
 	require.False(t, ok)
+}
+
+func TestBuiltinCatalogModelMetadataCompletesMissingOfficialIDs(t *testing.T) {
+	falseVal := false
+	trueVal := true
+	cases := []struct {
+		id         string
+		name       string
+		reasoning  bool
+		modalities []string
+		context    int64
+		maxOutput  int64
+		defaultLvl string
+		levels     []string
+	}{
+		{"codex-auto-review", "Codex Auto Review", true, []string{"text", "image"}, 272000, 0, "medium", []string{"low", "medium", "high", "xhigh", "max"}},
+		{"gpt-image-2", "GPT Image 2", false, []string{"text", "image"}, 16384, 16384, "", nil},
+		{"gpt-image-2-exact", "GPT Image 2 Exact", false, []string{"text", "image"}, 16384, 16384, "", nil},
+		{"gpt-image-2.5", "GPT Image 2.5", false, []string{"text", "image"}, 16384, 16384, "", nil},
+		{"gpt-image-2.5-flare", "GPT Image 2.5 Flare", false, []string{"text", "image"}, 16384, 16384, "", nil},
+		{"gpt-image-2.5-sunburst", "GPT Image 2.5 Sunburst", false, []string{"text", "image"}, 16384, 16384, "", nil},
+		{"gpt-image-1k-th", "GPT Image 1K TH", false, []string{"text", "image"}, 16384, 16384, "", nil},
+		{"grok-imagine-image-2.0", "Grok Imagine Image 2.0", false, []string{"text", "image"}, 64000, 16384, "", nil},
+		{"grok-imagine-video-1.5", "Grok Imagine Video 1.5", false, []string{"text", "image"}, 1024, 1024, "", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			got, ok := builtinCatalogModelMetadata(tc.id)
+			require.True(t, ok)
+			require.True(t, upstreamModelMetadataIsComplete(got))
+			require.Equal(t, tc.name, got.DisplayName)
+			require.NotEmpty(t, got.Description)
+			require.Equal(t, tc.modalities, got.InputModalities)
+			require.Equal(t, tc.context, got.ContextWindow)
+			require.Equal(t, tc.maxOutput, got.MaxOutputTokens)
+			if tc.reasoning {
+				require.Equal(t, &trueVal, got.Reasoning)
+				require.Equal(t, tc.defaultLvl, got.DefaultReasoningLevel)
+				require.Equal(t, tc.levels, got.SupportedReasoningLevels)
+			} else {
+				require.Equal(t, &falseVal, got.Reasoning)
+			}
+		})
+	}
+}
+
+func TestInheritUpstreamModelVariantMetadataCopiesBaseCapabilities(t *testing.T) {
+	reasoning := true
+	metadata := map[string]UpstreamModelMetadata{
+		"claude-opus-4-5-20251101": {
+			ID:                       "claude-opus-4-5-20251101",
+			DisplayName:              "claude-opus-4-5-20251101",
+			Description:              "Flagship Claude model for deep reasoning, coding, and long-horizon agents",
+			Reasoning:                &reasoning,
+			InputModalities:          []string{"text", "image"},
+			ContextWindow:            200000,
+			MaxOutputTokens:          64000,
+			SupportedReasoningLevels: []string{"low", "medium", "high"},
+			DefaultReasoningLevel:    "high",
+		},
+		"gemini-3.6-flash": {
+			ID:                       "gemini-3.6-flash",
+			DisplayName:              "gemini-3.6-flash",
+			Description:              "Fast Gemini model balancing multimodal reasoning, tool use, and cost",
+			Reasoning:                &reasoning,
+			InputModalities:          []string{"text", "image"},
+			ContextWindow:            1048576,
+			MaxOutputTokens:          65535,
+			SupportedReasoningLevels: []string{"none", "low", "medium", "high", "max"},
+			DefaultReasoningLevel:    "none",
+		},
+		"claude-opus-4-5-20251101-thinking": {ID: "claude-opus-4-5-20251101-thinking", DisplayName: "claude-opus-4-5-20251101-thinking"},
+		"gemini-3.6-flash-tiered":           {ID: "gemini-3.6-flash-tiered", DisplayName: "gemini-3.6-flash-tiered"},
+	}
+	inheritUpstreamModelVariantMetadata(metadata, []string{
+		"claude-opus-4-5-20251101",
+		"claude-opus-4-5-20251101-thinking",
+		"gemini-3.6-flash",
+		"gemini-3.6-flash-tiered",
+	})
+	thinking := metadata["claude-opus-4-5-20251101-thinking"]
+	require.True(t, upstreamModelMetadataIsComplete(thinking))
+	require.Equal(t, int64(200000), thinking.ContextWindow)
+	require.Equal(t, int64(64000), thinking.MaxOutputTokens)
+	require.Equal(t, []string{"text", "image"}, thinking.InputModalities)
+	require.Contains(t, thinking.Description, "extended-thinking")
+	tiered := metadata["gemini-3.6-flash-tiered"]
+	require.True(t, upstreamModelMetadataIsComplete(tiered))
+	require.Equal(t, int64(1048576), tiered.ContextWindow)
+	require.Equal(t, []string{"none", "low", "medium", "high", "max"}, tiered.SupportedReasoningLevels)
+	require.Contains(t, tiered.Description, "tiered routing")
 }
 
 func TestSyncUpstreamModelCatalogFillsDeepSeekV4WhenRegistryMisses(t *testing.T) {
@@ -1265,5 +1360,57 @@ func TestSyncUpstreamModelCatalogFillsDeepSeekV4WhenRegistryMisses(t *testing.T)
 	require.Equal(t, []string{"text", "image"}, catalog.Metadata["deepseek-v4-flash-vision-exp"].InputModalities)
 	require.Equal(t, []string{"text"}, catalog.Metadata["deepseek-v4-pro-0813"].InputModalities)
 	require.Equal(t, []string{"none", "low", "high", "max"}, catalog.Metadata["deepseek-v4.1-flash-0910"].SupportedReasoningLevels)
+	require.NotEmpty(t, catalog.Metadata["deepseek-v4.1-flash-0910"].Description)
 	require.NotNil(t, repo.updates)
+}
+
+func TestSyncUpstreamModelCatalogFillsMissingOfficialMetadata(t *testing.T) {
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":[
+			{"id":"claude-opus-4-5-20251101","name":"Claude 4.5 Opus","description":"Flagship Claude model for deep reasoning, coding, and long-horizon agents","reasoning":true,"reasoning_options":[{"type":"effort","values":["low","medium","high"]}],"modalities":{"input":["text","image"]},"limit":{"context":200000,"output":64000}},
+			{"id":"claude-opus-4-5-20251101-thinking"},
+			{"id":"codex-auto-review"},
+			{"id":"gemini-3.6-flash","name":"gemini-3.6-flash","description":"Fast Gemini model balancing multimodal reasoning, tool use, and cost","reasoning":true,"reasoning_options":[{"type":"effort","values":["none","low","medium","high","max"]}],"modalities":{"input":["text","image"]},"limit":{"context":1048576,"output":65535}},
+			{"id":"gemini-3.6-flash-tiered"},
+			{"id":"gpt-image-2"},
+			{"id":"gpt-image-2-exact"},
+			{"id":"gpt-image-2.5"},
+			{"id":"gpt-image-2.5-flare"},
+			{"id":"gpt-image-2.5-sunburst"},
+			{"id":"gpt-image-1k-th"},
+			{"id":"grok-imagine-image-2.0"},
+			{"id":"grok-imagine-video-1.5"},
+			{"id":"deepseek-v4.1-flash-0910"}
+		]}`))},
+		{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"openai":{"id":"openai","models":{}}}`))},
+	}}
+	repo := &upstreamModelMetadataRepoStub{}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream, cfg: upstreamModelSyncTestConfig()}
+
+	catalog, err := svc.SyncUpstreamModelCatalog(context.Background(), &Account{
+		ID: 777, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.openai.com/v1"},
+	})
+	require.NoError(t, err)
+	for _, id := range []string{
+		"claude-opus-4-5-20251101-thinking",
+		"codex-auto-review",
+		"gemini-3.6-flash-tiered",
+		"gpt-image-2",
+		"gpt-image-2-exact",
+		"gpt-image-2.5",
+		"gpt-image-2.5-flare",
+		"gpt-image-2.5-sunburst",
+		"gpt-image-1k-th",
+		"grok-imagine-image-2.0",
+		"grok-imagine-video-1.5",
+		"deepseek-v4.1-flash-0910",
+	} {
+		require.True(t, upstreamModelMetadataIsComplete(catalog.Metadata[id]), id)
+		require.NotEmpty(t, catalog.Metadata[id].Description, id)
+	}
+	require.Equal(t, []string{"low", "medium", "high"}, catalog.Metadata["claude-opus-4-5-20251101-thinking"].SupportedReasoningLevels)
+	require.Equal(t, int64(200000), catalog.Metadata["claude-opus-4-5-20251101-thinking"].ContextWindow)
+	require.Equal(t, int64(16384), catalog.Metadata["gpt-image-2"].MaxOutputTokens)
+	require.Equal(t, int64(1024), catalog.Metadata["grok-imagine-video-1.5"].MaxOutputTokens)
 }

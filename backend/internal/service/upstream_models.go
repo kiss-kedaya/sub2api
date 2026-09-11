@@ -16,6 +16,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
 const (
@@ -278,6 +280,17 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 			}
 		}
 	}
+	if builtin := builtinCatalogModelMetadataForIDs(enrichIDs); len(builtin) > 0 {
+		for modelID, fallback := range builtin {
+			current := catalog.Metadata[modelID]
+			merged, changed := mergeUpstreamModelMetadata(current, fallback)
+			catalog.Metadata[modelID] = merged
+			if changed && source == "upstream" {
+				source = "builtin"
+			}
+		}
+	}
+	inheritUpstreamModelVariantMetadata(catalog.Metadata, enrichIDs)
 
 	completeMetadata := completeUpstreamModelMetadataSubset(capabilityIDs, catalog.Metadata)
 	persistedCapabilities := false
@@ -706,6 +719,7 @@ func builtinDeepSeekModelMetadata(modelID string) (UpstreamModelMetadata, bool) 
 	return UpstreamModelMetadata{
 		ID:                       strings.TrimSpace(modelID),
 		DisplayName:              display,
+		Description:              deepSeekV4Description(id, vision),
 		Reasoning:                &reasoning,
 		DefaultReasoningLevel:    "high",
 		SupportedReasoningLevels: []string{"none", "low", "high", "max"},
@@ -713,6 +727,244 @@ func builtinDeepSeekModelMetadata(modelID string) (UpstreamModelMetadata, bool) 
 		ContextWindow:            deepSeekV4ContextWindow,
 		MaxOutputTokens:          deepSeekV4MaxOutput,
 	}, true
+}
+
+func deepSeekV4Description(id string, vision bool) string {
+	switch {
+	case strings.Contains(id, "pro"):
+		return "DeepSeek V4 Pro with million-token context and support for thinking and non-thinking modes. Official /models omits capability fields; vision is not supported."
+	case strings.Contains(id, "vision"):
+		return "Experimental multimodal DeepSeek V4 Flash model for image understanding, coding, and agentic work. Official docs route this ID to DeepSeek-V4.1-Flash."
+	case strings.Contains(id, "v4.1") || id == "deepseek-flash":
+		return "DeepSeek-V4.1-Flash with 1M context, 384K max output, thinking/non-thinking modes, and image understanding. Official model name is deepseek-flash."
+	case vision:
+		return "DeepSeek V4 Flash family served by DeepSeek-V4.1-Flash: 1M context, 384K max output, thinking/non-thinking modes, and image understanding."
+	default:
+		return "DeepSeek V4 model with million-token context and support for thinking and non-thinking modes."
+	}
+}
+
+func builtinCatalogModelMetadataForIDs(modelIDs []string) map[string]UpstreamModelMetadata {
+	out := make(map[string]UpstreamModelMetadata)
+	for _, modelID := range modelIDs {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			continue
+		}
+		if entry, ok := builtinCatalogModelMetadata(modelID); ok {
+			out[modelID] = entry
+		}
+	}
+	return out
+}
+
+// builtinCatalogModelMetadata fills official capability fields that /models and
+// models.dev omit for Codex probes and media generators.
+func builtinCatalogModelMetadata(modelID string) (UpstreamModelMetadata, bool) {
+	id := strings.ToLower(strings.TrimSpace(modelID))
+	id = strings.TrimPrefix(id, "openai/")
+	id = strings.TrimPrefix(id, "anthropic/")
+	id = strings.TrimPrefix(id, "xai/")
+	id = strings.TrimPrefix(id, "google/")
+	if slash := strings.LastIndexByte(id, '/'); slash >= 0 {
+		id = strings.TrimSpace(id[slash+1:])
+	}
+	if id == "" {
+		return UpstreamModelMetadata{}, false
+	}
+
+	switch {
+	case id == openai.CodexUsageProbeModel:
+		reasoning := true
+		return UpstreamModelMetadata{
+			ID:                       strings.TrimSpace(modelID),
+			DisplayName:              "Codex Auto Review",
+			Description:              "Automatic approval review model for Codex.",
+			Reasoning:                &reasoning,
+			DefaultReasoningLevel:    "medium",
+			SupportedReasoningLevels: []string{"low", "medium", "high", "xhigh", "max"},
+			InputModalities:          []string{"text", "image"},
+			ContextWindow:            272000,
+		}, true
+	case IsGPTImageGenerationModel(id):
+		reasoning := false
+		return UpstreamModelMetadata{
+			ID:              strings.TrimSpace(modelID),
+			DisplayName:     gptImageCatalogDisplayName(id),
+			Description:     gptImageCatalogDescription(id),
+			Reasoning:       &reasoning,
+			InputModalities: []string{"text", "image"},
+			ContextWindow:   16384,
+			MaxOutputTokens: 16384,
+		}, true
+	case xai.IsGrokImagineModel(id):
+		reasoning := false
+		return UpstreamModelMetadata{
+			ID:              strings.TrimSpace(modelID),
+			DisplayName:     grokImagineCatalogDisplayName(id),
+			Description:     grokImagineCatalogDescription(id),
+			Reasoning:       &reasoning,
+			InputModalities: []string{"text", "image"},
+			ContextWindow:   grokImagineCatalogContextWindow(id),
+			MaxOutputTokens: grokImagineCatalogMaxOutput(id),
+		}, true
+	default:
+		return UpstreamModelMetadata{}, false
+	}
+}
+
+func gptImageCatalogDisplayName(id string) string {
+	switch {
+	case strings.HasPrefix(id, "gpt-image-2.5-sunburst"):
+		return "GPT Image 2.5 Sunburst"
+	case strings.HasPrefix(id, "gpt-image-2.5-flare"):
+		return "GPT Image 2.5 Flare"
+	case strings.HasPrefix(id, "gpt-image-2.5"):
+		return "GPT Image 2.5"
+	case strings.HasPrefix(id, "gpt-image-2-exact"):
+		return "GPT Image 2 Exact"
+	case strings.HasPrefix(id, "gpt-image-1k-th"):
+		return "GPT Image 1K TH"
+	case strings.HasPrefix(id, "gpt-image-1.5"):
+		return "GPT Image 1.5"
+	case strings.HasPrefix(id, "gpt-image-1"):
+		return "GPT Image 1"
+	default:
+		return "GPT Image 2"
+	}
+}
+
+func gptImageCatalogDescription(id string) string {
+	switch {
+	case strings.HasPrefix(id, "gpt-image-2.5-sunburst"):
+		return "GPT Image 2.5 Sunburst generates and edits images from text and image inputs. Use it for workflows where editing precision matters most."
+	case strings.HasPrefix(id, "gpt-image-2.5-flare"):
+		return "GPT Image 2.5 Flare is OpenAI's fastest GPT Image 2.5 model for high-quality, everyday image generation and editing."
+	case strings.HasPrefix(id, "gpt-image-2.5"):
+		return "GPT Image 2.5 family for prompt-driven generation and precise editing. Select flare for speed or sunburst for quality."
+	case strings.HasPrefix(id, "gpt-image-2-exact"):
+		return "GPT Image 2 exact-edit variant for prompt-driven generation and visual design workflows."
+	case strings.HasPrefix(id, "gpt-image-1k-th"):
+		return "GPT Image 1K thumbnail variant for prompt-driven generation and visual design workflows."
+	default:
+		return "Image model for prompt-driven generation, editing, and visual design workflows."
+	}
+}
+
+func grokImagineCatalogDisplayName(id string) string {
+	switch {
+	case strings.Contains(id, "video-1.5"):
+		return "Grok Imagine Video 1.5"
+	case strings.Contains(id, "video"):
+		return "Grok Imagine Video"
+	case strings.Contains(id, "image-2.0"):
+		return "Grok Imagine Image 2.0"
+	case strings.Contains(id, "quality"):
+		return "Grok Imagine Image Quality"
+	default:
+		return "Grok Imagine Image"
+	}
+}
+
+func grokImagineCatalogDescription(id string) string {
+	if strings.Contains(id, "video") {
+		return "Video model for image-to-video generation, editing, and extension workflows."
+	}
+	return "Image model for prompt-driven generation, editing, and visual design workflows."
+}
+
+func grokImagineCatalogContextWindow(id string) int64 {
+	if strings.Contains(id, "video") {
+		return 1024
+	}
+	return 64000
+}
+
+func grokImagineCatalogMaxOutput(id string) int64 {
+	if strings.Contains(id, "video") {
+		return 1024
+	}
+	return 16384
+}
+
+func inheritUpstreamModelVariantMetadata(metadata map[string]UpstreamModelMetadata, modelIDs []string) {
+	if metadata == nil {
+		return
+	}
+	for _, modelID := range modelIDs {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			continue
+		}
+		baseID, suffix := upstreamModelVariantBaseID(modelID)
+		if baseID == "" || strings.EqualFold(baseID, modelID) {
+			continue
+		}
+		base, ok := metadata[baseID]
+		if !ok || !upstreamModelMetadataIsUseful(base) {
+			continue
+		}
+		current := metadata[modelID]
+		fallback := base
+		fallback.ID = modelID
+		if strings.TrimSpace(fallback.DisplayName) != "" && !strings.EqualFold(strings.TrimSpace(fallback.DisplayName), baseID) {
+			fallback.DisplayName = strings.TrimSpace(fallback.DisplayName) + " " + suffix
+		} else {
+			fallback.DisplayName = modelID
+		}
+		if desc := strings.TrimSpace(fallback.Description); desc != "" {
+			note := upstreamModelVariantDescriptionNote(suffix)
+			if note != "" && !strings.Contains(desc, note) {
+				fallback.Description = desc + " " + note
+			}
+		}
+		if strings.EqualFold(suffix, "Thinking") {
+			if fallback.Reasoning == nil {
+				reasoning := true
+				fallback.Reasoning = &reasoning
+			}
+			if len(fallback.SupportedReasoningLevels) == 0 {
+				if levels := claude.EffortLevelsForModel(baseID); len(levels) > 0 {
+					fallback.SupportedReasoningLevels = append([]string(nil), levels...)
+					if fallback.DefaultReasoningLevel == "" {
+						fallback.DefaultReasoningLevel = levels[len(levels)-1]
+					}
+				}
+			}
+		}
+		merged, _ := mergeUpstreamModelMetadata(current, fallback)
+		if strings.TrimSpace(merged.ID) == "" {
+			merged.ID = modelID
+		}
+		if strings.TrimSpace(merged.DisplayName) == "" {
+			merged.DisplayName = modelID
+		}
+		metadata[modelID] = merged
+	}
+}
+
+func upstreamModelVariantBaseID(modelID string) (string, string) {
+	id := strings.TrimSpace(modelID)
+	lower := strings.ToLower(id)
+	switch {
+	case strings.HasSuffix(lower, "-thinking"):
+		return id[:len(id)-len("-thinking")], "Thinking"
+	case strings.HasSuffix(lower, "-tiered"):
+		return id[:len(id)-len("-tiered")], "Tiered"
+	default:
+		return "", ""
+	}
+}
+
+func upstreamModelVariantDescriptionNote(suffix string) string {
+	switch strings.ToLower(strings.TrimSpace(suffix)) {
+	case "thinking":
+		return "This ID is the extended-thinking variant of the same official model."
+	case "tiered":
+		return "This ID is the tiered routing variant of the same official model."
+	default:
+		return ""
+	}
 }
 
 func filterUpstreamModelsByAccountPlatform(account *Account, models []string) []string {

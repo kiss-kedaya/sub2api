@@ -447,6 +447,84 @@ func TestAccountHandlerSyncUpstreamModelsPreviewUsesProvidedModelMapping(t *test
 	require.Equal(t, []string{"low", "high"}, resp.Data.Metadata["glm-5.3"].SupportedReasoningLevels)
 }
 
+func TestAccountHandlerSyncUpstreamModelsPreviewGeminiCustomUsesOpenAIModels(t *testing.T) {
+	var captured string
+	upstream := &syncUpstreamHTTPUpstream{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"gemini-3.8-flash"}]}`)),
+	}}
+	router := setupSyncUpstreamModelsRouter(newStubAdminService(), &capturingSyncUpstream{inner: upstream, captured: &captured})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/admin/accounts/models/sync-upstream-preview",
+		strings.NewReader(`{
+			"platform":"gemini",
+			"type":"apikey",
+			"base_url":"https://mdkj.lol/v1",
+			"api_key":"sk-gemini",
+			"api_protocol":"chat_completions"
+		}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "https://mdkj.lol/v1/models", captured)
+	require.NotContains(t, captured, "/v1beta/models")
+	var resp struct {
+		Data service.UpstreamModelCatalog `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, []string{"gemini-3.8-flash"}, resp.Data.Models)
+}
+
+func TestAccountHandlerSyncUpstreamModelsPreviewGeminiCustomInfersOpenAIModelsWithoutProtocol(t *testing.T) {
+	var captured string
+	upstream := &syncUpstreamHTTPUpstream{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"gemini-3.8-flash"}]}`)),
+	}}
+	router := setupSyncUpstreamModelsRouter(newStubAdminService(), &capturingSyncUpstream{inner: upstream, captured: &captured})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/admin/accounts/models/sync-upstream-preview",
+		strings.NewReader(`{
+			"platform":"gemini",
+			"type":"apikey",
+			"base_url":"https://mdkj.lol",
+			"api_key":"sk-gemini"
+		}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "https://mdkj.lol/v1/models", captured)
+	require.NotContains(t, captured, "/v1beta/models")
+}
+
+type capturingSyncUpstream struct {
+	inner     service.HTTPUpstream
+	captured  *string
+}
+
+func (u *capturingSyncUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	if u.captured != nil && req != nil && req.URL != nil && *u.captured == "" {
+		*u.captured = req.URL.String()
+	}
+	return u.inner.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func (u *capturingSyncUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
 func TestAccountHandlerSyncUpstreamModels_UpstreamErrorDoesNotExposeBody(t *testing.T) {
 	svc := &availableModelsAdminService{
 		stubAdminService: newStubAdminService(),
