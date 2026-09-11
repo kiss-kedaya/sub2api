@@ -24,14 +24,31 @@ const AccountExtraImagesURLToB64JSON = "images_url_to_b64_json"
 // openAIImageURLDownloadTimeout 是单张图片 url 下载的超时上限。
 const openAIImageURLDownloadTimeout = 60 * time.Second
 
-// ImagesURLToB64JSONEnabled 返回账户是否开启了 url 转 b64_json 回填。
+// ImagesURLToB64JSONEnabled 默认开启 url 转 b64_json，避免把上游 CDN 地址交给客户端。
+// 账户 extra 里显式 images_url_to_b64_json=false 才关闭。
 func ImagesURLToB64JSONEnabled(account *Account) bool {
-	return account != nil && account.getExtraBool(AccountExtraImagesURLToB64JSON)
+	if account == nil {
+		return true
+	}
+	if raw, ok := account.Extra[AccountExtraImagesURLToB64JSON]; ok {
+		switch typed := raw.(type) {
+		case bool:
+			return typed
+		case string:
+			switch strings.TrimSpace(strings.ToLower(typed)) {
+			case "0", "false", "no", "off":
+				return false
+			case "1", "true", "yes", "on":
+				return true
+			}
+		}
+	}
+	return true
 }
 
 // backfillOpenAIImagesB64JSON 对 Images 端点的非流式响应做 url 转 b64_json 回填。
 //
-// 只处理 data[i].b64_json 缺失或为空且 url 非空的项；url 字段原样保留。
+// 只处理 data[i].b64_json 缺失或为空且 url 非空的项；成功后删除 url，避免暴露上游。
 // 单项失败仅记日志并保留该项原样，响应整体照常返回。
 // 客户端显式要求 response_format=url 时不做回填。
 func (s *OpenAIGatewayService) backfillOpenAIImagesB64JSON(
@@ -86,7 +103,12 @@ func (s *OpenAIGatewayService) backfillOpenAIImagesB64JSON(
 			)
 			continue
 		}
-		body = updated
+		cleared, err := sjson.DeleteBytes(updated, fmt.Sprintf("data.%d.url", index))
+		if err != nil {
+			body = updated
+			continue
+		}
+		body = cleared
 	}
 	return body
 }
