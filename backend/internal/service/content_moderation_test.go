@@ -1070,7 +1070,7 @@ func TestContentModerationCheck_OpenAIResponsesRecordsNonHitForCodexPayload(t *t
 	require.False(t, logs[0].Flagged)
 	require.Equal(t, ContentModerationActionAllow, logs[0].Action)
 	require.Equal(t, "/responses", logs[0].Endpoint)
-	require.Equal(t, "last user prompt", logs[0].InputExcerpt)
+	require.Equal(t, "first user prompt\n\nlast user prompt", logs[0].InputExcerpt)
 	require.Equal(t, "last user prompt", moderationRequest.Input)
 }
 
@@ -1139,7 +1139,7 @@ func TestContentModerationCheck_PreBlockBlocksCodexResponsesLatestUserInput(t *t
 	require.True(t, logs[0].Flagged)
 	require.Equal(t, ContentModerationActionBlock, logs[0].Action)
 	require.Equal(t, ContentModerationModePreBlock, logs[0].Mode)
-	require.Equal(t, "latest blocked prompt", logs[0].InputExcerpt)
+	require.Equal(t, "environment context\n\nlatest blocked prompt", logs[0].InputExcerpt)
 	require.Equal(t, "latest blocked prompt", moderationRequest.Input)
 }
 
