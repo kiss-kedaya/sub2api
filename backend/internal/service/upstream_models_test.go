@@ -1199,3 +1199,71 @@ func TestMatchModelsDevProviderOfficialHostsWithoutAPI(t *testing.T) {
 	}}
 	require.False(t, upstreamCatalogNeedsRegistry(capabilitySyncModelIDs([]string{"gpt-6-astra", "gpt-image-2"}), metadata))
 }
+
+func TestBuiltinDeepSeekModelMetadataCompletesV4IDs(t *testing.T) {
+	cases := []struct {
+		id     string
+		name   string
+		vision bool
+	}{
+		{"deepseek-v4-flash-0731", "DeepSeek V4 Flash 0731", true},
+		{"deepseek-v4-flash-vision-exp", "DeepSeek V4 Flash Vision Exp", true},
+		{"deepseek-v4-pro-0813", "DeepSeek V4 Pro 0813", false},
+		{"deepseek-v4.1-flash-0910", "DeepSeek V4.1 Flash 0910", true},
+		{"deepseek-flash", "DeepSeek V4.1 Flash", true},
+		{"deepseek-v4-flash", "DeepSeek V4 Flash", true},
+		{"deepseek-v4-pro", "DeepSeek V4 Pro", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			got, ok := builtinDeepSeekModelMetadata(tc.id)
+			require.True(t, ok)
+			require.True(t, upstreamModelMetadataIsComplete(got), "builtin entry must be persistable")
+			require.Equal(t, tc.name, got.DisplayName)
+			require.Equal(t, int64(1_048_576), got.ContextWindow)
+			require.Equal(t, int64(384_000), got.MaxOutputTokens)
+			require.Equal(t, "high", got.DefaultReasoningLevel)
+			require.Equal(t, []string{"none", "low", "high", "max"}, got.SupportedReasoningLevels)
+			if tc.vision {
+				require.Equal(t, []string{"text", "image"}, got.InputModalities)
+			} else {
+				require.Equal(t, []string{"text"}, got.InputModalities)
+			}
+		})
+	}
+	_, ok := builtinDeepSeekModelMetadata("glm-4.6")
+	require.False(t, ok)
+}
+
+func TestSyncUpstreamModelCatalogFillsDeepSeekV4WhenRegistryMisses(t *testing.T) {
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":[
+			{"id":"deepseek-v4-flash-0731"},
+			{"id":"deepseek-v4-flash-vision-exp"},
+			{"id":"deepseek-v4-pro-0813"},
+			{"id":"deepseek-v4.1-flash-0910"}
+		]}`))},
+		{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"deepseek":{"id":"deepseek","api":"https://api.deepseek.com","models":{}}}`))},
+	}}
+	repo := &upstreamModelMetadataRepoStub{}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream, cfg: upstreamModelSyncTestConfig()}
+
+	catalog, err := svc.SyncUpstreamModelCatalog(context.Background(), &Account{
+		ID: 501, Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.deepseek.com"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"deepseek-v4-flash-0731",
+		"deepseek-v4-flash-vision-exp",
+		"deepseek-v4-pro-0813",
+		"deepseek-v4.1-flash-0910",
+	}, catalog.Models)
+	require.Empty(t, catalog.Warnings)
+	require.True(t, upstreamModelMetadataIsComplete(catalog.Metadata["deepseek-v4-flash-0731"]))
+	require.Equal(t, []string{"text", "image"}, catalog.Metadata["deepseek-v4-flash-0731"].InputModalities)
+	require.Equal(t, []string{"text", "image"}, catalog.Metadata["deepseek-v4-flash-vision-exp"].InputModalities)
+	require.Equal(t, []string{"text"}, catalog.Metadata["deepseek-v4-pro-0813"].InputModalities)
+	require.Equal(t, []string{"none", "low", "high", "max"}, catalog.Metadata["deepseek-v4.1-flash-0910"].SupportedReasoningLevels)
+	require.NotNil(t, repo.updates)
+}
