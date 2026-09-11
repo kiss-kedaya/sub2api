@@ -16,7 +16,7 @@ type ModelsListResponse struct {
 }
 
 func DefaultModels() []Model {
-	methods := []string{"generateContent", "streamGenerateContent"}
+	methods := []string{"generateContent", "streamGenerateContent", "countTokens"}
 	return []Model{
 		{Name: "models/gemini-2.0-flash", SupportedGenerationMethods: methods},
 		{Name: "models/gemini-2.5-flash", SupportedGenerationMethods: methods},
@@ -52,7 +52,7 @@ func FallbackModelsList() ModelsListResponse {
 }
 
 func FallbackModel(model string) Model {
-	methods := []string{"generateContent", "streamGenerateContent"}
+	methods := []string{"generateContent", "streamGenerateContent", "countTokens"}
 	if model == "" {
 		return Model{Name: "models/unknown", SupportedGenerationMethods: methods}
 	}

@@ -607,6 +607,27 @@ func TestGetAPIProtocol(t *testing.T) {
 	require.True(t, mk(PlatformGemini, APIProtocolResponses).IsGeminiOpenAIProtocol())
 	require.True(t, mk(PlatformGemini, APIProtocolResponses).IsOpenAICompatible())
 	require.False(t, mk(PlatformGemini, "").IsOpenAICompatible())
+	custom := &Account{
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://mdkj.lol/v1",
+		},
+	}
+	require.True(t, custom.IsGeminiOpenAIProtocol())
+	require.True(t, custom.IsOpenAICompatible())
+	require.Equal(t, APIProtocolChatCompletions, custom.GetAPIProtocol())
+	official := &Account{
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://generativelanguage.googleapis.com/v1beta",
+		},
+	}
+	require.False(t, official.IsGeminiOpenAIProtocol())
+	require.False(t, official.IsOpenAICompatible())
 }
 
 func TestSupportsNativeCNResponses(t *testing.T) {
