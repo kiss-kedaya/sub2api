@@ -269,13 +269,12 @@ func TestNewConfiguredCodexModelDescriptorUsesProviderMetadataAndSafeFallback(t 
 	require.Equal(t, int64(1_000_000), deepSeek.MaxContextWindow)
 	require.NotNil(t, deepSeek.DefaultReasoningLevel)
 	require.Equal(t, "high", *deepSeek.DefaultReasoningLevel)
-	require.Equal(t, []configuredCodexReasoningLevel{
-		{Effort: "low", Description: "Fast responses with lighter reasoning"},
-		{Effort: "high", Description: "Greater reasoning depth for coding and agent tasks"},
-		{Effort: "max", Description: "Maximum reasoning depth for complex tasks"},
-	}, deepSeek.SupportedReasoningLevels)
+	require.Equal(t, []string{"none", "low", "high", "max"}, effortsFromConfiguredCodexLevels(deepSeek.SupportedReasoningLevels))
 	require.True(t, deepSeek.SupportsParallelToolCalls)
 	require.Equal(t, []string{"text"}, deepSeek.InputModalities)
+	flash := newConfiguredCodexModelDescriptor("deepseek-flash")
+	require.Equal(t, []string{"text", "image"}, flash.InputModalities)
+	require.Equal(t, []string{"none", "low", "high", "max"}, effortsFromConfiguredCodexLevels(flash.SupportedReasoningLevels))
 
 	grok := newConfiguredCodexModelDescriptor("grok-4.6")
 	require.Equal(t, "Grok 4.6", grok.DisplayName)
