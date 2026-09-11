@@ -54,6 +54,8 @@ export default {
     generateNewKey: '生成新的 API 密钥',
     batchImageAgent: '批量生图助手',
     batchImageAgentDesc: '复制给 Agent 的任务说明',
+    infiniteCanvas: '无限画布',
+    infiniteCanvasDesc: '一键导入智能路由密钥并打开画布',
     viewUsage: '查看使用记录',
     checkDetailedLogs: '查看详细的使用日志',
     redeemCode: '兑换码',
