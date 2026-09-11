@@ -313,11 +313,17 @@ func validCodexAutomationHeartbeat(value string) bool {
 			id := fields["automation_id"]
 			timestamp, hasTime := fields["current_time_iso"]
 			instructions, hasInstructions := fields["instructions"]
+			timestamp = strings.TrimSpace(timestamp)
+			instructions = strings.TrimSpace(instructions)
 			if hasTime != hasInstructions {
 				return false
 			}
 			if hasTime {
-				if _, err := time.Parse(time.RFC3339Nano, timestamp); err != nil || strings.TrimSpace(instructions) == "" {
+				if _, err := time.Parse(time.RFC3339Nano, timestamp); err != nil {
+					if _, err := time.Parse(time.RFC3339, timestamp); err != nil || instructions == "" {
+						return false
+					}
+				} else if instructions == "" {
 					return false
 				}
 			}
