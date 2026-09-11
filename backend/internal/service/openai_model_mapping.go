@@ -100,3 +100,36 @@ func resolveOpenAICompactForwardModel(account *Account, model string) string {
 	}
 	return trimmedModel
 }
+
+
+// isCNProviderServableModel 判断空 model_mapping 的国产供应商账号能否服务该模型。
+// 空映射不再等于“允许所有”：zhipu 空 mapping 不能把 gpt-5.6-* 当成可服务，
+// 否则调度会当成容量不足返回 503。显式 mapping / 透传不走这里。
+func isCNProviderServableModel(platform, requestedModel string) bool {
+	model := strings.ToLower(lastOpenAIModelSegment(requestedModel))
+	if model == "" {
+		return true
+	}
+	switch platform {
+	case PlatformZhipu:
+		return hasAnyPrefix(model, "glm-", "cog", "chatglm")
+	case PlatformKimi:
+		return model == "k3" || model == "k3-256k" || hasAnyPrefix(model, "kimi-", "moonshot-", "k2-", "k1.5")
+	case PlatformDeepseek:
+		return hasAnyPrefix(model, "deepseek-")
+	case PlatformMiniMax:
+		return hasAnyPrefix(model, "minimax-", "abab", "m2.")
+	default:
+		return true
+	}
+}
+
+func hasAnyPrefix(model string, prefixes ...string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(model, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
