@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -339,6 +340,10 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CodexThreadsDoNo
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_SameCodexThreadStillPreempts(t *testing.T) {
 	serverErrs, aReadErr := runOpenAIWSCodexThreadPair(t, "thread-a", "thread-a")
 	require.Error(t, aReadErr, "同线程重连必须取代旧连接")
+	var closeErr coderws.CloseError
+	require.True(t, errors.As(aReadErr, &closeErr), "被取代的连接应收到关闭帧而不是裸断开: %v", aReadErr)
+	require.Equal(t, coderws.StatusTryAgainLater, closeErr.Code)
+	require.Equal(t, openAIWSSessionPreemptedCloseReason, closeErr.Reason)
 	preempted := 0
 	for _, err := range serverErrs {
 		if IsOpenAIWSSessionPreemptedError(err) {
