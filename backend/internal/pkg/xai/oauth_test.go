@@ -144,6 +144,10 @@ func TestBuildGrokMediaURLs(t *testing.T) {
 
 	_, err = BuildVideoURL(DefaultBaseURL, " ")
 	require.Error(t, err)
+
+	statusURL, err := BuildVideoGenerationsStatusURL(DefaultBaseURL, "req 123")
+	require.NoError(t, err)
+	require.Equal(t, DefaultBaseURL+"/videos/generations/req%20123", statusURL)
 }
 
 func TestValidateXAIURLsRejectUntrustedOAuthAndUnsafeBaseURLsByDefault(t *testing.T) {
