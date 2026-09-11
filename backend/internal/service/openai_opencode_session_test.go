@@ -147,6 +147,17 @@ func TestApplyOpenCodeSessionHeaderMapsCallerSessionID(t *testing.T) {
 	require.Equal(t, "conv-from-client", headers.Get(openCodeSessionHeader))
 }
 
+func TestApplyOpenCodeSessionHeaderRejectsControlCharsInPromptCacheKey(t *testing.T) {
+	account := &Account{Platform: PlatformOpenCodeGo, Type: AccountTypeAPIKey}
+	body := []byte("{\"model\":\"glm-5.3\",\"prompt_cache_key\":\"a\\nb\",\"input\":\"hello\"}")
+	headers := make(http.Header)
+	applyOpenCodeSessionHeader(newOpenCodeSessionTestContext(t, ""), account, "https://opencode.ai/zen/go/v1/responses", headers, body)
+	got := headers.Get(openCodeSessionHeader)
+	require.NotEmpty(t, got)
+	require.NotContains(t, got, "\n")
+	require.NotEqual(t, "a\nb", got)
+}
+
 func TestApplyOpenCodeSessionHeaderUsesPromptCacheKeyInsteadOfRandomUUID(t *testing.T) {
 	account := &Account{Platform: PlatformOpenCodeGo, Type: AccountTypeAPIKey}
 	body := []byte(`{"model":"grok-4.6","prompt_cache_key":"kimi-session-42","input":"hello"}`)

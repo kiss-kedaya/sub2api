@@ -99,22 +99,22 @@ func isOfficialOpenCodeHost(targetURL string) bool {
 
 func resolveOpenCodeSessionID(c *gin.Context, headers http.Header, generate bool, bodies ...[]byte) string {
 	if c != nil && c.Request != nil {
-		if sessionID := strings.TrimSpace(c.GetHeader(openCodeSessionHeader)); sessionID != "" {
+		if sessionID := sanitizeSessionID(c.GetHeader(openCodeSessionHeader)); sessionID != "" {
 			return sessionID
 		}
-		if sessionID := explicitOpenAIHeaderSessionID(c); sessionID != "" {
+		if sessionID := sanitizeSessionID(explicitOpenAIHeaderSessionID(c)); sessionID != "" {
 			return sessionID
 		}
-		if sessionID := ClaudeCodeSessionIDFromHeader(c); sessionID != "" {
+		if sessionID := sanitizeSessionID(ClaudeCodeSessionIDFromHeader(c)); sessionID != "" {
 			return sessionID
 		}
 	}
 	for _, body := range bodies {
-		if sessionID := openCodeSessionIDFromPayload(body); sessionID != "" {
+		if sessionID := sanitizeSessionID(openCodeSessionIDFromPayload(body)); sessionID != "" {
 			return sessionID
 		}
 	}
-	if sessionID := strings.TrimSpace(existingOpenCodeSessionHeader(headers)); sessionID != "" {
+	if sessionID := sanitizeSessionID(existingOpenCodeSessionHeader(headers)); sessionID != "" {
 		return sessionID
 	}
 	if generate {
