@@ -23,6 +23,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	account *Account,
 	reqBody map[string]any,
 	clientPromptCacheKey string,
+	executionScope string,
 	token string,
 	decision OpenAIWSProtocolDecision,
 	isCodexCLI bool,
@@ -126,8 +127,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	}
 	// 与 WS 接入路径共用执行作用域：codex 多智能体共用 session-id，turn state 与
 	// store=false 的连接绑定必须按线程隔离，同一线程在两条路径之间也才能共享状态。
-	if scope, _ := resolveOpenAIWSExecutionScope(c, openAIWSExecutionScopeBodyFromRequest(reqBody), getAPIKeyIDFromContext(c)); scope != "" {
-		sessionHash = scope
+	// 作用域由 Forward 从改写前的原始请求算出后传入，reqBody 此时已带账号 namespace。
+	if executionScope = strings.TrimSpace(executionScope); executionScope != "" {
+		sessionHash = executionScope
 	}
 	if turnState == "" && stateStore != nil && sessionHash != "" {
 		if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
