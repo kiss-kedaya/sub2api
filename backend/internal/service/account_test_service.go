@@ -400,6 +400,7 @@ func (s *AccountTestService) testOpenCodeGoAccountConnection(c *gin.Context, acc
 	if testModelID == "" {
 		testModelID = DefaultOpenCodeGoTestModel
 	}
+	testModelID = account.GetMappedModel(testModelID)
 	proto := account.GetAPIProtocol()
 	switch proto {
 	case APIProtocolChatCompletions, APIProtocolAnthropic, APIProtocolResponses:

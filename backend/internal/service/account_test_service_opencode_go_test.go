@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func openCodeGoTestAccount(id int64) *Account {
@@ -89,6 +90,24 @@ func TestAccountTestService_OpenCodeGoPinnedChatProtocolIgnoresCatalog(t *testin
 	require.NoError(t, err)
 	require.Len(t, upstream.requests, 1)
 	require.Equal(t, "https://opencode.ai/zen/go/v1/chat/completions", upstream.requests[0].URL.String())
+}
+
+func TestAccountTestService_OpenCodeGoAppliesModelMappingOnResponses(t *testing.T) {
+	account := openCodeGoTestAccount(406)
+	account.Credentials["model_mapping"] = map[string]any{
+		"opencode/muse-spark-1.3-contributior-free": "muse-spark-1.3-contributior-free",
+	}
+	svc, upstream := adaptiveCNAccountTestService(account, adaptiveCNResponsesTestResponse())
+	c, recorder := newTestContext()
+
+	err := svc.TestAccountConnection(c, account.ID, "opencode/muse-spark-1.3-contributior-free", "hi", AccountTestModeDefault)
+
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, "https://opencode.ai/zen/go/v1/responses", upstream.requests[0].URL.String())
+	require.Equal(t, "muse-spark-1.3-contributior-free", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Contains(t, recorder.Body.String(), `"model":"muse-spark-1.3-contributior-free"`)
+	require.NotContains(t, string(upstream.lastBody), "opencode/muse-spark-1.3-contributior-free")
 }
 
 func TestAccountTestService_OpenCodeGoEmptyModelDefaultsToChatCatalogID(t *testing.T) {
