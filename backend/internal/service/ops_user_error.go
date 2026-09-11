@@ -39,6 +39,9 @@ type UserErrorRequestList struct {
 // MapUserErrorCategory 把后端 error_phase + error_type 映射为用户侧粗分类码。
 // 返回的是稳定的分类 code（前端做 i18n），不是展示文案。
 func MapUserErrorCategory(phase, errType string) string {
+	if errType == "model_not_found" {
+		return "model_not_found"
+	}
 	switch phase {
 	case "auth":
 		return "auth"
@@ -82,6 +85,8 @@ func CategoryToFilter(category string) (phases []string, errorTypes []string) {
 		return nil, []string{"billing_error", "subscription_error"}
 	case "invalid_request":
 		return nil, []string{"invalid_request_error"}
+	case "model_not_found":
+		return nil, []string{"model_not_found"}
 	case "cyber":
 		return []string{"request"}, []string{"cyber_policy"}
 	default:
