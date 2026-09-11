@@ -4270,13 +4270,36 @@ const syncPreviewCredentials = computed(() => {
     allowedModels.value,
     modelMappings.value
   )
-  return {
+  const preview: {
+    platform: string
+    type: string
+    base_url?: string
+    api_key: string
+    api_protocol?: string
+    api_base_urls?: Record<string, string>
+    model_mapping?: Record<string, string>
+  } = {
     platform: form.platform,
     type: form.type,
     base_url: baseUrl || undefined,
     api_key: apiKeyValue.value,
     ...(modelMapping ? { model_mapping: modelMapping } : {})
   }
+  if (form.platform === 'gemini' && accountCategory.value === 'apikey') {
+    const customBase = (baseUrl || '').toLowerCase()
+    const isOfficialGoogle = customBase.includes('generativelanguage.googleapis.com')
+    if (isGeminiProtocolAccount.value || (customBase && !isOfficialGoogle)) {
+      preview.api_protocol = isGeminiProtocolAccount.value ? apiProtocol.value : 'chat_completions'
+      if (isGeminiProtocolAccount.value && apiProtocol.value === 'adaptive') {
+        preview.api_base_urls = {
+          chat_completions: adaptiveBaseUrls.value.chat_completions.trim() || baseUrl,
+          anthropic: adaptiveBaseUrls.value.anthropic.trim(),
+          responses: adaptiveBaseUrls.value.responses.trim()
+        }
+      }
+    }
+  }
+  return preview
 })
 
 const editQuotaLimit = ref<number | null>(null)

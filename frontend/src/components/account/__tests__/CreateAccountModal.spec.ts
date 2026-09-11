@@ -552,6 +552,23 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     })
   })
 
+  it('previews Gemini custom OpenAI-compatible upstreams as chat completions', async () => {
+    const wrapper = mountModal([{ id: 9, platform: 'gemini' }])
+    await selectButtonByText(wrapper, 'Gemini')
+    await selectButtonByText(wrapper, 'admin.accounts.gemini.accountType.apiKeyTitle')
+    const inputs = wrapper.findAll('form#create-account-form input[type="text"]')
+    await inputs[1].setValue('https://mdkj.lol/v1')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-gemini')
+
+    expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('syncCredentials')).toMatchObject({
+      platform: 'gemini',
+      type: 'apikey',
+      base_url: 'https://mdkj.lol/v1',
+      api_key: 'sk-gemini',
+      api_protocol: 'chat_completions'
+    })
+  })
+
   it('exposes Agent Identity in the OpenAI authorization methods', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')

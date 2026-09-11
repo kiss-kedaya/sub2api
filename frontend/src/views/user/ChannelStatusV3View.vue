@@ -28,15 +28,25 @@
         <div v-for="i in 8" :key="i" class="h-72 animate-pulse rounded-[24px] bg-white/60 dark:bg-dark-800" />
       </div>
       <EmptyState v-else-if="rows.length === 0" :title="t('channelMonitorV3.emptyTitle')" :description="t('channelMonitorV3.emptyDescription')" />
-      <div v-else class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        <ChannelMonitorV3Card
-          v-for="row in rows"
-          :key="row.group_id ?? `${row.platform}:${row.group_name ?? ''}`"
-          :row="row"
-          :user-rate-multiplier="getUserRateMultiplier(row.group_id)"
-          :countdown-seconds="countdownSeconds"
-          :timeline-length="timelineLength"
-        />
+      <div v-else class="space-y-8">
+        <section
+          v-for="section in platformSections"
+          :key="section.platform"
+          class="space-y-3"
+          :data-testid="`channel-status-platform-${section.platform}`"
+        >
+          <h2 class="px-1 text-sm font-semibold text-gray-700 dark:text-gray-200">{{ providerLabel(section.platform) }}</h2>
+          <div class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <ChannelMonitorV3Card
+              v-for="row in section.rows"
+              :key="row.group_id ?? `${row.platform}:${row.group_name ?? ''}`"
+              :row="row"
+              :user-rate-multiplier="getUserRateMultiplier(row.group_id)"
+              :countdown-seconds="countdownSeconds"
+              :timeline-length="timelineLength"
+            />
+          </div>
+        </section>
       </div>
     </div>
   </AppLayout>
@@ -55,10 +65,12 @@ import userGroupsAPI from '@/api/groups'
 import type { MonitorFilter, MonitorMatrixResponse, MonitorRange, MonitorSnapshot } from '@/api/channelMonitorV2'
 import type { Group } from '@/types'
 import ChannelMonitorV3Card from '@/components/user/monitor/ChannelMonitorV3Card.vue'
+import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import { formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
 
 const { t, locale } = useI18n()
 const appStore = useAppStore()
+const { providerLabel } = useChannelMonitorFormat()
 const ranges = computed(() => [
   { value: '90m' as MonitorRange, label: t('channelMonitorV3.ranges.90m') },
   { value: '24h' as MonitorRange, label: t('channelMonitorV3.ranges.24h') },
@@ -81,6 +93,19 @@ let countdownTimer: number | null = null
 const rows = computed(() => [...(matrix.value?.items ?? [])]
   .filter(row => row.group_id != null && row.group_id > 0)
   .sort((a, b) => (a.group_id ?? 0) - (b.group_id ?? 0)))
+const platformSections = computed(() => {
+  const grouped = new Map<string, typeof rows.value>()
+  for (const row of rows.value) {
+    const platform = row.platform || 'unknown'
+    const current = grouped.get(platform) ?? []
+    current.push(row)
+    grouped.set(platform, current)
+  }
+  return [...grouped.entries()].map(([platform, sectionRows]) => ({
+    platform,
+    rows: sectionRows.sort((a, b) => (a.group_id ?? 0) - (b.group_id ?? 0)),
+  }))
+})
 const timelineLength = computed(() => ({ '90m': 18, '24h': 24, '7d': 14, '30d': 30 })[filter.value.range])
 const latestSnapshotMetrics = computed(() => {
   const trend = [...(snapshot.value?.trend ?? [])]
