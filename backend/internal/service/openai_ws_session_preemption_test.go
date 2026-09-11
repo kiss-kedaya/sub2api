@@ -435,6 +435,59 @@ func TestOpenAIWSIngressSessionPreemptionIsolatesCodexThreads(t *testing.T) {
 	require.NoError(t, otherKeyCtx.Err())
 }
 
+func newOpenAIWSPreemptCodexKindContext(apiKeyID int64, threadID, requestKind string) *gin.Context {
+	c := newOpenAIWSPreemptCodexContext(apiKeyID, threadID)
+	c.Request.Header.Set(openAIWSTurnMetadataHeader, `{"session_id":"root-session","thread_id":"`+threadID+`","request_kind":"`+requestKind+`"}`)
+	return c
+}
+
+func TestOpenAIWSIngressSessionPreemptionKeepsDetachedRequestsApart(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	turnMessage := []byte(`{"type":"response.create","input":"hello"}`)
+	memoryMessage := []byte(`{"type":"response.create","input":"consolidate"}`)
+
+	turnCtx, turnCleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(
+		context.Background(), newOpenAIWSPreemptCodexKindContext(11, "thread-a", "turn"), account, turnMessage,
+	)
+	require.True(t, armed)
+	defer turnCleanup()
+
+	memoryCtx, memoryCleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(
+		context.Background(), newOpenAIWSPreemptCodexKindContext(11, "thread-a", "memory"), account, memoryMessage,
+	)
+	require.True(t, armed)
+	defer memoryCleanup()
+	require.NoError(t, turnCtx.Err(), "memory consolidation on the same thread must not preempt the user turn")
+	require.NoError(t, memoryCtx.Err())
+
+	prewarmCtx, prewarmCleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(
+		context.Background(), newOpenAIWSPreemptCodexKindContext(11, "thread-a", "prewarm"), account, turnMessage,
+	)
+	require.True(t, armed)
+	defer prewarmCleanup()
+	require.True(t, IsOpenAIWSSessionPreemptedError(context.Cause(turnCtx)), "prewarm shares the turn lane and replaces the stale turn connection")
+	require.NoError(t, memoryCtx.Err(), "turn lane reconnect must leave memory consolidation alone")
+
+	_, memoryRetryCleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(
+		context.Background(), newOpenAIWSPreemptCodexKindContext(11, "thread-a", "memory"), account, memoryMessage,
+	)
+	require.True(t, armed)
+	defer memoryRetryCleanup()
+	require.True(t, IsOpenAIWSSessionPreemptedError(context.Cause(memoryCtx)), "memory reconnect replaces the stale memory connection")
+	require.NoError(t, prewarmCtx.Err(), "memory reconnect must leave the turn lane alone")
+
+	scorer := newOpenAIWSPreemptCodexContext(11, "")
+	scorer.Request.Header.Set(openAIWSThreadIDHeader, "thread-a")
+	scorer.Request.Header.Set(openAISubagentHeader, "guardian")
+	scorerCtx, scorerCleanup, armed := svc.BeginOpenAIWSIngressSessionPreemption(context.Background(), scorer, account, turnMessage)
+	require.True(t, armed)
+	defer scorerCleanup()
+	require.NoError(t, prewarmCtx.Err(), "guardian scorer without thread metadata must not preempt the user turn")
+	require.NoError(t, scorerCtx.Err())
+}
+
 func TestOpenAIWSIngressSessionPreemptionSkipsContentOnlyIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	groupID := int64(7)

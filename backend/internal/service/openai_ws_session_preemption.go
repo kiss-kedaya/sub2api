@@ -131,13 +131,18 @@ func (s *OpenAIGatewayService) BeginOpenAIWSIngressSessionPreemptionWithClient(
 			stateStore.DeleteSessionTurnState(preemptGroupID, preemptScope)
 			stateStore.DeleteSessionConn(preemptGroupID, preemptScope)
 		}
+		lane := resolveOpenAIWSExecutionLane(c, firstClientMessage)
+		if lane == "" {
+			lane = "main"
+		}
 		logOpenAIWSModeInfo(
-			"ingress_ws_session_preempted account_id=%d group_id=%d api_key_id=%d scope=%s thread_id=%s",
+			"ingress_ws_session_preempted account_id=%d group_id=%d api_key_id=%d scope=%s thread_id=%s lane=%s",
 			account.ID,
 			preemptGroupID,
 			preemptAPIKeyID,
 			truncateOpenAIWSLogValue(preemptScope, 12),
 			truncateOpenAIWSLogValue(preemptThreadID, openAIWSIDValueMaxLen),
+			truncateOpenAIWSLogValue(lane, openAIWSIDValueMaxLen),
 		)
 	}
 	return preemptCtx, cleanup, true
