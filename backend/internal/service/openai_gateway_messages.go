@@ -46,13 +46,18 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	// OpenCode Go：按模型原生协议分流。规则未命中兜底 Chat Completions。
 	if account.IsOpenCodeGo() {
-		switch openCodeGoNativeProtocol(account, resolveOpenCodeGoMappedModel(account, body, defaultMappedModel)) {
+		mapped, rewritten, rewriteErr := rewriteOpenCodeGoRequestModel(account, body, defaultMappedModel)
+		if rewriteErr != nil {
+			return nil, rewriteErr
+		}
+		body = rewritten
+		switch openCodeGoNativeProtocol(account, mapped) {
 		case APIProtocolAnthropic:
-			return s.forwardAnthropicViaNativeAnthropicEndpoint(ctx, c, account, body, defaultMappedModel)
+			return s.forwardAnthropicViaNativeAnthropicEndpoint(ctx, c, account, body, mapped)
 		case APIProtocolResponses:
 			break
 		default:
-			return s.forwardAnthropicViaRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+			return s.forwardAnthropicViaRawChatCompletions(ctx, c, account, body, mapped)
 		}
 	} else if account.IsAnthropicProtocol() || account.IsAdaptiveAPIProtocol() {
 		// 入口分流（国产供应商 Anthropic 协议）：上游为供应商原生 Anthropic 端点时，
