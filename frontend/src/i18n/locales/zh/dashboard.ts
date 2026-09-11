@@ -54,6 +54,8 @@ export default {
     generateNewKey: '生成新的 API 密钥',
     batchImageAgent: '批量生图助手',
     batchImageAgentDesc: '复制给 Agent 的任务说明',
+    infiniteCanvas: '无限画布',
+    infiniteCanvasDesc: '一键导入智能路由密钥并打开画布',
     viewUsage: '查看使用记录',
     checkDetailedLogs: '查看详细的使用日志',
     redeemCode: '兑换码',
@@ -479,7 +481,7 @@ export default {
       empty: '暂无错误请求', failedToLoad: '加载错误请求失败',
       categories: {
         auth: '认证失败', rate_limit: '限流', quota: '余额/订阅',
-        invalid_request: '参数错误', service_unavailable: '服务暂时不可用',
+        invalid_request: '参数错误', model_not_found: '没有这个模型', service_unavailable: '服务暂时不可用',
         upstream: '上游错误', internal: '平台错误', other: '其他', cyber: '安全策略',
       },
       detail: {

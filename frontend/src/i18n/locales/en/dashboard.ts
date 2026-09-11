@@ -54,6 +54,8 @@ export default {
     generateNewKey: 'Generate a new API key',
     batchImageAgent: 'Batch Image Assistant',
     batchImageAgentDesc: 'Copy instructions for an agent',
+    infiniteCanvas: 'Infinite Canvas',
+    infiniteCanvasDesc: 'Open the canvas with a smart-routing key',
     viewUsage: 'View Usage',
     checkDetailedLogs: 'Check detailed usage logs',
     redeemCode: 'Redeem Code',
@@ -474,7 +476,7 @@ export default {
       empty: 'No error requests', failedToLoad: 'Failed to load error requests',
       categories: {
         auth: 'Auth failed', rate_limit: 'Rate limited', quota: 'Balance/Subscription',
-        invalid_request: 'Invalid request', service_unavailable: 'Service unavailable',
+        invalid_request: 'Invalid request', model_not_found: 'Model not found', service_unavailable: 'Service unavailable',
         upstream: 'Upstream error', internal: 'Platform error', other: 'Other', cyber: 'Cyber policy',
       },
       detail: {

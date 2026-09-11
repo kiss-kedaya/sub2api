@@ -3025,6 +3025,8 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 		Type         string            `json:"type" binding:"required"`
 		BaseURL      string            `json:"base_url"`
 		APIKey       string            `json:"api_key" binding:"required"`
+		APIProtocol  string            `json:"api_protocol"`
+		APIBaseURLs  map[string]string `json:"api_base_urls"`
 		ModelMapping map[string]string `json:"model_mapping"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -3035,15 +3037,27 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	for sourceModel, upstreamModel := range req.ModelMapping {
 		modelMapping[sourceModel] = upstreamModel
 	}
+	apiBaseURLs := make(map[string]any, len(req.APIBaseURLs))
+	for protocol, baseURL := range req.APIBaseURLs {
+		apiBaseURLs[protocol] = baseURL
+	}
+
+	credentials := map[string]any{
+		"api_key":       req.APIKey,
+		"base_url":      req.BaseURL,
+		"model_mapping": modelMapping,
+	}
+	if protocol := strings.TrimSpace(req.APIProtocol); protocol != "" {
+		credentials["api_protocol"] = protocol
+	}
+	if len(apiBaseURLs) > 0 {
+		credentials["api_base_urls"] = apiBaseURLs
+	}
 
 	tempAccount := &service.Account{
-		Platform: req.Platform,
-		Type:     req.Type,
-		Credentials: map[string]any{
-			"api_key":       req.APIKey,
-			"base_url":      req.BaseURL,
-			"model_mapping": modelMapping,
-		},
+		Platform:    req.Platform,
+		Type:        req.Type,
+		Credentials: credentials,
 	}
 
 	if h.accountTestService == nil {
