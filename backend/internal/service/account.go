@@ -348,9 +348,30 @@ func (a *Account) IsGeminiOpenAIProtocol() bool {
 	switch strings.TrimSpace(a.GetCredential("api_protocol")) {
 	case APIProtocolAdaptive, APIProtocolChatCompletions, APIProtocolAnthropic, APIProtocolResponses:
 		return true
+	case "":
+		// 创建账号点同步时经常还不带 api_protocol。官方 Google 地址继续走
+		// /v1beta/models；自定义中转（mdkj.lol 这类）默认按 OpenAI /v1/models。
+		return usesCustomGeminiOpenAICompatibleBaseURL(a.GetCredential("base_url"))
 	default:
 		return false
 	}
+}
+
+func usesCustomGeminiOpenAICompatibleBaseURL(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "" {
+		return false
+	}
+	return host != "generativelanguage.googleapis.com" &&
+		!strings.HasSuffix(host, ".generativelanguage.googleapis.com")
 }
 
 func (a *Account) GeminiOAuthType() string {

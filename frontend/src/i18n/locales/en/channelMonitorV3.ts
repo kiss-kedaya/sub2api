@@ -21,6 +21,7 @@ export default {
     timelineTooltip: '{time} · Availability {availability} · Cache {cache} · First token {ttft}',
     emptyTitle: 'No channel data',
     emptyDescription: 'There is no passive-monitor data for this time range yet',
+    platformSection: '{platform}',
     summary: 'Availability {success} · Cache {cache}',
     ranges: { '90m': '90m', '24h': '24h', '7d': '7d', '30d': '30d' },
   },
