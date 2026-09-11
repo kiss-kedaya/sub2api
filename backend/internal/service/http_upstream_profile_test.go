@@ -51,3 +51,10 @@ func TestWithHTTPUpstreamPublicHostsOnly(t *testing.T) {
 		t.Fatal("public-hosts-only must not disable redirects")
 	}
 }
+
+func TestWithHTTPUpstreamProfile_OpenAIImages(t *testing.T) {
+	ctx := WithHTTPUpstreamProfile(context.TODO(), HTTPUpstreamProfileOpenAIImages)
+	if profile := HTTPUpstreamProfileFromContext(ctx); profile != HTTPUpstreamProfileOpenAIImages {
+		t.Fatalf("expected profile %q, got %q", HTTPUpstreamProfileOpenAIImages, profile)
+	}
+}
