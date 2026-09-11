@@ -166,6 +166,7 @@ export default {
     dashboard: 'Dashboard',
     announcements: 'Announcements',
     apiKeys: 'API Keys',
+    infiniteCanvas: 'Infinite Canvas',
     batchImage: 'Batch Images',
     usage: 'Usage',
     redeem: 'Redeem',
