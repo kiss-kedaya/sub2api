@@ -1406,10 +1406,12 @@ func (s *AccountTestService) testGrokVideoGeneration(c *gin.Context, ctx context
 	s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("video request accepted: %s\n", requestID)})
 	s.sendEvent(c, TestEvent{Type: "status", Text: "Polling video status until done (max ~60s)..."})
 
-	statusURL, err := buildGrokMediaURL(account, s.cfg, GrokMediaEndpointVideoStatus, requestID)
+	statusURLs, err := grokVideoStatusPollURLs(account, s.cfg, requestID)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid Grok video status URL: %s", err.Error()))
 	}
+	statusURL := statusURLs[0]
+	contentEndpoint := GrokMediaEndpointVideoContent
 
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
@@ -1427,6 +1429,12 @@ func (s *AccountTestService) testGrokVideoGeneration(c *gin.Context, ctx context
 		}
 		statusBody, _ := io.ReadAll(statusResp.Body)
 		_ = statusResp.Body.Close()
+		if statusResp.StatusCode == http.StatusNotFound && len(statusURLs) > 1 && statusURL == statusURLs[0] {
+			statusURL = statusURLs[1]
+			contentEndpoint = GrokMediaEndpointVideoGenerationsContent
+			s.sendEvent(c, TestEvent{Type: "status", Text: "official /videos/{id} not found, retrying /videos/generations/{id}"})
+			continue
+		}
 		if statusResp.StatusCode != http.StatusOK && statusResp.StatusCode != http.StatusAccepted {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Grok video status returned %d: %s", statusResp.StatusCode, string(statusBody)))
 		}
@@ -1439,7 +1447,7 @@ func (s *AccountTestService) testGrokVideoGeneration(c *gin.Context, ctx context
 		}
 		switch st {
 		case "done", "completed", "succeeded", "success":
-			return s.emitGrokVideoResult(c, ctx, account, authToken, requestID, statusBody)
+			return s.emitGrokVideoResult(c, ctx, account, authToken, requestID, statusBody, contentEndpoint)
 		case "failed", "error", "canceled", "cancelled":
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Grok video failed: %s", string(statusBody)))
 		}
@@ -1453,7 +1461,19 @@ func (s *AccountTestService) testGrokVideoGeneration(c *gin.Context, ctx context
 }
 
 // emitGrokVideoResult surfaces a playable video URL or downloads /content as data URL.
-func (s *AccountTestService) emitGrokVideoResult(c *gin.Context, ctx context.Context, account *Account, authToken, requestID string, statusBody []byte) error {
+func grokVideoStatusPollURLs(account *Account, cfg *config.Config, requestID string) ([]string, error) {
+	primary, err := buildGrokMediaURL(account, cfg, GrokMediaEndpointVideoStatus, requestID)
+	if err != nil {
+		return nil, err
+	}
+	urls := []string{primary}
+	if alt, altErr := buildGrokMediaURL(account, cfg, GrokMediaEndpointVideoGenerationsStatus, requestID); altErr == nil && alt != primary {
+		urls = append(urls, alt)
+	}
+	return urls, nil
+}
+
+func (s *AccountTestService) emitGrokVideoResult(c *gin.Context, ctx context.Context, account *Account, authToken, requestID string, statusBody []byte, contentEndpoint GrokMediaEndpoint) error {
 	videoURL := firstNonEmpty(
 		strings.TrimSpace(gjson.GetBytes(statusBody, "video.url").String()),
 		strings.TrimSpace(gjson.GetBytes(statusBody, "url").String()),
@@ -1468,7 +1488,10 @@ func (s *AccountTestService) emitGrokVideoResult(c *gin.Context, ctx context.Con
 	}
 
 	// Fetch binary content via official /videos/{id}/content (Bearer-authenticated).
-	contentURL, err := buildGrokMediaURL(account, s.cfg, GrokMediaEndpointVideoContent, requestID)
+	if contentEndpoint == "" {
+		contentEndpoint = GrokMediaEndpointVideoContent
+	}
+	contentURL, err := buildGrokMediaURL(account, s.cfg, contentEndpoint, requestID)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid Grok video content URL: %s", err.Error()))
 	}
