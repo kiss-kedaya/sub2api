@@ -21,7 +21,7 @@ const (
 	geminiSignalPromptBlocked
 	// geminiSignalContentFilter：首候选 finishReason 属于内容过滤类枚举。
 	geminiSignalContentFilter
-	// geminiSignalAbnormalStop：首候选 finishReason 是模型生成异常，或响应体为空。
+	// geminiSignalAbnormalStop：上游 2xx 但响应体为空（EMPTY_STREAM / EMPTY_RESPONSE）。
 	geminiSignalAbnormalStop
 	// geminiSignalError：事件本身是 Google 错误信封 {"error":{"code","message","status"}}，
 	// 与 Gemini SDK 客户端对流式 chunk 的错误判定相同。
@@ -34,7 +34,7 @@ type geminiResponseSignal struct {
 	// Reason 是 finishReason / blockReason 枚举值，或 Google 错误信封的 status；作为 ops 错误 code。
 	Reason  string
 	Message string
-	// Status 是该信号的语义 HTTP 状态：内容策略类固定 400，错误信封取 error.code，生成异常与空响应 502。
+	// Status 是该信号的语义 HTTP 状态：内容策略类固定 400，错误信封取 error.code，空响应 502。
 	Status int
 	// Detail 是错误信封原文（已截断），仅 geminiSignalError 填写。
 	Detail string
@@ -61,8 +61,8 @@ func geminiPayloadMayCarrySignal(payload []byte) bool {
 
 // detectGeminiResponseSignal 检查一个 Gemini 响应事件是否携带带内信号；Code Assist 的
 // {"response":{...}} 包装体先解包。判定顺序：错误信封 > promptFeedback.blockReason > 首候选 finishReason。
-// finishReason 为空、STOP、MAX_TOKENS、FINISH_REASON_UNSPECIFIED 视为正常；OTHER、
-// TOO_MANY_TOOL_CALLS、NO_IMAGE、IMAGE_OTHER 与未知枚举同样按正常停止处理（与 gemini-cli 遥测一致）。
+// finishReason 只有内容过滤类枚举登记为信号；STOP、MAX_TOKENS、OTHER、MALFORMED_FUNCTION_CALL、
+// UNEXPECTED_TOOL_CALL、TOO_MANY_TOOL_CALLS 等其余枚举都是模型侧的生成结果，不做上游归因，一律不登记。
 func detectGeminiResponseSignal(payload []byte) (geminiResponseSignal, bool) {
 	payload = bytes.TrimSpace(payload)
 	if len(payload) == 0 || !geminiPayloadMayCarrySignal(payload) || !gjson.ValidBytes(payload) {
@@ -109,8 +109,7 @@ func detectGeminiResponseSignal(payload []byte) (geminiResponseSignal, bool) {
 
 	candidate := geminiPrimaryCandidate(payload)
 	finishReason := strings.ToUpper(strings.TrimSpace(candidate.Get("finishReason").String()))
-	switch finishReason {
-	case "", "STOP", "MAX_TOKENS", "FINISH_REASON_UNSPECIFIED":
+	if !isGeminiContentFilterFinishReason(finishReason) {
 		return geminiResponseSignal{}, false
 	}
 	detail := strings.TrimSpace(candidate.Get("finishMessage").String())
@@ -118,23 +117,12 @@ func detectGeminiResponseSignal(payload []byte) (geminiResponseSignal, bool) {
 		detail = geminiFinishReasonText(finishReason)
 	}
 	detail = truncateString(detail, 512)
-	if isGeminiContentFilterFinishReason(finishReason) {
-		return geminiResponseSignal{
-			Kind:    geminiSignalContentFilter,
-			Reason:  finishReason,
-			Message: fmt.Sprintf("Gemini content policy stop (finishReason=%s): %s", finishReason, detail),
-			Status:  http.StatusBadRequest,
-		}, true
-	}
-	if isGeminiAbnormalStopFinishReason(finishReason) {
-		return geminiResponseSignal{
-			Kind:    geminiSignalAbnormalStop,
-			Reason:  finishReason,
-			Message: fmt.Sprintf("Gemini generation stopped abnormally (finishReason=%s): %s", finishReason, detail),
-			Status:  http.StatusBadGateway,
-		}, true
-	}
-	return geminiResponseSignal{}, false
+	return geminiResponseSignal{
+		Kind:    geminiSignalContentFilter,
+		Reason:  finishReason,
+		Message: fmt.Sprintf("Gemini content policy stop (finishReason=%s): %s", finishReason, detail),
+		Status:  http.StatusBadRequest,
+	}, true
 }
 
 // geminiPrimaryCandidate 返回首候选：index 缺省或为 0 的候选。多候选流里其它 index 的候选不参与判定。
@@ -226,16 +214,6 @@ func isGeminiContentFilterFinishReason(reason string) bool {
 	}
 }
 
-// isGeminiAbnormalStopFinishReason 的集合与 gemini-cli 遥测的 ERROR 归类一致。
-func isGeminiAbnormalStopFinishReason(reason string) bool {
-	switch reason {
-	case "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL":
-		return true
-	default:
-		return false
-	}
-}
-
 // geminiFinishReasonText 是 finishMessage 缺失时的兜底描述；列出的枚举沿用 gemini-cli 的
 // 用户提示文案，其余枚举用通用兜底。
 func geminiFinishReasonText(reason string) string {
@@ -252,12 +230,8 @@ func geminiFinishReasonText(reason string) string {
 		return "Response stopped due to prohibited content."
 	case "SPII":
 		return "Response stopped due to sensitive personally identifiable information."
-	case "MALFORMED_FUNCTION_CALL":
-		return "Response stopped due to malformed function call."
 	case "IMAGE_SAFETY":
 		return "Response stopped due to image safety violations."
-	case "UNEXPECTED_TOOL_CALL":
-		return "Response stopped due to unexpected tool call."
 	case "IMAGE_PROHIBITED_CONTENT":
 		return "Response stopped due to prohibited image content."
 	default:
@@ -345,7 +319,7 @@ func (b *geminiSSEFallbackBody) Truncated() bool {
 // 用量与计费照常走 ForwardResult。stream 是客户端请求的流式标记。
 //   - 内容策略类（promptFeedback.blockReason / 内容过滤 finishReason）是请求级结果：
 //     只记请求级带内错误，不归因上游账号，不计入 SLA。
-//   - 错误信封、生成异常与空响应按上游失败登记：写上游错误上下文与尝试事件，并按语义状态计入 SLA。
+//   - 错误信封与空响应按上游失败登记：写上游错误上下文与尝试事件，并按语义状态计入 SLA。
 func (s *GeminiMessagesCompatService) markGeminiResponseSignal(c *gin.Context, account *Account, sig geminiResponseSignal, stream bool, upstreamRequestID string) {
 	if c == nil || sig.Kind == geminiSignalNone {
 		return

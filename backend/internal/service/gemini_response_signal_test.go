@@ -62,13 +62,10 @@ func TestDetectGeminiResponseSignal(t *testing.T) {
 			wantKind: geminiSignalContentFilter, wantReason: "SPII", wantStatus: http.StatusBadRequest,
 		},
 		{
-			name: "MALFORMED_FUNCTION_CALL is an abnormal stop", payload: `{"candidates":[{"content":{},"finishReason":"MALFORMED_FUNCTION_CALL"}]}`, wantHit: true,
-			wantKind: geminiSignalAbnormalStop, wantReason: "MALFORMED_FUNCTION_CALL", wantStatus: http.StatusBadGateway,
-			wantMessage: "Gemini generation stopped abnormally (finishReason=MALFORMED_FUNCTION_CALL): Response stopped due to malformed function call.",
+			name: "MALFORMED_FUNCTION_CALL is not a signal", payload: `{"candidates":[{"content":{},"finishReason":"MALFORMED_FUNCTION_CALL"}]}`, wantHit: false,
 		},
 		{
-			name: "UNEXPECTED_TOOL_CALL is an abnormal stop", payload: `{"candidates":[{"finishReason":"UNEXPECTED_TOOL_CALL"}]}`, wantHit: true,
-			wantKind: geminiSignalAbnormalStop, wantReason: "UNEXPECTED_TOOL_CALL", wantStatus: http.StatusBadGateway,
+			name: "UNEXPECTED_TOOL_CALL is not a signal", payload: `{"candidates":[{"finishReason":"UNEXPECTED_TOOL_CALL"}]}`, wantHit: false,
 		},
 		{
 			name: "promptFeedback blockReason", payload: `{"promptFeedback":{"blockReason":"PROHIBITED_CONTENT","safetyRatings":[]},"usageMetadata":{"promptTokenCount":10,"totalTokenCount":10}}`, wantHit: true,

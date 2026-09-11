@@ -421,6 +421,21 @@ func TestGeminiForwardNative_StreamOtherFinishReasonLeavesNoMark(t *testing.T) {
 	require.Empty(t, upstreamErrorEventsFromContext(t, c))
 }
 
+func TestGeminiForwardNative_StreamMalformedFunctionCallLeavesNoMark(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := `data: {"candidates":[{"content":{"parts":[{"text":"partial"}],"role":"model"},"finishReason":"MALFORMED_FUNCTION_CALL"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2}}
+
+`
+	svc := newGeminiSignalService("text/event-stream", body)
+	c, _ := newGeminiNativeTestContext(t)
+	result, err := svc.ForwardNative(context.Background(), c, geminiSignalTestAccount(),
+		"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Usage.OutputTokens)
+	require.Empty(t, GetOpsStreamErrors(c))
+	require.Empty(t, upstreamErrorEventsFromContext(t, c))
+}
+
 func TestGeminiForwardNative_NonStreamEmptyBodyMarksEmptyResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for name, body := range map[string]string{
