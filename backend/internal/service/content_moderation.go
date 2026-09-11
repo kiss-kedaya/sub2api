@@ -1881,7 +1881,7 @@ func (s *ContentModerationService) buildLog(input ContentModerationCheckInput, c
 		HighestScore:      highestScore,
 		CategoryScores:    cloneFloatMap(scores),
 		ThresholdSnapshot: cloneFloatMap(cfg.Thresholds),
-		InputExcerpt:      trimRunes(redactContentModerationSecrets(text), maxModerationExcerptRunes),
+		InputExcerpt:      trimRunes(redactContentModerationSecrets(moderationLogFullText(input, text)), maxModerationInputRunes),
 		UpstreamLatencyMS: latency,
 		QueueDelayMS:      queueDelay,
 		Error:             errText,
@@ -2945,6 +2945,14 @@ func cloneInt64Ptr(in *int64) *int64 {
 	}
 	v := *in
 	return &v
+}
+
+func moderationLogFullText(input ContentModerationCheckInput, fallback string) string {
+	full := ExtractContentModerationFullText(input.Protocol, input.Body)
+	if strings.TrimSpace(full) == "" {
+		return fallback
+	}
+	return full
 }
 
 func trimRunes(text string, max int) string {

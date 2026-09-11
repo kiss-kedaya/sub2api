@@ -1881,7 +1881,9 @@ function canUnbanRow(row: ContentModerationLog): boolean {
 }
 
 function inputSummaryText(row: ContentModerationLog): string {
-  return row.input_excerpt || row.error || '-'
+  const text = row.input_excerpt || row.error || '-'
+  if (text.length <= 80) return text
+  return `${text.slice(0, 80)}…`
 }
 
 function openInputDetail(row: ContentModerationLog) {
