@@ -124,6 +124,11 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		sessionHash, legacySessionHash = openAIWSSessionHashesFromID(promptCacheKey)
 		attachOpenAILegacySessionHashToGin(c, legacySessionHash)
 	}
+	// 与 WS 接入路径共用执行作用域：codex 多智能体共用 session-id，turn state 与
+	// store=false 的连接绑定必须按线程隔离，同一线程在两条路径之间也才能共享状态。
+	if scope, _ := resolveOpenAIWSExecutionScope(c, openAIWSExecutionScopeBodyFromRequest(reqBody), getAPIKeyIDFromContext(c)); scope != "" {
+		sessionHash = scope
+	}
 	if turnState == "" && stateStore != nil && sessionHash != "" {
 		if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
 			turnState = savedTurnState
