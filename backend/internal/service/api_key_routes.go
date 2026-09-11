@@ -148,7 +148,7 @@ const (
 func groupCatalogPlatforms() []string {
 	return []string{
 		PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity,
-		PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek,
+		PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax,
 	}
 }
 
