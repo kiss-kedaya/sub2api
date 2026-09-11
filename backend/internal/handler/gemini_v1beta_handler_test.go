@@ -117,10 +117,10 @@ func TestGeminiV1BetaHandler_ListModelsAntigravityFallback(t *testing.T) {
 			expectedBehavior: "static_fallback",
 		},
 		{
-			name:             "无任何账户-返回503",
+			name:             "无任何账户-返回静态列表",
 			hasGeminiAccount: false,
 			hasAntigravity:   false,
-			expectedBehavior: "service_unavailable",
+			expectedBehavior: "static_fallback",
 		},
 	}
 
@@ -131,10 +131,8 @@ func TestGeminiV1BetaHandler_ListModelsAntigravityFallback(t *testing.T) {
 
 			if tt.hasGeminiAccount {
 				behavior = "forward_to_upstream"
-			} else if tt.hasAntigravity {
-				behavior = "static_fallback"
 			} else {
-				behavior = "service_unavailable"
+				behavior = "static_fallback"
 			}
 
 			require.Equal(t, tt.expectedBehavior, behavior)
@@ -163,10 +161,10 @@ func TestGeminiV1BetaHandler_GetModelAntigravityFallback(t *testing.T) {
 			expectedBehavior: "static_model_info",
 		},
 		{
-			name:             "无任何账户-返回503",
+			name:             "无任何账户-返回静态模型信息",
 			hasGeminiAccount: false,
 			hasAntigravity:   false,
-			expectedBehavior: "service_unavailable",
+			expectedBehavior: "static_model_info",
 		},
 	}
 
@@ -177,10 +175,8 @@ func TestGeminiV1BetaHandler_GetModelAntigravityFallback(t *testing.T) {
 
 			if tt.hasGeminiAccount {
 				behavior = "forward_to_upstream"
-			} else if tt.hasAntigravity {
-				behavior = "static_model_info"
 			} else {
-				behavior = "service_unavailable"
+				behavior = "static_model_info"
 			}
 
 			require.Equal(t, tt.expectedBehavior, behavior)
