@@ -254,8 +254,11 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	if err != nil {
 		return nil, err
 	}
-	accounts = accountsSupportingRequestedModel(accounts, requestedModel)
+	accounts, unsupported := filterAccountsSupportingRequestedModel(accounts, requestedModel)
 	if len(accounts) == 0 {
+		if unsupported > 0 && strings.TrimSpace(requestedModel) != "" {
+			return nil, noAvailableAccountsDueToModelSupport(requestedModel, unsupported)
+		}
 		return nil, ErrNoAvailableAccounts
 	}
 	ctx = s.withWindowCostPrefetch(ctx, accounts)

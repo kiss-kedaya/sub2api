@@ -918,7 +918,10 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
-	accounts = accountsSupportingRequestedModel(accounts, requestedModel)
+	accounts, unsupported := filterAccountsSupportingRequestedModel(accounts, requestedModel)
+	if len(accounts) == 0 {
+		return nil, noAvailableAccountsDueToModelSupport(requestedModel, unsupported)
+	}
 
 	// 3. 按优先级 + LRU 选择最佳账号
 	// Select by priority + LRU
@@ -1204,9 +1207,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
-	accounts = accountsSupportingRequestedModel(accounts, requestedModel)
+	accounts, unsupported := filterAccountsSupportingRequestedModel(accounts, requestedModel)
 	if len(accounts) == 0 {
-		return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}.summary(""))
+		return nil, noAvailableAccountsDueToModelSupport(requestedModel, unsupported)
 	}
 	accounts = applySchedulerFreshnessForRequest(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
 	if len(accounts) == 0 {

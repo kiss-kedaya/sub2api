@@ -1383,6 +1383,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			if len(failedAccountIDs) == 0 {
 				if err != nil {
 					cls := classifyOpenAICompatibleNoAccountErrorFromGin(c, h.gatewayService, apiKey, currentRoutingModel, reqModel)
+					cls = classifySelectionFailureErrorFromGin(c, err, cls)
 					if !cls.ModelNotFound {
 						markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 					}
@@ -3100,9 +3101,6 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 			}
 			errType = "overloaded_error"
 			message = strings.TrimSpace(failoverErr.ClientMessage)
-		} else if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
-			status = http.StatusServiceUnavailable
-			errType = "overloaded_error"
 		}
 		h.handleStreamingAwareError(c, status, errType, message, streamStarted)
 		return
