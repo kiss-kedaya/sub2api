@@ -79,7 +79,7 @@ func IsOpenAICompatibleUpstreamPlatform(platform string) bool {
 
 func isOpenAICompatibleUpstreamPlatform(platform string) bool {
 	switch strings.TrimSpace(platform) {
-	case PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek:
+	case PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
 		return true
 	default:
 		return false
@@ -144,6 +144,10 @@ const (
 	groupCatalogModelPresent
 	groupCatalogModelAbsent
 )
+
+func GroupCatalogPlatforms() []string {
+	return groupCatalogPlatforms()
+}
 
 func groupCatalogPlatforms() []string {
 	return []string{
@@ -286,7 +290,7 @@ func (s *GatewayService) UpstreamPlatformForModel(ctx context.Context, apiKey *A
 		ids = []int64{apiKey.Group.ID}
 	}
 	prefer := []string{
-		PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek,
+		PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax,
 		PlatformAnthropic, PlatformGemini, PlatformAntigravity,
 	}
 	sawCatalog := false
