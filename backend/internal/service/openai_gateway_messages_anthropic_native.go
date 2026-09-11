@@ -146,25 +146,6 @@ func resolveOpenCodeGoMappedModel(account *Account, body []byte, defaultMappedMo
 	return normalizeOpenAIModelForUpstream(account, billing)
 }
 
-// rewriteOpenCodeGoRequestModel applies account model_mapping to the request
-// body so every OpenCode protocol path (Responses / Chat Completions /
-// Anthropic Messages) sends the mapped ID as the real upstream model.
-func rewriteOpenCodeGoRequestModel(account *Account, body []byte, defaultMappedModel string) (string, []byte, error) {
-	mapped := resolveOpenCodeGoMappedModel(account, body, defaultMappedModel)
-	original := strings.TrimSpace(gjson.GetBytes(body, "model").String())
-	if mapped == "" {
-		mapped = original
-	}
-	if mapped == "" || mapped == original || len(body) == 0 {
-		return mapped, body, nil
-	}
-	rewritten, err := sjson.SetBytes(body, "model", mapped)
-	if err != nil {
-		return mapped, body, fmt.Errorf("rewrite OpenCode mapped model: %w", err)
-	}
-	return mapped, rewritten, nil
-}
-
 func (s *OpenAIGatewayService) buildNativeAnthropicUpstreamRequest(
 	ctx context.Context,
 	c *gin.Context,
