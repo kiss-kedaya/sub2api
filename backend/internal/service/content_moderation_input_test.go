@@ -177,3 +177,15 @@ func TestExtractContentModerationInput_ResponsesLastIsAssistantSkipped(t *testin
 	require.Empty(t, input.Text)
 	require.Empty(t, input.Images)
 }
+
+func TestExtractContentModerationFullText_OpenAIChatKeepsAllUserTurns(t *testing.T) {
+	body := []byte(`{
+		"messages": [
+			{"role":"user","content":"Q1 完整第一轮"},
+			{"role":"assistant","content":"A1"},
+			{"role":"user","content":"Q2 完整第二轮"}
+		]
+	}`)
+	require.Equal(t, "Q2 完整第二轮", ExtractContentModerationInput(ContentModerationProtocolOpenAIChat, body).Text)
+	require.Equal(t, "Q1 完整第一轮\n\nQ2 完整第二轮", ExtractContentModerationFullText(ContentModerationProtocolOpenAIChat, body))
+}

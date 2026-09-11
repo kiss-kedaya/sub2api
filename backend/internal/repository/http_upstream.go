@@ -922,6 +922,11 @@ func (s *httpUpstreamService) applyProfilePoolSettings(settings poolSettings, pr
 		if s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIResponseHeaderTimeout > 0 {
 			settings.responseHeaderTimeout = time.Duration(s.cfg.Gateway.OpenAIResponseHeaderTimeout) * time.Second
 		}
+	case service.HTTPUpstreamProfileOpenAIImages:
+		settings.responseHeaderTimeout = defaultResponseHeaderTimeout
+		if s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIResponseHeaderTimeout > 0 {
+			settings.responseHeaderTimeout = time.Duration(s.cfg.Gateway.OpenAIResponseHeaderTimeout) * time.Second
+		}
 	case service.HTTPUpstreamProfileGrok:
 		// Grok can stall before its first byte under capacity pressure. Keep the
 		// generic 600s gateway timeout from turning one request into a 10-minute
@@ -1013,6 +1018,11 @@ func (s *httpUpstreamService) resolveProtocolMode(profile service.HTTPUpstreamPr
 	}
 	if profile == service.HTTPUpstreamProfileGrok {
 		return upstreamProtocolModeGrok
+	}
+	if profile == service.HTTPUpstreamProfileOpenAIImages {
+		// Image edits/generations can sit minutes with no HTTP/2 frames.
+		// H2 idle PING then kills the connection: "timeout awaiting response headers".
+		return upstreamProtocolModeOpenAIH1
 	}
 	if profile != service.HTTPUpstreamProfileOpenAI {
 		return upstreamProtocolModeDefault

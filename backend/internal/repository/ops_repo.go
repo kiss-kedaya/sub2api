@@ -239,15 +239,22 @@ func (r *opsRepository) ListErrorLogs(ctx context.Context, filter *service.OpsEr
 	}
 
 	where, args := buildOpsErrorLogsWhere(filter)
+	orderBy := opsErrorLogsOrderBy(filter)
 	countSQL := "SELECT COUNT(*) FROM ops_error_logs e " + where
-
-	var total int
-	if err := r.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
-		return nil, err
-	}
-
 	offset := (page - 1) * pageSize
-	argsWithLimit := append(args, pageSize, offset)
+	argsWithLimit := append(append([]any{}, args...), pageSize, offset)
+
+	type countResult struct {
+		total int
+		err   error
+	}
+	countCh := make(chan countResult, 1)
+	go func() {
+		var total int
+		err := r.db.QueryRowContext(ctx, countSQL, args...).Scan(&total)
+		countCh <- countResult{total: total, err: err}
+	}()
+
 	selectSQL := `
 SELECT
   e.id,
@@ -285,18 +292,24 @@ SELECT
   e.request_type,
   COALESCE(ak.name, ''),
   ak.deleted_at
-FROM ops_error_logs e
+FROM (
+  SELECT e.id
+  FROM ops_error_logs e
+  ` + where + `
+  ORDER BY ` + orderBy + `
+  LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2) + `
+) page
+JOIN ops_error_logs e ON e.id = page.id
 LEFT JOIN accounts a ON e.account_id = a.id
 LEFT JOIN groups g ON e.group_id = g.id
 LEFT JOIN users u ON e.user_id = u.id
 LEFT JOIN users u2 ON e.resolved_by_user_id = u2.id
 LEFT JOIN api_keys ak ON ak.id = e.api_key_id
-` + where + `
-ORDER BY ` + opsErrorLogsOrderBy(filter) + `
-LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
+ORDER BY ` + orderBy
 
 	rows, err := r.db.QueryContext(ctx, selectSQL, argsWithLimit...)
 	if err != nil {
+		<-countCh
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
@@ -402,6 +415,12 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
+	countRes := <-countCh
+	if countRes.err != nil {
+		return nil, countRes.err
+	}
+	total := countRes.total
 
 	return &service.OpsErrorLogList{
 		Errors:   out,
