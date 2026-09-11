@@ -130,8 +130,16 @@ func buildGrokMediaURL(account *Account, cfg *config.Config, endpoint GrokMediaE
 		return xai.BuildVideosExtensionsURLWithValidator(baseURL, validator)
 	case GrokMediaEndpointVideoStatus:
 		return xai.BuildVideoURLWithValidator(baseURL, requestID, validator)
+	case GrokMediaEndpointVideoGenerationsStatus:
+		return xai.BuildVideoGenerationsStatusURLWithValidator(baseURL, requestID, validator)
 	case GrokMediaEndpointVideoContent:
 		videoURL, err := xai.BuildVideoURLWithValidator(baseURL, requestID, validator)
+		if err != nil {
+			return "", err
+		}
+		return videoURL + "/content", nil
+	case GrokMediaEndpointVideoGenerationsContent:
+		videoURL, err := xai.BuildVideoGenerationsStatusURLWithValidator(baseURL, requestID, validator)
 		if err != nil {
 			return "", err
 		}

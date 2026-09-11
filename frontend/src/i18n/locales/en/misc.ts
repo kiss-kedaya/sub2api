@@ -71,6 +71,21 @@ export default {
       'The administrator enabled the entry but has not configured a recharge/subscription URL. Please contact admin.'
   },
 
+  // Infinite Canvas (iframe embed)
+  infiniteCanvas: {
+    title: 'Infinite Canvas',
+    description: 'Create images, video, and chat on an infinite canvas using your Sub2API key',
+    preparing: 'Creating a smart-routing key and opening Infinite Canvas…',
+    openInNewTab: 'Open in new tab',
+    errorTitle: 'Unable to open Infinite Canvas',
+    noGroups: 'You have no available groups, so a smart-routing API key cannot be created.',
+    missingKey: 'The API key was created but its secret was not returned. Try again or create a key manually.',
+    requestFailed: 'Failed to prepare the Infinite Canvas API key. Please retry.',
+    retry: 'Retry',
+    keyCreated: 'Created a smart-routing API key for Infinite Canvas',
+    groupsTruncated: 'Smart routing supports at most 10 groups; extra groups were omitted.',
+  },
+
   // Custom Page (iframe embed)
   customPage: {
     title: 'Custom Page',

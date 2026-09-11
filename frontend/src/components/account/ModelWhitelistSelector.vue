@@ -171,6 +171,8 @@ const props = defineProps<{
     type: string
     base_url?: string
     api_key: string
+    api_protocol?: string
+    api_base_urls?: Record<string, string>
   }
 }>()
 

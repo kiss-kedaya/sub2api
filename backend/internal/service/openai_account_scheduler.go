@@ -1524,9 +1524,9 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
-	accounts = accountsSupportingRequestedModel(accounts, req.RequestedModel)
+	accounts, unsupported := filterAccountsSupportingRequestedModel(accounts, req.RequestedModel)
 	if len(accounts) == 0 {
-		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary(""))
+		return nil, 0, 0, 0, noAvailableAccountsDueToModelSupport(req.RequestedModel, unsupported)
 	}
 	accounts = applySchedulerFreshnessForRequest(ctx, s.service.accountRepo, s.service.schedulerSnapshot, accounts)
 	if len(accounts) == 0 {

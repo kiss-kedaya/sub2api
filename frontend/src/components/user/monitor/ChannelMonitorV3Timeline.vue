@@ -162,10 +162,12 @@ const displayBars = computed<TimelineBar[]>(() => {
       ? bucket.health.overall
       : 'unknown'
     const availabilityPercent = (1 - bucket.metrics.error_rate) * 100
-    const style = {
-      ...(STATUS_STYLE[state]),
-      colorClass: availabilityBarClass(availabilityPercent),
-    }
+    const style = state === 'unknown'
+      ? { ...STATUS_STYLE.unknown }
+      : {
+          ...(STATUS_STYLE[state]),
+          colorClass: availabilityBarClass(availabilityPercent),
+        }
     bars.push({
       key: bucket.bucket_start,
       ...style,

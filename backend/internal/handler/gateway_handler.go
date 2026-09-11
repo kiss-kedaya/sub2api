@@ -391,6 +391,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if err != nil {
 				if len(fs.FailedAccountIDs) == 0 {
 					cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, service.PlatformGemini)
+					cls = classifySelectionFailureErrorFromGin(c, err, cls)
 					if !cls.ModelNotFound {
 						markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 					}
@@ -736,6 +737,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			if err != nil {
 				if len(fs.FailedAccountIDs) == 0 {
 					cls := classifyNoAccountErrorFromGin(c, h.gatewayService, currentAPIKey, reqModel, reqModel, platform)
+					cls = classifySelectionFailureErrorFromGin(c, err, cls)
 					if !cls.ModelNotFound {
 						markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 					}
@@ -2043,10 +2045,6 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 		service.SetOpsUpstreamError(c, statusCode, service.ExtractUpstreamErrorMessage(responseBody), "")
 		c.Header("Retry-After", "30")
 		status, errType, message := wrapUpstreamClientError(statusCode, responseBody)
-		if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
-			status = http.StatusServiceUnavailable
-			errType = "overloaded_error"
-		}
 		h.handleStreamingAwareError(c, status, errType, message, streamStarted)
 		return
 	}

@@ -320,6 +320,7 @@ func TestForwardGrokVideoStatusRewritesOnlyProtectedContentURL(t *testing.T) {
 	require.Equal(t, "/v1/videos/task-1/content", gjson.Get(recorder.Body.String(), "url").String())
 	require.Equal(t, "/v1/videos/task-1/content", gjson.Get(recorder.Body.String(), "download_url").String())
 	require.Equal(t, "https://vidgen.x.ai/task-1.mp4", gjson.Get(recorder.Body.String(), "video_url").String())
+	require.NotContains(t, recorder.Body.String(), "relay.example")
 	require.Equal(t, "9007199254740993", gjson.Get(recorder.Body.String(), "counter").String())
 	require.NotContains(t, recorder.Body.String(), "malicious.invalid")
 }
@@ -338,7 +339,55 @@ func TestRewriteGrokMediaVideoContentURLsRewritesSignedVideoURL(t *testing.T) {
 
 	rewritten := rewriteGrokMediaVideoContentURLs(body, "request-1", "/v1/videos/request-1/content")
 
-	require.Equal(t, "/v1/videos/request-1/content", gjson.GetBytes(rewritten, "video.url").String())
+	require.Equal(t, "https://vidgen.x.ai/signed-token/xai-video-request-1.mp4", gjson.GetBytes(rewritten, "video.url").String())
 	require.Equal(t, "8", gjson.GetBytes(rewritten, "video.duration").String())
 	require.Equal(t, "done", gjson.GetBytes(rewritten, "status").String())
+}
+
+func TestShouldHideGrokMediaUpstreamURL(t *testing.T) {
+	require.True(t, shouldHideGrokMediaUpstreamURL("https://api.mysandbox.vip/v1/videos/task-1/content"))
+	require.True(t, shouldHideGrokMediaUpstreamURL("https://aipro.hk.cn/v1/videos/task-1"))
+	require.True(t, shouldHideGrokMediaUpstreamURL("/v1/videos/task-1/content"))
+	require.False(t, shouldHideGrokMediaUpstreamURL("https://vidgen.x.ai/task-1.mp4"))
+	require.False(t, shouldHideGrokMediaUpstreamURL("https://api.x.ai/v1/videos/task-1/content"))
+}
+
+func grokMediaJSONResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func TestForwardGrokVideoStatusFallsBackToGenerationsPath(t *testing.T) {
+	statusBody := `{"id":"task-1","status":"completed","url":"https://api.mysandbox.vip/v1/videos/generations/task-1/content","video_url":"https://vidgen.x.ai/task-1.mp4"}`
+	upstream := &grokMediaContentUpstreamStub{
+		responses: []*http.Response{
+			grokMediaJSONResponse(http.StatusNotFound, `{"error":{"message":"Video request not found","type":"not_found_error"}}`),
+			grokMediaJSONResponse(http.StatusOK, statusBody),
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	c, recorder := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1", nil)
+
+	_, err := svc.ForwardGrokMedia(
+		context.Background(), c, grokMediaContentTestAccount(),
+		GrokMediaEndpointVideoStatus, "task-1", nil, "",
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://relay.example/v1/videos/task-1", upstream.requests[0].URL.String())
+	require.Equal(t, "https://relay.example/v1/videos/generations/task-1", upstream.requests[1].URL.String())
+	require.Equal(t, "/v1/videos/task-1/content", gjson.Get(recorder.Body.String(), "url").String())
+	require.Equal(t, "https://vidgen.x.ai/task-1.mp4", gjson.Get(recorder.Body.String(), "video_url").String())
+	require.NotContains(t, recorder.Body.String(), "mysandbox.vip")
+}
+
+func TestIsGrokMediaVideoContentURLAcceptsGenerationsPath(t *testing.T) {
+	require.True(t, isGrokMediaVideoContentURL("https://api.mysandbox.vip/v1/videos/generations/task-1/content", "task-1"))
+	require.True(t, isGrokMediaVideoContentURL("/v1/videos/generations/task-1/content", "task-1"))
+	require.False(t, isGrokMediaVideoContentURL("https://api.mysandbox.vip/v1/videos/generations/task-2/content", "task-1"))
 }
