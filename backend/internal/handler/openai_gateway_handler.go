@@ -198,11 +198,11 @@ func resolveOpenAIMessagesDispatchMappedModel(c *gin.Context, apiKey *service.AP
 	if apiKey == nil || apiKey.Group == nil {
 		return ""
 	}
-	// composite 解析到 grok/CN 目标时调度级映射不适用（Group 级映射的 gpt-5.x
-	// 默认值是 openai 专属,发给这些上游必错）,模型改写交给账号级 model_mapping。
+	// composite 解析到 grok/CN/OpenCode 目标时调度级映射不适用（Group 级映射的
+	// gpt-5.x 默认值是 openai 专属,发给这些上游必错）,模型改写交给账号级 model_mapping。
 	if apiKey.Group.Platform == service.PlatformComposite && c != nil && c.Request != nil {
 		if platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok &&
-			(platform == service.PlatformGrok || service.IsCNProvider(platform)) {
+			(platform == service.PlatformGrok || service.IsMultiProtocolAPIKeyProvider(platform)) {
 			return ""
 		}
 	}

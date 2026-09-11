@@ -156,20 +156,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	if account.IsOpenCodeGo() {
-		mapped, rewritten, rewriteErr := rewriteOpenCodeGoRequestModel(account, body, "")
-		if rewriteErr != nil {
-			return nil, rewriteErr
-		}
-		if mapped != originalModel {
-			body = rewritten
-			originalBody = rewritten
-			requestView = newOpenAIRequestView(body)
-			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
-			originalModel = reqModel
-		}
+		mapped := resolveOpenCodeGoMappedModel(account, body, "")
 		switch openCodeGoNativeProtocol(account, mapped) {
 		case APIProtocolAnthropic:
-			return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, mapped)
+			return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, "")
 		case APIProtocolResponses:
 			break
 		default:
