@@ -268,6 +268,16 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 			)
 		}
 	}
+	if builtin := builtinDeepSeekModelMetadataForIDs(enrichIDs); len(builtin) > 0 {
+		for modelID, fallback := range builtin {
+			current := catalog.Metadata[modelID]
+			merged, changed := mergeUpstreamModelMetadata(current, fallback)
+			catalog.Metadata[modelID] = merged
+			if changed && source == "upstream" {
+				source = "builtin"
+			}
+		}
+	}
 
 	completeMetadata := completeUpstreamModelMetadataSubset(capabilityIDs, catalog.Metadata)
 	persistedCapabilities := false
@@ -628,6 +638,81 @@ func upstreamModelRegistryBaseURL(account *Account) string {
 	default:
 		return strings.TrimSpace(account.GetCredential("base_url"))
 	}
+}
+
+const (
+	deepSeekV4ContextWindow int64 = 1_048_576
+	deepSeekV4MaxOutput     int64 = 384_000
+)
+
+func builtinDeepSeekModelMetadataForIDs(modelIDs []string) map[string]UpstreamModelMetadata {
+	out := make(map[string]UpstreamModelMetadata)
+	for _, modelID := range modelIDs {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			continue
+		}
+		if entry, ok := builtinDeepSeekModelMetadata(modelID); ok {
+			out[modelID] = entry
+		}
+	}
+	return out
+}
+
+// builtinDeepSeekModelMetadata fills capability fields DeepSeek /models omits
+// and models.dev does not yet list for dated V4 IDs.
+// Official: deepseek-flash = V4.1-Flash (vision); deepseek-v4-pro = V4-Pro-0813 (no vision).
+// Old flash IDs stay callable but are served by V4.1-Flash. Thinking default high; levels none/low/high/max.
+func builtinDeepSeekModelMetadata(modelID string) (UpstreamModelMetadata, bool) {
+	id := strings.ToLower(strings.TrimSpace(modelID))
+	id = strings.TrimPrefix(id, "deepseek/")
+	if id == "" {
+		return UpstreamModelMetadata{}, false
+	}
+	if id != "deepseek-flash" && !strings.HasPrefix(id, "deepseek-v4") {
+		return UpstreamModelMetadata{}, false
+	}
+
+	display := "DeepSeek V4"
+	switch {
+	case id == "deepseek-v4-flash-0731":
+		display = "DeepSeek V4 Flash 0731"
+	case id == "deepseek-v4-flash-vision-exp":
+		display = "DeepSeek V4 Flash Vision Exp"
+	case id == "deepseek-v4-pro-0813":
+		display = "DeepSeek V4 Pro 0813"
+	case id == "deepseek-v4.1-flash-0910":
+		display = "DeepSeek V4.1 Flash 0910"
+	case id == "deepseek-v4-flash":
+		display = "DeepSeek V4 Flash"
+	case id == "deepseek-v4.1-flash" || id == "deepseek-flash":
+		display = "DeepSeek V4.1 Flash"
+	case strings.Contains(id, "pro"):
+		display = "DeepSeek V4 Pro"
+	case strings.Contains(id, "vision"):
+		display = "DeepSeek V4 Flash Vision"
+	case strings.Contains(id, "flash"):
+		display = "DeepSeek V4 Flash"
+	}
+
+	// Pro has no vision. Flash family (including dated/old aliases) is served by V4.1-Flash.
+	vision := !strings.Contains(id, "pro")
+
+	reasoning := true
+	modalities := []string{"text"}
+	if vision {
+		modalities = append(modalities, "image")
+	}
+	return UpstreamModelMetadata{
+		ID:                       strings.TrimSpace(modelID),
+		DisplayName:              display,
+		Reasoning:                &reasoning,
+		DefaultReasoningLevel:    "high",
+		SupportedReasoningLevels: []string{"none", "low", "high", "max"},
+		InputModalities:          modalities,
+		ContextWindow:            deepSeekV4ContextWindow,
+		MaxOutputTokens:          deepSeekV4MaxOutput,
+	}, true
 }
 
 func filterUpstreamModelsByAccountPlatform(account *Account, models []string) []string {
