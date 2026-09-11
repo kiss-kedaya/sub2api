@@ -1205,8 +1205,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 }
 
-// Models handles listing available models
-// GET /v1/models
+// Models lists visible models, or retrieves the exact list entry for a model path parameter.
+// GET /v1/models and /v1/models/:model (also exposed through root aliases)
 // Returns models based on account configurations (model_mapping whitelist)
 // Falls back to default models if no whitelist is configured
 //
@@ -1252,18 +1252,12 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 
 	// Fallback to default models
 	if responsePlatform == service.PlatformOpenAI {
-		c.JSON(http.StatusOK, gin.H{
-			"object": "list",
-			"data":   openai.DefaultModels,
-		})
+		writeModelsListResponse(c, openai.DefaultModels)
 		return
 	}
 
 	if responsePlatform == service.PlatformGemini {
-		c.JSON(http.StatusOK, gin.H{
-			"object": "list",
-			"data":   geminicli.DefaultModels,
-		})
+		writeModelsListResponse(c, geminicli.DefaultModels)
 		return
 	}
 	if responsePlatform == service.PlatformGrok {
@@ -1271,10 +1265,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"object": "list",
-		"data":   claude.DefaultModels,
-	})
+	writeModelsListResponse(c, claude.DefaultModels)
 }
 
 func apiKeyModelsListGroupIDs(apiKey *service.APIKey) []int64 {
@@ -1326,7 +1317,7 @@ func (h *GatewayHandler) modelsForGroupID(ctx context.Context, groupID *int64, g
 		// List by the accounts actually in the group, not the group label.
 		// A Gemini-labeled group with OpenAI-type accounts must still expose
 		// those accounts' mapped models (e.g. gemini-3.8-flash).
-		models = h.compositeAvailableModels(ctx, groupID)
+		models = h.compositeAvailableModels(ctx, groupID, platform == service.PlatformComposite)
 	} else if h != nil && h.gatewayService != nil {
 		models = h.gatewayService.GetAvailableModels(ctx, groupID, platform)
 	}
@@ -1352,7 +1343,7 @@ func (h *GatewayHandler) modelsForGroupID(ctx context.Context, groupID *int64, g
 		// Bound group with no hydrated policy: expose every mapped/default
 		// model the group's accounts can actually serve, without dumping the
 		// Claude catalog for a missing platform.
-		return h.compositeAvailableModels(ctx, groupID)
+		return h.compositeAvailableModels(ctx, groupID, false)
 	}
 	if injectDefaults && platform != "" {
 		return defaultModelIDsForPlatform(platform)
@@ -1407,7 +1398,7 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 		platform = group.Platform
 	}
 	if platform == service.PlatformComposite {
-		availableModels := h.compositeAvailableModels(ctx, groupID)
+		availableModels := h.compositeAvailableModels(ctx, groupID, true)
 		fallbackModels := defaultCodexModelIDsForPlatform(service.PlatformComposite)
 		if group.ModelAllowlistEnabled() {
 			source := availableModels
@@ -1433,7 +1424,7 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	return fallbackModels
 }
 
-func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *int64) []string {
+func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *int64, injectUnmappedDefaults bool) []string {
 	if h == nil || h.gatewayService == nil {
 		return nil
 	}
@@ -1442,7 +1433,7 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 	schedulablePlatforms := h.gatewayService.GetSchedulablePlatforms(ctx, groupID)
 	for _, platform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax} {
 		platformModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
-		if len(platformModels) == 0 {
+		if len(platformModels) == 0 && injectUnmappedDefaults {
 			// CN 供应商没有静态默认模型列表（defaultModelIDsForPlatform 的
 			// default 分支是 Claude 列表），composite 下只暴露账号映射键。
 			if _, ok := schedulablePlatforms[platform]; ok && !service.IsCNProvider(platform) {
@@ -1482,10 +1473,7 @@ func writeModelsList(c *gin.Context, platform string, modelIDs []string) {
 			CreatedAt:   "2024-01-01T00:00:00Z",
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"object": "list",
-		"data":   models,
-	})
+	writeModelsListResponse(c, models)
 }
 
 func writeAllowlistedModelsList(c *gin.Context, platform string, modelIDs []string) {
@@ -1544,10 +1532,7 @@ func writeGrokModelsList(c *gin.Context, modelIDs []string) {
 		models = append(models, item)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"object": "list",
-		"data":   models,
-	})
+	writeModelsListResponse(c, models)
 }
 
 func grokModelSupportsConfigurableReasoning(modelID string) bool {
@@ -1580,10 +1565,7 @@ func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
 			DisplayName: modelID,
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"object": "list",
-		"data":   models,
-	})
+	writeModelsListResponse(c, models)
 }
 
 // modelListingSource 汇总模型列表过滤的候选来源：账号映射键（availableModels）
