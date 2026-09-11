@@ -54,6 +54,8 @@ export default {
     generateNewKey: 'Generate a new API key',
     batchImageAgent: 'Batch Image Assistant',
     batchImageAgentDesc: 'Copy instructions for an agent',
+    infiniteCanvas: 'Infinite Canvas',
+    infiniteCanvasDesc: 'Open the canvas with a smart-routing key',
     viewUsage: 'View Usage',
     checkDetailedLogs: 'Check detailed usage logs',
     redeemCode: 'Redeem Code',
