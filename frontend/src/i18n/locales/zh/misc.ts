@@ -69,6 +69,21 @@ export default {
     notConfiguredDesc: '管理员已开启入口，但尚未配置充值/订阅链接，请联系管理员。'
   },
 
+  // Infinite Canvas (iframe embed)
+  infiniteCanvas: {
+    title: '无限画布',
+    description: '使用智能路由 API 密钥在无限画布中进行图片、视频和对话创作',
+    preparing: '正在创建智能路由密钥并打开无限画布…',
+    openInNewTab: '新窗口打开',
+    errorTitle: '无法打开无限画布',
+    noGroups: '当前没有可用分组，无法创建智能路由 API 密钥。',
+    missingKey: '密钥已创建但未返回明文，请重试或手动创建密钥。',
+    requestFailed: '准备无限画布密钥失败，请重试。',
+    retry: '重试',
+    keyCreated: '已为无限画布创建智能路由 API 密钥',
+    groupsTruncated: '智能路由最多支持 10 个分组，已省略多余分组。',
+  },
+
   // Custom Page (iframe embed)
   customPage: {
     title: '自定义页面',
