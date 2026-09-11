@@ -461,13 +461,35 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 		descriptor.Description = "DeepSeek coding and reasoning model routed through Sub2API."
 		descriptor.DefaultReasoningLevel = &defaultReasoningLevel
 		descriptor.SupportedReasoningLevels = []configuredCodexReasoningLevel{
-			{Effort: "low", Description: "Fast responses with lighter reasoning"},
-			{Effort: "high", Description: "Greater reasoning depth for coding and agent tasks"},
-			{Effort: "max", Description: "Maximum reasoning depth for complex tasks"},
+			{Effort: "none", Description: configuredCodexReasoningLevelDescription("none")},
+			{Effort: "low", Description: configuredCodexReasoningLevelDescription("low")},
+			{Effort: "high", Description: configuredCodexReasoningLevelDescription("high")},
+			{Effort: "max", Description: configuredCodexReasoningLevelDescription("max")},
 		}
 		descriptor.SupportsParallelToolCalls = true
 		descriptor.ContextWindow = configuredCodexDeepSeekV4Context
 		descriptor.MaxContextWindow = configuredCodexDeepSeekV4Context
+		if meta, ok := builtinDeepSeekModelMetadata(modelID); ok {
+			if strings.TrimSpace(meta.DisplayName) != "" {
+				descriptor.DisplayName = meta.DisplayName
+			}
+			if strings.TrimSpace(meta.DefaultReasoningLevel) != "" {
+				level := meta.DefaultReasoningLevel
+				descriptor.DefaultReasoningLevel = &level
+			}
+			if len(meta.SupportedReasoningLevels) > 0 {
+				levels := make([]configuredCodexReasoningLevel, 0, len(meta.SupportedReasoningLevels))
+				for _, effort := range meta.SupportedReasoningLevels {
+					levels = append(levels, configuredCodexReasoningLevel{
+						Effort: effort, Description: configuredCodexReasoningLevelDescription(effort),
+					})
+				}
+				descriptor.SupportedReasoningLevels = levels
+			}
+			if len(meta.InputModalities) > 0 {
+				descriptor.InputModalities = append([]string(nil), meta.InputModalities...)
+			}
+		}
 	}
 
 	if isGrokCodexModel(modelID) {
@@ -1073,6 +1095,14 @@ func groupCodexModelSupportsImageInput(
 		if !resolved {
 			return false
 		}
+	}
+	if meta, ok := builtinDeepSeekModelMetadata(upstreamModel); ok {
+		for _, modality := range meta.InputModalities {
+			if strings.EqualFold(strings.TrimSpace(modality), "image") {
+				return true
+			}
+		}
+		return false
 	}
 	if platform != PlatformOpenAI && platform != PlatformGrok {
 		return false
