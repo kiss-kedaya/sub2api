@@ -166,6 +166,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			}
 			if len(failedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, requestedModel, requestedModel, service.PlatformOpenAI)
+				cls = classifySelectionFailureErrorFromGin(c, err, cls)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				}

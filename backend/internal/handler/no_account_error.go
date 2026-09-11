@@ -117,10 +117,14 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 		}
 	}
 	if unsupported == pool {
+		message := fallback.Message
+		if strings.TrimSpace(message) == "" || message == "Service temporarily unavailable" {
+			message = "The requested model is not supported by any currently configured upstream account."
+		}
 		return noAccountErrorClassification{
 			Status:        http.StatusNotFound,
 			ErrType:       "model_not_found",
-			Message:       "The requested model is not supported by any currently configured upstream account.",
+			Message:       message,
 			ModelNotFound: true,
 		}
 	}
