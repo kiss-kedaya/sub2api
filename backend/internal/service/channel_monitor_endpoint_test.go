@@ -50,6 +50,11 @@ func TestJoinMonitorURL_DoesNotMatchHostOrEncodedSlash(t *testing.T) {
 		joinURL("https://relay.example/tenant%2Fv1", "/v1/messages"))
 }
 
+func TestJoinMonitorURL_DoesNotDuplicateFullAPIPath(t *testing.T) {
+	require.Equal(t, "https://x.example/v1/messages", joinURL("https://x.example/v1/messages", "/v1/messages"))
+	require.Equal(t, "https://x.example/anthropic/v1/messages", joinURL("https://x.example/anthropic/v1/messages", "/v1/messages"))
+}
+
 func TestNormalizeMonitorEndpoint_PreservesBasePath(t *testing.T) {
 	require.Equal(t, "https://api.deepseek.com/anthropic",
 		normalizeEndpoint("  https://api.deepseek.com/anthropic/  "))

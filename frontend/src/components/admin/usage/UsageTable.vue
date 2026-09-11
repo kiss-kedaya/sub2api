@@ -208,7 +208,7 @@
         <template #cell-cost="{ row }">
           <div class="text-sm">
             <div class="flex items-center gap-1.5">
-              <span class="font-medium text-green-600 dark:text-green-400">${{ row.actual_cost?.toFixed(6) || '0.000000' }}</span>
+              <span class="font-medium text-green-600 dark:text-green-400">${{ row.actual_cost?.toFixed(8) || '0.00000000' }}</span>
               <span
                 v-if="row.long_context_billing_applied"
                 data-testid="long-context-billing-marker"
@@ -226,7 +226,7 @@
               </div>
             </div>
             <div v-if="showAccountBilling && row.account_rate_multiplier != null" class="mt-0.5 text-[11px] text-orange-500 dark:text-orange-400">
-              A ${{ accountBilled(row).toFixed(6) }}
+              A ${{ accountBilled(row).toFixed(8) }}
             </div>
           </div>
         </template>

@@ -69,6 +69,9 @@ func TestIsOpenAICompatibleUpstreamPlatform(t *testing.T) {
 	require.True(t, isOpenAICompatibleUpstreamPlatform("openai"))
 	require.True(t, isOpenAICompatibleUpstreamPlatform("grok"))
 	require.True(t, isOpenAICompatibleUpstreamPlatform("kimi"))
+	require.True(t, isOpenAICompatibleUpstreamPlatform("zhipu"))
+	require.True(t, isOpenAICompatibleUpstreamPlatform("deepseek"))
+	require.True(t, isOpenAICompatibleUpstreamPlatform("minimax"))
 	require.False(t, isOpenAICompatibleUpstreamPlatform("anthropic"))
 	require.False(t, isOpenAICompatibleUpstreamPlatform("gemini"))
 }
