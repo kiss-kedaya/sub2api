@@ -1222,6 +1222,10 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		return nil, s.writeGoogleError(c, http.StatusNotFound, "Unsupported action: "+action)
 	}
 
+	if account.IsGeminiOpenAIProtocol() {
+		return s.forwardGeminiNativeViaOpenAICompat(ctx, c, account, originalModel, action, stream, body)
+	}
+
 	// Some Gemini upstreams validate tool call parts strictly; ensure any `functionCall` part includes a
 	// `thoughtSignature` to avoid frequent INVALID_ARGUMENT 400s.
 	body = ensureGeminiFunctionCallThoughtSignatures(body)

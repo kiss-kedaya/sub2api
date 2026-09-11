@@ -129,24 +129,26 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		return
 	}
 
+	writeLocalCatalog := func() {
+		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(gemini.DefaultModels())})
+	}
+
 	account, err := h.selectGeminiStudioAccount(c.Request.Context(), apiKey)
 	if err != nil {
-		if errors.Is(err, errGeminiStudioAntigravityFallback) {
-			c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(gemini.DefaultModels())})
-			return
-		}
-		markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-		googleError(c, http.StatusServiceUnavailable, "No available Gemini accounts: "+err.Error())
+		// Official sub2api / Gemini SDK sync GET /v1beta/models before generateContent.
+		// Gemini groups that only have OpenAI-compat or Antigravity accounts must still
+		// return a Google-format catalog instead of 503, or the client shows "sync failed".
+		writeLocalCatalog()
+		return
+	}
+	if account != nil && account.IsGeminiOpenAIProtocol() {
+		writeLocalCatalog()
 		return
 	}
 
 	res, err := h.geminiCompatService.ForwardAIStudioGET(c.Request.Context(), account, "/v1beta/models")
-	if err != nil {
-		googleError(c, http.StatusBadGateway, err.Error())
-		return
-	}
-	if shouldFallbackGeminiModels(res) {
-		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(gemini.DefaultModels())})
+	if err != nil || shouldFallbackGeminiModels(res) || (res != nil && res.StatusCode >= 400) {
+		writeLocalCatalog()
 		return
 	}
 	if apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
@@ -241,21 +243,16 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 
 	account, err := h.selectGeminiStudioAccount(c.Request.Context(), apiKey)
 	if err != nil {
-		if errors.Is(err, errGeminiStudioAntigravityFallback) {
-			c.JSON(http.StatusOK, gemini.FallbackModel(modelName))
-			return
-		}
-		markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-		googleError(c, http.StatusServiceUnavailable, "No available Gemini accounts: "+err.Error())
+		c.JSON(http.StatusOK, gemini.FallbackModel(modelName))
+		return
+	}
+	if account != nil && account.IsGeminiOpenAIProtocol() {
+		c.JSON(http.StatusOK, gemini.FallbackModel(modelName))
 		return
 	}
 
 	res, err := h.geminiCompatService.ForwardAIStudioGET(c.Request.Context(), account, "/v1beta/models/"+modelName)
-	if err != nil {
-		googleError(c, http.StatusBadGateway, err.Error())
-		return
-	}
-	if shouldFallbackGeminiModel(modelName, res) {
+	if err != nil || shouldFallbackGeminiModel(modelName, res) || (res != nil && res.StatusCode >= 400) {
 		c.JSON(http.StatusOK, gemini.FallbackModel(modelName))
 		return
 	}
