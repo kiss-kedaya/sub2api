@@ -457,10 +457,6 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 	if lastErr != nil && service.IsUpstreamCapacityCoolingBody(lastErr.ResponseBody) {
 		c.Header("Retry-After", "30")
 		status, errType, message := wrapUpstreamClientError(lastErr.StatusCode, lastErr.ResponseBody)
-		if lastErr.StatusCode == http.StatusUnauthorized || lastErr.StatusCode == http.StatusForbidden {
-			status = http.StatusServiceUnavailable
-			errType = "server_error"
-		}
 		h.chatCompletionsErrorResponse(c, status, errType, message)
 		return
 	}
