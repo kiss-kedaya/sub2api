@@ -719,16 +719,24 @@ readLoop:
 			if !wroteDownstream && canFallback {
 				return nil, wrapOpenAIWSFallback(fallbackReason, errors.New(errMsg))
 			}
-			statusCode := openAIWSErrorHTTPStatusFromRaw(errCodeRaw, errTypeRaw)
+			statusCode := openAIWSErrorHTTPStatusFromFields(errCodeRaw, errTypeRaw, errMsg)
 			setOpsUpstreamError(c, statusCode, errMsg, "")
 			if reqStream && !clientDisconnected {
 				flushBufferedStreamEvents("error_event")
 				emitStreamMessage(message, true)
 			}
 			if !reqStream {
+				clientErrType := errType
+				if clientErrType == "" || clientErrType == "upstream_error" {
+					if statusCode < http.StatusInternalServerError {
+						clientErrType = openAIDeterministicClientErrorType(statusCode)
+					} else {
+						clientErrType = "upstream_error"
+					}
+				}
 				c.JSON(statusCode, gin.H{
 					"error": gin.H{
-						"type":    "upstream_error",
+						"type":    clientErrType,
 						"message": errMsg,
 					},
 				})

@@ -274,7 +274,7 @@ func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload 
 		status = int(gjson.GetBytes(payload, "status").Int())
 	}
 	if status == 0 {
-		status = openAIWSErrorHTTPStatusFromRaw(code, errType)
+		status = openAIWSErrorHTTPStatusFromFields(code, errType, message)
 	}
 	if errType == "" {
 		errType = "upstream_error"
@@ -815,6 +815,13 @@ func classifyOpenAIWSErrorEvent(message []byte) (string, bool) {
 }
 
 func openAIWSErrorHTTPStatusFromRaw(codeRaw, errTypeRaw string) int {
+	return openAIWSErrorHTTPStatusFromFields(codeRaw, errTypeRaw, "")
+}
+
+func openAIWSErrorHTTPStatusFromFields(codeRaw, errTypeRaw, msgRaw string) int {
+	if mapped := openAIDeterministicClientHTTPStatus(msgRaw, nil); mapped > 0 {
+		return mapped
+	}
 	code := strings.ToLower(strings.TrimSpace(codeRaw))
 	errType := strings.ToLower(strings.TrimSpace(errTypeRaw))
 	switch {
@@ -842,8 +849,8 @@ func openAIWSErrorHTTPStatus(message []byte) int {
 	if len(message) == 0 {
 		return http.StatusBadGateway
 	}
-	codeRaw, errTypeRaw, _ := parseOpenAIWSErrorEventFields(message)
-	return openAIWSErrorHTTPStatusFromRaw(codeRaw, errTypeRaw)
+	codeRaw, errTypeRaw, msgRaw := parseOpenAIWSErrorEventFields(message)
+	return openAIWSErrorHTTPStatusFromFields(codeRaw, errTypeRaw, msgRaw)
 }
 
 func (s *OpenAIGatewayService) openAIWSFallbackCooldown() time.Duration {
