@@ -1871,11 +1871,7 @@
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.openai.wsModeDesc') }}
             </p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.wsModeRoutingDesc') }}
-            </p>
             <p v-if="openAIWSModeHintKey" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.wsModeHintPrefix') }}
               {{ t(openAIWSModeHintKey) }}
             </p>
           </div>
