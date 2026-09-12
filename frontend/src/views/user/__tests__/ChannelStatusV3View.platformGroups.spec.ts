@@ -144,4 +144,62 @@ describe('ChannelStatusV3View platform grouping', () => {
     const openaiCards = wrapper.get('[data-testid="channel-status-platform-openai"]').findAll('[data-testid^="card-"]')
     expect(openaiCards.map((card) => card.text())).toEqual(['GPT', 'Codex'])
   })
+
+  function mountView() {
+    return mount(ChannelStatusV3View, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Icon: true,
+          EmptyState: true,
+          ChannelMonitorV3Card: defineComponent({
+            name: 'ChannelMonitorV3Card',
+            props: ['row'],
+            setup: (props) => () => h('div', { 'data-testid': `card-${props.row.group_id}` }, props.row.group_name),
+          }),
+        },
+      },
+    })
+  }
+
+  it('packs consecutive single-group platforms onto one row with their own headings', async () => {
+    getMatrix.mockResolvedValue({
+      coverage: coverage(),
+      group_by: 'platform_group',
+      items: [
+        row('openai', 1, 'GPT'),
+        row('openai', 2, 'Codex'),
+        row('anthropic', 5, 'kiro'),
+        row('grok', 6, 'Grok'),
+        row('gemini', 9, 'Gemini A'),
+        row('gemini', 10, 'Gemini B'),
+      ],
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="channel-status-compact-platforms"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="channel-status-platform-anthropic"]').find('h2').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="channel-status-platform-grok"]').find('h2').exists()).toBe(true)
+    const compact = wrapper.get('[data-testid="channel-status-compact-platforms"]')
+    expect(compact.find('[data-testid="card-5"]').text()).toBe('kiro')
+    expect(compact.find('[data-testid="card-6"]').text()).toBe('Grok')
+  })
+
+  it('does not let a later singleton fill a previous multi-group row', async () => {
+    getMatrix.mockResolvedValue({
+      coverage: coverage(),
+      group_by: 'platform_group',
+      items: [
+        row('kimi', 11, 'Kimi'),
+        row('kimi', 12, 'Kimi B300'),
+        row('zhipu', 13, 'GLM'),
+      ],
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    const kimiCards = wrapper.get('[data-testid="channel-status-platform-kimi"]').findAll('[data-testid^="card-"]')
+    expect(kimiCards.map((card) => card.text())).toEqual(['Kimi', 'Kimi B300'])
+    expect(wrapper.get('[data-testid="channel-status-platform-kimi"]').find('[data-testid="card-13"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="channel-status-platform-zhipu"]').find('[data-testid="card-13"]').text()).toBe('GLM')
+  })
 })

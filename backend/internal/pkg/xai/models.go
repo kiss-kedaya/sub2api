@@ -275,6 +275,19 @@ func IsGrokImagineModel(model string) bool {
 	}
 }
 
+// IsGrokImagineVideoModel reports whether model is a Grok Imagine video
+// generator. These models belong on POST /v1/videos (JSON), not chat or messages.
+func IsGrokImagineVideoModel(model string) bool {
+	normalized := strings.ToLower(StripGrokProviderPrefix(model))
+	if normalized == "" {
+		return false
+	}
+	if normalized == "grok-video-1.5" {
+		return true
+	}
+	return strings.HasPrefix(normalized, "grok-imagine-video")
+}
+
 // IsGrokTextResponsesModelID reports whether model is a known Grok text model
 // for the Responses API. Imagine image/video and unknown custom ids return false.
 func IsGrokTextResponsesModelID(model string) bool {

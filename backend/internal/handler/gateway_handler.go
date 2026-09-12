@@ -194,6 +194,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	body = parsedReq.Body.Bytes()
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
+	if service.IsChatUnsupportedMediaModel(reqModel) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "This model is not supported on the Messages endpoint")
+		return
+	}
 	bindRequestedReasoningEffort(c, body, reqModel)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if policyBody, changed, err := applyAnthropicReasoningEffortPolicyForRequest(c, apiKey, body); err != nil {
@@ -2628,6 +2632,15 @@ func billingErrorDetails(err error) (status int, code, message string, retryAfte
 		// 错误码用 rate_limit_exceeded 与 OpenAI 兼容客户端一致；细分类型由 ErrCode + window_resets_at metadata 区分。
 		msg := pkgerrors.Message(err)
 		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, extractQuotaResetSeconds(err)
+	}
+	if errors.Is(err, service.ErrInsufficientBalance) || errors.Is(err, service.ErrBalanceWithholdingFailed) {
+		msg := pkgerrors.Message(err)
+		if msg == "" {
+			msg = "Insufficient account balance"
+		}
+		// 没余额不是权限问题。403 会被 SDK 当成 AccessDenied；
+		// OpenAI 兼容客户端把 429 + insufficient_quota 识别为额度/余额用尽。
+		return http.StatusTooManyRequests, "insufficient_quota", msg, 0
 	}
 	msg := pkgerrors.Message(err)
 	if msg == "" {

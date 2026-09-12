@@ -67,6 +67,41 @@ func applyGrokImagineImageGeometry(body []byte) ([]byte, error) {
 	return sjson.DeleteBytes(out, "size")
 }
 
+func applyGrokImagineVideoGeometry(body []byte) ([]byte, error) {
+	out := append([]byte(nil), body...)
+	resolution := strings.TrimSpace(gjson.GetBytes(out, "resolution").String())
+	if resolution == "" {
+		if name := strings.TrimSpace(gjson.GetBytes(out, "resolution_name").String()); name != "" {
+			next, err := sjson.SetBytes(out, "resolution", name)
+			if err != nil {
+				return nil, err
+			}
+			out = next
+		}
+	}
+	aspect := strings.TrimSpace(gjson.GetBytes(out, "aspect_ratio").String())
+	if aspect == "" {
+		if derived := grokImagineAspectRatioFromSize(gjson.GetBytes(out, "size").String()); derived != "" {
+			next, err := sjson.SetBytes(out, "aspect_ratio", derived)
+			if err != nil {
+				return nil, err
+			}
+			out = next
+		}
+	}
+	for _, field := range []string{"size", "resolution_name", "generate_audio", "watermark", "mode"} {
+		if !gjson.GetBytes(out, field).Exists() {
+			continue
+		}
+		next, err := sjson.DeleteBytes(out, field)
+		if err != nil {
+			return nil, err
+		}
+		out = next
+	}
+	return out, nil
+}
+
 func assignGrokMediaResolution(value string, info *GrokMediaRequestInfo) {
 	if info == nil {
 		return
