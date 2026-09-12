@@ -691,7 +691,10 @@ export default {
           '默认关闭。开启后可启用 responses_websockets_v2 协议能力（受网关全局开关与账号类型开关约束）。',
         wsMode: 'WS mode',
         wsModeDesc:
-          '仅对当前 OpenAI 账号类型生效；包括 http_bridge 在内的账号 WS mode 仅在全局 gateway.openai_ws.mode_router_v2_enabled=true 时生效。',
+          '账号 WS 开关：选择“关闭”可禁用本账号的 WS；选择其他选项则启用，实际是否可用仍受网关其他 WS 开关限制。',
+        wsModeRoutingDesc:
+          '连接方式：全局 gateway.openai_ws.mode_router_v2_enabled=true 时，按所选模式（包括 http_bridge）连接；为 false（默认）时，不区分这三种模式，允许 WS 时统一使用旧版上下文池。',
+        wsModeHintPrefix: '所选模式生效后的连接方式：',
         wsModeOff: '关闭（off）',
         wsModeCtxPool: '上下文池（ctx_pool）',
         wsModePassthrough: '透传（passthrough）',
