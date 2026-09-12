@@ -89,12 +89,14 @@ func TestNormalizeAPIKeyGroupIDs(t *testing.T) {
 	_, _, err = normalizeAPIKeyGroupIDs(nil, []int64{1, 1})
 	require.Error(t, err)
 
-	tooMany := make([]int64, maxAPIKeyGroupRoutes+1)
-	for i := range tooMany {
-		tooMany[i] = int64(i + 1)
+	many := make([]int64, 30)
+	for i := range many {
+		many[i] = int64(i + 1)
 	}
-	_, _, err = normalizeAPIKeyGroupIDs(nil, tooMany)
-	require.Error(t, err)
+	ids, primary, err = normalizeAPIKeyGroupIDs(nil, many)
+	require.NoError(t, err)
+	require.Equal(t, many, ids)
+	require.Equal(t, int64(1), *primary)
 }
 
 func TestShouldContinueAlongKeyRoutes(t *testing.T) {

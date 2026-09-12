@@ -345,6 +345,46 @@ func TestGatewayRoutesNonGrokVideosAreRejectedAtPlatformGate(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesSmartRoutingGrokVideoAllowed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	groupID := int64(1)
+	RegisterGatewayRoutes(
+		router,
+		&handler.Handlers{
+			Gateway:       &handler.GatewayHandler{},
+			OpenAIGateway: &handler.OpenAIGatewayHandler{},
+			AsyncImage:    handler.NewAsyncImageHandler(nil, nil),
+		},
+		servermiddleware.APIKeyAuthMiddleware(func(c *gin.Context) {
+			c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{
+				GroupID:       &groupID,
+				RouteGroupIDs: []int64{1, 2},
+				Group:         &service.Group{ID: 1, Platform: service.PlatformOpenAI},
+			})
+			c.Next()
+		}),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		&config.Config{
+			Gateway: config.GatewayConfig{
+				MaxBodySize:     1024 * 1024,
+				TextMaxBodySize: 1024 * 1024,
+			},
+		},
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"grok-imagine-video-1.5","prompt":"waves"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.NotEqual(t, http.StatusNotFound, w.Code)
+	require.NotContains(t, w.Body.String(), "not supported")
+}
+
 func TestGatewayRoutesCompositeVideoGenerationAllowed(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformComposite)
 

@@ -82,7 +82,7 @@ export default {
     requestFailed: 'Failed to prepare the Infinite Canvas API key. Please retry.',
     retry: 'Retry',
     keyCreated: 'Created a smart-routing API key for Infinite Canvas',
-    groupsTruncated: 'Smart routing supports at most 10 groups; extra groups were omitted.',
+    groupsTruncated: 'Smart routing bound every available group.',
   },
 
   // Custom Page (iframe embed)
