@@ -35,6 +35,14 @@ func WrapUpstreamErrorForClient(statusCode int, body []byte) (status int, errTyp
 	if errType == "" {
 		errType = strings.TrimSpace(gjson.GetBytes(body, "error.status").String())
 	}
+	if mappedStatus := openAIDeterministicClientHTTPStatus(message, body); mappedStatus > 0 {
+		if status < 400 || status >= 500 {
+			status = mappedStatus
+		}
+		if errType == "" || errType == "api_error" || errType == "upstream_error" {
+			errType = openAIDeterministicClientErrorType(status)
+		}
+	}
 	if errType == "" {
 		switch status {
 		case http.StatusTooManyRequests:

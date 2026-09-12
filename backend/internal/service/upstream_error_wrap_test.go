@@ -32,6 +32,21 @@ func TestWrapUpstreamErrorForClient_DoesNotMap5xxTo502(t *testing.T) {
 	require.Equal(t, "Internal error during token generation", message)
 }
 
+func TestWrapUpstreamErrorForClient_RemapsWrappedClientJSONObjectError(t *testing.T) {
+	body := []byte(`{"error":{"message":"Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'."}}`)
+	status, errType, _, message := WrapUpstreamErrorForClient(http.StatusBadGateway, body)
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_request_error", errType)
+	require.Contains(t, message, "json_object")
+}
+
+func TestWrapUpstreamErrorForClient_RemapsWebsocketPolicyViolation(t *testing.T) {
+	status, errType, _, message := WrapUpstreamErrorForClient(0, []byte(`websocket: close 1008 (policy violation)`))
+	require.Equal(t, http.StatusForbidden, status)
+	require.Equal(t, "permission_error", errType)
+	require.Contains(t, message, "1008")
+}
+
 func TestWrapUpstreamErrorForClient_ClaudeAndGeminiBodies(t *testing.T) {
 	status, errType, _, message := WrapUpstreamErrorForClient(529, []byte(`{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`))
 	require.Equal(t, 529, status)
