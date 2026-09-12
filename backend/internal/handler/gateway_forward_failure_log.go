@@ -40,10 +40,26 @@ func logGatewayForwardFailureWithWarn(log *zap.Logger, c *gin.Context, event str
 		log.Warn(event, append(fields, zap.Error(err))...)
 		return
 	}
+	if isGatewayForwardTimeoutFailure(err, summary) {
+		if status > 0 {
+			fields = append(fields, zap.Int("upstream_status", status))
+		}
+		log.Warn(event, append(fields, zap.Error(err))...)
+		return
+	}
 	if status > 0 {
 		fields = append(fields, zap.Int("upstream_status", status))
 	}
 	log.Error(event, append(fields, zap.Error(err))...)
+}
+
+func isGatewayForwardTimeoutFailure(err error, summary string) bool {
+	text := strings.ToLower(strings.TrimSpace(summary))
+	if err != nil {
+		text += " " + strings.ToLower(err.Error())
+	}
+	return strings.Contains(text, "timeout awaiting response headers") ||
+		strings.Contains(text, "timeout exceeded while awaiting headers")
 }
 
 func gatewayForwardFailureDetails(c *gin.Context, err error) (int, string) {

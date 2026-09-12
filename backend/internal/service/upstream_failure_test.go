@@ -48,6 +48,13 @@ func TestClassifyUpstreamFailure_Canceled(t *testing.T) {
 	require.False(t, class.Failover)
 }
 
+func TestClassifyUpstreamFailure_WrappedJSONObjectIsClient(t *testing.T) {
+	body := []byte(`{"error":{"message":"Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'."}}`)
+	class := ClassifyUpstreamFailure(http.StatusBadGateway, nil, body, nil)
+	require.Equal(t, UpstreamFailureClient, class.Kind)
+	require.False(t, class.Failover)
+}
+
 func TestShouldFailoverUpstreamResponse_ModelNotFoundWithoutFlag(t *testing.T) {
 	body := []byte(`{"error":{"code":"model_not_found","message":"model not found"}}`)
 	require.True(t, ShouldFailoverUpstreamResponse(http.StatusBadRequest, nil, body, false))

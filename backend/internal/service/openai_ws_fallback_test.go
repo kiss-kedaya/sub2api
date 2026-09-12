@@ -128,6 +128,7 @@ func TestOpenAIWSErrorHTTPStatus(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, openAIWSErrorHTTPStatus([]byte(`{"type":"error","error":{"type":"permission_error","code":"forbidden","message":"forbidden"}}`)))
 	require.Equal(t, http.StatusTooManyRequests, openAIWSErrorHTTPStatus([]byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"rate limited"}}`)))
 	require.Equal(t, http.StatusBadGateway, openAIWSErrorHTTPStatus([]byte(`{"type":"error","error":{"type":"server_error","code":"server_error","message":"server"}}`)))
+	require.Equal(t, http.StatusBadRequest, openAIWSErrorHTTPStatus([]byte(`{"type":"error","error":{"message":"Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'."}}`)))
 }
 
 func TestResolveOpenAIWSFallbackErrorResponse(t *testing.T) {
@@ -159,6 +160,34 @@ func TestResolveOpenAIWSFallbackErrorResponse(t *testing.T) {
 	t.Run("non_fallback_error_not_resolved", func(t *testing.T) {
 		_, _, _, _, ok := resolveOpenAIWSFallbackErrorResponse(errors.New("plain error"))
 		require.False(t, ok)
+	})
+
+	t.Run("policy_violation_is_forbidden", func(t *testing.T) {
+		statusCode, errType, clientMessage, _, ok := resolveOpenAIWSFallbackErrorResponse(
+			wrapOpenAIWSFallback("policy_violation", errors.New("websocket: close 1008 (policy violation)")),
+		)
+		require.True(t, ok)
+		require.Equal(t, http.StatusForbidden, statusCode)
+		require.Equal(t, "permission_error", errType)
+		require.Contains(t, clientMessage, "1008")
+	})
+
+	t.Run("raw_websocket_policy_close", func(t *testing.T) {
+		statusCode, errType, _, _, ok := resolveOpenAIWSFallbackErrorResponse(
+			errors.New("websocket: close 1008 (policy violation)"),
+		)
+		require.True(t, ok)
+		require.Equal(t, http.StatusForbidden, statusCode)
+		require.Equal(t, "permission_error", errType)
+	})
+
+	t.Run("json_object_client_error", func(t *testing.T) {
+		statusCode, errType, _, _, ok := resolveOpenAIWSFallbackErrorResponse(
+			errors.New("Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'."),
+		)
+		require.True(t, ok)
+		require.Equal(t, http.StatusBadRequest, statusCode)
+		require.Equal(t, "invalid_request_error", errType)
 	})
 }
 

@@ -51,7 +51,13 @@ func ClassifyUpstreamFailure(statusCode int, headers http.Header, body []byte, e
 			SameAccountRetry: true,
 		}
 	}
+	if isOpenAIDeterministicClientErrorMessage("", body) {
+		return UpstreamFailureClass{Kind: UpstreamFailureClient}
+	}
 	if err != nil && statusCode == 0 {
+		if isOpenAIDeterministicClientErrorMessage(err.Error(), nil) {
+			return UpstreamFailureClass{Kind: UpstreamFailureClient}
+		}
 		return UpstreamFailureClass{Kind: UpstreamFailureNetwork, Failover: true, SameAccountRetry: true}
 	}
 
