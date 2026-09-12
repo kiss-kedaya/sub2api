@@ -322,6 +322,180 @@ func TestOpenAIWSConnPool_AcquireQueueWaitMetrics(t *testing.T) {
 	require.GreaterOrEqual(t, metrics.ConnPickTotal, int64(1))
 }
 
+func TestOpenAIWSConnPool_AcquireAtCapacityWakesWhenAnotherConnReleases(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 2
+	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 4
+
+	pool := newOpenAIWSConnPool(cfg)
+	accountID := int64(993)
+	account := &Account{ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	req := openAIWSAcquireRequest{Account: account, WSURL: "wss://example.com/v1/responses"}
+	target := newOpenAIWSConn("target", accountID, &openAIWSFakeConn{}, nil)
+	other := newOpenAIWSConn("other", accountID, &openAIWSFakeConn{}, nil)
+	require.True(t, target.tryAcquire())
+	require.True(t, other.tryAcquire())
+	// other 上已有一个等待者，新来的等待者会挂到 target 上。
+	other.waiters.Add(1)
+
+	ap := pool.ensureAccountPoolLocked(accountID)
+	ap.mu.Lock()
+	ap.conns[target.id] = target
+	ap.conns[other.id] = other
+	ap.lastAcquire = &req
+	ap.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	type result struct {
+		lease *openAIWSConnLease
+		err   error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		lease, err := pool.Acquire(ctx, req)
+		resultCh <- result{lease: lease, err: err}
+	}()
+	require.Eventually(t, func() bool { return target.waiters.Load() == 1 }, time.Second, 5*time.Millisecond)
+
+	time.Sleep(40 * time.Millisecond)
+	otherLease := &openAIWSConnLease{pool: pool, accountID: accountID, conn: other}
+	otherLease.Release()
+
+	select {
+	case got := <-resultCh:
+		require.NoError(t, got.err)
+		require.NotNil(t, got.lease)
+		require.Equal(t, other.id, got.lease.ConnID())
+		require.True(t, got.lease.Reused())
+		require.GreaterOrEqual(t, got.lease.QueueWaitDuration(), 30*time.Millisecond, "queue wait accumulated before the wake-up must be carried into the lease")
+		got.lease.Release()
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("waiter queued on a busy connection must be woken when another connection is released")
+	}
+	require.Equal(t, int32(0), target.waiters.Load())
+	metrics := pool.SnapshotMetrics()
+	require.Equal(t, int64(1), metrics.AcquireQueueWaitTotal)
+	require.GreaterOrEqual(t, metrics.AcquireQueueWaitMsTotal, int64(30))
+}
+
+func TestOpenAIWSConnPool_AcquireAtCapacityWakesWhenCapacityFreedByEviction(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 2
+	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 4
+
+	pool := newOpenAIWSConnPool(cfg)
+	dialer := &openAIWSCountingDialer{}
+	pool.setClientDialerForTest(dialer)
+	accountID := int64(994)
+	account := &Account{ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	req := openAIWSAcquireRequest{Account: account, WSURL: "wss://example.com/v1/responses"}
+	target := newOpenAIWSConn("target", accountID, &openAIWSFakeConn{}, nil)
+	other := newOpenAIWSConn("other", accountID, &openAIWSFakeConn{}, nil)
+	require.True(t, target.tryAcquire())
+	require.True(t, other.tryAcquire())
+	other.waiters.Add(1)
+
+	ap := pool.ensureAccountPoolLocked(accountID)
+	ap.mu.Lock()
+	ap.conns[target.id] = target
+	ap.conns[other.id] = other
+	ap.lastAcquire = &req
+	ap.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	type result struct {
+		lease *openAIWSConnLease
+		err   error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		lease, err := pool.Acquire(ctx, req)
+		resultCh <- result{lease: lease, err: err}
+	}()
+	require.Eventually(t, func() bool { return target.waiters.Load() == 1 }, time.Second, 5*time.Millisecond)
+
+	// 剔除另一条连接腾出名额，等待者应重新选择并新拨号，而不是继续等 target。
+	time.Sleep(40 * time.Millisecond)
+	pool.evictConn(accountID, other.id)
+
+	select {
+	case got := <-resultCh:
+		require.NoError(t, got.err)
+		require.NotNil(t, got.lease)
+		require.False(t, got.lease.Reused())
+		require.NotEqual(t, target.id, got.lease.ConnID())
+		require.GreaterOrEqual(t, got.lease.QueueWaitDuration(), 30*time.Millisecond, "queue wait must be carried into a lease obtained by dialing after the wake-up")
+		got.lease.Release()
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("waiter queued on a busy connection must be woken when pool capacity is freed")
+	}
+	require.Equal(t, 1, dialer.DialCount())
+	require.Equal(t, int32(0), target.waiters.Load())
+	metrics := pool.SnapshotMetrics()
+	require.Equal(t, int64(1), metrics.AcquireQueueWaitTotal)
+	require.GreaterOrEqual(t, metrics.AcquireQueueWaitMsTotal, int64(30))
+}
+
+func TestOpenAIWSConnPool_AcquireAtCapacityCanceledWaiterDoesNotTakeReleasedConn(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 2
+	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 4
+
+	accountID := int64(995)
+	account := &Account{ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	req := openAIWSAcquireRequest{Account: account, WSURL: "wss://example.com/v1/responses"}
+	pool := newOpenAIWSConnPool(cfg)
+	target := newOpenAIWSConn("target", accountID, &openAIWSFakeConn{}, nil)
+	other := newOpenAIWSConn("other", accountID, &openAIWSFakeConn{}, nil)
+	require.True(t, target.tryAcquire())
+	require.True(t, other.tryAcquire())
+	other.waiters.Add(1)
+
+	ap := pool.ensureAccountPoolLocked(accountID)
+	ap.mu.Lock()
+	ap.conns[target.id] = target
+	ap.conns[other.id] = other
+	ap.lastAcquire = &req
+	ap.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct {
+		lease *openAIWSConnLease
+		err   error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		lease, err := pool.Acquire(ctx, req)
+		resultCh <- result{lease: lease, err: err}
+	}()
+	require.Eventually(t, func() bool { return target.waiters.Load() == 1 }, time.Second, 5*time.Millisecond)
+
+	// 持锁广播：等待者被唤醒后卡在重新取锁上，此时取消请求并归还 other 的令牌，
+	// 解锁后重选会看到一条空闲连接，但请求已经取消，不能带着租约返回。
+	ap.mu.Lock()
+	ap.signalChangedLocked()
+	cancel()
+	other.release()
+	ap.mu.Unlock()
+
+	select {
+	case got := <-resultCh:
+		require.ErrorIs(t, got.err, context.Canceled)
+		require.Nil(t, got.lease, "a canceled waiter must not come back with a lease after a pool change wake-up")
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("canceled waiter must return promptly")
+	}
+	require.True(t, other.tryAcquire(), "the released token must stay available to other acquirers")
+	other.release()
+	require.Equal(t, int32(0), target.waiters.Load())
+}
+
 func TestOpenAIWSConnPool_DialSuccessWakesTopologyWaiterAndCanceledWaiterDoesNotLoseLease(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
