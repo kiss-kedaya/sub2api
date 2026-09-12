@@ -613,9 +613,11 @@ export default {
         wsModeShared: 'Shared (shared)',
         wsModeDedicated: 'Dedicated (dedicated)',
         wsModeCtxPoolHint:
-          'Gateway → acquire upstream WS connections from the pool; capacity is determined by configuration.',
-        wsModePassthroughHint: 'Gateway → upstream WS, without a connection pool.',
-        wsModeHttpBridgeHint: 'Gateway conversion → upstream HTTP/SSE.',
+          'The gateway gets upstream WebSocket connections from a pool, reusing existing connections when possible. Gateway configuration sets the maximum number of connections in the pool.',
+        wsModePassthroughHint:
+          'The gateway opens a separate upstream WebSocket connection for each client session and relays messages in both directions, without using a connection pool.',
+        wsModeHttpBridgeHint:
+          'The client connects to the gateway over WebSocket. The gateway converts requests to upstream HTTP requests, then converts SSE streaming responses back into WebSocket messages for the client.',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           'Only applies to OpenAI OAuth. This account can use OpenAI WebSocket Mode only when enabled.',
