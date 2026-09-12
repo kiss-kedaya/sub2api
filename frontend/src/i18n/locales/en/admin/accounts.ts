@@ -612,9 +612,10 @@ export default {
         wsModeHttpBridge: 'HTTP Bridge (http_bridge)',
         wsModeShared: 'Shared (shared)',
         wsModeDedicated: 'Dedicated (dedicated)',
-        wsModeConcurrencyHint:
-          'Account concurrency limits requests in flight; the context pool connection limit is controlled by the gateway connection pool settings.',
-        wsModePassthroughHint: 'Passthrough mode does not use the WS connection pool.',
+        wsModeCtxPoolHint:
+          'Gateway → acquire upstream WS connections from the pool; capacity is determined by configuration.',
+        wsModePassthroughHint: 'Gateway → upstream WS, without a connection pool.',
+        wsModeHttpBridgeHint: 'Gateway conversion → upstream HTTP/SSE.',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           'Only applies to OpenAI OAuth. This account can use OpenAI WebSocket Mode only when enabled.',
