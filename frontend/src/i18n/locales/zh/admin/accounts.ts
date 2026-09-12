@@ -698,9 +698,9 @@ export default {
         wsModeHttpBridge: 'HTTP 桥接（http_bridge）',
         wsModeShared: '共享（shared）',
         wsModeDedicated: '独享（dedicated）',
-        wsModeCtxPoolHint: '网关 → 从连接池获取上游 WS 连接，数量由配置决定。',
-        wsModePassthroughHint: '网关 → 上游 WS，不使用连接池。',
-        wsModeHttpBridgeHint: '网关转换 → 上游 HTTP/SSE。',
+        wsModeCtxPoolHint: '网关从连接池中获取上游 WebSocket 连接，优先复用已有连接。连接池最多能建立多少条连接，由网关配置决定。',
+        wsModePassthroughHint: '网关为每个客户端会话单独建立上游 WebSocket 连接，转发双方的消息，不使用连接池。',
+        wsModeHttpBridgeHint: '客户端通过 WebSocket 连接网关，网关将请求转换为上游 HTTP 请求，再把上游的 SSE 流式响应转换成 WebSocket 消息返回给客户端。',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           '仅对 OpenAI OAuth 生效。开启后该账号才允许使用 OpenAI WebSocket Mode 协议。',
