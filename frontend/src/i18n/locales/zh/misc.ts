@@ -80,7 +80,7 @@ export default {
     requestFailed: '准备无限画布密钥失败，请重试。',
     retry: '重试',
     keyCreated: '已为无限画布创建智能路由 API 密钥',
-    groupsTruncated: '智能路由最多支持 10 个分组，已省略多余分组。',
+    groupsTruncated: '智能路由已按可用分组全部绑定。',
   },
 
   // Custom Page (iframe embed)
