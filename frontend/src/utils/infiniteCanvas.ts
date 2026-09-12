@@ -22,50 +22,25 @@ export function groupIdsEqual(left: number[] | undefined, right: number[]): bool
   return a.every((id, index) => id === right[index])
 }
 
-export function resolveHttpBaseUrl(value: string | undefined | null, pageOrigin: string): string {
-  const origin = String(pageOrigin || '').trim().replace(/\/+$/, '')
-  const raw = String(value || '').trim()
-  const candidate = raw || origin
-  try {
-    const url = new URL(candidate, origin || undefined)
-    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname) {
-      return origin
-    }
-    url.hash = ''
-    url.search = ''
-    return url.toString().replace(/\/+$/, '')
-  } catch {
-    return origin
-  }
+export function resolveHttpBaseUrl(pageOrigin: string): string {
+  return String(pageOrigin || '').trim().replace(/\/+$/, '')
 }
 
-export function resolveInfiniteCanvasBaseUrl(envUrl: string | undefined | null, pageOrigin: string): string {
-  const origin = String(pageOrigin || '').trim().replace(/\/+$/, '')
-  const fallback = origin ? `${origin}${INFINITE_CANVAS_PATH}` : INFINITE_CANVAS_PATH
-  const raw = String(envUrl || '').trim()
-  if (!raw) return fallback.endsWith('/') ? fallback : `${fallback}/`
-  try {
-    const url = new URL(raw, origin || undefined)
-    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname) {
-      return fallback.endsWith('/') ? fallback : `${fallback}/`
-    }
-    url.hash = ''
-    url.search = ''
-    const href = url.toString()
-    return href.endsWith('/') ? href : `${href}/`
-  } catch {
-    return fallback.endsWith('/') ? fallback : `${fallback}/`
-  }
+export function resolveInfiniteCanvasBaseUrl(pageOrigin: string): string {
+  const origin = resolveHttpBaseUrl(pageOrigin)
+  if (!origin) return INFINITE_CANVAS_PATH
+  return `${origin}${INFINITE_CANVAS_PATH}`
 }
 
 export function buildInfiniteCanvasImportUrl(options: {
   canvasBaseUrl: string
   apiKey: string
   openaiBaseUrl: string
+  pageOrigin: string
   theme?: 'light' | 'dark'
   lang?: string
 }): string {
-  const url = new URL(options.canvasBaseUrl)
+  const url = new URL(options.canvasBaseUrl, `${options.pageOrigin || 'http://localhost'}/`)
   url.searchParams.set('apiKey', options.apiKey)
   url.searchParams.set('baseUrl', options.openaiBaseUrl)
   if (options.theme) {

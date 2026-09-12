@@ -153,6 +153,15 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 		}
 	})
 
+	t.Run("242线上已应用checksum可兼容当前文件", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"242_ops_error_logs_client_errors_time_index_notx.sql",
+			"71055c38b036d9a6e7de26fd6eb463969ead3d8cf3e159be17258e6b9cf5dad0",
+			"50bb0d4e2c67de882e6b2817110025e5bccd9c9699f00166265e584b11b82b8e",
+		)
+		require.True(t, ok)
+	})
+
 	t.Run("119未知checksum不兼容", func(t *testing.T) {
 		ok := isMigrationChecksumCompatible(
 			"119_enforce_payment_orders_out_trade_no_unique.sql",

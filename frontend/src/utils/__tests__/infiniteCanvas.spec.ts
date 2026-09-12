@@ -38,34 +38,34 @@ describe('groupIdsEqual', () => {
 })
 
 describe('resolveHttpBaseUrl', () => {
-  it('prefers an absolute API base URL and falls back to the page origin', () => {
-    expect(resolveHttpBaseUrl('https://api.example.com/v1/', 'http://ui.example.com')).toBe('https://api.example.com/v1')
-    expect(resolveHttpBaseUrl('', 'http://ui.example.com')).toBe('http://ui.example.com')
-    expect(resolveHttpBaseUrl('/gateway', 'https://ui.example.com')).toBe('https://ui.example.com/gateway')
+  it('always uses the page origin so canvas API calls stay same-origin', () => {
+    expect(resolveHttpBaseUrl('https://kedaya.ai/')).toBe('https://kedaya.ai')
+    expect(resolveHttpBaseUrl('http://localhost:5173')).toBe('http://localhost:5173')
   })
 })
 
 describe('resolveInfiniteCanvasBaseUrl', () => {
-  it('uses the same-origin /canvas/ path unless an absolute override is provided', () => {
-    expect(resolveInfiniteCanvasBaseUrl('', 'http://51.222.42.218:17777')).toBe('http://51.222.42.218:17777/canvas/')
-    expect(resolveInfiniteCanvasBaseUrl('https://canvas.example.com', 'http://ui.example.com')).toBe('https://canvas.example.com/')
+  it('stays on the current origin /canvas/ path', () => {
+    expect(resolveInfiniteCanvasBaseUrl('https://kedaya.ai')).toBe('https://kedaya.ai/canvas/')
+    expect(resolveInfiniteCanvasBaseUrl('https://kedaya.ai/')).toBe('https://kedaya.ai/canvas/')
   })
 })
 
 describe('buildInfiniteCanvasImportUrl', () => {
-  it('imports OpenAI-compatible credentials the way Infinite Canvas reads query params', () => {
+  it('imports credentials against the same origin the sidebar is on', () => {
     const href = buildInfiniteCanvasImportUrl({
-      canvasBaseUrl: 'http://51.222.42.218:17777/canvas/',
+      canvasBaseUrl: '/canvas/',
       apiKey: 'sk-test',
-      openaiBaseUrl: 'http://51.222.42.218:17777',
+      openaiBaseUrl: 'https://kedaya.ai',
+      pageOrigin: 'https://kedaya.ai',
       theme: 'dark',
       lang: 'zh-CN',
     })
     const url = new URL(href)
-    expect(url.origin).toBe('http://51.222.42.218:17777')
+    expect(url.origin).toBe('https://kedaya.ai')
     expect(url.pathname).toBe('/canvas/')
     expect(url.searchParams.get('apiKey')).toBe('sk-test')
-    expect(url.searchParams.get('baseUrl')).toBe('http://51.222.42.218:17777')
+    expect(url.searchParams.get('baseUrl')).toBe('https://kedaya.ai')
     expect(url.searchParams.get('theme')).toBe('dark')
     expect(url.searchParams.get('lang')).toBe('zh-CN')
   })
