@@ -873,11 +873,7 @@
           <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
             {{ t('admin.accounts.openai.wsModeDesc') }}
           </p>
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.openai.wsModeRoutingDesc') }}
-          </p>
           <p v-if="openAIWSModeHintKey" class="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.openai.wsModeHintPrefix') }}
             {{ t(openAIWSModeHintKey) }}
           </p>
           <Select
@@ -1155,11 +1151,7 @@
           <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
             {{ t('admin.accounts.openai.wsModeDesc') }}
           </p>
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.openai.wsModeRoutingDesc') }}
-          </p>
           <p v-if="openAIAPIKeyWSModeHintKey" class="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.openai.wsModeHintPrefix') }}
             {{ t(openAIAPIKeyWSModeHintKey) }}
           </p>
           <Select
