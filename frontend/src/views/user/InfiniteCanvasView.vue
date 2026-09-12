@@ -21,23 +21,12 @@
         </div>
 
         <div v-else class="canvas-embed-shell">
-          <a
-            v-if="embedUrl"
-            :href="embedUrl"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="btn btn-secondary btn-sm canvas-open-fab"
-          >
-            <Icon name="externalLink" size="sm" class="mr-1.5" :stroke-width="2" />
-            {{ t('infiniteCanvas.openInNewTab') }}
-          </a>
           <iframe
             v-if="embedUrl"
             :src="embedUrl"
             class="canvas-embed-frame"
             allow="clipboard-read; clipboard-write; fullscreen"
             allowfullscreen
-            referrerpolicy="no-referrer"
             :title="t('infiniteCanvas.title')"
           ></iframe>
         </div>
@@ -53,11 +42,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores'
 import { detectTheme } from '@/utils/embedded-url'
-import {
-  buildInfiniteCanvasImportUrl,
-  resolveHttpBaseUrl,
-  resolveInfiniteCanvasBaseUrl,
-} from '@/utils/infiniteCanvas'
+import { buildInfiniteCanvasImportUrl, resolveHttpBaseUrl, resolveInfiniteCanvasBaseUrl } from '@/utils/infiniteCanvas'
 import { InfiniteCanvasSetupError, ensureInfiniteCanvasApiKey } from '@/utils/infiniteCanvasSession'
 
 const { t, locale } = useI18n()
@@ -88,12 +73,13 @@ async function prepareSession() {
     }
     const session = await ensureInfiniteCanvasApiKey()
     const pageOrigin = window.location.origin
-    const openaiBaseUrl = resolveHttpBaseUrl(appStore.cachedPublicSettings?.api_base_url, pageOrigin)
-    const canvasBaseUrl = resolveInfiniteCanvasBaseUrl(import.meta.env.VITE_INFINITE_CANVAS_URL, pageOrigin)
+    const openaiBaseUrl = resolveHttpBaseUrl(pageOrigin)
+    const canvasBaseUrl = resolveInfiniteCanvasBaseUrl(pageOrigin)
     embedUrl.value = buildInfiniteCanvasImportUrl({
       canvasBaseUrl,
       apiKey: session.apiKey,
       openaiBaseUrl,
+      pageOrigin,
       theme: detectTheme(),
       lang: canvasLang(String(locale.value || '')),
     })
@@ -127,12 +113,5 @@ onMounted(() => {
 
 .canvas-embed-frame {
   @apply h-full w-full border-0 bg-white dark:bg-dark-900;
-}
-
-.canvas-open-fab {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 2;
 }
 </style>

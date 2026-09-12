@@ -20,7 +20,7 @@ vi.mock('vue-i18n', () => ({
 vi.mock('@/stores', () => ({
   useAppStore: () => ({
     publicSettingsLoaded: true,
-    cachedPublicSettings: { api_base_url: 'https://api.example.com' },
+    cachedPublicSettings: {},
     fetchPublicSettings,
     showSuccess,
     showWarning,
@@ -66,8 +66,9 @@ describe('InfiniteCanvasView', () => {
     const url = new URL(src)
     expect(url.pathname).toBe('/canvas/')
     expect(url.searchParams.get('apiKey')).toBe('sk-canvas')
-    expect(url.searchParams.get('baseUrl')).toBe('https://api.example.com')
+    expect(url.searchParams.get('baseUrl')).toBe(window.location.origin)
     expect(url.searchParams.get('lang')).toBe('zh-CN')
+    expect(wrapper.find('a[target="_blank"]').exists()).toBe(false)
     expect(showSuccess).toHaveBeenCalled()
   })
 
