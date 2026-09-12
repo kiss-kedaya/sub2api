@@ -605,10 +605,7 @@ export default {
           'Disabled by default. Enable to allow responses_websockets_v2 capability (still gated by global and account-type switches).',
         wsMode: 'WS mode',
         wsModeDesc:
-          'Account WS switch: select Off to disable WS for this account, or another option to enable it. Availability still depends on the other gateway WS switches.',
-        wsModeRoutingDesc:
-          'Connection mode: when gateway.openai_ws.mode_router_v2_enabled=true, the selected mode applies, including http_bridge. When false (the default), all three modes use the legacy context pool whenever WS is allowed.',
-        wsModeHintPrefix: 'Connection behavior when the selected mode takes effect:',
+          'Applies only to the current OpenAI account type. Select Off to disable WS. Other modes use the selected connection method only when gateway.openai_ws.mode_router_v2_enabled=true; otherwise, they use the context pool.',
         wsModeOff: 'Off (off)',
         wsModeCtxPool: 'Context Pool (ctx_pool)',
         wsModePassthrough: 'Passthrough (passthrough)',
@@ -616,11 +613,11 @@ export default {
         wsModeShared: 'Shared (shared)',
         wsModeDedicated: 'Dedicated (dedicated)',
         wsModeCtxPoolHint:
-          'The gateway gets upstream WebSocket connections from a pool, reusing existing connections when possible. Gateway configuration sets the maximum number of connections in the pool.',
+          'The gateway gets and reuses upstream WS connections from a pool, with the pool limit determined by gateway configuration.',
         wsModePassthroughHint:
-          'The gateway opens a separate upstream WebSocket connection for each client session and relays messages in both directions, without using a connection pool.',
+          'The gateway opens a separate upstream WS connection for each client session, without using a connection pool.',
         wsModeHttpBridgeHint:
-          'The client connects to the gateway over WebSocket. The gateway converts requests to upstream HTTP requests, then converts SSE streaming responses back into WebSocket messages for the client.',
+          'The gateway converts client WS requests to upstream HTTP requests, then converts SSE streaming responses back into WS messages.',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           'Only applies to OpenAI OAuth. This account can use OpenAI WebSocket Mode only when enabled.',
