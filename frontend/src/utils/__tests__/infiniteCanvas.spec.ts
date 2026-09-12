@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import type { ApiKey } from '@/types'
 import {
   INFINITE_CANVAS_KEY_NAME,
-  MAX_SMART_ROUTE_GROUPS,
   buildInfiniteCanvasImportUrl,
   findReusableCanvasKey,
   groupIdsEqual,
@@ -13,18 +12,13 @@ import {
 } from '../infiniteCanvas'
 
 describe('selectSmartRoutingGroupIds', () => {
-  it('keeps available-group order, drops invalid ids, and caps at the smart-routing limit', () => {
-    const groups = [
-      { id: 3 },
-      { id: 3 },
-      { id: 0 },
-      { id: 8 },
-      ...Array.from({ length: 12 }, (_, index) => ({ id: 10 + index })),
-    ]
+  it('keeps available-group order and drops invalid ids', () => {
+    const extra = Array.from({ length: 12 }, (_, index) => ({ id: 10 + index }))
+    const groups = [{ id: 3 }, { id: 3 }, { id: 0 }, { id: 8 }, ...extra]
     const ids = selectSmartRoutingGroupIds(groups)
     expect(ids[0]).toBe(3)
     expect(ids[1]).toBe(8)
-    expect(ids).toHaveLength(MAX_SMART_ROUTE_GROUPS)
+    expect(ids).toHaveLength(2 + extra.length)
     expect(new Set(ids).size).toBe(ids.length)
   })
 })

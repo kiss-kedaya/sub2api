@@ -1242,6 +1242,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	if service.IsChatUnsupportedMediaModel(reqModel) {
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "This model is not supported on the Messages endpoint")
+		return
+	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
@@ -1753,7 +1757,6 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 	h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "function_call_output requires item_reference ids matching each call_id on HTTP requests; continuation via previous_response_id is only supported on Responses WebSocket v2")
 	return false
 }
-
 
 func (h *OpenAIGatewayHandler) acquireResponsesUserSlot(
 	c *gin.Context,
@@ -3427,7 +3430,7 @@ func (h *OpenAIGatewayHandler) attachTextPricingContext(c *gin.Context, groupID 
 }
 
 // handlePreauthorizationError 渲染预扣失败响应并返回调用方是否需要 return，集中
-// 五个付费端点共享的计费错误 → HTTP 映射（403"余额不足"；429 类限流带 Retry-After），
+// 五个付费端点共享的计费错误 → HTTP 映射（429 insufficient_quota 表示余额不足；429 类限流带 Retry-After），
 // 使各调用点保持一致。它只渲染错误响应——成功路径的 guard 装载与兜底退款仍留在调用点。
 // err==nil 返回 false，故调用点可写 `if h.handlePreauthorizationError(...) { return }`。
 // 分发走 handleStreamingAwareError：预扣时刻无 compact keepalive 提交，streamStarted
