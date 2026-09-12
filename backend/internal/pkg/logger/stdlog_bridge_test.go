@@ -19,6 +19,7 @@ func TestInferStdLogLevel(t *testing.T) {
 		{msg: "[Forward] Upstream error (non-retryable): Status=400", want: LevelWarn},
 		{msg: "Account 7: upstream error 429 after retries", want: LevelWarn},
 		{msg: "Account 7: 400 error, attempting failover", want: LevelWarn},
+		{msg: "OpenAI upstream error 404 (account=29151 platform=openai type=oauth): store is set to false", want: LevelWarn},
 		{msg: "[ERROR] upstream error Status=429", want: LevelError},
 		{msg: "database corruption error", want: LevelError},
 		{msg: "[OpenAI WS Mode] reconnect_retry account_id=22 retry=1 max_retries=5", want: LevelInfo},

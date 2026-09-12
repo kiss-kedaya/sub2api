@@ -276,6 +276,25 @@ func TestHandleErrorResponse_PassthroughRuleStillWinsOver400Branch(t *testing.T)
 	require.Equal(t, "自定义文案", gjson.Get(rec.Body.String(), "error.message").String())
 }
 
+func TestHandleErrorResponse_WrappedJSONObjectIsClient400(t *testing.T) {
+	c, rec := newOpenAIUpstreamErrorTestContext(t)
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	body := `{"error":{"message":"Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'."}}`
+
+	_, err := svc.handleErrorResponse(
+		context.Background(),
+		newOpenAIUpstreamErrorResponse(http.StatusBadGateway, body),
+		c, newOpenAIUpstreamErrorTestAccount(), nil,
+	)
+
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
+	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "json_object")
+}
+
 func TestIsOpenAIDeterministicClientError(t *testing.T) {
 	require.True(t, isOpenAIDeterministicClientError(http.StatusBadRequest))
 	for _, status := range []int{
@@ -286,6 +305,22 @@ func TestIsOpenAIDeterministicClientError(t *testing.T) {
 	} {
 		require.False(t, isOpenAIDeterministicClientError(status), "status %d", status)
 	}
+}
+
+func TestIsOpenAIDeterministicClientFailure_WrappedJSONObject(t *testing.T) {
+	body := []byte(`{"error":{"message":"Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'."}}`)
+	require.True(t, isOpenAIDeterministicClientFailure(http.StatusBadGateway, "", body))
+	require.False(t, (&OpenAIGatewayService{}).shouldFailoverOpenAIUpstreamResponse(
+		newOpenAIUpstreamErrorTestAccount(), http.StatusBadGateway, "", body,
+	))
+}
+
+func TestIsOpenAIDeterministicClientFailure_UnsupportedParameter(t *testing.T) {
+	body := []byte(`{"error":{"message":"Unsupported parameter: metadata"}}`)
+	require.True(t, isOpenAIDeterministicClientErrorMessage("", body))
+	require.False(t, (&OpenAIGatewayService{}).shouldFailoverOpenAIUpstreamResponse(
+		newOpenAIUpstreamErrorTestAccount(), http.StatusBadGateway, "Unsupported parameter: metadata", body,
+	))
 }
 
 func TestWriteOpenAIUpstreamClientError_PayloadShape(t *testing.T) {
