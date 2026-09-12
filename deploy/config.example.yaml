@@ -358,9 +358,13 @@ gateway:
     # 是否按账号并发动态计算连接池上限：
     # effective_max_conns = min(max_conns_per_account, ceil(account.concurrency * factor))
     dynamic_max_conns_by_account_concurrency_enabled: true
-    # 按账号类型分别设置系数（OAuth / API Key）
-    oauth_max_conns_factor: 1.0
-    apikey_max_conns_factor: 1.0
+    # 按账号类型分别设置系数（OAuth / API Key）。
+    # ctx_pool 接入下每个客户端会话在整个生命周期（轮次之间也不释放）持有一条上游连接，
+    # 该上限限制的是同时持有连接的会话数，在飞请求数另由账号并发限制；
+    # 系数 1.0 会让存活会话数一到并发数，新会话就收到 1013 upstream websocket is busy。
+    # 空闲连接数另受 max_idle_per_account 裁剪。
+    oauth_max_conns_factor: 5.0
+    apikey_max_conns_factor: 5.0
     dial_timeout_seconds: 10
     read_timeout_seconds: 900
     write_timeout_seconds: 120
