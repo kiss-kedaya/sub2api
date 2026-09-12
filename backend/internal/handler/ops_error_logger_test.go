@@ -428,6 +428,50 @@ func TestOpsErrorLoggerMiddleware_RecoveredTelemetryFiltersSkipMonitoringAttempt
 	require.Equal(t, "visible retry", events[0].Message)
 }
 
+func TestShouldSkipHighChurnOpsError_RateLimitFlood(t *testing.T) {
+	require.True(t, shouldSkipHighChurnOpsError("rate_limit_error", http.StatusTooManyRequests,
+		"too many rate-limited requests from this key; slow down and retry after Retry-After seconds"))
+	require.False(t, shouldSkipHighChurnOpsError("rate_limit_error", http.StatusTooManyRequests,
+		"Too many pending requests, please retry later"))
+}
+
+func TestOpsErrorLoggerMiddleware_SkipsRateLimitFlood(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/responses", func(c *gin.Context) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": gin.H{
+			"type":    "rate_limit_error",
+			"message": "too many rate-limited requests from this key; slow down and retry after Retry-After seconds",
+		}})
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	require.Equal(t, int64(0), OpsErrorLogQueueLength())
+}
+
+func TestOpsErrorLoggerMiddleware_SkipsRecoveredHeaderTimeout(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/responses", func(c *gin.Context) {
+		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
+			UpstreamStatusCode: 0,
+			Message:            `Post "https://rc.lukyface.com/v1/responses": http2: timeout awaiting response headers`,
+		}})
+		c.JSON(http.StatusOK, gin.H{"status": "completed"})
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, int64(0), OpsErrorLogQueueLength())
+}
+
 func TestOpsErrorLoggerMiddleware_RecoveredTelemetrySkipsAllHiddenAttempts(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 	gin.SetMode(gin.TestMode)

@@ -117,7 +117,7 @@ func TestHandleOpenAIUpstreamTransportError_TransientFailsOverWithoutEviction(t 
 	c, rec := newOpenAITransportErrTestContext()
 
 	err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account,
-		errors.New(`Post "https://chatgpt.com/...": context deadline exceeded (Client.Timeout exceeded while awaiting headers)`), false)
+		errors.New(`Post "https://chatgpt.com/...": i/o timeout`), false)
 
 	var fo *UpstreamFailoverError
 	require.True(t, errors.As(err, &fo), "transient error must return *UpstreamFailoverError")
@@ -126,6 +126,26 @@ func TestHandleOpenAIUpstreamTransportError_TransientFailsOverWithoutEviction(t 
 	// Transient → do NOT evict.
 	require.Empty(t, repo.tempUnschedCalls)
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Equal(t, 0, rec.Body.Len())
+}
+
+func TestHandleOpenAIUpstreamTransportError_HeaderTimeoutSoftUnschedules(t *testing.T) {
+	repo := &openaiTransportAccountRepoStub{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 101, Name: "lukyface", Platform: PlatformOpenAI}
+	c, rec := newOpenAITransportErrTestContext()
+
+	before := time.Now()
+	err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account,
+		errors.New(`Post "https://rc.lukyface.com/v1/responses": http2: timeout awaiting response headers`), false)
+	after := time.Now()
+
+	var fo *UpstreamFailoverError
+	require.True(t, errors.As(err, &fo))
+	require.Len(t, repo.tempUnschedCalls, 1)
+	require.True(t, repo.tempUnschedCalls[0].until.After(before.Add(openAIHeaderTimeoutSoftUnschedDuration-time.Second)))
+	require.True(t, repo.tempUnschedCalls[0].until.Before(after.Add(openAIHeaderTimeoutSoftUnschedDuration+time.Second)))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
 	require.Equal(t, 0, rec.Body.Len())
 }
 

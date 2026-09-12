@@ -54,6 +54,18 @@ func TestLogGatewayForwardFailure_TypedRateLimitHasNoStack(t *testing.T) {
 	require.Equal(t, "slow down", entry.ContextMap()["error_summary"])
 }
 
+func TestLogGatewayForwardFailure_HeaderTimeoutIsWarn(t *testing.T) {
+	core, observed := observer.New(zapcore.DebugLevel)
+	log := zap.New(core, zap.AddStacktrace(zapcore.ErrorLevel))
+	err := errors.New(`Post "https://aipro.hk.cn/v1/images/generations": timeout awaiting response headers`)
+
+	logGatewayForwardFailure(log, nil, "openai.images.forward_failed", err)
+
+	entry := observed.All()[0]
+	require.Equal(t, zapcore.WarnLevel, entry.Level)
+	require.Empty(t, entry.Stack)
+}
+
 func TestLogGatewayForwardFailure_UnexpectedFailureRetainsErrorStack(t *testing.T) {
 	core, observed := observer.New(zapcore.DebugLevel)
 	log := zap.New(core, zap.AddStacktrace(zapcore.ErrorLevel))

@@ -500,8 +500,11 @@ func isExpectedOperationalFailureLog(lower string) bool {
 		return false
 	}
 	for _, statusPattern := range []string{
-		"status=400", "status=429", "status 400", "status 429",
-		"error 400", "error 429", "400 error", "429 error",
+		"status=400", "status=404", "status=429",
+		"status 400", "status 404", "status 429",
+		"error 400", "error 404", "error 429",
+		"400 error", "404 error", "429 error",
+		"upstream error 400", "upstream error 404", "upstream error 429",
 	} {
 		if strings.Contains(lower, statusPattern) {
 			return true

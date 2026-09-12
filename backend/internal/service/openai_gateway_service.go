@@ -814,7 +814,7 @@ func resolveOpenAIWSFallbackErrorResponse(err error) (statusCode int, errType st
 	}
 	var fallbackErr *openAIWSFallbackError
 	if !errors.As(err, &fallbackErr) || fallbackErr == nil {
-		return 0, "", "", "", false
+		return resolveOpenAIWSClientRejection(err)
 	}
 
 	reason := strings.TrimSpace(fallbackErr.Reason)
@@ -832,8 +832,19 @@ func resolveOpenAIWSFallbackErrorResponse(err error) (statusCode int, errType st
 			upstreamMessage = sanitizeUpstreamErrorMessage(strings.TrimSpace(dialErr.Err.Error()))
 		}
 	}
+	if upstreamMessage == "" && fallbackErr.Err != nil {
+		upstreamMessage = sanitizeUpstreamErrorMessage(strings.TrimSpace(fallbackErr.Err.Error()))
+	}
 
 	switch reason {
+	case "policy_violation":
+		if statusCode == 0 {
+			statusCode = http.StatusForbidden
+		}
+		errType = "permission_error"
+		if upstreamMessage == "" {
+			upstreamMessage = "Request blocked by upstream policy"
+		}
 	case "invalid_encrypted_content":
 		if statusCode == 0 {
 			statusCode = http.StatusBadRequest
@@ -867,14 +878,18 @@ func resolveOpenAIWSFallbackErrorResponse(err error) (statusCode int, errType st
 			statusCode = http.StatusTooManyRequests
 		}
 	default:
+		if mappedStatus := openAIDeterministicClientHTTPStatus(upstreamMessage, nil); mappedStatus > 0 {
+			statusCode = mappedStatus
+			if errType == "" {
+				errType = openAIDeterministicClientErrorType(statusCode)
+			}
+			break
+		}
 		if statusCode == 0 {
 			return 0, "", "", "", false
 		}
 	}
 
-	if upstreamMessage == "" && fallbackErr.Err != nil {
-		upstreamMessage = sanitizeUpstreamErrorMessage(strings.TrimSpace(fallbackErr.Err.Error()))
-	}
 	if upstreamMessage == "" {
 		switch reason {
 		case "upgrade_required":
@@ -891,13 +906,33 @@ func resolveOpenAIWSFallbackErrorResponse(err error) (statusCode int, errType st
 	}
 
 	if errType == "" {
-		if statusCode == http.StatusTooManyRequests {
+		switch statusCode {
+		case http.StatusTooManyRequests:
 			errType = "rate_limit_error"
-		} else {
+		case http.StatusBadRequest:
+			errType = "invalid_request_error"
+		default:
 			errType = "upstream_error"
 		}
 	}
 	clientMessage = upstreamMessage
+	return statusCode, errType, clientMessage, upstreamMessage, true
+}
+
+func resolveOpenAIWSClientRejection(err error) (statusCode int, errType string, clientMessage string, upstreamMessage string, ok bool) {
+	if err == nil {
+		return 0, "", "", "", false
+	}
+	upstreamMessage = sanitizeUpstreamErrorMessage(strings.TrimSpace(err.Error()))
+	statusCode = openAIDeterministicClientHTTPStatus(upstreamMessage, nil)
+	if statusCode == 0 {
+		return 0, "", "", "", false
+	}
+	errType = openAIDeterministicClientErrorType(statusCode)
+	clientMessage = upstreamMessage
+	if clientMessage == "" {
+		clientMessage = "Upstream rejected the request"
+	}
 	return statusCode, errType, clientMessage, upstreamMessage, true
 }
 

@@ -18,6 +18,10 @@ import (
 // unscheduled after a durable transport failure (matches tokenRefreshTempUnschedDuration).
 const openAITransportErrorTempUnschedDuration = 10 * time.Minute
 
+// openAIHeaderTimeoutSoftUnschedDuration keeps a header-timeout account out of
+// the first hop briefly so a dead intermediary is not retried on every request.
+const openAIHeaderTimeoutSoftUnschedDuration = 60 * time.Second
+
 // openAITransportFailoverBody is the OpenAI-format error body attached to the
 // failover error for a transport-level failure. Kept identical to the legacy
 // inline 502 body so the client-visible payload is unchanged if failover is
@@ -33,6 +37,9 @@ type upstreamTransportErrorClass struct {
 	// or DNS/routing failure. Such accounts should be temporarily unscheduled
 	// (and alerted on) instead of being repeatedly scheduled into hard failures.
 	Persistent bool
+	// HeaderTimeout is a repeated first-byte stall. Fail over, but keep the
+	// account out of the next scheduling window for a short interval.
+	HeaderTimeout bool
 }
 
 // persistentUpstreamTransportErrorMarkers are substrings (matched case-insensitively
@@ -88,7 +95,15 @@ func classifyUpstreamTransportError(err error) upstreamTransportErrorClass {
 			return upstreamTransportErrorClass{Persistent: true}
 		}
 	}
+	if isUpstreamHeaderTimeoutMessage(msg) {
+		return upstreamTransportErrorClass{HeaderTimeout: true}
+	}
 	return upstreamTransportErrorClass{}
+}
+
+func isUpstreamHeaderTimeoutMessage(msg string) bool {
+	return strings.Contains(msg, "timeout awaiting response headers") ||
+		strings.Contains(msg, "timeout exceeded while awaiting headers")
 }
 
 // handleOpenAIUpstreamTransportError handles a transport-level upstream failure
@@ -137,8 +152,11 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 		return err
 	}
 
-	if classifyUpstreamTransportError(err).Persistent {
+	class := classifyUpstreamTransportError(err)
+	if class.Persistent {
 		s.tempUnscheduleOpenAITransportError(ctx, account, safeErr)
+	} else if class.HeaderTimeout {
+		s.tempUnscheduleOpenAITransportErrorFor(ctx, account, safeErr, openAIHeaderTimeoutSoftUnschedDuration)
 	}
 
 	return &UpstreamFailoverError{
@@ -159,10 +177,17 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 //   - "openai.account_temp_unscheduled_transport_failed" — DB write attempted
 //     but returned an error.
 func (s *OpenAIGatewayService) tempUnscheduleOpenAITransportError(ctx context.Context, account *Account, safeErr string) {
+	s.tempUnscheduleOpenAITransportErrorFor(ctx, account, safeErr, openAITransportErrorTempUnschedDuration)
+}
+
+func (s *OpenAIGatewayService) tempUnscheduleOpenAITransportErrorFor(ctx context.Context, account *Account, safeErr string, duration time.Duration) {
 	if s == nil || account == nil {
 		return
 	}
-	until := time.Now().Add(openAITransportErrorTempUnschedDuration)
+	if duration <= 0 {
+		duration = openAITransportErrorTempUnschedDuration
+	}
+	until := time.Now().Add(duration)
 	reason := "upstream transport error (proxy/network): " + safeErr
 
 	// Immediate in-memory block so this process skips the account until the
