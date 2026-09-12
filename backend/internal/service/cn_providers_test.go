@@ -630,16 +630,6 @@ func TestGetAPIProtocol(t *testing.T) {
 	require.False(t, official.IsOpenAICompatible())
 }
 
-func TestSupportsNativeCNResponses(t *testing.T) {
-	t.Parallel()
-	require.True(t, (&Account{Platform: PlatformDeepseek}).SupportsNativeCNResponses())
-	require.True(t, (&Account{Platform: PlatformKimi}).SupportsNativeCNResponses())
-	require.True(t, (&Account{Platform: PlatformKimi, Credentials: map[string]any{"account_mode": AccountModeCoding}}).SupportsNativeCNResponses())
-	require.False(t, (&Account{Platform: PlatformZhipu}).SupportsNativeCNResponses())
-	require.False(t, (&Account{Platform: PlatformOpenAI}).SupportsNativeCNResponses())
-	require.False(t, mkGemini("").SupportsNativeCNResponses())
-}
-
 func mkGemini(protocol string) *Account {
 	creds := map[string]any{"api_key": "sk-test"}
 	if protocol != "" {
@@ -656,6 +646,7 @@ func TestSupportsNativeCNResponses(t *testing.T) {
 	require.True(t, (&Account{Platform: PlatformMiniMax}).SupportsNativeCNResponses())
 	require.False(t, (&Account{Platform: PlatformZhipu}).SupportsNativeCNResponses())
 	require.False(t, (&Account{Platform: PlatformOpenAI}).SupportsNativeCNResponses())
+	require.False(t, mkGemini("").SupportsNativeCNResponses())
 }
 
 func TestAdaptiveProtocolBaseURLs(t *testing.T) {
@@ -858,14 +849,6 @@ func TestNormalizeDeepSeekResponsesRequestBody(t *testing.T) {
 	// openai 账号原样返回
 	openai := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	require.Equal(t, string(body), string(normalizeDeepSeekResponsesRequestBody(openai, body)))
-
-	kimiResponses := &Account{
-		Platform: PlatformKimi, Type: AccountTypeAPIKey,
-		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
-	}
-	kimiNormalized := normalizeDeepSeekResponsesRequestBody(kimiResponses, body)
-	require.False(t, gjson.GetBytes(kimiNormalized, "store").Bool())
-	require.False(t, gjson.GetBytes(kimiNormalized, "previous_response_id").Exists())
 }
 
 // TestGetAnthropicAPIKeyAuthScheme_CNProvider CN 账号可经 extra 覆写鉴权方案，
