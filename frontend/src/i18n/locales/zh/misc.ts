@@ -72,9 +72,8 @@ export default {
   // Infinite Canvas (iframe embed)
   infiniteCanvas: {
     title: '无限画布',
-    description: '使用智能路由 API 密钥在无限画布中进行图片、视频和对话创作',
-    preparing: '正在创建智能路由密钥并打开无限画布…',
-    openInNewTab: '新窗口打开',
+    description: '在侧边栏内使用智能路由密钥进行图片、视频和对话创作',
+    preparing: '正在准备智能路由密钥…',
     errorTitle: '无法打开无限画布',
     noGroups: '当前没有可用分组，无法创建智能路由 API 密钥。',
     missingKey: '密钥已创建但未返回明文，请重试或手动创建密钥。',
