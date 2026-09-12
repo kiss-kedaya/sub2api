@@ -74,9 +74,8 @@ export default {
   // Infinite Canvas (iframe embed)
   infiniteCanvas: {
     title: 'Infinite Canvas',
-    description: 'Create images, video, and chat on an infinite canvas using your Sub2API key',
-    preparing: 'Creating a smart-routing key and opening Infinite Canvas…',
-    openInNewTab: 'Open in new tab',
+    description: 'Create images, video, and chat in the sidebar using your Sub2API key',
+    preparing: 'Preparing a smart-routing key…',
     errorTitle: 'Unable to open Infinite Canvas',
     noGroups: 'You have no available groups, so a smart-routing API key cannot be created.',
     missingKey: 'The API key was created but its secret was not returned. Try again or create a key manually.',
