@@ -613,7 +613,7 @@ export default {
         wsModeShared: 'Shared (shared)',
         wsModeDedicated: 'Dedicated (dedicated)',
         wsModeConcurrencyHint:
-          'When WS mode is enabled, account concurrency becomes the WS connection pool limit for this account.',
+          'Account concurrency limits requests in flight; the context pool connection limit is controlled by the gateway connection pool settings.',
         wsModePassthroughHint: 'Passthrough mode does not use the WS connection pool.',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:

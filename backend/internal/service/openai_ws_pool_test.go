@@ -1164,21 +1164,95 @@ func TestOpenAIWSConnPool_EffectiveMaxConnsDisabledFallbackHardCap(t *testing.T)
 	require.Equal(t, 8, pool.effectiveMaxConnsByAccount(account), "关闭动态模式后应保持旧行为")
 }
 
-func TestOpenAIWSConnPool_EffectiveMaxConnsByAccount_ModeRouterV2RespectsHardCap(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
-	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 8
-	cfg.Gateway.OpenAIWS.DynamicMaxConnsByAccountConcurrencyEnabled = true
-	cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor = 0.3
-	cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor = 0.6
+func TestOpenAIWSConnPool_EffectiveMaxConnsByAccount_ModeRouterV2(t *testing.T) {
+	tests := []struct {
+		name        string
+		accountType string
+		concurrency int
+		factor      float64
+		dynamic     bool
+		want        int
+	}{
+		{name: "oauth expansion", accountType: AccountTypeOAuth, concurrency: 1, factor: 5, dynamic: true, want: 5},
+		{name: "apikey expansion", accountType: AccountTypeAPIKey, concurrency: 1, factor: 5, dynamic: true, want: 5},
+		{name: "oauth fraction", accountType: AccountTypeOAuth, concurrency: 20, factor: 0.3, dynamic: true, want: 6},
+		{name: "apikey rounding", accountType: AccountTypeAPIKey, concurrency: 3, factor: 0.6, dynamic: true, want: 2},
+		{name: "minimum one", accountType: AccountTypeOAuth, concurrency: 1, factor: 0.3, dynamic: true, want: 1},
+		{name: "hard cap", accountType: AccountTypeOAuth, concurrency: 3, factor: 5, dynamic: true, want: 8},
+		{name: "dynamic disabled", accountType: AccountTypeAPIKey, concurrency: 2, factor: 0.6, want: 8},
+		{name: "zero concurrency", accountType: AccountTypeOAuth, factor: 5, dynamic: true, want: 0},
+		{name: "negative concurrency", accountType: AccountTypeAPIKey, concurrency: -1, factor: 5, dynamic: true, want: 0},
+		{name: "zero concurrency dynamic disabled", accountType: AccountTypeOAuth, factor: 5, want: 0},
+		{name: "negative concurrency dynamic disabled", accountType: AccountTypeAPIKey, concurrency: -1, factor: 5, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+			cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 8
+			cfg.Gateway.OpenAIWS.DynamicMaxConnsByAccountConcurrencyEnabled = tt.dynamic
+			cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor = 1
+			cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor = 1
+			if tt.accountType == AccountTypeOAuth {
+				cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor = tt.factor
+			} else {
+				cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor = tt.factor
+			}
+			pool := newOpenAIWSConnPool(cfg)
+			t.Cleanup(pool.Close)
+			account := &Account{Platform: PlatformOpenAI, Type: tt.accountType, Concurrency: tt.concurrency}
+			require.Equal(t, tt.want, pool.effectiveMaxConnsByAccount(account))
+			require.Equal(t, 8, pool.effectiveMaxConnsByAccount(nil))
+		})
+	}
+}
 
-	pool := newOpenAIWSConnPool(cfg)
+func TestOpenAIWSConnPool_AcquireRetainedSessionsUsesScaledCapacity(t *testing.T) {
+	for _, mode := range []struct {
+		name string
+		v2   bool
+	}{
+		{name: "legacy"},
+		{name: "mode router v2", v2: true},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = mode.v2
+			cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 3
+			cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 3
+			cfg.Gateway.OpenAIWS.PoolTargetUtilization = 1
+			cfg.Gateway.OpenAIWS.DynamicMaxConnsByAccountConcurrencyEnabled = true
+			cfg.Gateway.OpenAIWS.OAuthMaxConnsFactor = 2
+			pool := newOpenAIWSConnPool(cfg)
+			pool.setClientDialerForTest(&openAIWSFakeDialer{})
+			t.Cleanup(pool.Close)
+			req := openAIWSAcquireRequest{
+				Account: &Account{ID: 902, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 2},
+				WSURL:   "wss://example.com/v1/responses",
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			leases := make([]*openAIWSConnLease, 0, 3)
+			for range 3 {
+				lease, err := pool.Acquire(ctx, req)
+				require.NoError(t, err, "轮次之间仍持有连接的会话应可使用系数扩出的容量")
+				t.Cleanup(lease.Release)
+				leases = append(leases, lease)
+			}
 
-	high := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 20}
-	require.Equal(t, 8, pool.effectiveMaxConnsByAccount(high), "v2 路径也必须受连接池硬上限约束")
+			fullCtx, fullCancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			defer fullCancel()
+			_, err := pool.Acquire(fullCtx, req)
+			require.ErrorIs(t, err, context.DeadlineExceeded, "扩容后仍必须受全局硬上限约束")
 
-	nonPositive := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 0}
-	require.Equal(t, 0, pool.effectiveMaxConnsByAccount(nonPositive), "并发数<=0 时应不可调度")
+			leases[0].Release()
+			reused, err := pool.Acquire(ctx, req)
+			require.NoError(t, err)
+			defer reused.Release()
+			require.Equal(t, leases[0].ConnID(), reused.ConnID())
+			require.True(t, reused.Reused())
+		})
+	}
 }
 
 func TestOpenAIWSConnPool_AcquireRejectsWhenEffectiveMaxConnsIsZero(t *testing.T) {
