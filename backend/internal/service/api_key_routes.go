@@ -9,8 +9,6 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
-const maxAPIKeyGroupRoutes = 10
-
 // UpstreamPlatformResolver maps a request model to the concrete account
 // platform that should handle it. Used by gateway middleware before dispatch.
 type UpstreamPlatformResolver interface {
@@ -293,6 +291,12 @@ func (s *GatewayService) UpstreamPlatformForModel(ctx context.Context, apiKey *A
 		PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax,
 		PlatformAnthropic, PlatformGemini, PlatformAntigravity,
 	}
+	if detected, ok := DetectModelPlatform(model); ok && detected == PlatformGrok {
+		prefer = []string{
+			PlatformGrok, PlatformOpenAI, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax,
+			PlatformAnthropic, PlatformGemini, PlatformAntigravity,
+		}
+	}
 	sawCatalog := false
 	for _, gid := range ids {
 		gid := gid
@@ -382,9 +386,6 @@ func normalizeAPIKeyGroupIDs(groupID *int64, groupIDs []int64) ([]int64, *int64,
 			return []int64{*groupID}, groupID, nil
 		}
 		return nil, groupID, nil
-	}
-	if len(cleaned) > maxAPIKeyGroupRoutes {
-		return nil, nil, infraerrors.BadRequest("API_KEY_GROUP_IDS_TOO_MANY", fmt.Sprintf("group_ids supports at most %d groups", maxAPIKeyGroupRoutes))
 	}
 	if groupID != nil && *groupID > 0 && *groupID != cleaned[0] {
 		return nil, nil, infraerrors.BadRequest("API_KEY_GROUP_ID_MISMATCH", "group_id must match the first group_ids entry")

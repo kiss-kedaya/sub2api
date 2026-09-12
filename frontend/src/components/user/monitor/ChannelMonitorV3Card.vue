@@ -7,7 +7,7 @@
       <div class="min-w-0 flex-1">
         <div class="truncate text-base font-semibold text-gray-900 dark:text-gray-100">{{ groupLabel }}</div>
         <div class="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
-          <span class="rounded-md px-1.5 py-0.5 text-[10px] font-medium" :class="providerBadgeClass(row.platform)">{{ providerLabel(row.platform) }}</span>
+          <span v-if="showPlatformBadge" class="rounded-md px-1.5 py-0.5 text-[10px] font-medium" :class="providerBadgeClass(row.platform)">{{ providerLabel(row.platform) }}</span>
           <span class="rounded-md bg-primary-50 px-1.5 py-0.5 font-mono text-[10px] font-medium text-primary-700 dark:bg-dark-700 dark:text-gray-300">{{ t('channelMonitorV3.userRate') }} {{ formattedUserRate }}</span>
         </div>
       </div>
@@ -51,12 +51,15 @@ import { providerGradient, useChannelMonitorFormat } from '@/composables/useChan
 import ProviderIcon from './ProviderIcon.vue'
 import ChannelMonitorV3Timeline from './ChannelMonitorV3Timeline.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   row: MonitorMatrixRow
   countdownSeconds: number
   timelineLength: number
   userRateMultiplier?: number | null
-}>()
+  showPlatformBadge?: boolean
+}>(), {
+  showPlatformBadge: true,
+})
 const { t } = useI18n()
 const { providerLabel, providerBadgeClass } = useChannelMonitorFormat()
 

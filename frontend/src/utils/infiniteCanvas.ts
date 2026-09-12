@@ -2,7 +2,6 @@ import type { ApiKey, Group } from '@/types'
 
 export const INFINITE_CANVAS_KEY_NAME = 'Infinite Canvas'
 export const INFINITE_CANVAS_PATH = '/canvas/'
-export const MAX_SMART_ROUTE_GROUPS = 10
 
 export function selectSmartRoutingGroupIds(groups: Array<Pick<Group, 'id'>>): number[] {
   const seen = new Set<number>()
@@ -11,7 +10,6 @@ export function selectSmartRoutingGroupIds(groups: Array<Pick<Group, 'id'>>): nu
     if (!Number.isInteger(group.id) || group.id <= 0 || seen.has(group.id)) continue
     seen.add(group.id)
     ids.push(group.id)
-    if (ids.length >= MAX_SMART_ROUTE_GROUPS) break
   }
   return ids
 }
