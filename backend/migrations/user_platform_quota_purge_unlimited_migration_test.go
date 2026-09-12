@@ -7,10 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestUserPlatformQuotasPurgeUnlimitedMigration 校验 238 号迁移只删除三档限额全为 NULL 的行：
+// TestUserPlatformQuotasPurgeUnlimitedMigration 校验 243 号迁移只删除三档限额全为 NULL 的行：
 // 这类行等价于"不存在"，任何一档非 NULL 的记录（含软删历史）都必须保留。
 func TestUserPlatformQuotasPurgeUnlimitedMigration(t *testing.T) {
-	content, err := FS.ReadFile("238_purge_unlimited_user_platform_quotas.sql")
+	content, err := FS.ReadFile("243_purge_unlimited_user_platform_quotas.sql")
 	require.NoError(t, err)
 
 	// 去掉注释行后只允许这一条 DELETE。
