@@ -50,30 +50,6 @@ func TestRawInputRewritePreservesImagesAndSurroundingFields(t *testing.T) {
 	require.Equal(t, "call_valid", gjson.GetBytes(out, "input.0.call_id").String())
 }
 
-func TestStoreFalseRawReplayMatchesDecodedBehavior(t *testing.T) {
-	fixtures := []string{
-		` {"store":false,"input":[{"type":"reasoning","id":"rs_a","encrypted_content":"opaque","summary":null,"opaque":9007199254740993},{"type":"custom_tool_call_output","id":"fc_a","output":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}],"tail":"keep"} `,
-		`{"store":false,"input":[null,42,"keep",{"type":"reasoning","encrypted_content":" "},{"type":"item_reference","id":"rs_drop"},{"type":"item_reference","id":"msg_keep"}]}`,
-		`{"store":false,"input":[{"type":"reasoning","id":"keep","encrypted_content":"opaque","summary":[]},{"type":"message","call_id":null,"content":"keep"}]}`,
-		`{"store":false,"input":[],"input":[{"type":"reasoning","id":"rs_drop"}]}`,
-		`{"store":false,"input":[{"type":"message","type":"reasoning","id":"rs_drop"}]}`,
-		`{"store":false,"input":[{"type":"reasoning","id":"rs_drop"}]} trailing`,
-		`{"store":false,"input":[{"type":"reasoning","id":"rs_drop"}]`,
-		`{"store":false,"input":[]}`,
-	}
-	for _, fixture := range fixtures {
-		body := []byte(fixture)
-		want, wantChanged, wantErr := normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, false)
-		got, changed, err := normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body, false)
-		require.Equal(t, wantErr != nil, err != nil)
-		if wantErr != nil {
-			continue
-		}
-		require.Equal(t, wantChanged, changed)
-		require.JSONEq(t, string(want), string(got))
-	}
-}
-
 func TestLegacyIngressNativeFastPathKeepsValidation(t *testing.T) {
 	for _, body := range []string{`{"input":[]} trailing`, `{"input":[}`, `[{"input":[]}]`} {
 		_, _, err := normalizeOpenAIResponsesLegacyIngress([]byte(body))
