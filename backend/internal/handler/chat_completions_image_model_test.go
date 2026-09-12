@@ -52,6 +52,58 @@ func TestChatCompletionsRejectsGPTImageModelsBeforeScheduling(t *testing.T) {
 	}
 }
 
+func TestMessagesRejectsGrokVideoModelsBeforeScheduling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"grok-imagine-video-1.5","max_tokens":32,"messages":[{"role":"user","content":"make a video"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	setImageChatTestAuth(c)
+
+	(&GatewayHandler{}).Messages(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Equal(t, "invalid_request_error", gjson.Get(recorder.Body.String(), "error.type").String())
+	require.Contains(t, gjson.Get(recorder.Body.String(), "error.message").String(), "Messages")
+}
+
+func TestChatCompletionsRejectsGrokVideoModelsBeforeScheduling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, model := range []string{"grok-imagine-video", "grok-imagine-video-1.5", "xai/grok-imagine-video-1.5"} {
+		for _, tc := range []struct {
+			name string
+			call func(*gin.Context)
+		}{
+			{
+				name: "gateway",
+				call: (&GatewayHandler{}).ChatCompletions,
+			},
+			{
+				name: "openai_gateway",
+				call: newOpenAIImageChatRejectionHandler(t).ChatCompletions,
+			},
+		} {
+			t.Run(tc.name+"/"+model, func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				body := []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"make a video"}]}`)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+				setImageChatTestAuth(c)
+
+				tc.call(c)
+
+				require.Equal(t, http.StatusBadRequest, recorder.Code)
+				require.Equal(t, "invalid_request_error", gjson.Get(recorder.Body.String(), "error.type").String())
+				require.Contains(t, gjson.Get(recorder.Body.String(), "error.message").String(), "Chat Completions")
+				_, selected := c.Get(opsAccountIDKey)
+				require.False(t, selected, "rejection must happen before account selection")
+			})
+		}
+	}
+}
+
 func TestOpenAIChatCompletionsImageModelRejectionDoesNotAcquireConcurrency(t *testing.T) {
 	var acquireCalls atomic.Int64
 	cache := &concurrencyCacheMock{

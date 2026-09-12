@@ -57,4 +57,56 @@ func TestGrokImagineAspectRatioFromSize(t *testing.T) {
 	require.Equal(t, "3:4", grokImagineAspectRatioFromSize("1152x1536"))
 	require.Equal(t, "4:3", grokImagineAspectRatioFromSize("1536x1152"))
 	require.Equal(t, "16:9", grokImagineAspectRatioFromSize("1792x1024"))
+	require.Equal(t, "16:9", grokImagineAspectRatioFromSize("1280x720"))
+}
+
+func TestApplyGrokImagineVideoGeometryMapsCanvasFields(t *testing.T) {
+	t.Parallel()
+
+	out, err := applyGrokImagineVideoGeometry([]byte(`{
+		"model":"grok-imagine-video-1.5",
+		"prompt":"waves",
+		"size":"1280x720",
+		"resolution_name":"720p",
+		"generate_audio":"true",
+		"watermark":"false",
+		"mode":"frames"
+	}`))
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(out, "size").Exists())
+	require.False(t, gjson.GetBytes(out, "resolution_name").Exists())
+	require.False(t, gjson.GetBytes(out, "generate_audio").Exists())
+	require.False(t, gjson.GetBytes(out, "watermark").Exists())
+	require.False(t, gjson.GetBytes(out, "mode").Exists())
+	require.Equal(t, "720p", gjson.GetBytes(out, "resolution").String())
+	require.Equal(t, "16:9", gjson.GetBytes(out, "aspect_ratio").String())
+}
+
+func TestAdaptGrokVideoClientResponseExposesOpenAITaskID(t *testing.T) {
+	t.Parallel()
+
+	created := adaptGrokVideoClientResponse(
+		GrokMediaEndpointVideosGenerations,
+		"",
+		[]byte(`{"request_id":"eed70fd0-e818-9e8d-9b7f-58442b974104"}`),
+	)
+	require.Equal(t, "eed70fd0-e818-9e8d-9b7f-58442b974104", gjson.GetBytes(created, "id").String())
+	require.Equal(t, "eed70fd0-e818-9e8d-9b7f-58442b974104", gjson.GetBytes(created, "request_id").String())
+
+	status := adaptGrokVideoClientResponse(
+		GrokMediaEndpointVideoStatus,
+		"task-1",
+		[]byte(`{"status":"done","video":{"url":"https://vidgen.x.ai/task-1.mp4"}}`),
+	)
+	require.Equal(t, "completed", gjson.GetBytes(status, "status").String())
+	require.Equal(t, "task-1", gjson.GetBytes(status, "id").String())
+	require.Equal(t, "task-1", gjson.GetBytes(status, "request_id").String())
+	require.Equal(t, "https://vidgen.x.ai/task-1.mp4", gjson.GetBytes(status, "video.url").String())
+
+	expired := adaptGrokVideoClientResponse(
+		GrokMediaEndpointVideoStatus,
+		"task-2",
+		[]byte(`{"status":"expired"}`),
+	)
+	require.Equal(t, "failed", gjson.GetBytes(expired, "status").String())
 }

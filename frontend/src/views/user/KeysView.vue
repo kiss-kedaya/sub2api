@@ -507,7 +507,6 @@
               <button type="button" class="text-gray-400 hover:text-red-600" @click="removeSmartRoute(index)">×</button>
             </div>
             <Select
-              v-if="formData.group_ids.length < 10"
               :model-value="null"
               :options="smartRoutingAddOptions"
               :placeholder="t('keys.smartRoutingAdd')"
@@ -516,7 +515,6 @@
               @update:model-value="addSmartRoute"
             />
             <p v-if="formData.group_ids.length === 0" class="text-xs text-gray-400">{{ t('keys.smartRoutingEmpty') }}</p>
-            <p v-else-if="formData.group_ids.length >= 10" class="text-xs text-gray-400">{{ t('keys.smartRoutingMax') }}</p>
           </div>
           <Select
             v-else
@@ -1558,10 +1556,6 @@ const smartRoutingAddOptions = computed(() => {
 const addSmartRoute = (value: string | number | boolean | null) => {
   if (typeof value !== 'number') return
   if (formData.value.group_ids.includes(value)) return
-  if (formData.value.group_ids.length >= 10) {
-    appStore.showError(t('keys.smartRoutingMax'))
-    return
-  }
   formData.value.group_ids = [...formData.value.group_ids, value]
   formData.value.group_id = formData.value.group_ids[0] ?? null
 }
