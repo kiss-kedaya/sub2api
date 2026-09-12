@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/imroc/req/v3"
@@ -481,6 +482,13 @@ func isGrokImageGenerationModel(model string) bool {
 	return model == "grok-imagine" ||
 		model == "grok-imagine-edit" ||
 		strings.HasPrefix(model, "grok-imagine-image")
+}
+
+// IsChatUnsupportedMediaModel reports models that must not be dispatched on
+// /v1/chat/completions or /v1/messages. GPT image models and Grok Imagine
+// video models have dedicated media endpoints instead.
+func IsChatUnsupportedMediaModel(model string) bool {
+	return IsGPTImageGenerationModel(model) || xai.IsGrokImagineVideoModel(model)
 }
 
 func validateOpenAIImagesModel(model string) error {

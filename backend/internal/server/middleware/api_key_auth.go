@@ -261,7 +261,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			} else {
 				// 非订阅模式 或 订阅模式但 subscriptionService 未注入：回退到余额检查
 				if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
-					AbortWithError(c, 403, "INSUFFICIENT_BALANCE", "Insufficient account balance")
+					abortWithInsufficientBalance(c)
 					return
 				}
 			}
@@ -314,6 +314,15 @@ func abortWithAPIKeyQuotaError(c *gin.Context) {
 	AbortWithError(c, http.StatusTooManyRequests, "API_KEY_QUOTA_EXHAUSTED", message)
 }
 
+func abortWithInsufficientBalance(c *gin.Context) {
+	const message = "Insufficient account balance"
+	if isOpenAICompatibleAPIKeyRequest(c) || isOpenAIV1APIKeyRequest(c) {
+		abortWithOpenAIQuotaError(c, http.StatusTooManyRequests, message)
+		return
+	}
+	AbortWithError(c, http.StatusTooManyRequests, "INSUFFICIENT_BALANCE", message)
+}
+
 func isOpenAICompatibleAPIKeyRequest(c *gin.Context) bool {
 	if c == nil || c.Request == nil || c.Request.URL == nil {
 		return false
@@ -331,6 +340,17 @@ func isOpenAICompatibleAPIKeyRequest(c *gin.Context) bool {
 		}
 	}
 	return false
+}
+
+func isOpenAIV1APIKeyRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	path := strings.TrimRight(c.Request.URL.Path, "/")
+	if path == "/v1" || strings.HasPrefix(path, "/v1/") {
+		return true
+	}
+	return path == "/openai/v1" || strings.HasPrefix(path, "/openai/v1/")
 }
 
 func isAsyncImageTaskRead(method, path string) bool {

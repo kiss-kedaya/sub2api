@@ -116,7 +116,10 @@ describe('channel-monitor-v2 design system structure', () => {
   it('V3 channel status groups cards by platform', () => {
     const src = read('views/user/ChannelStatusV3View.vue')
     expect(src).toContain('platformSections')
+    expect(src).toContain('layoutBlocks')
     expect(src).toContain('channel-status-platform-')
+    expect(src).toContain('channel-status-board')
+    expect(src).toContain('channel-status-compact-platforms')
   })
 })
 
