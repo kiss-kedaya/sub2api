@@ -207,8 +207,12 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 		profile = service.HTTPUpstreamProfileFromContext(req.Context())
 	}
 
+	destHost := ""
+	if req != nil && req.URL != nil {
+		destHost = req.URL.Hostname()
+	}
 	// 获取或创建对应的客户端，并标记请求占用
-	entry, err := s.acquireClientWithProfile(proxyURL, accountID, accountConcurrency, profile)
+	entry, err := s.acquireClientWithProfile(proxyURL, accountID, accountConcurrency, profile, destHost)
 	if err != nil {
 		return nil, err
 	}
@@ -630,12 +634,12 @@ func (s *httpUpstreamService) redirectChecker(req *http.Request, via []*http.Req
 // acquireClient 获取或创建客户端，并标记为进行中请求
 // 用于请求路径，避免在获取后被淘汰
 func (s *httpUpstreamService) acquireClient(proxyURL string, accountID int64, accountConcurrency int) (*upstreamClientEntry, error) {
-	return s.acquireClientWithProfile(proxyURL, accountID, accountConcurrency, service.HTTPUpstreamProfileDefault)
+	return s.acquireClientWithProfile(proxyURL, accountID, accountConcurrency, service.HTTPUpstreamProfileDefault, "")
 }
 
 // acquireClientWithProfile 获取或创建客户端，并按请求 profile 选择协议策略。
-func (s *httpUpstreamService) acquireClientWithProfile(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile) (*upstreamClientEntry, error) {
-	return s.getClientEntry(proxyURL, accountID, accountConcurrency, profile, true, true)
+func (s *httpUpstreamService) acquireClientWithProfile(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile, destHost string) (*upstreamClientEntry, error) {
+	return s.getClientEntry(proxyURL, accountID, accountConcurrency, profile, true, true, destHost)
 }
 
 // getOrCreateClient 获取或创建客户端
@@ -654,13 +658,13 @@ func (s *httpUpstreamService) acquireClientWithProfile(proxyURL string, accountI
 //   - account: 按账户隔离，同一账户共享客户端（代理变更时重建）
 //   - account_proxy: 按账户+代理组合隔离，最细粒度
 func (s *httpUpstreamService) getOrCreateClient(proxyURL string, accountID int64, accountConcurrency int) (*upstreamClientEntry, error) {
-	return s.getClientEntry(proxyURL, accountID, accountConcurrency, service.HTTPUpstreamProfileDefault, false, false)
+	return s.getClientEntry(proxyURL, accountID, accountConcurrency, service.HTTPUpstreamProfileDefault, false, false, "")
 }
 
 // getClientEntry 获取或创建客户端条目
 // markInFlight=true 时会标记进行中请求，用于请求路径防止被淘汰
 // enforceLimit=true 时会限制客户端数量，超限且无法淘汰时返回错误
-func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile, markInFlight bool, enforceLimit bool) (*upstreamClientEntry, error) {
+func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile, markInFlight bool, enforceLimit bool, destHost string) (*upstreamClientEntry, error) {
 	// 获取隔离模式
 	isolation := s.getIsolationMode()
 	// 标准化代理 URL 并解析
@@ -669,7 +673,7 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 		return nil, err
 	}
 	// 根据请求 profile（例如 OpenAI）选择协议模式
-	protocolMode := s.resolveProtocolMode(profile, proxyKey, parsedProxy)
+	protocolMode := s.resolveProtocolMode(profile, proxyKey, parsedProxy, destHost)
 	settings := s.resolvePoolSettings(isolation, accountConcurrency)
 	settings = s.applyProfilePoolSettings(settings, profile)
 	// 构建缓存键（根据隔离策略不同）
@@ -1012,7 +1016,22 @@ func (s *httpUpstreamService) resolveOpenAIHTTP2Settings() openAIHTTP2Settings {
 	return settings
 }
 
-func (s *httpUpstreamService) resolveProtocolMode(profile service.HTTPUpstreamProfile, proxyKey string, parsedProxy *url.URL) string {
+func isOfficialOpenAIUpstreamHost(host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	if h == "" {
+		return false
+	}
+	if i := strings.IndexByte(h, ':'); i >= 0 {
+		h = h[:i]
+	}
+	h = strings.TrimSuffix(h, ".")
+	return h == "api.openai.com" ||
+		h == "chatgpt.com" ||
+		strings.HasSuffix(h, ".openai.com") ||
+		strings.HasSuffix(h, ".chatgpt.com")
+}
+
+func (s *httpUpstreamService) resolveProtocolMode(profile service.HTTPUpstreamProfile, proxyKey string, parsedProxy *url.URL, destHost string) string {
 	if profile == service.HTTPUpstreamProfileLongStream {
 		return upstreamProtocolModeLongStreamH2
 	}
@@ -1026,6 +1045,12 @@ func (s *httpUpstreamService) resolveProtocolMode(profile service.HTTPUpstreamPr
 	}
 	if profile != service.HTTPUpstreamProfileOpenAI {
 		return upstreamProtocolModeDefault
+	}
+	// Third-party OpenAI-compatible hosts (lukyface etc.) often stall before the
+	// first HEADERS frame and mishandle HTTP/2 PING. Force HTTP/1.1 so a slow
+	// first byte is not aborted as "timeout awaiting response headers".
+	if destHost != "" && !isOfficialOpenAIUpstreamHost(destHost) {
+		return upstreamProtocolModeOpenAIH1
 	}
 	settings := s.resolveOpenAIHTTP2Settings()
 	if !settings.enabled {
@@ -1346,11 +1371,19 @@ func buildUpstreamTransport(settings poolSettings, proxyURL *url.URL, protocolMo
 		ResponseHeaderTimeout: settings.responseHeaderTimeout,
 	}
 	switch protocolMode {
-	case upstreamProtocolModeLongStreamH2, upstreamProtocolModeOpenAIH2:
+	case upstreamProtocolModeLongStreamH2:
 		transport.ForceAttemptHTTP2 = true
 		// 显式配置 http2 并启用 PING 健康探测，剔除代理/NAT 静默掐断的死连接，
 		// 避免请求挂在死连接上直到 TCP 重传超时（分钟级）。
 		if _, err := enableHTTP2KeepAlive(transport); err != nil {
+			return nil, err
+		}
+	case upstreamProtocolModeOpenAIH2:
+		transport.ForceAttemptHTTP2 = true
+		// Official OpenAI HTTP/2: do not idle-PING while waiting for the first
+		// Responses HEADERS frame. A 10s ReadIdleTimeout is what produced
+		// "http2: timeout awaiting response headers" on slow first-byte hops.
+		if _, err := configureHTTP2(transport); err != nil {
 			return nil, err
 		}
 	case upstreamProtocolModeOpenAIH1:
@@ -1371,8 +1404,12 @@ func buildUpstreamTransport(settings poolSettings, proxyURL *url.URL, protocolMo
 // Go 默认惰性配置 http2 且 ReadIdleTimeout=0（不发健康 PING），无法检测被代理/NAT
 // 静默掐断的死连接。此处主动设置 ReadIdleTimeout/PingTimeout，让死连接被提前 PING
 // 出并关闭，请求得以重建连接而非挂到 TCP 重传超时。返回底层 *http2.Transport 便于测试。
+func configureHTTP2(transport *http.Transport) (*http2.Transport, error) {
+	return http2.ConfigureTransports(transport)
+}
+
 func enableHTTP2KeepAlive(transport *http.Transport) (*http2.Transport, error) {
-	h2, err := http2.ConfigureTransports(transport)
+	h2, err := configureHTTP2(transport)
 	if err != nil {
 		return nil, err
 	}
