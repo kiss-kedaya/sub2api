@@ -1164,6 +1164,9 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		if shouldSkipOpsErrorLog(c.Request.Context(), ops, parsed.Message, string(body), c.Request.URL.Path) {
 			return
 		}
+		if shouldSkipHighChurnOpsError(normalizeOpsErrorType(parsed.ErrorType, parsed.Code), status, parsed.Message) {
+			return
+		}
 
 		apiKey := getOpsAPIKey(c)
 
@@ -1360,6 +1363,9 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *service.OpsService, finalStatu
 		entry.ErrorMessage += ": " + strings.TrimSpace(*entry.UpstreamErrorMessage)
 	}
 	entry.ErrorMessage = truncateString(entry.ErrorMessage, 2048)
+	if shouldSkipHighChurnOpsRecovered(entry) {
+		return
+	}
 
 	if c.Request != nil {
 		entry.UserAgent = c.GetHeader("User-Agent")
@@ -2485,6 +2491,30 @@ func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message
 		}
 	}
 
+	return false
+}
+
+func shouldSkipHighChurnOpsError(errType string, status int, message string) bool {
+	msg := strings.ToLower(strings.TrimSpace(message))
+	if status == http.StatusTooManyRequests || errType == "rate_limit_error" {
+		if strings.Contains(msg, "too many rate-limited requests from this key") {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldSkipHighChurnOpsRecovered(entry *service.OpsInsertErrorLogInput) bool {
+	if entry == nil {
+		return false
+	}
+	if strings.Contains(strings.ToLower(entry.ErrorMessage), "timeout awaiting response headers") {
+		return true
+	}
+	if entry.UpstreamErrorMessage != nil &&
+		strings.Contains(strings.ToLower(*entry.UpstreamErrorMessage), "timeout awaiting response headers") {
+		return true
+	}
 	return false
 }
 
