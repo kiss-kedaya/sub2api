@@ -676,6 +676,12 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		}
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 	}
+	if resp.StatusCode == http.StatusUnprocessableEntity && account.Type == AccountTypeAPIKey && !isOpenAIDeterministicClientFailure(resp.StatusCode, upstreamMsg, body) {
+		c.JSON(http.StatusBadGateway, gin.H{"type": "error", "error": gin.H{
+			"type": "upstream_error", "message": "Upstream request failed",
+		}})
+		return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
+	}
 
 	// Check custom error codes
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {

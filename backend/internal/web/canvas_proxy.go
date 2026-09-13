@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -28,12 +29,13 @@ func InfiniteCanvasHandler() gin.HandlerFunc {
 	}
 	upstream := strings.TrimSpace(os.Getenv("INFINITE_CANVAS_UPSTREAM"))
 	var proxy *httputil.ReverseProxy
-	if parsed, err := url.Parse(upstream); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+	if parsed, err := parseCanvasUpstream(upstream); err != nil {
+		fmt.Fprintf(os.Stderr, "infinite canvas upstream disabled: %v\n", err)
+	} else {
 		proxy = httputil.NewSingleHostReverseProxy(parsed)
-		original := proxy.Director
-		proxy.Director = func(req *http.Request) {
-			original(req)
-			req.Host = parsed.Host
+		proxy.Rewrite = func(req *httputil.ProxyRequest) {
+			req.SetURL(parsed)
+			req.Out.Host = parsed.Host
 		}
 	}
 
@@ -66,11 +68,36 @@ func isInfiniteCanvasPath(pathName string) bool {
 	return pathName == infiniteCanvasPathPrefix || strings.HasPrefix(pathName, infiniteCanvasPathPrefix+"/")
 }
 
+func parseCanvasUpstream(raw string) (*url.URL, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("empty upstream")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported scheme %q", parsed.Scheme)
+	}
+	if parsed.Host == "" || parsed.User != nil {
+		return nil, fmt.Errorf("invalid upstream host")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("upstream must not contain query or fragment")
+	}
+	return parsed, nil
+}
+
 func serveInfiniteCanvasFile(c *gin.Context, staticDir string, fileServer http.Handler) bool {
 	if staticDir == "" {
 		return false
 	}
-	info, err := os.Stat(staticDir)
+	staticRoot, err := filepath.Abs(staticDir)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(staticRoot)
 	if err != nil || !info.IsDir() {
 		return false
 	}
@@ -80,13 +107,17 @@ func serveInfiniteCanvasFile(c *gin.Context, staticDir string, fileServer http.H
 		rel = "index.html"
 	}
 	clean := path.Clean("/" + rel)
-	full := filepath.Join(staticDir, filepath.FromSlash(strings.TrimPrefix(clean, "/")))
+	full := filepath.Join(staticRoot, filepath.FromSlash(strings.TrimPrefix(clean, "/")))
+	relative, err := filepath.Rel(staticRoot, full)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return false
+	}
 	if st, err := os.Stat(full); err == nil && !st.IsDir() {
 		fileServer.ServeHTTP(c.Writer, c.Request)
 		c.Abort()
 		return true
 	}
-	index := filepath.Join(staticDir, "index.html")
+	index := filepath.Join(staticRoot, "index.html")
 	if _, err := os.Stat(index); err != nil {
 		return false
 	}
