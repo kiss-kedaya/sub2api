@@ -410,6 +410,13 @@ func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Con
 	if !account.IsOpenAICompatible() || account.Platform != platform {
 		return "platform_mismatch"
 	}
+	// A model mismatch is a permanent capability property. Check it before
+	// cooldown/schedulability state so diagnostics report why the account can
+	// never serve this request instead of misclassifying it as a transient
+	// model cooldown.
+	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
+		return "model_not_supported"
+	}
 	if !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 		if account.IsSchedulable() {
 			return openAIModelCooldownSelectionFailureReason(ctx, account, requestedModel)
@@ -445,9 +452,6 @@ func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Con
 			}
 			return "quota_auto_pause"
 		}
-	}
-	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
-		return "model_not_supported"
 	}
 	if !account.SupportsOpenAIEndpointCapability(requiredCapability) {
 		if account.IsGrok() && requiredCapability == OpenAIEndpointCapabilityGrokMediaGeneration {
@@ -918,11 +922,6 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
-	accounts, unsupported := filterAccountsSupportingRequestedModel(accounts, requestedModel)
-	if len(accounts) == 0 {
-		return nil, noAvailableAccountsDueToModelSupport(requestedModel, unsupported)
-	}
-
 	// 3. 按优先级 + LRU 选择最佳账号
 	// Select by priority + LRU
 	selected, compactBlocked, filterStats := s.selectBestAccount(ctx, groupID, platform, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, preferLowUpstreamRate)
@@ -1307,7 +1306,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		return a
 	}
 	baseCandidateCount := 0
-	filterStats := openAISelectionFilterStats{pool: len(accounts)}
+	filterStats := openAISelectionFilterStats{pool: len(accounts) + unsupported}
+	if unsupported > 0 {
+		filterStats.exclude("model_not_supported")
+		filterStats.reasons["model_not_supported"] = unsupported
+	}
 	candidates := make([]*Account, 0, len(accounts))
 	for i := range accounts {
 		acc := &accounts[i]

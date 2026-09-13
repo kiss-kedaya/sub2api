@@ -118,7 +118,11 @@ func PoolModeSameAccountRetry(account *Account, statusCode int, headers http.Hea
 	if account == nil || !account.IsPoolMode() || !account.IsPoolModeRetryableStatus(statusCode) {
 		return false
 	}
-	return ClassifyUpstreamFailure(statusCode, headers, body, nil).SameAccountRetry
+	class := ClassifyUpstreamFailure(statusCode, headers, body, nil)
+	if class.Kind == UpstreamFailureAuth {
+		return true
+	}
+	return class.SameAccountRetry
 }
 
 func isCompat400Body(body []byte) bool {

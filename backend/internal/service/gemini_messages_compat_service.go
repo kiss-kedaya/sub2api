@@ -1946,6 +1946,13 @@ func (s *GeminiMessagesCompatService) writeGeminiMappedError(c *gin.Context, acc
 		}
 		return fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", upstreamStatus, upstreamMsg)
 	}
+	if upstreamStatus == http.StatusUnprocessableEntity && !isOpenAIDeterministicClientErrorMessage("", body) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"type":  "error",
+			"error": gin.H{"type": "invalid_request_error", "message": "Upstream request failed"},
+		})
+		return fmt.Errorf("upstream error: %d", upstreamStatus)
+	}
 
 	var statusCode int
 	var errType, errMsg string

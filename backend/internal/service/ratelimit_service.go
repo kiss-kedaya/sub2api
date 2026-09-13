@@ -1018,9 +1018,9 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 	// shouldApplyOpenAIAlphaSearchAccountErrorSideEffects 的不变式也是端点级错误
 	// 只换号、不写账号错误状态。这里只跳过账号处罚，不改变 failover 行为——
 	// 换个走不同代理的账号仍有可能成功。
-	if isHTMLResponse(responseBody) {
+	if isHTMLResponse(responseBody) || IsUpstreamWAFBody(responseBody) || IsUpstreamCapacityCoolingBody(responseBody) {
 		slog.Warn(
-			"openai_403_html_body_skips_account_penalty",
+			"openai_403_request_scoped_body_skips_account_penalty",
 			"account_id", account.ID,
 			"upstream_message", upstreamMsg,
 		)
@@ -2118,7 +2118,7 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 		}
 	}
 
-	if hasRecoverableRuntimeState(account) {
+	if hasRecoverableRuntimeState(account) && !hasActiveCodexQuotaOverdraftPause(account, time.Now().UTC()) {
 		if err := s.ClearRateLimit(ctx, accountID); err != nil {
 			return nil, err
 		}
@@ -2132,6 +2132,22 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 	}
 
 	return result, nil
+}
+
+func hasActiveCodexQuotaOverdraftPause(account *Account, now time.Time) bool {
+	if account == nil || !isCodexQuotaOverdraftAccount(account) {
+		return false
+	}
+	state, ok := codexQuotaOverdraftStateFromAccount(account)
+	if !ok || state == nil || state.RecoverAt == nil || !state.RecoverAt.After(now) {
+		return false
+	}
+	switch state.Status {
+	case codexQuotaOverdraftProbeFailed, codexQuotaOverdraftProbeInconclusive:
+		return true
+	default:
+		return false
+	}
 }
 
 // RecoverAccountAfterSuccessfulTest 将一次成功测试视为正常请求，
