@@ -50,6 +50,10 @@ func (r *transactionalBulkSubscriptionRepo) GetByID(ctx context.Context, _ int64
 	return &copy, nil
 }
 
+func (r *transactionalBulkSubscriptionRepo) GetByIDForUpdate(ctx context.Context, id int64) (*UserSubscription, error) {
+	return r.GetByID(ctx, id)
+}
+
 func (r *transactionalBulkSubscriptionRepo) ExtendExpiry(ctx context.Context, _ int64, expiry time.Time) error {
 	r.pending[dbent.TxFromContext(ctx)].ExpiresAt = expiry
 	return nil

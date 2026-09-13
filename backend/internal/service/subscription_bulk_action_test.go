@@ -38,6 +38,10 @@ func (r *bulkActionSubscriptionRepo) GetByID(ctx context.Context, id int64) (*Us
 	return sub, nil
 }
 
+func (r *bulkActionSubscriptionRepo) GetByIDForUpdate(ctx context.Context, id int64) (*UserSubscription, error) {
+	return r.GetByID(ctx, id)
+}
+
 func (r *bulkActionSubscriptionRepo) mutated(id int64) {
 	r.mutations = append(r.mutations, id)
 	if r.afterMutation != nil {

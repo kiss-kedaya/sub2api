@@ -63,6 +63,10 @@ func (r *bulkActionHandlerSubscriptionRepo) GetByID(_ context.Context, id int64)
 	return &copy, nil
 }
 
+func (r *bulkActionHandlerSubscriptionRepo) GetByIDForUpdate(ctx context.Context, id int64) (*service.UserSubscription, error) {
+	return r.GetByID(ctx, id)
+}
+
 func (r *bulkActionHandlerSubscriptionRepo) ExtendExpiry(_ context.Context, _ int64, expiry time.Time) error {
 	r.extendCalls++
 	r.sub.ExpiresAt = expiry
