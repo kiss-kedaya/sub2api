@@ -350,18 +350,18 @@ var (
 	grokVideoAccountsByID  sync.Map
 )
 
-func grokVideoLocalBindingKey(userID, apiKeyID int64, requestID string) string {
-	return fmt.Sprintf("%d:%d:%s", userID, apiKeyID, strings.TrimSpace(requestID))
+func grokVideoLocalBindingKey(groupID, userID, apiKeyID int64, requestID string) string {
+	return fmt.Sprintf("%d:%d:%d:%s", groupID, userID, apiKeyID, strings.TrimSpace(requestID))
 }
 
-func rememberGrokVideoAccount(userID, apiKeyID int64, requestID string, account *Account, ttl time.Duration) {
+func rememberGrokVideoAccount(groupID, userID, apiKeyID int64, requestID string, account *Account, ttl time.Duration) {
 	if account == nil || account.ID <= 0 || userID <= 0 || apiKeyID <= 0 || strings.TrimSpace(requestID) == "" {
 		return
 	}
 	if ttl <= 0 {
 		ttl = 24 * time.Hour
 	}
-	grokVideoLocalBindings.Store(grokVideoLocalBindingKey(userID, apiKeyID, requestID), grokVideoLocalBinding{
+	grokVideoLocalBindings.Store(grokVideoLocalBindingKey(groupID, userID, apiKeyID, requestID), grokVideoLocalBinding{
 		AccountID: account.ID,
 		Account:   account,
 		ExpiresAt: time.Now().Add(ttl),
@@ -369,14 +369,15 @@ func rememberGrokVideoAccount(userID, apiKeyID int64, requestID string, account 
 	grokVideoAccountsByID.Store(account.ID, account)
 }
 
-func recallGrokVideoAccountID(userID, apiKeyID int64, requestID string) int64 {
-	raw, ok := grokVideoLocalBindings.Load(grokVideoLocalBindingKey(userID, apiKeyID, requestID))
+func recallGrokVideoAccountID(groupID, userID, apiKeyID int64, requestID string) int64 {
+	key := grokVideoLocalBindingKey(groupID, userID, apiKeyID, requestID)
+	raw, ok := grokVideoLocalBindings.Load(key)
 	if !ok {
 		return 0
 	}
 	entry, ok := raw.(grokVideoLocalBinding)
 	if !ok || time.Now().After(entry.ExpiresAt) || entry.AccountID <= 0 {
-		grokVideoLocalBindings.Delete(grokVideoLocalBindingKey(userID, apiKeyID, requestID))
+		grokVideoLocalBindings.Delete(key)
 		return 0
 	}
 	return entry.AccountID
@@ -425,7 +426,7 @@ func (s *OpenAIGatewayService) BindGrokMediaVideoRequestAccount(
 		}
 	}
 	if account := recallGrokVideoAccountByID(accountID); account != nil {
-		rememberGrokVideoAccount(userID, apiKeyID, requestID, account, ttl)
+		rememberGrokVideoAccount(derefGroupID(groupID), userID, apiKeyID, requestID, account, ttl)
 	}
 	if s == nil || s.cache == nil {
 		return nil
@@ -449,7 +450,7 @@ func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
 	requestID string,
 	userID, apiKeyID int64,
 ) (int64, error) {
-	if id := recallGrokVideoAccountID(userID, apiKeyID, requestID); id > 0 {
+	if id := recallGrokVideoAccountID(derefGroupID(groupID), userID, apiKeyID, requestID); id > 0 {
 		return id, nil
 	}
 	if s == nil || s.cache == nil {
@@ -463,7 +464,7 @@ func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
 	if id > 0 {
 		return id, err
 	}
-	return s.cache.GetSessionAccountID(ctx, 0, cacheKey)
+	return 0, err
 }
 
 func (s *OpenAIGatewayService) GetGrokMediaBoundAccount(ctx context.Context, accountID int64) (*Account, error) {
@@ -473,12 +474,22 @@ func (s *OpenAIGatewayService) GetGrokMediaBoundAccount(ctx context.Context, acc
 	if account := recallGrokVideoAccountByID(accountID); account != nil {
 		return account, nil
 	}
-	if s == nil || s.schedulerSnapshot == nil {
-		return nil, fmt.Errorf("account snapshot is unavailable")
+	if s == nil {
+		return nil, fmt.Errorf("account repository is unavailable")
 	}
-	account, err := s.schedulerSnapshot.GetAccount(ctx, accountID)
-	if err != nil {
-		return nil, err
+	var account *Account
+	var err error
+	if s.schedulerSnapshot != nil {
+		account, err = s.schedulerSnapshot.GetAccount(ctx, accountID)
+		if err != nil && s.accountRepo == nil {
+			return nil, err
+		}
+	}
+	if account == nil && s.accountRepo != nil {
+		account, err = s.accountRepo.GetByID(ctx, accountID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if account == nil || account.Platform != PlatformGrok {
 		return nil, fmt.Errorf("bound grok media account is unavailable")
@@ -938,10 +949,9 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		(endpoint == GrokMediaEndpointVideosGenerations || endpoint == GrokMediaEndpointVideosEdits || endpoint == GrokMediaEndpointVideosExtensions) {
 		if owner, ok := grokVideoBindOwnerFrom(ctx); ok {
 			ttl := grokVideoPendingBillingTTL(s.cfg)
-			rememberGrokVideoAccount(owner.UserID, owner.APIKeyID, bindID, account, ttl)
-			if err := s.BindGrokMediaVideoRequestAccount(ctx, owner.GroupID, bindID, owner.UserID, owner.APIKeyID, account.ID); err != nil {
-				// Memory bind already recorded; redis miss must not delay the create response.
-			}
+			rememberGrokVideoAccount(derefGroupID(owner.GroupID), owner.UserID, owner.APIKeyID, bindID, account, ttl)
+			// Memory bind already recorded; redis miss must not delay the create response.
+			_ = s.BindGrokMediaVideoRequestAccount(ctx, owner.GroupID, bindID, owner.UserID, owner.APIKeyID, account.ID)
 		}
 	}
 	respBody = adaptGrokVideoClientResponse(endpoint, requestID, respBody)

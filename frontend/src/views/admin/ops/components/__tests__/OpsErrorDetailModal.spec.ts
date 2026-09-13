@@ -4,13 +4,14 @@ import OpsErrorDetailModal from '../OpsErrorDetailModal.vue'
 
 const mocks = vi.hoisted(() => ({
   getRequestErrorDetail: vi.fn(),
+  getUpstreamErrorDetail: vi.fn(),
   listRequestErrorUpstreamErrors: vi.fn()
 }))
 
 vi.mock('@/api/admin/ops', () => ({
   opsAPI: {
     getRequestErrorDetail: mocks.getRequestErrorDetail,
-    getUpstreamErrorDetail: vi.fn(),
+    getUpstreamErrorDetail: mocks.getUpstreamErrorDetail,
     listRequestErrorUpstreamErrors: mocks.listRequestErrorUpstreamErrors
   }
 }))
@@ -30,6 +31,7 @@ vi.mock('vue-i18n', async (importOriginal) => {
 describe('OpsErrorDetailModal', () => {
   beforeEach(() => {
     mocks.getRequestErrorDetail.mockReset()
+    mocks.getUpstreamErrorDetail.mockReset()
     mocks.listRequestErrorUpstreamErrors.mockReset()
     mocks.listRequestErrorUpstreamErrors.mockResolvedValue({ items: [] })
   })
@@ -78,7 +80,7 @@ describe('OpsErrorDetailModal', () => {
   })
 
   it('shows a WAF chip for Cloudflare 1010 bodies', async () => {
-    mocks.getRequestErrorDetail.mockResolvedValue({
+    mocks.getUpstreamErrorDetail.mockResolvedValue({
       id: 2,
       created_at: '2026-09-09T00:00:00Z',
       phase: 'upstream',

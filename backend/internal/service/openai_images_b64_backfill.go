@@ -108,9 +108,30 @@ func (s *OpenAIGatewayService) backfillOpenAIImagesB64JSON(
 			body = updated
 			continue
 		}
+		if strings.TrimSpace(gjson.GetBytes(cleared, fmt.Sprintf("data.%d.url", index)).String()) != "" {
+			if nulled, setErr := sjson.SetBytes(cleared, fmt.Sprintf("data.%d.url", index), nil); setErr == nil {
+				cleared = nulled
+			}
+		}
 		body = cleared
 	}
 	return body
+}
+
+func restoreOpenAIImagesResponseURLs(original, updated []byte) []byte {
+	if !gjson.ValidBytes(original) || !gjson.ValidBytes(updated) {
+		return updated
+	}
+	for index, item := range gjson.GetBytes(original, "data").Array() {
+		rawURL := strings.TrimSpace(item.Get("url").String())
+		if rawURL == "" || strings.TrimSpace(gjson.GetBytes(updated, fmt.Sprintf("data.%d.b64_json", index)).String()) == "" {
+			continue
+		}
+		if restored, err := sjson.SetBytes(updated, fmt.Sprintf("data.%d.url", index), rawURL); err == nil {
+			updated = restored
+		}
+	}
+	return updated
 }
 
 // fetchOpenAIImageURLBase64 取得图片 url 内容的标准 base64 编码。

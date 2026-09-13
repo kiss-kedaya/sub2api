@@ -1,6 +1,10 @@
 package service
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+)
 
 // accountsSupportingRequestedModel keeps mapped accounts that actually serve
 // the model. Empty-mapping accounts are used only when no mapped sibling in
@@ -19,13 +23,20 @@ func accountsSupportingRequestedModel(accounts []Account, requestedModel string)
 	unmapped := make([]Account, 0)
 	for _, account := range accounts {
 		mapping := account.GetModelMapping()
+		supported := account.IsModelSupported(requestedModel)
+		if !supported {
+			normalized := normalizeRequestedModelForAccountLookup(account, requestedModel)
+			if normalized != requestedModel {
+				supported = account.IsModelSupported(normalized)
+			}
+		}
 		if len(mapping) == 0 {
-			if account.IsModelSupported(requestedModel) {
+			if supported {
 				unmapped = append(unmapped, account)
 			}
 			continue
 		}
-		if account.IsModelSupported(requestedModel) {
+		if supported {
 			matched = append(matched, account)
 		}
 	}
@@ -35,16 +46,36 @@ func accountsSupportingRequestedModel(accounts []Account, requestedModel string)
 	return unmapped
 }
 
+func normalizeRequestedModelForAccountLookup(account Account, requestedModel string) string {
+	if account.Platform != PlatformAnthropic || account.Type == AccountTypeAPIKey {
+		return requestedModel
+	}
+	normalized := claude.NormalizeModelID(requestedModel)
+	if account.Type == AccountTypeServiceAccount {
+		return normalizeVertexAnthropicModelID(normalized)
+	}
+	return normalized
+}
+
 // filterAccountsSupportingRequestedModel reports how many accounts were dropped
 // solely because they cannot serve the requested model. Callers use that count
 // to emit model_not_supported=N instead of pool=0, so handlers can return 404
 // instead of a retryable 503.
 func filterAccountsSupportingRequestedModel(accounts []Account, requestedModel string) (filtered []Account, unsupported int) {
 	filtered = accountsSupportingRequestedModel(accounts, requestedModel)
-	if len(accounts) == 0 || len(filtered) > 0 || strings.TrimSpace(requestedModel) == "" {
+	if len(accounts) == 0 || strings.TrimSpace(requestedModel) == "" {
 		return filtered, 0
 	}
-	return filtered, len(accounts)
+	supported := make(map[int64]struct{}, len(filtered))
+	for i := range filtered {
+		supported[filtered[i].ID] = struct{}{}
+	}
+	for i := range accounts {
+		if _, ok := supported[accounts[i].ID]; !ok {
+			unsupported++
+		}
+	}
+	return filtered, unsupported
 }
 
 func noAvailableAccountsDueToModelSupport(requestedModel string, unsupportedCount int) error {

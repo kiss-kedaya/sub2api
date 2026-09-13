@@ -1574,7 +1574,10 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		}
 	}
 
-	filterStats := openAISelectionFilterStats{pool: len(accounts)}
+	filterStats := openAISelectionFilterStats{pool: len(accounts) + unsupported}
+	if unsupported > 0 {
+		filterStats.reasons = map[string]int{"model_not_supported": unsupported}
+	}
 	filtered := make([]*Account, 0, len(accounts))
 	loadReq := make([]AccountWithConcurrency, 0, len(accounts))
 	for i := range accounts {

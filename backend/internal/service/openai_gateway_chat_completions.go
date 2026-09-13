@@ -59,6 +59,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	ctx = context.WithoutCancel(ctx)
 	beginUpstreamResponseModelObservation(c)
 	setCodexToolNameReverse(c, nil)
 	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
@@ -156,8 +157,14 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
 	compatPromptCacheInjected := false
-	if promptCacheKey == "" && account.UsesOpenAICodexProtocol() && shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
+	if promptCacheKey == "" && !isResponsesShape &&
+		(account.UsesOpenAICodexProtocol() ||
+			(account.Type == AccountTypeAPIKey && openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportYes)) &&
+		shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
 		promptCacheKey = deriveCompatPromptCacheKey(&chatReq, upstreamModel)
+		if apiKeyID := getAPIKeyIDFromContext(c); apiKeyID != 0 && promptCacheKey != "" && account.Type == AccountTypeAPIKey {
+			promptCacheKey = "compat_cc_" + hashSensitiveValueForLog(fmt.Sprintf("%d|%s", apiKeyID, promptCacheKey))
+		}
 		compatPromptCacheInjected = promptCacheKey != ""
 	}
 
@@ -303,22 +310,26 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	responsesBody = updatedBody
 
 	// 5. Get access token
-	token, _, err := s.GetAccessToken(ctx, account)
+	token, _, err := s.GetAccessToken(context.WithoutCancel(ctx), account)
 	if err != nil {
 		return nil, fmt.Errorf("get access token: %w", err)
 	}
 
 	// 6. Build upstream request
-	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	upstreamCtx, releaseUpstreamCtx := context.WithCancel(context.WithoutCancel(ctx))
 	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, promptCacheKey, false)
-	releaseUpstreamCtx()
 	if err != nil {
+		releaseUpstreamCtx()
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
 	if promptCacheKey != "" {
 		apiKeyID := getAPIKeyIDFromContext(c)
-		upstreamReq.Header.Set("session_id", generateSessionUUID(isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey)))
+		sessionSeed := isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey)
+		if compatPromptCacheInjected && account.Type == AccountTypeAPIKey {
+			sessionSeed = promptCacheKey
+		}
+		upstreamReq.Header.Set("session_id", generateSessionUUID(sessionSeed))
 	}
 
 	// 7. Send request
@@ -328,9 +339,15 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
+		releaseUpstreamCtx()
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if clientStream {
+			releaseUpstreamCtx()
+		}
+		_ = resp.Body.Close()
+	}()
 
 	// 8. Handle error response with failover
 	if resp.StatusCode >= 400 {

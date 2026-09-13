@@ -352,7 +352,7 @@ func openAIForwardResultAsGateway(result *service.OpenAIForwardResult) *service.
 		return nil
 	}
 	return &service.ForwardResult{
-		RequestID:                     result.RequestID,
+		RequestID: result.RequestID,
 		Usage: service.ClaudeUsage{
 			InputTokens:              result.Usage.InputTokens,
 			OutputTokens:             result.Usage.OutputTokens,

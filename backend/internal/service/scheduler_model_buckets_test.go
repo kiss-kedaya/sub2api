@@ -28,3 +28,20 @@ func TestAccountsSupportingRequestedModel_EmptyMappingFallbackWhenNobodyMapped(t
 	require.Len(t, got, 1)
 	require.Equal(t, int64(1), got[0].ID)
 }
+
+func TestAccountsSupportingRequestedModel_NormalizesAnthropicOAuthModelID(t *testing.T) {
+	account := Account{
+		ID:       1,
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"claude-sonnet-4-5-20250929": "claude-sonnet-4-5-20250929",
+			},
+		},
+	}
+
+	got := accountsSupportingRequestedModel([]Account{account}, "claude-sonnet-4-5")
+	require.Len(t, got, 1)
+	require.Equal(t, int64(1), got[0].ID)
+}
