@@ -31,6 +31,16 @@ func TestAllowOpenAICompatibleMessagesDispatch_CNProvidersExempt(t *testing.T) {
 	require.True(t, allowOpenAICompatibleMessagesDispatch(nil, openaiOn))
 }
 
+func TestAllowOpenAICompatibleMessagesDispatch_OpenAIGroupResolvedGrok(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+	c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), service.PlatformGrok))
+	apiKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI, AllowMessagesDispatch: false}}
+	require.True(t, allowOpenAICompatibleMessagesDispatch(c, apiKey),
+		"Claude Code 打 grok-* 时，OpenAI 平台的 Grok 分组不能再 403")
+}
+
 func TestAllowOpenAICompatibleMessagesDispatch_CompositeResolvedTargets(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
