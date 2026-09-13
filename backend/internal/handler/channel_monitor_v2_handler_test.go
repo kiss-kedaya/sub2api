@@ -67,7 +67,7 @@ func TestChannelMonitorV2ScopeFailsClosedForOrdinaryViewerWithoutAuthorizationDe
 	filter := service.ChannelMonitorV2Filter{}
 	h := NewChannelMonitorV2Handler(nil, nil)
 	require.False(t, h.scopeFilter(c, &filter, false))
-	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
 	require.False(t, filter.RestrictGroups)
 }
 

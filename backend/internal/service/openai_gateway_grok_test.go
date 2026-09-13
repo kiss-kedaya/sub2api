@@ -1988,9 +1988,10 @@ func TestForwardGrokMediaVideoMutationEndpoints(t *testing.T) {
 func TestGrokVideoLocalBindingRoundTrip(t *testing.T) {
 	t.Parallel()
 	account := &Account{ID: 29155, Platform: PlatformGrok, Type: AccountTypeAPIKey}
-	rememberGrokVideoAccount(41, 51, "req-local-1", account, time.Hour)
-	require.Equal(t, int64(29155), recallGrokVideoAccountID(41, 51, "req-local-1"))
-	require.Zero(t, recallGrokVideoAccountID(41, 52, "req-local-1"))
+	rememberGrokVideoAccount(24, 41, 51, "req-local-1", account, time.Hour)
+	require.Equal(t, int64(29155), recallGrokVideoAccountID(24, 41, 51, "req-local-1"))
+	require.Zero(t, recallGrokVideoAccountID(25, 41, 51, "req-local-1"))
+	require.Zero(t, recallGrokVideoAccountID(24, 41, 52, "req-local-1"))
 	got := recallGrokVideoAccountByID(29155)
 	require.NotNil(t, got)
 	require.Equal(t, int64(29155), got.ID)

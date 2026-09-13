@@ -134,4 +134,3 @@ func TestNormalizeCodexAutomationBootstrapRejectsUnsafeEnvelope(t *testing.T) {
 	require.False(t, changed)
 	require.Equal(t, withCallID, got)
 }
-

@@ -41,6 +41,10 @@ func (r openAIImagesFailoverAccountRepo) ListSchedulableByGroupIDAndPlatform(_ c
 	return r.accountsForPlatform(platform), nil
 }
 
+func (r openAIImagesFailoverAccountRepo) ListSchedulableByGroupID(_ context.Context, _ int64) ([]service.Account, error) {
+	return append([]service.Account(nil), r.accounts...), nil
+}
+
 func (r openAIImagesFailoverAccountRepo) ListSchedulableByPlatform(_ context.Context, platform string) ([]service.Account, error) {
 	return r.accountsForPlatform(platform), nil
 }
