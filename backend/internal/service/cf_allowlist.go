@@ -246,7 +246,7 @@ func (s *CFAllowlistService) findExistingRuleID(ctx context.Context, ip string) 
 	if err != nil {
 		return "", infraerrors.ServiceUnavailable("CF_ALLOWLIST_UNAVAILABLE", "无法连接 Cloudflare")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	_ = json.Unmarshal(raw, &list)
 	if len(list.Result) == 0 || strings.TrimSpace(list.Result[0].ID) == "" {
@@ -277,7 +277,7 @@ func (s *CFAllowlistService) cfDo(ctx context.Context, method, path string, body
 	if err != nil {
 		return infraerrors.ServiceUnavailable("CF_ALLOWLIST_UNAVAILABLE", "无法连接 Cloudflare")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if out == nil {
 		out = &cfAPIEnvelope{}

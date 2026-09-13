@@ -191,7 +191,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 				AccountID: filters.AccountID, GroupID: filters.GroupID,
 				Model: filters.Model, RequestType: filters.RequestType,
 				Stream: filters.Stream, NativeCompactionV2: filters.NativeCompactionV2,
-				BillingType: filters.BillingType,
+				BillingType:           filters.BillingType,
 				UpstreamModelMismatch: filters.UpstreamModelMismatch,
 			},
 		)
