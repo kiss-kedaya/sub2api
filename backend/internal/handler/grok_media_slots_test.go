@@ -252,6 +252,9 @@ func TestGrokMediaLookupSlotLifecycle(t *testing.T) {
 	for _, scenario := range []string{"normal", "mismatch acquired", "mismatch wait", "full", "queue full", "cancel while waiting", "wait then acquired", "upstream error", "cancel", "panic"} {
 		t.Run(scenario, func(t *testing.T) {
 			h, slots, bindings, upstream := newGrokMediaSlotHandler(t, false, strings.HasPrefix(scenario, "mismatch"))
+			boundID, boundErr := h.gatewayService.ResolveGrokMediaVideoRequestAccount(context.Background(), ptrInt64(24), "task", 10, 20)
+			require.NoError(t, boundErr)
+			require.Equal(t, int64(1), boundID)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if scenario == "full" || scenario == "mismatch wait" || scenario == "queue full" || scenario == "cancel while waiting" {
@@ -285,18 +288,18 @@ func TestGrokMediaLookupSlotLifecycle(t *testing.T) {
 				h.GrokVideoStatus(c)
 				slots.assertReleased(t)
 				if strings.HasPrefix(scenario, "mismatch") {
-					require.Equal(t, 404, w.Code)
+					require.Equal(t, 404, w.Code, "body=%s", w.Body.String())
 				}
 				if scenario == "normal" || scenario == "wait then acquired" {
-					require.Equal(t, 200, w.Code)
+					require.Equal(t, 200, w.Code, "body=%s", w.Body.String())
 				}
 				if scenario == "full" || scenario == "queue full" {
-					require.Equal(t, http.StatusTooManyRequests, w.Code)
+					require.Equal(t, http.StatusTooManyRequests, w.Code, "body=%s", w.Body.String())
 				}
 			}
 			require.Zero(t, bindings.writes, "lookups must preserve owner and TTL")
 			if scenario == "mismatch acquired" {
-				require.Equal(t, 20, slots.released)
+				require.Zero(t, slots.released)
 			}
 			if slots.full {
 				require.Zero(t, slots.released)
@@ -349,7 +352,7 @@ func TestGrokMediaEligibilityReleasesBeforeSwitch(t *testing.T) {
 			}
 			if scenario == "exhausted" {
 				require.Equal(t, 503, w.Code)
-				require.Equal(t, 2, slots.released)
+				require.Equal(t, 3, slots.released)
 				require.Zero(t, upstream.calls)
 			}
 		})

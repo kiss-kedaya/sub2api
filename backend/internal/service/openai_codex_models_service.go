@@ -466,6 +466,9 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 			{Effort: "high", Description: configuredCodexReasoningLevelDescription("high")},
 			{Effort: "max", Description: configuredCodexReasoningLevelDescription("max")},
 		}
+		if strings.EqualFold(strings.TrimSpace(modelID), "deepseek-4-pro") {
+			descriptor.SupportedReasoningLevels = descriptor.SupportedReasoningLevels[1:]
+		}
 		descriptor.SupportsParallelToolCalls = true
 		descriptor.ContextWindow = configuredCodexDeepSeekV4Context
 		descriptor.MaxContextWindow = configuredCodexDeepSeekV4Context

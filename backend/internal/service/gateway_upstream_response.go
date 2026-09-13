@@ -442,6 +442,12 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		}
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, summary)
 	}
+	if resp.StatusCode == http.StatusUnprocessableEntity && !isOpenAIDeterministicClientErrorMessage("", body) {
+		c.JSON(http.StatusBadGateway, gin.H{"type": "error", "error": gin.H{
+			"type": "upstream_error", "message": "Upstream request failed",
+		}})
+		return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
+	}
 
 	// 根据状态码返回适当的自定义错误响应（不透传上游详细信息）
 	var errType, errMsg string
