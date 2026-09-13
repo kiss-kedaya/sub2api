@@ -36,7 +36,7 @@ ORDER BY id ASC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list cf allowlist: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make([]CFAllowlistRow, 0)
 	for rows.Next() {
 		var row CFAllowlistRow
