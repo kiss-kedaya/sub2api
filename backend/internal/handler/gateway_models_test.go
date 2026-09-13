@@ -128,7 +128,7 @@ func TestGatewayCodexModels_NonOpenAIGroupsUseMappedModels(t *testing.T) {
 			name:       "DeepSeek",
 			platform:   service.PlatformDeepseek,
 			model:      "deepseek-v4-pro",
-			efforts:    []string{"low", "high", "max"},
+			efforts:    []string{"none", "low", "high", "max"},
 			modalities: []string{"text"},
 		},
 		{

@@ -64,6 +64,10 @@ func extractClaudeCodeSessionIDFromPayload(body []byte) string {
 // internal probes and incomplete request contexts instead of creating a cache
 // identity that could be shared by unrelated tenants.
 func resolveGrokCacheIdentity(c *gin.Context, body []byte, explicitKey, upstreamModel string) string {
+	return resolveGrokCacheIdentityFromSources(c, body, body, explicitKey, upstreamModel)
+}
+
+func resolveGrokCacheIdentityFromSources(c *gin.Context, seedBody, derivedBody []byte, explicitKey, upstreamModel string) string {
 	apiKeyID := getAPIKeyIDFromContext(c)
 	if apiKeyID <= 0 {
 		return ""
@@ -80,14 +84,14 @@ func resolveGrokCacheIdentity(c *gin.Context, body []byte, explicitKey, upstream
 		return ""
 	}
 
-	seed := explicitGrokCacheSeed(c, body, explicitKey)
+	seed := explicitGrokCacheSeed(c, seedBody, explicitKey)
 	if seed == "" {
-		seed = deriveOpenAIStablePrefixSessionSeed(body)
+		seed = deriveOpenAIStablePrefixSessionSeed(derivedBody)
 		if seed == "" {
 			// A model alone is too broad for cache routing. Preserve the
 			// existing first-user-derived identity when no reusable prefix is
 			// available so unrelated prompts do not share one tenant-wide key.
-			seed = deriveOpenAIAnchoredContentSessionSeed(body)
+			seed = deriveOpenAIAnchoredContentSessionSeed(derivedBody)
 		}
 	}
 	if seed == "" {
