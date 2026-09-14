@@ -2057,6 +2057,136 @@ func TestOpenAIWSConnPool_CanceledWaiterReturnsDeliveredLease(t *testing.T) {
 	}
 }
 
+type openAIWSWaiterCancelGate struct {
+	done       chan struct{}
+	errEntered chan struct{}
+	allowErr   chan struct{}
+	once       sync.Once
+}
+
+func (c *openAIWSWaiterCancelGate) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c *openAIWSWaiterCancelGate) Done() <-chan struct{}       { return c.done }
+func (c *openAIWSWaiterCancelGate) Value(any) any               { return nil }
+func (c *openAIWSWaiterCancelGate) Err() error {
+	select {
+	case <-c.done:
+		c.once.Do(func() { close(c.errEntered) })
+		<-c.allowErr
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
+type openAIWSDoneCallContext struct {
+	context.Context
+	doneCalls atomic.Int32
+}
+
+func (c *openAIWSDoneCallContext) Done() <-chan struct{} {
+	c.doneCalls.Add(1)
+	return c.Context.Done()
+}
+
+func TestOpenAIWSConnPool_ForceNewConnWakesAfterCanceledWaiterDecrements(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		forcePreferred bool
+	}{
+		{name: "normal_queue"},
+		{name: "preferred_queue", forcePreferred: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+			cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+			cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
+
+			pool := newOpenAIWSConnPool(cfg)
+			t.Cleanup(pool.Close)
+			dialer := &openAIWSCountingDialer{}
+			pool.setClientDialerForTest(dialer)
+			account := &Account{ID: 126, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+			occupied, err := pool.Acquire(context.Background(), openAIWSAcquireRequest{
+				Account: account,
+				WSURL:   "wss://example.com/v1/responses",
+			})
+			require.NoError(t, err)
+			defer occupied.Release()
+
+			cancelGate := &openAIWSWaiterCancelGate{
+				done:       make(chan struct{}),
+				errEntered: make(chan struct{}),
+				allowErr:   make(chan struct{}),
+			}
+			var releaseGateOnce sync.Once
+			releaseGate := func() { releaseGateOnce.Do(func() { close(cancelGate.allowErr) }) }
+			defer releaseGate()
+			waiterResult := make(chan error, 1)
+			go func() {
+				_, acquireErr := pool.Acquire(cancelGate, openAIWSAcquireRequest{
+					Account:            account,
+					WSURL:              "wss://example.com/v1/responses",
+					PreferredConnID:    occupied.ConnID(),
+					ForcePreferredConn: tc.forcePreferred,
+				})
+				waiterResult <- acquireErr
+			}()
+			ap := pool.getOrCreateAccountPool(account.ID)
+			require.Eventually(t, func() bool {
+				ap.mu.Lock()
+				conn := ap.conns[occupied.ConnID()]
+				waiters := int32(0)
+				if conn != nil {
+					waiters = conn.waiters.Load()
+				}
+				ap.mu.Unlock()
+				return waiters == 1
+			}, time.Second, time.Millisecond)
+
+			forceBase, forceCancel := context.WithTimeout(context.Background(), time.Second)
+			defer forceCancel()
+			forceCtx := &openAIWSDoneCallContext{Context: forceBase}
+			forceResult := make(chan *openAIWSConnLease, 1)
+			forceErr := make(chan error, 1)
+			go func() {
+				lease, acquireErr := pool.Acquire(forceCtx, openAIWSAcquireRequest{
+					Account:      account,
+					WSURL:        "wss://example.com/v1/responses",
+					ForceNewConn: true,
+				})
+				forceResult <- lease
+				forceErr <- acquireErr
+			}()
+			require.Eventually(t, func() bool { return forceCtx.doneCalls.Load() >= 2 }, time.Second, time.Millisecond)
+
+			// Pause cancellation before the normal waiter's deferred decrement, then
+			// let the fresh acquire consume the release notification and wait again.
+			close(cancelGate.done)
+			select {
+			case <-cancelGate.errEntered:
+			case <-time.After(time.Second):
+				t.Fatal("normal waiter did not reach its cancellation return")
+			}
+			occupied.Release()
+			require.Eventually(t, func() bool { return forceCtx.doneCalls.Load() >= 4 }, time.Second, time.Millisecond)
+			releaseGate()
+			require.ErrorIs(t, <-waiterResult, context.Canceled)
+
+			select {
+			case lease := <-forceResult:
+				require.NoError(t, <-forceErr)
+				require.NotNil(t, lease)
+				require.False(t, lease.Reused())
+				lease.Release()
+			case <-time.After(time.Second):
+				t.Fatal("ForceNewConn waiter remained asleep after canceled waiter decremented")
+			}
+			require.Equal(t, 2, dialer.DialCount())
+		})
+	}
+}
+
 func TestOpenAIWSConnLease_MarkBrokenEvictsConn(t *testing.T) {
 	pool := newOpenAIWSConnPool(&config.Config{})
 	accountID := int64(5001)
