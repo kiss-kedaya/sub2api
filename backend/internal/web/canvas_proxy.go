@@ -34,7 +34,6 @@ func InfiniteCanvasHandler() gin.HandlerFunc {
 	} else {
 		// Operator-configured INFINITE_CANVAS_UPSTREAM; scheme/host already allowlisted.
 		proxy = httputil.NewSingleHostReverseProxy(parsed) //nolint:gosec // G704
-		proxy.Director = nil                               // ReverseProxy requires exactly one of Director or Rewrite.
 		proxy.Rewrite = func(req *httputil.ProxyRequest) {
 			req.SetURL(parsed)
 			req.Out.Host = parsed.Host
