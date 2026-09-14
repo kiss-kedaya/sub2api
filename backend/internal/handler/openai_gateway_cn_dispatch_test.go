@@ -98,5 +98,7 @@ func TestAllowOpenAICompatibleMessagesDispatch_SmartRoutingResolvedOpenAI(t *tes
 		Group:         &service.Group{ID: primaryID, Platform: service.PlatformAnthropic, AllowMessagesDispatch: false},
 	}
 	ensureCompositeTargetPlatform(c, apiKey, "gpt-5")
-	require.True(t, allowOpenAICompatibleMessagesDispatch(c, apiKey))
+	// Smart-routing 非 composite 分组不得用模型名猜 resolved platform（0.1.262）。
+	// gpt-5 不能把 Anthropic 分组变成 OpenAI messages 豁免。
+	require.False(t, allowOpenAICompatibleMessagesDispatch(c, apiKey))
 }

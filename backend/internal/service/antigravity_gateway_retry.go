@@ -782,10 +782,6 @@ func logPrefix(sessionID, accountName string) string {
 	return fmt.Sprintf("[antigravity-Forward] account=%s", accountName)
 }
 
-func (s *AntigravityGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
-	return s.shouldFailoverUpstreamResponse(statusCode, nil, nil)
-}
-
 func (s *AntigravityGatewayService) shouldFailoverUpstreamResponse(statusCode int, headers http.Header, body []byte) bool {
 	failoverOn400 := s != nil && s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.FailoverOn400
 	return ShouldFailoverUpstreamResponse(statusCode, headers, body, failoverOn400)
