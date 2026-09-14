@@ -81,18 +81,28 @@ func simplifyGrokRootObjectUnion(schema map[string]any) bool {
 		return false
 	}
 	if ref := strings.TrimSpace(stringValue(objectBranch["$ref"])); ref != "" {
+		if !strings.HasPrefix(ref, "#/$defs/") {
+			return false
+		}
+		defs, ok := schema["$defs"].(map[string]any)
+		if !ok {
+			return false
+		}
+		name := ref
+		if slash := strings.LastIndex(name, "/"); slash >= 0 {
+			name = name[slash+1:]
+		}
+		resolved, ok := defs[name].(map[string]any)
+		if !ok {
+			// Keep unresolved local and external refs intact. Flattening them into
+			// an empty object silently changes the tool contract and leaves no
+			// usable schema for the upstream to validate.
+			return false
+		}
 		delete(objectBranch, "$ref")
-		if defs, ok := schema["$defs"].(map[string]any); ok {
-			name := ref
-			if slash := strings.LastIndex(name, "/"); slash >= 0 {
-				name = name[slash+1:]
-			}
-			if resolved, ok := defs[name].(map[string]any); ok {
-				for key, value := range resolved {
-					if _, exists := objectBranch[key]; !exists {
-						objectBranch[key] = value
-					}
-				}
+		for key, value := range resolved {
+			if _, exists := objectBranch[key]; !exists {
+				objectBranch[key] = value
 			}
 		}
 	}
