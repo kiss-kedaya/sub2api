@@ -1946,14 +1946,6 @@ func (s *GeminiMessagesCompatService) writeGeminiMappedError(c *gin.Context, acc
 		}
 		return fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", upstreamStatus, upstreamMsg)
 	}
-	if upstreamStatus == http.StatusUnprocessableEntity && !isOpenAIDeterministicClientErrorMessage("", body) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"type":  "error",
-			"error": gin.H{"type": "invalid_request_error", "message": "Upstream request failed"},
-		})
-		return fmt.Errorf("upstream error: %d", upstreamStatus)
-	}
-
 	var statusCode int
 	var errType, errMsg string
 
@@ -1965,6 +1957,43 @@ func (s *GeminiMessagesCompatService) writeGeminiMappedError(c *gin.Context, acc
 		if mapped.StatusCode > 0 {
 			statusCode = mapped.StatusCode
 		}
+	}
+	if upstreamStatus == http.StatusUnprocessableEntity {
+		// Some Gemini-compatible relays return HTTP 422 while preserving the
+		// Google error status in the body. Only this 422 compatibility path
+		// translates that semantic status; ordinary 401/403/5xx responses keep
+		// their existing HTTP status handling below.
+		if statusCode == 0 {
+			switch errType {
+			case "permission_error":
+				statusCode = http.StatusForbidden
+			case "authentication_error":
+				statusCode = http.StatusUnauthorized
+			case "overloaded_error":
+				statusCode = http.StatusServiceUnavailable
+			case "api_error":
+				statusCode = http.StatusInternalServerError
+			case "timeout_error":
+				statusCode = http.StatusGatewayTimeout
+			}
+		}
+		if statusCode == 0 {
+			if isOpenAIDeterministicClientErrorMessage("", body) {
+				statusCode = http.StatusBadRequest
+				errType = "invalid_request_error"
+			} else {
+				statusCode = http.StatusBadGateway
+				errType = "upstream_error"
+			}
+		}
+		if errMsg == "" {
+			errMsg = "Upstream request failed"
+		}
+		c.JSON(statusCode, gin.H{
+			"type":  "error",
+			"error": gin.H{"type": errType, "message": errMsg},
+		})
+		return fmt.Errorf("upstream error: %d", upstreamStatus)
 	}
 
 	wrappedStatus, wrappedType, _, wrappedMsg := WrapUpstreamErrorForClient(upstreamStatus, body)
