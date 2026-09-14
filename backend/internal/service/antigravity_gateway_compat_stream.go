@@ -332,7 +332,7 @@ func (s *AntigravityGatewayService) startAntigravityCompatScanner(
 	}
 	scanner := bufio.NewScanner(body)
 	scanBuf := getSSEScannerBuf64K()
-	scanner.Buffer(scanBuf[:0], maxLineSize)
+	attachSSEScannerBuffer(scanner, scanBuf[:], maxLineSize)
 
 	events := make(chan antigravityCompatScanEvent, 16)
 	done := make(chan struct{})

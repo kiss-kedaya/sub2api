@@ -159,7 +159,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+	attachSSEScannerBuffer(scanner, nil, maxLineSize)
 
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
@@ -332,7 +332,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+	attachSSEScannerBuffer(scanner, nil, maxLineSize)
 
 	resultWithUsage := func() *OpenAIForwardResult {
 		return &OpenAIForwardResult{

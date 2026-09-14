@@ -425,7 +425,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	scanBuf := getSSEScannerBuf64K()
-	scanner.Buffer(scanBuf[:0], maxLineSize)
+	attachSSEScannerBuffer(scanner, scanBuf[:], maxLineSize)
 
 	type scanEvent struct {
 		line string
