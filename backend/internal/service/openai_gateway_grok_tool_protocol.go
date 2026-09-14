@@ -203,14 +203,11 @@ func transformResponsesClientToolStream(
 	maxLineSize int,
 ) {
 	defer func() { _ = source.Close() }()
-	if maxLineSize <= 0 {
-		maxLineSize = defaultMaxLineSize
-	}
 
 	scanner := bufio.NewScanner(source)
 	scanBuf := getSSEScannerBuf64K()
 	defer putSSEScannerBuf64K(scanBuf)
-	scanner.Buffer(scanBuf[:0], maxLineSize)
+	attachSSEScannerBuffer(scanner, scanBuf[:], maxLineSize)
 	documents := newOpenAISSEJSONDocumentScanner(scanner)
 	restorer := apicompat.NewResponsesClientToolStreamRestorer(mapping)
 	buffered := bufio.NewWriterSize(destination, 4*1024)
