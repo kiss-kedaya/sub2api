@@ -63,18 +63,11 @@ func filterGrokResponsesBillingPings(
 	maxLineSize int,
 ) {
 	defer func() { _ = closeSource() }()
-	if maxLineSize <= 0 {
-		maxLineSize = defaultMaxLineSize
-	}
 
 	scanner := bufio.NewScanner(source)
 	scanBuf := getSSEScannerBuf64K()
 	defer putSSEScannerBuf64K(scanBuf)
-	initialBufferSize := len(scanBuf)
-	if maxLineSize < initialBufferSize {
-		initialBufferSize = maxLineSize
-	}
-	scanner.Buffer(scanBuf[:0:initialBufferSize], maxLineSize)
+	attachSSEScannerBuffer(scanner, scanBuf[:], maxLineSize)
 	scanner.Split(scanSSELinesPreservingEndings)
 
 	// Only frames opened by an `event: ping` line are buffered (pingFrame);

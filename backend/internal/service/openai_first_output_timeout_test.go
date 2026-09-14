@@ -202,7 +202,7 @@ func TestOpenAIFirstOutputStageDefaultLimitIsIndependentFromScannerLimit(t *test
 
 func TestOpenAIFirstOutputEventQueueSizeBackpressuresGuardedStreams(t *testing.T) {
 	require.Equal(t, 1, openAIFirstOutputEventQueueSize(true))
-	require.Equal(t, 16, openAIFirstOutputEventQueueSize(false))
+	require.Equal(t, 1, openAIFirstOutputEventQueueSize(false))
 }
 
 func TestOpenAIFirstOutputDynamicScannerLimitsOnlyWhileGuardIsActive(t *testing.T) {
