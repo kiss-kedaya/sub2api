@@ -76,6 +76,26 @@ func TestIsDeepSeekModel(t *testing.T) {
 	}
 }
 
+// TestGetModelPricing_DeepseekFlashAliasKeeps303Rates 锁定价格回退后的别名语义：
+// deepseek-flash 保留为可用模型名，但仍沿用 303 的 Flash 三档价格。
+func TestGetModelPricing_DeepseekFlashAliasKeeps303Rates(t *testing.T) {
+	bs := NewBillingService(&config.Config{}, &PricingService{})
+
+	alias, err := bs.GetModelPricing("deepseek-flash")
+	require.NoError(t, err)
+	legacy, err := bs.GetModelPricing("deepseek-v4-flash")
+	require.NoError(t, err)
+
+	for name, pricing := range map[string]*ModelPricing{
+		"deepseek-flash":    alias,
+		"deepseek-v4-flash": legacy,
+	} {
+		require.InDelta(t, 2.2e-7, pricing.InputPricePerToken, 1e-15, name)
+		require.InDelta(t, 6.6e-7, pricing.OutputPricePerToken, 1e-15, name)
+		require.InDelta(t, 7e-9, pricing.CacheReadPricePerToken, 1e-15, name)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 默认价卡（Source=LiteLLM）按官方峰谷倍率计费；分组/渠道自定义定价不叠加
 // ---------------------------------------------------------------------------
