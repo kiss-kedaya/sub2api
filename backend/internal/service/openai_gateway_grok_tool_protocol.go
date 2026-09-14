@@ -100,7 +100,6 @@ func simplifyGrokRootObjectUnion(schema map[string]any) bool {
 		schema[key] = value
 	}
 	delete(schema, "oneOf")
-	delete(schema, "$defs")
 	if _, exists := schema["type"]; !exists {
 		schema["type"] = "object"
 	}

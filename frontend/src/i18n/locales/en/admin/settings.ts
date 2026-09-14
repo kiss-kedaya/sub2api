@@ -407,7 +407,7 @@ export default {
         subscriptionGroup: 'Subscription Group',
         subscriptionValidityDays: 'Validity (days)',
         defaultPlatformQuotas: 'Default Platform Quotas (on signup)',
-        defaultPlatformQuotasHint: 'Applied to new users on signup; existing users are not affected. Leave blank = no limit for that platform and window.',
+        defaultPlatformQuotasHint: 'Automatically assigned to new users on signup; existing users are not affected. Leave blank = unlimited.',
         platformQuotaNotice: 'Monthly quota uses a 30-day rolling window, not a calendar month.',
       },
       platformQuota: {
@@ -770,7 +770,7 @@ export default {
         validationFieldRequired: '{field} is required',
         validationEasyPayCustomMethodRequired: 'Each custom EasyPay method requires both a payment type and an upstream type',
         validationEasyPayCustomMethodTypeInvalid: 'Custom EasyPay payment types may only contain lowercase letters, digits, underscores, and hyphens',
-        validationEasyPayCustomMethodUpstreamTypeInvalid: 'EasyPay upstream types may only contain lowercase letters, digits, underscores, and hyphens',
+        validationEasyPayCustomMethodUpstreamTypeInvalid: 'EasyPay upstream types may only contain lowercase letters, digits, periods, underscores, and hyphens',
         validationEasyPayCustomMethodReserved: 'Custom EasyPay payment types cannot use built-in alipay or wxpay',
         validationEasyPayCustomMethodPrefixReserved: 'Custom EasyPay payment types cannot start with alipay or wxpay',
         validationEasyPayCustomMethodDuplicate: 'Custom EasyPay payment types must be unique',

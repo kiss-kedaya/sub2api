@@ -1101,6 +1101,11 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	}
 	sort.SliceStable(eligible, func(i, j int) bool {
 		a, b := eligible[i], eligible[j]
+		aMapped := len(a.GetModelMapping()) > 0
+		bMapped := len(b.GetModelMapping()) > 0
+		if aMapped != bMapped {
+			return aMapped
+		}
 		if requireCompact && compactTiers[a.ID] != compactTiers[b.ID] {
 			return compactTiers[a.ID] > compactTiers[b.ID]
 		}

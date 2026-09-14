@@ -28,11 +28,12 @@ import (
 func f64p(v float64) *float64 { return &v }
 
 type httpUpstreamRecorder struct {
-	lastReq      *http.Request
-	lastBody     []byte
-	lastProxyURL string
-	requests     []*http.Request
-	bodies       [][]byte
+	lastContextErr error
+	lastReq        *http.Request
+	lastBody       []byte
+	lastProxyURL   string
+	requests       []*http.Request
+	bodies         [][]byte
 
 	resp      *http.Response
 	responses []*http.Response
@@ -66,6 +67,9 @@ func (r passthroughErrReadCloser) Close() error {
 
 func (u *httpUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	u.lastReq = req
+	if req != nil {
+		u.lastContextErr = req.Context().Err()
+	}
 	u.lastProxyURL = proxyURL
 	if req != nil && req.Body != nil {
 		b, _ := io.ReadAll(req.Body)

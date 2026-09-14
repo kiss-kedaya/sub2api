@@ -1088,11 +1088,24 @@ func (p *openAIWSConnPool) acquire(ctx context.Context, req openAIWSAcquireReque
 	if p == nil || req.Account == nil || req.Account.ID <= 0 {
 		return nil, errors.New("invalid ws acquire request")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if stringsTrim(req.WSURL) == "" {
 		return nil, errors.New("ws url is empty")
 	}
 
 retryAcquire:
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-p.workerStopCh:
+		return nil, errOpenAIWSConnClosed
+	default:
+	}
 	accountID := req.Account.ID
 	compatibility := normalizeOpenAIWSHandshakeCompatibility(req.Account, req.Headers)
 	routingAffinity := normalizeOpenAIWSRoutingAffinity(req.Headers)
@@ -1173,7 +1186,10 @@ retryAcquire:
 			preferredConn.waiters.Add(1)
 			ap.mu.Unlock()
 			closeOpenAIWSConns(evicted)
-			defer preferredConn.waiters.Add(-1)
+			defer func() {
+				preferredConn.waiters.Add(-1)
+				p.notifyAccountPoolChanged(accountID)
+			}()
 			waitStart := time.Now()
 			p.metrics.acquireQueueWaitTotal.Add(1)
 
@@ -1340,6 +1356,21 @@ retryAcquire:
 			delete(ap.conns, idle.id)
 			evicted = append(evicted, idle)
 			p.metrics.scaleDownTotal.Add(1)
+		} else {
+			// ForceNewConn cannot queue on an existing connection: it must wait for
+			// capacity, then dial a fresh connection. Wake on topology changes,
+			// request cancellation, or pool shutdown so no waiter is stranded.
+			changedCh := ap.changeChannelLocked()
+			ap.mu.Unlock()
+			closeOpenAIWSConns(evicted)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-changedCh:
+				goto retryAcquire
+			case <-p.workerStopCh:
+				return nil, errOpenAIWSConnClosed
+			}
 		}
 	}
 
@@ -1421,7 +1452,10 @@ acquireAtCapacity:
 	target.waiters.Add(1)
 	ap.mu.Unlock()
 	closeOpenAIWSConns(evicted)
-	defer target.waiters.Add(-1)
+	defer func() {
+		target.waiters.Add(-1)
+		p.notifyAccountPoolChanged(accountID)
+	}()
 	waitStart := time.Now()
 	p.metrics.acquireQueueWaitTotal.Add(1)
 

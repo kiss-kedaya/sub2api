@@ -118,22 +118,6 @@ func (s *OpenAIGatewayService) backfillOpenAIImagesB64JSON(
 	return body
 }
 
-func restoreOpenAIImagesResponseURLs(original, updated []byte) []byte {
-	if !gjson.ValidBytes(original) || !gjson.ValidBytes(updated) {
-		return updated
-	}
-	for index, item := range gjson.GetBytes(original, "data").Array() {
-		rawURL := strings.TrimSpace(item.Get("url").String())
-		if rawURL == "" || strings.TrimSpace(gjson.GetBytes(updated, fmt.Sprintf("data.%d.b64_json", index)).String()) == "" {
-			continue
-		}
-		if restored, err := sjson.SetBytes(updated, fmt.Sprintf("data.%d.url", index), rawURL); err == nil {
-			updated = restored
-		}
-	}
-	return updated
-}
-
 // fetchOpenAIImageURLBase64 取得图片 url 内容的标准 base64 编码。
 // data: 形式的 url 直接取其 base64 载荷；其余 url 先沿用 base_url 的出站 URL 策略校验，
 // 再无条件拒绝回环、私网、链路本地等目的地（含重定向的每一跳），经账户代理下载，
