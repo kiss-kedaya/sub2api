@@ -7,12 +7,12 @@ import (
 
 const sseScannerBuf64KSize = 64 * 1024
 
-// Scanner never shrinks after a large token. Do not pass gateway.max_line_size
-// (multi-MB) as maxTokenSize or each SSE connection retains a huge arena.
-const sseScannerTokenMax = 1024 * 1024
+// Bound scanner growth without rejecting normal base64 image events. All SSE
+// routes can carry media, including passthrough and client-tool restoration.
+const sseScannerTokenMax = 16 * 1024 * 1024
 
 // OpenAI /v1/responses 首包之后允许大于 8MiB 的图片 delta，但不能跟 500MiB max_line_size 扩。
-const sseScannerTokenMaxOpenAI = 16 * 1024 * 1024
+const sseScannerTokenMaxOpenAI = sseScannerTokenMax
 
 func attachSSEScannerBuffer(scanner *bufio.Scanner, scratch []byte, maxToken int) {
 	attachSSEScannerBufferCapped(scanner, scratch, maxToken, sseScannerTokenMax)
