@@ -24,7 +24,7 @@ const (
 	openAIFirstOutputStageMaxBytes           = 8 * 1024 * 1024
 	openAIFirstOutputScannerFramingAllowance = 64
 	openAIFirstOutputGuardQueueSize          = 1
-	openAIDefaultStreamQueueSize             = 16
+	openAIDefaultStreamQueueSize             = 1
 )
 
 var (
@@ -50,8 +50,17 @@ func newOpenAIFirstOutputStage(limit int64) *openAIFirstOutputStage {
 		limit = 1
 	}
 	return &openAIFirstOutputStage{
-		limit:      limit,
-		createTemp: func() (*os.File, error) { return os.CreateTemp("", "sub2api-openai-first-output-*") },
+		limit: limit,
+		createTemp: func() (*os.File, error) {
+			dir := strings.TrimSpace(os.Getenv("TMPDIR"))
+			if dir == "" || dir == "/tmp" {
+				dir = "/var/tmp/sub2api"
+			}
+			if err := os.MkdirAll(dir, 0o1777); err != nil {
+				return nil, err
+			}
+			return os.CreateTemp(dir, "sub2api-openai-first-output-*")
+		},
 		removeFile: os.Remove,
 		memoryOnly: runtime.GOOS == "windows",
 	}
