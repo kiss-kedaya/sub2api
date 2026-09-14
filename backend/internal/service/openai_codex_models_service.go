@@ -2461,24 +2461,17 @@ func mergeMissingCodexModelFields(current, defaults map[string]json.RawMessage) 
 }
 
 func validateCodexModelsManifestEnvelope(body []byte) error {
-	var envelope map[string]json.RawMessage
+	var envelope *struct {
+		Models []json.RawMessage `json:"models"`
+	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return fmt.Errorf("decode JSON object: %w", err)
 	}
 	if envelope == nil {
 		return errors.New("expected a JSON object")
 	}
-	models, ok := envelope["models"]
-	if !ok {
+	if envelope.Models == nil {
 		return errors.New("missing top-level models array")
-	}
-	models = bytes.TrimSpace(models)
-	var entries []json.RawMessage
-	if len(models) == 0 || models[0] != '[' {
-		return errors.New("top-level models field is not an array")
-	}
-	if err := json.Unmarshal(models, &entries); err != nil {
-		return fmt.Errorf("decode top-level models array: %w", err)
 	}
 	return nil
 }
