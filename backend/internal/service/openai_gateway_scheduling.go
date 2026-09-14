@@ -922,10 +922,6 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
-	accounts, unsupported := filterAccountsSupportingRequestedModel(accounts, requestedModel)
-	if len(accounts) == 0 {
-		return nil, noAvailableAccountsDueToModelSupport(requestedModel, unsupported)
-	}
 	// 3. 按优先级 + LRU 选择最佳账号
 	// Select by priority + LRU
 	selected, compactBlocked, filterStats := s.selectBestAccount(ctx, groupID, platform, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, preferLowUpstreamRate)
@@ -1105,6 +1101,11 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	}
 	sort.SliceStable(eligible, func(i, j int) bool {
 		a, b := eligible[i], eligible[j]
+		aMapped := len(a.GetModelMapping()) > 0
+		bMapped := len(b.GetModelMapping()) > 0
+		if aMapped != bMapped {
+			return aMapped
+		}
 		if requireCompact && compactTiers[a.ID] != compactTiers[b.ID] {
 			return compactTiers[a.ID] > compactTiers[b.ID]
 		}
