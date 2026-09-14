@@ -1077,6 +1077,31 @@ func TestOpenAISelectAccountForModelWithExclusions_NoModelSupport(t *testing.T) 
 	}
 }
 
+func TestOpenAISelectAccountForModelWithExclusions_PrefersMappedAccount(t *testing.T) {
+	repo := stubOpenAIAccountRepo{accounts: []Account{
+		{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Priority: 0},
+		{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Priority: 100,
+			Credentials: map[string]any{"model_mapping": map[string]any{"gemini-3.8-flash": "gemini-3.8-flash"}}},
+	}}
+
+	svc := &OpenAIGatewayService{accountRepo: repo, cache: &stubGatewayCache{}}
+	account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "gemini-3.8-flash", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), account.ID)
+}
+
+func TestOpenAISelectAccountForModelWithExclusions_UsesEmptyMappingAsFallback(t *testing.T) {
+	repo := stubOpenAIAccountRepo{accounts: []Account{{
+		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{},
+	}}}
+
+	svc := &OpenAIGatewayService{accountRepo: repo, cache: &stubGatewayCache{}}
+	account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "gemini-3.8-flash", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), account.ID)
+}
+
 func TestOpenAISelectAccountWithLoadAwareness_LoadBatchErrorFallback(t *testing.T) {
 	groupID := int64(1)
 	repo := stubOpenAIAccountRepo{
