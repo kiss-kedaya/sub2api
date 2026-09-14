@@ -296,6 +296,8 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				apiKey = routedKey
 			}
 		}
+		// Own an eagerly acquired slot before any rejection or eligibility probe.
+		// Forwarding takes over the same once-only release after admission.
 		if selection != nil && selection.Acquired {
 			selection.ReleaseFunc = wrapReleaseOnDone(requestCtx, selection.ReleaseFunc)
 			accountReleaseFunc = selection.ReleaseFunc
