@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -471,39 +472,39 @@ func TestWithWindowCostPrefetch_BatchReadAndContextReuse(t *testing.T) {
 }
 
 func TestWithWindowCostPrefetch_CoalescesConcurrentBatchQueries(t *testing.T) {
-	windowStart := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
-	windowEnd := windowStart.Add(5 * time.Hour)
-	accounts := []Account{
-		{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeOAuth, Extra: map[string]any{"window_cost_limit": 100.0}, SessionWindowStart: &windowStart, SessionWindowEnd: &windowEnd},
-		{ID: 2, Platform: PlatformAnthropic, Type: AccountTypeSetupToken, Extra: map[string]any{"window_cost_limit": 100.0}, SessionWindowStart: &windowStart, SessionWindowEnd: &windowEnd},
-	}
-	release := make(chan struct{})
-	repo := &usageLogWindowCostRepoStub{costs: map[int64]float64{1: 11, 2: 22}, wait: release}
-	svc := &GatewayService{sessionLimitCache: windowCostNoopCache{}, usageLogRepo: repo}
+	synctest.Test(t, func(t *testing.T) {
+		windowStart := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
+		windowEnd := windowStart.Add(5 * time.Hour)
+		accounts := []Account{
+			{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeOAuth, Extra: map[string]any{"window_cost_limit": 100.0}, SessionWindowStart: &windowStart, SessionWindowEnd: &windowEnd},
+			{ID: 2, Platform: PlatformAnthropic, Type: AccountTypeSetupToken, Extra: map[string]any{"window_cost_limit": 100.0}, SessionWindowStart: &windowStart, SessionWindowEnd: &windowEnd},
+		}
+		release := make(chan struct{})
+		repo := &usageLogWindowCostRepoStub{costs: map[int64]float64{1: 11, 2: 22}, wait: release}
+		svc := &GatewayService{sessionLimitCache: windowCostNoopCache{}, usageLogRepo: repo}
 
-	const callers = 8
-	var wg sync.WaitGroup
-	results := make([]context.Context, callers)
-	wg.Add(callers)
-	for i := 0; i < callers; i++ {
-		go func(index int) {
-			defer wg.Done()
-			results[index] = svc.withWindowCostPrefetch(context.Background(), accounts)
-		}(i)
-	}
-	deadline := time.Now().Add(time.Second)
-	for repo.calls.Load() == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	close(release)
-	wg.Wait()
+		const callers = 8
+		var wg sync.WaitGroup
+		results := make([]context.Context, callers)
+		wg.Add(callers)
+		for i := 0; i < callers; i++ {
+			go func(index int) {
+				defer wg.Done()
+				results[index] = svc.withWindowCostPrefetch(context.Background(), accounts)
+			}(i)
+		}
+		// Wait until every caller is blocked on the shared in-flight query.
+		synctest.Wait()
+		close(release)
+		wg.Wait()
 
-	require.Equal(t, int64(1), repo.calls.Load())
-	for _, ctx := range results {
-		cost, ok := windowCostFromPrefetchContext(ctx, 2)
-		require.True(t, ok)
-		require.Equal(t, 22.0, cost)
-	}
+		require.Equal(t, int64(1), repo.calls.Load())
+		for _, ctx := range results {
+			cost, ok := windowCostFromPrefetchContext(ctx, 2)
+			require.True(t, ok)
+			require.Equal(t, 22.0, cost)
+		}
+	})
 }
 
 func TestWithWindowCostPrefetch_AllHitNoSQL(t *testing.T) {
