@@ -78,7 +78,7 @@ func TestInfiniteCanvasHandler_ProxiesUpstream(t *testing.T) {
 			req.Host = "canvas.example.test"
 			resp, err := client.Do(req)
 			require.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
 			require.Equal(t, http.StatusOK, resp.StatusCode)
