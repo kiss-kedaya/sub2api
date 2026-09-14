@@ -928,12 +928,13 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 // 如果未配置 mapping，返回 true（允许所有模型）。
 //
 // 例外：
-// 1. OpenAI OAuth 账号（Codex 上游）的空映射会排除明确属于其他厂商
-//    家族的模型（deepseek-*/glm-* 等）——转发阶段 normalizeOpenAIModelForUpstream
-//    会把未知模型原样透传，Codex 上游对这类模型必然返回不可重试的 400，导致
-//    请求卡死在该账号上、无法 failover 到真正支持该模型的 API Key 账号（#3662）。
-// 2. 国产供应商（kimi/zhipu/deepseek/minimax）空映射只认自家家族。zhipu 空
-//    mapping 不能把 gpt-5.6-* 当成可服务，否则选号会当成容量不足返回 503。
+//  1. OpenAI OAuth 账号（Codex 上游）的空映射会排除明确属于其他厂商
+//     家族的模型（deepseek-*/glm-* 等）——转发阶段 normalizeOpenAIModelForUpstream
+//     会把未知模型原样透传，Codex 上游对这类模型必然返回不可重试的 400，导致
+//     请求卡死在该账号上、无法 failover 到真正支持该模型的 API Key 账号（#3662）。
+//  2. 国产供应商（kimi/zhipu/deepseek/minimax）空映射只认自家家族。zhipu 空
+//     mapping 不能把 gpt-5.6-* 当成可服务，否则选号会当成容量不足返回 503。
+//
 // 未知/自定义别名在 OpenAI OAuth 路径仍保持允许，见 isOpenAIOAuthServableModel。
 func (a *Account) IsModelSupported(requestedModel string) bool {
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。

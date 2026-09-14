@@ -510,8 +510,8 @@ func TestAccountHandlerSyncUpstreamModelsPreviewGeminiCustomInfersOpenAIModelsWi
 }
 
 type capturingSyncUpstream struct {
-	inner     service.HTTPUpstream
-	captured  *string
+	inner    service.HTTPUpstream
+	captured *string
 }
 
 func (u *capturingSyncUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
