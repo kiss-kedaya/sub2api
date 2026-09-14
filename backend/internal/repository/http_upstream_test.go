@@ -715,7 +715,9 @@ func (s *HTTPUpstreamSuite) TestOfficialOpenAIHostKeepsHTTP2() {
 	entry, err := svc.getClientEntry("", 1, 1, service.HTTPUpstreamProfileOpenAI, false, false, "api.openai.com")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), upstreamProtocolModeOpenAIH2, entry.protocolMode)
-	require.True(s.T(), entry.client.Transport.(*http.Transport).ForceAttemptHTTP2)
+	transport, ok := entry.client.Transport.(*http.Transport)
+	require.True(s.T(), ok)
+	require.True(s.T(), transport.ForceAttemptHTTP2)
 }
 
 func TestIsOfficialOpenAIUpstreamHost(t *testing.T) {
