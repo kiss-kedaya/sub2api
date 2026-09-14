@@ -1186,7 +1186,10 @@ retryAcquire:
 			preferredConn.waiters.Add(1)
 			ap.mu.Unlock()
 			closeOpenAIWSConns(evicted)
-			defer preferredConn.waiters.Add(-1)
+			defer func() {
+				preferredConn.waiters.Add(-1)
+				p.notifyAccountPoolChanged(accountID)
+			}()
 			waitStart := time.Now()
 			p.metrics.acquireQueueWaitTotal.Add(1)
 
@@ -1449,7 +1452,10 @@ acquireAtCapacity:
 	target.waiters.Add(1)
 	ap.mu.Unlock()
 	closeOpenAIWSConns(evicted)
-	defer target.waiters.Add(-1)
+	defer func() {
+		target.waiters.Add(-1)
+		p.notifyAccountPoolChanged(accountID)
+	}()
 	waitStart := time.Now()
 	p.metrics.acquireQueueWaitTotal.Add(1)
 
