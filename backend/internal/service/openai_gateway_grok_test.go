@@ -493,6 +493,37 @@ func TestPatchGrokResponsesBodySimplifiesTypedInvalidRootUnion(t *testing.T) {
 	require.Equal(t, gjson.False, tool.Get("strict").Type)
 }
 
+func TestSanitizeGrokResponsesToolsPreservesUnresolvedRootRefs(t *testing.T) {
+	tests := []struct {
+		name string
+		ref  string
+		defs string
+	}{
+		{
+			name: "missing local definition",
+			ref:  "#/$defs/missing",
+			defs: `"known":{"type":"object"}`,
+		},
+		{
+			name: "external definition",
+			ref:  "#/components/schemas/request",
+			defs: `"request":{"type":"object"}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"tools":[{"type":"function","name":"lookup","strict":true,"parameters":{"oneOf":[{"$ref":"` + tt.ref + `"},{"type":"null"}],"$defs":{` + tt.defs + `}}}]}`)
+			patched, err := sanitizeGrokResponsesTools(body)
+			require.NoError(t, err)
+			require.Equal(t, string(body), string(patched))
+			tool := gjson.GetBytes(patched, `tools.#(name=="lookup")`)
+			require.Equal(t, tt.ref, tool.Get("parameters.oneOf.0.$ref").String())
+			require.True(t, tool.Get("parameters.$defs").Exists())
+			require.True(t, tool.Get("strict").Bool())
+		})
+	}
+}
+
 func TestSanitizeGrokResponsesToolsKeepsToolChoiceOnlyWithSupportedTools(t *testing.T) {
 	t.Parallel()
 
