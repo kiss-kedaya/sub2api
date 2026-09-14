@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -60,6 +61,7 @@ func setupFakeAnthropic(t *testing.T, handler *captureHandler) string {
 }
 
 type openAICaptureHandler struct {
+	mu                        sync.Mutex
 	lastBody                  map[string]any
 	lastHeaders               http.Header
 	lastPath                  string
@@ -69,27 +71,35 @@ type openAICaptureHandler struct {
 }
 
 func (h *openAICaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.lastHeaders = r.Header.Clone()
-	h.lastPath = r.URL.Path
-	defer func() { _ = r.Body.Close() }()
-	var parsed map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&parsed)
-	h.lastBody = parsed
-
+	requestHeaders := r.Header.Clone()
+	requestPath := r.URL.Path
+	h.mu.Lock()
+	h.lastHeaders = requestHeaders
+	h.lastPath = requestPath
 	if h.status == 0 {
 		h.status = http.StatusOK
 	}
+	status := h.status
+	rawResponse := h.rawResponse
+	responsesLeadingReasoning := h.responsesLeadingReasoning
+	h.mu.Unlock()
+	defer func() { _ = r.Body.Close() }()
+	var parsed map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&parsed)
+	h.mu.Lock()
+	h.lastBody = parsed
+	h.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(h.status)
-	if h.rawResponse != "" {
-		_, _ = w.Write([]byte(h.rawResponse))
+	w.WriteHeader(status)
+	if rawResponse != "" {
+		_, _ = w.Write([]byte(rawResponse))
 		return
 	}
 
 	answer := answerFromOpenAIRequest(parsed)
-	if h.lastPath == providerOpenAIResponsesPath {
+	if requestPath == providerOpenAIResponsesPath {
 		output := []map[string]any{}
-		if h.responsesLeadingReasoning {
+		if responsesLeadingReasoning {
 			output = append(output, map[string]any{
 				"type":    "reasoning",
 				"summary": []any{},
