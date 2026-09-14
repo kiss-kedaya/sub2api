@@ -52,10 +52,7 @@ func newOpenAIFirstOutputStage(limit int64) *openAIFirstOutputStage {
 	return &openAIFirstOutputStage{
 		limit: limit,
 		createTemp: func() (*os.File, error) {
-			dir := strings.TrimSpace(os.Getenv("TMPDIR"))
-			if dir == "" || dir == "/tmp" {
-				dir = "/var/tmp/sub2api"
-			}
+			const dir = "/var/tmp/sub2api"
 			if err := os.MkdirAll(dir, 0o1777); err != nil {
 				return nil, err
 			}
