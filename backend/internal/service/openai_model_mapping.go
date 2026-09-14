@@ -101,7 +101,6 @@ func resolveOpenAICompactForwardModel(account *Account, model string) string {
 	return trimmedModel
 }
 
-
 // isCNProviderServableModel 判断空 model_mapping 的国产供应商账号能否服务该模型。
 // 空映射不再等于“允许所有”：zhipu 空 mapping 不能把 gpt-5.6-* 当成可服务，
 // 否则调度会当成容量不足返回 503。显式 mapping / 透传不走这里。
@@ -132,4 +131,3 @@ func hasAnyPrefix(model string, prefixes ...string) bool {
 	}
 	return false
 }
-
