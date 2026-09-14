@@ -36,7 +36,7 @@ func TestGroupUsableForRequest(t *testing.T) {
 	require.True(t, groupUsableForRequest(&Group{Platform: PlatformComposite}, PlatformOpenAI, "gpt-5"))
 
 	restricted := &Group{
-		Platform:         PlatformOpenAI,
+		Platform:       PlatformOpenAI,
 		ModelAllowlist: GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5"}},
 	}
 	require.True(t, groupUsableForRequest(restricted, PlatformOpenAI, "gpt-5"))
@@ -184,8 +184,8 @@ func TestGroupCatalogUsableForRequest_OpenAICompatibleGrokDoesNotClaimGemini(t *
 		},
 		groupRepo: &groupLookupHotpathRepoStub{
 			group: &Group{
-				ID:               grokID,
-				Platform:         PlatformGrok,
+				ID:             grokID,
+				Platform:       PlatformGrok,
 				ModelAllowlist: GroupModelsListConfig{Enabled: true, Models: []string{"grok-4.6"}},
 			},
 		},

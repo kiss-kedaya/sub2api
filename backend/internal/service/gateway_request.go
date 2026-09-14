@@ -1011,6 +1011,7 @@ func sanitizeAnthropicFallbackFields(body []byte, anthropicBetaHeader string) ([
 	}
 	return body, changed
 }
+
 // anthropicBetaTokensContains 检测逗号分隔的 anthropic-beta header 是否含指定 token。
 // 宋体空格宽容；区分大小写（Anthropic beta token 始终是小写）。
 func anthropicBetaTokensContains(header, token string) bool {

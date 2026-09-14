@@ -113,7 +113,6 @@ func (s *GatewayService) DiagnoseModelAvailabilityForPlatform(
 	return diag
 }
 
-
 func diagnoseModelAvailabilityFromSchedulerSnapshot(
 	snapshot *SchedulerSnapshotService,
 	ctx context.Context,
