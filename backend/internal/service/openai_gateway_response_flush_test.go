@@ -162,27 +162,19 @@ func TestOpenAIResponseFlush_DataQueuedButBlankDrainsFlushesOnce(t *testing.T) {
 	first := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"first\"}\n\n"
 	second := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"second\"}\n\n"
 	terminal := "data: [DONE]\n\n"
-	allowSecond := make(chan struct{})
-	allowTerminal := make(chan struct{})
-	terminalWaiting := make(chan struct{})
-	reader := &stagedOpenAISSEReadCloser{
-		segments: [][]byte{[]byte(first), []byte(second), []byte(terminal)},
-		gates:    []<-chan struct{}{nil, allowSecond, allowTerminal},
-		waiting:  []chan struct{}{nil, nil, terminalWaiting},
-	}
 	releaseFirstFlush := make(chan struct{})
 	recorder := newOpenAIResponseFlushRecorder()
 	recorder.blockFlush = 1
 	recorder.flushBlocked = make(chan struct{})
 	recorder.releaseFlush = releaseFirstFlush
-	resultCh, errCh := runOpenAIResponseFlushTestAsync(recorder, reader, config.GatewayConfig{StreamDataIntervalTimeout: 30})
+	resultCh, errCh := runOpenAIResponseFlushTestAsync(
+		recorder,
+		io.NopCloser(strings.NewReader(first+second+terminal)),
+		config.GatewayConfig{StreamDataIntervalTimeout: 30},
+	)
 
 	waitOpenAIResponseFlushSignal(t, recorder.flushBlocked)
-	close(allowSecond)
-	waitOpenAIResponseFlushSignal(t, terminalWaiting)
 	close(releaseFirstFlush)
-	waitOpenAIResponseFlushCount(t, recorder, 2)
-	close(allowTerminal)
 
 	require.NoError(t, <-errCh)
 	require.NotNil(t, <-resultCh)
@@ -190,7 +182,8 @@ func TestOpenAIResponseFlush_DataQueuedButBlankDrainsFlushesOnce(t *testing.T) {
 	require.Equal(t, first+second+terminal, gotBody)
 	require.Len(t, flushes, 3)
 	require.Equal(t, first, flushes[0])
-	require.Equal(t, first+second, flushes[1], "blank line that drains the queue must flush the complete event exactly once")
+	require.Equal(t, first+second, flushes[1])
+	require.Equal(t, first+second+terminal, flushes[2])
 }
 
 func TestOpenAIResponseFlush_BurstDoesNotIncreaseFlushes(t *testing.T) {
@@ -200,32 +193,27 @@ func TestOpenAIResponseFlush_BurstDoesNotIncreaseFlushes(t *testing.T) {
 		`data: {"type":"response.output_text.delta","delta":"third"}`,
 		`data: [DONE]`,
 	}, "\n\n") + "\n\n"
-	allowBurst := make(chan struct{})
-	eofReached := make(chan struct{})
-	reader := &stagedOpenAISSEReadCloser{
-		segments:   [][]byte{[]byte(first), []byte(burst)},
-		gates:      []<-chan struct{}{nil, allowBurst},
-		eofReached: eofReached,
-	}
 	releaseFirstFlush := make(chan struct{})
 	recorder := newOpenAIResponseFlushRecorder()
 	recorder.blockFlush = 1
 	recorder.flushBlocked = make(chan struct{})
 	recorder.releaseFlush = releaseFirstFlush
-	resultCh, errCh := runOpenAIResponseFlushTestAsync(recorder, reader, config.GatewayConfig{StreamDataIntervalTimeout: 30})
+	resultCh, errCh := runOpenAIResponseFlushTestAsync(
+		recorder,
+		io.NopCloser(strings.NewReader(first+burst)),
+		config.GatewayConfig{StreamDataIntervalTimeout: 30},
+	)
 
 	waitOpenAIResponseFlushSignal(t, recorder.flushBlocked)
-	close(allowBurst)
-	waitOpenAIResponseFlushSignal(t, eofReached)
 	close(releaseFirstFlush)
 
 	require.NoError(t, <-errCh)
 	require.NotNil(t, <-resultCh)
 	gotBody, flushes := recorder.snapshot()
 	require.Equal(t, first+burst, gotBody)
-	require.Len(t, flushes, 2, "queued burst must remain batched until its drained event boundary")
+	require.Len(t, flushes, 4, "backpressure flushes each complete event after a blocked flush instead of queueing a burst")
 	require.Equal(t, first, flushes[0])
-	require.Equal(t, first+burst, flushes[1])
+	require.Equal(t, first+burst, flushes[len(flushes)-1])
 }
 
 func TestOpenAIResponseFlush_CommentAndEOFOnlyFlushCompleteResidual(t *testing.T) {
@@ -571,7 +559,7 @@ func TestOpenAIResponseFlush_ReusedTypeKeepsSSEBytesAndTerminalSemantics(t *test
 	}
 }
 
-func TestOpenAIResponseFlush_ClientDisconnectStillDrainsUsage(t *testing.T) {
+func TestOpenAIResponseFlush_ClientDisconnectClosesUpstream(t *testing.T) {
 	first := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n"
 	terminal := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":2}}}}\n\n"
 	recorder := newOpenAIResponseFlushRecorder()

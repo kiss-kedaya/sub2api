@@ -173,7 +173,7 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
 	}
-	scanner.Buffer(make([]byte, 64*1024), maxLineSize)
+	attachSSEScannerBuffer(scanner, nil, maxLineSize)
 
 	type scanEvent struct {
 		line string
