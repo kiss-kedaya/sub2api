@@ -567,6 +567,129 @@ func TestOpenAIWSConnPool_ForceNewConnSkipsReuse(t *testing.T) {
 	require.Equal(t, 2, dialer.DialCount(), "ForceNewConn=true 时应跳过空闲连接复用并新建连接")
 }
 
+func TestOpenAIWSConnPool_ForceNewConnWaitsForCapacityAndDialsFresh(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
+
+	pool := newOpenAIWSConnPool(cfg)
+	t.Cleanup(pool.Close)
+	dialer := &openAIWSCountingDialer{}
+	pool.setClientDialerForTest(dialer)
+	account := &Account{ID: 124, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	failedA, err := pool.Acquire(context.Background(), openAIWSAcquireRequest{
+		Account: account,
+		WSURL:   "wss://example.com/v1/responses",
+	})
+	require.NoError(t, err)
+	failedAID := failedA.ConnID()
+	failedA.MarkBroken()
+	failedA.Release()
+
+	occupiedB, err := pool.Acquire(context.Background(), openAIWSAcquireRequest{
+		Account: account,
+		WSURL:   "wss://example.com/v1/responses",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, dialer.DialCount())
+	defer occupiedB.Release()
+
+	type acquireResult struct {
+		lease *openAIWSConnLease
+		err   error
+	}
+	resultCh := make(chan acquireResult, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	go func() {
+		lease, acquireErr := pool.Acquire(ctx, openAIWSAcquireRequest{
+			Account:      account,
+			WSURL:        "wss://example.com/v1/responses",
+			ForceNewConn: true,
+		})
+		resultCh <- acquireResult{lease: lease, err: acquireErr}
+	}()
+
+	select {
+	case result := <-resultCh:
+		t.Fatalf("ForceNewConn must wait while the only connection is occupied: lease=%v err=%v", result.lease, result.err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	occupiedB.Release()
+	select {
+	case result := <-resultCh:
+		require.NoError(t, result.err)
+		require.NotNil(t, result.lease)
+		require.False(t, result.lease.Reused())
+		require.Equal(t, 3, dialer.DialCount())
+		require.NotEqual(t, failedAID, result.lease.ConnID())
+		require.NotEqual(t, occupiedB.ConnID(), result.lease.ConnID())
+		result.lease.Release()
+	case <-time.After(time.Second):
+		t.Fatal("ForceNewConn did not resume after capacity was released")
+	}
+}
+
+func TestOpenAIWSConnPool_ForceNewConnWaitHonorsContextAndClose(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
+
+	pool := newOpenAIWSConnPool(cfg)
+	t.Cleanup(pool.Close)
+	pool.setClientDialerForTest(&openAIWSCountingDialer{})
+	account := &Account{ID: 125, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	occupied, err := pool.Acquire(context.Background(), openAIWSAcquireRequest{
+		Account: account,
+		WSURL:   "wss://example.com/v1/responses",
+	})
+	require.NoError(t, err)
+	defer occupied.Release()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	resultCh := make(chan error, 1)
+	go func() {
+		_, acquireErr := pool.Acquire(ctx, openAIWSAcquireRequest{
+			Account:      account,
+			WSURL:        "wss://example.com/v1/responses",
+			ForceNewConn: true,
+		})
+		resultCh <- acquireErr
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case acquireErr := <-resultCh:
+		require.ErrorIs(t, acquireErr, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("ForceNewConn waiter ignored context cancellation")
+	}
+
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	closeResultCh := make(chan error, 1)
+	go func() {
+		_, acquireErr := pool.Acquire(ctx2, openAIWSAcquireRequest{
+			Account:      account,
+			WSURL:        "wss://example.com/v1/responses",
+			ForceNewConn: true,
+		})
+		closeResultCh <- acquireErr
+	}()
+	time.Sleep(50 * time.Millisecond)
+	pool.Close()
+	select {
+	case acquireErr := <-closeResultCh:
+		require.ErrorIs(t, acquireErr, errOpenAIWSConnClosed)
+	case <-time.After(time.Second):
+		t.Fatal("ForceNewConn waiter was not released by pool.Close")
+	}
+}
+
 func TestOpenAIWSConnPool_AcquireReusesOnlyMatchingBetaFeatures(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 2
