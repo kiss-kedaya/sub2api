@@ -31,7 +31,7 @@ import (
 // （GLM effort 归一化、fast policy、Grok 分支、ClientDisconnect 语义等）仍留在
 // 调用方，属于有意保留的行为差异，不在此强行统一。
 
-// newUpstreamSSEScanner 构造读取上游 SSE 流的行扫描器。单行上限固定 1MiB，不跟 max_line_size 扩。
+// newUpstreamSSEScanner bounds line growth while allowing media SSE events.
 func (s *OpenAIGatewayService) newUpstreamSSEScanner(r io.Reader) *bufio.Scanner {
 	scanner := bufio.NewScanner(r)
 	maxLineSize := defaultMaxLineSize
