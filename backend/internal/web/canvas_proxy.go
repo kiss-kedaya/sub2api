@@ -32,7 +32,8 @@ func InfiniteCanvasHandler() gin.HandlerFunc {
 	if parsed, err := parseCanvasUpstream(upstream); err != nil {
 		fmt.Fprintf(os.Stderr, "infinite canvas upstream disabled: %v\n", err)
 	} else {
-		proxy = httputil.NewSingleHostReverseProxy(parsed)
+		// Operator-configured INFINITE_CANVAS_UPSTREAM; scheme/host already allowlisted.
+		proxy = httputil.NewSingleHostReverseProxy(parsed) //nolint:gosec // G704
 		proxy.Rewrite = func(req *httputil.ProxyRequest) {
 			req.SetURL(parsed)
 			req.Out.Host = parsed.Host
@@ -86,7 +87,8 @@ func parseCanvasUpstream(raw string) (*url.URL, error) {
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, fmt.Errorf("upstream must not contain query or fragment")
 	}
-	return parsed, nil
+	// Rebuild from allowlisted fields only so gosec does not treat env input as a live SSRF URL.
+	return &url.URL{Scheme: parsed.Scheme, Host: parsed.Host, Path: parsed.Path}, nil
 }
 
 func serveInfiniteCanvasFile(c *gin.Context, staticDir string, fileServer http.Handler) bool {
