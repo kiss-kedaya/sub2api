@@ -96,9 +96,11 @@ func TestOpenAIGatewayService_APIKeyPreservesLiteDeclaredNamespaceToolCalls(t *t
 		"model":"gpt-5.6-terra",
 		"stream":false,
 		"input":[
+			{"type":"function_call","namespace":"collaboration","name":"spawn_agent","call_id":"call_spawn","arguments":"{}"},
 			{"type":"function_call","namespace":"mcp__cua_repl","name":"js","call_id":"call_js","arguments":"{}"},
 			{"type":"message","role":"user","namespace":"leftover","content":[{"type":"input_text","text":"hello"}]},
 			{"type":"additional_tools","role":"developer","tools":[
+				{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"spawn_agent","parameters":{"type":"object"}}]},
 				{"type":"namespace","name":"mcp__cua_repl","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]}
 			]}
 		]
@@ -118,10 +120,13 @@ func TestOpenAIGatewayService_APIKeyPreservesLiteDeclaredNamespaceToolCalls(t *t
 	require.Len(t, upstream.bodies, 1)
 	forwarded := upstream.bodies[0]
 
-	require.True(t, gjson.GetBytes(forwarded, `input.#(type=="additional_tools").tools.#(type=="namespace")`).Exists())
-	require.Equal(t, "mcp__cua_repl", gjson.GetBytes(forwarded, "input.0.namespace").String())
-	require.Equal(t, "js", gjson.GetBytes(forwarded, "input.0.name").String())
-	require.False(t, gjson.GetBytes(forwarded, "input.1.namespace").Exists())
+	require.Equal(t, "collaboration", gjson.GetBytes(forwarded, `input.#(type=="additional_tools").tools.0.name`).String())
+	require.Equal(t, "mcp__cua_repl", gjson.GetBytes(forwarded, `input.#(type=="additional_tools").tools.1.name`).String())
+	require.Equal(t, "collaboration", gjson.GetBytes(forwarded, "input.0.namespace").String())
+	require.Equal(t, "spawn_agent", gjson.GetBytes(forwarded, "input.0.name").String())
+	require.Equal(t, "mcp__cua_repl", gjson.GetBytes(forwarded, "input.1.namespace").String())
+	require.Equal(t, "js", gjson.GetBytes(forwarded, "input.1.name").String())
+	require.False(t, gjson.GetBytes(forwarded, "input.2.namespace").Exists())
 }
 
 // compact 端点 schema 更窄：input[].namespace 会 400 Unknown parameter（issue #4761），
