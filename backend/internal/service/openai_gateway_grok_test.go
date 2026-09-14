@@ -472,7 +472,7 @@ func TestPatchGrokResponsesBodySimplifiesTypedInvalidRootUnion(t *testing.T) {
 				"parameters":{
 					"type":"object",
 					"oneOf":[{"$ref":"#/$defs/update"},{"type":"null"}],
-					"$defs":{"update":{"type":"object","properties":{"id":{"type":"string"}}}}
+					"$defs":{"update":{"type":"object","properties":{"id":{"type":"string"},"nested":{"$ref":"#/$defs/common"}}},"common":{"type":"string"}}
 				}
 			}]
 		}]
@@ -488,7 +488,8 @@ func TestPatchGrokResponsesBodySimplifiesTypedInvalidRootUnion(t *testing.T) {
 	require.True(t, tool.Get("parameters.properties").IsObject())
 	require.True(t, tool.Get("parameters.additionalProperties").Bool())
 	require.False(t, tool.Get("parameters.oneOf").Exists())
-	require.False(t, tool.Get("parameters.$defs").Exists())
+	require.True(t, tool.Get("parameters.$defs.common").Exists())
+	require.Equal(t, "#/$defs/common", tool.Get("parameters.properties.nested.$ref").String())
 	require.Equal(t, gjson.False, tool.Get("strict").Type)
 }
 
