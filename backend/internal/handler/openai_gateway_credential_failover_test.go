@@ -103,6 +103,20 @@ func TestOpenAICoolingGroupForbiddenIsRetryable503(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "access forbidden")
 }
 
+func TestOpenAIFailoverExhaustionPreservesUpstream503ServerError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+
+	(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode:   http.StatusServiceUnavailable,
+		ResponseBody: []byte(`{"error":{"type":"server_error","message":"upstream is restarting"}}`),
+	}, false)
+
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	require.Equal(t, "server_error", gjson.Get(recorder.Body.String(), "error.type").String())
+}
+
 func TestOpenAICoolingGroupCredentialReasonStillReturns503(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

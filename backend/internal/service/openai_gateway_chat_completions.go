@@ -343,9 +343,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
 	defer func() {
-		if clientStream {
-			releaseUpstreamCtx()
-		}
+		releaseUpstreamCtx()
 		_ = resp.Body.Close()
 	}()
 

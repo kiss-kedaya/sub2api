@@ -33,10 +33,11 @@ func InfiniteCanvasHandler() gin.HandlerFunc {
 		fmt.Fprintf(os.Stderr, "infinite canvas upstream disabled: %v\n", err)
 	} else {
 		// Operator-configured INFINITE_CANVAS_UPSTREAM; scheme/host already allowlisted.
-		proxy = httputil.NewSingleHostReverseProxy(parsed) //nolint:gosec // G704
-		proxy.Rewrite = func(req *httputil.ProxyRequest) {
-			req.SetURL(parsed)
-			req.Out.Host = parsed.Host
+		proxy = &httputil.ReverseProxy{
+			Rewrite: func(req *httputil.ProxyRequest) {
+				req.SetURL(parsed)
+				req.Out.Host = parsed.Host
+			},
 		}
 	}
 

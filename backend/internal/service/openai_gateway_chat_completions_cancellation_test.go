@@ -76,11 +76,19 @@ func (u *contextBoundHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string,
 }
 
 func TestForwardAsChatCompletions_CancelsUpstreamBeforeClosingBody(t *testing.T) {
+	for _, stream := range []string{"true", "false"} {
+		t.Run(stream, func(t *testing.T) {
+			testForwardAsChatCompletionsCancelsUpstreamBeforeClosingBody(t, stream)
+		})
+	}
+}
+
+func testForwardAsChatCompletionsCancelsUpstreamBeforeClosingBody(t *testing.T, clientStream string) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":` + clientStream + `}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
 	c.Request.Header.Set("Content-Type", "application/json")
 

@@ -911,9 +911,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 	if err != nil {
 		return OpenAIUsage{}, 0, nil, err
 	}
-	originalBody := body
 	body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
-	body = restoreOpenAIImagesResponseURLs(originalBody, body)
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := "application/json"
 	if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled {
