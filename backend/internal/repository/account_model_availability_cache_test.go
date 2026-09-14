@@ -295,13 +295,16 @@ func TestListModelAvailabilityCandidates_ConcurrentMissQueriesOnce(t *testing.T)
 	var wg sync.WaitGroup
 	results := make([][]service.Account, 2)
 	errs := make([]error, 2)
+	start := make(chan struct{})
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			<-start
 			results[i], errs[i] = repo.ListModelAvailabilityCandidates(context.Background(), &groupID, []string{service.PlatformOpenAI}, false)
 		}(i)
 	}
+	close(start)
 	wg.Wait()
 	for i := 0; i < 2; i++ {
 		require.NoError(t, errs[i])
@@ -454,10 +457,15 @@ func TestListModelAvailabilityCandidates_LeaderQueryDetachedFromCallerCancel(t *
 	// 等 leader 进入查询后加入第二个 waiter，再取消首个调用方。
 	<-gate.started
 	waiterDone := make(chan error, 1)
+	waiterStarted := make(chan struct{})
 	go func() {
+		close(waiterStarted)
 		_, err := repo.ListModelAvailabilityCandidates(context.Background(), &groupID, []string{service.PlatformOpenAI}, false)
 		waiterDone <- err
 	}()
+	<-waiterStarted
+	// 让 waiter 有机会进入 singleflight，避免取消发生在加入之前变成二次查询。
+	time.Sleep(20 * time.Millisecond)
 	cancel()
 
 	deadline, ok := gate.captured.Deadline()
