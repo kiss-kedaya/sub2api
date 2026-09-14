@@ -3102,6 +3102,10 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		service.SetOpsUpstreamError(c, statusCode, service.ExtractUpstreamErrorMessage(responseBody), "")
 		c.Header("Retry-After", "30")
 		status, errType, message := wrapUpstreamClientError(statusCode, responseBody)
+		if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+			status = http.StatusServiceUnavailable
+			errType = "overloaded_error"
+		}
 		if failoverErr.IsOpenAICapacityShed() && strings.TrimSpace(failoverErr.ClientMessage) != "" {
 			status = failoverErr.ClientStatusCode
 			if status <= 0 {
@@ -3168,6 +3172,24 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 
 	// 使用默认的错误映射
 	status, errType, errMsg := wrapUpstreamClientError(statusCode, responseBody)
+	// Exhausted OpenAI failover: mask leftover 401/403/5xx (not 503) as 502.
+	// Cooling-group 403 already returned 503 above. Do not invent 503 here.
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		status = http.StatusBadGateway
+		errType = "upstream_error"
+		if strings.TrimSpace(errMsg) == "" || strings.EqualFold(errMsg, "Forbidden") {
+			errMsg = "Upstream request failed"
+		}
+	case status == 520 || (status >= 500 && status != http.StatusServiceUnavailable):
+		status = http.StatusBadGateway
+		errType = "upstream_error"
+		errMsg = "Upstream service temporarily unavailable"
+	case errType == "server_error":
+		status = http.StatusBadGateway
+		errType = "upstream_error"
+		errMsg = "Upstream service temporarily unavailable"
+	}
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 

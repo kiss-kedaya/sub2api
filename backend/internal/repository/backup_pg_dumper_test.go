@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func TestSafeRestoreSQLReaderRejectsShellAndFileCommands(t *testing.T) {
 	for _, input := range []string{
 		`\! id` + "\n",
