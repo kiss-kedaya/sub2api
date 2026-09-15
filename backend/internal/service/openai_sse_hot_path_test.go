@@ -61,6 +61,82 @@ func TestOpenAISSEFrameHotPathClassifiers(t *testing.T) {
 	require.False(t, openAISSEFrameMayContainGrokSearch(invalid))
 }
 
+func TestOpenAIFrameTTFTClassificationMatchesDataEntryPoint(t *testing.T) {
+	tests := []struct {
+		name         string
+		data         string
+		fallbackType string
+		wantClient   bool
+		wantVisible  bool
+		wantSemantic bool
+	}{
+		{name: "empty"},
+		{name: "whitespace", data: " \r\n\t "},
+		{name: "empty with type", fallbackType: "response.output_text.delta"},
+		{name: "done marker", data: " [DONE] ", fallbackType: "response.completed", wantClient: true},
+		{name: "preamble payload", data: `{"type":"response.created"}`},
+		{name: "preamble fallback", data: `{}`, fallbackType: " response.in_progress "},
+		{name: "payload wins", data: `{"type":"response.created","delta":"hello"}`, fallbackType: "response.output_text.delta"},
+		{name: "empty type uses fallback", data: `{"type":" ","delta":"hello"}`, fallbackType: " response.output_text.delta ", wantClient: true, wantVisible: true, wantSemantic: true},
+		{name: "trimmed payload type", data: `{"type":" response.output_text.delta ","delta":"hello"}`, wantClient: true, wantVisible: true, wantSemantic: true},
+		{name: "delta without payload type", data: `{"delta":"hello"}`, fallbackType: "response.output_text.delta", wantClient: true, wantVisible: true, wantSemantic: true},
+		{name: "semantic delta", data: `{"type":"response.output_text.delta","delta":"hello"}`, wantClient: true, wantVisible: true, wantSemantic: true},
+		{name: "empty delta", data: `{"type":"response.output_text.delta","delta":""}`, wantClient: true, wantSemantic: true},
+		{name: "null delta", data: `{"type":"response.output_text.delta","delta":null}`, wantClient: true, wantSemantic: true},
+		{name: "whitespace delta", data: `{"type":"response.output_text.delta","delta":" "}`, wantClient: true, wantVisible: true, wantSemantic: true},
+		{name: "numeric delta compatibility", data: `{"type":"response.output_text.delta","delta":0}`, wantClient: true, wantVisible: true, wantSemantic: true},
+		{name: "empty added reasoning", data: `{"type":"response.output_item.added","item":{"type":"reasoning","summary":[]}}`, wantSemantic: true},
+		{name: "empty added text", data: `{"type":"response.content_part.added","part":{"type":"output_text","text":""}}`, wantSemantic: true},
+		{name: "tool arguments", data: `{"type":"response.function_call_arguments.done","arguments":"{}"}`, wantClient: true, wantVisible: true, wantSemantic: true},
+		{name: "partial image", data: `{"type":"response.image_generation_call.partial_image","partial_image_b64":"YWJj"}`, wantClient: true, wantVisible: true, wantSemantic: true},
+		{name: "empty completed", data: `{"type":"response.completed","response":{"output":[]}}`, wantClient: true, wantSemantic: true},
+		{name: "completed text", data: `{"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"hello"}]}]}}`, wantClient: true, wantVisible: true, wantSemantic: true},
+		{name: "failed", data: `{"type":"response.failed"}`},
+		{name: "retryable error", data: `{"type":"error","error":{"code":"server_is_overloaded","message":"server is overloaded"}}`},
+		{name: "nonretryable error", data: `{"type":"error","error":{"code":"invalid_request_error","message":"invalid request"}}`, wantClient: true, wantSemantic: true},
+		{name: "unknown event", data: `{"type":"vendor.progress"}`, wantClient: true, wantSemantic: true},
+		{name: "no type", data: `{}`, wantClient: true, wantSemantic: true},
+		{name: "scalar", data: `null`, wantClient: true, wantSemantic: true},
+		{name: "malformed untyped", data: `{`, wantClient: true, wantSemantic: true},
+		{name: "malformed preamble", data: `{"type":"response.created"} trailing`},
+		{name: "malformed delta", data: `{"type":"response.output_text.delta","delta":"hello"} trailing`, wantClient: true, wantSemantic: true},
+		{name: "malformed with fallback", data: `{`, fallbackType: "response.in_progress"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			frame := parseOpenAISSEDataFrame([]byte(tt.data), tt.fallbackType)
+			// Both streaming loops pass the effective type to the legacy entry points.
+			require.Equal(t, tt.wantClient, openAIStreamDataStartsClientOutput(tt.data, frame.eventType))
+			require.Equal(t, tt.wantClient, openAIStreamFrameStartsClientOutput(frame))
+			require.Equal(t, tt.wantVisible, openAIStreamDataStartsVisibleOutput(tt.data, frame.eventType))
+			require.Equal(t, tt.wantVisible, openAIStreamFrameStartsVisibleOutput(frame))
+			require.Equal(t, tt.wantSemantic, openAIStreamDataStartsSemanticTTFT(tt.data, frame.eventType))
+			require.Equal(t, tt.wantSemantic, openAIStreamFrameStartsSemanticTTFT(frame))
+			for _, mode := range []string{OpenAITTFTModeSemantic, OpenAITTFTModeVisible, "", "unknown"} {
+				for _, forceOutput := range []bool{false, true} {
+					want := forceOutput || tt.wantSemantic
+					if mode == OpenAITTFTModeVisible {
+						want = tt.wantVisible
+					}
+					require.Equal(t, want, openAIStreamDataStartsTTFT(tt.data, frame.eventType, forceOutput, mode), "data mode=%q force=%t", mode, forceOutput)
+					require.Equal(t, want, openAIStreamFrameStartsTTFT(frame, forceOutput, mode), "frame mode=%q force=%t", mode, forceOutput)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenAIFrameTTFTReusesParsedPayload(t *testing.T) {
+	data := []byte(`{"type":"response.image_generation_call.partial_image","partial_image_b64":"` + strings.Repeat("A", 16*1024) + `"}`)
+	frame := parseOpenAISSEDataFrame(data, "")
+	allocs := testing.AllocsPerRun(100, func() {
+		benchmarkOpenAISSEHotPathBoolSink = openAIStreamFrameStartsTTFT(frame, false, OpenAITTFTModeVisible)
+	})
+	require.True(t, benchmarkOpenAISSEHotPathBoolSink)
+	require.Zero(t, allocs, "classifying an already parsed plain image payload must not allocate another frame")
+}
+
 func TestSplitOpenAIConcatenatedJSONDocumentsPrefilterPreservesRepairSemantics(t *testing.T) {
 	require.False(t, mayContainOpenAIConcatenatedJSONDocuments([]byte(`{"type":"response.output_text.delta","delta":"hello"}`)))
 	require.True(t, mayContainOpenAIConcatenatedJSONDocuments([]byte("{\"type\":\"response.created\"} \r\n\t {\"type\":\"response.completed\"}")))
@@ -124,6 +200,36 @@ var (
 	benchmarkOpenAISSEHotPathBytesSink []byte
 )
 
+func BenchmarkOpenAIPassthroughFrameTTFT(b *testing.B) {
+	for _, payload := range []struct {
+		name string
+		data []byte
+	}{
+		{"text", []byte(`{"type":"response.output_text.delta","sequence_number":42,"delta":"streaming response benchmark payload"}`)},
+		{"image16K", []byte(`{"type":"response.image_generation_call.partial_image","partial_image_b64":"` + strings.Repeat("A", 16*1024) + `"}`)},
+	} {
+		for _, mode := range []string{OpenAITTFTModeSemantic, OpenAITTFTModeVisible} {
+			b.Run(payload.name+"/"+mode+"/data", func(b *testing.B) {
+				data := string(payload.data)
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					frame := parseOpenAISSEDataFrame(payload.data, "")
+					benchmarkOpenAISSEHotPathBoolSink = openAIStreamDataStartsTTFT(data, frame.eventType, false, mode)
+				}
+			})
+			b.Run(payload.name+"/"+mode+"/frame", func(b *testing.B) {
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					frame := parseOpenAISSEDataFrame(payload.data, "")
+					benchmarkOpenAISSEHotPathBoolSink = openAIStreamFrameStartsTTFT(frame, false, mode)
+				}
+			})
+		}
+	}
+}
+
 func BenchmarkOpenAIResponsesSSEHotPath(b *testing.B) {
 	data := []byte(`{"type":"response.output_text.delta","sequence_number":42,"delta":"streaming response benchmark payload"}`)
 
@@ -166,6 +272,45 @@ func BenchmarkOpenAIResponsesSSEHotPath(b *testing.B) {
 				doneItems.ObserveFrame(frame)
 			}
 			benchmarkOpenAISSEHotPathBoolSink = openAIStreamFrameStartsVisibleOutput(frame)
+		}
+	})
+
+	payload := string(data)
+	eventType := "response.output_text.delta"
+	b.Run("three classifiers parse data", func(b *testing.B) {
+		b.ReportAllocs()
+		b.SetBytes(int64(len(data)))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			benchmarkOpenAISSEHotPathIntSink = 0
+			if openAIStreamDataStartsClientOutput(payload, eventType) {
+				benchmarkOpenAISSEHotPathIntSink++
+			}
+			if openAIStreamDataStartsVisibleOutput(payload, eventType) {
+				benchmarkOpenAISSEHotPathIntSink++
+			}
+			if openAIStreamDataStartsTTFT(payload, eventType, false, OpenAITTFTModeVisible) {
+				benchmarkOpenAISSEHotPathIntSink++
+			}
+		}
+	})
+
+	b.Run("three classifiers reuse frame", func(b *testing.B) {
+		b.ReportAllocs()
+		b.SetBytes(int64(len(data)))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			frame := parseOpenAISSEDataFrame(data, eventType)
+			benchmarkOpenAISSEHotPathIntSink = 0
+			if openAIStreamFrameStartsClientOutput(frame) {
+				benchmarkOpenAISSEHotPathIntSink++
+			}
+			if openAIStreamFrameStartsVisibleOutput(frame) {
+				benchmarkOpenAISSEHotPathIntSink++
+			}
+			if openAIStreamFrameStartsTTFT(frame, false, OpenAITTFTModeVisible) {
+				benchmarkOpenAISSEHotPathIntSink++
+			}
 		}
 	})
 }
