@@ -221,7 +221,10 @@ func (p *openAIResponsesToolSchemaParser) parseValue(
 		case "additional_tools":
 			context = openAIResponsesToolSchemaToolCarrier
 		default:
-			context = openAIResponsesToolSchemaSkip
+			// The type probe already parsed this entire non-tool item with the
+			// same syntax and depth checks as Skip. Reuse its end offset.
+			p.pos = probe.pos
+			return nil
 		}
 	}
 	switch p.body[p.pos] {
@@ -652,7 +655,13 @@ func (p *openAIResponsesToolSchemaParser) syntaxError(message string) error {
 func decodeOpenAIResponsesJSONString(raw []byte) (string, error) {
 	decoded, err := strconv.Unquote(string(raw))
 	if err != nil {
-		return "", err
+		// JSON permits escaped slashes and UTF-16 surrogate pairs that Go
+		// string literals do not. Keep the common path, but decode these as JSON.
+		var jsonDecoded string
+		if err := json.Unmarshal(raw, &jsonDecoded); err != nil {
+			return "", err
+		}
+		return jsonDecoded, nil
 	}
 	return decoded, nil
 }
