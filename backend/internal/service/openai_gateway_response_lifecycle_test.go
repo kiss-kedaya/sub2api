@@ -79,7 +79,8 @@ func TestOpenAIStreamingResponse_ClientCancellationClosesBlockedUpstreamBody(t *
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		MaxLineSize: defaultMaxLineSize,
+		StreamDataIntervalTimeout: 1,
+		MaxLineSize:               defaultMaxLineSize,
 	}}}
 	resp, body, writer := newLifecycleTrackingResponse()
 	defer func() { _ = writer.Close() }()
@@ -100,14 +101,90 @@ func TestOpenAIStreamingResponse_ClientCancellationClosesBlockedUpstreamBody(t *
 
 	select {
 	case <-body.closed:
-	case <-time.After(300 * time.Millisecond):
-		t.Fatal("client cancellation left the upstream response body open")
+		t.Fatal("client cancellation closed the upstream body before the drain window")
+	case <-time.After(100 * time.Millisecond):
 	}
 	select {
 	case err := <-done:
 		require.Error(t, err)
+		require.Contains(t, err.Error(), "stream usage incomplete after disconnect timeout")
 		require.False(t, errors.Is(err, context.DeadlineExceeded))
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(1200 * time.Millisecond):
 		t.Fatal("client cancellation left the stream handler blocked")
+	}
+	select {
+	case <-body.closed:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("client cancellation did not release the upstream body after the drain window")
+	}
+}
+
+func TestOpenAIStreamingResponse_ClientCancellationDrainsTerminalUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
+		MaxLineSize: defaultMaxLineSize,
+	}}}
+	resp, _, writer := newLifecycleTrackingResponse()
+	defer func() { _ = writer.Close() }()
+	c, _ := newLifecycleTestContext(ctx)
+
+	initialWritten := make(chan error, 1)
+	terminalWritten := make(chan error, 1)
+	go func() {
+		defer writer.Close()
+		_, err := writer.Write([]byte("data: {\"type\":\"response.in_progress\",\"response\":{}}\n\n"))
+		initialWritten <- err
+		if err != nil {
+			return
+		}
+		// The terminal frame must be sent after cancellation, beyond the old
+		// 1.5-second cutoff, even when the read-interval setting is disabled.
+		<-ctx.Done()
+		timer := time.NewTimer(1700 * time.Millisecond)
+		defer timer.Stop()
+		<-timer.C
+		_, err = writer.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":1}}}}\n\n"))
+		terminalWritten <- err
+	}()
+
+	done := make(chan struct {
+		result *openaiStreamingResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := svc.handleStreamingResponse(ctx, resp, c, &Account{ID: 1}, time.Now(), "model", "model")
+		done <- struct {
+			result *openaiStreamingResult
+			err    error
+		}{result: result, err: err}
+	}()
+
+	select {
+	case err := <-initialWritten:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("initial streaming frame was not consumed")
+	}
+	cancel()
+
+	select {
+	case err := <-terminalWritten:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("terminal usage frame was not accepted during the drain window")
+	}
+	select {
+	case outcome := <-done:
+		require.NoError(t, outcome.err)
+		require.NotNil(t, outcome.result)
+		require.True(t, outcome.result.clientDisconnect)
+		require.NotNil(t, outcome.result.usage)
+		require.Equal(t, 3, outcome.result.usage.InputTokens)
+		require.Equal(t, 5, outcome.result.usage.OutputTokens)
+		require.Equal(t, 1, outcome.result.usage.CacheReadInputTokens)
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream handler did not finish after terminal usage")
 	}
 }

@@ -25,7 +25,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const openAIStreamScannerShutdownTimeout = time.Second
+const (
+	openAIStreamClientDisconnectDrainTimeoutDefault = 180 * time.Second
+	openAIStreamScannerShutdownTimeout              = time.Second
+)
 
 // openaiStreamingResult streaming response result
 type openaiStreamingResult struct {
@@ -54,9 +57,8 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel, reasoningEffort string) (*openaiStreamingResult, error) {
-	// detachUpstreamContext deliberately keeps billing/failover work independent
-	// from the caller. Response-body ownership is different: a client cancel must
-	// stop the blocked upstream read, otherwise the scanner retains the body.
+	// detachUpstreamContext deliberately keeps billing/failover work independent.
+	// A canceled client still gets a bounded window for the terminal usage frame.
 	watchCtx := ctx
 	if c != nil && c.Request != nil {
 		watchCtx = c.Request.Context()
@@ -64,24 +66,40 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	if watchCtx == nil {
 		watchCtx = context.Background()
 	}
-	streamLifecycleDone := make(chan struct{})
 	var scannerDone <-chan struct{}
+	var drainTimer *time.Timer
+	var drainCh <-chan time.Time
+	clientDisconnected := false
+	clientCancelCh := watchCtx.Done()
+	drainTimeout := openAIStreamClientDisconnectDrainTimeoutDefault
+	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		drainTimeout = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	}
+	streamAccountID := int64(0)
+	if account != nil {
+		streamAccountID = account.ID
+	}
+	startDisconnectDrain := func() {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		// This is a total budget from disconnect, never refreshed by new data.
+		drainTimer = time.NewTimer(drainTimeout)
+		drainCh = drainTimer.C
+		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, draining upstream usage for %s", drainTimeout)
+	}
 	defer func() {
+		if drainTimer != nil {
+			drainTimer.Stop()
+		}
 		_ = resp.Body.Close()
-		close(streamLifecycleDone)
 		if scannerDone != nil {
 			select {
 			case <-scannerDone:
 			case <-time.After(openAIStreamScannerShutdownTimeout):
-				logger.LegacyPrintf("service.openai_gateway", "OpenAI stream scanner did not exit after upstream body close: account=%d model=%s", account.ID, originalModel)
+				logger.LegacyPrintf("service.openai_gateway", "OpenAI stream scanner did not exit after upstream body close: account=%d model=%s", streamAccountID, originalModel)
 			}
-		}
-	}()
-	go func() {
-		select {
-		case <-watchCtx.Done():
-			_ = resp.Body.Close()
-		case <-streamLifecycleDone:
 		}
 	}()
 
@@ -163,7 +181,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		firstOutputStage = newDefaultOpenAIFirstOutputStage()
 		defer func() {
 			if err := firstOutputStage.Close(); err != nil {
-				logger.LegacyPrintf("service.openai_gateway", "OpenAI first-output staging cleanup failed: account=%d model=%s error=%v", account.ID, originalModel, err)
+				logger.LegacyPrintf("service.openai_gateway", "OpenAI first-output staging cleanup failed: account=%d model=%s error=%v", streamAccountID, originalModel, err)
 			}
 		}()
 	}
@@ -282,7 +300,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	// 注意：OpenAI `/v1/responses` streaming 事件必须符合 OpenAI Responses schema；
 	// 否则下游 SDK（例如 OpenCode）会因为类型校验失败而报错。
 	errorEventSent := false
-	clientDisconnected := false
 	sawTerminalEvent := false
 	sawFailedEvent := false
 	sawBareError := false
@@ -312,16 +329,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if errors.Is(err, errOpenAIFirstOutputStageLimit) {
 				message = "OpenAI first-output staging limit exceeded"
 			}
-			logger.LegacyPrintf("service.openai_gateway", "%s: account=%d model=%s error=%v", message, account.ID, originalModel, err)
+			logger.LegacyPrintf("service.openai_gateway", "%s: account=%d model=%s error=%v", message, streamAccountID, originalModel, err)
 			failoverErr := s.newOpenAIStreamFailoverErrorWithModel(c, account, false, upstreamRequestID, nil, message, mappedModel)
 			failoverErr.SafeToFailoverAfterWrite = true
 			streamEarlyErr = failoverErr
 			_ = resp.Body.Close()
 			return
 		}
-		clientDisconnected = true
-		_ = resp.Body.Close()
-		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, closing upstream instead of draining")
+		startDisconnectDrain()
 	}
 	completeGuardedEvent := func(queueDrained bool) {
 		completedProgressEvent := eventStartsClientOutput
@@ -361,15 +376,15 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		errorEventSent = true
 		payload := `{"type":"error","sequence_number":0,"error":{"type":"upstream_error","message":` + strconv.Quote(reason) + `,"code":` + strconv.Quote(reason) + `}}`
 		if err := flushBuffered(); err != nil {
-			clientDisconnected = true
+			startDisconnectDrain()
 			return
 		}
 		if _, err := writePendingString("data: " + payload + "\n\n"); err != nil {
-			clientDisconnected = true
+			startDisconnectDrain()
 			return
 		}
 		if err := flushBuffered(); err != nil {
-			clientDisconnected = true
+			startDisconnectDrain()
 			return
 		}
 		clientOutputStarted = true
@@ -405,7 +420,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return
 		}
 		if err := flushBuffered(); err != nil {
-			clientDisconnected = true
+			startDisconnectDrain()
 			logger.LegacyPrintf("service.openai_gateway", "%s", disconnectMessage)
 			return
 		}
@@ -461,7 +476,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return nil, nil, false
 		}
 		if errors.Is(scanErr, errOpenAIFirstOutputScannerLimit) && !firstOutputProgressObserved {
-			logger.LegacyPrintf("service.openai_gateway", "SSE token exceeded guarded first-output limit: account=%d limit=%d error=%v", account.ID, openAIFirstOutputStageMaxBytes+openAIFirstOutputScannerFramingAllowance, scanErr)
+			logger.LegacyPrintf("service.openai_gateway", "SSE token exceeded guarded first-output limit: account=%d limit=%d error=%v", streamAccountID, openAIFirstOutputStageMaxBytes+openAIFirstOutputScannerFramingAllowance, scanErr)
 			failoverErr := s.newOpenAIStreamFailoverErrorWithModel(
 				c, account, false, upstreamRequestID, nil,
 				"OpenAI SSE line exceeds guarded first-output limit",
@@ -471,7 +486,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return resultWithUsage(), failoverErr, true
 		}
 		if errors.Is(scanErr, bufio.ErrTooLong) && stageFirstOutput && !firstOutputProgressObserved {
-			logger.LegacyPrintf("service.openai_gateway", "SSE line too long before first output: account=%d max_size=%d error=%v", account.ID, maxLineSize, scanErr)
+			logger.LegacyPrintf("service.openai_gateway", "SSE line too long before first output: account=%d max_size=%d error=%v", streamAccountID, maxLineSize, scanErr)
 			failoverErr := s.newOpenAIStreamFailoverErrorWithModel(
 				c, account, false, upstreamRequestID, nil,
 				"OpenAI SSE line exceeds guarded first-output limit",
@@ -497,7 +512,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", scanErr), true
 		}
 		if errors.Is(scanErr, bufio.ErrTooLong) {
-			logger.LegacyPrintf("service.openai_gateway", "SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, scanErr)
+			logger.LegacyPrintf("service.openai_gateway", "SSE line too long: account=%d max_size=%d error=%v", streamAccountID, maxLineSize, scanErr)
 			sendErrorEvent("response_too_large")
 			return resultWithUsage(), scanErr, true
 		}
@@ -871,21 +886,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 	}
 
-	// 无超时/无 keepalive 的常见路径走同步扫描，减少 goroutine 与 channel 开销。
-	if streamInterval <= 0 && keepaliveInterval <= 0 && firstOutputTimeout <= 0 {
-		defer putSSEScannerBuf64K(scanBuf)
-		for documentScanner.Scan() {
-			processSSELine(documentScanner.Text(), true)
-			if streamEarlyErr != nil {
-				return resultWithUsage(), streamEarlyErr
-			}
-		}
-		if result, err, done := handleScanErr(documentScanner.Err()); done {
-			return result, err
-		}
-		return finalizeStream()
-	}
-
 	type scanEvent struct {
 		line      string
 		err       error
@@ -940,6 +940,17 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 
 	for {
 		select {
+		case <-clientCancelCh:
+			clientCancelCh = nil
+			startDisconnectDrain()
+
+		case <-drainCh:
+			_ = resp.Body.Close()
+			if sawTerminalEvent {
+				return finalizeStream()
+			}
+			return resultWithUsage(), fmt.Errorf("stream usage incomplete after disconnect timeout")
+
 		case ev, ok := <-events:
 			if !ok {
 				if stageFirstOutput && eventInProgress {
@@ -958,10 +969,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if streamEarlyErr != nil {
 				return resultWithUsage(), streamEarlyErr
 			}
-			if clientDisconnected {
-				_ = resp.Body.Close()
-				return finalizeStream()
-			}
 			// Grok terminal events carry final usage. Do not hold the account slot
 			// (or report an idle timeout) while waiting for the HTTP body to close.
 			if account != nil && account.IsGrok() && sawTerminalEvent && terminalEventType != "error" && ev.line == "" {
@@ -970,6 +977,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 
 		case <-intervalCh:
+			if clientDisconnected {
+				continue
+			}
 			if failureDelivered {
 				return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 			}
@@ -981,10 +991,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				_ = resp.Body.Close()
 				return finalizeStream()
 			}
-			if clientDisconnected {
-				return resultWithUsage(), fmt.Errorf("stream usage incomplete after timeout")
-			}
-			logger.LegacyPrintf("service.openai_gateway", "Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
+			logger.LegacyPrintf("service.openai_gateway", "Stream data interval timeout: account=%d model=%s interval=%s", streamAccountID, originalModel, streamInterval)
+			_ = resp.Body.Close()
 			// 处理流超时，可能标记账户为临时不可调度或错误状态
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
@@ -1007,14 +1015,15 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				stopFirstOutputTimer()
 				continue
 			}
+			if clientDisconnected {
+				stopFirstOutputTimer()
+				continue
+			}
 			if codexFailureTerminal && sawBareError && !sawResponseFailed && len(events) == 0 {
 				_ = resp.Body.Close()
 				return finalizeStream()
 			}
 			_ = resp.Body.Close()
-			for ev := range events {
-				markEventProcessed(ev)
-			}
 			return resultWithUsage(), s.newOpenAIFirstOutputTimeoutError(
 				ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
 				startTime, originalModel, reasoningEffort,
@@ -1038,7 +1047,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				recordOpenAIStreamKeepaliveBytes(c, n)
 				if err != nil {
 					handlePendingWriteError(err)
-					return finalizeStream()
+					if streamEarlyErr != nil {
+						return resultWithUsage(), streamEarlyErr
+					}
+					continue
 				}
 				flusher.Flush()
 				lastDownstreamWriteAt = time.Now()
@@ -1046,11 +1058,17 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 			if _, err := writePendingString(":\n\n"); err != nil {
 				handlePendingWriteError(err)
-				return finalizeStream()
+				if streamEarlyErr != nil {
+					return resultWithUsage(), streamEarlyErr
+				}
+				continue
 			}
 			if err := flushBuffered(); err != nil {
 				handlePendingWriteError(err)
-				return finalizeStream()
+				if streamEarlyErr != nil {
+					return resultWithUsage(), streamEarlyErr
+				}
+				continue
 			}
 			lastDownstreamWriteAt = time.Now()
 		}
