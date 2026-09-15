@@ -926,6 +926,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				_ = resp.Body.Close()
 				return finalizeStream()
 			}
+			// Grok terminal events carry final usage. Do not hold the account slot
+			// (or report an idle timeout) while waiting for the HTTP body to close.
+			if account != nil && account.IsGrok() && sawTerminalEvent && terminalEventType != "error" && ev.line == "" {
+				_ = resp.Body.Close()
+				return finalizeStream()
+			}
 
 		case <-intervalCh:
 			if failureDelivered {
