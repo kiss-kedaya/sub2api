@@ -49,3 +49,11 @@ Content-Type: application/json
 活动说明和资格规则显示上游的 `title`、`description` 和 `rules`。`requires_explicit_confirmation` 不为 `false` 时必须勾选收件人同意；此值不伪造为已同意。Spark 影子账号可查询母账号次数，但发送需从母账号操作。
 
 发送成功后，后端以有时限的独立上下文刷新次数。回读失败仍返回 `sent: true`、`refresh_failed: true`，并尝试清空过期快照。发送请求不自动重试；网络错误或无法确认的响应要求先在 Codex 核对状态。接口错误不会向前端透传上游原始响应中的凭证或无关个人信息。
+
+### 界面测试
+
+以下截图使用真实 Vue 组件和模拟 API 响应，不包含真实账号凭证，也没有发送邮件。
+
+![邀请弹窗与同意确认](screenshots/codex-referral-dialog.png)
+
+![模拟发送成功后刷新剩余次数](screenshots/codex-referral-success.png)
