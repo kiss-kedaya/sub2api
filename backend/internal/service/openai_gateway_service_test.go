@@ -3718,6 +3718,144 @@ func TestHandleNonStreamingResponse_APIKeyFallsBackToSSEBodyWhenContentTypeIsWro
 	require.Equal(t, "hello", gjson.Get(rec.Body.String(), "output.0.content.0.text").String())
 }
 
+type nonStreamingOpenAIAccountStateRepo struct {
+	openAIAuthPolicyAccountRepo
+	rateLimitCalls, modelRateLimitCalls, overloadCalls int
+}
+
+func (r *nonStreamingOpenAIAccountStateRepo) SetRateLimited(context.Context, int64, time.Time) error {
+	r.rateLimitCalls++
+	return nil
+}
+
+func (r *nonStreamingOpenAIAccountStateRepo) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
+	r.modelRateLimitCalls++
+	return nil
+}
+
+func (r *nonStreamingOpenAIAccountStateRepo) SetOverloaded(context.Context, int64, time.Time) error {
+	r.overloadCalls++
+	return nil
+}
+
+func TestHandleNonStreamingResponse_InvalidJSONFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name, contentType, body string
+		poolMode                bool
+	}{
+		{"plain_text", "text/plain; charset=utf-8", "Hi! What can I help you with?\n", false},
+		{"plain_text_pool", "text/plain; charset=utf-8", "Hi! What can I help you with?\n", true},
+		{"wrong_json_header", "application/json", "Hi! What can I help you with?\n", false},
+		{"html", "text/html", "<html>upstream unavailable</html>", false},
+		{"truncated_json", "application/json", `{"usage":{"input_tokens":7`, false},
+		{"empty", "application/json", "", false},
+		{"untrusted_auth_text", "text/plain", "invalid_api_key account_deactivated quota_exceeded", false},
+		{"truncated_auth_error", "application/json", `{"error":{"type":"authentication_error","code":"invalid_api_key"}} trailing`, false},
+		{"truncated_rate_limit", "application/json", `{"error":{"type":"rate_limit_error","status_code":429}} trailing`, false},
+		{"valid_json_missing_usage", "application/json", `{"id":"resp_no_usage","output":[]}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				w.Header().Set("X-Request-Id", "invalid-json-request")
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer upstream.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream.URL+"/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol","stream":false,"input":"Reply with exactly OK."}`))
+			require.NoError(t, err)
+			resp, err := upstream.Client().Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+			repo := &nonStreamingOpenAIAccountStateRepo{}
+			rateLimit := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, rateLimitService: rateLimit}
+			account := &Account{ID: 29157, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"pool_mode": tc.poolMode}}
+
+			result, err := svc.handleNonStreamingResponse(ctx, resp, c, account, "gpt-5.6-sol", "gpt-5.6-sol")
+			require.Nil(t, result, "invalid responses must not create successful usage")
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+			require.True(t, failoverErr.ShouldRetryNextAccount())
+			require.True(t, failoverErr.RequestScopedTransient)
+			require.Equal(t, GatewayFailureScopeRequest, failoverErr.Scope)
+			require.Equal(t, account.IsPoolMode() && account.IsPoolModeRetryableStatus(http.StatusBadGateway), failoverErr.RetryableOnSameAccount)
+			require.False(t, failoverErr.IsCredentialFailure())
+			require.False(t, failoverErr.SafeToFailoverAfterWrite)
+			require.Equal(t, "invalid-json-request", failoverErr.ResponseHeaders.Get("X-Request-Id"))
+			require.Equal(t, tc.contentType, failoverErr.ResponseHeaders.Get("Content-Type"))
+			require.Equal(t, "parse response: invalid json response", gjson.GetBytes(failoverErr.ResponseBody, "error.message").String())
+			require.False(t, IsResponseCommitted(c))
+			require.False(t, c.Writer.Written())
+			require.Empty(t, rec.Body.String())
+			_, _, accountHealthFailure := classifyOpenAIAPIKeyHealthFailure(failoverErr)
+			require.False(t, accountHealthFailure)
+			(&GatewayService{accountRepo: repo, rateLimitService: rateLimit}).TempUnscheduleRetryableError(ctx, account.ID, failoverErr)
+			require.Zero(t, repo.setErrorCalls)
+			require.Zero(t, repo.tempCalls)
+			require.Zero(t, repo.rateLimitCalls)
+			require.Zero(t, repo.modelRateLimitCalls)
+			require.Zero(t, repo.overloadCalls)
+
+			// Reuse the untouched client writer for a different account's response.
+			next := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
+				Body: io.NopCloser(strings.NewReader(`{"id":"resp_recovered","status":"completed","output":[],"usage":{"input_tokens":7,"output_tokens":3}}`))}
+			result, err = svc.handleNonStreamingResponse(ctx, next, c, &Account{ID: 29158, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, "gpt-5.6-sol", "gpt-5.6-sol")
+			require.NoError(t, err)
+			require.Equal(t, 7, result.InputTokens)
+			require.Equal(t, 3, result.OutputTokens)
+			require.Equal(t, "resp_recovered", gjson.Get(rec.Body.String(), "id").String())
+		})
+	}
+}
+
+func TestHandleNonStreamingResponse_InvalidJSONFailoverBoundaries(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name, body          string
+		status              int
+		committed, canceled bool
+	}{
+		{name: "already_committed", body: "plain text", status: http.StatusOK, committed: true},
+		{name: "canceled_after_read", body: "plain text", status: http.StatusOK, canceled: true},
+		{name: "non_2xx", body: "plain text", status: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.canceled {
+				cancel()
+			}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+			if tc.committed {
+				MarkResponseCommitted(c)
+				c.Data(http.StatusBadGateway, "application/json", []byte(`{"error":"already sent"}`))
+			}
+			before := rec.Body.String()
+			resp := &http.Response{StatusCode: tc.status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(tc.body))}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			result, err := svc.handleNonStreamingResponse(ctx, resp, c, &Account{ID: 29157, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, "gpt-5.6-sol", "gpt-5.6-sol")
+			require.Nil(t, result)
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(err, &failoverErr))
+			if tc.canceled {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+			require.Equal(t, before, rec.Body.String())
+		})
+	}
+}
+
 func TestHandleNonStreamingResponse_JSONBodyWithSSEContentTypeKeepsUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
