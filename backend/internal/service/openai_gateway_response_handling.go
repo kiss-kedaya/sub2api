@@ -1627,12 +1627,6 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		observer.ObserveOpenAI(body, strings.TrimSpace(gjson.GetBytes(body, "type").String()))
 	}
 
-	// Detect SSE responses for ALL account types via Content-Type header.
-	// Some OpenAI-compatible upstreams (including other sub2api instances)
-	// may return SSE even when stream=false was requested.
-	if isEventStreamResponse(resp.Header) {
-		return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
-	}
 	// bodyLooksLikeSSE is a line-level heuristic: real SSE framing requires
 	// "data:"/"event:" field names at the very start of a physical line. A
 	// plain bytes.Contains scan would also match ordinary JSON responses
@@ -1640,6 +1634,13 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	// "event:" (e.g. compact tool output), causing those JSON bodies to be
 	// misrouted into handleSSEToJSON and lose their usage accounting.
 	bodyLooksLikeSSE := bodyHasSSEFraming(body)
+	// Some OpenAI-compatible upstreams return SSE for stream=false, while
+	// others attach an SSE Content-Type to a complete JSON document. Prefer the
+	// actual body shape when it is valid JSON; this preserves usage accounting
+	// and prevents returning a JSON document with an SSE media type.
+	if isEventStreamResponse(resp.Header) && (!gjson.ValidBytes(body) || bodyLooksLikeSSE) {
+		return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
+	}
 
 	// For OAuth accounts, also fall back to a body-content heuristic because
 	// the upstream may omit the Content-Type header while still sending SSE.
@@ -1689,13 +1690,14 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	s.relayOpenAICodexTurnState(c, account, resp.Header)
 
 	contentType := "application/json"
-	if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled {
+	if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled && !isEventStreamResponse(resp.Header) {
 		if upstreamType := resp.Header.Get("Content-Type"); upstreamType != "" {
 			contentType = upstreamType
 		}
 	}
 
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+		c.Writer.Header().Set("Content-Type", contentType)
 		c.Data(resp.StatusCode, contentType, body)
 	}
 
@@ -1803,6 +1805,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		}
 	}
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+		c.Writer.Header().Set("Content-Type", contentType)
 		c.Data(resp.StatusCode, contentType, body)
 	}
 
