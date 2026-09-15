@@ -700,7 +700,10 @@ func TestCachePostResetSnapshot(t *testing.T) {
 	repo := &stubQuotaAccountRepo{}
 	svc := &OpenAIQuotaService{accountRepo: repo}
 	credits := &OpenAIRateLimitResetCredits{AvailableCount: 0}
+	balance := "1200.50"
 	usage := &OpenAIQuotaUsage{
+		Credits:               &OpenAICredits{HasCredits: true, Balance: &balance},
+		FetchedAt:             123,
 		RateLimitResetCredits: credits,
 		RateLimit: &OpenAIRateLimit{
 			PrimaryWindow: &OpenAIRateLimitWindow{
@@ -715,6 +718,7 @@ func TestCachePostResetSnapshot(t *testing.T) {
 	require.NoError(t, svc.CachePostResetSnapshot(context.Background(), 100, usage))
 	require.Equal(t, 1, repo.extraUpdateCalls)
 	require.Equal(t, credits, repo.extraUpdates[100][openaiQuotaResetCreditsKey])
+	require.Equal(t, openAICreditsSnapshot{Credits: usage.Credits, FetchedAt: 123}, repo.extraUpdates[100][openaiQuotaCreditsKey])
 	require.Equal(t, 0.0, repo.extraUpdates[100]["codex_5h_used_percent"])
 	require.Equal(t, 0.0, repo.extraUpdates[100]["codex_7d_used_percent"])
 }
