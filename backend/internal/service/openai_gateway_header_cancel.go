@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 )
@@ -55,4 +56,35 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderCancel(clientCtx contex
 	}
 	resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: cancelUpstream}
 	return resp, nil
+}
+
+// Buffered success/error reads have no SSE drain loop after header handoff.
+// Give only canceled clients the same existing drain budget, then close the
+// source body to unblock ReadAll. Closing the returned body joins the watcher.
+func (s *OpenAIGatewayService) openAIBufferedBodyWithCancel(clientCtx context.Context, body io.ReadCloser) io.ReadCloser {
+	if clientCtx == nil || clientCtx.Done() == nil {
+		return body
+	}
+	budget := openAIStreamClientDisconnectDrainTimeoutDefault
+	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		budget = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	}
+	readDone := make(chan struct{})
+	watchDone := make(chan struct{})
+	stopWatch := context.AfterFunc(clientCtx, func() {
+		defer close(watchDone)
+		timer := time.NewTimer(budget)
+		defer timer.Stop()
+		select {
+		case <-readDone:
+		case <-timer.C:
+			_ = body.Close()
+		}
+	})
+	return &openAIRequestContextReadCloser{ReadCloser: body, cleanup: func() {
+		close(readDone)
+		if !stopWatch() {
+			<-watchDone
+		}
+	}}
 }

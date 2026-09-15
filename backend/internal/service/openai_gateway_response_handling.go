@@ -330,6 +330,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	eventStartsTTFTOutput := false
 	eventShouldFlush := false
 	handlePendingWriteError := func(err error) {
+		if errors.Is(err, errOpenAIFirstOutputClientWrite) {
+			startDisconnectDrain()
+			return
+		}
 		if firstOutputStage != nil && !firstOutputStage.closed {
 			message := "OpenAI first-output staging failed"
 			if errors.Is(err, errOpenAIFirstOutputStageLimit) {
@@ -1063,10 +1067,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				n, err := w.Write([]byte(":\n\n"))
 				recordOpenAIStreamKeepaliveBytes(c, n)
 				if err != nil {
-					handlePendingWriteError(err)
-					if streamEarlyErr != nil {
-						return resultWithUsage(), streamEarlyErr
-					}
+					startDisconnectDrain()
 					continue
 				}
 				flusher.Flush()
@@ -1741,6 +1742,11 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if c != nil && c.Request != nil {
+			if err := c.Request.Context().Err(); err != nil {
+				return nil, err
+			}
 		}
 		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && account != nil && !IsResponseCommitted(c) {
 			// Invalid JSON or missing usage is not evidence of credential failure.

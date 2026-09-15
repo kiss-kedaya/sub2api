@@ -1111,6 +1111,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if headerGuard != nil {
 			resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: headerGuard.close}
 		}
+		if !reqStream || resp.StatusCode >= http.StatusBadRequest {
+			resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
+		}
 
 		// Handle error response
 		if resp.StatusCode >= 400 {
@@ -1354,6 +1357,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
+				if clientErr := clientCtx.Err(); clientErr != nil {
+					return nil, clientErr
+				}
 				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
