@@ -314,6 +314,28 @@ func TestListModelAvailabilityCandidates_ConcurrentMissQueriesOnce(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestModelAvailabilityLateMissRechecksCacheBeforeQuery(t *testing.T) {
+	counter := &countingQueryMatcher{}
+	repo, mock := newModelAvailabilityCandidateRepo(t, counter)
+	groupID := int64(42)
+	platforms := []string{service.PlatformOpenAI}
+	key := makeModelAvailabilityCandidateCacheKey(&groupID, platforms, false)
+	_, hit := repo.modelAvailabilityCache.get(key)
+	require.False(t, hit)
+
+	// Another caller fills the entry after this caller's miss but before it
+	// joins singleflight. No overlapping query remains to deduplicate against.
+	mock.ExpectQuery("model availability candidates").
+		WillReturnRows(addOAuthCandidateRow(modelAvailabilityCandidateRow()))
+	first, err := repo.ListModelAvailabilityCandidates(context.Background(), &groupID, platforms, false)
+	require.NoError(t, err)
+	late, err := repo.loadModelAvailabilityCandidatesCached(context.Background(), key, &groupID, platforms, false)
+	require.NoError(t, err)
+	require.Equal(t, first, late)
+	require.Equal(t, 1, counter.Count())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 // TestListModelAvailabilityCandidates_ConcurrentSupportChecksRaceFree 验证缓存
 // 返回的账号由多调用方直接共享（无拷贝）：并发对同一缓存条目做
 // IsModelSupported 不得产生数据竞争——并发安全性来自 GetModelMapping 的
