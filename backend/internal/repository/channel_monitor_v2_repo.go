@@ -789,6 +789,9 @@ func (r *channelMonitorV2Repository) loadErrorDetails(ctx context.Context, filte
 			COALESCE(current_error.status_code, 0) AS status_code,
 			COALESCE(current_error.upstream_status_code, 0) AS upstream_status_code,
 			LEFT(CASE WHEN current_error.error_message LIKE '` + service.OpsMinimumInputPolicyMessagePrefix + `%' THEN current_error.error_message
+			  WHEN current_error.status_code = 400 AND COALESCE(current_error.upstream_status_code, 400) = 400
+			    AND CONCAT_WS(' ', current_error.upstream_error_detail, current_error.error_body) ~ '"code"[[:space:]]*:[[:space:]]*"input_too_small"'
+			    THEN '` + service.OpsMinimumInputPolicyMessagePrefix + `' || COALESCE(NULLIF(current_error.upstream_error_message, ''), current_error.error_message, '')
 			  ELSE COALESCE(NULLIF(current_error.upstream_error_message, ''), NULLIF(current_error.error_message, ''), NULLIF(current_error.upstream_error_detail, ''), NULLIF(current_error.error_body, ''), current_error.error_type, '') END, 600) AS message,
 			COUNT(*) AS count
 		FROM ops_error_logs current_error
