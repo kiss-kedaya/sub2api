@@ -2401,6 +2401,11 @@ func (r *accountRepository) loadModelAvailabilityCandidatesCached(
 	includeGrouped bool,
 ) ([]service.Account, error) {
 	resultCh := r.modelAvailabilityCache.sf.DoChan(modelAvailabilityCandidatesSFKey(key), func() (any, error) {
+		// A previous leader may have populated the cache after this caller's
+		// initial miss but before it joined singleflight.
+		if cached, ok := r.modelAvailabilityCache.get(key); ok {
+			return cached, nil
+		}
 		generation := r.modelAvailabilityCache.currentGeneration()
 		// The first caller is only a waiter; its cancellation or short
 		// deadline must not abort the shared refresh for other callers.
