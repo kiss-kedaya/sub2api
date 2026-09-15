@@ -517,8 +517,9 @@ type ResponsesUsage struct {
 func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 	type responsesUsageAlias ResponsesUsage
 	type cacheTokenPresence struct {
-		CacheCreationTokens *int `json:"cache_creation_tokens"`
-		CacheWriteTokens    *int `json:"cache_write_tokens"`
+		CachedTokens        json.RawMessage `json:"cached_tokens"`
+		CacheCreationTokens *int            `json:"cache_creation_tokens"`
+		CacheWriteTokens    *int            `json:"cache_write_tokens"`
 	}
 	var aux struct {
 		responsesUsageAlias
@@ -527,6 +528,9 @@ func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 		CacheCreationTokens     int                           `json:"cache_creation_tokens"`
 		CacheWriteInputTokens   int                           `json:"cache_write_input_tokens"`
 		CacheWriteTokens        int                           `json:"cache_write_tokens"`
+		CacheReadInputTokens    int                           `json:"cache_read_input_tokens"`
+		CacheReadTokens         int                           `json:"cache_read_tokens"`
+		CachedTokens            int                           `json:"cached_tokens"`
 		PromptTokensDetails     *ResponsesInputTokensDetails  `json:"prompt_tokens_details,omitempty"`
 		CompletionTokensDetails *ResponsesOutputTokensDetails `json:"completion_tokens_details,omitempty"`
 	}
@@ -562,6 +566,27 @@ func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 	}
 	if u.OutputTokensDetails == nil && aux.CompletionTokensDetails != nil {
 		u.OutputTokensDetails = aux.CompletionTokensDetails
+	}
+	// Match gateway usage parsing: explicit nested cache counts (including
+	// zero/null) outrank compatibility aliases. Preserve this count through
+	// Responses-to-Chat and Responses-to-Messages conversions.
+	cacheReadTokens := 0
+	switch {
+	case nestedPresence.InputTokensDetails != nil && len(nestedPresence.InputTokensDetails.CachedTokens) > 0:
+		cacheReadTokens = max(aux.InputTokensDetails.CachedTokens, 0)
+	case nestedPresence.PromptTokensDetails != nil && len(nestedPresence.PromptTokensDetails.CachedTokens) > 0:
+		cacheReadTokens = max(aux.PromptTokensDetails.CachedTokens, 0)
+	case aux.CacheReadInputTokens > 0:
+		cacheReadTokens = aux.CacheReadInputTokens
+	case aux.CacheReadTokens > 0:
+		cacheReadTokens = aux.CacheReadTokens
+	case aux.CachedTokens > 0:
+		cacheReadTokens = aux.CachedTokens
+	}
+	if u.InputTokensDetails != nil {
+		u.InputTokensDetails.CachedTokens = cacheReadTokens
+	} else if cacheReadTokens > 0 {
+		u.InputTokensDetails = &ResponsesInputTokensDetails{CachedTokens: cacheReadTokens}
 	}
 	var canonicalCacheCreationTokens *int
 	switch {
