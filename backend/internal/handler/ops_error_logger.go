@@ -1276,6 +1276,10 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			}
 		}
 		suppressOpsUpstreamAttributionForLocalModelConfiguration(c, entry)
+		if parsed.Code == "input_too_small" && status == http.StatusBadRequest &&
+			entry.UpstreamStatusCode != nil && *entry.UpstreamStatusCode == http.StatusBadRequest {
+			entry.ErrorMessage = service.OpsMinimumInputPolicyMessagePrefix + entry.ErrorMessage
+		}
 
 		if apiKey != nil {
 			entry.APIKeyID = &apiKey.ID
