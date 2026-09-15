@@ -133,7 +133,7 @@ func TestOpenAIStreamingResponse_ClientCancellationDrainsTerminalUsage(t *testin
 	initialWritten := make(chan error, 1)
 	terminalWritten := make(chan error, 1)
 	go func() {
-		defer writer.Close()
+		defer func() { _ = writer.Close() }()
 		_, err := writer.Write([]byte("data: {\"type\":\"response.in_progress\",\"response\":{}}\n\n"))
 		initialWritten <- err
 		if err != nil {
