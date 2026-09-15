@@ -65,6 +65,7 @@ func TestOpsErrorLoggerMinimumInputPolicyAfterProtocolConversion(t *testing.T) {
 		name, path, detail, clientCode, wantCategory string
 		upstreamStatus                               int
 		lastEvent                                    *service.OpsUpstreamErrorEvent
+		streamFailure                                bool
 	}{
 		{name: "chat without client code", path: "/v1/chat/completions", detail: minimumInputDetail, upstreamStatus: 400, wantCategory: "context_limit"},
 		{name: "messages without client code", path: "/v1/messages", detail: minimumInputDetail, upstreamStatus: 400, wantCategory: "context_limit"},
@@ -75,6 +76,7 @@ func TestOpsErrorLoggerMinimumInputPolicyAfterProtocolConversion(t *testing.T) {
 		{name: "no upstream status", detail: minimumInputDetail, wantCategory: "invalid_request"},
 		{name: "upstream server failure", detail: minimumInputDetail, upstreamStatus: 502, wantCategory: "invalid_request"},
 		{name: "different final client code", detail: minimumInputDetail, clientCode: "invalid_request", upstreamStatus: 400, wantCategory: "invalid_request"},
+		{name: "stream failure cannot reuse previous detail", detail: minimumInputDetail, upstreamStatus: 400, streamFailure: true, wantCategory: "invalid_request"},
 		{name: "earlier minimum input attempt", detail: minimumInputDetail, upstreamStatus: 400, wantCategory: "invalid_request",
 			lastEvent: &service.OpsUpstreamErrorEvent{UpstreamStatusCode: 400, Message: "Invalid parameter", Detail: `{"error":{"code":"invalid_request"}}`}},
 	} {
@@ -91,6 +93,11 @@ func TestOpsErrorLoggerMinimumInputPolicyAfterProtocolConversion(t *testing.T) {
 			}
 			body, err := json.Marshal(gin.H{"error": clientError})
 			require.NoError(t, err)
+			wireBody, wireStatus, contentType := body, http.StatusBadRequest, "application/json"
+			if tc.streamFailure {
+				wireBody = []byte("event: error\ndata: " + string(body) + "\n\n")
+				wireStatus, contentType = http.StatusOK, "text/event-stream"
+			}
 			ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 			router := gin.New()
 			router.Use(OpsErrorLoggerMiddleware(ops))
@@ -100,15 +107,17 @@ func TestOpsErrorLoggerMinimumInputPolicyAfterProtocolConversion(t *testing.T) {
 				if tc.lastEvent != nil {
 					c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{tc.lastEvent})
 				}
-				c.Data(http.StatusBadRequest, "application/json", body)
+				c.Data(wireStatus, contentType, wireBody)
 			})
 			recorder := httptest.NewRecorder()
 			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, nil))
-			require.Equal(t, http.StatusBadRequest, recorder.Code)
-			require.JSONEq(t, string(body), recorder.Body.String())
+			require.Equal(t, wireStatus, recorder.Code)
+			require.Equal(t, string(wireBody), recorder.Body.String())
 			require.Equal(t, int64(1), OpsErrorLogQueueLength())
 			entry := (<-opsErrorLogQueue).entry
-			require.JSONEq(t, string(body), entry.ErrorBody)
+			if !tc.streamFailure {
+				require.JSONEq(t, string(body), entry.ErrorBody)
+			}
 			upstreamStatus := 0
 			if entry.UpstreamStatusCode != nil {
 				upstreamStatus = *entry.UpstreamStatusCode

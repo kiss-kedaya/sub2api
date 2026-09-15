@@ -1280,7 +1280,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			entry.UpstreamStatusCode != nil && *entry.UpstreamStatusCode == http.StatusBadRequest {
 			code := parsed.Code
 			// Protocol conversion can omit the client code; only consult the final upstream attempt.
-			if code == "" && entry.UpstreamErrorDetail != nil {
+			if code == "" && !parsed.StreamFailure && entry.UpstreamErrorDetail != nil {
 				var upstream struct {
 					Error struct {
 						Code string `json:"code"`
