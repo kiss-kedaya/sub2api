@@ -95,9 +95,19 @@ func buildClient(opts Options) (*http.Client, error) {
 	}
 	rt = servertiming.WrapRoundTripper(rt)
 	return &http.Client{
-		Transport: rt,
+		Transport: &pooledTransport{RoundTripper: rt, transport: transport},
 		Timeout:   opts.Timeout,
 	}, nil
+}
+
+// pooledTransport 保留包装后的请求链路，并将空闲连接清理交给原始连接池。
+type pooledTransport struct {
+	http.RoundTripper
+	transport *http.Transport
+}
+
+func (t *pooledTransport) CloseIdleConnections() {
+	t.transport.CloseIdleConnections()
 }
 
 func buildTransport(opts Options) (*http.Transport, error) {
