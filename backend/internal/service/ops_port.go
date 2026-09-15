@@ -61,6 +61,10 @@ type OpsRepository interface {
 	GetLatestDailyBucketDate(ctx context.Context) (time.Time, bool, error)
 }
 
+// Keep the canonical length-policy label readable by retained monitor workers.
+// The original client response and upstream payload remain separate fields.
+const OpsMinimumInputPolicyMessagePrefix = "Context length requirement (minimum input): "
+
 type OpsInsertErrorLogInput struct {
 	RequestID       string
 	ClientRequestID string
