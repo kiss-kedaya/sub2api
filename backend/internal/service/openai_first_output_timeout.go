@@ -30,6 +30,7 @@ const (
 var (
 	errOpenAIFirstOutputStageLimit   = errors.New("openai first-output staging limit exceeded")
 	errOpenAIFirstOutputScannerLimit = errors.New("openai pre-output scanner token limit exceeded")
+	errOpenAIFirstOutputClientWrite  = errors.New("openai first-output client write failed")
 )
 
 type openAIFirstOutputStage struct {
@@ -184,10 +185,26 @@ func (s *openAIFirstOutputStage) prepareWrite(incoming int) error {
 	return nil
 }
 
+// Preserve the source of copy failures: spool reads can fail over, but a failed
+// downstream write must drain the existing attempt for usage.
+type openAIFirstOutputClientWriter struct{ io.Writer }
+
+func (w openAIFirstOutputClientWriter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	if err == nil && n < len(p) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		err = fmt.Errorf("%w: %w", errOpenAIFirstOutputClientWrite, err)
+	}
+	return n, err
+}
+
 func (s *openAIFirstOutputStage) CommitTo(dst io.Writer) error {
 	if s == nil || s.closed {
 		return os.ErrClosed
 	}
+	dst = openAIFirstOutputClientWriter{Writer: dst}
 	if s.tempFile == nil {
 		if _, err := io.Copy(dst, bytes.NewReader(s.memory.Bytes())); err != nil {
 			return err
