@@ -58,3 +58,70 @@ func TestOpsErrorLoggerMinimumInputPolicyPreservesDiagnosticAndChannelHealth(t *
 		})
 	}
 }
+
+func TestOpsErrorLoggerMinimumInputPolicyAfterProtocolConversion(t *testing.T) {
+	const minimumInputDetail = `{"error":{"code":"input_too_small","type":"invalid_request_error","message":"Minimum input is 2000 tokens"}}`
+	for _, tc := range []struct {
+		name, path, detail, clientCode, wantCategory string
+		upstreamStatus                               int
+		lastEvent                                    *service.OpsUpstreamErrorEvent
+	}{
+		{name: "chat without client code", path: "/v1/chat/completions", detail: minimumInputDetail, upstreamStatus: 400, wantCategory: "context_limit"},
+		{name: "messages without client code", path: "/v1/messages", detail: minimumInputDetail, upstreamStatus: 400, wantCategory: "context_limit"},
+		{name: "other upstream code", detail: `{"error":{"code":"invalid_request"}}`, upstreamStatus: 400, wantCategory: "invalid_request"},
+		{name: "message is not a code", detail: `{"error":{"message":"input_too_small"}}`, upstreamStatus: 400, wantCategory: "invalid_request"},
+		{name: "malformed detail", detail: `{"error":{"code":"input_too_small"}`, upstreamStatus: 400, wantCategory: "invalid_request"},
+		{name: "no detail", upstreamStatus: 400, wantCategory: "invalid_request"},
+		{name: "no upstream status", detail: minimumInputDetail, wantCategory: "invalid_request"},
+		{name: "upstream server failure", detail: minimumInputDetail, upstreamStatus: 502, wantCategory: "invalid_request"},
+		{name: "different final client code", detail: minimumInputDetail, clientCode: "invalid_request", upstreamStatus: 400, wantCategory: "invalid_request"},
+		{name: "earlier minimum input attempt", detail: minimumInputDetail, upstreamStatus: 400, wantCategory: "invalid_request",
+			lastEvent: &service.OpsUpstreamErrorEvent{UpstreamStatusCode: 400, Message: "Invalid parameter", Detail: `{"error":{"code":"invalid_request"}}`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupOpsErrorLogTestQueue(t, 2)
+			gin.SetMode(gin.TestMode)
+			path := tc.path
+			if path == "" {
+				path = "/v1/chat/completions"
+			}
+			clientError := gin.H{"type": "invalid_request_error", "message": "Minimum input is 2000 tokens"}
+			if tc.clientCode != "" {
+				clientError["code"] = tc.clientCode
+			}
+			body, err := json.Marshal(gin.H{"error": clientError})
+			require.NoError(t, err)
+			ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			router := gin.New()
+			router.Use(OpsErrorLoggerMiddleware(ops))
+			router.POST(path, func(c *gin.Context) {
+				setOpsRequestContext(c, "gpt-5.5", true)
+				service.SetOpsUpstreamError(c, tc.upstreamStatus, "Minimum input is 2000 tokens", tc.detail)
+				if tc.lastEvent != nil {
+					c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{tc.lastEvent})
+				}
+				c.Data(http.StatusBadRequest, "application/json", body)
+			})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, nil))
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+			require.JSONEq(t, string(body), recorder.Body.String())
+			require.Equal(t, int64(1), OpsErrorLogQueueLength())
+			entry := (<-opsErrorLogQueue).entry
+			require.JSONEq(t, string(body), entry.ErrorBody)
+			upstreamStatus := 0
+			if entry.UpstreamStatusCode != nil {
+				upstreamStatus = *entry.UpstreamStatusCode
+			}
+			category := service.ClassifyChannelMonitorV2Error(service.ChannelMonitorV2ErrorInput{
+				ErrorType: entry.ErrorType, ErrorOwner: entry.ErrorOwner, ErrorSource: entry.ErrorSource,
+				StatusCode: entry.StatusCode, UpstreamStatusCode: upstreamStatus, Message: entry.ErrorMessage,
+			})
+			require.Equal(t, tc.wantCategory, category)
+			if tc.wantCategory == "context_limit" {
+				require.JSONEq(t, minimumInputDetail, *entry.UpstreamErrorDetail)
+				require.Equal(t, "Minimum input is 2000 tokens", *entry.UpstreamErrorMessage)
+			}
+		})
+	}
+}
