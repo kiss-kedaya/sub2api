@@ -1042,7 +1042,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	compactModelFallbackRetried := false
 	agentTaskRecoveryTried := false
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
+	clientCtx := ctx
+	if c.Request != nil {
+		clientCtx = c.Request.Context()
+	}
 	for {
+		if err := clientCtx.Err(); err != nil {
+			return nil, err
+		}
 		// Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		var headerGuard *openAIFirstOutputHeaderGuard
@@ -1070,13 +1077,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Send request
 		upstreamStart := time.Now()
-		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
 			headerGuard.close()
+			if clientErr := clientCtx.Err(); clientErr != nil {
+				return nil, clientErr
+			}
 			return nil, s.newOpenAIFirstOutputTimeoutError(
 				ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
 				startTime, originalModel, reasoningEffortValue,
@@ -1090,6 +1100,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if headerGuard != nil {
 				headerGuard.close()
 			}
+			if clientErr := clientCtx.Err(); clientErr != nil {
+				return nil, clientErr
+			}
 			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
 			// a failover so the handler switches to a healthy account, and temporarily
 			// unschedule the account on durable faults (e.g. rejected proxy credentials).
@@ -1101,8 +1114,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Handle error response
 		if resp.StatusCode >= 400 {
+			if clientErr := clientCtx.Err(); clientErr != nil {
+				_ = resp.Body.Close()
+				return nil, clientErr
+			}
 			respBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
+			if clientErr := clientCtx.Err(); clientErr != nil {
+				return nil, clientErr
+			}
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
