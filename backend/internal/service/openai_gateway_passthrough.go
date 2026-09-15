@@ -1338,6 +1338,22 @@ func openAIStreamDataStartsSemanticTTFT(data, eventType string) bool {
 	}
 }
 
+// Frame callers supply the effective event type, including best-effort types
+// from malformed payloads. Keep the string entry point's fallback rules intact.
+func openAIStreamFrameStartsSemanticTTFT(frame openAISSEDataFrame) bool {
+	if len(frame.trimmed) == 0 || frame.isDone() {
+		return false
+	}
+	switch frame.eventType {
+	case "response.failed":
+		return false
+	case "error":
+		return !openAIStreamFailedEventShouldFailover(frame.trimmed, extractOpenAISSEErrorMessage(frame.trimmed))
+	default:
+		return !openAIStreamEventIsPreamble(frame.eventType)
+	}
+}
+
 func (s *OpenAIGatewayService) openAITTFTMode(ctx context.Context) string {
 	mode := OpenAITTFTModeSemantic
 	if s != nil && s.settingService != nil {
@@ -1355,6 +1371,13 @@ func openAIStreamDataStartsTTFT(data, eventType string, forceOutput bool, mode s
 		return openAIStreamDataStartsVisibleOutput(data, eventType)
 	}
 	return forceOutput || openAIStreamDataStartsSemanticTTFT(data, eventType)
+}
+
+func openAIStreamFrameStartsTTFT(frame openAISSEDataFrame, forceOutput bool, mode string) bool {
+	if mode == OpenAITTFTModeVisible {
+		return openAIStreamFrameStartsVisibleOutput(frame)
+	}
+	return forceOutput || openAIStreamFrameStartsSemanticTTFT(frame)
 }
 
 // openAIStreamFailedEventErrorCode 提取流内 failed 事件的错误码（小写），
@@ -2286,7 +2309,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				openAIResponsesCompletedFrameIsEmpty(frame, usage) {
 				return resultWithUsage(), newOpenAIResponsesEmptyCompletedFailoverError(c, account, upstreamRequestID)
 			}
-			if firstTokenMs == nil && openAIStreamDataStartsTTFT(trimmedData, eventType, forceFlushFailedEvent, ttftMode) {
+			if firstTokenMs == nil && openAIStreamFrameStartsTTFT(frame, forceFlushFailedEvent, ttftMode) {
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
 			}
