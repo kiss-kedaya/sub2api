@@ -353,6 +353,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			if !clientDisconnected && clientOutputStarted {
 				c.Writer.Flush()
 			}
+			if account != nil && account.IsGrok() && terminal.sawDone {
+				break
+			}
 			continue
 		}
 		if !clientDisconnected && clientOutputStarted {

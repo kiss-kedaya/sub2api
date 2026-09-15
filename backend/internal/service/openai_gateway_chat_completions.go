@@ -665,6 +665,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	searchCount := 0
 	streamSearchSeen := make(map[string]struct{})
 	countSearch := account != nil && account.IsGrok()
+	ttftMode := OpenAITTFTModeSemantic
+	if countSearch {
+		ttftMode = s.openAITTFTMode(c.Request.Context())
+	}
 	nonBillableUpstreamError := false
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
@@ -710,7 +714,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 
 	processDataLine := func(payload string) bool {
 		payload = string(restoreCodexToolNamesFromContext(c, []byte(payload)))
-		if firstChunk {
+		if firstChunk && (!countSearch || (gjson.Valid(payload) && openAIStreamDataStartsTTFT(payload, "", false, ttftMode))) {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
