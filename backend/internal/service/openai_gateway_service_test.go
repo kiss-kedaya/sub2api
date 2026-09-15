@@ -3768,7 +3768,7 @@ func TestHandleNonStreamingResponse_InvalidJSONFailover(t *testing.T) {
 			require.NoError(t, err)
 			resp, err := upstream.Client().Do(req)
 			require.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
