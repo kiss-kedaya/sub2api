@@ -404,7 +404,7 @@ func responsesTerminalText(evt *ResponsesStreamEvent) string {
 		}
 		for _, part := range item.Content {
 			if part.Type == "output_text" {
-				text.WriteString(part.Text)
+				_, _ = text.WriteString(part.Text)
 			}
 		}
 	}
