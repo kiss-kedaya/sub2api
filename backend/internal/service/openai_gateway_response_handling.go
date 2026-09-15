@@ -748,9 +748,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if needModelReplace && mappedModel != "" && strings.Contains(line, mappedModel) {
 				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
 			}
-			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
-			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
-			startsTTFTOutput := openAIStreamDataStartsTTFT(data, eventType, forceFlushFailedEvent, ttftMode)
+			startsClientOutput := forceFlushFailedEvent || openAIStreamFrameStartsClientOutput(frame)
+			startsVisibleOutput := openAIStreamFrameStartsVisibleOutput(frame)
+			startsTTFTOutput := openAIStreamFrameStartsTTFT(frame, forceFlushFailedEvent, ttftMode)
 			if stageFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
 				eventStartsTTFTOutput = eventStartsTTFTOutput || startsTTFTOutput
