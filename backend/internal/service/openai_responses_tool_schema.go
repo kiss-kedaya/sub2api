@@ -40,6 +40,21 @@ func shouldSanitizeOpenAIResponsesToolSchemaPatterns(platform string) bool {
 }
 
 func sanitizeOpenAIResponsesToolSchemasForPlatform(body []byte, platform string) ([]byte, bool, error) {
+	// Stay below the body limit even when root-type repairs grow the document.
+	// Large/ambiguous cases retain the exact ordered-pass behavior below.
+	if platform == PlatformOpenAI && len(body) > 0 && len(body) < openAIResponsesToolSchemaMaxBodySize/2 &&
+		openAIResponsesBodyMayContainRegexLookaround(body) {
+		normalized, changed, err := trySanitizeOpenAIResponsesToolSchemas(body, openAIResponsesToolSchemaOptions{
+			replaceNullParameterTypes:       true,
+			injectObjectUnionRootObjectType: true,
+			removeLookaroundPatterns:        true,
+		})
+		if err == nil {
+			return normalized, changed, nil
+		}
+		// Keep the original ordered passes for parser limits or overlapping
+		// patches, including their error classification and rollback behavior.
+	}
 	normalized := body
 	changed := false
 	if shouldRepairOpenAIResponsesNullToolSchemaType(platform) {
@@ -144,6 +159,16 @@ type openAIResponsesToolSchemaParser struct {
 func sanitizeOpenAIResponsesToolSchemas(
 	body []byte, options openAIResponsesToolSchemaOptions,
 ) ([]byte, bool, error) {
+	normalized, changed, err := trySanitizeOpenAIResponsesToolSchemas(body, options)
+	if errors.Is(err, errOpenAIResponsesToolSchemaLimit) {
+		return body, false, nil
+	}
+	return normalized, changed, err
+}
+
+func trySanitizeOpenAIResponsesToolSchemas(
+	body []byte, options openAIResponsesToolSchemaOptions,
+) ([]byte, bool, error) {
 	if len(body) > openAIResponsesToolSchemaMaxBodySize {
 		return body, false, nil
 	}
@@ -152,9 +177,6 @@ func sanitizeOpenAIResponsesToolSchemas(
 	}
 	p := openAIResponsesToolSchemaParser{body: body, options: options}
 	if err := p.parseValue(openAIResponsesToolSchemaDocument, false, 0); err != nil {
-		if errors.Is(err, errOpenAIResponsesToolSchemaLimit) {
-			return body, false, nil
-		}
 		return nil, false, err
 	}
 	p.skipWhitespace()
