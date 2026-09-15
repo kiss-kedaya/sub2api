@@ -74,16 +74,22 @@ func TestCleanJSONSchema_ArrayMissingItemsFallback(t *testing.T) {
 	cleaned := CleanJSONSchema(input)
 	require.NotNil(t, cleaned)
 
-	props := cleaned["properties"].(map[string]any)
-	tags := props["tags"].(map[string]any)
-	require.NotNil(t, tags["items"])
-	assert.Equal(t, "string", tags["items"].(map[string]any)["type"])
+	props, ok := cleaned["properties"].(map[string]any)
+	require.True(t, ok)
+	tags, ok := props["tags"].(map[string]any)
+	require.True(t, ok)
+	tagsItems, ok := tags["items"].(map[string]any)
+	require.True(t, ok, "tags.items must be an object")
+	assert.Equal(t, "string", tagsItems["type"])
 
-	nested := props["nested_empty_array"].(map[string]any)
-	nestedItems := nested["items"].(map[string]any)
+	nested, ok := props["nested_empty_array"].(map[string]any)
+	require.True(t, ok)
+	nestedItems, ok := nested["items"].(map[string]any)
+	require.True(t, ok)
 	assert.Equal(t, "array", nestedItems["type"])
-	require.NotNil(t, nestedItems["items"])
-	assert.Equal(t, "string", nestedItems["items"].(map[string]any)["type"])
+	nestedInnerItems, ok := nestedItems["items"].(map[string]any)
+	require.True(t, ok, "nested items.items must be an object")
+	assert.Equal(t, "string", nestedInnerItems["type"])
 }
 
 func TestCleanJSONSchema_ArrayExistingItemsPreserved(t *testing.T) {
@@ -103,9 +109,13 @@ func TestCleanJSONSchema_ArrayExistingItemsPreserved(t *testing.T) {
 	cleaned := CleanJSONSchema(input)
 	require.NotNil(t, cleaned)
 
-	numbers := cleaned["properties"].(map[string]any)["numbers"].(map[string]any)
+	props, ok := cleaned["properties"].(map[string]any)
+	require.True(t, ok)
+	numbers, ok := props["numbers"].(map[string]any)
+	require.True(t, ok)
 	assert.Equal(t, "array", numbers["type"])
-	items := numbers["items"].(map[string]any)
+	items, ok := numbers["items"].(map[string]any)
+	require.True(t, ok, "numbers.items must be an object")
 	assert.Equal(t, "integer", items["type"])
 }
 
@@ -131,14 +141,18 @@ func TestCleanJSONSchema_EnumOnlySchemaInTuple(t *testing.T) {
 	cleaned := CleanJSONSchema(input)
 	require.NotNil(t, cleaned)
 
-	props := cleaned["properties"].(map[string]any)
-	choice := props["choice"].(map[string]any)
+	props, ok := cleaned["properties"].(map[string]any)
+	require.True(t, ok)
+	choice, ok := props["choice"].(map[string]any)
+	require.True(t, ok)
 	assert.Equal(t, "string", choice["type"])
 	assert.Nil(t, choice["properties"], "enum-only schema must NOT be treated as object with reason property")
 	assert.Equal(t, []any{"option_a", "option_b"}, choice["enum"])
 
-	tupleArray := props["tuple_with_enum"].(map[string]any)
-	tupleItems := tupleArray["items"].(map[string]any)
+	tupleArray, ok := props["tuple_with_enum"].(map[string]any)
+	require.True(t, ok)
+	tupleItems, ok := tupleArray["items"].(map[string]any)
+	require.True(t, ok, "tuple_with_enum.items must be an object")
 	assert.Equal(t, "string", tupleItems["type"])
 	assert.Nil(t, tupleItems["properties"])
 	assert.Equal(t, []any{"read", "write"}, tupleItems["enum"])
@@ -158,8 +172,10 @@ func TestCleanJSONSchema_ConstKeywordConversion(t *testing.T) {
 	cleaned := CleanJSONSchema(input)
 	require.NotNil(t, cleaned)
 
-	props := cleaned["properties"].(map[string]any)
-	action := props["action"].(map[string]any)
+	props, ok := cleaned["properties"].(map[string]any)
+	require.True(t, ok)
+	action, ok := props["action"].(map[string]any)
+	require.True(t, ok)
 	assert.Nil(t, action["const"], "const keyword must be removed")
 	assert.Equal(t, "string", action["type"])
 	assert.Equal(t, []any{"ping"}, action["enum"])
@@ -189,12 +205,15 @@ func TestCleanJSONSchema_AnyOfNestedPrefixItems(t *testing.T) {
 	cleaned := CleanJSONSchema(input)
 	require.NotNil(t, cleaned)
 
-	props := cleaned["properties"].(map[string]any)
+	props, ok := cleaned["properties"].(map[string]any)
+	require.True(t, ok)
 	require.NotNil(t, props["extra_tuple"])
-	extraTuple := props["extra_tuple"].(map[string]any)
+	extraTuple, ok := props["extra_tuple"].(map[string]any)
+	require.True(t, ok)
 	assert.Nil(t, extraTuple["prefixItems"], "nested prefixItems from anyOf merge must be cleaned")
-	require.NotNil(t, extraTuple["items"])
-	assert.Equal(t, "integer", extraTuple["items"].(map[string]any)["type"])
+	extraItems, ok := extraTuple["items"].(map[string]any)
+	require.True(t, ok, "extra_tuple.items must be an object")
+	assert.Equal(t, "integer", extraItems["type"])
 }
 
 func TestCleanJSONSchema_EmptyPrefixItems(t *testing.T) {
@@ -212,10 +231,12 @@ func TestCleanJSONSchema_EmptyPrefixItems(t *testing.T) {
 	cleaned := CleanJSONSchema(input)
 	require.NotNil(t, cleaned)
 
-	props := cleaned["properties"].(map[string]any)
-	emptyTuple := props["empty_tuple"].(map[string]any)
+	props, ok := cleaned["properties"].(map[string]any)
+	require.True(t, ok)
+	emptyTuple, ok := props["empty_tuple"].(map[string]any)
+	require.True(t, ok)
 	assert.Nil(t, emptyTuple["prefixItems"], "empty prefixItems array must be removed")
-	require.NotNil(t, emptyTuple["items"])
-	assert.Equal(t, "string", emptyTuple["items"].(map[string]any)["type"])
+	emptyTupleItems, ok := emptyTuple["items"].(map[string]any)
+	require.True(t, ok, "empty_tuple.items must be an object")
+	assert.Equal(t, "string", emptyTupleItems["type"])
 }
-
