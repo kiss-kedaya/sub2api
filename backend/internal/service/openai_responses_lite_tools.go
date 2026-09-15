@@ -1,9 +1,12 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/tidwall/gjson"
 )
 
 type openAIResponsesLiteValidationError struct {
@@ -255,6 +258,20 @@ func normalizeOpenAIResponsesLiteToolsPayload(body []byte) ([]byte, bool, error)
 // normalizeOpenAIResponsesLiteParallelToolCallsPayload pins the Lite-only
 // parallel tool setting while preserving large JSON numbers via UseNumber.
 func normalizeOpenAIResponsesLiteParallelToolCallsPayload(body []byte) ([]byte, bool, error) {
+	root := parseRawJSONView(body)
+	if root.IsObject() {
+		var parallel gjson.Result
+		// Match map decoding: the last occurrence of a duplicate key wins.
+		root.ForEach(func(key, value gjson.Result) bool {
+			if key.Str == "parallel_tool_calls" {
+				parallel = value
+			}
+			return true
+		})
+		if parallel.Type == gjson.False && json.Valid(body) {
+			return body, false, nil
+		}
+	}
 	var requestBody map[string]any
 	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {
 		return body, false, fmt.Errorf("decode responses Lite request body: %w", err)
