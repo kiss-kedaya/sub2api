@@ -54,6 +54,8 @@ const (
 	apiKeyLastUsedFailBackoff = 5 * time.Second
 )
 
+const apiKeyAuthSharedLookupTimeout = 5 * time.Second
+
 // APIKeyUpdateFields 声明 APIKeyRepository.Update 允许写回的列。
 //
 // 与 UserUpdateFields 同理：api_keys 的用量列由计费热路径原子递增
@@ -737,13 +739,25 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 	}
 
 	if s.authCfg.singleflight {
-		value, err, _ := s.authGroup.Do(cacheKey, func() (any, error) {
-			return s.loadAuthCacheEntry(ctx, key, cacheKey)
-		})
-		if err != nil {
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		entry, _ := value.(*APIKeyAuthCacheEntry)
+		resultCh := s.authGroup.DoChan(cacheKey, func() (any, error) {
+			// No caller owns the shared lookup; bound its lifetime independently.
+			lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), apiKeyAuthSharedLookupTimeout)
+			defer cancel()
+			return s.loadAuthCacheEntry(lookupCtx, key, cacheKey)
+		})
+		var entry *APIKeyAuthCacheEntry
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result := <-resultCh:
+			if result.Err != nil {
+				return nil, result.Err
+			}
+			entry, _ = result.Val.(*APIKeyAuthCacheEntry)
+		}
 		if apiKey, used, err := s.applyAuthCacheEntry(key, entry); used {
 			if err != nil {
 				return nil, fmt.Errorf("get api key: %w", err)
