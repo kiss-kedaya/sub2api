@@ -1722,6 +1722,24 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		if bodyLooksLikeSSE {
 			return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && account != nil && !IsResponseCommitted(c) {
+			// Invalid JSON or missing usage is not evidence of credential failure.
+			// Record a fixed error without classifying or retaining arbitrary body text.
+			message := s.recordOpenAIStreamUpstreamError(c, account, false,
+				resp.Header.Get("x-request-id"), "failover", nil, "parse response: invalid json response")
+			errorBody, _ := json.Marshal(gin.H{"error": gin.H{"type": "upstream_error", "message": message}})
+			return nil, &UpstreamFailoverError{
+				StatusCode:             http.StatusBadGateway,
+				ResponseBody:           errorBody,
+				ResponseHeaders:        resp.Header.Clone(),
+				RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(http.StatusBadGateway),
+				RequestScopedTransient: true,
+				Scope:                  GatewayFailureScopeRequest,
+			}
+		}
 		return nil, fmt.Errorf("parse response: invalid json response")
 	}
 	usage := &usageValue
