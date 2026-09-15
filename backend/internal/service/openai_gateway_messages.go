@@ -932,6 +932,10 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	searchCount := 0
 	streamSearchSeen := make(map[string]struct{})
 	countSearch := account != nil && account.IsGrok()
+	ttftMode := OpenAITTFTModeSemantic
+	if countSearch {
+		ttftMode = s.openAITTFTMode(c.Request.Context())
+	}
 	nonBillableUpstreamError := false
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
@@ -982,7 +986,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	// processDataLine handles a single "data: ..." SSE line from upstream.
 	processDataLine := func(payload string) bool {
 		payload = string(restoreCodexToolNamesFromContext(c, []byte(payload)))
-		if firstChunk {
+		if firstChunk && (!countSearch || (gjson.Valid(payload) && openAIStreamDataStartsTTFT(payload, "", false, ttftMode))) {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
