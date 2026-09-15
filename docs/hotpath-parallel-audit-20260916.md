@@ -96,15 +96,17 @@
 - 已合并六组候选后的service、handler、apicompat、httputil包unit通过。初次repository有3个备份测试因本机PATH缺少sh失败；只给测试进程添加既有Git sh目录后，repository全包unit通过，无代码绕过。
 - 主代理分别完成httputil全包race、日志边界定向race、apicompat全包race、审核回收与实际协议handler联合race、httpclient全包race。
 - 另一个子代理只读交叉检查主代理两个补丁，未发现P1/P2阻断项，13项相关测试通过。413错误包装链经源码核对，没有声称已做真实公网压缩边界请求。
-- 最终鉴权补丁已收集，主代理正在执行其整合race；随后执行Linux完整CI。
+- 最终鉴权补丁整合后，主代理执行全部 `TestRoutingHotpathAudit_` 定向race通过（5.038秒）；没有遗留子代理任务。
+- 最终送验主线源码为 `0d596ee337f83cb49b157c850fa9852d11a34d93`。[CI 34999800787](https://github.com/kiss-kedaya/sub2api/actions/runs/34999800787) 全部通过：Linux完整单元测试与集成测试、前端检查、golangci-lint、部署脚本检查。
+- 同提交 [Security Scan 34999800773](https://github.com/kiss-kedaya/sub2api/actions/runs/34999800773) 通过。此后的收尾提交仅更新本报告，不修改送验源码。
 
 ## 交付清单
 
 - 四个子代理在四个独立工作树审查，主代理另审httputil和Ops日志；完成后的HTTP池补审复用生命周期代理，未让多个代理同时写同一文件。
 - 共确认并修复8项功能/生命周期缺陷，加1项schema重复遍历优化。全部附修前失败或基准证据，无未经证实的容量调参。
-- 正式代码修改涉及8个生产文件，测试单独覆盖压缩边界、对象回收、协议终帧、缓存隔离、取消和连接关闭。后续只提交本轮相关文件。
+- 正式代码修改涉及8个生产文件，测试单独覆盖压缩边界、对象回收、协议终帧、缓存隔离、取消和连接关闭。上述修复已合入正式main并推送GitHub。
 - 原始报告副本：`.artifacts/parse-audit-0916.md`、`protocol-audit-0916.md`、`lifecycle-audit-0916.md`、`httpclient-audit-0916.md`、`routing-audit-0916.md`；原始日志仍在各隔离树`.artifacts`中。
 
 ## 生效状态
 
-此报告目前记录本地审查与候选修复，不表示新版本已经发布或生产已生效。
+本轮修复已进入正式main，尚未打版或部署，因此线上用户目前不会因这些补丁产生变化。前轮交接状态为319全量、318热备，旧物理机40%、新机60%；本轮没有连接生产复核或改动该状态。
