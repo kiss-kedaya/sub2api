@@ -283,7 +283,8 @@ func enqueueOpsErrorLog(ops *service.OpsService, entry *service.OpsInsertErrorLo
 }
 
 func normalizeOpsPersistentUserAgent(value string) string {
-	return truncateString(strings.TrimSpace(strings.ToValidUTF8(value, "")), opsErrorLogMaxUserAgentBytes)
+	// The async queue owns only the bounded value, not the original header.
+	return strings.Clone(truncateString(strings.TrimSpace(strings.ToValidUTF8(value, "")), opsErrorLogMaxUserAgentBytes))
 }
 
 func StopOpsErrorLogWorkers() bool {
