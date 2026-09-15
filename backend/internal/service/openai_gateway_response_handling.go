@@ -25,6 +25,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const openAIStreamScannerShutdownTimeout = time.Second
+
 // openaiStreamingResult streaming response result
 type openaiStreamingResult struct {
 	usage                    *OpenAIUsage
@@ -52,6 +54,37 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel, reasoningEffort string) (*openaiStreamingResult, error) {
+	// detachUpstreamContext deliberately keeps billing/failover work independent
+	// from the caller. Response-body ownership is different: a client cancel must
+	// stop the blocked upstream read, otherwise the scanner retains the body.
+	watchCtx := ctx
+	if c != nil && c.Request != nil {
+		watchCtx = c.Request.Context()
+	}
+	if watchCtx == nil {
+		watchCtx = context.Background()
+	}
+	streamLifecycleDone := make(chan struct{})
+	var scannerDone <-chan struct{}
+	defer func() {
+		_ = resp.Body.Close()
+		close(streamLifecycleDone)
+		if scannerDone != nil {
+			select {
+			case <-scannerDone:
+			case <-time.After(openAIStreamScannerShutdownTimeout):
+				logger.LegacyPrintf("service.openai_gateway", "OpenAI stream scanner did not exit after upstream body close: account=%d model=%s", account.ID, originalModel)
+			}
+		}
+	}()
+	go func() {
+		select {
+		case <-watchCtx.Done():
+			_ = resp.Body.Close()
+		case <-streamLifecycleDone:
+		}
+	}()
+
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -887,7 +920,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 	var lastReadAt int64
 	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+	scanDone := make(chan struct{})
+	scannerDone = scanDone
 	go func(scanBuf *sseScannerBuf64K) {
+		defer close(scanDone)
 		defer putSSEScannerBuf64K(scanBuf)
 		defer close(events)
 		for documentScanner.Scan() {
