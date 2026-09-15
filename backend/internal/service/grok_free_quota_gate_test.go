@@ -63,13 +63,41 @@ func grokFreeQuotaTestConfig() *config.Config {
 	return cfg
 }
 
+func waitForGrokFreeQuotaTestRefresh(t *testing.T, cache *sync.Map) {
+	t.Helper()
+	root, ok := freeQuotaRefreshInFlight.Load(cache)
+	if !ok {
+		return
+	}
+	inFlight, ok := root.(*sync.Map)
+	require.True(t, ok)
+	// Cache publication and repository return both precede the final sweep.
+	// Only the deferred marker removal happens after all cache access finishes.
+	require.Eventually(t, func() bool {
+		idle := true
+		inFlight.Range(func(_, _ any) bool {
+			idle = false
+			return false
+		})
+		return idle
+	}, 2*time.Second, time.Millisecond, "quota refresh must finish before fixture teardown")
+}
+
+func cleanupGrokFreeQuotaTestRefresh(t *testing.T, caches ...*sync.Map) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, cache := range caches {
+			waitForGrokFreeQuotaTestRefresh(t, cache)
+		}
+	})
+}
+
 func TestFilterGrokFreeQuotaAccountsOnlyBlocksExplicitFreeOAuth(t *testing.T) {
 	repo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*usagestats.AccountStats{
 		1: {Tokens: 475_000}, // 95% of 500k
 	}}
-	// Clear shared cache for deterministic unit tests.
-	openaiGrokFreeQuotaGateCache = sync.Map{}
 	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{cfg: grokFreeQuotaTestConfig(), usageLogRepo: repo}}
+	cleanupGrokFreeQuotaTestRefresh(t, &scheduler.grokFreeQuotaGateCache)
 	accounts := []Account{
 		{ID: 1, Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{"subscription_tier": "FREE"}},
 		{ID: 2, Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{"subscription_tier": "PRO"}},
@@ -81,11 +109,7 @@ func TestFilterGrokFreeQuotaAccountsOnlyBlocksExplicitFreeOAuth(t *testing.T) {
 	filtered := scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
 	require.Equal(t, []int64{1, 2, 3, 4}, accountIDs(filtered), "miss fails open on hot path")
 
-	require.Eventually(t, func() bool {
-		repo.mu.Lock()
-		defer repo.mu.Unlock()
-		return repo.calls >= 1
-	}, 2*time.Second, 10*time.Millisecond)
+	waitForGrokFreeQuotaTestRefresh(t, &scheduler.grokFreeQuotaGateCache)
 
 	// Second pass: uses refreshed cache and blocks over-gate free OAuth.
 	filtered = scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
@@ -96,8 +120,8 @@ func TestFilterGrokFreeQuotaAccountsOnlyBlocksExplicitFreeOAuth(t *testing.T) {
 
 func TestFilterGrokFreeQuotaAccountsStatsFailureFailsOpen(t *testing.T) {
 	repo := &grokFreeQuotaUsageRepoStub{err: errors.New("usage database unavailable")}
-	openaiGrokFreeQuotaGateCache = sync.Map{}
 	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{cfg: grokFreeQuotaTestConfig(), usageLogRepo: repo}}
+	cleanupGrokFreeQuotaTestRefresh(t, &scheduler.grokFreeQuotaGateCache)
 	accounts := []Account{{
 		ID: 1, Platform: PlatformGrok, Type: AccountTypeOAuth,
 		Credentials: map[string]any{"subscription_tier": "free"},
@@ -105,11 +129,7 @@ func TestFilterGrokFreeQuotaAccountsStatsFailureFailsOpen(t *testing.T) {
 
 	filtered := scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
 	require.Equal(t, []int64{1}, accountIDs(filtered))
-	require.Eventually(t, func() bool {
-		repo.mu.Lock()
-		defer repo.mu.Unlock()
-		return repo.calls >= 1
-	}, 2*time.Second, 10*time.Millisecond)
+	waitForGrokFreeQuotaTestRefresh(t, &scheduler.grokFreeQuotaGateCache)
 	// Negative cache entry keeps subsequent hot-path calls fail-open without thrash.
 	filtered = scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
 	require.Equal(t, []int64{1}, accountIDs(filtered))
@@ -136,8 +156,8 @@ func TestFilterGrokFreeQuotaAccountsRecoversAfterRollingUsageFalls(t *testing.T)
 	repo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*usagestats.AccountStats{
 		1: {Tokens: 490_000},
 	}}
-	openaiGrokFreeQuotaGateCache = sync.Map{}
 	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{cfg: grokFreeQuotaTestConfig(), usageLogRepo: repo}}
+	cleanupGrokFreeQuotaTestRefresh(t, &scheduler.grokFreeQuotaGateCache)
 	accounts := []Account{{
 		ID: 1, Platform: PlatformGrok, Type: AccountTypeOAuth,
 		Credentials: map[string]any{"plan_type": "free"},
@@ -149,6 +169,7 @@ func TestFilterGrokFreeQuotaAccountsRecoversAfterRollingUsageFalls(t *testing.T)
 		filtered := scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
 		return len(filtered) == 0
 	}, 2*time.Second, 10*time.Millisecond)
+	waitForGrokFreeQuotaTestRefresh(t, &scheduler.grokFreeQuotaGateCache)
 
 	repo.mu.Lock()
 	repo.stats[1] = &usagestats.AccountStats{Tokens: 100_000}
@@ -157,23 +178,15 @@ func TestFilterGrokFreeQuotaAccountsRecoversAfterRollingUsageFalls(t *testing.T)
 	require.Empty(t, scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts), "fresh cache keeps the soft-gate hold")
 
 	// Expire entry → miss fails open and schedules refresh with recovered usage.
-	// Clear in-flight markers so a refresh is allowed after we force-expire the entry.
-	if root, ok := freeQuotaRefreshInFlight.Load(&scheduler.grokFreeQuotaGateCache); ok {
-		if m, ok := root.(*sync.Map); ok {
-			m.Delete(int64(1))
-		}
-	}
 	callsBeforeExpire := repo.calls
 	scheduler.grokFreeQuotaGateCache.Store(int64(1), grokFreeQuotaGateCacheEntry{
 		tokens: 490_000, checkedAt: time.Now().Add(-2 * time.Minute), known: true, // TTL=60s → stale
 	})
 	// Hot path fail-open while refresh is in flight.
 	require.Equal(t, []int64{1}, accountIDs(scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)))
-	require.Eventually(t, func() bool {
-		filtered := scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
-		return len(filtered) == 1 && filtered[0].ID == 1 &&
-			repo.calls > callsBeforeExpire
-	}, 2*time.Second, 10*time.Millisecond)
+	waitForGrokFreeQuotaTestRefresh(t, &scheduler.grokFreeQuotaGateCache)
+	require.Greater(t, repo.calls, callsBeforeExpire)
+	require.Equal(t, []int64{1}, accountIDs(scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)))
 }
 
 func TestResolveGrokFreeQuotaGateSettingsDefaultsToNinetyFivePercent(t *testing.T) {
@@ -198,7 +211,8 @@ func TestIsExplicitGrokFreeOAuthAccount_OnlyExactFree(t *testing.T) {
 func TestOpenAIAccountSchedulerLoadBalanceAppliesGrokFreeQuotaGate(t *testing.T) {
 	cfg := grokFreeQuotaTestConfig()
 	cfg.RunMode = config.RunModeSimple
-	openaiGrokFreeQuotaGateCache = sync.Map{}
+	waitForGrokFreeQuotaTestRefresh(t, &openaiGrokFreeQuotaGateCache)
+	openaiGrokFreeQuotaGateCache.Clear()
 	accounts := []Account{
 		{ID: 1, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{"subscription_tier": "free"}},
 		{ID: 2, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{"subscription_tier": "pro"}},
@@ -211,6 +225,8 @@ func TestOpenAIAccountSchedulerLoadBalanceAppliesGrokFreeQuotaGate(t *testing.T)
 		}},
 	}
 	scheduler := &defaultOpenAIAccountScheduler{service: svc, stats: newOpenAIAccountRuntimeStats()}
+	// Load balancing also refreshes the legacy shared cache while listing accounts.
+	cleanupGrokFreeQuotaTestRefresh(t, &scheduler.grokFreeQuotaGateCache, &openaiGrokFreeQuotaGateCache)
 
 	// Warm cache via background refresh so load-balance sees the soft-gate.
 	_ = scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
@@ -238,8 +254,8 @@ func TestGrokFreeQuotaGateIsSchedulerOnlyAdminPathUnfiltered(t *testing.T) {
 	repo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*usagestats.AccountStats{
 		9: {Tokens: 500_000},
 	}}
-	openaiGrokFreeQuotaGateCache = sync.Map{}
 	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{cfg: grokFreeQuotaTestConfig(), usageLogRepo: repo}}
+	cleanupGrokFreeQuotaTestRefresh(t, &scheduler.grokFreeQuotaGateCache)
 	overGate := Account{ID: 9, Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{"subscription_tier": "FREE"}}
 	require.Eventually(t, func() bool {
 		_ = scheduler.filterGrokFreeQuotaAccounts(context.Background(), []Account{overGate})
@@ -284,6 +300,7 @@ func TestFilterGrokFreeQuotaAccountsEvictsDepartedAccounts(t *testing.T) {
 		1: {Tokens: 1_000},
 	}}
 	var cache sync.Map
+	cleanupGrokFreeQuotaTestRefresh(t, &cache)
 	// Account 99 was scheduled long ago and no longer appears in any batch. Its
 	// entry must not survive a run that queries for a different account.
 	cache.Store(int64(99), grokFreeQuotaGateCacheEntry{tokens: 5, checkedAt: time.Now().UTC().Add(-2 * time.Hour), known: true})
