@@ -6,8 +6,6 @@ import type { ApiKey } from '@/types'
 const loaded = ref(false)
 const loading = ref(false)
 const hasAllowedBatchImageKey = ref(false)
-const cacheUserId = ref<number | null>(null)
-let requestId = 0
 let pendingLoad: Promise<boolean> | null = null
 const pageSize = 100
 
@@ -21,16 +19,7 @@ function keyAllowsBatchImage(key: ApiKey): boolean {
 
 async function loadBatchImageAccess(force = false): Promise<boolean> {
   const authStore = useAuthStore()
-  const userId = authStore.isAuthenticated ? authStore.user?.id ?? null : null
-  if (cacheUserId.value !== userId) {
-    cacheUserId.value = userId
-    loaded.value = false
-    loading.value = false
-    hasAllowedBatchImageKey.value = false
-    pendingLoad = null
-    requestId += 1
-  }
-  if (userId === null) {
+  if (!authStore.isAuthenticated) {
     loaded.value = true
     hasAllowedBatchImageKey.value = false
     return false
@@ -44,8 +33,6 @@ async function loadBatchImageAccess(force = false): Promise<boolean> {
     return pendingLoad
   }
 
-  const loadId = ++requestId
-  const isCurrentLoad = () => loadId === requestId && authStore.isAuthenticated && authStore.user?.id === userId
   loading.value = true
   pendingLoad = (async () => {
     let page = 1
@@ -55,8 +42,6 @@ async function loadBatchImageAccess(force = false): Promise<boolean> {
         sort_by: 'created_at',
         sort_order: 'desc'
       })
-
-      if (!isCurrentLoad()) return false
 
       if ((response.items || []).some(keyAllowsBatchImage)) {
         hasAllowedBatchImageKey.value = true
@@ -74,13 +59,11 @@ async function loadBatchImageAccess(force = false): Promise<boolean> {
     }
   })()
     .catch(() => {
-      if (!isCurrentLoad()) return false
       hasAllowedBatchImageKey.value = false
       loaded.value = true
       return false
     })
     .finally(() => {
-      if (loadId !== requestId) return
       loading.value = false
       pendingLoad = null
     })
@@ -89,14 +72,12 @@ async function loadBatchImageAccess(force = false): Promise<boolean> {
 }
 
 export function useBatchImageAccess() {
-  const authStore = useAuthStore()
-  const isCurrentUser = computed(() => (authStore.isAuthenticated ? authStore.user?.id ?? null : null) === cacheUserId.value)
-  const canUseBatchImage = computed(() => authStore.isAuthenticated && isCurrentUser.value && hasAllowedBatchImageKey.value)
+  const canUseBatchImage = computed(() => hasAllowedBatchImageKey.value)
 
   return {
     canUseBatchImage,
-    batchImageAccessLoaded: computed(() => isCurrentUser.value && loaded.value),
-    batchImageAccessLoading: computed(() => isCurrentUser.value && loading.value),
+    batchImageAccessLoaded: computed(() => loaded.value),
+    batchImageAccessLoading: computed(() => loading.value),
     refreshBatchImageAccess: loadBatchImageAccess,
   }
 }
