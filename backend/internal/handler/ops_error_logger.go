@@ -1276,9 +1276,23 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			}
 		}
 		suppressOpsUpstreamAttributionForLocalModelConfiguration(c, entry)
-		if parsed.Code == "input_too_small" && status == http.StatusBadRequest &&
+		if status == http.StatusBadRequest &&
 			entry.UpstreamStatusCode != nil && *entry.UpstreamStatusCode == http.StatusBadRequest {
-			entry.ErrorMessage = service.OpsMinimumInputPolicyMessagePrefix + entry.ErrorMessage
+			code := parsed.Code
+			// Protocol conversion can omit the client code; only consult the final upstream attempt.
+			if code == "" && entry.UpstreamErrorDetail != nil {
+				var upstream struct {
+					Error struct {
+						Code string `json:"code"`
+					} `json:"error"`
+				}
+				if json.Unmarshal([]byte(*entry.UpstreamErrorDetail), &upstream) == nil {
+					code = upstream.Error.Code
+				}
+			}
+			if code == "input_too_small" {
+				entry.ErrorMessage = service.OpsMinimumInputPolicyMessagePrefix + entry.ErrorMessage
+			}
 		}
 
 		if apiKey != nil {
