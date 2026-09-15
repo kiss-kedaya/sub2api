@@ -147,7 +147,7 @@ func newOpenAIResponsesFailoverTestContext(t *testing.T, ctx context.Context) (*
 // TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected 复现
 // #4257：客户端在上游请求在途期间断开，上游随后返回可 failover 的 520。
 // 期望：不再用已取消的 context 重新选号（不触达账号 2）、不把取消误报成
-// 502 账号耗尽、请求按 499 归类。
+// 502 账号耗尽、请求按 499 归类，且不记录取消后的 failover 事件。
 func TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -166,14 +166,9 @@ func TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected(t *t
 	_, hasFinalUpstreamErr := c.Get(service.OpsUpstreamStatusCodeKey)
 	require.False(t, hasFinalUpstreamErr, "不应记录 failover 耗尽的上游错误终态")
 
-	// 真实发生过的 520 应保留 failover 事件（service 层在返回 failover 错误前记录）
-	rawEvents, ok := c.Get(service.OpsUpstreamErrorsKey)
-	require.True(t, ok)
-	events, ok := rawEvents.([]*service.OpsUpstreamErrorEvent)
-	require.True(t, ok)
-	require.Len(t, events, 1)
-	require.Equal(t, "failover", events[0].Kind)
-	require.Equal(t, 520, events[0].UpstreamStatusCode)
+	// Header cancellation returns before classifying the late 520 as failover.
+	_, hasUpstreamEvents := c.Get(service.OpsUpstreamErrorsKey)
+	require.False(t, hasUpstreamEvents, "a canceled request must not record a failover event")
 }
 
 // TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient 回归
@@ -191,4 +186,15 @@ func TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient(t *te
 	require.Equal(t, []int64{1, 2}, upstream.calls(), "在线客户端应正常切换账号")
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Equal(t, "upstream_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+
+	rawEvents, ok := c.Get(service.OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := rawEvents.([]*service.OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 2)
+	for i, event := range events {
+		require.Equal(t, int64(i+1), event.AccountID)
+		require.Equal(t, "failover", event.Kind)
+		require.Equal(t, 520, event.UpstreamStatusCode)
+	}
 }
