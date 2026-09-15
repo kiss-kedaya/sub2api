@@ -43,7 +43,7 @@ func TestResponsesTerminalTextFallback(t *testing.T) {
 					for _, choice := range chunk.Choices {
 						if choice.Delta.Content != nil && *choice.Delta.Content != "" {
 							require.False(t, chatStopped, "text must precede finish_reason")
-							chatText.WriteString(*choice.Delta.Content)
+							_, _ = chatText.WriteString(*choice.Delta.Content)
 						}
 						if choice.FinishReason != nil {
 							chatStopped = true
@@ -58,7 +58,7 @@ func TestResponsesTerminalTextFallback(t *testing.T) {
 					if event.Delta != nil && event.Delta.Type == "text_delta" {
 						require.True(t, anthropicStarted)
 						require.False(t, anthropicStopped)
-						anthropicText.WriteString(event.Delta.Text)
+						_, _ = anthropicText.WriteString(event.Delta.Text)
 					}
 					if event.Type == "message_stop" {
 						anthropicStopped = true
