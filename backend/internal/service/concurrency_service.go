@@ -615,7 +615,8 @@ func (s *ConcurrencyService) getAccountsLoadBatch(ctx context.Context, accounts 
 		if cached, ok := s.getCachedAccountLoadBatch(key, now); ok {
 			return cached, nil
 		}
-		loadMap, fetchErr := s.fetchAccountsLoadBatch(ctx, accounts)
+		// Only shared work outlives its caller; fresh reads must remain cancelable.
+		loadMap, fetchErr := s.fetchAccountsLoadBatch(context.WithoutCancel(ctx), accounts)
 		if fetchErr != nil {
 			return nil, fetchErr
 		}
@@ -646,7 +647,7 @@ func (s *ConcurrencyService) fetchAccountsLoadBatch(ctx context.Context, account
 	}
 	baseCtx := context.Background()
 	if ctx != nil {
-		baseCtx = context.WithoutCancel(ctx)
+		baseCtx = ctx
 	}
 	redisCtx, cancel := context.WithTimeout(baseCtx, accountLoadBatchFetchTimeout)
 	defer cancel()
