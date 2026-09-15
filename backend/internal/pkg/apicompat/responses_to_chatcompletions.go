@@ -363,6 +363,12 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	}
 
 	var chunks []ChatCompletionsChunk
+	if !state.SawText {
+		if text := responsesTerminalText(evt); text != "" {
+			chunks = append(chunks, resToChatHandleCreated(evt, state)...)
+			chunks = append(chunks, resToChatHandleTextDelta(&ResponsesStreamEvent{Delta: text}, state)...)
+		}
+	}
 	chunks = append(chunks, makeChatFinishChunk(state, finishReason))
 
 	if state.IncludeUsage && state.Usage != nil {
@@ -378,6 +384,31 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	}
 
 	return chunks
+}
+
+// Some upstreams send text only in the terminal snapshot. Callers use this
+// only when no text delta was emitted, so normal streams are never replayed.
+func responsesTerminalText(evt *ResponsesStreamEvent) string {
+	if evt.Response == nil {
+		return ""
+	}
+	switch evt.Type {
+	case "response.completed", "response.done", "response.incomplete":
+	default:
+		return ""
+	}
+	var text strings.Builder
+	for _, item := range evt.Response.Output {
+		if item.Type != "message" {
+			continue
+		}
+		for _, part := range item.Content {
+			if part.Type == "output_text" {
+				text.WriteString(part.Text)
+			}
+		}
+	}
+	return text.String()
 }
 
 func chatUsageFromResponsesUsage(u *ResponsesUsage) *ChatUsage {

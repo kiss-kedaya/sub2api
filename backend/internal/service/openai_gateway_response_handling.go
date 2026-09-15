@@ -353,6 +353,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		completedTTFTEvent := eventStartsTTFTOutput
 		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
+		// Measure the complete upstream event before downstream backpressure.
+		if completedTTFTEvent && firstTokenMs == nil {
+			ms := int(time.Since(startTime).Milliseconds())
+			firstTokenMs = &ms
+		}
 		if !clientDisconnected {
 			if completedProgressEvent {
 				applyAttemptResponseHeaders()
@@ -370,10 +375,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			firstOutputScanGuard.Store(false)
 			firstOutputProgressObserved = true
 			stopFirstOutputTimer()
-		}
-		if completedTTFTEvent && firstTokenMs == nil {
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
 		}
 		eventStartsClientOutput = false
 		eventStartsTTFTOutput = false
