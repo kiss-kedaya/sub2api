@@ -91,7 +91,10 @@ func TestGetClientCloseIdleConnectionsKeepsActiveResponse(t *testing.T) {
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "start:")
-		w.(http.Flusher).Flush()
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Errorf("flush response: %v", err)
+			return
+		}
 		select {
 		case <-release:
 			_, _ = io.WriteString(w, "finished")
@@ -109,7 +112,7 @@ func TestGetClientCloseIdleConnectionsKeepsActiveResponse(t *testing.T) {
 	})
 	resp, err := client.Get(server.URL)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { require.NoError(t, resp.Body.Close()) }()
 	client.CloseIdleConnections()
 	unblock()
 	body, err := io.ReadAll(resp.Body)
