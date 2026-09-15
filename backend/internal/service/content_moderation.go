@@ -1202,7 +1202,6 @@ func (s *ContentModerationService) enqueueRecord(input ContentModerationCheckInp
 		return
 	}
 	task := contentModerationTask{
-		input:            input,
 		inputHash:        inputHash,
 		log:              log,
 		config:           cloneContentModerationConfig(cfg),
@@ -1857,11 +1856,11 @@ func (s *ContentModerationService) resolveModerationProxyURL(ctx context.Context
 func (s *ContentModerationService) buildLog(input ContentModerationCheckInput, cfg *ContentModerationConfig, action string, flagged bool, highestCategory string, highestScore float64, scores map[string]float64, text string, latency *int, queueDelay *int, errText string) *ContentModerationLog {
 	var userID *int64
 	if input.UserID > 0 {
-		userID = &input.UserID
+		userID = cloneInt64Ptr(&input.UserID)
 	}
 	var apiKeyID *int64
 	if input.APIKeyID > 0 {
-		apiKeyID = &input.APIKeyID
+		apiKeyID = cloneInt64Ptr(&input.APIKeyID)
 	}
 	return &ContentModerationLog{
 		RequestID:         input.RequestID,
