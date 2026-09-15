@@ -26,6 +26,7 @@
 - `a829270a8`：断连后排水总预算取现有 StreamDataIntervalTimeout，未设时 180s；handler 返回时关闭 body、等待 scanner 退出。取消后 1.7s 才到达的终止 usage 测试通过，配置 1s 的挂起读取测试按期释放。没有改全局 detached 计费上下文。
 - `227172cb1`、`0a2b9e8bd`：复用最终 SSE payload 已解析的 frame，避免输出/首字判定重复扫描。三判定基准 760--1186ns 降到 322--324ns，672B/6 次分配降到 112B/1 次分配；不能把局部基准幅度当成整体服务性能提升。
 - 整合后的定向 race 通过。扩大 Grok race 时发现旧 quota 测试重置全局 singleflight 与上一测试后台任务竞态，正在修测试隔离。全后端 unit 仅三个 pg_dump 测试因 Windows PATH 缺 sh 失败；补上已安装 Git sh 后三个测试通过，未改生产 backup 逻辑。
+- `2a4ccc780` 已修复 quota 测试隔离，扩大 Grok/stream/nonstream/flush 的 race 全部通过；`2149a3deb` 保留取消后 EOF、读错误、failed 的已收用量，避免错误返回为 failover 后被上层丢弃。`1a415607e` 将非流式协议违约转为请求内切换，账号暂封/禁用/限流 mock 调用均为0。
 
 ## 内存与生命周期审查
 

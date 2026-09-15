@@ -80,7 +80,7 @@ func TestGrokResponsesFlushesVisibleTextBeforeTerminalAndMeasuresVisibleText(t *
 	resultCh := make(chan *openaiStreamingResult, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		result, err := svc.handleStreamingResponse(context.Background(), resp, c, account, start, "grok", "grok")
 		resultCh <- result
 		errCh <- err
