@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -103,6 +104,9 @@ func TestRoutingHotpathAudit_UnsharedLoadHonorsCancellation(t *testing.T) {
 func TestRoutingHotpathAudit_SharedLoadSurvivesLeaderCancellation(t *testing.T) {
 	started := make(chan context.Context, 1)
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
 	var calls atomic.Int32
 	cache := &routingHotpathLoadCache{load: func(ctx context.Context, _ []AccountWithConcurrency) (map[int64]*AccountLoadInfo, error) {
 		calls.Add(1)
@@ -124,7 +128,6 @@ func TestRoutingHotpathAudit_SharedLoadSurvivesLeaderCancellation(t *testing.T) 
 		_, err := svc.GetAccountsLoadBatch(ctx, accounts)
 		done <- err
 	}()
-	defer close(release)
 	var fetchCtx context.Context
 	select {
 	case fetchCtx = <-started:
@@ -147,7 +150,7 @@ func TestRoutingHotpathAudit_SharedLoadSurvivesLeaderCancellation(t *testing.T) 
 	joined := svc.accountLoadGroup.DoChan(accountLoadBatchCacheKey(accounts), func() (any, error) {
 		return nil, errors.New("shared flight disappeared")
 	})
-	release <- struct{}{}
+	unblock()
 	select {
 	case result := <-joined:
 		require.NoError(t, result.Err)
