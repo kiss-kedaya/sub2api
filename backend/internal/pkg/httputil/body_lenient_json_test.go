@@ -3,12 +3,35 @@ package httputil
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/tidwall/gjson"
 )
+
+func TestNormalizeLenientJSONRequestBody_AllControlBytes(t *testing.T) {
+	for value := 0; value <= 0x7f; value++ {
+		if value >= 0x20 && value != 0x7f {
+			continue
+		}
+		t.Run(fmt.Sprintf("byte_%02x", value), func(t *testing.T) {
+			body := append([]byte("{\"input\":\"before"), byte(value))
+			body = append(body, []byte("after\",\"cache_control\":{\"type\":\"ephemeral\"}}")...)
+			got, err := NormalizeLenientJSONRequestBody(body, int64(len(body)+5))
+			if err != nil || !gjson.ValidBytes(got) {
+				t.Fatalf("control byte must be escaped: %v", err)
+			}
+			if gjson.GetBytes(got, "input").String() != "before"+string(rune(value))+"after" {
+				t.Fatal("normalization changed the message value")
+			}
+			if gjson.GetBytes(got, "cache_control.type").String() != "ephemeral" {
+				t.Fatal("cache control was lost")
+			}
+		})
+	}
+}
 
 func TestNormalizeLenientJSONRequestBody_accepts_client_control_chars_in_strings(t *testing.T) {
 	tests := []struct {
