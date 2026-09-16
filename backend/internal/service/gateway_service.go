@@ -614,6 +614,9 @@ type ForwardResult struct {
 	UpstreamHeaders http.Header
 	Usage           ClaudeUsage
 	Model           string
+	// Keep usage from deterministic pre-output request failures, but do not bill it.
+	NonBillableUpstreamError bool
+
 	// UpstreamModel is the actual upstream model after mapping.
 	// Prefer empty when it is identical to Model; persistence normalizes equal values away as no-op mappings.
 	UpstreamModel string
