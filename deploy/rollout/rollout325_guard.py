@@ -31,7 +31,7 @@ def config_for(pct):
     if pct not in (0, 1, 100):
         raise ValueError('Unsupported traffic percentage')
     lines = [f'upstream {NAME} {{']
-    for port, weight in [(8091, 100-pct), (8092, pct)]:
+    for port, weight in [(8091, 100-pct), (8093, pct)]:
         if weight:
             for ip, share in SHARES:
                 lines.append(f'    server {ip}:{port} weight={weight*share} max_fails=3 fail_timeout=10s;')
@@ -63,7 +63,7 @@ def fingerprint():
 def health(include_old=False):
     origins = [('https://kedaya.ai/readyz', 'ready', True)]
     for ip, _ in SHARES:
-        for port in ((8091, 8092) if include_old else (8092,)):
+        for port in ((8091, 8093) if include_old else (8093,)):
             origins.append((f'http://{ip}:{port}/readyz', 'ready', False))
 
     def probe(url, expected, local):
@@ -143,11 +143,11 @@ def traffic(cutoff, started_after=None):
                         probe = 'GET /health ' in line or 'GET /readyz ' in line
                     if stamp < cutoff or (started_after is not None and stamp-elapsed < started_after):
                         continue
-                    ports = re.findall(r':(8090|8091|8092)\b', upstream)
+                    ports = re.findall(r':(8090|8091|8093)\b', upstream)
                     if not ports:
                         continue
                     # Attribute retried requests to their final application, not both versions.
-                    version = {'8090': '322', '8091': '323', '8092': '325'}[ports[-1]]
+                    version = {'8090': '322', '8091': '323', '8093': '325'}[ports[-1]]
                     counts[('probe_' if probe else 'business_')+version][code] += 1
                 except (KeyError, ValueError, TypeError, IndexError):
                     continue

@@ -42,7 +42,7 @@ class RolloutTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 guard.check()
         self.assertEqual(guard.CONFIG.read_text(), guard.rollback_config([ip for ip, _ in guard.SHARES]))
-        self.assertNotIn(':8092', guard.CONFIG.read_text())
+        self.assertNotIn(':8093', guard.CONFIG.read_text())
         state = guard.get_state()
         self.assertEqual(state['phase'], 'rolled_back')
         self.assertFalse(state['armed'])
@@ -85,11 +85,11 @@ class RolloutTests(unittest.TestCase):
         canary = guard.config_for(1)
         self.assertIn('10.254.0.2:8091 weight=3960 ', canary)
         self.assertIn('10.254.0.1:8091 weight=5940 ', canary)
-        self.assertIn('10.254.0.2:8092 weight=40 ', canary)
-        self.assertIn('10.254.0.1:8092 weight=60 ', canary)
+        self.assertIn('10.254.0.2:8093 weight=40 ', canary)
+        self.assertIn('10.254.0.1:8093 weight=60 ', canary)
         full = guard.config_for(100)
-        self.assertIn('10.254.0.2:8092 weight=4000 ', full)
-        self.assertIn('10.254.0.1:8092 weight=6000 ', full)
+        self.assertIn('10.254.0.2:8093 weight=4000 ', full)
+        self.assertIn('10.254.0.1:8093 weight=6000 ', full)
         self.assertEqual(full.count('backup;'), 2)
         self.assertNotIn(':8090', full)
 
@@ -129,7 +129,7 @@ class RolloutTests(unittest.TestCase):
         stamp = time.time()
         log = self.root/'slow.log'
         log.write_text(json.dumps({'ts': guard.datetime.datetime.fromtimestamp(stamp, guard.datetime.timezone.utc).isoformat(),
-                                   'request_time': '240', 'upstream': '10.254.0.1:8092', 'status': '504', 'probe': False})+'\n')
+                                   'request_time': '240', 'upstream': '10.254.0.1:8093', 'status': '504', 'probe': False})+'\n')
         with patch.object(guard, 'Path', side_effect=lambda value: log if 'sub2api-rollout.log' in str(value) else Path(value)):
             counts = guard.traffic(stamp-180, started_after=stamp-600)
         self.assertEqual(counts, {'business_325': {'504': 1}})
@@ -182,7 +182,7 @@ class RolloutTests(unittest.TestCase):
         self.assertIn('10.254.0.2:8091', config)
         self.assertNotIn('10.254.0.1:', config)
         self.assertNotIn(':8090', config)
-        self.assertNotIn(':8092', config)
+        self.assertNotIn(':8093', config)
 
     def test_one_success_does_not_allow_promotion(self):
         guard.CONFIG.write_text(guard.config_for(1))
@@ -195,11 +195,11 @@ class RolloutTests(unittest.TestCase):
         self.assertEqual(guard.get_state()['percent'], 1)
         self.assertEqual(self.calls, [])
 
-    def test_retry_is_attributed_to_final_8092_port(self):
+    def test_retry_is_attributed_to_final_8093_port(self):
         stamp = time.time()
         log = self.root/'retry.log'
         log.write_text(json.dumps({'ts': guard.datetime.datetime.fromtimestamp(stamp, guard.datetime.timezone.utc).isoformat(),
-                                   'request_time': '1', 'upstream': '10.254.0.1:8091, 10.254.0.2:8092',
+                                   'request_time': '1', 'upstream': '10.254.0.1:8091, 10.254.0.2:8093',
                                    'status': '200', 'probe': False})+'\n')
         with patch.object(guard, 'Path', side_effect=lambda value: log if 'sub2api-rollout.log' in str(value) else Path(value)):
             self.assertEqual(guard.traffic(stamp-180), {'business_325': {'200': 1}})
@@ -226,7 +226,7 @@ class RolloutTests(unittest.TestCase):
             calls.append(args)
             if args[0] == 'curl':
                 url = args[-1]
-                if origin_failure and url == 'http://10.254.0.1:8092/readyz':
+                if origin_failure and url == 'http://10.254.0.1:8093/readyz':
                     raise RuntimeError('origin unavailable')
                 if url == 'https://kedaya.ai/readyz' and '--resolve' not in args:
                     count = sum(call[-1] == url and '--resolve' not in call for call in calls)
@@ -275,7 +275,7 @@ class RolloutTests(unittest.TestCase):
         run, calls = self.health_run(public_failures=1)
         def origin_fails_after_timeout(*args):
             public_seen = any(call[-1] == 'https://kedaya.ai/readyz' and '--resolve' not in call for call in calls)
-            if public_seen and args[-1] == 'http://10.254.0.1:8092/readyz':
+            if public_seen and args[-1] == 'http://10.254.0.1:8093/readyz':
                 raise RuntimeError('origin failed during verification')
             return run(*args)
         with patch.object(guard, 'run', origin_fails_after_timeout):
