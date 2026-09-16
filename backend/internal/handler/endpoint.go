@@ -368,6 +368,7 @@ func openAIForwardResultAsGateway(result *service.OpenAIForwardResult) *service.
 		UpstreamResponseModelConflict: result.UpstreamResponseModelConflict,
 		UpstreamResponseServiceTier:   result.UpstreamResponseServiceTier,
 		Stream:                        result.Stream,
+		NonBillableUpstreamError:      result.NonBillableUpstreamError,
 		Duration:                      result.Duration,
 		FirstTokenMs:                  result.FirstTokenMs,
 		ClientDisconnect:              result.ClientDisconnect,
