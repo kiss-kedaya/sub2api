@@ -5,11 +5,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -23,6 +27,7 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 	stream bool,
 	body []byte,
 ) (*ForwardResult, error) {
+	start := time.Now()
 	if s == nil || s.httpUpstream == nil {
 		return nil, s.writeGoogleError(c, http.StatusBadGateway, "OpenAI-compatible Gemini upstream is not configured")
 	}
@@ -30,7 +35,11 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 	if apiKey == "" {
 		return nil, s.writeGoogleError(c, http.StatusBadGateway, "gemini api_key not configured")
 	}
-	baseURL := strings.TrimSpace(account.GetCNProtocolBaseURL(APIProtocolChatCompletions))
+	protocol := APIProtocolChatCompletions
+	if account.usesNativeResponsesUpstream() {
+		protocol = APIProtocolResponses
+	}
+	baseURL := strings.TrimSpace(account.GetCNProtocolBaseURL(protocol))
 	if baseURL == "" {
 		baseURL = strings.TrimSpace(account.GetCredential("base_url"))
 	}
@@ -46,7 +55,29 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 	if err != nil {
 		return nil, s.writeGoogleError(c, http.StatusBadRequest, err.Error())
 	}
-	fullURL := strings.TrimRight(baseURL, "/") + "/chat/completions"
+	endpoint := "/v1/chat/completions"
+	if protocol == APIProtocolResponses {
+		var chatRequest apicompat.ChatCompletionsRequest
+		if err := json.Unmarshal(chatBody, &chatRequest); err != nil {
+			return nil, s.writeGoogleError(c, http.StatusBadRequest, "Invalid Gemini request")
+		}
+		request, err := apicompat.ChatCompletionsToResponses(&chatRequest)
+		if err != nil {
+			return nil, s.writeGoogleError(c, http.StatusBadRequest, "Invalid Gemini request")
+		}
+		// The shared converter defaults to Codex streaming and a minimum budget.
+		// Gemini relays support the requested mode and exact generation limit.
+		request.Stream = stream
+		request.MaxOutputTokens = chatRequest.MaxTokens
+		request.Include = nil
+		chatBody, err = json.Marshal(request)
+		if err != nil {
+			return nil, err
+		}
+		endpoint = "/v1/responses"
+	}
+	SetActualOpenAIUpstreamEndpoint(c, endpoint)
+	fullURL := buildOpenAIEndpointURL(baseURL, endpoint)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(chatBody))
 	if err != nil {
 		return nil, s.writeGoogleError(c, http.StatusBadGateway, err.Error())
@@ -63,25 +94,55 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 	}
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
-		return nil, s.writeGoogleError(c, http.StatusBadGateway, err.Error())
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, s.writeGoogleError(c, http.StatusBadGateway, "Failed to contact Gemini upstream")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-		return nil, s.writeGoogleError(c, resp.StatusCode, strings.TrimSpace(string(errBody)))
+		return nil, s.writeGoogleError(c, resp.StatusCode, sanitizeUpstreamErrorMessage(extractGeminiBridgeErrorMessage(errBody)))
 	}
 
 	if stream {
-		return s.pipeOpenAIChatStreamAsGemini(c, resp.Body, mappedModel)
+		result, err := s.pipeOpenAIStreamAsGemini(ctx, c, resp.Body, mappedModel, protocol)
+		result.RequestID = resp.Header.Get("x-request-id")
+		result.UpstreamHeaders = resp.Header
+		result.Duration = time.Since(start)
+		return result, err
 	}
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	geminiBody, usage := chatCompletionsToGeminiNative(raw, mappedModel)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
+	if err != nil || len(raw) > 8<<20 || !json.Valid(raw) {
+		return nil, s.writeGoogleError(c, http.StatusBadGateway, "Invalid Gemini upstream response")
+	}
+	usage, _ := extractOpenAIUsageFromJSONBytes(raw)
+	result := &ForwardResult{
+		RequestID: resp.Header.Get("x-request-id"), UpstreamHeaders: resp.Header,
+		Model: mappedModel, UpstreamModel: mappedModel, Usage: geminiBridgeClaudeUsage(usage),
+		Duration: time.Since(start),
+	}
+	if status := geminiBridgeFailureStatus(raw, ""); status != 0 {
+		return result, s.writeGoogleError(c, status, sanitizeUpstreamErrorMessage(extractGeminiBridgeErrorMessage(raw)))
+	}
+	usageMetadata := geminiBridgeUsageMetadata(usage, geminiBridgeUsageObject(raw))
+	if protocol == APIProtocolResponses {
+		var response apicompat.ResponsesResponse
+		if err := json.Unmarshal(raw, &response); err != nil || (response.Status != "completed" && response.Status != "incomplete") {
+			return nil, s.writeGoogleError(c, http.StatusBadGateway, "Invalid Gemini upstream response")
+		}
+		raw, err = json.Marshal(apicompat.ResponsesToChatCompletions(&response, mappedModel))
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !gjson.GetBytes(raw, "choices").IsArray() || len(gjson.GetBytes(raw, "choices").Array()) == 0 {
+		return nil, s.writeGoogleError(c, http.StatusBadGateway, "Empty Gemini upstream response")
+	}
+	geminiBody := geminiBridgePayload(gjson.GetBytes(raw, "choices.0.message.content").String(), mappedModel,
+		geminiBridgeFinishReason(gjson.GetBytes(raw, "choices.0.finish_reason").String()), usageMetadata)
 	c.Data(http.StatusOK, "application/json", geminiBody)
-	return &ForwardResult{
-		Model:         mappedModel,
-		UpstreamModel: mappedModel,
-		Usage:         usage,
-	}, nil
+	return result, nil
 }
 
 func (s *GeminiMessagesCompatService) writeGeminiCountTokensFromBody(c *gin.Context, model string, body []byte) (*ForwardResult, error) {
@@ -138,6 +199,9 @@ func geminiNativeRequestToChatCompletions(model string, body []byte, stream bool
 		"messages": msgs,
 		"stream":   stream,
 	}
+	if stream {
+		out["stream_options"] = map[string]bool{"include_usage": true}
+	}
 	if temp := gjson.GetBytes(body, "generationConfig.temperature"); temp.Exists() {
 		out["temperature"] = temp.Value()
 	}
@@ -150,79 +214,220 @@ func geminiNativeRequestToChatCompletions(model string, body []byte, stream bool
 func chatCompletionsToGeminiNative(raw []byte, model string) ([]byte, ClaudeUsage) {
 	text := gjson.GetBytes(raw, "choices.0.message.content").String()
 	finish := gjson.GetBytes(raw, "choices.0.finish_reason").String()
-	geminiFinish := "STOP"
-	if finish == "length" {
-		geminiFinish = "MAX_TOKENS"
-	}
-	prompt := int(gjson.GetBytes(raw, "usage.prompt_tokens").Int())
-	completion := int(gjson.GetBytes(raw, "usage.completion_tokens").Int())
-	payload, _ := json.Marshal(map[string]any{
-		"candidates": []map[string]any{
-			{
-				"content": map[string]any{
-					"role":  "model",
-					"parts": []map[string]string{{"text": text}},
-				},
-				"finishReason": geminiFinish,
-			},
-		},
-		"usageMetadata": map[string]any{
-			"promptTokenCount":     prompt,
-			"candidatesTokenCount": completion,
-			"totalTokenCount":      prompt + completion,
-		},
-		"modelVersion": model,
-	})
-	return payload, ClaudeUsage{InputTokens: prompt, OutputTokens: completion}
+	usage, _ := extractOpenAIUsageFromJSONBytes(raw)
+	return geminiBridgePayload(text, model, geminiBridgeFinishReason(finish), geminiBridgeUsageMetadata(usage, geminiBridgeUsageObject(raw))), geminiBridgeClaudeUsage(usage)
 }
 
-func (s *GeminiMessagesCompatService) pipeOpenAIChatStreamAsGemini(c *gin.Context, body io.Reader, model string) (*ForwardResult, error) {
+func geminiBridgeClaudeUsage(usage OpenAIUsage) ClaudeUsage {
+	return ClaudeUsage{
+		InputTokens:  max(usage.InputTokens-usage.CacheReadInputTokens-usage.CacheCreationInputTokens, 0),
+		OutputTokens: usage.OutputTokens, CacheReadInputTokens: usage.CacheReadInputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens, ImageOutputTokens: usage.ImageOutputTokens,
+	}
+}
+
+func geminiBridgeUsageObject(raw []byte) gjson.Result {
+	if usage := gjson.GetBytes(raw, "response.usage"); usage.IsObject() {
+		return usage
+	}
+	return gjson.GetBytes(raw, "usage")
+}
+
+func geminiBridgeUsageMetadata(usage OpenAIUsage, raw gjson.Result) map[string]any {
+	thoughts := max(int(firstPositiveGJSONInt(raw.Get("completion_tokens_details.reasoning_tokens"), raw.Get("output_tokens_details.reasoning_tokens"))), 0)
+	metadata := map[string]any{
+		"promptTokenCount":        usage.InputTokens,
+		"candidatesTokenCount":    max(usage.OutputTokens-thoughts, 0),
+		"totalTokenCount":         usage.InputTokens + usage.OutputTokens,
+		"cachedContentTokenCount": usage.CacheReadInputTokens,
+	}
+	if thoughts > 0 {
+		metadata["thoughtsTokenCount"] = thoughts
+	}
+	return metadata
+}
+
+func geminiBridgeFinishReason(finish string) string {
+	switch finish {
+	case "length":
+		return "MAX_TOKENS"
+	case "content_filter":
+		return "SAFETY"
+	default:
+		return "STOP"
+	}
+}
+
+func geminiBridgePayload(text, model, finish string, metadata map[string]any) []byte {
+	candidate := map[string]any{
+		"content": map[string]any{"role": "model", "parts": []map[string]string{{"text": text}}},
+	}
+	if finish != "" {
+		candidate["finishReason"] = finish
+	}
+	payload := map[string]any{
+		"candidates": []map[string]any{
+			candidate,
+		},
+		"modelVersion": model,
+	}
+	if metadata != nil {
+		payload["usageMetadata"] = metadata
+	}
+	data, _ := json.Marshal(payload)
+	return data
+}
+
+func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Context, c *gin.Context, body io.Reader, model, protocol string) (*ForwardResult, error) {
+	start := time.Now()
+	result := &ForwardResult{Model: model, UpstreamModel: model, Stream: true}
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Status(http.StatusOK)
-	flusher, _ := c.Writer.(http.Flusher)
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	usage := ClaudeUsage{}
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
+	var parser openAICompatSSEFrameParser
+	state := apicompat.NewResponsesEventToChatState()
+	state.Model = model
+	var metadata map[string]any
+	var streamErr error
+	streamStatus := http.StatusBadGateway
+	finish := ""
+	terminal := false
+	write := func(data []byte) {
+		if result.ClientDisconnect {
+			return
 		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
-			break
+		if ctx.Err() != nil {
+			result.ClientDisconnect = true
+			return
 		}
-		delta := gjson.Get(data, "choices.0.delta.content").String()
-		if delta != "" {
-			chunk, _ := json.Marshal(map[string]any{
-				"candidates": []map[string]any{
-					{"content": map[string]any{"role": "model", "parts": []map[string]string{{"text": delta}}}},
-				},
-				"modelVersion": model,
-			})
-			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", chunk)
-			if flusher != nil {
-				flusher.Flush()
+		MarkResponseCommitted(c)
+		if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", data); err != nil {
+			result.ClientDisconnect = true
+			return
+		}
+		c.Writer.Flush()
+	}
+	consume := func(frame openAICompatSSEFrame, ok bool) {
+		if !ok || terminal {
+			return
+		}
+		parsed := parseOpenAISSEDataFrame([]byte(frame.Data), frame.EventType)
+		if parsed.isDone() {
+			if protocol == APIProtocolChatCompletions && finish != "" {
+				terminal = true
+			}
+			return
+		}
+		if !parsed.validJSON {
+			streamErr = errors.New("Invalid Gemini upstream stream event")
+			terminal = true
+			return
+		}
+		if usage, ok := openAIUsageFromGJSON(geminiBridgeUsageObject(parsed.data)); ok {
+			result.Usage = geminiBridgeClaudeUsage(usage)
+			metadata = geminiBridgeUsageMetadata(usage, geminiBridgeUsageObject(parsed.data))
+		}
+		if status := geminiBridgeFailureStatus(parsed.data, parsed.eventType); status != 0 {
+			streamStatus = status
+			streamErr = fmt.Errorf("Gemini upstream stream failed: %s", parsed.eventType)
+			// A Responses error prelude can be followed by a terminal usage snapshot.
+			terminal = protocol != APIProtocolResponses || (parsed.eventType != "error" && parsed.eventType != "")
+			return
+		}
+		if streamErr != nil {
+			terminal = isOpenAICompatResponsesTerminalEvent(parsed.eventType)
+			return
+		}
+		var chunks []apicompat.ChatCompletionsChunk
+		if protocol == APIProtocolResponses {
+			var event apicompat.ResponsesStreamEvent
+			if err := json.Unmarshal(parsed.data, &event); err != nil {
+				streamErr = err
+				terminal = true
+				return
+			}
+			event.Type = parsed.eventType
+			chunks = apicompat.ResponsesEventToChatChunks(&event, state)
+			terminal = isOpenAICompatResponsesTerminalEvent(event.Type)
+		} else {
+			var chunk apicompat.ChatCompletionsChunk
+			if err := json.Unmarshal(parsed.data, &chunk); err != nil {
+				streamErr = err
+				terminal = true
+				return
+			}
+			chunks = []apicompat.ChatCompletionsChunk{chunk}
+		}
+		for _, chunk := range chunks {
+			for _, choice := range chunk.Choices {
+				if choice.Index != 0 {
+					continue
+				}
+				if choice.Delta.Content != nil && *choice.Delta.Content != "" {
+					if result.FirstTokenMs == nil {
+						ms := int(time.Since(start).Milliseconds())
+						result.FirstTokenMs = &ms
+					}
+					write(geminiBridgePayload(*choice.Delta.Content, model, "", nil))
+				}
+				if choice.FinishReason != nil {
+					finish = geminiBridgeFinishReason(*choice.FinishReason)
+				}
 			}
 		}
-		if gjson.Get(data, "usage").Exists() {
-			usage.InputTokens = int(gjson.Get(data, "usage.prompt_tokens").Int())
-			usage.OutputTokens = int(gjson.Get(data, "usage.completion_tokens").Int())
+	}
+	for !terminal && scanner.Scan() {
+		consume(parser.AddLine(scanner.Text()))
+	}
+	consume(parser.Finish())
+	if streamErr == nil {
+		streamErr = scanner.Err()
+	}
+	if ctx.Err() != nil {
+		result.ClientDisconnect = true
+		if !terminal {
+			streamErr = ctx.Err()
 		}
 	}
-	done, _ := json.Marshal(map[string]any{
-		"candidates": []map[string]any{
-			{
-				"content":      map[string]any{"role": "model", "parts": []map[string]string{{"text": ""}}},
-				"finishReason": "STOP",
-			},
-		},
-		"modelVersion": model,
-	})
-	_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", done)
-	if flusher != nil {
-		flusher.Flush()
+	if streamErr == nil && !terminal {
+		streamErr = io.ErrUnexpectedEOF
 	}
-	return &ForwardResult{Model: model, UpstreamModel: model, Usage: usage}, nil
+	if streamErr == nil && metadata == nil {
+		streamErr = errors.New("Gemini upstream stream omitted usage")
+	}
+	if streamErr != nil {
+		payload, _ := json.Marshal(map[string]any{"error": map[string]any{
+			"code": streamStatus, "status": googleapi.HTTPStatusToGoogleStatus(streamStatus), "message": "Gemini upstream stream did not complete",
+		}, "usageMetadata": metadata})
+		write(payload)
+		return result, streamErr
+	}
+	write(geminiBridgePayload("", model, finish, metadata))
+	return result, nil
+}
+
+func extractGeminiBridgeErrorMessage(raw []byte) string {
+	for _, path := range []string{"response.error.message", "error.message", "message"} {
+		if message := gjson.GetBytes(raw, path).String(); message != "" {
+			return message
+		}
+	}
+	return "Gemini upstream request failed"
+}
+
+func geminiBridgeFailureStatus(raw []byte, eventType string) int {
+	status := gjson.GetBytes(raw, "response.status").String()
+	if status == "" {
+		status = gjson.GetBytes(raw, "status").String()
+	}
+	if eventType == "error" || eventType == "response.failed" || eventType == "response.cancelled" || eventType == "response.canceled" ||
+		status == "failed" || status == "cancelled" || status == "canceled" || gjson.GetBytes(raw, "error").IsObject() || gjson.GetBytes(raw, "response.error").IsObject() {
+		if isOpenAIDeterministicClientErrorMessage("", raw) {
+			return openAIDeterministicClientHTTPStatus("", raw)
+		}
+		return openAIStreamFailedEventSemanticStatus(raw, extractGeminiBridgeErrorMessage(raw))
+	}
+	return 0
 }
