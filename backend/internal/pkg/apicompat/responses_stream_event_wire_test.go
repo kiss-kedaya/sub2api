@@ -18,6 +18,18 @@ func marshalEvent(t *testing.T, e ResponsesStreamEvent) map[string]any {
 	return m
 }
 
+func TestWire_SequenceNumberPresentAtZero(t *testing.T) {
+	for _, eventType := range []string{"response.created", "response.in_progress", "response.output_text.delta", "response.completed", "response.failed", "error"} {
+		t.Run(eventType, func(t *testing.T) {
+			for _, seq := range []int{0, 7} {
+				m := marshalEvent(t, ResponsesStreamEvent{Type: eventType, SequenceNumber: seq})
+				require.Contains(t, m, "sequence_number")
+				require.EqualValues(t, seq, m["sequence_number"])
+			}
+		})
+	}
+}
+
 // TestWire_IndexFieldsPresentAtZero guards the omitempty trap: output_index/
 // content_index/summary_index must serialize even when 0.
 func TestWire_IndexFieldsPresentAtZero(t *testing.T) {
