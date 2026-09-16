@@ -2,7 +2,38 @@ package service
 
 import (
 	"context"
+	"strings"
 )
+
+type openAIMessagesKeyRouteContextKey struct{}
+
+// WithOpenAIMessagesKeyRoute enables Messages-only model aliases during key
+// routing. Chat Completions shares the capability but must not use these aliases.
+func WithOpenAIMessagesKeyRoute(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, openAIMessagesKeyRouteContextKey{}, true)
+}
+
+func openAIMessagesKeyRouteModel(ctx context.Context, group *Group, model string) string {
+	if enabled, _ := ctx.Value(openAIMessagesKeyRouteContextKey{}).(bool); !enabled {
+		return model
+	}
+	normalized := NormalizeOpenAICompatRequestedModel(model)
+	if group == nil {
+		return normalized
+	}
+	if group.Platform == PlatformComposite {
+		if platform, ok := ResolvedTargetPlatformFromContext(ctx); ok && (platform == PlatformGrok || IsCNProvider(platform)) {
+			return normalized
+		}
+	}
+	if mapped := strings.TrimSpace(group.ResolveMessagesDispatchModel(model)); mapped != "" {
+		return mapped
+	}
+	return normalized
+}
 
 func (s *OpenAIGatewayService) hydrateAPIKeyGroup(ctx context.Context, apiKey *APIKey, groupID int64) (*APIKey, error) {
 	var getGroup func(context.Context, int64) (*Group, error)
@@ -16,7 +47,16 @@ func (s *OpenAIGatewayService) catalogModels(ctx context.Context, groupID *int64
 	if s == nil {
 		return nil
 	}
-	return loadAvailableModelsFromStore(ctx, s.accountRepo, s.schedulerSnapshot, groupID, platform)
+	return s.routeModelsCatalog(ctx, groupID).modelsFor(platform)
+}
+
+func (s *OpenAIGatewayService) routeModelsCatalog(ctx context.Context, groupID *int64) groupModelsCatalog {
+	// Reuse the shared catalog builder. Along-route preparation calls it once
+	// per authorized group, without adding a second long-lived cache.
+	if s == nil {
+		return groupModelsCatalog{}
+	}
+	return loadGroupModelsCatalogFromStore(ctx, s.accountRepo, s.schedulerSnapshot, groupID)
 }
 
 func (s *OpenAIGatewayService) selectAlongKeyRoutes(
@@ -24,49 +64,39 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 	apiKey *APIKey,
 	platformOverride []string,
 	requestedModel string,
-	selectOne func(groupID *int64, groupPlatform []string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error),
+	selectOne func(ctx context.Context, groupID *int64, groupPlatform []string, model string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error),
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
-	candidates := apiKey.CandidateGroupIDs()
-	if len(candidates) == 0 {
-		selection, decision, err := selectOne(apiKey.GroupID, append([]string(nil), platformOverride...))
+	if s == nil || apiKey == nil {
+		return nil, OpenAIAccountScheduleDecision{}, apiKey, ErrNoAvailableAccounts
+	}
+	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
+	if len(apiKey.CandidateGroupIDs()) == 0 {
+		selection, decision, err := selectOne(ctx, apiKey.GroupID, append([]string(nil), platformOverride...), requestedModel)
 		return selection, decision, apiKey, err
 	}
-	siblingHasPresent := keyRouteSiblingHasCatalogedModel(ctx, candidates, requestedModel, s.catalogModels)
-	var lastErr error
+	candidates, siblingHasPresent, lastErr := prepareAPIKeyRouteCandidates(ctx, apiKey, requestedModel, s.hydrateAPIKeyGroup, s.routeModelsCatalog, openAIMessagesKeyRouteModel)
 	var lastDecision OpenAIAccountScheduleDecision
-	for _, groupID := range candidates {
-		gid := groupID
+	for _, candidate := range candidates {
+		routed := candidate.key
+		group := routed.Group
 		groupPlatform := append([]string(nil), platformOverride...)
-		var group *Group
-		if s != nil && s.schedulerSnapshot != nil {
-			if found, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, gid); err == nil && found != nil {
-				group = found
-				if !groupAllowsRequestedModel(group, requestedModel) {
-					continue
-				}
-				if isOpenAICompatibleUpstreamPlatform(group.Platform) {
-					groupPlatform = []string{group.Platform}
-				}
-			}
+		if isOpenAICompatibleUpstreamPlatform(group.Platform) {
+			groupPlatform = []string{group.Platform}
 		}
-		if group == nil || !group.CustomModelsListEnabled() {
-			presence := groupCatalogHasRequestedModelWith(ctx, gid, requestedModel, s.catalogModels)
-			if skipKeyRouteForCatalog(presence, siblingHasPresent) {
-				continue
-			}
+		if !group.CustomModelsListEnabled() && skipKeyRouteForCatalog(candidate.presence, siblingHasPresent) {
+			continue
 		}
-		selection, decision, err := selectOne(&gid, groupPlatform)
+		routeCtx := ContextWithAPIKeyRoute(ctx, routed)
+		mapping, restricted := s.ResolveChannelMappingAndRestrict(routeCtx, routed.GroupID, requestedModel)
+		if restricted {
+			continue
+		}
+		model := mapping.MappedModel
+		if !mapping.Mapped {
+			model = openAIMessagesKeyRouteModel(routeCtx, group, requestedModel)
+		}
+		selection, decision, err := selectOne(routeCtx, routed.GroupID, groupPlatform, model)
 		if err == nil {
-			routed, hydErr := s.hydrateAPIKeyGroup(ctx, apiKey, groupID)
-			if hydErr != nil {
-				releaseAccountSelection(selection)
-				lastErr = hydErr
-				lastDecision = decision
-				if shouldContinueAlongKeyRoutes(hydErr) {
-					continue
-				}
-				return nil, decision, apiKey, hydErr
-			}
 			return selection, decision, routed, nil
 		}
 		lastErr = err
@@ -95,9 +125,9 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForCapabilityAlongKeyRo
 	useUpstreamTokenCost bool,
 	platformOverride ...string,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
-	return s.selectAlongKeyRoutes(ctx, apiKey, platformOverride, requestedModel, func(groupID *int64, groupPlatform []string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	return s.selectAlongKeyRoutes(ctx, apiKey, platformOverride, requestedModel, func(ctx context.Context, groupID *int64, groupPlatform []string, model string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 		return s.SelectAccountWithSchedulerForCapability(
-			ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs,
+			ctx, groupID, previousResponseID, sessionHash, model, excludedIDs,
 			requiredTransport, requiredCapability, requireCompact, previousResponseCanMove, useUpstreamTokenCost, groupPlatform...,
 		)
 	})
@@ -111,7 +141,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImagesAlongKeyRoutes
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
-	return s.selectAlongKeyRoutes(ctx, apiKey, []string{PlatformOpenAI}, requestedModel, func(groupID *int64, _ []string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-		return s.SelectAccountWithSchedulerForImages(ctx, groupID, sessionHash, requestedModel, excludedIDs, requiredCapability)
+	return s.selectAlongKeyRoutes(ctx, apiKey, []string{PlatformOpenAI}, requestedModel, func(ctx context.Context, groupID *int64, _ []string, model string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+		return s.SelectAccountWithSchedulerForImages(ctx, groupID, sessionHash, model, excludedIDs, requiredCapability)
 	})
 }

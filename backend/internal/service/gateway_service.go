@@ -1424,7 +1424,7 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 // retained only for legacy services without a scheduler snapshot or for an
 // explicit freshness/recovery context.
 func (s *GatewayService) loadAvailableModels(ctx context.Context, groupID *int64, platform string) []string {
-	if s == nil || s.accountRepo == nil {
+	if s == nil {
 		return nil
 	}
 	return loadAvailableModelsFromStore(ctx, s.accountRepo, s.schedulerSnapshot, groupID, platform)
@@ -1441,7 +1441,7 @@ func listSchedulableAccountsFromRepo(ctx context.Context, repo AccountRepository
 }
 
 func loadAvailableModelsFromStore(ctx context.Context, repo AccountRepository, snapshot *SchedulerSnapshotService, groupID *int64, platform string) []string {
-	if repo == nil {
+	if repo == nil && snapshot == nil {
 		return nil
 	}
 	var (
@@ -1452,10 +1452,9 @@ func loadAvailableModelsFromStore(ctx context.Context, repo AccountRepository, s
 		requestCtx := withSchedulerRequestMode(ctx, repo, snapshot)
 		accounts, _, err = snapshot.listSchedulableAccountsForRequest(requestCtx, groupID, platform, false)
 		if err != nil {
-			accounts, err = listSchedulableAccountsFromRepo(ctx, repo, groupID)
-			if err != nil {
-				return nil
-			}
+			// The snapshot service owns explicit freshness/recovery fallback.
+			// Never turn a snapshot-only cache miss into a repository scan here.
+			return nil
 		}
 	} else {
 		accounts, err = listSchedulableAccountsFromRepo(ctx, repo, groupID)

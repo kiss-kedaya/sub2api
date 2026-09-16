@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
@@ -349,21 +350,85 @@ func releaseAccountSelection(result *AccountSelectionResult) {
 	}
 }
 
+// ContextWithAPIKeyRoute carries the selected billing group into scheduling
+// and forwarding. For composite routes the API key still owns the parent group.
+func ContextWithAPIKeyRoute(ctx context.Context, key *APIKey) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if key == nil || key.GroupID == nil || key.Group == nil || key.Group.ID != *key.GroupID {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxkey.Group, key.Group)
+}
+
+func apiKeyRouteGroupAllowed(key *APIKey) bool {
+	if key == nil || key.User == nil || key.GroupID == nil || key.Group == nil ||
+		key.Group.ID != *key.GroupID || !IsGroupContextValid(key.Group) || !key.Group.IsActive() {
+		return false
+	}
+	// Subscription admission and limits are checked by the request's subscription
+	// resolver. They do not use the standard/exclusive AllowedGroups policy.
+	return key.Group.IsSubscriptionType() || key.User.CanBindGroup(key.Group.ID, key.Group.IsExclusive)
+}
+
+type apiKeyRouteCandidate struct {
+	key      *APIKey
+	catalog  groupModelsCatalog
+	presence groupCatalogModelPresence
+}
+
+// Resolve authorization before catalog reads or sticky selection. Reuse each
+// catalog for sibling preference and selection within this request.
+func prepareAPIKeyRouteCandidates(ctx context.Context, apiKey *APIKey, requestedModel string,
+	hydrate func(context.Context, *APIKey, int64) (*APIKey, error),
+	catalog func(context.Context, *int64) groupModelsCatalog,
+	catalogModelAlias func(context.Context, *Group, string) string,
+) ([]apiKeyRouteCandidate, bool, error) {
+	var candidates []apiKeyRouteCandidate
+	var lastErr error
+	siblingHasPresent := false
+	for _, groupID := range apiKey.CandidateGroupIDs() {
+		routed, err := hydrate(ctx, apiKey, groupID)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if !apiKeyRouteGroupAllowed(routed) || !groupAllowsRequestedModel(routed.Group, requestedModel) {
+			continue
+		}
+		cat := catalog(ContextWithAPIKeyRoute(ctx, routed), routed.GroupID)
+		presence := catalogHasRequestedModel(cat, requestedModel)
+		if presence != groupCatalogModelPresent && catalogModelAlias != nil {
+			if alias := catalogModelAlias(ctx, routed.Group, requestedModel); alias != requestedModel &&
+				catalogHasRequestedModel(cat, alias) == groupCatalogModelPresent {
+				presence = groupCatalogModelPresent
+			}
+		}
+		if presence == groupCatalogModelPresent {
+			siblingHasPresent = true
+		}
+		candidates = append(candidates, apiKeyRouteCandidate{key: routed, catalog: cat, presence: presence})
+	}
+	return candidates, siblingHasPresent, lastErr
+}
+
 func hydrateAPIKeyGroup(ctx context.Context, apiKey *APIKey, groupID int64, getGroup func(context.Context, int64) (*Group, error)) (*APIKey, error) {
 	if apiKey == nil {
 		return nil, ErrNoAvailableAccounts
-	}
-	if apiKey.GroupID != nil && *apiKey.GroupID == groupID && apiKey.Group != nil && apiKey.Group.ID == groupID {
-		return apiKey, nil
 	}
 	if getGroup != nil {
 		group, err := getGroup(ctx, groupID)
 		if err != nil {
 			return nil, err
 		}
-		if group != nil {
+		if group != nil && group.ID == groupID {
 			return cloneAPIKeyWithGroupID(apiKey, group), nil
 		}
+		return nil, ErrSchedulerCacheNotReady
+	}
+	if apiKey.GroupID != nil && *apiKey.GroupID == groupID && apiKey.Group != nil && apiKey.Group.ID == groupID {
+		return apiKey, nil
 	}
 	return nil, ErrSchedulerCacheNotReady
 }

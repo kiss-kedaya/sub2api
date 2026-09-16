@@ -126,12 +126,22 @@ func (s *GatewayService) storeGroupModelsCatalog(groupID *int64, cat groupModels
 }
 
 func (s *GatewayService) buildGroupModelsCatalog(ctx context.Context, groupID *int64) groupModelsCatalog {
+	if s == nil {
+		return groupModelsCatalog{}
+	}
+	return loadGroupModelsCatalogFromStore(ctx, s.accountRepo, s.schedulerSnapshot, groupID)
+}
+
+func loadGroupModelsCatalogFromStore(ctx context.Context, repo AccountRepository, snapshot *SchedulerSnapshotService, groupID *int64) groupModelsCatalog {
 	cat := groupModelsCatalog{
 		byPlatform: make(map[string][]string, len(groupCatalogPlatforms())),
 		platforms:  make(map[string]struct{}),
 	}
-	if s == nil || s.accountRepo == nil {
+	if repo == nil && snapshot == nil {
 		return cat
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	addPlatforms := func(accounts []Account) {
@@ -142,14 +152,13 @@ func (s *GatewayService) buildGroupModelsCatalog(ctx context.Context, groupID *i
 		}
 	}
 
-	if s.schedulerSnapshot != nil {
-		requestCtx := withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
+	if snapshot != nil {
+		requestCtx := withSchedulerRequestMode(ctx, repo, snapshot)
 		for _, platform := range groupCatalogPlatforms() {
-			accounts, _, err := s.schedulerSnapshot.listSchedulableAccountsForRequest(requestCtx, groupID, platform, false)
+			accounts, _, err := snapshot.listSchedulableAccountsForRequest(requestCtx, groupID, platform, false)
 			if err != nil {
-				// Snapshot-authoritative: a cold/failed bucket is an empty
-				// platform catalog, not a PostgreSQL scan. The uncached
-				// loadAvailableModels path still has the legacy repo fallback.
+				// A cold/failed bucket leaves the catalog unknown. Recovery
+				// belongs to the snapshot service, never a direct repo scan.
 				continue
 			}
 			addPlatforms(accounts)
@@ -158,7 +167,7 @@ func (s *GatewayService) buildGroupModelsCatalog(ctx context.Context, groupID *i
 		return cat
 	}
 
-	accounts, err := listSchedulableAccountsFromRepo(ctx, s.accountRepo, groupID)
+	accounts, err := listSchedulableAccountsFromRepo(ctx, repo, groupID)
 	if err != nil || len(accounts) == 0 {
 		return cat
 	}
