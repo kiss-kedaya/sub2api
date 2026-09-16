@@ -69,6 +69,11 @@ func TestBuildOpenAICompactSSEPayload_EmitsItemsAndCompleted(t *testing.T) {
 
 	events := parseCompactBridgeSSE(t, string(payload))
 	require.Len(t, events, 3)
+	for i, event := range events {
+		seq := gjson.Get(event[1], "sequence_number")
+		require.True(t, seq.Exists())
+		require.EqualValues(t, i, seq.Int())
+	}
 
 	require.Equal(t, "response.output_item.done", events[0][0])
 	first := events[0][1]

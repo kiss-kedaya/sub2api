@@ -681,7 +681,7 @@ type ResponsesStreamEvent struct {
 	Param string `json:"param,omitempty"`
 
 	// Sequence number for ordering events
-	SequenceNumber int `json:"sequence_number,omitempty"`
+	SequenceNumber int `json:"sequence_number"`
 }
 
 // ---------------------------------------------------------------------------

@@ -114,7 +114,8 @@ func writeOpenAICompactSSEFailureMessage(c *gin.Context, statusCode int, errType
 	}
 	MarkOpsStreamError(c, errType, message, statusCode)
 	payload, err := json.Marshal(map[string]any{
-		"type": "response.failed",
+		"type":            "response.failed",
+		"sequence_number": 0,
 		"response": map[string]any{
 			"id":     "resp_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
 			"object": "response",
@@ -191,6 +192,10 @@ func buildOpenAICompactSSEPayload(finalResponse []byte) ([]byte, bool) {
 		if err != nil {
 			return nil, false
 		}
+		event, err = sjson.SetBytes(event, "sequence_number", outputIndex)
+		if err != nil {
+			return nil, false
+		}
 		event, err = sjson.SetRawBytes(event, "item", []byte(item.Raw))
 		if err != nil {
 			return nil, false
@@ -200,6 +205,10 @@ func buildOpenAICompactSSEPayload(finalResponse []byte) ([]byte, bool) {
 	}
 
 	completed, err := sjson.SetRawBytes([]byte(`{"type":"response.completed"}`), "response", response)
+	if err != nil {
+		return nil, false
+	}
+	completed, err = sjson.SetBytes(completed, "sequence_number", outputIndex)
 	if err != nil {
 		return nil, false
 	}
