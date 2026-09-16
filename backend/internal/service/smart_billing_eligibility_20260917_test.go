@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -200,4 +201,175 @@ func TestSmartBillingRouteEligibilitySubscriptionUsesTargetAndSkipsBalanceQuota(
 	require.Equal(t, 1, cache.rateCalls)
 	require.Equal(t, int32(1), atomic.LoadInt32(&rpm.userGroupCalls))
 	require.Zero(t, atomic.LoadInt32(&rpm.userCalls))
+}
+
+type smartRouteHeldBalanceCache struct {
+	*smartRouteEligibilityCache
+	wallet    *smartRouteWallet
+	liveErr   error
+	liveReads int
+}
+
+func (c *smartRouteHeldBalanceCache) GetLiveBalance(context.Context, int64) (float64, bool, error) {
+	c.liveReads++
+	return c.wallet.balance, true, c.liveErr
+}
+
+func smartRouteHeldBalanceFixture(t *testing.T) (*BillingCacheService, *smartRouteHeldBalanceCache, *userRPMCacheStub, *APIKey, *BalancePreauthorizationGuard, BalancePreauthorizationRequest, context.Context) {
+	t.Helper()
+	svc, cache, rpm, _, key, _ := smartRouteEligibilityFixture()
+	_, wallet, guard, req := smartRouteGuard(t, 0)
+	req.EstimateKind = PreauthorizationEstimatePerRequest
+	req.PerRequestEstimate.RequestCount = 1
+	req.CostInput.Resolver = &ModelPricingResolver{}
+	req.CostInput.Resolved = &ResolvedPricing{Mode: BillingModePerRequest, DefaultPerRequestPrice: 10}
+	req.CostInput.RateMultiplier = 1
+	require.NoError(t, guard.RepriceForRoute(context.Background(), req))
+	require.Equal(t, 10.0, guard.HoldAmount())
+	require.Zero(t, wallet.balance, "the real guard reserved the entire fake wallet")
+	heldCache := &smartRouteHeldBalanceCache{smartRouteEligibilityCache: cache, wallet: wallet}
+	svc.cache = heldCache
+	svc.cfg.Billing.BalancePreauthorizationEnabled = true
+	req.CostInput.GroupID, req.CostInput.Group = key.GroupID, key.Group
+	ctx := ContextWithBalancePreauthorizationGuard(context.Background(), guard)
+	return svc, heldCache, rpm, key, guard, req, ctx
+}
+
+func TestSmartBillingRouteHeldBalanceRepricesOnlyRequiredDifference(t *testing.T) {
+	for _, name := range []string{"cheaper", "more-expensive"} {
+		t.Run(name, func(t *testing.T) {
+			svc, cache, rpm, key, guard, req, ctx := smartRouteHeldBalanceFixture(t)
+			require.ErrorIs(t, svc.CheckBillingEligibility(ctx, key.User, key, key.Group, nil, PlatformOpenAI), ErrInsufficientBalance)
+			require.NoError(t, svc.CheckAPIKeyRouteEligibility(ctx, key.User, key, key.Group, nil, PlatformOpenAI))
+			require.Equal(t, int32(1), atomic.LoadInt32(&rpm.userGroupCalls))
+			require.Zero(t, atomic.LoadInt32(&rpm.userCalls))
+			require.Equal(t, 1, cache.quotaCalls)
+			// The route-only allowance must not escape into the caller's context.
+			require.ErrorIs(t, svc.CheckBillingEligibility(ctx, key.User, key, key.Group, nil, PlatformOpenAI), ErrInsufficientBalance)
+			calls := cache.wallet.topUpCalls
+			if name == "cheaper" {
+				req.CostInput.RateMultiplier = 0.5
+				require.NoError(t, guard.RepriceForRoute(ctx, req))
+				require.Equal(t, calls, cache.wallet.topUpCalls)
+			} else {
+				req.CostInput.RateMultiplier = 2
+				require.ErrorIs(t, guard.RepriceForRoute(ctx, req), ErrBalanceWithholdingFailed)
+				require.Equal(t, calls+1, cache.wallet.topUpCalls)
+			}
+			require.Equal(t, 10.0, guard.HoldAmount())
+			require.Zero(t, cache.wallet.balance)
+			require.NoError(t, guard.Refund(context.Background()))
+			require.Equal(t, 10.0, cache.wallet.balance)
+		})
+	}
+}
+
+func TestSmartBillingRouteHeldBalanceRejectsForeignAndInactiveGuards(t *testing.T) {
+	for _, name := range []string{"wrong-user", "wrong-key", "transferred", "finalized", "refunded", "no-guard", "preauthorization-disabled"} {
+		t.Run(name, func(t *testing.T) {
+			svc, cache, rpm, key, guard, _, ctx := smartRouteHeldBalanceFixture(t)
+			switch name {
+			case "wrong-user":
+				key.UserID++
+				key.User = &User{ID: key.UserID}
+			case "wrong-key":
+				key.ID++
+			case "transferred":
+				_, ok := guard.TransferToWorker()
+				require.True(t, ok)
+			case "finalized":
+				require.NoError(t, guard.Finalize(context.Background(), 10, "held-balance-test"))
+			case "refunded":
+				require.NoError(t, guard.Refund(context.Background()))
+				// Refunding restores 10; counting the stale hold again would
+				// incorrectly satisfy this reserve of 11.
+				svc.cfg.Billing.MinimumBalanceReserve = 11
+			case "no-guard":
+				ctx = context.Background()
+			case "preauthorization-disabled":
+				svc.cfg.Billing.BalancePreauthorizationEnabled = false
+				cache.balance = 0
+			}
+			require.ErrorIs(t, svc.CheckAPIKeyRouteEligibility(ctx, key.User, key, key.Group, nil, PlatformOpenAI), ErrInsufficientBalance)
+			require.Zero(t, atomic.LoadInt32(&rpm.userGroupCalls))
+			require.Zero(t, atomic.LoadInt32(&rpm.userCalls))
+		})
+	}
+}
+
+func TestSmartBillingRouteHeldBalanceStillEnforcesLimits(t *testing.T) {
+	for _, name := range []string{"platform-quota", "key-quota", "key-window", "target-rpm", "minimum-reserve", "subscription-quota"} {
+		t.Run(name, func(t *testing.T) {
+			svc, cache, rpm, key, _, _, ctx := smartRouteHeldBalanceFixture(t)
+			var sub *UserSubscription
+			var want error
+			one := 1.0
+			switch name {
+			case "platform-quota":
+				cache.quota.DailyLimitUSD, cache.quota.DailyUsageUSD = &one, 1
+				want = ErrUserPlatformDailyQuotaExhausted
+			case "key-quota":
+				key.Quota, key.QuotaUsed = 1, 1
+				want = ErrAPIKeyQuotaExhausted
+			case "key-window":
+				key.RateLimit5h, cache.rate.Usage5h = 1, 1
+				want = ErrAPIKeyRateLimit5hExceeded
+			case "target-rpm":
+				rpm.userGroupCounts = []int{11}
+				want = ErrGroupRPMExceeded
+			case "minimum-reserve":
+				svc.cfg.Billing.MinimumBalanceReserve = 11
+				want = ErrInsufficientBalance
+			case "subscription-quota":
+				_, sub = smartRouteSubscriptionKey()
+				key.Group.SubscriptionType = SubscriptionTypeSubscription
+				key.Group.DailyLimitUSD, cache.sub.DailyUsage = &one, 1
+				want = ErrDailyLimitExceeded
+			}
+			require.ErrorIs(t, svc.CheckAPIKeyRouteEligibility(ctx, key.User, key, key.Group, sub, PlatformOpenAI), want)
+			require.Zero(t, atomic.LoadInt32(&rpm.userCalls))
+			if name == "target-rpm" {
+				require.Equal(t, int32(1), atomic.LoadInt32(&rpm.userGroupCalls))
+			} else {
+				require.Zero(t, atomic.LoadInt32(&rpm.userGroupCalls))
+			}
+		})
+	}
+}
+
+func TestSmartBillingRouteHeldBalancePreservesCircuitBreaker(t *testing.T) {
+	svc, cache, rpm, key, _, _, ctx := smartRouteHeldBalanceFixture(t)
+	svc.circuitBreaker = &billingCircuitBreaker{failureThreshold: 1, resetTimeout: time.Hour}
+	cache.liveErr = errors.New("live wallet unavailable")
+	require.ErrorIs(t, svc.CheckAPIKeyRouteEligibility(ctx, key.User, key, key.Group, nil, PlatformOpenAI), ErrBillingServiceUnavailable)
+	require.Equal(t, billingCircuitOpen, svc.circuitBreaker.state)
+	require.Equal(t, 1, cache.liveReads)
+	cache.liveErr = nil
+	require.ErrorIs(t, svc.CheckAPIKeyRouteEligibility(ctx, key.User, key, key.Group, nil, PlatformOpenAI), ErrBillingServiceUnavailable)
+	require.Equal(t, 1, cache.liveReads, "open circuit must reject before the wallet read")
+	require.Zero(t, atomic.LoadInt32(&rpm.userGroupCalls))
+	svc.circuitBreaker = &billingCircuitBreaker{failureThreshold: 2, failures: 1}
+	require.NoError(t, svc.CheckAPIKeyRouteEligibility(ctx, key.User, key, key.Group, nil, PlatformOpenAI))
+	require.Zero(t, svc.circuitBreaker.failures)
+	require.Equal(t, billingCircuitClosed, svc.circuitBreaker.state)
+}
+
+func TestSmartBillingRouteHeldBalanceAllowsExactFractionalReserve(t *testing.T) {
+	svc, cache, _, _, key, _ := smartRouteEligibilityFixture()
+	_, wallet, guard, req := smartRouteGuard(t, 0)
+	wallet.balance = 0.8
+	req.EstimateKind = PreauthorizationEstimatePerRequest
+	req.PerRequestEstimate.RequestCount = 1
+	req.CostInput.Resolver = &ModelPricingResolver{}
+	req.CostInput.Resolved = &ResolvedPricing{Mode: BillingModePerRequest, DefaultPerRequestPrice: 0.7}
+	req.CostInput.RateMultiplier = 1
+	require.NoError(t, guard.RepriceForRoute(context.Background(), req))
+	require.Equal(t, 0.1, wallet.balance)
+	require.Equal(t, 0.7, guard.HoldAmount())
+	svc.cache = &smartRouteHeldBalanceCache{smartRouteEligibilityCache: cache, wallet: wallet}
+	svc.cfg.Billing.BalancePreauthorizationEnabled = true
+	svc.cfg.Billing.MinimumBalanceReserve = 0.8
+	ctx := ContextWithBalancePreauthorizationGuard(context.Background(), guard)
+	require.NoError(t, svc.CheckAPIKeyRouteEligibility(ctx, key.User, key, key.Group, nil, PlatformOpenAI))
+	require.ErrorIs(t, svc.CheckBillingEligibility(ctx, key.User, key, key.Group, nil, PlatformOpenAI), ErrInsufficientBalance)
 }
