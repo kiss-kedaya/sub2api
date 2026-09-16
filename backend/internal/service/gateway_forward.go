@@ -609,6 +609,14 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 		// 检查是否需要通用重试（排除400，因为400已经在上面特殊处理过了）
 		if resp.StatusCode >= 400 && resp.StatusCode != 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
+			if resp.StatusCode == http.StatusNotFound {
+				respBody, _ := s.readUpstreamErrorBody(resp)
+				_ = resp.Body.Close()
+				resp.Body = io.NopCloser(bytes.NewReader(respBody))
+				if isUpstreamRouteNotFound(resp.StatusCode, respBody) {
+					break
+				}
+			}
 			if attempt < maxRetryAttempts {
 				elapsed := time.Since(retryStart)
 				if elapsed >= maxRetryElapsed {
