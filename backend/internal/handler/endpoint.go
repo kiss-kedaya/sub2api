@@ -315,7 +315,7 @@ func GetUpstreamEndpoint(c *gin.Context, platform string) string {
 	// OpenAI 转发服务维护独立的运行时端点上下文，覆盖普通入站推导。
 	// 这对 force_chat_completions 的错误路径尤为重要：此时可能没有
 	// ForwardResult，不能把入站 /v1/responses 误报成上游端点。
-	if platform == service.PlatformOpenAI || platform == service.PlatformGrok || service.IsCNProvider(platform) {
+	if platform == service.PlatformOpenAI || platform == service.PlatformGrok || platform == service.PlatformGemini || service.IsCNProvider(platform) {
 		if endpoint := service.GetActualOpenAIUpstreamEndpoint(c); endpoint != "" {
 			return endpoint
 		}
@@ -352,9 +352,11 @@ func openAIForwardResultAsGateway(result *service.OpenAIForwardResult) *service.
 		return nil
 	}
 	return &service.ForwardResult{
-		RequestID: result.RequestID,
+		RequestID:       result.RequestID,
+		UpstreamHeaders: result.UpstreamHeaders,
 		Usage: service.ClaudeUsage{
-			InputTokens:              result.Usage.InputTokens,
+			// OpenAI input includes cache reads/writes; Gateway bills exclusive buckets.
+			InputTokens:              max(result.Usage.InputTokens-result.Usage.CacheReadInputTokens-result.Usage.CacheCreationInputTokens, 0),
 			OutputTokens:             result.Usage.OutputTokens,
 			CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
 			CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
@@ -370,6 +372,7 @@ func openAIForwardResultAsGateway(result *service.OpenAIForwardResult) *service.
 		FirstTokenMs:                  result.FirstTokenMs,
 		ClientDisconnect:              result.ClientDisconnect,
 		ReasoningEffort:               result.ReasoningEffort,
+		RequestedReasoningEffort:      result.RequestedReasoningEffort,
 		ServiceTier:                   result.ServiceTier,
 		ImageCount:                    result.ImageCount,
 		ImageSize:                     result.ImageSize,
