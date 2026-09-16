@@ -254,10 +254,29 @@ func TestProxyOpenAIWSHTTPBridgeTurnAPIKeyRestoresClientToolsInResponseDone(t *t
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Len(t, events, 4)
+	expectedTypes := []string{
+		"response.output_item.added",
+		"response.custom_tool_call_input.delta",
+		"response.custom_tool_call_input.done",
+		"response.output_item.done",
+		"response.done",
+	}
+	require.Len(t, events, len(expectedTypes))
+	for i, event := range events {
+		require.Equal(t, expectedTypes[i], gjson.GetBytes(event, "type").String())
+		sequence := gjson.GetBytes(event, "sequence_number")
+		require.True(t, sequence.Exists())
+		require.Equal(t, int64(i), sequence.Int())
+	}
+	require.Equal(t, "pwd", gjson.GetBytes(events[1], "delta").String())
+	require.Equal(t, "pwd", gjson.GetBytes(events[2], "input").String())
+	require.Equal(t, "custom_tool_call", gjson.GetBytes(events[3], "item.type").String())
+	require.Equal(t, "completed", gjson.GetBytes(events[3], "item.status").String())
+	require.Equal(t, "pwd", gjson.GetBytes(events[3], "item.input").String())
+	require.Equal(t, "item_exec", gjson.GetBytes(events[3], "item.id").String())
 	terminal := events[len(events)-1]
 	require.Equal(t, "response.done", gjson.GetBytes(terminal, "type").String())
-	require.Equal(t, int64(3), gjson.GetBytes(terminal, "sequence_number").Int())
+	require.Equal(t, int64(4), gjson.GetBytes(terminal, "sequence_number").Int())
 	require.Equal(t, "custom_tool_call", gjson.GetBytes(terminal, "response.output.0.type").String())
 	require.Equal(t, "pwd", gjson.GetBytes(terminal, "response.output.0.input").String())
 	require.False(t, gjson.GetBytes(terminal, "response.output.0.arguments").Exists())
