@@ -97,6 +97,7 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *ope
 			ID:       groupID,
 			Platform: service.PlatformOpenAI,
 			Status:   service.StatusActive,
+			Hydrated: true,
 		},
 		User: &service.User{ID: 1751, Status: service.StatusActive},
 	}

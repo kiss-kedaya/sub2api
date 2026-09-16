@@ -165,8 +165,8 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		h.responsesErrorResponse(c, status, code, message)
 		return
 	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
 	if balanceGuard != nil {
-		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
 		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 	}
 
@@ -196,12 +196,27 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	fs := NewFillFailoverState(h.maxAccountSwitches, false)
 
 	for {
+		requestCtx = c.Request.Context()
 		if requestCtx.Err() != nil {
 			return
 		}
 		selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(requestCtx, apiKey, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0), effectiveAPIKeyPlatform(c, apiKey))
-		if routedKey != nil {
+		if err == nil && routedKey != nil {
+			changed := keyRouteGroupChanged(apiKey, routedKey)
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
+				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
+				Mapping: &channelMapping, Guard: &balanceGuard, Body: body, Model: reqModel, PricingAt: pricingAt,
+			}); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				h.responsesErrorResponse(c, status, code, message)
+				return
+			}
 			apiKey = routedKey
+			requestCtx = c.Request.Context()
+			if changed {
+				preauthorizationBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+			}
 		}
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
