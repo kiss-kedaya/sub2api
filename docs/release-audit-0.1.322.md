@@ -2,6 +2,8 @@
 
 日期：2026-09-16。基于已全量的321，补齐一个已由生产记录证实的分类缺口。
 
+后续状态：05:25/09:25发生探针误回退，10:13已重新全量；原因、守护修复和最新验证见[探针回退记录](incident-322-probe-rollback-20260916.md)。下文首轮发布时间与验收数据保留为历史证据。
+
 ## 问题与修复
 
 - Chat/Messages转换后的客户端错误仅保留type/message，丢失error.code。321仅读取客户端code，导致同一个input_too_small在Responses中被排除健康计错，在Chat/Messages中仍被计错。
