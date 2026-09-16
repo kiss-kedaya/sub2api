@@ -85,6 +85,11 @@ func ClassifyUpstreamFailure(statusCode int, headers http.Header, body []byte, e
 		if isOpenAICompatibleModelNotFound400(body) {
 			return UpstreamFailureClass{Kind: UpstreamFailureModelMissing, Failover: true}
 		}
+		// A standard proxy 404 page indicates an unavailable upstream route.
+		// Rotate accounts without replaying the same unavailable endpoint.
+		if isUpstreamRouteNotFound(statusCode, body) {
+			return UpstreamFailureClass{Kind: UpstreamFailureServer, Failover: true}
+		}
 		return UpstreamFailureClass{Kind: UpstreamFailureClient}
 	default:
 		if statusCode >= 500 {
@@ -95,6 +100,18 @@ func ClassifyUpstreamFailure(statusCode int, headers http.Header, body []byte, e
 		}
 		return UpstreamFailureClass{Kind: UpstreamFailureNone}
 	}
+}
+
+// Match the standard proxy error page, not arbitrary HTML resource errors or
+// a JSON error whose message happens to contain HTML.
+func isUpstreamRouteNotFound(statusCode int, body []byte) bool {
+	if statusCode != http.StatusNotFound || !isHTMLResponse(body) {
+		return false
+	}
+	page := strings.ToLower(string(body))
+	return strings.Contains(page, "<title>404 not found</title>") &&
+		strings.Contains(page, "<h1>404 not found</h1>") &&
+		strings.Contains(page, "<center>nginx")
 }
 
 // ShouldFailoverUpstream reports whether the outcome should rotate accounts.

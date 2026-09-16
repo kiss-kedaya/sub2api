@@ -48,6 +48,41 @@ func TestClassifyUpstreamFailure_Canceled(t *testing.T) {
 	require.False(t, class.Failover)
 }
 
+func TestClassifyUpstreamFailure_HTMLRouteNotFound(t *testing.T) {
+	for _, body := range []string{
+		"<html>\r\n<head><title>404 Not Found</title></head>\r\n<body><center><h1>404 Not Found</h1></center><hr><center>nginx</center></body></html>",
+		" \n<!DOCTYPE HTML><HTML><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1><center>nginx/1.24.0</center></body></HTML>",
+	} {
+		class := ClassifyUpstreamFailure(http.StatusNotFound, nil, []byte(body), nil)
+		require.Equal(t, UpstreamFailureServer, class.Kind)
+		require.True(t, class.Failover)
+		require.False(t, class.SameAccountRetry)
+		require.False(t, class.PunishAccount)
+		require.True(t, ShouldFailoverUpstreamResponse(http.StatusNotFound, nil, []byte(body), false))
+	}
+}
+
+func TestClassifyUpstreamFailure_ResourceNotFoundStaysClient(t *testing.T) {
+	for _, body := range []string{
+		`{"error":{"type":"not_found_error","message":"Response resp_123 not found"}}`,
+		`{"error":{"message":"File file_123 not found"}}`,
+		`{"error":{"message":"<html>not found</html>"}}`,
+		"Not Found",
+		"<html><body>File not found</body></html>",
+		"<html><title>404 Not Found</title><h1>404 Not Found</h1><p>Unknown resource</p></html>",
+		"",
+	} {
+		class := ClassifyUpstreamFailure(http.StatusNotFound, http.Header{"Content-Type": {"text/html"}}, []byte(body), nil)
+		require.Equal(t, UpstreamFailureClient, class.Kind)
+		require.False(t, class.Failover)
+		require.False(t, class.SameAccountRetry)
+		require.False(t, class.PunishAccount)
+	}
+	class := ClassifyUpstreamFailure(http.StatusUnprocessableEntity, nil, []byte("<html>Invalid input</html>"), nil)
+	require.Equal(t, UpstreamFailureClient, class.Kind)
+	require.False(t, class.Failover)
+}
+
 func TestClassifyUpstreamFailure_WrappedJSONObjectIsClient(t *testing.T) {
 	body := []byte(`{"error":{"message":"Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'."}}`)
 	class := ClassifyUpstreamFailure(http.StatusBadGateway, nil, body, nil)
