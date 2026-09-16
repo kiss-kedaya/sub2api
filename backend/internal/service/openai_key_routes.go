@@ -16,6 +16,27 @@ func WithOpenAIMessagesKeyRoute(ctx context.Context) context.Context {
 	return context.WithValue(ctx, openAIMessagesKeyRouteContextKey{}, true)
 }
 
+func openAIMessagesKeyRouteGroupAllowed(ctx context.Context, group *Group) bool {
+	if ctx == nil {
+		return true
+	}
+	if enabled, _ := ctx.Value(openAIMessagesKeyRouteContextKey{}).(bool); !enabled {
+		return true
+	}
+	if group == nil {
+		return false
+	}
+	if group.Platform == PlatformGrok || IsCNProvider(group.Platform) {
+		return true
+	}
+	if platform, ok := ResolvedTargetPlatformFromContext(ctx); ok && (platform == PlatformGrok || IsCNProvider(platform)) {
+		return true
+	}
+	// Initial handler dispatch can defer this check to a later smart route.
+	// A concrete candidate must enforce its own switch before catalog or sticky use.
+	return group.AllowMessagesDispatch
+}
+
 func openAIMessagesKeyRouteModel(ctx context.Context, group *Group, model string) string {
 	if enabled, _ := ctx.Value(openAIMessagesKeyRouteContextKey{}).(bool); !enabled {
 		return model
@@ -40,7 +61,14 @@ func (s *OpenAIGatewayService) hydrateAPIKeyGroup(ctx context.Context, apiKey *A
 	if s != nil && s.schedulerSnapshot != nil {
 		getGroup = s.schedulerSnapshot.GetGroupByIDLite
 	}
-	return hydrateAPIKeyGroup(ctx, apiKey, groupID, getGroup)
+	routed, err := hydrateAPIKeyGroup(ctx, apiKey, groupID, getGroup)
+	if err != nil {
+		return nil, err
+	}
+	if !openAIMessagesKeyRouteGroupAllowed(ctx, routed.Group) {
+		return nil, ErrNoAvailableAccounts
+	}
+	return routed, nil
 }
 
 func (s *OpenAIGatewayService) catalogModels(ctx context.Context, groupID *int64, platform string) []string {
