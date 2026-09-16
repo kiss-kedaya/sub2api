@@ -13,6 +13,7 @@ var (
 	ErrBalancePreauthorizationOwnershipTransferred = errors.New("balance preauthorization ownership transferred")
 	ErrBalancePreauthorizationAlreadyRefunded      = errors.New("balance preauthorization already refunded")
 	ErrBalancePreauthorizationAlreadyFinalized     = errors.New("balance preauthorization already finalized")
+	ErrBalancePreauthorizationOutputObserved       = errors.New("balance preauthorization output already observed")
 )
 
 type balancePreauthorizationGuardState uint8
@@ -34,6 +35,7 @@ type balancePreauthorizationGuardCore struct {
 	holdAmount        float64
 	outputWindow      int
 	outputHoldTracker *BillingOutputHoldTracker
+	outputObserved    bool
 	ownerToken        uint64
 	terminalState     balancePreauthorizationGuardState
 }
@@ -81,6 +83,8 @@ func (g *BalancePreauthorizationGuard) HoldAmount() float64 {
 	if g == nil || g.core == nil {
 		return 0
 	}
+	g.core.mu.Lock()
+	defer g.core.mu.Unlock()
 	return g.core.holdAmount
 }
 
@@ -88,7 +92,78 @@ func (g *BalancePreauthorizationGuard) ReservedOutputTokens() int {
 	if g == nil || g.core == nil {
 		return 0
 	}
+	g.core.mu.Lock()
+	defer g.core.mu.Unlock()
 	return g.core.outputWindow
+}
+
+// RepriceForRoute changes admission pricing before any output is observed.
+// It retains the durable request/fingerprint and the same wallet attempt;
+// existing holds are never released until finalization or refund.
+// RequestID may be omitted; AuthorizationFingerprint must be omitted because
+// repricing does not prepare or replace the durable authorization identity.
+func (g *BalancePreauthorizationGuard) RepriceForRoute(ctx context.Context, request BalancePreauthorizationRequest) error {
+	if g == nil || g.core == nil {
+		return balancePreauthorizationUnavailable(errors.New("balance preauthorization guard is nil"))
+	}
+	ctx = nonNilContext(ctx)
+	g.core.mu.Lock()
+	defer g.core.mu.Unlock()
+	if g.core.ownerToken != g.ownerToken {
+		return ErrBalancePreauthorizationOwnershipTransferred
+	}
+	switch g.core.terminalState {
+	case balancePreauthorizationGuardFinalized:
+		return ErrBalancePreauthorizationAlreadyFinalized
+	case balancePreauthorizationGuardRefunded:
+		return ErrBalancePreauthorizationAlreadyRefunded
+	}
+	if g.core.outputObserved {
+		return ErrBalancePreauthorizationOutputObserved
+	}
+	if (strings.TrimSpace(request.RequestID) != "" && strings.TrimSpace(request.RequestID) != g.core.requestID) ||
+		strings.TrimSpace(request.AuthorizationFingerprint) != "" || request.APIKeyID != g.core.apiKeyID || request.UserID != g.core.userID {
+		return balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
+	}
+	if err := ctx.Err(); err != nil {
+		return balancePreauthorizationUnavailable(err)
+	}
+	if request.BillingType == BillingTypeSubscription {
+		g.core.outputHoldTracker = nil
+		g.core.outputWindow = 0
+		return nil
+	}
+	if request.BillingType != BillingTypeBalance || request.BillableInputBytes < 0 ||
+		request.EstimatedInputTokens < 0 || request.InitialOutputWindowTokens < 0 {
+		return balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
+	}
+	if g.core.service == nil || g.core.service.costCalculator == nil || g.core.service.wallet == nil {
+		return balancePreauthorizationUnavailable(errors.New("balance preauthorization dependency is unavailable"))
+	}
+	estimate, err := g.core.service.estimateHold(ctx, request)
+	if err != nil {
+		return balancePreauthorizationUnavailable(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return balancePreauthorizationUnavailable(err)
+	}
+	if estimate.HoldAmount > g.core.holdAmount {
+		walletCtx, cancel := context.WithTimeout(ctx, balancePreauthorizationWalletTimeout)
+		defer cancel()
+		if err := g.topUpHold(walletCtx, estimate.HoldAmount); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return balancePreauthorizationUnavailable(err)
+	}
+	// Use the new price's base, not the possibly larger retained hold. Output
+	// consumes that surplus before any further wallet top-up is needed.
+	g.core.outputHoldTracker = NewBillingOutputHoldTracker(
+		estimate.OutputWindow, estimate.OutputWindow, estimate.HoldAmount, estimate.OutputUnitPrice, 1,
+	)
+	g.core.outputWindow = estimate.OutputWindow
+	return nil
 }
 
 // wrapStreamOutputHoldTopUpFailure 为流式中途补扣失败统一包装错误，供四条流式
@@ -119,17 +194,12 @@ func detachedBalancePreauthorizationWalletContext(parent context.Context) (conte
 
 // ObserveStreamingOutput records additionalBytes of emitted output and raises
 // the live hold when the reserved output window is about to be exceeded. It is
-// a no-op (nil) when no tracker exists (per-request/free/non-stream requests),
-// when the guard is not the active owner, or when the observation stays within
-// the reserved lead — so the hot path pays only an integer add in the common
-// case. A returned error means the wallet top-up failed and the caller MUST
+// wallet-free when no tracker exists or retained holds cover the output. Even
+// free output seals route pricing. Observations and repricing share core.mu.
+// A returned error means the guard cannot cover output and the caller MUST
 // abort the upstream stream rather than emit more billable output.
 func (g *BalancePreauthorizationGuard) ObserveStreamingOutput(ctx context.Context, additionalBytes int) error {
-	if g == nil || g.core == nil || g.core.outputHoldTracker == nil || additionalBytes <= 0 {
-		return nil
-	}
-	decision := g.core.outputHoldTracker.ObserveOutputBytes(additionalBytes)
-	if !decision.Required {
+	if g == nil || g.core == nil || additionalBytes <= 0 {
 		return nil
 	}
 	g.core.mu.Lock()
@@ -142,16 +212,31 @@ func (g *BalancePreauthorizationGuard) ObserveStreamingOutput(ctx context.Contex
 	if g.core.terminalState != balancePreauthorizationGuardActive {
 		return nil
 	}
+	g.core.outputObserved = true
+	if g.core.outputHoldTracker == nil {
+		return nil
+	}
+	g.core.outputHoldTracker.ObserveOutputBytes(additionalBytes)
+	target := g.core.outputHoldTracker.TargetHoldAmount()
+	if target <= g.core.holdAmount {
+		return nil
+	}
 
 	walletCtx, cancel := detachedBalancePreauthorizationWalletContext(ctx)
 	defer cancel()
+	return g.topUpHold(walletCtx, target)
+}
+
+// topUpHold requires core.mu. The wallet's cumulative target makes retries
+// after an ambiguous failure idempotent, including a zero-hold attempt.
+func (g *BalancePreauthorizationGuard) topUpHold(ctx context.Context, target float64) error {
 	result, err := g.core.service.wallet.TopUpLiveBalance(
-		walletCtx, g.core.userID, g.core.attemptID, decision.TargetHoldAmount,
+		ctx, g.core.userID, g.core.attemptID, target,
 	)
 	if err != nil {
 		return balancePreauthorizationUnavailable(err)
 	}
-	if !liveBalanceOperationSucceeded(result, LiveBalanceAttemptAuthorized) {
+	if !liveBalanceAuthorizationSucceeded(result, target) {
 		if result.Outcome == LiveBalanceOutcomeInsufficient {
 			return ErrBalanceWithholdingFailed
 		}
@@ -160,7 +245,7 @@ func (g *BalancePreauthorizationGuard) ObserveStreamingOutput(ctx context.Contex
 			result.Outcome, result.State,
 		))
 	}
-	g.core.holdAmount = decision.TargetHoldAmount
+	g.core.holdAmount = math.Max(g.core.holdAmount, result.ReservedAmount)
 	return nil
 }
 
