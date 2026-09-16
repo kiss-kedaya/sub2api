@@ -76,3 +76,4 @@
 - 新机14:53协程28245，其中约5974个HTTP handler，约5104个Client.Do/Transport.RoundTrip等待；4821落在通用doOpenAIUpstreamWithHeaderCancel，forwardGrokResponses仅174。内存压力主要与大量长请求携带请求体等待上游相关，需要后续按上游/请求生命周期做容量审查，不以本次Grok工具修复名义随意缩超时或改并发。
 - 14:54验收新机RSS约15.4GiB、旧机13.6GiB，主机可用约20.9/19.8GiB。新机RSS开始在15GiB附近波动，仍是需持续关注的风险；没有声称内存泄漏彻底修复。守护继续自动检查平台健康、候选进程与内存余量。
 - 原始性能快照存于本地.artifacts/heap325-new.pb.gz、heap325-old.pb.gz、heap325-new-gc.pb.gz、heap325-old-gc.pb.gz、goroutine325-new.pb.gz，仅用于内部分析，不随公开release上传。
+- 14:59双机守护仍verified/100%/armed；RSS约15.3/15.4GiB，未触阈值。两机经公网readyz正常。本地Windows出口访问返回Cloudflare地域403，响应明确为不开放中国大陆访问；这是边缘访问策略，未修改，也未误归为325平台故障或触发回退。
