@@ -775,6 +775,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	user := input.User
 	account := input.Account
 	subscription := input.Subscription
+	if err := validateAPIKeyRouteSubscriptionIdentity(apiKey, user, subscription); err != nil {
+		return err
+	}
 	ApplyForwardImageBillingResolution(result)
 	logServiceTierBillingDowngrade("service.gateway", account, result.RequestID, ApplyForwardServiceTierBillingResolution(result))
 
