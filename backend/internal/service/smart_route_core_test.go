@@ -163,45 +163,6 @@ func TestSmartRouteCoreMissingPolicyFailsClosed(t *testing.T) {
 	}
 }
 
-func TestSmartRouteCoreCandidateMappingAndProfitContext(t *testing.T) {
-	primary := &Group{ID: 9, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, RateMultiplier: 0.1, ProfitControlEnabled: true}
-	backup := &Group{ID: 27, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, RateMultiplier: 2, ProfitControlEnabled: true}
-	for _, group := range []*Group{primary, backup} {
-		group.ModelAllowlist = GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5.5"}}
-	}
-	channel := newTestChannelService(makeStandardRepo(Channel{
-		ID: 1, Status: StatusActive, GroupIDs: []int64{9},
-		ModelMapping: map[string]map[string]string{PlatformOpenAI: {"gpt-5.5": "primary-private"}},
-	}, map[int64]string{9: PlatformOpenAI}))
-	_, channelErr := channel.GetChannelForGroup(context.Background(), primary.ID)
-	require.NoError(t, channelErr)
-	snapshot, _ := newSmartRouteCoreSnapshot([]*Group{primary, backup})
-	svc := &OpenAIGatewayService{schedulerSnapshot: snapshot, channelService: channel}
-	key := smartRouteCoreKey(primary, backup)
-	ctx := ContextWithAPIKeyRoute(context.Background(), key)
-	ctx, pricingAt := svc.WithOpenAIRequestPricingContext(ctx, &primary.ID)
-	var tried []string
-	_, _, routed, err := svc.selectAlongKeyRoutes(ctx, key, nil, "gpt-5.5",
-		func(ctx context.Context, gid *int64, _ []string, model string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-			tried = append(tried, model)
-			require.Equal(t, *gid, ctx.Value(ctxkey.Group).(*Group).ID)
-			ctx = svc.withOpenAIProfitControlGate(ctx, gid)
-			gate := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
-			require.Equal(t, pricingAt, gate.pricingAt)
-			if *gid == primary.ID {
-				require.InDelta(t, 0.1, gate.threshold, 1e-9)
-				return nil, OpenAIAccountScheduleDecision{}, ErrNoAvailableAccounts
-			}
-			require.InDelta(t, 2, gate.threshold, 1e-9)
-			return &AccountSelectionResult{}, OpenAIAccountScheduleDecision{}, nil
-		})
-	require.NoError(t, err)
-	require.Equal(t, []string{"primary-private", "gpt-5.5"}, tried)
-	require.Equal(t, backup.ID, *routed.GroupID)
-	require.Equal(t, primary.ID, key.Group.ID)
-	require.Equal(t, primary.ID, ctx.Value(ctxkey.Group).(*Group).ID)
-}
-
 func TestSmartRouteCoreCatalogSnapshotOnlyWithoutCache(t *testing.T) {
 	repo := &modelsListAccountRepoStub{}
 	snapshot, _ := newSmartRouteCoreSnapshot(nil)
@@ -293,9 +254,9 @@ func TestSmartRouteCoreSnapshotCatalogWithoutRepository(t *testing.T) {
 func TestSmartRouteCoreMessagesAliasesAreCandidateScoped(t *testing.T) {
 	for _, messages := range []bool{false, true} {
 		t.Run(fmt.Sprintf("messages_%t", messages), func(t *testing.T) {
-			primary := &Group{ID: 9, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true,
+			primary := &Group{ID: 9, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, AllowMessagesDispatch: true,
 				MessagesDispatchModelConfig: OpenAIMessagesDispatchModelConfig{ExactModelMappings: map[string]string{"claude-company": "primary-private"}}}
-			backup := &Group{ID: 27, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true,
+			backup := &Group{ID: 27, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, AllowMessagesDispatch: true,
 				MessagesDispatchModelConfig: OpenAIMessagesDispatchModelConfig{ExactModelMappings: map[string]string{"claude-company": "backup-private"}}}
 			accounts := []*Account{
 				{ID: 1, Platform: PlatformOpenAI, GroupIDs: []int64{9}, Credentials: map[string]any{"model_mapping": map[string]any{"primary-private": "primary-private"}}},
@@ -340,7 +301,7 @@ func TestSmartRouteCoreMessagesNormalizationAndCompositeExemptions(t *testing.T)
 }
 
 func TestSmartRouteCoreMessagesAliasCannotBypassOriginalAllowlist(t *testing.T) {
-	group := &Group{ID: 9, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true,
+	group := &Group{ID: 9, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, AllowMessagesDispatch: true,
 		ModelAllowlist:              GroupModelsListConfig{Enabled: true, Models: []string{"gpt-private"}},
 		MessagesDispatchModelConfig: OpenAIMessagesDispatchModelConfig{ExactModelMappings: map[string]string{"blocked-alias": "gpt-private"}}}
 	svc := &OpenAIGatewayService{}
@@ -350,4 +311,59 @@ func TestSmartRouteCoreMessagesAliasCannotBypassOriginalAllowlist(t *testing.T) 
 			return nil, OpenAIAccountScheduleDecision{}, nil
 		})
 	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+}
+
+func TestSmartRouteCoreMessagesCandidateDispatchPermission(t *testing.T) {
+	for _, tc := range []struct {
+		name, platform, resolved       string
+		messages, allow, wantCandidate bool
+	}{
+		{"messages_openai_disabled", PlatformOpenAI, "", true, false, false},
+		{"messages_smart_openai_disabled", PlatformOpenAI, PlatformOpenAI, true, false, false},
+		{"messages_openai_enabled", PlatformOpenAI, PlatformOpenAI, true, true, true},
+		{"chat_openai_disabled", PlatformOpenAI, PlatformOpenAI, false, false, true},
+		{"messages_grok_exempt", PlatformGrok, PlatformOpenAI, true, false, true},
+		{"messages_kimi_exempt", PlatformKimi, "", true, false, true},
+		{"messages_zhipu_exempt", PlatformZhipu, "", true, false, true},
+		{"messages_deepseek_exempt", PlatformDeepseek, "", true, false, true},
+		{"messages_minimax_exempt", PlatformMiniMax, "", true, false, true},
+		{"messages_openai_resolved_grok_exempt", PlatformOpenAI, PlatformGrok, true, false, true},
+		{"messages_openai_resolved_kimi_exempt", PlatformOpenAI, PlatformKimi, true, false, true},
+		{"messages_composite_openai_disabled", PlatformComposite, PlatformOpenAI, true, false, false},
+		{"messages_composite_grok_exempt", PlatformComposite, PlatformGrok, true, false, true},
+		{"messages_composite_deepseek_exempt", PlatformComposite, PlatformDeepseek, true, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			primary := &Group{ID: 9, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, AllowMessagesDispatch: true}
+			candidate := &Group{ID: 27, Platform: tc.platform, Status: StatusActive, Hydrated: true, AllowMessagesDispatch: tc.allow}
+			last := &Group{ID: 28, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, AllowMessagesDispatch: true}
+			groups := []*Group{primary, candidate, last}
+			account := &Account{ID: 1027, Platform: tc.platform, GroupIDs: []int64{candidate.ID}, Credentials: map[string]any{"model_mapping": map[string]any{"company-model": "company-model"}}}
+			snapshot, _ := newSmartRouteCoreSnapshot(groups, account)
+			svc := &OpenAIGatewayService{schedulerSnapshot: snapshot}
+			ctx := context.Background()
+			if tc.messages {
+				ctx = WithOpenAIMessagesKeyRoute(ctx)
+			}
+			if tc.resolved != "" {
+				ctx = WithResolvedTargetPlatform(ctx, tc.resolved)
+			}
+			var tried []int64
+			_, _, routed, err := svc.selectAlongKeyRoutes(ctx, smartRouteCoreKey(groups...), nil, "company-model",
+				func(_ context.Context, gid *int64, _ []string, _ string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+					tried = append(tried, *gid)
+					if *gid == primary.ID {
+						return nil, OpenAIAccountScheduleDecision{}, ErrNoAvailableAccounts
+					}
+					return &AccountSelectionResult{}, OpenAIAccountScheduleDecision{}, nil
+				})
+			require.NoError(t, err)
+			if tc.wantCandidate {
+				require.Equal(t, candidate.ID, *routed.GroupID)
+			} else {
+				require.Equal(t, last.ID, *routed.GroupID)
+				require.Equal(t, []int64{primary.ID, last.ID}, tried, "disabled candidate must not hide unknown sibling catalogs or reach sticky selection")
+			}
+		})
+	}
 }

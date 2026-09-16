@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/stretchr/testify/require"
 )
 
@@ -236,4 +237,70 @@ func TestSmartRouteCoreGatewayAuthorizationAndMapping(t *testing.T) {
 			require.Zero(t, repo.listByGroupCalls.Load())
 		})
 	}
+}
+
+func TestSmartRouteCoreSimpleModeActiveGroupWithoutSnapshot(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	t.Cleanup(resetOpenAIAdvancedSchedulerSettingCacheForTest)
+	for _, platform := range []string{PlatformOpenAI, PlatformGrok} {
+		t.Run(platform, func(t *testing.T) {
+			group := &Group{ID: 9, Platform: platform, Status: StatusActive, Hydrated: true}
+			model := "gpt-5.5"
+			if platform == PlatformGrok {
+				model = "grok-4.6"
+			}
+			account := &Account{ID: 1, Platform: platform, Type: AccountTypeAPIKey, Status: StatusActive,
+				Schedulable: true, Concurrency: 1, GroupIDs: []int64{group.ID},
+				Credentials: map[string]any{"model_mapping": map[string]any{model: model}}}
+			repo := &mockAccountRepoForPlatform{accounts: []Account{*account}, accountsByID: map[int64]*Account{account.ID: account}}
+			svc := &OpenAIGatewayService{accountRepo: repo, cfg: &config.Config{RunMode: config.RunModeSimple}}
+			_ = svc.openAIAdvancedSchedulerRuntimeSettings(context.Background())
+			result, _, routed, err := svc.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(context.Background(), smartRouteCoreKey(group),
+				"", "", model, nil, OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false, false, false, platform)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			defer releaseAccountSelection(result)
+			require.Equal(t, account.ID, result.Account.ID)
+			require.Equal(t, group.ID, *routed.GroupID)
+		})
+	}
+}
+
+func TestSmartRouteCoreCandidateMappingAndProfitContext(t *testing.T) {
+	primary := &Group{ID: 9, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, RateMultiplier: 0.1, ProfitControlEnabled: true}
+	backup := &Group{ID: 27, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, RateMultiplier: 2, ProfitControlEnabled: true}
+	for _, group := range []*Group{primary, backup} {
+		group.ModelAllowlist = GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5.5"}}
+	}
+	channel := newTestChannelService(makeStandardRepo(Channel{
+		ID: 1, Status: StatusActive, GroupIDs: []int64{9},
+		ModelMapping: map[string]map[string]string{PlatformOpenAI: {"gpt-5.5": "primary-private"}},
+	}, map[int64]string{9: PlatformOpenAI}))
+	_, channelErr := channel.GetChannelForGroup(context.Background(), primary.ID)
+	require.NoError(t, channelErr)
+	snapshot, _ := newSmartRouteCoreSnapshot([]*Group{primary, backup})
+	svc := &OpenAIGatewayService{schedulerSnapshot: snapshot, channelService: channel}
+	key := smartRouteCoreKey(primary, backup)
+	ctx := ContextWithAPIKeyRoute(context.Background(), key)
+	ctx, pricingAt := svc.WithOpenAIRequestPricingContext(ctx, &primary.ID)
+	var tried []string
+	_, _, routed, err := svc.selectAlongKeyRoutes(ctx, key, nil, "gpt-5.5",
+		func(ctx context.Context, gid *int64, _ []string, model string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+			tried = append(tried, model)
+			require.Equal(t, *gid, ctx.Value(ctxkey.Group).(*Group).ID)
+			ctx = svc.withOpenAIProfitControlGate(ctx, gid)
+			gate := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
+			require.Equal(t, pricingAt, gate.pricingAt)
+			if *gid == primary.ID {
+				require.InDelta(t, 0.1, gate.threshold, 1e-9)
+				return nil, OpenAIAccountScheduleDecision{}, ErrNoAvailableAccounts
+			}
+			require.InDelta(t, 2, gate.threshold, 1e-9)
+			return &AccountSelectionResult{}, OpenAIAccountScheduleDecision{}, nil
+		})
+	require.NoError(t, err)
+	require.Equal(t, []string{"primary-private", "gpt-5.5"}, tried)
+	require.Equal(t, backup.ID, *routed.GroupID)
+	require.Equal(t, primary.ID, key.Group.ID)
+	require.Equal(t, primary.ID, ctx.Value(ctxkey.Group).(*Group).ID)
 }
