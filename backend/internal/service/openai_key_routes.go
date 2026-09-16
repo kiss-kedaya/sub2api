@@ -102,7 +102,7 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 		selection, decision, err := selectOne(ctx, apiKey.GroupID, append([]string(nil), platformOverride...), requestedModel)
 		return selection, decision, apiKey, err
 	}
-	candidates, siblingHasPresent, lastErr := prepareAPIKeyRouteCandidates(ctx, apiKey, requestedModel, s.hydrateAPIKeyGroup, s.routeModelsCatalog, openAIMessagesKeyRouteModel)
+	candidates, siblingHasPresent, lastErr := prepareAPIKeyRouteCandidates(ctx, apiKey, requestedModel, s.hydrateAPIKeyGroup, s.routeModelsCatalog, s.ResolveChannelMappingAndRestrict, openAIMessagesKeyRouteModel)
 	var lastDecision OpenAIAccountScheduleDecision
 	for _, candidate := range candidates {
 		routed := candidate.key
@@ -115,15 +115,7 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 			continue
 		}
 		routeCtx := ContextWithAPIKeyRoute(ctx, routed)
-		mapping, restricted := s.ResolveChannelMappingAndRestrict(routeCtx, routed.GroupID, requestedModel)
-		if restricted {
-			continue
-		}
-		model := mapping.MappedModel
-		if !mapping.Mapped {
-			model = openAIMessagesKeyRouteModel(routeCtx, group, requestedModel)
-		}
-		selection, decision, err := selectOne(routeCtx, routed.GroupID, groupPlatform, model)
+		selection, decision, err := selectOne(routeCtx, routed.GroupID, groupPlatform, candidate.model)
 		if err == nil {
 			return selection, decision, routed, nil
 		}
