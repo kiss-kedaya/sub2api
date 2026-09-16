@@ -84,3 +84,30 @@ func TestGeminiBridgeGatewayConversionPreservesMetadataAndClampsInput(t *testing
 	require.Equal(t, 2, result.SearchCount)
 	require.Equal(t, 1.0, result.AudioUsage.DurationOrUnits)
 }
+
+func TestGeminiBridgeGatewayNonBillableFlagPreservesUsage(t *testing.T) {
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	cfg.Default.RateMultiplier = 1
+	logs, repo := &geminiBridgeUsageRepo{}, &geminiBridgeBillingRepo{}
+	gateway := service.NewGatewayService(nil, nil, logs, repo, nil, nil, nil, nil, cfg,
+		nil, nil, service.NewBillingService(cfg, nil), nil, &service.BillingCacheService{}, nil, nil, &service.DeferredService{},
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	upstream := &service.OpenAIForwardResult{RequestID: "gemini-rejected-request", Model: "gpt-5.1",
+		Usage: service.OpenAIUsage{InputTokens: 1000}, NonBillableUpstreamError: true}
+	converted := openAIForwardResultAsGateway(upstream)
+	require.True(t, converted.NonBillableUpstreamError)
+	require.NoError(t, gateway.RecordUsage(context.Background(), &service.RecordUsageInput{
+		Result: converted, APIKey: &service.APIKey{ID: 7}, User: &service.User{ID: 42},
+		Account: &service.Account{ID: 9, Platform: service.PlatformGemini},
+	}))
+	require.NotNil(t, logs.last)
+	require.NotNil(t, repo.last)
+	require.Equal(t, 1000, logs.last.InputTokens)
+	require.Zero(t, logs.last.OutputTokens)
+	require.Zero(t, logs.last.InputCost)
+	require.Zero(t, logs.last.TotalCost)
+	require.Zero(t, logs.last.ActualCost)
+	require.Zero(t, repo.last.BalanceCost)
+	require.Equal(t, 1000, converted.Usage.InputTokens)
+	require.Equal(t, 1000, upstream.Usage.InputTokens)
+}
