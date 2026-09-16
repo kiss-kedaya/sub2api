@@ -304,3 +304,82 @@ func TestSmartRouteCoreCandidateMappingAndProfitContext(t *testing.T) {
 	require.Equal(t, primary.ID, key.Group.ID)
 	require.Equal(t, primary.ID, ctx.Value(ctxkey.Group).(*Group).ID)
 }
+
+func TestSmartRouteCoreChannelAliasCatalogAndSingleMapping(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	t.Cleanup(resetOpenAIAdvancedSchedulerSettingCacheForTest)
+	for _, engine := range []string{"openai", "gateway"} {
+		for _, scenario := range []string{"single", "backup", "allow_original", "deny_original"} {
+			t.Run(engine+"/"+scenario, func(t *testing.T) {
+				platform := PlatformOpenAI
+				if engine == "gateway" {
+					platform = PlatformAnthropic
+				}
+				primary := &Group{ID: 9, Platform: platform, Status: StatusActive, Hydrated: true}
+				groups := []*Group{primary}
+				if scenario == "backup" {
+					groups = append(groups, &Group{ID: 27, Platform: platform, Status: StatusActive, Hydrated: true})
+				}
+				if scenario == "allow_original" {
+					primary.ModelAllowlist = GroupModelsListConfig{Enabled: true, Models: []string{"route-A"}}
+				}
+				if scenario == "deny_original" {
+					primary.ModelAllowlist = GroupModelsListConfig{Enabled: true, Models: []string{"primary-B"}}
+				}
+				var accounts []*Account
+				var channels []Channel
+				groupPlatforms := make(map[int64]string)
+				for i, group := range groups {
+					mapped := "primary-B"
+					if i > 0 {
+						mapped = "backup-B"
+					}
+					accounts = append(accounts, &Account{ID: group.ID, Platform: platform, Type: AccountTypeAPIKey,
+						Status: StatusActive, Schedulable: true, Concurrency: 1, GroupIDs: []int64{group.ID},
+						Credentials: map[string]any{"model_mapping": map[string]any{mapped: mapped}}})
+					channels = append(channels, Channel{ID: group.ID, Status: StatusActive, GroupIDs: []int64{group.ID},
+						ModelMapping: map[string]map[string]string{platform: {"route-A": mapped, mapped: "never-schedule-C"}}})
+					groupPlatforms[group.ID] = platform
+				}
+				channel := newTestChannelService(&mockChannelRepository{
+					listAllFn:           func(context.Context) ([]Channel, error) { return channels, nil },
+					getGroupPlatformsFn: func(context.Context, []int64) (map[int64]string, error) { return groupPlatforms, nil },
+				})
+				_, err := channel.GetChannelForGroup(context.Background(), primary.ID)
+				require.NoError(t, err)
+				snapshot, _ := newSmartRouteCoreSnapshot(groups, accounts...)
+				repo := &modelsListAccountRepoStub{}
+				key := smartRouteCoreKey(groups...)
+				var excluded map[int64]struct{}
+				if scenario == "backup" {
+					excluded = map[int64]struct{}{primary.ID: {}}
+				}
+				var result *AccountSelectionResult
+				var routed *APIKey
+				if engine == "openai" {
+					svc := &OpenAIGatewayService{schedulerSnapshot: snapshot, accountRepo: repo, channelService: channel,
+						cfg: &config.Config{}, concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{})}
+					_ = svc.openAIAdvancedSchedulerRuntimeSettings(context.Background())
+					result, _, routed, err = svc.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(context.Background(), key,
+						"", "", "route-A", excluded, OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false, false, false, platform)
+				} else {
+					svc := &GatewayService{schedulerSnapshot: snapshot, accountRepo: repo, channelService: channel,
+						cfg: &config.Config{}, concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{})}
+					result, routed, err = svc.SelectAccountAlongKeyRoutes(context.Background(), key, "", "route-A", excluded, "", key.UserID, platform)
+				}
+				if scenario == "deny_original" {
+					require.ErrorIs(t, err, ErrNoAvailableAccounts)
+					require.Nil(t, result)
+					return
+				}
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				defer releaseAccountSelection(result)
+				want := groups[len(groups)-1].ID
+				require.Equal(t, want, *routed.GroupID)
+				require.Equal(t, want, result.Account.ID, "only mapped B is schedulable; a second B-to-C mapping must fail this test")
+				require.Zero(t, repo.listByGroupCalls.Load())
+			})
+		}
+	}
+}

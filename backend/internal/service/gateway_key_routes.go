@@ -50,7 +50,7 @@ func (s *GatewayService) SelectAccountAlongKeyRoutes(
 		result, err := s.SelectAccountWithLoadAwareness(ctx, apiKey.GroupID, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
 		return result, apiKey, err
 	}
-	candidates, siblingHasPresent, lastErr := prepareAPIKeyRouteCandidates(ctx, apiKey, requestedModel, s.hydrateAPIKeyGroup, s.ensureGroupModelsCatalog, nil)
+	candidates, siblingHasPresent, lastErr := prepareAPIKeyRouteCandidates(ctx, apiKey, requestedModel, s.hydrateAPIKeyGroup, s.ensureGroupModelsCatalog, s.ResolveChannelMappingAndRestrict, nil)
 	for _, candidate := range candidates {
 		routed := candidate.key
 		if !groupUsableForRequest(routed.Group, platform, requestedModel, candidate.catalog.platforms) {
@@ -65,11 +65,7 @@ func (s *GatewayService) SelectAccountAlongKeyRoutes(
 			// this candidate's billing parent while preserving the pricing instant.
 			routeCtx = context.WithValue(routeCtx, gatewayTokenRequestBillingGroupCtxKey{}, routed.Group)
 		}
-		mapping, restricted := s.ResolveChannelMappingAndRestrict(routeCtx, routed.GroupID, requestedModel)
-		if restricted {
-			continue
-		}
-		result, err := s.SelectAccountWithLoadAwareness(routeCtx, routed.GroupID, sessionHash, mapping.MappedModel, excludedIDs, metadataUserID, sub2apiUserID)
+		result, err := s.SelectAccountWithLoadAwareness(routeCtx, routed.GroupID, sessionHash, candidate.model, excludedIDs, metadataUserID, sub2apiUserID)
 		if err == nil {
 			return result, routed, nil
 		}

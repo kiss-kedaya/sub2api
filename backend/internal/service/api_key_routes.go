@@ -376,6 +376,7 @@ type apiKeyRouteCandidate struct {
 	key      *APIKey
 	catalog  groupModelsCatalog
 	presence groupCatalogModelPresence
+	model    string
 }
 
 // Resolve authorization before catalog reads or sticky selection. Reuse each
@@ -383,7 +384,8 @@ type apiKeyRouteCandidate struct {
 func prepareAPIKeyRouteCandidates(ctx context.Context, apiKey *APIKey, requestedModel string,
 	hydrate func(context.Context, *APIKey, int64) (*APIKey, error),
 	catalog func(context.Context, *int64) groupModelsCatalog,
-	catalogModelAlias func(context.Context, *Group, string) string,
+	resolveMapping func(context.Context, *int64, string) (ChannelMappingResult, bool),
+	fallbackModel func(context.Context, *Group, string) string,
 ) ([]apiKeyRouteCandidate, bool, error) {
 	var candidates []apiKeyRouteCandidate
 	var lastErr error
@@ -397,18 +399,25 @@ func prepareAPIKeyRouteCandidates(ctx context.Context, apiKey *APIKey, requested
 		if !apiKeyRouteGroupAllowed(routed) || !groupAllowsRequestedModel(routed.Group, requestedModel) {
 			continue
 		}
-		cat := catalog(ContextWithAPIKeyRoute(ctx, routed), routed.GroupID)
+		routeCtx := ContextWithAPIKeyRoute(ctx, routed)
+		mapping, restricted := resolveMapping(routeCtx, routed.GroupID, requestedModel)
+		if restricted {
+			continue
+		}
+		model := mapping.MappedModel
+		if !mapping.Mapped && fallbackModel != nil {
+			model = fallbackModel(routeCtx, routed.Group, requestedModel)
+		}
+		cat := catalog(routeCtx, routed.GroupID)
 		presence := catalogHasRequestedModel(cat, requestedModel)
-		if presence != groupCatalogModelPresent && catalogModelAlias != nil {
-			if alias := catalogModelAlias(ctx, routed.Group, requestedModel); alias != requestedModel &&
-				catalogHasRequestedModel(cat, alias) == groupCatalogModelPresent {
-				presence = groupCatalogModelPresent
-			}
+		if presence != groupCatalogModelPresent && model != requestedModel &&
+			catalogHasRequestedModel(cat, model) == groupCatalogModelPresent {
+			presence = groupCatalogModelPresent
 		}
 		if presence == groupCatalogModelPresent {
 			siblingHasPresent = true
 		}
-		candidates = append(candidates, apiKeyRouteCandidate{key: routed, catalog: cat, presence: presence})
+		candidates = append(candidates, apiKeyRouteCandidate{key: routed, catalog: cat, presence: presence, model: model})
 	}
 	return candidates, siblingHasPresent, lastErr
 }
