@@ -394,7 +394,14 @@ func TestForwardGrokResponsesAPIKeyRestoresClientToolsStreaming(t *testing.T) {
 	customAdded := requireGrokProtocolFrame(t, frames, "response.output_item.added", "item.type", "custom_tool_call")
 	require.Equal(t, "apply_patch", gjson.GetBytes(customAdded.data, "item.name").String())
 	customInputDelta := requireGrokProtocolFrame(t, frames, "response.custom_tool_call_input.delta", "", "")
-	require.Equal(t, "*** Begin Patch", gjson.GetBytes(customInputDelta.data, "delta").String())
+	require.Equal(t, "*** Begin", gjson.GetBytes(customInputDelta.data, "delta").String())
+	var customInput strings.Builder
+	for _, frame := range frames {
+		if frame.event == "response.custom_tool_call_input.delta" && gjson.GetBytes(frame.data, "item_id").String() == "item_custom" {
+			_, _ = customInput.WriteString(gjson.GetBytes(frame.data, "delta").String())
+		}
+	}
+	require.Equal(t, "*** Begin Patch", customInput.String())
 	customInputDone := requireGrokProtocolFrame(t, frames, "response.custom_tool_call_input.done", "", "")
 	require.Equal(t, "*** Begin Patch", gjson.GetBytes(customInputDone.data, "input").String())
 	customDone := requireGrokProtocolFrame(t, frames, "response.output_item.done", "item.type", "custom_tool_call")
