@@ -344,12 +344,6 @@ func shouldContinueAlongKeyRoutes(err error) bool {
 		errors.Is(err, ErrGroupNotFound)
 }
 
-func releaseAccountSelection(result *AccountSelectionResult) {
-	if result != nil && result.ReleaseFunc != nil {
-		result.ReleaseFunc()
-	}
-}
-
 // ContextWithAPIKeyRoute carries the selected billing group into scheduling
 // and forwarding. For composite routes the API key still owns the parent group.
 func ContextWithAPIKeyRoute(ctx context.Context, key *APIKey) context.Context {

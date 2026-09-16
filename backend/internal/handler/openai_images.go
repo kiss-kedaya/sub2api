@@ -150,11 +150,12 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	// 精确预留余额；结算走 RecordUsage → applyUsageBilling 的 guard.Finalize 退实际
 	// 差额，兜底 defer 退款在 worker 交接后自动失效。pricingAt 与 Images 结算口径
 	// 一致地使用调用时刻。
+	pricingAt := time.Now()
 	balanceGuard, err := preauthorizePerRequestGatewayRequest(
 		c.Request.Context(), h.balancePreauthorizer, h.gatewayService,
 		apiKey, subscription, body,
 		service.BalancePreauthorizationBillingModel(routingModel, channelMapping),
-		time.Now(),
+		pricingAt,
 		service.PerRequestPreauthorizationEstimate{
 			RequestCount: parsed.N,
 			SizeTier:     parsed.SizeTier,
@@ -163,8 +164,8 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	if h.handlePreauthorizationError(c, err, streamStarted) {
 		return
 	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
 	if balanceGuard != nil {
-		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
 		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 	}
 
@@ -191,8 +192,18 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			failedAccountIDs,
 			parsed.RequiredCapability,
 		)
-		if routedKey != nil {
+		if err == nil && routedKey != nil {
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
+				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
+				Mapping: &channelMapping, Guard: &balanceGuard, Body: body, Model: routingModel, PricingAt: pricingAt,
+				PerRequest: &service.PerRequestPreauthorizationEstimate{RequestCount: parsed.N, SizeTier: parsed.SizeTier},
+			}); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				h.handlePreauthorizationError(c, bindErr, streamStarted)
+				return
+			}
 			apiKey = routedKey
+			requestCtx = service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
 		}
 		if err != nil {
 			if failoverClientGone(c) {

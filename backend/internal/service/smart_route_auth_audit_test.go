@@ -12,6 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func releaseAccountSelection(result *AccountSelectionResult) {
+	if result != nil && result.ReleaseFunc != nil {
+		result.ReleaseFunc()
+	}
+}
+
 // Keep the real lifecycle retirement implementation; supply only in-memory
 // snapshot/account reads so this reproduction needs no database or Redis.
 type smartRouteAuditCache struct {
@@ -287,7 +293,9 @@ func TestSmartRouteCoreCandidateMappingAndProfitContext(t *testing.T) {
 	_, _, routed, err := svc.selectAlongKeyRoutes(ctx, key, nil, "gpt-5.5",
 		func(ctx context.Context, gid *int64, _ []string, model string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 			tried = append(tried, model)
-			require.Equal(t, *gid, ctx.Value(ctxkey.Group).(*Group).ID)
+			group, ok := ctx.Value(ctxkey.Group).(*Group)
+			require.True(t, ok)
+			require.Equal(t, *gid, group.ID)
 			ctx = svc.withOpenAIProfitControlGate(ctx, gid)
 			gate := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
 			require.Equal(t, pricingAt, gate.pricingAt)
@@ -302,7 +310,9 @@ func TestSmartRouteCoreCandidateMappingAndProfitContext(t *testing.T) {
 	require.Equal(t, []string{"primary-private", "gpt-5.5"}, tried)
 	require.Equal(t, backup.ID, *routed.GroupID)
 	require.Equal(t, primary.ID, key.Group.ID)
-	require.Equal(t, primary.ID, ctx.Value(ctxkey.Group).(*Group).ID)
+	group, ok := ctx.Value(ctxkey.Group).(*Group)
+	require.True(t, ok)
+	require.Equal(t, primary.ID, group.ID)
 }
 
 func TestSmartRouteCoreChannelAliasCatalogAndSingleMapping(t *testing.T) {

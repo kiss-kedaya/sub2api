@@ -309,8 +309,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
 	if balanceGuard != nil {
-		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
 		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 	}
 
@@ -389,7 +389,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 		for {
 			selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0), service.PlatformGemini) // Gemini 不使用会话限制
-			if routedKey != nil {
+			if err == nil && routedKey != nil {
+				if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
+					Previous: apiKey, Selected: routedKey, Subscription: &subscription,
+					Mapping: &channelMapping, Guard: &balanceGuard, Body: body, Model: reqModel, PricingAt: pricingAt,
+				}); bindErr != nil {
+					releaseRejectedKeyRouteSelection(selection)
+					status, code, message, _ := billingErrorDetails(bindErr)
+					h.handleStreamingAwareError(c, status, code, message, streamStarted)
+					return
+				}
 				apiKey = routedKey
 			}
 			if err != nil {
@@ -735,7 +744,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				zap.Int("failed_account_count", len(fs.FailedAccountIDs)),
 			)
 			selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), currentAPIKey, sessionKey, reqModel, fs.FailedAccountIDs, parsedReq.MetadataUserID, subject.UserID, platform)
-			if routedKey != nil {
+			if err == nil && routedKey != nil {
+				if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
+					Previous: currentAPIKey, Selected: routedKey, Subscription: &currentSubscription,
+					Mapping: &channelMapping, Guard: &balanceGuard, Body: body, Model: reqModel, PricingAt: pricingAt,
+				}); bindErr != nil {
+					releaseRejectedKeyRouteSelection(selection)
+					status, code, message, _ := billingErrorDetails(bindErr)
+					h.handleStreamingAwareError(c, status, code, message, streamStarted)
+					return
+				}
 				currentAPIKey = routedKey
 			}
 			if err != nil {
@@ -1091,8 +1109,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 							_ = h.antigravityGatewayService.WriteMappedClaudeError(c, account, promptTooLongErr.StatusCode, promptTooLongErr.RequestID, promptTooLongErr.Body)
 							return
 						}
-						fallbackAPIKey := cloneAPIKeyWithGroup(apiKey, fallbackGroup)
-						if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), fallbackAPIKey.User, fallbackAPIKey, fallbackGroup, nil, service.PlatformFromAPIKey(fallbackAPIKey)); err != nil {
+						fallbackAPIKey := cloneAPIKeyWithGroup(currentAPIKey, fallbackGroup)
+						fallbackAPIKey.RouteGroupIDs = nil
+						c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.ForcePlatform, ""))
+						if err := h.bindSelectedKeyRoute(c, keyRouteBinding{
+							Previous: currentAPIKey, Selected: fallbackAPIKey, Subscription: &currentSubscription,
+							Mapping: &channelMapping, Guard: &balanceGuard, Body: body, Model: reqModel, PricingAt: pricingAt,
+						}); err != nil {
 							status, code, message, retryAfter := billingErrorDetails(err)
 							if retryAfter > 0 {
 								c.Header("Retry-After", strconv.Itoa(retryAfter))

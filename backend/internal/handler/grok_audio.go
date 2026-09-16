@@ -71,7 +71,12 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 			service.OpenAIEndpointCapabilityChatCompletions,
 			false, false, false, service.PlatformGrok,
 		)
-		if routedKey != nil {
+		if selectErr == nil && routedKey != nil {
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{Previous: apiKey, Selected: routedKey, Subscription: &subscription}); bindErr != nil {
+				releaseRejectedKeyRouteSelection(candidate)
+				h.handlePreauthorizationError(c, bindErr, false)
+				return
+			}
 			apiKey = routedKey
 		}
 		if selectErr != nil || candidate == nil || candidate.Account == nil {
@@ -242,7 +247,12 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 			false,
 			service.PlatformGrok,
 		)
-		if routedKey != nil {
+		if selectErr == nil && routedKey != nil {
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{Previous: apiKey, Selected: routedKey, Subscription: &subscription}); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				h.handlePreauthorizationError(c, bindErr, false)
+				return
+			}
 			apiKey = routedKey
 		}
 		if selectErr != nil || selection == nil || selection.Account == nil {

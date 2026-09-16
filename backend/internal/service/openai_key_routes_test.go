@@ -56,7 +56,8 @@ func TestSelectAlongKeyRoutes_SkipsEmptyOpenAIWhenSiblingMapsGemini(t *testing.T
 		{ID: emptyID, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true},
 		{ID: geminiID, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true},
 	}
-	repo := svc.accountRepo.(*modelsListAccountRepoStub)
+	repo, ok := svc.accountRepo.(*modelsListAccountRepoStub)
+	require.True(t, ok)
 	var accounts []*Account
 	for gid, items := range repo.byGroup {
 		for _, item := range items {

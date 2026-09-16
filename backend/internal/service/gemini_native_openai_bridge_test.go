@@ -505,7 +505,7 @@ func TestGeminiBridgeCancellationUnblocksRead(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	body := &geminiBridgeBlockingBody{started: make(chan struct{}), closed: make(chan struct{})}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	fallback := time.AfterFunc(time.Second, func() { _ = body.Close() })
 	defer fallback.Stop()
 	go func() { <-body.started; cancel() }()

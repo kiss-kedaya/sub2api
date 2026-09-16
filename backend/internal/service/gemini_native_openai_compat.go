@@ -330,7 +330,7 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 			return
 		}
 		if !parsed.validJSON {
-			streamErr = errors.New("Invalid Gemini upstream stream event")
+			streamErr = errors.New("invalid Gemini upstream stream event")
 			terminal = true
 			return
 		}
@@ -347,7 +347,7 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 				result.NonBillableUpstreamError = true
 			}
 			streamStatus = status
-			streamErr = fmt.Errorf("Gemini upstream stream failed: %s", parsed.eventType)
+			streamErr = fmt.Errorf("gemini upstream stream failed: %s", parsed.eventType)
 			// A Responses error prelude can be followed by a terminal usage snapshot.
 			terminal = protocol != APIProtocolResponses || (parsed.eventType != "error" && parsed.eventType != "")
 			return
@@ -429,7 +429,7 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 		streamErr = io.ErrUnexpectedEOF
 	}
 	if streamErr == nil && metadata == nil {
-		streamErr = errors.New("Gemini upstream stream omitted usage")
+		streamErr = errors.New("gemini upstream stream omitted usage")
 	}
 	if streamErr != nil {
 		payload, _ := json.Marshal(map[string]any{"error": map[string]any{
