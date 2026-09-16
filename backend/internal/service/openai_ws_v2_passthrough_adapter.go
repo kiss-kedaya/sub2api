@@ -1587,10 +1587,11 @@ func buildOpenAIWSPassthroughFailureEvent(responseID, model string) []byte {
 		responseID = "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	}
 	response := map[string]any{
-		"id":     responseID,
-		"object": "response",
-		"status": "failed",
-		"output": []any{},
+		"id":         responseID,
+		"object":     "response",
+		"created_at": time.Now().Unix(),
+		"status":     "failed",
+		"output":     []any{},
 		"error": map[string]string{
 			"code":    "upstream_error",
 			"message": "upstream websocket disconnected before response.completed",
@@ -1600,8 +1601,9 @@ func buildOpenAIWSPassthroughFailureEvent(responseID, model string) []byte {
 		response["model"] = model
 	}
 	payload, err := json.Marshal(map[string]any{
-		"type":     "response.failed",
-		"response": response,
+		"type":            "response.failed",
+		"sequence_number": 0,
+		"response":        response,
 	})
 	if err != nil {
 		return nil

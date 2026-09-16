@@ -378,6 +378,9 @@ func buildOpenAIWSHTTPBridgeFailedEvent(responseID, model string, source []byte,
 		code = strings.TrimSpace(gjson.GetBytes(source, "response.error.code").String())
 	}
 	if code == "" {
+		code = strings.TrimSpace(gjson.GetBytes(source, "code").String())
+	}
+	if code == "" {
 		code = "upstream_error"
 	}
 	message := extractOpenAISSEErrorMessage(source)
@@ -393,14 +396,14 @@ func buildOpenAIWSHTTPBridgeFailedEvent(responseID, model string, source []byte,
 	}
 	response := map[string]any{
 		"id": responseID, "object": "response", "status": "failed",
-		"output": []any{}, "error": errorBody,
+		"output": []any{}, "error": errorBody, "created_at": time.Now().Unix(),
 	}
 	if model = strings.TrimSpace(model); model != "" {
 		response["model"] = model
 	}
-	body, err := json.Marshal(map[string]any{"type": "response.failed", "response": response})
+	body, err := json.Marshal(map[string]any{"type": "response.failed", "sequence_number": gjson.GetBytes(source, "sequence_number").Int(), "response": response})
 	if err != nil {
-		return []byte(`{"type":"response.failed","response":{"status":"failed","output":[],"error":{"code":"upstream_error","message":"Upstream response failed"}}}`)
+		return []byte(`{"type":"response.failed","sequence_number":0,"response":{"status":"failed","output":[],"error":{"code":"upstream_error","message":"Upstream response failed"}}}`)
 	}
 	return body
 }

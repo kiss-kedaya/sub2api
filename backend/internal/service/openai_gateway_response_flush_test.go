@@ -446,7 +446,7 @@ func TestOpenAIResponseFlush_BareErrorFollowedByCompletedUsesCompletedTerminal(t
 	require.Contains(t, gotBody, `"type":"response.completed"`)
 }
 
-func TestOpenAIResponseFlush_CompatibleAPIKeyDoesNotUseCodexBareErrorSynthesis(t *testing.T) {
+func TestOpenAIResponseFlush_CompatibleAPIKeyUsesResponsesFailedTerminal(t *testing.T) {
 	body := "data: {\"type\":\"error\",\"error\":{\"code\":\"provider_error\",\"message\":\"provider failed\"}}\n\n"
 	recorder := newOpenAIResponseFlushRecorder()
 	account := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
@@ -456,8 +456,9 @@ func TestOpenAIResponseFlush_CompatibleAPIKeyDoesNotUseCodexBareErrorSynthesis(t
 	require.Error(t, err)
 	require.NotNil(t, result)
 	gotBody, _ := recorder.snapshot()
-	require.Contains(t, gotBody, `"type":"error"`)
-	require.NotContains(t, gotBody, `"type":"response.failed"`)
+	require.NotContains(t, gotBody, `"type":"error"`)
+	require.Equal(t, 1, strings.Count(gotBody, `"type":"response.failed"`))
+	require.Contains(t, gotBody, `"code":"provider_error"`)
 }
 
 func TestOpenAIResponseFlush_RecentBareErrorAllowsCompletedBeforeIdleTimeout(t *testing.T) {
