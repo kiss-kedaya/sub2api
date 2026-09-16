@@ -173,3 +173,14 @@ func BenchmarkCustomToolInputStreaming(b *testing.B) {
 		}
 	}
 }
+
+func TestCustomToolFinishedCallDoesNotCaptureUnrelatedArguments(t *testing.T) {
+	r := newCustomInputRestorer(t)
+	_, _, err := r.RestoreEvent([]byte(`{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec","arguments":"{\"input\":\"abc\"}"}}`))
+	require.NoError(t, err)
+	out, _, err := r.RestoreEvent([]byte(`{"type":"response.function_call_arguments.delta","item_id":"fc_plain","delta":"{}"}`))
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, "response.function_call_arguments.delta", gjson.GetBytes(out[0], "type").String())
+	require.Equal(t, "fc_plain", gjson.GetBytes(out[0], "item_id").String())
+}

@@ -688,8 +688,8 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 			if call.kind != "custom" {
 				delete(r.calls, call.itemID)
 				delete(r.calls, call.callID)
-				delete(r.byOutput, call.outputIdx)
 			}
+			delete(r.byOutput, call.outputIdx)
 		}
 		emit(r.restoreNamespaceEvent(event))
 	default:
@@ -704,6 +704,10 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 			restoreResponsesOutputClientTools(event.Response.Output, &r.adapter)
 		}
 		emit(r.restoreNamespaceEvent(event))
+	}
+	if isResponsesClientToolTerminalEvent(event.Type) {
+		clear(r.calls)
+		clear(r.byOutput)
 	}
 	return out
 }
