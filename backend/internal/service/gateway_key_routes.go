@@ -5,6 +5,12 @@ import (
 )
 
 func (s *GatewayService) hydrateAPIKeyGroup(ctx context.Context, apiKey *APIKey, groupID int64) (*APIKey, error) {
+	if s != nil && s.schedulerSnapshot != nil {
+		return hydrateAPIKeyGroup(ctx, apiKey, groupID, s.schedulerSnapshot.GetGroupByIDLite)
+	}
+	if s == nil || s.groupRepo == nil {
+		return hydrateAPIKeyGroup(ctx, apiKey, groupID, nil)
+	}
 	return hydrateAPIKeyGroup(ctx, apiKey, groupID, func(ctx context.Context, id int64) (*Group, error) {
 		if s == nil {
 			return nil, ErrSchedulerCacheNotReady
@@ -32,33 +38,39 @@ func (s *GatewayService) SelectAccountAlongKeyRoutes(
 	sub2apiUserID int64,
 	requestPlatform ...string,
 ) (*AccountSelectionResult, *APIKey, error) {
+	if s == nil || apiKey == nil {
+		return nil, apiKey, ErrNoAvailableAccounts
+	}
+	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	platform := ""
 	if len(requestPlatform) > 0 {
 		platform = requestPlatform[0]
 	}
-	candidates := apiKey.CandidateGroupIDs()
-	if len(candidates) == 0 {
+	if len(apiKey.CandidateGroupIDs()) == 0 {
 		result, err := s.SelectAccountWithLoadAwareness(ctx, apiKey.GroupID, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
 		return result, apiKey, err
 	}
-	siblingHasPresent := keyRouteSiblingHasCatalogedModel(ctx, candidates, requestedModel, s.GetAvailableModels)
-	var lastErr error
-	for _, groupID := range candidates {
-		gid := groupID
-		if !s.shouldTryKeyRouteGroup(ctx, gid, platform, requestedModel, siblingHasPresent) {
+	candidates, siblingHasPresent, lastErr := prepareAPIKeyRouteCandidates(ctx, apiKey, requestedModel, s.hydrateAPIKeyGroup, s.ensureGroupModelsCatalog, nil)
+	for _, candidate := range candidates {
+		routed := candidate.key
+		if !groupUsableForRequest(routed.Group, platform, requestedModel, candidate.catalog.platforms) {
 			continue
 		}
-		result, err := s.SelectAccountWithLoadAwareness(ctx, &gid, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
+		if !routed.Group.CustomModelsListEnabled() && skipKeyRouteForCatalog(candidate.presence, siblingHasPresent) {
+			continue
+		}
+		routeCtx := ContextWithAPIKeyRoute(ctx, routed)
+		if _, tokenRequest := gatewayTokenRequestPricingAtFromContext(routeCtx); tokenRequest {
+			// Internal composite routing may replace ctxkey.Group later; freeze
+			// this candidate's billing parent while preserving the pricing instant.
+			routeCtx = context.WithValue(routeCtx, gatewayTokenRequestBillingGroupCtxKey{}, routed.Group)
+		}
+		mapping, restricted := s.ResolveChannelMappingAndRestrict(routeCtx, routed.GroupID, requestedModel)
+		if restricted {
+			continue
+		}
+		result, err := s.SelectAccountWithLoadAwareness(routeCtx, routed.GroupID, sessionHash, mapping.MappedModel, excludedIDs, metadataUserID, sub2apiUserID)
 		if err == nil {
-			routed, hydErr := s.hydrateAPIKeyGroup(ctx, apiKey, groupID)
-			if hydErr != nil {
-				releaseAccountSelection(result)
-				lastErr = hydErr
-				if shouldContinueAlongKeyRoutes(hydErr) {
-					continue
-				}
-				return nil, apiKey, hydErr
-			}
 			return result, routed, nil
 		}
 		lastErr = err
