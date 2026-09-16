@@ -71,7 +71,8 @@ func TestOpenAIStreamTimeoutTerminal(t *testing.T) {
 						require.Equal(t, 7, usage.CacheReadInputTokens)
 					}
 					raw, _ := c.Get(OpsUpstreamErrorsKey)
-					events := raw.([]*OpsUpstreamErrorEvent)
+					events, ok := raw.([]*OpsUpstreamErrorEvent)
+					require.True(t, ok)
 					if tt.success {
 						require.NoError(t, err)
 						require.False(t, nonBillable)
