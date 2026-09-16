@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
@@ -99,14 +100,18 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 		}
 		return nil, s.writeGoogleError(c, http.StatusBadGateway, "Failed to contact Gemini upstream")
 	}
-	defer func() { _ = resp.Body.Close() }()
+	closeBody := sync.OnceFunc(func() { _ = resp.Body.Close() })
+	defer closeBody()
 	if resp.StatusCode >= 400 {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 		return nil, s.writeGoogleError(c, resp.StatusCode, sanitizeUpstreamErrorMessage(extractGeminiBridgeErrorMessage(errBody)))
 	}
 
 	if stream {
-		result, err := s.pipeOpenAIStreamAsGemini(ctx, c, resp.Body, mappedModel, protocol)
+		// Close a blocked read on cancellation, including custom upstream transports.
+		stopClosing := context.AfterFunc(ctx, closeBody)
+		defer stopClosing()
+		result, err := s.pipeOpenAIStreamAsGemini(ctx, c, resp.Body, mappedModel, protocol, start)
 		result.RequestID = resp.Header.Get("x-request-id")
 		result.UpstreamHeaders = resp.Header
 		result.Duration = time.Since(start)
@@ -278,9 +283,9 @@ func geminiBridgePayload(text, model, finish string, metadata map[string]any) []
 	return data
 }
 
-func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Context, c *gin.Context, body io.Reader, model, protocol string) (*ForwardResult, error) {
-	start := time.Now()
+func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Context, c *gin.Context, body io.Reader, model, protocol string, start time.Time) (*ForwardResult, error) {
 	result := &ForwardResult{Model: model, UpstreamModel: model, Stream: true}
+	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Status(http.StatusOK)
@@ -292,25 +297,27 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 	var metadata map[string]any
 	var streamErr error
 	streamStatus := http.StatusBadGateway
+	streamMessage := "Gemini upstream stream did not complete"
 	finish := ""
 	terminal := false
-	write := func(data []byte) {
+	write := func(data []byte) error {
 		if result.ClientDisconnect {
-			return
+			return io.ErrClosedPipe
 		}
-		if ctx.Err() != nil {
+		if err := ctx.Err(); err != nil {
 			result.ClientDisconnect = true
-			return
+			return err
 		}
 		MarkResponseCommitted(c)
 		if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", data); err != nil {
 			result.ClientDisconnect = true
-			return
+			return err
 		}
 		c.Writer.Flush()
+		return nil
 	}
 	consume := func(frame openAICompatSSEFrame, ok bool) {
-		if !ok || terminal {
+		if !ok || terminal || result.ClientDisconnect || ctx.Err() != nil {
 			return
 		}
 		parsed := parseOpenAISSEDataFrame([]byte(frame.Data), frame.EventType)
@@ -366,11 +373,31 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 					continue
 				}
 				if choice.Delta.Content != nil && *choice.Delta.Content != "" {
+					if err := ctx.Err(); err != nil {
+						result.ClientDisconnect = true
+						streamErr = err
+						terminal = true
+						return
+					}
+					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(*choice.Delta.Content)); topUpErr != nil {
+						streamErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
+						streamStatus = http.StatusServiceUnavailable
+						if errors.Is(topUpErr, ErrBalanceWithholdingFailed) {
+							streamStatus = http.StatusForbidden
+						}
+						streamMessage = "Streaming output balance reservation failed"
+						terminal = true
+						return
+					}
 					if result.FirstTokenMs == nil {
 						ms := int(time.Since(start).Milliseconds())
 						result.FirstTokenMs = &ms
 					}
-					write(geminiBridgePayload(*choice.Delta.Content, model, "", nil))
+					if err := write(geminiBridgePayload(*choice.Delta.Content, model, "", nil)); err != nil {
+						streamErr = err
+						terminal = true
+						return
+					}
 				}
 				if choice.FinishReason != nil {
 					finish = geminiBridgeFinishReason(*choice.FinishReason)
@@ -378,7 +405,7 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 			}
 		}
 	}
-	for !terminal && scanner.Scan() {
+	for !terminal && !result.ClientDisconnect && ctx.Err() == nil && scanner.Scan() {
 		consume(parser.AddLine(scanner.Text()))
 	}
 	consume(parser.Finish())
@@ -387,9 +414,7 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 	}
 	if ctx.Err() != nil {
 		result.ClientDisconnect = true
-		if !terminal {
-			streamErr = ctx.Err()
-		}
+		streamErr = ctx.Err()
 	}
 	if streamErr == nil && !terminal {
 		streamErr = io.ErrUnexpectedEOF
@@ -399,13 +424,12 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 	}
 	if streamErr != nil {
 		payload, _ := json.Marshal(map[string]any{"error": map[string]any{
-			"code": streamStatus, "status": googleapi.HTTPStatusToGoogleStatus(streamStatus), "message": "Gemini upstream stream did not complete",
+			"code": streamStatus, "status": googleapi.HTTPStatusToGoogleStatus(streamStatus), "message": streamMessage,
 		}, "usageMetadata": metadata})
-		write(payload)
+		_ = write(payload)
 		return result, streamErr
 	}
-	write(geminiBridgePayload("", model, finish, metadata))
-	return result, nil
+	return result, write(geminiBridgePayload("", model, finish, metadata))
 }
 
 func extractGeminiBridgeErrorMessage(raw []byte) string {
