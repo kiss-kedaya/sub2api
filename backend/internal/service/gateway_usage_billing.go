@@ -865,6 +865,15 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		}
 	}
 
+	// Preserve rejected-request usage for diagnostics without charging it.
+	if result.NonBillableUpstreamError {
+		billingMode := string(BillingModeToken)
+		if cost != nil && strings.TrimSpace(cost.BillingMode) != "" {
+			billingMode = cost.BillingMode
+		}
+		cost = &CostBreakdown{BillingMode: billingMode}
+	}
+
 	// 判断计费方式：订阅模式 vs 余额模式
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 	billingType := BillingTypeBalance

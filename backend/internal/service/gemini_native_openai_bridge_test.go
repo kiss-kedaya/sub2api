@@ -540,3 +540,74 @@ func TestGeminiBridgeFirstTokenIncludesHeaderWait(t *testing.T) {
 		})
 	}
 }
+
+func TestGeminiBridgeRejectedRequestBilling(t *testing.T) {
+	inputUsage := `{"input_tokens":1000,"output_tokens":0}`
+	partialUsage := `{"input_tokens":1000,"output_tokens":50}`
+	smallInput := `{"code":"input_too_small","message":"The input is too small"}`
+	invalidRequest := `{"type":"invalid_request_error","message":"unsupported parameter"}`
+	serverError := `{"type":"server_error","message":"upstream unavailable"}`
+	failed := func(errBody, usage string) string {
+		return `{"status":"failed","error":` + errBody + `,"usage":` + usage + `}`
+	}
+	sse := func(body string) string { return "event: response.failed\ndata: {\"response\":" + body + "}\n\n" }
+	textDelta := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial output\"}\n\n"
+	for _, tc := range []struct {
+		name, protocol, body string
+		stream, free         bool
+		output               int
+	}{
+		{"responses-buffered-input-too-small", APIProtocolResponses, failed(smallInput, inputUsage), false, true, 0},
+		{"responses-stream-input-too-small", APIProtocolResponses, sse(failed(smallInput, inputUsage)), true, true, 0},
+		{"responses-stream-invalid-request", APIProtocolResponses, sse(failed(invalidRequest, inputUsage)), true, true, 0},
+		{"chat-buffered-invalid-request", APIProtocolChatCompletions, failed(invalidRequest, inputUsage), false, true, 0},
+		{"chat-stream-invalid-request", APIProtocolChatCompletions, "data: " + failed(invalidRequest, inputUsage) + "\n\n", true, true, 0},
+		{"server-error-input-stays-billable", APIProtocolResponses, sse(failed(serverError, inputUsage)), true, false, 0},
+		{"server-error-partial-output", APIProtocolResponses, textDelta + sse(failed(serverError, partialUsage)), true, false, 50},
+		{"client-error-after-output-stays-billable", APIProtocolResponses, textDelta + sse(failed(invalidRequest, inputUsage)), true, false, 0},
+		{"client-error-with-output-usage-stays-billable", APIProtocolResponses, sse(failed(invalidRequest, partialUsage)), true, false, 50},
+		{"buffered-client-error-with-output-stays-billable", APIProtocolResponses, `{"status":"failed","error":` + invalidRequest + `,"usage":` + inputUsage + `,"output":[{"type":"message","content":[{"type":"output_text","text":"partial output"}]}]}`, false, false, 0},
+		{"truncated-stream-stays-billable", APIProtocolResponses, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial output\",\"usage\":" + partialUsage + "}\n\n", true, false, 50},
+		{"cancelled-stream-stays-billable", APIProtocolResponses, "event: response.cancelled\ndata: {\"response\":{\"status\":\"cancelled\",\"usage\":" + inputUsage + "}}\n\n", true, false, 0},
+		{"request-error-prelude-with-terminal-usage", APIProtocolResponses, "event: error\ndata: {\"error\":" + smallInput + "}\n\nevent: response.failed\ndata: {\"response\":{\"status\":\"failed\",\"usage\":" + inputUsage + "}}\n\n", true, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &GeminiMessagesCompatService{httpUpstream: &geminiBridgeUpstream{do: func(*http.Request) (*http.Response, error) {
+				return geminiBridgeResponse(tc.body), nil
+			}}}
+			c, _ := geminiBridgeContext()
+			account := geminiBridgeAccount(tc.protocol)
+			result, err := svc.ForwardNative(context.Background(), c, account, "gemini-2.5-flash", "generateContent", tc.stream, []byte(geminiBridgeRequest))
+			require.Error(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, ClaudeUsage{InputTokens: 1000, OutputTokens: tc.output}, result.Usage)
+			require.Equal(t, tc.free, result.NonBillableUpstreamError)
+			logs := &openAIRecordUsageLogRepoStub{inserted: true}
+			repo := &openAIRecordUsageBillingRepoStub{}
+			billing := NewBillingService(&config.Config{}, &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+				"gemini-2.5-flash": {InputCostPerToken: 1e-6, OutputCostPerToken: 2e-6},
+			}})
+			gateway := &GatewayService{usageLogRepo: logs, usageBillingRepo: repo, billingService: billing,
+				billingCacheService: &BillingCacheService{}, deferredService: &DeferredService{}}
+			require.NoError(t, gateway.RecordUsage(context.Background(), &RecordUsageInput{
+				Result: result, APIKey: &APIKey{ID: 7}, User: &User{ID: 42}, Account: account,
+			}))
+			require.NotNil(t, logs.lastLog)
+			require.NotNil(t, repo.lastCmd)
+			require.Equal(t, 1000, logs.lastLog.InputTokens)
+			require.Equal(t, tc.output, logs.lastLog.OutputTokens)
+			if tc.free {
+				require.Zero(t, logs.lastLog.InputCost)
+				require.Zero(t, logs.lastLog.TotalCost)
+				require.Zero(t, logs.lastLog.ActualCost)
+				require.Zero(t, repo.lastCmd.BalanceCost)
+			} else {
+				expected, err := billing.CalculateCost(result.Model, UsageTokens{InputTokens: 1000, OutputTokens: tc.output}, 1)
+				require.NoError(t, err)
+				require.Positive(t, repo.lastCmd.BalanceCost)
+				require.InDelta(t, expected.ActualCost, repo.lastCmd.BalanceCost, 1e-12)
+				require.InDelta(t, expected.ActualCost, logs.lastLog.ActualCost, 1e-12)
+			}
+		})
+	}
+}
