@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
@@ -333,4 +335,208 @@ func TestGeminiBridgeNonStreamingReadFailureDoesNotReturnEmptySuccess(t *testing
 	require.Nil(t, result)
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.True(t, reader.closed)
+}
+
+type geminiBridgeStepBody struct {
+	frames []string
+	reads  int
+	closed int
+}
+
+func (b *geminiBridgeStepBody) Read(p []byte) (int, error) {
+	b.reads++
+	if len(b.frames) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, b.frames[0])
+	b.frames[0] = b.frames[0][n:]
+	if b.frames[0] == "" {
+		b.frames = b.frames[1:]
+	}
+	return n, nil
+}
+
+func (b *geminiBridgeStepBody) Close() error { b.closed++; return nil }
+
+type geminiBridgeObservingWriter struct {
+	gin.ResponseWriter
+	beforeWrite func([]byte) error
+}
+
+func (w *geminiBridgeObservingWriter) Write(data []byte) (int, error) {
+	if err := w.beforeWrite(data); err != nil {
+		return 0, err
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+func geminiBridgeStreamFrames(protocol, text string) []string {
+	if protocol == APIProtocolResponses {
+		return []string{
+			"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\",\"usage\":" + geminiBridgeResponsesUsage + "}\n\n",
+			"data: {\"type\":\"response.output_text.delta\",\"delta\":\"" + text + "\"}\n\n",
+			"event: response.completed\ndata: {\"response\":{\"status\":\"completed\",\"usage\":" + geminiBridgeResponsesUsage + "}}\n\n",
+		}
+	}
+	return []string{
+		"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}],\"usage\":" + geminiBridgeChatUsage + "}\n\n",
+		"data: {\"choices\":[{\"delta\":{\"content\":\"" + text + "\"}}]}\n\n",
+		"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":" + geminiBridgeChatUsage + "}\n\ndata: [DONE]\n\n",
+	}
+}
+
+func TestGeminiBridgeStreamingOutputHoldBeforeEmission(t *testing.T) {
+	for _, protocol := range []string{APIProtocolChatCompletions, APIProtocolResponses} {
+		for _, insufficient := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/insufficient=%v", protocol, insufficient), func(t *testing.T) {
+				fixture := newPreauthorizationFixture()
+				guard := streamingPreauthorizationGuard(t, fixture)
+				if insufficient {
+					fixture.wallet.topUp = []LiveBalanceResult{
+						{Outcome: LiveBalanceOutcomeApplied, State: LiveBalanceAttemptAuthorized},
+						{Outcome: LiveBalanceOutcomeInsufficient, State: LiveBalanceAttemptAuthorized},
+					}
+				}
+				ctx := ContextWithBalancePreauthorizationGuard(context.Background(), guard)
+				text := strings.Repeat("x", 2048)
+				body := &geminiBridgeStepBody{frames: geminiBridgeStreamFrames(protocol, text)}
+				svc := &GeminiMessagesCompatService{httpUpstream: &geminiBridgeUpstream{do: func(*http.Request) (*http.Response, error) {
+					response := geminiBridgeResponse("")
+					response.Body = body
+					return response, nil
+				}}}
+				c, rec := geminiBridgeContext()
+				c.Writer = &geminiBridgeObservingWriter{ResponseWriter: c.Writer, beforeWrite: func(data []byte) error {
+					if strings.Contains(string(data), text) {
+						require.GreaterOrEqual(t, fixture.wallet.topUpCalls, 2, "reserve the next window before exposing this frame")
+					}
+					return nil
+				}}
+				result, err := svc.ForwardNative(ctx, c, geminiBridgeAccount(protocol), "gemini-2.5-flash", "streamGenerateContent", true, []byte(geminiBridgeRequest))
+				require.Positive(t, fixture.wallet.topUpCalls)
+				require.Equal(t, 1, body.closed)
+				require.NotNil(t, result)
+				requireGeminiBridgeBilling(t, result, geminiBridgeAccount(protocol))
+				if insufficient {
+					require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
+					require.ErrorContains(t, err, "stream output hold top-up failed")
+					require.Contains(t, rec.Body.String(), "hello")
+					require.NotContains(t, rec.Body.String(), text)
+					require.NotContains(t, rec.Body.String(), `"finishReason"`)
+					require.Contains(t, rec.Body.String(), `"code":403`)
+					require.Equal(t, 2, body.reads, "top-up failure must stop reading upstream")
+				} else {
+					require.NoError(t, err)
+					require.Contains(t, rec.Body.String(), text)
+					require.Contains(t, rec.Body.String(), `"finishReason":"STOP"`)
+				}
+			})
+		}
+	}
+}
+
+func TestGeminiBridgeCancellationStopsBeforeAnotherRead(t *testing.T) {
+	for _, beforeRead := range []bool{false, true} {
+		t.Run(fmt.Sprintf("before_read=%v", beforeRead), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			body := &geminiBridgeStepBody{frames: geminiBridgeStreamFrames(APIProtocolChatCompletions, "must not read")}
+			svc := &GeminiMessagesCompatService{httpUpstream: &geminiBridgeUpstream{do: func(*http.Request) (*http.Response, error) {
+				if beforeRead {
+					cancel()
+				}
+				response := geminiBridgeResponse("")
+				response.Body = body
+				return response, nil
+			}}}
+			c, rec := geminiBridgeContext()
+			c.Writer = &geminiBridgeObservingWriter{ResponseWriter: c.Writer, beforeWrite: func([]byte) error { cancel(); return nil }}
+			result, err := svc.ForwardNative(ctx, c, geminiBridgeAccount(APIProtocolChatCompletions), "gemini-2.5-flash", "streamGenerateContent", true, []byte(geminiBridgeRequest))
+			require.ErrorIs(t, err, context.Canceled)
+			require.True(t, result.ClientDisconnect)
+			require.Equal(t, 1, body.closed)
+			if beforeRead {
+				require.Zero(t, body.reads)
+			} else {
+				require.Equal(t, 1, body.reads)
+				requireGeminiBridgeBilling(t, result, geminiBridgeAccount(APIProtocolChatCompletions))
+			}
+			require.NotContains(t, rec.Body.String(), "must not read")
+			require.NotContains(t, rec.Body.String(), `"finishReason"`)
+		})
+	}
+}
+
+func TestGeminiBridgeWriterFailureStopsReading(t *testing.T) {
+	body := &geminiBridgeStepBody{frames: geminiBridgeStreamFrames(APIProtocolResponses, "must not read")}
+	svc := &GeminiMessagesCompatService{httpUpstream: &geminiBridgeUpstream{do: func(*http.Request) (*http.Response, error) {
+		response := geminiBridgeResponse("")
+		response.Body = body
+		return response, nil
+	}}}
+	c, _ := geminiBridgeContext()
+	c.Writer = &geminiBridgeObservingWriter{ResponseWriter: c.Writer, beforeWrite: func([]byte) error { return io.ErrClosedPipe }}
+	result, err := svc.ForwardNative(context.Background(), c, geminiBridgeAccount(APIProtocolResponses), "gemini-2.5-flash", "streamGenerateContent", true, []byte(geminiBridgeRequest))
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+	require.True(t, result.ClientDisconnect)
+	require.Equal(t, 1, body.reads)
+	require.Equal(t, 1, body.closed)
+	requireGeminiBridgeBilling(t, result, geminiBridgeAccount(APIProtocolResponses))
+}
+
+type geminiBridgeBlockingBody struct {
+	started chan struct{}
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func (b *geminiBridgeBlockingBody) Read([]byte) (int, error) {
+	close(b.started)
+	<-b.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (b *geminiBridgeBlockingBody) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
+
+func TestGeminiBridgeCancellationUnblocksRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	body := &geminiBridgeBlockingBody{started: make(chan struct{}), closed: make(chan struct{})}
+	defer body.Close()
+	fallback := time.AfterFunc(time.Second, func() { _ = body.Close() })
+	defer fallback.Stop()
+	go func() { <-body.started; cancel() }()
+	svc := &GeminiMessagesCompatService{httpUpstream: &geminiBridgeUpstream{do: func(*http.Request) (*http.Response, error) {
+		response := geminiBridgeResponse("")
+		response.Body = body
+		return response, nil
+	}}}
+	c, _ := geminiBridgeContext()
+	result, err := svc.ForwardNative(ctx, c, geminiBridgeAccount(APIProtocolChatCompletions), "gemini-2.5-flash", "streamGenerateContent", true, []byte(geminiBridgeRequest))
+	require.ErrorIs(t, err, context.Canceled)
+	require.True(t, result.ClientDisconnect)
+	require.True(t, fallback.Stop(), "cancellation must close the reader without the test timeout")
+}
+
+func TestGeminiBridgeFirstTokenIncludesHeaderWait(t *testing.T) {
+	for _, protocol := range []string{APIProtocolChatCompletions, APIProtocolResponses} {
+		t.Run(protocol, func(t *testing.T) {
+			var headerWait time.Duration
+			svc := &GeminiMessagesCompatService{httpUpstream: &geminiBridgeUpstream{do: func(*http.Request) (*http.Response, error) {
+				start := time.Now()
+				time.Sleep(40 * time.Millisecond)
+				headerWait = time.Since(start)
+				return geminiBridgeResponse(strings.Join(geminiBridgeStreamFrames(protocol, "world"), "")), nil
+			}}}
+			c, _ := geminiBridgeContext()
+			result, err := svc.ForwardNative(context.Background(), c, geminiBridgeAccount(protocol), "gemini-2.5-flash", "streamGenerateContent", true, []byte(geminiBridgeRequest))
+			require.NoError(t, err)
+			require.NotNil(t, result.FirstTokenMs)
+			require.GreaterOrEqual(t, *result.FirstTokenMs, int(headerWait.Milliseconds()))
+			require.GreaterOrEqual(t, result.Duration.Milliseconds(), int64(*result.FirstTokenMs))
+		})
+	}
 }
