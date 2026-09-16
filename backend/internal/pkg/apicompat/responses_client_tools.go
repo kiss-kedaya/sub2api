@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf16"
 )
 
 // ResponsesClientToolMapping records the reversible lowering applied before a
@@ -551,11 +552,12 @@ type responsesClientToolStreamCall struct {
 	name string
 	// callID and itemID stay as the upstream sent them so later upstream
 	// events keep matching this call; clientItemID is what we emit.
-	callID       string
-	itemID       string
-	clientItemID string
-	outputIdx    int
-	arguments    strings.Builder
+	callID          string
+	itemID          string
+	clientItemID    string
+	outputIdx       int
+	arguments       strings.Builder
+	customInputSent string
 }
 
 func NewResponsesClientToolStreamRestorer(mapping ResponsesClientToolMapping) *ResponsesClientToolStreamRestorer {
@@ -602,6 +604,15 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 	case "response.function_call_arguments.delta":
 		if call := r.callFor(event); call != nil {
 			_, _ = call.arguments.WriteString(event.Delta)
+			if call.kind == "custom" {
+				input, _ := decodeCustomToolInputPrefix(call.arguments.String())
+				if len(input) > len(call.customInputSent) && strings.HasPrefix(input, call.customInputSent) {
+					delta := input[len(call.customInputSent):]
+					call.customInputSent = input
+					emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: call.outputIdx, ItemID: call.clientItemID, Delta: delta})
+					return out
+				}
+			}
 			return nil
 		}
 		emit(r.restoreNamespaceEvent(event))
@@ -612,9 +623,13 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 				_, _ = call.arguments.WriteString(event.Arguments)
 			}
 			if call.kind == "custom" {
-				input := extractCustomToolCallInput(call.arguments.String())
-				if input != "" {
-					emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: call.outputIdx, ItemID: call.clientItemID, Delta: input})
+				input, _ := decodeCustomToolInputPrefix(call.arguments.String())
+				if input == "" {
+					input = extractCustomToolCallInput(call.arguments.String())
+				}
+				if len(input) > len(call.customInputSent) && strings.HasPrefix(input, call.customInputSent) {
+					emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: call.outputIdx, ItemID: call.clientItemID, Delta: input[len(call.customInputSent):]})
+					call.customInputSent = input
 				}
 				emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.done", OutputIndex: call.outputIdx, ItemID: call.clientItemID, CallID: call.callID, Name: call.name, Input: input})
 			}
@@ -625,7 +640,10 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 		if call := r.recordItem(event); call != nil {
 			if call.kind == "custom" {
 				event.Item.Type = "custom_tool_call"
-				event.Item.Input = extractCustomToolCallInput(call.arguments.String())
+				event.Item.Input, _ = decodeCustomToolInputPrefix(call.arguments.String())
+				if event.Item.Input == "" {
+					event.Item.Input = extractCustomToolCallInput(call.arguments.String())
+				}
 				event.Item.Arguments = ""
 				event.Item.Namespace = ""
 			} else {
@@ -653,6 +671,117 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 		emit(r.restoreNamespaceEvent(event))
 	}
 	return out
+}
+
+// decodeCustomToolInputPrefix decodes the input string from a partial
+// {"input":"..."} function-call argument. It returns text already complete
+// enough to send downstream, even while the JSON object or string is unfinished.
+// Re-scanning the bounded argument buffer keeps the state small and lets the
+// done event correct a partial escape or a split Unicode surrogate without
+// duplicating any bytes.
+func decodeCustomToolInputPrefix(arguments string) (string, bool) {
+	key := strings.Index(arguments, `"input"`)
+	if key < 0 {
+		return "", false
+	}
+	pos := key + len(`"input"`)
+	for pos < len(arguments) && (arguments[pos] == ' ' || arguments[pos] == '\t' || arguments[pos] == '\r' || arguments[pos] == '\n') {
+		pos++
+	}
+	if pos >= len(arguments) || arguments[pos] != ':' {
+		return "", false
+	}
+	pos++
+	for pos < len(arguments) && (arguments[pos] == ' ' || arguments[pos] == '\t' || arguments[pos] == '\r' || arguments[pos] == '\n') {
+		pos++
+	}
+	if pos >= len(arguments) || arguments[pos] != '"' {
+		return "", false
+	}
+	pos++
+	var decoded strings.Builder
+	for pos < len(arguments) {
+		ch := arguments[pos]
+		switch ch {
+		case '"':
+			return decoded.String(), true
+		case '\\':
+			if pos+1 >= len(arguments) {
+				return decoded.String(), false
+			}
+			switch arguments[pos+1] {
+			case '"', '\\', '/':
+				decoded.WriteByte(arguments[pos+1])
+				pos += 2
+			case 'b':
+				decoded.WriteByte('\b')
+				pos += 2
+			case 'f':
+				decoded.WriteByte('\f')
+				pos += 2
+			case 'n':
+				decoded.WriteByte('\n')
+				pos += 2
+			case 'r':
+				decoded.WriteByte('\r')
+				pos += 2
+			case 't':
+				decoded.WriteByte('\t')
+				pos += 2
+			case 'u':
+				if pos+6 > len(arguments) {
+					return decoded.String(), false
+				}
+				first, ok := decodeJSONHex16(arguments[pos+2 : pos+6])
+				if !ok {
+					return decoded.String(), false
+				}
+				pos += 6
+				if first >= 0xD800 && first <= 0xDBFF {
+					if pos+6 > len(arguments) || arguments[pos] != '\\' || arguments[pos+1] != 'u' {
+						return decoded.String(), false
+					}
+					second, ok := decodeJSONHex16(arguments[pos+2 : pos+6])
+					if !ok || second < 0xDC00 || second > 0xDFFF {
+						return decoded.String(), false
+					}
+					decoded.WriteRune(utf16.DecodeRune(rune(first), rune(second)))
+					pos += 6
+				} else if first >= 0xDC00 && first <= 0xDFFF {
+					return decoded.String(), false
+				} else {
+					decoded.WriteRune(rune(first))
+				}
+			default:
+				return decoded.String(), false
+			}
+		default:
+			decoded.WriteByte(ch)
+			pos++
+		}
+	}
+	return decoded.String(), false
+}
+
+func decodeJSONHex16(value string) (uint16, bool) {
+	if len(value) != 4 {
+		return 0, false
+	}
+	var result uint16
+	for _, ch := range []byte(value) {
+		result <<= 4
+		switch {
+		case ch >= '0' && ch <= '9':
+			result += uint16(ch - '0')
+		case ch >= 'a' && ch <= 'f':
+			result += uint16(ch-'a') + 10
+		case ch >= 'A' && ch <= 'F':
+			result += uint16(ch-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return result, true
 }
 
 // RestoreEvent restores one Responses SSE JSON data payload. Custom tool
