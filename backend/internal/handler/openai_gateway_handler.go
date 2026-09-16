@@ -675,8 +675,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
 	if balanceGuard != nil {
-		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
 		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 	}
 	// Cloudflare's proxied HTTP edge can terminate a request that has not
@@ -707,7 +707,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			apiKey,
 			previousResponseID,
 			sessionHash,
-			forwardModel,
+			reqModel,
 			failedAccountIDs,
 			service.OpenAIUpstreamTransportAny,
 			requiredCapability,
@@ -716,8 +716,24 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			!imageIntent,
 			requestPlatform,
 		)
-		if routedKey != nil {
+		if err == nil && routedKey != nil {
+			changed := keyRouteGroupChanged(apiKey, routedKey)
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
+				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
+				Mapping: &channelMapping, Guard: &balanceGuard, Body: body, Model: reqModel, PricingAt: pricingAt,
+			}); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				h.handleStreamingAwareError(c, status, code, message, streamStarted)
+				return
+			}
 			apiKey = routedKey
+			if changed {
+				forwardModel = openAIChannelForwardModel(channelMapping, reqModel)
+				forwardBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+				c.Request = c.Request.WithContext(service.WithOpenAIForwardModel(c.Request.Context(), forwardModel, legacyCompact))
+				seedOpenAIForwardImageIntentHint(c, channelMapping.Mapped, imageIntent)
+			}
 		}
 		if err != nil {
 			if failoverClientGone(c) {
@@ -1338,8 +1354,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
 	if balanceGuard != nil {
-		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
 		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 	}
 	// Anthropic-compatible streaming responses can also spend time waiting for
@@ -1362,11 +1378,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		}
 		reqLog.Debug("openai_messages.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		selection, scheduleDecision, routedKey, err := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(
-			c.Request.Context(),
+			service.WithOpenAIMessagesKeyRoute(c.Request.Context()),
 			apiKey,
 			"", // no previous_response_id
 			sessionHash,
-			currentRoutingModel,
+			reqModel,
 			failedAccountIDs,
 			service.OpenAIUpstreamTransportAny,
 			service.OpenAIEndpointCapabilityChatCompletions,
@@ -1375,8 +1391,23 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			true,
 			requestPlatform,
 		)
-		if routedKey != nil {
+		if err == nil && routedKey != nil {
+			changed := keyRouteGroupChanged(apiKey, routedKey)
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
+				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
+				Mapping: &channelMappingMsg, Guard: &balanceGuard, Body: body, Model: reqModel, PricingAt: pricingAt,
+			}); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
+				return
+			}
 			apiKey = routedKey
+			if changed {
+				effectiveMappedModel = resolveOpenAIMessagesDispatchMappedModel(c, apiKey, reqModel)
+				c.Request = c.Request.WithContext(service.WithOpenAIReasoningEffortPolicy(c.Request.Context(), "", nil, ""))
+				bindOpenAIReasoningEffortPolicyForMessagesRequest(c, apiKey, body)
+			}
 		}
 		if err != nil {
 			if failoverClientGone(c) {
@@ -2358,7 +2389,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			apiKey,
 			previousResponseID,
 			sessionHash,
-			wsForwardModel,
+			reqModel,
 			failedAccountIDs,
 			requiredTransport,
 			requiredCapability,
@@ -2367,8 +2398,18 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			!imageIntent,
 			requestPlatform,
 		)
-		if routedKey != nil {
+		if err == nil && routedKey != nil {
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
+				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
+				Mapping: &channelMappingWS, Model: reqModel,
+			}); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "selected group billing is unavailable")
+				return
+			}
 			apiKey = routedKey
+			ctx = service.ContextWithAPIKeyRoute(ctx, apiKey)
+			wsForwardModel = openAIChannelForwardModel(channelMappingWS, reqModel)
 		}
 		if err != nil {
 			reqLog.Warn("openai.websocket_account_select_failed",

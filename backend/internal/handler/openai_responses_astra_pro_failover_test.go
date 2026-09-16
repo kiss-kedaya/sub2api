@@ -91,6 +91,8 @@ func newAstraProFailoverContext(t *testing.T, body string) (*gin.Context, *httpt
 		Group: &service.Group{
 			ID:       groupID,
 			Platform: service.PlatformOpenAI,
+			Status:   service.StatusActive,
+			Hydrated: true,
 		},
 		User: &service.User{ID: 100},
 	})

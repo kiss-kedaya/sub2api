@@ -90,7 +90,9 @@ func TestSmartRouteCoreWarmSnapshotDoesNotQueryOtherProviders(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		_, _, routed, err := svc.selectAlongKeyRoutes(context.Background(), smartRouteCoreKey(group), nil, "gpt-5.5",
 			func(ctx context.Context, gid *int64, _ []string, model string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-				require.Equal(t, *gid, ctx.Value(ctxkey.Group).(*Group).ID)
+				group, ok := ctx.Value(ctxkey.Group).(*Group)
+				require.True(t, ok)
+				require.Equal(t, *gid, group.ID)
 				require.Equal(t, "gpt-5.5", model)
 				return &AccountSelectionResult{Account: account}, OpenAIAccountScheduleDecision{}, nil
 			})
@@ -199,7 +201,7 @@ func TestContextWithAPIKeyRoute(t *testing.T) {
 	require.Same(t, primary, updated.Value(ctxkey.Group))
 	require.Nil(t, ctx.Value(ctxkey.Group))
 	require.Same(t, ctx, ContextWithAPIKeyRoute(ctx, nil))
-	require.NotNil(t, ContextWithAPIKeyRoute(nil, nil))
+	require.NotNil(t, ContextWithAPIKeyRoute(nil, nil)) //nolint:staticcheck // Verify the nil-context compatibility contract.
 	require.Same(t, ctx, ContextWithAPIKeyRoute(ctx, &APIKey{Group: primary}))
 	cancel()
 	require.ErrorIs(t, updated.Err(), context.Canceled)
@@ -207,11 +209,12 @@ func TestContextWithAPIKeyRoute(t *testing.T) {
 
 func TestSmartRouteCoreNilAndUngrouped(t *testing.T) {
 	svc := &OpenAIGatewayService{}
-	_, _, _, err := svc.selectAlongKeyRoutes(nil, nil, nil, "model", nil)
+	_, _, _, err := svc.selectAlongKeyRoutes(nil, nil, nil, "model", nil) //nolint:staticcheck // Verify nil-service and nil-context handling.
 	require.ErrorIs(t, err, ErrNoAvailableAccounts)
-	_, _, err = (&GatewayService{}).SelectAccountAlongKeyRoutes(nil, nil, "", "model", nil, "", 0)
+	_, _, err = (&GatewayService{}).SelectAccountAlongKeyRoutes(nil, nil, "", "model", nil, "", 0) //nolint:staticcheck // Verify nil-key and nil-context handling.
 	require.ErrorIs(t, err, ErrNoAvailableAccounts)
 	key := smartRouteCoreKey()
+	//nolint:staticcheck // Verify that the ungrouped path normalizes a nil context.
 	_, _, routed, err := svc.selectAlongKeyRoutes(nil, key, []string{PlatformOpenAI}, "model",
 		func(ctx context.Context, gid *int64, platforms []string, model string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 			require.NotNil(t, ctx)
