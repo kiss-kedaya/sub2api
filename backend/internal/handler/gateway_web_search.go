@@ -143,7 +143,13 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		selected, routedKey, selectErr := h.gatewayService.SelectAccountAlongKeyRoutes(
 			c.Request.Context(), apiKey, "", searchModel, failedAccounts, "", 0, service.PlatformFromAPIKey(apiKey),
 		)
-		if routedKey != nil {
+		if selectErr == nil && routedKey != nil {
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{Previous: apiKey, Selected: routedKey, Subscription: &subscription}); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selected)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				c.JSON(status, gin.H{"error": gin.H{"type": code, "message": message}})
+				return
+			}
 			apiKey = routedKey
 		}
 		if selectErr != nil {

@@ -191,12 +191,15 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	// 结算走 RecordUsage → applyUsageBilling 的 guard.Finalize 退实际差额，兜底
 	// defer 退款在 worker 交接后自动失效。视频为异步三段（生成/查询/内容），
 	// 计费参数在状态查询到 done 才完整，故不走此同步预扣路径，留待单独提交。
+	var balanceGuard *service.BalancePreauthorizationGuard
+	pricingAt := time.Now()
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
 	if endpoint.IsImageGenerationRequest() {
-		balanceGuard, err := preauthorizePerRequestGatewayRequest(
+		balanceGuard, err = preauthorizePerRequestGatewayRequest(
 			c.Request.Context(), h.balancePreauthorizer, h.gatewayService,
 			apiKey, subscription, body,
 			service.BalancePreauthorizationBillingModel(routingModel, service.ChannelMappingResult{}),
-			time.Now(),
+			pricingAt,
 			service.PerRequestPreauthorizationEstimate{
 				RequestCount: requestInfo.N,
 				SizeTier:     requestInfo.SizeTier,
@@ -206,7 +209,6 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			return
 		}
 		if balanceGuard != nil {
-			defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
 			c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 		}
 	}
@@ -292,8 +294,22 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				false,
 				service.PlatformGrok,
 			)
-			if routedKey != nil {
+			if err == nil && routedKey != nil {
+				binding := keyRouteBinding{Previous: apiKey, Selected: routedKey, Subscription: &subscription}
+				if endpoint.IsImageGenerationRequest() {
+					binding.Guard, binding.Body, binding.Model, binding.PricingAt = &balanceGuard, body, routingModel, pricingAt
+					binding.PerRequest = &service.PerRequestPreauthorizationEstimate{RequestCount: requestInfo.N, SizeTier: requestInfo.SizeTier}
+				}
+				if bindErr := h.bindSelectedKeyRoute(c, binding); bindErr != nil {
+					releaseRejectedKeyRouteSelection(selection)
+					h.handlePreauthorizationError(c, bindErr, false)
+					return
+				}
 				apiKey = routedKey
+				requestCtx = service.ContextWithAPIKeyRoute(requestCtx, apiKey)
+				if balanceGuard != nil {
+					requestCtx = service.ContextWithBalancePreauthorizationGuard(requestCtx, balanceGuard)
+				}
 			}
 		}
 		// Own an eagerly acquired slot before any rejection or eligibility probe.

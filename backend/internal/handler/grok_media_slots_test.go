@@ -243,7 +243,7 @@ func grokMediaSlotContext(ctx context.Context, generation bool) (*gin.Context, *
 	c.Request = req
 	c.Params = gin.Params{{Key: "request_id", Value: "task"}}
 	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{ID: 20, UserID: 10, GroupID: &groupID,
-		Group: &service.Group{ID: groupID, Platform: service.PlatformGrok, AllowImageGeneration: true}, User: &service.User{ID: 10}})
+		Group: &service.Group{ID: groupID, Platform: service.PlatformGrok, Status: service.StatusActive, Hydrated: true, AllowImageGeneration: true}, User: &service.User{ID: 10}})
 	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 10, Concurrency: 5})
 	return c, w
 }

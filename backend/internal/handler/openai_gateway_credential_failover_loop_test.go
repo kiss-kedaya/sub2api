@@ -949,7 +949,7 @@ func newGrokCredentialFailoverHandler(t *testing.T, mode string) (*OpenAIGateway
 	apiKey := &service.APIKey{
 		ID: 902, GroupID: &groupID,
 		User:  &service.User{ID: 903, Status: service.StatusActive},
-		Group: &service.Group{ID: groupID, Platform: service.PlatformGrok, Status: service.StatusActive, AllowImageGeneration: true},
+		Group: &service.Group{ID: groupID, Platform: service.PlatformGrok, Status: service.StatusActive, Hydrated: true, AllowImageGeneration: true},
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

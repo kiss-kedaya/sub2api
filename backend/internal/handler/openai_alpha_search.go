@@ -136,8 +136,8 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	if h.handlePreauthorizationError(c, err, false) {
 		return
 	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
 	if balanceGuard != nil {
-		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
 		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 	}
 
@@ -156,8 +156,20 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			false,
 			service.PlatformOpenAI,
 		)
-		if routedKey != nil {
+		if err == nil && routedKey != nil {
+			changed := keyRouteGroupChanged(apiKey, routedKey)
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
+				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
+				Mapping: &channelMapping, Guard: &balanceGuard, Body: body, Model: requestedModel, PricingAt: asPricingAt,
+			}); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				h.handlePreauthorizationError(c, bindErr, false)
+				return
+			}
 			apiKey = routedKey
+			if changed {
+				forwardBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+			}
 		}
 		if err != nil || selection == nil || selection.Account == nil {
 			if failoverClientGone(c) {

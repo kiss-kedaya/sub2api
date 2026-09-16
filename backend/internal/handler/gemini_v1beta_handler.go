@@ -398,8 +398,8 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		googleError(c, status, message)
 		return
 	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
 	if balanceGuard != nil {
-		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
 		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 	}
 
@@ -517,9 +517,19 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	}
 
 	for {
-		selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, sessionKey, modelName, fs.FailedAccountIDs, "", int64(0), service.PlatformGemini) // Gemini 不使用会话限制
-		if routedKey != nil {
+		selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0), service.PlatformGemini) // Gemini 不使用会话限制
+		if err == nil && routedKey != nil {
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
+				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
+				Mapping: &channelMapping, Guard: &balanceGuard, Body: body, Model: reqModel, PricingAt: pricingAt,
+			}); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, _, message, _ := billingErrorDetails(bindErr)
+				googleError(c, status, message)
+				return
+			}
 			apiKey = routedKey
+			modelName = openAIChannelForwardModel(channelMapping, reqModel)
 		}
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
@@ -676,9 +686,31 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
 		}
+		if result != nil {
+			usageInput := &service.RecordUsageInput{
+				Result: result, APIKey: apiKey, User: apiKey.User, Account: account,
+				Subscription: subscription, PricingAt: pricingAt,
+				QuotaPlatform:   service.QuotaPlatform(c.Request.Context(), apiKey),
+				InboundEndpoint: GetInboundEndpoint(c), UpstreamEndpoint: GetUpstreamEndpoint(c, account.Platform),
+				UserAgent: c.GetHeader("User-Agent"), IPAddress: ip.GetClientIP(c),
+				RequestPayloadHash: service.HashUsageRequestPayload(body), ForceCacheBilling: fs.ForceCacheBilling,
+				APIKeyService: h.apiKeyService, SessionID: service.ExtractClientSessionID(c),
+				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+			}
+			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+				if recordErr := h.gatewayService.RecordUsage(ctx, usageInput); recordErr != nil {
+					logger.L().With(
+						zap.String("component", "handler.gemini_v1beta.models"),
+						zap.Int64("user_id", usageInput.User.ID), zap.Int64("api_key_id", usageInput.APIKey.ID),
+						zap.Any("group_id", usageInput.APIKey.GroupID), zap.String("model", usageInput.Result.Model),
+						zap.Int64("account_id", usageInput.Account.ID),
+					).Error("gemini.record_usage_failed", zap.Error(recordErr))
+				}
+			})
+		}
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
-			if errors.As(err, &failoverErr) {
+			if result == nil && errors.As(err, &failoverErr) {
 				failoverAction := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
 				switch failoverAction {
 				case FailoverContinue:
@@ -696,10 +728,6 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			return
 		}
 
-		// 捕获请求信息（用于异步记录，避免在 goroutine 中访问 gin.Context）
-		userAgent := c.GetHeader("User-Agent")
-		clientIP := ip.GetClientIP(c)
-
 		// 保存 Gemini 内容摘要会话（用于 Fallback 匹配）
 		if useDigestFallback && geminiDigestChain != "" && geminiPrefixHash != "" {
 			if err := h.gatewayService.SaveGeminiSession(
@@ -715,44 +743,6 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			}
 		}
 
-		// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
-		requestPayloadHash := service.HashUsageRequestPayload(body)
-		inboundEndpoint := GetInboundEndpoint(c)
-		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
-		// ForceCacheBilling 提前拍成标量，避免 worker 闭包保活 failover 状态里的响应体。
-		forceCacheBilling := fs.ForceCacheBilling
-		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
-		sessionID := service.ExtractClientSessionID(c)
-		// 长上下文阶梯由目录数据驱动，统一在计费路径内生效，入口无需声明。
-		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-				Result:             result,
-				QuotaPlatform:      quotaPlatform,
-				APIKey:             apiKey,
-				User:               apiKey.User,
-				Account:            account,
-				Subscription:       subscription,
-				PricingAt:          pricingAt,
-				InboundEndpoint:    inboundEndpoint,
-				UpstreamEndpoint:   upstreamEndpoint,
-				UserAgent:          userAgent,
-				IPAddress:          clientIP,
-				RequestPayloadHash: requestPayloadHash,
-				ForceCacheBilling:  forceCacheBilling,
-				APIKeyService:      h.apiKeyService,
-				SessionID:          sessionID,
-				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
-			}); err != nil {
-				logger.L().With(
-					zap.String("component", "handler.gemini_v1beta.models"),
-					zap.Int64("user_id", authSubject.UserID),
-					zap.Int64("api_key_id", apiKey.ID),
-					zap.Any("group_id", apiKey.GroupID),
-					zap.String("model", modelName),
-					zap.Int64("account_id", account.ID),
-				).Error("gemini.record_usage_failed", zap.Error(err))
-			}
-		})
 		reqLog.Debug("gemini.request_completed",
 			zap.Int64("account_id", account.ID),
 			zap.Int("switch_count", fs.SwitchCount),

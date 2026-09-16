@@ -35,6 +35,9 @@ func preauthorizeTextGatewayRequest(
 	if preauthorizer == nil || pricing == nil || apiKey == nil {
 		return nil, nil
 	}
+	if deferKeyRoutePreauthorization(ctx, apiKey) {
+		return nil, nil
+	}
 	billingType := service.BalancePreauthorizationBillingType(apiKey, subscription)
 	if requirement, ok := preauthorizer.(balancePreauthorizationRequirement); ok &&
 		!requirement.RequiresPreauthorization(billingType) {
@@ -76,6 +79,9 @@ func preauthorizePerRequestGatewayRequest(
 	estimate service.PerRequestPreauthorizationEstimate,
 ) (*service.BalancePreauthorizationGuard, error) {
 	if preauthorizer == nil || pricing == nil || apiKey == nil {
+		return nil, nil
+	}
+	if deferKeyRoutePreauthorization(ctx, apiKey) {
 		return nil, nil
 	}
 	billingType := service.BalancePreauthorizationBillingType(apiKey, subscription)

@@ -137,6 +137,8 @@ func newOpenAIResponsesFailoverTestContext(t *testing.T, ctx context.Context) (*
 		Group: &service.Group{
 			ID:       groupID,
 			Platform: service.PlatformOpenAI,
+			Status:   service.StatusActive,
+			Hydrated: true,
 		},
 		User: &service.User{ID: 100},
 	})
