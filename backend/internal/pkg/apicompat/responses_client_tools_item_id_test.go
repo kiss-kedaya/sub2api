@@ -62,15 +62,18 @@ func TestResponsesClientToolStreamRestorer_RetypesCustomToolCallItemID(t *testin
 	require.Equal(t, clientID, added[0].Item.ID)
 
 	// Later upstream events still address the item by its upstream ID.
-	require.Empty(t, restorer.Restore(ResponsesStreamEvent{
+	delta := restorer.Restore(ResponsesStreamEvent{
 		Type: "response.function_call_arguments.delta", SequenceNumber: 1, ItemID: upstreamID, Delta: `{"input":"di`,
-	}))
+	})
+	require.Len(t, delta, 1)
+	require.Equal(t, "di", delta[0].Delta)
 	done := restorer.Restore(ResponsesStreamEvent{
 		Type: "response.function_call_arguments.done", SequenceNumber: 2, ItemID: upstreamID,
 		CallID: "call_1", Name: "exec", Arguments: `{"input":"dir"}`,
 	})
 	require.Len(t, done, 2)
 	require.Equal(t, "response.custom_tool_call_input.delta", done[0].Type)
+	require.Equal(t, "r", done[0].Delta)
 	require.Equal(t, clientID, done[0].ItemID)
 	require.Equal(t, "response.custom_tool_call_input.done", done[1].Type)
 	require.Equal(t, clientID, done[1].ItemID)
@@ -81,6 +84,7 @@ func TestResponsesClientToolStreamRestorer_RetypesCustomToolCallItemID(t *testin
 		Item: &ResponsesOutput{Type: "function_call", ID: upstreamID, CallID: "call_1", Name: "exec", Arguments: `{"input":"dir"}`, Status: "completed"},
 	})
 	require.Len(t, closed, 1)
+	require.Equal(t, 4, closed[0].SequenceNumber)
 	require.Equal(t, "custom_tool_call", closed[0].Item.Type)
 	require.Equal(t, clientID, closed[0].Item.ID)
 	require.Equal(t, "dir", closed[0].Item.Input)
