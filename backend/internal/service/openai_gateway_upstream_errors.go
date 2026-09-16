@@ -373,6 +373,10 @@ func newOpenAIUpstreamFailoverError(
 ) *UpstreamFailoverError {
 	requestScopedCapacity := isOpenAIRequestScopedCapacityShed(upstreamMsg, responseBody)
 	class := ClassifyUpstreamFailure(statusCode, responseHeaders, responseBody, nil)
+	if isUpstreamRouteNotFound(statusCode, responseBody) {
+		retryableOnSameAccount = false
+		requestScopedCapacity = false
+	}
 	if class.Kind == UpstreamFailureWAF {
 		retryableOnSameAccount = false
 		requestScopedCapacity = false
