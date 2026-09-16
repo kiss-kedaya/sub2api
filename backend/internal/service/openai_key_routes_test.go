@@ -52,10 +52,23 @@ func TestSelectAlongKeyRoutes_SkipsEmptyOpenAIWhenSiblingMapsGemini(t *testing.T
 		},
 	}
 	primary := emptyID
-	key := &APIKey{GroupID: &primary, RouteGroupIDs: []int64{emptyID, geminiID}}
+	groups := []*Group{
+		{ID: emptyID, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true},
+		{ID: geminiID, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true},
+	}
+	repo := svc.accountRepo.(*modelsListAccountRepoStub)
+	var accounts []*Account
+	for gid, items := range repo.byGroup {
+		for _, item := range items {
+			item.GroupIDs = []int64{gid}
+			accounts = append(accounts, &item)
+		}
+	}
+	svc.schedulerSnapshot, _ = newSmartRouteCoreSnapshot(groups, accounts...)
+	key := &APIKey{User: &User{}, GroupID: &primary, Group: groups[0], RouteGroupIDs: []int64{emptyID, geminiID}}
 
 	var tried []int64
-	_, _, _, err := svc.selectAlongKeyRoutes(context.Background(), key, []string{PlatformOpenAI}, "gemini-3.8-flash", func(groupID *int64, _ []string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	_, _, _, err := svc.selectAlongKeyRoutes(context.Background(), key, []string{PlatformOpenAI}, "gemini-3.8-flash", func(_ context.Context, groupID *int64, _ []string, _ string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 		tried = append(tried, *groupID)
 		return nil, OpenAIAccountScheduleDecision{}, ErrNoAvailableAccounts
 	})
