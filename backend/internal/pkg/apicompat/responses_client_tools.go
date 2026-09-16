@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"unicode/utf16"
 )
 
 // ResponsesClientToolMapping records the reversible lowering applied before a
@@ -537,14 +536,14 @@ func restoreClientToolValue(value any, adapter *ResponsesClientToolMapping) bool
 }
 
 // ResponsesClientToolStreamRestorer restores client tool stream lifecycles.
-// It is intentionally stateful because custom tools need their function
-// arguments buffered until the upstream signals the call is complete.
+// Custom input strings stream incrementally; terminal arguments remain authoritative.
 type ResponsesClientToolStreamRestorer struct {
 	adapter  ResponsesClientToolMapping
 	nextSeq  int
 	seenSeq  bool
 	calls    map[string]*responsesClientToolStreamCall
 	byOutput map[int]*responsesClientToolStreamCall
+	err      error
 }
 
 type responsesClientToolStreamCall struct {
@@ -552,12 +551,14 @@ type responsesClientToolStreamCall struct {
 	name string
 	// callID and itemID stay as the upstream sent them so later upstream
 	// events keep matching this call; clientItemID is what we emit.
-	callID          string
-	itemID          string
-	clientItemID    string
-	outputIdx       int
-	arguments       strings.Builder
-	customInputSent string
+	callID       string
+	itemID       string
+	clientItemID string
+	outputIdx    int
+	arguments    strings.Builder
+	customInput  customToolInputStream
+	customDone   bool
+	itemDone     bool
 }
 
 func NewResponsesClientToolStreamRestorer(mapping ResponsesClientToolMapping) *ResponsesClientToolStreamRestorer {
@@ -570,6 +571,9 @@ func NewResponsesClientToolStreamRestorer(mapping ResponsesClientToolMapping) *R
 func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) []ResponsesStreamEvent {
 	if r == nil {
 		return []ResponsesStreamEvent{event}
+	}
+	if r.err != nil {
+		return nil
 	}
 	if !r.seenSeq {
 		r.nextSeq = event.SequenceNumber
@@ -605,10 +609,15 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 		if call := r.callFor(event); call != nil {
 			_, _ = call.arguments.WriteString(event.Delta)
 			if call.kind == "custom" {
-				input, _ := decodeCustomToolInputPrefix(call.arguments.String())
-				if len(input) > len(call.customInputSent) && strings.HasPrefix(input, call.customInputSent) {
-					delta := input[len(call.customInputSent):]
-					call.customInputSent = input
+				if call.customDone {
+					return nil
+				}
+				delta, err := call.customInput.append(call.arguments.String())
+				if err != nil {
+					r.err = err
+					return nil
+				}
+				if delta != "" {
 					emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: call.outputIdx, ItemID: call.clientItemID, Delta: delta})
 					return out
 				}
@@ -623,14 +632,19 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 				_, _ = call.arguments.WriteString(event.Arguments)
 			}
 			if call.kind == "custom" {
-				input, _ := decodeCustomToolInputPrefix(call.arguments.String())
-				if input == "" {
-					input = extractCustomToolCallInput(call.arguments.String())
+				input := extractCustomToolCallInput(call.arguments.String())
+				tail, err := call.customInput.finish(input)
+				if err != nil {
+					r.err = err
+					return nil
 				}
-				if len(input) > len(call.customInputSent) && strings.HasPrefix(input, call.customInputSent) {
-					emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: call.outputIdx, ItemID: call.clientItemID, Delta: input[len(call.customInputSent):]})
-					call.customInputSent = input
+				if call.customDone {
+					return nil
 				}
+				if tail != "" {
+					emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: call.outputIdx, ItemID: call.clientItemID, Delta: tail})
+				}
+				call.customDone = true
 				emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.done", OutputIndex: call.outputIdx, ItemID: call.clientItemID, CallID: call.callID, Name: call.name, Input: input})
 			}
 			return out
@@ -640,10 +654,23 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 		if call := r.recordItem(event); call != nil {
 			if call.kind == "custom" {
 				event.Item.Type = "custom_tool_call"
-				event.Item.Input, _ = decodeCustomToolInputPrefix(call.arguments.String())
-				if event.Item.Input == "" {
-					event.Item.Input = extractCustomToolCallInput(call.arguments.String())
+				event.Item.Input = extractCustomToolCallInput(call.arguments.String())
+				tail, err := call.customInput.finish(event.Item.Input)
+				if err != nil {
+					r.err = err
+					return nil
 				}
+				if call.itemDone {
+					return nil
+				}
+				if !call.customDone {
+					if tail != "" {
+						emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.delta", OutputIndex: call.outputIdx, ItemID: call.clientItemID, Delta: tail})
+					}
+					emit(ResponsesStreamEvent{Type: "response.custom_tool_call_input.done", OutputIndex: call.outputIdx, ItemID: call.clientItemID, CallID: call.callID, Name: call.name, Input: event.Item.Input})
+					call.customDone = true
+				}
+				call.itemDone = true
 				event.Item.Arguments = ""
 				event.Item.Namespace = ""
 			} else {
@@ -658,14 +685,22 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 			if call.clientItemID != "" {
 				event.Item.ID = call.clientItemID
 			}
-			delete(r.calls, call.itemID)
-			delete(r.calls, call.callID)
-			delete(r.byOutput, call.outputIdx)
+			if call.kind != "custom" {
+				delete(r.calls, call.itemID)
+				delete(r.calls, call.callID)
+				delete(r.byOutput, call.outputIdx)
+			}
 		}
 		emit(r.restoreNamespaceEvent(event))
 	default:
 		// response.completed carries the non-stream representation.
 		if event.Response != nil {
+			if event.Type == "response.completed" || event.Type == "response.done" {
+				out = append(out, r.finishCustomToolSnapshots(event.Response.Output)...)
+				if r.err != nil {
+					return nil
+				}
+			}
 			restoreResponsesOutputClientTools(event.Response.Output, &r.adapter)
 		}
 		emit(r.restoreNamespaceEvent(event))
@@ -673,121 +708,13 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 	return out
 }
 
-// decodeCustomToolInputPrefix decodes the input string from a partial
-// {"input":"..."} function-call argument. It returns text already complete
-// enough to send downstream, even while the JSON object or string is unfinished.
-// Re-scanning the bounded argument buffer keeps the state small and lets the
-// done event correct a partial escape or a split Unicode surrogate without
-// duplicating any bytes.
-func decodeCustomToolInputPrefix(arguments string) (string, bool) {
-	key := strings.Index(arguments, `"input"`)
-	if key < 0 {
-		return "", false
-	}
-	pos := key + len(`"input"`)
-	for pos < len(arguments) && (arguments[pos] == ' ' || arguments[pos] == '\t' || arguments[pos] == '\r' || arguments[pos] == '\n') {
-		pos++
-	}
-	if pos >= len(arguments) || arguments[pos] != ':' {
-		return "", false
-	}
-	pos++
-	for pos < len(arguments) && (arguments[pos] == ' ' || arguments[pos] == '\t' || arguments[pos] == '\r' || arguments[pos] == '\n') {
-		pos++
-	}
-	if pos >= len(arguments) || arguments[pos] != '"' {
-		return "", false
-	}
-	pos++
-	var decoded strings.Builder
-	for pos < len(arguments) {
-		ch := arguments[pos]
-		switch ch {
-		case '"':
-			return decoded.String(), true
-		case '\\':
-			if pos+1 >= len(arguments) {
-				return decoded.String(), false
-			}
-			switch arguments[pos+1] {
-			case '"', '\\', '/':
-				decoded.WriteByte(arguments[pos+1])
-				pos += 2
-			case 'b':
-				decoded.WriteByte('\b')
-				pos += 2
-			case 'f':
-				decoded.WriteByte('\f')
-				pos += 2
-			case 'n':
-				decoded.WriteByte('\n')
-				pos += 2
-			case 'r':
-				decoded.WriteByte('\r')
-				pos += 2
-			case 't':
-				decoded.WriteByte('\t')
-				pos += 2
-			case 'u':
-				if pos+6 > len(arguments) {
-					return decoded.String(), false
-				}
-				first, ok := decodeJSONHex16(arguments[pos+2 : pos+6])
-				if !ok {
-					return decoded.String(), false
-				}
-				pos += 6
-				if first >= 0xD800 && first <= 0xDBFF {
-					if pos+6 > len(arguments) || arguments[pos] != '\\' || arguments[pos+1] != 'u' {
-						return decoded.String(), false
-					}
-					second, ok := decodeJSONHex16(arguments[pos+2 : pos+6])
-					if !ok || second < 0xDC00 || second > 0xDFFF {
-						return decoded.String(), false
-					}
-					decoded.WriteRune(utf16.DecodeRune(rune(first), rune(second)))
-					pos += 6
-				} else if first >= 0xDC00 && first <= 0xDFFF {
-					return decoded.String(), false
-				} else {
-					decoded.WriteRune(rune(first))
-				}
-			default:
-				return decoded.String(), false
-			}
-		default:
-			decoded.WriteByte(ch)
-			pos++
-		}
-	}
-	return decoded.String(), false
-}
-
-func decodeJSONHex16(value string) (uint16, bool) {
-	if len(value) != 4 {
-		return 0, false
-	}
-	var result uint16
-	for _, ch := range []byte(value) {
-		result <<= 4
-		switch {
-		case ch >= '0' && ch <= '9':
-			result += uint16(ch - '0')
-		case ch >= 'a' && ch <= 'f':
-			result += uint16(ch-'a') + 10
-		case ch >= 'A' && ch <= 'F':
-			result += uint16(ch-'A') + 10
-		default:
-			return 0, false
-		}
-	}
-	return result, true
-}
-
 // RestoreEvent restores one Responses SSE JSON data payload. Custom tool
 // completions can expand to multiple payloads and proxy argument deltas can be
 // intentionally dropped, hence the slice return value.
 func (r *ResponsesClientToolStreamRestorer) RestoreEvent(payload []byte) ([][]byte, bool, error) {
+	if r.err != nil {
+		return nil, false, r.err
+	}
 	if len(payload) == 0 {
 		return nil, false, nil
 	}
@@ -799,11 +726,35 @@ func (r *ResponsesClientToolStreamRestorer) RestoreEvent(payload []byte) ([][]by
 		return nil, false, err
 	}
 	if isResponsesClientToolTerminalEvent(wire.Type) {
+		var prefix [][]byte
+		if (wire.Type == "response.completed" || wire.Type == "response.done") && len(r.calls) > 0 {
+			var terminal struct {
+				Response struct {
+					Output []ResponsesOutput `json:"output"`
+				} `json:"response"`
+			}
+			if err := json.Unmarshal(payload, &terminal); err != nil {
+				return nil, false, err
+			}
+			for _, event := range r.finishCustomToolSnapshots(terminal.Response.Output) {
+				encoded, err := json.Marshal(event)
+				if err != nil {
+					return nil, false, err
+				}
+				prefix = append(prefix, encoded)
+			}
+			if r.err != nil {
+				return nil, false, r.err
+			}
+		}
 		restored, changed, err := RestoreResponsesClientToolPayload(payload, r.adapter)
 		if err != nil {
 			return nil, false, err
 		}
-		return r.resequenceRaw(restored, wire.Sequence, changed)
+		resequenced, changed, err := r.resequenceRaw(restored, wire.Sequence, changed)
+		clear(r.calls)
+		clear(r.byOutput)
+		return append(prefix, resequenced...), changed || len(prefix) > 0, err
 	}
 	if !clientToolLifecycleEvent(wire.Type) {
 		return r.resequenceRaw(payload, wire.Sequence, false)
@@ -816,6 +767,9 @@ func (r *ResponsesClientToolStreamRestorer) RestoreEvent(payload []byte) ([][]by
 		return nil, false, err
 	}
 	events := r.Restore(event)
+	if r.err != nil {
+		return nil, false, r.err
+	}
 	if len(events) == 1 {
 		unchanged, err := json.Marshal(events[0])
 		if err == nil && bytes.Equal(bytes.TrimSpace(unchanged), bytes.TrimSpace(payload)) {
@@ -831,6 +785,24 @@ func (r *ResponsesClientToolStreamRestorer) RestoreEvent(payload []byte) ([][]by
 		result = append(result, encoded)
 	}
 	return result, true, nil
+}
+
+func (r *ResponsesClientToolStreamRestorer) finishCustomToolSnapshots(outputs []ResponsesOutput) []ResponsesStreamEvent {
+	var events []ResponsesStreamEvent
+	for _, item := range outputs {
+		call := r.calls[item.ID]
+		if call == nil {
+			call = r.calls[item.CallID]
+		}
+		if call == nil || call.kind != "custom" || item.Type != "function_call" {
+			continue
+		}
+		events = append(events, r.Restore(ResponsesStreamEvent{Type: "response.output_item.done", OutputIndex: call.outputIdx, Item: &item})...)
+		if r.err != nil {
+			return nil
+		}
+	}
+	return events
 }
 
 func isResponsesClientToolTerminalEvent(typ string) bool {
