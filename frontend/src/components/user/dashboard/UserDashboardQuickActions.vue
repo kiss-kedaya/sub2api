@@ -1,85 +1,14 @@
 <template>
-  <div class="card">
-    <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('dashboard.quickActions') }}</h2>
+  <nav class="signal-actions" :aria-label="t('dashboard.quickActions')">
+    <span class="signal-actions-label">{{ t('dashboard.quickActions') }}</span>
+    <div class="signal-actions-list">
+      <button @click="router.push('/infinite-canvas')"><Icon name="grid" size="sm" /><span>{{ t('dashboard.infiniteCanvas') }}</span></button>
+      <button @click="router.push('/keys')"><Icon name="key" size="sm" /><span>{{ t('dashboard.createApiKey') }}</span></button>
+      <button @click="router.push('/usage')"><Icon name="chart" size="sm" /><span>{{ t('dashboard.viewUsage') }}</span></button>
+      <button v-if="canUseBatchImage" @click="router.push('/batch-image')"><Icon name="sparkles" size="sm" /><span>{{ t('dashboard.batchImageAgent') }}</span></button>
+      <button @click="router.push('/redeem')"><Icon name="gift" size="sm" /><span>{{ t('dashboard.redeemCode') }}</span></button>
     </div>
-    <div class="space-y-3 p-4">
-      <button @click="router.push('/infinite-canvas')" class="group flex w-full items-center gap-4 rounded-xl bg-gray-50 p-4 text-left transition-all duration-200 hover:bg-gray-100 dark:bg-dark-800/50 dark:hover:bg-dark-800">
-        <div class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 transition-transform group-hover:scale-105 dark:bg-violet-900/30">
-          <Icon name="grid" size="lg" class="text-violet-600 dark:text-violet-400" />
-        </div>
-        <div class="min-w-0 flex-1">
-          <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('dashboard.infiniteCanvas') }}</p>
-          <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('dashboard.infiniteCanvasDesc') }}</p>
-        </div>
-        <Icon
-          name="chevronRight"
-          size="md"
-          class="text-gray-400 transition-colors group-hover:text-violet-500 dark:text-dark-500"
-        />
-      </button>
-
-      <button @click="router.push('/keys')" class="group flex w-full items-center gap-4 rounded-xl bg-gray-50 p-4 text-left transition-all duration-200 hover:bg-gray-100 dark:bg-dark-800/50 dark:hover:bg-dark-800">
-        <div class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-primary-100 transition-transform group-hover:scale-105 dark:bg-primary-900/30">
-          <Icon name="key" size="lg" class="text-primary-600 dark:text-primary-400" />
-        </div>
-        <div class="min-w-0 flex-1">
-          <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('dashboard.createApiKey') }}</p>
-          <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('dashboard.generateNewKey') }}</p>
-        </div>
-        <Icon
-          name="chevronRight"
-          size="md"
-          class="text-gray-400 transition-colors group-hover:text-primary-500 dark:text-dark-500"
-        />
-      </button>
-
-      <button @click="router.push('/usage')" class="group flex w-full items-center gap-4 rounded-xl bg-gray-50 p-4 text-left transition-all duration-200 hover:bg-gray-100 dark:bg-dark-800/50 dark:hover:bg-dark-800">
-        <div class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-emerald-100 transition-transform group-hover:scale-105 dark:bg-emerald-900/30">
-          <Icon name="chart" size="lg" class="text-emerald-600 dark:text-emerald-400" />
-        </div>
-        <div class="min-w-0 flex-1">
-          <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('dashboard.viewUsage') }}</p>
-          <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('dashboard.checkDetailedLogs') }}</p>
-        </div>
-        <Icon
-          name="chevronRight"
-          size="md"
-          class="text-gray-400 transition-colors group-hover:text-emerald-500 dark:text-dark-500"
-        />
-      </button>
-
-      <button v-if="canUseBatchImage" @click="router.push('/batch-image')" class="group flex w-full items-center gap-4 rounded-xl bg-gray-50 p-4 text-left transition-all duration-200 hover:bg-gray-100 dark:bg-dark-800/50 dark:hover:bg-dark-800">
-        <div class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-sky-100 transition-transform group-hover:scale-105 dark:bg-sky-900/30">
-          <Icon name="sparkles" size="lg" class="text-sky-600 dark:text-sky-400" />
-        </div>
-        <div class="min-w-0 flex-1">
-          <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('dashboard.batchImageAgent') }}</p>
-          <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('dashboard.batchImageAgentDesc') }}</p>
-        </div>
-        <Icon
-          name="chevronRight"
-          size="md"
-          class="text-gray-400 transition-colors group-hover:text-sky-500 dark:text-dark-500"
-        />
-      </button>
-
-      <button @click="router.push('/redeem')" class="group flex w-full items-center gap-4 rounded-xl bg-gray-50 p-4 text-left transition-all duration-200 hover:bg-gray-100 dark:bg-dark-800/50 dark:hover:bg-dark-800">
-        <div class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-amber-100 transition-transform group-hover:scale-105 dark:bg-amber-900/30">
-          <Icon name="gift" size="lg" class="text-amber-600 dark:text-amber-400" />
-        </div>
-        <div class="min-w-0 flex-1">
-          <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('dashboard.redeemCode') }}</p>
-          <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('dashboard.addBalanceWithCode') }}</p>
-        </div>
-        <Icon
-          name="chevronRight"
-          size="md"
-          class="text-gray-400 transition-colors group-hover:text-amber-500 dark:text-dark-500"
-        />
-      </button>
-    </div>
-  </div>
+  </nav>
 </template>
 
 <script setup lang="ts">
@@ -96,3 +25,19 @@ onMounted(() => {
   void refreshBatchImageAccess()
 })
 </script>
+
+<style scoped>
+.signal-actions { display: flex; align-items: center; gap: 18px; padding: 12px 0; min-width: 0; }
+.signal-actions-label { flex-shrink: 0; font-size: 11px; color: var(--signal-muted, #65716a); }
+.signal-actions-list { display: flex; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+.signal-actions button { display: inline-flex; align-items: center; justify-content: flex-start; gap: 7px; min-height: 36px; padding: 6px 9px; border-radius: 4px; font-size: 12px; font-weight: 500; color: var(--signal-text, #202423); text-align: left; }
+.signal-actions button :deep(svg) { color: var(--signal-accent, #087f68); flex-shrink: 0; }
+.signal-actions button:hover { background: var(--signal-surface, #fff); color: var(--signal-accent, #087f68); }
+.signal-actions button:focus-visible { outline: 2px solid var(--signal-accent, #087f68); outline-offset: 2px; }
+@media (max-width: 640px) {
+  .signal-actions { align-items: flex-start; gap: 8px; padding: 10px 0; }
+  .signal-actions-label { padding-top: 14px; }
+  .signal-actions-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 1; gap: 0 6px; }
+  .signal-actions button { min-height: 44px; padding: 7px 4px; overflow-wrap: anywhere; }
+}
+</style>
