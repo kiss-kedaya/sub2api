@@ -153,8 +153,9 @@ export function createMockApi(now = new Date()) {
       next.expires_at = new Date(now.getTime() + days * 86_400_000).toISOString()
     }
     if ('expires_at' in body) {
-      if (body.expires_at !== null && (typeof body.expires_at !== 'string' || !Number.isFinite(Date.parse(body.expires_at)))) throw new PreviewError(422, '无效的过期时间')
-      next.expires_at = body.expires_at as string | null
+      const expiration = body.expires_at === '' ? null : body.expires_at
+      if (expiration !== null && (typeof expiration !== 'string' || !Number.isFinite(Date.parse(expiration)))) throw new PreviewError(422, '无效的过期时间')
+      next.expires_at = expiration as string | null
     }
     if (body.reset_quota === true) next.quota_used = 0
     if (body.reset_rate_limit_usage === true) next.usage_5h = next.usage_1d = next.usage_7d = 0
@@ -182,7 +183,7 @@ export function createMockApi(now = new Date()) {
               (!query.get('status') || key.status === query.get('status')) &&
               (!query.get('group_id') || key.group_ids?.includes(Number(query.get('group_id'))))
           })
-          return page(sort(items, query, ['id', 'name', 'created_at', 'last_used_at', 'quota_used', 'status', 'group_id'], 'id'), query)
+          return page(sort(items, query, ['id', 'name', 'created_at', 'last_used_at', 'quota_used', 'status', 'group_id', 'current_concurrency', 'expires_at'], 'id'), query)
         }
         if (/^\/api\/v1\/keys\/\d+$/.test(path)) {
           const key = data.keys.find(item => item.id === Number(path.split('/').pop()))
@@ -205,10 +206,21 @@ export function createMockApi(now = new Date()) {
         }
         if (path === '/api/v1/usage/dashboard/stats') {
           const timezone = timezoneOf(query)
-          const today = data.usage.filter(row => dateLabel(row.created_at, timezone) === dateLabel(data.now, timezone))
+          const month = data.usage.filter(row => new Date(row.created_at).getTime() >= now.getTime() - 30 * 86_400_000)
+          const today = month.filter(row => dateLabel(row.created_at, timezone) === dateLabel(data.now, timezone))
           const todayStats = Object.fromEntries(Object.entries(summarize(today)).filter(([key]) => key.startsWith('total_')).map(([key, value]) => [key.replace('total_', 'today_'), value]))
-          return { ...summarize(data.usage), ...todayStats, total_api_keys: data.keys.length,
-            active_api_keys: data.keys.filter(key => key.status === 'active').length, rpm: 0, tpm: 0 }
+          const recent = summarize(month.filter(row => new Date(row.created_at).getTime() > now.getTime() - 5 * 60_000))
+          const byPlatform = data.groups.map(group => {
+            const total = summarize(month.filter(row => row.group_id === group.id))
+            const daily = summarize(today.filter(row => row.group_id === group.id))
+            return { platform: group.platform, total_requests: total.total_requests,
+              total_tokens: total.total_tokens, total_actual_cost: total.total_actual_cost,
+              today_requests: daily.total_requests, today_tokens: daily.total_tokens,
+              today_actual_cost: daily.total_actual_cost }
+          })
+          return { ...summarize(month), ...todayStats, total_api_keys: data.keys.length,
+            active_api_keys: data.keys.filter(key => key.status === 'active').length,
+            rpm: recent.total_requests / 5, tpm: recent.total_tokens / 5, by_platform: byPlatform }
         }
         if (['/api/v1/usage/dashboard/trend', '/api/v1/usage/dashboard/models', '/api/v1/usage/dashboard/snapshot-v2'].includes(path)) return charts(query)
         const daily = path.match(/^\/api\/v1\/user\/api-keys\/(\d+)\/usage\/daily$/)

@@ -38,7 +38,7 @@ async function renderShell(path: string, role: 'user' | 'admin' = 'user') {
 
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [...new Set(['/dashboard', '/keys', '/usage', ...excludedPaths])].map((routePath) => ({
+    routes: [...new Set(['/dashboard', '/keys', '/usage', ...excludedPaths, '/:pathMatch(.*)*'])].map((routePath) => ({
       path: routePath,
       component: { template: '<div />' },
       meta: { title: routePath === '/keys' ? 'API Keys' : routePath }
@@ -69,7 +69,7 @@ afterEach(() => {
 })
 
 describe('SIGNAL shell route isolation', () => {
-  it.each(['/dashboard', '/keys?search=test#active', '/usage'])('opts in %s and leaves one content heading', async (path) => {
+  it.each(['/dashboard', '/keys?search=test#active', '/keys/', '/usage'])('opts in %s and leaves one content heading', async (path) => {
     await renderShell(path)
     expect(wrapper!.classes()).toContain('console-signal')
     expect(wrapper!.find('.bg-mesh-gradient').exists()).toBe(false)
