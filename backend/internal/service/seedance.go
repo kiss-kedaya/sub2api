@@ -74,7 +74,7 @@ func buildSeedanceURL(base string, endpoint GrokMediaEndpoint, taskID string) (s
 // future fields. Only model is rewritten using the account's configured mapping.
 func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Context, account *Account, endpoint GrokMediaEndpoint, taskID string, body []byte) (*OpenAIForwardResult, error) {
 	if !account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilitySeedance) || !endpoint.IsSeedance() {
-		return nil, fmt.Errorf("Seedance requires an OpenAI API key account with a custom base URL")
+		return nil, fmt.Errorf("seedance requires an OpenAI API key account with a custom base URL")
 	}
 	base, err := s.validateUpstreamBaseURL(account.GetCredential("base_url"))
 	if err != nil {
@@ -86,7 +86,8 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 	}
 	model, upstreamModel := "", ""
 	method := http.MethodGet
-	if endpoint == SeedanceEndpointCreate {
+	switch endpoint {
+	case SeedanceEndpointCreate:
 		info, parseErr := ParseSeedanceRequest(body)
 		if parseErr != nil {
 			return nil, parseErr
@@ -98,12 +99,12 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 			return nil, err
 		}
 		method = http.MethodPost
-	} else if endpoint == SeedanceEndpointDelete {
+	case SeedanceEndpointDelete:
 		method = http.MethodDelete
 	}
 	token := strings.TrimSpace(account.GetCredential("api_key"))
 	if token == "" {
-		return nil, fmt.Errorf("Seedance account missing api_key")
+		return nil, fmt.Errorf("seedance account missing api_key")
 	}
 	started := time.Now()
 	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
@@ -123,7 +124,7 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	responseBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		return nil, err
@@ -132,13 +133,13 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 	// accepted a billable job. Preserve native error codes and response bodies.
 	if resp.StatusCode >= 300 {
 		writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
-		return nil, fmt.Errorf("Seedance upstream status %d", resp.StatusCode)
+		return nil, fmt.Errorf("seedance upstream status %d", resp.StatusCode)
 	}
 	result := &OpenAIForwardResult{Model: model, BillingModel: model, UpstreamModel: upstreamModel, Duration: time.Since(started), ResponseHeaders: resp.Header.Clone()}
 	if endpoint == SeedanceEndpointCreate {
 		id := strings.TrimSpace(gjson.GetBytes(responseBody, "id").String())
 		if id == "" {
-			return nil, fmt.Errorf("Seedance create response missing task ID")
+			return nil, fmt.Errorf("seedance create response missing task ID")
 		}
 		result.ResponseID = SeedanceTaskKey(id)
 	}
