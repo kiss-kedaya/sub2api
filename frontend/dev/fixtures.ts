@@ -41,7 +41,9 @@ export function createFixtures(now = new Date()) {
   for (let day = 44; day >= 0; day--) {
     const count = 36 + Math.round(15 * (1 + Math.sin(day * 0.63))) + (44 - day)
     for (let j = 0; j < count; j++) {
-      const created = midnight - day * DAY + Math.floor(j * DAY / count)
+      const created = day === 0
+        ? now.getTime() - (count - 1 - j) * 5 * 60_000
+        : midnight - day * DAY + Math.floor(j * DAY / count)
       if (created > now.getTime()) continue
       const seed = day * 173 + j * 29
       const key = keys[seed % keys.length]

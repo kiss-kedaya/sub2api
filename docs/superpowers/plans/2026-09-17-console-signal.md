@@ -39,11 +39,11 @@ Owner clarification: reference Linear, Vercel, Raycast, Resend and Supabase. Ado
 Files: `frontend/src/components/layout/AppLayout.vue`, `AppHeader.vue`, `AppSidebar.vue`, `frontend/src/styles/console-signal.css`, optional route predicate and tests.
 
 - [x] Read existing layout, menus, theme and route boundaries.
-- [ ] Add exact route opt-in and prove excluded routes stay unchanged.
-- [ ] Replace mesh backdrop only on opted-in pages with neutral surfaces.
-- [ ] Apply consistent navigation, breadcrumb, buttons, inputs and dialogs through explicit scoped selectors.
-- [ ] Preserve sidebar collapse/mobile menu, subscriptions, balance, language, profile and theme controls.
-- [ ] Check teleported overlays and remove style scope on route changes.
+- [x] Add exact route opt-in and prove excluded routes stay unchanged.
+- [x] Replace mesh backdrop only on opted-in pages with neutral surfaces.
+- [x] Apply consistent navigation, breadcrumb, buttons, inputs and dialogs through explicit scoped selectors.
+- [x] Preserve sidebar collapse/mobile menu, subscriptions, balance, language, profile and theme controls.
+- [x] Check teleported overlays and remove style scope on route changes.
 
 Owner worktree: `F:/GO/sub2-signal-shell`; only this task's files.
 
@@ -52,11 +52,11 @@ Owner worktree: `F:/GO/sub2-signal-shell`; only this task's files.
 Files: `frontend/src/views/user/DashboardView.vue`, `frontend/src/components/user/dashboard/*`.
 
 - [x] Identify existing data, amounts, chart components and quick actions.
-- [ ] Add compact brand-led heading; keep account summary visible in the first viewport.
-- [ ] Replace floating statistic-card sections with organized metric bands.
-- [ ] Restyle platform breakdown using existing provider logos.
-- [ ] Retain trend, model comparison, recent requests, loading/empty states and all existing actions.
-- [ ] Respect reduced motion for new Chart.js presentation and maintain stable chart dimensions.
+- [x] Add compact brand-led heading; keep account summary visible in the first viewport.
+- [x] Replace floating statistic-card sections with organized metric bands.
+- [x] Restyle platform breakdown using existing provider logos.
+- [x] Retain trend, model comparison, recent requests, loading/empty states and all existing actions.
+- [x] Respect reduced motion for new Chart.js presentation and maintain stable chart dimensions.
 
 Owner worktree: `F:/GO/sub2-signal-dashboard`; no shared chart or billing edits.
 
@@ -64,12 +64,12 @@ Owner worktree: `F:/GO/sub2-signal-dashboard`; no shared chart or billing edits.
 
 Files: `frontend/src/views/user/KeysView.vue`, `UsageView.vue`, `frontend/src/styles/console-workspace.css`, focused view tests.
 
-- [ ] Add compact semantic page titles and consistent action/filter hierarchy.
-- [ ] Keep keys table, provider dialog and smart routing behavior unchanged.
-- [ ] Use recognizable tool icons with accessible labels and tooltips.
-- [ ] Make usage statistics ruled bands and group charts as unframed sections.
-- [ ] Preserve all seven usage filters, error tab, column selection and export.
-- [ ] Ensure 320px layouts wrap controls; only table containers may scroll horizontally.
+- [x] Add compact semantic page titles and consistent action/filter hierarchy.
+- [x] Keep keys table, provider dialog and smart routing behavior unchanged.
+- [x] Use recognizable tool icons with accessible labels and tooltips.
+- [x] Make usage statistics ruled bands and group charts as unframed sections.
+- [x] Preserve all seven usage filters, error tab, column selection and export.
+- [x] Ensure 320px layouts wrap controls; only table containers may scroll horizontally.
 
 Owner: main agent in the feature branch.
 
@@ -77,13 +77,13 @@ Owner: main agent in the feature branch.
 
 Files: `frontend/dev/*`, `frontend/vite.config.ts`, `frontend/package.json` (one preview script only).
 
-- [ ] Add `console-preview` serve-only mode; bind 127.0.0.1 and require a loopback host.
-- [ ] Seed a clearly fictional user and safe local session; do not add a production authentication bypass.
-- [ ] Intercept all `/api`, `/v1`, `/setup` requests; no passthrough to any real backend.
-- [ ] Supply dashboard/usage charts and key groups with realistic-shaped demonstration fixtures.
-- [ ] Support local key CRUD, search and pagination; unsupported writes fail explicitly.
-- [ ] Label the environment as local demonstration data; reset/restart never touches real users.
-- [ ] Test production-mode exclusion and unknown endpoint rejection.
+- [x] Add `console-preview` serve-only mode; bind 127.0.0.1 and require a loopback host.
+- [x] Seed a clearly fictional user and safe local session; do not add a production authentication bypass.
+- [x] Intercept all `/api`, `/v1`, `/setup` requests; no passthrough to any real backend.
+- [x] Supply dashboard/usage charts and key groups with realistic-shaped demonstration fixtures.
+- [x] Support local key CRUD, search and pagination; unsupported writes fail explicitly.
+- [x] Label the environment as local demonstration data; reset/restart never touches real users.
+- [x] Test production-mode exclusion and unknown endpoint rejection.
 
 Owner worktree: `F:/GO/sub2-signal-preview`.
 
@@ -92,22 +92,22 @@ Owner worktree: `F:/GO/sub2-signal-preview`.
 ### Task 5: Tests And Visual Checks
 
 - [x] Capture original keys desktop screenshot and run existing provider-dialog browser check at 1280/375/320.
-- [ ] Review each worker diff, then integrate local commits into the feature branch (no push).
-- [ ] Run `pnpm run typecheck` and eslint on every changed TS/Vue file.
-- [ ] Run KeysView, UsageView, locale completeness, relevant shell/dashboard and preview tests.
-- [ ] Build to `.artifacts/signal-dist` rather than overwriting backend embedded assets.
-- [ ] Compare production bundle size with baseline; target <=20KiB added gzip JS+CSS and zero new runtime dependency. Record actuals; investigate material excess.
-- [ ] Playwright: dashboard, keys, usage in dark/light at 1440, 375 and 320px, plus wide 1920px framing.
-- [ ] Verify chart canvas contains drawn pixels; inspect screenshots for overflow/overlap/low contrast.
-- [ ] Exercise sidebar, theme, date/filter, pagination, copy, create/edit/delete key and smart routing using local fixtures.
-- [ ] Check empty and failed API states, keyboard focus, reduced motion and excluded routes.
-- [ ] Sample settled-page main-thread work and interactions. No new decorative long tasks or perpetual rendering; dev timing is diagnostic, not a production Lighthouse claim.
-- [ ] Confirm browser requests remain local and a production build contains no demo auth/fixtures.
+- [x] Review each worker diff, then integrate local commits into the feature branch (no push).
+- [x] Run `pnpm run typecheck` and eslint on every changed TS/Vue file.
+- [x] Run KeysView, UsageView, locale completeness, relevant shell/dashboard and preview tests.
+- [x] Build to `.artifacts/signal-dist` rather than overwriting backend embedded assets.
+- [x] Compare production bundle size with baseline; target <=20KiB added gzip JS+CSS and zero new runtime dependency. Record actuals; investigate material excess.
+- [x] Playwright: dashboard, keys, usage in dark/light at 1440, 375 and 320px, plus wide 1920px framing.
+- [x] Verify chart canvas contains drawn pixels; inspect screenshots for overflow/overlap/low contrast.
+- [x] Exercise sidebar, theme, date/filter, pagination, copy, create/edit/delete key and smart routing using local fixtures.
+- [x] Check empty and failed API states, keyboard focus, reduced motion and excluded routes.
+- [x] Sample settled-page main-thread work and interactions. No new decorative long tasks or perpetual rendering; dev timing is diagnostic, not a production Lighthouse claim.
+- [x] Confirm browser requests remain local and a production build contains no demo auth/fixtures.
 
 ### Task 6: Handoff
 
-- [ ] Leave verified loopback server on `http://127.0.0.1:4317/dashboard`.
-- [ ] Record exact commands, test counts, screenshots, limitations and final local commit(s) below.
+- [x] Leave verified loopback server on `http://127.0.0.1:4317/dashboard`.
+- [x] Record exact commands, test counts, screenshots, limitations and final local commit(s) below.
 - [ ] Wait for owner experience/approval. Do not publish a release or deploy to production.
 
 ## Rollback
@@ -116,8 +116,33 @@ This is frontend-only, local-only work on a feature branch. Main and production 
 
 ## Verification Record
 
-- Baseline: key provider browser check passed at 1280/375/320; no page errors. Original screenshot: `.artifacts/key-provider-before.png`.
-- Pending: implementation, integration, final browser and build checks.
+- Baseline: key provider browser check passed at 1280/375/320; no page errors. Build baseline retained in `.artifacts/signal-baseline-dist`. The legacy screenshot helper reused its filenames in later runs; final screenshots have a separate directory below.
+- Implementation and worker integration complete. Owner acceptance and production deployment are deliberately pending.
 - Main-agent preliminary checks: existing 27 page/locale tests passed; after adding named-tool tests, KeysView 17 and UsageView 9 passed. Chart tests (5 token, 3 group, 4 model) passed, including theme switching and opt-in motion.
 - Added a narrowly scoped chart presentation change: optional animation duration leaves other callers unchanged. The token chart now observes theme class changes, with VueUse-managed listener cleanup.
 - Fixed the newly left-aligned keys toolbar's mobile column menu anchoring before browser acceptance.
+
+### Final Evidence (2026-09-18)
+
+- `pnpm run typecheck`: passed. ESLint over all 30 changed TS/Vue/MJS files: passed. `git diff --check`: passed.
+- Focused Vitest suite: 85 tests across 12 files passed (dashboard, shell, chart contracts, keys, usage, locale keys). Isolated preview suite: 14 tests across 2 files passed. Total: 99.
+- Build: `pnpm exec vite build --outDir ../.artifacts/signal-dist --logLevel error`, passed; backend embedded assets were not overwritten.
+- Sum of all JS/CSS gzip assets: 1,671,992 bytes baseline, 1,678,375 bytes final. Increase: 6,383 bytes, below the 20KiB budget. No new runtime dependency. Existing large admin bundle/Browserslist warnings remain; they are not introduced by this branch.
+- Browser matrix: 3 routes x 4 viewport widths (320, 375, 1440, 1920) x 2 themes = 24 captures. All have one H1, no document overflow, no broken visible images, and nonblank chart canvases where applicable.
+- Browser interactions: search/empty state, key creation, provider changes clearing stale groups, mobile dialog and column menu, copy, edit, disable/enable, delete confirmation, CSV export, error tab, date presets/apply, sidebar collapse, mobile navigation, theme toggle, excluded route and trailing-slash route, initial overview failure and refresh recovery. No uncaught page errors.
+- Cross-provider ordered smart-route preservation is also covered by the existing KeysView regression suite.
+- Settled dashboard CDP sample: 4ms TaskDuration over 3,000ms, 24MiB JS heap in the final sample. This is one local Chrome dev-mode sample, not a production load test or memory-leak guarantee.
+- Production asset scan: no demo token, demo identity or demo key markers. Preview tests reject public binding, foreign origins, rebinding hosts and unknown API writes; no real backend is configured in preview mode.
+- The machine's security software injects a Kaspersky request into browser pages. Browser tests blocked it and recorded it separately from application requests; no application-origin external request was observed.
+- Screenshots and reports: `.artifacts/console-signal/`; checks: `.artifacts/console-signal-check.cjs` and `.artifacts/console-signal-interactions.cjs`; bundle comparison: `bundle-report.json`.
+- Start command in `frontend`: `pnpm run dev:console`. The delivered background process binds only `127.0.0.1:4317`. Preview data lives only in process memory and resets on restart.
+- Local integrated commits: `dbc7595d0` (workspaces/plan), `92e388884` (shell), `c2fda3009` (dashboard), `a67a9b232` (isolated preview); final follow-up records integration fixes. No push, release, SSH, production configuration, database or traffic change.
+
+### Lessons From Verification
+
+1. A Vue class override can lose to scoped Tailwind dark utilities. Remove mutually exclusive root backgrounds and use explicit narrow selectors; screenshots caught what unit tests could not.
+2. HTML-injected `localStorage.setItem` must receive a JSON string, not an object literal. Execute the bootstrap in a test context and parse the stored user, rather than only matching HTML text.
+3. Preview contracts must mirror real form payloads, including `expires_at: ''` clearing expiry, supported sort fields and `by_platform` summaries. Fix the mock, not the production form.
+4. Keep mobile labels from shrinking into vertical characters. Anchor menus inside the viewport, and wait for short entrance animations to finish before visual assertions.
+5. Full route isolation includes matched routes with a trailing slash and teleported dialogs. Test both entering and leaving the scoped shell.
+6. Treat a polished demo as visual/interaction evidence only. No real model request, payment or production rollout was tested or performed for this task.

@@ -17,6 +17,13 @@
         <UserDashboardCharts v-model:startDate="startDate" v-model:endDate="endDate" v-model:granularity="granularity" :loading="loadingCharts" :trend="trendData" :models="modelStats" @dateRangeChange="loadCharts" @granularityChange="loadCharts" @refresh="refreshAll" />
         <UserDashboardRecentUsage :data="recentUsage" :loading="loadingUsage" />
       </template>
+      <div v-else class="signal-error" role="alert">
+        <Icon name="exclamationCircle" size="md" />
+        <span>{{ t('dashboard.loadFailed') }}</span>
+        <button class="btn btn-secondary" @click="refreshAll">
+          <Icon name="refresh" size="sm" class="mr-2" />{{ t('common.refresh') }}
+        </button>
+      </div>
     </div>
   </AppLayout>
 </template>
@@ -90,6 +97,7 @@ onMounted(() => { refreshAll() })
   flex-shrink: 0;
 }
 .signal-loading { display: flex; justify-content: center; padding: 64px 0; }
+.signal-error { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 32px 0; color: var(--signal-muted); }
 @media (max-width: 480px) {
   .signal-heading { flex-wrap: wrap; gap: 4px 12px; }
   .signal-heading h1 { font-size: 24px; }

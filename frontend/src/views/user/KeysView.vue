@@ -24,6 +24,7 @@
             />
           </div>
           <EndpointPopover
+            class="signal-key-endpoints"
             v-if="publicSettings?.api_base_url || customEndpoints.length > 0"
             :api-base-url="publicSettings?.api_base_url || ''"
             :custom-endpoints="customEndpoints"
@@ -447,6 +448,7 @@
 
       <template #pagination>
         <Pagination
+          class="signal-pagination"
           v-if="pagination.total > 0"
           :page="pagination.page"
           :total="pagination.total"

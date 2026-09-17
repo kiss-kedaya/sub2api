@@ -203,6 +203,7 @@
         />
 
         <Pagination
+          class="signal-pagination"
           v-if="pagination.total > 0"
           :page="pagination.page"
           :total="pagination.total"
