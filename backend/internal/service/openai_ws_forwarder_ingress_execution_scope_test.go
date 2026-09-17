@@ -233,6 +233,8 @@ func runOpenAIWSCodexThreadPair(t *testing.T, threadA, threadB string) (serverEr
 	cfg := newOpenAIWSExecutionScopeTestConfig()
 
 	gatedConn := newOpenAIWSGatedConn(`{"type":"response.completed","response":{"id":"resp_thread_a","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
+	releaseA := sync.OnceFunc(func() { close(gatedConn.gate) })
+	defer releaseA()
 	fastConn := &openAIWSCaptureConn{
 		events: [][]byte{
 			[]byte(`{"type":"response.completed","response":{"id":"resp_thread_b","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
@@ -307,7 +309,11 @@ func runOpenAIWSCodexThreadPair(t *testing.T, threadA, threadB string) (serverEr
 	cancelB()
 	require.NoError(t, readErrB, "B 必须正常完成")
 	require.Equal(t, "resp_thread_b", gjson.GetBytes(completedB, "response.id").String())
-	close(gatedConn.gate)
+	// Keep the old request in flight until same-thread preemption is observed.
+	// Releasing it here would race its successful terminal event with the close frame.
+	if threadA != threadB {
+		releaseA()
+	}
 
 	readCtxA, cancelA := context.WithTimeout(context.Background(), 5*time.Second)
 	_, completedA, aReadErr := connA.Read(readCtxA)
