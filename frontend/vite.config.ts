@@ -77,7 +77,15 @@ function injectPublicSettings(backendUrl: string): Plugin {
   }
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(async ({ mode, command, isPreview }) => {
+  if (mode === 'console-preview') {
+    if (command !== 'serve' || isPreview) {
+      throw new Error('console-preview is local dev only; build and preview are disabled')
+    }
+    const { consolePreviewConfig } = await import('./dev/console-preview')
+    return consolePreviewConfig()
+  }
+
   // 加载环境变量
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080'
