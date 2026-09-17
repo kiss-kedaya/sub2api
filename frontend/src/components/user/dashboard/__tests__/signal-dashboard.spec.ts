@@ -195,6 +195,27 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
     wrapper.unmount()
   })
 
+  it('offers a refresh command when the initial overview request fails', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    getDashboardStats.mockRejectedValueOnce(new Error('Local test failure'))
+    const wrapper = mount(Dashboard, { global: { stubs: {
+      AppLayout: { template: '<main><slot /></main>' },
+      UserDashboardQuickActions: true, UserDashboardStats: true,
+      UserDashboardCharts: true, UserDashboardRecentUsage: true,
+    } } })
+    try {
+      await flushPromises()
+      expect(wrapper.get('[role="alert"]').text()).toContain('dashboard.loadFailed')
+      await wrapper.get('[role="alert"] button').trigger('click')
+      await flushPromises()
+      expect(getDashboardStats).toHaveBeenCalledTimes(2)
+      expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+      error.mockRestore()
+    }
+  })
+
   it('shows the configured brand and preserves date-change versus full-refresh fetches', async () => {
     const wrapper = mount(Dashboard, { global: { stubs: {
       AppLayout: { template: '<main><slot /></main>' },

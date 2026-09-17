@@ -1,6 +1,7 @@
 import { request } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
+import { runInNewContext } from 'node:vm'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createServer, loadConfigFromFile, type ViteDevServer } from 'vite'
 import { consolePreviewConfig, consolePreviewPlugin, PREVIEW_MODE } from './console-preview'
@@ -110,6 +111,19 @@ describe('preview server isolation', () => {
     expect(response.text).toContain('user_guide_900001_user_v4_interactive')
     expect(response.text.indexOf("localStorage.setItem('auth_token'")).toBeLessThan(response.text.indexOf('src="/src/main.ts"'))
     expect(response.text).not.toContain('should-never-connect')
+    const bootstrap = response.text.match(/<script>\s*(window\.__APP_CONFIG__[\s\S]*?)<\/script>/)?.[1]
+    expect(bootstrap).toBeDefined()
+    const storage = new Map<string, string>()
+    runInNewContext(bootstrap!, {
+      window: {}, location: { origin: `http://127.0.0.1:${port}` },
+      localStorage: {
+        setItem: (key: string, value: unknown) => storage.set(key, String(value)),
+        getItem: (key: string) => storage.get(key) ?? null,
+        removeItem: (key: string) => storage.delete(key),
+      },
+      document: { documentElement: { classList: { toggle: vi.fn() } }, addEventListener: vi.fn() },
+    })
+    expect(JSON.parse(storage.get('auth_user')!)).toMatchObject({ id: 900001, role: 'user' })
     const publicSettings = JSON.parse((await http('/api/v1/settings/public')).text).data
     expect(publicSettings.site_name).toBe('kedaya.ai')
     expect(publicSettings.api_base_url).toBe(`http://127.0.0.1:${port}`)

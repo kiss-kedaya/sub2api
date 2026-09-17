@@ -358,7 +358,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.console-signal .table-page-layout .table-scroll-container {
+.console-signal .signal-main .table-page-layout .table-scroll-container {
   border-inline: 0;
   border-radius: 0;
   background: var(--signal-surface);
@@ -512,6 +512,31 @@ body:has(.console-signal) > .select-dropdown-portal .select-option-selected {
   color: #d34040;
 }
 
+html .console-signal .signal-main :is(.date-picker-trigger, .date-picker-dropdown, .date-picker-input) {
+  border-color: var(--signal-control-line);
+  border-radius: 6px;
+  background: var(--signal-surface);
+  color: var(--signal-text);
+}
+
+.console-signal .signal-main :is(.date-picker-icon, .date-picker-chevron, .date-picker-label) {
+  color: var(--signal-muted);
+}
+
+.console-signal .signal-main .date-picker-preset {
+  color: var(--signal-text);
+}
+
+.console-signal .signal-main .date-picker-preset-active {
+  color: var(--signal-accent);
+  background: var(--signal-accent-soft);
+}
+
+.console-signal .signal-main .date-picker-apply {
+  background: var(--signal-accent);
+  color: var(--signal-on-accent);
+}
+
 @media (min-width: 768px) {
   .console-signal .header-inner {
     padding-inline: 24px;
@@ -537,6 +562,31 @@ body:has(.console-signal) > .select-dropdown-portal .select-option-selected {
 }
 
 @media (max-width: 639px) {
+  .console-signal .signal-main .date-picker-dropdown {
+    min-width: 0;
+    width: min(320px, calc(100vw - 32px));
+    max-height: min(440px, calc(100dvh - 100px));
+    overflow: auto;
+  }
+
+  .console-signal :is(.signal-date-control, .signal-range-bar > div > div:first-child) {
+    position: relative;
+    width: 100%;
+  }
+
+  .console-signal :is(.signal-date-control, .signal-range-bar > div > div:first-child) > .relative {
+    position: static;
+  }
+
+  .console-signal .date-picker-custom {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .console-signal .date-picker-separator {
+    display: none;
+  }
+
   .console-signal .signal-breadcrumb-home,
   .console-signal .signal-breadcrumb > svg {
     display: none;

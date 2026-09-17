@@ -122,7 +122,7 @@ export function consolePreviewPlugin(): Plugin {
             window.__APP_CONFIG__ = ${json(settings)};
             window.__APP_CONFIG__.api_base_url = location.origin;
             localStorage.setItem('auth_token', ${json(DEMO_TOKEN)});
-            localStorage.setItem('auth_user', ${json(api.user)});
+            localStorage.setItem('auth_user', ${json(JSON.stringify(api.user))});
             localStorage.removeItem('refresh_token');
             localStorage.removeItem('token_expires_at');
             localStorage.removeItem('pending_auth_session');

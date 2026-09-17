@@ -1,7 +1,7 @@
 <template>
   <div
-    class="min-h-screen bg-gray-50 dark:bg-dark-950"
-    :class="{ 'console-signal': isConsoleSignal }"
+    class="min-h-screen"
+    :class="isConsoleSignal ? 'console-signal' : 'bg-gray-50 dark:bg-dark-950'"
   >
     <!-- Background Decoration -->
     <div v-if="!isConsoleSignal" class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>

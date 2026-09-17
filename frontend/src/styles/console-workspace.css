@@ -61,6 +61,28 @@
   padding-top: 20px;
 }
 
+.console-signal .signal-key-endpoints > div {
+  max-width: 100%;
+  flex-wrap: wrap;
+  background: var(--signal-surface);
+  border-color: var(--signal-line);
+}
+
+.console-signal .signal-key-endpoints > div > span {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.console-signal .signal-key-endpoints .group\/endpoint {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.console-signal .signal-key-endpoints code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .console-signal .signal-keys .table-scroll-container {
   border-radius: 6px;
   background: var(--signal-surface);
@@ -156,6 +178,27 @@
   font-size: 12px;
 }
 
+.console-signal .signal-main .signal-pagination {
+  border-color: var(--signal-line);
+  background: transparent;
+}
+
+.console-signal .signal-main .signal-pagination button {
+  border-color: var(--signal-line);
+  background: var(--signal-surface);
+  color: var(--signal-text);
+}
+
+.console-signal .signal-main .signal-pagination button[aria-current='page'] {
+  border-color: var(--signal-accent);
+  background: var(--signal-accent-soft);
+  color: var(--signal-accent);
+}
+
+.console-signal .signal-main .signal-pagination button:hover:not(:disabled) {
+  background: var(--signal-hover);
+}
+
 @media (min-width: 1024px) {
   .console-signal .signal-usage-chart-grid > :nth-child(2) {
     border-left: 1px solid var(--signal-line);
@@ -174,6 +217,32 @@
 }
 
 @media (max-width: 639px) {
+  .console-signal .signal-keys [data-field] > span {
+    flex-shrink: 0;
+  }
+
+  .console-signal .signal-keys [data-field='group'] {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .console-signal .signal-keys [data-field='group'] > div {
+    text-align: left;
+  }
+
+  .console-signal .signal-keys [data-field='group'] button {
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+
+  .console-signal .signal-keys [data-field='group'] button > span {
+    white-space: nowrap;
+  }
+
+  .console-signal .signal-keys [data-field='group'] button > svg {
+    display: none;
+  }
+
   .console-signal .signal-workspace-title h1 {
     font-size: 24px;
   }
