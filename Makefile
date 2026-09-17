@@ -10,6 +10,13 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/user/__tests__/PaymentView.spec.ts \
 	src/views/user/__tests__/PaymentResultView.spec.ts \
 	src/views/user/__tests__/ChannelStatusView.mode.spec.ts \
+	src/views/user/__tests__/KeysView.spec.ts \
+	src/views/user/__tests__/UsageView.spec.ts \
+	src/components/layout/__tests__/ConsoleSignal.spec.ts \
+	src/components/user/dashboard/__tests__/signal-dashboard.spec.ts \
+	src/components/charts/__tests__/TokenUsageTrend.spec.ts \
+	src/components/charts/__tests__/ModelDistributionChart.spec.ts \
+	src/components/charts/__tests__/GroupDistributionChart.spec.ts \
 	src/components/user/profile/__tests__/ProfileInfoCard.spec.ts \
 	src/components/user/profile/__tests__/ProfileBalanceNotifyCard.spec.ts \
 	src/views/user/__tests__/RedeemView.spec.ts \
@@ -40,6 +47,7 @@ test-frontend:
 	@pnpm --dir frontend run lint:check
 	@pnpm --dir frontend run typecheck
 	@$(MAKE) test-frontend-critical
+	@pnpm --dir frontend exec vitest run --config dev/vitest.config.ts
 
 test-frontend-critical:
 	@pnpm --dir frontend exec vitest run $(FRONTEND_CRITICAL_VITEST)
