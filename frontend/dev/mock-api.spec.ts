@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { createMockApi, PreviewError } from './mock-api'
 import type { ApiKey, PaginatedResponse, UsageLog } from '../src/types'
+import type { UserDashboardStats } from '../src/api/usage'
 
 const date = new Date('2026-09-17T13:00:00Z')
 const query = (value = '') => new URLSearchParams(value)
 
 describe('local demo API contracts', () => {
+  it('supplies consistent platform totals and recent activity even immediately after midnight', () => {
+    const api = createMockApi(new Date('2026-09-17T16:01:00Z'))
+    const stats = api.handle('GET', '/api/v1/usage/dashboard/stats', query('timezone=Asia%2FShanghai')) as UserDashboardStats
+    expect(stats.today_requests).toBeGreaterThan(0)
+    expect(stats.rpm).toBeGreaterThan(0)
+    expect(stats.by_platform).toHaveLength(6)
+    expect(stats.by_platform!.reduce((sum, item) => sum + item.total_requests, 0)).toBe(stats.total_requests)
+    expect(stats.by_platform!.reduce((sum, item) => sum + item.total_actual_cost, 0)).toBeCloseTo(stats.total_actual_cost, 8)
+  })
+
   it('provides fake identities, real pagination, filtering and sorting', () => {
     const api = createMockApi(date)
     expect(api.user.email).toMatch(/\.test$/)
@@ -23,6 +34,8 @@ describe('local demo API contracts', () => {
     const created = api.handle('POST', '/api/v1/keys', query(), { name: '浏览器演示', group_ids: [1, 2], quota: 8, expires_in_days: 7 }) as ApiKey
     expect(created).toMatchObject({ id: 27, group_id: 1, group_ids: [1, 2], quota: 8, status: 'active' })
     expect(created.expires_at).toBe('2026-09-24T13:00:00.000Z')
+    api.handle('PUT', '/api/v1/keys/27', query(), { expires_at: '' })
+    expect(api.handle('GET', '/api/v1/keys/27', query())).toMatchObject({ expires_at: null })
     api.handle('PUT', '/api/v1/keys/27', query(), { name: '已修改', status: 'inactive', group_id: 3 })
     expect(api.handle('GET', '/api/v1/keys/27', query())).toMatchObject({ name: '已修改', status: 'inactive', group_id: 3, group_ids: [3] })
     expect(() => api.handle('PUT', '/api/v1/keys/27', query(), { name: '', group_id: 999 })).toThrow()
