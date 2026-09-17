@@ -135,6 +135,7 @@
                   v-for="(_, index) in 6"
                   :key="index"
                   :ref="(el) => setInputRef(el, index)"
+                  :value="code[index]"
                   type="text"
                   maxlength="1"
                   inputmode="numeric"
