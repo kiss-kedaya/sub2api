@@ -126,6 +126,7 @@ type DistributionMetric = 'tokens' | 'actual_cost'
 const props = withDefaults(defineProps<{
   groupStats: GroupStat[]
   loading?: boolean
+  animationDuration?: number
   metric?: DistributionMetric
   showMetricToggle?: boolean
   enableBreakdown?: boolean
@@ -211,6 +212,7 @@ const chartData = computed(() => {
 })
 
 const doughnutOptions = computed(() => ({
+  ...(props.animationDuration === undefined ? {} : { animation: { duration: props.animationDuration } }),
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
