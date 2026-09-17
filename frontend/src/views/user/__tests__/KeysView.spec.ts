@@ -39,6 +39,7 @@ const messages: Record<string, string> = {
   'common.refresh': 'Refresh',
   'common.status': 'Status',
   'keys.apiKey': 'API Key',
+  'keys.title': 'API Keys',
   'keys.allGroups': 'All Groups',
   'keys.allStatus': 'All Status',
   'keys.columnSettings': 'Column Settings',
@@ -300,6 +301,22 @@ describe('user KeysView column settings', () => {
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
     isCurrentStep.mockReturnValue(false)
+  })
+
+  it('keeps named icon tools and the key count in the workspace heading', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.get('h1').text()).toContain('API Keys')
+    expect(wrapper.get('.signal-count').text()).toBe('1')
+    const columns = wrapper.get('button[aria-label="Column Settings"]')
+    expect(columns.attributes('title')).toBe('Column Settings')
+    expect(columns.attributes('aria-expanded')).toBe('false')
+    await columns.trigger('click')
+    expect(columns.attributes('aria-expanded')).toBe('true')
+    listKeys.mockClear()
+    await wrapper.get('button[aria-label="Refresh"]').trigger('click')
+    await flushPromises()
+    expect(listKeys).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 
   it('filters groups by provider and never submits a stale group after switching', async () => {

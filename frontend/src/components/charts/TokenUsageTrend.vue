@@ -19,7 +19,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { useMutationObserver } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import {
   Chart as ChartJS,
@@ -52,11 +53,13 @@ const { t } = useI18n()
 const props = defineProps<{
   trendData: TrendDataPoint[]
   loading?: boolean
+  animationDuration?: number
 }>()
 
-const isDarkMode = computed(() => {
-  return document.documentElement.classList.contains('dark')
-})
+const isDarkMode = ref(document.documentElement.classList.contains('dark'))
+useMutationObserver(document.documentElement, () => {
+  isDarkMode.value = document.documentElement.classList.contains('dark')
+}, { attributes: true, attributeFilter: ['class'] })
 
 const chartColors = computed(() => ({
   text: isDarkMode.value ? '#e5e7eb' : '#374151',
@@ -124,6 +127,7 @@ const chartData = computed(() => {
 })
 
 const lineOptions = computed(() => ({
+  ...(props.animationDuration === undefined ? {} : { animation: { duration: props.animationDuration } }),
   responsive: true,
   maintainAspectRatio: false,
   interaction: {

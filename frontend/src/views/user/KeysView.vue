@@ -1,8 +1,8 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <TablePageLayout class="signal-keys">
       <template #filters>
-        <div class="flex flex-col gap-3">
+        <div class="signal-key-filters flex flex-col gap-3">
           <div class="flex flex-wrap items-center gap-3">
             <SearchInput
               v-model="filterSearch"
@@ -12,13 +12,13 @@
             />
             <Select
               :model-value="filterGroupId"
-              class="w-40"
+              class="w-full sm:w-40"
               :options="groupFilterOptions"
               @update:model-value="onGroupFilterChange"
             />
             <Select
               :model-value="filterStatus"
-              class="w-40"
+              class="w-full sm:w-40"
               :options="statusFilterOptions"
               @update:model-value="onStatusFilterChange"
             />
@@ -32,29 +32,34 @@
       </template>
 
       <template #actions>
-        <div class="flex justify-end gap-3">
+        <div class="signal-workspace-heading">
+          <div class="signal-workspace-title">
+            <p class="signal-workspace-index" aria-hidden="true">02 / ACCESS</p>
+            <h1>{{ t('keys.title') }} <span class="signal-count">{{ pagination.total }}</span></h1>
+          </div>
+          <div class="signal-workspace-actions">
           <button
             @click="loadApiKeys"
             :disabled="loading"
-            class="btn btn-secondary"
+            class="btn btn-secondary btn-icon"
             :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
           >
             <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
           </button>
           <div class="relative" ref="columnDropdownRef">
             <button
               @click="showColumnDropdown = !showColumnDropdown"
-              class="btn btn-secondary px-2 md:px-3"
+              class="btn btn-secondary btn-icon"
               :title="t('keys.columnSettings')"
+              :aria-label="t('keys.columnSettings')"
+              :aria-expanded="showColumnDropdown"
             >
-              <svg class="h-4 w-4 md:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125z" />
-              </svg>
-              <span class="hidden md:inline">{{ t('keys.columnSettings') }}</span>
+              <Icon name="grid" size="md" />
             </button>
             <div
               v-if="showColumnDropdown"
-              class="absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
+              class="absolute left-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800 sm:left-auto sm:right-0"
             >
               <button
                 v-for="col in toggleableColumns"
@@ -77,6 +82,7 @@
             <Icon name="plus" size="md" class="mr-2" />
             {{ t('keys.createKey') }}
           </button>
+          </div>
         </div>
       </template>
 
@@ -1225,6 +1231,7 @@
 </template>
 
 <script setup lang="ts">
+import '@/styles/console-workspace.css'
 	import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'

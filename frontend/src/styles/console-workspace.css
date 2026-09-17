@@ -1,0 +1,207 @@
+.console-signal .signal-workspace-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-width: 0;
+}
+
+.console-signal .signal-workspace-index {
+  margin-bottom: 8px;
+  color: var(--signal-muted);
+  font: 11px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0;
+}
+
+.console-signal .signal-workspace-title h1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  color: var(--signal-text);
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+
+.console-signal .signal-count {
+  border: 1px solid var(--signal-line);
+  border-radius: 4px;
+  padding: 3px 8px;
+  color: var(--signal-muted);
+  font: 12px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.console-signal .signal-workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.console-signal .signal-period {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--signal-muted);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.console-signal .signal-keys {
+  gap: 22px;
+  min-width: 0;
+}
+
+.console-signal .signal-key-filters {
+  border-top: 1px solid var(--signal-line);
+  padding-top: 20px;
+}
+
+.console-signal .signal-keys .table-scroll-container {
+  border-radius: 6px;
+  background: var(--signal-surface);
+  border-color: var(--signal-line);
+  box-shadow: none;
+}
+
+.console-signal .signal-keys .table-scroll-container :is(th, td) {
+  padding: 16px;
+  border-color: var(--signal-line);
+}
+
+.console-signal .signal-keys .table-scroll-container th {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--signal-muted);
+}
+
+.console-signal .signal-usage-metrics {
+  gap: 0;
+  border-top: 1px solid var(--signal-line);
+  border-bottom: 1px solid var(--signal-line);
+}
+
+.console-signal .signal-usage-metrics > .card {
+  align-items: flex-start;
+  border: 0;
+  border-right: 1px solid var(--signal-line);
+  border-radius: 0;
+  padding: 24px 20px;
+  background: transparent;
+  box-shadow: none;
+  min-width: 0;
+}
+
+.console-signal .signal-usage-metrics > .card:last-child {
+  border-right: 0;
+}
+
+.console-signal .signal-usage-metrics > .card > div:first-child {
+  background: transparent;
+  color: var(--signal-muted);
+  padding: 0;
+  padding-top: 3px;
+  flex-shrink: 0;
+}
+
+.console-signal .signal-usage-metrics > .card > div:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.console-signal .signal-usage-metrics .text-xl {
+  margin: 6px 0;
+  color: var(--signal-text);
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.console-signal .signal-usage-metrics > .card:nth-child(3) .text-xl {
+  color: var(--signal-amber);
+}
+
+.console-signal .signal-usage-metrics :is(.text-gray-500, .text-gray-400) {
+  color: var(--signal-muted);
+}
+
+.console-signal .signal-range-bar {
+  padding: 4px 0 20px;
+  border-bottom: 1px solid var(--signal-line);
+}
+
+.console-signal .signal-usage-chart-grid > * {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 12px 0 24px;
+}
+
+.console-signal .signal-log-filters {
+  padding: 24px 0;
+  border-top: 1px solid var(--signal-line);
+  border-bottom: 1px solid var(--signal-line);
+}
+
+.console-signal .signal-log-filters .input-label {
+  color: var(--signal-muted);
+  font-size: 12px;
+}
+
+@media (min-width: 1024px) {
+  .console-signal .signal-usage-chart-grid > :nth-child(2) {
+    border-left: 1px solid var(--signal-line);
+    padding-left: 24px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .console-signal .signal-usage-metrics > .card:nth-child(2) {
+    border-right: 0;
+  }
+
+  .console-signal .signal-usage-metrics > .card:nth-child(-n+2) {
+    border-bottom: 1px solid var(--signal-line);
+  }
+}
+
+@media (max-width: 639px) {
+  .console-signal .signal-workspace-title h1 {
+    font-size: 24px;
+  }
+
+  .console-signal .signal-workspace-heading {
+    gap: 16px;
+  }
+
+  .console-signal .signal-workspace-actions {
+    width: 100%;
+  }
+
+  .console-signal .signal-workspace-actions > .btn-primary {
+    flex: 1;
+  }
+
+  .console-signal .signal-usage-metrics > .card {
+    padding: 18px 10px;
+    gap: 6px;
+  }
+
+  .console-signal .signal-usage-metrics .text-xl {
+    font-size: 19px;
+  }
+
+  .console-signal .signal-range-bar > div > div {
+    flex-wrap: wrap;
+    min-width: 0;
+    margin-left: 0;
+  }
+}

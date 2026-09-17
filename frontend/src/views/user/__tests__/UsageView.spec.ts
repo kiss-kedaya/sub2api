@@ -52,6 +52,7 @@ const messages: Record<string, string> = {
   'admin.usage.allGroups': 'All groups',
   'admin.usage.allModels': 'All models',
   'usage.allApiKeys': 'All API Keys',
+  'usage.title': 'Usage',
   'usage.errors.allKeys': 'All API Keys',
   'usage.tabs.usage': 'Usage records',
   'usage.tabs.errors': 'Error records',
@@ -208,6 +209,23 @@ describe('user UsageView', () => {
     listMyErrorRequests.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
     list.mockResolvedValue({ items: [{ id: 1, name: 'demo-key' }], total: 1, page: 1, page_size: 100, pages: 1 })
     getAvailable.mockResolvedValue([{ id: 1, name: 'default' }])
+  })
+
+  it('preserves named toolbar commands and a semantic page heading', async () => {
+    const wrapper = mountUsageView()
+    await flushPromises()
+    expect(wrapper.get('h1').text()).toBe('Usage')
+    const columns = wrapper.get('button[aria-label="Columns"]')
+    expect(columns.attributes('aria-expanded')).toBe('false')
+    await columns.trigger('click')
+    expect(columns.attributes('aria-expanded')).toBe('true')
+    query.mockClear()
+    await wrapper.get('button[aria-label="Refresh"]').trigger('click')
+    await flushPromises()
+    expect(query).toHaveBeenCalled()
+    expect(wrapper.get('button[aria-label="Reset"]').attributes('title')).toBe('Reset')
+    expect(wrapper.findAll('button').some(button => button.text().includes('Export CSV'))).toBe(true)
+    wrapper.unmount()
   })
 
   it('loads logs, stats, model stats, and snapshot on first render', async () => {
