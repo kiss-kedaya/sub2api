@@ -471,12 +471,54 @@
           />
         </div>
 
+        <fieldset>
+          <legend class="input-label">{{ t('keys.providerLabel') }}</legend>
+          <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <label
+              v-for="provider in keyProviders"
+              :key="provider.value"
+              class="relative min-w-0"
+            >
+              <input
+                type="radio"
+                name="key-provider"
+                :value="provider.value"
+                :checked="activeKeyProvider === provider.value"
+                :disabled="!availableKeyProviders.has(provider.value)"
+                class="peer sr-only"
+                @change="selectKeyProvider(provider.value)"
+              />
+              <span class="flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border border-gray-300 px-2 py-3 text-sm font-semibold text-gray-800 transition-colors peer-enabled:cursor-pointer peer-enabled:hover:border-teal-400 peer-checked:border-teal-500 peer-checked:bg-teal-50 peer-checked:ring-1 peer-checked:ring-teal-500 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-teal-500 peer-disabled:cursor-not-allowed peer-disabled:opacity-40 dark:border-dark-500 dark:text-gray-100 dark:peer-checked:bg-teal-500/10">
+                <span class="flex h-8 items-center justify-center gap-1" aria-hidden="true">
+                  <span
+                    v-for="platform in provider.icons"
+                    :key="platform"
+                    :class="['flex h-8 w-8 items-center justify-center rounded-lg', platformBadgeLightClass(platform)]"
+                  >
+                    <PlatformIcon :platform="platform" size="lg" />
+                  </span>
+                </span>
+                <span class="max-w-full break-words text-center">{{ provider.label }}</span>
+              </span>
+              <span
+                v-if="activeKeyProvider === provider.value"
+                class="pointer-events-none absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-teal-500 text-white"
+                aria-hidden="true"
+              >
+                <Icon name="check" size="xs" />
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
         <div>
-          <label class="input-label">{{ t('keys.groupLabel') }}</label>
-          <label class="mt-1 mb-3 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
-            <input v-model="formData.smart_routing" type="checkbox" class="rounded border-gray-300" />
-            {{ t('keys.smartRouting') }}
-          </label>
+          <div class="mb-2 flex items-center justify-between gap-3">
+            <label class="input-label mb-0">{{ t('keys.groupLabel') }}</label>
+            <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+              <input v-model="formData.smart_routing" type="checkbox" class="rounded border-gray-300" />
+              {{ t('keys.smartRouting') }}
+            </label>
+          </div>
           <p v-if="formData.smart_routing" class="mb-3 text-xs text-gray-500 dark:text-dark-400">
             {{ t('keys.smartRoutingHint') }}
           </p>
@@ -519,7 +561,7 @@
           <Select
             v-else
             v-model="formData.group_id"
-            :options="groupOptions"
+            :options="providerGroupOptions"
             :placeholder="t('keys.selectGroup')"
             :searchable="true"
             :search-placeholder="t('keys.searchGroup')"
@@ -968,7 +1010,7 @@
             form="key-form"
             type="submit"
             :disabled="submitting"
-            class="btn btn-primary"
+            class="btn bg-teal-600 text-white shadow-sm hover:bg-teal-700 focus-visible:ring-teal-500/30 dark:bg-teal-500 dark:hover:bg-teal-600"
             data-tour="key-form-submit"
           >
             <svg
@@ -1206,11 +1248,13 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+	import PlatformIcon from '@/components/common/PlatformIcon.vue'
 	import type { ApiKey, CustomEndpoint, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
+import { platformBadgeLightClass } from '@/utils/platformColors'
 import {
   buildCcSwitchImportDeeplink,
   CC_SWITCH_APP_LABEL_KEYS,
@@ -1533,6 +1577,49 @@ const groupOptions = computed(() =>
 
 const groupOptionById = (id: number) => groupOptions.value.find((opt) => opt.value === id)
 
+type KeyProvider = 'anthropic' | 'openai' | 'cn' | 'other'
+
+const keyProviders = computed<Array<{ value: KeyProvider; label: string; icons: GroupPlatform[] }>>(() => [
+  { value: 'anthropic', label: 'Anthropic', icons: ['anthropic'] },
+  { value: 'openai', label: 'OpenAI', icons: ['openai'] },
+  { value: 'cn', label: t('keys.providerCN'), icons: ['deepseek', 'kimi'] },
+  { value: 'other', label: t('keys.providerOther'), icons: ['gemini', 'grok'] },
+])
+
+const keyProviderForPlatform = (platform: GroupPlatform): KeyProvider => {
+  switch (platform) {
+    case 'anthropic':
+    case 'openai':
+      return platform
+    case 'kimi':
+    case 'zhipu':
+    case 'deepseek':
+    case 'minimax':
+      return 'cn'
+    default:
+      return 'other'
+  }
+}
+
+const selectedKeyProvider = ref<KeyProvider | null>(null)
+const availableKeyProviders = computed(() => new Set(groups.value.map((group) => keyProviderForPlatform(group.platform))))
+const activeKeyProvider = computed(() => {
+  if (selectedKeyProvider.value) return selectedKeyProvider.value
+  const group = groupOptions.value.find((option) => option.value === formData.value.group_id)
+  const platform = group?.platform ?? selectedKey.value?.group?.platform
+  if (platform) return keyProviderForPlatform(platform)
+  return keyProviders.value.find((provider) => availableKeyProviders.value.has(provider.value))?.value ?? 'anthropic'
+})
+const providerGroupOptions = computed(() => groupOptions.value.filter((option) => keyProviderForPlatform(option.platform) === activeKeyProvider.value))
+
+const selectKeyProvider = (provider: KeyProvider) => {
+  selectedKeyProvider.value = provider
+  if (!formData.value.smart_routing && !providerGroupOptions.value.some((option) => option.value === formData.value.group_id)) {
+    formData.value.group_id = null
+    formData.value.group_ids = []
+  }
+}
+
 const isSmartRoutingKey = (key: ApiKey) => (key.group_ids?.length ?? 0) > 1
 
 watch(
@@ -1545,12 +1632,13 @@ watch(
       return
     }
     formData.value.group_ids = formData.value.group_id != null ? [formData.value.group_id] : []
+    selectedKeyProvider.value = null
   }
 )
 
 const smartRoutingAddOptions = computed(() => {
   const selected = new Set(formData.value.group_ids)
-  return groupOptions.value.filter((opt) => !selected.has(opt.value))
+  return providerGroupOptions.value.filter((opt) => !selected.has(opt.value))
 })
 
 const addSmartRoute = (value: string | number | boolean | null) => {
@@ -1721,6 +1809,7 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 }
 
 const editKey = (key: ApiKey) => {
+  selectedKeyProvider.value = null
   selectedKey.value = key
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
   const hasExpiration = !!key.expires_at
@@ -1965,6 +2054,7 @@ const handleDelete = async () => {
 }
 
 const closeModals = () => {
+  selectedKeyProvider.value = null
   showCreateModal.value = false
   showEditModal.value = false
   selectedKey.value = null

@@ -7,6 +7,7 @@ import KeysView from '../KeysView.vue'
 
 const {
   listKeys,
+  createKey,
   updateKey,
   getPublicSettings,
   getDashboardApiKeysUsage,
@@ -19,6 +20,7 @@ const {
   nextStep,
 } = vi.hoisted(() => ({
   listKeys: vi.fn(),
+  createKey: vi.fn(),
   updateKey: vi.fn(),
   getPublicSettings: vi.fn(),
   getDashboardApiKeysUsage: vi.fn(),
@@ -64,7 +66,7 @@ const messages: Record<string, string> = {
 vi.mock('@/api', () => ({
   keysAPI: {
     list: listKeys,
-    create: vi.fn(),
+    create: createKey,
     update: updateKey,
     delete: vi.fn(),
     toggleStatus: vi.fn(),
@@ -78,6 +80,9 @@ vi.mock('@/api', () => ({
   userGroupsAPI: {
     getAvailable: getAvailableGroups,
     getUserGroupRates,
+  },
+  endpointsAPI: {
+    getCustomEndpoints: vi.fn().mockResolvedValue([]),
   },
 }))
 
@@ -271,6 +276,7 @@ describe('user KeysView column settings', () => {
     localStorage.clear()
 
     listKeys.mockReset()
+    createKey.mockReset()
     updateKey.mockReset()
     getPublicSettings.mockReset()
     getDashboardApiKeysUsage.mockReset()
@@ -294,6 +300,88 @@ describe('user KeysView column settings', () => {
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
     isCurrentStep.mockReturnValue(false)
+  })
+
+  it('filters groups by provider and never submits a stale group after switching', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 1, name: 'Claude', platform: 'anthropic' },
+      { id: 2, name: 'GPT', platform: 'openai' },
+      { id: 3, name: 'Grok', platform: 'grok' },
+      { id: 4, name: 'Combined', platform: 'composite' },
+    ])
+    const wrapper = await mountView()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('Provider key')
+    const groupSelect = wrapper.getComponent('[data-tour="key-form-group"]')
+    expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([1])
+    expect(wrapper.get('input[name="key-provider"][value="cn"]').attributes('disabled')).toBeDefined()
+    groupSelect.vm.$emit('update:modelValue', 1)
+    await nextTick()
+    await wrapper.get('input[name="key-provider"][value="openai"]').setValue()
+    expect(groupSelect.props('modelValue')).toBeNull()
+    expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([2])
+    await wrapper.get('#key-form').trigger('submit')
+    expect(createKey).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('keys.groupRequired')
+    await wrapper.get('input[name="key-provider"][value="other"]').setValue()
+    expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([3, 4])
+    groupSelect.vm.$emit('update:modelValue', 3)
+    await nextTick()
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(createKey).toHaveBeenCalledWith('Provider key', 3, undefined, [], [], 0, undefined,
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, undefined)
+    wrapper.unmount()
+  })
+
+  it('selects an available provider when groups arrive after the dialog opens', async () => {
+    let resolveGroups!: (groups: unknown[]) => void
+    getAvailableGroups.mockReturnValue(new Promise((resolve) => { resolveGroups = resolve }))
+    const wrapper = await mountView()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    resolveGroups([{ id: 2, name: 'GPT', platform: 'openai' }])
+    await flushPromises()
+    expect((wrapper.get('input[name="key-provider"][value="openai"]').element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.getComponent('[data-tour="key-form-group"]').props('options')).toMatchObject([{ value: 2 }])
+    wrapper.unmount()
+  })
+
+  it('opens an existing key in its own provider and includes all Chinese platforms', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 1, name: 'GPT', platform: 'openai' },
+      { id: 2, name: 'Kimi', platform: 'kimi' },
+      { id: 3, name: 'DeepSeek', platform: 'deepseek' },
+      { id: 4, name: 'GLM', platform: 'zhipu' },
+      { id: 5, name: 'MiniMax', platform: 'minimax' },
+    ])
+    listKeys.mockResolvedValue({ items: [{ ...createApiKey(), group_id: 3 }], total: 1 })
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    expect((wrapper.get('input[name="key-provider"][value="cn"]').element as HTMLInputElement).checked).toBe(true)
+    const groupSelect = wrapper.getComponent('[data-tour="key-form-group"]')
+    expect(groupSelect.props('modelValue')).toBe(3)
+    expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([2, 3, 4, 5])
+    wrapper.unmount()
+  })
+
+  it('keeps ordered cross-provider smart routes while changing the provider filter', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 1, name: 'Claude', platform: 'anthropic' },
+      { id: 2, name: 'GPT', platform: 'openai' },
+      { id: 3, name: 'Grok', platform: 'grok' },
+    ])
+    listKeys.mockResolvedValue({ items: [{ ...createApiKey(), group_id: 2, group_ids: [2, 1] }], total: 1 })
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await wrapper.get('input[name="key-provider"][value="other"]').setValue()
+    const addSelect = wrapper.findAllComponents({ name: 'Select' }).find((select) => select.attributes('placeholder') === 'keys.smartRoutingAdd')!
+    expect(addSelect.props('options')).toMatchObject([{ value: 3 }])
+    addSelect.vm.$emit('update:modelValue', 3)
+    await nextTick()
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(updateKey).toHaveBeenCalledWith(1, expect.objectContaining({ group_id: 2, group_ids: [2, 1, 3] }))
+    wrapper.unmount()
   })
 
   it.each([
