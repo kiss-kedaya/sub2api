@@ -3,7 +3,7 @@
     class="sidebar"
     :class="[
       sidebarCollapsed ? 'w-[72px]' : 'w-64',
-      { '-translate-x-full lg:translate-x-0': !mobileOpen }
+      { '-translate-x-full lg:translate-x-0': !mobileOpen, 'signal-sidebar': isConsoleSignal }
     ]"
   >
     <!-- Logo/Brand -->
@@ -148,11 +148,12 @@
     </nav>
 
     <!-- Bottom Section -->
-    <div class="mt-auto border-t border-gray-100 p-3 dark:border-dark-800">
+    <div class="sidebar-footer mt-auto border-t border-gray-100 p-3 dark:border-dark-800">
       <!-- Theme Toggle -->
       <button
         @click="toggleTheme"
         class="sidebar-link mb-2 w-full"
+        data-test="theme-toggle"
         :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
         :title="sidebarCollapsed ? (isDark ? t('nav.lightMode') : t('nav.darkMode')) : undefined"
       >
@@ -198,6 +199,7 @@ import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
+import { useConsoleSignal } from '@/composables/useConsoleSignal'
 
 interface NavItem {
   path: string
@@ -238,6 +240,7 @@ function applyFeatureFlags(items: NavItem[]): NavItem[] {
 const { t } = useI18n()
 
 const route = useRoute()
+const { isConsoleSignal } = useConsoleSignal()
 const router = useRouter()
 const appStore = useAppStore()
 const authStore = useAuthStore()
