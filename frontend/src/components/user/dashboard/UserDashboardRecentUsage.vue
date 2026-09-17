@@ -1,43 +1,36 @@
 <template>
-  <div class="card">
-    <div class="flex items-center justify-between border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-      <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('dashboard.recentUsage') }}</h2>
-      <span class="badge badge-gray">{{ t('dashboard.last7Days') }}</span>
+  <section class="signal-recent">
+    <header class="signal-recent-heading">
+      <h2>{{ t('dashboard.recentUsage') }}</h2>
+      <span>{{ t('dashboard.last7Days') }}</span>
+    </header>
+    <div v-if="loading" class="signal-recent-loading"><LoadingSpinner size="lg" /></div>
+    <div v-else-if="data.length === 0" class="signal-recent-empty">
+      <EmptyState :title="t('dashboard.noUsageRecords')" :description="t('dashboard.startUsingApi')" />
     </div>
-    <div class="p-6">
-      <div v-if="loading" class="flex items-center justify-center py-12">
-        <LoadingSpinner size="lg" />
-      </div>
-      <div v-else-if="data.length === 0" class="py-8">
-        <EmptyState :title="t('dashboard.noUsageRecords')" :description="t('dashboard.startUsingApi')" />
-      </div>
-      <div v-else class="space-y-3">
-        <div v-for="log in data" :key="log.id" class="flex items-center justify-between rounded-xl bg-gray-50 p-4 transition-colors hover:bg-gray-100 dark:bg-dark-800/50 dark:hover:bg-dark-800">
-          <div class="flex items-center gap-4">
-            <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-100 dark:bg-primary-900/30">
-              <Icon name="beaker" size="md" class="text-primary-600 dark:text-primary-400" />
-            </div>
+    <template v-else>
+      <ol class="signal-request-list">
+        <li v-for="log in data" :key="log.id" class="signal-request">
+          <div class="signal-request-model">
+            <Icon name="beaker" size="md" />
             <div>
-              <p class="text-sm font-medium text-gray-900 dark:text-white">{{ log.model }}</p>
-              <p class="text-xs text-gray-500 dark:text-dark-400">{{ formatDateTime(log.created_at) }}</p>
+              <p>{{ log.model }}</p>
+              <time :datetime="log.created_at">{{ formatDateTime(log.created_at) }}</time>
             </div>
           </div>
-          <div class="text-right">
-            <p class="text-sm font-semibold">
-              <span class="text-green-600 dark:text-green-400" :title="t('dashboard.actual')">${{ formatCost(log.actual_cost) }}</span>
-              <span class="font-normal text-gray-400 dark:text-gray-500" :title="t('dashboard.standard')"> / ${{ formatCost(log.total_cost) }}</span>
-            </p>
-            <p class="text-xs text-gray-500 dark:text-dark-400">{{ (log.input_tokens + log.output_tokens).toLocaleString() }} tokens</p>
+          <div class="signal-request-tokens">
+            <span>{{ (log.input_tokens + log.output_tokens).toLocaleString() }}</span>
+            <span class="signal-request-label">tokens</span>
           </div>
-        </div>
-
-        <router-link to="/usage" class="flex items-center justify-center gap-2 py-3 text-sm font-medium text-primary-600 transition-colors hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
-          {{ t('dashboard.viewAllUsage') }}
-          <Icon name="arrowRight" size="sm" />
-        </router-link>
-      </div>
-    </div>
-  </div>
+          <div class="signal-request-cost">
+            <div><span class="signal-request-label">{{ t('dashboard.actual') }}</span><span class="signal-actual">${{ formatCost(log.actual_cost) }}</span></div>
+            <div><span class="signal-request-label">{{ t('dashboard.standard') }}</span><span class="signal-standard">${{ formatCost(log.total_cost) }}</span></div>
+          </div>
+        </li>
+      </ol>
+      <router-link to="/usage" class="signal-view-all">{{ t('dashboard.viewAllUsage') }}<Icon name="arrowRight" size="sm" /></router-link>
+    </template>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -55,3 +48,37 @@ defineProps<{
 const { t } = useI18n()
 const formatCost = (c: number) => c.toFixed(4)
 </script>
+
+<style scoped>
+.signal-recent { min-width: 0; padding-top: 20px; }
+.signal-recent-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.signal-recent-heading h2 { font-size: 14px; font-weight: 600; }
+.signal-recent-heading > span { font-size: 12px; color: var(--signal-muted, #65716a); }
+.signal-recent-loading { display: flex; justify-content: center; padding: 48px 0; }
+.signal-recent-empty { padding: 24px 0; }
+.signal-request-list { border-top: 1px solid var(--signal-line, #dce2df); }
+.signal-request { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(100px, .5fr) minmax(180px, .65fr); gap: 20px; align-items: center; padding: 14px 12px; border-bottom: 1px solid var(--signal-line, #dce2df); font-variant-numeric: tabular-nums; }
+.signal-request:hover { background: var(--signal-surface, #fff); }
+.signal-request-model { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.signal-request-model > :deep(svg) { flex-shrink: 0; color: var(--signal-muted, #65716a); }
+.signal-request-model > div { min-width: 0; }
+.signal-request-model p { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.signal-request-model time { display: block; margin-top: 4px; font-size: 11px; color: var(--signal-muted, #65716a); }
+.signal-request-tokens { display: flex; align-items: baseline; justify-content: flex-end; flex-wrap: wrap; gap: 5px; font-size: 13px; overflow-wrap: anywhere; min-width: 0; }
+.signal-request-label { font-size: 11px; color: var(--signal-muted, #65716a); }
+.signal-request-cost { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.signal-request-cost > div { display: flex; justify-content: flex-end; align-items: baseline; gap: 12px; font-size: 13px; }
+.signal-request-cost > div > span:last-child { min-width: 88px; text-align: right; overflow-wrap: anywhere; }
+.signal-actual { color: var(--signal-amber, #99640c); font-weight: 600; }
+.signal-standard { color: var(--signal-muted, #65716a); }
+.signal-view-all { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 44px; padding-top: 8px; font-size: 12px; font-weight: 500; color: var(--signal-accent, #087f68); }
+.signal-view-all:focus-visible { outline: 2px solid var(--signal-accent, #087f68); outline-offset: 2px; }
+@media (max-width: 640px) {
+  .signal-request { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; padding: 14px 0; }
+  .signal-request-model { grid-column: 1 / -1; align-items: flex-start; }
+  .signal-request-model > :deep(svg) { margin-top: 2px; }
+  .signal-request-tokens { justify-content: flex-start; padding-left: 32px; }
+  .signal-request-cost > div { gap: 6px; }
+  .signal-request-cost > div > span:last-child { min-width: 0; }
+}
+</style>
