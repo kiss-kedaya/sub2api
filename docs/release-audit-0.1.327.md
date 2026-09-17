@@ -22,6 +22,12 @@
   filtering, empty categories, stale selection clearing, and layout passed.
 - Release commit CI and immutable release artifact checks are required before
   traffic changes. Earlier test results alone do not approve production rollout.
+- Initial main CI found an existing WebSocket preemption test ordering race:
+  its fake upstream completion was released before the old client observed the
+  preemption close frame. The same-commit tag unit suite passed. A test-only
+  follow-up keeps the old request blocked for same-thread preemption and retains
+  the close-status, reason, and exactly-one-preempted-session assertions. No
+  production logic or the immutable 327 tag is changed by this follow-up.
 
 ## Rollout Contract
 
