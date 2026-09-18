@@ -29,8 +29,22 @@ vi.mock('vue-chartjs', () => ({
 describe('TokenUsageTrend', () => {
   const sampleTrend = [{
     date: '2026-09-17', requests: 1, input_tokens: 100, output_tokens: 50,
+    total_tokens: 470,
     cache_creation_tokens: 20, cache_read_tokens: 300, cost: 0.02, actual_cost: 0.01,
   }]
+
+  it('uses backend total_tokens in total mode and preserves all detailed series', async () => {
+    const wrapper = mount(TokenUsageTrend, { props: { trendData: sampleTrend, mode: 'total' } })
+    const chart = wrapper.getComponent(Line)
+    expect(chart.props('data').datasets).toHaveLength(1)
+    expect(chart.props('data').datasets[0].data).toEqual([470])
+    expect(chart.props('options').plugins.legend.display).toBe(false)
+    expect(chart.props('options').scales.yPercent.display).toBe(false)
+    await wrapper.setProps({ mode: 'breakdown' })
+    expect(chart.props('data').datasets).toHaveLength(5)
+    expect(chart.props('options').scales.yPercent.display).toBe(true)
+    wrapper.unmount()
+  })
 
   it('updates chart label colors when the existing theme toggle changes the root class', async () => {
     const wasDark = document.documentElement.classList.contains('dark')

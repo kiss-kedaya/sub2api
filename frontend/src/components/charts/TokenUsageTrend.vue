@@ -54,6 +54,7 @@ const props = defineProps<{
   trendData: TrendDataPoint[]
   loading?: boolean
   animationDuration?: number
+  mode?: 'total' | 'breakdown'
 }>()
 
 const isDarkMode = ref(document.documentElement.classList.contains('dark'))
@@ -63,7 +64,7 @@ useMutationObserver(document.documentElement, () => {
 
 const chartColors = computed(() => ({
   text: isDarkMode.value ? '#e5e7eb' : '#374151',
-  grid: isDarkMode.value ? '#374151' : '#e5e7eb',
+  grid: props.mode === 'total' ? (isDarkMode.value ? '#29292c' : '#e8e8ec') : (isDarkMode.value ? '#374151' : '#e5e7eb'),
   input: '#3b82f6',
   output: '#10b981',
   cacheCreation: '#f59e0b',
@@ -76,7 +77,17 @@ const chartData = computed(() => {
 
   return {
     labels: props.trendData.map((d) => d.date),
-    datasets: [
+    datasets: props.mode === 'total' ? [{
+      label: t('dashboard.totalUsage'),
+      data: props.trendData.map(d => d.total_tokens),
+      borderColor: chartColors.value.text,
+      backgroundColor: `${chartColors.value.text}0c`,
+      borderWidth: 2,
+      pointRadius: 2,
+      pointHoverRadius: 4,
+      fill: true,
+      tension: 0.25,
+    }] : [
       {
         label: 'Input',
         data: props.trendData.map((d) => d.input_tokens),
@@ -136,6 +147,7 @@ const lineOptions = computed(() => ({
   },
   plugins: {
     legend: {
+      display: props.mode !== 'total',
       position: 'top' as const,
       labels: {
         color: chartColors.value.text,
@@ -169,6 +181,7 @@ const lineOptions = computed(() => ({
   scales: {
     x: {
       grid: {
+        display: props.mode !== 'total',
         color: chartColors.value.grid
       },
       ticks: {
@@ -191,6 +204,7 @@ const lineOptions = computed(() => ({
       }
     },
     yPercent: {
+      display: props.mode !== 'total',
       position: 'right' as const,
       min: 0,
       max: 100,

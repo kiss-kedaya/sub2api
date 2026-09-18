@@ -33,6 +33,7 @@ export interface PlatformDashboardStats {
 export interface UserDashboardStats {
   total_api_keys: number
   active_api_keys: number
+  // Totals cover retained aggregates; this response does not expose their start date.
   total_requests: number
   total_input_tokens: number
   total_output_tokens: number
@@ -313,11 +314,12 @@ export async function getMyApiKeyDailyUsage(
 }
 
 export async function getDashboardSnapshotV2(
-  params?: UsageDashboardSnapshotV2Params
+  params?: UsageDashboardSnapshotV2Params,
+  config: { signal?: AbortSignal } = {}
 ): Promise<UsageDashboardSnapshotV2Response> {
   const { data } = await apiClient.get<UsageDashboardSnapshotV2Response>(
     '/usage/dashboard/snapshot-v2',
-    { params }
+    { ...config, params }
   )
   return data
 }
