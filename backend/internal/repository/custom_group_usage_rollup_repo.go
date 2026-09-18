@@ -67,6 +67,25 @@ func (r *usageLogRepository) readGroupUsageRollupSnapshot(ctx context.Context, t
 }
 
 func (r *usageLogRepository) getAllGroupUsageSummaryFromRollups(ctx context.Context, todayStart time.Time) (results []usagestats.GroupUsageSummary, err error) {
+	if db, ok := r.sql.(*sql.DB); ok {
+		// Keep the watermark and totals on one snapshot while rollups or retained
+		// history change. No locks are taken on gateway usage-log writes.
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = tx.Rollback() }()
+		txRepo := &usageLogRepository{sql: tx}
+		results, err := txRepo.getAllGroupUsageSummaryFromRollups(ctx, todayStart)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return results, nil
+	}
+
 	todayStart = service.GroupUsageTodayStart(todayStart)
 	yesterdayStart := service.GroupUsageYesterdayStart(todayStart)
 	timezoneName := service.GroupUsageTimezoneName()
@@ -83,7 +102,7 @@ func (r *usageLogRepository) getAllGroupUsageSummaryFromRollups(ctx context.Cont
 	// 此前它是在同一条 SQL 里由 state CTE 算出、再 CROSS JOIN 给 tail 用的，
 	// 于是 created_at 的下界对 planner 来说是个运行期才知道的值：既进不了
 	// index cond，也估不准选择性，只能退化成 usage_logs 全表扫。
-	// 生产实测（1721 万行 / PostgreSQL 17）：
+	// 上游实测（1721 万行 / PostgreSQL 17，非本站生产测量）：
 	//   Seq Scan on usage_logs … rows=17212870, Rows Removed by Join Filter: 17178082
 	//   Execution Time: 48720 ms
 	// 换成参数之后走 idx_usage_logs_created_at：
