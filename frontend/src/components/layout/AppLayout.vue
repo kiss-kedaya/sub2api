@@ -1,7 +1,7 @@
 <template>
   <div
     class="min-h-screen"
-    :class="[isConsoleSignal ? 'console-signal' : 'bg-gray-50 dark:bg-dark-950', { 'signal-admin': isAdminSignal }]"
+    :class="[isConsoleSignal ? 'console-signal' : 'bg-gray-50 dark:bg-dark-950', { 'signal-admin': isAdminSignal, 'signal-nav-collapsed': sidebarCollapsed }]"
   >
     <!-- Background Decoration -->
     <div v-if="!isConsoleSignal" class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>

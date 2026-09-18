@@ -2,136 +2,231 @@
   <AppLayout>
     <div class="signal-dashboard">
       <header class="signal-masthead">
-        <div class="signal-identity">
-          <span class="signal-mark" aria-hidden="true"><Icon name="chart" size="lg" /></span>
-          <div class="signal-heading">
-            <h1>{{ appStore.siteName }}</h1>
-            <span class="signal-page-label">{{ t('dashboard.title') }}</span>
-          </div>
-        </div>
-        <UserDashboardQuickActions />
+        <h1>{{ t('dashboard.overview') }}</h1>
+        <button class="btn btn-secondary signal-overview-refresh" :disabled="loading || loadingCharts" @click="refreshAll">
+          <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading || loadingCharts }" />
+          {{ t('common.refresh') }}
+        </button>
       </header>
-      <div v-if="loading" class="signal-loading"><LoadingSpinner /></div>
-      <template v-else-if="stats">
-        <UserDashboardStats section="summary" :stats="stats" :balance="user?.balance || 0" :is-simple="authStore.isSimpleMode" />
-        <ConsoleTabs
-          v-if="!authStore.isSimpleMode"
-          id="dashboard-view"
-          class="signal-dashboard-tabs"
-          :label="t('dashboard.title')"
-          :model-value="dashboardView"
-          :items="[{ key: 'overview', label: t('dashboard.overview') }, { key: 'platforms', label: t('dashboard.platformBreakdown') }]"
-          @update:model-value="dashboardView = $event === 'platforms' ? 'platforms' : 'overview'"
-        />
-        <section
-          v-show="dashboardView === 'overview' || authStore.isSimpleMode"
-          id="dashboard-view-panel-overview"
-          class="signal-dashboard-overview"
-          :role="authStore.isSimpleMode ? undefined : 'tabpanel'"
-          :aria-labelledby="authStore.isSimpleMode ? undefined : 'dashboard-view-tab-overview'"
-          :tabindex="authStore.isSimpleMode ? undefined : 0"
-        >
-          <UserDashboardCharts v-model:startDate="startDate" v-model:endDate="endDate" v-model:granularity="granularity" :loading="loadingCharts" :trend="trendData" :models="modelStats" @dateRangeChange="loadCharts" @granularityChange="loadCharts" @refresh="refreshAll" />
-          <UserDashboardRecentUsage :data="recentUsage" :loading="loadingUsage" />
-        </section>
-        <section
-          v-if="!authStore.isSimpleMode"
-          v-show="dashboardView === 'platforms'"
-          id="dashboard-view-panel-platforms"
-          class="signal-dashboard-platforms"
-          role="tabpanel"
-          aria-labelledby="dashboard-view-tab-platforms"
-          tabindex="0"
-        >
-          <UserDashboardStats section="platforms" :stats="stats" :balance="user?.balance || 0" :is-simple="false" :platform-quotas="platformQuotas" />
-        </section>
-      </template>
-      <div v-else class="signal-error" role="alert">
+      <div v-if="loading && !stats" class="signal-loading"><LoadingSpinner /></div>
+      <div v-if="statsError" class="signal-error" role="alert">
         <Icon name="exclamationCircle" size="md" />
         <span>{{ t('dashboard.loadFailed') }}</span>
-        <button class="btn btn-secondary" @click="refreshAll">
-          <Icon name="refresh" size="sm" class="mr-2" />{{ t('common.refresh') }}
-        </button>
+        <button class="btn btn-secondary" @click="refreshAll">{{ t('common.refresh') }}</button>
       </div>
+      <template v-if="stats">
+        <UserDashboardStats section="summary" :stats="stats" :balance="user?.balance || 0" :is-simple="authStore.isSimpleMode">
+          <template #actions><UserDashboardQuickActions /></template>
+          <template #models>
+            <UserDashboardModels :models="modelStats" :start-date="startDate" :end-date="endDate" :loading="loadingCharts" :error="chartsError" />
+          </template>
+        </UserDashboardStats>
+        <UserDashboardCharts
+          v-model:startDate="startDate" v-model:endDate="endDate" v-model:granularity="granularity"
+          :loading="loadingCharts" :error="chartsError" :trend="trendData"
+          @dateRangeChange="changeChartRange" @granularityChange="loadCharts" @refresh="loadCharts"
+        />
+        <div class="signal-dashboard-details">
+          <details v-if="!authStore.isSimpleMode" @toggle="togglePlatforms" class="signal-disclosure" data-detail="platforms">
+            <summary><Icon name="grid" size="sm" /><span>{{ t('dashboard.platformBreakdown') }}</span><Icon name="chevronDown" size="sm" /></summary>
+            <template v-if="platformsOpen">
+              <div v-if="loadingQuotas" class="signal-loading"><LoadingSpinner /></div>
+              <div v-else-if="quotasError" class="signal-error" role="alert">
+                <span>{{ t('dashboard.chartsFailed') }}</span>
+                <button class="btn btn-secondary" @click="loadQuotas(true)">{{ t('common.refresh') }}</button>
+              </div>
+              <UserDashboardStats v-else section="platforms" :stats="stats" :balance="user?.balance || 0" :is-simple="false" :platform-quotas="platformQuotas" />
+            </template>
+          </details>
+          <details @toggle="toggleRecent" class="signal-disclosure" data-detail="recent">
+            <summary><Icon name="clock" size="sm" /><span>{{ t('dashboard.recentUsage') }}</span><Icon name="chevronDown" size="sm" /></summary>
+            <template v-if="recentOpen">
+              <div v-if="recentError" class="signal-error" role="alert">
+                <span>{{ t('dashboard.chartsFailed') }}</span>
+                <button class="btn btn-secondary" @click="loadRecent()">{{ t('common.refresh') }}</button>
+              </div>
+              <UserDashboardRecentUsage v-else :data="recentUsage" :loading="loadingUsage" :start-date="startDate" :end-date="endDate" />
+            </template>
+          </details>
+        </div>
+      </template>
     </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'; import { useAuthStore } from '@/stores/auth'; import { usageAPI, type UserDashboardStats as UserStatsType } from '@/api/usage'
-import AppLayout from '@/components/layout/AppLayout.vue'; import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import UserDashboardStats from '@/components/user/dashboard/UserDashboardStats.vue'; import UserDashboardCharts from '@/components/user/dashboard/UserDashboardCharts.vue'
-import UserDashboardRecentUsage from '@/components/user/dashboard/UserDashboardRecentUsage.vue'; import UserDashboardQuickActions from '@/components/user/dashboard/UserDashboardQuickActions.vue'
-import type { UsageLog, TrendDataPoint, ModelStat, PlatformQuotaItem } from '@/types'
-import { useAppStore } from '@/stores/app'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
-import ConsoleTabs from '@/components/common/ConsoleTabs.vue'
+import { useAuthStore } from '@/stores/auth'
+import { usageAPI, type UserDashboardStats as UserStatsType } from '@/api/usage'
 import { getMyPlatformQuotas } from '@/api/user'
 import { formatDateLocalInput } from '@/utils/format'
+import type { UsageLog, TrendDataPoint, ModelStat, PlatformQuotaItem } from '@/types'
+import AppLayout from '@/components/layout/AppLayout.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import Icon from '@/components/icons/Icon.vue'
+import UserDashboardStats from '@/components/user/dashboard/UserDashboardStats.vue'
+import UserDashboardCharts from '@/components/user/dashboard/UserDashboardCharts.vue'
+import UserDashboardModels from '@/components/user/dashboard/UserDashboardModels.vue'
+import UserDashboardRecentUsage from '@/components/user/dashboard/UserDashboardRecentUsage.vue'
+import UserDashboardQuickActions from '@/components/user/dashboard/UserDashboardQuickActions.vue'
 
-const appStore = useAppStore()
 const { t } = useI18n()
-const authStore = useAuthStore(); const user = computed(() => authStore.user)
-const dashboardView = ref<'overview' | 'platforms'>('overview')
-const stats = ref<UserStatsType | null>(null); const loading = ref(false); const loadingUsage = ref(false); const loadingCharts = ref(false)
-const trendData = ref<TrendDataPoint[]>([]); const modelStats = ref<ModelStat[]>([]); const recentUsage = ref<UsageLog[]>([])
-const platformQuotas = ref<PlatformQuotaItem[] | null>(null)
+const authStore = useAuthStore()
+const user = computed(() => authStore.user)
+const stats = ref<UserStatsType | null>(null)
+const trendData = ref<TrendDataPoint[]>([])
+const modelStats = ref<ModelStat[]>([])
+const recentUsage = ref<UsageLog[]>([])
+const platformQuotas = ref<PlatformQuotaItem[]>([])
+const loading = ref(false)
+const loadingCharts = ref(false)
+const loadingUsage = ref(false)
+const loadingQuotas = ref(false)
+const statsError = ref(false)
+const chartsError = ref(false)
+const recentError = ref(false)
+const quotasError = ref(false)
+const recentOpen = ref(false)
+const platformsOpen = ref(false)
+let recentLoaded = false
+let quotasLoaded = false
+let disposed = false
+let chartsRequest: AbortController | undefined
+let recentRequest: AbortController | undefined
 
-const startDate = ref(formatDateLocalInput(new Date(Date.now() - 6 * 86400000))); const endDate = ref(formatDateLocalInput(new Date())); const granularity = ref('day')
+const startDate = ref(formatDateLocalInput(new Date(Date.now() - 6 * 86400000)))
+const endDate = ref(formatDateLocalInput(new Date()))
+const granularity = ref('day')
 
-const loadStats = async () => { loading.value = true; try { await authStore.refreshUser(); stats.value = await usageAPI.getDashboardStats() } catch (error) { console.error('Failed to load dashboard stats:', error) } finally { loading.value = false } }
-const loadCharts = async () => { loadingCharts.value = true; try { const res = await Promise.all([usageAPI.getDashboardTrend({ start_date: startDate.value, end_date: endDate.value, granularity: granularity.value as any }), usageAPI.getDashboardModels({ start_date: startDate.value, end_date: endDate.value })]); trendData.value = res[0].trend || []; modelStats.value = res[1].models || [] } catch (error) { console.error('Failed to load charts:', error) } finally { loadingCharts.value = false } }
-const loadRecent = async () => { loadingUsage.value = true; try { const res = await usageAPI.getByDateRange(startDate.value, endDate.value); recentUsage.value = res.items.slice(0, 5) } catch (error) { console.error('Failed to load recent usage:', error) } finally { loadingUsage.value = false } }
-const loadPlatformQuotas = async () => { try { const data = await getMyPlatformQuotas(); platformQuotas.value = data.platform_quotas ?? [] } catch (error) { console.warn('Failed to load platform quotas:', error); platformQuotas.value = [] } }
-const refreshAll = () => { loadStats(); loadCharts(); loadRecent(); loadPlatformQuotas() }
+async function loadStats() {
+  if (loading.value) return
+  loading.value = true
+  statsError.value = false
+  try {
+    const [, result] = await Promise.all([authStore.refreshUser(), usageAPI.getDashboardStats()])
+    if (!disposed) stats.value = result
+  } catch {
+    if (!disposed) statsError.value = true
+  } finally {
+    if (!disposed) loading.value = false
+  }
+}
 
-onMounted(() => { refreshAll() })
+async function loadCharts() {
+  chartsRequest?.abort()
+  const request = new AbortController()
+  chartsRequest = request
+  loadingCharts.value = true
+  chartsError.value = false
+  trendData.value = []
+  modelStats.value = []
+  try {
+    const result = await usageAPI.getDashboardSnapshotV2({
+      start_date: startDate.value, end_date: endDate.value,
+      granularity: granularity.value === 'hour' ? 'hour' : 'day',
+      include_trend: true, include_model_stats: true, include_group_stats: false,
+    }, { signal: request.signal })
+    if (disposed || request !== chartsRequest) return
+    trendData.value = result.trend ?? []
+    modelStats.value = result.models ?? []
+  } catch {
+    if (!disposed && request === chartsRequest && !request.signal.aborted) chartsError.value = true
+  } finally {
+    if (!disposed && request === chartsRequest) loadingCharts.value = false
+  }
+}
+
+async function loadRecent() {
+  recentRequest?.abort()
+  const request = new AbortController()
+  recentRequest = request
+  loadingUsage.value = true
+  recentError.value = false
+  try {
+    const result = await usageAPI.query({
+      start_date: startDate.value, end_date: endDate.value,
+      page: 1, page_size: 5, sort_by: 'created_at', sort_order: 'desc',
+    }, { signal: request.signal })
+    if (disposed || request !== recentRequest) return
+    recentUsage.value = result.items ?? []
+    recentLoaded = true
+  } catch {
+    if (!disposed && request === recentRequest && !request.signal.aborted) recentError.value = true
+  } finally {
+    if (!disposed && request === recentRequest) loadingUsage.value = false
+  }
+}
+
+async function loadQuotas(force = false) {
+  if (loadingQuotas.value || (quotasLoaded && !force)) return
+  loadingQuotas.value = true
+  quotasError.value = false
+  try {
+    const result = await getMyPlatformQuotas()
+    if (disposed) return
+    platformQuotas.value = result.platform_quotas ?? []
+    quotasLoaded = true
+  } catch {
+    if (!disposed) quotasError.value = true
+  } finally {
+    if (!disposed) loadingQuotas.value = false
+  }
+}
+
+function togglePlatforms(event: Event) {
+  platformsOpen.value = (event.currentTarget as HTMLDetailsElement).open
+  if (platformsOpen.value) void loadQuotas()
+}
+
+function toggleRecent(event: Event) {
+  recentOpen.value = (event.currentTarget as HTMLDetailsElement).open
+  if (recentOpen.value && !recentLoaded) void loadRecent()
+}
+
+function invalidateRecent() {
+  recentRequest?.abort()
+  recentRequest = undefined
+  recentLoaded = false
+  loadingUsage.value = false
+}
+
+function changeChartRange() {
+  void loadCharts()
+  invalidateRecent()
+  if (recentOpen.value) void loadRecent()
+}
+
+function refreshAll() {
+  void loadStats()
+  void loadCharts()
+  invalidateRecent()
+  quotasLoaded = false
+  if (recentOpen.value) void loadRecent()
+  if (platformsOpen.value) void loadQuotas(true)
+}
+
+onMounted(refreshAll)
+onUnmounted(() => {
+  disposed = true
+  chartsRequest?.abort()
+  recentRequest?.abort()
+})
 </script>
 
 <style scoped>
-.signal-dashboard {
-  min-width: 0;
-  color: var(--signal-text, #202423);
-  background: var(--signal-bg, #f5f6f5);
-  letter-spacing: 0;
-}
-.signal-masthead {
-  padding: 0 0 18px;
-  border-bottom: 1px solid var(--signal-line, #dce2df);
-}
-.signal-identity, .signal-heading { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.signal-mark {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 auto;
-  color: var(--signal-accent, #087f68);
-  border: 1px solid var(--signal-line, #dce2df);
-  border-radius: 6px;
-  background: var(--signal-surface, #fff);
-  box-shadow: inset 0 0 12px color-mix(in srgb, var(--signal-accent, #087f68) 8%, transparent);
-}
-.signal-heading h1 {
-  margin: 0;
-  font-size: 28px;
-  line-height: 1.2;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-.signal-page-label {
-  padding-left: 14px;
-  border-left: 1px solid var(--signal-line, #dce2df);
-  color: var(--signal-muted, #65716a);
-  font-size: 13px;
-  flex-shrink: 0;
-}
-.signal-loading { display: flex; justify-content: center; padding: 64px 0; }
-.signal-error { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 32px 0; color: var(--signal-muted); }
-@media (max-width: 480px) {
-  .signal-heading { flex-wrap: wrap; gap: 4px 12px; }
-  .signal-heading h1 { font-size: 24px; }
-  .signal-page-label { border: 0; padding: 0; }
-}
+.signal-dashboard { min-width: 0; color: var(--signal-text); }
+.signal-masthead { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 20px; }
+.signal-masthead h1 { font-size: 20px; line-height: 28px; font-weight: 600; }
+.signal-overview-refresh { gap: 8px; min-height: 34px; font-size: 12px; }
+.signal-loading { display: flex; justify-content: center; padding: 40px 0; }
+.signal-error { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 24px 0; color: var(--signal-muted); font-size: 13px; }
+.signal-dashboard-details { margin-top: 24px; border-top: 1px solid var(--signal-line); }
+.signal-disclosure { border-bottom: 1px solid var(--signal-line); }
+.signal-disclosure > summary { display: flex; align-items: center; gap: 10px; min-height: 52px; list-style: none; cursor: pointer; font-size: 13px; font-weight: 500; }
+.signal-disclosure > summary::-webkit-details-marker { display: none; }
+.signal-disclosure > summary > span { flex: 1; min-width: 0; }
+.signal-disclosure > summary > svg { color: var(--signal-muted); flex-shrink: 0; }
+.signal-disclosure[open] > summary > svg:last-child { transform: rotate(180deg); }
+.signal-disclosure > summary:focus-visible { outline: 2px solid var(--signal-accent); outline-offset: -2px; }
 </style>
