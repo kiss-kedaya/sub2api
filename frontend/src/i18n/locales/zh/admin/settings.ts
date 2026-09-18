@@ -525,6 +525,14 @@ export default {
         codexOverdraftBusinessInjection: '兼容 CPAProxy 的真实请求隐藏注入',
         codexOverdraftBusinessInjectionHint: '高风险开关：会向真实请求加入无操作工具对，上游可能把它计入输入 Token。只有确认计费修正和成本影响后才建议开启；默认关闭。',
         codexHardeningTitle: 'Codex 设置',
+        codexTicketEnabled: '292 打票',
+        codexTicketEnabledDesc:
+          '关闭后不打票、不注入 x-codex-turn-state，按原链路转发。开启后后台打票，并在业务请求中覆盖该头。',
+        codexTicketHarvestProxy: '292 打票代理',
+        codexTicketHarvestProxyDesc:
+          '用于后台采集，保存后生效，无需重启。业务请求仍使用账号代理。填写完整代理 URL；清空并保存会停止采集。',
+        codexTicketHarvestProxyPlaceholder: "http://user:pass{'@'}proxy.example.com:1080",
+        codexTicketHarvestProxyConfigured: '已配置（密码已隐藏）。要更换请整段粘贴新的代理 URL。',
         codexClientRestrictionTitle: 'Codex 客户端限制',
         codexHardeningDesc:
           '仅对已开启「仅允许 Codex 官方客户端」的 OpenAI OAuth 账号生效（全局）。在 User-Agent/Originator 之外，用版本区间、引擎指纹门与黑/白名单巩固判定。',

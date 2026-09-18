@@ -112,25 +112,30 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		return filtered
 	}
 
-	// 强制 antigravity 模式：返回 antigravity 支持的模型列表
-	if forcePlatform == service.PlatformAntigravity {
-		if apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
-			agModels := antigravity.DefaultGeminiModels()
-			filtered := make([]antigravity.GeminiModel, 0, len(agModels))
-			for _, model := range agModels {
-				if apiKey.Group.ModelAllowlist.Allows(model.Name) {
-					filtered = append(filtered, model)
+	agModels := make([]gemini.Model, 0)
+	seenAGModels := make(map[string]bool)
+	if h.geminiCompatService != nil {
+		for _, groupID := range geminiStudioGroupIDs(apiKey) {
+			ids, err := h.geminiCompatService.AntigravityGeminiModelIDs(c.Request.Context(), &groupID, forcePlatform != service.PlatformAntigravity)
+			if err != nil {
+				requestLogger(c, "handler.gemini_v1beta.models").Warn("unable to list Antigravity mappings", zap.Int64("group_id", groupID), zap.Error(err))
+				continue
+			}
+			for _, id := range ids {
+				if !seenAGModels[id] {
+					agModels = append(agModels, gemini.FallbackModel(id))
+					seenAGModels[id] = true
 				}
 			}
-			c.JSON(http.StatusOK, antigravity.GeminiModelsListResponse{Models: filtered})
-			return
 		}
-		c.JSON(http.StatusOK, antigravity.FallbackGeminiModelsList())
+	}
+	if forcePlatform == service.PlatformAntigravity {
+		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(agModels)})
 		return
 	}
 
 	writeLocalCatalog := func() {
-		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(gemini.DefaultModels())})
+		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(mergeGeminiModelLists(gemini.DefaultModels(), agModels))})
 	}
 
 	account, err := h.selectGeminiStudioAccount(c.Request.Context(), apiKey)
@@ -147,10 +152,16 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 	}
 
 	res, err := h.geminiCompatService.ForwardAIStudioGET(c.Request.Context(), account, "/v1beta/models")
-	if err != nil || shouldFallbackGeminiModels(res) || (res != nil && res.StatusCode >= 400) {
+	if err != nil || res == nil || shouldFallbackGeminiModels(res) || res.StatusCode >= 400 {
 		writeLocalCatalog()
 		return
 	}
+	if res.StatusCode == http.StatusOK && len(agModels) > 0 {
+		if merged, ok := appendUpstreamGeminiModels(res.Body, agModels); ok {
+			res.Body = merged
+		}
+	}
+
 	if apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
 		if filtered, dropped, ok := filterUpstreamGeminiModelsBody(res.Body, apiKey.Group.ModelAllowlist); ok && dropped {
 			res.Body = filtered
@@ -159,6 +170,69 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 	writeUpstreamResponse(c, res)
 }
 
+// mergeGeminiModelLists keeps native metadata when both sources advertise a model.
+func mergeGeminiModelLists(native, extra []gemini.Model) []gemini.Model {
+	result := append([]gemini.Model{}, native...)
+	seen := make(map[string]bool, len(native))
+	for _, model := range native {
+		seen[model.Name] = true
+	}
+	for _, model := range extra {
+		if !seen[model.Name] {
+			result = append(result, model)
+			seen[model.Name] = true
+		}
+	}
+	return result
+}
+
+// appendUpstreamGeminiModels preserves unknown model metadata and envelope fields.
+func appendUpstreamGeminiModels(body []byte, extra []gemini.Model) ([]byte, bool) {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(body, &envelope) != nil || envelope == nil {
+		return body, false
+	}
+	var models []json.RawMessage
+	raw, exists := envelope["models"]
+	if !exists || json.Unmarshal(raw, &models) != nil {
+		return body, false
+	}
+	seen := make(map[string]bool, len(models))
+	for _, raw := range models {
+		var model struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(raw, &model) != nil {
+			return body, false
+		}
+		seen[model.Name] = true
+	}
+	changed := false
+	for _, model := range extra {
+		if seen[model.Name] {
+			continue
+		}
+		raw, err := json.Marshal(model)
+		if err != nil {
+			return body, false
+		}
+		models = append(models, raw)
+		seen[model.Name] = true
+		changed = true
+	}
+	if !changed {
+		return body, true
+	}
+	envelope["models"], _ = json.Marshal(models)
+	merged, err := json.Marshal(envelope)
+	return merged, err == nil
+}
+
+// filterUpstreamGeminiModelsBody 按白名单过滤上游 /v1beta/models 响应中的
+// models[].name，其余信封字段（如 nextPageToken）原样保留。
+// 返回值：filtered 为过滤后的响应体；dropped 表示是否有条目被移除（全命中时
+// 为 false，调用方应保持原始响应以完整透传上游头）；ok=false 表示解析失败，
+// 调用方同样应透传原始响应。
 func filterUpstreamGeminiModelsBody(body []byte, allowlist service.GroupModelAllowlist) (filtered []byte, dropped bool, ok bool) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
