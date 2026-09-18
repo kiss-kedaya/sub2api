@@ -6,6 +6,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/api/__tests__/tokenRefresh.spec.ts \
 	src/api/__tests__/channelMonitorV2.spec.ts \
 	src/api/__tests__/usage.snapshot.spec.ts \
+	src/api/__tests__/redeem.spec.ts \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \
 	src/views/auth/__tests__/WechatCallbackView.spec.ts \
 	src/views/user/__tests__/PaymentView.spec.ts \
@@ -28,6 +29,23 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/user/profile/__tests__/ProfileInfoCard.spec.ts \
 	src/components/user/profile/__tests__/ProfileBalanceNotifyCard.spec.ts \
 	src/views/user/__tests__/RedeemView.spec.ts \
+	src/views/user/__tests__/UserOrdersView.filters.spec.ts \
+	src/views/user/__tests__/InfiniteCanvasView.spec.ts \
+	src/utils/__tests__/infiniteCanvasSession.spec.ts \
+	src/components/common/__tests__/BaseDialog.ids.spec.ts \
+	src/components/common/__tests__/Pagination.jump.spec.ts \
+	src/components/common/__tests__/ProxySelector.testing.spec.ts \
+	src/components/admin/channel/__tests__/ModelTagInput.keyboard.spec.ts \
+	src/components/admin/payment/__tests__/AdminRefundDialog.balance.spec.ts \
+	src/components/admin/user/__tests__/UserPlatformQuotaModal.spec.ts \
+	src/components/user/profile/__tests__/Totp.errors.spec.ts \
+	src/components/user/profile/__tests__/TotpSetupModal.inputs.spec.ts \
+	src/composables/__tests__/useClipboard.spec.ts \
+	src/stores/__tests__/announcements.markAll.spec.ts \
+	src/stores/__tests__/payment.config.spec.ts \
+	src/stores/__tests__/subscriptions.clear.spec.ts \
+	src/views/auth/__tests__/RegisterView.spec.ts \
+	src/components/account/__tests__/AccountUsageCell.spec.ts \
 	src/views/admin/__tests__/SettingsView.spec.ts \
 	src/views/admin/__tests__/UsageView.spec.ts \
 	src/features/channel-monitor-v2/__tests__/designSystem.structure.spec.ts \

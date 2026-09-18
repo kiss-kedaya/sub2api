@@ -1,16 +1,16 @@
 import { keysAPI } from '@/api/keys'
 import { userGroupsAPI } from '@/api/groups'
-import type { ApiKey, Group } from '@/types'
+import type { ApiKey } from '@/types'
 import {
   INFINITE_CANVAS_KEY_NAME,
   findReusableCanvasKey,
-  groupIdsEqual,
+  isUsableCanvasKey,
   selectSmartRoutingGroupIds,
 } from '@/utils/infiniteCanvas'
 
 export class InfiniteCanvasSetupError extends Error {
   constructor(
-    readonly code: 'no-groups' | 'missing-key' | 'request-failed',
+    readonly code: 'not-configured' | 'key-unavailable' | 'no-groups' | 'missing-key' | 'request-failed',
     message: string,
   ) {
     super(message)
@@ -29,15 +29,34 @@ export interface InfiniteCanvasSession {
 export interface InfiniteCanvasKeyClient {
   list: typeof keysAPI.list
   create: typeof keysAPI.create
-  update: typeof keysAPI.update
   getAvailableGroups: typeof userGroupsAPI.getAvailable
 }
 
 const defaultClient: InfiniteCanvasKeyClient = {
   list: keysAPI.list,
   create: keysAPI.create,
-  update: keysAPI.update,
   getAvailableGroups: userGroupsAPI.getAvailable,
+}
+
+// Only share pending work within the same user and operation. Every later
+// entry reads current key state so revoked or deleted keys cannot stay cached.
+const inFlightSetups = new WeakMap<InfiniteCanvasKeyClient, Map<string, Promise<InfiniteCanvasSession>>>()
+
+function currentUserScope(): string | null {
+  try {
+    const raw = window.localStorage.getItem('auth_user')
+    if (!raw) return null
+    const user = JSON.parse(raw) as { id?: number | string }
+    return user.id === undefined || user.id === null ? null : String(user.id)
+  } catch {
+    return null
+  }
+}
+
+function assertUserScope(scope: string | null): void {
+  if (currentUserScope() !== scope) {
+    throw new InfiniteCanvasSetupError('request-failed', 'The authenticated user changed')
+  }
 }
 
 function extractErrorMessage(error: unknown): string {
@@ -46,55 +65,42 @@ function extractErrorMessage(error: unknown): string {
   return response?.data?.detail || response?.data?.message || ''
 }
 
-export async function ensureInfiniteCanvasApiKey(
-  client: InfiniteCanvasKeyClient = defaultClient,
+function toSession(key: ApiKey, created: boolean): InfiniteCanvasSession {
+  if (!key.key) throw new InfiniteCanvasSetupError('missing-key', 'API key value is empty')
+  return {
+    apiKey: key.key,
+    groupIds: key.group_ids?.length ? key.group_ids : key.group_id ? [key.group_id] : [],
+    truncated: false,
+    created,
+    keyId: key.id,
+  }
+}
+
+async function prepareInfiniteCanvasApiKey(
+  client: InfiniteCanvasKeyClient,
+  createIfMissing: boolean,
+  userScope: string | null,
 ): Promise<InfiniteCanvasSession> {
-  let groups: Group[]
-  try {
-    groups = await client.getAvailableGroups()
-  } catch (error) {
-    throw new InfiniteCanvasSetupError('request-failed', extractErrorMessage(error) || 'Failed to load groups')
-  }
-
-  const groupIds = selectSmartRoutingGroupIds(groups)
-  if (groupIds.length === 0) {
-    throw new InfiniteCanvasSetupError('no-groups', 'No available groups')
-  }
-
-  let existing: ApiKey | undefined
   try {
     const listed = await client.list(1, 100, { search: INFINITE_CANVAS_KEY_NAME, sort_by: 'created_at', sort_order: 'desc' })
-    existing = findReusableCanvasKey(listed.items || [])
-  } catch (error) {
-    throw new InfiniteCanvasSetupError('request-failed', extractErrorMessage(error) || 'Failed to list API keys')
-  }
-
-  const truncated = groups.length > groupIds.length
-  const needsGroupSync = existing
-    ? !groupIdsEqual(existing.group_ids && existing.group_ids.length > 0 ? existing.group_ids : existing.group_id ? [existing.group_id] : [], groupIds)
-    : false
-
-  try {
+    assertUserScope(userScope)
+    const existing = findReusableCanvasKey(listed.items || [])
     if (existing) {
-      if (needsGroupSync || existing.status !== 'active') {
-        existing = await client.update(existing.id, {
-          group_id: groupIds[0],
-          group_ids: groupIds,
-          status: 'active',
-        })
+      if (!isUsableCanvasKey(existing)) {
+        throw new InfiniteCanvasSetupError('key-unavailable', 'Canvas key is disabled, expired or exhausted')
       }
-      if (!existing.key) {
-        throw new InfiniteCanvasSetupError('missing-key', 'API key value is empty')
-      }
-      return {
-        apiKey: existing.key,
-        groupIds,
-        truncated,
-        created: false,
-        keyId: existing.id,
-      }
+      return toSession(existing, false)
+    }
+    if (!createIfMissing) {
+      throw new InfiniteCanvasSetupError('not-configured', 'No canvas key configured')
     }
 
+    const groups = await client.getAvailableGroups()
+    assertUserScope(userScope)
+    const groupIds = selectSmartRoutingGroupIds(groups)
+    if (groupIds.length === 0) {
+      throw new InfiniteCanvasSetupError('no-groups', 'No available groups')
+    }
     const created = await client.create(
       INFINITE_CANVAS_KEY_NAME,
       groupIds[0],
@@ -105,19 +111,36 @@ export async function ensureInfiniteCanvasApiKey(
       undefined,
       undefined,
       groupIds,
+      { idempotencyKey: crypto.randomUUID() },
     )
-    if (!created.key) {
-      throw new InfiniteCanvasSetupError('missing-key', 'API key value is empty')
-    }
-    return {
-      apiKey: created.key,
-      groupIds,
-      truncated,
-      created: true,
-      keyId: created.id,
-    }
+    assertUserScope(userScope)
+    return toSession(created, true)
   } catch (error) {
     if (error instanceof InfiniteCanvasSetupError) throw error
-    throw new InfiniteCanvasSetupError('request-failed', extractErrorMessage(error) || 'Failed to create API key')
+    throw new InfiniteCanvasSetupError('request-failed', extractErrorMessage(error) || 'Failed to prepare API key')
   }
+}
+
+export function ensureInfiniteCanvasApiKey(
+  client: InfiniteCanvasKeyClient = defaultClient,
+  options: { createIfMissing?: boolean } = {},
+): Promise<InfiniteCanvasSession> {
+  const scope = currentUserScope()
+  const createIfMissing = options.createIfMissing === true
+  const operationKey = JSON.stringify([scope, createIfMissing])
+  let operations = inFlightSetups.get(client)
+  if (!operations) {
+    operations = new Map()
+    inFlightSetups.set(client, operations)
+  }
+  const pending = operations.get(operationKey)
+  if (pending) return pending
+
+  const operation = prepareInfiniteCanvasApiKey(client, createIfMissing, scope)
+  operations.set(operationKey, operation)
+  const clearInFlight = () => {
+    if (operations.get(operationKey) === operation) operations.delete(operationKey)
+  }
+  void operation.then(clearInFlight, clearInFlight)
+  return operation
 }

@@ -257,6 +257,8 @@ type UpdateSettingsRequest struct {
 	OpenAICodexUserAgent                   *string `json:"openai_codex_user_agent"`
 	OpenAICodexClientVersion               *string `json:"openai_codex_client_version"`
 	OpenAICodexVersionAutoSyncEnabled      *bool   `json:"openai_codex_version_auto_sync_enabled"`
+	OpenAICodexTicketEnabled               *bool   `json:"openai_codex_ticket_enabled"`
+	OpenAICodexTicketHarvestProxyURL       *string `json:"openai_codex_ticket_harvest_proxy_url"`
 
 	// codex_cli_only 加固（global-only）
 	MinCodexVersion                      string `json:"min_codex_version"`
@@ -470,6 +472,11 @@ func omittedSettingKeys(sentFields map[string]json.RawMessage) service.OmittedSe
 		if _, sent := sentFields[jsonName]; !sent {
 			omitted[settingKey] = struct{}{}
 		}
+	}
+	// Unlike other pointer settings, proxy absence must remain distinguishable
+	// from an explicit empty value that overrides the deployment proxy.
+	if _, sent := sentFields[service.SettingKeyOpenAICodexTicketHarvestProxyURL]; !sent {
+		omitted[service.SettingKeyOpenAICodexTicketHarvestProxyURL] = struct{}{}
 	}
 	return omitted
 }
@@ -1767,6 +1774,22 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAICodexVersionAutoSyncEnabled
 		}(),
+		OpenAICodexTicketEnabled: func() bool {
+			if req.OpenAICodexTicketEnabled != nil {
+				return *req.OpenAICodexTicketEnabled
+			}
+			return previousSettings.OpenAICodexTicketEnabled
+		}(),
+		OpenAICodexTicketHarvestProxyURL: func() string {
+			if req.OpenAICodexTicketHarvestProxyURL == nil {
+				return previousSettings.OpenAICodexTicketHarvestProxyURL
+			}
+			next := strings.TrimSpace(*req.OpenAICodexTicketHarvestProxyURL)
+			if service.IsMaskedProxyURL(next) {
+				return previousSettings.OpenAICodexTicketHarvestProxyURL
+			}
+			return next
+		}(),
 		MinCodexVersion:       strings.TrimSpace(req.MinCodexVersion),
 		MaxCodexVersion:       strings.TrimSpace(req.MaxCodexVersion),
 		CodexCLIOnlyBlacklist: strings.TrimSpace(req.CodexCLIOnlyBlacklist),
@@ -2315,6 +2338,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexClientVersion:                               updatedSettings.OpenAICodexClientVersion,
 		OpenAICodexClientVersionSynced:                         updatedSettings.OpenAICodexClientVersionSynced,
 		OpenAICodexVersionAutoSyncEnabled:                      updatedSettings.OpenAICodexVersionAutoSyncEnabled,
+		OpenAICodexTicketEnabled:                               updatedSettings.OpenAICodexTicketEnabled,
+		OpenAICodexTicketHarvestProxyURL:                       service.MaskProxyURL(updatedSettings.OpenAICodexTicketHarvestProxyURL),
+		OpenAICodexTicketHarvestProxyConfigured:                strings.TrimSpace(updatedSettings.OpenAICodexTicketHarvestProxyURL) != "",
 		MinCodexVersion:                                        updatedSettings.MinCodexVersion,
 		MaxCodexVersion:                                        updatedSettings.MaxCodexVersion,
 		CodexCLIOnlyBlacklist:                                  updatedSettings.CodexCLIOnlyBlacklist,

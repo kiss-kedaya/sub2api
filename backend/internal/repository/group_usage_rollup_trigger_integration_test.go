@@ -383,6 +383,63 @@ func TestGroupUsageSummaryUsesConfiguredDSTBoundaries(t *testing.T) {
 	require.InDelta(t, 7, result[0].YesterdayCost, 0.0000001)
 }
 
+func TestGroupUsageSummarySnapshotSurvivesConcurrentHistoryCleanup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	useGroupUsageRepositoryTestTimezone(t, "UTC")
+	todayStart := time.Date(2026, 3, 9, 0, 0, 0, 0, time.UTC)
+	schema := createGroupUsageRollupTriggerTestSchema(t, ctx, false)
+	seedTx := beginGroupUsageRollupTriggerTestTx(t, ctx, schema)
+	defer func() { _ = seedTx.Rollback() }()
+	_, err := seedTx.ExecContext(ctx, `
+		INSERT INTO groups (id) VALUES (10);
+		INSERT INTO users (id) VALUES (1);
+		INSERT INTO usage_logs (id, user_id, group_id, actual_cost, created_at) VALUES
+			(1, 1, 10, 2, TIMESTAMPTZ '2026-03-07 12:00:00+00'),
+			(2, 1, 10, 3, TIMESTAMPTZ '2026-03-08 12:00:00+00'),
+			(3, 1, 10, 5, TIMESTAMPTZ '2026-03-09 12:00:00+00');
+		UPDATE usage_group_rollup_state SET closed_before = DATE '1970-01-01', timezone_name = 'UTC' WHERE id = 1;
+	`)
+	require.NoError(t, err)
+	require.NoError(t, newDashboardAggregationRepositoryWithSQL(seedTx).SyncGroupUsageRollups(ctx, todayStart))
+	require.NoError(t, seedTx.Commit())
+
+	reader, err := integrationDB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	require.NoError(t, err)
+	defer func() { _ = reader.Rollback() }()
+	require.NoError(t, setGroupUsageRollupTriggerSearchPath(ctx, reader, pq.QuoteIdentifier(schema)))
+	repo := newUsageLogRepositoryWithSQL(nil, reader)
+	state, err := repo.readGroupUsageRollupSnapshot(ctx, "UTC", "2026-03-09")
+	require.NoError(t, err)
+	require.True(t, state.valid)
+
+	// Publish a different retention boundary after the reader has captured its
+	// watermark. Its totals must still belong to the earlier snapshot.
+	writer := beginGroupUsageRollupTriggerTestTx(t, ctx, schema)
+	defer func() { _ = writer.Rollback() }()
+	_, err = writer.ExecContext(ctx, "DELETE FROM usage_logs WHERE id = 1")
+	require.NoError(t, err)
+	require.NoError(t, newDashboardAggregationRepositoryWithSQL(writer).SyncGroupUsageRollups(ctx, todayStart))
+	require.NoError(t, writer.Commit())
+
+	before, err := repo.GetAllGroupUsageSummary(ctx, todayStart)
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+	require.InDelta(t, 10, before[0].TotalCost, 0.0000001)
+	require.InDelta(t, 5, before[0].TodayCost, 0.0000001)
+	require.InDelta(t, 3, before[0].YesterdayCost, 0.0000001)
+	require.NoError(t, reader.Commit())
+
+	fresh := beginGroupUsageRollupTriggerTestTx(t, ctx, schema)
+	defer func() { _ = fresh.Rollback() }()
+	after, err := newUsageLogRepositoryWithSQL(nil, fresh).GetAllGroupUsageSummary(ctx, todayStart)
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	require.InDelta(t, 8, after[0].TotalCost, 0.0000001)
+	require.InDelta(t, 5, after[0].TodayCost, 0.0000001)
+	require.InDelta(t, 3, after[0].YesterdayCost, 0.0000001)
+}
+
 func createGroupUsageRollupTriggerTestSchema(t *testing.T, ctx context.Context, partitioned bool) string {
 	t.Helper()
 

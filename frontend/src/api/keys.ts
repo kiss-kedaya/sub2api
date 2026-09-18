@@ -66,7 +66,8 @@ export async function create(
   quota?: number,
   expiresInDays?: number,
   rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
-  groupIds?: number[]
+  groupIds?: number[],
+  options?: { idempotencyKey?: string }
 ): Promise<ApiKey> {
   const payload: CreateApiKeyRequest = { name }
   if (groupId !== undefined) {
@@ -100,7 +101,9 @@ export async function create(
     payload.rate_limit_7d = rateLimitData.rate_limit_7d
   }
 
-  const { data } = await apiClient.post<ApiKey>('/keys', payload)
+  const { data } = await apiClient.post<ApiKey>('/keys', payload, options?.idempotencyKey
+    ? { headers: { 'Idempotency-Key': options.idempotencyKey } }
+    : undefined)
   return data
 }
 
