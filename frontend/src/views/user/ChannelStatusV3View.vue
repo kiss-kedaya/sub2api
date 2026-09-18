@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
-    <div class="space-y-5 pb-12">
-      <section class="glass-card overflow-hidden p-0">
+    <div class="signal-channel-page signal-channel-v3 space-y-5 pb-12">
+      <section class="signal-channel-command glass-card overflow-hidden p-0">
         <header class="flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
           <div class="min-w-0">
             <h1 class="page-title flex items-center gap-2 text-xl font-black text-gray-900 dark:text-white">
@@ -16,7 +16,7 @@
           </div>
           <button class="btn btn-secondary btn-icon h-8 w-8 rounded-lg" type="button" :disabled="loading || refreshing" :title="t('common.refresh')" @click="reload(false)"><Icon name="refresh" size="sm" :class="refreshing ? 'animate-spin' : ''" /></button>
         </header>
-        <div class="flex flex-wrap items-center gap-2 px-4 py-3 sm:px-5">
+        <div class="signal-channel-range flex flex-wrap items-center gap-2 px-4 py-3 sm:px-5">
           <button v-for="option in ranges" :key="option.value" type="button" class="tab !px-2.5 !py-1 text-xs" :class="filter.range === option.value ? 'tab-active' : ''" @click="setRange(option.value)">{{ option.label }}</button>
           <span class="mx-1 hidden h-5 w-px bg-gray-200 dark:bg-dark-700 sm:block" />
           <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('channelMonitorV3.description') }}</span>
@@ -24,8 +24,8 @@
         </div>
       </section>
 
-      <div v-if="loading && rows.length === 0" class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        <div v-for="i in 8" :key="i" class="h-72 animate-pulse rounded-[24px] bg-white/60 dark:bg-dark-800" />
+      <div v-if="loading && rows.length === 0" class="signal-channel-loading-grid grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <div v-for="i in 8" :key="i" class="h-72 animate-pulse bg-white/60 dark:bg-dark-800" />
       </div>
       <EmptyState v-else-if="rows.length === 0" :title="t('channelMonitorV3.emptyTitle')" :description="t('channelMonitorV3.emptyDescription')" />
       <div v-else class="channel-status-board space-y-8" data-testid="channel-status-board">
@@ -36,7 +36,7 @@
           :data-testid="block.kind === 'cluster' ? `channel-status-platform-${block.platform}` : 'channel-status-compact-platforms'"
         >
           <template v-if="block.kind === 'cluster'">
-            <h2 class="mb-3 flex items-center gap-2 px-1 text-sm font-semibold text-gray-700 dark:text-gray-200">
+            <h2 class="signal-platform-heading mb-3 flex items-center gap-2 px-1 text-sm font-semibold text-gray-700 dark:text-gray-200">
               {{ providerLabel(block.platform) }}
               <span class="rounded-full bg-gray-100 px-1.5 py-px font-mono text-[10px] font-medium text-gray-500 dark:bg-dark-700 dark:text-gray-400">{{ block.rows.length }}</span>
             </h2>
@@ -60,7 +60,7 @@
               :key="item.row.group_id ?? `${item.platform}:${item.row.group_name ?? ''}`"
               :data-testid="`channel-status-platform-${item.platform}`"
             >
-              <h2 class="mb-3 px-1 text-sm font-semibold text-gray-700 dark:text-gray-200">{{ providerLabel(item.platform) }}</h2>
+              <h2 class="signal-platform-heading mb-3 px-1 text-sm font-semibold text-gray-700 dark:text-gray-200">{{ providerLabel(item.platform) }}</h2>
               <ChannelMonitorV3Card
                 :row="item.row"
                 :user-rate-multiplier="getUserRateMultiplier(item.row.group_id)"
@@ -77,6 +77,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import './channel-signal.css'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import EmptyState from '@/components/common/EmptyState.vue'

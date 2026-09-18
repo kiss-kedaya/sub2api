@@ -1,23 +1,40 @@
 <template>
   <AppLayout>
-    <MonitorHero
-      :overall-status="overallStatus"
-      :interval-seconds="DEFAULT_INTERVAL_SECONDS"
-      :window="currentWindow"
-      :loading="loading"
-      :auto-refresh="autoRefresh"
-      @update:window="handleWindowChange"
-      @refresh="manualReload"
-    />
+    <div class="signal-channel-page signal-channel-v1">
+      <header class="signal-channel-masthead">
+        <div class="signal-channel-identity">
+          <span class="signal-channel-mark" aria-hidden="true">
+            <Icon name="chart" size="lg" />
+          </span>
+          <div class="signal-channel-heading">
+            <h1>{{ t('channelStatus.title') }}</h1>
+            <p>{{ t('channelStatus.description') }}</p>
+          </div>
+        </div>
+        <span class="signal-channel-count" aria-live="polite">{{ items.length }}</span>
+      </header>
 
-    <MonitorCardGrid
-      :items="items"
-      :window="currentWindow"
-      :countdown-seconds="countdown"
-      :loading="loading"
-      :detail-cache="detailCache"
-      @card-click="openDetail"
-    />
+      <MonitorHero
+        class="signal-channel-controls"
+        :overall-status="overallStatus"
+        :interval-seconds="DEFAULT_INTERVAL_SECONDS"
+        :window="currentWindow"
+        :loading="loading"
+        :auto-refresh="autoRefresh"
+        @update:window="handleWindowChange"
+        @refresh="manualReload"
+      />
+
+      <MonitorCardGrid
+        class="signal-channel-card-grid"
+        :items="items"
+        :window="currentWindow"
+        :countdown-seconds="countdown"
+        :loading="loading"
+        :detail-cache="detailCache"
+        @card-click="openDetail"
+      />
+    </div>
 
     <MonitorDetailDialog
       :show="showDetail"
@@ -46,8 +63,10 @@ import MonitorHero, {
 } from '@/components/user/monitor/MonitorHero.vue'
 import MonitorCardGrid from '@/components/user/monitor/MonitorCardGrid.vue'
 import MonitorDetailDialog from '@/components/user/MonitorDetailDialog.vue'
+import Icon from '@/components/icons/Icon.vue'
 import { DEFAULT_INTERVAL_SECONDS, STATUS_OPERATIONAL } from '@/constants/channelMonitor'
 import { useAutoRefresh } from '@/composables/useAutoRefresh'
+import './channel-signal.css'
 
 const { t } = useI18n()
 const appStore = useAppStore()
