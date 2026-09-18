@@ -395,6 +395,19 @@
   .console-signal.signal-admin .table-page-layout.mobile-mode { height: auto; min-height: calc(100dvh - 120px); }
 }
 
+@media (max-width: 479px) {
+  .console-signal .header-actions { gap: 0; }
+  .console-signal .header-actions > :is(button, div) > button,
+  .console-signal .header-actions > button {
+    min-width: 36px;
+    min-height: 40px;
+    padding-inline: 6px;
+  }
+  .console-signal .header-subscriptions > button > div { display: none; }
+  .console-signal .header-locale > button > svg { display: none; }
+  .console-signal .header-identity { max-width: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .console-signal .btn:active:not(:disabled) { transform: none; }
 }

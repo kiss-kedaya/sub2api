@@ -1,5 +1,7 @@
 # 0.1.330 User Console Completion
 
+Status: unpublished draft. The user rejected the initial flat direction and expanded the scope to admin layouts and richer AI-product styling. The revised iteration stays on local port 4317 pending visual acceptance; do not treat the prepared rollout scripts or this filename as a released version.
+
 ## Intended Behavior
 
 Channel status and recharge were still using their prior presentation in 329. This release extends the approved SIGNAL layout to monitoring, recharge, orders, subscriptions, redemption, profile, affiliate and IP allowlist pages. User routes are explicitly opted in; admin pages, authentication and the canvas editor retain their own layouts. Payment amounts, currencies, validation, order creation, provider integrations, channel metrics and polling must retain their existing behavior.
