@@ -16,7 +16,8 @@ vi.mock('@/composables/useBatchImageAccess', () => ({
 }))
 
 const userPaths = ['/dashboard', '/keys', '/usage', '/monitor', '/available-channels', '/purchase',
-  '/orders', '/subscriptions', '/profile', '/redeem', '/affiliate', '/ip-allowlist', '/payment/qrcode', '/payment/result']
+  '/orders', '/subscriptions', '/profile', '/redeem', '/affiliate', '/ip-allowlist',
+  '/payment/qrcode', '/payment/result', '/payment/stripe', '/payment/airwallex']
 const excludedPaths = ['/admin/dashboard', '/admin/keys', '/admin/usage', '/login', '/keys/other', '/usage-extra', '/infinite-canvas']
 let wrapper: VueWrapper | undefined
 

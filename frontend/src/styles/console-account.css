@@ -87,6 +87,25 @@
   letter-spacing: 0;
 }
 
+.console-signal .signal-provider-payment > .card {
+  padding-inline: 0;
+  border-inline: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.console-signal .signal-provider-amount {
+  background: var(--signal-surface);
+}
+
+.console-signal .signal-provider-amount > p:first-child {
+  color: var(--signal-muted);
+}
+
+.console-signal .signal-provider-amount > p + p {
+  color: var(--signal-accent);
+}
+
 .signal-account-support {
   padding: 16px;
   border-left: 2px solid var(--signal-accent);
