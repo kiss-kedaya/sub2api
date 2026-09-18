@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { createMockApi, PreviewError } from './mock-api'
 import type { ApiKey, PaginatedResponse, UsageLog } from '../src/types'
 import type { UserDashboardStats } from '../src/api/usage'
+import type { MonitorMatrixResponse } from '../src/api/channelMonitorV2'
+import type { UserMonitorListResponse } from '../src/api/channelMonitor'
+import type { UserAvailableChannel } from '../src/api/channels'
+import type { CheckoutInfoResponse, CreateOrderResult, PaymentOrder } from '../src/types/payment'
 
 const date = new Date('2026-09-17T13:00:00Z')
 const query = (value = '') => new URLSearchParams(value)
@@ -71,6 +75,96 @@ describe('local demo API contracts', () => {
     expect(api.handle('GET', '/api/v1/usage/stats', query('api_key_id=999'))).toMatchObject({ total_requests: 0, total_tokens: 0, total_actual_cost: 0 })
     expect(api.handle('POST', '/api/v1/usage/dashboard/api-keys-usage', query(), { api_key_ids: [1, 999] })).toMatchObject({ stats: { '1': { api_key_id: 1 }, '999': { total_actual_cost: 0 } } })
     expect(api.handle('GET', '/api/v1/user/api-keys/1/usage/daily', query('days=7'))).toMatchObject({ days: 7 })
+  })
+
+  it('enables preview navigation, defaults monitor to V3 and keeps V1 switching local', () => {
+    const api = createMockApi(date)
+    expect(api.handle('GET', '/api/v1/settings/public', query())).toMatchObject({
+      channel_monitor_enabled: true,
+      channel_monitor_mode: 'v2',
+      available_channels_enabled: true,
+      payment_enabled: true,
+      affiliate_enabled: true,
+    })
+    expect(api.handle('PUT', '/api/v1/settings/public', query(), { channel_monitor_mode: 'v1' })).toMatchObject({ channel_monitor_mode: 'v1' })
+    expect(api.handle('GET', '/api/v1/settings/public', query())).toMatchObject({ channel_monitor_mode: 'v1' })
+    expect(() => api.handle('PUT', '/api/v1/settings/public', query(), { channel_monitor_mode: 'v3' })).toThrow('v1 或 v2')
+    api.handle('PUT', '/api/v1/settings/public', query(), { channel_monitor_mode: 'v2' })
+  })
+
+  it('supplies realistic V1 and V2/V3 monitor states with filterable matrix data', () => {
+    const api = createMockApi(date)
+    const v1 = api.handle('GET', '/api/v1/channel-monitors', query()) as UserMonitorListResponse
+    expect(v1.items).toHaveLength(5)
+    expect(new Set(v1.items.map(item => item.primary_status))).toEqual(new Set(['operational', 'degraded', 'failed', 'error']))
+    expect(v1.items.every(item => item.name.includes('本地预览'))).toBe(true)
+    expect(api.handle('GET', `/api/v1/channel-monitors/${v1.items[0].id}/status`, query())).toMatchObject({ id: v1.items[0].id })
+
+    const matrix = api.handle('GET', '/api/v1/channel-monitor-v2/matrix', query('range=90m&group_by=platform_group')) as MonitorMatrixResponse
+    expect(matrix.items).toHaveLength(5)
+    expect(matrix.items.map(item => item.health.overall)).toEqual(['healthy', 'healthy', 'warning', 'critical', 'unknown'])
+    expect(matrix.items.every(item => item.buckets.length === 30)).toBe(true)
+    const filtered = api.handle('GET', '/api/v1/channel-monitor-v2/matrix', query('range=24h&group_by=platform_group_model&platform=gemini&model=gemini-2.5-pro')) as MonitorMatrixResponse
+    expect(filtered.items).toHaveLength(1)
+    expect(filtered.items[0]).toMatchObject({ platform: 'gemini', model: 'gemini-2.5-pro', health: { overall: 'warning' } })
+    expect(api.handle('GET', '/api/v1/channel-monitor-v2/errors', query())).toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ category: 'rate_or_capacity' })]),
+    })
+  })
+
+  it('returns channel pricing and subscription quota structures from source contracts', () => {
+    const api = createMockApi(date)
+    const channels = api.handle('GET', '/api/v1/channels/available', query()) as UserAvailableChannel[]
+    expect(channels).toHaveLength(2)
+    expect(channels.flatMap(channel => channel.platforms).flatMap(section => section.supported_models)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'gpt-5', pricing: expect.objectContaining({ billing_mode: 'token', input_price: 1.25 }) }),
+      expect.objectContaining({ name: 'deepseek-chat', pricing: expect.objectContaining({ output_price: 1.1 }) }),
+    ]))
+    const subscriptions = api.handle('GET', '/api/v1/subscriptions', query()) as Array<{ status: string; group?: { daily_limit_usd: number | null } }>
+    expect(subscriptions.map(item => item.status)).toEqual(['active', 'active', 'expired'])
+    expect(subscriptions[0].group?.daily_limit_usd).toBe(12)
+    expect(api.handle('GET', '/api/v1/subscriptions/summary', query())).toMatchObject({ active_count: 2 })
+  })
+
+  it('keeps payment orders local, currency-aware and free of outbound payment URLs', () => {
+    const api = createMockApi(date)
+    const checkout = api.handle('GET', '/api/v1/payment/checkout-info', query()) as CheckoutInfoResponse
+    expect(checkout.methods.alipay.currency).toBe('CNY')
+    expect(checkout.methods.epusdt.currency).toBe('USDT')
+    expect(checkout.plans[0]).toMatchObject({ price: 29, currency: 'USD' })
+    const created = api.handle('POST', '/api/v1/payment/orders', query(), { amount: 20, payment_type: 'alipay', order_type: 'balance' }) as CreateOrderResult
+    expect(created).toMatchObject({ order_id: 51007, amount: 20, pay_amount: 20, currency: 'CNY', payment_mode: 'qrcode' })
+    expect(created.qr_code).toBe('LOCAL-DEMO-PAYMENT:LOCAL-DEMO-20260917-51007')
+    expect(created.pay_url).toBeUndefined()
+    expect(created.client_secret).toBeUndefined()
+    expect(api.handle('GET', '/api/v1/payment/orders/51007', query())).toMatchObject({ status: 'PENDING', currency: 'CNY' })
+    api.handle('POST', '/api/v1/payment/orders/51007/cancel', query())
+    expect(api.handle('GET', '/api/v1/payment/orders/51007', query())).toMatchObject({ status: 'CANCELLED' })
+
+    const usdt = api.handle('POST', '/api/v1/payment/orders', query(), { amount: 12, payment_type: 'epusdt', order_type: 'balance' }) as CreateOrderResult
+    expect(usdt).toMatchObject({ currency: 'USDT', pay_amount: 12 })
+    const orders = api.handle('GET', '/api/v1/payment/orders/my', query('page=1&page_size=20')) as PaginatedResponse<PaymentOrder>
+    expect(orders.total).toBe(8)
+    expect(orders.items.some(order => order.currency === 'USDT')).toBe(true)
+    api.handle('POST', '/api/v1/payment/orders/51005/refund-request', query(), { reason: '仅测试页面交互' })
+    expect(api.handle('GET', '/api/v1/payment/orders/51005', query())).toMatchObject({ status: 'REFUND_REQUESTED', refund_request_reason: '仅测试页面交互' })
+  })
+
+  it('simulates redeem, affiliate, profile and IP allowlist actions only in memory', () => {
+    const api = createMockApi(date)
+    expect(api.handle('POST', '/api/v1/redeem', query(), { code: 'DEMO-BALANCE-10' })).toMatchObject({ type: 'balance', new_balance: 138.64 })
+    expect(api.handle('GET', '/api/v1/auth/me', query())).toMatchObject({ balance: 138.64 })
+    expect(() => api.handle('POST', '/api/v1/redeem', query(), { code: 'DEMO-BALANCE-10' })).toThrow('已在当前进程使用')
+    expect(api.handle('POST', '/api/v1/user/aff/transfer', query())).toMatchObject({ transferred_quota: 18.64, balance: 157.28 })
+    expect(api.handle('GET', '/api/v1/user/aff', query())).toMatchObject({ aff_quota: 0 })
+    expect(api.handle('PUT', '/api/v1/user', query(), { username: '预览资料已修改' })).toMatchObject({ username: '预览资料已修改' })
+
+    const added = api.handle('POST', '/api/v1/user/cf-allowlist', query(), { ip: '198.51.100.24' }) as { id: number }
+    expect(api.handle('GET', '/api/v1/user/cf-allowlist', query())).toMatchObject({ used_slots: 3 })
+    api.handle('DELETE', `/api/v1/user/cf-allowlist/${added.id}`, query())
+    expect(api.handle('GET', '/api/v1/user/cf-allowlist', query())).toMatchObject({ used_slots: 2 })
+    expect(() => api.handle('POST', '/api/v1/user/cf-allowlist', query(), { ip: 'not-an-ip' })).toThrow('有效的 IPv4 或 IPv6')
+    expect(createMockApi(date).handle('GET', '/api/v1/auth/me', query())).toMatchObject({ balance: 128.64, username: '演示用户' })
   })
 
   it('rejects unsupported operations and malformed input explicitly', () => {
