@@ -1,6 +1,6 @@
 # SIGNAL User Page Completion
 
-The user reported that channel status and recharge still use the old design after 329. Subsequent feedback rejected the overly flat visual treatment and explicitly added frequently used admin pages and interaction improvements. The current iteration must be reviewed locally on 4317 before another production release.
+The user reported that channel status and recharge still use the old design after 329. Subsequent feedback rejected the overly flat visual treatment and explicitly added frequently used admin pages and interaction improvements. After local review on 4317 and the reference-led simplification below, the user authorized GitHub release and deployment on 2026-09-18, conditional on green tests and CI.
 
 ## Scope
 
