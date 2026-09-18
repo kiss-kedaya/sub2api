@@ -18,7 +18,8 @@ vi.mock('@/composables/useBatchImageAccess', () => ({
 const userPaths = ['/dashboard', '/keys', '/usage', '/monitor', '/available-channels', '/purchase',
   '/orders', '/subscriptions', '/profile', '/redeem', '/affiliate', '/ip-allowlist',
   '/payment/qrcode', '/payment/result', '/payment/stripe', '/payment/airwallex']
-const excludedPaths = ['/admin/dashboard', '/admin/keys', '/admin/usage', '/login', '/keys/other', '/usage-extra', '/infinite-canvas']
+const adminPaths = ['/admin/dashboard', '/admin/accounts', '/admin/groups', '/admin/users', '/admin/keys', '/admin/usage']
+const excludedPaths = ['/login', '/keys/other', '/usage-extra', '/infinite-canvas']
 let wrapper: VueWrapper | undefined
 
 async function renderShell(path: string, role: 'user' | 'admin' = 'user') {
@@ -41,7 +42,7 @@ async function renderShell(path: string, role: 'user' | 'admin' = 'user') {
 
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [...new Set([...userPaths, ...excludedPaths, '/:pathMatch(.*)*'])].map((routePath) => ({
+    routes: [...new Set([...userPaths, ...adminPaths, ...excludedPaths, '/:pathMatch(.*)*'])].map((routePath) => ({
       path: routePath,
       component: { template: '<div />' },
       meta: { title: routePath === '/keys' ? 'API Keys' : routePath }
@@ -91,16 +92,24 @@ describe('SIGNAL shell route isolation', () => {
     expect(wrapper!.find('header h1').exists()).toBe(true)
   })
 
-  it('includes admins on user pages and removes opt-in after navigation', async () => {
+  it.each(adminPaths)('applies the admin workspace on %s with its existing header title', async (path) => {
+    await renderShell(path, 'admin')
+    expect(wrapper!.classes()).toContain('signal-admin')
+    expect(wrapper!.get('header h1').text()).toBe(path)
+    expect(wrapper!.get('.signal-breadcrumb a').attributes('href')).toBe('/admin/dashboard')
+  })
+
+  it('switches between admin and personal workspace without leaving theme state behind', async () => {
     const { router } = await renderShell('/keys', 'admin')
     expect(wrapper!.classes()).toContain('console-signal')
     expect(wrapper!.find('.sidebar a[href="/admin/dashboard"]').exists()).toBe(true)
     await router.push('/admin/dashboard')
-    expect(wrapper!.classes()).not.toContain('console-signal')
-    expect(wrapper!.find('.signal-breadcrumb').exists()).toBe(false)
+    expect(wrapper!.classes()).toContain('console-signal')
+    expect(wrapper!.classes()).toContain('signal-admin')
     expect(document.body.classList.contains('console-signal')).toBe(false)
     await router.push('/usage')
     expect(wrapper!.classes()).toContain('console-signal')
+    expect(wrapper!.classes()).not.toContain('signal-admin')
   })
 
   it('keeps collapse, mobile navigation, theme and balance semantics', async () => {

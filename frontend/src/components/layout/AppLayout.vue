@@ -1,7 +1,7 @@
 <template>
   <div
     class="min-h-screen"
-    :class="isConsoleSignal ? 'console-signal' : 'bg-gray-50 dark:bg-dark-950'"
+    :class="[isConsoleSignal ? 'console-signal' : 'bg-gray-50 dark:bg-dark-950', { 'signal-admin': isAdminSignal }]"
   >
     <!-- Background Decoration -->
     <div v-if="!isConsoleSignal" class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>
@@ -29,6 +29,7 @@
 import '@/styles/onboarding.css'
 import '@/styles/console-signal.css'
 import '@/styles/console-account.css'
+import '@/styles/console-studio.css'
 import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
@@ -40,7 +41,7 @@ import AppHeader from './AppHeader.vue'
 
 const appStore = useAppStore()
 const authStore = useAuthStore()
-const { isConsoleSignal } = useConsoleSignal()
+const { isConsoleSignal, isAdminSignal } = useConsoleSignal()
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const isAdmin = computed(() => authStore.user?.role === 'admin')
 
