@@ -64,7 +64,9 @@ jobs:
         working-directory: frontend
         run: pnpm run build
       - name: Verify rollout rollback simulations
-        run: python3 deploy/rollout/test_rollout329_guard.py
+        run: |
+          python3 deploy/rollout/test_rollout329_guard.py
+          python3 deploy/rollout/test_rollout330_guard.py
 
   golangci-lint:
     runs-on: ubuntu-latest
