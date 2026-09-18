@@ -74,9 +74,9 @@
                 <Icon name="checkCircle" size="md" class="text-emerald-600 dark:text-emerald-400" />
               </div>
               <div class="flex-1">
-                <h3 class="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
+                <h2 class="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
                   {{ t('redeem.redeemSuccess') }}
-                </h3>
+                </h2>
                 <div class="mt-2 text-sm text-emerald-700 dark:text-emerald-400">
                   <p>{{ redeemResult.message }}</p>
                   <div class="mt-3 space-y-1">
@@ -132,9 +132,9 @@
                 />
               </div>
               <div class="flex-1">
-                <h3 class="text-sm font-semibold text-red-800 dark:text-red-300">
+                <h2 class="text-sm font-semibold text-red-800 dark:text-red-300">
                   {{ t('redeem.redeemFailed') }}
-                </h3>
+                </h2>
                 <p class="mt-2 text-sm text-red-700 dark:text-red-400">
                   {{ errorMessage }}
                 </p>
@@ -156,9 +156,9 @@
               <Icon name="infoCircle" size="md" class="text-primary-600 dark:text-primary-400" />
             </div>
             <div class="flex-1">
-              <h3 class="text-sm font-semibold text-primary-800 dark:text-primary-300">
+              <h2 class="text-sm font-semibold text-primary-800 dark:text-primary-300">
                 {{ t('redeem.aboutCodes') }}
-              </h3>
+              </h2>
               <ul
                 class="mt-2 list-inside list-disc space-y-1 text-sm text-primary-700 dark:text-primary-400"
               >
