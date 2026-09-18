@@ -5,7 +5,7 @@ const signalPaths = new Set([
   '/dashboard', '/keys', '/usage', '/monitor', '/available-channels',
   '/purchase', '/orders', '/subscriptions', '/redeem',
   '/profile', '/affiliate', '/ip-allowlist',
-  '/payment/qrcode', '/payment/result',
+  '/payment/qrcode', '/payment/result', '/payment/stripe', '/payment/airwallex',
 ])
 
 export function useConsoleSignal() {
