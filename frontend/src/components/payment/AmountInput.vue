@@ -1,5 +1,20 @@
 <template>
-  <div class="payment-amount-input space-y-4">
+  <div class="payment-amount-input">
+    <label class="payment-amount-input__entry">
+      <span class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('payment.amountLabel') }}</span>
+      <span class="payment-amount-input__field">
+        <span class="payment-amount-input__currency">{{ currency }}</span>
+        <input
+          type="text"
+          inputmode="decimal"
+          :value="customText"
+          :placeholder="placeholderText"
+          :aria-label="t('payment.customAmount')"
+          class="input w-full"
+          @input="handleInput"
+        />
+      </span>
+    </label>
     <!-- Quick Amount Buttons -->
     <div>
       <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -24,25 +39,6 @@
       </div>
     </div>
 
-    <!-- Custom Amount Input -->
-    <div>
-      <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-        {{ t('payment.customAmount') }}
-      </label>
-      <div class="relative">
-        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-dark-500">
-          $
-        </span>
-        <input
-          type="text"
-          inputmode="decimal"
-          :value="customText"
-          :placeholder="placeholderText"
-          class="input w-full py-3 pl-8 pr-4"
-          @input="handleInput"
-        />
-      </div>
-    </div>
   </div>
 </template>
 
@@ -55,10 +51,12 @@ const props = withDefaults(defineProps<{
   modelValue: number | null
   min?: number
   max?: number
+  currency?: string
 }>(), {
   amounts: () => [10, 20, 50, 100, 200, 500, 1000, 2000, 5000],
   min: 0,
   max: 0,
+  currency: 'USD',
 })
 
 const emit = defineEmits<{
@@ -89,8 +87,12 @@ function selectAmount(amt: number) {
 }
 
 function handleInput(e: Event) {
-  const val = (e.target as HTMLInputElement).value
-  if (!AMOUNT_PATTERN.test(val)) return
+  const input = e.target as HTMLInputElement
+  const val = input.value
+  if (!AMOUNT_PATTERN.test(val)) {
+    input.value = customText.value
+    return
+  }
   customText.value = val
   if (val === '') {
     emit('update:modelValue', null)
@@ -105,8 +107,19 @@ function handleInput(e: Event) {
 }
 
 watch(() => props.modelValue, (v) => {
-  if (v !== null && String(v) !== customText.value) {
-    customText.value = String(v)
-  }
+  if (v === null) {
+    if (Number(customText.value) > 0) customText.value = ''
+  } else if (String(v) !== customText.value) customText.value = String(v)
 }, { immediate: true })
 </script>
+
+<style scoped>
+.payment-amount-input { display: grid; gap: 20px; }
+.payment-amount-input__entry { display: block; min-width: 0; }
+.payment-amount-input__field { position: relative; display: block; }
+.payment-amount-input__field .input { min-height: 64px; padding: 12px 16px 12px 72px; font-size: 26px; font-variant-numeric: tabular-nums; }
+.payment-amount-input__currency { position: absolute; inset: 0 auto 0 16px; display: flex; align-items: center; max-width: 48px; font-size: 12px; font-weight: 600; color: var(--signal-muted, #6b7280); }
+@media (max-width: 479px) {
+  .payment-amount-input__field .input { font-size: 22px; padding-left: 64px; }
+}
+</style>

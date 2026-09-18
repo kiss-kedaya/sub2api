@@ -1,10 +1,10 @@
 /* Shared material and type, scoped to the signed-in console. */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal) {
-  --signal-bg: #f8f9fb;
+  --signal-bg: #f7f8fa;
   --signal-surface: #ffffff;
   --signal-raised: #ffffff;
   --signal-sidebar: #f0f2f5;
-  --signal-line: #e0e3e9;
+  --signal-line: #dfe2e8;
   --signal-text: #20222a;
   --signal-muted: #6b7180;
   --signal-accent: #3764e8;
@@ -12,29 +12,35 @@
   --signal-hover: #edf0f7;
   --signal-accent-soft: #e9efff;
   --signal-on-accent: #ffffff;
-  --signal-control-line: #c3c9d4;
+  --signal-control-line: #bcc3ce;
   --signal-highlight: #ffffff;
-  --signal-shadow: 0 8px 24px #21293b0a, 0 1px 3px #21293b08;
+  --signal-inset: #f3f4f7;
+  --signal-divider: #e9ebf0;
+  --signal-shadow: 0 2px 4px #19223005, 0 8px 20px #19223006;
+  --signal-popover-shadow: 0 4px 12px #1922300c, 0 24px 64px #1922301f;
   font-family: 'Segoe UI Variable', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
 .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal) {
-  --signal-bg: #161719;
+  --signal-bg: #18191c;
   --signal-surface: #1e2023;
-  --signal-raised: #27292d;
+  --signal-raised: #292b30;
   --signal-sidebar: #111214;
-  --signal-line: #34363c;
+  --signal-line: #36383e;
   --signal-text: #eeeef2;
   --signal-muted: #a4a6b1;
   --signal-accent: #8bafff;
   --signal-amber: #e3b770;
-  --signal-hover: #2b2d32;
+  --signal-hover: #2d3036;
   --signal-accent-soft: #24304b;
   --signal-on-accent: #101624;
-  --signal-control-line: #555966;
-  --signal-highlight: #ffffff0f;
-  --signal-shadow: 0 8px 24px #00000014, 0 1px 3px #00000014;
+  --signal-control-line: #4e535f;
+  --signal-highlight: #ffffff0c;
+  --signal-inset: #191b1f;
+  --signal-divider: #2c2e34;
+  --signal-shadow: 0 2px 4px #00000014, 0 8px 20px #0000000f;
+  --signal-popover-shadow: 0 4px 12px #00000029, 0 24px 64px #00000066;
 }
 
 .console-signal .signal-sidebar {
@@ -52,8 +58,8 @@
   padding-inline: 16px;
 }
 
-.console-signal .sidebar-brand-title {
-  font-size: 16px;
+.console-signal .signal-sidebar .sidebar-brand-title {
+  font-size: 18px;
   font-weight: 650;
 }
 
@@ -71,10 +77,15 @@
 }
 
 .console-signal .signal-sidebar .sidebar-link-active {
-  background: var(--signal-surface);
+  background: linear-gradient(100deg, color-mix(in srgb, var(--signal-accent) 6%, var(--signal-surface)), var(--signal-surface));
   border-color: var(--signal-line);
   color: var(--signal-text);
   box-shadow: inset 0 1px 0 var(--signal-highlight), 0 2px 5px #00000008;
+}
+
+.console-signal .signal-sidebar .sidebar-link-active::before {
+  inset-block: 12px;
+  border-radius: 1px;
 }
 
 .console-signal .signal-sidebar .sidebar-link-active > svg {
@@ -89,6 +100,10 @@
 .console-signal .signal-header {
   background: var(--signal-bg);
   border-color: var(--signal-line);
+}
+
+.console-signal :is(.header-avatar, .header-balance) {
+  box-shadow: inset 0 1px 0 var(--signal-highlight);
 }
 
 .console-signal .signal-main {
@@ -125,27 +140,49 @@
   box-shadow: inset 0 1px 0 var(--signal-highlight), 0 1px 2px #00000008;
 }
 
+:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary:hover:not(:disabled) {
+  border-color: var(--signal-control-line);
+  background: linear-gradient(180deg, var(--signal-hover), var(--signal-surface));
+}
+
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary {
   border: 1px solid color-mix(in srgb, var(--signal-accent) 80%, black);
   box-shadow: inset 0 1px 0 #ffffff30, 0 2px 5px #00000014;
 }
 
-.console-signal .input:focus,
-.console-signal .select-trigger-open {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal-accent) 12%, transparent);
+:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .input {
+  background: var(--signal-inset);
+  box-shadow: inset 0 1px 2px #00000008;
 }
 
-.console-signal .btn:active:not(:disabled) {
+:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .select-trigger {
+  box-shadow: inset 0 1px 0 var(--signal-highlight);
+}
+
+:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.input:focus, .select-trigger-open) {
+  box-shadow: inset 0 1px 2px #00000008, 0 0 0 3px color-mix(in srgb, var(--signal-accent) 14%, transparent);
+}
+
+:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn:active:not(:disabled) {
   transform: translateY(1px);
 }
 
-.console-signal :is(.card, .glass-card, .table-container) {
-  box-shadow: inset 0 1px 0 var(--signal-highlight), var(--signal-shadow);
+/* Floating controls need separation; page sections keep their own flat layout. */
+:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.dropdown, .modal-content, .dialog-container),
+body:has(.console-signal) > .select-dropdown-portal {
+  box-shadow: inset 0 1px 0 var(--signal-highlight), var(--signal-popover-shadow);
+}
+
+:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.modal-footer, .dialog-footer) {
+  background: var(--signal-inset);
+}
+
+.console-signal :is(.signal-value, .signal-reading-value, .admin-metric-grid, .table-pagination) {
+  font-variant-numeric: lining-nums tabular-nums;
 }
 
 .console-signal .signal-dashboard {
-  display: flex;
-  flex-direction: column;
+  display: block;
   background: transparent;
 }
 
@@ -153,27 +190,54 @@
   display: contents;
 }
 
-.console-signal .signal-dashboard .signal-masthead { order: 0; }
-.console-signal .signal-dashboard .signal-actions { order: 1; }
-.console-signal .signal-dashboard .signal-stat-strip { order: 2; }
-.console-signal .signal-dashboard .signal-telemetry { order: 3; }
-.console-signal .signal-dashboard .signal-charts { order: 4; }
-.console-signal .signal-dashboard .signal-platforms { order: 5; }
-.console-signal .signal-dashboard .signal-recent { order: 6; }
+.console-signal .signal-dashboard .signal-masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.console-signal .signal-dashboard .signal-dashboard-tabs { margin-top: 14px; }
+
+.console-signal .signal-dashboard-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 28px;
+}
+
+.console-signal .signal-dashboard-overview > .signal-recent {
+  margin-top: 24px;
+  padding: 0 0 0 24px;
+  border-left: 1px solid var(--signal-line);
+}
+
+.console-signal .signal-dashboard-overview .signal-request {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 16px 0;
+  gap: 10px;
+}
+
+.console-signal .signal-dashboard-overview .signal-request-model { grid-column: 1 / -1; }
+.console-signal .signal-dashboard-overview .signal-request-tokens { justify-content: flex-start; padding-left: 32px; }
+.console-signal .signal-dashboard-overview .signal-request-cost > div { gap: 6px; }
+.console-signal .signal-dashboard-overview .signal-request-cost > div > span:last-child { min-width: 0; }
+.console-signal .signal-dashboard-overview .signal-view-all { justify-content: space-between; }
 
 .console-signal .signal-dashboard .signal-stat-strip {
+  margin-top: 24px;
   gap: 14px;
   border: 0;
   background: transparent;
   box-shadow: none;
 }
 
-.console-signal .signal-stat-strip .signal-metric {
+.console-signal .signal-dashboard .signal-stat-strip .signal-metric {
   position: relative;
-  padding: 20px;
+  padding: 22px;
   border: 1px solid var(--signal-line);
   border-radius: 8px;
-  background: linear-gradient(155deg, var(--signal-raised), var(--signal-surface));
+  background: linear-gradient(165deg, var(--signal-raised), var(--signal-surface) 70%);
   box-shadow: inset 0 1px 0 var(--signal-highlight), var(--signal-shadow);
 }
 
@@ -187,15 +251,15 @@
   background: var(--signal-accent);
 }
 
-.console-signal .signal-value {
+.console-signal .signal-dashboard .signal-value {
   margin-top: 16px;
-  font-size: 28px;
-  font-weight: 600;
-  line-height: 36px;
+  font-size: 30px;
+  font-weight: 550;
+  line-height: 38px;
 }
 
-.console-signal .signal-actions {
-  padding-block: 18px;
+.console-signal .signal-dashboard .signal-actions {
+  padding: 0;
 }
 
 .console-signal .signal-actions-label { display: none; }
@@ -205,24 +269,46 @@
   gap: 8px;
 }
 
-.console-signal .signal-actions button {
+.console-signal .signal-dashboard .signal-actions .signal-action-compact {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
+}
+.console-signal .signal-dashboard .signal-action-compact > span { display: none; }
+
+.console-signal .signal-dashboard .signal-actions button {
   border: 1px solid var(--signal-line);
   border-radius: 6px;
   padding: 8px 12px;
-  background: var(--signal-surface);
+  background: linear-gradient(180deg, var(--signal-raised), var(--signal-surface));
   box-shadow: inset 0 1px 0 var(--signal-highlight);
+  transition: border-color 140ms ease, color 140ms ease;
 }
 
+.console-signal .signal-dashboard .signal-actions button:hover {
+  color: var(--signal-accent);
+  border-color: var(--signal-control-line);
+}
+
+.console-signal .signal-dashboard .signal-actions .signal-action-primary {
+  background: var(--signal-accent);
+  border-color: var(--signal-accent);
+  color: var(--signal-on-accent);
+}
+.console-signal .signal-dashboard .signal-action-primary svg { color: inherit; }
+
 .console-signal .signal-telemetry {
-  margin-top: 20px;
+  margin-top: 16px;
   padding-bottom: 8px;
+  border-bottom: 0;
 }
 
 .console-signal .signal-reading {
   padding: 14px 18px;
 }
 
-.console-signal .signal-charts {
+.console-signal .signal-dashboard .signal-charts {
   margin-top: 6px;
   border-top: 0;
 }
@@ -232,10 +318,24 @@
   padding-top: 6px;
 }
 
-.console-signal :is(.signal-trend, .signal-distribution) {
+@media (max-width: 1199px) {
+  .console-signal .signal-dashboard-overview { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .console-signal .signal-dashboard-overview > .signal-recent { margin-top: 12px; padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--signal-line); }
+}
+
+.console-signal .signal-dashboard :is(.signal-trend, .signal-distribution) {
   border: 0;
-  border-top: 2px solid var(--signal-line);
+  border-top: 1px solid var(--signal-line);
   background: transparent;
+}
+
+.console-signal .signal-dashboard .signal-trend .card {
+  background: transparent;
+  box-shadow: none;
+}
+
+.console-signal .signal-dashboard :is(.signal-trend h3, .signal-distribution h2) {
+  margin-bottom: 22px;
 }
 
 .console-signal .signal-dashboard .signal-platform-grid {
@@ -261,14 +361,29 @@
   font-weight: 500;
 }
 
-.console-signal .signal-payment .payment-method-selector__option:not([aria-pressed='true']) {
-  background: var(--signal-surface);
+.console-signal .signal-payment :is(.payment-method-selector__option, .payment-amount-input__option):not([aria-pressed='true']) {
+  background: linear-gradient(165deg, var(--signal-raised), var(--signal-surface));
   border-color: var(--signal-line);
+  box-shadow: inset 0 1px 0 var(--signal-highlight), 0 1px 2px #00000008;
 }
 
-.console-signal .signal-payment .payment-amount-input__option:not([aria-pressed='true']) {
-  background: var(--signal-surface);
-  border-color: var(--signal-line);
+.console-signal .signal-payment :is(.payment-method-selector__option, .payment-amount-input__option)[aria-pressed='true'] {
+  color: var(--signal-text);
+  border-color: var(--signal-accent);
+  background: var(--signal-accent-soft);
+  box-shadow: inset 0 1px 0 var(--signal-highlight), inset 0 -2px var(--signal-accent);
+}
+
+.console-signal .signal-payment :is(.payment-method-selector__option, .payment-amount-input__option):hover:not(:disabled):not([aria-pressed='true']) {
+  border-color: var(--signal-control-line);
+}
+
+.console-signal .signal-checkout-summary {
+  box-shadow: inset 0 1px 0 var(--signal-highlight), var(--signal-shadow);
+}
+
+.console-signal .signal-checkout-summary__header {
+  background: linear-gradient(155deg, var(--signal-raised), var(--signal-surface));
 }
 
 .console-signal .signal-payment [data-testid='payment-method-label'] {
@@ -297,7 +412,7 @@
   min-width: 0;
 }
 
-.console-signal.signal-admin .table-page-layout .table-scroll-container {
+.console-signal.signal-admin .signal-main .table-page-layout .table-scroll-container {
   border: 1px solid var(--signal-line);
   border-radius: 8px;
   box-shadow: inset 0 1px 0 var(--signal-highlight), var(--signal-shadow);
@@ -310,6 +425,64 @@
 
 .console-signal.signal-admin .table-scroll-container tr:hover td {
   background-color: var(--signal-hover);
+}
+
+.console-signal.signal-admin .table-scroll-container tbody tr:has(input[data-test='select-row']:checked) td,
+.console-signal.signal-admin .accounts-table-stage tbody tr:has(td:first-child > input[type='checkbox']:checked) td {
+  background-color: var(--signal-accent-soft);
+}
+
+.console-signal .accounts-table-stage > .space-y-3 > .rounded-lg {
+  background: var(--signal-surface);
+  border-color: var(--signal-line);
+}
+
+.console-signal .accounts-table-stage > .space-y-3 > .rounded-lg:has([data-field='select'] input:checked) {
+  background: var(--signal-accent-soft);
+  border-color: var(--signal-accent);
+}
+
+.console-signal .signal-main .table-wrapper :is(.sticky-col-left, .sticky-col-left-second)::after,
+.console-signal .signal-main .table-wrapper .sticky-col-right::before {
+  width: 6px;
+  opacity: 0.6;
+}
+
+.console-signal .table-body > tr + tr {
+  border-color: var(--signal-divider);
+}
+
+.console-signal .table-pagination {
+  border-color: var(--signal-line);
+  background: transparent;
+  padding-inline: 0;
+}
+
+.console-signal .table-pagination nav {
+  gap: 4px;
+  box-shadow: none;
+}
+
+.console-signal .table-pagination button:not(.btn) {
+  min-width: 34px;
+  min-height: 36px;
+  margin-left: 0;
+  border: 1px solid var(--signal-line);
+  border-radius: 6px;
+  background: var(--signal-surface);
+  color: var(--signal-muted);
+}
+
+.console-signal .table-pagination button:hover:not(:disabled) {
+  background: var(--signal-hover);
+  color: var(--signal-text);
+}
+
+.console-signal .table-pagination button[aria-current='page'] {
+  background: var(--signal-accent-soft);
+  border-color: var(--signal-accent);
+  color: var(--signal-accent);
+  box-shadow: inset 0 1px 0 var(--signal-highlight);
 }
 
 .console-signal.signal-admin :is(.text-gray-900, .text-gray-800, .text-gray-700) {
@@ -383,16 +556,20 @@
 
 @media (max-width: 639px) {
   .console-signal .signal-dashboard .signal-stat-strip { gap: 10px; }
-  .console-signal .signal-stat-strip .signal-metric { padding: 16px 12px; }
-  .console-signal .signal-value { font-size: 24px; }
-  .console-signal .signal-actions-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .console-signal .signal-actions button { min-height: 42px; padding: 8px; }
+  .console-signal .signal-dashboard .signal-stat-strip .signal-metric { padding: 16px 12px; }
+  .console-signal .signal-dashboard .signal-value { font-size: 24px; }
+  .console-signal .signal-dashboard .signal-actions-list { display: flex; flex-wrap: wrap; }
+  .console-signal .signal-dashboard .signal-actions button { min-height: 42px; padding: 8px; }
+  .console-signal .signal-dashboard .signal-actions .signal-action-compact { width: 42px; height: 42px; }
+  .console-signal .signal-dashboard .signal-heading h1 { font-size: 28px; }
+  .console-signal .table-pagination button:not(.btn) { min-height: 44px; }
   .console-signal .signal-sidebar .sidebar-link { min-height: 44px; }
   .console-signal .admin-metric-grid { gap: 10px; }
   .console-signal .admin-metric-grid > .card { padding: 14px 12px; }
   .console-signal .admin-metric-grid > .card > div { flex-direction: column; gap: 8px; }
   .console-signal .admin-chart-toolbar .ml-auto { margin-left: 0; }
   .console-signal.signal-admin .table-page-layout.mobile-mode { height: auto; min-height: calc(100dvh - 120px); }
+  .console-signal.signal-admin .signal-main .table-page-layout.mobile-mode .table-scroll-container { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 }
 
 @media (max-width: 479px) {
@@ -409,5 +586,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .console-signal .btn:active:not(:disabled) { transform: none; }
+  :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn:active:not(:disabled) { transform: none; }
+  .console-signal .signal-dashboard .signal-actions button { transition: none; }
 }
