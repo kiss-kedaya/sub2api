@@ -10,13 +10,14 @@
             @update:filters="(newFilters) => Object.assign(params, newFilters)"
             @change="debouncedReload"
             @update:searchQuery="debouncedReload"
-          />
-          <AccountTableActions
-            :loading="loading"
-            @refresh="handleManualRefresh"
-            @create="showCreate = true"
           >
-            <template #after>
+            <template #actions>
+              <AccountTableActions
+                :loading="loading"
+                @refresh="handleManualRefresh"
+                @create="showCreate = true"
+              >
+                <template #after>
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
                 <button
@@ -176,8 +177,10 @@
                   </div>
                 </Teleport>
               </div>
+                </template>
+              </AccountTableActions>
             </template>
-          </AccountTableActions>
+          </AccountTableFilters>
         </div>
         <div
           v-if="hasPendingListSync"
@@ -2605,10 +2608,6 @@ onUnmounted(() => {
 }
 
 .accounts-command-bar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
   padding-block: 1px;
 }
 
@@ -2701,19 +2700,9 @@ onUnmounted(() => {
   border-radius: 6px;
 }
 
-@media (max-width: 1279px) {
-  .accounts-command-bar {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 @media (max-width: 767px) {
   .accounts-workspace {
     gap: 10px;
-  }
-
-  .accounts-command-bar {
-    gap: 8px;
   }
 
   .accounts-compact-action {
