@@ -10,6 +10,7 @@
           v-for="amt in filteredAmounts"
           :key="amt"
           type="button"
+          :aria-pressed="modelValue === amt"
           :class="[
             'payment-amount-input__option rounded-lg border-2 px-4 py-3 text-center font-medium transition-colors',
             modelValue === amt

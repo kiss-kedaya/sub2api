@@ -10,7 +10,8 @@ const signalPaths = new Set([
 
 export function useConsoleSignal() {
   const route = useRoute()
-  const isConsoleSignal = computed(() => signalPaths.has(route.matched.at(-1)?.path || route.path))
+  const isAdminSignal = computed(() => (route.matched.at(-1)?.path || route.path).startsWith('/admin/'))
+  const isConsoleSignal = computed(() => isAdminSignal.value || signalPaths.has(route.matched.at(-1)?.path || route.path))
 
-  return { isConsoleSignal }
+  return { isConsoleSignal, isAdminSignal }
 }
