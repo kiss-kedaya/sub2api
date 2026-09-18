@@ -14,7 +14,7 @@
       <!-- Filters -->
       <div class="signal-orders-toolbar">
         <div class="flex min-w-0 flex-1 flex-wrap items-center gap-3">
-          <Select v-model="currentFilter" :options="statusFilters" class="w-36" @change="fetchOrders" />
+          <Select v-model="currentFilter" :options="statusFilters" class="w-36" @change="handlePageChange(1)" />
         </div>
         <button @click="fetchOrders" :disabled="loading" class="btn btn-secondary btn-icon" :title="t('common.refresh')" :aria-label="t('common.refresh')">
           <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />

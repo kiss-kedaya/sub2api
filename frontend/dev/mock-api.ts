@@ -595,7 +595,9 @@ export function createMockApi(now = new Date()) {
             expires_at: item.expires_at, days_remaining: item.expires_at ? Math.ceil((Date.parse(item.expires_at) - now.getTime()) / 86_400_000) : null,
           })) }
         }
-        if (path === '/api/v1/redeem/history') return data.redeemHistory
+        if (path === '/api/v1/redeem/history') {
+          return query.has('page') || query.has('page_size') ? page(data.redeemHistory, query) : data.redeemHistory
+        }
         if (path === '/api/v1/user/aff') return data.affiliateDetail
         if (path === '/api/v1/user/cf-allowlist') return { ...data.cfAllowlist, used_slots: data.cfAllowlist.items.length }
         if (path === '/api/v1/user/totp/status') return { enabled: false, enabled_at: null, feature_enabled: false }

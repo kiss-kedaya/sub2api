@@ -532,6 +532,14 @@ export default {
         codexOverdraftBusinessInjection: 'CPAProxy-compatible real-request hidden injection',
         codexOverdraftBusinessInjectionHint: 'High-risk switch: adds a no-op tool pair to real requests, which upstream may count as input tokens. Enable only after accepting the billing and cost impact; off by default.',
         codexHardeningTitle: "Codex Settings",
+        codexTicketEnabled: "292 ticket harvest",
+        codexTicketEnabledDesc:
+          "When off, the gateway neither harvests nor injects x-codex-turn-state and forwards traffic as usual. When on, it harvests tickets in the background and overwrites that header on production requests.",
+        codexTicketHarvestProxy: "292 harvest proxy",
+        codexTicketHarvestProxyDesc:
+          "Used for background collection. Changes apply without a restart; production requests keep using each account's proxy. Enter a full proxy URL. Clear and save to stop collection.",
+        codexTicketHarvestProxyPlaceholder: "http://user:pass{'@'}proxy.example.com:1080",
+        codexTicketHarvestProxyConfigured: "Configured (password hidden). Paste a full new proxy URL to replace it.",
         codexClientRestrictionTitle: "Codex client restriction",
         codexHardeningDesc:
           "Only affects OpenAI OAuth accounts with 'Codex official clients only' enabled (global). Beyond User-Agent/Originator, harden the decision with a version range, an engine-fingerprint gate, and black/whitelists.",
