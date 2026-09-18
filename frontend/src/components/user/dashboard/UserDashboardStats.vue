@@ -1,6 +1,6 @@
 <template>
   <section class="signal-stats" :aria-label="t('dashboard.title')">
-    <div class="signal-stat-strip" :class="{ 'signal-stat-strip--simple': isSimple }">
+    <div v-if="section !== 'platforms'" class="signal-stat-strip" :class="{ 'signal-stat-strip--simple': isSimple }">
       <div v-if="!isSimple" class="signal-metric signal-metric--balance">
         <p class="signal-label"><Icon name="dollar" size="sm" />{{ t('dashboard.balance') }}</p>
         <p class="signal-value">${{ formatBalance(balance) }}</p>
@@ -28,7 +28,7 @@
       </div>
     </div>
 
-    <div class="signal-telemetry">
+    <div v-if="section !== 'platforms'" class="signal-telemetry">
       <div class="signal-reading">
         <p class="signal-label">{{ t('dashboard.todayTokens') }}</p>
         <p class="signal-reading-value">{{ formatTokens(stats?.today_tokens || 0) }}</p>
@@ -59,7 +59,7 @@
       </div>
     </div>
 
-    <section v-if="!isSimple && platformCards.length > 0" class="signal-platforms">
+    <section v-if="section !== 'summary' && !isSimple && platformCards.length > 0" class="signal-platforms">
       <header class="signal-section-heading">
         <h2>{{ t('dashboard.platformBreakdown') }}</h2>
         <span>{{ t('dashboard.platformCount', { count: sortedPlatforms.length }) }}</span>
@@ -105,6 +105,7 @@
         </article>
       </div>
     </section>
+    <p v-else-if="section === 'platforms' && !isSimple" class="signal-platform-empty">{{ t('dashboard.platformBreakdownEmpty') }}</p>
   </section>
 </template>
 
@@ -131,6 +132,7 @@ const props = defineProps<{
   balance: number
   isSimple: boolean
   platformQuotas?: PlatformQuotaItem[] | null
+  section?: 'summary' | 'platforms'
 }>()
 const { t } = useI18n()
 
@@ -284,6 +286,7 @@ const formatDuration = (ms: number) => ms >= 1000 ? `${(ms / 1000).toFixed(2)}s`
 
 <style scoped>
 .signal-stats { min-width: 0; }
+.signal-platform-empty { padding: 48px 0; color: var(--signal-muted); font-size: 14px; text-align: center; }
 .signal-stat-strip, .signal-telemetry {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
