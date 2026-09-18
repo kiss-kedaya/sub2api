@@ -1,6 +1,15 @@
 <template>
   <AppLayout>
-    <div class="space-y-6">
+    <div class="signal-admin-dashboard space-y-6">
+      <div class="admin-overview-toolbar">
+        <div class="admin-overview-identity">
+          <span class="admin-overview-mark"><Icon name="chart" size="lg" /></span>
+          <div><span class="admin-overview-label">OVERVIEW</span><p>{{ t('admin.dashboard.title') }}</p></div>
+        </div>
+        <button type="button" class="btn btn-secondary" :disabled="loading || chartsLoading" @click="loadDashboardStats">
+          <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading || chartsLoading }" />{{ t('common.refresh') }}
+        </button>
+      </div>
       <!-- Loading State -->
       <div v-if="loading" class="flex items-center justify-center py-12">
         <LoadingSpinner />
@@ -15,7 +24,7 @@
 
       <template v-else-if="stats">
         <!-- Row 1: Core Stats -->
-        <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div class="admin-metric-grid grid grid-cols-2 gap-4 lg:grid-cols-4">
           <!-- Total API Keys -->
           <div class="card p-4">
             <div class="flex items-center gap-3">
@@ -103,7 +112,7 @@
         </div>
 
         <!-- Row 2: Token Stats -->
-        <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div class="admin-metric-grid admin-metric-grid-secondary grid grid-cols-2 gap-4 lg:grid-cols-4">
           <!-- Today Tokens -->
           <div class="card p-4">
             <div class="flex items-center gap-3">
@@ -224,7 +233,7 @@
         </div>
 
         <!-- Quick Actions -->
-        <div class="card p-4">
+        <div class="admin-dashboard-shortcuts">
           <div class="mb-3 flex items-center justify-between">
             <h2 class="text-sm font-semibold text-gray-900 dark:text-white">
               {{ t('admin.dashboard.quickActions') }}
@@ -272,9 +281,9 @@
         </div>
 
         <!-- Charts Section -->
-        <div class="space-y-6">
+        <div class="admin-dashboard-charts space-y-6">
           <!-- Date Range Filter -->
-          <div class="card p-4">
+          <div class="admin-chart-toolbar">
             <div class="flex flex-wrap items-center gap-4">
               <div class="flex items-center gap-2">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -286,8 +295,8 @@
                   @change="onDateRangeChange"
                 />
               </div>
-              <button @click="loadDashboardStats" :disabled="chartsLoading" class="btn btn-secondary">
-                {{ t('common.refresh') }}
+              <button @click="loadDashboardStats" :disabled="chartsLoading" class="btn btn-secondary btn-icon" :title="t('common.refresh')" :aria-label="t('common.refresh')">
+                <Icon name="refresh" size="sm" :class="{ 'animate-spin': chartsLoading }" />
               </button>
               <div class="ml-auto flex items-center gap-2">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300"

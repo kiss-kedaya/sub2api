@@ -13,6 +13,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/user/__tests__/KeysView.spec.ts \
 	src/views/user/__tests__/UsageView.spec.ts \
 	src/components/layout/__tests__/ConsoleSignal.spec.ts \
+	src/components/layout/__tests__/ConsoleNavigationSearch.spec.ts \
 	src/components/user/dashboard/__tests__/signal-dashboard.spec.ts \
 	src/components/charts/__tests__/TokenUsageTrend.spec.ts \
 	src/components/charts/__tests__/ModelDistributionChart.spec.ts \
