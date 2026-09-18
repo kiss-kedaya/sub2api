@@ -12,7 +12,7 @@ const port = Number(values.port)
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid preview port')
 const server = await createServer({
   root: fileURLToPath(new URL('../', import.meta.url)),
-  configFile: fileURLToPath(new URL('../vite.config.ts', import.meta.url)),
+  configFile: fileURLToPath(new URL('./vite.config.ts', import.meta.url)),
   mode: 'console-preview', envFile: false,
   server: { host: values.host, port, strictPort: true },
 })

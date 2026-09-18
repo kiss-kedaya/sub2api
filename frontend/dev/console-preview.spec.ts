@@ -48,7 +48,7 @@ describe('preview server isolation', () => {
     expect((server.httpServer!.address() as AddressInfo).address).toBe('127.0.0.1')
     expect(server.config.inlineConfig.envFile).toBe(false)
     expect(server.config.env.VITE_API_BASE_URL).toBeUndefined()
-    expect(server.config.define['import.meta.env.VITE_API_BASE_URL']).toBe('"/api/v1"')
+    expect(server.config.define?.['import.meta.env.VITE_API_BASE_URL']).toBe('"/api/v1"')
     expect(server.config.server.proxy).toBeUndefined()
     expect(server.config.server.cors).toBe(false)
     expect(consolePreviewPlugin().apply).toBe('serve')
@@ -56,15 +56,16 @@ describe('preview server isolation', () => {
   })
 
   it('rejects DNS rebinding, cross-origin, null-origin, proxy and cross-site requests', async () => {
-    for (const headers of [
+    const cases: Record<string, string>[] = [
       { Host: 'public.example.test' }, { Host: `localhost:${port}` },
       { Origin: 'https://public.example.test' }, { Origin: 'null' },
       { Origin: `http://127.0.0.1:${port + 1}` },
       { 'X-Forwarded-Host': 'public.example.test' },
       { 'X-Forwarded-For': '192.0.2.1' }, { 'Sec-Fetch-Site': 'cross-site' },
-    ]) {
-      expect((await http('/api/v1/keys', 'GET', headers as Record<string, string>)).status).toBe(403)
-      expect((await http('/dashboard', 'GET', headers as Record<string, string>)).status).toBe(403)
+    ]
+    for (const headers of cases) {
+      expect((await http('/api/v1/keys', 'GET', headers)).status).toBe(403)
+      expect((await http('/dashboard', 'GET', headers)).status).toBe(403)
     }
     const response = await http('/api/v1/keys', 'GET', { Origin: `http://127.0.0.1:${port}` })
     expect(response.status).toBe(200)
@@ -151,12 +152,14 @@ describe('preview server isolation', () => {
   })
 
   it('refuses build and static preview before emitting backend assets', async () => {
-    const configFile = fileURLToPath(new URL('../vite.config.ts', import.meta.url))
-    for (const env of [
-      { command: 'build' as const, mode: PREVIEW_MODE },
-      { command: 'serve' as const, mode: PREVIEW_MODE, isPreview: true },
-    ]) {
-      await expect(loadConfigFromFile(env, configFile, undefined, 'silent')).rejects.toThrow('local dev only')
+    for (const config of ['../vite.config.ts', './vite.config.ts']) {
+      const configFile = fileURLToPath(new URL(config, import.meta.url))
+      for (const env of [
+        { command: 'build' as const, mode: PREVIEW_MODE },
+        { command: 'serve' as const, mode: PREVIEW_MODE, isPreview: true },
+      ]) {
+        await expect(loadConfigFromFile(env, configFile, undefined, 'silent')).rejects.toThrow('local dev only')
+      }
     }
   })
 })
