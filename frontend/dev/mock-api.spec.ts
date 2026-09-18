@@ -11,6 +11,13 @@ const date = new Date('2026-09-17T13:00:00Z')
 const query = (value = '') => new URLSearchParams(value)
 
 describe('local demo API contracts', () => {
+  it('serves paginated redemption history while keeping legacy array reads', () => {
+    const api = createMockApi(date)
+    const legacy = api.handle('GET', '/api/v1/redeem/history', query()) as unknown[]
+    expect(Array.isArray(legacy)).toBe(true)
+    const result = api.handle('GET', '/api/v1/redeem/history', query('page=2&page_size=1')) as PaginatedResponse<unknown>
+    expect(result).toMatchObject({ page: 2, page_size: 1, total: legacy.length, items: legacy.slice(1, 2) })
+  })
   it('serves admin shell reads and large group selectors without enabling writes', () => {
     const api = createMockApi(date)
     expect(api.handle('GET', '/api/v1/admin/compliance', query())).toMatchObject({ required: false })
