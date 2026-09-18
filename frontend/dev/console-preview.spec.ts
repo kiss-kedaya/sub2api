@@ -56,6 +56,18 @@ afterAll(async () => {
 })
 
 describe('preview server isolation', () => {
+  it('provides local-only admin and user entry links', async () => {
+    const admin = await http('/__preview/admin')
+    expect(admin.status).toBe(302)
+    expect(admin.headers.location).toBe('/admin/dashboard')
+    expect(JSON.parse((await http('/api/v1/auth/me')).text).data.role).toBe('admin')
+    const user = await http('/__preview/user')
+    expect(user.status).toBe(302)
+    expect(user.headers.location).toBe('/dashboard')
+    expect(JSON.parse((await http('/api/v1/auth/me')).text).data.role).toBe('user')
+    expect((await http('/__preview/admin', 'GET', { 'Sec-Fetch-Site': 'cross-site' })).status).toBe(403)
+    expect(outbound).not.toHaveBeenCalled()
+  })
   it('binds only loopback, disables environment loading, CORS and all proxies', () => {
     expect((server.httpServer!.address() as AddressInfo).address).toBe('127.0.0.1')
     expect(server.config.inlineConfig.envFile).toBe(false)

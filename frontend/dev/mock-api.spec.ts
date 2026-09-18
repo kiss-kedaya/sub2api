@@ -11,6 +11,15 @@ const date = new Date('2026-09-17T13:00:00Z')
 const query = (value = '') => new URLSearchParams(value)
 
 describe('local demo API contracts', () => {
+  it('serves admin shell reads and large group selectors without enabling writes', () => {
+    const api = createMockApi(date)
+    expect(api.handle('GET', '/api/v1/admin/compliance', query())).toMatchObject({ required: false })
+    expect(api.handle('GET', '/api/v1/admin/settings', query())).toMatchObject({ custom_menu_items: [] })
+    expect(api.handle('GET', '/api/v1/admin/settings/web-search-emulation', query())).toEqual({ enabled: false, providers: [] })
+    expect(api.handle('GET', '/api/v1/admin/system/check-updates', query())).toMatchObject({ has_update: false })
+    expect(api.handle('GET', '/api/v1/admin/groups', query('page_size=1000'))).toMatchObject({ page_size: 1000 })
+    expect(() => api.handle('PUT', '/api/v1/admin/settings', query(), {})).toThrow()
+  })
   it('supplies consistent platform totals and recent activity even immediately after midnight', () => {
     const api = createMockApi(new Date('2026-09-17T16:01:00Z'))
     const stats = api.handle('GET', '/api/v1/usage/dashboard/stats', query('timezone=Asia%2FShanghai')) as UserDashboardStats

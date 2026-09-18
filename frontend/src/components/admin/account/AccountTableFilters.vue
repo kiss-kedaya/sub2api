@@ -112,6 +112,7 @@ const gOpts = computed(() => [
 <style scoped>
 .account-table-filters {
   display: flex;
+  flex-wrap: wrap;
   min-width: 0;
   flex: 1 1 auto;
   align-items: center;
@@ -133,6 +134,7 @@ const gOpts = computed(() => [
 
 .account-filter-panel {
   display: flex;
+  flex-wrap: wrap;
   min-width: 0;
   flex: 3 1 640px;
   align-items: center;
