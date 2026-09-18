@@ -396,7 +396,7 @@ func TestGrokMediaVideoCompletionStillClaimsBillingOnce(t *testing.T) {
 	result := &service.OpenAIForwardResult{ResponseID: "task", Model: "grok-imagine-video",
 		VideoCount: 1, VideoDurationSeconds: 6}
 	for i := range 20 {
-		bill := prepareGrokVideoCompletionBilling(c.Request.Context(), h, zap.NewNop(), key, subject, "task", result)
+		bill := prepareGrokVideoCompletionBilling(c.Request.Context(), h, zap.NewNop(), key, subject, "task", result, nil)
 		if i == 0 {
 			require.NotNil(t, bill)
 			require.Equal(t, service.StableGrokVideoBillingRequestID("task"), bill.RequestID)

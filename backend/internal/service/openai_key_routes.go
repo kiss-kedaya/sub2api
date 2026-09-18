@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"time"
 )
 
 type openAIMessagesKeyRouteContextKey struct{}
@@ -69,6 +71,26 @@ func (s *OpenAIGatewayService) hydrateAPIKeyGroup(ctx context.Context, apiKey *A
 		return nil, ErrNoAvailableAccounts
 	}
 	return routed, nil
+}
+
+// ResolveAPIKeyRouteGroup restores billing from a server-owned async task.
+// groupID must come from the authenticated owner's task, never client input.
+func (s *OpenAIGatewayService) ResolveAPIKeyRouteGroup(ctx context.Context, apiKey *APIKey, groupID int64) (*APIKey, error) {
+	if apiKey == nil || groupID <= 0 {
+		return nil, ErrNoAvailableAccounts
+	}
+	if apiKey.GroupID != nil && *apiKey.GroupID == groupID && apiKey.Group != nil && apiKey.Group.ID == groupID {
+		return apiKey, nil
+	}
+	routed, err := s.hydrateAPIKeyGroup(ctx, apiKey, groupID)
+	if err == nil || !errors.Is(err, ErrSchedulerCacheNotReady) || s == nil || s.channelService == nil || s.channelService.groupRepo == nil {
+		return routed, err
+	}
+	// Only async settlement may make this bounded cold-cache lookup. Ordinary
+	// account selection keeps its snapshot-only contract.
+	lookupCtx, cancel := context.WithTimeout(nonNilContext(ctx), 2*time.Second)
+	defer cancel()
+	return hydrateAPIKeyGroup(lookupCtx, apiKey, groupID, s.channelService.groupRepo.GetByIDLite)
 }
 
 func (s *OpenAIGatewayService) catalogModels(ctx context.Context, groupID *int64, platform string) []string {
