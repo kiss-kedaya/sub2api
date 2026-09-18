@@ -55,9 +55,14 @@ export async function redeem(code: string): Promise<{
  * @returns The requested page of redeemed codes and the total count
  */
 export async function getHistory(page = 1, pageSize = 20): Promise<PaginatedResponse<RedeemHistoryItem>> {
-  const { data } = await apiClient.get<PaginatedResponse<RedeemHistoryItem>>('/redeem/history', {
+  const { data } = await apiClient.get<PaginatedResponse<RedeemHistoryItem> | RedeemHistoryItem[]>('/redeem/history', {
     params: { page, page_size: pageSize }
   })
+  // Old instances return an array during rolling upgrades.
+  if (Array.isArray(data)) {
+    return { items: data.slice((page - 1) * pageSize, page * pageSize), total: data.length,
+      page, page_size: pageSize, pages: Math.ceil(data.length / pageSize) }
+  }
   return data
 }
 
