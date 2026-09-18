@@ -1,12 +1,14 @@
 <template>
   <AppLayout>
-    <div class="space-y-6">
-      <UsageStatsCards :stats="usageStats" />
+    <div class="admin-usage-workbench">
+      <section class="usage-summary-strip">
+        <UsageStatsCards :stats="usageStats" />
+      </section>
       <!-- Charts Section -->
-      <div class="space-y-4">
-        <div class="card p-4">
-          <div class="flex flex-wrap items-center gap-4">
-            <div class="flex items-center gap-2">
+      <section class="usage-analysis-workspace">
+        <div class="usage-range-toolbar">
+          <div class="usage-range-controls">
+            <div class="usage-control-cluster">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
               <DateRangePicker
                 v-model:start-date="startDate"
@@ -14,7 +16,7 @@
                 @change="onDateRangeChange"
               />
             </div>
-            <div class="ml-auto flex items-center gap-2">
+            <div class="usage-control-cluster usage-granularity-control">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.granularity') }}:</span>
               <div class="w-28">
                 <Select v-model="granularity" :options="granularityOptions" @change="loadChartData" />
@@ -22,7 +24,7 @@
             </div>
           </div>
         </div>
-        <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div class="usage-chart-grid">
           <ModelDistributionChart
             v-model:source="modelDistributionSource"
             v-model:metric="modelDistributionMetric"
@@ -46,7 +48,7 @@
             :filters="breakdownFilters"
           />
         </div>
-        <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div class="usage-chart-grid">
           <EndpointDistributionChart
             v-model:source="endpointDistributionSource"
             v-model:metric="endpointDistributionMetric"
@@ -63,16 +65,18 @@
           />
           <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" />
         </div>
-      </div>
+      </section>
       <!-- 明细区：tab 栏 + 筛选 + 内容收进同一张卡片，消除割裂感 -->
-      <div class="card">
-        <div class="flex flex-wrap items-center border-b border-gray-200 px-2 dark:border-dark-700 sm:px-4">
+      <section class="card usage-detail-workspace">
+        <div class="usage-detail-tabs" role="tablist">
           <button
             v-for="tab in detailTabs"
             :key="tab.key"
             type="button"
+            role="tab"
+            :aria-selected="activeTab === tab.key"
             data-testid="usage-detail-tab"
-            class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-3 text-sm font-medium transition-colors sm:px-4"
+            class="usage-detail-tab"
             :class="activeTab === tab.key
               ? 'border-primary-500 text-primary-600 dark:text-primary-400'
               : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:border-dark-500 dark:hover:text-gray-200'"
@@ -83,7 +87,7 @@
           </button>
         </div>
 
-        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" class="border-b border-gray-100 dark:border-dark-700/50" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
           <template #after-reset>
             <div v-if="activeTab !== 'ranking'" class="relative" ref="columnDropdownRef">
               <button
@@ -122,7 +126,7 @@
           </template>
         </UsageFilters>
 
-        <div v-show="activeTab === 'usage'" class="overflow-hidden rounded-b-2xl">
+        <div v-show="activeTab === 'usage'" class="usage-detail-content">
           <UsageTable
             flat
             :data="usageLogs"
@@ -137,7 +141,7 @@
           />
           <Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" />
         </div>
-        <div v-show="activeTab === 'errors'" class="overflow-hidden rounded-b-2xl">
+        <div v-show="activeTab === 'errors'" class="usage-detail-content">
           <OpsErrorLogTable
             flat
             :rows="errRows" :total="errTotal" :loading="errLoading"
@@ -152,7 +156,7 @@
             @ipGeoBatchFailed="handleIpGeoBatchFailed" />
         </div>
         <!-- 懒挂载：首次切到该 tab 才请求排行数据，之后随筛选自动刷新 -->
-        <div v-if="rankingMounted" v-show="activeTab === 'ranking'" class="overflow-hidden rounded-b-2xl">
+        <div v-if="rankingMounted" v-show="activeTab === 'ranking'" class="usage-detail-content">
           <UserTokenRanking
             ref="rankingRef"
             :start-date="startDate"
@@ -162,7 +166,7 @@
             @select-user="handleRankingSelectUser"
           />
         </div>
-      </div>
+      </section>
       <OpsErrorDetailModal v-model:show="showErrorModal" :error-id="selectedErrorId" :error-type="'request'" />
     </div>
   </AppLayout>
@@ -885,3 +889,207 @@ watch(modelDistributionSource, (source) => {
 
 defineExpose({ requestedModelStats, refreshData })
 </script>
+
+<style scoped>
+.admin-usage-workbench {
+  display: grid;
+  min-width: 0;
+  gap: 18px;
+}
+
+.usage-summary-strip {
+  min-width: 0;
+}
+
+.usage-summary-strip :deep(.card) {
+  border-color: var(--signal-line);
+  border-radius: 8px;
+  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 6%, transparent);
+}
+
+.usage-analysis-workspace {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+  padding: 14px 0 18px;
+  border-top: 1px solid var(--signal-line);
+  border-bottom: 1px solid var(--signal-line);
+}
+
+.usage-range-toolbar {
+  padding: 12px 14px;
+  border: 1px solid var(--signal-line);
+  border-radius: 8px;
+  background: var(--signal-surface);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 6%, transparent);
+}
+
+.usage-range-controls,
+.usage-control-cluster {
+  display: flex;
+  align-items: center;
+}
+
+.usage-range-controls {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+
+.usage-control-cluster {
+  min-width: 0;
+  gap: 8px;
+}
+
+.usage-granularity-control {
+  margin-left: auto;
+  padding-left: 20px;
+  border-left: 1px solid var(--signal-line);
+}
+
+.usage-chart-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.usage-chart-grid :deep(.card) {
+  min-width: 0;
+  border-color: var(--signal-line);
+  border-radius: 8px;
+  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 5%, transparent);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.usage-chart-grid :deep(.card:hover) {
+  border-color: var(--signal-control-line);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-accent) 16%, transparent);
+}
+
+.usage-detail-workspace {
+  min-width: 0;
+  overflow: visible;
+  border: 1px solid var(--signal-line);
+  border-radius: 8px;
+  background: var(--signal-surface);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 6%, transparent);
+}
+
+.usage-detail-tabs {
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--signal-line);
+  scrollbar-width: thin;
+}
+
+.usage-detail-tab {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -1px;
+  padding: 12px 14px;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.usage-detail-tab:hover {
+  background: var(--signal-hover);
+}
+
+.usage-filter-panel {
+  border-bottom: 1px solid var(--signal-line);
+  background: color-mix(in srgb, var(--signal-bg) 58%, var(--signal-surface));
+}
+
+.usage-detail-content {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 0 0 8px 8px;
+}
+
+.usage-detail-content :deep(.table-wrapper) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.usage-detail-content :deep(th) {
+  padding-top: 11px;
+  padding-bottom: 11px;
+}
+
+.usage-detail-content :deep(td) {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.usage-detail-content :deep(tbody tr) {
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.usage-detail-content :deep(tbody tr:hover) {
+  box-shadow: inset 2px 0 var(--signal-accent);
+}
+
+@media (max-width: 1023px) {
+  .usage-chart-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 639px) {
+  .admin-usage-workbench {
+    gap: 14px;
+  }
+
+  .usage-analysis-workspace {
+    padding-block: 12px;
+  }
+
+  .usage-range-toolbar {
+    padding: 12px;
+  }
+
+  .usage-range-controls,
+  .usage-control-cluster {
+    align-items: stretch;
+  }
+
+  .usage-control-cluster {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .usage-granularity-control {
+    margin-left: 0;
+    padding-top: 12px;
+    padding-left: 0;
+    border-top: 1px solid var(--signal-line);
+    border-left: 0;
+  }
+
+  .usage-granularity-control > div {
+    width: 100%;
+  }
+
+  .usage-detail-tabs {
+    padding-inline: 4px;
+  }
+
+  .usage-detail-tab {
+    padding-inline: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-usage-workbench :deep(*) {
+    transition-duration: 0.01ms !important;
+  }
+}
+</style>
