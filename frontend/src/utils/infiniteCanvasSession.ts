@@ -40,15 +40,31 @@ const defaultClient: InfiniteCanvasKeyClient = {
   getAvailableGroups: userGroupsAPI.getAvailable,
 }
 
+// Route changes can mount the canvas more than once before the first setup
+// request finishes. Keep one request per client and remember a newly-created
+// session for the current authenticated browser session.
+const inFlightSetups = new WeakMap<InfiniteCanvasKeyClient, Promise<InfiniteCanvasSession>>()
+let cachedCreatedSession: { userKey: string; session: InfiniteCanvasSession } | null = null
+
+function currentUserCacheKey(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem('auth_user')
+    if (!raw) return null
+    const user = JSON.parse(raw) as { id?: number | string }
+    return user.id === undefined || user.id === null ? null : String(user.id)
+  } catch {
+    return null
+  }
+}
+
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message
   const response = (error as { response?: { data?: { detail?: string; message?: string } } })?.response
   return response?.data?.detail || response?.data?.message || ''
 }
 
-export async function ensureInfiniteCanvasApiKey(
-  client: InfiniteCanvasKeyClient = defaultClient,
-): Promise<InfiniteCanvasSession> {
+async function prepareInfiniteCanvasApiKey(client: InfiniteCanvasKeyClient): Promise<InfiniteCanvasSession> {
   let groups: Group[]
   try {
     groups = await client.getAvailableGroups()
@@ -95,6 +111,7 @@ export async function ensureInfiniteCanvasApiKey(
       }
     }
 
+    const userKey = currentUserCacheKey()
     const created = await client.create(
       INFINITE_CANVAS_KEY_NAME,
       groupIds[0],
@@ -105,19 +122,47 @@ export async function ensureInfiniteCanvasApiKey(
       undefined,
       undefined,
       groupIds,
+      userKey ? { idempotencyKey: `infinite-canvas-key-${userKey}` } : undefined,
     )
     if (!created.key) {
       throw new InfiniteCanvasSetupError('missing-key', 'API key value is empty')
     }
-    return {
+    const session = {
       apiKey: created.key,
       groupIds,
       truncated,
       created: true,
       keyId: created.id,
     }
+    if (client === defaultClient) {
+      const userKey = currentUserCacheKey()
+      if (userKey) cachedCreatedSession = { userKey, session }
+    }
+    return session
   } catch (error) {
     if (error instanceof InfiniteCanvasSetupError) throw error
     throw new InfiniteCanvasSetupError('request-failed', extractErrorMessage(error) || 'Failed to create API key')
   }
+}
+
+export function ensureInfiniteCanvasApiKey(
+  client: InfiniteCanvasKeyClient = defaultClient,
+): Promise<InfiniteCanvasSession> {
+  if (client === defaultClient) {
+    const userKey = currentUserCacheKey()
+    if (userKey && cachedCreatedSession?.userKey === userKey) {
+      return Promise.resolve({ ...cachedCreatedSession.session, created: false })
+    }
+  }
+
+  const pending = inFlightSetups.get(client)
+  if (pending) return pending
+
+  const operation = prepareInfiniteCanvasApiKey(client)
+  inFlightSetups.set(client, operation)
+  const clearInFlight = () => {
+    if (inFlightSetups.get(client) === operation) inFlightSetups.delete(client)
+  }
+  void operation.then(clearInFlight, clearInFlight)
+  return operation
 }
