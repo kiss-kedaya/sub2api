@@ -60,6 +60,11 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
+      - name: Verify production frontend build
+        working-directory: frontend
+        run: pnpm run build
+      - name: Verify rollout rollback simulations
+        run: python3 deploy/rollout/test_rollout329_guard.py
 
   golangci-lint:
     runs-on: ubuntu-latest

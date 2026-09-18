@@ -30,5 +30,7 @@ Upstream business 502/503 are observed but do not cause rollback by themselves. 
 
 ## Evidence
 
+- Release frontend build failed before artifact publication or installation. `vue-tsc -b` found the local preview imported by the Node config project. Version 328 was never deployed; its immutable tag remains as failure evidence. The corrected release is 0.1.329, with an isolated dev config and the exact production build added to CI.
+
 - Prior local acceptance: 99 focused tests, typecheck, ESLint and build passed; 24 responsive/theme captures and key/usage interactions passed.
 - Final release CI, checksums and production verification will be appended after execution.

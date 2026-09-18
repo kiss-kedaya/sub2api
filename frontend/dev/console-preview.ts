@@ -52,7 +52,7 @@ export function consolePreviewPlugin(): Plugin {
     apply: 'serve',
     enforce: 'pre',
     configResolved(config) {
-      active = config.command === 'serve' && config.mode === PREVIEW_MODE && !config.isPreview
+      active = config.command === 'serve' && config.mode === PREVIEW_MODE
       if (!active) return
       if (config.server.host !== '127.0.0.1' || config.server.https || config.server.proxy ||
           config.server.cors !== false || config.server.strictPort !== true || config.server.hmr === false) {
