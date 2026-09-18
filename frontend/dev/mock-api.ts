@@ -1,4 +1,7 @@
+import { isIP } from 'node:net'
 import type { ApiKey, PaginatedResponse, UsageLog } from '../src/types'
+import type { MonitorMatrixGroupBy, MonitorMatrixRow } from '../src/api/channelMonitorV2'
+import type { PaymentOrder } from '../src/types/payment'
 import { createFixtures, makeKey, settings } from './fixtures'
 
 export class PreviewError extends Error {
@@ -73,6 +76,10 @@ function buckets(rows: UsageLog[], key: (row: UsageLog) => string) {
 export function createMockApi(now = new Date()) {
   const data = createFixtures(now)
   let nextId = data.keys.length + 1
+  let nextOrderId = Math.max(...data.paymentOrders.map(order => order.id)) + 1
+  let nextAllowlistId = Math.max(...data.cfAllowlist.items.map(item => item.id)) + 1
+  let nextRedeemId = Math.max(...data.redeemHistory.map(item => item.id)) + 1
+  const usedDemoCodes = new Set<string>()
   const timezoneOf = (query: URLSearchParams) => {
     const timezone = query.get('timezone') || 'UTC'
     try { new Intl.DateTimeFormat('en', { timeZone: timezone }) } catch { throw new PreviewError(400, '无效的时区') }
@@ -162,6 +169,47 @@ export function createMockApi(now = new Date()) {
     next.updated_at = new Date().toISOString()
     return next
   }
+  function selectedMonitorRows(query: URLSearchParams): MonitorMatrixRow[] {
+    const platforms = query.getAll('platform')
+    const groupIds = query.getAll('group_id').map(Number)
+    const models = query.getAll('model')
+    const groupBy = (query.get('group_by') || 'platform_group') as MonitorMatrixGroupBy
+    if (!['platform', 'platform_group', 'platform_model', 'platform_group_model'].includes(groupBy)) {
+      throw new PreviewError(400, '无效的监控分组方式')
+    }
+    return data.monitorMatrixRows.flatMap((row, index) => {
+      const model = data.monitorModels[index]?.model
+      if (platforms.length && !platforms.includes(row.platform)) return []
+      if (groupIds.length && (!row.group_id || !groupIds.includes(row.group_id))) return []
+      if (models.length && (!model || !models.includes(model))) return []
+      return [{
+        ...row,
+        group_id: groupBy.includes('group') ? row.group_id : undefined,
+        group_name: groupBy.includes('group') ? row.group_name : undefined,
+        model: groupBy.includes('model') ? model : undefined,
+      }]
+    })
+  }
+  function publicOrder(order: PaymentOrder) {
+    return {
+      out_trade_no: order.out_trade_no,
+      status: order.status,
+      paid: ['PAID', 'RECHARGING', 'COMPLETED'].includes(order.status),
+      created_at: order.created_at,
+      expires_at: order.expires_at,
+    }
+  }
+  function findOrder(id: number) {
+    const order = data.paymentOrders.find(item => item.id === id)
+    if (!order) throw new PreviewError(404, '本地演示订单不存在')
+    return order
+  }
+  function orderByTradeNo(value: unknown) {
+    if (typeof value !== 'string' || !value) throw new PreviewError(422, '缺少演示订单号')
+    const order = data.paymentOrders.find(item => item.out_trade_no === value)
+    if (!order) throw new PreviewError(404, '本地演示订单不存在')
+    return order
+  }
   return {
     user: data.user,
     handle(method: string, path: string, query: URLSearchParams, body: Record<string, unknown> = {}): unknown {
@@ -172,9 +220,74 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/groups/available') return data.groups
         if (path === '/api/v1/groups/rates') return {}
         if (path === '/api/v1/user/platform-quotas') return { platform_quotas: [] }
-        if (['/api/v1/announcements', '/api/v1/user/custom-endpoints', '/api/v1/subscriptions',
-          '/api/v1/subscriptions/active', '/api/v1/subscriptions/progress'].includes(path)) return []
-        if (path === '/api/v1/subscriptions/summary') return { active_count: 0, subscriptions: [] }
+        if (['/api/v1/announcements', '/api/v1/user/custom-endpoints'].includes(path)) return []
+        if (path === '/api/v1/channel-monitors') return { items: data.monitorViews }
+        const monitorDetail = path.match(/^\/api\/v1\/channel-monitors\/(\d+)\/status$/)
+        if (monitorDetail) {
+          const detail = data.monitorDetails[Number(monitorDetail[1])]
+          if (!detail) throw new PreviewError(404, '本地演示监控项不存在')
+          return detail
+        }
+        if (path === '/api/v1/channel-monitor-v2/dimensions') return data.monitorDimensions
+        if (path === '/api/v1/channel-monitor-v2/snapshot') {
+          const rows = selectedMonitorRows(query)
+          if (rows.length === 1) return { ...data.monitorSnapshot, metrics: rows[0].metrics, health: rows[0].health, trend: rows[0].buckets }
+          return data.monitorSnapshot
+        }
+        if (path === '/api/v1/channel-monitor-v2/matrix') {
+          return { coverage: data.monitorCoverage, group_by: query.get('group_by') || 'platform_group', items: selectedMonitorRows(query) }
+        }
+        if (path === '/api/v1/channel-monitor-v2/models') {
+          const platforms = query.getAll('platform'), models = query.getAll('model')
+          return { coverage: data.monitorCoverage, items: data.monitorModels.filter(item =>
+            (!platforms.length || platforms.includes(item.platform)) && (!models.length || models.includes(item.model))) }
+        }
+        if (path === '/api/v1/channel-monitor-v2/errors') return { coverage: data.monitorCoverage, items: [
+          { category: 'rate_or_capacity', count: 184, rate: 0.054, details: [{ platform: 'grok', model: 'grok-4', status_code: 429, message: '本地演示：上游容量不足', count: 151 }] },
+          { category: 'timeout', count: 42, rate: 0.012, details: [{ platform: 'gemini', model: 'gemini-2.5-pro', status_code: 504, message: '本地演示：响应较慢', count: 42 }] },
+          { category: 'client_cancelled', count: 18, rate: 0.005, ignored: true },
+        ] }
+        if (path === '/api/v1/channel-monitor-v2/users') return { coverage: data.monitorCoverage, items: [
+          { user_id: data.user.id, rank: 1, email: data.user.email, username: data.user.username, display_label: '我（本地演示）', is_self: true, can_drilldown: true, metrics: data.monitorSnapshot.metrics },
+          { rank: 2, display_label: '匿名演示用户', is_self: false, can_drilldown: false, metrics: { ...data.monitorSnapshot.metrics, request_count: 680, success_requests: 648, error_requests: 32 } },
+        ] }
+        if (path === '/api/v1/channels/available') return data.availableChannels
+        if (path === '/api/v1/payment/config') return data.paymentConfig
+        if (path === '/api/v1/payment/plans') return data.paymentPlans
+        if (path === '/api/v1/payment/checkout-info') return data.checkoutInfo
+        if (path === '/api/v1/payment/limits') return { methods: data.checkoutInfo.methods, global_min: data.checkoutInfo.global_min, global_max: data.checkoutInfo.global_max }
+        if (path === '/api/v1/payment/orders/my') {
+          const status = query.get('status')
+          const orders = data.paymentOrders.filter(order => !status || order.status === status).sort((a, b) => b.id - a.id)
+          return page(orders, query)
+        }
+        if (path === '/api/v1/payment/orders/refund-eligible-providers') return { provider_instance_ids: ['local-demo-alipay', 'local-demo-wxpay'] }
+        const paymentOrder = path.match(/^\/api\/v1\/payment\/orders\/(\d+)$/)
+        if (paymentOrder) return findOrder(Number(paymentOrder[1]))
+        if (path === '/api/v1/subscriptions') return data.subscriptions
+        if (path === '/api/v1/subscriptions/active') return data.subscriptions.filter(item => item.status === 'active')
+        if (path === '/api/v1/subscriptions/progress') return data.subscriptionProgress
+        const subscriptionProgress = path.match(/^\/api\/v1\/subscriptions\/(\d+)\/progress$/)
+        if (subscriptionProgress) {
+          const progress = data.subscriptionProgress.find(item => item.subscription_id === Number(subscriptionProgress[1]))
+          if (!progress) throw new PreviewError(404, '本地演示订阅不存在')
+          return progress
+        }
+        if (path === '/api/v1/subscriptions/summary') {
+          const active = data.subscriptions.filter(item => item.status === 'active')
+          return { active_count: active.length, subscriptions: active.map(item => ({
+            id: item.id, group_name: item.group?.name ?? `#${item.group_id}`, status: item.status,
+            daily_progress: item.group?.daily_limit_usd ? item.daily_usage_usd / item.group.daily_limit_usd * 100 : null,
+            weekly_progress: item.group?.weekly_limit_usd ? item.weekly_usage_usd / item.group.weekly_limit_usd * 100 : null,
+            monthly_progress: item.group?.monthly_limit_usd ? item.monthly_usage_usd / item.group.monthly_limit_usd * 100 : null,
+            expires_at: item.expires_at, days_remaining: item.expires_at ? Math.ceil((Date.parse(item.expires_at) - now.getTime()) / 86_400_000) : null,
+          })) }
+        }
+        if (path === '/api/v1/redeem/history') return data.redeemHistory
+        if (path === '/api/v1/user/aff') return data.affiliateDetail
+        if (path === '/api/v1/user/cf-allowlist') return { ...data.cfAllowlist, used_slots: data.cfAllowlist.items.length }
+        if (path === '/api/v1/user/totp/status') return { enabled: false, enabled_at: null, feature_enabled: false }
+        if (path === '/api/v1/user/totp/verification-method') return { method: 'password' }
         if (path === '/v1/models') return { object: 'list', data: data.models.map(id => ({ id, object: 'model', owned_by: 'local-demo' })) }
         if (path === '/api/v1/keys') {
           const items = data.keys.filter(key => {
@@ -243,6 +356,139 @@ export function createMockApi(now = new Date()) {
             today_actual_cost: summarize(rows.filter(row => dateLabel(row.created_at, 'UTC') === today)).total_actual_cost }]
         })) }
       }
+      if (method === 'POST' && path === '/api/v1/payment/orders') {
+        const amount = body.amount
+        const paymentType = body.payment_type
+        const orderType = body.order_type
+        if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) throw new PreviewError(422, '演示订单金额必须大于 0')
+        if (typeof paymentType !== 'string' || !data.checkoutInfo.methods[paymentType]?.available) throw new PreviewError(422, '演示支付方式不可用')
+        if (orderType !== 'balance' && orderType !== 'subscription') throw new PreviewError(422, '无效的演示订单类型')
+        const plan = orderType === 'subscription' ? data.paymentPlans.find(item => item.id === body.plan_id) : undefined
+        if (orderType === 'subscription' && !plan) throw new PreviewError(422, '本地演示套餐不存在')
+        const limits = data.checkoutInfo.methods[paymentType]
+        if (amount < limits.single_min || amount > limits.single_max) throw new PreviewError(422, '演示订单金额超出该方式限额')
+        const currency = limits.currency || 'CNY'
+        const converted = orderType === 'subscription' && currency === 'CNY' ? amount * data.checkoutInfo.subscription_usd_to_cny_rate : amount
+        const feeRate = limits.recharge_fee_rate ?? data.checkoutInfo.recharge_fee_rate
+        const payAmount = Math.round(converted * (1 + feeRate / 100) * 100) / 100
+        const outTradeNo = `LOCAL-DEMO-${now.toISOString().slice(0, 10).replaceAll('-', '')}-${String(nextOrderId)}`
+        const order: PaymentOrder = {
+          id: nextOrderId++, user_id: data.user.id, amount, pay_amount: payAmount, currency,
+          fee_rate: feeRate, payment_type: paymentType, out_trade_no: outTradeNo, status: 'PENDING',
+          order_type: orderType, plan_id: plan?.id, created_at: now.toISOString(),
+          expires_at: new Date(now.getTime() + 30 * 60_000).toISOString(), refund_amount: 0,
+          provider_instance_id: `local-demo-${paymentType}`,
+        }
+        data.paymentOrders.unshift(order)
+        return {
+          order_id: order.id,
+          amount: order.amount,
+          pay_amount: order.pay_amount,
+          fee_rate: order.fee_rate,
+          currency: order.currency,
+          expires_at: order.expires_at,
+          payment_type: order.payment_type,
+          out_trade_no: order.out_trade_no,
+          payment_mode: 'qrcode',
+          result_type: 'order_created',
+          qr_code: `LOCAL-DEMO-PAYMENT:${order.out_trade_no}`,
+          resume_token: `local-demo-resume-${order.id}`,
+        }
+      }
+      const cancelOrder = path.match(/^\/api\/v1\/payment\/orders\/(\d+)\/cancel$/)
+      if (method === 'POST' && cancelOrder) {
+        const order = findOrder(Number(cancelOrder[1]))
+        if (order.status !== 'PENDING') throw new PreviewError(409, '只有待支付的本地演示订单可以取消')
+        order.status = 'CANCELLED'
+        return { message: '本地演示订单已取消' }
+      }
+      const refundOrder = path.match(/^\/api\/v1\/payment\/orders\/(\d+)\/refund-request$/)
+      if (method === 'POST' && refundOrder) {
+        const order = findOrder(Number(refundOrder[1]))
+        if (order.status !== 'COMPLETED') throw new PreviewError(409, '只有已完成的本地演示订单可以申请退款')
+        if (typeof body.reason !== 'string' || !body.reason.trim()) throw new PreviewError(422, '请输入本地演示退款原因')
+        order.status = 'REFUND_REQUESTED'
+        order.refund_request_reason = body.reason.trim()
+        order.refund_requested_at = now.toISOString()
+        return order
+      }
+      if (method === 'POST' && path === '/api/v1/payment/orders/verify') return orderByTradeNo(body.out_trade_no)
+      if (method === 'POST' && path === '/api/v1/payment/public/orders/verify') return publicOrder(orderByTradeNo(body.out_trade_no))
+      if (method === 'POST' && path === '/api/v1/payment/public/orders/resolve') {
+        if (typeof body.resume_token !== 'string' || !/^local-demo-resume-\d+$/.test(body.resume_token)) throw new PreviewError(404, '本地演示恢复令牌不存在')
+        return publicOrder(findOrder(Number(body.resume_token.split('-').pop())))
+      }
+      if (method === 'POST' && path === '/api/v1/redeem') {
+        const code = typeof body.code === 'string' ? body.code.trim().toUpperCase() : ''
+        if (!['DEMO-BALANCE-10', 'DEMO-SUB-30'].includes(code)) throw new PreviewError(422, '请输入本地演示兑换码 DEMO-BALANCE-10 或 DEMO-SUB-30')
+        if (usedDemoCodes.has(code)) throw new PreviewError(409, '该本地演示兑换码已在当前进程使用')
+        usedDemoCodes.add(code)
+        if (code === 'DEMO-BALANCE-10') {
+          data.user.balance += 10
+          data.redeemHistory.unshift({ id: nextRedeemId++, code, type: 'balance', value: 10, status: 'used', used_at: now.toISOString(), created_at: now.toISOString() })
+          return { message: '本地演示余额已增加', type: 'balance', value: 10, new_balance: data.user.balance }
+        }
+        const group = data.groups[2]
+        if (!group) throw new PreviewError(500, '本地演示分组缺失')
+        const subscription = {
+          id: Math.max(...data.subscriptions.map(item => item.id)) + 1,
+          user_id: data.user.id,
+          group_id: group.id,
+          status: 'active' as const,
+          starts_at: now.toISOString(),
+          daily_usage_usd: 0,
+          weekly_usage_usd: 0,
+          monthly_usage_usd: 0,
+          daily_window_start: now.toISOString(),
+          weekly_window_start: now.toISOString(),
+          monthly_window_start: now.toISOString(),
+          created_at: now.toISOString(),
+          updated_at: now.toISOString(),
+          expires_at: new Date(now.getTime() + 30 * 86_400_000).toISOString(),
+          group,
+        }
+        data.subscriptions.unshift(subscription)
+        data.redeemHistory.unshift({ id: nextRedeemId++, code, type: 'subscription', value: 30, status: 'used', used_at: now.toISOString(), created_at: now.toISOString(), group_id: group.id, validity_days: 30, group: { id: group.id, name: group.name } })
+        return { message: '本地演示订阅已添加', type: 'subscription', value: 30, group_name: group.name, validity_days: 30 }
+      }
+      if (method === 'POST' && path === '/api/v1/user/aff/transfer') {
+        const amount = data.affiliateDetail.aff_quota
+        if (amount <= 0) throw new PreviewError(409, '当前没有可转入的本地演示额度')
+        data.affiliateDetail.aff_quota = 0
+        data.affiliateDetail.aff_history_quota += amount
+        data.user.balance = Math.round((data.user.balance + amount) * 100) / 100
+        return { transferred_quota: amount, balance: data.user.balance }
+      }
+      if (method === 'POST' && path === '/api/v1/user/cf-allowlist') {
+        const ip = typeof body.ip === 'string' ? body.ip.trim() : ''
+        if (!isIP(ip)) throw new PreviewError(422, '请输入有效的 IPv4 或 IPv6 地址')
+        if (data.cfAllowlist.items.some(item => item.ip === ip)) throw new PreviewError(409, '该 IP 已在本地演示白名单中')
+        if (data.cfAllowlist.items.length >= data.cfAllowlist.max_slots) throw new PreviewError(409, '本地演示白名单名额已满')
+        const item = { id: nextAllowlistId++, ip, created_at: now.toISOString() }
+        data.cfAllowlist.items.push(item)
+        return item
+      }
+      if (method === 'PUT' && path === '/api/v1/settings/public') {
+        if (body.channel_monitor_mode !== 'v1' && body.channel_monitor_mode !== 'v2') throw new PreviewError(422, '本地预览仅支持 v1 或 v2 监控模式')
+        settings.channel_monitor_mode = body.channel_monitor_mode
+        return settings
+      }
+      if (method === 'PUT' && path === '/api/v1/user') {
+        if ('username' in body) {
+          if (typeof body.username !== 'string' || !body.username.trim() || body.username.length > 100) throw new PreviewError(422, '演示用户名须为 1 至 100 个字符')
+          data.user.username = body.username.trim()
+        }
+        if ('avatar_url' in body) data.user.avatar_url = typeof body.avatar_url === 'string' && body.avatar_url ? body.avatar_url : null
+        if ('balance_notify_enabled' in body) data.user.balance_notify_enabled = body.balance_notify_enabled === true
+        if ('balance_notify_threshold' in body) {
+          const threshold = body.balance_notify_threshold
+          if (threshold !== null && (typeof threshold !== 'number' || threshold < 0)) throw new PreviewError(422, '演示提醒阈值无效')
+          data.user.balance_notify_threshold = threshold as number | null
+        }
+        data.user.updated_at = now.toISOString()
+        return data.user
+      }
+      if (method === 'PUT' && path === '/api/v1/user/password') return { message: '本地演示密码未写入任何账户' }
       if (method === 'POST' && path === '/api/v1/keys') {
         if (!('name' in body)) throw new PreviewError(422, '请输入演示密钥名称')
         const key = editKey({ ...makeKey(nextId, undefined, new Date().toISOString()), status: 'active', quota: 0 }, body)
@@ -259,6 +505,13 @@ export function createMockApi(now = new Date()) {
         }
         data.keys[index] = editKey(data.keys[index], body)
         return data.keys[index]
+      }
+      const allowlistDelete = path.match(/^\/api\/v1\/user\/cf-allowlist\/(\d+)$/)
+      if (method === 'DELETE' && allowlistDelete) {
+        const index = data.cfAllowlist.items.findIndex(item => item.id === Number(allowlistDelete[1]))
+        if (index < 0) throw new PreviewError(404, '本地演示 IP 不存在')
+        data.cfAllowlist.items.splice(index, 1)
+        return { message: '本地演示 IP 已移除' }
       }
       throw new PreviewError(501, '演示不支持此操作，不会写入或转发到真实后端')
     },
