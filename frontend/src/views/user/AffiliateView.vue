@@ -1,6 +1,11 @@
 <template>
   <AppLayout>
-    <div class="space-y-6">
+    <div class="signal-account-page signal-affiliate space-y-6">
+      <header class="signal-account-heading">
+        <span class="signal-account-index">PARTNERS</span>
+        <h1>{{ t('affiliate.title') }}</h1>
+        <p>{{ t('affiliate.description') }}</p>
+      </header>
       <div v-if="loading" class="flex justify-center py-12">
         <div
           class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
@@ -8,7 +13,7 @@
       </div>
 
       <template v-else-if="detail">
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="signal-affiliate-metrics grid sm:grid-cols-2 lg:grid-cols-4">
           <div class="card p-5">
             <p class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-dark-400">
               <Icon name="dollar" size="sm" class="text-primary-500" />
@@ -44,9 +49,7 @@
           </div>
         </div>
 
-        <div class="card p-6">
-          <h3 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('affiliate.title') }}</h3>
-          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('affiliate.description') }}</p>
+        <section class="signal-account-section">
 
           <div class="mt-5 grid gap-4 md:grid-cols-2">
             <div class="space-y-2">
@@ -81,9 +84,9 @@
               <li v-if="detail.aff_frozen_quota > 0">4. {{ t('affiliate.tips.line4') }}</li>
             </ul>
           </div>
-        </div>
+        </section>
 
-        <div class="card p-6">
+        <section class="signal-account-section">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h3 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('affiliate.transfer.title') }}</h3>
@@ -102,9 +105,9 @@
           <p v-if="detail.aff_quota <= 0" class="mt-3 text-sm text-amber-600 dark:text-amber-400">
             {{ t('affiliate.transfer.empty') }}
           </p>
-        </div>
+        </section>
 
-        <div class="card p-6">
+        <section class="signal-account-section">
           <h3 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('affiliate.invitees.title') }}</h3>
           <div v-if="detail.invitees.length === 0" class="mt-4 rounded-xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-dark-400">
             {{ t('affiliate.invitees.empty') }}
@@ -133,7 +136,7 @@
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
       </template>
     </div>
   </AppLayout>

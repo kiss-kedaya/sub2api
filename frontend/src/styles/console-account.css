@@ -1,0 +1,161 @@
+.console-signal .signal-account-page {
+  min-width: 0;
+  color: var(--signal-text);
+}
+
+.signal-account-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding-block: 4px 24px;
+  border-bottom: 1px solid var(--signal-line);
+}
+
+.signal-account-index {
+  color: var(--signal-muted);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.signal-account-heading h1 {
+  color: var(--signal-text);
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 34px;
+  overflow-wrap: anywhere;
+}
+
+.signal-account-heading p {
+  max-width: 640px;
+  color: var(--signal-muted);
+  font-size: 13px;
+  line-height: 22px;
+}
+
+.console-signal .signal-account-section,
+.console-signal .signal-profile > .card,
+.console-signal .signal-redeem > .card {
+  min-width: 0;
+  padding-block: 20px;
+  border: 0;
+  border-top: 1px solid var(--signal-line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.console-signal .signal-profile > .card,
+.console-signal .signal-redeem > .card > .p-6 {
+  padding-inline: 0;
+}
+
+.signal-account-support {
+  padding: 16px;
+  border-left: 2px solid var(--signal-accent);
+  background: var(--signal-accent-soft);
+  overflow-wrap: anywhere;
+}
+
+.signal-balance-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  border-block: 1px solid var(--signal-line);
+  background: var(--signal-surface);
+}
+
+.signal-balance-strip > div {
+  min-width: 0;
+  padding: 20px;
+}
+
+.signal-balance-strip > div + div {
+  border-left: 1px solid var(--signal-line);
+}
+
+.signal-account-label {
+  color: var(--signal-muted);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.signal-account-balance,
+.signal-account-number {
+  margin-top: 8px;
+  color: var(--signal-accent);
+  font-size: 28px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 36px;
+  overflow-wrap: anywhere;
+}
+
+.signal-account-number {
+  color: var(--signal-text);
+}
+
+.signal-account-number span {
+  color: var(--signal-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.console-signal .signal-affiliate-metrics {
+  gap: 1px;
+  border-block: 1px solid var(--signal-line);
+  background: var(--signal-line);
+}
+
+.console-signal .signal-affiliate-metrics > .card {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--signal-surface);
+  font-variant-numeric: tabular-nums;
+}
+
+.console-signal .signal-account-page :is(.text-gray-900, .text-gray-700, .text-primary-800) {
+  color: var(--signal-text);
+}
+
+.console-signal .signal-account-page :is(.text-gray-400, .text-gray-500, .text-gray-600) {
+  color: var(--signal-muted);
+}
+
+.console-signal .signal-account-page :is(.text-primary-500, .text-primary-600, .text-primary-700) {
+  color: var(--signal-accent);
+}
+
+.console-signal .signal-account-page :is(.bg-gray-50, .bg-primary-50, .bg-primary-100) {
+  background: var(--signal-accent-soft);
+}
+
+.console-signal .signal-account-page :is(.border-gray-100, .border-gray-200, .border-primary-200) {
+  border-color: var(--signal-line);
+}
+
+.console-signal .signal-account-page .rounded-xl {
+  border-radius: 6px;
+}
+
+.console-signal .signal-redeem > .border-red-200 {
+  border-left: 2px solid #d34040;
+  padding-left: 16px;
+}
+
+.console-signal .signal-redeem > .border-emerald-200 {
+  border-left: 2px solid var(--signal-accent);
+  padding-left: 16px;
+}
+
+@media (max-width: 479px) {
+  .signal-balance-strip > div {
+    padding: 16px 12px;
+  }
+
+  .signal-account-balance,
+  .signal-account-number {
+    font-size: 24px;
+  }
+}
