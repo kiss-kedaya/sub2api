@@ -1,4 +1,4 @@
-import { request } from 'node:http'
+import { createServer as createHttpServer, request } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
@@ -10,6 +10,17 @@ import { PREVIEW_LABEL } from './fixtures'
 let server: ViteDevServer
 let port: number
 const outbound = vi.fn(() => { throw new Error('Unexpected outbound fetch') })
+
+async function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createHttpServer()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address() as AddressInfo
+      probe.close(error => error ? reject(error) : resolve(address.port))
+    })
+  })
+}
 
 function http(path: string, method = 'GET', headers: Record<string, string> = {}, body = '') {
   return new Promise<{ status: number; headers: Record<string, unknown>; text: string }>((resolve, reject) => {
@@ -30,9 +41,10 @@ beforeAll(async () => {
   vi.stubEnv('VITE_API_BASE_URL', 'https://should-never-connect.example.test')
   vi.stubEnv('VITE_DEV_PROXY_TARGET', 'https://should-never-connect.example.test')
   const config = consolePreviewConfig()
+  const freePort = await getFreePort()
   server = await createServer({ ...config, configFile: false, mode: PREVIEW_MODE,
     optimizeDeps: { noDiscovery: true, include: [] },
-    server: { ...config.server, port: 0 }, logLevel: 'silent' })
+    server: { ...config.server, port: freePort }, logLevel: 'silent' })
   await server.listen()
   port = (server.httpServer!.address() as AddressInfo).port
 })
@@ -119,6 +131,32 @@ describe('preview server isolation', () => {
     expect(outbound).not.toHaveBeenCalled()
   })
 
+  it('switches admin preview identity and serves common admin routes without outbound requests', async () => {
+    const switched = await http('/api/v1/__preview/role', 'POST', { 'Content-Type': 'application/json' }, '{"role":"admin"}')
+    expect(switched.status).toBe(200)
+    expect(JSON.parse(switched.text).data).toMatchObject({ role: 'admin', email: 'admin-preview@example.test' })
+    expect(JSON.parse((await http('/api/v1/auth/me')).text).data).toMatchObject({ role: 'admin' })
+
+    for (const endpoint of [
+      '/api/v1/admin/dashboard/snapshot-v2?granularity=day',
+      '/api/v1/admin/accounts?page=1&page_size=10',
+      '/api/v1/admin/groups?page=1&page_size=10',
+      '/api/v1/admin/users?page=1&page_size=10',
+      '/api/v1/admin/usage?page=1&page_size=10',
+      '/api/v1/admin/keys?page=1&page_size=10',
+    ]) expect((await http(endpoint)).status, endpoint).toBe(200)
+
+    expect((await http('/admin/keys')).headers.location).toBe('/keys')
+
+    expect((await http('/api/v1/admin/users/910002/balance', 'POST', { 'Content-Type': 'application/json' }, '{"balance":999}')).status).toBe(501)
+    const adminHtml = await http('/admin/dashboard')
+    expect(adminHtml.text).toContain('admin-preview@example.test')
+    expect(adminHtml.text).toContain('admin_guide_900001_admin_v4_interactive')
+    expect(outbound).not.toHaveBeenCalled()
+
+    await http('/api/v1/__preview/role', 'POST', { 'Content-Type': 'application/json' }, '{"role":"user"}')
+  })
+
   it('rejects malformed/oversized bodies and supports CRUD through HTTP', async () => {
     expect((await http('/api/v1/keys', 'POST', { 'Content-Type': 'application/json' }, '{bad')).status).toBe(400)
     expect((await http('/api/v1/keys', 'POST', { 'Content-Type': 'application/json' }, '[]')).status).toBe(400)
@@ -140,6 +178,7 @@ describe('preview server isolation', () => {
     expect(response.text).toContain(PREVIEW_LABEL)
     expect(response.text).toContain('console-preview@example.test')
     expect(response.text).toContain('user_guide_900001_user_v4_interactive')
+    expect(response.text).toContain('admin_guide_900001_admin_v4_interactive')
     expect(response.text.indexOf("localStorage.setItem('auth_token'")).toBeLessThan(response.text.indexOf('src="/src/main.ts"'))
     expect(response.text).not.toContain('should-never-connect')
     const bootstrap = response.text.match(/<script>\s*(window\.__APP_CONFIG__[\s\S]*?)<\/script>/)?.[1]

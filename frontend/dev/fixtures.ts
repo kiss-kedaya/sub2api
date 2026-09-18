@@ -1,12 +1,19 @@
 import type {
+  AccountListItem,
+  AccountUsageInfo,
+  AdminGroup,
+  AdminUsageLog,
+  AdminUser,
   ApiKey,
   Group,
+  Proxy,
   PublicSettings,
   SubscriptionProgress,
   UsageLog,
   User,
   UserAffiliateDetail,
   UserSubscription,
+  WindowStats,
 } from '../src/types'
 import type {
   MonitorConfig,
@@ -113,7 +120,16 @@ export function createFixtures(now = new Date()) {
     key.quota_used = rows.reduce((sum, row) => sum + row.actual_cost, 0)
     key.last_used_at = rows.at(-1)?.created_at ?? null
   }
-  return { user, groups, keys, usage, models, now: timestamp, ...createPageFixtures(now, user, groups) }
+  return {
+    user,
+    groups,
+    keys,
+    usage,
+    models,
+    now: timestamp,
+    ...createPageFixtures(now, user, groups),
+    ...createAdminFixtures(now, groups, keys, usage),
+  }
 }
 
 export function makeKey(id: number, group: Group | undefined, timestamp: string): ApiKey {
@@ -127,6 +143,160 @@ export function makeKey(id: number, group: Group | undefined, timestamp: string)
     usage_5h: 0, usage_1d: 0, usage_7d: 0, window_5h_start: null, window_1d_start: null,
     window_7d_start: null, reset_5h_at: null, reset_1d_at: null, reset_7d_at: null,
   }
+}
+
+function createAdminFixtures(now: Date, groups: Group[], sourceKeys: ApiKey[], sourceUsage: UsageLog[]) {
+  const at = (offsetMs: number) => new Date(now.getTime() + offsetMs).toISOString()
+  const adminUsers: AdminUser[] = Array.from({ length: 34 }, (_, index) => {
+    const id = 910001 + index
+    const disabled = index % 11 === 8
+    return {
+      id,
+      username: index === 0 ? '本地预览管理员' : `演示用户 ${String(index).padStart(2, '0')}`,
+      email: index === 0 ? 'admin-preview@example.test' : `demo-user-${String(index).padStart(2, '0')}@example.test`,
+      role: index === 0 || index === 17 ? 'admin' : 'user',
+      status: disabled ? 'disabled' : 'active',
+      balance: Math.round((24 + (index * 19.37) % 360) * 100) / 100,
+      frozen_balance: index % 7 === 0 ? 3.2 : 0,
+      concurrency: 2 + index % 10,
+      rpm_limit: index % 5 === 0 ? 120 : 0,
+      allowed_groups: index % 4 === 0 ? [groups[index % groups.length].id] : null,
+      restrict_public_groups: index % 4 === 0,
+      balance_notify_enabled: false,
+      balance_notify_threshold: null,
+      balance_notify_extra_emails: [],
+      notes: `${PREVIEW_LABEL}，无真实账户`,
+      current_concurrency: disabled ? 0 : index % 4,
+      last_active_at: disabled ? at(-(index + 8) * DAY) : at(-(index % 18) * 60 * 60_000),
+      last_used_at: disabled ? null : at(-(index % 20) * 45 * 60_000),
+      created_at: at(-(index + 5) * DAY),
+      updated_at: at(-(index % 6) * 60 * 60_000),
+    }
+  })
+
+  const adminGroups: AdminGroup[] = groups.map((group, index) => ({
+    ...group,
+    name: `${group.name}（后台预览）`,
+    description: `${PREVIEW_LABEL}，价格和容量均为虚构数据`,
+    rpm_limit: 180 + index * 40,
+    force_openai_fast: group.platform === 'openai',
+    free_openai_fast: false,
+    model_pricing: [],
+    profit_control_enabled: false,
+    profit_min_margin: 0.08,
+    profit_safety_buffer: 0.03,
+    model_routing: null,
+    model_routing_enabled: false,
+    mcp_xml_inject: false,
+    account_count: 3,
+    active_account_count: index === 3 ? 2 : 3,
+    rate_limited_account_count: index === 3 ? 1 : 0,
+    model_allowlist: { enabled: true, models: [
+      ['claude-sonnet-4-5'], ['gpt-5', 'gpt-5-mini'], ['gemini-2.5-pro'],
+      ['grok-4'], ['deepseek-chat'], ['kimi-k2'],
+    ][index] ?? [] },
+    sort_order: (index + 1) * 10,
+  }))
+
+  const adminAccounts: AccountListItem[] = Array.from({ length: 24 }, (_, index) => {
+    const group = adminGroups[index % adminGroups.length]
+    const status: AccountListItem['status'] = index % 9 === 7 ? 'error' : index % 8 === 6 ? 'inactive' : 'active'
+    return {
+      id: 920001 + index,
+      name: `${group.platform.toUpperCase()} 演示账号 ${String(index + 1).padStart(2, '0')}`,
+      notes: `${PREVIEW_LABEL}，不含真实凭据`,
+      platform: group.platform === 'composite' ? 'openai' : group.platform,
+      type: index % 3 === 0 ? 'oauth' : index % 3 === 1 ? 'apikey' : 'upstream',
+      credentials_status: { has_access_token: false, has_api_key: false },
+      proxy_id: index % 3 === 0 ? 930001 : null,
+      concurrency: 4 + index % 8,
+      current_concurrency: status === 'active' ? index % 4 : 0,
+      priority: 10 + index % 4,
+      rate_multiplier: 0.82 + (index % 5) * 0.07,
+      load_factor: 1,
+      status,
+      error_message: status === 'error' ? '本地演示：上游返回 429' : null,
+      last_used_at: status === 'inactive' ? null : at(-(index % 16) * 20 * 60_000),
+      expires_at: null,
+      auto_pause_on_expired: true,
+      created_at: at(-(index + 20) * DAY),
+      updated_at: at(-(index % 9) * 30 * 60_000),
+      group_ids: [group.id],
+      schedulable: status === 'active',
+      rate_limited_at: index % 10 === 5 ? at(-20 * 60_000) : null,
+      rate_limit_reset_at: index % 10 === 5 ? at(40 * 60_000) : null,
+      overload_until: null,
+      temp_unschedulable_until: status === 'error' ? at(15 * 60_000) : null,
+      temp_unschedulable_reason: status === 'error' ? '本地演示限流' : null,
+      session_window_start: at(-2 * 60 * 60_000),
+      session_window_end: at(3 * 60 * 60_000),
+      session_window_status: status === 'active' ? 'allowed' : null,
+      extra: { preview: true, plan_type: index % 2 === 0 ? 'team' : 'pro' },
+      scheduler_score: { base_score: 0.91 - (index % 7) * 0.07, sticky_weighted_enabled: true },
+    }
+  })
+
+  const adminKeys: ApiKey[] = sourceKeys.map((key, index) => {
+    const owner = adminUsers[index % adminUsers.length]
+    const group = adminGroups[(key.group_id ?? 1) - 1]
+    return {
+      ...key,
+      id: 940001 + index,
+      user_id: owner.id,
+      name: `后台演示密钥 ${String(index + 1).padStart(2, '0')}`,
+      key: `sk-admin-demo-not-valid-${String(index + 1).padStart(6, '0')}`,
+      group,
+    }
+  })
+
+  const adminUsage: AdminUsageLog[] = sourceUsage.map((row, index) => {
+    const apiKey = adminKeys[index % adminKeys.length]
+    const owner = adminUsers.find(item => item.id === apiKey.user_id) ?? adminUsers[0]
+    const account = adminAccounts[index % adminAccounts.length]
+    const group = adminGroups[(row.group_id ?? 1) - 1]
+    return {
+      ...row,
+      id: 950001 + index,
+      user_id: owner.id,
+      api_key_id: apiKey.id,
+      account_id: account.id,
+      request_id: `admin-preview-request-${index + 1}`,
+      upstream_request_id: `upstream-demo-${index + 1}`,
+      upstream_model: row.model,
+      upstream_response_model: row.model,
+      upstream_model_mismatch: false,
+      account_rate_multiplier: account.rate_multiplier ?? 1,
+      account_stats_cost: row.total_cost * (account.rate_multiplier ?? 1),
+      user: owner,
+      api_key: apiKey,
+      account: { id: account.id, name: account.name },
+      group,
+    }
+  })
+
+  const adminProxies: Proxy[] = [
+    {
+      id: 930001, name: `东京演示出口 · ${PREVIEW_LABEL}`, protocol: 'https', host: '192.0.2.20', port: 8443,
+      username: null, status: 'active', account_count: 8, latency_ms: 68, latency_status: 'success',
+      ip_address: '192.0.2.20', country: 'Japan', country_code: 'JP', region: 'Tokyo', city: 'Tokyo',
+      expires_at: null, fallback_mode: 'none', expiry_warn_days: 7, created_at: at(-90 * DAY), updated_at: at(-10 * 60_000),
+    },
+  ]
+
+  const usageByAccount: Record<string, AccountUsageInfo> = Object.fromEntries(adminAccounts.map((account, index) => [String(account.id), {
+    source: 'passive',
+    updated_at: at(-(index % 5) * 60_000),
+    five_hour: { utilization: 18 + index % 65, resets_at: at((index % 5 + 1) * 60 * 60_000), remaining_seconds: (index % 5 + 1) * 3600 },
+    seven_day: { utilization: 24 + index % 68, resets_at: at((index % 5 + 1) * DAY), remaining_seconds: (index % 5 + 1) * 86_400 },
+    seven_day_sonnet: null,
+  }]))
+  const todayStatsByAccount: Record<string, WindowStats> = Object.fromEntries(adminAccounts.map((account, index) => [String(account.id), {
+    requests: 42 + index * 7,
+    tokens: 84_000 + index * 11_000,
+    cost: Math.round((2.6 + index * 0.37) * 100) / 100,
+  }]))
+
+  return { adminUsers, adminGroups, adminAccounts, adminKeys, adminUsage, adminProxies, usageByAccount, todayStatsByAccount }
 }
 
 function createPageFixtures(now: Date, user: User, groups: Group[]) {
