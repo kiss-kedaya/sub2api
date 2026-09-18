@@ -28,6 +28,7 @@
 <script setup lang="ts">
 import '@/styles/onboarding.css'
 import '@/styles/console-signal.css'
+import '@/styles/console-account.css'
 import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'

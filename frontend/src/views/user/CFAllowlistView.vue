@@ -1,15 +1,16 @@
 <template>
   <AppLayout>
-    <div class="mx-auto max-w-2xl space-y-6">
-      <div class="card p-6">
-        <h1 class="text-xl font-semibold text-gray-900 dark:text-white">{{ t('cfAllowlist.title') }}</h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-dark-300">{{ t('cfAllowlist.intro') }}</p>
-      </div>
+    <div class="signal-account-page signal-allowlist mx-auto max-w-3xl space-y-6">
+      <header class="signal-account-heading">
+        <span class="signal-account-index">NETWORK</span>
+        <h1>{{ t('cfAllowlist.title') }}</h1>
+        <p>{{ t('cfAllowlist.intro') }}</p>
+      </header>
 
-      <div v-if="loading" class="card p-6 text-sm text-gray-500">{{ t('common.loading') }}</div>
+      <div v-if="loading" class="signal-account-section text-sm text-gray-500">{{ t('common.loading') }}</div>
 
       <div v-else-if="status" class="space-y-6">
-        <div class="card p-6">
+        <div class="signal-account-section signal-allowlist-summary">
           <p class="text-sm text-gray-500">{{ t('cfAllowlist.recharged') }}</p>
           <p class="mt-1 text-3xl font-bold text-gray-900 dark:text-white">
             ¥{{ status.total_recharged.toFixed(2) }}
@@ -23,7 +24,7 @@
           </p>
         </div>
 
-        <div class="card p-6 space-y-4">
+        <div class="signal-account-section space-y-4">
           <p class="text-sm text-gray-600 dark:text-dark-300">
             {{ t('cfAllowlist.detectedIP') }}:
             <span class="font-mono">{{ status.detected_ip || t('cfAllowlist.unknownIP') }}</span>
@@ -49,7 +50,7 @@
           </button>
         </div>
 
-        <div class="card p-6">
+        <div class="signal-account-section">
           <h2 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('cfAllowlist.current') }}</h2>
           <ul v-if="status.items.length" class="mt-3 space-y-2">
             <li
@@ -58,8 +59,8 @@
               class="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 dark:border-dark-600"
             >
               <span class="font-mono text-sm">{{ item.ip }}</span>
-              <button type="button" class="text-sm text-red-600" :disabled="removingId === item.id" @click="removeIP(item.id)">
-                {{ t('common.delete') }}
+              <button type="button" class="btn btn-ghost btn-icon text-red-600" :title="t('common.delete')" :aria-label="t('common.delete')" :disabled="removingId === item.id" @click="removeIP(item.id)">
+                <Icon name="trash" size="sm" />
               </button>
             </li>
           </ul>
@@ -74,6 +75,7 @@
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import Icon from '@/components/icons/Icon.vue'
 import { cfAllowlistAPI, type CFAllowlistStatus } from '@/api/cfAllowlist'
 import { useAppStore } from '@/stores/app'
 

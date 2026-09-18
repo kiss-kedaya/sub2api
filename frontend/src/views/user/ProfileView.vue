@@ -2,8 +2,12 @@
   <AppLayout>
     <div
       data-testid="profile-shell"
-      class="mx-auto max-w-[950px] space-y-6"
+      class="signal-account-page signal-profile mx-auto max-w-[950px] space-y-6"
     >
+      <header class="signal-account-heading">
+        <span class="signal-account-index">ACCOUNT</span>
+        <h1>{{ t('profile.title') }}</h1>
+      </header>
       <ProfileInfoCard
         :user="user"
         :linuxdo-enabled="linuxdoOAuthEnabled"
@@ -17,7 +21,7 @@
 
       <div
         v-if="contactInfo"
-        class="card border-primary-200 bg-primary-50 p-6 dark:bg-primary-900/20"
+        class="signal-account-support"
       >
         <div class="flex items-center gap-4">
           <div class="rounded-xl bg-primary-100 p-3 text-primary-600">
