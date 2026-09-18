@@ -1,37 +1,102 @@
 <template>
   <div class="account-table-filters">
-    <div class="account-filter-search-row">
-      <SearchInput
-        :model-value="searchQuery"
-        :placeholder="t('admin.accounts.searchAccounts')"
-        class="account-filter-search"
-        @update:model-value="$emit('update:searchQuery', $event)"
-        @search="$emit('change')"
-      />
-      <button
-        type="button"
-        class="account-filter-toggle"
-        :class="{ 'account-filter-toggle-active': filtersExpanded || activeFilterCount > 0 }"
-        :aria-expanded="filtersExpanded"
-        :title="t('common.filter')"
-        @click="filtersExpanded = !filtersExpanded"
-      >
-        <Icon name="filter" size="sm" />
-        <span>{{ t('common.filter') }}</span>
-        <span v-if="activeFilterCount" class="account-filter-count">{{ activeFilterCount }}</span>
-        <Icon :name="filtersExpanded ? 'chevronUp' : 'chevronDown'" size="xs" />
-      </button>
+    <div class="account-filter-toolbar">
+      <div class="account-filter-search-row">
+        <SearchInput
+          :model-value="searchQuery"
+          :placeholder="t('admin.accounts.searchAccounts')"
+          class="account-filter-search"
+          @update:model-value="$emit('update:searchQuery', $event)"
+          @search="$emit('change')"
+        />
+        <button
+          type="button"
+          class="account-filter-toggle"
+          :class="{ 'account-filter-toggle-active': filtersExpanded || activeFilterCount > 0 }"
+          :aria-expanded="filtersExpanded"
+          aria-controls="account-advanced-filters"
+          :aria-label="`${filtersExpanded ? t('common.collapse') : t('common.expand')} ${t('common.filter')}`"
+          @click="filtersExpanded = !filtersExpanded"
+        >
+          <Icon name="filter" size="sm" />
+          <span>{{ t('common.filter') }}</span>
+          <span v-if="activeFilterCount" class="account-filter-count">{{ activeFilterCount }}</span>
+          <Icon :name="filtersExpanded ? 'chevronUp' : 'chevronDown'" size="xs" />
+        </button>
+      </div>
+      <slot name="actions"></slot>
     </div>
 
     <div
+      v-show="filtersExpanded"
+      id="account-advanced-filters"
       class="account-filter-panel"
-      :class="{ 'account-filter-panel-open': filtersExpanded }"
+      role="group"
+      :aria-label="t('common.filter')"
     >
-      <Select :model-value="filters.platform" :options="pOpts" @update:model-value="updatePlatform" @change="$emit('change')" />
-      <Select :model-value="filters.type" :options="tOpts" @update:model-value="updateType" @change="$emit('change')" />
-      <Select :model-value="filters.status" :options="sOpts" @update:model-value="updateStatus" @change="$emit('change')" />
-      <Select :model-value="filters.privacy_mode" :options="privacyOpts" @update:model-value="updatePrivacyMode" @change="$emit('change')" />
-      <Select :model-value="filters.group" :options="gOpts" @update:model-value="updateGroup" @change="$emit('change')" />
+      <Select
+        :model-value="filters.platform"
+        :options="pOpts"
+        :aria-label="t('admin.accounts.columns.platform')"
+        @update:model-value="updatePlatform"
+        @change="$emit('change')"
+      />
+      <Select
+        :model-value="filters.type"
+        :options="tOpts"
+        :aria-label="t('admin.accounts.columns.type')"
+        @update:model-value="updateType"
+        @change="$emit('change')"
+      />
+      <Select
+        :model-value="filters.status"
+        :options="sOpts"
+        :aria-label="t('admin.accounts.columns.status')"
+        @update:model-value="updateStatus"
+        @change="$emit('change')"
+      />
+      <Select
+        :model-value="filters.privacy_mode"
+        :options="privacyOpts"
+        :aria-label="t('admin.accounts.setPrivacy')"
+        @update:model-value="updatePrivacyMode"
+        @change="$emit('change')"
+      />
+      <Select
+        :model-value="filters.group"
+        :options="gOpts"
+        :aria-label="t('admin.accounts.columns.groups')"
+        @update:model-value="updateGroup"
+        @change="$emit('change')"
+      />
+    </div>
+
+    <div v-if="activeFilters.length" class="account-filter-summary" aria-live="polite">
+      <span class="account-filter-summary-label">{{ t('common.filter') }}</span>
+      <div class="account-filter-tags">
+        <button
+          v-for="filter in activeFilters"
+          :key="filter.key"
+          type="button"
+          class="account-filter-tag"
+          :data-filter-key="filter.key"
+          :aria-label="`${t('common.remove')} ${filter.label}: ${filter.valueLabel}`"
+          @click="clearFilter(filter.key)"
+        >
+          <span class="account-filter-tag-label">{{ filter.label }}</span>
+          <span class="account-filter-tag-value">{{ filter.valueLabel }}</span>
+          <Icon name="x" size="xs" aria-hidden="true" />
+        </button>
+      </div>
+      <button
+        type="button"
+        class="account-filter-reset"
+        data-test="reset-account-filters"
+        :aria-label="`${t('common.reset')} ${t('common.all')} ${t('common.filter')}`"
+        @click="resetFilters"
+      >
+        {{ t('common.reset') }}
+      </button>
     </div>
   </div>
 </template>
@@ -45,6 +110,9 @@ import Select from '@/components/common/Select.vue'
 import type { AdminGroup } from '@/types'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 
+const FILTER_KEYS = ['platform', 'type', 'status', 'privacy_mode', 'group'] as const
+type FilterKey = (typeof FILTER_KEYS)[number]
+
 const props = defineProps<{
   searchQuery: string
   filters: Record<string, any>
@@ -54,26 +122,6 @@ const props = defineProps<{
 const emit = defineEmits(['update:searchQuery', 'update:filters', 'change'])
 const { t } = useI18n()
 const filtersExpanded = ref(false)
-
-const activeFilterCount = computed(() =>
-  ['platform', 'type', 'status', 'privacy_mode', 'group'].filter((key) => Boolean(props.filters[key])).length
-)
-
-const updatePlatform = (value: string | number | boolean | null) => {
-  emit('update:filters', { ...props.filters, platform: value })
-}
-const updateType = (value: string | number | boolean | null) => {
-  emit('update:filters', { ...props.filters, type: value })
-}
-const updateStatus = (value: string | number | boolean | null) => {
-  emit('update:filters', { ...props.filters, status: value })
-}
-const updatePrivacyMode = (value: string | number | boolean | null) => {
-  emit('update:filters', { ...props.filters, privacy_mode: value })
-}
-const updateGroup = (value: string | number | boolean | null) => {
-  emit('update:filters', { ...props.filters, group: value })
-}
 
 const pOpts = computed(() => [
   { value: '', label: t('admin.accounts.allPlatforms') },
@@ -107,22 +155,65 @@ const gOpts = computed(() => [
   { value: 'ungrouped', label: t('admin.accounts.ungroupedGroup') },
   ...(props.groups || []).map((group) => ({ value: String(group.id), label: group.name }))
 ])
+
+const filterDefinitions = computed(() => ({
+  platform: { label: t('admin.accounts.columns.platform'), options: pOpts.value },
+  type: { label: t('admin.accounts.columns.type'), options: tOpts.value },
+  status: { label: t('admin.accounts.columns.status'), options: sOpts.value },
+  privacy_mode: { label: t('admin.accounts.setPrivacy'), options: privacyOpts.value },
+  group: { label: t('admin.accounts.columns.groups'), options: gOpts.value }
+}))
+
+const activeFilters = computed(() => FILTER_KEYS.flatMap((key) => {
+  const value = props.filters[key]
+  if (value === '' || value === null || value === undefined) return []
+  const definition = filterDefinitions.value[key]
+  const option = definition.options.find((item) => item.value === value)
+  return [{ key, label: definition.label, valueLabel: option?.label ?? String(value) }]
+}))
+
+const activeFilterCount = computed(() => activeFilters.value.length)
+
+const updateFilter = (key: FilterKey, value: string | number | boolean | null) => {
+  emit('update:filters', { ...props.filters, [key]: value })
+}
+
+const updatePlatform = (value: string | number | boolean | null) => updateFilter('platform', value)
+const updateType = (value: string | number | boolean | null) => updateFilter('type', value)
+const updateStatus = (value: string | number | boolean | null) => updateFilter('status', value)
+const updatePrivacyMode = (value: string | number | boolean | null) => updateFilter('privacy_mode', value)
+const updateGroup = (value: string | number | boolean | null) => updateFilter('group', value)
+
+const clearFilter = (key: FilterKey) => {
+  updateFilter(key, '')
+  emit('change')
+}
+
+const resetFilters = () => {
+  emit('update:filters', {
+    ...props.filters,
+    ...Object.fromEntries(FILTER_KEYS.map((key) => [key, '']))
+  })
+  emit('change')
+}
 </script>
 
 <style scoped>
 .account-table-filters {
-  display: flex;
-  flex-wrap: wrap;
   min-width: 0;
-  flex: 1 1 auto;
+}
+
+.account-filter-toolbar {
+  display: flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
 }
 
 .account-filter-search-row {
   display: flex;
-  min-width: 220px;
-  flex: 1 1 280px;
+  min-width: 240px;
+  flex: 1 1 360px;
   align-items: center;
   gap: 8px;
 }
@@ -132,22 +223,8 @@ const gOpts = computed(() => [
   width: 100%;
 }
 
-.account-filter-panel {
-  display: flex;
-  flex-wrap: wrap;
-  min-width: 0;
-  flex: 3 1 640px;
-  align-items: center;
-  gap: 8px;
-}
-
-.account-filter-panel > * {
-  min-width: 128px;
-  flex: 1 1 144px;
-}
-
 .account-filter-toggle {
-  display: none;
+  display: inline-flex;
   min-height: 40px;
   flex: 0 0 auto;
   align-items: center;
@@ -170,6 +247,13 @@ const gOpts = computed(() => [
   color: var(--signal-accent);
 }
 
+.account-filter-toggle:focus-visible,
+.account-filter-tag:focus-visible,
+.account-filter-reset:focus-visible {
+  outline: 2px solid var(--signal-accent);
+  outline-offset: 2px;
+}
+
 .account-filter-count {
   display: inline-grid;
   min-width: 18px;
@@ -182,16 +266,101 @@ const gOpts = computed(() => [
   font-variant-numeric: tabular-nums;
 }
 
+.account-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--signal-line);
+}
+
+.account-filter-panel > * {
+  min-width: 0;
+  width: 100%;
+}
+
+.account-filter-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.account-filter-summary-label {
+  flex: 0 0 auto;
+  color: var(--signal-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.account-filter-tags {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.account-filter-tag {
+  display: inline-flex;
+  min-height: 30px;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border: 1px solid var(--signal-line);
+  border-radius: 6px;
+  background: var(--signal-surface);
+  color: var(--signal-text);
+  font-size: 11px;
+  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.account-filter-tag:hover {
+  border-color: var(--signal-accent);
+  background: var(--signal-accent-soft);
+  color: var(--signal-accent);
+}
+
+.account-filter-tag-label {
+  color: var(--signal-muted);
+}
+
+.account-filter-tag-value {
+  max-width: 160px;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-filter-reset {
+  min-height: 30px;
+  flex: 0 0 auto;
+  padding-inline: 6px;
+  color: var(--signal-accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.account-filter-reset:hover {
+  text-decoration: underline;
+}
+
 @media (max-width: 1100px) {
-  .account-table-filters {
+  .account-filter-toolbar {
     align-items: stretch;
-    flex-direction: column;
+    flex-wrap: wrap;
   }
 
-  .account-filter-search-row,
+  .account-filter-search-row {
+    flex-basis: 100%;
+  }
+
   .account-filter-panel {
-    width: 100%;
-    flex-basis: auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -201,23 +370,25 @@ const gOpts = computed(() => [
   }
 
   .account-filter-toggle {
-    display: inline-flex;
     min-height: 44px;
   }
 
   .account-filter-panel {
-    display: none;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding-top: 2px;
   }
 
-  .account-filter-panel-open {
-    display: grid;
+  .account-filter-summary {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 
-  .account-filter-panel > * {
+  .account-filter-summary-label {
     width: 100%;
-    min-width: 0;
+  }
+
+  .account-filter-tag,
+  .account-filter-reset {
+    min-height: 40px;
   }
 }
 
@@ -228,6 +399,13 @@ const gOpts = computed(() => [
 
   .account-filter-toggle > span:first-of-type {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-filter-toggle,
+  .account-filter-tag {
+    transition: none;
   }
 }
 </style>
