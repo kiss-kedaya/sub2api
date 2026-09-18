@@ -1,40 +1,36 @@
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-gray-50 px-4 dark:bg-dark-900">
-    <div class="w-full max-w-md space-y-6">
+  <div class="signal-payment-result">
+    <main class="signal-payment-result__main">
       <!-- Loading -->
       <div v-if="loading" class="flex items-center justify-center py-20">
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
       </div>
       <template v-else>
         <!-- Status Icon -->
-        <div class="text-center">
+        <header class="signal-payment-result__status">
           <div v-if="isSuccess"
-            class="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
-            <svg class="h-10 w-10 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"
-              stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
+            class="signal-payment-result__status-icon signal-payment-result__status-icon--success">
+            <Icon name="check" size="xl" :stroke-width="2" />
           </div>
           <div v-else-if="isPending"
-            class="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-yellow-100 dark:bg-yellow-900/30">
-            <div class="h-10 w-10 animate-spin rounded-full border-4 border-yellow-500 border-t-transparent"></div>
+            class="signal-payment-result__status-icon signal-payment-result__status-icon--pending">
+            <Icon name="clock" size="xl" />
           </div>
           <div v-else
-            class="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
-            <svg class="h-10 w-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            class="signal-payment-result__status-icon signal-payment-result__status-icon--failed">
+            <Icon name="x" size="xl" :stroke-width="2" />
           </div>
-          <h2 class="mt-4 text-2xl font-bold text-gray-900 dark:text-white">
+          <p class="signal-payment-result__index" aria-hidden="true">PAYMENT / RESULT</p>
+          <h1>
             {{ statusTitle }}
-          </h2>
-          <p v-if="isPending" class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+          </h1>
+          <p v-if="isPending" class="signal-payment-result__hint">
             {{ t('payment.result.processingHint') }}
           </p>
-        </div>
+        </header>
         <!-- Order Info -->
-        <div v-if="order" class="rounded-xl bg-white p-5 shadow-sm dark:bg-dark-800">
-          <div class="space-y-3 text-sm">
+        <section v-if="order" class="signal-payment-result__details">
+          <div>
             <div v-if="hasOrderId(order)" class="flex justify-between">
               <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.orderId') }}</span>
               <span class="font-medium text-gray-900 dark:text-white">#{{ order.id }}</span>
@@ -68,10 +64,10 @@
               <OrderStatusBadge :status="displayOrderStatus(order.status)" />
             </div>
           </div>
-        </div>
+        </section>
         <!-- EasyPay return info (when no order loaded) -->
-        <div v-else-if="returnInfo" class="rounded-xl bg-white p-5 shadow-sm dark:bg-dark-800">
-          <div class="space-y-3 text-sm">
+        <section v-else-if="returnInfo" class="signal-payment-result__details">
+          <div>
             <div v-if="returnInfo.outTradeNo" class="flex justify-between">
               <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.orderId') }}</span>
               <span class="font-medium text-gray-900 dark:text-white">{{ returnInfo.outTradeNo }}</span>
@@ -85,14 +81,20 @@
               <span class="font-medium text-gray-900 dark:text-white">{{ t(paymentMethodI18nKey(returnInfo.type), normalizedOrderPaymentType(returnInfo.type)) }}</span>
             </div>
           </div>
-        </div>
+        </section>
         <!-- Actions -->
-        <div class="flex gap-3">
-          <button class="btn btn-secondary flex-1" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
-          <button class="btn btn-primary flex-1" @click="router.push('/orders')">{{ t('payment.result.viewOrders') }}</button>
+        <div class="signal-payment-result__actions">
+          <button class="btn btn-secondary" @click="router.push('/purchase')">
+            <Icon name="arrowLeft" size="sm" />
+            {{ t('payment.result.backToRecharge') }}
+          </button>
+          <button class="btn btn-primary" @click="router.push('/orders')">
+            <Icon name="document" size="sm" />
+            {{ t('payment.result.viewOrders') }}
+          </button>
         </div>
       </template>
-    </div>
+    </main>
   </div>
 </template>
 
@@ -113,6 +115,7 @@ import type { PublicOrderVerifyResult } from '@/api/payment'
 import type { OrderStatus, PaymentOrder } from '@/types/payment'
 import { formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 import { normalizePaymentMethodForDisplay, paymentMethodI18nKey } from './paymentUx'
+import Icon from '@/components/icons/Icon.vue'
 
 const i18n = useI18n()
 const { t } = i18n
@@ -461,3 +464,199 @@ onBeforeUnmount(() => {
   clearStatusRefreshTimer()
 })
 </script>
+
+<style scoped>
+.signal-payment-result {
+  --result-bg: #f5f6f5;
+  --result-surface: #ffffff;
+  --result-line: #dce2df;
+  --result-text: #202423;
+  --result-muted: #65716a;
+  --result-accent: #087f68;
+  --result-accent-soft: #e5f3ee;
+  --result-amber: #a86610;
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px 16px;
+  color: var(--result-text);
+  background: var(--result-bg);
+  letter-spacing: 0;
+}
+
+:global(.dark) .signal-payment-result {
+  --result-bg: #111315;
+  --result-surface: #191c1f;
+  --result-line: #303538;
+  --result-text: #edf2ef;
+  --result-muted: #a0aca6;
+  --result-accent: #6ce4bd;
+  --result-accent-soft: #203a30;
+  --result-amber: #eeb766;
+}
+
+.signal-payment-result__main {
+  display: grid;
+  width: min(100%, 480px);
+  gap: 16px;
+}
+
+.signal-payment-result__status {
+  display: grid;
+  justify-items: center;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--result-line);
+  text-align: center;
+}
+
+.signal-payment-result__status-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  margin-bottom: 12px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: var(--result-surface);
+}
+
+.signal-payment-result__status-icon--success {
+  color: var(--result-accent);
+}
+
+.signal-payment-result__status-icon--pending {
+  color: var(--result-amber);
+}
+
+.signal-payment-result__status-icon--failed {
+  color: #d34040;
+}
+
+.signal-payment-result__index {
+  margin: 0 0 3px;
+  color: var(--result-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.signal-payment-result__status h1 {
+  margin: 0;
+  color: var(--result-text);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.signal-payment-result__hint {
+  margin: 7px 0 0;
+  color: var(--result-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.signal-payment-result__details {
+  padding: 18px;
+  border: 1px solid var(--result-line);
+  border-radius: 8px;
+  background: var(--result-surface);
+}
+
+.signal-payment-result__details > div {
+  display: grid;
+  gap: 0;
+}
+
+.signal-payment-result__details > div > div {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--result-line);
+  font-size: 13px;
+}
+
+.signal-payment-result__details > div > div:first-child {
+  padding-top: 0;
+}
+
+.signal-payment-result__details > div > div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.signal-payment-result__details > div > div > span:first-child {
+  flex: 0 0 auto;
+  color: var(--result-muted);
+}
+
+.signal-payment-result__details > div > div > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--result-text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.signal-payment-result__details :deep(.payment-order-status) {
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+}
+
+.signal-payment-result__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.signal-payment-result__actions .btn {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 6px;
+}
+
+.signal-payment-result__actions .btn-primary {
+  border: 1px solid transparent;
+  color: #ffffff;
+  background: var(--result-accent);
+}
+
+.signal-payment-result__actions .btn-secondary {
+  border: 1px solid var(--result-line);
+  color: var(--result-text);
+  background: var(--result-surface);
+}
+
+@media (max-width: 374px) {
+  .signal-payment-result {
+    padding: 16px 12px;
+  }
+
+  .signal-payment-result__status h1 {
+    font-size: 21px;
+  }
+
+  .signal-payment-result__details {
+    padding: 14px;
+  }
+
+  .signal-payment-result__details > div > div {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .signal-payment-result__details > div > div > span:last-child {
+    text-align: left;
+  }
+
+  .signal-payment-result__actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>

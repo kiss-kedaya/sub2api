@@ -1,33 +1,40 @@
 <template>
   <AppLayout>
-    <div class="mx-auto flex max-w-md flex-col items-center space-y-6 py-8">
-      <h2 class="text-xl font-semibold text-gray-900 dark:text-white">
-        {{ qrUrl ? scanTitle : t('payment.qr.payInNewWindow') }}
-      </h2>
-      <div v-if="qrUrl" class="rounded-2xl bg-white p-6 shadow-lg dark:bg-dark-800">
-        <canvas ref="qrCanvas" class="mx-auto"></canvas>
-      </div>
-      <!-- Scan prompt for QR code -->
-      <p v-if="qrUrl && !expired && scanHint" class="text-center text-sm text-gray-500 dark:text-gray-400">
-        {{ scanHint }}
-      </p>
-      <div v-if="expired" class="text-center">
-        <p class="text-lg font-medium text-red-500">{{ t('payment.qr.expired') }}</p>
-        <button class="btn btn-primary mt-4" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
-      </div>
-      <div v-else class="text-center">
-        <p class="text-sm text-gray-500 dark:text-gray-400">{{ qrUrl ? t('payment.qr.expiresIn') : t('payment.qr.payInNewWindowHint') }}</p>
-        <p class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-white">{{ countdownDisplay }}</p>
-        <p class="mt-2 text-sm text-gray-400 dark:text-gray-500">{{ t('payment.qr.waitingPayment') }}</p>
-      </div>
-      <a v-if="payUrl && !qrUrl && !expired" :href="payUrl" target="_blank" rel="noopener noreferrer"
-        class="btn btn-primary w-full py-3">
-        {{ t('payment.qr.openPayWindow') }}
-      </a>
-      <!-- Cancel button -->
-      <button v-if="!expired && orderId" class="btn btn-secondary w-full" :disabled="cancelling" @click="handleCancel">
-        {{ cancelling ? t('common.processing') : t('payment.qr.cancelOrder') }}
-      </button>
+    <div class="signal-payment-qr">
+      <header class="signal-payment-qr__heading">
+        <p aria-hidden="true">PAYMENT / LIVE</p>
+        <h1>{{ qrUrl ? scanTitle : t('payment.qr.payInNewWindow') }}</h1>
+      </header>
+      <section class="signal-payment-qr__panel">
+        <div v-if="qrUrl" class="signal-payment-qr__code">
+          <canvas ref="qrCanvas"></canvas>
+        </div>
+        <!-- Scan prompt for QR code -->
+        <p v-if="qrUrl && !expired && scanHint" class="signal-payment-qr__hint">
+          {{ scanHint }}
+        </p>
+        <div v-if="expired" class="signal-payment-qr__status signal-payment-qr__status--expired">
+          <Icon name="exclamationCircle" size="lg" />
+          <p>{{ t('payment.qr.expired') }}</p>
+          <button class="btn btn-primary" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
+        </div>
+        <div v-else class="signal-payment-qr__status">
+          <span>{{ qrUrl ? t('payment.qr.expiresIn') : t('payment.qr.payInNewWindowHint') }}</span>
+          <strong>{{ countdownDisplay }}</strong>
+          <p>{{ t('payment.qr.waitingPayment') }}</p>
+        </div>
+        <div v-if="!expired" class="signal-payment-qr__actions">
+          <a v-if="payUrl && !qrUrl" :href="payUrl" target="_blank" rel="noopener noreferrer"
+            class="btn btn-primary">
+            <Icon name="externalLink" size="sm" />
+            {{ t('payment.qr.openPayWindow') }}
+          </a>
+          <!-- Cancel button -->
+          <button v-if="orderId" class="btn btn-secondary" :disabled="cancelling" @click="handleCancel">
+            {{ cancelling ? t('common.processing') : t('payment.qr.cancelOrder') }}
+          </button>
+        </div>
+      </section>
     </div>
   </AppLayout>
 </template>
@@ -45,6 +52,7 @@ import { isBuiltInAlipayMethod, isBuiltInWxpayMethod } from '@/components/paymen
 import QRCode from 'qrcode'
 import alipayIcon from '@/assets/icons/alipay.svg'
 import wxpayIcon from '@/assets/icons/wxpay.svg'
+import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -212,3 +220,143 @@ onMounted(() => {
 
 onUnmounted(() => cleanup())
 </script>
+
+<style scoped>
+.signal-payment-qr {
+  --qr-bg: var(--signal-bg, #f5f6f5);
+  --qr-surface: var(--signal-surface, #ffffff);
+  --qr-line: var(--signal-line, #dce2df);
+  --qr-text: var(--signal-text, #202423);
+  --qr-muted: var(--signal-muted, #65716a);
+  --qr-accent: var(--signal-accent, #087f68);
+  --qr-amber: var(--signal-amber, #a86610);
+  display: grid;
+  width: min(100%, 480px);
+  gap: 14px;
+  margin-inline: auto;
+  padding-block: 24px;
+  color: var(--qr-text);
+  letter-spacing: 0;
+}
+
+.signal-payment-qr__heading {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--qr-line);
+  text-align: left;
+}
+
+.signal-payment-qr__heading p {
+  margin: 0 0 3px;
+  color: var(--qr-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.signal-payment-qr__heading h1 {
+  margin: 0;
+  color: var(--qr-text);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.signal-payment-qr__panel {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--qr-line);
+  border-radius: 8px;
+  background: var(--qr-surface);
+}
+
+.signal-payment-qr__code {
+  display: grid;
+  place-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+  padding: 12px;
+  border: 1px solid var(--qr-line);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.signal-payment-qr__code canvas {
+  display: block;
+  max-width: 100%;
+  height: auto !important;
+}
+
+.signal-payment-qr__hint {
+  margin: 0;
+  color: var(--qr-muted);
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.signal-payment-qr__status {
+  display: grid;
+  gap: 4px;
+  padding: 14px 0;
+  border-block: 1px solid var(--qr-line);
+  text-align: center;
+}
+
+.signal-payment-qr__status span,
+.signal-payment-qr__status p {
+  margin: 0;
+  color: var(--qr-muted);
+  font-size: 12px;
+}
+
+.signal-payment-qr__status strong {
+  color: var(--qr-text);
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.signal-payment-qr__status--expired {
+  place-items: center;
+  color: var(--qr-amber);
+}
+
+.signal-payment-qr__status--expired p {
+  color: var(--qr-amber);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.signal-payment-qr__status--expired .btn {
+  margin-top: 8px;
+}
+
+.signal-payment-qr__actions {
+  display: grid;
+  gap: 8px;
+}
+
+.signal-payment-qr__actions .btn {
+  display: inline-flex;
+  width: 100%;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+@media (max-width: 374px) {
+  .signal-payment-qr {
+    padding-block: 10px;
+  }
+
+  .signal-payment-qr__panel {
+    padding: 14px;
+  }
+
+  .signal-payment-qr__code {
+    padding: 8px;
+  }
+}
+</style>
