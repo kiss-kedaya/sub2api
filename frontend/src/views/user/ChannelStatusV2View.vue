@@ -1,9 +1,9 @@
 <template>
   <AppLayout>
-    <div class="space-y-6 pb-12">
+    <div class="signal-channel-page signal-channel-v2 space-y-6 pb-12">
       <!-- Ops-style elevated shell: title toolbar + filters (mirrors OpsDashboardHeader) -->
       <section
-        class="card sticky top-0 z-20 !rounded-3xl !border-0 p-0 shadow-sm ring-1 ring-gray-900/5 backdrop-blur-sm dark:!bg-dark-800 dark:ring-dark-700 supports-[backdrop-filter]:bg-white/95 dark:supports-[backdrop-filter]:bg-dark-800/95"
+        class="card signal-channel-command sticky top-0 z-20 rounded-3xl p-0 ring-1 ring-gray-900/5"
       >
         <header class="page-header mb-0 flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
           <div class="min-w-0">
@@ -196,17 +196,19 @@
       <!-- Overview KPI: success · TTFT · tokens/s(optional) · cache · (+ RPM when throughput visible) -->
       <section
         v-if="snapshot"
-        class="grid grid-cols-2 gap-3 sm:grid-cols-3"
+        class="signal-channel-metrics grid grid-cols-2 gap-3 sm:grid-cols-3"
         :class="showThroughput ? 'xl:grid-cols-5' : 'xl:grid-cols-4'"
         :aria-label="t('channelMonitorV2.summaryAria')"
       >
         <MetricCell
+          class="signal-metric-cell"
           :label="t('channelMonitorV2.metrics.successRate')"
           :value="formatPercent(1 - snapshot.metrics.error_rate)"
           :detail="t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(snapshot.metrics.error_rate) })"
           :state="snapshot.health.error_rate"
         />
         <MetricCell
+          class="signal-metric-cell"
           :label="t('channelMonitorV2.metrics.ttftP50')"
           :value="formatMs(snapshot.metrics.ttft.p50_ms)"
           :detail="latencyKpiSecondary(snapshot.metrics.ttft)"
@@ -215,12 +217,14 @@
         />
         <MetricCell
           v-if="showThroughput"
+          class="signal-metric-cell"
           :label="t('channelMonitorV2.metrics.tps')"
           :value="formatTps(snapshot.metrics.tpm)"
           :detail="t('channelMonitorV2.metrics.tpsDetail')"
           :title="exactTps(snapshot.metrics.tpm)"
         />
         <MetricCell
+          class="signal-metric-cell"
           :label="t('channelMonitorV2.metrics.cacheRate')"
           :value="formatPercent(snapshot.metrics.cache_rate)"
           :detail="t('channelMonitorV2.metrics.cacheDetail')"
@@ -228,6 +232,7 @@
         />
         <MetricCell
           v-if="showThroughput"
+          class="signal-metric-cell"
           :label="t('channelMonitorV2.metrics.rpm')"
           :value="formatRate(snapshot.metrics.rpm)"
           :detail="t('channelMonitorV2.metrics.rpmDetail')"
@@ -236,7 +241,7 @@
       </section>
       <section
         v-else-if="loading"
-        class="grid grid-cols-2 gap-3 sm:grid-cols-3"
+        class="signal-channel-metrics grid grid-cols-2 gap-3 sm:grid-cols-3"
         :class="showThroughput ? 'xl:grid-cols-5' : 'xl:grid-cols-4'"
         aria-hidden="true"
       >
@@ -250,12 +255,14 @@
       <div class="relative min-h-[320px]">
         <MonitorTrendChart
           v-if="trendView === 'line'"
+          class="signal-monitor-surface"
           :trend="snapshot?.trend || []"
           :coverage="snapshot?.coverage || null"
           :loading="loading && !snapshot"
         />
         <RelayPulseMatrix
           v-else-if="matrix"
+          class="signal-monitor-surface"
           :rows="matrixRows"
           :coverage="matrix.coverage"
           :health-mode="healthMode"
@@ -263,13 +270,13 @@
         />
         <div
           v-else-if="loading"
-          class="card flex min-h-[320px] items-center justify-center !rounded-3xl !border-0 text-sm text-gray-400 shadow-sm ring-1 ring-gray-900/5 dark:ring-dark-700"
+          class="card signal-monitor-surface flex min-h-[320px] items-center justify-center text-sm text-gray-400"
         >
           <span class="animate-pulse">{{ t('common.loading') }}</span>
         </div>
       </div>
 
-      <section class="card flex min-h-0 flex-col overflow-hidden !rounded-3xl !border-0 shadow-sm ring-1 ring-gray-900/5 dark:!bg-dark-800 dark:ring-dark-700">
+      <section class="card signal-channel-ledger flex min-h-0 flex-col overflow-hidden">
         <div class="border-b border-gray-100 px-5 pt-4 dark:border-dark-700 sm:px-6">
           <nav class="tabs w-full max-w-md sm:w-auto" role="tablist" :aria-label="t('channelMonitorV2.tabs.aria')">
             <button
@@ -460,6 +467,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import './channel-signal.css'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
