@@ -5,6 +5,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/api/__tests__/client.spec.ts \
 	src/api/__tests__/tokenRefresh.spec.ts \
 	src/api/__tests__/channelMonitorV2.spec.ts \
+	src/api/__tests__/usage.snapshot.spec.ts \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \
 	src/views/auth/__tests__/WechatCallbackView.spec.ts \
 	src/views/user/__tests__/PaymentView.spec.ts \
@@ -14,6 +15,12 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/user/__tests__/UsageView.spec.ts \
 	src/components/layout/__tests__/ConsoleSignal.spec.ts \
 	src/components/layout/__tests__/ConsoleNavigationSearch.spec.ts \
+	src/components/layout/__tests__/AppSidebar.spec.ts \
+	src/components/common/__tests__/ConsoleTabs.spec.ts \
+	src/components/common/__tests__/DataTable.spec.ts \
+	src/components/payment/__tests__/AmountInput.spec.ts \
+	src/components/admin/account/__tests__/AccountTableFilters.spec.ts \
+	src/components/admin/account/__tests__/AccountBulkActionsBar.spec.ts \
 	src/components/user/dashboard/__tests__/signal-dashboard.spec.ts \
 	src/components/charts/__tests__/TokenUsageTrend.spec.ts \
 	src/components/charts/__tests__/ModelDistributionChart.spec.ts \
@@ -22,6 +29,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/user/profile/__tests__/ProfileBalanceNotifyCard.spec.ts \
 	src/views/user/__tests__/RedeemView.spec.ts \
 	src/views/admin/__tests__/SettingsView.spec.ts \
+	src/views/admin/__tests__/UsageView.spec.ts \
 	src/features/channel-monitor-v2/__tests__/designSystem.structure.spec.ts \
 	src/features/channel-monitor-v2/__tests__/monitorFormat.spec.ts \
 	src/features/channel-monitor-v2/__tests__/monitorZoom.spec.ts
