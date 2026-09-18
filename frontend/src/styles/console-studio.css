@@ -1,20 +1,20 @@
 /* Shared material and type, scoped to the signed-in console. */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal) {
-  --signal-bg: #f7f8fa;
+  --signal-bg: #fafafa;
   --signal-surface: #ffffff;
-  --signal-raised: #ffffff;
-  --signal-sidebar: #f0f2f5;
-  --signal-line: #dfe2e8;
-  --signal-text: #20222a;
-  --signal-muted: #6b7180;
+  --signal-raised: #f5f5f6;
+  --signal-sidebar: #f3f3f4;
+  --signal-line: #e3e3e6;
+  --signal-text: #232326;
+  --signal-muted: #737379;
   --signal-accent: #3764e8;
   --signal-amber: #a66a19;
-  --signal-hover: #edf0f7;
+  --signal-hover: #ececee;
   --signal-accent-soft: #e9efff;
   --signal-on-accent: #ffffff;
   --signal-control-line: #bcc3ce;
   --signal-highlight: #ffffff;
-  --signal-inset: #f3f4f7;
+  --signal-inset: #f4f4f5;
   --signal-divider: #e9ebf0;
   --signal-shadow: 0 2px 4px #19223005, 0 8px 20px #19223006;
   --signal-popover-shadow: 0 4px 12px #1922300c, 0 24px 64px #1922301f;
@@ -23,22 +23,22 @@
 }
 
 .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal) {
-  --signal-bg: #18191c;
-  --signal-surface: #1e2023;
-  --signal-raised: #292b30;
-  --signal-sidebar: #111214;
-  --signal-line: #36383e;
-  --signal-text: #eeeef2;
-  --signal-muted: #a4a6b1;
+  --signal-bg: #0e0e0f;
+  --signal-surface: #19191b;
+  --signal-raised: #212123;
+  --signal-sidebar: #161617;
+  --signal-line: #2b2b2e;
+  --signal-text: #f0f0f1;
+  --signal-muted: #a1a1a7;
   --signal-accent: #8bafff;
   --signal-amber: #e3b770;
-  --signal-hover: #2d3036;
+  --signal-hover: #28282b;
   --signal-accent-soft: #24304b;
   --signal-on-accent: #101624;
-  --signal-control-line: #4e535f;
+  --signal-control-line: #4b4b52;
   --signal-highlight: #ffffff0c;
-  --signal-inset: #191b1f;
-  --signal-divider: #2c2e34;
+  --signal-inset: #121213;
+  --signal-divider: #27272a;
   --signal-shadow: 0 2px 4px #00000014, 0 8px 20px #0000000f;
   --signal-popover-shadow: 0 4px 12px #00000029, 0 24px 64px #00000066;
 }
@@ -49,8 +49,8 @@
 }
 
 .console-signal .sidebar-header {
-  height: 76px;
-  padding-inline: 20px;
+  height: 64px;
+  padding-inline: 16px;
   border-bottom-color: transparent;
 }
 
@@ -77,19 +77,18 @@
 }
 
 .console-signal .signal-sidebar .sidebar-link-active {
-  background: linear-gradient(100deg, color-mix(in srgb, var(--signal-accent) 6%, var(--signal-surface)), var(--signal-surface));
-  border-color: var(--signal-line);
+  background: var(--signal-hover);
+  border-color: transparent;
   color: var(--signal-text);
-  box-shadow: inset 0 1px 0 var(--signal-highlight), 0 2px 5px #00000008;
+  box-shadow: none;
 }
 
 .console-signal .signal-sidebar .sidebar-link-active::before {
-  inset-block: 12px;
-  border-radius: 1px;
+  display: none;
 }
 
 .console-signal .signal-sidebar .sidebar-link-active > svg {
-  color: var(--signal-accent);
+  color: var(--signal-text);
 }
 
 .console-signal .signal-sidebar .sidebar-link:hover {
@@ -100,6 +99,17 @@
 .console-signal .signal-header {
   background: var(--signal-bg);
   border-color: var(--signal-line);
+}
+
+.console-signal .header-inner { height: 56px; }
+
+@media (min-width: 1024px) {
+  .console-signal { --signal-nav-size: 216px; }
+  .console-signal.signal-nav-collapsed { --signal-nav-size: 72px; }
+  .console-signal .signal-sidebar { width: var(--signal-nav-size); }
+  .console-signal .signal-frame { margin-left: var(--signal-nav-size); }
+  .console-signal .signal-main { padding: 24px; }
+  .console-signal .header-inner { padding-inline: 24px; }
 }
 
 .console-signal :is(.header-avatar, .header-balance) {
@@ -181,184 +191,58 @@ body:has(.console-signal) > .select-dropdown-portal {
   font-variant-numeric: lining-nums tabular-nums;
 }
 
-.console-signal .signal-dashboard {
-  display: block;
-  background: transparent;
+.console-signal .signal-dashboard .signal-stats { display: block; }
+.console-signal .signal-dashboard .signal-masthead { padding-bottom: 20px; border: 0; }
+.console-signal .signal-dashboard .signal-lead-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.7fr); gap: 14px; }
+.console-signal .signal-dashboard .signal-lead-grid--simple { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+.console-signal .signal-dashboard .signal-stat-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 16px; border: 0; background: transparent; box-shadow: none; }
+.console-signal .signal-dashboard .signal-stat-strip--models { grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(205px, 1.35fr); }
+.console-signal .signal-dashboard .signal-metric { display: flex; flex-direction: column; min-width: 0; padding: 18px; border: 1px solid var(--signal-line); border-radius: 8px; background: var(--signal-surface); overflow: hidden; box-shadow: none; }
+.console-signal .signal-dashboard .signal-lead-grid > .signal-metric { min-height: 164px; }
+.console-signal .signal-dashboard .signal-value { margin: 12px 0 0; color: var(--signal-text); font-size: 25px; font-weight: 600; line-height: 32px; }
+.console-signal .signal-dashboard .signal-lead-grid .signal-value { font-size: 28px; line-height: 36px; }
+.console-signal .signal-dashboard .signal-metric--balance .signal-value { color: var(--signal-text); }
+.console-signal .signal-dashboard .signal-value small { font-size: 14px; font-weight: 400; color: var(--signal-muted); }
+.console-signal .signal-dashboard .signal-metric--cost .signal-value { color: var(--signal-amber); }
+.console-signal .signal-dashboard .signal-label { font-size: 12px; }
+.console-signal .signal-dashboard .signal-label > svg { display: none; }
+.console-signal .signal-dashboard .signal-metric-foot { display: flex; flex-direction: column; gap: 3px; min-height: 54px; margin: auto -18px -18px; padding: 11px 18px; border-top: 1px solid var(--signal-line); background: var(--signal-raised); font-size: 11px; font-variant-numeric: tabular-nums; color: var(--signal-muted); overflow-wrap: anywhere; }
+.console-signal .signal-dashboard .signal-metric-foot strong { font-size: 12px; font-weight: 500; color: var(--signal-text); }
+.console-signal .signal-dashboard .signal-metric .signal-value { padding-bottom: 18px; }
+.console-signal .signal-dashboard .signal-token-split { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--signal-line); font-size: 11px; font-variant-numeric: tabular-nums; }
+.console-signal .signal-dashboard .signal-token-split dt { color: var(--signal-muted); }
+.console-signal .signal-dashboard .signal-token-split dd { margin-top: 5px; color: var(--signal-text); overflow-wrap: anywhere; }
+.console-signal .signal-dashboard .signal-actions { display: flex; flex-direction: column; align-items: stretch; gap: 14px; padding: 12px 4px 0 12px; }
+.console-signal .signal-dashboard .signal-actions-label { display: block; padding: 0; color: var(--signal-text); font-size: 14px; font-weight: 600; }
+.console-signal .signal-dashboard .signal-actions-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 8px 16px; }
+.console-signal .signal-dashboard .signal-actions button { display: flex; align-items: center; justify-content: flex-start; min-width: 0; min-height: 48px; gap: 10px; padding: 8px 0; border-radius: 0; border-bottom: 1px solid var(--signal-line); background: transparent; color: var(--signal-text); text-align: left; font-size: 12px; }
+.console-signal .signal-dashboard .signal-actions button span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.console-signal .signal-dashboard .signal-actions button svg { color: var(--signal-muted); flex-shrink: 0; }
+.console-signal .signal-dashboard .signal-actions button:hover { color: var(--signal-accent); border-color: var(--signal-control-line); }
+.console-signal .signal-dashboard .signal-telemetry { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px 24px; margin-top: 12px; padding: 0; border: 0; }
+.console-signal .signal-dashboard .signal-telemetry .signal-reading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; padding: 0; border: 0; }
+.console-signal .signal-dashboard .signal-reading-value { margin: 0; font-size: 12px; font-weight: 500; }
+.console-signal .signal-dashboard .signal-platform-grid { gap: 12px; padding-block: 12px 20px; }
+.console-signal .signal-dashboard .signal-platform { padding: 16px; border: 1px solid var(--signal-line); border-radius: 8px; background: var(--signal-surface); }
+.console-signal .signal-dashboard .signal-platform-heading { margin-bottom: 14px; }
+
+@media (max-width: 1279px) {
+  .console-signal .signal-dashboard .signal-lead-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .console-signal .signal-dashboard .signal-actions { grid-column: 1 / -1; padding: 4px 0 0; }
+  .console-signal .signal-dashboard .signal-actions-list { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .console-signal .signal-dashboard .signal-stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .console-signal .signal-dashboard .signal-model-card { grid-column: 1 / -1; }
+  .console-signal .signal-dashboard .signal-model-summary { max-width: 400px; }
 }
 
-.console-signal .signal-dashboard .signal-stats {
-  display: contents;
-}
-
-.console-signal .signal-dashboard .signal-masthead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 18px;
-}
-
-.console-signal .signal-dashboard .signal-dashboard-tabs { margin-top: 14px; }
-
-.console-signal .signal-dashboard-overview {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 28px;
-}
-
-.console-signal .signal-dashboard-overview > .signal-recent {
-  margin-top: 24px;
-  padding: 0 0 0 24px;
-  border-left: 1px solid var(--signal-line);
-}
-
-.console-signal .signal-dashboard-overview .signal-request {
-  grid-template-columns: minmax(0, 1fr) auto;
-  padding: 16px 0;
-  gap: 10px;
-}
-
-.console-signal .signal-dashboard-overview .signal-request-model { grid-column: 1 / -1; }
-.console-signal .signal-dashboard-overview .signal-request-tokens { justify-content: flex-start; padding-left: 32px; }
-.console-signal .signal-dashboard-overview .signal-request-cost > div { gap: 6px; }
-.console-signal .signal-dashboard-overview .signal-request-cost > div > span:last-child { min-width: 0; }
-.console-signal .signal-dashboard-overview .signal-view-all { justify-content: space-between; }
-
-.console-signal .signal-dashboard .signal-stat-strip {
-  margin-top: 24px;
-  gap: 14px;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.console-signal .signal-dashboard .signal-stat-strip .signal-metric {
-  position: relative;
-  padding: 22px;
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  background: linear-gradient(165deg, var(--signal-raised), var(--signal-surface) 70%);
-  box-shadow: inset 0 1px 0 var(--signal-highlight), var(--signal-shadow);
-}
-
-.console-signal .signal-metric--balance::before {
-  content: '';
-  position: absolute;
-  top: -1px;
-  left: 18px;
-  right: 18px;
-  height: 2px;
-  background: var(--signal-accent);
-}
-
-.console-signal .signal-dashboard .signal-value {
-  margin-top: 16px;
-  font-size: 30px;
-  font-weight: 550;
-  line-height: 38px;
-}
-
-.console-signal .signal-dashboard .signal-actions {
-  padding: 0;
-}
-
-.console-signal .signal-actions-label { display: none; }
-
-.console-signal .signal-actions-list {
-  width: 100%;
-  gap: 8px;
-}
-
-.console-signal .signal-dashboard .signal-actions .signal-action-compact {
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  justify-content: center;
-}
-.console-signal .signal-dashboard .signal-action-compact > span { display: none; }
-
-.console-signal .signal-dashboard .signal-actions button {
-  border: 1px solid var(--signal-line);
-  border-radius: 6px;
-  padding: 8px 12px;
-  background: linear-gradient(180deg, var(--signal-raised), var(--signal-surface));
-  box-shadow: inset 0 1px 0 var(--signal-highlight);
-  transition: border-color 140ms ease, color 140ms ease;
-}
-
-.console-signal .signal-dashboard .signal-actions button:hover {
-  color: var(--signal-accent);
-  border-color: var(--signal-control-line);
-}
-
-.console-signal .signal-dashboard .signal-actions .signal-action-primary {
-  background: var(--signal-accent);
-  border-color: var(--signal-accent);
-  color: var(--signal-on-accent);
-}
-.console-signal .signal-dashboard .signal-action-primary svg { color: inherit; }
-
-.console-signal .signal-telemetry {
-  margin-top: 16px;
-  padding-bottom: 8px;
-  border-bottom: 0;
-}
-
-.console-signal .signal-reading {
-  padding: 14px 18px;
-}
-
-.console-signal .signal-dashboard .signal-charts {
-  margin-top: 6px;
-  border-top: 0;
-}
-
-.console-signal .signal-chart-grid {
-  gap: 24px;
-  padding-top: 6px;
-}
-
-@media (max-width: 1199px) {
-  .console-signal .signal-dashboard-overview { grid-template-columns: minmax(0, 1fr); gap: 0; }
-  .console-signal .signal-dashboard-overview > .signal-recent { margin-top: 12px; padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--signal-line); }
-}
-
-.console-signal .signal-dashboard :is(.signal-trend, .signal-distribution) {
-  border: 0;
-  border-top: 1px solid var(--signal-line);
-  background: transparent;
-}
-
-.console-signal .signal-dashboard .signal-trend .card {
-  background: transparent;
-  box-shadow: none;
-}
-
-.console-signal .signal-dashboard :is(.signal-trend h3, .signal-distribution h2) {
-  margin-bottom: 22px;
-}
-
-.console-signal .signal-dashboard .signal-platform-grid {
-  gap: 12px;
-  padding-block: 12px 24px;
-}
-
-.console-signal .signal-dashboard .signal-platform {
-  padding: 16px;
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  background: var(--signal-surface);
-  box-shadow: inset 0 1px 0 var(--signal-highlight);
-}
-
-.console-signal .signal-dashboard .signal-platform-heading {
-  margin-bottom: 14px;
-}
-
-.console-signal .signal-dashboard .signal-heading h1 {
-  font-family: Georgia, 'Songti SC', 'SimSun', serif;
-  font-size: 32px;
-  font-weight: 500;
+@media (max-width: 479px) {
+  .console-signal .signal-dashboard .signal-metric { padding: 14px; }
+  .console-signal .signal-dashboard .signal-metric-foot { margin-inline: -14px; margin-bottom: -14px; padding-inline: 14px; }
+  .console-signal .signal-dashboard .signal-lead-grid .signal-value { font-size: 23px; }
+  .console-signal .signal-dashboard .signal-value { font-size: 22px; }
+  .console-signal .signal-dashboard .signal-actions-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .console-signal .signal-dashboard .signal-telemetry { justify-content: flex-start; }
+  .console-signal .signal-dashboard .signal-lead-grid--simple > .signal-metric { grid-column: 1 / -1; }
 }
 
 .console-signal .signal-payment :is(.payment-method-selector__option, .payment-amount-input__option):not([aria-pressed='true']) {
@@ -555,13 +439,6 @@ body:has(.console-signal) > .select-dropdown-portal {
 }
 
 @media (max-width: 639px) {
-  .console-signal .signal-dashboard .signal-stat-strip { gap: 10px; }
-  .console-signal .signal-dashboard .signal-stat-strip .signal-metric { padding: 16px 12px; }
-  .console-signal .signal-dashboard .signal-value { font-size: 24px; }
-  .console-signal .signal-dashboard .signal-actions-list { display: flex; flex-wrap: wrap; }
-  .console-signal .signal-dashboard .signal-actions button { min-height: 42px; padding: 8px; }
-  .console-signal .signal-dashboard .signal-actions .signal-action-compact { width: 42px; height: 42px; }
-  .console-signal .signal-dashboard .signal-heading h1 { font-size: 28px; }
   .console-signal .table-pagination button:not(.btn) { min-height: 44px; }
   .console-signal .signal-sidebar .sidebar-link { min-height: 44px; }
   .console-signal .admin-metric-grid { gap: 10px; }

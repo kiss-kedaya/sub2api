@@ -1,12 +1,12 @@
 <template>
   <nav class="signal-actions" :aria-label="t('dashboard.quickActions')">
-    <span class="signal-actions-label">{{ t('dashboard.quickActions') }}</span>
+    <h2 class="signal-actions-label">{{ t('dashboard.quickActions') }}</h2>
     <div class="signal-actions-list">
-      <button class="signal-action-primary" @click="router.push('/keys')"><Icon name="key" size="sm" /><span>{{ t('dashboard.createApiKey') }}</span></button>
-      <button @click="router.push('/infinite-canvas')"><Icon name="grid" size="sm" /><span>{{ t('dashboard.infiniteCanvas') }}</span></button>
-      <button class="signal-action-compact" :title="t('dashboard.viewUsage')" :aria-label="t('dashboard.viewUsage')" @click="router.push('/usage')"><Icon name="chart" size="sm" /><span>{{ t('dashboard.viewUsage') }}</span></button>
-      <button v-if="canUseBatchImage" class="signal-action-compact" :title="t('dashboard.batchImageAgent')" :aria-label="t('dashboard.batchImageAgent')" @click="router.push('/batch-image')"><Icon name="sparkles" size="sm" /><span>{{ t('dashboard.batchImageAgent') }}</span></button>
-      <button class="signal-action-compact" :title="t('dashboard.redeemCode')" :aria-label="t('dashboard.redeemCode')" @click="router.push('/redeem')"><Icon name="gift" size="sm" /><span>{{ t('dashboard.redeemCode') }}</span></button>
+      <button @click="router.push('/keys')"><Icon name="key" size="md" /><span>{{ t('dashboard.createApiKey') }}</span><Icon name="arrowRight" size="sm" /></button>
+      <button @click="router.push('/infinite-canvas')"><Icon name="grid" size="md" /><span>{{ t('dashboard.infiniteCanvas') }}</span><Icon name="arrowRight" size="sm" /></button>
+      <button @click="router.push('/usage')"><Icon name="chart" size="md" /><span>{{ t('dashboard.viewUsage') }}</span><Icon name="arrowRight" size="sm" /></button>
+      <button v-if="canUseBatchImage" @click="router.push('/batch-image')"><Icon name="sparkles" size="md" /><span>{{ t('dashboard.batchImageAgent') }}</span><Icon name="arrowRight" size="sm" /></button>
+      <button @click="router.push('/redeem')"><Icon name="gift" size="md" /><span>{{ t('dashboard.redeemCode') }}</span><Icon name="arrowRight" size="sm" /></button>
     </div>
   </nav>
 </template>
