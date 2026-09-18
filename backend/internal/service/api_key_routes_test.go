@@ -129,6 +129,37 @@ func TestHydrateAPIKeyGroupRequiresFullGroup(t *testing.T) {
 	require.Equal(t, 1.0, key.Group.RateMultiplier)
 }
 
+func TestResolveAPIKeyRouteGroupRestoresTaskGroup(t *testing.T) {
+	primaryID := int64(1)
+	key := &APIKey{
+		GroupID:       &primaryID,
+		RouteGroupIDs: []int64{1, 2},
+		Group:         &Group{ID: 1, Platform: PlatformGrok, RateMultiplier: 1},
+	}
+	svc := &OpenAIGatewayService{channelService: &ChannelService{
+		groupRepo: &routeGroupRepoForTest{group: &Group{ID: 2, Platform: PlatformGrok, RateMultiplier: 2}},
+	}}
+
+	routed, err := svc.ResolveAPIKeyRouteGroup(context.Background(), key, 2)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), *routed.GroupID)
+	require.Equal(t, int64(2), routed.Group.ID)
+	require.Equal(t, 1.0, key.Group.RateMultiplier)
+	key.RouteGroupIDs = []int64{1}
+	routed, err = svc.ResolveAPIKeyRouteGroup(context.Background(), key, 2)
+	require.NoError(t, err, "an accepted task retains its billing group after key edits")
+	require.Equal(t, int64(2), routed.Group.ID)
+}
+
+type routeGroupRepoForTest struct {
+	GroupRepository
+	group *Group
+}
+
+func (r *routeGroupRepoForTest) GetByIDLite(context.Context, int64) (*Group, error) {
+	return r.group, nil
+}
+
 func TestGroupPlatformFitsRequest(t *testing.T) {
 	require.True(t, groupPlatformFitsRequest("anthropic", "anthropic"))
 	require.False(t, groupPlatformFitsRequest("openai", "anthropic"))

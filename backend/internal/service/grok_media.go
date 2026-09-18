@@ -319,9 +319,10 @@ type grokVideoBindOwnerKey struct{}
 // GrokVideoBindOwner identifies the API key that created a Grok video job so
 // status/content lookups can reuse the same upstream account.
 type GrokVideoBindOwner struct {
-	GroupID  *int64
-	UserID   int64
-	APIKeyID int64
+	GroupID        *int64
+	UserID         int64
+	APIKeyID       int64
+	PendingBilling *GrokVideoPendingBilling
 }
 
 func ContextWithGrokVideoBindOwner(ctx context.Context, owner GrokVideoBindOwner) context.Context {
@@ -531,9 +532,13 @@ func (s *OpenAIGatewayService) SelectGrokMediaVideoRequestAccount(
 // first observes a completed video URL. Status may omit model/duration; we fall
 // back to this snapshot, then defaults.
 type GrokVideoPendingBilling struct {
-	Model                string `json:"model"`
-	BillingModel         string `json:"billing_model,omitempty"`
-	UpstreamModel        string `json:"upstream_model,omitempty"`
+	Model         string `json:"model"`
+	BillingModel  string `json:"billing_model,omitempty"`
+	UpstreamModel string `json:"upstream_model,omitempty"`
+	// GroupID is the smart-route group selected for the create request. The
+	// authenticated API key's primary group is not authoritative after routing.
+	GroupID              int64  `json:"group_id,omitempty"`
+	BindingGroupID       int64  `json:"binding_group_id,omitempty"`
 	VideoResolution      string `json:"video_resolution,omitempty"`
 	VideoDurationSeconds int    `json:"video_duration_seconds,omitempty"`
 	OriginalModel        string `json:"original_model,omitempty"`
@@ -952,6 +957,24 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 			rememberGrokVideoAccount(derefGroupID(owner.GroupID), owner.UserID, owner.APIKeyID, bindID, account, ttl)
 			// Memory bind already recorded; redis miss must not delay the create response.
 			_ = s.BindGrokMediaVideoRequestAccount(ctx, owner.GroupID, bindID, owner.UserID, owner.APIKeyID, account.ID)
+			if owner.PendingBilling != nil {
+				pending := *owner.PendingBilling
+				pending.BillingModel = requestModel
+				pending.UpstreamModel = upstreamModel
+				pending.VideoResolution = usage.VideoResolution
+				pending.VideoDurationSeconds = usage.VideoDurationSeconds
+				// Publish billing identity before the task ID reaches the client.
+				// The accepted job survives client cancellation and cross-host polling.
+				storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				storeErr := s.StoreGrokVideoPendingBilling(storeCtx, bindID, owner.UserID, owner.APIKeyID, pending)
+				if storeErr != nil {
+					storeErr = s.StoreGrokVideoPendingBilling(storeCtx, bindID, owner.UserID, owner.APIKeyID, pending)
+				}
+				cancel()
+				if storeErr != nil {
+					return nil, ErrBillingServiceUnavailable.WithCause(storeErr)
+				}
+			}
 		}
 	}
 	respBody = adaptGrokVideoClientResponse(endpoint, requestID, respBody)
