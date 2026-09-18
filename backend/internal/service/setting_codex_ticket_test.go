@@ -40,12 +40,13 @@ func TestCodexTicketEnabledRuntimeSettingOverridesYaml(t *testing.T) {
 
 	h := http.Header{}
 	h.Set(openAICodexTurnStateHeader, "client-state")
+	require.False(t, settings.GetOpenAICodexTicketEnabled(context.Background(), false))
 	require.False(t, svc.openAICodexTicketEnabled())
 	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, "gpt-6-astra", h))
 	require.Equal(t, "client-state", h.Get(openAICodexTurnStateHeader))
 
 	repo.values[SettingKeyOpenAICodexTicketEnabled] = "true"
-	settings.InvalidateOpenAICodexTicketEnabledCache()
+	settings.refreshCachedSettings(&SystemSettings{OpenAICodexTicketEnabled: true})
 	require.True(t, svc.openAICodexTicketEnabled())
 	h = http.Header{}
 	h.Set(openAICodexTurnStateHeader, "client-state")
@@ -53,7 +54,7 @@ func TestCodexTicketEnabledRuntimeSettingOverridesYaml(t *testing.T) {
 	require.Equal(t, fakeCodexTicketState(292), h.Get(openAICodexTurnStateHeader))
 
 	repo.values[SettingKeyOpenAICodexTicketEnabled] = "false"
-	settings.InvalidateOpenAICodexTicketEnabledCache()
+	settings.refreshCachedSettings(&SystemSettings{OpenAICodexTicketEnabled: false})
 	require.False(t, svc.openAICodexTicketEnabled())
 	h = http.Header{}
 	h.Set(openAICodexTurnStateHeader, "client-state")
@@ -89,7 +90,7 @@ func TestCodexTicketProxyRuntimeSettingAndFallback(t *testing.T) {
 	settings.openAICodexTicketHarvestProxyCache.Store(&cachedOpenAICodexTicketHarvestProxy{value: "http://second.example.com:8080", expiresAt: time.Now().Add(-time.Second).UnixNano()})
 	require.Equal(t, "https://third.example.com:443", svc.openAICodexTicketHarvestProxyURL())
 	repo.err = errors.New("database unavailable")
-	settings.openAICodexTicketHarvestProxyCache.Store(&cachedOpenAICodexTicketHarvestProxy{value: "https://third.example.com:443", expiresAt: 0})
+	settings.openAICodexTicketHarvestProxyCache.Store(&cachedOpenAICodexTicketHarvestProxy{value: "https://third.example.com:443", configured: true, expiresAt: 0})
 	require.Equal(t, "https://third.example.com:443", svc.openAICodexTicketHarvestProxyURL())
 }
 
@@ -100,7 +101,7 @@ func TestCodexTicketProxyMaskAndValidation(t *testing.T) {
 		require.NotContains(t, masked, "secret")
 		require.True(t, IsMaskedProxyURL(masked))
 	}
-	require.True(t, IsMaskedProxyURL(""))
+	require.False(t, IsMaskedProxyURL(""))
 	require.False(t, IsMaskedProxyURL("http://user:secret***suffix@proxy.example.com:8080"))
 	for _, raw := range []string{"user:secret@host:1234", "http://user:secret@", "ftp://user:secret@host:1234", "http://user:secret@host:99999", "http://host:1234/?password=secret", "http://host:1234/#secret", "http://user:secret%zz@host:1234"} {
 		err := ValidateOpenAICodexTicketHarvestProxyURL(raw)
@@ -116,4 +117,14 @@ func TestCodexTicketSettingsRefreshDoesNotMutateSharedConfig(t *testing.T) {
 	svc.refreshCachedSettings(&SystemSettings{OpenAICodexTicketEnabled: true})
 	require.False(t, cfg.Gateway.OpenAICodexTicket.Enabled, "runtime settings must not write the shared immutable startup configuration")
 	require.True(t, svc.GetOpenAICodexTicketEnabled(context.Background(), false))
+}
+
+func TestCodexTicketParsedSettingsPreserveProxyPresence(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAICodexTicket.HarvestProxyURL = "http://file.example:8080"
+	settings := NewSettingService(nil, cfg)
+	parsed := settings.parseSettings(map[string]string{})
+	require.Equal(t, cfg.Gateway.OpenAICodexTicket.HarvestProxyURL, parsed.OpenAICodexTicketHarvestProxyURL)
+	parsed = settings.parseSettings(map[string]string{SettingKeyOpenAICodexTicketHarvestProxyURL: ""})
+	require.Empty(t, parsed.OpenAICodexTicketHarvestProxyURL)
 }

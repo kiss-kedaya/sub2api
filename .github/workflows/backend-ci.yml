@@ -40,6 +40,9 @@ jobs:
       - name: Integration tests
         working-directory: backend
         run: make test-integration
+      - name: Codex ticket concurrency regression
+        working-directory: backend
+        run: go test -race -tags=unit ./internal/service -run 'Test.*CodexTicket' -count=1
 
   frontend:
     runs-on: ubuntu-latest

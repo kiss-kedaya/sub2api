@@ -203,6 +203,7 @@ type SettingService struct {
 	codexRestrictionPolicyRefresh      settingRefreshBackoff
 	openAICodexTicketEnabledCache      atomic.Value // *cachedOpenAICodexTicketEnabled
 	openAICodexTicketEnabledSF         singleflight.Group
+	openAICodexTicketEnabledRefresh    settingRefreshBackoff
 	openAICodexTicketHarvestProxyCache atomic.Value // *cachedOpenAICodexTicketHarvestProxy
 	openAICodexTicketHarvestProxySF    singleflight.Group
 
