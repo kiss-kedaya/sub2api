@@ -1,17 +1,14 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <TablePageLayout class="groups-workspace">
       <template #filters>
-        <div
-          class="flex flex-col justify-between gap-4 lg:flex-row lg:items-start"
-        >
-          <!-- Left: fuzzy search + filters (can wrap to multiple lines) -->
-          <div class="flex flex-1 flex-wrap items-center gap-3">
-            <div class="relative w-full sm:w-64">
+        <div class="groups-command-bar">
+          <div class="groups-search-row">
+            <div class="groups-search-field">
               <Icon
                 name="search"
                 size="md"
-                class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500"
+                class="groups-search-icon"
               />
               <input
                 v-model="searchQuery"
@@ -21,18 +18,35 @@
                 @input="handleSearch"
               />
             </div>
+            <button
+              type="button"
+              class="groups-filter-toggle"
+              :class="{ 'groups-filter-toggle-active': groupFiltersExpanded || activeGroupFilterCount > 0 }"
+              :aria-expanded="groupFiltersExpanded"
+              :title="t('common.filter')"
+              @click="groupFiltersExpanded = !groupFiltersExpanded"
+            >
+              <Icon name="filter" size="sm" />
+              <span>{{ t('common.filter') }}</span>
+              <span v-if="activeGroupFilterCount" class="groups-filter-count">{{ activeGroupFilterCount }}</span>
+              <Icon :name="groupFiltersExpanded ? 'chevronUp' : 'chevronDown'" size="xs" />
+            </button>
+          </div>
+
+          <div
+            class="groups-filter-panel"
+            :class="{ 'groups-filter-panel-open': groupFiltersExpanded }"
+          >
             <Select
               v-model="filters.platform"
               :options="platformFilterOptions"
               :placeholder="t('admin.groups.allPlatforms')"
-              class="w-44"
               @change="loadGroups"
             />
             <Select
               v-model="filters.status"
               :options="statusOptions"
               :placeholder="t('admin.groups.allStatus')"
-              class="w-40"
               @change="loadGroups"
             />
             <Select
@@ -40,20 +54,18 @@
               v-model="filters.is_exclusive"
               :options="exclusiveOptions"
               :placeholder="t('admin.groups.allGroups')"
-              class="w-44"
               @change="loadGroups"
             />
           </div>
 
-          <!-- Right: actions -->
-          <div
-            class="flex w-full flex-shrink-0 flex-wrap items-center justify-end gap-3 lg:w-auto"
-          >
+          <div class="groups-actions">
             <button
+              type="button"
               @click="loadGroups"
               :disabled="loading"
-              class="btn btn-secondary"
+              class="btn btn-secondary groups-icon-action"
               :title="t('common.refresh')"
+              :aria-label="t('common.refresh')"
             >
               <Icon
                 name="refresh"
@@ -63,24 +75,33 @@
             </button>
             <div class="relative" ref="columnDropdownRef">
               <button
+                type="button"
                 @click="showColumnDropdown = !showColumnDropdown"
-                class="btn btn-secondary"
+                class="btn btn-secondary groups-secondary-action"
                 :title="t('admin.groups.columnSettings')"
+                :aria-label="t('admin.groups.columnSettings')"
+                aria-haspopup="menu"
+                :aria-expanded="showColumnDropdown"
               >
-                <Icon name="grid" size="md" class="mr-2" />
-                <span class="hidden md:inline">{{
+                <Icon name="grid" size="md" />
+                <span class="groups-action-label">{{
                   t("admin.groups.columnSettings")
                 }}</span>
+                <Icon name="chevronDown" size="xs" class="groups-action-label" />
               </button>
               <div
                 v-if="showColumnDropdown"
-                class="absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
+                class="groups-column-menu absolute right-0 top-full z-50 mt-2 max-h-80 w-52 overflow-y-auto"
+                role="menu"
               >
                 <button
                   v-for="col in toggleableColumns"
                   :key="col.key"
+                  type="button"
                   @click="toggleColumn(col.key)"
-                  class="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+                  class="groups-column-menu-item"
+                  role="menuitemcheckbox"
+                  :aria-checked="isColumnVisible(col.key)"
                 >
                   <span>{{ col.label }}</span>
                   <Icon
@@ -95,20 +116,23 @@
             </div>
             <button
               v-if="!authStore.isSimpleMode"
+              type="button"
               @click="openSortModal"
-              class="btn btn-secondary"
+              class="btn btn-secondary groups-secondary-action"
               :title="t('admin.groups.sortOrder')"
+              :aria-label="t('admin.groups.sortOrder')"
             >
-              <Icon name="arrowsUpDown" size="md" class="mr-2" />
-              {{ t("admin.groups.sortOrder") }}
+              <Icon name="arrowsUpDown" size="md" />
+              <span class="groups-action-label">{{ t("admin.groups.sortOrder") }}</span>
             </button>
             <button
+              type="button"
               @click="openCreateModal"
-              class="btn btn-primary"
+              class="btn btn-primary groups-create-action"
               data-tour="groups-create-btn"
             >
-              <Icon name="plus" size="md" class="mr-2" />
-              {{ t("admin.groups.createGroup") }}
+              <Icon name="plus" size="sm" />
+              <span>{{ t("admin.groups.createGroup") }}</span>
             </button>
           </div>
         </div>
@@ -4794,6 +4818,10 @@ const filters = reactive({
   status: "",
   is_exclusive: "",
 });
+const groupFiltersExpanded = ref(false);
+const activeGroupFilterCount = computed(() =>
+  [filters.platform, filters.status, filters.is_exclusive].filter(Boolean).length,
+);
 const pagination = reactive({
   page: 1,
   page_size: getPersistedPageSize(),
@@ -6854,3 +6882,227 @@ onUnmounted(() => {
   clearAllAccountSearchState();
 });
 </script>
+
+<style scoped>
+.groups-workspace {
+  gap: 12px;
+}
+
+.groups-command-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(300px, 1.3fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding-block: 1px;
+}
+
+.groups-search-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.groups-search-field {
+  position: relative;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.groups-search-icon {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  z-index: 1;
+  color: var(--signal-muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.groups-filter-panel {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(104px, 1fr));
+  gap: 8px;
+}
+
+.groups-filter-panel > * {
+  min-width: 0;
+  width: 100%;
+}
+
+.groups-filter-toggle {
+  display: none;
+  min-height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-inline: 10px;
+  border: 1px solid var(--signal-control-line);
+  border-radius: 6px;
+  background: var(--signal-surface);
+  color: var(--signal-muted);
+  font-size: 12px;
+  font-weight: 600;
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+
+.groups-filter-toggle:hover,
+.groups-filter-toggle-active {
+  border-color: var(--signal-accent);
+  background: var(--signal-accent-soft);
+  color: var(--signal-accent);
+}
+
+.groups-filter-count {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--signal-accent);
+  color: var(--signal-on-accent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.groups-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.groups-icon-action {
+  width: 40px;
+  min-width: 40px;
+  padding-inline: 0;
+}
+
+.groups-secondary-action,
+.groups-create-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.groups-column-menu {
+  padding: 6px;
+  border: 1px solid var(--signal-line);
+  border-radius: 8px;
+  background: var(--signal-surface);
+  color: var(--signal-text);
+  box-shadow: var(--signal-shadow), inset 0 1px 0 color-mix(in srgb, var(--signal-text) 7%, transparent);
+}
+
+.groups-column-menu-item {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  color: var(--signal-text);
+  font-size: 13px;
+  text-align: left;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+.groups-column-menu-item:hover {
+  background: var(--signal-hover);
+  color: var(--signal-accent);
+}
+
+@media (max-width: 1279px) {
+  .groups-command-bar {
+    grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.25fr);
+  }
+
+  .groups-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 767px) {
+  .groups-workspace {
+    gap: 10px;
+  }
+
+  .groups-command-bar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .groups-filter-toggle {
+    display: inline-flex;
+    min-height: 44px;
+  }
+
+  .groups-filter-panel {
+    display: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .groups-filter-panel-open {
+    display: grid;
+  }
+
+  .groups-actions {
+    grid-column: auto;
+  }
+
+  .groups-actions :is(.btn, button) {
+    min-height: 44px;
+  }
+
+  .groups-icon-action,
+  .groups-secondary-action {
+    width: 44px;
+    min-width: 44px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+
+  .groups-action-label {
+    display: none;
+  }
+
+  .groups-create-action {
+    margin-left: auto;
+  }
+
+  .groups-column-menu {
+    right: auto;
+    left: 0;
+    max-width: calc(100dvw - 16px);
+  }
+}
+
+@media (max-width: 359px) {
+  .groups-filter-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .groups-filter-toggle > span:first-of-type {
+    display: none;
+  }
+
+  .groups-actions {
+    gap: 4px;
+  }
+
+  .groups-create-action {
+    padding-inline: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .groups-filter-toggle,
+  .groups-column-menu-item {
+    transition: none;
+  }
+}
+</style>
