@@ -26,9 +26,9 @@ function integer(value: string | null, fallback: number, max: number) {
   return n
 }
 
-function page<T>(items: T[], query: URLSearchParams): PaginatedResponse<T> {
+function page<T>(items: T[], query: URLSearchParams, maxPageSize = 100): PaginatedResponse<T> {
   const current = integer(query.get('page'), 1, 1_000_000)
-  const size = integer(query.get('page_size'), 20, 100)
+  const size = integer(query.get('page_size'), 20, maxPageSize)
   return { items: items.slice((current - 1) * size, current * size), total: items.length,
     page: current, page_size: size, pages: Math.ceil(items.length / size) }
 }
@@ -355,6 +355,20 @@ export function createMockApi(now = new Date()) {
         if (path === '/setup/status') return { needs_setup: false, step: 'complete' }
         if (path === '/api/v1/settings/public') return settings
         if (['/api/v1/auth/me', '/api/v1/user/profile'].includes(path)) return { ...data.user, run_mode: 'standard' }
+        if (path === '/api/v1/admin/compliance') return {
+          required: false, version: 'local-preview', document_path_zh: '', document_path_en: '',
+          document_url_zh: '', document_url_en: '', ack_phrase_zh: '', ack_phrase_en: '',
+        }
+        if (path === '/api/v1/admin/settings') return {
+          ...settings, ops_monitoring_enabled: false, ops_realtime_monitoring_enabled: false,
+          ops_query_mode_default: 'auto', custom_menu_items: [],
+        }
+        if (path === '/api/v1/admin/payment/config') return { enabled: true }
+        if (path === '/api/v1/admin/settings/web-search-emulation') return { enabled: false, providers: [] }
+        if (path === '/api/v1/admin/system/check-updates') return {
+          current_version: 'local-preview', latest_version: 'local-preview', has_update: false,
+          cached: true, build_type: 'source',
+        }
         if (path === '/api/v1/admin/dashboard/stats') return adminDashboardStats()
         if (path === '/api/v1/admin/dashboard/realtime') return {
           active_requests: 7, requests_per_minute: 42, average_response_time: 1380, error_rate: 0.018,
@@ -430,7 +444,7 @@ export function createMockApi(now = new Date()) {
             (!query.get('platform') || group.platform === query.get('platform')) &&
             (!query.get('status') || group.status === query.get('status')) &&
             (!query.get('is_exclusive') || String(group.is_exclusive) === query.get('is_exclusive')))
-          return page(sort(items, query, ['id', 'name', 'platform', 'status', 'rate_multiplier', 'sort_order', 'created_at'], 'sort_order'), query)
+          return page(sort(items, query, ['id', 'name', 'platform', 'status', 'rate_multiplier', 'sort_order', 'created_at'], 'sort_order'), query, 1000)
         }
         if (path === '/api/v1/admin/groups/all') return data.adminGroups.filter(group =>
           (query.get('include_inactive') === 'true' || group.status === 'active') &&
