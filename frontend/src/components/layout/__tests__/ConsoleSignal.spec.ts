@@ -15,7 +15,9 @@ vi.mock('@/composables/useBatchImageAccess', () => ({
   useBatchImageAccess: () => ({ canUseBatchImage: false, refreshBatchImageAccess: vi.fn() })
 }))
 
-const excludedPaths = ['/admin/dashboard', '/admin/keys', '/admin/usage', '/profile', '/redeem', '/login', '/keys/other', '/usage-extra']
+const userPaths = ['/dashboard', '/keys', '/usage', '/monitor', '/available-channels', '/purchase',
+  '/orders', '/subscriptions', '/profile', '/redeem', '/affiliate', '/ip-allowlist', '/payment/qrcode', '/payment/result']
+const excludedPaths = ['/admin/dashboard', '/admin/keys', '/admin/usage', '/login', '/keys/other', '/usage-extra', '/infinite-canvas']
 let wrapper: VueWrapper | undefined
 
 async function renderShell(path: string, role: 'user' | 'admin' = 'user') {
@@ -38,7 +40,7 @@ async function renderShell(path: string, role: 'user' | 'admin' = 'user') {
 
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [...new Set(['/dashboard', '/keys', '/usage', ...excludedPaths, '/:pathMatch(.*)*'])].map((routePath) => ({
+    routes: [...new Set([...userPaths, ...excludedPaths, '/:pathMatch(.*)*'])].map((routePath) => ({
       path: routePath,
       component: { template: '<div />' },
       meta: { title: routePath === '/keys' ? 'API Keys' : routePath }
@@ -69,7 +71,7 @@ afterEach(() => {
 })
 
 describe('SIGNAL shell route isolation', () => {
-  it.each(['/dashboard', '/keys?search=test#active', '/keys/', '/usage'])('opts in %s and leaves one content heading', async (path) => {
+  it.each([...userPaths, '/keys?search=test#active', '/keys/'])('opts in %s and leaves one content heading', async (path) => {
     await renderShell(path)
     expect(wrapper!.classes()).toContain('console-signal')
     expect(wrapper!.find('.bg-mesh-gradient').exists()).toBe(false)
