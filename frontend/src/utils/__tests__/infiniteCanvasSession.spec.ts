@@ -73,8 +73,28 @@ describe('ensureInfiniteCanvasApiKey', () => {
       undefined,
       undefined,
       [4, 1, 9],
+      undefined,
     )
     expect(session).toMatchObject({ apiKey: 'sk-new', created: true, groupIds: [4, 1, 9] })
+  })
+
+  it('deduplicates concurrent first-entry setup requests', async () => {
+    getAvailableGroups.mockResolvedValue([group(4), group(1)])
+    list.mockResolvedValue({ items: [], pages: 1 })
+    create.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return key({ key: 'sk-new', group_id: 4, group_ids: [4, 1] })
+    })
+
+    const client = { list, create, update, getAvailableGroups }
+    const [first, second] = await Promise.all([
+      ensureInfiniteCanvasApiKey(client),
+      ensureInfiniteCanvasApiKey(client),
+    ])
+
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(first.apiKey).toBe('sk-new')
+    expect(second.apiKey).toBe('sk-new')
   })
 
   it('reuses the named key and refreshes group_ids when membership changed', async () => {
