@@ -2,6 +2,11 @@ export default {
   dashboard: {
     title: '仪表盘',
     overview: '用量概览',
+    recentTotal: '近期累计',
+    recentTokens: '近期累计 Token',
+    totalUsage: '总用量',
+    tokenDetails: 'Token 明细',
+    chartsFailed: '用量数据暂时加载失败',
     loadFailed: '账户概览暂时加载失败',
     welcomeMessage: '欢迎回来！这是您账户的概览。',
     balance: '余额',
