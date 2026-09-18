@@ -1,11 +1,43 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+type grokVideoPendingCaptureCache struct {
+	GatewayCache
+	payload []byte
+}
+
+func (c *grokVideoPendingCaptureCache) SetGrokVideoPendingBilling(_ context.Context, _ string, payload []byte, _ time.Duration) error {
+	c.payload = append([]byte(nil), payload...)
+	return nil
+}
+
+func (c *grokVideoPendingCaptureCache) GetGrokVideoPendingBilling(_ context.Context, _ string) ([]byte, error) {
+	return append([]byte(nil), c.payload...), nil
+}
+
+func TestGrokVideoPendingBillingRoundTripsSelectedGroup(t *testing.T) {
+	cache := &grokVideoPendingCaptureCache{}
+	svc := &OpenAIGatewayService{cache: cache}
+	pending := GrokVideoPendingBilling{Model: "grok-imagine-video", GroupID: 2}
+
+	require.NoError(t, svc.StoreGrokVideoPendingBilling(context.Background(), "task", 10, 20, pending))
+	loaded, err := svc.LoadGrokVideoPendingBilling(context.Background(), "task", 10, 20)
+	require.NoError(t, err)
+	require.NotNil(t, loaded)
+	require.Equal(t, int64(2), loaded.GroupID)
+
+	var encoded map[string]any
+	require.NoError(t, json.Unmarshal(cache.payload, &encoded))
+	require.Equal(t, float64(2), encoded["group_id"])
+}
 
 func TestGrokVideoE2EDurationFromCreatedAt(t *testing.T) {
 	t.Parallel()
