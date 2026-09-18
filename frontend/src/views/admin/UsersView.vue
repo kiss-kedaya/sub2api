@@ -1,13 +1,12 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
-      <!-- Single Row: Search, Filters, and Actions -->
+    <TablePageLayout class="admin-users-workbench">
+      <!-- Search, filters, view tools, and primary actions -->
       <template #filters>
-        <div class="flex flex-wrap items-center gap-3">
-          <!-- Left: Search + Active Filters -->
-          <div class="flex flex-1 flex-wrap items-center gap-3">
+        <div class="users-command-bar">
+          <div class="users-query-zone">
             <!-- Search Box -->
-            <div class="relative w-full md:w-64">
+            <div class="users-search relative">
               <Icon
                 name="search"
                 size="md"
@@ -22,8 +21,9 @@
               />
             </div>
 
-            <!-- Role Filter (visible when enabled) -->
-            <div v-if="visibleFilters.has('role')" class="w-full sm:w-32">
+            <div class="users-filter-row">
+              <!-- Role Filter (visible when enabled) -->
+              <div v-if="visibleFilters.has('role')" class="w-full sm:w-32">
               <Select
                 v-model="filters.role"
                 :options="[
@@ -33,10 +33,10 @@
                 ]"
                 @change="applyFilter"
               />
-            </div>
+              </div>
 
-            <!-- Status Filter (visible when enabled) -->
-            <div v-if="visibleFilters.has('status')" class="w-full sm:w-32">
+              <!-- Status Filter (visible when enabled) -->
+              <div v-if="visibleFilters.has('status')" class="w-full sm:w-32">
               <Select
                 v-model="filters.status"
                 :options="[
@@ -46,10 +46,10 @@
                 ]"
                 @change="applyFilter"
               />
-            </div>
+              </div>
 
-            <!-- Group Filter (visible when enabled) -->
-            <div v-if="visibleFilters.has('group')" class="w-full sm:w-44">
+              <!-- Group Filter (visible when enabled) -->
+              <div v-if="visibleFilters.has('group')" class="w-full sm:w-44">
               <Select
                 v-model="filters.group"
                 :options="groupFilterOptions"
@@ -59,10 +59,10 @@
                 :search-placeholder="t('admin.users.searchAuthorizedGroups')"
                 @change="applyFilter"
               />
-            </div>
+              </div>
 
-            <!-- API Key Group Filter (visible when enabled) -->
-            <div v-if="visibleFilters.has('apiKeyGroup')" class="w-full sm:w-44">
+              <!-- API Key Group Filter (visible when enabled) -->
+              <div v-if="visibleFilters.has('apiKeyGroup')" class="w-full sm:w-44">
               <Select
                 v-model="filters.apiKeyGroup"
                 :options="apiKeyGroupFilterOptions"
@@ -70,10 +70,10 @@
                 :search-placeholder="t('admin.users.searchApiKeyGroups')"
                 @change="applyFilter"
               />
-            </div>
+              </div>
 
-            <!-- Dynamic Attribute Filters -->
-            <template v-for="(value, attrId) in activeAttributeFilters" :key="attrId">
+              <!-- Dynamic Attribute Filters -->
+              <template v-for="(value, attrId) in activeAttributeFilters" :key="attrId">
               <div
                 v-if="visibleFilters.has(`attr_${attrId}`)"
                 class="relative w-full sm:w-36"
@@ -120,13 +120,12 @@
                   class="input w-full"
                 />
               </div>
-            </template>
+              </template>
+            </div>
           </div>
 
-          <!-- Right: Actions and Settings -->
-          <div class="flex flex-wrap items-center justify-end gap-2">
-            <!-- Mobile: Secondary buttons (icon only) -->
-            <div class="flex items-center gap-2 md:contents">
+          <div class="users-action-zone">
+            <div class="users-view-tools">
               <!-- Refresh Button -->
               <button
                 @click="loadUsers"
@@ -242,32 +241,33 @@
               </button>
             </div>
 
-            <button
-              v-if="selectedCount > 0"
-              class="btn btn-secondary flex-1 md:flex-initial"
-              data-test="bulk-edit-limits"
-              @click="showBulkEditModal = true"
-            >
-              <Icon name="users" size="md" class="mr-2" />
-              {{ t('admin.users.bulkLimits.action', { count: selectedCount }) }}
-            </button>
+            <div class="users-context-actions">
+              <button
+                v-if="selectedCount > 0"
+                class="btn btn-secondary flex-1 md:flex-initial"
+                data-test="bulk-edit-limits"
+                @click="showBulkEditModal = true"
+              >
+                <Icon name="users" size="md" class="mr-2" />
+                {{ t('admin.users.bulkLimits.action', { count: selectedCount }) }}
+              </button>
 
-            <button
-              v-if="selectedCount > 0"
-              class="btn btn-danger flex-1 md:flex-initial"
-              data-test="bulk-delete-users"
-              :disabled="bulkDeleting"
-              @click="bulkDeleteIds = [...selectedIds]"
-            >
-              <Icon name="trash" size="md" class="mr-2" />
-              {{ t('admin.users.bulkDelete.action', { count: selectedCount }) }}
-            </button>
+              <button
+                v-if="selectedCount > 0"
+                class="btn btn-danger flex-1 md:flex-initial"
+                data-test="bulk-delete-users"
+                :disabled="bulkDeleting"
+                @click="bulkDeleteIds = [...selectedIds]"
+              >
+                <Icon name="trash" size="md" class="mr-2" />
+                {{ t('admin.users.bulkDelete.action', { count: selectedCount }) }}
+              </button>
 
-            <!-- Create User Button (full width on mobile, auto width on desktop) -->
-            <button @click="showCreateModal = true" class="btn btn-primary flex-1 md:flex-initial">
-              <Icon name="plus" size="md" class="mr-2" />
-              {{ t('admin.users.createUser') }}
-            </button>
+              <button @click="showCreateModal = true" class="btn btn-primary users-create-action">
+                <Icon name="plus" size="md" class="mr-2" />
+                {{ t('admin.users.createUser') }}
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -1900,3 +1900,160 @@ onUnmounted(() => {
   abortController?.abort()
 })
 </script>
+
+<style scoped>
+.admin-users-workbench {
+  --users-control-height: 38px;
+}
+
+.users-command-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px 20px;
+  padding: 14px;
+  border: 1px solid var(--signal-line);
+  border-radius: 8px;
+  background: var(--signal-surface);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 7%, transparent);
+}
+
+.users-query-zone {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.users-search {
+  width: min(100%, 30rem);
+}
+
+.users-search :deep(.input),
+.users-search > .input {
+  min-height: var(--users-control-height);
+}
+
+.users-filter-row,
+.users-view-tools,
+.users-context-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.users-filter-row {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--signal-line) 76%, transparent);
+}
+
+.users-action-zone {
+  display: flex;
+  min-width: max-content;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.users-view-tools {
+  justify-content: flex-end;
+}
+
+.users-context-actions {
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--signal-line) 76%, transparent);
+}
+
+.users-create-action {
+  flex: 0 0 auto;
+}
+
+.admin-users-workbench :deep(.table-scroll-container) {
+  border-top: 1px solid var(--signal-line);
+  border-bottom: 1px solid var(--signal-line);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 5%, transparent);
+}
+
+.admin-users-workbench :deep(.table-wrapper th) {
+  padding-top: 11px;
+  padding-bottom: 11px;
+}
+
+.admin-users-workbench :deep(.table-wrapper td) {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.admin-users-workbench :deep(.table-body tr) {
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.admin-users-workbench :deep(.table-body tr:hover) {
+  box-shadow: inset 2px 0 var(--signal-accent);
+}
+
+.admin-users-workbench :deep(.layout-section-fixed:last-child) {
+  padding-top: 2px;
+  border-top: 1px solid var(--signal-line);
+}
+
+@media (max-width: 1023px) {
+  .users-command-bar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .users-action-zone {
+    min-width: 0;
+    align-items: stretch;
+  }
+
+  .users-view-tools,
+  .users-context-actions {
+    justify-content: flex-start;
+  }
+
+  .admin-users-workbench :deep(.table-scroll-container) {
+    border: 0;
+    box-shadow: none;
+  }
+
+  .admin-users-workbench :deep(.table-scroll-container > .space-y-3) {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 639px) {
+  .users-command-bar {
+    padding: 12px;
+  }
+
+  .users-filter-row > *,
+  .users-context-actions > * {
+    width: 100%;
+  }
+
+  .users-view-tools {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .users-view-tools > * {
+    min-width: 0;
+  }
+
+  .users-view-tools :deep(.btn),
+  .users-view-tools > .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-users-workbench :deep(*) {
+    transition-duration: 0.01ms !important;
+  }
+}
+</style>
