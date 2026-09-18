@@ -2395,7 +2395,7 @@ func (s *OpenAIGatewayService) RefreshSchedulerAccountFreshness(ctx context.Cont
 	if !parentHealthyForShadow(fresh, s.parentAccountLookup(ctx)) {
 		return nil, false
 	}
-	if s.isOpenAIAccountRequestRuntimeBlocked(fresh, requestedModel) || s.isOpenAIProxyStreamQuarantined(ctx, fresh) || s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, fresh) {
+	if s.isOpenAIAccountRequestRuntimeBlocked(fresh, requestedModel, false) || s.isOpenAIProxyStreamQuarantined(ctx, fresh) || s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, fresh) {
 		return nil, false
 	}
 	rememberSchedulerHydratedAccount(ctx, fresh)

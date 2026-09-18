@@ -258,7 +258,7 @@ type UpdateSettingsRequest struct {
 	OpenAICodexClientVersion               *string `json:"openai_codex_client_version"`
 	OpenAICodexVersionAutoSyncEnabled      *bool   `json:"openai_codex_version_auto_sync_enabled"`
 	OpenAICodexTicketEnabled               *bool   `json:"openai_codex_ticket_enabled"`
-	OpenAICodexTicketHarvestProxyURL       string  `json:"openai_codex_ticket_harvest_proxy_url"`
+	OpenAICodexTicketHarvestProxyURL       *string `json:"openai_codex_ticket_harvest_proxy_url"`
 
 	// codex_cli_only 加固（global-only）
 	MinCodexVersion                      string `json:"min_codex_version"`
@@ -472,6 +472,11 @@ func omittedSettingKeys(sentFields map[string]json.RawMessage) service.OmittedSe
 		if _, sent := sentFields[jsonName]; !sent {
 			omitted[settingKey] = struct{}{}
 		}
+	}
+	// Unlike other pointer settings, proxy absence must remain distinguishable
+	// from an explicit empty value that overrides the deployment proxy.
+	if _, sent := sentFields[service.SettingKeyOpenAICodexTicketHarvestProxyURL]; !sent {
+		omitted[service.SettingKeyOpenAICodexTicketHarvestProxyURL] = struct{}{}
 	}
 	return omitted
 }
@@ -1776,7 +1781,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			return previousSettings.OpenAICodexTicketEnabled
 		}(),
 		OpenAICodexTicketHarvestProxyURL: func() string {
-			next := strings.TrimSpace(req.OpenAICodexTicketHarvestProxyURL)
+			if req.OpenAICodexTicketHarvestProxyURL == nil {
+				return previousSettings.OpenAICodexTicketHarvestProxyURL
+			}
+			next := strings.TrimSpace(*req.OpenAICodexTicketHarvestProxyURL)
 			if service.IsMaskedProxyURL(next) {
 				return previousSettings.OpenAICodexTicketHarvestProxyURL
 			}

@@ -1355,7 +1355,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if isExcluded(acc.ID) ||
 					!isOpenAICompatibleAccountEligibleForRequest(ctx, acc, platform, requestedModel, false, requiredCapability) ||
 					!parentHealthyForShadow(acc, parentLookupL2) ||
-					s.isOpenAIAccountRequestRuntimeBlocked(acc, requestedModel) ||
+					s.isOpenAIAccountRequestRuntimeBlocked(acc, requestedModel, requireCompact) ||
 					(needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, acc, requestedModel, requireCompact)) {
 					continue
 				}
