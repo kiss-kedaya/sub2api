@@ -52,5 +52,11 @@ export function buildInfiniteCanvasImportUrl(options: {
 
 export function findReusableCanvasKey(keys: ApiKey[], name = INFINITE_CANVAS_KEY_NAME): ApiKey | undefined {
   const matches = keys.filter((key) => key.name === name)
-  return matches.find((key) => key.status === 'active') ?? matches[0]
+  return matches.find(isUsableCanvasKey) ?? matches[0]
+}
+
+export function isUsableCanvasKey(key: ApiKey): boolean {
+  return key.status === 'active'
+    && (!key.expires_at || new Date(key.expires_at).getTime() > Date.now())
+    && !(key.quota > 0 && key.quota_used >= key.quota)
 }
