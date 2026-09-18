@@ -47,6 +47,7 @@ test-frontend:
 	@pnpm --dir frontend run lint:check
 	@pnpm --dir frontend run typecheck
 	@$(MAKE) test-frontend-critical
+	@pnpm --dir frontend exec vue-tsc -p dev/tsconfig.json --noEmit
 	@pnpm --dir frontend exec vitest run --config dev/vitest.config.ts
 
 test-frontend-critical:

@@ -77,13 +77,9 @@ function injectPublicSettings(backendUrl: string): Plugin {
   }
 }
 
-export default defineConfig(async ({ mode, command, isPreview }) => {
+export default defineConfig(({ mode }) => {
   if (mode === 'console-preview') {
-    if (command !== 'serve' || isPreview) {
-      throw new Error('console-preview is local dev only; build and preview are disabled')
-    }
-    const { consolePreviewConfig } = await import('./dev/console-preview')
-    return consolePreviewConfig()
+    throw new Error('console-preview is local dev only; use pnpm run dev:console')
   }
 
   // 加载环境变量
