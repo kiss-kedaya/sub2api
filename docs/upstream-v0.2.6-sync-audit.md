@@ -1,7 +1,9 @@
 # v0.2.6 上游兼容同步记录
 
 日期：2026-09-18。工作目录：`F:/GO/sub2-official-work`。
-分支：`sync/upstream-v0.2.6`。生产当前版本仍为 `0.1.330`。
+同步分支：`sync/upstream-v0.2.6`，已由 [PR #48](https://github.com/kiss-kedaya/sub2api/pull/48) 合入 `main`。
+合并提交：`b0321fa373ea617151feef5c38b19ecd8913ca01`，代码树与已验证的 `66b96b83bfc0a80243a15ce5b9eccff6feeeb147` 完全一致。
+本轮没有发布标签或部署生产；生产保持原 `0.1.330`。
 
 ## 来源与合并范围
 
@@ -72,7 +74,12 @@
 - 官方宣称的 1721 万行 48.7s → 34ms 是上游实测，本站尚未测出这一速度，不能直接沿用为本站指标。
 - 票据的 service/admin/DTO/repository 定向测试通过；后台组件 91 项通过；新增并发与清理回归已在本地验证。CI 加入票据专用 race 检查。
 - 本地生产前端构建通过。全量 Go 单测首次因 Wire 重复声明失败，其余包通过；修正后 server 包重新编译通过，最终以完整提交的 Linux CI 为准。
-- 第一批 GitHub CI `35344549389`、Security Scan `35344549395` 全绿（提交 `5eb5a1ec4`）；最终票据补丁仍需单独核对最终提交检查，不能沿用第一批绿灯。
+- 第一批 GitHub CI `35344549389`、Security Scan `35344549395` 全绿（提交 `5eb5a1ec4`）。
+- 最终代码 `66b96b83b` 的推送 CI [35346864416](https://github.com/kiss-kedaya/sub2api/actions/runs/35346864416) 与 PR CI [35346941705](https://github.com/kiss-kedaya/sub2api/actions/runs/35346941705) 全部通过：Go 单元测试、PostgreSQL/Redis 集成、票据 `-race`、golangci-lint、前端 lint/typecheck/关键测试/生产构建与部署脚本检查。
+- 最终安全扫描 `35346864366`、`35346941742` 均通过。CLA 在本仓库按规则跳过，没有绕过失败的检查。
+- 合并后的 `main` 自动触发 CI [35348398579](https://github.com/kiss-kedaya/sub2api/actions/runs/35348398579)，记录时仍在运行；主分支安全扫描 `35348398547` 已通过。合并前后代码树相同，记录更新仅修改此 MD。
+- 本地 `go test -race -tags=unit ./internal/service -run 'Test.*CodexTicket' -count=1` 通过，内嵌前端的 Go 二进制构建通过。
+- Chrome 后台设置验证默认关闭、只回填掩码、明确清空提交空串；移动端输入框正常。演示接口缺失的辅助设置以演示错误提示，不作为真实后端失败，也没有向生产发送保存请求。
 
 ## 后续发布约束
 
