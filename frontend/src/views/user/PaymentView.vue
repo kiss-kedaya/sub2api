@@ -1,15 +1,27 @@
 <template>
   <AppLayout>
-    <div :class="['mx-auto w-full space-y-6', activeTab === 'rechargeCenter' ? 'max-w-[1440px]' : 'max-w-4xl']">
+    <div :class="['signal-payment mx-auto w-full', activeTab === 'rechargeCenter' ? 'max-w-[1440px]' : 'max-w-5xl']">
       <div v-if="loading" class="flex items-center justify-center py-20">
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
       </div>
       <template v-else>
+        <header v-if="paymentPhase === 'select' && !selectedPlan" class="signal-payment-heading">
+          <div class="signal-payment-heading__icon" aria-hidden="true">
+            <Icon name="creditCard" size="lg" />
+          </div>
+          <div class="min-w-0">
+            <p class="signal-payment-heading__index" aria-hidden="true">04 / BILLING</p>
+            <h1>{{ t('nav.buySubscription') }}</h1>
+            <p>{{ t('purchase.description') }}</p>
+          </div>
+        </header>
         <!-- Tab Switcher (hide during payment and subscription confirm) -->
-        <div v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" class="flex space-x-1 rounded-xl bg-gray-100 p-1 dark:bg-dark-800">
+        <div v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" class="signal-payment-tabs" role="tablist">
           <button v-for="tab in tabs" :key="tab.key"
-            class="flex-1 rounded-lg px-4 py-2.5 text-sm font-medium transition-all"
-            :class="activeTab === tab.key ? 'bg-white text-gray-900 shadow dark:bg-dark-700 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'"
+            class="signal-payment-tab"
+            :class="{ 'signal-payment-tab--active': activeTab === tab.key }"
+            role="tab"
+            :aria-selected="activeTab === tab.key"
             @click="activeTab = tab.key">{{ tab.label }}</button>
         </div>
         <!-- Payment in progress (shared by recharge and subscription) -->
@@ -36,67 +48,74 @@
           <!-- Top-up Tab -->
           <template v-if="activeTab === 'recharge'">
             <!-- Recharge Account Card -->
-            <div class="card p-5">
-              <p class="text-xs font-medium text-gray-400 dark:text-gray-500">{{ t('payment.rechargeAccount') }}</p>
-              <p class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ user?.username || '' }}</p>
-              <p class="mt-0.5 text-sm font-medium text-green-600 dark:text-green-400">{{ t('payment.currentBalance') }}: {{ user?.balance?.toFixed(2) || '0.00' }}</p>
-            </div>
-            <div v-if="enabledMethods.length === 0" class="card py-16 text-center">
-              <p class="text-gray-500 dark:text-gray-400">{{ t('payment.notAvailable') }}</p>
-            </div>
-            <template v-else>
-            <div class="card p-6">
-              <AmountInput
-                v-model="amount"
-                :amounts="[10, 20, 50, 100, 200, 500, 1000, 2000, 5000]"
-                :min="globalMinAmount"
-                :max="globalMaxAmount"
-              />
-              <p v-if="amountError" class="mt-2 text-xs text-amber-600 dark:text-amber-300">{{ amountError }}</p>
-            </div>
-            <div v-if="enabledMethods.length >= 1" class="card p-6">
-              <PaymentMethodSelector
-                :methods="methodOptions"
-                :selected="selectedMethod"
-                @select="selectedMethod = $event"
-              />
-            </div>
-            <div v-if="validAmount > 0" class="card p-6">
-              <div class="space-y-2 text-sm">
-                <div class="flex justify-between">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('payment.paymentAmount') }}</span>
-                  <span class="text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(validAmount) }}</span>
-                </div>
-                <div v-if="feeRate > 0" class="flex justify-between">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('payment.fee') }} ({{ feeRate }}%)</span>
-                  <span class="text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(feeAmount) }}</span>
-                </div>
-                <div v-if="feeRate > 0" class="flex justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
-                  <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
-                  <span class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ formatSelectedPaymentAmount(totalAmount) }}</span>
-                </div>
-                <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('payment.creditedBalance') }}</span>
-                  <span class="text-gray-900 dark:text-white">${{ creditedAmount.toFixed(2) }}</span>
-                </div>
-                <p v-if="balanceRechargeMultiplier !== 1" class="border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
-                  {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
-                </p>
+            <div class="signal-account-strip">
+              <div class="min-w-0">
+                <p class="signal-kicker">{{ t('payment.rechargeAccount') }}</p>
+                <p class="signal-account-name">{{ user?.username || '' }}</p>
+              </div>
+              <div class="signal-balance-block">
+                <span>{{ t('payment.currentBalance') }}</span>
+                <strong>{{ user?.balance?.toFixed(2) || '0.00' }}</strong>
               </div>
             </div>
-            <button :class="['btn w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="!canSubmit || submitting" @click="handleSubmitRecharge">
-              <span v-if="submitting" class="flex items-center justify-center gap-2">
-                <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
-                {{ t('common.processing') }}
-              </span>
-              <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(totalAmount) }}</span>
-            </button>
-            </template>
+            <div v-if="enabledMethods.length === 0" class="signal-empty-state">
+              <p class="text-gray-500 dark:text-gray-400">{{ t('payment.notAvailable') }}</p>
+            </div>
+            <div v-else class="signal-recharge-layout">
+              <div class="signal-recharge-fields">
+                <section class="signal-payment-section">
+                  <AmountInput
+                    v-model="amount"
+                    :amounts="[10, 20, 50, 100, 200, 500, 1000, 2000, 5000]"
+                    :min="globalMinAmount"
+                    :max="globalMaxAmount"
+                  />
+                  <p v-if="amountError" class="signal-payment-warning">{{ amountError }}</p>
+                </section>
+                <section v-if="enabledMethods.length >= 1" class="signal-payment-section">
+                  <PaymentMethodSelector
+                    :methods="methodOptions"
+                    :selected="selectedMethod"
+                    @select="selectedMethod = $event"
+                  />
+                </section>
+              </div>
+              <aside class="signal-checkout-summary">
+                <div class="signal-checkout-summary__header">
+                  <span>{{ t('payment.actualPay') }}</span>
+                  <strong>{{ formatSelectedPaymentAmount(totalAmount) }}</strong>
+                </div>
+                <div class="signal-checkout-summary__rows">
+                  <div>
+                    <span>{{ t('payment.paymentAmount') }}</span>
+                    <strong>{{ formatSelectedPaymentAmount(validAmount) }}</strong>
+                  </div>
+                  <div v-if="feeRate > 0">
+                    <span>{{ t('payment.fee') }} ({{ feeRate }}%)</span>
+                    <strong>{{ formatSelectedPaymentAmount(feeAmount) }}</strong>
+                  </div>
+                  <div v-if="balanceRechargeMultiplier !== 1">
+                    <span>{{ t('payment.creditedBalance') }}</span>
+                    <strong>${{ creditedAmount.toFixed(2) }}</strong>
+                  </div>
+                </div>
+                <p v-if="balanceRechargeMultiplier !== 1" class="signal-rate-note">
+                  {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
+                </p>
+                <button :class="['btn w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="!canSubmit || submitting" @click="handleSubmitRecharge">
+                  <span v-if="submitting" class="flex items-center justify-center gap-2">
+                    <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
+                    {{ t('common.processing') }}
+                  </span>
+                  <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(totalAmount) }}</span>
+                </button>
+              </aside>
+            </div>
           </template>
           <!-- Recharge Center Tab: reuse the configured custom payment center instead of subscriptions -->
           <template v-else-if="activeTab === 'rechargeCenter'">
-            <div ref="rechargeCenterFrameRef" class="recharge-center-shell overflow-hidden rounded-2xl border border-blue-100/80 bg-white/80 shadow-sm dark:border-blue-900/50 dark:bg-dark-800/80">
-              <div class="flex flex-col gap-3 border-b border-blue-100/70 bg-gradient-to-r from-blue-50/80 via-white to-cyan-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-blue-900/40 dark:from-blue-950/40 dark:via-dark-800 dark:to-cyan-950/30">
+            <div ref="rechargeCenterFrameRef" class="recharge-center-shell">
+              <div class="recharge-center-toolbar">
                 <div>
                   <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('payment.rechargeCenterTitle') }}</p>
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('payment.rechargeCenterDescription') }}</p>
@@ -104,7 +123,7 @@
                 <div v-if="rechargeCenterUrl" class="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    class="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-medium text-blue-700 transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 dark:border-blue-800 dark:bg-dark-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                    class="signal-tool-button"
                     :aria-label="isRechargeCenterFullscreen ? t('payment.rechargeCenterExitFullscreen') : t('payment.rechargeCenterFullscreen')"
                     @click="toggleRechargeCenterFullscreen"
                   >
@@ -115,17 +134,18 @@
                     :href="rechargeCenterUrl"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="inline-flex min-h-10 items-center justify-center rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-medium text-blue-700 transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 dark:border-blue-800 dark:bg-dark-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                    class="signal-tool-button"
                   >
+                    <Icon name="externalLink" size="sm" aria-hidden="true" />
                     {{ t('payment.rechargeCenterOpen') }}
                   </a>
                 </div>
               </div>
-              <div v-if="rechargeCenterUrl" class="recharge-center-frame bg-white p-2 dark:bg-dark-900/30 sm:p-3">
+              <div v-if="rechargeCenterUrl" class="recharge-center-frame">
                 <iframe
                   :src="rechargeCenterUrl"
                   title="Recharge Center"
-                  class="h-[clamp(720px,calc(100dvh-210px),1080px)] min-h-[720px] w-full rounded-xl border border-gray-100 bg-white dark:border-dark-700"
+                  class="h-[clamp(720px,calc(100dvh-210px),1080px)] min-h-[720px] w-full border-0 bg-white"
                   allow="payment *; clipboard-write"
                   allowfullscreen
                 ></iframe>
@@ -276,7 +296,7 @@
           <div class="relative flex max-h-full w-full max-w-lg flex-col rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl dark:border-dark-700 dark:bg-dark-900">
             <!-- Close button -->
             <button class="absolute right-4 top-4 rounded-lg p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-200" @click="closeRenewalModal">
-              <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              <Icon name="x" size="md" :stroke-width="2" />
             </button>
             <h3 class="mb-4 shrink-0 text-lg font-semibold text-gray-900 dark:text-white">{{ t('payment.selectPlan') }}</h3>
             <div class="min-h-0 space-y-4 overflow-y-auto">
@@ -1267,6 +1287,373 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.signal-payment {
+  --payment-bg: var(--signal-bg, #f5f6f5);
+  --payment-surface: var(--signal-surface, #ffffff);
+  --payment-line: var(--signal-line, #dce2df);
+  --payment-text: var(--signal-text, #202423);
+  --payment-muted: var(--signal-muted, #65716a);
+  --payment-accent: var(--signal-accent, #087f68);
+  --payment-accent-soft: var(--signal-accent-soft, #e5f3ee);
+  --payment-amber: var(--signal-amber, #a86610);
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  color: var(--payment-text);
+  letter-spacing: 0;
+}
+
+.signal-payment-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--payment-line);
+}
+
+.signal-payment-heading__icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--payment-line);
+  border-radius: 6px;
+  color: var(--payment-accent);
+  background: var(--payment-surface);
+}
+
+.signal-payment-heading__index,
+.signal-kicker {
+  margin: 0;
+  color: var(--payment-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
+.signal-payment-heading h1 {
+  margin: 2px 0 0;
+  color: var(--payment-text);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.signal-payment-heading p:last-child {
+  margin: 4px 0 0;
+  color: var(--payment-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.signal-payment-tabs {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+  padding: 3px;
+  overflow-x: auto;
+  border: 1px solid var(--payment-line);
+  border-radius: 6px;
+  background: var(--payment-bg);
+}
+
+.signal-payment-tab {
+  min-width: 120px;
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--payment-muted);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.signal-payment-tab:hover {
+  color: var(--payment-text);
+  background: color-mix(in srgb, var(--payment-surface) 60%, transparent);
+}
+
+.signal-payment-tab--active {
+  color: var(--payment-accent);
+  background: var(--payment-surface);
+  box-shadow: inset 0 -2px var(--payment-accent);
+}
+
+.signal-account-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--payment-line);
+  border-radius: 8px;
+  background: var(--payment-surface);
+}
+
+.signal-account-name {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--payment-text);
+  font-size: 15px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal-balance-block {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 2px;
+  text-align: right;
+}
+
+.signal-balance-block span {
+  color: var(--payment-muted);
+  font-size: 11px;
+}
+
+.signal-balance-block strong {
+  color: var(--payment-accent);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.signal-recharge-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  gap: 18px;
+  align-items: start;
+}
+
+.signal-recharge-fields {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.signal-payment-section,
+.signal-checkout-summary,
+.signal-empty-state {
+  border: 1px solid var(--payment-line);
+  border-radius: 8px;
+  background: var(--payment-surface);
+}
+
+.signal-payment-section {
+  padding: 18px;
+}
+
+.signal-empty-state {
+  padding: 56px 20px;
+  text-align: center;
+}
+
+.signal-payment-warning {
+  margin: 10px 0 0;
+  color: var(--payment-amber);
+  font-size: 12px;
+}
+
+.signal-checkout-summary {
+  position: sticky;
+  top: 82px;
+  overflow: hidden;
+}
+
+.signal-checkout-summary__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+  border-bottom: 1px solid var(--payment-line);
+  background: var(--payment-bg);
+}
+
+.signal-checkout-summary__header span {
+  color: var(--payment-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.signal-checkout-summary__header strong {
+  color: var(--payment-accent);
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.signal-checkout-summary__rows {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+}
+
+.signal-checkout-summary__rows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--payment-muted);
+  font-size: 13px;
+}
+
+.signal-checkout-summary__rows strong {
+  color: var(--payment-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-rate-note {
+  margin: 0 18px 16px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--payment-line);
+  color: var(--payment-amber);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.signal-checkout-summary > .btn {
+  width: calc(100% - 36px);
+  margin: 0 18px 18px;
+}
+
+.recharge-center-shell {
+  overflow: hidden;
+  border: 1px solid var(--payment-line);
+  border-radius: 8px;
+  background: var(--payment-surface);
+}
+
+.recharge-center-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--payment-line);
+  background: var(--payment-bg);
+}
+
+.signal-tool-button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--payment-line);
+  border-radius: 6px;
+  color: var(--payment-text);
+  background: var(--payment-surface);
+  font-size: 12px;
+  font-weight: 600;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.signal-tool-button:hover {
+  border-color: var(--payment-accent);
+  color: var(--payment-accent);
+  background: var(--payment-accent-soft);
+}
+
+.recharge-center-frame {
+  padding: 8px;
+  background: var(--payment-bg);
+}
+
+.signal-payment :deep(.payment-amount-input),
+.signal-payment :deep(.payment-method-selector) {
+  color: var(--payment-text);
+}
+
+.signal-payment :deep(.payment-amount-input__grid) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.signal-payment :deep(.payment-amount-input__option) {
+  min-width: 0;
+  min-height: 46px;
+  padding: 9px 10px;
+  border-width: 1px;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-payment :deep(.payment-method-selector__grid) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.signal-payment :deep(.payment-method-selector__option) {
+  height: 58px;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.signal-payment :deep(.payment-method-selector__option[aria-pressed='true']) {
+  border-color: var(--payment-accent);
+  color: var(--payment-text);
+  background: var(--payment-accent-soft);
+  box-shadow: inset 0 -2px var(--payment-accent);
+}
+
+.signal-payment > :deep(.card),
+.signal-payment :deep(.payment-status-card),
+.signal-payment :deep(.payment-subscription-plan) {
+  border: 1px solid var(--payment-line);
+  border-radius: 8px;
+  background: var(--payment-surface);
+  box-shadow: none;
+}
+
+.signal-payment :deep(.payment-status-panel) {
+  width: min(100%, 620px);
+  margin-inline: auto;
+}
+
+.signal-payment :deep(.payment-status-card .rounded-xl) {
+  border: 1px solid var(--payment-line);
+  border-radius: 6px;
+  background: var(--payment-bg);
+}
+
+.signal-payment :deep(.payment-subscription-plan) {
+  transform: none;
+}
+
+.signal-payment :deep(.payment-subscription-plan:hover) {
+  transform: none;
+  border-color: var(--payment-accent);
+  box-shadow: none;
+}
+
+.signal-payment :deep(.payment-subscription-plan > div:first-child) {
+  height: 3px;
+  background: var(--payment-accent);
+}
+
+.signal-payment :deep(.payment-subscription-plan__quota) {
+  border: 1px solid var(--payment-line);
+  border-radius: 6px;
+  background: var(--payment-bg);
+}
+
+.signal-payment :deep(.payment-subscription-plan__action) {
+  border-radius: 6px;
+  box-shadow: none;
+  transform: none;
+}
+
 .recharge-center-shell:fullscreen {
   display: flex;
   height: 100dvh;
@@ -1283,5 +1670,66 @@ onUnmounted(() => {
 .recharge-center-shell:fullscreen iframe {
   height: 100%;
   min-height: 0;
+}
+
+@media (max-width: 767px) {
+  .signal-payment {
+    gap: 14px;
+  }
+
+  .signal-payment-heading {
+    padding-bottom: 14px;
+  }
+
+  .signal-payment-heading h1 {
+    font-size: 21px;
+  }
+
+  .signal-recharge-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .signal-checkout-summary {
+    position: static;
+  }
+
+  .recharge-center-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 374px) {
+  .signal-payment-heading__icon {
+    display: none;
+  }
+
+  .signal-account-strip {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .signal-balance-block {
+    width: 100%;
+    padding-top: 10px;
+    border-top: 1px solid var(--payment-line);
+    text-align: left;
+  }
+
+  .signal-payment-section {
+    padding: 14px;
+  }
+
+  .signal-payment :deep(.payment-amount-input__grid),
+  .signal-payment :deep(.payment-method-selector__grid) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .recharge-center-toolbar > div:last-child {
+    display: grid;
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
 }
 </style>
