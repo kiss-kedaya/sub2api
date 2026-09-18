@@ -7,6 +7,16 @@
           <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('infiniteCanvas.preparing') }}</p>
         </div>
 
+        <div v-else-if="errorCode === 'not-configured'" class="flex h-full items-center justify-center p-6 text-center">
+          <div class="max-w-md">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('infiniteCanvas.notConfigured') }}</h3>
+            <button type="button" class="btn btn-primary mt-6" @click="prepareSession(true)">
+              <Icon name="plus" size="sm" class="mr-2" />
+              {{ t('infiniteCanvas.createAndEnter') }}
+            </button>
+          </div>
+        </div>
+
         <div v-else-if="errorMessage" class="flex h-full items-center justify-center p-10 text-center">
           <div class="max-w-md">
             <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 dark:bg-dark-700">
@@ -14,7 +24,10 @@
             </div>
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('infiniteCanvas.errorTitle') }}</h3>
             <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">{{ errorMessage }}</p>
-            <button type="button" class="btn btn-primary mt-6" @click="prepareSession">
+            <RouterLink v-if="errorCode === 'key-unavailable'" to="/keys" class="btn btn-primary mt-6">
+              {{ t('infiniteCanvas.manageKeys') }}
+            </RouterLink>
+            <button v-else type="button" class="btn btn-primary mt-6" @click="prepareSession()">
               {{ t('infiniteCanvas.retry') }}
             </button>
           </div>
@@ -36,7 +49,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -49,11 +63,13 @@ const { t, locale } = useI18n()
 const appStore = useAppStore()
 
 const loading = ref(true)
-const errorCode = ref<'no-groups' | 'missing-key' | 'request-failed' | null>(null)
+const errorCode = ref<InfiniteCanvasSetupError['code'] | null>(null)
 const embedUrl = ref('')
+let disposed = false
 
 const errorMessage = computed(() => {
   if (errorCode.value === 'no-groups') return t('infiniteCanvas.noGroups')
+  if (errorCode.value === 'key-unavailable') return t('infiniteCanvas.keyUnavailable')
   if (errorCode.value === 'missing-key') return t('infiniteCanvas.missingKey')
   if (errorCode.value === 'request-failed') return t('infiniteCanvas.requestFailed')
   return ''
@@ -63,7 +79,7 @@ function canvasLang(value: string): string {
   return value.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
 }
 
-async function prepareSession() {
+async function prepareSession(createIfMissing = false) {
   loading.value = true
   errorCode.value = null
   embedUrl.value = ''
@@ -71,7 +87,9 @@ async function prepareSession() {
     if (!appStore.publicSettingsLoaded) {
       await appStore.fetchPublicSettings()
     }
-    const session = await ensureInfiniteCanvasApiKey()
+    if (disposed) return
+    const session = await ensureInfiniteCanvasApiKey(undefined, { createIfMissing })
+    if (disposed) return
     const pageOrigin = window.location.origin
     const openaiBaseUrl = resolveHttpBaseUrl(pageOrigin)
     const canvasBaseUrl = resolveInfiniteCanvasBaseUrl(pageOrigin)
@@ -99,6 +117,8 @@ async function prepareSession() {
 onMounted(() => {
   void prepareSession()
 })
+
+onUnmounted(() => { disposed = true })
 </script>
 
 <style scoped>
