@@ -1,5 +1,16 @@
 import { isIP } from 'node:net'
-import type { ApiKey, PaginatedResponse, UsageLog } from '../src/types'
+import type {
+  AdminUsageLog,
+  DashboardStats,
+  GroupStat,
+  ModelStat,
+  PaginatedResponse,
+  TrendDataPoint,
+  UsageLog,
+  UserSpendingRankingResponse,
+  UserUsageTrendPoint,
+  ApiKey,
+} from '../src/types'
 import type { MonitorMatrixGroupBy, MonitorMatrixRow } from '../src/api/channelMonitorV2'
 import type { PaymentOrder } from '../src/types/payment'
 import { createFixtures, makeKey, settings } from './fixtures'
@@ -62,8 +73,8 @@ function chartSummary(rows: UsageLog[]) {
     total_tokens: s.total_tokens, cost: s.total_cost, actual_cost: s.total_actual_cost }
 }
 
-function buckets(rows: UsageLog[], key: (row: UsageLog) => string) {
-  const result = new Map<string, UsageLog[]>()
+function buckets<T extends UsageLog>(rows: T[], key: (row: T) => string) {
+  const result = new Map<string, T[]>()
   for (const row of rows) {
     const label = key(row)
     const bucket = result.get(label) ?? []
@@ -122,6 +133,133 @@ export function createMockApi(now = new Date()) {
         .sort((a, b) => b.total_tokens - a.total_tokens),
       groups: buckets(rows, row => String(row.group_id)).map(([id, items]) => ({ group_id: Number(id),
         group_name: data.groups.find(group => group.id === Number(id))?.name ?? '演示', ...chartSummary(items) })),
+    }
+  }
+  function filteredAdminUsage(query: URLSearchParams): AdminUsageLog[] {
+    const timezone = timezoneOf(query)
+    const start = query.get('start_date'), end = query.get('end_date')
+    for (const date of [start, end]) {
+      if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)))) {
+        throw new PreviewError(400, '无效的日期')
+      }
+    }
+    if (start && end && start > end) throw new PreviewError(400, '开始日期不能晚于结束日期')
+    return data.adminUsage.filter(row => {
+      for (const field of ['user_id', 'api_key_id', 'account_id', 'group_id', 'billing_type', 'billing_mode', 'request_type', 'stream', 'native_compaction_v2'] as const) {
+        const filter = query.get(field)
+        if (filter !== null && filter !== '' && String(row[field]) !== filter) return false
+      }
+      const model = query.get('model')?.toLowerCase()
+      if (model && !row.model.toLowerCase().includes(model)) return false
+      if (start || end) {
+        const date = dateLabel(row.created_at, timezone)
+        if ((start && date < start) || (end && date > end)) return false
+      }
+      return true
+    })
+  }
+  function adminCharts(query: URLSearchParams) {
+    const rows = filteredAdminUsage(query)
+    const timezone = timezoneOf(query)
+    const granularity = query.get('granularity') || 'day'
+    if (!['day', 'hour'].includes(granularity)) throw new PreviewError(400, '无效的时间粒度')
+    const trend: TrendDataPoint[] = buckets(rows, row => dateLabel(row.created_at, timezone, granularity === 'hour'))
+      .map(([date, items]) => ({ date, ...chartSummary(items) })).sort((a, b) => a.date.localeCompare(b.date))
+    const models: ModelStat[] = buckets(rows, row => row.model).map(([model, items]) => ({
+      model,
+      ...chartSummary(items),
+      account_cost: items.reduce((sum, row) => sum + (row.account_stats_cost ?? row.total_cost), 0),
+    })).sort((a, b) => b.total_tokens - a.total_tokens)
+    const groups: GroupStat[] = buckets(rows, row => String(row.group_id)).map(([id, items]) => ({
+      group_id: Number(id),
+      group_name: data.adminGroups.find(group => group.id === Number(id))?.name ?? '本地演示分组',
+      ...chartSummary(items),
+      account_cost: items.reduce((sum, row) => sum + (row.account_stats_cost ?? row.total_cost), 0),
+    }))
+    return {
+      generated_at: data.now,
+      start_date: query.get('start_date') || dateLabel(data.adminUsage[0].created_at, timezone),
+      end_date: query.get('end_date') || dateLabel(data.now, timezone),
+      granularity,
+      trend,
+      models,
+      groups,
+    }
+  }
+  function adminDashboardStats(rows = data.adminUsage): DashboardStats {
+    const all = summarize(rows)
+    const todayLabel = dateLabel(data.now, 'UTC')
+    const todayRows = rows.filter(row => dateLabel(row.created_at, 'UTC') === todayLabel)
+    const today = summarize(todayRows)
+    const recent = summarize(rows.filter(row => Date.parse(row.created_at) > now.getTime() - 5 * 60_000))
+    return {
+      total_users: data.adminUsers.length,
+      today_new_users: data.adminUsers.filter(user => dateLabel(user.created_at, 'UTC') === todayLabel).length,
+      active_users: new Set(todayRows.map(row => row.user_id)).size,
+      hourly_active_users: new Set(todayRows.filter(row => Date.parse(row.created_at) > now.getTime() - 60 * 60_000).map(row => row.user_id)).size,
+      stats_updated_at: data.now,
+      stats_stale: false,
+      total_api_keys: data.adminKeys.length,
+      active_api_keys: data.adminKeys.filter(key => key.status === 'active').length,
+      total_accounts: data.adminAccounts.length,
+      normal_accounts: data.adminAccounts.filter(account => account.status === 'active').length,
+      error_accounts: data.adminAccounts.filter(account => account.status === 'error').length,
+      ratelimit_accounts: data.adminAccounts.filter(account => account.rate_limit_reset_at && Date.parse(account.rate_limit_reset_at) > now.getTime()).length,
+      overload_accounts: data.adminAccounts.filter(account => account.overload_until && Date.parse(account.overload_until) > now.getTime()).length,
+      total_requests: all.total_requests,
+      total_input_tokens: all.total_input_tokens,
+      total_output_tokens: all.total_output_tokens,
+      total_cache_creation_tokens: all.total_cache_creation_tokens,
+      total_cache_read_tokens: all.total_cache_read_tokens,
+      total_tokens: all.total_tokens,
+      total_cost: all.total_cost,
+      total_actual_cost: all.total_actual_cost,
+      total_account_cost: rows.reduce((sum, row) => sum + (row.account_stats_cost ?? row.total_cost), 0),
+      today_requests: today.total_requests,
+      today_input_tokens: today.total_input_tokens,
+      today_output_tokens: today.total_output_tokens,
+      today_cache_creation_tokens: today.total_cache_creation_tokens,
+      today_cache_read_tokens: today.total_cache_read_tokens,
+      today_tokens: today.total_tokens,
+      today_cost: today.total_cost,
+      today_actual_cost: today.total_actual_cost,
+      today_account_cost: todayRows.reduce((sum, row) => sum + (row.account_stats_cost ?? row.total_cost), 0),
+      average_duration_ms: all.average_duration_ms,
+      uptime: 18 * 86_400 + 13_260,
+      rpm: recent.total_requests / 5,
+      tpm: recent.total_tokens / 5,
+    }
+  }
+  function adminUserTrend(query: URLSearchParams): UserUsageTrendPoint[] {
+    const timezone = timezoneOf(query)
+    const granularity = query.get('granularity') || 'day'
+    const limit = integer(query.get('limit'), 12, 100)
+    const selectedUsers = [...buckets(filteredAdminUsage(query), row => String(row.user_id))]
+      .sort((a, b) => summarize(b[1]).total_tokens - summarize(a[1]).total_tokens).slice(0, limit)
+    return selectedUsers.flatMap(([id, userRows]) => {
+      const user = data.adminUsers.find(item => item.id === Number(id))
+      return buckets(userRows, row => dateLabel(row.created_at, timezone, granularity === 'hour')).map(([date, items]) => {
+        const summary = summarize(items)
+        return { date, user_id: Number(id), email: user?.email ?? '', username: user?.username ?? '',
+          requests: summary.total_requests, tokens: summary.total_tokens, cost: summary.total_cost, actual_cost: summary.total_actual_cost }
+      })
+    }).sort((a, b) => a.date.localeCompare(b.date) || a.user_id - b.user_id)
+  }
+  function adminRanking(query: URLSearchParams): UserSpendingRankingResponse {
+    const limit = integer(query.get('limit'), 10, 100)
+    const ranking = buckets(filteredAdminUsage(query), row => String(row.user_id)).map(([id, rows]) => {
+      const user = data.adminUsers.find(item => item.id === Number(id))
+      const summary = summarize(rows)
+      return { user_id: Number(id), email: user?.email ?? '', username: user?.username ?? '',
+        actual_cost: summary.total_actual_cost, requests: summary.total_requests, tokens: summary.total_tokens }
+    }).sort((a, b) => b.actual_cost - a.actual_cost).slice(0, limit)
+    return {
+      ranking,
+      total_actual_cost: ranking.reduce((sum, item) => sum + item.actual_cost, 0),
+      total_requests: ranking.reduce((sum, item) => sum + item.requests, 0),
+      total_tokens: ranking.reduce((sum, item) => sum + item.tokens, 0),
+      start_date: query.get('start_date') || dateLabel(data.adminUsage[0].created_at, 'UTC'),
+      end_date: query.get('end_date') || dateLabel(data.now, 'UTC'),
     }
   }
   function editKey(key: ApiKey, body: Record<string, unknown>) {
@@ -217,6 +355,166 @@ export function createMockApi(now = new Date()) {
         if (path === '/setup/status') return { needs_setup: false, step: 'complete' }
         if (path === '/api/v1/settings/public') return settings
         if (['/api/v1/auth/me', '/api/v1/user/profile'].includes(path)) return { ...data.user, run_mode: 'standard' }
+        if (path === '/api/v1/admin/dashboard/stats') return adminDashboardStats()
+        if (path === '/api/v1/admin/dashboard/realtime') return {
+          active_requests: 7, requests_per_minute: 42, average_response_time: 1380, error_rate: 0.018,
+        }
+        if (path === '/api/v1/admin/dashboard/snapshot-v2') {
+          const snapshot = adminCharts(query)
+          return {
+            ...snapshot,
+            stats: query.get('include_stats') === 'false' ? undefined : adminDashboardStats(filteredAdminUsage(query)),
+            trend: query.get('include_trend') === 'false' ? undefined : snapshot.trend,
+            models: query.get('include_model_stats') === 'false' ? undefined : snapshot.models,
+            groups: query.get('include_group_stats') === 'false' ? undefined : snapshot.groups,
+            users_trend: query.get('include_users_trend') === 'true' ? adminUserTrend(query) : undefined,
+          }
+        }
+        if (path === '/api/v1/admin/dashboard/trend') {
+          const snapshot = adminCharts(query)
+          return { trend: snapshot.trend, start_date: snapshot.start_date, end_date: snapshot.end_date, granularity: snapshot.granularity }
+        }
+        if (path === '/api/v1/admin/dashboard/models') {
+          const snapshot = adminCharts(query)
+          return { models: snapshot.models, start_date: snapshot.start_date, end_date: snapshot.end_date }
+        }
+        if (path === '/api/v1/admin/dashboard/groups') {
+          const snapshot = adminCharts(query)
+          return { groups: snapshot.groups, start_date: snapshot.start_date, end_date: snapshot.end_date }
+        }
+        if (path === '/api/v1/admin/dashboard/users-trend') {
+          const snapshot = adminCharts(query)
+          return { trend: adminUserTrend(query), start_date: snapshot.start_date, end_date: snapshot.end_date, granularity: snapshot.granularity }
+        }
+        if (path === '/api/v1/admin/dashboard/users-ranking') return adminRanking(query)
+        if (path === '/api/v1/admin/dashboard/user-breakdown') {
+          const ranking = adminRanking(query)
+          return { users: ranking.ranking.map(item => ({
+            user_id: item.user_id, email: item.email, requests: item.requests,
+            input_tokens: Math.round(item.tokens * 0.48), output_tokens: Math.round(item.tokens * 0.19),
+            cache_tokens: Math.round(item.tokens * 0.33), total_tokens: item.tokens,
+            cost: item.actual_cost, actual_cost: item.actual_cost, account_cost: item.actual_cost * 0.82,
+          })), start_date: ranking.start_date, end_date: ranking.end_date }
+        }
+        if (path === '/api/v1/admin/accounts') {
+          const search = query.get('search')?.toLowerCase()
+          const items = data.adminAccounts.filter(account =>
+            (!search || `${account.name} ${account.notes ?? ''}`.toLowerCase().includes(search)) &&
+            (!query.get('platform') || account.platform === query.get('platform')) &&
+            (!query.get('type') || account.type === query.get('type')) &&
+            (!query.get('status') || account.status === query.get('status')) &&
+            (!query.get('group') || account.group_ids?.includes(Number(query.get('group')))))
+          return page(sort(items, query, ['id', 'name', 'platform', 'type', 'status', 'priority', 'created_at', 'last_used_at'], 'id'), query)
+        }
+        if (path === '/api/v1/admin/accounts/upstream-billing-rates') {
+          const result = page(data.adminAccounts.map(account => ({
+            account_id: account.id, enabled: false, rate: account.rate_multiplier ?? 1, observed_at: data.now,
+          })), query)
+          return result
+        }
+        if (path === '/api/v1/admin/accounts/upstream-billing-probe/settings') return { enabled: false, interval_minutes: 60 }
+        const adminAccount = path.match(/^\/api\/v1\/admin\/accounts\/(\d+)$/)
+        if (adminAccount) {
+          const account = data.adminAccounts.find(item => item.id === Number(adminAccount[1]))
+          if (!account) throw new PreviewError(404, '本地演示账号不存在')
+          return { ...account, groups: data.adminGroups.filter(group => account.group_ids?.includes(group.id)) }
+        }
+        const accountUsage = path.match(/^\/api\/v1\/admin\/accounts\/(\d+)\/usage$/)
+        if (accountUsage) return data.usageByAccount[accountUsage[1]] ?? { updated_at: null, five_hour: null, seven_day: null, seven_day_sonnet: null }
+        const accountToday = path.match(/^\/api\/v1\/admin\/accounts\/(\d+)\/today-stats$/)
+        if (accountToday) return data.todayStatsByAccount[accountToday[1]] ?? { requests: 0, tokens: 0, cost: 0 }
+        if (path === '/api/v1/admin/groups') {
+          const search = query.get('search')?.toLowerCase()
+          const items = data.adminGroups.filter(group =>
+            (!search || `${group.name} ${group.description ?? ''}`.toLowerCase().includes(search)) &&
+            (!query.get('platform') || group.platform === query.get('platform')) &&
+            (!query.get('status') || group.status === query.get('status')) &&
+            (!query.get('is_exclusive') || String(group.is_exclusive) === query.get('is_exclusive')))
+          return page(sort(items, query, ['id', 'name', 'platform', 'status', 'rate_multiplier', 'sort_order', 'created_at'], 'sort_order'), query)
+        }
+        if (path === '/api/v1/admin/groups/all') return data.adminGroups.filter(group =>
+          (query.get('include_inactive') === 'true' || group.status === 'active') &&
+          (!query.get('platform') || group.platform === query.get('platform')))
+        if (path === '/api/v1/admin/groups/live-capability') return { supported: true }
+        if (path === '/api/v1/admin/groups/usage-summary') return data.adminGroups.map((group, index) => ({
+          group_id: group.id, today_cost: 3.4 + index * 1.7, yesterday_cost: 4.1 + index * 1.5, total_cost: 420 + index * 187,
+        }))
+        if (path === '/api/v1/admin/groups/capacity-summary') return data.adminGroups.map((group, index) => ({
+          group_id: group.id, concurrency_used: 4 + index, concurrency_max: 24 + index * 4,
+          sessions_used: 9 + index * 2, sessions_max: 60, rpm_used: 42 + index * 11, rpm_max: group.rpm_limit ?? 0,
+        }))
+        const modelCandidates = path.match(/^\/api\/v1\/admin\/groups\/(\d+)\/model-allowlist-candidates$/)
+        if (modelCandidates) {
+          const group = data.adminGroups.find(item => item.id === Number(modelCandidates[1]))
+          return { models: group?.model_allowlist?.models ?? data.models }
+        }
+        const adminGroup = path.match(/^\/api\/v1\/admin\/groups\/(\d+)$/)
+        if (adminGroup) {
+          const group = data.adminGroups.find(item => item.id === Number(adminGroup[1]))
+          if (!group) throw new PreviewError(404, '本地演示分组不存在')
+          return group
+        }
+        if (path === '/api/v1/admin/users') {
+          const search = query.get('search')?.toLowerCase()
+          const groupName = query.get('group_name')?.toLowerCase()
+          const keyGroup = Number(query.get('api_key_group_id') || 0)
+          const items = data.adminUsers.filter(user =>
+            (!search || `${user.email} ${user.username} ${user.notes}`.toLowerCase().includes(search)) &&
+            (!query.get('status') || user.status === query.get('status')) &&
+            (!query.get('role') || user.role === query.get('role')) &&
+            (!groupName || data.adminGroups.some(group => user.allowed_groups?.includes(group.id) && group.name.toLowerCase().includes(groupName))) &&
+            (!keyGroup || data.adminKeys.some(key => key.user_id === user.id && key.group_ids?.includes(keyGroup))))
+          return page(sort(items, query, ['id', 'email', 'username', 'balance', 'status', 'role', 'created_at', 'last_active_at'], 'id'), query)
+        }
+        const userApiKeys = path.match(/^\/api\/v1\/admin\/users\/(\d+)\/api-keys$/)
+        if (userApiKeys) return page(data.adminKeys.filter(key => key.user_id === Number(userApiKeys[1])), query)
+        const userUsage = path.match(/^\/api\/v1\/admin\/users\/(\d+)\/usage$/)
+        if (userUsage) {
+          const summary = summarize(data.adminUsage.filter(row => row.user_id === Number(userUsage[1])))
+          return { total_requests: summary.total_requests, total_cost: summary.total_actual_cost, total_tokens: summary.total_tokens }
+        }
+        const platformQuotas = path.match(/^\/api\/v1\/admin\/users\/(\d+)\/platform-quotas$/)
+        if (platformQuotas) return { platform_quotas: data.adminGroups.slice(0, 5).map((group, index) => ({
+          platform: group.platform, daily_limit_usd: 20, weekly_limit_usd: 100, monthly_limit_usd: 320,
+          daily_usage_usd: 2 + index, weekly_usage_usd: 18 + index * 2, monthly_usage_usd: 74 + index * 6,
+        })) }
+        const adminUser = path.match(/^\/api\/v1\/admin\/users\/(\d+)$/)
+        if (adminUser) {
+          const user = data.adminUsers.find(item => item.id === Number(adminUser[1]))
+          if (!user) throw new PreviewError(404, '本地演示用户不存在')
+          return user
+        }
+        if (path === '/api/v1/admin/user-attributes') return []
+        if (path === '/api/v1/admin/proxies/all') return data.adminProxies
+        if (path === '/api/v1/admin/keys' || path === '/api/v1/admin/api-keys') {
+          const search = query.get('search')?.toLowerCase()
+          return page(data.adminKeys.filter(key =>
+            (!search || `${key.name} ${key.key}`.toLowerCase().includes(search)) &&
+            (!query.get('status') || key.status === query.get('status')) &&
+            (!query.get('user_id') || key.user_id === Number(query.get('user_id'))) &&
+            (!query.get('group_id') || key.group_ids?.includes(Number(query.get('group_id'))))), query)
+        }
+        if (path === '/api/v1/admin/usage') return page(sort(filteredAdminUsage(query), query,
+          ['id', 'created_at', 'model', 'input_tokens', 'output_tokens', 'actual_cost', 'total_cost', 'duration_ms', 'first_token_ms'], 'created_at'), query)
+        if (path === '/api/v1/admin/usage/stats') {
+          const rows = filteredAdminUsage(query)
+          const endpoints = buckets(rows, row => row.inbound_endpoint || '/v1/responses').map(([endpoint, items]) => ({ endpoint, ...chartSummary(items) }))
+          return { ...summarize(rows), total_account_cost: rows.reduce((sum, row) => sum + (row.account_stats_cost ?? row.total_cost), 0), endpoints, upstream_endpoints: [], endpoint_paths: [] }
+        }
+        if (path === '/api/v1/admin/usage/search-users') {
+          const keyword = query.get('q')?.toLowerCase() ?? ''
+          return data.adminUsers.filter(user => !keyword || user.email.toLowerCase().includes(keyword)).slice(0, 30)
+            .map(user => ({ id: user.id, email: user.email, deleted: Boolean(user.deleted_at) }))
+        }
+        if (path === '/api/v1/admin/usage/search-api-keys') {
+          const keyword = query.get('q')?.toLowerCase() ?? ''
+          return data.adminKeys.filter(key =>
+            (!query.get('user_id') || key.user_id === Number(query.get('user_id'))) &&
+            (!keyword || key.name.toLowerCase().includes(keyword))).slice(0, 30)
+            .map(key => ({ id: key.id, name: key.name, user_id: key.user_id }))
+        }
+        if (path === '/api/v1/admin/usage/cleanup-tasks') return page([], query)
+        if (path === '/api/v1/admin/ops/errors') return page([], query)
         if (path === '/api/v1/groups/available') return data.groups
         if (path === '/api/v1/groups/rates') return {}
         if (path === '/api/v1/user/platform-quotas') return { platform_quotas: [] }
@@ -346,6 +644,56 @@ export function createMockApi(now = new Date()) {
           return { ...result, days, items: result.trend.map(row => ({ ...row, cache_write_tokens: row.cache_creation_tokens })) }
         }
         throw new PreviewError(404, '此接口未提供演示数据，不会连接真实后端')
+      }
+      if (method === 'POST' && path === '/api/v1/__preview/role') {
+        if (body.role !== 'admin' && body.role !== 'user') throw new PreviewError(422, '预览身份仅支持 admin 或 user')
+        data.user.role = body.role
+        data.user.username = body.role === 'admin' ? '本地预览管理员' : '演示用户'
+        data.user.email = body.role === 'admin' ? 'admin-preview@example.test' : 'console-preview@example.test'
+        return { ...data.user, run_mode: 'standard' }
+      }
+      if (method === 'POST' && path === '/api/v1/admin/dashboard/users-usage') {
+        if (!Array.isArray(body.user_ids) || body.user_ids.length > 100 || body.user_ids.some(id => !Number.isSafeInteger(id))) {
+          throw new PreviewError(422, '无效的用户列表')
+        }
+        const today = dateLabel(data.now, 'UTC')
+        return { stats: Object.fromEntries(body.user_ids.map(id => {
+          const rows = data.adminUsage.filter(row => row.user_id === id)
+          const todayRows = rows.filter(row => dateLabel(row.created_at, 'UTC') === today)
+          return [String(id), {
+            user_id: id,
+            total_actual_cost: summarize(rows).total_actual_cost,
+            today_actual_cost: summarize(todayRows).total_actual_cost,
+            by_platform: data.adminGroups.map(group => ({
+              platform: group.platform,
+              total_actual_cost: summarize(rows.filter(row => row.group_id === group.id)).total_actual_cost,
+              today_actual_cost: summarize(todayRows.filter(row => row.group_id === group.id)).total_actual_cost,
+            })),
+          }]
+        })) }
+      }
+      if (method === 'POST' && path === '/api/v1/admin/dashboard/api-keys-usage') {
+        if (!Array.isArray(body.api_key_ids) || body.api_key_ids.length > 100 || body.api_key_ids.some(id => !Number.isSafeInteger(id))) {
+          throw new PreviewError(422, '无效的密钥列表')
+        }
+        const today = dateLabel(data.now, 'UTC')
+        return { stats: Object.fromEntries(body.api_key_ids.map(id => {
+          const rows = data.adminUsage.filter(row => row.api_key_id === id)
+          return [String(id), { api_key_id: id, total_actual_cost: summarize(rows).total_actual_cost,
+            today_actual_cost: summarize(rows.filter(row => dateLabel(row.created_at, 'UTC') === today)).total_actual_cost }]
+        })) }
+      }
+      if (method === 'POST' && path === '/api/v1/admin/accounts/usage/batch') {
+        if (!Array.isArray(body.account_ids) || body.account_ids.some(id => !Number.isSafeInteger(id))) throw new PreviewError(422, '无效的账号列表')
+        return { usage: Object.fromEntries(body.account_ids.map(id => [String(id), data.usageByAccount[String(id)] ?? null])), errors: {} }
+      }
+      if (method === 'POST' && path === '/api/v1/admin/accounts/today-stats/batch') {
+        if (!Array.isArray(body.account_ids) || body.account_ids.some(id => !Number.isSafeInteger(id))) throw new PreviewError(422, '无效的账号列表')
+        return { stats: Object.fromEntries(body.account_ids.map(id => [String(id), data.todayStatsByAccount[String(id)] ?? { requests: 0, tokens: 0, cost: 0 }])) }
+      }
+      if (method === 'POST' && path === '/api/v1/admin/user-attributes/batch') {
+        if (!Array.isArray(body.user_ids) || body.user_ids.some(id => !Number.isSafeInteger(id))) throw new PreviewError(422, '无效的用户列表')
+        return { attributes: Object.fromEntries(body.user_ids.map(id => [String(id), {}])) }
       }
       if (method === 'POST' && path === '/api/v1/usage/dashboard/api-keys-usage') {
         if (!Array.isArray(body.api_key_ids) || body.api_key_ids.length > 100 || body.api_key_ids.some(id => !Number.isSafeInteger(id))) throw new PreviewError(422, '无效的密钥列表')

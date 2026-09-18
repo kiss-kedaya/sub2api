@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createMockApi, PreviewError } from './mock-api'
-import type { ApiKey, PaginatedResponse, UsageLog } from '../src/types'
+import type { AccountListItem, AdminGroup, AdminUsageLog, AdminUser, ApiKey, DashboardStats, PaginatedResponse, UsageLog } from '../src/types'
 import type { UserDashboardStats } from '../src/api/usage'
 import type { MonitorMatrixResponse } from '../src/api/channelMonitorV2'
 import type { UserMonitorListResponse } from '../src/api/channelMonitor'
@@ -31,6 +31,68 @@ describe('local demo API contracts', () => {
     const filtered = api.handle('GET', '/api/v1/keys', query('group_id=1&status=active&search=000001')) as PaginatedResponse<ApiKey>
     expect(filtered.items.map(key => key.id)).toEqual([1])
     expect(() => api.handle('GET', '/api/v1/keys', query('page_size=999999'))).toThrow(PreviewError)
+  })
+
+  it('switches preview role explicitly while keeping user as the default', () => {
+    const api = createMockApi(date)
+    expect(api.user.role).toBe('user')
+    expect(api.handle('POST', '/api/v1/__preview/role', query(), { role: 'admin' })).toMatchObject({
+      role: 'admin', email: 'admin-preview@example.test', run_mode: 'standard',
+    })
+    expect(api.user.role).toBe('admin')
+    expect(api.handle('GET', '/api/v1/auth/me', query())).toMatchObject({ role: 'admin', email: 'admin-preview@example.test' })
+    expect(api.handle('POST', '/api/v1/__preview/role', query(), { role: 'user' })).toMatchObject({ role: 'user' })
+    expect(() => api.handle('POST', '/api/v1/__preview/role', query(), { role: 'owner' })).toThrow('admin 或 user')
+  })
+
+  it('serves typed admin dashboard trends and rankings from consistent demo usage', () => {
+    const api = createMockApi(date)
+    const snapshot = api.handle('GET', '/api/v1/admin/dashboard/snapshot-v2', query('start_date=2026-09-11&end_date=2026-09-17&granularity=day')) as {
+      stats: DashboardStats; trend: Array<{ requests: number }>; models: Array<{ model: string }>
+    }
+    expect(snapshot.stats.total_users).toBe(34)
+    expect(snapshot.stats.total_accounts).toBe(24)
+    expect(snapshot.trend.reduce((sum, item) => sum + item.requests, 0)).toBeGreaterThan(0)
+    expect(snapshot.models).toEqual(expect.arrayContaining([expect.objectContaining({ model: 'gpt-5' })]))
+    expect(api.handle('GET', '/api/v1/admin/dashboard/users-trend', query('limit=4'))).toMatchObject({ trend: expect.any(Array) })
+    expect(api.handle('GET', '/api/v1/admin/dashboard/users-ranking', query('limit=5'))).toMatchObject({ ranking: expect.any(Array) })
+  })
+
+  it('paginates and filters admin accounts, groups, users, keys and usage', () => {
+    const api = createMockApi(date)
+    const accounts = api.handle('GET', '/api/v1/admin/accounts', query('page=2&page_size=5&platform=openai&sort_by=id&sort_order=asc')) as PaginatedResponse<AccountListItem>
+    expect(accounts.page).toBe(2)
+    expect(accounts.items.every(item => item.platform === 'openai' && item.credentials_status?.has_api_key === false)).toBe(true)
+
+    const groups = api.handle('GET', '/api/v1/admin/groups', query('platform=gemini&page_size=10')) as PaginatedResponse<AdminGroup>
+    expect(groups.items).toHaveLength(1)
+    expect(groups.items[0]).toMatchObject({ platform: 'gemini', model_pricing: [], description: expect.stringContaining('演示数据') })
+
+    const users = api.handle('GET', '/api/v1/admin/users', query('role=user&status=active&page_size=10')) as PaginatedResponse<AdminUser>
+    expect(users.items.every(item => item.role === 'user' && item.status === 'active' && item.email.endsWith('.test'))).toBe(true)
+    expect(api.handle('POST', '/api/v1/admin/dashboard/users-usage', query(), { user_ids: users.items.map(item => item.id) })).toMatchObject({ stats: expect.any(Object) })
+
+    const keys = api.handle('GET', '/api/v1/admin/keys', query(`user_id=${users.items[0].id}&page_size=100`)) as PaginatedResponse<ApiKey>
+    expect(keys.items.every(item => item.user_id === users.items[0].id && item.key.includes('not-valid'))).toBe(true)
+
+    const usage = api.handle('GET', '/api/v1/admin/usage', query('model=claude&page=1&page_size=8')) as PaginatedResponse<AdminUsageLog>
+    expect(usage.items).toHaveLength(8)
+    expect(usage.items.every(item => item.model.includes('claude') && item.account?.name.includes('演示账号'))).toBe(true)
+    expect(api.handle('GET', '/api/v1/admin/usage/stats', query('model=claude'))).toMatchObject({ total_requests: usage.total, total_account_cost: expect.any(Number) })
+  })
+
+  it('supports admin modal reads but rejects every admin write', () => {
+    const api = createMockApi(date)
+    expect(api.handle('GET', '/api/v1/admin/users/910002', query())).toMatchObject({ id: 910002, notes: expect.stringContaining('本地预览') })
+    expect(api.handle('GET', '/api/v1/admin/users/910002/api-keys', query())).toMatchObject({ items: expect.any(Array) })
+    expect(api.handle('GET', '/api/v1/admin/accounts/920001', query())).toMatchObject({ id: 920001, groups: expect.any(Array) })
+    for (const [method, path] of [
+      ['POST', '/api/v1/admin/users/910002/balance'],
+      ['DELETE', '/api/v1/admin/users/910002'],
+      ['PUT', '/api/v1/admin/groups/1'],
+      ['POST', '/api/v1/admin/accounts/batch-delete'],
+      ['POST', '/api/v1/admin/payment/orders/1/refund'],
+    ]) expect(() => api.handle(method, path, query(), {})).toThrow('演示不支持')
   })
 
   it('keeps CRUD across reads, uses monotonic IDs and resets on a new process', () => {
