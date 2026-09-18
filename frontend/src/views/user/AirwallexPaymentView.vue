@@ -1,6 +1,10 @@
 <template>
   <AppLayout>
-    <div class="mx-auto max-w-lg space-y-6 py-8">
+    <div class="signal-provider-payment mx-auto max-w-lg space-y-6 py-8">
+      <header class="signal-account-heading">
+        <span class="signal-account-index">AIRWALLEX</span>
+        <h1>{{ t('nav.buySubscription') }}</h1>
+      </header>
       <div v-if="loading" class="flex items-center justify-center py-20">
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-emerald-500 border-t-transparent"></div>
       </div>
@@ -9,7 +13,7 @@
         <div class="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
           <Icon name="exclamationCircle" size="xl" class="text-red-500" />
         </div>
-        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('payment.airwallexLoadFailed') }}</h3>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('payment.airwallexLoadFailed') }}</h2>
         <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ errorMessage }}</p>
         <button class="btn btn-primary mt-6" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
       </div>
