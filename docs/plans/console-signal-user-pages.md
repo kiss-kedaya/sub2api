@@ -24,7 +24,7 @@ The user reported that channel status and recharge still use the old design afte
 - [x] Verify existing critical regression suites and exact production build.
 - [x] Inspect desktop/mobile screenshots, both themes, empty/loading/error states and key actions.
 - [x] Leave the revised design running on 4317 for user review. Do not publish this rejected/intermediate direction as an approved release.
-- [ ] After design acceptance, publish an immutable release and perform the established 1%-to-full guarded rollout.
+- [x] After explicit release authorization, publish v0.1.330 and complete the established 1%-to-full guarded rollout on both hosts. See `docs/release-audit-0.1.330.md` for CI, artifact, deployment evidence and residual issues.
 
 ## Reference Evidence
 
