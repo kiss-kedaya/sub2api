@@ -1,0 +1,581 @@
+.console-signal .signal-channel-page {
+  --channel-bg: #f5f6f7;
+  --channel-surface: #ffffff;
+  --channel-surface-muted: #edf1ef;
+  --channel-line: #dfe3e5;
+  --channel-line-strong: #aab5b0;
+  --channel-text: #192322;
+  --channel-muted: #62706e;
+  --channel-accent: #087f6a;
+  --channel-accent-soft: #e5f3ee;
+  --channel-amber: #a86610;
+  min-width: 0;
+  color: var(--channel-text);
+  letter-spacing: 0;
+}
+
+.dark .console-signal .signal-channel-page {
+  --channel-bg: #111315;
+  --channel-surface: #191c1f;
+  --channel-surface-muted: #252c29;
+  --channel-line: #303538;
+  --channel-line-strong: #66716c;
+  --channel-text: #edf2ef;
+  --channel-muted: #a0aca6;
+  --channel-accent: #6ce4bd;
+  --channel-accent-soft: #203a30;
+  --channel-amber: #eeb766;
+}
+
+.console-signal .signal-channel-masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 0 18px;
+  border-bottom: 1px solid var(--channel-line);
+}
+
+.console-signal .signal-channel-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.console-signal .signal-channel-mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--channel-accent);
+  border: 1px solid var(--channel-line);
+  border-radius: 6px;
+  background: var(--channel-surface);
+  box-shadow: inset 0 0 12px color-mix(in srgb, var(--channel-accent) 8%, transparent);
+}
+
+.console-signal .signal-channel-heading {
+  min-width: 0;
+}
+
+.console-signal .signal-channel-heading h1 {
+  margin: 0;
+  color: var(--channel-text);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.console-signal .signal-channel-heading p {
+  margin: 4px 0 0;
+  color: var(--channel-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.console-signal .signal-channel-count {
+  min-width: 44px;
+  padding: 5px 9px;
+  color: var(--channel-accent);
+  border: 1px solid var(--channel-line);
+  border-radius: 4px;
+  background: var(--channel-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.console-signal .signal-channel-page :is(button, input, [role='tab']) {
+  letter-spacing: 0;
+}
+
+.console-signal .signal-channel-page :is(.btn, .btn-icon, .input, .select-trigger) {
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.console-signal .signal-channel-page :is(button, input, [tabindex='0']):focus-visible {
+  outline: 2px solid var(--channel-accent);
+  outline-offset: 2px;
+}
+
+.console-signal .signal-channel-controls {
+  margin: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--channel-line);
+}
+
+.console-signal .signal-channel-v1 .signal-channel-controls > div {
+  justify-content: flex-start;
+}
+
+.console-signal .signal-channel-v1 .signal-channel-controls [role='tablist'] {
+  border-color: var(--channel-line);
+  border-radius: 6px;
+  background: var(--channel-bg);
+}
+
+.console-signal .signal-channel-v1 .signal-channel-controls [role='tab'] {
+  border-radius: 4px;
+}
+
+.console-signal .signal-channel-v1 .signal-channel-controls [aria-selected='true'] {
+  color: var(--channel-text);
+  background: var(--channel-surface);
+  box-shadow: inset 0 -2px var(--channel-accent);
+}
+
+.console-signal .signal-channel-card-grid {
+  padding-top: 20px;
+}
+
+.console-signal .signal-channel-card-grid > .grid {
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--channel-line);
+  border-radius: 6px;
+  background: var(--channel-line);
+}
+
+.console-signal .signal-channel-card-grid button.group {
+  min-height: 268px;
+  padding: 18px;
+  border: 0;
+  border-radius: 0;
+  background: var(--channel-surface);
+  box-shadow: none;
+  backdrop-filter: none;
+  transition: none;
+}
+
+.console-signal .signal-channel-card-grid button.group:hover {
+  z-index: 1;
+  transform: none;
+  background: var(--channel-surface-muted);
+  box-shadow: inset 0 0 0 1px var(--channel-line-strong);
+}
+
+.console-signal .signal-channel-card-grid button.group > div:first-child > span:first-child {
+  border-radius: 5px;
+}
+
+.console-signal .signal-channel-card-grid button.group > div:first-child > span:last-child {
+  border-radius: 4px;
+}
+
+.console-signal .signal-channel-command {
+  border: 1px solid var(--channel-line) !important;
+  border-radius: 6px !important;
+  background: var(--channel-surface) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+.console-signal .signal-channel-command > header {
+  border-color: var(--channel-line) !important;
+}
+
+.console-signal .signal-channel-command .page-title > span:first-child {
+  border: 1px solid var(--channel-line);
+  border-radius: 5px;
+  color: var(--channel-accent);
+  background: var(--channel-accent-soft);
+}
+
+.console-signal .signal-channel-command .page-title {
+  color: var(--channel-text) !important;
+  font-weight: 700 !important;
+}
+
+.console-signal .signal-channel-command .monitor-toolbar,
+.console-signal .signal-channel-range {
+  border-top: 0;
+  background: var(--channel-bg);
+}
+
+.console-signal .signal-channel-command .tabs {
+  gap: 0;
+}
+
+.console-signal .signal-channel-command .tab {
+  min-height: 30px;
+  border-radius: 0;
+}
+
+.console-signal .signal-channel-command .tab-active {
+  color: var(--channel-accent);
+  box-shadow: inset 0 -2px var(--channel-accent);
+}
+
+.console-signal .signal-channel-metrics {
+  gap: 1px !important;
+  overflow: hidden;
+  border: 1px solid var(--channel-line);
+  border-radius: 6px;
+  background: var(--channel-line);
+}
+
+.console-signal .signal-channel-metrics .signal-metric-cell,
+.console-signal .signal-channel-metrics > div {
+  min-height: 92px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: var(--channel-surface) !important;
+  box-shadow: none !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+}
+
+.console-signal .signal-monitor-surface,
+.console-signal .signal-channel-ledger {
+  border: 1px solid var(--channel-line) !important;
+  border-radius: 6px !important;
+  background: var(--channel-surface) !important;
+  box-shadow: none !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+}
+
+.console-signal .signal-monitor-surface .matrix-scroll {
+  border: 1px solid var(--channel-line);
+  border-radius: 4px;
+  background: var(--channel-bg);
+}
+
+.console-signal .signal-channel-ledger > div:first-child {
+  border-color: var(--channel-line) !important;
+  background: var(--channel-bg);
+}
+
+.console-signal .signal-channel-ledger .table-container {
+  border-radius: 0;
+}
+
+.console-signal .signal-channel-ledger .monitor-table th {
+  color: var(--channel-muted);
+  border-color: var(--channel-line);
+  background: var(--channel-bg);
+}
+
+.console-signal .signal-channel-ledger .monitor-table td {
+  border-color: var(--channel-line);
+}
+
+.console-signal .signal-channel-ledger .monitor-table tbody tr:hover {
+  background: var(--channel-surface-muted);
+}
+
+.console-signal .signal-channel-v2 details,
+.console-signal .signal-channel-v2 [class*='rounded-2xl'] {
+  border-radius: 6px;
+}
+
+.console-signal .signal-channel-v3 .channel-status-board {
+  display: grid;
+  gap: 28px;
+}
+
+.console-signal .signal-platform-heading {
+  min-height: 30px;
+  margin-bottom: 0 !important;
+  padding: 0 10px !important;
+  color: var(--channel-text) !important;
+  border: 1px solid var(--channel-line);
+  border-bottom: 0;
+  background: var(--channel-bg);
+  font-size: 12px !important;
+  text-transform: uppercase;
+}
+
+.console-signal .signal-platform-heading > span {
+  margin-left: auto;
+  border-radius: 3px !important;
+  color: var(--channel-muted) !important;
+  background: var(--channel-surface) !important;
+}
+
+.console-signal .signal-channel-v3 section[data-layout='cluster'] > .grid,
+.console-signal .signal-channel-v3 [data-testid='channel-status-compact-platforms'] > .grid {
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--channel-line);
+  border-radius: 0 0 6px 6px;
+  background: var(--channel-line);
+}
+
+.console-signal .signal-channel-v3 [data-testid='channel-status-compact-platforms'] > .grid {
+  border-radius: 6px;
+}
+
+.console-signal .signal-channel-v3 [data-testid='channel-status-compact-platforms'] > .grid > div {
+  min-width: 0;
+  background: var(--channel-surface);
+}
+
+.console-signal .signal-channel-v3 [data-testid='channel-status-compact-platforms'] > .grid .signal-platform-heading {
+  border-inline: 0;
+  border-top: 0;
+}
+
+.console-signal .channel-signal-card {
+  min-height: 272px !important;
+  padding: 18px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: var(--channel-surface) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+.console-signal .channel-signal-card__header {
+  min-height: 42px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--channel-line);
+}
+
+.console-signal .channel-signal-card__provider {
+  border-radius: 5px !important;
+}
+
+.console-signal .channel-signal-card__name {
+  color: var(--channel-text) !important;
+  font-weight: 650;
+}
+
+.console-signal .channel-signal-card__meta > span,
+.console-signal .channel-signal-card__sample {
+  border-radius: 3px !important;
+}
+
+.console-signal .channel-signal-card__sample {
+  border: 1px solid var(--channel-line);
+  background: var(--channel-bg) !important;
+}
+
+.console-signal .channel-signal-card__metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--channel-line);
+  border-radius: 4px;
+  background: var(--channel-line);
+}
+
+.console-signal .channel-signal-card__metric {
+  min-width: 0;
+  padding: 10px;
+  border: 0;
+  border-radius: 0;
+  background: var(--channel-bg);
+}
+
+.console-signal .channel-signal-card__metric > div:last-child {
+  overflow-wrap: anywhere;
+}
+
+.console-signal .channel-signal-card__timeline {
+  border-color: var(--channel-line) !important;
+}
+
+.console-signal .channel-signal-timeline__legend,
+.console-signal .channel-signal-timeline__axis {
+  color: var(--channel-muted) !important;
+  letter-spacing: 0;
+}
+
+.console-signal .channel-signal-timeline .v3-timeline-bars {
+  gap: 3px;
+}
+
+.console-signal .channel-signal-timeline .v3-soft-glass-bar {
+  border-radius: 1px;
+}
+
+.console-signal .signal-channel-loading-grid {
+  gap: 1px !important;
+  overflow: hidden;
+  border: 1px solid var(--channel-line);
+  border-radius: 6px;
+  background: var(--channel-line);
+}
+
+.console-signal .signal-channel-loading-grid > div {
+  border-radius: 0;
+}
+
+.console-signal .signal-available-page .table-page-layout {
+  gap: 0;
+}
+
+.console-signal .signal-available-page .layout-section-fixed:nth-child(2) {
+  border-bottom: 1px solid var(--channel-line);
+}
+
+.console-signal .signal-channel-filterbar {
+  padding: 14px 0;
+}
+
+.console-signal .signal-channel-filterbar .input {
+  border-color: var(--channel-line-strong);
+  background: var(--channel-surface);
+  color: var(--channel-text);
+}
+
+.console-signal .signal-channel-filterbar .input:focus {
+  border-color: var(--channel-accent);
+  --tw-ring-color: var(--channel-accent);
+}
+
+.console-signal .signal-channel-filterbar .btn-secondary {
+  min-width: 38px;
+  border-color: var(--channel-line-strong);
+  background: var(--channel-surface);
+  color: var(--channel-text);
+}
+
+.console-signal .signal-available-page .layout-section-scrollable {
+  padding-top: 14px;
+}
+
+.console-signal .signal-available-page .table-scroll-container {
+  border-color: var(--channel-line) !important;
+  border-radius: 6px !important;
+  background: var(--channel-surface) !important;
+  box-shadow: none !important;
+}
+
+.console-signal .signal-channel-table table {
+  color: var(--channel-text);
+}
+
+.console-signal .signal-channel-table thead tr {
+  color: var(--channel-muted) !important;
+  border-color: var(--channel-line) !important;
+  background: var(--channel-bg) !important;
+}
+
+.console-signal .signal-channel-table tbody {
+  border-color: var(--channel-line) !important;
+}
+
+.console-signal .signal-channel-table tbody tr {
+  transition: none;
+}
+
+.console-signal .signal-channel-table tbody tr:hover {
+  background: var(--channel-surface-muted) !important;
+}
+
+.console-signal .signal-channel-table [data-testid='mobile-channels'] > section {
+  border-color: var(--channel-line);
+  background: var(--channel-surface);
+}
+
+@media (max-width: 639px) {
+  .console-signal .signal-channel-heading h1 {
+    font-size: 24px;
+  }
+
+  .console-signal .signal-channel-heading p {
+    font-size: 12px;
+  }
+
+  .console-signal .signal-channel-count {
+    align-self: flex-start;
+  }
+
+  .console-signal .signal-channel-v1 .signal-channel-controls > div {
+    justify-content: space-between;
+  }
+
+  .console-signal .signal-channel-v1 .signal-channel-controls [role='tablist'] {
+    order: -1;
+    width: 100%;
+  }
+
+  .console-signal .signal-channel-v1 .signal-channel-controls [role='tab'] {
+    flex: 1 1 0;
+  }
+
+  .console-signal .signal-channel-card-grid button.group,
+  .console-signal .channel-signal-card {
+    min-height: 0 !important;
+    padding: 14px !important;
+  }
+
+  .console-signal .signal-channel-command {
+    position: static !important;
+  }
+
+  .console-signal .signal-channel-command > header {
+    padding: 14px !important;
+  }
+
+  .console-signal .signal-channel-command .monitor-toolbar {
+    padding-inline: 10px !important;
+  }
+
+  .console-signal .signal-channel-metrics .signal-metric-cell,
+  .console-signal .signal-channel-metrics > div {
+    min-height: 86px !important;
+    padding: 12px !important;
+  }
+
+  .console-signal .signal-monitor-surface {
+    padding: 14px !important;
+  }
+
+  .console-signal .channel-signal-card__metric {
+    padding: 8px 6px;
+  }
+
+  .console-signal .channel-signal-card__metric > div:last-child {
+    font-size: 15px;
+  }
+
+  .console-signal .signal-available-page .table-page-layout {
+    height: auto;
+  }
+
+  .console-signal .signal-channel-filterbar {
+    position: relative;
+    padding-block: 12px;
+  }
+
+  .console-signal .signal-channel-filterbar > div:last-child {
+    position: absolute;
+    right: 0;
+    width: auto;
+  }
+
+  .console-signal .signal-channel-filterbar > div:first-child {
+    padding-right: 50px;
+  }
+}
+
+@media (max-width: 374px) {
+  .console-signal .signal-channel-masthead {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .console-signal .signal-channel-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .console-signal .signal-channel-heading h1 {
+    font-size: 21px;
+  }
+
+  .console-signal .signal-channel-count {
+    min-width: 36px;
+    padding-inline: 6px;
+  }
+
+  .console-signal .channel-signal-card__metric > div:first-child {
+    font-size: 9px;
+  }
+}

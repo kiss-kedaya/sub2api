@@ -1,6 +1,6 @@
 <template>
-  <div class="mt-4 border-t border-white/70 pt-3 dark:border-dark-700/60">
-    <div class="mb-2 flex justify-between text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+  <div class="channel-signal-timeline mt-4 border-t border-white/70 pt-3 dark:border-dark-700/60">
+    <div class="channel-signal-timeline__legend mb-2 flex justify-between text-[10px] font-semibold uppercase tracking-widest text-gray-400">
       <span>{{ t('monitorCommon.history60pts', { n: length }) }}</span>
       <span class="tabular-nums">{{ t('monitorCommon.nextUpdateIn', { n: countdownSeconds }) }}</span>
     </div>
@@ -48,7 +48,7 @@
       </div>
     </div>
 
-    <div class="mt-1 flex justify-between text-[9px] uppercase tracking-widest text-gray-400">
+    <div class="channel-signal-timeline__axis mt-1 flex justify-between text-[9px] uppercase tracking-widest text-gray-400">
       <span>{{ t('monitorCommon.past') }}</span>
       <span>{{ t('monitorCommon.now') }}</span>
     </div>
