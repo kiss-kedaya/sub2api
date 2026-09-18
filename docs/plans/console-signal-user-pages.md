@@ -20,7 +20,7 @@ The user reported that channel status and recharge still use the old design afte
 - [x] Create separate branches/worktrees; assign disjoint channel/payment/preview work to gpt-5.6-sol agents.
 - [x] Complete and integrate the initial user page layouts and shared-shell coverage.
 - [x] Complete revised visual direction and admin page integration.
-- [ ] Finish independent review of the integrated admin presentation and navigation changes.
+- [x] Finish independent review of the integrated admin presentation and navigation changes.
 - [x] Verify existing critical regression suites and exact production build.
 - [x] Inspect desktop/mobile screenshots, both themes, empty/loading/error states and key actions.
 - [ ] Leave the revised design running on 4317 for user review. Do not publish this rejected/intermediate direction as an approved release.
@@ -44,3 +44,4 @@ CI must run the actual production build, not only a partial typecheck. Check bot
 - Critical frontend suite: 24 files / 280 tests passed. Preview: 27 tests passed. Vue application/dev typechecks, targeted ESLint and production build passed. A release-asset scan found no preview identities, role switch API or fake keys. The build retains pre-existing large-chunk and mixed dynamic-import warnings.
 - Found during integration: Vite held stale transformed modules after file changes; restarting only the verified local preview process made the actual new CSS available. Missing admin shell mock endpoints and a large group selector page size caused local 404/400; added explicit mock contracts, keeping unknown requests denied. Account filter flex wrapping prevented overlap with its action group.
 - 329 remains deployed with its guard and retained fallback. No 330 tag, release or deployment was created for this new direction.
+- Final independent review used normalized AST comparisons: Accounts, Users, Usage and Dashboard business scripts are unchanged; all 32 Groups API/router/emit calls match their prior contracts. It found one simple-mode search visibility mismatch, corrected to hide user management and retain group management as the existing sidebar does. A focused regression test passes; navigation-search tests now total four.

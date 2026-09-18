@@ -56,7 +56,7 @@ const destinations = computed(() => {
     { path: '/admin/usage', label: t('admin.usage.title'), icon: 'chart' as const },
     { path: '/admin/settings', label: t('admin.settings.title'), icon: 'cog' as const },
   ]
-  return auth.isSimpleMode ? admin.filter(item => item.path !== '/admin/groups') : [...admin, ...personal]
+  return auth.isSimpleMode ? admin.filter(item => item.path !== '/admin/users') : [...admin, ...personal]
 })
 const results = computed(() => {
   const term = query.value.trim().toLocaleLowerCase()
