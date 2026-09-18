@@ -15,11 +15,12 @@
         </button>
 
         <nav v-if="isConsoleSignal" class="signal-breadcrumb" :aria-label="pageTitle">
-          <router-link to="/dashboard" class="signal-breadcrumb-home" :title="appStore.siteName">
+          <router-link :to="isAdminSignal ? '/admin/dashboard' : '/dashboard'" class="signal-breadcrumb-home" :title="appStore.siteName">
             {{ appStore.siteName }}
           </router-link>
           <Icon name="chevronRight" size="xs" aria-hidden="true" />
-          <span aria-current="page" :title="pageTitle">{{ pageTitle }}</span>
+          <h1 v-if="isAdminSignal" class="signal-admin-title" :title="pageTitle">{{ pageTitle }}</h1>
+          <span v-else aria-current="page" :title="pageTitle">{{ pageTitle }}</span>
         </nav>
         <div v-else class="hidden lg:block">
           <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -33,6 +34,7 @@
 
       <!-- Right: Announcements + Docs + Language + Subscriptions + Balance + User Dropdown -->
       <div class="header-actions flex min-w-0 items-center gap-1 sm:gap-3">
+        <ConsoleNavigationSearch v-if="isConsoleSignal" />
         <!-- Announcement Bell -->
         <AnnouncementBell v-if="user" />
 
@@ -276,10 +278,11 @@ import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { useConsoleSignal } from '@/composables/useConsoleSignal'
+import ConsoleNavigationSearch from './ConsoleNavigationSearch.vue'
 
 const router = useRouter()
 const route = useRoute()
-const { isConsoleSignal } = useConsoleSignal()
+const { isConsoleSignal, isAdminSignal } = useConsoleSignal()
 const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
