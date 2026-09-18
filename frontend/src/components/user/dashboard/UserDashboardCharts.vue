@@ -110,17 +110,17 @@ const doughnutOptions = computed(() => ({
 .signal-refresh:hover { color: var(--signal-accent, #087f68); }
 .signal-refresh:focus-visible { outline: 2px solid var(--signal-accent, #087f68); outline-offset: 3px; }
 .signal-refresh:disabled { opacity: .45; cursor: wait; }
-.signal-chart-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--signal-line, #dce2df); }
+.signal-chart-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; padding-bottom: 24px; }
 .signal-trend, .signal-distribution { min-width: 0; background: var(--signal-surface, #fff); }
 .signal-trend :deep(.card) { border: 0; border-radius: 0; box-shadow: none; background: transparent; padding: 16px; }
 .signal-trend :deep(h3), .signal-distribution h2 { margin: 0 0 18px; font-size: 14px; font-weight: 600; color: var(--signal-text, #202423); }
 .signal-trend :deep(.h-48) { height: 240px; }
 .signal-distribution { position: relative; padding: 16px; }
-.signal-distribution-body { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.signal-distribution-body { display: flex; align-items: center; gap: 24px; }
 .signal-doughnut { width: 120px; height: 120px; flex-shrink: 0; }
 .signal-chart-empty { display: grid; place-items: center; height: 100%; font-size: 12px; color: var(--signal-muted, #65716a); text-align: center; }
 .signal-chart-overlay { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; background: var(--signal-surface, #fff); opacity: .85; }
-.signal-model-table { width: 100%; max-height: 122px; overflow: auto; scrollbar-gutter: stable; }
+.signal-model-table { width: 100%; min-width: 0; max-height: 200px; overflow: auto; scrollbar-gutter: stable; }
 .signal-model-table:focus-visible { outline: 2px solid var(--signal-accent, #087f68); outline-offset: 2px; }
 .signal-model-table table { width: 100%; font-size: 11px; font-variant-numeric: tabular-nums; }
 .signal-model-table th { padding: 0 8px 8px; color: var(--signal-muted, #65716a); font-weight: 500; white-space: nowrap; text-align: right; }

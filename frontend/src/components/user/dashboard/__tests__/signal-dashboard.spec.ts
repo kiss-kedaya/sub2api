@@ -156,7 +156,7 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
   })
 
   it('preserves loading and empty states without showing fabricated records', async () => {
-    const wrapper = mount(Recent, { props: { data: [], loading: true } })
+    const wrapper = mount(Recent, { props: { data: [], loading: true }, global: { stubs: { RouterLink: true } } })
     expect(wrapper.findComponent({ name: 'LoadingSpinner' }).exists()).toBe(true)
     await wrapper.setProps({ loading: false })
     expect(wrapper.findComponent({ name: 'EmptyState' }).exists()).toBe(true)
@@ -169,7 +169,7 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
     expect(refreshBatchImageAccess).toHaveBeenCalledOnce()
     expect(wrapper.findAll('button')).toHaveLength(4)
     for (const button of wrapper.findAll('button')) await button.trigger('click')
-    expect(push.mock.calls.map(call => call[0])).toEqual(['/infinite-canvas', '/keys', '/usage', '/redeem'])
+    expect(push.mock.calls.map(call => call[0])).toEqual(['/keys', '/infinite-canvas', '/usage', '/redeem'])
     canUseBatchImage.value = true
     await flushPromises()
     await wrapper.findAll('button')[3].trigger('click')
@@ -192,6 +192,32 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
     expect(trend.props('animationDuration')).toBe(0)
     await wrapper.find('.signal-refresh').trigger('click')
     expect(wrapper.emitted('refresh')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('switches overview and platforms without refetching or duplicating account totals', async () => {
+    const wrapper = mount(Dashboard, { attachTo: document.body, global: { stubs: {
+      AppLayout: { template: '<main><slot /></main>' },
+      UserDashboardQuickActions: true, UserDashboardStats: true,
+      UserDashboardCharts: true, UserDashboardRecentUsage: true,
+    } } })
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'UserDashboardStats' }).props('section')).toBe('summary')
+    await wrapper.get('#dashboard-view-tab-platforms').trigger('click')
+    expect(wrapper.get('#dashboard-view-panel-overview').isVisible()).toBe(false)
+    expect(wrapper.get('#dashboard-view-panel-platforms').isVisible()).toBe(true)
+    await wrapper.get('#dashboard-view-tab-overview').trigger('click')
+    expect(wrapper.get('#dashboard-view-panel-overview').isVisible()).toBe(true)
+    expect(getDashboardStats).toHaveBeenCalledOnce()
+    expect(getDashboardTrend).toHaveBeenCalledOnce()
+    expect(getMyPlatformQuotas).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
+  it('renders an empty platform panel and keeps summary metrics out of platform mode', () => {
+    const wrapper = mount(Stats, { props: { stats: { ...stats, total_actual_cost: 0, today_actual_cost: 0, by_platform: [] }, balance: 0, isSimple: false, section: 'platforms' } })
+    expect(wrapper.findAll('.signal-metric')).toHaveLength(0)
+    expect(wrapper.text()).toContain('dashboard.platformBreakdownEmpty')
     wrapper.unmount()
   })
 

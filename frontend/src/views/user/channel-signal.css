@@ -310,7 +310,7 @@
   padding: 18px !important;
   border: 1px solid var(--channel-line) !important;
   border-radius: 8px !important;
-  background: var(--channel-surface) !important;
+  background: linear-gradient(165deg, var(--signal-raised), var(--channel-surface) 60%) !important;
   box-shadow: inset 0 1px 0 var(--signal-highlight), var(--signal-shadow) !important;
   backdrop-filter: none !important;
 }
@@ -318,7 +318,7 @@
 .console-signal .channel-signal-card__header {
   min-height: 42px;
   padding-bottom: 12px;
-  border-bottom: 1px solid var(--channel-line);
+  border-bottom: 1px solid var(--signal-divider);
 }
 
 .console-signal .channel-signal-card__provider {
@@ -358,6 +358,7 @@
 }
 
 .console-signal .channel-signal-card__metric > div:last-child {
+  font-variant-numeric: lining-nums tabular-nums;
   overflow-wrap: anywhere;
 }
 

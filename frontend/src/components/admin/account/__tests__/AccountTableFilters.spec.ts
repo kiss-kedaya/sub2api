@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 
 import Select from '@/components/common/Select.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import AccountTableFilters from '../AccountTableFilters.vue'
 
 vi.mock('vue-i18n', () => ({
@@ -31,6 +32,31 @@ const mountFilters = () => shallowMount(AccountTableFilters, {
 })
 
 describe('AccountTableFilters', () => {
+  it('leaves search reload to the parent model listener instead of refreshing twice', async () => {
+    const wrapper = mountFilters()
+    wrapper.getComponent(SearchInput).vm.$emit('update:modelValue', 'grok')
+    wrapper.getComponent(SearchInput).vm.$emit('search', 'grok')
+    await nextTick()
+    expect(wrapper.emitted('update:searchQuery')).toEqual([['grok']])
+    expect(wrapper.emitted('change')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('keeps focus on a remaining tag or the filter toggle after removing conditions', async () => {
+    const wrapper = shallowMount(AccountTableFilters, { attachTo: document.body, props: {
+      searchQuery: '', filters: filters(),
+      'onUpdate:filters': value => wrapper.setProps({ filters: value }),
+    } })
+    await wrapper.get('[data-filter-key="platform"]').trigger('click')
+    await nextTick()
+    expect(document.activeElement).toBe(wrapper.get('[data-filter-key="type"]').element)
+    await wrapper.get('[data-test="reset-account-filters"]').trigger('click')
+    await nextTick()
+    expect(wrapper.findAll('.account-filter-tag')).toHaveLength(0)
+    expect(document.activeElement).toBe(wrapper.get('.account-filter-toggle').element)
+    wrapper.unmount()
+  })
+
   it('collapses advanced filters on every viewport and exposes its state accessibly', async () => {
     const wrapper = mountFilters()
     const toggle = wrapper.get('.account-filter-toggle')
