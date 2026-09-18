@@ -35,7 +35,7 @@
 }
 
 .console-signal .signal-account-section,
-.console-signal .signal-profile > .card,
+.console-signal .signal-profile .card,
 .console-signal .signal-redeem > .card {
   min-width: 0;
   padding-block: 20px;
@@ -47,8 +47,44 @@
 }
 
 .console-signal .signal-profile > .card,
+.console-signal .signal-profile > .card > .px-6,
 .console-signal .signal-redeem > .card > .p-6 {
   padding-inline: 0;
+}
+
+.console-signal .signal-profile [data-testid='profile-overview-hero'] {
+  border-top: 0;
+  padding: 0;
+}
+
+.console-signal .signal-profile [data-testid='profile-overview-hero'] > div {
+  padding: 4px 0 0;
+}
+
+.console-signal .signal-profile .profile-identity-avatar {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--signal-line);
+  border-radius: 6px;
+  background: var(--signal-accent-soft);
+  color: var(--signal-accent);
+  box-shadow: none;
+}
+
+.console-signal .signal-profile .profile-identity-metrics {
+  gap: 1px;
+  border-block: 1px solid var(--signal-line);
+  background: var(--signal-line);
+}
+
+.console-signal .signal-profile .profile-identity-metrics > div {
+  border-radius: 0;
+  background: var(--signal-surface);
+  box-shadow: none;
+}
+
+.signal-account-page [class*='tracking-'] {
+  letter-spacing: 0;
 }
 
 .signal-account-support {
