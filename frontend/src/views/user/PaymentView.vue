@@ -12,18 +12,17 @@
           <div class="min-w-0">
             <p class="signal-payment-heading__index" aria-hidden="true">04 / BILLING</p>
             <h1>{{ t('nav.buySubscription') }}</h1>
-            <p>{{ t('purchase.description') }}</p>
           </div>
+          <RouterLink to="/orders" class="signal-payment-orders btn btn-secondary">
+            <Icon name="clock" size="sm" />{{ t('payment.orders.title') }}
+          </RouterLink>
         </header>
         <!-- Tab Switcher (hide during payment and subscription confirm) -->
-        <div v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" class="signal-payment-tabs" role="tablist">
-          <button v-for="tab in tabs" :key="tab.key"
-            class="signal-payment-tab"
-            :class="{ 'signal-payment-tab--active': activeTab === tab.key }"
-            role="tab"
-            :aria-selected="activeTab === tab.key"
-            @click="activeTab = tab.key">{{ tab.label }}</button>
-        </div>
+        <ConsoleTabs v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan"
+          id="payment-view" class="signal-payment-tabs" :label="t('payment.title')"
+          :model-value="activeTab" :items="tabs"
+          @update:model-value="activeTab = $event === 'rechargeCenter' ? 'rechargeCenter' : 'recharge'"
+        />
         <!-- Payment in progress (shared by recharge and subscription) -->
         <template v-if="paymentPhase === 'paying'">
           <PaymentStatusPanel
@@ -46,33 +45,26 @@
         <!-- Tab content (select phase) -->
         <template v-else>
           <!-- Top-up Tab -->
-          <template v-if="activeTab === 'recharge'">
-            <!-- Recharge Account Card -->
-            <div class="signal-account-strip">
-              <div class="min-w-0">
-                <p class="signal-kicker">{{ t('payment.rechargeAccount') }}</p>
-                <p class="signal-account-name">{{ user?.username || '' }}</p>
-              </div>
-              <div class="signal-balance-block">
-                <span>{{ t('payment.currentBalance') }}</span>
-                <strong>{{ user?.balance?.toFixed(2) || '0.00' }}</strong>
-              </div>
-            </div>
+          <section v-if="activeTab === 'recharge'" id="payment-view-panel-recharge"
+            class="signal-payment-flow" role="tabpanel" aria-labelledby="payment-view-tab-recharge" tabindex="0">
             <div v-if="enabledMethods.length === 0" class="signal-empty-state">
               <p class="text-gray-500 dark:text-gray-400">{{ t('payment.notAvailable') }}</p>
             </div>
             <div v-else class="signal-recharge-layout">
               <div class="signal-recharge-fields">
                 <section class="signal-payment-section">
+                  <h2 class="signal-payment-step"><span aria-hidden="true">01</span>{{ t('payment.amountLabel') }}</h2>
                   <AmountInput
                     v-model="amount"
                     :amounts="[10, 20, 50, 100, 200, 500, 1000, 2000, 5000]"
                     :min="globalMinAmount"
                     :max="globalMaxAmount"
+                    :currency="selectedCurrency"
                   />
                   <p v-if="amountError" class="signal-payment-warning">{{ amountError }}</p>
                 </section>
                 <section v-if="enabledMethods.length >= 1" class="signal-payment-section">
+                  <h2 class="signal-payment-step"><span aria-hidden="true">02</span>{{ t('payment.paymentMethod') }}</h2>
                   <PaymentMethodSelector
                     :methods="methodOptions"
                     :selected="selectedMethod"
@@ -81,11 +73,22 @@
                 </section>
               </div>
               <aside class="signal-checkout-summary">
+                <div class="signal-account-strip">
+                  <div class="min-w-0">
+                    <p class="signal-kicker">{{ t('payment.rechargeAccount') }}</p>
+                    <p class="signal-account-name">{{ user?.username || '' }}</p>
+                  </div>
+                  <div class="signal-balance-block">
+                    <span>{{ t('payment.currentBalance') }}</span>
+                    <strong>${{ user?.balance?.toFixed(2) || '0.00' }}</strong>
+                  </div>
+                </div>
                 <div class="signal-checkout-summary__header">
                   <span>{{ t('payment.actualPay') }}</span>
                   <strong>{{ formatSelectedPaymentAmount(totalAmount) }}</strong>
                 </div>
                 <div class="signal-checkout-summary__rows">
+                  <div v-if="selectedMethod"><span>{{ t('payment.paymentMethod') }}</span><strong>{{ selectedMethodLabel }}</strong></div>
                   <div>
                     <span>{{ t('payment.paymentAmount') }}</span>
                     <strong>{{ formatSelectedPaymentAmount(validAmount) }}</strong>
@@ -102,18 +105,22 @@
                 <p v-if="balanceRechargeMultiplier !== 1" class="signal-rate-note">
                   {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
                 </p>
+                <div class="signal-checkout-action">
+                <span class="signal-checkout-mobile-total"><small>{{ t('payment.actualPay') }}</small><strong>{{ formatSelectedPaymentAmount(totalAmount) }}</strong></span>
                 <button :class="['btn w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="!canSubmit || submitting" @click="handleSubmitRecharge">
                   <span v-if="submitting" class="flex items-center justify-center gap-2">
                     <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
                     {{ t('common.processing') }}
                   </span>
-                  <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(totalAmount) }}</span>
+                  <span v-else>{{ t('payment.createOrder') }} <span class="signal-checkout-button-amount">{{ formatSelectedPaymentAmount(totalAmount) }}</span></span>
                 </button>
+                </div>
               </aside>
             </div>
-          </template>
+          </section>
           <!-- Recharge Center Tab: reuse the configured custom payment center instead of subscriptions -->
-          <template v-else-if="activeTab === 'rechargeCenter'">
+          <section v-else-if="activeTab === 'rechargeCenter'" id="payment-view-panel-rechargeCenter"
+            role="tabpanel" :aria-labelledby="tabs.length > 1 ? 'payment-view-tab-rechargeCenter' : undefined" :aria-label="tabs.length <= 1 ? t('payment.rechargeCenterTitle') : undefined" tabindex="0">
             <div ref="rechargeCenterFrameRef" class="recharge-center-shell">
               <div class="recharge-center-toolbar">
                 <div>
@@ -154,7 +161,7 @@
                 {{ t('payment.rechargeCenterUnavailable') }}
               </div>
             </div>
-          </template>
+          </section>
           <!-- Legacy subscription flow kept for compatibility with existing order recovery links. -->
           <template v-else-if="activeTab === 'subscription'">
             <!-- Subscription confirm (inline, replaces plan list) -->
@@ -323,7 +330,7 @@ import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import '@/styles/announcement-markdown.css'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { usePaymentStore } from '@/stores/payment'
 import { useSubscriptionStore } from '@/stores/subscriptions'
@@ -335,6 +342,7 @@ import { hasPeakRate, formatPeakRateWindow, serverTimezoneLabel, type PeakRateFi
 import type { SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderType } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AmountInput from '@/components/payment/AmountInput.vue'
+import ConsoleTabs from '@/components/common/ConsoleTabs.vue'
 import PaymentMethodSelector from '@/components/payment/PaymentMethodSelector.vue'
 import { METHOD_ORDER, getPaymentPopupFeatures, isBuiltInAlipayMethod, isBuiltInWxpayMethod } from '@/components/payment/providerConfig'
 import {
@@ -393,6 +401,7 @@ const rechargeCenterFrameRef = ref<HTMLElement | null>(null)
 const isRechargeCenterFullscreen = ref(false)
 const amount = ref<number | null>(null)
 const selectedMethod = ref('')
+const selectedMethodLabel = computed(() => methodOptions.value.find(method => method.type === selectedMethod.value)?.display_name || t(`payment.methods.${selectedMethod.value}`, selectedMethod.value))
 const selectedPlan = ref<SubscriptionPlan | null>(null)
 const previewImage = ref('')
 
@@ -1349,42 +1358,12 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
-.signal-payment-tabs {
-  display: grid;
-  grid-auto-columns: minmax(0, 1fr);
-  grid-auto-flow: column;
-  gap: 2px;
-  padding: 3px;
-  overflow-x: auto;
-  border: 1px solid var(--payment-line);
-  border-radius: 6px;
-  background: var(--payment-bg);
-}
-
-.signal-payment-tab {
-  min-width: 120px;
-  min-height: 38px;
-  padding: 7px 12px;
-  border: 0;
-  border-radius: 4px;
-  color: var(--payment-muted);
-  background: transparent;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.35;
-  transition: color 120ms ease, background-color 120ms ease;
-}
-
-.signal-payment-tab:hover {
-  color: var(--payment-text);
-  background: color-mix(in srgb, var(--payment-surface) 60%, transparent);
-}
-
-.signal-payment-tab--active {
-  color: var(--payment-accent);
-  background: var(--payment-surface);
-  box-shadow: inset 0 -2px var(--payment-accent);
-}
+.signal-payment-orders { flex: 0 0 auto; margin-left: auto; gap: 8px; }
+.signal-payment-flow { padding-top: 14px; }
+.signal-payment-step { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; font-size: 15px; font-weight: 600; }
+.signal-payment-step > span { font-size: 11px; color: var(--payment-muted); font-variant-numeric: tabular-nums; }
+.signal-payment-section :deep(.payment-amount-input__entry > span:first-child),
+.signal-payment-section :deep(.payment-method-selector > label) { display: none; }
 
 .signal-account-strip {
   display: flex;
@@ -1392,10 +1371,8 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 20px;
   min-width: 0;
-  padding: 16px 18px;
-  border: 1px solid var(--payment-line);
-  border-radius: 8px;
-  background: var(--payment-surface);
+  padding: 18px;
+  border-bottom: 1px solid var(--payment-line);
 }
 
 .signal-account-name {
@@ -1422,25 +1399,24 @@ onUnmounted(() => {
 
 .signal-balance-block strong {
   color: var(--payment-accent);
-  font-size: 22px;
+  font-size: 16px;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
 
 .signal-recharge-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+  gap: 40px;
   align-items: start;
 }
 
 .signal-recharge-fields {
   display: grid;
-  gap: 14px;
+  gap: 24px;
   min-width: 0;
 }
 
-.signal-payment-section,
 .signal-checkout-summary,
 .signal-empty-state {
   border: 1px solid var(--payment-line);
@@ -1449,7 +1425,12 @@ onUnmounted(() => {
 }
 
 .signal-payment-section {
-  padding: 18px;
+  min-width: 0;
+}
+
+.signal-payment-section + .signal-payment-section {
+  padding-top: 24px;
+  border-top: 1px solid var(--payment-line);
 }
 
 .signal-empty-state {
@@ -1471,10 +1452,10 @@ onUnmounted(() => {
 
 .signal-checkout-summary__header {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 18px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 22px 18px;
   border-bottom: 1px solid var(--payment-line);
   background: var(--payment-bg);
 }
@@ -1487,7 +1468,10 @@ onUnmounted(() => {
 
 .signal-checkout-summary__header strong {
   color: var(--payment-accent);
-  font-size: 24px;
+  font-size: 30px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+  max-width: 100%;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -1521,10 +1505,8 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
-.signal-checkout-summary > .btn {
-  width: calc(100% - 36px);
-  margin: 0 18px 18px;
-}
+.signal-checkout-action { padding: 0 18px 18px; }
+.signal-checkout-mobile-total { display: none; }
 
 .recharge-center-shell {
   overflow: hidden;
@@ -1587,18 +1569,26 @@ onUnmounted(() => {
   border-width: 1px;
   border-radius: 6px;
   font-variant-numeric: tabular-nums;
+  font-size: 17px;
+  font-weight: 550;
 }
 
 .signal-payment :deep(.payment-method-selector__grid) {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
 .signal-payment :deep(.payment-method-selector__option) {
-  height: 58px;
+  min-height: 66px;
+  height: auto;
+  padding: 12px 46px 12px 16px;
   border-radius: 6px;
   box-shadow: none;
 }
+
+.signal-payment :deep(.payment-method-selector__option > span) { justify-content: flex-start; }
+.signal-payment :deep(.payment-method-selector__option::after) { content: ''; position: absolute; right: 18px; top: calc(50% - 7px); width: 14px; height: 14px; border: 1px solid var(--signal-control-line); border-radius: 50%; }
+.signal-payment :deep(.payment-method-selector__option[aria-pressed='true']::after) { border: 4px solid var(--payment-accent); background: var(--payment-surface); }
 
 .signal-payment :deep(.payment-method-selector__option[aria-pressed='true']) {
   border-color: var(--payment-accent);
@@ -1679,6 +1669,7 @@ onUnmounted(() => {
 
   .signal-payment-heading {
     padding-bottom: 14px;
+    flex-wrap: wrap;
   }
 
   .signal-payment-heading h1 {
@@ -1691,7 +1682,18 @@ onUnmounted(() => {
 
   .signal-checkout-summary {
     position: static;
+    overflow: visible;
   }
+
+  .signal-payment:has(.signal-checkout-action) { padding-bottom: 98px; }
+  .signal-payment :is(input, .payment-method-selector__option) { scroll-margin-bottom: 110px; }
+  .signal-payment-orders { font-size: 12px; }
+  .signal-checkout-action { position: fixed; bottom: 0; left: 0; right: 0; z-index: 25; display: flex; align-items: center; gap: 16px; padding: 14px 16px max(14px, env(safe-area-inset-bottom)); border-top: 1px solid var(--payment-line); background: var(--payment-surface); box-shadow: 0 -6px 24px #0000000a; }
+  .signal-checkout-action > .btn { flex: 1; min-width: 0; width: auto; font-size: 14px; }
+  .signal-checkout-mobile-total { display: grid; flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
+  .signal-checkout-mobile-total small { font-size: 11px; color: var(--payment-muted); }
+  .signal-checkout-mobile-total strong { font-size: 22px; overflow-wrap: anywhere; }
+  .signal-checkout-button-amount { display: none; }
 
   .recharge-center-toolbar {
     align-items: flex-start;
@@ -1717,12 +1719,7 @@ onUnmounted(() => {
     text-align: left;
   }
 
-  .signal-payment-section {
-    padding: 14px;
-  }
-
-  .signal-payment :deep(.payment-amount-input__grid),
-  .signal-payment :deep(.payment-method-selector__grid) {
+  .signal-payment :deep(.payment-amount-input__grid) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

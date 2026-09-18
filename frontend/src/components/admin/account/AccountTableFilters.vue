@@ -7,9 +7,9 @@
           :placeholder="t('admin.accounts.searchAccounts')"
           class="account-filter-search"
           @update:model-value="$emit('update:searchQuery', $event)"
-          @search="$emit('change')"
         />
         <button
+          ref="filterToggle"
           type="button"
           class="account-filter-toggle"
           :class="{ 'account-filter-toggle-active': filtersExpanded || activeFilterCount > 0 }"
@@ -73,13 +73,14 @@
 
     <div v-if="activeFilters.length" class="account-filter-summary" aria-live="polite">
       <span class="account-filter-summary-label">{{ t('common.filter') }}</span>
-      <div class="account-filter-tags">
+      <div ref="filterTags" class="account-filter-tags">
         <button
           v-for="filter in activeFilters"
           :key="filter.key"
           type="button"
           class="account-filter-tag"
           :data-filter-key="filter.key"
+          :title="`${filter.label}: ${filter.valueLabel}`"
           :aria-label="`${t('common.remove')} ${filter.label}: ${filter.valueLabel}`"
           @click="clearFilter(filter.key)"
         >
@@ -102,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
@@ -122,6 +123,8 @@ const props = defineProps<{
 const emit = defineEmits(['update:searchQuery', 'update:filters', 'change'])
 const { t } = useI18n()
 const filtersExpanded = ref(false)
+const filterToggle = ref<HTMLButtonElement | null>(null)
+const filterTags = ref<HTMLElement | null>(null)
 
 const pOpts = computed(() => [
   { value: '', label: t('admin.accounts.allPlatforms') },
@@ -185,8 +188,15 @@ const updatePrivacyMode = (value: string | number | boolean | null) => updateFil
 const updateGroup = (value: string | number | boolean | null) => updateFilter('group', value)
 
 const clearFilter = (key: FilterKey) => {
+  const index = activeFilters.value.findIndex(filter => filter.key === key)
   updateFilter(key, '')
   emit('change')
+  nextTick(() => {
+    const buttons = filterTags.value?.querySelectorAll<HTMLButtonElement>('button')
+    const next = buttons?.[Math.min(index, buttons.length - 1)]
+    const target = next ?? filterToggle.value
+    target?.focus()
+  })
 }
 
 const resetFilters = () => {
@@ -195,6 +205,7 @@ const resetFilters = () => {
     ...Object.fromEntries(FILTER_KEYS.map((key) => [key, '']))
   })
   emit('change')
+  nextTick(() => filterToggle.value?.focus())
 }
 </script>
 
@@ -307,6 +318,7 @@ const resetFilters = () => {
   display: inline-flex;
   min-height: 30px;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 5px;
   padding: 4px 7px;

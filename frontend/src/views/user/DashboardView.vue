@@ -9,13 +9,42 @@
             <span class="signal-page-label">{{ t('dashboard.title') }}</span>
           </div>
         </div>
+        <UserDashboardQuickActions />
       </header>
       <div v-if="loading" class="signal-loading"><LoadingSpinner /></div>
       <template v-else-if="stats">
-        <UserDashboardQuickActions />
-        <UserDashboardStats :stats="stats" :balance="user?.balance || 0" :is-simple="authStore.isSimpleMode" :platform-quotas="platformQuotas" />
-        <UserDashboardCharts v-model:startDate="startDate" v-model:endDate="endDate" v-model:granularity="granularity" :loading="loadingCharts" :trend="trendData" :models="modelStats" @dateRangeChange="loadCharts" @granularityChange="loadCharts" @refresh="refreshAll" />
-        <UserDashboardRecentUsage :data="recentUsage" :loading="loadingUsage" />
+        <UserDashboardStats section="summary" :stats="stats" :balance="user?.balance || 0" :is-simple="authStore.isSimpleMode" />
+        <ConsoleTabs
+          v-if="!authStore.isSimpleMode"
+          id="dashboard-view"
+          class="signal-dashboard-tabs"
+          :label="t('dashboard.title')"
+          :model-value="dashboardView"
+          :items="[{ key: 'overview', label: t('dashboard.overview') }, { key: 'platforms', label: t('dashboard.platformBreakdown') }]"
+          @update:model-value="dashboardView = $event === 'platforms' ? 'platforms' : 'overview'"
+        />
+        <section
+          v-show="dashboardView === 'overview' || authStore.isSimpleMode"
+          id="dashboard-view-panel-overview"
+          class="signal-dashboard-overview"
+          :role="authStore.isSimpleMode ? undefined : 'tabpanel'"
+          :aria-labelledby="authStore.isSimpleMode ? undefined : 'dashboard-view-tab-overview'"
+          :tabindex="authStore.isSimpleMode ? undefined : 0"
+        >
+          <UserDashboardCharts v-model:startDate="startDate" v-model:endDate="endDate" v-model:granularity="granularity" :loading="loadingCharts" :trend="trendData" :models="modelStats" @dateRangeChange="loadCharts" @granularityChange="loadCharts" @refresh="refreshAll" />
+          <UserDashboardRecentUsage :data="recentUsage" :loading="loadingUsage" />
+        </section>
+        <section
+          v-if="!authStore.isSimpleMode"
+          v-show="dashboardView === 'platforms'"
+          id="dashboard-view-panel-platforms"
+          class="signal-dashboard-platforms"
+          role="tabpanel"
+          aria-labelledby="dashboard-view-tab-platforms"
+          tabindex="0"
+        >
+          <UserDashboardStats section="platforms" :stats="stats" :balance="user?.balance || 0" :is-simple="false" :platform-quotas="platformQuotas" />
+        </section>
       </template>
       <div v-else class="signal-error" role="alert">
         <Icon name="exclamationCircle" size="md" />
@@ -37,12 +66,14 @@ import type { UsageLog, TrendDataPoint, ModelStat, PlatformQuotaItem } from '@/t
 import { useAppStore } from '@/stores/app'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import ConsoleTabs from '@/components/common/ConsoleTabs.vue'
 import { getMyPlatformQuotas } from '@/api/user'
 import { formatDateLocalInput } from '@/utils/format'
 
 const appStore = useAppStore()
 const { t } = useI18n()
 const authStore = useAuthStore(); const user = computed(() => authStore.user)
+const dashboardView = ref<'overview' | 'platforms'>('overview')
 const stats = ref<UserStatsType | null>(null); const loading = ref(false); const loadingUsage = ref(false); const loadingCharts = ref(false)
 const trendData = ref<TrendDataPoint[]>([]); const modelStats = ref<ModelStat[]>([]); const recentUsage = ref<UsageLog[]>([])
 const platformQuotas = ref<PlatformQuotaItem[] | null>(null)
