@@ -1,8 +1,8 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <TablePageLayout class="accounts-workspace">
       <template #filters>
-        <div class="flex flex-wrap-reverse items-start justify-between gap-3">
+        <div class="accounts-command-bar">
           <AccountTableFilters
             v-model:searchQuery="params.search"
             :filters="params"
@@ -20,12 +20,16 @@
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
                 <button
+                  type="button"
                   @click="
                     showAutoRefreshDropdown = !showAutoRefreshDropdown;
                     showAccountToolsDropdown = false
                   "
-                  class="btn btn-secondary px-2 md:px-3"
+                  class="btn btn-secondary accounts-compact-action"
                   :title="t('admin.accounts.autoRefresh')"
+                  :aria-label="t('admin.accounts.autoRefresh')"
+                  aria-haspopup="menu"
+                  :aria-expanded="showAutoRefreshDropdown"
                 >
                   <Icon name="refresh" size="sm" :class="[autoRefreshEnabled ? 'animate-spin' : '']" />
                   <span class="hidden md:inline">
@@ -38,12 +42,16 @@
                 </button>
                 <div
                   v-if="showAutoRefreshDropdown"
-                  class="absolute right-0 z-50 mt-2 w-56 origin-top-right rounded-lg border border-gray-200 bg-white shadow-lg dark:border-dark-700 dark:bg-dark-800"
+                  class="account-popover absolute right-0 z-50 mt-2 w-56 origin-top-right"
+                  role="menu"
                 >
-                  <div class="p-2">
+                  <div class="account-popover-body">
                     <button
+                      type="button"
                       @click="setAutoRefreshEnabled(!autoRefreshEnabled)"
-                      class="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+                      class="account-popover-item"
+                      role="menuitemcheckbox"
+                      :aria-checked="autoRefreshEnabled"
                     >
                       <span>{{ t('admin.accounts.enableAutoRefresh') }}</span>
                       <Icon v-if="autoRefreshEnabled" name="check" size="sm" class="text-primary-500" />
@@ -52,8 +60,11 @@
                     <button
                       v-for="sec in autoRefreshIntervals"
                       :key="sec"
+                      type="button"
                       @click="setAutoRefreshInterval(sec)"
-                      class="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+                      class="account-popover-item"
+                      role="menuitemradio"
+                      :aria-checked="autoRefreshIntervalSeconds === sec"
                     >
                       <span>{{ autoRefreshIntervalLabel(sec) }}</span>
                       <Icon v-if="autoRefreshIntervalSeconds === sec" name="check" size="sm" class="text-primary-500" />
@@ -66,9 +77,12 @@
               <div class="relative" ref="accountToolsDropdownRef">
                 <button
                   ref="accountToolsTriggerRef"
+                  type="button"
                   @click="toggleAccountToolsDropdown"
-                  class="btn btn-secondary px-2 md:px-3"
+                  class="btn btn-secondary accounts-compact-action"
                   :title="t('admin.accounts.moreActions')"
+                  :aria-label="t('admin.accounts.moreActions')"
+                  aria-haspopup="menu"
                   :aria-expanded="showAccountToolsDropdown"
                 >
                   <Icon name="more" size="sm" class="md:mr-1.5" />
@@ -78,13 +92,14 @@
                 <Teleport to="body">
                   <div
                     v-if="showAccountToolsDropdown"
-                    class="fixed z-[9999] origin-top-right overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-dark-700 dark:bg-dark-800"
+                    class="account-popover fixed z-[9999] origin-top-right overflow-hidden"
                     :style="accountToolsDropdownStyle"
+                    role="menu"
                     @click.stop
                   >
-                    <div class="overflow-y-auto p-2" :style="{ maxHeight: `${accountToolsDropdownPosition.maxHeight}px` }">
-                      <div class="px-2 py-2">
-                        <div class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                    <div class="account-tools-scroll" :style="{ maxHeight: `${accountToolsDropdownPosition.maxHeight}px` }">
+                      <div class="account-menu-heading">
+                        <div>
                           {{ t('admin.accounts.dataActions') }}
                         </div>
                       </div>
@@ -115,9 +130,9 @@
                         </span>
                       </button>
 
-                      <div class="my-2 border-t border-gray-100 dark:border-dark-700"></div>
-                      <div class="px-2 py-2">
-                        <div class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                      <div class="account-menu-divider"></div>
+                      <div class="account-menu-heading">
+                        <div>
                           {{ t('admin.accounts.toolActions') }}
                         </div>
                       </div>
@@ -134,10 +149,10 @@
                         <span class="flex-1 text-left">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
                       </button>
 
-                      <div class="my-2 border-t border-gray-100 dark:border-dark-700"></div>
-                      <div class="px-2 py-2">
+                      <div class="account-menu-divider"></div>
+                      <div class="account-menu-heading">
                         <div class="flex items-center justify-between gap-3">
-                          <span class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                          <span>
                             {{ t('admin.accounts.viewColumns') }}
                           </span>
                           <Icon name="grid" size="sm" class="text-gray-400" />
@@ -147,8 +162,11 @@
                         <button
                           v-for="col in toggleableColumns"
                           :key="col.key"
+                          type="button"
                           @click="toggleColumn(col.key)"
-                          class="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+                          class="account-popover-item"
+                          role="menuitemcheckbox"
+                          :aria-checked="isColumnVisible(col.key)"
                         >
                           <span class="truncate">{{ col.label }}</span>
                           <Icon v-if="isColumnVisible(col.key)" name="check" size="sm" class="text-primary-500" />
@@ -163,7 +181,7 @@
         </div>
         <div
           v-if="hasPendingListSync"
-          class="mt-2 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200"
+          class="accounts-sync-notice"
         >
           <span>{{ t('admin.accounts.listPendingSyncHint') }}</span>
           <button
@@ -191,7 +209,7 @@
           @select-all-results="handleSelectAllResults"
           @toggle-schedulable="handleBulkToggleSchedulable"
         />
-        <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div ref="accountTableRef" class="accounts-table-stage">
         <DataTable
           ref="dataTableRef"
           :columns="cols"
@@ -2582,11 +2600,143 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.accounts-workspace {
+  gap: 12px;
+}
+
+.accounts-command-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding-block: 1px;
+}
+
+.accounts-compact-action {
+  min-width: 40px;
+  padding-inline: 10px;
+}
+
+.accounts-table-stage {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.accounts-sync-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--signal-amber) 42%, var(--signal-line));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--signal-amber) 9%, var(--signal-surface));
+  color: var(--signal-amber);
+  font-size: 13px;
+}
+
+.account-popover {
+  border: 1px solid var(--signal-line);
+  border-radius: 8px;
+  background: var(--signal-surface);
+  color: var(--signal-text);
+  box-shadow: var(--signal-shadow), inset 0 1px 0 color-mix(in srgb, var(--signal-text) 7%, transparent);
+}
+
+.account-popover-body,
+.account-tools-scroll {
+  padding: 6px;
+}
+
+.account-tools-scroll {
+  overflow-y: auto;
+}
+
+.account-popover-item,
 .account-tools-menu-item {
-  @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700;
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  color: var(--signal-text);
+  font-size: 13px;
+  text-align: left;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+.account-popover-item:hover,
+.account-tools-menu-item:hover {
+  background: var(--signal-hover);
+  color: var(--signal-accent);
+}
+
+.account-menu-heading {
+  padding: 7px 9px 5px;
+  color: var(--signal-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.account-menu-divider {
+  height: 1px;
+  margin: 5px 8px;
+  background: var(--signal-line);
 }
 
 .account-tools-menu-icon {
-  @apply inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md;
+  display: flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+}
+
+@media (max-width: 1279px) {
+  .accounts-command-bar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .accounts-workspace {
+    gap: 10px;
+  }
+
+  .accounts-command-bar {
+    gap: 8px;
+  }
+
+  .accounts-compact-action {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding-inline: 0;
+  }
+
+  .accounts-sync-notice {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .account-popover {
+    max-width: calc(100dvw - 16px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-popover-item,
+  .account-tools-menu-item {
+    transition: none;
+  }
 }
 </style>
