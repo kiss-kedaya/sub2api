@@ -564,6 +564,7 @@ export function createMockApi(now = new Date()) {
           { rank: 2, display_label: '匿名演示用户', is_self: false, can_drilldown: false, metrics: { ...data.monitorSnapshot.metrics, request_count: 680, success_requests: 648, error_requests: 32 } },
         ] }
         if (path === '/api/v1/channels/available') return data.availableChannels
+        if (path === '/api/v1/model-plaza') return data.modelPlaza
         if (path === '/api/v1/payment/config') return data.paymentConfig
         if (path === '/api/v1/payment/plans') return data.paymentPlans
         if (path === '/api/v1/payment/checkout-info') return data.checkoutInfo

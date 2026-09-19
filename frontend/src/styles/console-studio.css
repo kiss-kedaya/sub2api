@@ -1,44 +1,44 @@
-/* Shared material and type, scoped to the signed-in console. */
+/* Shared system surfaces and type for the console and its floating controls. */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #fafafa;
+  --signal-bg: #f2f2f7;
   --signal-surface: #ffffff;
-  --signal-raised: #f5f5f6;
-  --signal-sidebar: #f3f3f4;
-  --signal-line: #e3e3e6;
-  --signal-text: #232326;
-  --signal-muted: #737379;
-  --signal-accent: #3764e8;
+  --signal-raised: #f5f5f8;
+  --signal-sidebar: #f2f2f7;
+  --signal-line: #dedee4;
+  --signal-text: #1c1c1e;
+  --signal-muted: #63636c;
+  --signal-accent: #0066d6;
   --signal-amber: #a66a19;
-  --signal-hover: #ececee;
-  --signal-accent-soft: #e9efff;
+  --signal-hover: #e9e9ef;
+  --signal-accent-soft: #e3efff;
   --signal-on-accent: #ffffff;
-  --signal-control-line: #bcc3ce;
+  --signal-control-line: #c7c7ce;
   --signal-highlight: #ffffff;
-  --signal-inset: #f4f4f5;
-  --signal-divider: #e9ebf0;
-  --signal-shadow: 0 2px 4px #19223005, 0 8px 20px #19223006;
-  --signal-popover-shadow: 0 4px 12px #1922300c, 0 24px 64px #1922301f;
-  font-family: 'Segoe UI Variable', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --signal-inset: #ededf2;
+  --signal-divider: #e8e8ed;
+  --signal-shadow: 0 1px 3px #1c1c1e08, 0 6px 16px #1c1c1e05;
+  --signal-popover-shadow: 0 3px 10px #1c1c1e0a, 0 20px 56px #1c1c1e24;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
 .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #0e0e0f;
-  --signal-surface: #19191b;
-  --signal-raised: #212123;
-  --signal-sidebar: #161617;
-  --signal-line: #2b2b2e;
-  --signal-text: #f0f0f1;
-  --signal-muted: #a1a1a7;
-  --signal-accent: #8bafff;
+  --signal-bg: #111113;
+  --signal-surface: #1c1c1e;
+  --signal-raised: #28282b;
+  --signal-sidebar: #171719;
+  --signal-line: #38383b;
+  --signal-text: #f2f2f7;
+  --signal-muted: #aeaeb2;
+  --signal-accent: #78b4ff;
   --signal-amber: #e3b770;
-  --signal-hover: #28282b;
-  --signal-accent-soft: #24304b;
-  --signal-on-accent: #101624;
-  --signal-control-line: #4b4b52;
+  --signal-hover: #303034;
+  --signal-accent-soft: #22364e;
+  --signal-on-accent: #10253d;
+  --signal-control-line: #545459;
   --signal-highlight: #ffffff0c;
-  --signal-inset: #121213;
-  --signal-divider: #27272a;
+  --signal-inset: #151517;
+  --signal-divider: #303034;
   --signal-shadow: 0 2px 4px #00000014, 0 8px 20px #0000000f;
   --signal-popover-shadow: 0 4px 12px #00000029, 0 24px 64px #00000066;
 }
@@ -77,9 +77,9 @@
 }
 
 .console-signal .signal-sidebar .sidebar-link-active {
-  background: var(--signal-hover);
+  background: var(--signal-accent-soft);
   border-color: transparent;
-  color: var(--signal-text);
+  color: var(--signal-accent);
   box-shadow: none;
 }
 
@@ -88,7 +88,7 @@
 }
 
 .console-signal .signal-sidebar .sidebar-link-active > svg {
-  color: var(--signal-text);
+  color: var(--signal-accent);
 }
 
 .console-signal .signal-sidebar .sidebar-link:hover {
@@ -97,7 +97,7 @@
 }
 
 .console-signal .signal-header {
-  background: var(--signal-bg);
+  background: var(--signal-surface);
   border-color: var(--signal-line);
 }
 
@@ -141,7 +141,7 @@
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.btn, .input, .select-trigger) {
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary {
@@ -465,4 +465,25 @@ body:has(.console-signal) > .select-dropdown-portal {
 @media (prefers-reduced-motion: reduce) {
   :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn:active:not(:disabled) { transform: none; }
   .console-signal .signal-dashboard .signal-actions button { transition: none; }
+}
+
+.console-signal.model-plaza-public {
+  background: var(--signal-bg);
+  color: var(--signal-text);
+}
+
+.console-signal .plaza-pricing-table :is(th, td) {
+  border-color: var(--signal-line);
+}
+
+.console-signal .plaza-pricing-table tbody tr:hover {
+  background: var(--signal-hover);
+}
+
+.console-signal .custom-page-layout > .card,
+.console-signal .canvas-page-layout > .card {
+  border: 1px solid var(--signal-line);
+  border-radius: 8px;
+  background: var(--signal-surface);
+  box-shadow: none;
 }

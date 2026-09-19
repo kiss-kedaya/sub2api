@@ -15,6 +15,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/user/__tests__/KeysView.spec.ts \
 	src/views/user/__tests__/UsageView.spec.ts \
 	src/components/layout/__tests__/ConsoleSignal.spec.ts \
+	src/components/modelPlaza/__tests__/PlazaFilterBar.spec.ts \
 	src/components/layout/__tests__/ConsoleNavigationSearch.spec.ts \
 	src/components/layout/__tests__/AppSidebar.spec.ts \
 	src/components/common/__tests__/ConsoleTabs.spec.ts \

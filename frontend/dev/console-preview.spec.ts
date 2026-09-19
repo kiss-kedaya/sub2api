@@ -120,6 +120,7 @@ describe('preview server isolation', () => {
       '/api/v1/channel-monitor-v2/snapshot?range=90m',
       '/api/v1/channel-monitor-v2/matrix?range=90m&group_by=platform_group',
       '/api/v1/channels/available',
+      '/api/v1/model-plaza',
       '/api/v1/payment/checkout-info',
       '/api/v1/payment/orders/my?page=1&page_size=20',
       '/api/v1/subscriptions',

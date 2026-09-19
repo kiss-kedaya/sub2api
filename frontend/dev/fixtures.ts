@@ -492,6 +492,69 @@ function createPageFixtures(now: Date, user: User, groups: Group[]) {
     },
   ]
 
+  const plazaTokenPricing = (inputPerMillion: number, outputPerMillion: number) => {
+    const input = inputPerMillion / 1_000_000
+    const output = outputPerMillion / 1_000_000
+    return {
+      billing_mode: 'token' as const,
+      input_price: input,
+      output_price: output,
+      cache_write_price: input * 1.25,
+      cache_write_1h_price: input * 2,
+      cache_read_price: input * 0.1,
+      max_reasoning_effort_multiplier: 1.5,
+      image_input_price: null,
+      image_output_price: null,
+      per_request_price: null,
+      intervals: [],
+    }
+  }
+  const plazaCatalog: Record<string, Array<{ name: string; input: number; output: number }>> = {
+    anthropic: [{ name: 'claude-sonnet-4-5', input: 3, output: 15 }],
+    openai: [{ name: 'gpt-5', input: 1.25, output: 10 }, { name: 'gpt-5-mini', input: 0.25, output: 2 }],
+    gemini: [{ name: 'gemini-2.5-pro', input: 1.25, output: 10 }],
+    grok: [{ name: 'grok-4', input: 3, output: 15 }],
+    deepseek: [{ name: 'deepseek-chat', input: 0.27, output: 1.1 }],
+    kimi: [{ name: 'kimi-k2', input: 0.6, output: 2.5 }],
+  }
+  const plazaRates = [1, 0.07, 1, 1, 0.5, 1]
+  const modelPlaza = {
+    description: `**${PREVIEW_LABEL}**：价格仅用于本地预览，不改线上计费。`,
+    groups: groups.map((group, index) => ({
+      id: group.id,
+      name: group.name,
+      description: group.description,
+      platform: group.platform,
+      subscription_type: group.subscription_type,
+      rate_multiplier: plazaRates[index] ?? 1,
+      user_rate_multiplier: index === 0 ? 0.8 : undefined,
+      peak_rate_enabled: index === 1,
+      peak_start: index === 1 ? '14:00' : '',
+      peak_end: index === 1 ? '18:00' : '',
+      peak_rate_multiplier: index === 1 ? 1.5 : 1,
+      is_exclusive: index === 2,
+      image_rate_independent: index === 3,
+      image_rate_multiplier: index === 3 ? 2 : 1,
+      long_context_pricing_enabled: index !== 4,
+      models: (plazaCatalog[group.platform] ?? []).map(model => ({
+        name: model.name,
+        platform: group.platform,
+        pricing: plazaTokenPricing(model.input, model.output),
+        official_pricing: {
+          input_price: model.input / 1_000_000,
+          output_price: model.output / 1_000_000,
+          cache_write_price: model.input / 1_000_000 * 1.25,
+          cache_write_1h_price: model.input / 1_000_000 * 2,
+          cache_read_price: model.input / 1_000_000 * 0.1,
+          intervals: index === 4 ? [
+            { min_tokens: 0, max_tokens: 128000, tier_label: '128k', input_price: model.input / 1_000_000, output_price: model.output / 1_000_000, cache_write_price: null, cache_read_price: null, per_request_price: null },
+            { min_tokens: 128000, max_tokens: null, tier_label: '256k', input_price: model.input / 1_000_000 * 2, output_price: model.output / 1_000_000 * 2, cache_write_price: null, cache_read_price: null, per_request_price: null },
+          ] : undefined,
+        },
+      })),
+    })),
+  }
+
   const paymentPlans: SubscriptionPlan[] = [
     { id: 8101, group_id: groups[0].id, group_platform: groups[0].platform, group_name: groups[0].name, rate_multiplier: 1, daily_limit_usd: 12, weekly_limit_usd: 60, monthly_limit_usd: 180, name: 'Claude 月度演示套餐', description: '本地预览套餐，不会产生真实扣款。', price: 29, original_price: 39, currency: 'USD', validity_days: 30, validity_unit: 'day', features: ['每日 $12 演示额度', '到期自动失效', '仅本地预览'], for_sale: true, sort_order: 1 },
     { id: 8102, group_id: groups[1].id, group_platform: groups[1].platform, group_name: groups[1].name, rate_multiplier: 1, daily_limit_usd: 16, weekly_limit_usd: 80, monthly_limit_usd: 240, name: 'GPT 季度演示套餐', description: '包含额度与有效期展示。', price: 79, original_price: 99, currency: 'USD', validity_days: 90, validity_unit: 'day', features: ['每日 $16 演示额度', '90 天有效', '仅本地预览'], for_sale: true, sort_order: 2 },
@@ -594,6 +657,7 @@ function createPageFixtures(now: Date, user: User, groups: Group[]) {
     monitorViews,
     monitorDetails,
     availableChannels,
+    modelPlaza,
     paymentPlans,
     checkoutInfo,
     paymentConfig,
@@ -621,6 +685,6 @@ export const settings: PublicSettings = {
   balance_low_notify_threshold: 20, channel_monitor_enabled: true, channel_monitor_mode: 'v2',
   channel_monitor_default_interval_seconds: 60, channel_monitor_show_quota: true,
   available_channels_enabled: true,
-  model_plaza_enabled: false, model_plaza_require_auth: false, plugin_management_enabled: false,
+  model_plaza_enabled: true, model_plaza_require_auth: false, plugin_management_enabled: false,
   service_quota_enabled: false, affiliate_enabled: true, allow_user_view_error_requests: true,
 }
