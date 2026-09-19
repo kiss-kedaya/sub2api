@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,48 @@ func TestBatchImageQueue_DuplicateEnqueueReturnsAlreadyQueued(t *testing.T) {
 	err := queue.Enqueue(ctx, batchID)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, service.ErrBatchImageAlreadyQueued))
+}
+
+func TestBatchImageQueue_TwoInstancesEnqueueOnlyOnce(t *testing.T) {
+	ctx := context.Background()
+	first, mr := newBatchImageQueueTest(t)
+	secondClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = secondClient.Close() })
+	second := newBatchImageQueueWithOptions(secondClient, batchImageQueueOptions{
+		InflightTTL: time.Hour,
+		LockTTL:     time.Minute,
+	})
+	batchID := "imgbatch_two_instances"
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, queue := range []*batchImageQueue{first, second} {
+		wg.Add(1)
+		go func(queue *batchImageQueue) {
+			defer wg.Done()
+			<-start
+			errs <- queue.Enqueue(ctx, batchID)
+		}(queue)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	var successes, duplicates int
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, service.ErrBatchImageAlreadyQueued):
+			duplicates++
+		default:
+			require.NoError(t, err)
+		}
+	}
+	require.Equal(t, 1, successes)
+	require.Equal(t, 1, duplicates)
+	require.Equal(t, int64(1), first.rdb.LLen(ctx, first.readyKey).Val())
 }
 
 func TestBatchImageQueue_RequeueAfterMovesJobFromActiveToDelayed(t *testing.T) {
