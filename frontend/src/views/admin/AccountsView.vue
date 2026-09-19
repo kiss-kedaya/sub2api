@@ -2641,9 +2641,9 @@ onUnmounted(() => {
 .account-popover {
   border: 1px solid var(--signal-line);
   border-radius: 8px;
-  background: var(--signal-surface);
+  background: var(--signal-surface, #ffffff);
   color: var(--signal-text);
-  box-shadow: var(--signal-shadow), inset 0 1px 0 color-mix(in srgb, var(--signal-text) 7%, transparent);
+  box-shadow: var(--signal-popover-shadow, var(--signal-shadow)), inset 0 1px 0 color-mix(in srgb, var(--signal-text) 7%, transparent);
 }
 
 .account-popover-body,
