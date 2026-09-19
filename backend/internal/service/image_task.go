@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 const (
 	ImageTaskStatusProcessing = "processing"
+	ImageTaskStatusBilling    = "billing"
 	ImageTaskStatusCompleted  = "completed"
 	ImageTaskStatusFailed     = "failed"
 
@@ -32,16 +34,17 @@ var (
 // ImageTaskRecord is the private Redis representation of an asynchronous image
 // request. Ownership fields are intentionally omitted from the public view.
 type ImageTaskRecord struct {
-	ID          string          `json:"id"`
-	UserID      int64           `json:"user_id"`
-	APIKeyID    int64           `json:"api_key_id"`
-	Status      string          `json:"status"`
-	HTTPStatus  int             `json:"http_status,omitempty"`
-	Result      json.RawMessage `json:"result,omitempty"`
-	Error       json.RawMessage `json:"error,omitempty"`
-	CreatedAt   int64           `json:"created_at"`
-	CompletedAt *int64          `json:"completed_at,omitempty"`
-	ExpiresAt   int64           `json:"expires_at"`
+	ID            string          `json:"id"`
+	UserID        int64           `json:"user_id"`
+	APIKeyID      int64           `json:"api_key_id"`
+	Status        string          `json:"status"`
+	HTTPStatus    int             `json:"http_status,omitempty"`
+	Result        json.RawMessage `json:"result,omitempty"`
+	PendingResult json.RawMessage `json:"pending_result,omitempty"`
+	Error         json.RawMessage `json:"error,omitempty"`
+	CreatedAt     int64           `json:"created_at"`
+	CompletedAt   *int64          `json:"completed_at,omitempty"`
+	ExpiresAt     int64           `json:"expires_at"`
 }
 
 // ImageTask is the API-safe task representation returned to callers.
@@ -191,16 +194,102 @@ func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode i
 	if !json.Valid(result) {
 		return s.Fail(ctx, id, http.StatusBadGateway, imageTaskErrorJSON("api_error", "upstream returned a non-JSON image response"))
 	}
+	prepared, err := s.prepareResult(ctx, id, result)
+	if err != nil {
+		logger.L().Error("image_task.offload_failed", zap.String("task_id", id), zap.Error(err))
+		return s.Fail(ctx, id, http.StatusBadGateway, imageTaskErrorJSON("api_error", "failed to store generated image to object storage"))
+	}
+	return s.finish(ctx, id, ImageTaskStatusCompleted, statusCode, prepared, nil)
+}
+
+func (s *ImageTaskService) StageBilling(ctx context.Context, id string, statusCode int, result json.RawMessage) error {
+	if s == nil || s.store == nil {
+		return ErrImageTaskUnavailable
+	}
+	task, err := s.loadRecord(ctx, id)
+	if err != nil {
+		return err
+	}
+	if task.Status == ImageTaskStatusBilling || task.Status == ImageTaskStatusCompleted {
+		return nil
+	}
+	if task.Status != ImageTaskStatusProcessing {
+		return fmt.Errorf("image task %s cannot stage billing from status %s", id, task.Status)
+	}
+	prepared, err := s.prepareResult(ctx, id, result)
+	if err != nil {
+		logger.L().Error("image_task.billing_stage_prepare_failed", zap.String("task_id", id), zap.Error(err))
+		return err
+	}
+	task.Status = ImageTaskStatusBilling
+	task.HTTPStatus = statusCode
+	// Older readers publish Result regardless of status, so pending data must
+	// live in a separate private field throughout a rolling upgrade.
+	task.PendingResult = prepared
+	task.Result = nil
+	task.Error = nil
+	task.CompletedAt = nil
+	if err := s.store.Save(ctx, task, s.ttl); err != nil {
+		logger.L().Error("image_task.billing_stage_store_failed", zap.String("task_id", id), zap.Error(err))
+		return ErrImageTaskUnavailable.WithCause(err)
+	}
+	return nil
+}
+
+func (s *ImageTaskService) PublishBilled(ctx context.Context, id string) error {
+	if s == nil || s.store == nil {
+		return ErrImageTaskUnavailable
+	}
+	task, err := s.loadRecord(ctx, id)
+	if err != nil {
+		return err
+	}
+	if task.Status == ImageTaskStatusCompleted {
+		return nil
+	}
+	if task.Status != ImageTaskStatusBilling {
+		return fmt.Errorf("image task %s cannot publish from status %s", id, task.Status)
+	}
+	if !json.Valid(task.PendingResult) {
+		return errors.New("image task pending result is unavailable")
+	}
+	now := time.Now().UTC()
+	completedAt := now.Unix()
+	task.Status = ImageTaskStatusCompleted
+	task.Result = task.PendingResult
+	task.PendingResult = nil
+	task.CompletedAt = &completedAt
+	task.ExpiresAt = now.Add(s.ttl).Unix()
+	if err := s.store.Save(ctx, task, s.ttl); err != nil {
+		logger.L().Error("image_task.billing_publish_store_failed", zap.String("task_id", id), zap.Error(err))
+		return ErrImageTaskUnavailable.WithCause(err)
+	}
+	return nil
+}
+
+func (s *ImageTaskService) prepareResult(ctx context.Context, id string, result json.RawMessage) (json.RawMessage, error) {
+	if !json.Valid(result) {
+		return nil, errors.New("upstream returned a non-JSON image response")
+	}
 	if uploader, _ := s.current(); uploader != nil {
 		rewritten, err := uploader.Rewrite(ctx, id, result)
 		if err != nil {
-			// 转存失败不回退存 base64，避免大 blob 撑爆 Redis：直接把任务标记为失败。
-			logger.L().Error("image_task.offload_failed", zap.String("task_id", id), zap.Error(err))
-			return s.Fail(ctx, id, http.StatusBadGateway, imageTaskErrorJSON("api_error", "failed to store generated image to object storage"))
+			return nil, fmt.Errorf("store generated image in object storage: %w", err)
 		}
 		result = rewritten
 	}
-	return s.finish(ctx, id, ImageTaskStatusCompleted, statusCode, result, nil)
+	return result, nil
+}
+
+func (s *ImageTaskService) loadRecord(ctx context.Context, id string) (*ImageTaskRecord, error) {
+	task, err := s.store.Get(ctx, strings.TrimSpace(id))
+	if err != nil {
+		if errors.Is(err, ErrImageTaskNotFound) {
+			return nil, ErrImageTaskNotFound
+		}
+		return nil, ErrImageTaskUnavailable.WithCause(err)
+	}
+	return task, nil
 }
 
 func (s *ImageTaskService) Fail(ctx context.Context, id string, statusCode int, taskErr json.RawMessage) error {
@@ -226,6 +315,7 @@ func (s *ImageTaskService) finish(ctx context.Context, id, status string, status
 	task.Status = status
 	task.HTTPStatus = statusCode
 	task.Result = result
+	task.PendingResult = nil
 	task.Error = taskErr
 	task.CompletedAt = &completedAt
 	task.ExpiresAt = now.Add(s.ttl).Unix()
@@ -239,7 +329,7 @@ func imageTaskToPublic(task *ImageTaskRecord) *ImageTask {
 	if task == nil {
 		return nil
 	}
-	return &ImageTask{
+	public := &ImageTask{
 		ID:          task.ID,
 		TaskID:      task.ID,
 		Object:      "image.generation.task",
@@ -252,6 +342,12 @@ func imageTaskToPublic(task *ImageTaskRecord) *ImageTask {
 		CompletedAt: task.CompletedAt,
 		ExpiresAt:   task.ExpiresAt,
 	}
+	if task.Status == ImageTaskStatusBilling {
+		public.ImageURL = ""
+		public.Result = nil
+		public.Error = nil
+	}
+	return public
 }
 
 func firstImageTaskURL(result json.RawMessage) string {
