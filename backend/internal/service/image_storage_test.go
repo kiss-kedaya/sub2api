@@ -223,6 +223,49 @@ func TestImageTaskServiceCompleteOffloadsToStorage(t *testing.T) {
 	require.Len(t, storage.saved, 1)
 }
 
+func TestImageTaskServiceStageBillingOffloadsBeforePrivateCache(t *testing.T) {
+	store := &imageTaskMemoryStore{}
+	storage := &fakeImageStorage{}
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	svc := NewImageTaskServiceWithUploader(store, uploader, time.Hour, time.Minute)
+	owner := ImageTaskOwner{UserID: 1, APIKeyID: 2}
+	created, err := svc.Create(context.Background(), owner)
+	require.NoError(t, err)
+	b64 := base64.StdEncoding.EncodeToString(pngBytes)
+	result := json.RawMessage(`{"data":[{"b64_json":"` + b64 + `"}]}`)
+
+	require.NoError(t, svc.StageBilling(context.Background(), created.ID, http.StatusOK, result))
+
+	require.Equal(t, ImageTaskStatusBilling, store.task.Status)
+	require.Empty(t, store.task.Result)
+	require.NotContains(t, string(store.task.PendingResult), "b64_json")
+	require.Contains(t, string(store.task.PendingResult), "https://cdn.test/images/"+created.ID+"-0.png")
+	public, err := svc.Get(context.Background(), owner, created.ID)
+	require.NoError(t, err)
+	require.Empty(t, public.Result)
+	require.Empty(t, public.ImageURL)
+	require.Len(t, storage.saved, 1)
+}
+
+func TestImageTaskServiceStageBillingOffloadFailureKeepsProcessing(t *testing.T) {
+	store := &imageTaskMemoryStore{}
+	storage := &fakeImageStorage{err: errors.New("bucket unreachable")}
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	svc := NewImageTaskServiceWithUploader(store, uploader, time.Hour, time.Minute)
+	owner := ImageTaskOwner{UserID: 1, APIKeyID: 2}
+	created, err := svc.Create(context.Background(), owner)
+	require.NoError(t, err)
+	b64 := base64.StdEncoding.EncodeToString(pngBytes)
+
+	err = svc.StageBilling(context.Background(), created.ID, http.StatusOK,
+		json.RawMessage(`{"data":[{"b64_json":"`+b64+`"}]}`))
+
+	require.ErrorContains(t, err, "bucket unreachable")
+	require.Equal(t, ImageTaskStatusProcessing, store.task.Status)
+	require.Empty(t, store.task.Result, "failed offload must not cache the source result")
+	require.Empty(t, storage.saved)
+}
+
 func TestImageTaskServiceCompleteOffloadFailureMarksFailed(t *testing.T) {
 	store := &imageTaskMemoryStore{}
 	storage := &fakeImageStorage{err: errors.New("bucket unreachable")}
