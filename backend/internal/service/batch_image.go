@@ -333,6 +333,8 @@ type BatchImageRepository interface {
 	ListBatchImageJobsDueForInputCleanup(ctx context.Context, cutoff time.Time, limit int) ([]*BatchImageJob, error)
 	ListBatchImageJobsDueForOutputCleanup(ctx context.Context, now time.Time, limit int) ([]*BatchImageJob, error)
 	ListStaleUnsubmittedBatchImageJobs(ctx context.Context, cutoff time.Time, limit int) ([]*BatchImageJob, error)
+	ListBatchImageJobsPendingQueueRecovery(ctx context.Context, limit int) ([]string, error)
+	MarkBatchImageJobQueueRecovered(ctx context.Context, batchID string) error
 	MarkBatchImageInputDeleted(ctx context.Context, batchID string, deletedAt time.Time) error
 	MarkBatchImageOutputDeleted(ctx context.Context, batchID string, deletedAt time.Time) error
 	MarkBatchImageDownloaded(ctx context.Context, batchID string, downloadedAt time.Time) error
