@@ -2558,6 +2558,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// turn 级定价：首轮回退到 TurnStarted 的所属 turn 时刻；后续 turn 由
 		// BeforeTurn 重新冻结 pricingAt 并按最新门复核当前账号。
 		var turnPricing openAIWSTurnPricing
+		turnBilling := newOpenAIWSTurnBillingGuard(openAIWSTurnSettlementTimeout)
 		hooks := &service.OpenAIWSIngressHooks{
 			ClientLifecycleContext:      clientLifecycleCtx,
 			InitialRequestModel:         reqModel,
@@ -2633,66 +2634,91 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return mapping.MappedModel, nil
 			},
 			BeforeTurn: func(turn int) error {
-				if turn > 1 {
-					ctx = h.gatewayService.RefreshSchedulerRequestContext(ctx)
-					c.Request = c.Request.WithContext(ctx)
-					freshAccount, freshOK := h.gatewayService.RefreshSchedulerAccountFreshness(ctx, account, "")
-					if !freshOK {
-						return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer schedulable, please reconnect", nil)
+				return turnBilling.BeforeTurn(ctx, turn, func(turnCtx context.Context) error {
+					if turn > 1 {
+						ctx = h.gatewayService.RefreshSchedulerRequestContext(ctx)
+						c.Request = c.Request.WithContext(ctx)
+						if err := h.billingCacheService.CheckBillingEligibility(
+							turnCtx,
+							apiKey.User,
+							apiKey,
+							apiKey.Group,
+							subscription,
+							service.QuotaPlatform(turnCtx, apiKey),
+						); err != nil {
+							reqLog.Info("openai.websocket_turn_billing_eligibility_check_failed",
+								zap.Int("turn", turn),
+								zap.Error(err),
+							)
+							return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
+						}
+						freshAccount, freshOK := h.gatewayService.RefreshSchedulerAccountFreshness(ctx, account, "")
+						if !freshOK {
+							return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer schedulable, please reconnect", nil)
+						}
+						account = freshAccount
+						selection.Account = freshAccount
+						if freshAccount.Concurrency > 0 {
+							accountMaxConcurrency = freshAccount.Concurrency
+						}
 					}
-					account = freshAccount
-					selection.Account = freshAccount
-					if freshAccount.Concurrency > 0 {
-						accountMaxConcurrency = freshAccount.Concurrency
+					// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
+					if cyberBlockedThisConn {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
 					}
-				}
-				// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。
-				if cyberBlockedThisConn {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
-				}
-				// 长连接跨峰谷/倍率刷新防护：每个 turn 按当前时刻重装门并复核
-				// 当前账号，越线即要求客户端重连重选（连接绑定单一上游账号，
-				// 无法中途换号）。本 turn 的准入与计费共用同一 pricingAt。
-				turnCtx, turnAt := h.gatewayService.WithOpenAITurnPricingContext(ctx, apiKey.GroupID)
-				if _, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(turnCtx, account); vetoed {
-					reqLog.Info("openai.websocket_turn_profit_vetoed",
-						zap.Int("turn", turn),
-						zap.Int64("account_id", account.ID),
-						zap.String("reason", reason))
-					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer eligible for this connection, please reconnect", nil)
-				}
-				turnPricing.freeze(turnAt)
-				if turn == 1 {
+					// 长连接跨峰谷/倍率刷新防护：每个 turn 按当前时刻重装门并复核
+					// 当前账号，越线即要求客户端重连重选（连接绑定单一上游账号，
+					// 无法中途换号）。本 turn 的准入与计费共用同一 pricingAt。
+					turnCtx, turnAt := h.gatewayService.WithOpenAITurnPricingContext(ctx, apiKey.GroupID)
+					if _, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(turnCtx, account); vetoed {
+						reqLog.Info("openai.websocket_turn_profit_vetoed",
+							zap.Int("turn", turn),
+							zap.Int64("account_id", account.ID),
+							zap.String("reason", reason))
+						return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer eligible for this connection, please reconnect", nil)
+					}
+					turnPricing.freeze(turnAt)
+					if turn == 1 {
+						return nil
+					}
+					// 防御式清理：避免异常路径下旧槽位覆盖导致泄漏。
+					releaseTurnSlots()
+					// 非首轮 turn 需要重新抢占并发槽位，避免长连接空闲占槽。
+					userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKeyFromGin(c, subject.UserID, subject.Concurrency, apiKey.ID)
+					if err != nil {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", err)
+					}
+					if !userAcquired {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)
+					}
+					accountReleaseFunc, accountAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
+					if err != nil {
+						if userReleaseFunc != nil {
+							userReleaseFunc()
+						}
+						return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire account concurrency slot", err)
+					}
+					if !accountAcquired {
+						if userReleaseFunc != nil {
+							userReleaseFunc()
+						}
+						return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)
+					}
+					currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
+					currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
 					return nil
-				}
-				// 防御式清理：避免异常路径下旧槽位覆盖导致泄漏。
-				releaseTurnSlots()
-				// 非首轮 turn 需要重新抢占并发槽位，避免长连接空闲占槽。
-				userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKeyFromGin(c, subject.UserID, subject.Concurrency, apiKey.ID)
-				if err != nil {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", err)
-				}
-				if !userAcquired {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)
-				}
-				accountReleaseFunc, accountAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
-				if err != nil {
-					if userReleaseFunc != nil {
-						userReleaseFunc()
-					}
-					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire account concurrency slot", err)
-				}
-				if !accountAcquired {
-					if userReleaseFunc != nil {
-						userReleaseFunc()
-					}
-					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is busy, please retry later", nil)
-				}
-				currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
-				currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
-				return nil
+				})
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
+				var settleTurn func(context.Context) error
+				defer func() {
+					if err := turnBilling.FinishTurn(ctx, turn, settleTurn); err != nil {
+						reqLog.Error("openai.websocket_turn_billing_failed",
+							zap.Int("turn", turn),
+							zap.Error(err),
+						)
+					}
+				}()
 				turnStart := getTurnStart(turn)
 				cyberBlockBody := takeCyberTurnBody(turn)
 				// 每次 attempt 都清 cyber mark；failover 链结束前保留 recorded guard，
@@ -2765,32 +2791,39 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				sessionID := service.ExtractClientSessionID(c)
 				turnRecordPricingAt := turnPricing.currentOr(turnStart)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
-					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
-						Result:             result,
-						APIKey:             apiKey,
-						User:               apiKey.User,
-						Account:            account,
-						Subscription:       subscription,
-						InboundEndpoint:    inboundEndpoint,
-						UpstreamEndpoint:   upstreamEndpoint,
-						UserAgent:          userAgent,
-						IPAddress:          clientIP,
-						RequestPayloadHash: requestPayloadHash,
-						APIKeyService:      h.apiKeyService,
-						QuotaPlatform:      quotaPlatform,
-						SessionID:          sessionID,
-						ChannelUsageFields: turnUsageFields,
-						PricingAt:          turnRecordPricingAt,
-						CyberBlocked:       cyberBlocked,
-					}); err != nil {
-						reqLog.Error("openai.websocket_record_usage_failed",
-							zap.Int64("account_id", account.ID),
-							zap.String("request_id", result.RequestID),
-							zap.Error(err),
-						)
+				settleTurn = func(settleCtx context.Context) error {
+					var billingErr error
+					task := service.UsageRecordTask(func(taskCtx context.Context) {
+						billingErr = h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
+							Result:             result,
+							APIKey:             apiKey,
+							User:               apiKey.User,
+							Account:            account,
+							Subscription:       subscription,
+							InboundEndpoint:    inboundEndpoint,
+							UpstreamEndpoint:   upstreamEndpoint,
+							UserAgent:          userAgent,
+							IPAddress:          clientIP,
+							RequestPayloadHash: requestPayloadHash,
+							APIKeyService:      h.apiKeyService,
+							QuotaPlatform:      quotaPlatform,
+							SessionID:          sessionID,
+							ChannelUsageFields: turnUsageFields,
+							PricingAt:          turnRecordPricingAt,
+							CyberBlocked:       cyberBlocked,
+						})
+						if billingErr == nil && subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType() {
+							billingErr = h.billingCacheService.InvalidateSubscription(taskCtx, apiKey.User.ID, apiKey.Group.ID)
+						}
+					})
+					var transferred bool
+					task, transferred = transferBalancePreauthorizationUsageTask(ctx, task)
+					if !transferred {
+						return errDuplicateBalancePreauthorizationUsageTask
 					}
-				})
+					wrapUsageRecordTaskContext(ctx, task)(settleCtx)
+					return billingErr
+				}
 			},
 		}
 

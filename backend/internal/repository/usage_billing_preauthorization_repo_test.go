@@ -243,6 +243,48 @@ func TestBalancePreauthorizationTransitionRejectsWrongState(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestAdvanceBalancePreauthorizationHoldIsAtomicMonotonicAndAuthorizedOnly(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectExec(`(?s)UPDATE billing_balance_settlements.*hold_usd = GREATEST\(hold_usd, \$3\).*status = \$4`).
+		WithArgs("request", int64(7), 0.50, service.BalanceSettlementAuthorized).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := &usageBillingRepository{db: db}
+	require.NoError(t, repo.AdvanceBalancePreauthorizationHold(context.Background(), " request ", 7, 0.500000001))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAdvanceBalancePreauthorizationHoldRejectsTerminalRace(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectExec(`(?s)UPDATE billing_balance_settlements.*status = \$4`).
+		WithArgs("request", int64(7), 0.50, service.BalanceSettlementAuthorized).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	repo := &usageBillingRepository{db: db}
+	err = repo.AdvanceBalancePreauthorizationHold(context.Background(), "request", 7, 0.50)
+	require.ErrorIs(t, err, service.ErrUsageBillingRequestConflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAdvanceBalancePreauthorizationHoldValidatesAmount(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := &usageBillingRepository{db: db}
+
+	for _, amount := range []float64{-1, math.NaN(), math.Inf(1)} {
+		err := repo.AdvanceBalancePreauthorizationHold(context.Background(), "request", 7, amount)
+		require.ErrorIs(t, err, service.ErrInvalidBillingPreauthorizationEstimate)
+	}
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestBeginBalancePreauthorizationFinalizationValidatesAmountAndFingerprint(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

@@ -389,6 +389,35 @@ type fakeBatchImageRepository struct {
 	replaceCalls  int
 }
 
+func (r *fakeBatchImageRepository) ListBatchImageJobsPendingQueueRecovery(_ context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	batchIDs := make([]string, 0, limit)
+	for _, job := range r.jobs {
+		if len(batchIDs) >= limit {
+			break
+		}
+		if job.Status != BatchImageJobStatusSubmitted || batchImageDerefString(job.ProviderJobName) == "" || batchImageDerefString(job.LastErrorCode) != "QUEUE_FAILED" {
+			continue
+		}
+		batchIDs = append(batchIDs, job.BatchID)
+	}
+	return batchIDs, nil
+}
+
+func (r *fakeBatchImageRepository) MarkBatchImageJobQueueRecovered(_ context.Context, batchID string) error {
+	job, ok := r.jobs[batchID]
+	if !ok {
+		return ErrBatchImageJobNotFound
+	}
+	if batchImageDerefString(job.ProviderJobName) != "" && batchImageDerefString(job.LastErrorCode) == "QUEUE_FAILED" {
+		job.LastErrorCode = nil
+		job.LastErrorMessage = nil
+	}
+	return nil
+}
+
 func newFakeBatchImageRepository() *fakeBatchImageRepository {
 	return &fakeBatchImageRepository{
 		jobs:        make(map[string]*BatchImageJob),

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 const (
@@ -12,6 +14,9 @@ const (
 	LiveControllerObserver = "observer"
 	LiveControllerProxy    = "proxy"
 	LiveControllerClosed   = "closed"
+
+	// LiveBillingNotConfiguredCode is returned when standard-mode Live has no price.
+	LiveBillingNotConfiguredCode = "live_billing_not_configured"
 )
 
 var (
@@ -20,6 +25,11 @@ var (
 	ErrLiveCallNotFound      = errors.New("live call not found")
 	ErrLiveIdentityMismatch  = errors.New("live call identity mismatch")
 	ErrLiveControllerChanged = errors.New("live controller changed")
+	// ErrLiveBillingNotConfigured prevents unpriced Live calls in standard mode.
+	ErrLiveBillingNotConfigured = infraerrors.Forbidden(
+		"LIVE_BILLING_NOT_CONFIGURED",
+		"Live billing is not configured",
+	)
 )
 
 type LiveAttestationUnavailableError struct {
@@ -40,6 +50,7 @@ type LiveCallRequest struct {
 }
 
 type LiveCallIdentity struct {
+	APIKey          *APIKey `json:"-"`
 	APIKeyID        int64
 	UserID          int64
 	GroupID         *int64
