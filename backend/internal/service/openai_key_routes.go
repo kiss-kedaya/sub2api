@@ -120,21 +120,20 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 		return nil, OpenAIAccountScheduleDecision{}, apiKey, ErrNoAvailableAccounts
 	}
 	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
-	if len(apiKey.CandidateGroupIDs()) == 0 {
+	groupIDs := apiKey.CandidateGroupIDs()
+	if len(groupIDs) == 0 {
 		selection, decision, err := selectOne(ctx, apiKey.GroupID, append([]string(nil), platformOverride...), requestedModel)
 		return selection, decision, apiKey, err
 	}
-	candidates, siblingHasPresent, lastErr := prepareAPIKeyRouteCandidates(ctx, apiKey, requestedModel, s.hydrateAPIKeyGroup, s.routeModelsCatalog, s.ResolveChannelMappingAndRestrict, openAIMessagesKeyRouteModel)
+	routes := newAPIKeyRouteIterator(ctx, apiKey, groupIDs, requestedModel, s.hydrateAPIKeyGroup, s.routeModelsCatalog, s.ResolveChannelMappingAndRestrict, openAIMessagesKeyRouteModel)
+	var lastErr error
 	var lastDecision OpenAIAccountScheduleDecision
-	for _, candidate := range candidates {
+	for candidate, ok := routes.next(); ok; candidate, ok = routes.next() {
 		routed := candidate.key
 		group := routed.Group
 		groupPlatform := append([]string(nil), platformOverride...)
 		if isOpenAICompatibleUpstreamPlatform(group.Platform) {
 			groupPlatform = []string{group.Platform}
-		}
-		if !group.CustomModelsListEnabled() && skipKeyRouteForCatalog(candidate.presence, siblingHasPresent) {
-			continue
 		}
 		routeCtx := ContextWithAPIKeyRoute(ctx, routed)
 		selection, decision, err := selectOne(routeCtx, routed.GroupID, groupPlatform, candidate.model)
@@ -146,6 +145,9 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 		if !shouldContinueAlongKeyRoutes(err) {
 			return nil, decision, apiKey, err
 		}
+	}
+	if lastErr == nil {
+		lastErr = routes.err
 	}
 	if lastErr == nil {
 		lastErr = ErrNoAvailableAccounts

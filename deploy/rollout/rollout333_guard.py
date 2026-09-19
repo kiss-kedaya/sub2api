@@ -50,14 +50,14 @@ def config_for(pct):
 
 
 def atomic_text(target, value):
-    stage = target.with_name(target.name+'.333-tmp')
+    stage = target.with_name(target.name+f'.{CANDIDATE_VERSION}-tmp')
     stage.write_text(value)
     os.chmod(stage, 0o644 if target == CONFIG else 0o600)
     os.replace(stage, target)
 
 
 def atomic_bytes(target, value):
-    stage = target.with_name(target.name+'.333-tmp')
+    stage = target.with_name(target.name+f'.{CANDIDATE_VERSION}-tmp')
     stage.write_bytes(value)
     os.chmod(stage, 0o644)
     os.replace(stage, target)
@@ -188,6 +188,9 @@ def metrics():
 
 
 def traffic(cutoff, started_after=None):
+    versions = {'8095': '326', '8097': '326-grok600', '8103': '330', '8105': '331', '8107': '333',
+                str(STABLE_PORT): STABLE_VERSION, str(CANDIDATE_PORT): CANDIDATE_VERSION}
+    port_pattern = re.compile(r':('+'|'.join(re.escape(port) for port in versions)+r')\b')
     paths = [Path('/var/log/nginx/sub2api-rollout.log')]
     if not paths[0].exists():
         paths = [Path('/var/log/nginx/kedaya-ai_access.log'), Path('/var/log/nginx/kedaya-sub2-ip_access.log')]
@@ -217,11 +220,11 @@ def traffic(cutoff, started_after=None):
                         probe = 'GET /health ' in line or 'GET /readyz ' in line
                     if stamp < cutoff or (started_after is not None and stamp-elapsed < started_after):
                         continue
-                    ports = re.findall(r':(8095|8097|8103|8105|8107)\b', upstream)
+                    ports = port_pattern.findall(upstream)
                     if not ports:
                         continue
                     # Attribute retried requests to their final application, not both versions.
-                    version = {'8095': '326', '8097': '326-grok600', '8103': '330', '8105': '331', '8107': '333'}[ports[-1]]
+                    version = versions[ports[-1]]
                     counts[('probe_' if probe else 'business_')+version][code] += 1
                 except (KeyError, ValueError, TypeError, IndexError):
                     continue
@@ -298,9 +301,9 @@ def recover_pending():
             atomic_text(CONFIG, pending['before'])
             run('nginx', '-t')
             run('systemctl', 'reload', 'nginx')
-            state.update(phase='rollback_blocked', armed=True, reason='No healthy 331 target during recovery')
+            state.update(phase='rollback_blocked', armed=True, reason=f'No healthy {STABLE_VERSION} target during recovery')
             save(state)
-            raise RuntimeError('No healthy 331 target during recovery; previous route restored')
+            raise RuntimeError(f'No healthy {STABLE_VERSION} target during recovery; previous route restored')
         after = rollback_config(available)
         if after != pending['after']:
             pending['owned_configs'] = list(set([*pending.get('owned_configs', []), pending['after']]))
@@ -344,9 +347,9 @@ def rollback(reason):
     atomic_text(ROOT/f'rollback-before-{time.time_ns()}', before)
     available = available_backups()
     if not available:
-        state.update(phase='rollback_blocked', reason='No healthy 331 target: '+reason)
+        state.update(phase='rollback_blocked', reason=f'No healthy {STABLE_VERSION} target: '+reason)
         save(state)
-        raise RuntimeError('No healthy 331 target; keeping current route and guard active')
+        raise RuntimeError(f'No healthy {STABLE_VERSION} target; keeping current route and guard active')
     after = rollback_config(available)
     transition(after, {**state, 'phase': 'rolled_back', 'percent': 0, 'armed': False,
                        'reason': reason, 'rollback_at': time.time()})
