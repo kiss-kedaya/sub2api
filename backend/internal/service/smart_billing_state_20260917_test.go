@@ -121,6 +121,7 @@ func TestSmartBillingRepriceFreeToPaidSameAttempt(t *testing.T) {
 	require.Equal(t, 2, w.topUpCalls)
 	require.Equal(t, 1, w.authorizations)
 	require.Equal(t, "request-1:7", w.attemptID)
+	original.HoldAmount = g.HoldAmount()
 	require.Equal(t, original, *f.repo.prepared)
 	require.Equal(t, 0, w.refundCalls)
 	require.NoError(t, g.Finalize(context.Background(), 0.03, "final-usage-fingerprint"))

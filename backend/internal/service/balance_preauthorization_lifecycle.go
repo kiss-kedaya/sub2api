@@ -50,6 +50,14 @@ type balancePreauthorizationWallet interface {
 	RefundLiveBalance(ctx context.Context, userID int64, attemptID string) (LiveBalanceResult, error)
 }
 
+type balancePreauthorizationAttemptReader interface {
+	ReadLiveBalanceAttempt(ctx context.Context, userID int64, attemptID string) (LiveBalanceResult, error)
+}
+
+type balancePreauthorizationHoldRepository interface {
+	AdvanceBalancePreauthorizationHold(ctx context.Context, requestID string, apiKeyID int64, holdAmount float64) error
+}
+
 type balancePreauthorizationWatermarkedWallet interface {
 	AuthorizeExistingLiveBalance(
 		ctx context.Context,

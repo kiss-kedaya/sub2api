@@ -26,6 +26,126 @@ type liveAttestationStub struct {
 	err    error
 }
 
+type liveTestCipher struct{}
+
+func (liveTestCipher) Encrypt(plaintext string) (string, error) { return "enc:" + plaintext, nil }
+func (liveTestCipher) Decrypt(ciphertext string) (string, error) {
+	return strings.TrimPrefix(ciphertext, "enc:"), nil
+}
+
+type liveCreateTestCache struct {
+	schedulerTestGatewayCache
+	store       liveTestStore
+	closeOnSave bool
+}
+
+func (c *liveCreateTestCache) SaveLiveCall(ctx context.Context, record *LiveCallRecord, ttl time.Duration) error {
+	if err := c.store.SaveLiveCall(ctx, record, ttl); err != nil {
+		return err
+	}
+	if c.closeOnSave {
+		c.store.mu.Lock()
+		c.store.record.Controller = LiveControllerClosed
+		c.store.mu.Unlock()
+	}
+	return nil
+}
+
+func (c *liveCreateTestCache) GetLiveCall(ctx context.Context, callHash string) (*LiveCallRecord, error) {
+	return c.store.GetLiveCall(ctx, callHash)
+}
+
+func (c *liveCreateTestCache) ClaimLiveController(ctx context.Context, callHash, controller, owner string) (bool, error) {
+	return c.store.ClaimLiveController(ctx, callHash, controller, owner)
+}
+
+func (c *liveCreateTestCache) ReleaseLiveController(ctx context.Context, callHash, owner string) (bool, error) {
+	return c.store.ReleaseLiveController(ctx, callHash, owner)
+}
+
+func (c *liveCreateTestCache) GetLiveController(ctx context.Context, callHash string) (string, error) {
+	return c.store.GetLiveController(ctx, callHash)
+}
+
+func (c *liveCreateTestCache) MarkLiveCallClosed(ctx context.Context, callHash string, ttl time.Duration) (bool, error) {
+	return c.store.MarkLiveCallClosed(ctx, callHash, ttl)
+}
+
+type liveCreateTestConcurrencyCache struct {
+	schedulerTestConcurrencyCache
+	live liveTestConcurrencyCache
+}
+
+type liveCreateTestAccountRepo struct {
+	AccountRepository
+	account Account
+}
+
+func (r liveCreateTestAccountRepo) GetByID(_ context.Context, id int64) (*Account, error) {
+	if r.account.ID != id {
+		return nil, errors.New("account not found")
+	}
+	account := r.account
+	return &account, nil
+}
+
+func (r liveCreateTestAccountRepo) ListSchedulableByGroupID(_ context.Context, groupID int64) ([]Account, error) {
+	for _, id := range r.account.GroupIDs {
+		if id == groupID {
+			return []Account{r.account}, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r liveCreateTestAccountRepo) ListSchedulableByGroupIDAndPlatform(_ context.Context, groupID int64, platform string) ([]Account, error) {
+	if r.account.Platform != platform {
+		return nil, nil
+	}
+	return r.ListSchedulableByGroupID(context.Background(), groupID)
+}
+
+func (r liveCreateTestAccountRepo) ListSchedulableByPlatform(_ context.Context, platform string) ([]Account, error) {
+	if r.account.Platform != platform {
+		return nil, nil
+	}
+	return []Account{r.account}, nil
+}
+
+func (r liveCreateTestAccountRepo) ListSchedulableUngroupedByPlatform(context.Context, string) ([]Account, error) {
+	return nil, nil
+}
+
+func (c *liveCreateTestConcurrencyCache) AcquireLiveLease(
+	ctx context.Context,
+	accountID int64,
+	accountMax int,
+	userID int64,
+	userMax int,
+	apiKeyID int64,
+	leaseID string,
+	replacingRegularSlots bool,
+) (bool, error) {
+	return c.live.AcquireLiveLease(ctx, accountID, accountMax, userID, userMax, apiKeyID, leaseID, replacingRegularSlots)
+}
+
+func (c *liveCreateTestConcurrencyCache) RefreshLiveLease(ctx context.Context, accountID, userID, apiKeyID int64, leaseID string) (bool, error) {
+	return c.live.RefreshLiveLease(ctx, accountID, userID, apiKeyID, leaseID)
+}
+
+func (c *liveCreateTestConcurrencyCache) ReleaseLiveLease(ctx context.Context, accountID, userID, apiKeyID int64, leaseID string) error {
+	return c.live.ReleaseLiveLease(ctx, accountID, userID, apiKeyID, leaseID)
+}
+
+func liveTestAPIKey(group *Group) *APIKey {
+	user := &User{ID: 33, Status: StatusActive}
+	groupID := group.ID
+	return &APIKey{
+		ID: 22, UserID: user.ID, Status: StatusActive, Key: "secret-live-key",
+		User: user, GroupID: &groupID, Group: group, RouteGroupIDs: []int64{groupID},
+	}
+}
+
 func (s liveAttestationStub) Check(context.Context) error {
 	return s.err
 }
@@ -92,6 +212,121 @@ func TestValidateLiveCallRequestDoesNotRequireDelegation(t *testing.T) {
 	}
 	require.NoError(t, ValidateLiveCallRequest(request))
 	require.NotContains(t, string(request.Session), "delegation")
+}
+
+func TestCreateLiveCallStandardModeRejectsUnpricedBillingBeforeUpstream(t *testing.T) {
+	tests := []struct {
+		name             string
+		subscriptionType string
+		subscriptionID   *int64
+	}{
+		{name: "balance", subscriptionType: SubscriptionTypeStandard},
+		{name: "subscription", subscriptionType: SubscriptionTypeSubscription, subscriptionID: func() *int64 { value := int64(9); return &value }()},
+	}
+	request := &LiveCallRequest{SDP: "v=0\r\n", Session: json.RawMessage(`{"model":"gpt-live-test"}`)}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			group := &Group{
+				ID: 44, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true,
+				SubscriptionType: test.subscriptionType, AllowLive: true,
+			}
+			key := liveTestAPIKey(group)
+			upstream := &liveHTTPUpstreamStub{}
+			svc := &OpenAIGatewayService{cfg: &config.Config{RunMode: config.RunModeStandard}, httpUpstream: upstream}
+			_, err := svc.CreateLiveCall(context.Background(), request, LiveCallIdentity{
+				APIKey: key, APIKeyID: key.ID, UserID: key.UserID, GroupID: key.GroupID,
+				RouteGroupIDs: key.RouteGroupIDs, SubscriptionID: test.subscriptionID,
+			}, 2)
+			require.ErrorIs(t, err, ErrLiveBillingNotConfigured)
+			require.Nil(t, upstream.request, "unpriced standard Live must not dial upstream")
+		})
+	}
+}
+
+func TestCreateLiveCallSimpleModeUsesCompleteAPIKeyForCandidateSelection(t *testing.T) {
+	group := &Group{
+		ID: 44, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true,
+		SubscriptionType: SubscriptionTypeStandard, AllowLive: true,
+	}
+	key := liveTestAPIKey(group)
+	account := Account{
+		ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true, Concurrency: 2, GroupIDs: []int64{group.ID},
+		Credentials: map[string]any{"access_token": "test-access-token", "chatgpt_account_id": "acct_test"},
+	}
+	cache := &liveCreateTestCache{closeOnSave: true}
+	concurrencyCache := &liveCreateTestConcurrencyCache{}
+	upstream := &liveHTTPUpstreamStub{}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = false
+	svc := &OpenAIGatewayService{
+		cfg: cfg, accountRepo: liveCreateTestAccountRepo{account: account},
+		cache: cache, concurrencyService: NewConcurrencyService(concurrencyCache), httpUpstream: upstream,
+		liveAttestation: liveAttestationStub{header: "attestation"}, liveAttestationCipher: liveTestCipher{},
+	}
+
+	created, err := svc.CreateLiveCall(context.Background(), &LiveCallRequest{
+		SDP: "v=0\r\n", Session: json.RawMessage(`{"model":"gpt-live-test"}`),
+	}, LiveCallIdentity{
+		APIKey: key, APIKeyID: key.ID, UserID: key.UserID,
+		GroupID: key.GroupID, RouteGroupIDs: key.RouteGroupIDs,
+	}, 2)
+
+	require.NoError(t, err)
+	require.NotNil(t, created)
+	require.Equal(t, account.ID, created.Account.ID)
+	require.NotNil(t, upstream.request)
+	require.NotNil(t, cache.store.record)
+}
+
+func TestLiveCallIdentityDoesNotSerializeAPIKeyCredentials(t *testing.T) {
+	group := &Group{ID: 44, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, AllowLive: true}
+	key := liveTestAPIKey(group)
+	raw, err := json.Marshal(LiveCallIdentity{APIKey: key, APIKeyID: key.ID, UserID: key.UserID})
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), key.Key)
+	var encoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &encoded))
+	require.NotContains(t, encoded, "APIKey")
+}
+
+func TestValidateLiveCallIdentityRequiresExactOwner(t *testing.T) {
+	group := &Group{ID: 44, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, AllowLive: true}
+	key := liveTestAPIKey(group)
+	valid := LiveCallIdentity{
+		APIKey: key, APIKeyID: key.ID, UserID: key.UserID,
+		GroupID: key.GroupID, RouteGroupIDs: key.RouteGroupIDs,
+	}
+	require.NoError(t, validateLiveCallIdentity(valid))
+
+	tests := []struct {
+		name   string
+		mutate func(*LiveCallIdentity)
+	}{
+		{name: "api key", mutate: func(identity *LiveCallIdentity) { identity.APIKeyID++ }},
+		{name: "user", mutate: func(identity *LiveCallIdentity) { identity.UserID++ }},
+		{name: "group", mutate: func(identity *LiveCallIdentity) { other := int64(45); identity.GroupID = &other }},
+		{name: "routes", mutate: func(identity *LiveCallIdentity) { identity.RouteGroupIDs = []int64{45} }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			identity := valid
+			test.mutate(&identity)
+			require.ErrorIs(t, validateLiveCallIdentity(identity), ErrLiveIdentityMismatch)
+		})
+	}
+}
+
+func TestLiveRouteGroupRequiresAllowLive(t *testing.T) {
+	group := &Group{ID: 44, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, AllowLive: true}
+	key := liveTestAPIKey(group)
+	require.True(t, liveRouteGroupAllowed(key))
+	group.AllowLive = false
+	require.False(t, liveRouteGroupAllowed(key))
+	group.AllowLive = true
+	group.Platform = PlatformAnthropic
+	require.False(t, liveRouteGroupAllowed(key))
 }
 
 func TestCreateUpstreamLiveCallPreservesSession(t *testing.T) {

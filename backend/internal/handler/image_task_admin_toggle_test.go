@@ -81,6 +81,7 @@ func TestAsyncImageEnablesWithoutRestart(t *testing.T) {
 	h := &AsyncImageHandler{tasks: tasks}
 	h.execute = func(_ string, c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"created": 1, "data": []gin.H{{"url": "https://upstream.test/i.png"}}})
+		recordMediaSettlementResult(c, nil)
 	}
 
 	router := gin.New()

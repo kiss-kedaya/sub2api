@@ -245,6 +245,18 @@ func (g *BalancePreauthorizationGuard) topUpHold(ctx context.Context, target flo
 			result.Outcome, result.State,
 		))
 	}
+	holdRepo, ok := g.core.service.repo.(balancePreauthorizationHoldRepository)
+	if !ok {
+		return balancePreauthorizationUnavailable(errors.New("balance preauthorization hold repository is unavailable"))
+	}
+	if err := holdRepo.AdvanceBalancePreauthorizationHold(
+		ctx,
+		g.core.requestID,
+		g.core.apiKeyID,
+		result.ReservedAmount,
+	); err != nil {
+		return balancePreauthorizationUnavailable(err)
+	}
 	g.core.holdAmount = math.Max(g.core.holdAmount, result.ReservedAmount)
 	return nil
 }

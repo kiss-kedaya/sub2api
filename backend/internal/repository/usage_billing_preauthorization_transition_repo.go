@@ -31,6 +31,35 @@ func (r *usageBillingRepository) MarkBalancePreauthorizationAuthorized(ctx conte
 	return balancePreauthorizationTransitionResult(result, err, service.BalanceSettlementAuthorized)
 }
 
+// AdvanceBalancePreauthorizationHold durably records the largest cumulative
+// Redis reservation while the request is still authorized. GREATEST makes
+// delayed/retried writes monotonic; the status predicate prevents a late
+// top-up acknowledgement from crossing finalize or refund.
+func (r *usageBillingRepository) AdvanceBalancePreauthorizationHold(
+	ctx context.Context,
+	requestID string,
+	apiKeyID int64,
+	holdAmount float64,
+) error {
+	requestID, err := r.validateBalancePreauthorizationIdentity(requestID, apiKeyID)
+	if err != nil {
+		return err
+	}
+	holdAmount = service.QuantizeUsageBillingAmount(holdAmount)
+	if holdAmount < 0 || math.IsNaN(holdAmount) || math.IsInf(holdAmount, 0) {
+		return service.ErrInvalidBillingPreauthorizationEstimate
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE billing_balance_settlements
+		SET hold_usd = GREATEST(hold_usd, $3),
+			updated_at = CASE WHEN hold_usd < $3 THEN NOW() ELSE updated_at END
+		WHERE request_id = $1
+			AND api_key_id = $2
+			AND status = $4
+	`, requestID, apiKeyID, holdAmount, service.BalanceSettlementAuthorized)
+	return balancePreauthorizationTransitionResult(result, err, service.BalanceSettlementAuthorized)
+}
+
 func (r *usageBillingRepository) BeginBalancePreauthorizationFinalization(
 	ctx context.Context,
 	requestID string,

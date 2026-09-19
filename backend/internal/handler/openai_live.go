@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -37,6 +38,10 @@ func (h *OpenAIGatewayHandler) Live(c *gin.Context) {
 	}
 	if !liveEnabledForAPIKey(apiKey) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", "Live is not enabled for this group")
+		return
+	}
+	if h.cfg == nil || h.cfg.RunMode != config.RunModeSimple {
+		h.writeLiveBillingNotConfigured(c)
 		return
 	}
 	request, err := parseLiveCallRequest(c)
@@ -168,6 +173,7 @@ func liveCallIdentity(
 		subscriptionID = &value
 	}
 	return service.LiveCallIdentity{
+		APIKey:          apiKey,
 		APIKeyID:        apiKey.ID,
 		UserID:          userID,
 		GroupID:         apiKey.GroupID,
@@ -181,6 +187,10 @@ func liveCallIdentity(
 
 func (h *OpenAIGatewayHandler) writeLiveCreateError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, service.ErrLiveBillingNotConfigured):
+		h.writeLiveBillingNotConfigured(c)
+	case errors.Is(err, service.ErrLiveIdentityMismatch):
+		h.errorResponse(c, http.StatusForbidden, "permission_error", "Live identity does not match the authenticated API key")
 	case errors.Is(err, service.ErrLiveConcurrencyFull):
 		h.errorResponse(c, http.StatusTooManyRequests, "rate_limit_error", "Live concurrency limit reached")
 	case errors.Is(err, service.ErrLiveUnavailable):
@@ -198,6 +208,16 @@ func (h *OpenAIGatewayHandler) writeLiveCreateError(c *gin.Context, err error) {
 		}
 		h.errorResponse(c, http.StatusBadGateway, "api_error", "Live upstream request failed")
 	}
+}
+
+func (h *OpenAIGatewayHandler) writeLiveBillingNotConfigured(c *gin.Context) {
+	c.JSON(http.StatusForbidden, gin.H{
+		"error": gin.H{
+			"type":    "permission_error",
+			"code":    service.LiveBillingNotConfiguredCode,
+			"message": "Live billing is not configured",
+		},
+	})
 }
 
 func (h *OpenAIGatewayHandler) LiveSideband(c *gin.Context) {
