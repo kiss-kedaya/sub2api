@@ -81,6 +81,14 @@ func testMediaIntent(balanceCost float64) *service.MediaBillingIntent {
 	}
 }
 
+func testSubscriptionMediaIntent(subscriptionID int64, subscriptionCost float64) *service.MediaBillingIntent {
+	intent := testMediaIntent(0)
+	intent.Command.BillingType = service.BillingTypeSubscription
+	intent.Command.SubscriptionID = &subscriptionID
+	intent.Command.SubscriptionCost = subscriptionCost
+	return intent
+}
+
 func TestCreateMediaBillingJob_DuplicateReturnsPersistedIntentWithoutRepricing(t *testing.T) {
 	repo, mock := newMediaBillingSQLMock(t)
 	existing := service.MediaBillingJob{
@@ -186,6 +194,80 @@ func TestCreateMediaBillingJob_SubscriptionIncludesOutstandingReservations(t *te
 
 	_, err := repo.CreateMediaBillingJob(context.Background(), &job)
 	require.ErrorIs(t, err, service.ErrDailyLimitExceeded)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCreateMediaBillingJob_ImageSubscriptionPersistsWithoutReadmission(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	subscriptionID := int64(13)
+	job := service.MediaBillingJob{
+		ID: "image-subscription-ready", Kind: service.MediaBillingKindImage,
+		UserID: 42, APIKeyID: 7, AccountID: 9, GroupID: 11, SubscriptionID: &subscriptionID,
+		Status: service.MediaBillingReady, Intent: testSubscriptionMediaIntent(subscriptionID, 1.25),
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)INSERT INTO media_billing_jobs.*RETURNING`).
+		WillReturnRows(mediaBillingTestRow(job))
+	mock.ExpectCommit()
+
+	created, err := repo.CreateMediaBillingJob(context.Background(), &job)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, created.ID)
+	require.Equal(t, subscriptionID, *created.SubscriptionID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCreateMediaBillingJob_ImageSubscriptionStillValidatesIntentOwner(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	subscriptionID := int64(13)
+	otherSubscriptionID := int64(14)
+	job := service.MediaBillingJob{
+		ID: "image-subscription-owner-mismatch", Kind: service.MediaBillingKindImage,
+		UserID: 42, APIKeyID: 7, AccountID: 9, GroupID: 11, SubscriptionID: &subscriptionID,
+		Status: service.MediaBillingReady, Intent: testSubscriptionMediaIntent(otherSubscriptionID, 1.25),
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)INSERT INTO media_billing_jobs.*RETURNING`).
+		WillReturnRows(mediaBillingTestRow(job))
+	mock.ExpectRollback()
+
+	_, err := repo.CreateMediaBillingJob(context.Background(), &job)
+	require.ErrorIs(t, err, service.ErrUsageBillingRequestConflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCreateMediaBillingJob_SubscriptionZeroLimitsAreUnlimited(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	subscriptionID := int64(13)
+	job := service.MediaBillingJob{
+		ID: "video-sub-zero-limits", Kind: service.MediaBillingKindGrokVideo,
+		UserID: 42, APIKeyID: 7, AccountID: 9, GroupID: 11, SubscriptionID: &subscriptionID,
+		Status: service.MediaBillingCreating, ReservedAmount: 2,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)INSERT INTO media_billing_jobs.*RETURNING`).
+		WillReturnRows(mediaBillingTestRow(job))
+	mock.ExpectQuery(`(?s)SELECT us.user_id.*FOR UPDATE OF us`).
+		WithArgs(subscriptionID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"user_id", "group_id", "status", "starts_at", "expires_at",
+			"daily_usage_usd", "weekly_usage_usd", "monthly_usage_usd",
+			"daily_limit_usd", "weekly_limit_usd", "monthly_limit_usd",
+		}).AddRow(
+			int64(42), int64(11), service.SubscriptionStatusActive, time.Now().Add(-time.Hour), time.Now().Add(time.Hour),
+			9.0, 9.0, 9.0, 0.0, 0.0, 0.0,
+		))
+	mock.ExpectQuery(`(?s)SELECT COALESCE\(SUM\(reserved_amount\), 0\).*subscription_id`).
+		WithArgs(subscriptionID).
+		WillReturnRows(sqlmock.NewRows([]string{"reserved"}).AddRow(2.0))
+	mock.ExpectCommit()
+
+	created, err := repo.CreateMediaBillingJob(context.Background(), &job)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, created.ID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

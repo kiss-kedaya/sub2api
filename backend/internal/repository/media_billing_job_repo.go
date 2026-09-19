@@ -140,22 +140,24 @@ func (r *usageBillingRepository) CreateMediaBillingJob(ctx context.Context, inpu
 		}
 	}
 
-	if created.SubscriptionID != nil {
-		if err := r.reserveMediaBillingSubscription(ctx, tx, created); err != nil {
-			return nil, err
-		}
-	} else if created.Kind == service.MediaBillingKindGrokVideo && created.ReservedAmount > 0 {
-		_, reserveErr := reserveUsageBillingBatchImageBalance(ctx, tx, &service.BatchImageBalanceHoldCommand{
-			UserID:     created.UserID,
-			APIKeyID:   created.APIKeyID,
-			BatchID:    created.ID,
-			HoldAmount: created.ReservedAmount,
-		})
-		if reserveErr != nil {
-			if errors.Is(reserveErr, service.ErrBatchImageInsufficientBalance) {
-				return nil, service.ErrBalanceWithholdingFailed.WithCause(reserveErr)
+	if created.Kind == service.MediaBillingKindGrokVideo {
+		if created.SubscriptionID != nil {
+			if err := r.reserveMediaBillingSubscription(ctx, tx, created); err != nil {
+				return nil, err
 			}
-			return nil, reserveErr
+		} else if created.ReservedAmount > 0 {
+			_, reserveErr := reserveUsageBillingBatchImageBalance(ctx, tx, &service.BatchImageBalanceHoldCommand{
+				UserID:     created.UserID,
+				APIKeyID:   created.APIKeyID,
+				BatchID:    created.ID,
+				HoldAmount: created.ReservedAmount,
+			})
+			if reserveErr != nil {
+				if errors.Is(reserveErr, service.ErrBatchImageInsufficientBalance) {
+					return nil, service.ErrBalanceWithholdingFailed.WithCause(reserveErr)
+				}
+				return nil, reserveErr
+			}
 		}
 	}
 
@@ -281,13 +283,13 @@ func (r *usageBillingRepository) reserveMediaBillingSubscription(ctx context.Con
 	`, *job.SubscriptionID).Scan(&outstanding); err != nil {
 		return err
 	}
-	if dailyLimit.Valid && dailyUsage+outstanding > dailyLimit.Float64 {
+	if dailyLimit.Valid && dailyLimit.Float64 > 0 && dailyUsage+outstanding > dailyLimit.Float64 {
 		return service.ErrDailyLimitExceeded
 	}
-	if weeklyLimit.Valid && weeklyUsage+outstanding > weeklyLimit.Float64 {
+	if weeklyLimit.Valid && weeklyLimit.Float64 > 0 && weeklyUsage+outstanding > weeklyLimit.Float64 {
 		return service.ErrWeeklyLimitExceeded
 	}
-	if monthlyLimit.Valid && monthlyUsage+outstanding > monthlyLimit.Float64 {
+	if monthlyLimit.Valid && monthlyLimit.Float64 > 0 && monthlyUsage+outstanding > monthlyLimit.Float64 {
 		return service.ErrMonthlyLimitExceeded
 	}
 	return nil
