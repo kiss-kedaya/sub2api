@@ -299,7 +299,7 @@ func TestValidateRefundProviderResponseAcceptsPending(t *testing.T) {
 	require.Error(t, validateRefundProviderResponse(nil))
 }
 
-func TestFinishRefundPendingMarksOrderPendingAndRollsBackDeduction(t *testing.T) {
+func TestFinishRefundPendingMarksOrderPendingAndRetainsDeduction(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)
 
@@ -357,8 +357,8 @@ func TestFinishRefundPendingMarksOrderPendingAndRollsBackDeduction(t *testing.T)
 	require.NotNil(t, result)
 	require.False(t, result.Success)
 	require.Contains(t, result.Warning, "pending confirmation")
-	require.Equal(t, 40.0, rolledBack)
-	require.Zero(t, plan.BalanceToDeduct)
+	require.Zero(t, rolledBack)
+	require.Equal(t, 40.0, plan.BalanceToDeduct)
 
 	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
 	require.NoError(t, err)
@@ -373,6 +373,12 @@ func TestFinishRefundPendingMarksOrderPendingAndRollsBackDeduction(t *testing.T)
 		Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, pendingAudits)
+	pendingAudit, err := client.PaymentAuditLog.Query().
+		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("REFUND_PENDING")).
+		Only(ctx)
+	require.NoError(t, err)
+	require.Contains(t, pendingAudit.Detail, `"deductionState":"retained"`)
+	require.Contains(t, pendingAudit.Detail, `"balanceDeducted":40`)
 	successAudits, err := client.PaymentAuditLog.Query().
 		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("REFUND_SUCCESS")).
 		Count(ctx)
@@ -493,6 +499,12 @@ func TestQueryAndFinalizeRefundFinalizesProviderStatuses(t *testing.T) {
 					Only(ctx)
 				require.NoError(t, err)
 				require.Contains(t, audit.Detail, fmt.Sprintf(`"balanceDeducted":%v`, tc.wantDeduct))
+			} else if tc.status == payment.ProviderStatusFailed {
+				audit, err := client.PaymentAuditLog.Query().
+					Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("REFUND_FAILED")).
+					Only(ctx)
+				require.NoError(t, err)
+				require.Contains(t, audit.Detail, `"balanceReleased":0`)
 			}
 
 			reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
@@ -631,7 +643,7 @@ func createPendingRefundOrderForTest(t *testing.T, ctx context.Context, client *
 		SetOrderID(strconv.FormatInt(order.ID, 10)).
 		SetAction("REFUND_PENDING").
 		SetOperator("admin").
-		SetDetail(`{"refundID":"rf_test","deductionRollbackOK":true}`).
+		SetDetail(`{"refundID":"rf_test","deductionRollbackOK":true,"balanceRolledBack":100}`).
 		Save(ctx)
 	require.NoError(t, err)
 	return order
