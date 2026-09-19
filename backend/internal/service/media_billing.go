@@ -174,13 +174,7 @@ func (s *OpenAIGatewayService) settleMediaBillingJob(ctx context.Context, job *M
 		}
 	}
 	if result != nil && result.Applied {
-		key := &APIKey{ID: cmd.APIKeyID, UserID: cmd.UserID, GroupID: &job.GroupID}
-		if cmd.APIKeyRateLimitCost > 0 {
-			key.RateLimit5h = 1
-		}
-		params := &postUsageBillingParams{Cost: &CostBreakdown{ActualCost: intent.Usage.ActualCost, TotalCost: intent.Usage.TotalCost},
-			User: &User{ID: cmd.UserID}, APIKey: key, Account: &Account{ID: cmd.AccountID, Type: cmd.AccountType},
-			IsSubscriptionBill: cmd.SubscriptionID != nil, Platform: intent.QuotaPlatform}
+		params := s.mediaBillingPostUsageParams(ctx, job)
 		// Balance and subscription caches above are invalidated from the committed
 		// ledger; do not enqueue a second subscription increment here.
 		if s.billingCacheService != nil && s.deferredService != nil {
@@ -199,6 +193,44 @@ func (s *OpenAIGatewayService) settleMediaBillingJob(ctx context.Context, job *M
 		return err
 	}
 	return s.mediaBillingJobs.CompleteMediaBillingJob(ctx, job.ID)
+}
+
+func (s *OpenAIGatewayService) mediaBillingPostUsageParams(ctx context.Context, job *MediaBillingJob) *postUsageBillingParams {
+	intent, cmd := job.Intent, &job.Intent.Command
+	key := &APIKey{ID: cmd.APIKeyID, UserID: cmd.UserID, GroupID: &job.GroupID}
+	if cmd.APIKeyRateLimitCost > 0 {
+		key.RateLimit5h = 1
+	}
+	params := &postUsageBillingParams{Cost: &CostBreakdown{ActualCost: intent.Usage.ActualCost, TotalCost: intent.Usage.TotalCost},
+		User: &User{ID: cmd.UserID}, APIKey: key, Account: &Account{ID: cmd.AccountID, Type: cmd.AccountType},
+		AccountRateMultiplier: 1, IsSubscriptionBill: cmd.SubscriptionID != nil, Platform: intent.QuotaPlatform}
+	if intent.Usage.AccountRateMultiplier != nil {
+		params.AccountRateMultiplier = *intent.Usage.AccountRateMultiplier
+	}
+	if s.balanceNotifyService == nil {
+		return params
+	}
+	// Resolve current notification preferences without putting contact details
+	// or account credentials in the durable billing snapshot.
+	lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if !params.IsSubscriptionBill && params.Cost.ActualCost > 0 && s.userRepo != nil {
+		user, err := s.userRepo.GetByID(lookupCtx, cmd.UserID)
+		if err != nil {
+			logger.L().Warn("media_billing.notification_user_unavailable", zap.String("job_id", job.ID), zap.Error(err))
+		} else if user != nil && user.ID == cmd.UserID {
+			params.User = user
+		}
+	}
+	if params.Cost.TotalCost > 0 && params.Account.IsAPIKeyOrBedrock() && s.accountRepo != nil {
+		account, err := s.accountRepo.GetByID(lookupCtx, cmd.AccountID)
+		if err != nil {
+			logger.L().Warn("media_billing.notification_account_unavailable", zap.String("job_id", job.ID), zap.Error(err))
+		} else if account != nil && account.ID == cmd.AccountID {
+			params.Account = account
+		}
+	}
+	return params
 }
 
 type grokVideoBillingSnapshot struct {
