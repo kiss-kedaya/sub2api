@@ -373,47 +373,95 @@ type apiKeyRouteCandidate struct {
 	model    string
 }
 
-// Resolve authorization before catalog reads or sticky selection. Reuse each
-// catalog for sibling preference and selection within this request.
-func prepareAPIKeyRouteCandidates(ctx context.Context, apiKey *APIKey, requestedModel string,
+type apiKeyRouteIterator struct {
+	ctx               context.Context
+	apiKey            *APIKey
+	groupIDs          []int64
+	requestedModel    string
+	hydrate           func(context.Context, *APIKey, int64) (*APIKey, error)
+	catalog           func(context.Context, *int64) groupModelsCatalog
+	resolveMapping    func(context.Context, *int64, string) (ChannelMappingResult, bool)
+	fallbackModel     func(context.Context, *Group, string) string
+	candidates        []apiKeyRouteCandidate
+	nextGroup         int
+	nextCandidate     int
+	siblingHasPresent bool
+	err               error
+}
+
+func newAPIKeyRouteIterator(ctx context.Context, apiKey *APIKey, groupIDs []int64, requestedModel string,
 	hydrate func(context.Context, *APIKey, int64) (*APIKey, error),
 	catalog func(context.Context, *int64) groupModelsCatalog,
 	resolveMapping func(context.Context, *int64, string) (ChannelMappingResult, bool),
 	fallbackModel func(context.Context, *Group, string) string,
-) ([]apiKeyRouteCandidate, bool, error) {
-	var candidates []apiKeyRouteCandidate
-	var lastErr error
-	siblingHasPresent := false
-	for _, groupID := range apiKey.CandidateGroupIDs() {
-		routed, err := hydrate(ctx, apiKey, groupID)
+) apiKeyRouteIterator {
+	return apiKeyRouteIterator{
+		ctx: ctx, apiKey: apiKey, groupIDs: groupIDs, requestedModel: requestedModel,
+		hydrate: hydrate, catalog: catalog, resolveMapping: resolveMapping, fallbackModel: fallbackModel,
+	}
+}
+
+// Look ahead only for unknown catalogs: a later authorized group that explicitly
+// supports the model must still take precedence over unknown earlier groups.
+func (r *apiKeyRouteIterator) next() (apiKeyRouteCandidate, bool) {
+	for {
+		if r.nextCandidate == len(r.candidates) {
+			r.candidates = r.candidates[:0]
+			r.nextCandidate = 0
+			if !r.loadNext() {
+				return apiKeyRouteCandidate{}, false
+			}
+		}
+		candidate := r.candidates[r.nextCandidate]
+		r.nextCandidate++
+		if !candidate.key.Group.CustomModelsListEnabled() {
+			if candidate.presence == groupCatalogModelUnknown {
+				for !r.siblingHasPresent && r.loadNext() {
+				}
+			}
+			if skipKeyRouteForCatalog(candidate.presence, r.siblingHasPresent) {
+				continue
+			}
+		}
+		return candidate, true
+	}
+}
+
+// Authorization and mapping remain candidate-scoped and precede catalog reads.
+func (r *apiKeyRouteIterator) loadNext() bool {
+	for r.nextGroup < len(r.groupIDs) {
+		groupID := r.groupIDs[r.nextGroup]
+		r.nextGroup++
+		routed, err := r.hydrate(r.ctx, r.apiKey, groupID)
 		if err != nil {
-			lastErr = err
+			r.err = err
 			continue
 		}
-		if !apiKeyRouteGroupAllowed(routed) || !groupAllowsRequestedModel(routed.Group, requestedModel) {
+		if !apiKeyRouteGroupAllowed(routed) || !groupAllowsRequestedModel(routed.Group, r.requestedModel) {
 			continue
 		}
-		routeCtx := ContextWithAPIKeyRoute(ctx, routed)
-		mapping, restricted := resolveMapping(routeCtx, routed.GroupID, requestedModel)
+		routeCtx := ContextWithAPIKeyRoute(r.ctx, routed)
+		mapping, restricted := r.resolveMapping(routeCtx, routed.GroupID, r.requestedModel)
 		if restricted {
 			continue
 		}
 		model := mapping.MappedModel
-		if !mapping.Mapped && fallbackModel != nil {
-			model = fallbackModel(routeCtx, routed.Group, requestedModel)
+		if !mapping.Mapped && r.fallbackModel != nil {
+			model = r.fallbackModel(routeCtx, routed.Group, r.requestedModel)
 		}
-		cat := catalog(routeCtx, routed.GroupID)
-		presence := catalogHasRequestedModel(cat, requestedModel)
-		if presence != groupCatalogModelPresent && model != requestedModel &&
+		cat := r.catalog(routeCtx, routed.GroupID)
+		presence := catalogHasRequestedModel(cat, r.requestedModel)
+		if presence != groupCatalogModelPresent && model != r.requestedModel &&
 			catalogHasRequestedModel(cat, model) == groupCatalogModelPresent {
 			presence = groupCatalogModelPresent
 		}
 		if presence == groupCatalogModelPresent {
-			siblingHasPresent = true
+			r.siblingHasPresent = true
 		}
-		candidates = append(candidates, apiKeyRouteCandidate{key: routed, catalog: cat, presence: presence, model: model})
+		r.candidates = append(r.candidates, apiKeyRouteCandidate{key: routed, catalog: cat, presence: presence, model: model})
+		return true
 	}
-	return candidates, siblingHasPresent, lastErr
+	return false
 }
 
 func hydrateAPIKeyGroup(ctx context.Context, apiKey *APIKey, groupID int64, getGroup func(context.Context, int64) (*Group, error)) (*APIKey, error) {

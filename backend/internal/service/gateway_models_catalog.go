@@ -178,30 +178,18 @@ func loadGroupModelsCatalogFromStore(ctx context.Context, repo AccountRepository
 	return cat
 }
 
-func filterAccountsByPlatform(accounts []Account, platform string) []Account {
-	platform = strings.TrimSpace(platform)
-	if platform == "" || len(accounts) == 0 {
-		return accounts
-	}
-	out := make([]Account, 0, len(accounts))
-	for _, account := range accounts {
-		if account.Platform == platform {
-			out = append(out, account)
-		}
-	}
-	return out
-}
-
 func modelsFromSchedulableAccounts(accounts []Account, platform string) []string {
-	if platform != "" {
-		accounts = filterAccountsByPlatform(accounts, platform)
-	}
 	if len(accounts) == 0 {
 		return nil
 	}
 
+	filterPlatform := strings.TrimSpace(platform)
 	modelSet := make(map[string]struct{})
-	for _, acc := range accounts {
+	for i := range accounts {
+		acc := &accounts[i]
+		if filterPlatform != "" && acc.Platform != filterPlatform {
+			continue
+		}
 		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
 			return nil
 		}

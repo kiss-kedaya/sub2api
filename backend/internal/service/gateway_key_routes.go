@@ -46,17 +46,16 @@ func (s *GatewayService) SelectAccountAlongKeyRoutes(
 	if len(requestPlatform) > 0 {
 		platform = requestPlatform[0]
 	}
-	if len(apiKey.CandidateGroupIDs()) == 0 {
+	groupIDs := apiKey.CandidateGroupIDs()
+	if len(groupIDs) == 0 {
 		result, err := s.SelectAccountWithLoadAwareness(ctx, apiKey.GroupID, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
 		return result, apiKey, err
 	}
-	candidates, siblingHasPresent, lastErr := prepareAPIKeyRouteCandidates(ctx, apiKey, requestedModel, s.hydrateAPIKeyGroup, s.ensureGroupModelsCatalog, s.ResolveChannelMappingAndRestrict, nil)
-	for _, candidate := range candidates {
+	routes := newAPIKeyRouteIterator(ctx, apiKey, groupIDs, requestedModel, s.hydrateAPIKeyGroup, s.ensureGroupModelsCatalog, s.ResolveChannelMappingAndRestrict, nil)
+	var lastErr error
+	for candidate, ok := routes.next(); ok; candidate, ok = routes.next() {
 		routed := candidate.key
 		if !groupUsableForRequest(routed.Group, platform, requestedModel, candidate.catalog.platforms) {
-			continue
-		}
-		if !routed.Group.CustomModelsListEnabled() && skipKeyRouteForCatalog(candidate.presence, siblingHasPresent) {
 			continue
 		}
 		routeCtx := ContextWithAPIKeyRoute(ctx, routed)
@@ -73,6 +72,9 @@ func (s *GatewayService) SelectAccountAlongKeyRoutes(
 		if !shouldContinueAlongKeyRoutes(err) {
 			return nil, apiKey, err
 		}
+	}
+	if lastErr == nil {
+		lastErr = routes.err
 	}
 	if lastErr == nil {
 		lastErr = ErrNoAvailableAccounts
