@@ -8,9 +8,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestParseLiveCallRequestMultipartPreservesSession(t *testing.T) {
@@ -92,6 +95,20 @@ func TestLiveEnabledForAPIKey(t *testing.T) {
 	}))
 }
 
+func TestLiveCallIdentityCarriesAuthenticatedAPIKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/live", nil)
+	groupID := int64(44)
+	key := &service.APIKey{ID: 22, UserID: 33, GroupID: &groupID, RouteGroupIDs: []int64{44, 45}}
+
+	identity := liveCallIdentity(context, key, key.UserID, nil)
+
+	require.Same(t, key, identity.APIKey)
+	require.Equal(t, key.UserID, identity.UserID)
+	require.Equal(t, key.RouteGroupIDs, identity.RouteGroupIDs)
+}
+
 func TestLiveAttestationErrorIsExplicit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -103,6 +120,56 @@ func TestLiveAttestationErrorIsExplicit(t *testing.T) {
 
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "Sub2API runs on macOS")
+}
+
+func TestLiveBillingNotConfiguredErrorIsExplicit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	(&OpenAIGatewayHandler{}).writeLiveCreateError(context, service.ErrLiveBillingNotConfigured)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Equal(t, service.LiveBillingNotConfiguredCode, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
+}
+
+func TestLiveCreateIdentityMismatchIsForbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	(&OpenAIGatewayHandler{}).writeLiveCreateError(context, service.ErrLiveIdentityMismatch)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Equal(t, "permission_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+}
+
+func TestLiveStandardModeRejectsBeforeBillingOrUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	gateway := service.NewOpenAIGatewayService(
+		nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	handler := NewOpenAIGatewayHandler(gateway, nil, nil, nil, nil, nil, nil, nil, cfg)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/live", bytes.NewBufferString(
+		`{"sdp":"v=0\\r\\n","session":{"model":"gpt-live-test"}}`,
+	))
+	context.Request.Header.Set("Content-Type", "application/json")
+	groupID := int64(44)
+	user := &service.User{ID: 33, Status: service.StatusActive}
+	apiKey := &service.APIKey{
+		ID: 22, UserID: user.ID, User: user, GroupID: &groupID,
+		Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, Hydrated: true, AllowLive: true},
+	}
+	context.Set(string(middleware2.ContextKeyAPIKey), apiKey)
+	context.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: user.ID, Concurrency: 2})
+
+	handler.Live(context)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Equal(t, service.LiveBillingNotConfiguredCode, gjson.GetBytes(recorder.Body.Bytes(), "error.code").String())
 }
 
 func jsonPathString(t *testing.T, raw json.RawMessage, keys ...string) string {
