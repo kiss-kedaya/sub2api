@@ -73,6 +73,17 @@ func (f mediaBillingIntegrationFixture) intent(requestID string, balanceCost flo
 	}
 }
 
+func (f mediaBillingIntegrationFixture) subscriptionIntent(requestID string, subscriptionID int64, subscriptionCost float64) *service.MediaBillingIntent {
+	return &service.MediaBillingIntent{
+		Command: service.UsageBillingCommand{
+			RequestID: requestID, UserID: f.user.ID, APIKeyID: f.apiKey.ID, AccountID: f.account.ID,
+			AccountType: service.AccountTypeAPIKey, BillingType: service.BillingTypeSubscription,
+			SubscriptionID: &subscriptionID, SubscriptionCost: subscriptionCost,
+		},
+		RawAmounts: [5]float64{0, subscriptionCost},
+	}
+}
+
 func TestMediaBillingJobIntegration_CreateIsAtomicAndDuplicateDoesNotHoldAgain(t *testing.T) {
 	ctx := context.Background()
 	fixture := newMediaBillingIntegrationFixture(t, 10)
@@ -104,6 +115,60 @@ func TestMediaBillingJobIntegration_CreateIsAtomicAndDuplicateDoesNotHoldAgain(t
 	require.NoError(t, err)
 	assertMediaBillingWallet(t, ctx, fixture.user.ID, 10, 0)
 	assertMediaBillingOutboxDeltas(t, ctx, fixture.user.ID, []float64{-2, 2})
+}
+
+func TestMediaBillingJobIntegration_ImagePersistsAndAppliesAfterSubscriptionExpires(t *testing.T) {
+	ctx := context.Background()
+	fixture := newMediaBillingIntegrationFixture(t, 10)
+	now := time.Now()
+	subscription := mustCreateSubscription(t, integrationEntClient, &service.UserSubscription{
+		UserID: fixture.user.ID, GroupID: fixture.group.ID,
+		StartsAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-time.Hour),
+		Status: service.SubscriptionStatusActive, DailyUsageUSD: 3,
+	})
+	intent := fixture.subscriptionIntent("media-expired-image:"+fmt.Sprint(now.UnixNano()), subscription.ID, 1.25)
+	job := &service.MediaBillingJob{
+		ID: "media-expired-image-" + fmt.Sprint(now.UnixNano()), Kind: service.MediaBillingKindImage,
+		UserID: fixture.user.ID, APIKeyID: fixture.apiKey.ID, AccountID: fixture.account.ID, GroupID: fixture.group.ID,
+		SubscriptionID: &subscription.ID, Status: service.MediaBillingReady, Intent: intent,
+	}
+
+	created, err := fixture.repo.CreateMediaBillingJob(ctx, job)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, created.ID)
+
+	result, err := fixture.repo.ApplyMediaBillingJob(ctx, job.ID)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.NoError(t, fixture.repo.CompleteMediaBillingJob(ctx, job.ID))
+
+	var dailyUsage float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT daily_usage_usd FROM user_subscriptions WHERE id = $1`, subscription.ID).Scan(&dailyUsage))
+	require.InDelta(t, 4.25, dailyUsage, 0.00000001)
+}
+
+func TestMediaBillingJobIntegration_VideoSubscriptionZeroLimitsAreUnlimited(t *testing.T) {
+	ctx := context.Background()
+	zero := 0.0
+	fixture := newMediaBillingIntegrationFixture(t, 10)
+	_, err := integrationDB.ExecContext(ctx, `
+		UPDATE groups
+		SET daily_limit_usd = $2, weekly_limit_usd = $2, monthly_limit_usd = $2
+		WHERE id = $1
+	`, fixture.group.ID, zero)
+	require.NoError(t, err)
+	subscription := mustCreateSubscription(t, integrationEntClient, &service.UserSubscription{
+		UserID: fixture.user.ID, GroupID: fixture.group.ID,
+		StartsAt: time.Now().Add(-time.Hour), ExpiresAt: time.Now().Add(time.Hour),
+		Status: service.SubscriptionStatusActive, DailyUsageUSD: 9, WeeklyUsageUSD: 9, MonthlyUsageUSD: 9,
+	})
+	job := fixture.videoJob("media-zero-limits-"+fmt.Sprint(time.Now().UnixNano()), 2)
+	job.SubscriptionID = &subscription.ID
+
+	created, err := fixture.repo.CreateMediaBillingJob(ctx, job)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, created.ID)
 }
 
 func TestMediaBillingJobIntegration_ListLeasesAcrossWorkers(t *testing.T) {
