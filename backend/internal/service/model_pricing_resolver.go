@@ -147,6 +147,17 @@ func matchGroupModelPricing(group *Group, model string) *ChannelModelPricing {
 	if group == nil {
 		return nil
 	}
+	if pricing := matchGroupModelPricingLiteral(group, model); pricing != nil {
+		return pricing
+	}
+	normalized := normalizeKnownOpenAICodexModel(model)
+	if normalized == "" || strings.EqualFold(normalized, strings.TrimSpace(model)) {
+		return nil
+	}
+	return matchGroupModelPricingLiteral(group, normalized)
+}
+
+func matchGroupModelPricingLiteral(group *Group, model string) *ChannelModelPricing {
 	model = normalizeChannelPricingModelName(model)
 	var wildcard *ChannelModelPricing
 	for i := range group.ModelPricing {
