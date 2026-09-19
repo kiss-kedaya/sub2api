@@ -177,6 +177,10 @@ func newMediaBillingServiceTest(t *testing.T) (*OpenAIGatewayService, *mediaJobM
 	cfg.Default.RateMultiplier = 1
 	repo := &mediaJobMemoryRepo{balance: 100}
 	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(&openAIRecordUsageLogRepoStub{inserted: true}, &openAIRecordUsageBillingRepoStub{}, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	// The usage fixture starts the ticket loop. Stop it before replacing the
+	// configuration and dependencies for this deterministic recovery test.
+	svc.StopOpenAICodexTicketHarvester()
+	t.Cleanup(svc.CloseOpenAIWSPool)
 	svc.cfg = cfg
 	svc.billingService = NewBillingService(cfg, nil)
 	svc.mediaBillingJobs = repo
