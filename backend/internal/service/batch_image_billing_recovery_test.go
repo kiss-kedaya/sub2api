@@ -115,3 +115,60 @@ func TestBatchImageBillingRecoveryService_EnqueuesRetryWhenReleaseFails(t *testi
 	require.Equal(t, BatchImageJobStatusFailed, repo.jobs[stale.BatchID].Status)
 	require.Equal(t, []string{stale.BatchID}, queue.enqueued)
 }
+
+func TestBatchImageBillingRecoveryService_RecoversProviderSubmittedQueueFailure(t *testing.T) {
+	ctx := context.Background()
+	svc, repo, queue, provider, _ := newTestBatchImagePublicService(true)
+	queue.err = errors.New("redis unavailable")
+	billing := svc.BillingRepo.(*fakeBatchImageBillingRepo)
+
+	_, err := svc.Submit(ctx, testBatchImageOwner(), validBatchImageSubmitRequest(), "queue-recovery")
+	require.ErrorIs(t, err, ErrBatchImageQueueFailed)
+	require.Len(t, provider.submits, 1)
+	require.Len(t, billing.reserves, 1)
+	require.Empty(t, billing.releases)
+
+	queue.err = nil
+	recovery := &BatchImageBillingRecoveryService{Repo: repo, Queue: queue, Limit: 10}
+	recovered, err := recovery.RecoverSubmittedQueueFailuresOnce(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, recovered)
+	require.Len(t, queue.enqueued, 1)
+	require.Len(t, provider.submits, 1, "recovery must not submit to provider again")
+	require.Len(t, billing.reserves, 1, "recovery must not hold balance again")
+	require.Empty(t, billing.releases, "submitted provider job is still running")
+
+	for _, job := range repo.jobs {
+		require.Equal(t, BatchImageJobStatusSubmitted, job.Status)
+		require.NotEmpty(t, batchImageDerefString(job.ProviderJobName))
+		require.Empty(t, batchImageDerefString(job.LastErrorCode))
+	}
+
+	recovered, err = recovery.RecoverSubmittedQueueFailuresOnce(ctx)
+	require.NoError(t, err)
+	require.Zero(t, recovered)
+	require.Len(t, queue.enqueued, 1)
+	require.Len(t, provider.submits, 1)
+	require.Len(t, billing.reserves, 1)
+}
+
+func TestBatchImageBillingRecoveryService_TreatsAlreadyQueuedAsRecovered(t *testing.T) {
+	providerJobName := "providers/gemini_api/job"
+	queueFailure := "QUEUE_FAILED"
+	batchID := "imgbatch_already_queued_recovery"
+	repo := newFakeBatchImageRepository()
+	repo.jobs[batchID] = &BatchImageJob{
+		BatchID:         batchID,
+		Status:          BatchImageJobStatusSubmitted,
+		ProviderJobName: &providerJobName,
+		LastErrorCode:   &queueFailure,
+	}
+	queue := &publicBatchImageQueue{enqueued: []string{batchID}}
+	recovery := &BatchImageBillingRecoveryService{Repo: repo, Queue: queue, Limit: 10}
+
+	recovered, err := recovery.RecoverSubmittedQueueFailuresOnce(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, recovered)
+	require.Equal(t, []string{batchID}, queue.enqueued)
+	require.Empty(t, batchImageDerefString(repo.jobs[batchID].LastErrorCode))
+}

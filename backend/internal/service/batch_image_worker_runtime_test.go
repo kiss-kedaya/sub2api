@@ -48,11 +48,44 @@ func TestBatchImageWorkerRuntime_QueueEnabledStartsAndStops(t *testing.T) {
 	require.NotPanics(t, runtime.Stop)
 }
 
+func TestBatchImageWorkerRuntime_AutomaticallyRecoversSubmittedQueueFailure(t *testing.T) {
+	providerJobName := "providers/gemini_api/job"
+	queueFailure := "QUEUE_FAILED"
+	batchID := "imgbatch_runtime_queue_recovery"
+	repo := newFakeBatchImageRepository()
+	repo.jobs[batchID] = &BatchImageJob{
+		BatchID:         batchID,
+		Status:          BatchImageJobStatusSubmitted,
+		ProviderJobName: &providerJobName,
+		LastErrorCode:   &queueFailure,
+	}
+	queue := &blockingBatchImageRuntimeQueue{}
+	runtime := NewBatchImageWorkerRuntime(
+		NewBatchImageWorker(queue, &fakeBatchImageProcessor{}, BatchImageWorkerOptions{
+			DelayedPollInterval: time.Hour,
+			RecoveryInterval:    time.Hour,
+		}),
+		&config.Config{BatchImage: config.BatchImageConfig{QueueEnabled: true}},
+	)
+	runtime.billingRecovery = &BatchImageBillingRecoveryService{Repo: repo, Queue: queue, Limit: 10}
+
+	runtime.Start()
+	require.Eventually(t, func() bool {
+		return queue.enqueueCalls.Load() == 1
+	}, time.Second, 10*time.Millisecond)
+	runtime.Stop()
+
+	require.Empty(t, batchImageDerefString(repo.jobs[batchID].LastErrorCode))
+	require.Equal(t, int64(1), queue.enqueueCalls.Load())
+}
+
 type blockingBatchImageRuntimeQueue struct {
 	reserveCalls atomic.Int64
+	enqueueCalls atomic.Int64
 }
 
 func (q *blockingBatchImageRuntimeQueue) Enqueue(context.Context, string) error {
+	q.enqueueCalls.Add(1)
 	return nil
 }
 
