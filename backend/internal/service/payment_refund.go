@@ -500,10 +500,6 @@ func (s *PaymentService) QueryAndFinalizeRefund(ctx context.Context, oid int64) 
 	}
 }
 
-func (s *PaymentService) finalizePendingRefundSuccess(ctx context.Context, p *RefundPlan) (_ *RefundResult, err error) {
-	return s.finalizePendingRefundSuccessWithDeduction(ctx, p, true)
-}
-
 func (s *PaymentService) finalizePendingRefundSuccessWithDeduction(ctx context.Context, p *RefundPlan, deductAtFinalization bool) (_ *RefundResult, err error) {
 	tx, err := s.entClient.Tx(ctx)
 	if err != nil {

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -43,6 +42,9 @@ func (s *OpenAIGatewayService) IsImageTaskBillingComplete(ctx context.Context, t
 type preparedMediaUsage struct{ intent *MediaBillingIntent }
 
 func capturePreparedMediaUsage(ctx context.Context, usage *UsageLog, input *OpenAIRecordUsageInput, cost *CostBreakdown, accountRate float64, subscriptionBill bool) bool {
+	if ctx == nil {
+		return false
+	}
 	capture, ok := ctx.Value(preparedMediaUsageKey{}).(*preparedMediaUsage)
 	if !ok {
 		return false
@@ -56,6 +58,11 @@ func capturePreparedMediaUsage(ctx context.Context, usage *UsageLog, input *Open
 	if command != nil {
 		_, command.BalancePreauthorized = BalancePreauthorizationGuardFromContext(ctx)
 		capture.intent = &MediaBillingIntent{Command: *command, Usage: *usage, QuotaPlatform: input.QuotaPlatform}
+		capture.intent.Usage.User = nil
+		capture.intent.Usage.APIKey = nil
+		capture.intent.Usage.Account = nil
+		capture.intent.Usage.Group = nil
+		capture.intent.Usage.Subscription = nil
 		if cost != nil {
 			amounts := &capture.intent.RawAmounts
 			if subscriptionBill {
@@ -244,7 +251,7 @@ func (s *OpenAIGatewayService) CreateGrokVideoBillingJob(ctx context.Context, in
 	if err != nil {
 		return nil, err
 	}
-	perSecond := math.Abs(two.Usage.TotalCost-unit.Usage.TotalCost) > 1e-10 || math.Abs(two.Usage.ActualCost-unit.Usage.ActualCost) > 1e-10
+	perSecond := two.Usage.TotalCost != unit.Usage.TotalCost || two.Usage.ActualCost != unit.Usage.ActualCost
 	seconds := NormalizeVideoBillingDurationSecondsOrDefault(pending.VideoDurationSeconds)
 	factor := 1.0
 	if perSecond {
@@ -404,34 +411,41 @@ func (s *OpenAIGatewayService) StartMediaBillingWorker() {
 }
 
 func (s *OpenAIGatewayService) recoverMediaBillingJobs(ctx context.Context) {
-	listCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	jobs, err := s.mediaBillingJobs.ListMediaBillingJobs(listCtx, 16)
-	cancel()
-	if err != nil {
-		logger.L().Error("media_billing.list_failed", zap.Error(err))
-		return
-	}
-	for _, job := range jobs {
-		if ctx.Err() != nil {
+	// Acquire each lease just before processing so slower jobs cannot exhaust
+	// the leases of other jobs waiting in the same batch.
+	for processed := 0; processed < 16 && ctx.Err() == nil; processed++ {
+		listCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		jobs, err := s.mediaBillingJobs.ListMediaBillingJobs(listCtx, 1)
+		cancel()
+		if err != nil {
+			logger.L().Error("media_billing.list_failed", zap.Error(err))
 			return
 		}
-		workCtx, stop := context.WithTimeout(ctx, 30*time.Second)
-		if job.Intent != nil {
-			err = s.settleMediaBillingJob(workCtx, job, nil)
-		} else {
-			err = s.pollGrokVideoBillingJob(workCtx, job)
+		if len(jobs) == 0 {
+			return
 		}
-		stop()
-		if err != nil {
-			logger.L().Warn("media_billing.retry", zap.String("job_id", job.ID), zap.Error(err))
+		for _, job := range jobs {
+			if ctx.Err() != nil {
+				return
+			}
+			workCtx, stop := context.WithTimeout(ctx, 30*time.Second)
+			if job.Intent != nil {
+				err = s.settleMediaBillingJob(workCtx, job, nil)
+			} else {
+				err = s.pollGrokVideoBillingJob(workCtx, job)
+			}
+			stop()
+			if err != nil {
+				logger.L().Warn("media_billing.retry", zap.String("job_id", job.ID), zap.Error(err))
+			}
+			retryCtx, retryCancel := context.WithTimeout(ctx, 3*time.Second)
+			delay := 15 * time.Second
+			if err != nil {
+				delay = time.Minute
+			}
+			_ = s.mediaBillingJobs.RetryMediaBillingJob(retryCtx, job.ID, delay)
+			retryCancel()
 		}
-		retryCtx, retryCancel := context.WithTimeout(ctx, 3*time.Second)
-		delay := 15 * time.Second
-		if err != nil {
-			delay = time.Minute
-		}
-		_ = s.mediaBillingJobs.RetryMediaBillingJob(retryCtx, job.ID, delay)
-		retryCancel()
 	}
 }
 
@@ -479,8 +493,10 @@ func (s *OpenAIGatewayService) pollGrokVideoBillingJob(ctx context.Context, job 
 		return errors.New("invalid video status response")
 	}
 	switch strings.ToLower(body.Status) {
-	case "failed", "cancelled", "canceled", "expired":
+	case "failed", "cancelled", "canceled":
 		return s.FailGrokVideoBillingJob(ctx, job)
+	case "expired":
+		return errors.New("expired video requires billing reconciliation")
 	case "pending", "processing", "running", "queued", "in_progress", "":
 		return nil
 	default:

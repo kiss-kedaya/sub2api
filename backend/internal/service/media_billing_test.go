@@ -55,6 +55,7 @@ func (r *mediaJobMemoryRepo) SubmitMediaBillingJob(_ context.Context, id, task s
 	defer r.mu.Unlock()
 	j := r.jobs[id]
 	j.UpstreamTaskID, j.Snapshot, j.Status = task, snapshot, MediaBillingSubmitted
+	j.AvailableAt = time.Now()
 	return nil
 }
 func (r *mediaJobMemoryRepo) GetMediaBillingJob(_ context.Context, user, key int64, task string) (*MediaBillingJob, error) {
@@ -123,18 +124,25 @@ func (r *mediaJobMemoryRepo) CompleteMediaBillingJob(_ context.Context, id strin
 	r.jobs[id].Status = MediaBillingDone
 	return nil
 }
-func (r *mediaJobMemoryRepo) ListMediaBillingJobs(_ context.Context, _ int) ([]*MediaBillingJob, error) {
+func (r *mediaJobMemoryRepo) ListMediaBillingJobs(_ context.Context, limit int) ([]*MediaBillingJob, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var jobs []*MediaBillingJob
 	for _, j := range r.jobs {
-		if j.Status == MediaBillingSubmitted || j.Status == MediaBillingReady || j.Status == MediaBillingBilled {
+		if !j.AvailableAt.After(time.Now()) && (j.Status == MediaBillingSubmitted || j.Status == MediaBillingReady || j.Status == MediaBillingBilled) {
+			j.AvailableAt = time.Now().Add(time.Minute)
 			jobs = append(jobs, cloneMediaTestJob(j))
+			if len(jobs) == limit {
+				break
+			}
 		}
 	}
 	return jobs, nil
 }
-func (r *mediaJobMemoryRepo) RetryMediaBillingJob(context.Context, string, time.Duration) error {
+func (r *mediaJobMemoryRepo) RetryMediaBillingJob(_ context.Context, id string, delay time.Duration) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.jobs[id].AvailableAt = time.Now().Add(delay)
 	return nil
 }
 
@@ -143,6 +151,13 @@ type mediaUsageMemoryRepo struct {
 	mu   sync.Mutex
 	logs map[string]*UsageLog
 }
+
+type mediaAccountRepo struct {
+	AccountRepository
+	account *Account
+}
+
+func (r mediaAccountRepo) GetByID(context.Context, int64) (*Account, error) { return r.account, nil }
 
 func (r *mediaUsageMemoryRepo) Create(_ context.Context, log *UsageLog) (bool, error) {
 	r.mu.Lock()
@@ -183,10 +198,17 @@ func TestGrokVideoDurableBillingRecoversWithoutClientPolling(t *testing.T) {
 	require.InDelta(t, 3.6, job.ReservedAmount, 1e-8)
 	require.NoError(t, svc.SubmitGrokVideoBillingJob(ctx, job, "task_background", pending))
 	// A separate gateway instance has only durable job data, as after a restart.
-	restarted := &OpenAIGatewayService{cfg: svc.cfg, mediaBillingJobs: repo, usageLogRepo: svc.usageLogRepo}
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{{StatusCode: http.StatusOK,
+		Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"status":"done","video":{"url":"https://vidgen.x.ai/test.mp4","duration":6}}`))}}}
+	account := newOpenAIRejectedFieldTestAccount()
+	account.ID = input.Account.ID
+	account.Platform = PlatformGrok
+	restarted := &OpenAIGatewayService{cfg: svc.cfg, mediaBillingJobs: repo, usageLogRepo: svc.usageLogRepo,
+		accountRepo: mediaAccountRepo{account: account}, httpUpstream: upstream}
 	job, err = repo.GetMediaBillingJob(ctx, 42, 71, "task_background")
 	require.NoError(t, err)
-	require.NoError(t, restarted.SettleGrokVideoBillingJob(ctx, job, &OpenAIForwardResult{VideoCount: 1, VideoDurationSeconds: 6}))
+	restarted.recoverMediaBillingJobs(ctx)
+	require.Len(t, upstream.requests, 1, "background recovery must query the upstream without a client request")
 	require.Equal(t, 1, repo.applied)
 	require.InDelta(t, 96.4, repo.balance, 1e-8)
 	stored, err := repo.GetMediaBillingJobByID(ctx, job.ID)
@@ -226,6 +248,26 @@ func TestGrokVideoDurableBillingRefundsKnownFailureOnce(t *testing.T) {
 	require.NoError(t, svc.FailGrokVideoBillingJob(context.Background(), job))
 	require.NoError(t, svc.FailGrokVideoBillingJob(context.Background(), job))
 	require.InDelta(t, 100, repo.balance, 1e-8)
+}
+
+func TestMediaBillingRecoveryDrainsMultipleReadyJobs(t *testing.T) {
+	svc, repo, _, _ := newMediaBillingServiceTest(t)
+	ctx := context.Background()
+	for _, id := range []string{"image:first", "image:second"} {
+		_, err := repo.CreateMediaBillingJob(ctx, &MediaBillingJob{
+			ID: id, Kind: MediaBillingKindImage, Status: MediaBillingReady,
+			Intent: &MediaBillingIntent{Command: UsageBillingCommand{RequestID: id, BalanceCost: 2}, Usage: UsageLog{RequestID: id}},
+		})
+		require.NoError(t, err)
+	}
+	svc.recoverMediaBillingJobs(ctx)
+	require.Equal(t, 2, repo.applied)
+	require.InDelta(t, 96, repo.balance, 1e-8)
+	for _, id := range []string{"image:first", "image:second"} {
+		job, err := repo.GetMediaBillingJobByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, MediaBillingDone, job.Status)
+	}
 }
 
 func TestGrokVideoDoesNotPublishBeforeBilling(t *testing.T) {
