@@ -43,6 +43,9 @@ jobs:
       - name: Codex ticket concurrency regression
         working-directory: backend
         run: go test -race -tags=unit ./internal/service -run 'Test.*CodexTicket' -count=1
+      - name: Billing and media concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/handler ./internal/service ./internal/repository -run 'Test(GrokVideoDurable|MediaBilling|AsyncImage|ImageTask|OpenAIResponsesWebSocket.*(Balance|Subscription|Settlement)|SmartBilling|.*Refund.*Pending)' -count=1
 
   frontend:
     runs-on: ubuntu-latest
@@ -71,6 +74,7 @@ jobs:
           python3 deploy/rollout/test_rollout329_guard.py
           python3 deploy/rollout/test_rollout330_guard.py
           python3 deploy/rollout/test_rollout331_guard.py
+          python3 deploy/rollout/test_rollout332_guard.py
 
   golangci-lint:
     runs-on: ubuntu-latest

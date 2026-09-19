@@ -319,10 +319,13 @@ type grokVideoBindOwnerKey struct{}
 // GrokVideoBindOwner identifies the API key that created a Grok video job so
 // status/content lookups can reuse the same upstream account.
 type GrokVideoBindOwner struct {
-	GroupID        *int64
-	UserID         int64
-	APIKeyID       int64
-	PendingBilling *GrokVideoPendingBilling
+	GroupID          *int64
+	UserID           int64
+	APIKeyID         int64
+	PendingBilling   *GrokVideoPendingBilling
+	OnAccepted       func(context.Context, string, GrokVideoPendingBilling) error
+	OnRequestStarted func()
+	OnRejected       func(context.Context) error
 }
 
 func ContextWithGrokVideoBindOwner(ctx context.Context, owner GrokVideoBindOwner) context.Context {
@@ -532,6 +535,7 @@ func (s *OpenAIGatewayService) SelectGrokMediaVideoRequestAccount(
 // first observes a completed video URL. Status may omit model/duration; we fall
 // back to this snapshot, then defaults.
 type GrokVideoPendingBilling struct {
+	DurableJobID  string `json:"durable_job_id,omitempty"`
 	Model         string `json:"model"`
 	BillingModel  string `json:"billing_model,omitempty"`
 	UpstreamModel string `json:"upstream_model,omitempty"`
@@ -889,6 +893,9 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		proxyURL = account.Proxy.URL()
 	}
 	upstreamStart := time.Now()
+	if owner, ok := grokVideoBindOwnerFrom(ctx); ok && owner.OnRequestStarted != nil {
+		owner.OnRequestStarted()
+	}
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
@@ -924,6 +931,11 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		}
 	}
 	if resp.StatusCode >= 400 {
+		if owner, ok := grokVideoBindOwnerFrom(ctx); ok && owner.OnRejected != nil {
+			if err := owner.OnRejected(ctx); err != nil {
+				return nil, ErrBillingServiceUnavailable.WithCause(err)
+			}
+		}
 		return s.handleGrokMediaErrorResponse(ctx, resp, c, account, requestIDHeader, requestModel)
 	}
 
@@ -966,6 +978,12 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 				// Publish billing identity before the task ID reaches the client.
 				// The accepted job survives client cancellation and cross-host polling.
 				storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				if owner.OnAccepted != nil {
+					if err := owner.OnAccepted(storeCtx, bindID, pending); err != nil {
+						cancel()
+						return nil, ErrBillingServiceUnavailable.WithCause(err)
+					}
+				}
 				storeErr := s.StoreGrokVideoPendingBilling(storeCtx, bindID, owner.UserID, owner.APIKeyID, pending)
 				if storeErr != nil {
 					storeErr = s.StoreGrokVideoPendingBilling(storeCtx, bindID, owner.UserID, owner.APIKeyID, pending)
@@ -978,7 +996,6 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		}
 	}
 	respBody = adaptGrokVideoClientResponse(endpoint, requestID, respBody)
-	writeGrokMediaResponse(c, resp, respBody, s.responseHeaderFilter)
 	resultModel := requestModel
 	resultBillingModel := requestModel
 	if endpoint == GrokMediaEndpointVideoStatus || endpoint == GrokMediaEndpointVideoGenerationsStatus {
@@ -990,7 +1007,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 			resultBillingModel = m
 		}
 	}
-	return &OpenAIForwardResult{
+	result := &OpenAIForwardResult{
 		RequestID:            requestIDHeader,
 		UpstreamHeaders:      resp.Header,
 		ResponseID:           usage.ResponseID,
@@ -1007,7 +1024,12 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		VideoCount:           usage.VideoCount,
 		VideoResolution:      usage.VideoResolution,
 		VideoDurationSeconds: usage.VideoDurationSeconds,
-	}, nil
+	}
+	if err := runGrokMediaBeforePublish(ctx, result); err != nil {
+		return nil, err
+	}
+	writeGrokMediaResponse(c, resp, respBody, s.responseHeaderFilter)
+	return result, nil
 }
 
 func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
@@ -1158,9 +1180,6 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	}
 
 	s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, ""), account, contentResp.Header, contentResp.StatusCode)
-	if err := writeGrokMediaContentResponse(c, contentResp); err != nil {
-		return nil, err
-	}
 	// Content download is an alternate completion observation: when status body is
 	// official done+video.url, attach billable units so the handler can claim once
 	// (same path as status polling). Pending snapshot is merged in the handler.
@@ -1178,6 +1197,12 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		result.VideoCount = billed.VideoCount
 		result.VideoResolution = billed.VideoResolution
 		result.VideoDurationSeconds = billed.VideoDurationSeconds
+	}
+	if err := runGrokMediaBeforePublish(ctx, result); err != nil {
+		return nil, err
+	}
+	if err := writeGrokMediaContentResponse(c, contentResp); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

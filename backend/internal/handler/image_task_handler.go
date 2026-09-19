@@ -21,9 +21,10 @@ import (
 )
 
 type AsyncImageHandler struct {
-	tasks   *service.ImageTaskService
-	openAI  *OpenAIGatewayHandler
-	execute func(platform string, c *gin.Context)
+	tasks             *service.ImageTaskService
+	openAI            *OpenAIGatewayHandler
+	execute           func(platform string, c *gin.Context)
+	isBillingComplete func(context.Context, string) (bool, error)
 }
 
 func NewAsyncImageHandler(tasks *service.ImageTaskService, openAI *OpenAIGatewayHandler) *AsyncImageHandler {
@@ -100,13 +101,12 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		return
 	}
 
-	taskCtx, recorder, cancel := newAsyncImageContext(c, body, h.tasks.ExecutionTimeout())
 	task, err := h.tasks.Create(c.Request.Context(), service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID})
 	if err != nil {
-		cancel()
 		imageTaskError(c, err)
 		return
 	}
+	taskCtx, recorder, cancel := newAsyncImageContext(c, body, h.tasks.ExecutionTimeout(), task.ID)
 
 	pollURL := imageTaskPollURL(c.Request.URL.Path, task.ID)
 	c.Header("Cache-Control", "no-store")
@@ -175,13 +175,34 @@ func (h *AsyncImageHandler) Get(c *gin.Context) {
 		imageTaskError(c, service.ErrImageTaskForbidden)
 		return
 	}
-	task, err := h.tasks.Get(c.Request.Context(), service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID}, c.Param("task_id"))
+	owner := service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID}
+	task, err := h.tasks.Get(c.Request.Context(), owner, c.Param("task_id"))
 	if err != nil {
 		imageTaskError(c, err)
 		return
 	}
+	if task.Status == service.ImageTaskStatusBilling {
+		complete, checkErr := h.imageTaskBillingComplete(c.Request.Context(), task.ID)
+		if checkErr != nil {
+			logger.L().Error("image_task.billing_status_failed", zap.String("task_id", task.ID), zap.Error(checkErr))
+			imageTaskError(c, service.ErrImageTaskUnavailable.WithCause(checkErr))
+			return
+		}
+		if complete {
+			if err := h.tasks.PublishBilled(c.Request.Context(), task.ID); err != nil {
+				logger.L().Error("image_task.billing_publish_failed", zap.String("task_id", task.ID), zap.Error(err))
+				imageTaskError(c, err)
+				return
+			}
+			task, err = h.tasks.Get(c.Request.Context(), owner, task.ID)
+			if err != nil {
+				imageTaskError(c, err)
+				return
+			}
+		}
+	}
 	c.Header("Cache-Control", "no-store")
-	if task.Status == service.ImageTaskStatusProcessing {
+	if task.Status == service.ImageTaskStatusProcessing || task.Status == service.ImageTaskStatusBilling {
 		c.Header("Retry-After", "3")
 	}
 	c.JSON(http.StatusOK, task)
@@ -244,12 +265,49 @@ func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, r
 			h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", "upstream returned an invalid image response"))
 			return
 		}
-		if err := h.tasks.Complete(context.Background(), taskID, statusCode, json.RawMessage(body)); err != nil {
+		if settlementErr := mediaSettlementResult(taskCtx); settlementErr != nil {
+			if errors.Is(settlementErr, service.ErrMediaBillingPending) {
+				if err := persistAsyncImageResult(func(ctx context.Context) error {
+					return h.tasks.StageBilling(ctx, taskID, statusCode, json.RawMessage(body))
+				}); err != nil {
+					logger.L().Error("image_task.billing_stage_failed", zap.String("task_id", taskID), zap.Error(err))
+				}
+				return
+			}
+			logger.L().Error("image_task.media_settlement_failed", zap.String("task_id", taskID), zap.Error(settlementErr))
+			h.failTask(taskID, http.StatusServiceUnavailable, imageTaskErrorPayload("billing_error", "image result settlement failed"))
+			return
+		}
+		if err := persistAsyncImageResult(func(ctx context.Context) error {
+			return h.tasks.Complete(ctx, taskID, statusCode, json.RawMessage(body))
+		}); err != nil {
 			logger.L().Error("image_task.complete_store_failed", zap.String("task_id", taskID), zap.Error(err))
 		}
 		return
 	}
 	h.failTask(taskID, statusCode, extractImageTaskError(body))
+}
+
+func persistAsyncImageResult(save func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err = save(ctx); err == nil || errors.Is(err, service.ErrImageTaskNotFound) {
+			return err
+		}
+		if attempt == 2 {
+			break
+		}
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+	}
+	return err
 }
 
 func (h *AsyncImageHandler) failTask(taskID string, statusCode int, taskErr json.RawMessage) {
@@ -258,9 +316,10 @@ func (h *AsyncImageHandler) failTask(taskID string, statusCode int, taskErr json
 	}
 }
 
-func newAsyncImageContext(c *gin.Context, body []byte, timeoutDuration time.Duration) (*gin.Context, *httptest.ResponseRecorder, context.CancelFunc) {
+func newAsyncImageContext(c *gin.Context, body []byte, timeoutDuration time.Duration, taskID string) (*gin.Context, *httptest.ResponseRecorder, context.CancelFunc) {
 	base := context.WithoutCancel(c.Request.Context())
 	executionCtx, cancel := context.WithTimeout(base, timeoutDuration)
+	executionCtx = service.ContextWithAsyncImageTaskID(executionCtx, taskID)
 	request := c.Request.Clone(executionCtx)
 	request.Body = io.NopCloser(bytes.NewReader(body))
 	request.GetBody = func() (io.ReadCloser, error) {
@@ -274,7 +333,18 @@ func newAsyncImageContext(c *gin.Context, body []byte, timeoutDuration time.Dura
 	recorderCtx, _ := gin.CreateTestContext(recorder)
 	taskCtx.Writer = recorderCtx.Writer
 	taskCtx.Request = request
+	requireMediaSettlement(taskCtx)
 	return taskCtx, recorder, cancel
+}
+
+func (h *AsyncImageHandler) imageTaskBillingComplete(ctx context.Context, taskID string) (bool, error) {
+	if h != nil && h.isBillingComplete != nil {
+		return h.isBillingComplete(ctx, taskID)
+	}
+	if h == nil || h.openAI == nil || h.openAI.gatewayService == nil {
+		return false, service.ErrImageTaskUnavailable
+	}
+	return h.openAI.gatewayService.IsImageTaskBillingComplete(ctx, taskID)
 }
 
 func asyncImageRequestStreams(contentType string, body []byte) bool {

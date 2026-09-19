@@ -433,6 +433,9 @@ type OpenAIGatewayService struct {
 	accountRepo           AccountRepository
 	usageLogRepo          UsageLogRepository
 	usageBillingRepo      UsageBillingRepository
+	mediaBillingJobs      MediaBillingJobRepository
+	mediaBillingCancel    context.CancelFunc
+	mediaBillingDone      chan struct{}
 	userRepo              UserRepository
 	userSubRepo           UserSubscriptionRepository
 	cache                 GatewayCache
@@ -601,6 +604,8 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	svc.StartOpenAICodexTicketHarvester()
+	svc.mediaBillingJobs, _ = usageBillingRepo.(MediaBillingJobRepository)
+	svc.StartMediaBillingWorker()
 	return svc
 }
 
@@ -713,6 +718,10 @@ func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 // CloseOpenAIWSPool 关闭 OpenAI WebSocket 连接池的后台 worker 和空闲连接。
 // 应在应用优雅关闭时调用。
 func (s *OpenAIGatewayService) CloseOpenAIWSPool() {
+	if s != nil && s.mediaBillingCancel != nil {
+		s.mediaBillingCancel()
+		<-s.mediaBillingDone
+	}
 	if s != nil && s.openaiWSPool != nil {
 		s.openaiWSPool.Close()
 	}

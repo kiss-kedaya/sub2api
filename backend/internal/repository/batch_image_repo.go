@@ -622,6 +622,52 @@ func (r *batchImageRepository) ListStaleUnsubmittedBatchImageJobs(ctx context.Co
 	return scanBatchImageJobs(rows)
 }
 
+func (r *batchImageRepository) ListBatchImageJobsPendingQueueRecovery(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+SELECT batch_id
+FROM batch_image_jobs
+WHERE status = 'submitted'
+  AND provider_job_name IS NOT NULL
+  AND provider_job_name <> ''
+  AND last_error_code = 'QUEUE_FAILED'
+ORDER BY id ASC
+LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	batchIDs := make([]string, 0, limit)
+	for rows.Next() {
+		var batchID string
+		if err := rows.Scan(&batchID); err != nil {
+			return nil, err
+		}
+		batchIDs = append(batchIDs, batchID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return batchIDs, nil
+}
+
+func (r *batchImageRepository) MarkBatchImageJobQueueRecovered(ctx context.Context, batchID string) error {
+	_, err := r.sql.ExecContext(ctx, `
+UPDATE batch_image_jobs
+SET last_error_code = NULL,
+    last_error_message = NULL,
+    updated_at = $2,
+    version = version + 1
+WHERE batch_id = $1
+  AND provider_job_name IS NOT NULL
+  AND provider_job_name <> ''
+  AND last_error_code = 'QUEUE_FAILED'`, batchID, time.Now())
+	return err
+}
+
 func (r *batchImageRepository) MarkBatchImageInputDeleted(ctx context.Context, batchID string, deletedAt time.Time) error {
 	res, err := r.sql.ExecContext(ctx, `
 UPDATE batch_image_jobs
