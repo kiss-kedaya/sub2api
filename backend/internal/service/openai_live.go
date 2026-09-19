@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	coderws "github.com/coder/websocket"
 	"github.com/google/uuid"
@@ -130,6 +131,12 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 	if err := ValidateLiveCallRequest(request); err != nil {
 		return nil, err
 	}
+	if s == nil || s.cfg == nil || s.cfg.RunMode != config.RunModeSimple {
+		return nil, ErrLiveBillingNotConfigured
+	}
+	if err := validateLiveCallIdentity(identity); err != nil {
+		return nil, err
+	}
 	store, err := s.liveStore()
 	if err != nil {
 		return nil, err
@@ -144,10 +151,11 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 	}
 
 	excluded := make(map[int64]struct{})
-	// Live 按通话时长计费，不属于 token 利润门的语义范围：显式豁免，避免
-	// 防御性装门按文本 D 过滤 Live 账号池且门与计费时刻不同源。
+	// Simple mode preserves the existing unbilled Live behavior. It does not
+	// belong to the token profit gate, so keep account selection independent of
+	// text pricing until a dedicated Live price exists.
 	ctx = WithOpenAIProfitControlSuppressed(ctx)
-	liveKey := &APIKey{GroupID: identity.GroupID, RouteGroupIDs: identity.RouteGroupIDs}
+	liveKey := cloneLiveAPIKey(identity.APIKey)
 	var lastErr error
 	for attempt := 0; attempt <= 3; attempt++ {
 		selection, _, routedKey, selectErr := s.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(
@@ -163,6 +171,12 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			false,
 			false,
 		)
+		if selectErr == nil && !liveRouteGroupAllowed(routedKey) {
+			if selection != nil && selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+			return nil, ErrLiveUnavailable
+		}
 		if routedKey != nil && routedKey.GroupID != nil {
 			identity.GroupID = routedKey.GroupID
 			liveKey = routedKey
@@ -248,6 +262,57 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 		return nil, lastErr
 	}
 	return nil, ErrLiveUnavailable
+}
+
+func validateLiveCallIdentity(identity LiveCallIdentity) error {
+	key := identity.APIKey
+	if key == nil || identity.APIKeyID <= 0 || identity.UserID <= 0 ||
+		key.ID != identity.APIKeyID || key.UserID != identity.UserID ||
+		key.User == nil || key.User.ID != identity.UserID ||
+		!sameLiveOptionalID(key.GroupID, identity.GroupID) ||
+		key.GroupID == nil || key.Group == nil || key.Group.ID != *key.GroupID ||
+		!sameLiveRouteGroupIDs(key.RouteGroupIDs, identity.RouteGroupIDs) {
+		return ErrLiveIdentityMismatch
+	}
+	if !liveRouteGroupAllowed(key) {
+		return ErrLiveUnavailable
+	}
+	return nil
+}
+
+func cloneLiveAPIKey(key *APIKey) *APIKey {
+	if key == nil {
+		return nil
+	}
+	cloned := *key
+	cloned.RouteGroupIDs = append([]int64(nil), key.RouteGroupIDs...)
+	return &cloned
+}
+
+func liveRouteGroupAllowed(key *APIKey) bool {
+	return key != nil && key.GroupID != nil && key.Group != nil &&
+		key.Group.ID == *key.GroupID && IsGroupContextValid(key.Group) &&
+		key.Group.IsActive() && key.Group.AllowLive &&
+		(key.Group.Platform == PlatformOpenAI || key.Group.Platform == PlatformComposite)
+}
+
+func sameLiveOptionalID(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func sameLiveRouteGroupIDs(left, right []int64) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *OpenAIGatewayService) shouldFailoverLiveCreateError(account *Account, err error) bool {
@@ -829,11 +894,10 @@ func (s *OpenAIGatewayService) finalizeLiveCall(record *LiveCallRecord) {
 	if record.SubscriptionID > 0 {
 		billingType = BillingTypeSubscription
 	}
-	// TODO(billing): Live 会话目前不计费：TotalCost/ActualCost 恒为 0，完全绕过
-	// recordUsageCore/applyUsageBilling，余额模式下极低余额也能反复开启最长
-	// liveMaxSessionDuration 的会话。若确认按时长计费，应在此接入计费管道；
-	// 若确认有意免费，删除本注释即可（零值行为由
-	// TestFinalizeLiveCallIsIdempotentAndWritesZeroUsage 锁定）。
+	// Live has no configured price. Standard mode is rejected before Create;
+	// simple mode deliberately preserves the old unbilled behavior and writes a
+	// zero-cost usage row for observability only. Do not turn duration into a
+	// charge until an explicit Live price and settlement policy exist.
 	//
 	// 这是该会话唯一一次落库机会（MarkLiveCallClosed 已标记 first），失败即永久
 	// 丢失，因此走带日志与同步兜底的 writeUsageLogBestEffort（issue #3656）。
