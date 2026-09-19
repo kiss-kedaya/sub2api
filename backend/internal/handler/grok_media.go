@@ -518,7 +518,13 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 						return nil
 					}
 				}
-				return recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+				err := recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+				if endpoint.IsImageGenerationRequest() && mediaSettlementRequired(c) && errors.Is(err, service.ErrMediaBillingPending) {
+					// This writer is a private async-task recorder. Retain the
+					// generated image for publication after durable settlement.
+					return nil
+				}
+				return err
 			})
 		}
 		forwardStart := time.Now()
@@ -658,10 +664,14 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		} else if endpoint.IsVideoLookupRequest() && durableVideo == nil {
 			taskID := strings.TrimSpace(requestID)
 			if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result, videoPending); billResult != nil {
-				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
+				if err := recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID); err != nil {
+					reqLog.Error("grok_media.record_usage_failed", zap.Error(err))
+				}
 			}
 		} else if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {
-			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+			if err := recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID); err != nil {
+				reqLog.Error("grok_media.record_usage_failed", zap.Error(err))
+			}
 		}
 		reqLog.Debug("grok_media.request_completed",
 			zap.Int64("account_id", account.ID),
@@ -961,8 +971,10 @@ func recordGrokMediaUsage(
 		SessionID:          sessionID,
 		ChannelUsageFields: channelUsageFields,
 	}
-	if h.gatewayService.HasDurableMediaBilling() {
-		return h.gatewayService.RecordMediaUsage(c.Request.Context(), input)
+	if h.gatewayService.HasDurableMediaBilling() || mediaSettlementRequired(c) {
+		err := h.gatewayService.RecordMediaUsage(c.Request.Context(), input)
+		recordMediaSettlementResult(c, err)
+		return err
 	}
 	h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, input); err != nil {
