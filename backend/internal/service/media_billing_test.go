@@ -294,3 +294,54 @@ func TestVideoUnitAmountsRoundOnlyAfterMultiplication(t *testing.T) {
 	require.Equal(t, 0.00000009, result.Command.BalanceCost)
 	require.Equal(t, result.Command.BalanceCost, result.Usage.ActualCost)
 }
+
+type mediaNotificationUserRepo struct {
+	UserRepository
+	user *User
+	err  error
+}
+
+func (r mediaNotificationUserRepo) GetByID(context.Context, int64) (*User, error) {
+	return r.user, r.err
+}
+
+func TestMediaBillingNotificationsUseCurrentPreferencesAndFrozenRate(t *testing.T) {
+	svc, _, _, _ := newMediaBillingServiceTest(t)
+	notifications, _ := newBalanceNotifyServiceForTest()
+	svc.balanceNotifyService = notifications
+	user := &User{ID: 42, Email: "billing@example.test", BalanceNotifyEnabled: true}
+	account := &Account{ID: 17001, Type: AccountTypeAPIKey, Extra: map[string]any{
+		"quota_notify_daily_enabled": true, "quota_notify_daily_threshold": 10.0,
+	}}
+	svc.userRepo, svc.accountRepo = mediaNotificationUserRepo{user: user}, mediaAccountRepo{account: account}
+	rate := 2.0
+	job := &MediaBillingJob{ID: "image:notification", GroupID: 17, Intent: &MediaBillingIntent{
+		Command: UsageBillingCommand{UserID: 42, APIKeyID: 71, AccountID: 17001, AccountType: AccountTypeAPIKey},
+		Usage:   UsageLog{ActualCost: 3, TotalCost: 4, AccountRateMultiplier: &rate},
+	}}
+	params := svc.mediaBillingPostUsageParams(context.Background(), job)
+	require.True(t, notifications.canNotifyBalance(params.User), "a media charge must retain the user's notification opt-in")
+	dims := buildQuotaDimsFromState(params.Account, &AccountQuotaState{DailyUsed: 95, DailyLimit: 100})
+	require.True(t, dims[0].enabled)
+	cost := params.Cost.TotalCost * params.AccountRateMultiplier
+	require.Equal(t, 8.0, cost, "quota alerts use the frozen billing rate")
+	require.True(t, crossedDownward(100-(dims[0].currentUsed-cost), 100-dims[0].currentUsed, 10))
+	user.BalanceNotifyEnabled = false
+	require.False(t, notifications.canNotifyBalance(svc.mediaBillingPostUsageParams(context.Background(), job).User))
+	payload, err := json.Marshal(job.Intent)
+	require.NoError(t, err)
+	require.NotContains(t, string(payload), "billing@example.test", "notification lookup must not enrich the stored intent")
+}
+
+func TestMediaBillingNotificationLookupFailureDoesNotChangeCharge(t *testing.T) {
+	svc, _, _, _ := newMediaBillingServiceTest(t)
+	svc.balanceNotifyService, _ = newBalanceNotifyServiceForTest()
+	svc.userRepo = mediaNotificationUserRepo{err: errors.New("temporary lookup failure")}
+	job := &MediaBillingJob{ID: "image:notification-failure", Intent: &MediaBillingIntent{
+		Command: UsageBillingCommand{UserID: 42}, Usage: UsageLog{ActualCost: 3},
+	}}
+	params := svc.mediaBillingPostUsageParams(context.Background(), job)
+	require.Equal(t, 3.0, params.Cost.ActualCost)
+	require.Equal(t, int64(42), params.User.ID)
+	require.False(t, params.User.BalanceNotifyEnabled)
+}
