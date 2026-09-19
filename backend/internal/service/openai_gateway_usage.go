@@ -510,6 +510,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		)
 	}
 
+	if capturePreparedMediaUsage(ctx, usageLog, input, cost, accountRateMultiplier, isSubscriptionBilling) {
+		return nil
+	}
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
