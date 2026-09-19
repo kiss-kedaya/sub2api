@@ -1,5 +1,5 @@
 /* Shared material and type, scoped to the signed-in console. */
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal) {
+:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
   --signal-bg: #fafafa;
   --signal-surface: #ffffff;
   --signal-raised: #f5f5f6;
@@ -22,7 +22,7 @@
   -webkit-font-smoothing: antialiased;
 }
 
-.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal) {
+.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
   --signal-bg: #0e0e0f;
   --signal-surface: #19191b;
   --signal-raised: #212123;

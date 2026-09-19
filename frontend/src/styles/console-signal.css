@@ -1,5 +1,5 @@
 /* Tokens also reach body-level dialogs, only while a SIGNAL page is mounted. */
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal) {
+:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
   --signal-bg: #f5f6f7;
   --signal-surface: white;
   --signal-line: #dfe3e5;
@@ -16,7 +16,7 @@
   color: var(--signal-text);
 }
 
-.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal) {
+.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
   --signal-bg: #111315;
   --signal-surface: #191c1f;
   --signal-line: #303538;
