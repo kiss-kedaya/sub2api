@@ -529,11 +529,11 @@ func TestFinalizePendingRefundSuccessRejectsStaleCallerBeforeSecondDeduction(t *
 		}},
 	}
 
-	first, err := svc.finalizePendingRefundSuccess(ctx, svc.refundFinalizePlan(order))
+	first, err := svc.finalizePendingRefundSuccessWithDeduction(ctx, svc.refundFinalizePlan(order), true)
 	require.NoError(t, err)
 	require.True(t, first.Success)
 
-	second, err := svc.finalizePendingRefundSuccess(ctx, svc.refundFinalizePlan(order))
+	second, err := svc.finalizePendingRefundSuccessWithDeduction(ctx, svc.refundFinalizePlan(order), true)
 	require.Nil(t, second)
 	require.Error(t, err)
 	require.Equal(t, "CONFLICT", infraerrors.Reason(err))
@@ -565,7 +565,7 @@ func TestFinalizePendingRefundSuccessRollsBackPostDeductionFailure(t *testing.T)
 		}},
 	}
 
-	result, err := svc.finalizePendingRefundSuccess(ctx, svc.refundFinalizePlan(order))
+	result, err := svc.finalizePendingRefundSuccessWithDeduction(ctx, svc.refundFinalizePlan(order), true)
 	require.Nil(t, result)
 	require.ErrorContains(t, err, "injected failure after deduction")
 

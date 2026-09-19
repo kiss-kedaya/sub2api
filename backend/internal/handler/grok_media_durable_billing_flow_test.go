@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -315,6 +316,10 @@ func (u *durableMediaUpstream) Do(req *http.Request, _ string, accountID int64, 
 		if u.createErr != nil {
 			return nil, u.createErr
 		}
+		if strings.Contains(req.URL.Path, "/images/") {
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
+				Body: io.NopCloser(strings.NewReader(`{"data":[{"url":"https://example.test/private-generated-image.png"}]}`))}, nil
+		}
 		status := u.createStatus
 		if status == 0 {
 			status = http.StatusOK
@@ -375,7 +380,7 @@ func newDurableMediaHandlerFixtureWithAccounts(t *testing.T, accountCount int) *
 	for i := range accounts {
 		accounts[i] = service.Account{ID: 17001 + int64(i), Platform: service.PlatformGrok, Type: service.AccountTypeAPIKey,
 			Status: service.StatusActive, Schedulable: true, GroupIDs: []int64{17}, Concurrency: 10,
-			Credentials: map[string]any{"api_key": "synthetic-video-key", "model_mapping": map[string]any{"grok-imagine-video": "grok-imagine-video"}}}
+			Credentials: map[string]any{"api_key": "synthetic-video-key", "model_mapping": map[string]any{"grok-imagine-video": "grok-imagine-video", "grok-imagine-image": "grok-imagine-image"}}}
 		accountPointers[i] = &accounts[i]
 	}
 	accountRepo := openAIImagesFailoverAccountRepo{accounts: accounts}
@@ -568,4 +573,49 @@ func TestGrokVideoDurableHandlerCreateFailureSemantics(t *testing.T) {
 		require.Zero(t, direct)
 		require.Len(t, f.upstream.createAccountIDs(), 1, "uncertain submission must not fail over to the spare account")
 	})
+}
+
+func TestGrokAsyncImagePublishesOnlyAfterDurableSettlement(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprint("pending=", pending), func(t *testing.T) {
+			f := newDurableMediaHandlerFixture(t)
+			if pending {
+				f.repo.setApplyError(errors.New("synthetic ledger outage"))
+			}
+			store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+			tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+			owner := service.ImageTaskOwner{UserID: f.key.UserID, APIKeyID: f.key.ID}
+			task, err := tasks.Create(context.Background(), owner)
+			require.NoError(t, err)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			body := []byte(`{"model":"grok-imagine-image","prompt":"test"}`)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations/async", strings.NewReader(string(body)))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set(string(middleware.ContextKeyAPIKey), f.key)
+			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: f.key.UserID})
+			taskContext, recorder, cancel := newAsyncImageContext(c, body, time.Minute, task.ID)
+			h := NewAsyncImageHandler(tasks, f.handlers[0])
+			h.run(task.ID, service.PlatformGrok, taskContext, recorder, cancel)
+
+			stored, err := store.Get(context.Background(), task.ID)
+			require.NoError(t, err)
+			public, err := tasks.Get(context.Background(), owner, task.ID)
+			require.NoError(t, err)
+			job, err := f.repo.GetMediaBillingJobByID(context.Background(), "image:"+task.ID)
+			require.NoError(t, err)
+			require.Equal(t, int64(17), job.GroupID)
+			if pending {
+				require.Equal(t, service.MediaBillingReady, job.Status)
+				require.Equal(t, service.ImageTaskStatusBilling, public.Status)
+				require.Empty(t, public.Result)
+				require.Empty(t, public.ImageURL)
+				require.Empty(t, stored.Result)
+				require.Contains(t, string(stored.PendingResult), "private-generated-image.png")
+			} else {
+				require.Equal(t, service.MediaBillingDone, job.Status)
+				require.Equal(t, service.ImageTaskStatusCompleted, public.Status)
+				require.Contains(t, public.ImageURL, "private-generated-image.png")
+			}
+		})
+	}
 }
