@@ -13,6 +13,7 @@ const {
   listLogs,
   getGroups,
   getProxies,
+  testAPIKeys,
   showError,
   showSuccess,
 } = vi.hoisted(() => ({
@@ -22,6 +23,7 @@ const {
   listLogs: vi.fn(),
   getGroups: vi.fn(),
   getProxies: vi.fn(),
+  testAPIKeys: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
 }))
@@ -33,7 +35,7 @@ vi.mock('@/api/admin', () => ({
       updateConfig,
       getStatus,
       listLogs,
-      testAPIKeys: vi.fn(),
+      testAPIKeys,
       deleteFlaggedHash: vi.fn(),
       clearFlaggedHashes: vi.fn(),
       unbanUser: vi.fn(),
@@ -199,6 +201,7 @@ describe('admin RiskControlView', () => {
     getGroups.mockReset()
     showError.mockReset()
     showSuccess.mockReset()
+    testAPIKeys.mockReset()
 
     getConfig.mockResolvedValue(baseConfig())
     getStatus.mockResolvedValue(runtimeStatus())
@@ -215,6 +218,52 @@ describe('admin RiskControlView', () => {
       api_key_masks: [],
       api_key_statuses: [],
     }))
+  })
+
+  it('preserves both engine drafts and saves thresholds independently', async () => {
+    const wrapper = mount(RiskControlView, { global: { stubs: { AppLayout: AppLayoutStub, BaseDialog: BaseDialogStub, Icon: true, Select: true, Toggle: true, Pagination: true, ModelWhitelistSelector: ModelWhitelistSelectorStub, ProxySelector: true } } })
+    await flushPromises()
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await wrapper.get('[data-test="audit-base-url"]').setValue('https://openai-edited.example')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.riskThresholds').trigger('click')
+    await wrapper.get('[data-test="risk-threshold-sexual"]').setValue('73')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.basic').trigger('click')
+    const engine = () => wrapper.findComponent('[data-test="audit-engine-select"]')
+    engine().vm.$emit('update:modelValue', 'typesafe')
+    await flushPromises()
+    expect((wrapper.get('[data-test="audit-model"]').element as HTMLInputElement).value).toBe('jev-latest')
+    await wrapper.get('[data-test="audit-base-url"]').setValue('https://typesafe-edited.example')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.riskThresholds').trigger('click')
+    expect((wrapper.get('[data-test="risk-threshold-sexual"]').element as HTMLInputElement).value).toBe('80')
+    await wrapper.get('[data-test="risk-threshold-sexual"]').setValue('91')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.basic').trigger('click')
+    engine().vm.$emit('update:modelValue', 'openai')
+    await flushPromises()
+    expect((wrapper.get('[data-test="audit-base-url"]').element as HTMLInputElement).value).toBe('https://openai-edited.example')
+    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await flushPromises()
+    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({ engine: 'openai', engine_configs: {
+      openai: expect.objectContaining({ base_url: 'https://openai-edited.example', thresholds: expect.objectContaining({ sexual: 0.73 }) }),
+      typesafe: expect.objectContaining({ base_url: 'https://typesafe-edited.example', thresholds: expect.objectContaining({ sexual: 0.91 }) }),
+    } }))
+    expect(showError).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('tests the draft engine without switching the active engine', async () => {
+    testAPIKeys.mockResolvedValue({ items: [{ status: 'ok', configured: false }], image_count: 0 })
+    const wrapper = mount(RiskControlView, { global: { stubs: { AppLayout: AppLayoutStub, BaseDialog: BaseDialogStub, Icon: true, Select: true, Toggle: true, Pagination: true, ModelWhitelistSelector: ModelWhitelistSelectorStub, ProxySelector: true } } })
+    await flushPromises()
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    wrapper.findComponent('[data-test="audit-engine-select"]').vm.$emit('update:modelValue', 'typesafe')
+    await flushPromises()
+    await wrapper.get('textarea[autocomplete="new-password"]').setValue('test-only-key')
+    await findButtonByText(wrapper, 'admin.riskControl.testInputApiKeys').trigger('click')
+    await flushPromises()
+    expect(testAPIKeys).toHaveBeenCalledWith(expect.objectContaining({ engine: 'typesafe', api_keys: ['test-only-key'], model: 'jev-latest', thresholds: expect.objectContaining({ sexual: 0.8 }) }))
+    expect(updateConfig).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-test="active-audit-engine"]').text()).not.toContain('TypeSafe AI')
+    wrapper.unmount()
   })
 
   it('saves the selected model filter mode and models', async () => {
