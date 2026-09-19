@@ -70,3 +70,18 @@ func TestDispatchMediaSettlementRecordsSynchronousResultWhenRequired(t *testing.
 	require.Zero(t, asyncCalls)
 	require.ErrorIs(t, mediaSettlementResult(c), want)
 }
+
+func TestPersistAsyncImageResultRetriesTransientStorageFailure(t *testing.T) {
+	calls := 0
+	err := persistAsyncImageResult(func(ctx context.Context) error {
+		_, bounded := ctx.Deadline()
+		require.True(t, bounded)
+		calls++
+		if calls == 1 {
+			return errors.New("temporary storage failure")
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, calls)
+}
