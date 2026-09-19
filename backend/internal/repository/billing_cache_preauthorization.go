@@ -147,6 +147,21 @@ redis.call('HSET', KEYS[2], 'reserved', ARGV[1])
 return {1, state, tostring(wallet), ARGV[1], actual}
 `)
 
+var readLiveBalanceAttemptScript = redis.NewScript(`
+local wallet = redis.call('GET', KEYS[1])
+local state = redis.call('HGET', KEYS[2], 'state')
+if state == false then
+  return {4, 0, wallet or '0', '0', '0'}
+end
+
+local reserved = redis.call('HGET', KEYS[2], 'reserved') or '0'
+local actual = redis.call('HGET', KEYS[2], 'actual') or '0'
+if wallet == false then
+  return {3, state, '0', reserved, actual}
+end
+return {2, state, wallet, reserved, actual}
+`)
+
 var finalizeLiveBalanceScript = redis.NewScript(`
 local wallet = redis.call('GET', KEYS[1])
 local state = redis.call('HGET', KEYS[2], 'state')
@@ -419,6 +434,16 @@ func (c *billingCache) TopUpLiveBalance(ctx context.Context, userID int64, attem
 
 	return c.runLiveBalanceScript(ctx, topUpLiveBalanceScript,
 		userID, attemptID, targetUnits)
+}
+
+// ReadLiveBalanceAttempt returns the cumulative reserved amount and terminal
+// state without changing either. Recovery uses it to bridge the Redis-success,
+// PostgreSQL-failure window after a streaming top-up.
+func (c *billingCache) ReadLiveBalanceAttempt(ctx context.Context, userID int64, attemptID string) (service.LiveBalanceResult, error) {
+	if err := validateLiveBalanceIdentity(userID, attemptID); err != nil {
+		return service.LiveBalanceResult{}, err
+	}
+	return c.runLiveBalanceScript(ctx, readLiveBalanceAttemptScript, userID, attemptID)
 }
 
 // FinalizeLiveBalance replaces the accumulated hold with the actual charge.
