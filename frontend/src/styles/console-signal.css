@@ -1,34 +1,34 @@
 /* Tokens also reach body-level dialogs, only while a SIGNAL page is mounted. */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #f5f6f7;
-  --signal-surface: white;
-  --signal-line: #dfe3e5;
-  --signal-text: #192322;
-  --signal-muted: #62706e;
-  --signal-accent: #087f6a;
-  --signal-amber: #a86610;
-  --signal-hover: #edf1ef;
-  --signal-accent-soft: #e5f3ee;
+  --signal-bg: #f2f2f7;
+  --signal-surface: #ffffff;
+  --signal-line: #dedee4;
+  --signal-text: #1c1c1e;
+  --signal-muted: #63636c;
+  --signal-accent: #0066d6;
+  --signal-amber: #a66a19;
+  --signal-hover: #e9e9ef;
+  --signal-accent-soft: #e3efff;
   --signal-on-accent: #ffffff;
-  --signal-control-line: #84948d;
-  --signal-shadow: 0 12px 32px #19232214;
+  --signal-control-line: #c7c7ce;
+  --signal-shadow: 0 1px 3px #1c1c1e08, 0 6px 16px #1c1c1e05;
   letter-spacing: 0;
   color: var(--signal-text);
 }
 
 .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #111315;
-  --signal-surface: #191c1f;
-  --signal-line: #303538;
-  --signal-text: #edf2ef;
-  --signal-muted: #a0aca6;
-  --signal-accent: #6ce4bd;
-  --signal-amber: #eeb766;
-  --signal-hover: #252c29;
-  --signal-accent-soft: #203a30;
-  --signal-on-accent: #111315;
-  --signal-control-line: #667c70;
-  --signal-shadow: 0 12px 32px #00000033;
+  --signal-bg: #111113;
+  --signal-surface: #1c1c1e;
+  --signal-line: #38383b;
+  --signal-text: #f2f2f7;
+  --signal-muted: #aeaeb2;
+  --signal-accent: #78b4ff;
+  --signal-amber: #e3b770;
+  --signal-hover: #303034;
+  --signal-accent-soft: #22364e;
+  --signal-on-accent: #10253d;
+  --signal-control-line: #545459;
+  --signal-shadow: 0 2px 4px #00000014, 0 8px 20px #0000000f;
 }
 
 .console-signal {

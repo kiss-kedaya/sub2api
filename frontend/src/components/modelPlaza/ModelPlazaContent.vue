@@ -1,22 +1,22 @@
 <template>
-  <div class="space-y-5">
+  <div class="model-plaza-content space-y-5">
     <!-- 页头(独立形态下展示标题;后台形态 AppHeader 已有页面标题) -->
-    <div v-if="!embedded">
-      <h1 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-3xl">{{ t('modelPlaza.title') }}</h1>
-      <p class="mt-1.5 text-sm text-gray-500 dark:text-dark-400">{{ t('modelPlaza.description') }}</p>
+    <div v-if="!embedded" class="plaza-heading">
+      <h1>{{ t('modelPlaza.title') }}</h1>
+      <p>{{ t('modelPlaza.description') }}</p>
     </div>
 
     <!-- 全局价格说明(管理员配置,Markdown) -->
     <div
       v-if="descriptionHtml"
-      class="plaza-description rounded-2xl border border-gray-100 bg-white px-5 py-4 text-sm shadow-card dark:border-dark-700/50 dark:bg-dark-800/50"
+      class="plaza-description px-1 py-3 text-sm"
       v-html="descriptionHtml"
     ></div>
 
     <!-- 未登录提示 -->
     <p
       v-if="!isAuthenticated"
-      class="flex items-center gap-1.5 text-xs text-gray-400 dark:text-dark-500"
+      class="plaza-hint"
     >
       <Icon name="infoCircle" size="xs" class="h-3.5 w-3.5" />
       {{ t('modelPlaza.anonymousHint') }}
@@ -28,7 +28,7 @@
     </div>
     <div
       v-else-if="error"
-      class="rounded-2xl border border-red-200 bg-red-50 px-5 py-8 text-center text-sm text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300"
+      class="plaza-status plaza-status-error"
     >
       {{ t('modelPlaza.loadFailed') }}
     </div>
@@ -54,7 +54,7 @@
       </div>
       <div
         v-else
-        class="rounded-2xl border border-dashed border-gray-300 px-5 py-12 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-dark-400"
+        class="plaza-status"
       >
         {{ searchActive ? t('modelPlaza.noSearchResult') : t('modelPlaza.empty') }}
       </div>
@@ -154,7 +154,49 @@ const filteredGroups = computed(() => {
 </script>
 
 <style scoped>
+.model-plaza-content {
+  min-width: 0;
+  color: var(--signal-text, #1c1c1e);
+}
+
+.plaza-heading h1 {
+  font-size: 28px;
+  line-height: 34px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.plaza-heading p,
+.plaza-hint {
+  margin-top: 6px;
+  color: var(--signal-muted, #63636c);
+  font-size: 13px;
+}
+
+.plaza-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.plaza-status {
+  padding: 32px 20px;
+  border: 1px dashed var(--signal-line, #dedee4);
+  border-radius: 8px;
+  color: var(--signal-muted, #63636c);
+  text-align: center;
+  font-size: 14px;
+}
+
+.plaza-status-error {
+  border-style: solid;
+  border-color: #eb4d3d55;
+  background: #eb4d3d0f;
+  color: #c4291c;
+}
+
 .plaza-description {
+  border-bottom: 1px solid var(--signal-line, #dedee4);
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
