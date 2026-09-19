@@ -202,6 +202,10 @@ describe('local demo API contracts', () => {
     expect(subscriptions.map(item => item.status)).toEqual(['active', 'active', 'expired'])
     expect(subscriptions[0].group?.daily_limit_usd).toBe(12)
     expect(api.handle('GET', '/api/v1/subscriptions/summary', query())).toMatchObject({ active_count: 2 })
+    const plaza = api.handle('GET', '/api/v1/model-plaza', query()) as { groups: Array<{ id: number; platform: string; rate_multiplier: number; models: unknown[] }> }
+    expect(plaza.groups.length).toBe(6)
+    expect(plaza.groups.every(group => group.models.length > 0)).toBe(true)
+    expect(plaza.groups.map(group => group.rate_multiplier)).toEqual([1, 0.07, 1, 1, 0.5, 1])
   })
 
   it('keeps payment orders local, currency-aware and free of outbound payment URLs', () => {
