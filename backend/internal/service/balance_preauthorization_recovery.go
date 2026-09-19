@@ -33,6 +33,11 @@ func (s *BalancePreauthorizationService) RecoverBalancePreauthorization(
 		}
 		return s.recoverBalancePreauthorizationRefund(ctx, record)
 	case BalanceSettlementAuthorized:
+		var err error
+		record, err = s.reconcileAuthorizedBalancePreauthorizationHold(ctx, record)
+		if err != nil {
+			return err
+		}
 		// Redis authorization succeeded, but the process may have crashed after
 		// returning a successful provider response and before its in-memory usage
 		// task reached repo.Apply. The exact spend is unknowable here; refunding
@@ -58,6 +63,55 @@ func (s *BalancePreauthorizationService) RecoverBalancePreauthorization(
 	default:
 		return balancePreauthorizationUnavailable(fmt.Errorf("unsupported recoverable balance preauthorization status %d", record.Status))
 	}
+}
+
+func (s *BalancePreauthorizationService) reconcileAuthorizedBalancePreauthorizationHold(
+	ctx context.Context,
+	record BalancePreauthorizationRecord,
+) (BalancePreauthorizationRecord, error) {
+	reader, ok := s.wallet.(balancePreauthorizationAttemptReader)
+	if !ok {
+		return record, balancePreauthorizationUnavailable(errors.New("balance preauthorization attempt reader is unavailable"))
+	}
+	holdRepo, ok := s.repo.(balancePreauthorizationHoldRepository)
+	if !ok {
+		return record, balancePreauthorizationUnavailable(errors.New("balance preauthorization hold repository is unavailable"))
+	}
+
+	result, err := reader.ReadLiveBalanceAttempt(
+		ctx,
+		record.UserID,
+		BalancePreauthorizationAttemptID(record.RequestID, record.APIKeyID),
+	)
+	if err != nil {
+		return record, balancePreauthorizationUnavailable(err)
+	}
+	if result.Outcome == LiveBalanceOutcomeNotFound {
+		// Preserve the existing fail-closed path. Finalize will also return
+		// NotFound, leaving the durable row recoverable instead of inventing state.
+		return record, nil
+	}
+	if !liveBalanceAuthorizationSucceeded(result, record.HoldAmount) {
+		// A terminal Redis attempt means finalize/refund won the race. A fresh PG
+		// read will expose its durable transition; this stale recovery must stop.
+		return record, balancePreauthorizationUnavailable(fmt.Errorf(
+			"recover hold returned outcome=%d state=%d",
+			result.Outcome,
+			result.State,
+		))
+	}
+
+	cumulativeHold := QuantizeUsageBillingAmount(result.ReservedAmount)
+	if err := holdRepo.AdvanceBalancePreauthorizationHold(
+		ctx,
+		record.RequestID,
+		record.APIKeyID,
+		cumulativeHold,
+	); err != nil {
+		return record, balancePreauthorizationUnavailable(err)
+	}
+	record.HoldAmount = math.Max(record.HoldAmount, cumulativeHold)
+	return record, nil
 }
 
 func balancePreauthorizationRecoveryHoldFingerprint(record BalancePreauthorizationRecord) string {

@@ -400,6 +400,34 @@ func TestTopUpLiveBalanceUsesCumulativeTargetForIdempotency(t *testing.T) {
 	require.Equal(t, LiveBalanceOutcomeConflict, backwards.Outcome)
 }
 
+func TestReadLiveBalanceAttemptReturnsCumulativeAndTerminalState(t *testing.T) {
+	cache, _ := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+
+	_, err := cache.AuthorizeLiveBalance(ctx, 61, "request", 10, 1)
+	require.NoError(t, err)
+	_, err = cache.TopUpLiveBalance(ctx, 61, "request", 2.5)
+	require.NoError(t, err)
+
+	authorized, err := cache.ReadLiveBalanceAttempt(ctx, 61, "request")
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeIdempotent, authorized.Outcome)
+	require.Equal(t, LiveBalanceAttemptAuthorized, authorized.State)
+	require.InDelta(t, 2.5, authorized.ReservedAmount, 1e-12)
+
+	_, err = cache.FinalizeLiveBalance(ctx, 61, "request", 1.75)
+	require.NoError(t, err)
+	finalized, err := cache.ReadLiveBalanceAttempt(ctx, 61, "request")
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceAttemptFinalized, finalized.State)
+	require.InDelta(t, 2.5, finalized.ReservedAmount, 1e-12)
+	require.InDelta(t, 1.75, finalized.ActualAmount, 1e-12)
+
+	missing, err := cache.ReadLiveBalanceAttempt(ctx, 61, "missing")
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeNotFound, missing.Outcome)
+}
+
 func TestFinalizeLiveBalanceSettlesOnceAndRetainsTerminalMarker(t *testing.T) {
 	cache, client := newLiveBalanceTestCache(t)
 	ctx := context.Background()

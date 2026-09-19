@@ -103,6 +103,8 @@ type preauthorizationWalletStub struct {
 	refundErr        error
 	topUp            []LiveBalanceResult
 	topUpErr         error
+	attemptRead      *LiveBalanceResult
+	attemptReadErr   error
 	lastAttemptID    string
 	lastFallback     float64
 	lastWatermark    int64
@@ -115,6 +117,33 @@ type preauthorizationWalletStub struct {
 	finalizeCalls    int
 	refundCalls      int
 	topUpCalls       int
+}
+
+func (s *preauthorizationWalletStub) ReadLiveBalanceAttempt(
+	_ context.Context,
+	_ int64,
+	attemptID string,
+) (LiveBalanceResult, error) {
+	s.recorder.add("wallet_read_attempt")
+	s.lastAttemptID = attemptID
+	if s.attemptReadErr != nil {
+		return LiveBalanceResult{}, s.attemptReadErr
+	}
+	if s.attemptRead != nil {
+		return *s.attemptRead, nil
+	}
+	reserved := s.lastTopUpTarget
+	if reserved == 0 {
+		reserved = s.lastHold
+	}
+	if reserved == 0 {
+		reserved = 0.10
+	}
+	return LiveBalanceResult{
+		Outcome:        LiveBalanceOutcomeIdempotent,
+		State:          LiveBalanceAttemptAuthorized,
+		ReservedAmount: reserved,
+	}, nil
 }
 
 func (s *preauthorizationWalletStub) AuthorizeExistingLiveBalance(
@@ -242,7 +271,9 @@ type preauthorizationRepositoryStub struct {
 	completeSettlementErrors []error
 	beginRefundErr           error
 	completeRefundErr        error
+	advanceHoldErr           error
 	prepared                 *BalancePreauthorizationCommand
+	advancedHolds            []float64
 	finalizedAmount          float64
 	finalizedFingerprint     string
 	completeSettlementCalls  int
@@ -280,6 +311,23 @@ func (s *preauthorizationRepositoryStub) PrepareBalancePreauthorization(_ contex
 func (s *preauthorizationRepositoryStub) MarkBalancePreauthorizationAuthorized(context.Context, string, int64) error {
 	s.recorder.add("repo_authorized")
 	return s.authorizedErr
+}
+
+func (s *preauthorizationRepositoryStub) AdvanceBalancePreauthorizationHold(
+	_ context.Context,
+	_ string,
+	_ int64,
+	holdAmount float64,
+) error {
+	s.recorder.add("repo_advance_hold")
+	if s.advanceHoldErr != nil {
+		return s.advanceHoldErr
+	}
+	s.advancedHolds = append(s.advancedHolds, holdAmount)
+	if s.prepared != nil && holdAmount > s.prepared.HoldAmount {
+		s.prepared.HoldAmount = holdAmount
+	}
+	return nil
 }
 
 func (s *preauthorizationRepositoryStub) BeginBalancePreauthorizationFinalization(_ context.Context, _ string, _ int64, amount float64, fingerprint string) error {
@@ -718,7 +766,9 @@ func TestRecoverAuthorizedAfterSuccessfulResponseBeforeUsageTaskSettlesHold(t *t
 	err := fixture.service.RecoverBalancePreauthorization(context.Background(), record)
 
 	require.NoError(t, err)
-	require.Equal(t, []string{"repo_begin_finalize", "wallet_finalize", "repo_complete_settlement"}, fixture.recorder.snapshot())
+	require.Equal(t, []string{
+		"wallet_read_attempt", "repo_advance_hold", "repo_begin_finalize", "wallet_finalize", "repo_complete_settlement",
+	}, fixture.recorder.snapshot())
 	require.InDelta(t, record.HoldAmount, fixture.repo.finalizedAmount, 1e-12)
 	require.NotEmpty(t, fixture.repo.finalizedFingerprint)
 	require.InDelta(t, record.HoldAmount, fixture.wallet.lastActual, 1e-12)
@@ -727,6 +777,8 @@ func TestRecoverAuthorizedAfterSuccessfulResponseBeforeUsageTaskSettlesHold(t *t
 
 func TestRecoverAuthorizedMissingWalletStaysRecoverable(t *testing.T) {
 	fixture := newPreauthorizationFixture()
+	missing := LiveBalanceResult{Outcome: LiveBalanceOutcomeNotFound, State: LiveBalanceAttemptNone}
+	fixture.wallet.attemptRead = &missing
 	fixture.wallet.finalize = []LiveBalanceResult{{Outcome: LiveBalanceOutcomeNotFound, State: LiveBalanceAttemptNone}}
 	err := fixture.service.RecoverBalancePreauthorization(context.Background(), BalancePreauthorizationRecord{
 		RequestID:                "authorized-wallet-missing",
@@ -738,7 +790,7 @@ func TestRecoverAuthorizedMissingWalletStaysRecoverable(t *testing.T) {
 	})
 
 	require.ErrorIs(t, err, ErrBillingServiceUnavailable)
-	require.Equal(t, []string{"repo_begin_finalize", "wallet_finalize"}, fixture.recorder.snapshot())
+	require.Equal(t, []string{"wallet_read_attempt", "repo_begin_finalize", "wallet_finalize"}, fixture.recorder.snapshot())
 	require.Zero(t, fixture.repo.completeSettlementCalls)
 	require.Zero(t, fixture.wallet.refundCalls)
 }
