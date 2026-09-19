@@ -317,13 +317,15 @@ func TestBuildHostServicesGatesDirectoryByCapability(t *testing.T) {
 	authorized := &PluginInstallation{PluginKey: "p.authorized", Manifest: PluginManifest{
 		Capabilities: []PluginCapability{{ID: PluginCapabilityOpenAIOAuthOutbound, Platform: PlatformOpenAI, AccountType: AccountTypeOAuth}},
 	}}
-	srv := m.buildHostServices(authorized).(*pluginHostServiceServer)
+	srv, ok := m.buildHostServices(authorized).(*pluginHostServiceServer)
+	require.True(t, ok)
 	require.NotNil(t, srv.directory)
 
 	unauthorized := &PluginInstallation{PluginKey: "p.other", Manifest: PluginManifest{
 		Capabilities: []PluginCapability{{ID: "some.other.capability", Platform: "x", AccountType: "y"}},
 	}}
-	srv2 := m.buildHostServices(unauthorized).(*pluginHostServiceServer)
+	srv2, ok := m.buildHostServices(unauthorized).(*pluginHostServiceServer)
+	require.True(t, ok)
 	require.Nil(t, srv2.directory, "unauthorized plugin must not receive the account directory")
 	require.NotNil(t, srv2.store, "but KV remains available")
 }

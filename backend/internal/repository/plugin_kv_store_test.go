@@ -15,7 +15,8 @@ func newTestPluginKVStore(t *testing.T) (*pluginKVStore, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	store := NewPluginKVStore(rdb).(*pluginKVStore)
+	store, ok := NewPluginKVStore(rdb).(*pluginKVStore)
+	require.True(t, ok)
 	return store, mr
 }
 
