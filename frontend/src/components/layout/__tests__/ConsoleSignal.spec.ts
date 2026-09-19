@@ -17,9 +17,10 @@ vi.mock('@/composables/useBatchImageAccess', () => ({
 
 const userPaths = ['/dashboard', '/keys', '/usage', '/monitor', '/available-channels', '/purchase',
   '/orders', '/subscriptions', '/profile', '/redeem', '/affiliate', '/ip-allowlist',
-  '/payment/qrcode', '/payment/result', '/payment/stripe', '/payment/airwallex']
+  '/payment/qrcode', '/payment/result', '/payment/stripe', '/payment/airwallex',
+  '/model-plaza', '/batch-image', '/infinite-canvas', '/custom/demo']
 const adminPaths = ['/admin/dashboard', '/admin/accounts', '/admin/groups', '/admin/users', '/admin/keys', '/admin/usage']
-const excludedPaths = ['/login', '/keys/other', '/usage-extra', '/infinite-canvas']
+const leftoverPaths = ['/login', '/keys/other', '/usage-extra']
 let wrapper: VueWrapper | undefined
 
 async function renderShell(path: string, role: 'user' | 'admin' = 'user') {
@@ -42,7 +43,7 @@ async function renderShell(path: string, role: 'user' | 'admin' = 'user') {
 
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [...new Set([...userPaths, ...adminPaths, ...excludedPaths, '/:pathMatch(.*)*'])].map((routePath) => ({
+    routes: [...new Set([...userPaths, ...adminPaths, ...leftoverPaths, '/:pathMatch(.*)*'])].map((routePath) => ({
       path: routePath,
       component: { template: '<div />' },
       meta: { title: routePath === '/keys' ? 'API Keys' : routePath }
@@ -83,13 +84,11 @@ describe('SIGNAL shell route isolation', () => {
     expect(wrapper!.get('#page-action').text()).toBe('Page action')
   })
 
-  it.each(excludedPaths)('keeps the original shell on %s', async (path) => {
+  it.each(leftoverPaths)('still applies the shared theme on leftover AppLayout routes like %s', async (path) => {
     await renderShell(path)
-    expect(wrapper!.classes()).not.toContain('console-signal')
-    expect(wrapper!.find('.signal-header').exists()).toBe(false)
-    expect(wrapper!.find('.signal-sidebar').exists()).toBe(false)
-    expect(wrapper!.find('.bg-mesh-gradient').exists()).toBe(true)
-    expect(wrapper!.find('header h1').exists()).toBe(true)
+    expect(wrapper!.classes()).toContain('console-signal')
+    expect(wrapper!.find('.bg-mesh-gradient').exists()).toBe(false)
+    expect(wrapper!.find('.signal-header').exists()).toBe(true)
   })
 
   it.each(adminPaths)('applies the admin workspace on %s with its existing header title', async (path) => {

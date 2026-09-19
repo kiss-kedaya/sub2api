@@ -1,10 +1,7 @@
 <template>
-  <section
-    class="overflow-hidden rounded-2xl border bg-white shadow-card dark:bg-dark-800/50"
-    :class="[platformBorderStrongClass(group.platform)]"
-  >
+  <section class="plaza-group">
     <!-- 分组头部:名称/平台/倍率徽章/专属/订阅徽章 + 描述 -->
-    <header class="border-b border-gray-100 px-5 py-4 dark:border-dark-700/60">
+    <header class="plaza-group-header px-4 py-4 sm:px-5">
       <div class="flex flex-wrap items-center gap-2">
         <GroupBadge
           :name="group.name"
@@ -18,21 +15,15 @@
           :peak-rate-multiplier="group.peak_rate_multiplier"
           always-show-rate
         />
-        <span
-          v-if="group.is_exclusive"
-          class="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
-        >
+        <span v-if="group.is_exclusive" class="plaza-chip">
           <Icon name="shield" size="xs" class="h-3 w-3" />
           {{ t('modelPlaza.badges.exclusive') }}
         </span>
-        <span
-          v-if="group.subscription_type === 'subscription'"
-          class="inline-flex items-center rounded-md bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-600 dark:bg-violet-900/20 dark:text-violet-400"
-        >
+        <span v-if="group.subscription_type === 'subscription'" class="plaza-chip">
           {{ t('modelPlaza.badges.subscription') }}
         </span>
       </div>
-      <p v-if="group.description" class="mt-2 text-sm text-gray-500 dark:text-dark-400">
+      <p v-if="group.description" class="plaza-group-copy">
         {{ group.description }}
       </p>
       <p
@@ -79,7 +70,6 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import PlazaModelPricingTable from './PlazaModelPricingTable.vue'
 import type { ModelPlazaGroup } from '@/api/modelPlaza'
 import type { GroupPlatform, SubscriptionType } from '@/types'
-import { platformBorderStrongClass } from '@/utils/platformColors'
 import { hasPeakRate, formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
 import { useAppStore } from '@/stores/app'
 
@@ -119,3 +109,45 @@ const longContextNote = computed(() => {
   return hasOfficialLadder ? t('modelPlaza.detail.longContextDisabledNote') : ''
 })
 </script>
+
+<style scoped>
+.plaza-group {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--signal-line, #dedee4);
+  border-radius: 8px;
+  background: var(--signal-surface, #ffffff);
+  box-shadow: var(--signal-shadow);
+}
+
+.plaza-group-header {
+  border-bottom: 1px solid var(--signal-line);
+}
+
+.plaza-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--signal-raised, #f5f5f8);
+  color: var(--signal-muted, #63636c);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.plaza-group-copy {
+  margin-top: 8px;
+  color: var(--signal-muted, #63636c);
+  font-size: 13px;
+}
+
+.plaza-group :deep(thead) {
+  background: var(--signal-raised);
+}
+
+.plaza-group :deep(th) {
+  letter-spacing: 0;
+}
+</style>
