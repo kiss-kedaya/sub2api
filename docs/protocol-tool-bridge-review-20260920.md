@@ -2,7 +2,7 @@
 
 ## 结论与证据
 
-- 正式目录：`F:/GO/sub2-official-work`，基线 `0439faba4`。检查期间生产仍为 0.1.334；本记录中的代码修复尚未发布。
+- 正式目录：`F:/GO/sub2-official-work`，排查基线 `0439faba4`。排查时生产为 0.1.334；本记录中的代码修复现已随 0.1.336 双机全量上线，详见末尾验收。
 - 指定用户同一把 Key 在上海时间 16:00 前后为 Responses 入站，16:02 后为 Chat 入站，上游均为 Responses。实际入站在中间件读取 URL 时记录；界面直接展示两个字段，没有交换标签。
 - 用户网关显示 Responses 入站、Chat 出站，本站显示 Chat 入站、Responses 出站，两段记录可以同时正确。不能据此交换标签或全局修改账号协议。
 - 管理员自有测试 Key 经 `https://kedaya.ai` 分别请求 Responses / Chat，均返回 200 和 `exec_command` 工具调用，耗时约 3.65 / 2.99 秒。未使用反馈用户的余额，也未执行生成的命令。
@@ -27,9 +27,9 @@
 - ChatCompletions、Responses/Chat、Codex transform、原生 Anthropic 相关 service 定向测试通过。
 - handler 端点回归通过；未修改日志端点标签、服务器配置或生产数据库。
 
-## 后续上线边界
+## 发布范围
 
-代码修复位于正式工作树，未提交、打版、上线。此前前端和充值页工作也在同一工作树；发布时必须明确纳入范围，不能把本地预览当成线上已生效。继续沿用两机金丝雀、旧实例保留及平台错误回退策略。
+本次发布包含协议修复、此前前端及充值入口改动；已完成两机 1% 灰度、全量和观察。继续保留旧实例及平台故障回退守护。335 的背景资源部署缺陷由 336 修复，生产最终版本为 336。
 
 ## 官方对照复核
 
@@ -40,4 +40,10 @@
 - 官方 main 仍忽略 output_item.done 中的工具快照，completed.output 也不恢复工具调用。在独立源码快照上，通过 Go overlay 注入本地相同回归，命名工具/allowed_tools、developer、终态工具快照及缓冲快照全部复现失败。这些为预期失败的验证，没有修改官方源码。
 - 官方 [PR #7345](https://github.com/Wei-Shaw/sub2api/pull/7345) 已合并，修复 Responses 转 Anthropic 工具顶层联合 schema；[PR #7313](https://github.com/Wei-Shaw/sub2api/pull/7313) 已合并，修复 DeepSeek Chat 回退的 reasoning_content。当前二开没有对应完整实现，但它们不能直接解释指定用户 OpenAI Chat 到 Responses 这条链路，暂未引入本轮修复。
 - 官方 [PR #6925](https://github.com/Wei-Shaw/sub2api/pull/6925) 提醒终态数组可能重排。追加复现后发现本轮初稿虽能按 call_id 对齐旧调用，但新调用仍可能与旧的 streamed output_index 撞位，导致第二个终端工具丢失。已使用独立的内部终态索引，并保持对客户端输出的工具索引连续；新增混合新旧工具回归通过。
-- 最终 apicompat 全包 race 与相关 service 回归通过。生产仍未更新，官方检查也未改动服务器配置或数据库。
+- 最终 apicompat 全包 race 与相关 service 回归通过。上述官方检查阶段未修改生产、服务器配置或数据库。
+
+## 336 上线验收
+
+2026-09-20 UTC 12:13 两机全量切至 `c1c95354d5f87b1300560517165e3b364d753ea9`，约 51 分钟观察后确认完成，CI、安全扫描及发布成功。公网 Responses 请求 `a3b2792d-b8e8-4945-bb01-db29c14ce401` 返回 200 和 response.completed；Chat 请求 `9b5568d8-f300-4b0a-9588-3df31342d569` 返回 200 和 tool_calls，均拿到 exec_command 的完整参数。使用管理员自有测试 Key，没有实际执行命令。
+
+334 继续运行，自动回退守护开启，观察期未发现新增平台故障。本次真实请求验证了两种协议的工具返回；指定用户原始失败事件仍未取得，不宣称已经复现并解决其所有 Agent 链路问题。完整产物、备份和验证记录见 [336 发布记录](release-336-20260920.md)。
