@@ -709,6 +709,8 @@ export default {
         configGuide: 'Configuration Guide',
         enabled: 'Enable Payment',
         enabledHint: 'Enable or disable the payment system',
+        rechargeCenterEnabled: 'Show Alipay / WeChat entry',
+        rechargeCenterEnabledHint: 'Off by default. Show the configured Alipay / WeChat page in checkout. USDT remains available.',
         enabledPaymentTypes: 'Enabled Providers',
         enabledPaymentTypesHint: 'Disabling a provider will also disable its instances.',
         findProvider: 'Looking for a suitable EasyPay provider?',

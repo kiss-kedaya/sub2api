@@ -16,16 +16,17 @@ import (
 )
 
 const (
-	SettingPaymentEnabled      = "payment_enabled"
-	SettingMinRechargeAmount   = "MIN_RECHARGE_AMOUNT"
-	SettingMaxRechargeAmount   = "MAX_RECHARGE_AMOUNT"
-	SettingDailyRechargeLimit  = "DAILY_RECHARGE_LIMIT"
-	SettingOrderTimeoutMinutes = "ORDER_TIMEOUT_MINUTES"
-	SettingMaxPendingOrders    = "MAX_PENDING_ORDERS"
-	SettingEnabledPaymentTypes = "ENABLED_PAYMENT_TYPES"
-	SettingLoadBalanceStrategy = "LOAD_BALANCE_STRATEGY"
-	SettingBalancePayDisabled  = "BALANCE_PAYMENT_DISABLED"
-	SettingBalanceRechargeMult = "BALANCE_RECHARGE_MULTIPLIER"
+	SettingPaymentEnabled               = "payment_enabled"
+	SettingPaymentRechargeCenterEnabled = "payment_recharge_center_enabled"
+	SettingMinRechargeAmount            = "MIN_RECHARGE_AMOUNT"
+	SettingMaxRechargeAmount            = "MAX_RECHARGE_AMOUNT"
+	SettingDailyRechargeLimit           = "DAILY_RECHARGE_LIMIT"
+	SettingOrderTimeoutMinutes          = "ORDER_TIMEOUT_MINUTES"
+	SettingMaxPendingOrders             = "MAX_PENDING_ORDERS"
+	SettingEnabledPaymentTypes          = "ENABLED_PAYMENT_TYPES"
+	SettingLoadBalanceStrategy          = "LOAD_BALANCE_STRATEGY"
+	SettingBalancePayDisabled           = "BALANCE_PAYMENT_DISABLED"
+	SettingBalanceRechargeMult          = "BALANCE_RECHARGE_MULTIPLIER"
 	// SettingSubscriptionUSDToCNYRate 是订阅 CNY 换算汇率（1 USD = X CNY）。
 	// 0/未配置 = 关闭换算（订阅按 price 数值直付），显式配置后 CNY 通道订阅按 price × rate 收款。
 	SettingSubscriptionUSDToCNYRate      = "SUBSCRIPTION_USD_TO_CNY_RATE"
@@ -52,6 +53,7 @@ const (
 // PaymentConfig holds the payment system configuration.
 type PaymentConfig struct {
 	Enabled                   bool     `json:"enabled"`
+	RechargeCenterEnabled     bool     `json:"recharge_center_enabled"`
 	MinAmount                 float64  `json:"min_amount"`
 	MaxAmount                 float64  `json:"max_amount"`
 	DailyLimit                float64  `json:"daily_limit"`
@@ -86,6 +88,7 @@ type PaymentConfig struct {
 // UpdatePaymentConfigRequest contains fields to update payment configuration.
 type UpdatePaymentConfigRequest struct {
 	Enabled                   *bool    `json:"enabled"`
+	RechargeCenterEnabled     *bool    `json:"recharge_center_enabled"`
 	MinAmount                 *float64 `json:"min_amount"`
 	MaxAmount                 *float64 `json:"max_amount"`
 	DailyLimit                *float64 `json:"daily_limit"`
@@ -273,6 +276,7 @@ func (s *PaymentConfigService) IsPaymentEnabled(ctx context.Context) bool {
 func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentConfig, error) {
 	keys := []string{
 		SettingPaymentEnabled, SettingMinRechargeAmount, SettingMaxRechargeAmount,
+		SettingPaymentRechargeCenterEnabled,
 		SettingDailyRechargeLimit, SettingOrderTimeoutMinutes, SettingMaxPendingOrders,
 		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingSubscriptionUSDToCNYRate, SettingRechargeFeeRate, SettingLoadBalanceStrategy,
 		SettingProductNamePrefix, SettingProductNameSuffix,
@@ -296,6 +300,7 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *PaymentConfig {
 	cfg := &PaymentConfig{
 		Enabled:                   vals[SettingPaymentEnabled] == "true",
+		RechargeCenterEnabled:     vals[SettingPaymentRechargeCenterEnabled] == "true",
 		MinAmount:                 pcParseFloat(vals[SettingMinRechargeAmount], 1),
 		MaxAmount:                 pcParseFloat(vals[SettingMaxRechargeAmount], 0),
 		DailyLimit:                pcParseFloat(vals[SettingDailyRechargeLimit], 0),
@@ -401,6 +406,9 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 	m := make(map[string]string)
 	if req.Enabled != nil {
 		m[SettingPaymentEnabled] = formatBoolOrEmpty(req.Enabled)
+	}
+	if req.RechargeCenterEnabled != nil {
+		m[SettingPaymentRechargeCenterEnabled] = formatBoolOrEmpty(req.RechargeCenterEnabled)
 	}
 	if req.MinAmount != nil {
 		m[SettingMinRechargeAmount] = formatPositiveFloat(req.MinAmount)

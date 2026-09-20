@@ -46,8 +46,8 @@
         <template v-else>
           <!-- Top-up Tab -->
           <section v-if="activeTab === 'recharge'" id="payment-view-panel-recharge"
-            class="signal-payment-flow" role="tabpanel" aria-labelledby="payment-view-tab-recharge" tabindex="0">
-            <div v-if="enabledMethods.length === 0" class="signal-empty-state">
+            class="signal-payment-flow" role="tabpanel" :aria-labelledby="tabs.length > 1 ? 'payment-view-tab-recharge' : undefined" :aria-label="tabs.length <= 1 ? t('payment.tabTopUp') : undefined" tabindex="0">
+            <div v-if="checkout.balance_disabled || enabledMethods.length === 0" class="signal-empty-state">
               <p class="text-gray-500 dark:text-gray-400">{{ t('payment.notAvailable') }}</p>
             </div>
             <div v-else class="signal-recharge-layout">
@@ -70,6 +70,15 @@
                     :selected="selectedMethod"
                     @select="selectedMethod = $event"
                   />
+                  <div v-if="enabledMethods.includes('epusdt')" class="signal-exchange-links" :aria-label="t('payment.usdtExchangeAccounts')">
+                    <a href="https://www.mitnpkwxvfr.net/join/4274122" target="_blank" rel="noopener noreferrer" class="signal-exchange-link">
+                      {{ t('payment.registerOkx') }}<Icon name="externalLink" size="xs" aria-hidden="true" />
+                    </a>
+                    <a href="https://www.bsmkweb.cc/register?ref=TXUH99P0" target="_blank" rel="noopener noreferrer" class="signal-exchange-link">
+                      {{ t('payment.registerBinance') }}<Icon name="externalLink" size="xs" aria-hidden="true" />
+                    </a>
+                    <span>{{ t('payment.exchangeNetworkHint') }}</span>
+                  </div>
                 </section>
               </div>
               <aside class="signal-checkout-summary">
@@ -119,7 +128,7 @@
             </div>
           </section>
           <!-- Recharge Center Tab: reuse the configured custom payment center instead of subscriptions -->
-          <section v-else-if="activeTab === 'rechargeCenter'" id="payment-view-panel-rechargeCenter"
+          <section v-else-if="activeTab === 'rechargeCenter' && rechargeCenterEnabled" id="payment-view-panel-rechargeCenter"
             role="tabpanel" :aria-labelledby="tabs.length > 1 ? 'payment-view-tab-rechargeCenter' : undefined" :aria-label="tabs.length <= 1 ? t('payment.rechargeCenterTitle') : undefined" tabindex="0">
             <div ref="rechargeCenterFrameRef" class="recharge-center-shell">
               <div class="recharge-center-toolbar">
@@ -586,10 +595,12 @@ const renderedHelpText = computed(() => DOMPurify.sanitize(
   marked.parse(checkout.value.help_text || '', { async: false, gfm: true, breaks: false }),
 ))
 
+const rechargeCenterEnabled = computed(() => checkout.value.recharge_center_enabled === true)
+
 const tabs = computed(() => {
   const result: { key: 'recharge' | 'rechargeCenter'; label: string }[] = []
   if (!checkout.value.balance_disabled) result.push({ key: 'recharge', label: t('payment.tabTopUp') })
-  result.push({ key: 'rechargeCenter', label: t('payment.tabRechargeCenter') })
+  if (rechargeCenterEnabled.value) result.push({ key: 'rechargeCenter', label: t('payment.tabRechargeCenter') })
   return result
 })
 
@@ -667,6 +678,7 @@ const localeCode = computed(() => {
 
 const RECHARGE_CENTER_MENU_ID = '322273f5aaa4d036'
 const rechargeCenterUrl = computed(() => {
+  if (!rechargeCenterEnabled.value) return ''
   const item = appStore.cachedPublicSettings?.custom_menu_items?.find(
     candidate => candidate.id === RECHARGE_CENTER_MENU_ID,
   )
@@ -1266,7 +1278,7 @@ onMounted(async () => {
       }
     }
     await resumeWechatPaymentFromQuery()
-    if (checkout.value.balance_disabled) {
+    if (checkout.value.balance_disabled && rechargeCenterEnabled.value) {
       activeTab.value = 'rechargeCenter'
     }
     // Preserve legacy subscription deep links for payment callbacks and old renewal URLs.
@@ -1296,6 +1308,35 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.signal-exchange-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  color: var(--payment-muted);
+  font-size: 12px;
+}
+
+.signal-exchange-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  color: var(--payment-accent);
+}
+
+.signal-exchange-link:hover {
+  background: var(--payment-accent-soft);
+}
+
+@media (max-width: 639px) {
+  .signal-exchange-link { min-height: 40px; }
+}
+
 .signal-payment {
   --payment-bg: var(--signal-bg, #f5f6f5);
   --payment-surface: var(--signal-surface, #ffffff);

@@ -1,51 +1,73 @@
-/* Shared system surfaces and type for the console and its floating controls. */
+/* Paper, ink and a restrained sky-blue accent across the working console. */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #f2f2f7;
+  --signal-bg: #f8f9f9;
   --signal-surface: #ffffff;
-  --signal-raised: #f5f5f8;
-  --signal-sidebar: #f2f2f7;
-  --signal-line: #dedee4;
-  --signal-text: #1c1c1e;
-  --signal-muted: #63636c;
-  --signal-accent: #0066d6;
+  --signal-raised: #f2f5f6;
+  --signal-sidebar: #ffffff;
+  --signal-line: #dde2e4;
+  --signal-text: #202426;
+  --signal-muted: #657078;
+  --signal-accent: #007db5;
   --signal-amber: #a66a19;
-  --signal-hover: #e9e9ef;
-  --signal-accent-soft: #e3efff;
+  --signal-hover: #edf2f4;
+  --signal-accent-soft: #e6f4fc;
   --signal-on-accent: #ffffff;
-  --signal-control-line: #c7c7ce;
+  --signal-control-line: #b4c0c7;
   --signal-highlight: #ffffff;
-  --signal-inset: #ededf2;
-  --signal-divider: #e8e8ed;
-  --signal-shadow: 0 1px 3px #1c1c1e08, 0 6px 16px #1c1c1e05;
-  --signal-popover-shadow: 0 3px 10px #1c1c1e0a, 0 20px 56px #1c1c1e24;
+  --signal-inset: #f4f6f7;
+  --signal-divider: #e9edef;
+  --signal-shadow: 0 2px 4px #20242603;
+  --signal-popover-shadow: 0 3px 10px #2024260a, 0 20px 56px #2024261f;
+  --signal-command: #202426;
+  --signal-command-text: #ffffff;
+  --signal-paper-image: url('/images/console-paper.webp');
+  --signal-paper-blend: multiply;
+  --signal-paper-opacity: 0.46;
+  --signal-draft-opacity: 1;
+  --signal-draft-ink: #67879838;
+  --signal-draft-line: #348fbc52;
+  --signal-display-font: Georgia, 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', SimSun, serif;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
 .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #111113;
-  --signal-surface: #1c1c1e;
-  --signal-raised: #28282b;
-  --signal-sidebar: #171719;
-  --signal-line: #38383b;
-  --signal-text: #f2f2f7;
-  --signal-muted: #aeaeb2;
-  --signal-accent: #78b4ff;
+  --signal-bg: #141718;
+  --signal-surface: #1e2224;
+  --signal-raised: #272d30;
+  --signal-sidebar: #181c1e;
+  --signal-line: #353e43;
+  --signal-text: #f1f5f6;
+  --signal-muted: #aab7be;
+  --signal-accent: #6dc7f2;
   --signal-amber: #e3b770;
-  --signal-hover: #303034;
-  --signal-accent-soft: #22364e;
-  --signal-on-accent: #10253d;
-  --signal-control-line: #545459;
+  --signal-hover: #2c3438;
+  --signal-accent-soft: #203741;
+  --signal-on-accent: #10232c;
+  --signal-control-line: #586a74;
   --signal-highlight: #ffffff0c;
-  --signal-inset: #151517;
-  --signal-divider: #303034;
+  --signal-inset: #191e20;
+  --signal-divider: #30383c;
   --signal-shadow: 0 2px 4px #00000014, 0 8px 20px #0000000f;
   --signal-popover-shadow: 0 4px 12px #00000029, 0 24px 64px #00000066;
+  --signal-command: #eef5f8;
+  --signal-command-text: #192125;
+  --signal-paper-image: url('/images/console-paper-dark.webp');
+  --signal-paper-blend: screen;
+  --signal-paper-opacity: 0.32;
+  --signal-draft-opacity: 1;
+  --signal-draft-ink: #a0c7db30;
+  --signal-draft-line: #77bfdf48;
 }
 
 .console-signal .signal-sidebar {
   background: var(--signal-sidebar);
   border-color: var(--signal-line);
+}
+
+.console-signal {
+  position: relative;
+  isolation: isolate;
 }
 
 .console-signal .sidebar-header {
@@ -59,8 +81,9 @@
 }
 
 .console-signal .signal-sidebar .sidebar-brand-title {
-  font-size: 18px;
-  font-weight: 650;
+  font-family: var(--signal-display-font);
+  font-size: 21px;
+  font-weight: 600;
 }
 
 .console-signal .sidebar-nav {
@@ -84,7 +107,11 @@
 }
 
 .console-signal .signal-sidebar .sidebar-link-active::before {
-  display: none;
+  display: block;
+  width: 3px;
+  height: 14px;
+  border-radius: 0;
+  background: var(--signal-accent);
 }
 
 .console-signal .signal-sidebar .sidebar-link-active > svg {
@@ -104,7 +131,7 @@
 .console-signal .header-inner { height: 56px; }
 
 @media (min-width: 1024px) {
-  .console-signal { --signal-nav-size: 216px; }
+  .console-signal { --signal-nav-size: 224px; }
   .console-signal.signal-nav-collapsed { --signal-nav-size: 72px; }
   .console-signal .signal-sidebar { width: var(--signal-nav-size); }
   .console-signal .signal-frame { margin-left: var(--signal-nav-size); }
@@ -128,7 +155,8 @@
   letter-spacing: 0;
 }
 
-.console-signal :is(.signal-heading h1, .signal-workspace-heading h1, .signal-account-heading h1, .signal-channel-heading h1) {
+.console-signal :is(.signal-heading h1, .signal-workspace-heading h1, .signal-account-heading h1, .signal-channel-heading h1, .signal-payment-heading h1) {
+  font-family: var(--signal-display-font);
   font-size: 26px;
   line-height: 34px;
   font-weight: 600;
@@ -136,8 +164,8 @@
 
 .console-signal :is(.signal-mark, .signal-channel-mark, .signal-payment-heading__icon, .admin-overview-mark) {
   border-radius: 8px;
-  background: linear-gradient(145deg, var(--signal-raised), var(--signal-surface));
-  box-shadow: inset 0 1px 0 var(--signal-highlight), 0 3px 8px #00000008;
+  background: var(--signal-accent-soft);
+  box-shadow: none;
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.btn, .input, .select-trigger) {
@@ -145,28 +173,35 @@
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary {
-  background: linear-gradient(180deg, var(--signal-raised), var(--signal-surface));
+  background: var(--signal-surface);
   border-color: var(--signal-line);
-  box-shadow: inset 0 1px 0 var(--signal-highlight), 0 1px 2px #00000008;
+  box-shadow: none;
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary:hover:not(:disabled) {
   border-color: var(--signal-control-line);
-  background: linear-gradient(180deg, var(--signal-hover), var(--signal-surface));
+  background: var(--signal-hover);
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary {
-  border: 1px solid color-mix(in srgb, var(--signal-accent) 80%, black);
-  box-shadow: inset 0 1px 0 #ffffff30, 0 2px 5px #00000014;
+  border: 1px solid var(--signal-command);
+  background: var(--signal-command);
+  color: var(--signal-command-text);
+  box-shadow: none;
+}
+
+:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--signal-command) 88%, var(--signal-bg));
+  color: var(--signal-command-text);
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .input {
-  background: var(--signal-inset);
-  box-shadow: inset 0 1px 2px #00000008;
+  background: var(--signal-surface);
+  box-shadow: none;
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .select-trigger {
-  box-shadow: inset 0 1px 0 var(--signal-highlight);
+  box-shadow: none;
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.input:focus, .select-trigger-open) {
@@ -206,7 +241,7 @@ body:has(.console-signal) > .select-dropdown-portal {
 .console-signal .signal-dashboard .signal-metric--cost .signal-value { color: var(--signal-amber); }
 .console-signal .signal-dashboard .signal-label { font-size: 12px; }
 .console-signal .signal-dashboard .signal-label > svg { display: none; }
-.console-signal .signal-dashboard .signal-metric-foot { display: flex; flex-direction: column; gap: 3px; min-height: 54px; margin: auto -18px -18px; padding: 11px 18px; border-top: 1px solid var(--signal-line); background: var(--signal-raised); font-size: 11px; font-variant-numeric: tabular-nums; color: var(--signal-muted); overflow-wrap: anywhere; }
+.console-signal .signal-dashboard .signal-metric-foot { display: flex; flex-direction: column; gap: 3px; min-height: 54px; margin: auto -18px -18px; padding: 11px 18px; border-top: 1px solid var(--signal-line); background: transparent; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--signal-muted); overflow-wrap: anywhere; }
 .console-signal .signal-dashboard .signal-metric-foot strong { font-size: 12px; font-weight: 500; color: var(--signal-text); }
 .console-signal .signal-dashboard .signal-metric .signal-value { padding-bottom: 18px; }
 .console-signal .signal-dashboard .signal-token-split { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--signal-line); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -246,9 +281,9 @@ body:has(.console-signal) > .select-dropdown-portal {
 }
 
 .console-signal .signal-payment :is(.payment-method-selector__option, .payment-amount-input__option):not([aria-pressed='true']) {
-  background: linear-gradient(165deg, var(--signal-raised), var(--signal-surface));
+  background: var(--signal-surface);
   border-color: var(--signal-line);
-  box-shadow: inset 0 1px 0 var(--signal-highlight), 0 1px 2px #00000008;
+  box-shadow: none;
 }
 
 .console-signal .signal-payment :is(.payment-method-selector__option, .payment-amount-input__option)[aria-pressed='true'] {
@@ -267,7 +302,7 @@ body:has(.console-signal) > .select-dropdown-portal {
 }
 
 .console-signal .signal-checkout-summary__header {
-  background: linear-gradient(155deg, var(--signal-raised), var(--signal-surface));
+  background: var(--signal-raised);
 }
 
 .console-signal .signal-payment [data-testid='payment-method-label'] {
@@ -398,7 +433,7 @@ body:has(.console-signal) > .select-dropdown-portal {
 
 .console-signal .admin-metric-grid > .card {
   padding: 20px;
-  background: linear-gradient(155deg, var(--signal-raised), var(--signal-surface));
+  background: var(--signal-surface);
 }
 
 .console-signal .admin-metric-grid > .card > div {
@@ -480,10 +515,191 @@ body:has(.console-signal) > .select-dropdown-portal {
   background: var(--signal-hover);
 }
 
+.console-signal .plaza-pricing-table :is(.text-gray-400, .text-gray-500, .pz-unit) {
+  color: var(--signal-muted);
+}
+
 .console-signal .custom-page-layout > .card,
 .console-signal .canvas-page-layout > .card {
   border: 1px solid var(--signal-line);
   border-radius: 8px;
   background: var(--signal-surface);
   box-shadow: none;
+}
+
+.console-signal .signal-editorial-heading,
+.console-signal .signal-editorial-heading.signal-masthead {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 116px;
+  padding: 20px 0 26px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--signal-line);
+  margin-bottom: 24px;
+}
+
+.console-signal .signal-editorial-copy {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.console-signal .signal-dashboard .signal-editorial-heading h1,
+.console-signal .model-plaza-content .signal-editorial-heading h1 {
+  margin-top: 12px;
+  font-family: var(--signal-display-font);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.console-signal .signal-editorial-heading p {
+  margin-top: 12px;
+  color: var(--signal-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.console-signal .signal-editorial-index {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 10px;
+  color: var(--signal-muted);
+}
+
+.console-signal .signal-editorial-index::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  background: #00a8ed;
+}
+
+.console-signal .signal-editorial-heading > button {
+  position: relative;
+  align-self: flex-end;
+  flex-shrink: 0;
+}
+
+.console-signal .signal-dashboard .signal-lead-grid {
+  gap: 18px;
+  margin-top: 4px;
+}
+
+.console-signal .signal-dashboard .signal-metric--balance {
+  background: #202a30;
+  border-color: #202a30;
+  color: #ffffff;
+}
+
+.console-signal .signal-dashboard .signal-metric--balance :is(.signal-value, .signal-metric-foot strong) {
+  color: #ffffff;
+}
+
+.console-signal .signal-dashboard .signal-metric--balance :is(.signal-label, .signal-metric-foot) {
+  color: #c1d5e0;
+  border-color: #ffffff24;
+}
+
+.console-signal .signal-dashboard .signal-metric--balance .signal-label > span {
+  color: #84d9ff;
+}
+
+.console-signal .admin-overview-identity p {
+  font-family: var(--signal-display-font);
+}
+
+.console-signal .plaza-heading:not(.plaza-heading-embedded) {
+  min-height: 146px;
+}
+
+.console-signal .plaza-group {
+  box-shadow: none;
+}
+
+.console-signal .plaza-group-header {
+  background: var(--signal-surface);
+  border-top: 2px solid var(--signal-control-line);
+}
+
+.console-signal .signal-editorial-heading::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 72px;
+  height: 1px;
+  background: var(--signal-accent);
+  transform-origin: left;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .console-signal .signal-editorial-copy {
+    animation: console-content-enter 560ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+
+  .console-signal .signal-editorial-heading::after {
+    animation: console-line-enter 700ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+
+  .console-signal :is(.signal-lead-grid, .signal-stat-strip) > .signal-metric,
+  .console-signal .admin-metric-grid > .card,
+  .console-signal .plaza-group {
+    animation: console-content-enter 460ms cubic-bezier(0.16, 1, 0.3, 1) var(--console-enter-delay, 0ms) backwards;
+  }
+
+  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(2) { --console-enter-delay: 45ms; }
+  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(3) { --console-enter-delay: 90ms; }
+  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(4) { --console-enter-delay: 135ms; }
+
+  .console-signal :is(.btn, .signal-actions button, .plaza-seg-item) {
+    transition: transform 180ms ease-out, background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+  }
+
+  .console-signal .signal-actions button > svg:last-child {
+    transition: transform 200ms ease;
+  }
+
+  .console-signal .signal-sidebar .sidebar-link > svg {
+    transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), color 160ms ease;
+  }
+
+  .console-signal :is(.btn, .signal-actions button):active:not(:disabled) {
+    transform: translateY(1px) scale(0.985);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .console-signal .signal-sidebar .sidebar-link:hover > svg { transform: translateX(2px); }
+    .console-signal .signal-actions button:hover > svg:last-child { transform: translateX(4px); }
+    .console-signal .btn-primary:hover:not(:disabled) { transform: translateY(-1px); }
+  }
+}
+
+@keyframes console-content-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes console-line-enter {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@media (max-width: 639px) {
+  .console-signal .signal-editorial-heading,
+  .console-signal .signal-editorial-heading.signal-masthead,
+  .console-signal .plaza-heading:not(.plaza-heading-embedded) {
+    min-height: 112px;
+    padding-block: 18px;
+    margin-bottom: 20px;
+  }
+
 }
