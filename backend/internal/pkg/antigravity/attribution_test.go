@@ -137,3 +137,47 @@ func TestAttributionAndIdentityTogether(t *testing.T) {
 	require.Equal(t, "", stripClaudeAttribution(attribution))
 	require.Equal(t, "You are an AI agent.", neutralizeClaudeIdentity(identity))
 }
+
+// End-to-end through the transformer: the attribution block and the identity
+// sentence arrive as separate system blocks in real Claude Code traffic. The
+// same words inside user content must survive untouched, because there they are
+// conversation content rather than a client identity declaration.
+func TestTransformClaudeToGemini_IdentitySystemBlock(t *testing.T) {
+	const (
+		attribution = "x-anthropic-billing-header: cc_version=2.1.278.0a9; cc_entrypoint=claude-vscode;"
+		identity    = "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+		task        = "You are naming a coding session."
+		userText    = "Does Claude Code support claude-sonnet-4-6?"
+	)
+	system := []SystemBlock{
+		{Type: "text", Text: attribution},
+		{Type: "text", Text: identity},
+		{Type: "text", Text: task},
+	}
+	systemJSON, err := json.Marshal(system)
+	require.NoError(t, err)
+	userJSON, err := json.Marshal(userText)
+	require.NoError(t, err)
+	input := &ClaudeRequest{
+		Model:    "gemini-3.8-flash-high",
+		System:   systemJSON,
+		Messages: []ClaudeMessage{{Role: "user", Content: userJSON}},
+	}
+	body, err := TransformClaudeToGeminiWithOptions(input, "test-project", input.Model, TransformOptions{})
+	require.NoError(t, err)
+	var got V1InternalRequest
+	require.NoError(t, json.Unmarshal(body, &got))
+
+	var texts []string
+	for _, part := range got.Request.SystemInstruction.Parts {
+		if part.Text != "\n--- [SYSTEM_PROMPT_END] ---" {
+			texts = append(texts, part.Text)
+		}
+	}
+	require.Equal(t, []string{"You are an AI agent.", task}, texts)
+	for _, text := range texts {
+		require.NotContains(t, text, "Claude")
+		require.NotContains(t, text, "Anthropic")
+	}
+	require.Equal(t, userText, got.Request.Contents[0].Parts[0].Text)
+}
