@@ -78,6 +78,7 @@ jobs:
           python3 deploy/rollout/test_rollout333_guard.py
           python3 deploy/rollout/test_rollout334_guard.py
           python3 deploy/rollout/test_rollout335_guard.py
+          python3 deploy/rollout/test_rollout336_guard.py
 
   golangci-lint:
     runs-on: ubuntu-latest
