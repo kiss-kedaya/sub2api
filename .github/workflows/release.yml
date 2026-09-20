@@ -45,14 +45,21 @@ jobs:
       simple: ${{ steps.plan.outputs.simple }}
       dry_run: ${{ steps.plan.outputs.dry_run }}
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout workflow tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - name: Preserve tooling for releases of older tags
+        run: cp -R .github/release-tools "$RUNNER_TEMP/release-tools"
+      - name: Checkout selected application source
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: python -m pip install -r .github/release-tools/requirements-release.txt
+      - run: python -m pip install -r "$RUNNER_TEMP/release-tools/requirements-release.txt"
       - name: Resolve one source commit and target matrix
         id: plan
         env:
@@ -61,7 +68,12 @@ jobs:
           args=(--ref "$REQUESTED_REF")
           if [[ "$SIMPLE_RELEASE" == true ]]; then args+=(--simple); fi
           if [[ "$DRY_RUN" == true ]]; then args+=(--dry-run); fi
-          python .github/release-tools/release_matrix.py plan "${args[@]}"
+          python "$RUNNER_TEMP/release-tools/release_matrix.py" plan "${args[@]}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-tooling
+          path: ${{ runner.temp }}/release-tools/
+          retention-days: 1
       - uses: actions/upload-artifact@v7
         with:
           name: version-file
@@ -109,6 +121,10 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
+          name: release-tooling
+          path: ${{ runner.temp }}/release-tools/
+      - uses: actions/download-artifact@v8
+        with:
           name: version-file
           path: backend/cmd/server/
       - uses: actions/download-artifact@v8
@@ -136,17 +152,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: python -m pip install -r .github/release-tools/requirements-release.txt
+      - run: python -m pip install -r "$RUNNER_TEMP/release-tools/requirements-release.txt"
       - name: Select one GoReleaser target
         env:
           TARGET_OS: ${{ matrix.goos }}
           TARGET_ARCH: ${{ matrix.goarch }}
-        run: python .github/release-tools/release_matrix.py config build --goos "$TARGET_OS" --goarch "$TARGET_ARCH" --output .goreleaser.matrix.yaml
+        run: python "$RUNNER_TEMP/release-tools/release_matrix.py" config build --goos "$TARGET_OS" --goarch "$TARGET_ARCH" --output "$RUNNER_TEMP/goreleaser.matrix.yaml"
       - name: Build and archive without publishing
         uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
-          args: release --snapshot --clean --skip=validate,publish,docker,announce --config=.goreleaser.matrix.yaml
+          args: release --snapshot --clean --skip=validate,publish,docker,announce --config=${{ runner.temp }}/goreleaser.matrix.yaml
         env:
           GITHUB_REPO_OWNER: ${{ github.repository_owner }}
           GITHUB_REPO_OWNER_LOWER: ${{ needs.prepare.outputs.owner_lower }}
@@ -158,7 +174,7 @@ jobs:
           TARGET_OS: ${{ matrix.goos }}
           TARGET_ARCH: ${{ matrix.goarch }}
           RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
-        run: python .github/release-tools/release_matrix.py collect --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --goos "$TARGET_OS" --goarch "$TARGET_ARCH" --output matrix-output
+        run: python "$RUNNER_TEMP/release-tools/release_matrix.py" collect --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --goos "$TARGET_OS" --goarch "$TARGET_ARCH" --output matrix-output
       - uses: actions/upload-artifact@v7
         with:
           name: release-binary-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -172,7 +188,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: release-go-${{ runner.os }}-${{ runner.arch }}-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('backend/go.mod', 'backend/go.sum') }}-${{ needs.prepare.outputs.sha }}
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   release:
     needs: [prepare, build-binaries]
@@ -181,6 +197,8 @@ jobs:
       contents: write
       packages: write
     env:
+      SIMPLE_RELEASE: ${{ needs.prepare.outputs.simple }}
+      DRY_RUN: ${{ needs.prepare.outputs.dry_run }}
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
@@ -191,18 +209,22 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
+          name: release-tooling
+          path: ${{ runner.temp }}/release-tools/
+      - uses: actions/download-artifact@v8
+        with:
           pattern: release-binary-*
           path: release-input
           merge-multiple: true
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: python -m pip install -r .github/release-tools/requirements-release.txt
+      - run: python -m pip install -r "$RUNNER_TEMP/release-tools/requirements-release.txt"
       - name: Verify complete matrix and prepare Docker contexts
         run: |
           args=(--version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --input release-input --output .release-context)
           if [[ "$SIMPLE_RELEASE" == true ]]; then args+=(--simple); fi
-          python .github/release-tools/release_matrix.py contexts "${args[@]}"
+          python "$RUNNER_TEMP/release-tools/release_matrix.py" contexts "${args[@]}"
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
@@ -229,7 +251,7 @@ jobs:
       - name: Build images and publish manifests
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || 'skip' }}
-        run: bash .github/release-tools/release-images.sh
+        run: bash "$RUNNER_TEMP/release-tools/release-images.sh"
       - name: Get annotated tag notes
         id: tag_message
         run: |
@@ -242,14 +264,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - name: Prepare publication-only GoReleaser config
         run: |
-          args=(publish --output .goreleaser.publisher.yaml)
+          args=(publish --output "$RUNNER_TEMP/goreleaser.publisher.yaml")
           if [[ "$SIMPLE_RELEASE" == true ]]; then args+=(--simple); fi
-          python .github/release-tools/release_matrix.py config "${args[@]}"
+          python "$RUNNER_TEMP/release-tools/release_matrix.py" config "${args[@]}"
       - name: Publish existing archives and release notes
         uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
-          args: release --clean --skip=validate,before,docker ${{ env.DRY_RUN == 'true' && '--snapshot --skip=publish,announce' || '' }} --config=.goreleaser.publisher.yaml
+          args: release --clean --skip=validate,before,docker ${{ env.DRY_RUN == 'true' && '--snapshot --skip=publish,announce' || '' }} --config=${{ runner.temp }}/goreleaser.publisher.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ needs.prepare.outputs.tag }}
