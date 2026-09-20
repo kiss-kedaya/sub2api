@@ -7,7 +7,7 @@
     "dev": "vite",
     "dev:console": "node dev/serve.mjs",
     "check:i18n": "vitest run src/i18n/__tests__/localeKeyCompleteness.spec.ts",
-    "build": "pnpm run check:i18n && vue-tsc -b && vite build",
+    "build": "pnpm run check:i18n && vue-tsc -b && vite build && node dev/check-console-assets.mjs",
     "preview": "vite preview",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts",
     "lint:check": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts",
