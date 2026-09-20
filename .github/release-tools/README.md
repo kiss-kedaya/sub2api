@@ -25,6 +25,6 @@ Helper checks:
 
 ```bash
 python -m pip install -r .github/release-tools/requirements-release.txt
-python -m unittest discover -s .github/release -p 'test_release_matrix.py'
+python -m unittest discover -s .github/release-tools -p 'test_release_matrix.py'
 bash -n .github/release-tools/release-images.sh
 ```
