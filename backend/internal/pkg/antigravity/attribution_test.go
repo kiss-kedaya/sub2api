@@ -86,3 +86,54 @@ func TestTransformClaudeToGemini_AttributionDoesNotHideIdentity(t *testing.T) {
 	require.Equal(t, "You are Antigravity. Keep this identity.", got.Parts[0].Text)
 	require.False(t, strings.Contains(got.Parts[0].Text, "cc_version="))
 }
+
+func TestNeutralizeClaudeIdentity(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "agent sdk opener",
+			text: "You are a Claude agent, built on Anthropic's Claude Agent SDK. You are naming a coding session.",
+			want: "You are an AI agent. You are naming a coding session.",
+		},
+		{
+			name: "cli opener",
+			text: "You are Claude Code, Anthropic's official CLI for Claude. Help with engineering tasks.",
+			want: "You are an AI agent. Help with engineering tasks.",
+		},
+		{
+			name: "leading whitespace",
+			text: "\n  You are a Claude agent, built on Anthropic's Claude Agent SDK.\nRest.",
+			want: "You are an AI agent.\nRest.",
+		},
+		// User instructions that merely mention the vendor must stay untouched:
+		// they are content, not a client identity declaration.
+		{
+			name: "mention inside instructions",
+			text: "Follow CLAUDE.md. Prefer claude-sonnet-4-6 for long tasks.",
+			want: "Follow CLAUDE.md. Prefer claude-sonnet-4-6 for long tasks.",
+		},
+		{
+			name: "opener not at start",
+			text: "Example: You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+			want: "Example: You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+		},
+		{name: "ordinary text", text: "Keep these instructions.", want: "Keep these instructions."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, neutralizeClaudeIdentity(tt.text))
+		})
+	}
+}
+
+// The attribution line and the identity sentence arrive as separate system
+// blocks in real Claude Code traffic; both have to be handled.
+func TestAttributionAndIdentityTogether(t *testing.T) {
+	attribution := "x-anthropic-billing-header: cc_version=2.1.278.0a9; cc_entrypoint=claude-vscode;"
+	identity := "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+	require.Equal(t, "", stripClaudeAttribution(attribution))
+	require.Equal(t, "You are an AI agent.", neutralizeClaudeIdentity(identity))
+}
