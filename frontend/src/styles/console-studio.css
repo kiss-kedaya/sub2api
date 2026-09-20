@@ -20,7 +20,7 @@
   --signal-popover-shadow: 0 3px 10px #2024260a, 0 20px 56px #2024261f;
   --signal-command: #202426;
   --signal-command-text: #ffffff;
-  --signal-paper-image: url('/images/console-paper.webp');
+  --signal-paper-image: url('../assets/console-paper.webp');
   --signal-paper-blend: multiply;
   --signal-paper-opacity: 0.46;
   --signal-draft-opacity: 1;
@@ -52,7 +52,7 @@
   --signal-popover-shadow: 0 4px 12px #00000029, 0 24px 64px #00000066;
   --signal-command: #eef5f8;
   --signal-command-text: #192125;
-  --signal-paper-image: url('/images/console-paper-dark.webp');
+  --signal-paper-image: url('../assets/console-paper-dark.webp');
   --signal-paper-blend: screen;
   --signal-paper-opacity: 0.32;
   --signal-draft-opacity: 1;
