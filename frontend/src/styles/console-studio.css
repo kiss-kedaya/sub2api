@@ -147,6 +147,10 @@
   max-width: 1680px;
 }
 
+.console-signal .signal-main:has(> .signal-usage, > .admin-usage-workbench) {
+  max-width: none;
+}
+
 .console-signal :is(.signal-masthead, .signal-workspace-heading, .signal-channel-masthead, .signal-account-heading) {
   padding-bottom: 22px;
 }
