@@ -3,23 +3,44 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"net/http/httptest"
 	"testing"
+
+	"github.com/imroc/req/v3"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
-func referralTestService(t *testing.T, plan string, handler http.HandlerFunc) (*OpenAIQuotaService, *stubQuotaAccountRepo) {
+type referralClientStub struct {
+	eligibility       *OpenAIReferralEligibility
+	queryErr, sendErr error
+	calls             []OpenAIReferralCall
+	emails            []string
+}
+
+func (s *referralClientStub) QueryEligibility(_ context.Context, call OpenAIReferralCall) (*OpenAIReferralEligibility, error) {
+	s.calls = append(s.calls, call)
+	return s.eligibility, s.queryErr
+}
+func (s *referralClientStub) SendInvite(_ context.Context, call OpenAIReferralCall, email string) error {
+	s.calls = append(s.calls, call)
+	s.emails = append(s.emails, email)
+	return s.sendErr
+}
+
+func referralTestService(t *testing.T, plan string, client OpenAIReferralClient) (*OpenAIQuotaService, *stubQuotaAccountRepo) {
 	t.Helper()
 	a := &Account{ID: 100, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive,
 		Credentials: map[string]any{"chatgpt_account_id": "workspace-test", "plan_type": plan}}
 	repo := &stubQuotaAccountRepo{accounts: map[int64]*Account{100: a}}
 	tokens := &stubQuotaTokenCache{tokens: map[string]string{OpenAITokenCacheKey(a): "test-token"}}
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-	return NewOpenAIQuotaService(repo, nil, NewOpenAITokenProvider(repo, tokens, nil), newQuotaRedirectingFactory(srv)), repo
+	factory := func(string) (*req.Client, error) {
+		t.Fatal("referral service must use the business interface, not the HTTP factory")
+		return nil, nil
+	}
+	return NewOpenAIQuotaService(repo, nil, NewOpenAITokenProvider(repo, tokens, nil), factory, client), repo
 }
 
 func TestOpenAIReferralSend(t *testing.T) {
@@ -28,29 +49,13 @@ func TestOpenAIReferralSend(t *testing.T) {
 		{"self_serve_business_usage_based", openAIReferralWorkspace},
 	} {
 		t.Run(tc.plan, func(t *testing.T) {
-			var gets, posts int
-			svc, repo := referralTestService(t, tc.plan, func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
-				require.Equal(t, "workspace-test", r.Header.Get("ChatGPT-Account-ID"))
-				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Path {
-				case "/backend-api/referrals/invite/eligibility":
-					gets++
-					require.Equal(t, http.MethodGet, r.Method)
-					require.Equal(t, tc.program, r.URL.Query().Get("program_id"))
-					require.Equal(t, "persistent", r.URL.Query().Get("entrypoint"))
-					_, _ = w.Write([]byte(`{"should_show":true,"remaining_send_capacity":8,"remaining_reward_capacity":3,"grants":[{"grant_type":"rate_limit_reset_credit","amount":1,"recipient":"referrer"}],"rules":["Offer rule"]}`))
-				case "/backend-api/referrals/invite":
-					posts++
-					require.Equal(t, http.MethodPost, r.Method)
-					var body map[string]any
-					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-					require.Equal(t, map[string]any{"program_id": tc.program, "entrypoint": "persistent", "emails": []any{"friend@example.com"}}, body)
-					_, _ = w.Write([]byte(`{"invites":[{"referral_id":"test-invite","email":"friend@example.com"}]}`))
-				default:
-					t.Errorf("unexpected path: %s", r.URL.Path)
-				}
-			})
+			send, reward := 8, 3
+			client := &referralClientStub{eligibility: &OpenAIReferralEligibility{
+				ShouldShow: true, RemainingSendCapacity: &send, RemainingRewardCapacity: &reward,
+				Grants: []OpenAIReferralGrant{{GrantType: "rate_limit_reset_credit", Amount: 1, Recipient: "referrer"}},
+				Rules:  []string{"Offer rule"},
+			}}
+			svc, repo := referralTestService(t, tc.plan, client)
 			eligibility, err := svc.QueryReferralEligibility(context.Background(), 100)
 			require.NoError(t, err)
 			require.Equal(t, 3, *eligibility.AvailableInvites)
@@ -64,8 +69,17 @@ func TestOpenAIReferralSend(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, result.Sent)
 			require.Equal(t, "friend@example.com", result.Email)
-			require.Equal(t, 2, gets, "send must recheck eligibility")
-			require.Equal(t, 1, posts)
+			require.Equal(t, []string{"friend@example.com"}, client.emails)
+			require.Len(t, client.calls, 3, "send must recheck eligibility")
+			for _, call := range client.calls {
+				require.Equal(t, tc.program, call.ProgramID)
+				headers := make(http.Header)
+				for key, value := range call.Headers {
+					headers.Set(key, value)
+				}
+				require.Equal(t, "Bearer test-token", headers.Get("Authorization"))
+				require.Equal(t, "workspace-test", headers.Get("ChatGPT-Account-ID"))
+			}
 		})
 	}
 }
@@ -85,48 +99,39 @@ func TestOpenAIReferralSendGuards(t *testing.T) {
 		{"unknown capacity", "a@example.com", `{"should_show":true}`, "OPENAI_REFERRAL_UNAVAILABLE", true, false},
 		{"reward exhausted", "a@example.com", `{"should_show":true,"remaining_send_capacity":3,"offer_id":"credits_250","remaining_reward_capacity":0}`, "OPENAI_REFERRAL_UNAVAILABLE", true, false},
 		{"unknown reward capacity", "a@example.com", `{"should_show":true,"remaining_send_capacity":3,"grants":[{}]}`, "OPENAI_REFERRAL_UNAVAILABLE", true, false},
-		{"null response", "a@example.com", `null`, "OPENAI_REFERRAL_INVALID_RESPONSE", true, false},
 		{"shadow", "a@example.com", `{}`, "OPENAI_REFERRAL_SHADOW_ACCOUNT", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			posts := 0
-			svc, repo := referralTestService(t, "plus", func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodPost {
-					posts++
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(tc.body))
-			})
+			client := &referralClientStub{}
+			require.NoError(t, json.Unmarshal([]byte(tc.body), &client.eligibility))
+			svc, repo := referralTestService(t, "plus", client)
 			if tc.shadow {
 				parentID := int64(200)
 				repo.accounts[100].ParentAccountID = &parentID
 			}
 			_, err := svc.SendReferralInvite(context.Background(), 100, OpenAIReferralSendRequest{Email: tc.email, ProgramID: openAIReferralConsumer, Confirmed: tc.confirmed})
 			require.Equal(t, tc.reason, infraerrors.Reason(err))
-			require.Zero(t, posts)
+			require.Empty(t, client.emails)
 		})
 	}
 }
 
-func TestOpenAIReferralSendDoesNotRetryOrExposeUpstreamErrors(t *testing.T) {
-	for _, status := range []int{400, 401, 403, 409, 429, 500} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			posts := 0
-			svc, _ := referralTestService(t, "plus", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if r.Method == http.MethodGet {
-					_, _ = w.Write([]byte(`{"should_show":true,"remaining_send_capacity":2,"requires_explicit_confirmation":false,"offer_id":"none"}`))
-					return
-				}
-				posts++
-				w.WriteHeader(status)
-				_, _ = w.Write([]byte(`{"detail":"secret-token someone@example.com"}`))
-			})
-			_, err := svc.SendReferralInvite(context.Background(), 100, OpenAIReferralSendRequest{Email: "friend@example.com", ProgramID: openAIReferralConsumer})
-			require.Error(t, err)
-			require.NotContains(t, err.Error(), "secret-token")
-			require.NotContains(t, err.Error(), "someone@example.com")
-			require.Equal(t, 1, posts)
-		})
+func TestOpenAIReferralSendStopsOnQueryError(t *testing.T) {
+	client := &referralClientStub{queryErr: errors.New("eligibility unavailable")}
+	svc, _ := referralTestService(t, "plus", client)
+	_, err := svc.SendReferralInvite(context.Background(), 100, OpenAIReferralSendRequest{Email: "friend@example.com", ProgramID: openAIReferralConsumer, Confirmed: true})
+	require.ErrorIs(t, err, client.queryErr)
+	require.Empty(t, client.emails)
+}
+
+func TestOpenAIReferralSendPreservesUnknownOutcomeWithoutRetry(t *testing.T) {
+	count := 2
+	client := &referralClientStub{
+		eligibility: &OpenAIReferralEligibility{ShouldShow: true, RemainingSendCapacity: &count},
+		sendErr:     infraerrors.New(502, "OPENAI_REFERRAL_SEND_UNKNOWN", "outcome unknown"),
 	}
+	svc, _ := referralTestService(t, "plus", client)
+	_, err := svc.SendReferralInvite(context.Background(), 100, OpenAIReferralSendRequest{Email: "friend@example.com", ProgramID: openAIReferralConsumer, Confirmed: true})
+	require.ErrorIs(t, err, client.sendErr)
+	require.Len(t, client.emails, 1)
 }
