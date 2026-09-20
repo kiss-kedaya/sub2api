@@ -159,5 +159,33 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertIn('ghcr.io/exampleowner/sub2api', log)
 
 
+    def test_published_full_and_simple_image_tags(self):
+        fake_bin = Path('bin')
+        fake_bin.mkdir()
+        docker = fake_bin / 'docker'
+        docker.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_LOG"\n')
+        docker.chmod(0o755)
+        for simple in (False, True):
+            with self.subTest(simple=simple):
+                log_path = Path(f'docker-{simple}.log').resolve()
+                env = {**os.environ, 'PATH': str(fake_bin.resolve()) + os.pathsep + os.environ['PATH'],
+                       'DOCKER_LOG': str(log_path), 'RUNNER_TEMP': self.temp.name,
+                       'RELEASE_VERSION': '9.8.7', 'RELEASE_SHA': 'a' * 40, 'GITHUB_REPOSITORY': 'ExampleOwner/sub2api',
+                       'DRY_RUN': 'false', 'SIMPLE_RELEASE': str(simple).lower(), 'DOCKERHUB_USERNAME': 'fixturehub'}
+                subprocess.run(['bash', str(ROOT / '.github/release-tools/release-images.sh')], env=env, check=True)
+                log = log_path.read_text()
+                self.assertIn('--push', log)
+                self.assertEqual(log.count('buildx build'), 1 if simple else 2)
+                if simple:
+                    self.assertNotIn('fixturehub', log)
+                    self.assertNotIn('imagetools', log)
+                    self.assertIn('ghcr.io/exampleowner/sub2api:latest', log)
+                else:
+                    self.assertEqual(log.count('imagetools create'), 2)
+                    self.assertIn('fixturehub/sub2api:9.8', log)
+                    self.assertIn('ghcr.io/exampleowner/sub2api:9', log)
+
+
+
 if __name__ == '__main__':
     unittest.main()
