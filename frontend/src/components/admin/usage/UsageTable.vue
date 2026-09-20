@@ -1,5 +1,5 @@
 <template>
-  <div :class="flat ? '' : 'card overflow-hidden'">
+  <div class="usage-table" :class="flat ? '' : 'card overflow-hidden'">
     <div
       v-if="showIpGeoToolbar"
       class="flex items-center justify-end gap-2 border-b border-gray-200 px-4 py-2 dark:border-dark-700"
@@ -18,7 +18,7 @@
     </div>
     <div class="overflow-auto">
       <DataTable
-        :columns="columns"
+        :columns="layoutColumns"
         :data="data"
         :loading="loading"
         :server-side-sort="serverSideSort"
@@ -157,7 +157,7 @@
           <!-- Token 请求 -->
           <div v-else class="flex items-center gap-1.5">
             <div class="space-y-1 text-sm">
-              <div class="flex items-center gap-2">
+              <div class="usage-token-values flex flex-wrap items-center gap-2">
                 <div class="inline-flex items-center gap-1">
                   <Icon name="arrowDown" size="sm" class="h-3.5 w-3.5 text-emerald-500" />
                   <span class="font-medium text-gray-900 dark:text-white">{{ row.input_tokens?.toLocaleString() || 0 }}</span>
@@ -167,7 +167,7 @@
                   <span class="font-medium text-gray-900 dark:text-white">{{ row.output_tokens?.toLocaleString() || 0 }}</span>
                 </div>
               </div>
-              <div v-if="row.cache_read_tokens > 0 || row.cache_creation_tokens > 0" class="flex items-center gap-2">
+              <div v-if="row.cache_read_tokens > 0 || row.cache_creation_tokens > 0" class="usage-token-values flex flex-wrap items-center gap-2">
                 <div v-if="row.cache_read_tokens > 0" class="inline-flex items-center gap-1">
                   <svg class="h-3.5 w-3.5 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
                   <span class="font-medium text-sky-600 dark:text-sky-400">{{ formatCacheTokens(row.cache_read_tokens) }}</span>
@@ -629,6 +629,12 @@ const ipGeoBatchLoading = ref(false)
 
 const showIpGeoToolbar = computed(() => props.columns.some((col) => col.key === 'ip_address'))
 
+const wrappingColumns = new Set(['user', 'api_key', 'account', 'model', 'endpoint', 'group'])
+const layoutColumns = computed(() => props.columns.map(column => ({
+  ...column,
+  class: [column.class, wrappingColumns.has(column.key) ? 'usage-text-column' : '', column.key === 'created_at' ? 'usage-date-column' : ''].filter(Boolean).join(' '),
+})))
+
 const hasReasoningEffortMapping = (row: AdminUsageLog): boolean => {
   const requested = row.reasoning_effort?.trim() || ''
   const forwarded = row.upstream_reasoning_effort?.trim() || ''
@@ -798,3 +804,26 @@ const hideTokenTooltip = () => {
   tokenTooltipData.value = null
 }
 </script>
+
+<style scoped>
+.usage-table {
+  min-width: 0;
+  width: 100%;
+}
+
+.usage-table :deep(table) {
+  min-width: 100%;
+}
+
+.usage-table :deep(td.usage-text-column) {
+  min-width: 5rem;
+  max-width: 14rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.usage-table :deep(td.usage-date-column) {
+  min-width: 6.5rem;
+  white-space: normal;
+}
+</style>
