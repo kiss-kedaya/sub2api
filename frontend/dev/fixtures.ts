@@ -562,7 +562,7 @@ function createPageFixtures(now: Date, user: User, groups: Group[]) {
   const checkoutInfo: CheckoutInfoResponse = {
     recharge_center_enabled: false,
     methods: {
-      epusdt: { currency: 'CNY', display_name: 'USDT（本地演示）', daily_limit: 2000, daily_used: 45, daily_remaining: 1955, single_min: 5, single_max: 500, fee_rate: 0, available: true, recharge_fee_rate: 0, balance_recharge_multiplier: 1 },
+      epusdt: { currency: 'CNY', daily_limit: 2000, daily_used: 45, daily_remaining: 1955, single_min: 5, single_max: 500, fee_rate: 0, available: true, recharge_fee_rate: 0, balance_recharge_multiplier: 1 },
     },
     global_min: 5,
     global_max: 500,
