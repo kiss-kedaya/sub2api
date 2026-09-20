@@ -2,24 +2,18 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/mail"
 	"strings"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/imroc/req/v3"
 )
 
-// Desktop 26.908.40834, app-primary-44ec287874b7.js: SIt, EIt, PIt, FIt.
-// Referrals use /backend-api/referrals, not /backend-api/wham.
 const (
-	openAIReferralURL         = "https://chatgpt.com/backend-api/referrals/invite"
 	openAIReferralSnapshotKey = "codex_referral_snapshot"
 	openAIReferralConsumer    = "codex_referral_consumer"
 	openAIReferralWorkspace   = "codex_referral_workspace"
-	openAIReferralEntrypoint  = "persistent"
 )
 
 type OpenAIReferralGrant struct {
@@ -98,21 +92,19 @@ func referralProgram(a *Account) string {
 	}
 }
 
-func (s *OpenAIQuotaService) referralRequest(ctx context.Context, id int64) (*req.Request, error) {
+func (s *OpenAIQuotaService) referralCall(ctx context.Context, id int64, program string) (OpenAIReferralCall, error) {
+	if s.referralClient == nil {
+		return OpenAIReferralCall{}, infraerrors.New(http.StatusServiceUnavailable, "OPENAI_REFERRAL_NOT_CONFIGURED", "referral service is unavailable")
+	}
 	token, accountID, proxy, fedRAMP, err := s.prepareUpstreamCall(ctx, id)
 	if err != nil {
-		return nil, err
-	}
-	client, err := s.privacyClientFactory(proxy)
-	if err != nil {
-		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_REFERRAL_CLIENT_ERROR", "failed to build referral client")
+		return OpenAIReferralCall{}, err
 	}
 	headers, _, err := s.buildCodexQuotaHeaders(ctx, id, token, accountID, fedRAMP)
 	if err != nil {
-		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_REFERRAL_AUTH_ERROR", "failed to authenticate referral request")
+		return OpenAIReferralCall{}, infraerrors.New(http.StatusBadGateway, "OPENAI_REFERRAL_AUTH_ERROR", "failed to authenticate referral request")
 	}
-	// Sending an invitation has no documented idempotency key. Never retry it.
-	return client.R().SetContext(ctx).SetHeaders(headers).SetRetryCount(0), nil
+	return OpenAIReferralCall{ProxyURL: proxy, Headers: headers, ProgramID: program}, nil
 }
 
 func (s *OpenAIQuotaService) QueryReferralEligibility(ctx context.Context, id int64) (*OpenAIReferralEligibility, error) {
@@ -122,21 +114,14 @@ func (s *OpenAIQuotaService) QueryReferralEligibility(ctx context.Context, id in
 	}
 	callCtx, cancel := context.WithTimeout(ctx, openaiQuotaUpstreamTimeout)
 	defer cancel()
-	r, err := s.referralRequest(callCtx, id)
+	program := referralProgram(account)
+	call, err := s.referralCall(callCtx, id, program)
 	if err != nil {
 		return nil, err
 	}
-	program := referralProgram(account)
-	resp, err := r.SetQueryParams(map[string]string{"program_id": program, "entrypoint": openAIReferralEntrypoint}).Get(openAIReferralURL + "/eligibility")
+	result, err := s.referralClient.QueryEligibility(callCtx, call)
 	if err != nil {
-		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_REFERRAL_QUERY_FAILED", "failed to query invitation eligibility")
-	}
-	if !resp.IsSuccessState() {
-		return nil, referralHTTPError(resp.StatusCode)
-	}
-	var result *OpenAIReferralEligibility
-	if err := json.Unmarshal(resp.Bytes(), &result); err != nil || result == nil {
-		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_REFERRAL_INVALID_RESPONSE", "invalid invitation eligibility response")
+		return nil, err
 	}
 	result.ProgramID = program
 	result.AvailableInvites = referralCapacity(result)
@@ -185,43 +170,12 @@ func (s *OpenAIQuotaService) SendReferralInvite(ctx context.Context, id int64, i
 	}
 	callCtx, cancel := context.WithTimeout(ctx, openaiQuotaUpstreamTimeout)
 	defer cancel()
-	r, err := s.referralRequest(callCtx, id)
+	call, err := s.referralCall(callCtx, id, eligibility.ProgramID)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := r.SetBody(map[string]any{
-		"program_id": eligibility.ProgramID, "entrypoint": openAIReferralEntrypoint, "emails": []string{email},
-	}).Post(openAIReferralURL)
-	if err != nil {
-		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_REFERRAL_SEND_UNKNOWN", "invitation outcome is unknown; check the invitation status in Codex before sending again")
-	}
-	if !resp.IsSuccessState() {
-		return nil, referralHTTPError(resp.StatusCode)
-	}
-	var payload struct {
-		Invites []json.RawMessage `json:"invites"`
-	}
-	if err := json.Unmarshal(resp.Bytes(), &payload); err != nil || len(payload.Invites) != 1 || string(payload.Invites[0]) == "null" {
-		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_REFERRAL_SEND_UNKNOWN", "invitation outcome is unknown; check the invitation status in Codex before sending again")
+	if err := s.referralClient.SendInvite(callCtx, call, email); err != nil {
+		return nil, err
 	}
 	return &OpenAIReferralSendResult{Email: email, Sent: true}, nil
-}
-
-// Avoid exposing upstream response bodies, which can contain personal data or
-// credentials. The status still distinguishes validation, duplicates and limits.
-func referralHTTPError(status int) error {
-	switch status {
-	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		return infraerrors.New(http.StatusBadRequest, "OPENAI_REFERRAL_REJECTED", "the invitation request was rejected; check the email and eligibility")
-	case http.StatusUnauthorized:
-		return infraerrors.New(http.StatusBadGateway, "OPENAI_REFERRAL_AUTH_ERROR", "upstream authentication failed; refresh the account credentials")
-	case http.StatusForbidden:
-		return infraerrors.New(http.StatusForbidden, "OPENAI_REFERRAL_FORBIDDEN", "this account is not eligible for invitations")
-	case http.StatusConflict:
-		return infraerrors.New(http.StatusConflict, "OPENAI_REFERRAL_ALREADY_EXISTS", "an invitation already exists for this recipient")
-	case http.StatusTooManyRequests:
-		return infraerrors.New(http.StatusTooManyRequests, "OPENAI_REFERRAL_RATE_LIMITED", "invitation limit reached; try again later")
-	default:
-		return infraerrors.New(http.StatusBadGateway, "OPENAI_REFERRAL_UPSTREAM_ERROR", "invitation service is unavailable")
-	}
 }
