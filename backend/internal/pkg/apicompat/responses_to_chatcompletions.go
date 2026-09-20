@@ -116,34 +116,39 @@ func responsesStatusToChatFinishReason(status string, details *ResponsesIncomple
 // ResponsesEventToChatState tracks state for converting a sequence of Responses
 // SSE events into Chat Completions SSE chunks.
 type ResponsesEventToChatState struct {
-	ID                     string
-	Model                  string
-	Created                int64
-	ServiceTier            string // upstream tier observed on response events; echoed on chunks
-	SentRole               bool
-	SawToolCall            bool
-	SawText                bool
-	Finalized              bool        // true after finish chunk has been emitted
-	NextToolCallIndex      int         // next sequential tool_call index to assign
-	OutputIndexToToolIndex map[int]int // Responses output_index → Chat tool_calls index
-	OutputIndexToArguments map[int]string
-	IncludeUsage           bool
-	Usage                  *ChatUsage
+	ID                      string
+	Model                   string
+	Created                 int64
+	ServiceTier             string // upstream tier observed on response events; echoed on chunks
+	SentRole                bool
+	SawToolCall             bool
+	SawText                 bool
+	Finalized               bool        // true after finish chunk has been emitted
+	NextToolCallIndex       int         // next sequential tool_call index to assign
+	OutputIndexToToolIndex  map[int]int // Responses output_index → Chat tool_calls index
+	OutputIndexToArguments  map[int]string
+	ToolCallIDToOutputIndex map[string]int
+	IncludeUsage            bool
+	Usage                   *ChatUsage
 }
 
 // NewResponsesEventToChatState returns an initialised stream state.
 func NewResponsesEventToChatState() *ResponsesEventToChatState {
 	return &ResponsesEventToChatState{
-		ID:                     generateChatCmplID(),
-		Created:                time.Now().Unix(),
-		OutputIndexToToolIndex: make(map[int]int),
-		OutputIndexToArguments: make(map[int]string),
+		ID:                      generateChatCmplID(),
+		Created:                 time.Now().Unix(),
+		OutputIndexToToolIndex:  make(map[int]int),
+		OutputIndexToArguments:  make(map[int]string),
+		ToolCallIDToOutputIndex: make(map[string]int),
 	}
 }
 
 // ResponsesEventToChatChunks converts a single Responses SSE event into zero
 // or more Chat Completions chunks, updating state as it goes.
 func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if state.Finalized {
+		return nil
+	}
 	switch evt.Type {
 	case "response.created":
 		return resToChatHandleCreated(evt, state)
@@ -151,6 +156,8 @@ func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEvent
 		return resToChatHandleTextDelta(evt, state)
 	case "response.output_item.added":
 		return resToChatHandleOutputItemAdded(evt, state)
+	case "response.output_item.done":
+		return resToChatHandleToolSnapshot(evt, state)
 	case "response.function_call_arguments.delta",
 		// custom/freeform 工具（如新版 apply_patch）的输入增量与 function_call 参数增量同形，
 		// 均按 OutputIndex 累加到对应工具调用。
@@ -254,10 +261,19 @@ func resToChatHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 	if evt.Item == nil || (evt.Item.Type != "function_call" && evt.Item.Type != "custom_tool_call") {
 		return nil
 	}
+	if _, exists := state.OutputIndexToToolIndex[evt.OutputIndex]; exists {
+		return nil
+	}
 
 	state.SawToolCall = true
 	idx := state.NextToolCallIndex
 	state.OutputIndexToToolIndex[evt.OutputIndex] = idx
+	if evt.Item.CallID != "" {
+		if state.ToolCallIDToOutputIndex == nil {
+			state.ToolCallIDToOutputIndex = make(map[string]int)
+		}
+		state.ToolCallIDToOutputIndex[evt.Item.CallID] = evt.OutputIndex
+	}
 	state.NextToolCallIndex++
 
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{
@@ -270,6 +286,33 @@ func resToChatHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 			},
 		}},
 	})}
+}
+
+// Completed snapshots can be the only source of a call or its full arguments.
+// Reuse the normal registration and suffix logic so deltas are never replayed.
+func resToChatHandleToolSnapshot(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if evt.Item == nil || (evt.Item.Type != "function_call" && evt.Item.Type != "custom_tool_call") {
+		return nil
+	}
+	// Some compatible upstreams omit reasoning items from the terminal output.
+	// Match an existing call by identity before using the compacted array index.
+	if outputIndex, exists := state.ToolCallIDToOutputIndex[evt.Item.CallID]; exists {
+		copy := *evt
+		copy.OutputIndex = outputIndex
+		evt = &copy
+	}
+	var chunks []ChatCompletionsChunk
+	if !state.SentRole {
+		chunks = append(chunks, resToChatHandleCreated(evt, state)...)
+	}
+	chunks = append(chunks, resToChatHandleOutputItemAdded(evt, state)...)
+	arguments := evt.Item.Arguments
+	if evt.Item.Type == "custom_tool_call" {
+		arguments = evt.Item.Input
+	}
+	return append(chunks, resToChatHandleFuncArgsDone(&ResponsesStreamEvent{
+		Type: "response.function_call_arguments.done", OutputIndex: evt.OutputIndex, Arguments: arguments,
+	}, state)...)
 }
 
 func resToChatHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
@@ -329,6 +372,18 @@ func resToChatHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 }
 
 func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	var chunks []ChatCompletionsChunk
+	if evt.Response != nil && (evt.Type == "response.completed" || evt.Type == "response.done" || evt.Type == "response.incomplete") &&
+		(evt.Response.Status == "completed" || evt.Response.Status == "incomplete" || evt.Response.Status == "") {
+		for outputIndex := range evt.Response.Output {
+			// Terminal array positions can differ from streamed output indices.
+			// Existing calls match by call_id; reserve negative internal slots for
+			// newly recovered calls so they cannot overwrite a streamed sibling.
+			chunks = append(chunks, resToChatHandleToolSnapshot(&ResponsesStreamEvent{
+				OutputIndex: -outputIndex - 1, Item: &evt.Response.Output[outputIndex],
+			}, state)...)
+		}
+	}
 	state.Finalized = true
 	finishReason := "stop"
 
@@ -362,7 +417,6 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 		finishReason = "tool_calls"
 	}
 
-	var chunks []ChatCompletionsChunk
 	if !state.SawText {
 		if text := responsesTerminalText(evt); text != "" {
 			chunks = append(chunks, resToChatHandleCreated(evt, state)...)
@@ -548,15 +602,29 @@ func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) 
 		if event.Delta != "" {
 			_, _ = a.text.WriteString(event.Delta)
 		}
-	case "response.output_item.added":
+	case "response.output_item.added", "response.output_item.done":
 		if event.Item != nil && (event.Item.Type == "function_call" || event.Item.Type == "custom_tool_call") {
-			idx := len(a.funcCalls)
-			a.outputIndexToFuncIdx[event.OutputIndex] = idx
-			a.funcCalls = append(a.funcCalls, bufferedFuncCall{
-				OutputIndex: event.OutputIndex,
-				CallID:      event.Item.CallID,
-				Name:        event.Item.Name,
-			})
+			idx, exists := a.outputIndexToFuncIdx[event.OutputIndex]
+			if !exists {
+				idx = len(a.funcCalls)
+				a.outputIndexToFuncIdx[event.OutputIndex] = idx
+				a.funcCalls = append(a.funcCalls, bufferedFuncCall{OutputIndex: event.OutputIndex})
+			}
+			call := &a.funcCalls[idx]
+			if event.Item.CallID != "" {
+				call.CallID = event.Item.CallID
+			}
+			if event.Item.Name != "" {
+				call.Name = event.Item.Name
+			}
+			arguments := event.Item.Arguments
+			if event.Item.Type == "custom_tool_call" {
+				arguments = event.Item.Input
+			}
+			if event.Type == "response.output_item.done" && arguments != "" {
+				call.Args.Reset()
+				_, _ = call.Args.WriteString(arguments)
+			}
 		}
 	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
 		if event.Delta != "" {

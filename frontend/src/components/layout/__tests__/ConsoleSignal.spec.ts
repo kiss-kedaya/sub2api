@@ -111,6 +111,14 @@ describe('SIGNAL shell route isolation', () => {
     expect(wrapper!.classes()).not.toContain('signal-admin')
   })
 
+  it.each(['/model-plaza?embedded=1', '/infinite-canvas', '/batch-image', '/custom/demo'])('returns administrators to their dashboard from %s', async (path) => {
+    const { router } = await renderShell(path, 'admin')
+    const home = wrapper!.get('.signal-breadcrumb-home')
+    expect(home.attributes('href')).toBe('/admin/dashboard')
+    await home.trigger('click')
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/admin/dashboard'))
+  })
+
   it('keeps collapse, mobile navigation, theme and balance semantics', async () => {
     const { app } = await renderShell('/keys')
     expect(wrapper!.get('.header-balance-value').text()).toBe('$20.00')
