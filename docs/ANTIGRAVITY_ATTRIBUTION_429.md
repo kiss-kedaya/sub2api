@@ -59,3 +59,48 @@ Claude Code 提供 [`CLAUDE_CODE_ATTRIBUTION_HEADER`](https://code.claude.com/do
 回归测试覆盖两种 system 格式、换行与空白、保留后续指令、保留普通文本和用户 / 工具内容，以及不修改原请求。已有的无冒号 billing-header 文本保留测试继续适用。
 
 修复后应使用真实客户端新建会话验证完整响应，并确认已有冷却已到期。如果仍返回 429，继续检查原始上游错误、实际额度、并发和模型映射；不要用无限重试或反复清空冷却替代定位。
+
+## 补充：仅移除 attribution 行仍不足（2026-09-20）
+
+在另一套部署上（**Sub2API 0.2.7，已包含上一节的 `stripClaudeAttribution` 修复**，
+Claude Code 2.1.278 / claude-vscode 入口，映射模型 `gemini-3.8-flash-high`），
+同一类 429 再次出现在 Claude Code 的**会话标题生成**请求上。
+这类请求很小：约 4 KB、system 3201 字符、0 个工具、1 条消息。
+
+也就是说，下面的“原始请求回放”本身就是在**已经移除 attribution 行**的代码上跑的。
+
+对照实验在一个只绑定单个账号的隔离分组里进行，每次请求之前都等模型冷却到期，
+避免上一次失败造成的冷却把后续结果污染成 503：
+
+| 对照项 | 结果 |
+| --- | --- |
+| 原始请求回放 | 429（8/8） |
+| 仅把 system 换成普通提示词，其余不变 | 200（8/8） |
+| 回放前先由客户端侧移除 attribution 块（与网关行为叠加，确认无额外影响） | **429（3/3）** |
+| 在上一行基础上再中性化身份开场白 | **200（3/3）** |
+| 仅把 system 里的 `Claude` 替换为中性词 | 200（2/2） |
+| 仅把 system 里的 `Anthropic` 移除 | 200（2/2） |
+| 去掉 `output_config` / 改小 `max_tokens` / 改非流式 | 429（各 1/1，无影响） |
+
+该请求的 system 是三个文本块：
+
+1. 仅 attribution 元数据（本文上一节的修复会整块丢弃）；
+2. `You are a Claude agent, built on Anthropic's Claude Agent SDK.`；
+3. 其余任务说明，不含厂商名。
+
+也就是说，触发拒绝的不只是 attribution 元数据，**第 2 块的身份声明同样会触发**。
+Claude Code 的主对话提示词以 `You are an interactive CLI tool` 开头，已被
+`filterOpenCodePrompt` 处理，所以只有 Agent SDK 这类提示词漏网。
+
+### 本次修复
+
+在 attribution 处理之后，追加一次**开头锚定**的身份句中性化：
+
+- 命中 `You are a Claude agent, built on Anthropic's Claude Agent SDK.` 与
+  `You are Claude Code, Anthropic's official CLI for Claude.` 两种开场白，替换为
+  `You are an AI agent.`，块内其余内容原样保留。
+- 只在 system 文本块**开头**匹配：正文中间提到 Claude/Anthropic 的用户指令不受影响，
+  `claude-sonnet-4-6` 这类模型名也不会被改写。
+- 不修改用户消息、工具定义、模型映射与认证；仅作用于 Antigravity 转换器。
+
+同样地，这些对照只支持“这段文本在本次请求中触发拒绝”的判断，不能推断 Google 的内部策略。
