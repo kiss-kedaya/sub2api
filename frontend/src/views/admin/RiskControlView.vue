@@ -602,7 +602,7 @@
                   </div>
                 </div>
 
-                <div class="rounded-lg border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/30">
+                <div data-test="audit-key-statuses" class="rounded-lg border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/30">
                   <div class="mb-3 flex items-start justify-between gap-3">
                     <div class="min-w-0">
                       <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.riskControl.apiKeyHealth') }}</p>
@@ -1327,7 +1327,7 @@ function engineDraftFromConfig(config: ContentModerationConfig | undefined, engi
     api_key_masks: [...(config?.api_key_masks ?? [])], api_key_statuses: [...(config?.api_key_statuses ?? [])],
     api_keys_mode: 'append', clear_api_key: false, pendingDeletes: [],
     timeout_ms: config?.timeout_ms ?? 3000, retry_count: config?.retry_count ?? 2,
-    thresholds: riskThresholdsFromConfig(config?.thresholds ?? Object.fromEntries(riskThresholdCategories.map(k => [k, engine === 'typesafe' ? 0.8 : riskThresholdDefaults[k] / 100]))),
+    thresholds: riskThresholdsFromConfig(config?.thresholds),
   }
 }
 
@@ -1552,7 +1552,7 @@ const storedApiKeyTestButtonText = computed(() => {
 })
 
 const savedApiKeyRows = computed<ContentModerationAPIKeyStatus[]>(() => {
-  const rows = status.value?.api_key_statuses?.length
+  const rows = (status.value?.engine ?? 'openai') === configForm.engine && status.value?.api_key_statuses?.length
     ? status.value.api_key_statuses
     : configForm.api_key_statuses
   return Array.isArray(rows) ? rows : []
@@ -1661,7 +1661,7 @@ const riskThresholdRows = computed<RiskThresholdRow[]>(() => (
   riskThresholdCategories.map((category) => ({
     category,
     value: configForm.thresholds[category] ?? riskThresholdDefaults[category],
-    defaultValue: configForm.engine === 'typesafe' ? 80 : riskThresholdDefaults[category],
+    defaultValue: riskThresholdDefaults[category],
   }))
 ))
 
@@ -2406,7 +2406,7 @@ function buildRiskThresholdPayload(): Record<string, number> {
 }
 
 function resetRiskThresholds() {
-  configForm.thresholds = configForm.engine === 'typesafe' ? Object.fromEntries(riskThresholdCategories.map(k => [k, 80])) : { ...riskThresholdDefaults }
+  configForm.thresholds = { ...riskThresholdDefaults }
 }
 
 function clampPercent(value: unknown): number {
