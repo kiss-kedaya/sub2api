@@ -232,7 +232,7 @@ export default {
       activeEngine: 'Active engine: {engine}',
       engineUnavailable: 'No usable Key for the active engine. API auditing is unavailable; failed checks fail open under the existing policy.',
       typeSafeNotice: 'TypeSafe AI audits text only. Images are neither sent nor audited. Thresholds are uncalibrated; switching engines does not disable shared blocking, notifications or automatic bans.',
-      typeSafeThresholds: 'TypeSafe AI probabilities are not interchangeable with OpenAI scores. 80% is an uncalibrated starting value.',
+      typeSafeThresholds: 'Default thresholds match OpenAI, but the scores are not interchangeable. Adjust each category using actual audit results.',
       auditSource: 'Audit source',
       skippedImages: 'Unaudited images: {count}',
       legacyAuditSource: 'OpenAI (audit model version not recorded)',

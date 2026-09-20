@@ -58,10 +58,6 @@ func moderationEngineDefaults(engine string) *ContentModerationEngineConfig {
 	p := &ContentModerationEngineConfig{BaseURL: defaultContentModerationBaseURL, Model: defaultContentModerationModel, TimeoutMS: 3000, RetryCount: 2, Thresholds: ContentModerationDefaultThresholds()}
 	if engine == ContentModerationEngineTypeSafe {
 		p.BaseURL, p.Model = "https://api.typesafe.ai", "jev-latest"
-		// Provisional independent thresholds, not a calibration of OpenAI scores.
-		for k := range p.Thresholds {
-			p.Thresholds[k] = 0.8
-		}
 	}
 	return p
 }
