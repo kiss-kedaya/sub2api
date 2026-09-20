@@ -1,11 +1,13 @@
 <template>
   <AppLayout>
     <div class="signal-dashboard">
-      <header class="signal-masthead">
-        <h1>{{ t('dashboard.overview') }}</h1>
-        <button class="btn btn-secondary signal-overview-refresh" :disabled="loading || loadingCharts" @click="refreshAll">
+      <header class="signal-masthead signal-editorial-heading">
+        <div class="signal-editorial-copy">
+          <span class="signal-editorial-index" aria-hidden="true">01 / OVERVIEW</span>
+          <h1>{{ t('dashboard.overview') }}</h1>
+        </div>
+        <button class="btn btn-secondary btn-icon signal-overview-refresh" :title="t('common.refresh')" :aria-label="t('common.refresh')" :disabled="loading || loadingCharts" @click="refreshAll">
           <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading || loadingCharts }" />
-          {{ t('common.refresh') }}
         </button>
       </header>
       <div v-if="loading && !stats" class="signal-loading"><LoadingSpinner /></div>

@@ -86,6 +86,12 @@ function buckets<T extends UsageLog>(rows: T[], key: (row: T) => string) {
 
 export function createMockApi(now = new Date()) {
   const data = createFixtures(now)
+  const adminSettings = () => ({
+    ...settings, ops_monitoring_enabled: false, ops_realtime_monitoring_enabled: false,
+    ops_query_mode_default: 'auto', custom_menu_items: [],
+    payment_recharge_center_enabled: data.checkoutInfo.recharge_center_enabled === true,
+    payment_enabled_types: data.paymentConfig.enabled_payment_types,
+  })
   let nextId = data.keys.length + 1
   let nextOrderId = Math.max(...data.paymentOrders.map(order => order.id)) + 1
   let nextAllowlistId = Math.max(...data.cfAllowlist.items.map(item => item.id)) + 1
@@ -359,10 +365,7 @@ export function createMockApi(now = new Date()) {
           required: false, version: 'local-preview', document_path_zh: '', document_path_en: '',
           document_url_zh: '', document_url_en: '', ack_phrase_zh: '', ack_phrase_en: '',
         }
-        if (path === '/api/v1/admin/settings') return {
-          ...settings, ops_monitoring_enabled: false, ops_realtime_monitoring_enabled: false,
-          ops_query_mode_default: 'auto', custom_menu_items: [],
-        }
+        if (path === '/api/v1/admin/settings') return adminSettings()
         if (path === '/api/v1/admin/payment/config') return { enabled: true }
         if (path === '/api/v1/admin/settings/web-search-emulation') return { enabled: false, providers: [] }
         if (path === '/api/v1/admin/system/check-updates') return {
@@ -832,6 +835,14 @@ export function createMockApi(now = new Date()) {
         const item = { id: nextAllowlistId++, ip, created_at: now.toISOString() }
         data.cfAllowlist.items.push(item)
         return item
+      }
+      if (method === 'PUT' && path === '/api/v1/admin/settings') {
+        if (!('payment_recharge_center_enabled' in body)) throw new PreviewError(405, '演示不支持修改其他系统设置')
+        if ('payment_recharge_center_enabled' in body) {
+          if (typeof body.payment_recharge_center_enabled !== 'boolean') throw new PreviewError(422, '页面开关必须是布尔值')
+          data.checkoutInfo.recharge_center_enabled = body.payment_recharge_center_enabled
+        }
+        return adminSettings()
       }
       if (method === 'PUT' && path === '/api/v1/settings/public') {
         if (body.channel_monitor_mode !== 'v1' && body.channel_monitor_mode !== 'v2') throw new PreviewError(422, '本地预览仅支持 v1 或 v2 监控模式')

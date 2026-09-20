@@ -560,13 +560,12 @@ function createPageFixtures(now: Date, user: User, groups: Group[]) {
     { id: 8102, group_id: groups[1].id, group_platform: groups[1].platform, group_name: groups[1].name, rate_multiplier: 1, daily_limit_usd: 16, weekly_limit_usd: 80, monthly_limit_usd: 240, name: 'GPT 季度演示套餐', description: '包含额度与有效期展示。', price: 79, original_price: 99, currency: 'USD', validity_days: 90, validity_unit: 'day', features: ['每日 $16 演示额度', '90 天有效', '仅本地预览'], for_sale: true, sort_order: 2 },
   ]
   const checkoutInfo: CheckoutInfoResponse = {
+    recharge_center_enabled: false,
     methods: {
-      alipay: { currency: 'CNY', display_name: '支付宝（本地演示）', daily_limit: 5000, daily_used: 286, daily_remaining: 4714, single_min: 10, single_max: 1000, fee_rate: 0, available: true, recharge_fee_rate: 0, balance_recharge_multiplier: 1 },
-      wxpay: { currency: 'CNY', display_name: '微信支付（本地演示）', daily_limit: 3000, daily_used: 120, daily_remaining: 2880, single_min: 10, single_max: 800, fee_rate: 0.6, available: true, recharge_fee_rate: 0.6, balance_recharge_multiplier: 1 },
-      epusdt: { currency: 'USDT', display_name: 'USDT（本地演示）', daily_limit: 2000, daily_used: 45, daily_remaining: 1955, single_min: 5, single_max: 500, fee_rate: 0, available: true, recharge_fee_rate: 0, balance_recharge_multiplier: 1 },
+      epusdt: { currency: 'CNY', display_name: 'USDT（本地演示）', daily_limit: 2000, daily_used: 45, daily_remaining: 1955, single_min: 5, single_max: 500, fee_rate: 0, available: true, recharge_fee_rate: 0, balance_recharge_multiplier: 1 },
     },
     global_min: 5,
-    global_max: 1000,
+    global_max: 500,
     plans: paymentPlans,
     balance_disabled: false,
     balance_recharge_multiplier: 1,
@@ -587,7 +586,7 @@ function createPageFixtures(now: Date, user: User, groups: Group[]) {
     balance_disabled: false,
     balance_recharge_multiplier: 1,
     subscription_usd_to_cny_rate: 7.2,
-    enabled_payment_types: ['alipay', 'wxpay', 'epusdt'],
+    enabled_payment_types: ['epusdt'],
     help_image_url: '',
     help_text: checkoutInfo.help_text,
     stripe_publishable_key: '',

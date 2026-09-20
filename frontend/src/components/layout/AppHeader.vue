@@ -15,7 +15,7 @@
         </button>
 
         <nav v-if="isConsoleSignal" class="signal-breadcrumb" :aria-label="pageTitle">
-          <router-link :to="isAdminSignal ? '/admin/dashboard' : '/dashboard'" class="signal-breadcrumb-home" :title="appStore.siteName">
+          <router-link :to="authStore.isAdmin ? '/admin/dashboard' : '/dashboard'" class="signal-breadcrumb-home" :title="appStore.siteName">
             {{ appStore.siteName }}
           </router-link>
           <Icon name="chevronRight" size="xs" aria-hidden="true" />

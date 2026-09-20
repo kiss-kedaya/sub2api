@@ -3,6 +3,7 @@
     class="min-h-screen"
     :class="[isConsoleSignal ? 'console-signal' : 'bg-gray-50 dark:bg-dark-950', { 'signal-admin': isAdminSignal, 'signal-nav-collapsed': sidebarCollapsed }]"
   >
+    <ConsoleAtmosphere v-if="isConsoleSignal" />
     <!-- Background Decoration -->
     <div v-if="!isConsoleSignal" class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>
 
@@ -38,6 +39,7 @@ import { useOnboardingStore } from '@/stores/onboarding'
 import { useConsoleSignal } from '@/composables/useConsoleSignal'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
+import ConsoleAtmosphere from './ConsoleAtmosphere.vue'
 
 const appStore = useAppStore()
 const authStore = useAuthStore()

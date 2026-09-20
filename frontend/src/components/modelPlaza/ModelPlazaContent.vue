@@ -1,9 +1,11 @@
 <template>
   <div class="model-plaza-content space-y-5">
-    <!-- 页头(独立形态下展示标题;后台形态 AppHeader 已有页面标题) -->
-    <div v-if="!embedded" class="plaza-heading">
-      <h1>{{ t('modelPlaza.title') }}</h1>
-      <p>{{ t('modelPlaza.description') }}</p>
+    <div class="plaza-heading signal-editorial-heading" :class="{ 'plaza-heading-embedded': embedded }">
+      <div class="signal-editorial-copy">
+        <span class="signal-editorial-index" aria-hidden="true">02 / MODELS</span>
+        <h1>{{ t('modelPlaza.title') }}</h1>
+        <p>{{ t('modelPlaza.description') }}</p>
+      </div>
     </div>
 
     <!-- 全局价格说明(管理员配置,Markdown) -->
