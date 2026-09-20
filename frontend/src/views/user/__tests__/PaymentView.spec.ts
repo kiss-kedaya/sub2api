@@ -5,6 +5,7 @@ import { PAYMENT_RECOVERY_STORAGE_KEY } from '@/components/payment/paymentFlow'
 import { formatPaymentAmount } from '@/components/payment/currency'
 import AmountInput from '@/components/payment/AmountInput.vue'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
+import ConsoleTabs from '@/components/common/ConsoleTabs.vue'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
 import type { CheckoutInfoResponse, MethodLimit, SubscriptionPlan } from '@/types/payment'
@@ -78,6 +79,7 @@ vi.mock('@/stores', () => ({
     showError,
     showInfo,
     showWarning,
+    cachedPublicSettings: { custom_menu_items: [{ id: '322273f5aaa4d036', url: 'https://payment.example.test/recharge' }] },
   }),
 }))
 
@@ -341,6 +343,74 @@ describe('PaymentView help text', () => {
     const wrapper = await mountHelp('', 'https://example.com/help.png')
     expect(wrapper.find('.markdown-body').exists()).toBe(false)
     expect(wrapper.get('img').attributes('src')).toBe('https://example.com/help.png')
+  })
+})
+
+describe('PaymentView recharge center visibility', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    window.localStorage.clear()
+    createOrder.mockReset()
+  })
+
+  async function mountEntry(overrides: Partial<CheckoutInfoResponse> = {}) {
+    const method = checkoutInfoFixture().data.methods.wxpay
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+      methods: { epusdt: { ...method, currency: 'CNY' } }, ...overrides,
+    }))
+    const wrapper = shallowMount(PaymentView, { global: { stubs: {
+      AppLayout: { template: '<div><slot /></div>' }, Teleport: true, Transition: false,
+    } } })
+    await flushPromises()
+    return wrapper
+  }
+
+  it.each([undefined, false])('hides the external entry and iframe when the setting is %s', async flag => {
+    const wrapper = await mountEntry({ recharge_center_enabled: flag })
+    expect(wrapper.findComponent(ConsoleTabs).exists()).toBe(false)
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    const vm = wrapper.vm as unknown as { activeTab: string }
+    vm.activeTab = 'rechargeCenter'
+    await flushPromises()
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    expect(createOrder).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('shows the configured entry only after enabling it and selecting its tab', async () => {
+    const wrapper = await mountEntry({ recharge_center_enabled: true })
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    wrapper.getComponent(ConsoleTabs).vm.$emit('update:modelValue', 'rechargeCenter')
+    await flushPromises()
+    expect(wrapper.get('iframe').attributes('src')).toContain('https://payment.example.test/recharge')
+    expect(zh.payment.tabRechargeCenter).toBe('支付宝 / 微信')
+    expect(zh.payment.rechargeCenterTitle).toBe('支付宝 / 微信')
+    expect(createOrder).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps the two USDT registration links visible without opening checkout', async () => {
+    const wrapper = await mountEntry()
+    const links = wrapper.findAll('.signal-exchange-link')
+    expect(links.map(link => link.attributes('href'))).toEqual([
+      'https://www.mitnpkwxvfr.net/join/4274122',
+      'https://www.bsmkweb.cc/register?ref=TXUH99P0',
+    ])
+    for (const link of links) {
+      expect(link.attributes('target')).toBe('_blank')
+      expect(link.attributes('rel')).toContain('noopener')
+    }
+    expect(createOrder).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('shows unavailable when both top-up and the external entry are disabled', async () => {
+    const wrapper = await mountEntry({ balance_disabled: true, recharge_center_enabled: false })
+    expect(wrapper.text()).toContain('payment.notAvailable')
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    wrapper.unmount()
   })
 })
 

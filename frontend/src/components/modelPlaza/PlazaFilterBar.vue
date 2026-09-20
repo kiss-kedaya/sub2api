@@ -219,10 +219,9 @@ function onRateChange(value: string | number | boolean | null) {
 .plaza-seg {
   display: inline-flex;
   min-height: 36px;
-  padding: 2px;
-  border-radius: 8px;
-  background: var(--signal-inset, #ededf2);
-  gap: 2px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--signal-line, #dde2e4);
+  gap: 6px;
 }
 
 .plaza-seg-item {
@@ -232,7 +231,8 @@ function onRateChange(value: string | number | boolean | null) {
   min-height: 32px;
   padding: 0 12px;
   border: 0;
-  border-radius: 6px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
   color: var(--signal-muted, #63636c);
   font-size: 13px;
@@ -241,9 +241,8 @@ function onRateChange(value: string | number | boolean | null) {
 }
 
 .plaza-seg-item[aria-checked='true'] {
-  background: var(--signal-surface, #ffffff);
-  color: var(--signal-text, #1c1c1e);
-  box-shadow: var(--signal-shadow, 0 1px 3px #1c1c1e14);
+  border-bottom-color: var(--signal-accent, #007db5);
+  color: var(--signal-text, #202426);
 }
 
 .plaza-seg-item:disabled {
@@ -253,7 +252,15 @@ function onRateChange(value: string | number | boolean | null) {
 
 @media (max-width: 767px) {
   .plaza-toolbar {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .plaza-search {
+    grid-column: 1 / -1;
+  }
+
+  .plaza-seg-item {
+    min-height: 40px;
   }
 }
 </style>

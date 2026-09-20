@@ -6,6 +6,7 @@
 
   <!-- 独立形态:自带导航条(logo/站名 + 登录/回后台) -->
   <div v-else class="console-signal model-plaza-public min-h-screen">
+    <ConsoleAtmosphere />
     <PlazaNavBar />
     <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <ModelPlazaContent :response="data" :loading="loading" :error="loadFailed" />
@@ -19,6 +20,7 @@ import { useRoute } from 'vue-router'
 import '@/styles/console-signal.css'
 import '@/styles/console-studio.css'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import ConsoleAtmosphere from '@/components/layout/ConsoleAtmosphere.vue'
 import PlazaNavBar from '@/components/modelPlaza/PlazaNavBar.vue'
 import ModelPlazaContent from '@/components/modelPlaza/ModelPlazaContent.vue'
 import { getModelPlaza, type ModelPlazaResponse } from '@/api/modelPlaza'

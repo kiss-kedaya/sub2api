@@ -704,6 +704,8 @@ export default {
         configGuide: '支付配置指南',
         enabled: '启用支付',
         enabledHint: '启用或禁用支付系统',
+        rechargeCenterEnabled: '显示支付宝 / 微信入口',
+        rechargeCenterEnabledHint: '默认关闭。开启后，在充值页显示已配置的支付宝 / 微信页面；USDT 充值不受影响。',
         enabledPaymentTypes: '启用的服务商',
         enabledPaymentTypesHint: '禁用服务商将同时禁用对应的实例。',
         findProvider: '正在寻找合适的易支付服务商？',

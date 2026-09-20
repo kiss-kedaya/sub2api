@@ -304,6 +304,7 @@ type UpdateSettingsRequest struct {
 
 	// Payment configuration (integrated into settings, full replace)
 	PaymentEnabled                   *bool    `json:"payment_enabled"`
+	PaymentRechargeCenterEnabled     *bool    `json:"payment_recharge_center_enabled"`
 	PaymentMinAmount                 *float64 `json:"payment_min_amount"`
 	PaymentMaxAmount                 *float64 `json:"payment_max_amount"`
 	PaymentDailyLimit                *float64 `json:"payment_daily_limit"`
@@ -2106,6 +2107,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	if h.paymentConfigService != nil && hasPaymentFields(req) {
 		paymentReq := service.UpdatePaymentConfigRequest{
 			Enabled:                       req.PaymentEnabled,
+			RechargeCenterEnabled:         req.PaymentRechargeCenterEnabled,
 			MinAmount:                     req.PaymentMinAmount,
 			MaxAmount:                     req.PaymentMaxAmount,
 			DailyLimit:                    req.PaymentDailyLimit,
@@ -2387,6 +2389,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AccountQuotaNotifyEnabled:                              updatedSettings.AccountQuotaNotifyEnabled,
 		AccountQuotaNotifyEmails:                               dto.NotifyEmailEntriesFromService(updatedSettings.AccountQuotaNotifyEmails),
 		PaymentEnabled:                                         updatedPaymentCfg.Enabled,
+		PaymentRechargeCenterEnabled:                           updatedPaymentCfg.RechargeCenterEnabled,
 		PaymentMinAmount:                                       updatedPaymentCfg.MinAmount,
 		PaymentMaxAmount:                                       updatedPaymentCfg.MaxAmount,
 		PaymentDailyLimit:                                      updatedPaymentCfg.DailyLimit,
@@ -2465,7 +2468,7 @@ func mapDingTalkValidateError(err error) string {
 }
 
 func hasPaymentFields(req UpdateSettingsRequest) bool {
-	return req.PaymentEnabled != nil || req.PaymentMinAmount != nil ||
+	return req.PaymentEnabled != nil || req.PaymentRechargeCenterEnabled != nil || req.PaymentMinAmount != nil ||
 		req.PaymentMaxAmount != nil || req.PaymentDailyLimit != nil ||
 		req.PaymentOrderTimeoutMin != nil || req.PaymentMaxPendingOrders != nil ||
 		req.PaymentEnabledTypes != nil || req.PaymentBalanceDisabled != nil ||

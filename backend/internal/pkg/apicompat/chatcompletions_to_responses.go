@@ -82,10 +82,12 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 		out.Tools = convertChatToolsToResponses(req.Tools, req.Functions)
 	}
 
-	// tool_choice: already compatible format — pass through directly.
-	// Legacy function_call needs mapping.
+	// Named choices and allowed-tool policies use different wire formats.
 	if len(req.ToolChoice) > 0 {
-		out.ToolChoice = req.ToolChoice
+		out.ToolChoice, err = convertChatToolChoiceToResponses(req.ToolChoice)
+		if err != nil {
+			return nil, fmt.Errorf("convert tool_choice: %w", err)
+		}
 	} else if len(req.FunctionCall) > 0 {
 		tc, err := convertChatFunctionCallToToolChoice(req.FunctionCall)
 		if err != nil {
@@ -115,7 +117,7 @@ func convertChatMessagesToResponsesInput(msgs []ChatMessage) ([]ResponsesInputIt
 // ResponsesInputItem values.
 func chatMessageToResponsesItems(m ChatMessage) ([]ResponsesInputItem, error) {
 	switch m.Role {
-	case "system":
+	case "system", "developer":
 		return chatSystemToResponses(m)
 	case "user":
 		return chatUserToResponses(m)
@@ -130,7 +132,7 @@ func chatMessageToResponsesItems(m ChatMessage) ([]ResponsesInputItem, error) {
 	}
 }
 
-// chatSystemToResponses converts a system message.
+// chatSystemToResponses preserves system and developer instruction roles.
 func chatSystemToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	parsed, err := parseChatMessageContent(m.Content)
 	if err != nil {
@@ -140,7 +142,7 @@ func chatSystemToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []ResponsesInputItem{{Role: "system", Content: content}}, nil
+	return []ResponsesInputItem{{Role: m.Role, Content: content}}, nil
 }
 
 // chatUserToResponses converts a user message, handling both plain strings and
@@ -471,6 +473,47 @@ func convertChatToolsToResponses(tools []ChatTool, functions []ChatFunction) []R
 	}
 
 	return out
+}
+
+func convertChatToolChoiceToResponses(raw json.RawMessage) (json.RawMessage, error) {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	choice, ok := value.(map[string]any)
+	if !ok {
+		return raw, nil
+	}
+	flattenFunction := func(tool map[string]any) {
+		if tool["type"] != "function" {
+			return
+		}
+		if function, ok := tool["function"].(map[string]any); ok {
+			if _, exists := tool["name"]; !exists {
+				tool["name"] = function["name"]
+			}
+			delete(tool, "function")
+		}
+	}
+	flattenFunction(choice)
+	if choice["type"] == "allowed_tools" {
+		if allowed, ok := choice["allowed_tools"].(map[string]any); ok {
+			for _, key := range []string{"mode", "tools"} {
+				if field, exists := allowed[key]; exists {
+					choice[key] = field
+				}
+			}
+			delete(choice, "allowed_tools")
+		}
+		if allowed, ok := choice["tools"].([]any); ok {
+			for _, tool := range allowed {
+				if tool, ok := tool.(map[string]any); ok {
+					flattenFunction(tool)
+				}
+			}
+		}
+	}
+	return json.Marshal(choice)
 }
 
 func defaultStrictFalse(src *bool) *bool {

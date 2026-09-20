@@ -66,6 +66,8 @@ export interface MethodLimitsResponse {
 
 /** Response from /payment/checkout-info API — single call for the payment page */
 export interface CheckoutInfoResponse {
+	/** Controls the embedded Alipay / WeChat page; absent means hidden. */
+  recharge_center_enabled?: boolean
   methods: Record<string, MethodLimit>
   global_min: number
   global_max: number
