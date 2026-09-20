@@ -81,13 +81,18 @@ func (h *OpenAIOAuthHandler) SendReferralInvite(c *gin.Context) {
 	}
 	// The email is already sent. Refresh failure must not turn it into a failed
 	// submission and encourage a duplicate send, even if the browser disconnects.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 8*time.Second)
-	defer cancel()
-	eligibility, refreshErr := h.referralService.QueryReferralEligibility(ctx, id)
+	baseCtx := context.WithoutCancel(c.Request.Context())
+	refreshCtx, cancelRefresh := context.WithTimeout(baseCtx, 8*time.Second)
+	eligibility, refreshErr := h.referralService.QueryReferralEligibility(refreshCtx, id)
+	cancelRefresh()
 	if refreshErr != nil {
 		eligibility = nil
 	}
-	cacheErr := h.referralService.CacheReferralSnapshot(ctx, id, eligibility)
+	// Refresh may exhaust its entire deadline. Give persistence (including
+	// invalidating a stale snapshot) a fresh, independent deadline.
+	cacheCtx, cancelCache := context.WithTimeout(baseCtx, 3*time.Second)
+	defer cancelCache()
+	cacheErr := h.referralService.CacheReferralSnapshot(cacheCtx, id, eligibility)
 	response.Success(c, openAIReferralSendResponse{
 		OpenAIReferralSendResult:      *result,
 		openAIReferralRefreshResponse: openAIReferralRefreshResponse{Eligibility: eligibility, CachePersisted: cacheErr == nil},
