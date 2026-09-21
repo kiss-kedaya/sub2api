@@ -125,7 +125,7 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 		selection, decision, err := selectOne(ctx, apiKey.GroupID, append([]string(nil), platformOverride...), requestedModel)
 		return selection, decision, apiKey, err
 	}
-	routes := newAPIKeyRouteIterator(ctx, apiKey, groupIDs, requestedModel, s.hydrateAPIKeyGroup, s.routeModelsCatalog, s.ResolveChannelMappingAndRestrict, openAIMessagesKeyRouteModel)
+	routes := newAPIKeyRouteIterator(ctx, apiKey, groupIDs, requestedModel, s.hydrateAPIKeyGroup, nil, s.routeModelsCatalog, s.ResolveChannelMappingAndRestrict, openAIMessagesKeyRouteModel)
 	var lastErr error
 	var lastDecision OpenAIAccountScheduleDecision
 	for candidate, ok := routes.next(); ok; candidate, ok = routes.next() {

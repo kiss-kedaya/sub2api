@@ -379,6 +379,7 @@ type apiKeyRouteIterator struct {
 	groupIDs          []int64
 	requestedModel    string
 	hydrate           func(context.Context, *APIKey, int64) (*APIKey, error)
+	resolveCandidate  func(context.Context, *APIKey) (*APIKey, error)
 	catalog           func(context.Context, *int64) groupModelsCatalog
 	resolveMapping    func(context.Context, *int64, string) (ChannelMappingResult, bool)
 	fallbackModel     func(context.Context, *Group, string) string
@@ -391,13 +392,15 @@ type apiKeyRouteIterator struct {
 
 func newAPIKeyRouteIterator(ctx context.Context, apiKey *APIKey, groupIDs []int64, requestedModel string,
 	hydrate func(context.Context, *APIKey, int64) (*APIKey, error),
+	resolveCandidate func(context.Context, *APIKey) (*APIKey, error),
 	catalog func(context.Context, *int64) groupModelsCatalog,
 	resolveMapping func(context.Context, *int64, string) (ChannelMappingResult, bool),
 	fallbackModel func(context.Context, *Group, string) string,
 ) apiKeyRouteIterator {
 	return apiKeyRouteIterator{
 		ctx: ctx, apiKey: apiKey, groupIDs: groupIDs, requestedModel: requestedModel,
-		hydrate: hydrate, catalog: catalog, resolveMapping: resolveMapping, fallbackModel: fallbackModel,
+		hydrate: hydrate, resolveCandidate: resolveCandidate, catalog: catalog,
+		resolveMapping: resolveMapping, fallbackModel: fallbackModel,
 	}
 }
 
@@ -437,7 +440,20 @@ func (r *apiKeyRouteIterator) loadNext() bool {
 			r.err = err
 			continue
 		}
+		// Route authorization applies to the API-key-bound candidate. A Claude
+		// fallback is an official group-level redirect and must not be rejected
+		// again as if it were directly bound to the key.
 		if !apiKeyRouteGroupAllowed(routed) || !groupAllowsRequestedModel(routed.Group, r.requestedModel) {
+			continue
+		}
+		if r.resolveCandidate != nil {
+			routed, err = r.resolveCandidate(ContextWithAPIKeyRoute(r.ctx, routed), routed)
+			if err != nil {
+				r.err = err
+				continue
+			}
+		}
+		if routed == nil || routed.Group == nil || !groupAllowsRequestedModel(routed.Group, r.requestedModel) {
 			continue
 		}
 		routeCtx := ContextWithAPIKeyRoute(r.ctx, routed)

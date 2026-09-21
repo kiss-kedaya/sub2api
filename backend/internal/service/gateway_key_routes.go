@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
 func (s *GatewayService) hydrateAPIKeyGroup(ctx context.Context, apiKey *APIKey, groupID int64) (*APIKey, error) {
@@ -21,6 +23,27 @@ func (s *GatewayService) hydrateAPIKeyGroup(ctx context.Context, apiKey *APIKey,
 		}
 		return group, nil
 	})
+}
+
+// resolveAPIKeyRouteCandidate applies the same group-level fallback that the
+// official scheduler applies inside SelectAccountWithLoadAwareness. The
+// returned key must carry the effective group so forwarding and billing use
+// the group that actually supplied the account.
+func (s *GatewayService) resolveAPIKeyRouteCandidate(ctx context.Context, key *APIKey) (*APIKey, error) {
+	if s == nil || key == nil || key.GroupID == nil || key.Group == nil {
+		return key, nil
+	}
+	if forcePlatform, ok := ctx.Value(ctxkey.ForcePlatform).(string); ok && forcePlatform != "" {
+		return key, nil
+	}
+	group, resolvedID, err := s.resolveGatewayGroup(ctx, key.GroupID)
+	if err != nil {
+		return nil, err
+	}
+	if group == nil || resolvedID == nil || *resolvedID == *key.GroupID {
+		return key, nil
+	}
+	return cloneAPIKeyWithGroupID(key, group), nil
 }
 
 // SelectAccountAlongKeyRoutes tries the key's ordered groups one by one.
@@ -51,7 +74,7 @@ func (s *GatewayService) SelectAccountAlongKeyRoutes(
 		result, err := s.SelectAccountWithLoadAwareness(ctx, apiKey.GroupID, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
 		return result, apiKey, err
 	}
-	routes := newAPIKeyRouteIterator(ctx, apiKey, groupIDs, requestedModel, s.hydrateAPIKeyGroup, s.ensureGroupModelsCatalog, s.ResolveChannelMappingAndRestrict, nil)
+	routes := newAPIKeyRouteIterator(ctx, apiKey, groupIDs, requestedModel, s.hydrateAPIKeyGroup, s.resolveAPIKeyRouteCandidate, s.ensureGroupModelsCatalog, s.ResolveChannelMappingAndRestrict, nil)
 	var lastErr error
 	for candidate, ok := routes.next(); ok; candidate, ok = routes.next() {
 		routed := candidate.key
