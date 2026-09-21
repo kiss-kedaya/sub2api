@@ -582,7 +582,7 @@ type bufferedFuncCall struct {
 type BufferedResponseAccumulator struct {
 	text                 strings.Builder
 	reasoning            strings.Builder
-	funcCalls            []bufferedFuncCall
+	funcCalls            []*bufferedFuncCall // pointers keep strings.Builder from being copied on growth
 	outputIndexToFuncIdx map[int]int
 }
 
@@ -608,9 +608,9 @@ func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) 
 			if !exists {
 				idx = len(a.funcCalls)
 				a.outputIndexToFuncIdx[event.OutputIndex] = idx
-				a.funcCalls = append(a.funcCalls, bufferedFuncCall{OutputIndex: event.OutputIndex})
+				a.funcCalls = append(a.funcCalls, &bufferedFuncCall{OutputIndex: event.OutputIndex})
 			}
-			call := &a.funcCalls[idx]
+			call := a.funcCalls[idx]
 			if event.Item.CallID != "" {
 				call.CallID = event.Item.CallID
 			}
@@ -714,7 +714,7 @@ func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesRe
 			continue
 		}
 		for funcIndex := range a.funcCalls {
-			call := &a.funcCalls[funcIndex]
+			call := a.funcCalls[funcIndex]
 			matchesCallID := item.CallID != "" && item.CallID == call.CallID
 			if !matchesCallID && call.OutputIndex != outputIndex {
 				continue
