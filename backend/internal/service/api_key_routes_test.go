@@ -129,6 +129,45 @@ func TestHydrateAPIKeyGroupRequiresFullGroup(t *testing.T) {
 	require.Equal(t, 1.0, key.Group.RateMultiplier)
 }
 
+func TestAPIKeyRouteIteratorUsesEffectiveFallbackGroup(t *testing.T) {
+	primaryID := int64(1)
+	fallbackID := int64(2)
+	primary := &Group{ID: primaryID, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true}
+	fallback := &Group{ID: fallbackID, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true}
+	key := &APIKey{User: &User{ID: 7, Status: StatusActive, AllowedGroups: []int64{primaryID, fallbackID}}, GroupID: &primaryID, Group: primary, RouteGroupIDs: []int64{primaryID}}
+	routes := newAPIKeyRouteIterator(context.Background(), key, []int64{primaryID}, "gpt-5",
+		func(context.Context, *APIKey, int64) (*APIKey, error) { return key, nil },
+		func(_ context.Context, routed *APIKey) (*APIKey, error) {
+			return cloneAPIKeyWithGroupID(routed, fallback), nil
+		},
+		func(context.Context, *int64) groupModelsCatalog {
+			return groupModelsCatalog{byPlatform: map[string][]string{PlatformOpenAI: {"gpt-5"}}, platforms: map[string]struct{}{PlatformOpenAI: {}}}
+		},
+		func(context.Context, *int64, string) (ChannelMappingResult, bool) {
+			return ChannelMappingResult{}, false
+		}, nil)
+	candidate, ok := routes.next()
+	require.True(t, ok)
+	require.Equal(t, fallbackID, *candidate.key.GroupID)
+	require.Equal(t, fallbackID, candidate.key.Group.ID)
+}
+
+func TestGatewayRouteCandidateUsesOfficialClaudeFallbackGroup(t *testing.T) {
+	primaryID := int64(11)
+	fallbackID := int64(12)
+	primary := &Group{ID: primaryID, Platform: PlatformAnthropic, Status: StatusActive, Hydrated: true, ClaudeCodeOnly: true, FallbackGroupID: &fallbackID}
+	fallback := &Group{ID: fallbackID, Platform: PlatformAnthropic, Status: StatusActive, Hydrated: true}
+	snapshot, _ := newSmartRouteCoreSnapshot([]*Group{primary, fallback})
+	svc := &GatewayService{schedulerSnapshot: snapshot}
+	key := &APIKey{User: &User{ID: 7, Status: StatusActive, AllowedGroups: []int64{primaryID, fallbackID}}, GroupID: &primaryID, Group: primary, RouteGroupIDs: []int64{primaryID}}
+
+	ctx := withSchedulerSnapshotOnly(SetClaudeCodeClient(context.Background(), false))
+	routed, err := svc.resolveAPIKeyRouteCandidate(ctx, key)
+	require.NoError(t, err)
+	require.Equal(t, fallbackID, *routed.GroupID)
+	require.Equal(t, fallback, routed.Group)
+}
+
 func TestResolveAPIKeyRouteGroupRestoresTaskGroup(t *testing.T) {
 	primaryID := int64(1)
 	key := &APIKey{

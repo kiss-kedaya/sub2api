@@ -2,6 +2,7 @@ package apicompat
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1619,6 +1620,41 @@ func TestBufferedResponseAccumulator_ToolCalls(t *testing.T) {
 	assert.Equal(t, "call_abc", output[0].CallID)
 	assert.Equal(t, "get_weather", output[0].Name)
 	assert.Equal(t, `{"city":"NYC"}`, output[0].Arguments)
+}
+
+func TestBufferedResponseAccumulator_MultipleToolCallsDoNotCopyBuilder(t *testing.T) {
+	acc := NewBufferedResponseAccumulator()
+	acc.ProcessEvent(&ResponsesStreamEvent{
+		Type:        "response.output_item.added",
+		OutputIndex: 0,
+		Item:        &ResponsesOutput{Type: "function_call", CallID: "call_exec", Name: "exec_command"},
+	})
+	acc.ProcessEvent(&ResponsesStreamEvent{
+		Type:        "response.function_call_arguments.delta",
+		OutputIndex: 0,
+		Delta:       `{"cmd":"ls`,
+	})
+	for i := 1; i <= 32; i++ {
+		acc.ProcessEvent(&ResponsesStreamEvent{
+			Type:        "response.output_item.added",
+			OutputIndex: i,
+			Item: &ResponsesOutput{
+				Type:   "function_call",
+				CallID: fmt.Sprintf("call_extra_%d", i),
+				Name:   "exec_command",
+			},
+		})
+	}
+	acc.ProcessEvent(&ResponsesStreamEvent{
+		Type:        "response.function_call_arguments.delta",
+		OutputIndex: 0,
+		Delta:       `"}`,
+	})
+
+	output := acc.BuildOutput()
+	require.Len(t, output, 33)
+	assert.Equal(t, "call_exec", output[0].CallID)
+	assert.Equal(t, `{"cmd":"ls"}`, output[0].Arguments)
 }
 
 func TestResponsesEventToChatChunks_FunctionArgumentsDoneWithoutDeltas(t *testing.T) {
