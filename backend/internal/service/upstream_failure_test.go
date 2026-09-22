@@ -159,3 +159,13 @@ func TestEnsureNonScriptUserAgentKeepsAccountOverride(t *testing.T) {
 	EnsureNonScriptUserAgent(h, unconfigured)
 	require.Equal(t, gatewayBrowserUserAgent, h.Get("User-Agent"))
 }
+
+func TestClassifyUpstreamFailure_BillingAccountFrozen(t *testing.T) {
+	body := []byte(`{"code":"billing","message":"\u8ba1\u8d39\u8d26\u6237\u5df2\u88ab\u51bb\u7ed3","ref_code":400901,"ref_scope":"common"}`)
+	class := ClassifyUpstreamFailure(http.StatusBadRequest, nil, body, nil)
+	require.Equal(t, UpstreamFailureAuth, class.Kind)
+	require.True(t, class.Failover)
+	require.True(t, class.PunishAccount)
+	require.False(t, class.SameAccountRetry)
+	require.True(t, ShouldFailoverUpstreamResponse(http.StatusBadRequest, nil, body, false))
+}
