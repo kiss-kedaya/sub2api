@@ -702,6 +702,14 @@ func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID, 
 		return ErrSubscriptionNotFound
 	}
 
+	// Redemption already owns a transaction. Lock and reread the subscription
+	// before computing changes: the redeem-code lock cannot serialize different
+	// codes (or an administrator renewal) targeting the same subscription.
+	sub, err = s.subscriptionService.userSubRepo.GetByIDForUpdate(ctx, sub.ID)
+	if err != nil {
+		return fmt.Errorf("lock subscription for reduction: %w", err)
+	}
+
 	now := time.Now()
 	remaining := int(sub.ExpiresAt.Sub(now).Hours() / 24)
 	if remaining < 0 {
