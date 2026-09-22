@@ -141,6 +141,9 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 // openAIChatCompletionsTargetURL 解析账号的（非 Grok）Chat Completions 上游端点。
 func (s *OpenAIGatewayService) openAIChatCompletionsTargetURL(account *Account) (string, error) {
 	baseURL := account.GetOpenAIBaseURL()
+	if account.IsCloudflareOpenAI() && strings.TrimSpace(baseURL) == "" {
+		return "", fmt.Errorf("invalid cloudflare account id")
+	}
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
 	}
