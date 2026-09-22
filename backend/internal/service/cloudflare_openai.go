@@ -67,6 +67,10 @@ func isStaticCredentialAccountType(accountType string) bool {
 	return accountType == AccountTypeAPIKey || accountType == AccountTypeCloudflare
 }
 
+func cloudflareChatOnlyUpstreamError() error {
+	return fmt.Errorf("cloudflare workers ai only supports chat completions")
+}
+
 func oauthOnlyGroupError(groupName, accountType string) error {
 	if accountType == AccountTypeAPIKey {
 		return fmt.Errorf("分组 [%s] 仅允许 OAuth 账号，apikey 类型账号无法加入", groupName)
