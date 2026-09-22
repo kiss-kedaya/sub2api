@@ -45,7 +45,8 @@ func (s *OpenAIGatewayService) validateOutboundURL(raw string) (string, error) {
 // buildOpenAIResponsesURL 组装 OpenAI Responses 端点。
 // - base 以 /v1 结尾：追加 /responses
 // - base 以其他版本段结尾（如 /v4）：追加 /responses
-// - base 已是 /responses：原样返回
+// - base 已是 /v1/responses：原样返回
+// - base 已是无版本 /responses：改写为 /v1/responses
 // - 其他情况：追加 /v1/responses
 func buildOpenAIResponsesURL(base string) string {
 	return buildOpenAIEndpointURL(base, "/v1/responses")

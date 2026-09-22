@@ -15,8 +15,29 @@ import (
 // assigned in a separate pass so an output can safely appear before its call.
 func sanitizeGrokResponsesModelInput(body []byte) ([]byte, error) {
 	input := gjson.GetBytes(body, "input")
-	if !input.Exists() || input.Type == gjson.String {
+	if !input.Exists() {
 		return body, nil
+	}
+	if input.Type == gjson.String {
+		text := strings.TrimSpace(input.String())
+		if text == "" {
+			return body, nil
+		}
+		encoded, err := json.Marshal([]any{
+			map[string]any{
+				"type":    "message",
+				"role":    "user",
+				"content": text,
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("wrap Grok Responses string input: %w", err)
+		}
+		body, err = sjson.SetRawBytes(body, "input", encoded)
+		if err != nil {
+			return nil, fmt.Errorf("set Grok Responses string input: %w", err)
+		}
+		input = gjson.GetBytes(body, "input")
 	}
 	if input.IsObject() {
 		var err error

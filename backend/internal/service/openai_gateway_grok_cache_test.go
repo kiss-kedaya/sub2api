@@ -3,9 +3,12 @@
 package service
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 
@@ -376,22 +379,31 @@ func TestResolveGrokCacheIdentityFailsClosedWithoutAPIKeyContext(t *testing.T) {
 
 func TestGrokConversationHeaderIsScopedToGrokRequestScheduling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	body := []byte(`{"model":"grok","prompt_cache_key":"body-session","input":"hi"}`)
+	grokBody := []byte(`{"model":"grok","prompt_cache_key":"body-session","input":"hi"}`)
+	gptBody := []byte(`{"model":"gpt-5.6-sol","prompt_cache_key":"body-session","input":"hi"}`)
 
 	grokContext := newGrokCacheTestContext(601)
 	grokContext.Request.Header.Set(grokConversationIDHeader, "native-grok-session")
-	require.Equal(t, "native-grok-session", (&OpenAIGatewayService{}).ExtractSessionID(grokContext, body))
+	require.Equal(t, "native-grok-session", (&OpenAIGatewayService{}).ExtractSessionID(grokContext, grokBody))
 
+	// Smart-route keys keep an OpenAI primary group. A grok-* model still
+	// consumes x-grok-conv-id so multi-turn sticky stays on the Grok account.
+	smartRouteGrok := newGrokCacheTestContext(601)
+	smartRouteGrok.Set("api_key", &APIKey{ID: 601, Group: &Group{Platform: PlatformOpenAI}})
+	smartRouteGrok.Request.Header.Set(grokConversationIDHeader, "smart-route-grok-session")
+	require.Equal(t, "smart-route-grok-session", (&OpenAIGatewayService{}).ExtractSessionID(smartRouteGrok, grokBody))
+
+	// Unrelated OpenAI traffic must ignore a spoofed x-grok-conv-id.
 	openAIContext := newGrokCacheTestContext(601)
 	openAIContext.Set("api_key", &APIKey{ID: 601, Group: &Group{Platform: PlatformOpenAI}})
 	openAIContext.Request.Header.Set(grokConversationIDHeader, "must-be-ignored")
-	require.Equal(t, "body-session", (&OpenAIGatewayService{}).ExtractSessionID(openAIContext, body))
+	require.Equal(t, "body-session", (&OpenAIGatewayService{}).ExtractSessionID(openAIContext, gptBody))
 
 	withoutGrokHeader := newGrokCacheTestContext(601)
 	withoutGrokHeader.Set("api_key", &APIKey{ID: 601, Group: &Group{Platform: PlatformOpenAI}})
 	require.Equal(t,
-		(&OpenAIGatewayService{}).GenerateSessionHash(withoutGrokHeader, body),
-		(&OpenAIGatewayService{}).GenerateSessionHash(openAIContext, body),
+		(&OpenAIGatewayService{}).GenerateSessionHash(withoutGrokHeader, gptBody),
+		(&OpenAIGatewayService{}).GenerateSessionHash(openAIContext, gptBody),
 	)
 }
 
@@ -1164,4 +1176,73 @@ func TestResolveGrokCacheIdentityConcurrentDeterminism(t *testing.T) {
 		require.Equal(t, first, identity)
 	}
 	require.NotEmpty(t, first)
+}
+
+func TestApplyGrokCacheIdentityStripsOpenAICompatFieldsForAPIKey(t *testing.T) {
+	sourceBody := []byte(`{"model":"grok-4.7","input":"ping","store":false,"include":["reasoning.encrypted_content"],"previous_response_id":"resp_stale","service_tier":"priority"}`)
+	body, err := applyGrokResponsesCacheIdentity(sourceBody, sourceBody, "isolated-id", false)
+	require.NoError(t, err)
+	require.Equal(t, "isolated-id", gjson.GetBytes(body, "prompt_cache_key").String())
+	require.False(t, gjson.GetBytes(body, "store").Exists())
+	require.False(t, gjson.GetBytes(body, "include").Exists())
+	require.False(t, gjson.GetBytes(body, "previous_response_id").Exists())
+	require.False(t, gjson.GetBytes(body, "service_tier").Exists())
+}
+
+func TestIsGrokRequestContextPrefersRequestedModelOverOpenAIPrimaryGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c := newGrokCacheTestContext(31896)
+	c.Set("api_key", &APIKey{ID: 31896, Group: &Group{ID: 43, Platform: PlatformOpenAI}})
+	c.Request = c.Request.WithContext(WithResolvedTargetPlatform(context.Background(), PlatformOpenAI))
+	c.Request = c.Request.WithContext(WithOpenAIForwardModel(c.Request.Context(), "grok-4.7", false))
+	require.True(t, isGrokRequestContext(c))
+
+	c.Request = c.Request.WithContext(WithOpenAIForwardModel(c.Request.Context(), "gpt-5.6-sol", false))
+	require.False(t, isGrokRequestContext(c))
+}
+
+func TestIsGrokRequestContextReadsModelFromBodyWithoutForwardModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c := newGrokCacheTestContext(31896)
+	c.Set("api_key", &APIKey{ID: 31896, Group: &Group{ID: 43, Platform: PlatformOpenAI}})
+	c.Request = c.Request.WithContext(WithResolvedTargetPlatform(context.Background(), PlatformOpenAI))
+	body := []byte(`{"model":"grok-4.7","input":"ping","stream":false,"store":false,"service_tier":"priority"}`)
+	require.True(t, isGrokRequestContext(c, body))
+	require.Equal(t, "grok-4.7", grokRequestModelHint(c, body))
+	require.False(t, isGrokRequestContext(c, []byte(`{"model":"gpt-5.6-sol","input":"ping"}`)))
+}
+
+func TestGrokUpstreamDumpEnabledTrimsEnv(t *testing.T) {
+	t.Setenv("GROK_UPSTREAM_DUMP", "")
+	require.False(t, grokUpstreamDumpEnabled())
+	t.Setenv("GROK_UPSTREAM_DUMP", "1")
+	require.True(t, grokUpstreamDumpEnabled())
+	t.Setenv("GROK_UPSTREAM_DUMP", " true ")
+	require.True(t, grokUpstreamDumpEnabled())
+}
+
+func TestLogGrokAPIKeyUpstreamDumpWritesStderr(t *testing.T) {
+	t.Setenv("GROK_UPSTREAM_DUMP", "1")
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	old := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = old
+	})
+
+	req, err := http.NewRequest(http.MethodPost, "https://router.91topgo.com/v1/responses", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	req.Header.Set("Content-Type", "application/json")
+	c := newGrokCacheTestContext(31896)
+	logGrokAPIKeyUpstreamDump(c, &Account{ID: 29131, Platform: PlatformGrok, Type: AccountTypeAPIKey}, req.URL.String(), req, []byte(`{"model":"grok-4.7","input":"ping"}`))
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	text := string(out)
+	require.Contains(t, text, "grok_apikey_upstream_dump")
+	require.Contains(t, text, "account_id=29131")
+	require.Contains(t, text, "api_key_id=31896")
+	require.NotContains(t, text, "secret-token")
 }
