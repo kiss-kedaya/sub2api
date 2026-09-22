@@ -425,7 +425,7 @@ func (s *OpenAIGatewayService) stickySessionShouldYieldToFailover(ctx context.Co
 	}
 	account, err := s.getSchedulableAccount(ctx, accountID)
 	if err != nil {
-		return false
+		return true
 	}
 	return account == nil || shouldClearStickySession(account, "")
 }

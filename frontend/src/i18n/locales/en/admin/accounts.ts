@@ -159,6 +159,7 @@ export default {
         oauth: 'OAuth',
         chatgptOauth: 'ChatGPT OAuth',
         responsesApi: 'Responses API',
+        cloudflareWorkers: 'Workers AI',
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
@@ -572,6 +573,11 @@ export default {
       openai: {
         baseUrlHint: 'Leave default for official OpenAI API',
         apiKeyHint: 'Your OpenAI API Key',
+        cloudflareAccountId: 'Account ID',
+        cloudflareAccountIdPlaceholder: 'Cloudflare Account ID',
+        cloudflareAccountIdHint: 'Cloudflare account ID from the dashboard. The upstream URL is built from it; do not enter a base URL.',
+        cloudflareAccountIdInvalid: 'Account ID must be 8-64 letters, digits, underscores, or hyphens',
+        cloudflareApiTokenHint: 'Cloudflare API token with Workers AI permission. This is not an OpenAI sk-proj key.',
         oauthPassthrough: 'Auto passthrough (auth only)',
         oauthPassthroughDesc:
           'When enabled, this OpenAI account uses automatic passthrough: the gateway forwards request/response as-is and only swaps auth, while keeping billing/concurrency/audit and necessary safety filtering.',

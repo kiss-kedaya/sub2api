@@ -362,6 +362,7 @@ export default {
         oauth: 'OAuth',
         chatgptOauth: 'ChatGPT OAuth',
         responsesApi: 'Responses API',
+        cloudflareWorkers: 'Workers AI',
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
@@ -659,6 +660,11 @@ export default {
       openai: {
         baseUrlHint: '留空使用官方 OpenAI API',
         apiKeyHint: '您的 OpenAI API Key',
+        cloudflareAccountId: 'Account ID',
+        cloudflareAccountIdPlaceholder: 'Cloudflare Account ID',
+        cloudflareAccountIdHint: '填 Cloudflare 控制台里的 Account ID。上游地址按这个 ID 生成，不用手填 Base URL。',
+        cloudflareAccountIdInvalid: 'Account ID 只能是 8 到 64 位字母、数字、下划线或短横线',
+        cloudflareApiTokenHint: '填 Cloudflare API Token，需要 Workers AI 权限。不是 OpenAI 的 sk-proj key。',
         oauthPassthrough: '自动透传（仅替换认证）',
         oauthPassthroughDesc:
           '开启后，该 OpenAI 账号将自动透传请求与响应，仅替换认证并保留计费/并发/审计及必要安全过滤；如遇兼容性问题可随时关闭回滚。',

@@ -107,7 +107,7 @@ useResizeObserver(menuRef, updatePosition)
 
 const canDuplicate = computed(() => {
   if (!props.account || props.account.parent_account_id != null) return false
-  return ['apikey', 'upstream', 'bedrock', 'service_account'].includes(props.account.type)
+  return ['apikey', 'cloudflare', 'upstream', 'bedrock', 'service_account'].includes(props.account.type)
 })
 const isRateLimited = computed(() => {
   if (props.account?.rate_limit_reset_at && new Date(props.account.rate_limit_reset_at) > new Date()) {
