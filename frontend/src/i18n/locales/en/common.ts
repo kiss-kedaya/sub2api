@@ -140,6 +140,7 @@ export default {
     notFoundDescription: 'This legal document does not exist or has been removed by an administrator.',
     updatedAt: 'Updated: {date}',
     empty: 'No content',
+    navLabel: 'Legal & Policies',
     loginAgreement: 'Login Agreement',
     adminCompliance: 'Deployment and Operation Compliance Commitment',
     loginAgreementPrompt: {

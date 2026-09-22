@@ -181,4 +181,18 @@ describe('HomeView compact mode', () => {
 
     expect(modelPlazaDestination(wrapper)).toBeUndefined()
   })
+
+  it('exposes legal policy links in compact and default footers', () => {
+    const compact = mountHome({ compact_home_enabled: true })
+    expect(
+      compact.findAllComponents(RouterLinkStub).some((link) => link.props('to') === '/legal/privacy'),
+    ).toBe(true)
+    expect(compact.text()).toContain('home.footer.riskStrip')
+
+    const home = mountHome()
+    expect(home.text()).toContain('home.footer.riskStrip')
+    expect(
+      home.findAllComponents(RouterLinkStub).some((link) => link.props('to') === '/legal/disclaimer'),
+    ).toBe(true)
+  })
 })

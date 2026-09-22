@@ -110,7 +110,8 @@ export default {
       button: 'Sign Up Free'
     },
     footer: {
-      allRightsReserved: 'All rights reserved.'
+      allRightsReserved: 'All rights reserved.',
+      riskStrip: 'This site is an as-is API relay. Output does not represent our views. Unlawful use, child-exploitative content and unattended high-risk automation are prohibited.'
     }
   },
 
