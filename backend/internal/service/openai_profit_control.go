@@ -388,7 +388,8 @@ func (s *OpenAIGatewayService) bindOpenAIStickySessionDuringSelection(ctx contex
 // behavior at the handler bind points. With a gate it never overwrites a
 // different binding that already exists, so a temporarily ineligible account
 // remains sticky and becomes eligible again automatically after its rate
-// recovers.
+// recovers. Auth/runtime-blocked sticky accounts are the exception: failover
+// must be allowed to pin the session to the replacement account.
 func (s *OpenAIGatewayService) BindStickySessionAfterProfitAdmission(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {
 	if sessionHash == "" || accountID <= 0 {
 		return nil
@@ -405,9 +406,28 @@ func (s *OpenAIGatewayService) BindStickySessionAfterProfitAdmission(ctx context
 		return nil
 	}
 	if existingAccountID > 0 && existingAccountID != accountID {
-		return nil
+		if !s.stickySessionShouldYieldToFailover(ctx, existingAccountID) {
+			return nil
+		}
 	}
 	return s.BindStickySession(ctx, groupID, sessionHash, accountID)
+}
+
+func (s *OpenAIGatewayService) stickySessionShouldYieldToFailover(ctx context.Context, accountID int64) bool {
+	if s == nil || accountID <= 0 {
+		return false
+	}
+	if s.isOpenAIAccountRuntimeBlocked(&Account{ID: accountID, Platform: PlatformOpenAI}) {
+		return true
+	}
+	if s.accountRepo == nil && s.schedulerSnapshot == nil {
+		return false
+	}
+	account, err := s.getSchedulableAccount(ctx, accountID)
+	if err != nil {
+		return false
+	}
+	return account == nil || shouldClearStickySession(account, "")
 }
 
 // ---- 可观测性：按分组累计计数 + 采样日志（无逐请求输出） ----

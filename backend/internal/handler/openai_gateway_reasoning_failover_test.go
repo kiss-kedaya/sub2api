@@ -79,6 +79,17 @@ func TestDeriveOpenAIForwardAttemptBody_CrossModeStripsKiroReasoning(t *testing.
 	require.JSONEq(t, kiroReasoningCanonicalBody, string(canonical), "canonical forwardBody must never be mutated")
 }
 
+func TestOpenAIFailoverSchedulePreviousResponseIDClearsAfterAccountSwitch(t *testing.T) {
+	require.Equal(t, "resp_old", openAIFailoverSchedulePreviousResponseID("resp_old", nil))
+	require.Equal(t, "resp_old", openAIFailoverSchedulePreviousResponseID("resp_old", map[int64]struct{}{}))
+	require.Empty(t, openAIFailoverSchedulePreviousResponseID("resp_old", map[int64]struct{}{11: {}}))
+
+	body := []byte(`{"model":"gpt-5.1","previous_response_id":"resp_old","input":"hello"}`)
+	stripped := service.RemovePreviousResponseIDFromBody(body)
+	require.False(t, gjson.GetBytes(stripped, "previous_response_id").Exists())
+	require.Equal(t, "hello", gjson.GetBytes(stripped, "input").String())
+}
+
 // TestDeriveOpenAIForwardAttemptBody_SameModePreservesReasoning proves that
 // non-passthrough attempts before any passthrough attempt, passthrough-family
 // failovers, and switching into passthrough forward the canonical reasoning item

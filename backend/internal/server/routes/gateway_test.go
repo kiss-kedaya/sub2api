@@ -415,6 +415,30 @@ func TestGatewayRoutesCompositeOpenAIOnlyEndpointsRequireOpenAITarget(t *testing
 	require.NotEqual(t, http.StatusNotFound, w.Code)
 }
 
+func TestGatewayRoutesDeepseekEmbeddingsIsSupported(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformDeepseek)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{"model":"deepseek-chat","input":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+	require.NotEqual(t, http.StatusNotFound, w.Code)
+	require.NotContains(t, w.Body.String(), "Embeddings API is not supported")
+}
+
+func TestGatewayRoutesGeminiEmbeddingsStillUnsupported(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformGemini)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{"model":"gemini-2.5-pro","input":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Contains(t, w.Body.String(), "Embeddings API is not supported")
+}
+
 func TestGatewayRoutesGrokAllowsCLICompatibilityEntrypoints(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformGrok)
 
