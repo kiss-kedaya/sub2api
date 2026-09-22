@@ -501,3 +501,28 @@ func (c *sentinelMissGatewayCache) GetSessionAccountID(ctx context.Context, grou
 	}
 	return 0, ErrStickySessionNotFound
 }
+
+func TestGatewayProfitControlDeepSeekDoesNotInheritOpenAIGate(t *testing.T) {
+	openai := gatewayProfitTestGroup(43, PlatformOpenAI)
+	openai.RateMultiplier = 0.18
+	deepseek := gatewayProfitTestGroup(36, PlatformDeepseek)
+	deepseek.ProfitControlEnabled = true
+	deepseek.RateMultiplier = 0.10
+	svc := &GatewayService{}
+	account := gatewayProfitTestAccount(29204, PlatformDeepseek, 1.0, deepseek.ID)
+
+	openaiCtx := svc.withGatewayProfitControlGate(gatewayProfitTestContext(openai), &openai.ID)
+	require.False(t, svc.isGatewayAccountProfitEligible(openaiCtx, &account), "openai gate must veto rate 1.0")
+
+	routed := &APIKey{GroupID: &deepseek.ID, Group: deepseek}
+	routeCtx := ContextWithAPIKeyRoute(openaiCtx, routed)
+	routeCtx = svc.withGatewayProfitControlGate(routeCtx, &deepseek.ID)
+	require.True(t, svc.isGatewayAccountProfitEligible(routeCtx, &account), "deepseek is not a profit-control platform")
+
+	selection, err := svc.newSelectionResult(routeCtx, &account, true, nil, nil)
+	require.NoError(t, err)
+	require.False(t, selection.ProfitGateActive())
+	handlerCtx := ContextWithSelectionProfitGate(openaiCtx, selection)
+	_, vetoed, _ := svc.GatewayProfitControlVetoLatest(handlerCtx, &account)
+	require.False(t, vetoed, "deepseek selection replay must clear the openai entry gate")
+}

@@ -6,6 +6,24 @@ import (
 	"time"
 )
 
+// RebindKeyRouteProfitControl re-resolves the profit gate for the selected
+// billing group. Smart-route switches must not keep the entry group's threshold.
+func (s *OpenAIGatewayService) RebindKeyRouteProfitControl(ctx context.Context, groupID *int64) context.Context {
+	if s == nil {
+		return ctx
+	}
+	return s.withOpenAIProfitControlGate(ctx, groupID)
+}
+
+// RebindKeyRouteProfitControl re-resolves the profit gate for the selected
+// billing group. Smart-route switches must not keep the entry group's threshold.
+func (s *GatewayService) RebindKeyRouteProfitControl(ctx context.Context, groupID *int64) context.Context {
+	if s == nil {
+		return ctx
+	}
+	return s.withGatewayProfitControlGate(ctx, groupID)
+}
+
 // ResolveAPIKeyRouteSubscription binds billing to the selected API key group.
 func (s *GatewayService) ResolveAPIKeyRouteSubscription(ctx context.Context, key *APIKey, current *UserSubscription) (*UserSubscription, error) {
 	var repo UserSubscriptionRepository

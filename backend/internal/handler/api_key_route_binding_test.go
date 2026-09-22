@@ -22,6 +22,7 @@ type routeBindingGatewayStub struct {
 	pricedGroup  int64
 	pricedTier   string
 	bodyCopies   int
+	rebind       func(context.Context, *int64) context.Context
 }
 
 func (s *routeBindingGatewayStub) ResolveAPIKeyRouteSubscription(_ context.Context, _ *service.APIKey, _ *service.UserSubscription) (*service.UserSubscription, error) {
@@ -36,6 +37,13 @@ func (s *routeBindingGatewayStub) ReplaceModelInBody(body []byte, model string) 
 	s.bodyCopies++
 	result, _ := sjson.SetBytes(body, "model", model)
 	return result
+}
+
+func (s *routeBindingGatewayStub) RebindKeyRouteProfitControl(ctx context.Context, groupID *int64) context.Context {
+	if s.rebind != nil {
+		return s.rebind(ctx, groupID)
+	}
+	return ctx
 }
 
 func (s *routeBindingGatewayStub) BalancePreauthorizationCostInput(ctx context.Context, key *service.APIKey, model string, at time.Time, tier string) service.CostInput {
@@ -191,4 +199,56 @@ func TestKeyRouteBindingDisabledPreauthorizationDoesNotCopyBody(t *testing.T) {
 	require.Equal(t, "backup-private", mapping.MappedModel)
 	require.Zero(t, gateway.bodyCopies)
 	require.Nil(t, preauthorizer.captured)
+}
+
+func TestKeyRouteBindingClearsPrimaryProfitGateForBackupWithoutGate(t *testing.T) {
+	c, key, selected := routeBindingFixture()
+	key.Group.ProfitControlEnabled = true
+	key.Group.RateMultiplier = 0.18
+	selected.Group.Platform = service.PlatformGrok
+	selected.Group.ProfitControlEnabled = false
+	selected.Group.RateMultiplier = 0.08
+
+	svc := &service.OpenAIGatewayService{}
+	ctx, _ := svc.WithOpenAIRequestPricingContext(c.Request.Context(), key.GroupID)
+	c.Request = c.Request.WithContext(ctx)
+
+	rate := 1.0
+	account := &service.Account{ID: 29131, Platform: service.PlatformGrok, RateMultiplier: &rate}
+	vetoed, _ := service.OpenAIProfitControlVeto(c.Request.Context(), account)
+	require.True(t, vetoed, "entry openai profit gate must veto grok account rate 1.0")
+
+	gateway := &routeBindingGatewayStub{rebind: svc.RebindKeyRouteProfitControl}
+	require.NoError(t, bindSelectedKeyRoute(c, gateway, nil, nil, keyRouteBinding{Previous: key, Selected: selected}))
+	group, ok := c.Request.Context().Value(ctxkey.Group).(*service.Group)
+	require.True(t, ok)
+	require.Equal(t, selected.Group.ID, group.ID)
+	vetoed, _ = service.OpenAIProfitControlVeto(c.Request.Context(), account)
+	require.False(t, vetoed, "selected grok group has no profit gate; entry threshold must not leak")
+}
+
+func TestKeyRouteBindingClearsPrimaryProfitGateForDeepSeekBackup(t *testing.T) {
+	c, key, selected := routeBindingFixture()
+	key.Group.ProfitControlEnabled = true
+	key.Group.RateMultiplier = 0.18
+	selected.Group.Platform = service.PlatformDeepseek
+	selected.Group.ProfitControlEnabled = true
+	selected.Group.RateMultiplier = 0.10
+
+	svc := &service.OpenAIGatewayService{}
+	ctx, _ := svc.WithOpenAIRequestPricingContext(c.Request.Context(), key.GroupID)
+	c.Request = c.Request.WithContext(ctx)
+
+	rate := 1.0
+	account := &service.Account{ID: 29204, Platform: service.PlatformDeepseek, RateMultiplier: &rate}
+	vetoed, _ := service.OpenAIProfitControlVeto(c.Request.Context(), account)
+	require.True(t, vetoed, "entry openai profit gate must veto deepseek account rate 1.0")
+
+	gateway := &routeBindingGatewayStub{rebind: svc.RebindKeyRouteProfitControl}
+	require.NoError(t, bindSelectedKeyRoute(c, gateway, nil, nil, keyRouteBinding{Previous: key, Selected: selected}))
+	group, ok := c.Request.Context().Value(ctxkey.Group).(*service.Group)
+	require.True(t, ok)
+	require.Equal(t, selected.Group.ID, group.ID)
+	vetoed, _ = service.OpenAIProfitControlVeto(c.Request.Context(), account)
+	require.False(t, vetoed, "selected deepseek group cannot inherit openai profit gate")
 }
