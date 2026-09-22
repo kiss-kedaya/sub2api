@@ -4315,6 +4315,7 @@ const syncPreviewCredentials = computed(() => {
     platform: string
     type: string
     base_url?: string
+    account_id?: string
     api_key: string
     api_protocol?: string
     api_base_urls?: Record<string, string>
@@ -4322,9 +4323,13 @@ const syncPreviewCredentials = computed(() => {
   } = {
     platform: form.platform,
     type: form.type,
-    base_url: baseUrl || undefined,
     api_key: apiKeyValue.value,
     ...(modelMapping ? { model_mapping: modelMapping } : {})
+  }
+  if (form.type === 'cloudflare') {
+    preview.account_id = cloudflareAccountID.value.trim()
+  } else {
+    preview.base_url = baseUrl || undefined
   }
   if (form.platform === 'gemini' && accountCategory.value === 'apikey') {
     const customBase = (baseUrl || '').toLowerCase()
