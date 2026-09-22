@@ -1077,9 +1077,10 @@ func openAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
 	return OpenAICompactKeepaliveAdjustedWrittenSize(c) >= 0
 }
 
-func openAIStreamEventIsPreamble(eventType string) bool {
+// Lifecycle metadata and transport heartbeats are not model output.
+func openAIStreamEventIsMetadata(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "response.created", "response.in_progress":
+	case "response.created", "response.in_progress", "keepalive":
 		return true
 	default:
 		return false
@@ -1184,7 +1185,7 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 	case "response.output_item.added", "response.content_part.added", "response.reasoning_summary_part.added":
 		return openAIStreamAddedEventStartsClientOutput([]byte(trimmed), eventType)
 	}
-	return !openAIStreamEventIsPreamble(eventType)
+	return !openAIStreamEventIsMetadata(eventType)
 }
 
 func openAIStreamItemHasVisibleOutput(item gjson.Result) bool {
@@ -1262,7 +1263,7 @@ func openAIStreamDataStartsSemanticTTFT(data, eventType string) bool {
 		payload := []byte(trimmed)
 		return !openAIStreamFailedEventShouldFailover(payload, extractOpenAISSEErrorMessage(payload))
 	default:
-		return !openAIStreamEventIsPreamble(eventType)
+		return !openAIStreamEventIsMetadata(eventType)
 	}
 }
 
