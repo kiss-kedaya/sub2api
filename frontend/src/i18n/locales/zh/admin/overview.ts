@@ -443,6 +443,8 @@ export default {
         submit: '确认登记',
         submitting: '登记中...',
         success: '已登记线下提现 {amount}，剩余可提取 {remaining}',
+        replayed: '这笔线下提现此前已登记（{amount}），本次未重复扣减；登记后剩余可提取 {remaining}',
+        uncertainHint: '上次提交没有收到结果，可能已经登记成功。用户与金额已锁定，重新提交会沿用同一笔登记，已登记时不会重复扣减。',
         amountRequired: '请输入大于 0 的金额',
         amountExceeds: '提现金额不能超过当前可提取额度'
       },

@@ -407,7 +407,7 @@ func (r *oauthEmailAffiliateRepoStub) TransferQuotaToBalance(context.Context, in
 	panic("unexpected TransferQuotaToBalance call")
 }
 
-func (r *oauthEmailAffiliateRepoStub) WithdrawQuota(context.Context, int64, float64) (*service.AffiliateWithdrawResult, error) {
+func (r *oauthEmailAffiliateRepoStub) WithdrawQuota(context.Context, int64, float64, string) (*service.AffiliateWithdrawResult, error) {
 	panic("unexpected WithdrawQuota call")
 }
 

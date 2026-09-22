@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"math"
 	"strings"
@@ -105,7 +107,7 @@ type AffiliateRepository interface {
 	GetAccruedRebateFromInvitee(ctx context.Context, inviterID, inviteeUserID int64) (float64, error)
 	ThawFrozenQuota(ctx context.Context, userID int64) (float64, error)
 	TransferQuotaToBalance(ctx context.Context, userID int64) (float64, float64, error)
-	WithdrawQuota(ctx context.Context, userID int64, amount float64) (*AffiliateWithdrawResult, error)
+	WithdrawQuota(ctx context.Context, userID int64, amount float64, operationID string) (*AffiliateWithdrawResult, error)
 	ListInvitees(ctx context.Context, inviterID int64, limit int) ([]AffiliateInvitee, error)
 
 	// 管理端：用户级专属配置
@@ -202,6 +204,7 @@ type AffiliateTransferRecord struct {
 }
 
 // AffiliateWithdrawResult 是线下提现登记完成后的流水 ID 与额度快照。
+// Replayed 表示本次请求命中了同一幂等标识的已有登记，返回的是首次登记的结果。
 type AffiliateWithdrawResult struct {
 	LedgerID            int64   `json:"ledger_id"`
 	UserID              int64   `json:"user_id"`
@@ -209,6 +212,7 @@ type AffiliateWithdrawResult struct {
 	AvailableQuotaAfter float64 `json:"available_quota_after"`
 	FrozenQuotaAfter    float64 `json:"frozen_quota_after"`
 	HistoryQuotaAfter   float64 `json:"history_quota_after"`
+	Replayed            bool    `json:"-"`
 }
 
 type AffiliateUserOverview struct {
@@ -582,12 +586,22 @@ func (s *AffiliateService) AdminBatchSetUserRebateRate(ctx context.Context, user
 // AdminWithdrawQuota 登记一笔已在站外打款的线下提现：从用户可提取返利额度
 // 中扣除 amount，并写入 action=withdraw 的流水。冻结期内的额度不可扣除。
 // 金额按返利流水精度保留 8 位小数，舍入后必须为正。
-func (s *AffiliateService) AdminWithdrawQuota(ctx context.Context, userID int64, amount float64) (*AffiliateWithdrawResult, error) {
+//
+// idempotencyKey 标识一次登记且必填：同一个键只扣减一次，重复请求在用户与金额
+// 一致时返回首次登记的结果，不一致时返回 ErrIdempotencyKeyConflict。
+func (s *AffiliateService) AdminWithdrawQuota(ctx context.Context, userID int64, amount float64, idempotencyKey string) (*AffiliateWithdrawResult, error) {
 	if userID <= 0 {
 		return nil, infraerrors.BadRequest("INVALID_USER", "invalid user")
 	}
 	if s == nil || s.repo == nil {
 		return nil, infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate service unavailable")
+	}
+	key, err := NormalizeIdempotencyKey(idempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	if key == "" {
+		return nil, ErrIdempotencyKeyRequired
 	}
 	if math.IsNaN(amount) || math.IsInf(amount, 0) {
 		return nil, ErrAffiliateWithdrawAmountInvalid
@@ -596,7 +610,14 @@ func (s *AffiliateService) AdminWithdrawQuota(ctx context.Context, userID int64,
 	if amount <= 0 || math.IsInf(amount, 0) {
 		return nil, ErrAffiliateWithdrawAmountInvalid
 	}
-	return s.repo.WithdrawQuota(ctx, userID, amount)
+	return s.repo.WithdrawQuota(ctx, userID, amount, affiliateWithdrawOperationID(key))
+}
+
+// affiliateWithdrawOperationID 把线下提现登记的幂等键映射为流水的 operation_id，
+// 同一个键始终得到同一个值。
+func affiliateWithdrawOperationID(idempotencyKey string) string {
+	sum := sha256.Sum256([]byte("admin.affiliates.withdraw\x00" + idempotencyKey))
+	return hex.EncodeToString(sum[:])
 }
 
 // AdminListCustomUsers 列出有专属配置的用户。

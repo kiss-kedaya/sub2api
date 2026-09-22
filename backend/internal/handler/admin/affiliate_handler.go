@@ -208,7 +208,10 @@ type WithdrawQuotaRequest struct {
 }
 
 // WithdrawQuota records an offline withdrawal paid outside the site and
-// deducts it from the user's available affiliate quota.
+// deducts it from the user's available affiliate quota. The required
+// Idempotency-Key header identifies one registration: a repeated request with
+// the same key deducts nothing and returns the first result with
+// X-Idempotency-Replayed: true.
 // POST /api/v1/admin/affiliates/users/:user_id/withdraw
 func (h *AffiliateHandler) WithdrawQuota(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
@@ -223,10 +226,13 @@ func (h *AffiliateHandler) WithdrawQuota(c *gin.Context) {
 		return
 	}
 
-	result, err := h.affiliateService.AdminWithdrawQuota(c.Request.Context(), userID, req.Amount)
+	result, err := h.affiliateService.AdminWithdrawQuota(c.Request.Context(), userID, req.Amount, c.GetHeader("Idempotency-Key"))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if result != nil && result.Replayed {
+		c.Header("X-Idempotency-Replayed", "true")
 	}
 	response.Success(c, result)
 }

@@ -150,7 +150,7 @@ func (r *paymentFulfillmentAffiliateRepoStub) TransferQuotaToBalance(context.Con
 	panic("unexpected TransferQuotaToBalance call")
 }
 
-func (r *paymentFulfillmentAffiliateRepoStub) WithdrawQuota(context.Context, int64, float64) (*AffiliateWithdrawResult, error) {
+func (r *paymentFulfillmentAffiliateRepoStub) WithdrawQuota(context.Context, int64, float64, string) (*AffiliateWithdrawResult, error) {
 	panic("unexpected WithdrawQuota call")
 }
 

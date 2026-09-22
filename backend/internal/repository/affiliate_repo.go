@@ -341,19 +341,34 @@ VALUES ($1, 'transfer', $2, NULL, $3, $4, $5, $6, NOW(), NOW())`,
 	return transferred, newBalance, nil
 }
 
-// WithdrawQuota 登记一笔线下提现：先解冻已到期的冻结额度，再以
-// aff_quota >= amount 为条件原子扣减，并写入带额度快照的 withdraw 流水。
-// 可提取额度不足返回 ErrAffiliateQuotaInsufficient。
-func (r *affiliateRepository) WithdrawQuota(ctx context.Context, userID int64, amount float64) (*service.AffiliateWithdrawResult, error) {
+// WithdrawQuota 登记一笔线下提现。operationID 标识一次登记：同一事务内先以
+// operation_id 唯一约束写入占位流水，同标识的流水已存在时不重复扣减，用户与金额
+// 一致则返回该流水记录的结果（Replayed=true），不一致返回
+// ErrIdempotencyKeyConflict。占位成功后先解冻已到期的冻结额度，再以
+// aff_quota >= amount 为条件原子扣减并补写额度快照。可提取额度不足或用户没有
+// 返利档案时返回 ErrAffiliateQuotaInsufficient，占位随事务回滚，不占用该标识。
+func (r *affiliateRepository) WithdrawQuota(ctx context.Context, userID int64, amount float64, operationID string) (*service.AffiliateWithdrawResult, error) {
 	if userID <= 0 {
 		return nil, service.ErrUserNotFound
 	}
 	if amount <= 0 {
 		return nil, service.ErrAffiliateWithdrawAmountInvalid
 	}
+	if operationID == "" {
+		return nil, service.ErrIdempotencyKeyRequired
+	}
 
 	var result *service.AffiliateWithdrawResult
 	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		ledgerID, claimed, err := claimAffiliateWithdrawLedger(txCtx, txClient, userID, amount, operationID)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			result, err = findAffiliateWithdrawByOperation(txCtx, txClient, userID, amount, operationID)
+			return err
+		}
+
 		if _, err := thawFrozenQuotaTx(txCtx, txClient, userID); err != nil {
 			return fmt.Errorf("thaw before withdraw: %w", err)
 		}
@@ -380,45 +395,21 @@ WHERE user_id = $2
 			return err
 		}
 
-		rows, err := txClient.QueryContext(txCtx, `
-INSERT INTO user_affiliate_ledger (
-    user_id,
-    action,
-    amount,
-    source_user_id,
-    balance_after,
-    aff_quota_after,
-    aff_frozen_quota_after,
-    aff_history_quota_after,
-    created_at,
-    updated_at
-)
-VALUES ($1, 'withdraw', $2, NULL, $3, $4, $5, $6, NOW(), NOW())
-RETURNING id`,
-			userID,
-			amount,
+		if _, err := txClient.ExecContext(txCtx, `
+UPDATE user_affiliate_ledger
+SET balance_after = $1,
+    aff_quota_after = $2,
+    aff_frozen_quota_after = $3,
+    aff_history_quota_after = $4,
+    updated_at = NOW()
+WHERE id = $5`,
 			snapshot.BalanceAfter,
 			snapshot.AvailableQuotaAfter,
 			snapshot.FrozenQuotaAfter,
 			snapshot.HistoryQuotaAfter,
-		)
-		if err != nil {
-			return fmt.Errorf("insert affiliate withdraw ledger: %w", err)
-		}
-		if !rows.Next() {
-			_ = rows.Close()
-			if err := rows.Err(); err != nil {
-				return fmt.Errorf("insert affiliate withdraw ledger: %w", err)
-			}
-			return errors.New("insert affiliate withdraw ledger: no id returned")
-		}
-		var ledgerID int64
-		if err := rows.Scan(&ledgerID); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
-			return err
+			ledgerID,
+		); err != nil {
+			return fmt.Errorf("record affiliate withdraw snapshot: %w", err)
 		}
 
 		result = &service.AffiliateWithdrawResult{
@@ -433,6 +424,84 @@ RETURNING id`,
 	})
 	if err != nil {
 		return nil, err
+	}
+	return result, nil
+}
+
+// claimAffiliateWithdrawLedger 为有返利档案的用户写入一条带 operation_id 的
+// withdraw 占位流水。同标识的流水已存在或用户没有返利档案时 claimed 为 false。
+// 同标识的并发事务在唯一索引上等待先写入者结束：先写入者提交后返回 claimed=false，
+// 回滚后本事务继续写入。
+func claimAffiliateWithdrawLedger(ctx context.Context, client affiliateQueryExecer, userID int64, amount float64, operationID string) (int64, bool, error) {
+	rows, err := client.QueryContext(ctx, `
+INSERT INTO user_affiliate_ledger (user_id, action, amount, operation_id, created_at, updated_at)
+SELECT ua.user_id, 'withdraw', $2, $3, NOW(), NOW()
+FROM user_affiliates ua
+WHERE ua.user_id = $1
+ON CONFLICT (operation_id) WHERE operation_id IS NOT NULL DO NOTHING
+RETURNING id`, userID, amount, operationID)
+	if err != nil {
+		return 0, false, fmt.Errorf("claim affiliate withdraw ledger: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return 0, false, fmt.Errorf("claim affiliate withdraw ledger: %w", err)
+		}
+		return 0, false, nil
+	}
+	var ledgerID int64
+	if err := rows.Scan(&ledgerID); err != nil {
+		return 0, false, err
+	}
+	return ledgerID, true, rows.Close()
+}
+
+// findAffiliateWithdrawByOperation 读取 operation_id 已对应的线下提现流水，
+// 用户与金额一致时返回该流水记录的登记结果（Replayed=true），不一致返回
+// ErrIdempotencyKeyConflict；没有对应流水说明用户没有返利档案，返回
+// ErrAffiliateQuotaInsufficient。
+func findAffiliateWithdrawByOperation(ctx context.Context, client affiliateQueryExecer, userID int64, amount float64, operationID string) (*service.AffiliateWithdrawResult, error) {
+	rows, err := client.QueryContext(ctx, `
+SELECT id,
+       user_id = $2 AND action = 'withdraw' AND amount = CAST($3 AS DECIMAL(20,8)),
+       user_id,
+       amount::double precision,
+       COALESCE(aff_quota_after, 0)::double precision,
+       COALESCE(aff_frozen_quota_after, 0)::double precision,
+       COALESCE(aff_history_quota_after, 0)::double precision
+FROM user_affiliate_ledger
+WHERE operation_id = $1`, operationID, userID, amount)
+	if err != nil {
+		return nil, fmt.Errorf("query affiliate withdraw by operation: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("query affiliate withdraw by operation: %w", err)
+		}
+		return nil, service.ErrAffiliateQuotaInsufficient
+	}
+	var sameRequest bool
+	result := &service.AffiliateWithdrawResult{Replayed: true}
+	if err := rows.Scan(
+		&result.LedgerID,
+		&sameRequest,
+		&result.UserID,
+		&result.Amount,
+		&result.AvailableQuotaAfter,
+		&result.FrozenQuotaAfter,
+		&result.HistoryQuotaAfter,
+	); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if !sameRequest {
+		return nil, service.ErrIdempotencyKeyConflict
 	}
 	return result, nil
 }
