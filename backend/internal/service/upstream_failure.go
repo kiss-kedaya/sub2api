@@ -74,6 +74,9 @@ func ClassifyUpstreamFailure(statusCode int, headers http.Header, body []byte, e
 		if isOpenAICompatibleModelNotFound400(body) {
 			return UpstreamFailureClass{Kind: UpstreamFailureModelMissing, Failover: true}
 		}
+		if isUpstreamBillingAccountFrozen(body) {
+			return UpstreamFailureClass{Kind: UpstreamFailureAuth, Failover: true, PunishAccount: true}
+		}
 		if isGoogleProjectConfigError(strings.ToLower(extractUpstreamErrorMessage(body))) {
 			return UpstreamFailureClass{Kind: UpstreamFailureCompat, Failover: true, SameAccountRetry: true}
 		}
@@ -137,7 +140,7 @@ func PoolModeSameAccountRetry(account *Account, statusCode int, headers http.Hea
 	}
 	class := ClassifyUpstreamFailure(statusCode, headers, body, nil)
 	if class.Kind == UpstreamFailureAuth {
-		return true
+		return !isUpstreamBillingAccountFrozen(body)
 	}
 	return class.SameAccountRetry
 }
