@@ -27,6 +27,7 @@ const (
 // 供 /v1/models 在尚未同步上游列表时回退，以及账号白名单预填。
 func DefaultOpenCodeGoModelIDs() []string {
 	return []string{
+		"grok-4.7",
 		"grok-4.6",
 		"gpt-5.6-luna",
 		"glm-5.3-flash",
