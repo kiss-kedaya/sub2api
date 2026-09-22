@@ -1312,14 +1312,6 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			wantMessage:    "Forbidden",
 			wantRetryAfter: "17",
 		},
-		{
-			name:         "upstream unauthorized is reported as gateway failure",
-			statusCode:   http.StatusUnauthorized,
-			contentType:  "application/json",
-			responseBody: `{"error":{"message":"Incorrect API key provided","type":"authentication_error","code":"invalid_api_key","param":"api_key"},"rate_limit":{"remaining":0}}`,
-			wantStatus:   http.StatusUnauthorized,
-			wantMessage:  "Incorrect API key provided",
-		},
 		// 瞬时 5xx（500/502/503/504/520-524）对 API-key 账号已改走多账号
 		// failover（见 APIKeyPassthrough_Transient5xxTriggersFailover），此处
 		// 改用非瞬时 5xx 状态码，继续覆盖净化重建路径。
@@ -1791,6 +1783,49 @@ func TestOpenAIGatewayService_APIKeyPassthrough_Transient5xxTriggersFailover(t *
 			require.Equal(t, account.ID, events[len(events)-1].AccountID)
 		})
 	}
+}
+
+func TestOpenAIGatewayService_APIKeyPassthrough_HTTP401TriggersFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	requestBody := []byte(`{"model":"gpt-5.2","stream":false,"input":"hello"}`)
+	upstreamBody := `{"error":{"message":"Incorrect API key provided","type":"authentication_error","code":"invalid_api_key"}}`
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+
+	body := &passthroughCloseTrackingReadCloser{Reader: strings.NewReader(upstreamBody)}
+	repo := &openAIAuthPolicyAccountRepo{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{
+		cfg:              &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		rateLimitService: rateLimits,
+		httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "X-Request-Id": []string{"rid-api-key-401"}},
+			Body:       body,
+		}},
+	}
+	account := &Account{
+		ID:          4011,
+		Name:        "disabled-api-key",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.example.test"},
+		Extra:       map[string]any{"openai_passthrough": true},
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+	rateLimits.SetAccountRuntimeBlocker(svc)
+
+	result, err := svc.Forward(context.Background(), c, account, requestBody)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusUnauthorized, failoverErr.StatusCode)
+	require.False(t, c.Writer.Written(), "401 必须在写出下游响应前换号")
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Equal(t, 1, repo.setErrorCalls)
 }
 
 func TestOpenAIGatewayService_APIKeyPassthrough_ContextWindow502DoesNotFailover(t *testing.T) {

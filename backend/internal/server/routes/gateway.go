@@ -82,7 +82,7 @@ func RegisterGatewayRoutes(
 		h.Gateway.Models(c)
 	}
 	isOpenAIOnlyEndpointGatewayPlatform := func(c *gin.Context) bool {
-		return getGroupPlatform(c) == service.PlatformOpenAI
+		return isOpenAIResponsesCompatibleGatewayPlatform(c)
 	}
 	imagesHandler := func(c *gin.Context) {
 		switch getGroupPlatform(c) {

@@ -579,6 +579,10 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 		return 0, nil, "", nil
 	}
+	if s.isOpenAIAccountRuntimeBlocked(account) {
+		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		return 0, nil, "", nil
+	}
 	// OAuth/SetupToken continuation state lives on the WSv2 session and cannot
 	// survive an HTTP fallback. Official API-key Responses HTTP requests are
 	// different: previous_response_id is supported by the provider and scoped to

@@ -181,6 +181,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	jsonKeepaliveStarted := false
 	defer func() { stopJSONKeepalive() }()
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
+	accountSlotBusySeen := false
 
 	for {
 		reqLog.Debug("openai.images.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
@@ -229,12 +230,18 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			}
 			if lastFailoverErr != nil {
 				h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
+			} else if accountSlotBusySeen {
+				h.handleOpenAIAccountSlotBusyExhausted(c, streamStarted, reqLog)
 			} else {
 				h.handleFailoverExhaustedSimple(c, 502, streamStarted)
 			}
 			return
 		}
 		if selection == nil || selection.Account == nil {
+			if accountSlotBusySeen && lastFailoverErr == nil {
+				h.handleOpenAIAccountSlotBusyExhausted(c, streamStarted, reqLog)
+				return
+			}
 			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, clientRequestModel, routingModel, service.PlatformOpenAI)
 			if !cls.ModelNotFound {
 				markOpsRoutingCapacityLimited(c)
@@ -262,16 +269,11 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
 		accountReleaseFunc, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, parsed.Stream, &streamStarted, reqLog)
-		if slotResult == openAISlotAcquireProfitVetoed {
-			// Images 调度不装利润门，此分支实际不可达；防御性排除重选并受同一否决上限约束。
-			if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
-				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
-				return
-			}
-			continue
-		}
-		if slotResult != openAISlotAcquireOK {
+		switch h.openAISlotLoopAction(c, slotResult, account.ID, apiKey.GroupID, sessionHash, failedAccountIDs, &profitVetoCount, streamStarted, reqLog, &accountSlotBusySeen) {
+		case openAISlotLoopStop:
 			return
+		case openAISlotLoopRotate:
+			continue
 		}
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())

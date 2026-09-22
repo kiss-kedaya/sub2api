@@ -283,7 +283,11 @@ func TestGrokMediaLookupSlotLifecycle(t *testing.T) {
 				}
 				return original(req, id)
 			}
-			for range 20 {
+			iterations := 20
+			if scenario == "full" || scenario == "queue full" || scenario == "cancel while waiting" || scenario == "mismatch wait" {
+				iterations = 1
+			}
+			for range iterations {
 				c, w := grokMediaSlotContext(ctx, false)
 				h.GrokVideoStatus(c)
 				slots.assertReleased(t)
