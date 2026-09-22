@@ -268,3 +268,61 @@ func TestOpenAIProfitControlAfterAdmissionBindEagerWithoutGate(t *testing.T) {
 	require.NoError(t, svc.BindStickySessionAfterProfitAdmission(context.Background(), &groupID, sessionHash, cheapID))
 	require.Equal(t, cheapID, cache.sessionBindings[cacheKey], "无门时保持既有 eager 绑定行为")
 }
+
+func TestSmartRouteBackupWithoutProfitGateDoesNotInheritPrimaryVeto(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	primary := &Group{ID: 43, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, RateMultiplier: 0.18, ProfitControlEnabled: true}
+	rate := 1.0
+
+	for _, backup := range []struct {
+		name    string
+		group   *Group
+		account *Account
+	}{
+		{
+			name:    "grok-disabled",
+			group:   &Group{ID: 25, Platform: PlatformGrok, Status: StatusActive, Hydrated: true, RateMultiplier: 0.08, ProfitControlEnabled: false},
+			account: &Account{ID: 29131, Platform: PlatformGrok, Type: AccountTypeAPIKey, RateMultiplier: &rate},
+		},
+		{
+			name:    "deepseek-unsupported-even-if-enabled-flag-set",
+			group:   &Group{ID: 36, Platform: PlatformDeepseek, Status: StatusActive, Hydrated: true, RateMultiplier: 0.10, ProfitControlEnabled: true},
+			account: &Account{ID: 29204, Platform: PlatformDeepseek, Type: AccountTypeAPIKey, RateMultiplier: &rate},
+		},
+		{
+			name:    "kimi-unsupported",
+			group:   &Group{ID: 37, Platform: PlatformKimi, Status: StatusActive, Hydrated: true, RateMultiplier: 0.15, ProfitControlEnabled: false},
+			account: &Account{ID: 30001, Platform: PlatformKimi, Type: AccountTypeAPIKey, RateMultiplier: &rate},
+		},
+	} {
+		t.Run(backup.name, func(t *testing.T) {
+			ctx, _ := svc.WithOpenAIRequestPricingContext(profitControlTestCtx(primary), &primary.ID)
+			vetoed, _ := OpenAIProfitControlVeto(ctx, backup.account)
+			require.True(t, vetoed, "primary openai gate must veto backup account rate 1.0")
+
+			routed := &APIKey{GroupID: &backup.group.ID, Group: backup.group}
+			routeCtx := ContextWithAPIKeyRoute(ctx, routed)
+			routeCtx = svc.withOpenAIProfitControlGate(routeCtx, &backup.group.ID)
+			selection := attachSelectionProfitGate(routeCtx, &AccountSelectionResult{Account: backup.account, Acquired: true})
+			require.True(t, selection.profitGateResolved)
+			require.False(t, selection.ProfitGateActive(), "backup group must not carry a profit gate")
+
+			handlerCtx := ContextWithSelectionProfitGate(ctx, selection)
+			vetoed, _ = OpenAIProfitControlVeto(handlerCtx, backup.account)
+			require.False(t, vetoed, "backup group has no profit gate; primary threshold must not leak")
+		})
+	}
+}
+
+func TestContextWithSelectionProfitGateKeepsUnresolvedNilAsNoop(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	group := profitControlTestGroup(43, 0, 0)
+	group.RateMultiplier = 0.18
+	ctx, _ := svc.WithOpenAIRequestPricingContext(profitControlTestCtx(group), &group.ID)
+	plain := &AccountSelectionResult{}
+	require.Equal(t, ctx, ContextWithSelectionProfitGate(ctx, plain))
+	rate := 1.0
+	account := &Account{RateMultiplier: &rate}
+	vetoed, _ := OpenAIProfitControlVeto(ContextWithSelectionProfitGate(ctx, plain), account)
+	require.True(t, vetoed, "unresolved selection must keep the request gate")
+}
