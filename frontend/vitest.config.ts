@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'path'
 import vue from '@vitejs/plugin-vue'
+import { searchForWorkspaceRoot } from 'vite'
 
 export default defineConfig({
   plugins: [vue()],
@@ -9,6 +10,11 @@ export default defineConfig({
       '@': resolve(__dirname, 'src'),
       'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js'
     }
+  },
+  server: {
+    fs: {
+      allow: [searchForWorkspaceRoot(process.cwd()), resolve(__dirname, '..')],
+    },
   },
   test: {
     globals: true,
