@@ -1609,6 +1609,10 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		return
 	}
 
+	// Re-auth only returns authentication fields. Preserve account configuration
+	// stored alongside them (for example model_mapping), while allowing the new
+	// OAuth values to replace their existing counterparts.
+	req.Credentials = service.MergeCredentials(existing.Credentials, req.Credentials)
 	// Drop SSO/password residue; re-auth must leave only OAuth tokens on disk.
 	req.Credentials = service.SanitizeStoredCredentials(existing.Platform, req.Credentials)
 
