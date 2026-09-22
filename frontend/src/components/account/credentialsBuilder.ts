@@ -47,7 +47,7 @@ export function isHeaderOverrideCapable(platform: string, type: string): boolean
     platform === 'deepseek' ||
     platform === 'minimax'
   ) {
-    return type === 'apikey'
+    return type === 'apikey' || (platform === 'openai' && type === 'cloudflare')
   }
   if (platform === 'grok') {
     return type === 'apikey' || type === 'oauth'

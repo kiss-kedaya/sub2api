@@ -1408,7 +1408,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 }
 
 func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
-	if account == nil || account.Type != AccountTypeAPIKey {
+	if account == nil {
+		return false
+	}
+	if account.IsCloudflareOpenAI() {
+		return true
+	}
+	if account.Type != AccountTypeAPIKey {
 		return false
 	}
 	if account.IsCNProvider() || account.IsGeminiOpenAIProtocol() {
@@ -1438,7 +1444,13 @@ func openaiResponsesSupportMode(account *Account) string {
 // 管理员强制 Chat Completions、以及明确没有原生 Responses 的国产/Gemini 协议，才预降级。
 // 探针 false 不预降级：先打 /v1/responses（URL 会补 /v1），404/405 再回退。
 func shouldPreemptivelyConvertInboundResponsesToChat(account *Account) bool {
-	if account == nil || account.Type != AccountTypeAPIKey {
+	if account == nil {
+		return false
+	}
+	if account.IsCloudflareOpenAI() {
+		return true
+	}
+	if account.Type != AccountTypeAPIKey {
 		return false
 	}
 	if account.IsCNProvider() || account.IsGeminiOpenAIProtocol() {

@@ -351,7 +351,7 @@
       <!-- Account Type Selection (OpenAI) -->
       <div v-if="form.platform === 'openai'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-        <div class="mt-2 grid grid-cols-2 gap-3" data-tour="account-form-type">
+        <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3" data-tour="account-form-type">
           <button
             type="button"
             @click="accountCategory = 'oauth-based'"
@@ -401,6 +401,32 @@
             <div>
               <span class="block text-sm font-medium text-gray-900 dark:text-white">API Key</span>
               <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.responsesApi') }}</span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            @click="accountCategory = 'cloudflare'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'cloudflare'
+                ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
+                : 'border-gray-200 hover:border-orange-300 dark:border-dark-600 dark:hover:border-orange-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'cloudflare'
+                  ? 'bg-orange-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="cloud" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">Cloudflare</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.cloudflareWorkers') }}</span>
             </div>
           </button>
 
@@ -1299,8 +1325,19 @@
       </div>
 
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
-      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
-        <div v-if="!isAdaptiveProtocolAccount || apiProtocol !== 'adaptive'">
+      <div v-if="(form.type === 'apikey' || form.type === 'cloudflare') && form.platform !== 'antigravity'" class="space-y-4">
+        <div v-if="form.type === 'cloudflare'">
+          <label class="input-label">{{ t('admin.accounts.openai.cloudflareAccountId') }}</label>
+          <input
+            v-model="cloudflareAccountID"
+            type="text"
+            required
+            class="input font-mono"
+            :placeholder="t('admin.accounts.openai.cloudflareAccountIdPlaceholder')"
+          />
+          <p class="input-hint">{{ t('admin.accounts.openai.cloudflareAccountIdHint') }}</p>
+        </div>
+        <div v-else-if="!isAdaptiveProtocolAccount || apiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
             v-model="apiKeyBaseUrl"
@@ -1353,10 +1390,12 @@
             :placeholder="apiKeyValuePlaceholder"
           />
           <p v-if="apiKeyHint" class="input-hint">{{ apiKeyHint }}</p>
+          <p v-if="form.type === 'cloudflare'" class="input-hint">{{ t('admin.accounts.openai.cloudflareApiTokenHint') }}</p>
         </div>
 
-        <!-- 上游倍率自动探测：全部 API-key 平台可用（所在区块已限定 apikey 类型） -->
+        <!-- 上游倍率自动探测：Cloudflare 没有这套探测接口 -->
         <div
+          v-if="form.type !== 'cloudflare'"
           class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
         >
           <div>
@@ -2124,7 +2163,7 @@
 
       <!-- 配额控制 (非 Anthropic apikey/bedrock) -->
       <div
-        v-else-if="form.type === 'apikey' || form.type === 'bedrock'"
+        v-else-if="form.type === 'apikey' || form.type === 'cloudflare' || form.type === 'bedrock'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
       >
         <div class="mb-3">
@@ -3992,6 +4031,7 @@ const baseUrlHint = computed(() => {
 })
 
 const apiKeyHint = computed(() => {
+  if (form.type === 'cloudflare') return ''
   if (isGeminiProtocolAccount.value) return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
@@ -4114,10 +4154,11 @@ interface TempUnschedRuleForm {
 // State
 const step = ref(1)
 const submitting = ref(false)
-const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
+const accountCategory = ref<'oauth-based' | 'apikey' | 'cloudflare' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
+const cloudflareAccountID = ref('')
 const upstreamBillingAutoProbeEnabled = ref(true)
 
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）账号类型、API 协议与端点 ──
@@ -4782,6 +4823,8 @@ watch(
     }
     if ((form.platform === 'gemini' || form.platform === 'anthropic') && category === 'service_account') {
       form.type = 'service_account' as AccountType
+    } else if (form.platform === 'openai' && category === 'cloudflare') {
+      form.type = 'cloudflare'
     } else if (category === 'oauth-based') {
       form.type = form.platform === 'anthropic' ? method as AccountType : 'oauth'
     } else {
@@ -4847,6 +4890,9 @@ watch(
     }
     if (newPlatform !== 'anthropic' && accountCategory.value === 'bedrock') {
       accountCategory.value = 'oauth-based'
+    }
+    if (newPlatform !== 'openai' && accountCategory.value === 'cloudflare') {
+      accountCategory.value = 'apikey'
     }
     // Reset Bedrock fields when switching platforms
     bedrockAccessKeyId.value = ''
@@ -5291,6 +5337,7 @@ const resetForm = () => {
   adaptiveBaseUrls.value = { chat_completions: '', anthropic: '', responses: '' }
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
+  cloudflareAccountID.value = ''
   upstreamRequestIdHeader.value = ''
   upstreamBillingAutoProbeEnabled.value = true
   editQuotaLimit.value = null
@@ -5576,6 +5623,36 @@ const applyVertexServiceAccountJson = (value: string) => {
 
 const parseVertexServiceAccountJson = () => applyVertexServiceAccountJson(vertexServiceAccountJson.value)
 
+const applyAPIKeyQuotaExtra = (extra: Record<string, unknown> | undefined, type: AccountType) => {
+  if (type !== 'apikey' && type !== 'cloudflare' && type !== 'bedrock') {
+    return extra
+  }
+  const quotaExtra: Record<string, unknown> = { ...(extra || {}) }
+  if (editQuotaLimit.value != null && editQuotaLimit.value > 0) {
+    quotaExtra.quota_limit = editQuotaLimit.value
+  }
+  if (editQuotaDailyLimit.value != null && editQuotaDailyLimit.value > 0) {
+    quotaExtra.quota_daily_limit = editQuotaDailyLimit.value
+  }
+  if (editQuotaWeeklyLimit.value != null && editQuotaWeeklyLimit.value > 0) {
+    quotaExtra.quota_weekly_limit = editQuotaWeeklyLimit.value
+  }
+  if (editDailyResetMode.value === 'fixed') {
+    quotaExtra.quota_daily_reset_mode = 'fixed'
+    quotaExtra.quota_daily_reset_hour = editDailyResetHour.value ?? 0
+  }
+  if (editWeeklyResetMode.value === 'fixed') {
+    quotaExtra.quota_weekly_reset_mode = 'fixed'
+    quotaExtra.quota_weekly_reset_day = editWeeklyResetDay.value ?? 1
+    quotaExtra.quota_weekly_reset_hour = editWeeklyResetHour.value ?? 0
+  }
+  if (editDailyResetMode.value === 'fixed' || editWeeklyResetMode.value === 'fixed') {
+    quotaExtra.quota_reset_timezone = editResetTimezone.value || 'UTC'
+  }
+  writeQuotaNotifyToExtra(quotaExtra, 'create')
+  return Object.keys(quotaExtra).length > 0 ? quotaExtra : extra
+}
+
 const handleVertexServiceAccountFile = async (event: Event) => {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -5751,8 +5828,17 @@ const handleSubmit = async () => {
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
-    base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
     api_key: apiKeyValue.value.trim()
+  }
+  if (form.type === 'cloudflare') {
+    const accountID = cloudflareAccountID.value.trim()
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(accountID)) {
+      appStore.showError(t('admin.accounts.openai.cloudflareAccountIdInvalid'))
+      return
+    }
+    credentials.account_id = accountID
+  } else {
+    credentials.base_url = apiKeyBaseUrl.value.trim() || defaultBaseUrl
   }
   if (form.platform === 'gemini' && !isGeminiProtocolAccount.value) {
     credentials.tier_id = geminiTierAIStudio.value
@@ -5793,7 +5879,7 @@ const handleSubmit = async () => {
       credentials.model_mapping = modelMapping
     }
   }
-  if (form.platform === 'openai') {
+  if (form.platform === 'openai' && form.type !== 'cloudflare') {
     applyOpenAIEndpointCapabilities(credentials)
     const compactModelMapping = buildOpenAICompactModelMapping()
     if (compactModelMapping) {
@@ -5842,8 +5928,8 @@ const handleSubmit = async () => {
     platform: form.platform,
     type: form.type,
     group_ids: form.group_ids,
-    extra: withUpstreamRequestIdHeader(extra),
-    upstream_billing_probe_enabled: upstreamBillingAutoProbeEnabled.value,
+    extra: applyAPIKeyQuotaExtra(withUpstreamRequestIdHeader(extra), form.type),
+    upstream_billing_probe_enabled: form.type === 'cloudflare' ? false : upstreamBillingAutoProbeEnabled.value,
     auto_pause_on_expired: autoPauseOnExpired.value
   })
 }
@@ -5906,36 +5992,7 @@ const createAccountAndFinish = async (
   }
   // Inject quota limits for apikey/bedrock accounts
   let finalExtra = withUpstreamRequestIdHeader(extra)
-  if (type === 'apikey' || type === 'bedrock') {
-    const quotaExtra: Record<string, unknown> = { ...(finalExtra || {}) }
-    if (editQuotaLimit.value != null && editQuotaLimit.value > 0) {
-      quotaExtra.quota_limit = editQuotaLimit.value
-    }
-    if (editQuotaDailyLimit.value != null && editQuotaDailyLimit.value > 0) {
-      quotaExtra.quota_daily_limit = editQuotaDailyLimit.value
-    }
-    if (editQuotaWeeklyLimit.value != null && editQuotaWeeklyLimit.value > 0) {
-      quotaExtra.quota_weekly_limit = editQuotaWeeklyLimit.value
-    }
-    // Quota reset mode config
-    if (editDailyResetMode.value === 'fixed') {
-      quotaExtra.quota_daily_reset_mode = 'fixed'
-      quotaExtra.quota_daily_reset_hour = editDailyResetHour.value ?? 0
-    }
-    if (editWeeklyResetMode.value === 'fixed') {
-      quotaExtra.quota_weekly_reset_mode = 'fixed'
-      quotaExtra.quota_weekly_reset_day = editWeeklyResetDay.value ?? 1
-      quotaExtra.quota_weekly_reset_hour = editWeeklyResetHour.value ?? 0
-    }
-    if (editDailyResetMode.value === 'fixed' || editWeeklyResetMode.value === 'fixed') {
-      quotaExtra.quota_reset_timezone = editResetTimezone.value || 'UTC'
-    }
-    // Quota notify config
-    writeQuotaNotifyToExtra(quotaExtra, 'create')
-    if (Object.keys(quotaExtra).length > 0) {
-      finalExtra = quotaExtra
-    }
-  }
+  finalExtra = applyAPIKeyQuotaExtra(finalExtra, type)
   if (platform === 'openai') {
     if (type === 'apikey') {
       applyOpenAIEndpointCapabilities(credentials)

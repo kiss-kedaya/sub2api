@@ -38,6 +38,25 @@ func (s *OpenAIGatewayService) FetchOpenAIModelsList(ctx context.Context, accoun
 		}
 		return &OpenAIModelsResponse{Body: body, ETag: codexModelsManifestBodyETag(body)}, nil
 	}
+	if credentialAccount.IsCloudflareOpenAI() {
+		names, err := fetchCloudflareModelNames(ctx, s.httpUpstream, credentialAccount)
+		if err != nil {
+			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_MODELS_UPSTREAM_INVALID", "cloudflare model list: %v", err)
+		}
+		entries := make([]map[string]string, 0, len(names))
+		for _, name := range names {
+			entries = append(entries, map[string]string{"id": name})
+		}
+		raw, err := json.Marshal(map[string]any{"data": entries})
+		if err != nil {
+			return nil, invalidOpenAIModelsList(err)
+		}
+		body, err := standardOpenAIModelsBody(raw, false)
+		if err != nil {
+			return nil, invalidOpenAIModelsList(err)
+		}
+		return &OpenAIModelsResponse{Body: body, ETag: codexModelsManifestBodyETag(body)}, nil
+	}
 	req, err := buildOpenAIAPIKeyModelsRequest(ctx, credentialAccount, s.validateUpstreamBaseURL)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_MODELS_REQUEST_INVALID", "cannot build upstream model list request: %v", err)

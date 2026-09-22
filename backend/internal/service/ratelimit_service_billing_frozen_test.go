@@ -78,3 +78,37 @@ func TestGatewayChatCompletionsBillingFrozenFailoversToAnotherAccount(t *testing
 		Credentials: map[string]any{"pool_mode": true},
 	}, http.StatusBadRequest, nil, body))
 }
+
+func TestHandleUpstreamError_PoolModeBillingAccountFrozenStillDisables(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:          4403,
+		Platform:    PlatformDeepseek,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Name:        "senseaudio-pool",
+		Credentials: map[string]any{"pool_mode": true},
+	}
+
+	shouldDisable := svc.HandleUpstreamError(context.Background(), account, http.StatusBadRequest, http.Header{}, []byte(billingAccountFrozenBody), "deepseek-v4.1-flash")
+	require.True(t, shouldDisable)
+	require.Equal(t, 1, repo.setErrorCalls)
+	require.Equal(t, int64(4403), repo.lastErrorID)
+	require.Contains(t, repo.lastErrorMsg, "Billing account frozen")
+	require.Contains(t, repo.lastErrorMsg, "\u8ba1\u8d39\u8d26\u6237\u5df2\u88ab\u51bb\u7ed3")
+}
+
+func TestCheckErrorPolicy_PoolModeBillingAccountFrozenIsMatched(t *testing.T) {
+	svc := NewRateLimitService(&rateLimitAccountRepoStub{}, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:          4404,
+		Platform:    PlatformDeepseek,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"pool_mode": true},
+	}
+	require.Equal(t, ErrorPolicyMatched, svc.CheckErrorPolicy(context.Background(), account, http.StatusBadRequest, []byte(billingAccountFrozenBody)))
+}

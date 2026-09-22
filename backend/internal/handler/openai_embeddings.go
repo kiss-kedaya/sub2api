@@ -287,6 +287,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), false, nil, err)
 				h.gatewayService.RecordOpenAIAccountSwitch()
 				failedAccountIDs[account.ID] = struct{}{}
+				h.clearStickyAfterUpstreamAccountSwitch(c.Request.Context(), apiKey.GroupID, "")
 				lastFailoverErr = failoverErr
 				if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 					h.handleFailoverExhausted(c, failoverErr, false)

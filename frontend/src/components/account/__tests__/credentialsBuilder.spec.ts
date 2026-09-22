@@ -102,6 +102,7 @@ describe('isHeaderOverrideCapable', () => {
   it('anthropic/openai only support apikey accounts', () => {
     expect(isHeaderOverrideCapable('anthropic', 'apikey')).toBe(true)
     expect(isHeaderOverrideCapable('openai', 'apikey')).toBe(true)
+    expect(isHeaderOverrideCapable('openai', 'cloudflare')).toBe(true)
     expect(isHeaderOverrideCapable('anthropic', 'oauth')).toBe(false)
     expect(isHeaderOverrideCapable('openai', 'oauth')).toBe(false)
   })
