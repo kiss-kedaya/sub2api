@@ -101,6 +101,12 @@ export interface AffiliateWithdrawResult {
   history_quota_after: number
 }
 
+export interface AffiliateWithdrawResponse {
+  result: AffiliateWithdrawResult
+  /** True when the key matched an earlier registration and nothing was deducted again. */
+  replayed: boolean
+}
+
 export interface AffiliateUserOverview {
   user_id: number
   email: string
@@ -239,15 +245,25 @@ export async function getUserOverview(
   return data
 }
 
+/**
+ * Records an offline withdrawal. `idempotencyKey` identifies one registration:
+ * a retry with the same key deducts nothing and returns the first result, with
+ * `replayed` set.
+ */
 export async function withdrawUserQuota(
   userId: number,
   payload: WithdrawAffiliateQuotaRequest,
-): Promise<AffiliateWithdrawResult> {
-  const { data } = await apiClient.post<AffiliateWithdrawResult>(
+  idempotencyKey: string,
+): Promise<AffiliateWithdrawResponse> {
+  const response = await apiClient.post<AffiliateWithdrawResult>(
     `/admin/affiliates/users/${userId}/withdraw`,
     payload,
+    { headers: { 'Idempotency-Key': idempotencyKey } },
   )
-  return data
+  return {
+    result: response.data,
+    replayed: response.headers?.['x-idempotency-replayed'] === 'true',
+  }
 }
 
 export const affiliatesAPI = {
