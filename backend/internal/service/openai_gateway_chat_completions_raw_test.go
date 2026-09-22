@@ -30,6 +30,7 @@ func TestBuildOpenAIChatCompletionsURL(t *testing.T) {
 	}{
 		// 已是 /chat/completions：原样返回
 		{"already chat/completions", "https://api.openai.com/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
+		{"bare chat/completions inserts v1", "https://api.openai.com/chat/completions", "https://api.openai.com/v1/chat/completions"},
 		// 以 /v1 结尾：追加 /chat/completions
 		{"bare /v1", "https://api.openai.com/v1", "https://api.openai.com/v1/chat/completions"},
 		// 其他情况：追加 /v1/chat/completions
@@ -66,6 +67,8 @@ func TestBuildOpenAIResponsesURL_ProbeURL(t *testing.T) {
 		{"domain trailing slash", "https://api.openai.com/", "https://api.openai.com/v1/responses"},
 		{"bare /v1", "https://api.openai.com/v1", "https://api.openai.com/v1/responses"},
 		{"already /responses", "https://api.openai.com/v1/responses", "https://api.openai.com/v1/responses"},
+		{"bare /responses inserts v1", "https://api.openai.com/responses", "https://api.openai.com/v1/responses"},
+		{"third-party /responses inserts v1", "https://relay.example/responses", "https://relay.example/v1/responses"},
 		{"third-party bare domain", "https://api.deepseek.com", "https://api.deepseek.com/v1/responses"},
 		{"third-party versioned path", "https://open.bigmodel.cn/api/paas/v4", "https://open.bigmodel.cn/api/paas/v4/responses"},
 		{"only domain, no scheme", "api.gptgod.online", "api.gptgod.online/v1/responses"},

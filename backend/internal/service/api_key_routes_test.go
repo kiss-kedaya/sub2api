@@ -378,3 +378,71 @@ func TestUpstreamPlatformForModel_OpenAIGroupGeminiMapping(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, PlatformOpenAI, platform)
 }
+
+type groupByIDLiteStub struct {
+	GroupRepository
+	groups map[int64]*Group
+}
+
+func (s *groupByIDLiteStub) GetByIDLite(_ context.Context, id int64) (*Group, error) {
+	if s != nil && s.groups != nil {
+		if group := s.groups[id]; group != nil {
+			return group, nil
+		}
+	}
+	return nil, ErrGroupNotFound
+}
+
+func TestUpstreamPlatformForModel_OpenAIPrimaryPassthroughsUnknownGrokModel(t *testing.T) {
+	openaiID := int64(43)
+	grokID := int64(25)
+	svc := &GatewayService{
+		accountRepo: &modelsListAccountRepoStub{
+			byGroup: map[int64][]Account{
+				openaiID: {{
+					ID:       10,
+					Platform: PlatformOpenAI,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"gpt-5.4": "gpt-5.4"},
+					},
+				}},
+				grokID: {{
+					ID:       29131,
+					Platform: PlatformGrok,
+					Credentials: map[string]any{
+						"model_mapping": map[string]any{"grok-4.6": "grok-4.6"},
+					},
+				}},
+			},
+		},
+		groupRepo: &groupByIDLiteStub{groups: map[int64]*Group{
+			openaiID: {ID: openaiID, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true},
+			grokID:   {ID: grokID, Platform: PlatformGrok, Status: StatusActive, Hydrated: true},
+		}},
+	}
+	key := &APIKey{
+		GroupID:       &openaiID,
+		Group:         &Group{ID: openaiID, Platform: PlatformOpenAI},
+		RouteGroupIDs: []int64{openaiID, grokID},
+	}
+
+	platform, ok := svc.UpstreamPlatformForModel(context.Background(), key, "grok-4.7")
+	require.True(t, ok)
+	require.Equal(t, PlatformGrok, platform)
+
+	require.True(t, svc.shouldTryKeyRouteGroup(context.Background(), grokID, PlatformOpenAI, "grok-4.7", false))
+	require.False(t, svc.shouldTryKeyRouteGroup(context.Background(), openaiID, PlatformOpenAI, "grok-4.7", false))
+	require.False(t, svc.shouldTryKeyRouteGroup(context.Background(), grokID, PlatformOpenAI, "grok-4.7", true), "later catalog hit still wins over an unlisted grok group")
+}
+
+func TestGroupPassthroughsRequestedModel(t *testing.T) {
+	grokGroup := &Group{ID: 25, Platform: PlatformGrok}
+	openaiGroup := &Group{ID: 43, Platform: PlatformOpenAI}
+	allowlisted := &Group{ID: 25, Platform: PlatformGrok, ModelAllowlist: GroupModelsListConfig{Enabled: true, Models: []string{"grok-4.6"}}}
+
+	require.True(t, groupPassthroughsRequestedModel(grokGroup, "grok-4.7", nil))
+	require.False(t, groupPassthroughsRequestedModel(openaiGroup, "grok-4.7", map[string]struct{}{PlatformOpenAI: {}}))
+	require.True(t, groupPassthroughsRequestedModel(openaiGroup, "gpt-5.9", map[string]struct{}{PlatformOpenAI: {}}))
+	require.False(t, groupPassthroughsRequestedModel(allowlisted, "grok-4.7", map[string]struct{}{PlatformGrok: {}}))
+	require.False(t, groupPassthroughsRequestedModel(openaiGroup, "grok-imagine-video-1.5", map[string]struct{}{PlatformOpenAI: {}}))
+}

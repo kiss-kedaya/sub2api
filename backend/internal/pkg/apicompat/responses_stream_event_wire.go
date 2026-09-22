@@ -201,6 +201,9 @@ func responsesItemWire(item *ResponsesOutput) map[string]any {
 		m["call_id"] = item.CallID
 		m["execution"] = "client"
 		m["arguments"] = toolSearchCallArgumentsJSON(item.Arguments)
+	case "local_shell_call":
+		m["call_id"] = item.CallID
+		m["action"] = localShellCallActionJSON(item.Arguments)
 	}
 	return m
 }

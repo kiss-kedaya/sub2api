@@ -59,6 +59,16 @@ func claudeMessagesDispatchFamily(model string) string {
 	}
 }
 
+func (g *Group) IsGrokMessagesDispatchGroup() bool {
+	if g == nil {
+		return false
+	}
+	if g.Platform == PlatformGrok {
+		return true
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(g.Name)), "grok")
+}
+
 func (g *Group) ResolveMessagesDispatchModel(requestedModel string) string {
 	if g == nil {
 		return ""
@@ -68,15 +78,18 @@ func (g *Group) ResolveMessagesDispatchModel(requestedModel string) string {
 		return ""
 	}
 
-	if g.Platform == PlatformGrok {
+	if g.IsGrokMessagesDispatchGroup() {
 		if claudeMessagesDispatchFamily(requestedModel) == "" {
 			return ""
 		}
 		opts := xai.RuntimeModelMappingOptions()
-		if !opts.EnableCrossClientMap {
-			return ""
+		if mapped := strings.TrimSpace(xai.ModelMappingWithOptions(opts)["claude-*"]); mapped != "" {
+			return mapped
 		}
-		return xai.ModelMappingWithOptions(opts)["claude-*"]
+		if mapped := strings.TrimSpace(opts.DefaultText); mapped != "" {
+			return mapped
+		}
+		return xai.DefaultTextModel
 	}
 
 	// 国产供应商分组:调度级模型映射不适用(其配置被 sanitize 置空,且下方的

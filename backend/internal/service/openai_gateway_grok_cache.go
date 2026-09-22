@@ -3,8 +3,11 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
@@ -140,9 +143,50 @@ func explicitGrokCacheSeed(c *gin.Context, body []byte, explicitKey string) stri
 	return seed
 }
 
-func isGrokRequestContext(c *gin.Context) bool {
+func grokModelFromRequestBody(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(openAIRequestPayloadView(body).Get("model").String())
+}
+
+func grokRequestModelHint(c *gin.Context, bodies ...[]byte) string {
+	if c != nil && c.Request != nil {
+		if fwd, ok := openAIForwardModelFromContext(c.Request.Context()); ok {
+			if model := strings.TrimSpace(fwd.model); model != "" {
+				return model
+			}
+		}
+	}
+	for _, body := range bodies {
+		if model := grokModelFromRequestBody(body); model != "" {
+			return model
+		}
+	}
+	if c == nil {
+		return ""
+	}
+	if raw, ok := c.Get(gin.BodyBytesKey); ok {
+		if body, ok := raw.([]byte); ok {
+			if model := grokModelFromRequestBody(body); model != "" {
+				return model
+			}
+		}
+	}
+	return ""
+}
+
+func isGrokRequestContext(c *gin.Context, bodies ...[]byte) bool {
 	if c == nil {
 		return false
+	}
+	// Smart-route keys keep an OpenAI primary group. Trust the requested model
+	// family before that label, otherwise Grok sanitizers never run and
+	// third-party gateways (91topgo) reject the OpenAI-shaped body with 502.
+	if model := grokRequestModelHint(c, bodies...); model != "" {
+		if platform, ok := DetectModelPlatform(model); ok {
+			return platform == PlatformGrok
+		}
 	}
 	if c.Request != nil {
 		if platform, ok := ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
@@ -167,6 +211,13 @@ func isGrokRequestContext(c *gin.Context) bool {
 // without allowing an actual search. Explicit client function tools are handled by
 // applyGrokFreeMessagesFunctionToolCacheRoute (Messages bridge and native Responses).
 func applyGrokResponsesCacheIdentity(body, intentSourceBody []byte, identity string, injectFreeTierTools bool) ([]byte, error) {
+	if !injectFreeTierTools {
+		var err error
+		body, err = stripGrokAPIKeyOpenAICompatFields(body)
+		if err != nil {
+			return nil, err
+		}
+	}
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
 		if gjson.GetBytes(body, "prompt_cache_key").Exists() {
@@ -192,6 +243,23 @@ func applyGrokResponsesCacheIdentity(body, intentSourceBody []byte, identity str
 		return nil, err
 	}
 	return sjson.SetBytes(out, "tool_choice", grokFreeCacheDisabledToolChoice)
+}
+
+// stripGrokAPIKeyOpenAICompatFields drops OpenAI-only Responses fields that
+// third-party Grok API keys (for example 91topgo) reject with a bare 502.
+func stripGrokAPIKeyOpenAICompatFields(body []byte) ([]byte, error) {
+	out := body
+	for _, field := range []string{"store", "include", "previous_response_id", "service_tier"} {
+		if !gjson.GetBytes(out, field).Exists() {
+			continue
+		}
+		next, err := sjson.DeleteBytes(out, field)
+		if err != nil {
+			return nil, err
+		}
+		out = next
+	}
+	return out, nil
 }
 
 func hasGrokResponsesToolIntent(body []byte) bool {
@@ -540,6 +608,114 @@ func appendGrokFreeCacheNativeToolsWithPolicy(body []byte, allowPureClientTools,
 // applyGrokCacheHeaders applies the documented Chat Completions conversation
 // routing header. The request is built from a fresh header map, so client
 // supplied x-grok headers cannot override this server-derived value.
+
+func grokUpstreamDumpEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GROK_UPSTREAM_DUMP"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func redactUpstreamHeaderDump(header http.Header) string {
+	if header == nil {
+		return ""
+	}
+	headerNames := make([]string, 0, len(header))
+	for key := range header {
+		if strings.EqualFold(key, "Authorization") || strings.EqualFold(key, "Proxy-Authorization") || strings.EqualFold(key, "Cookie") {
+			headerNames = append(headerNames, key+"=<redacted>")
+			continue
+		}
+		headerNames = append(headerNames, key+"="+strings.Join(header.Values(key), ","))
+	}
+	sort.Strings(headerNames)
+	return strings.Join(headerNames, "; ")
+}
+
+func grokDumpProxyLabel(proxyURL string) string {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return ""
+	}
+	if i := strings.Index(proxyURL, "://"); i >= 0 {
+		rest := proxyURL[i+3:]
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			rest = rest[at+1:]
+		}
+		return proxyURL[:i+3] + rest
+	}
+	return "set"
+}
+
+func logGrokUpstreamHTTPDump(req *http.Request, proxyURL string, account *Account) {
+	if !grokUpstreamDumpEnabled() || req == nil {
+		return
+	}
+	accountID := int64(0)
+	platform := ""
+	accountType := ""
+	if account != nil {
+		accountID = account.ID
+		platform = account.Platform
+		accountType = account.Type
+	}
+	target := ""
+	if req.URL != nil {
+		target = req.URL.String()
+	}
+	line := fmt.Sprintf(
+		"grok_apikey_http_dump account_id=%d platform=%s type=%s method=%s url=%s proxy=%s content_length=%d headers=%s",
+		accountID, platform, accountType, req.Method, target, grokDumpProxyLabel(proxyURL), req.ContentLength, redactUpstreamHeaderDump(req.Header),
+	)
+	fmt.Fprintln(os.Stderr, line)
+	slog.Info(line)
+}
+
+func logGrokAPIKeyUpstreamResult(account *Account, req *http.Request, resp *http.Response, err error) {
+	if !grokUpstreamDumpEnabled() {
+		return
+	}
+	accountID := int64(0)
+	if account != nil {
+		accountID = account.ID
+	}
+	status := 0
+	if resp != nil {
+		status = resp.StatusCode
+	}
+	target := ""
+	if req != nil && req.URL != nil {
+		target = req.URL.String()
+	}
+	errText := ""
+	if err != nil {
+		errText = err.Error()
+	}
+	line := fmt.Sprintf("grok_apikey_upstream_result account_id=%d status=%d url=%s err=%s", accountID, status, target, errText)
+	fmt.Fprintln(os.Stderr, line)
+	slog.Info(line)
+}
+
+func logGrokAPIKeyUpstreamDump(c *gin.Context, account *Account, targetURL string, req *http.Request, body []byte) {
+	if !grokUpstreamDumpEnabled() || account == nil || account.IsGrokOAuth() || req == nil {
+		return
+	}
+	headerDump := redactUpstreamHeaderDump(req.Header)
+	preview := string(body)
+	if len(preview) > 2048 {
+		preview = preview[:2048] + "...(truncated)"
+	}
+	apiKeyID := getAPIKeyIDFromContext(c)
+	line := fmt.Sprintf(
+		"grok_apikey_upstream_dump account_id=%d api_key_id=%d platform=%s type=%s url=%s is_grok_ctx=%v headers=%s body=%s",
+		account.ID, apiKeyID, account.Platform, account.Type, targetURL, isGrokRequestContext(c, body), headerDump, preview,
+	)
+	fmt.Fprintln(os.Stderr, line)
+	slog.Info(line)
+}
+
 func applyGrokCacheHeaders(headers http.Header, identity string) {
 	if headers == nil {
 		return

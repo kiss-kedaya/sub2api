@@ -14,17 +14,33 @@ func buildOpenAIEndpointURL(base string, endpoint string) string {
 		return strings.TrimRight(normalized, "/") + endpoint
 	}
 	path := strings.TrimRight(parsed.Path, "/")
-	if !strings.HasSuffix(path, endpoint) && !strings.HasSuffix(path, relative) {
-		if openAIBaseURLHasVersionSuffix(path) {
-			path += relative
-		} else {
-			path += endpoint
-		}
-	}
+	path = joinOpenAIEndpointPath(path, endpoint, relative)
 	parsed.Path = path
 	parsed.RawPath = ""
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+// joinOpenAIEndpointPath 把 OpenAI 兼容端点接到 base path 上。
+// 入站 /v1/responses 要求出站 URL 带版本段：裸 /responses 不能当成已完整。
+func joinOpenAIEndpointPath(path, endpoint, relative string) string {
+	if strings.HasSuffix(path, endpoint) {
+		return path
+	}
+	if relative != "" && relative != endpoint && strings.HasSuffix(path, relative) {
+		prefix := strings.TrimRight(strings.TrimSuffix(path, relative), "/")
+		if openAIBaseURLHasVersionSuffix(prefix) {
+			return path
+		}
+		if prefix == "" {
+			return endpoint
+		}
+		return prefix + endpoint
+	}
+	if openAIBaseURLHasVersionSuffix(path) {
+		return path + relative
+	}
+	return path + endpoint
 }
 
 func buildOpenAIResponsesInputTokensURL(base string) string {

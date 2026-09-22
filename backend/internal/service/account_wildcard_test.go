@@ -232,6 +232,38 @@ func TestAccountIsModelSupported(t *testing.T) {
 			requestedModel: "gemini-3-flash",
 			expected:       false,
 		},
+		{
+			name:     "grok empty mapping passthroughs unlisted family id",
+			platform: PlatformGrok,
+			credentials: map[string]any{
+				"model_mapping": map[string]any{},
+			},
+			requestedModel: "grok-4.7",
+			expected:       true,
+		},
+		{
+			name:     "grok explicit mapping does not admit unlisted family id",
+			platform: PlatformGrok,
+			credentials: map[string]any{
+				"model_mapping": map[string]any{
+					"grok-4.5": "grok-4.5",
+					"grok-4.6": "grok-4.6",
+				},
+			},
+			requestedModel: "grok-4.7",
+			expected:       false,
+		},
+		{
+			name:     "grok mapping does not admit gpt models",
+			platform: PlatformGrok,
+			credentials: map[string]any{
+				"model_mapping": map[string]any{
+					"grok-4.6": "grok-4.6",
+				},
+			},
+			requestedModel: "gpt-5.6-sol",
+			expected:       false,
+		},
 	}
 
 	for _, tt := range tests {

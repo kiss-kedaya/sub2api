@@ -121,8 +121,8 @@ func TestForwardResponses_PassthroughFlagWithUnsupportedResponsesUsesAccountMapp
 				"gpt-5.4-account": "gpt-5.4-compact",
 			}
 			account.Extra = map[string]any{
-				"openai_passthrough":                     true,
-				openai_compat.ExtraKeyResponsesSupported: false,
+				"openai_passthrough":                true,
+				openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions),
 			}
 
 			result, err := svc.Forward(context.Background(), c, account, body)
@@ -300,6 +300,131 @@ func forceChatResponsesFallbackAccount() *Account {
 		openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceChatCompletions),
 	}
 	return account
+}
+
+func TestShouldPreemptivelyConvertInboundResponsesToChat(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		account *Account
+		want    bool
+	}{
+		{name: "nil", want: false},
+		{name: "oauth never", account: &Account{Type: AccountTypeOAuth, Platform: PlatformOpenAI}, want: false},
+		{name: "unknown extra keeps responses", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformOpenAI}, want: false},
+		{name: "probe false still tries responses", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformOpenAI, Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: false}}, want: false},
+		{name: "force chat", account: forceChatResponsesFallbackAccount(), want: true},
+		{name: "force responses overrides probe false", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformOpenAI, Extra: map[string]any{openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceResponses), openai_compat.ExtraKeyResponsesSupported: false}}, want: false},
+		{name: "cn chat protocol", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformZhipu, Credentials: map[string]any{"api_protocol": APIProtocolChatCompletions}}, want: true},
+		{name: "deepseek responses protocol", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformDeepseek, Credentials: map[string]any{"api_protocol": APIProtocolResponses}}, want: false},
+		{name: "kimi adaptive native", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformKimi, Credentials: map[string]any{"api_protocol": APIProtocolAdaptive}}, want: false},
+		{name: "zhipu adaptive no native", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformZhipu, Credentials: map[string]any{"api_protocol": APIProtocolAdaptive}}, want: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, shouldPreemptivelyConvertInboundResponsesToChat(tt.account))
+		})
+	}
+}
+
+func TestShouldForwardOpenAIResponsesViaRawChatCompletions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		account *Account
+		want    bool
+	}{
+		{name: "nil", want: false},
+		{name: "oauth never", account: &Account{Type: AccountTypeOAuth, Platform: PlatformOpenAI}, want: false},
+		{name: "unknown extra keeps responses", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformOpenAI}, want: false},
+		{name: "probe false keeps inbound chat on raw CC", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformOpenAI, Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: false}}, want: true},
+		{name: "force chat", account: forceChatResponsesFallbackAccount(), want: true},
+		{name: "force responses overrides probe false", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformOpenAI, Extra: map[string]any{openai_compat.ExtraKeyResponsesMode: string(openai_compat.ResponsesSupportModeForceResponses), openai_compat.ExtraKeyResponsesSupported: false}}, want: false},
+		{name: "cn chat protocol", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformZhipu, Credentials: map[string]any{"api_protocol": APIProtocolChatCompletions}}, want: true},
+		{name: "deepseek responses protocol", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformDeepseek, Credentials: map[string]any{"api_protocol": APIProtocolResponses}}, want: false},
+		{name: "kimi adaptive native", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformKimi, Credentials: map[string]any{"api_protocol": APIProtocolAdaptive}}, want: false},
+		{name: "zhipu adaptive no native", account: &Account{Type: AccountTypeAPIKey, Platform: PlatformZhipu, Credentials: map[string]any{"api_protocol": APIProtocolAdaptive}}, want: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, shouldForwardOpenAIResponsesViaRawChatCompletions(tt.account))
+		})
+	}
+}
+
+func TestForwardResponses_ProbeFalseTriesVersionedResponsesThenFallsBackToChat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","input":"hello","stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{
+			StatusCode: http.StatusNotFound,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"not found"}}`)),
+		},
+		{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_resp_chat_fallback"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"id":"chatcmpl_fallback","object":"chat.completion","model":"gpt-5.4","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`,
+			)),
+		},
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{openai_compat.ExtraKeyResponsesSupported: false}
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "http://upstream.example/v1/responses", upstream.requests[0].URL.String())
+	require.Equal(t, "http://upstream.example/v1/chat/completions", upstream.requests[1].URL.String())
+	require.True(t, gjson.GetBytes(upstream.bodies[0], "input").Exists())
+	require.Equal(t, "hello", gjson.GetBytes(upstream.bodies[1], "messages.0.content").String())
+	require.Equal(t, "/v1/chat/completions", GetActualOpenAIUpstreamEndpoint(c))
+	require.Equal(t, "ok", gjson.Get(rec.Body.String(), "output.0.content.0.text").String())
+}
+
+func TestForwardResponses_SupportedAccountKeepsResponsesOn400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","input":"hello","stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"bad request"}}`)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+	account := rawChatCompletionsTestAccount()
+	account.Extra = map[string]any{openai_compat.ExtraKeyResponsesSupported: true}
+
+	_, err := svc.Forward(context.Background(), c, account, body)
+	require.Error(t, err)
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, "http://upstream.example/v1/responses", upstream.requests[0].URL.String())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
+	require.NotEqual(t, "/v1/chat/completions", GetActualOpenAIUpstreamEndpoint(c))
 }
 
 // reasoningRecordingCache 记录 reasoning 缓存写入、并按需响应回查。
