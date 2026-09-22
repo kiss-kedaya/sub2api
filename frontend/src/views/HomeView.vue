@@ -86,7 +86,11 @@
     </main>
 
     <footer class="min-w-0 border-t border-gray-200 px-4 py-5 text-center text-sm text-gray-500 [overflow-wrap:anywhere] sm:px-6 dark:border-dark-800 dark:text-dark-400">
-      &copy; {{ currentYear }} {{ siteName }}
+      <p class="mx-auto max-w-3xl text-xs leading-6">{{ t('home.footer.riskStrip') }}</p>
+      <p class="mt-3">&copy; {{ currentYear }} {{ siteName }}</p>
+      <div class="mt-3">
+        <LegalFooterLinks />
+      </div>
     </footer>
   </div>
 
@@ -414,8 +418,12 @@
     <!-- Footer -->
     <footer class="relative z-10 border-t border-gray-200/50 px-6 py-8 dark:border-dark-800/50">
       <div
-        class="mx-auto flex max-w-6xl flex-col items-center justify-center gap-4 text-center sm:flex-row sm:text-left"
+        class="mx-auto flex max-w-6xl flex-col items-center justify-center gap-4 text-center"
       >
+        <p class="max-w-3xl text-xs leading-6 text-gray-500 dark:text-dark-400">
+          {{ t('home.footer.riskStrip') }}
+        </p>
+        <LegalFooterLinks />
         <p class="text-sm text-gray-500 dark:text-dark-400">
           &copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}
         </p>
@@ -450,6 +458,7 @@ import { useAuthStore, useAppStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
+import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 

@@ -7,21 +7,7 @@
 
     <!-- Decorative Elements -->
     <div class="pointer-events-none absolute inset-0 overflow-hidden">
-      <!-- Gradient Orbs -->
-      <div
-        class="absolute -right-40 -top-40 h-80 w-80 rounded-full bg-primary-400/20 blur-3xl"
-      ></div>
-      <div
-        class="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-primary-500/15 blur-3xl"
-      ></div>
-      <div
-        class="absolute left-1/2 top-1/2 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary-300/10 blur-3xl"
-      ></div>
-
-      <!-- Grid Pattern -->
-      <div
-        class="absolute inset-0 bg-[linear-gradient(rgba(20,184,166,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(20,184,166,0.03)_1px,transparent_1px)] bg-[size:64px_64px]"
-      ></div>
+      <div class="auth-grid absolute inset-0"></div>
     </div>
 
     <!-- Content Container -->
@@ -54,6 +40,10 @@
         <slot name="footer" />
       </div>
 
+      <div class="mt-5 text-gray-400 dark:text-dark-500">
+        <LegalFooterLinks />
+      </div>
+
       <!-- Copyright -->
       <div class="mt-8 text-center text-xs text-gray-400 dark:text-dark-500">
         &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
@@ -65,6 +55,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores'
+import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
 import { sanitizeUrl } from '@/utils/url'
 
 const appStore = useAppStore()
@@ -84,5 +75,29 @@ onMounted(() => {
 <style scoped>
 .text-gradient {
   @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
+}
+
+.auth-grid {
+  background-image:
+    linear-gradient(rgba(58, 83, 117, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(58, 83, 117, 0.07) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(circle at center, black 0%, transparent 78%);
+  animation: auth-grid-drift 28s linear infinite;
+}
+
+:global(html.dark) .auth-grid {
+  background-image:
+    linear-gradient(rgba(145, 169, 201, 0.11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(145, 169, 201, 0.11) 1px, transparent 1px);
+}
+
+@keyframes auth-grid-drift {
+  from { background-position: 0 0; }
+  to { background-position: 48px 48px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-grid { animation: none; }
 }
 </style>
