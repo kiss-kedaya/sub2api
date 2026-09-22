@@ -86,6 +86,7 @@ func (s *GatewayService) SelectAccountAlongKeyRoutes(
 			// Internal composite routing may replace ctxkey.Group later; freeze
 			// this candidate's billing parent while preserving the pricing instant.
 			routeCtx = context.WithValue(routeCtx, gatewayTokenRequestBillingGroupCtxKey{}, routed.Group)
+			routeCtx = s.withGatewayProfitControlGate(routeCtx, routed.GroupID)
 		}
 		result, err := s.SelectAccountWithLoadAwareness(routeCtx, routed.GroupID, sessionHash, candidate.model, excludedIDs, metadataUserID, sub2apiUserID)
 		if err == nil {

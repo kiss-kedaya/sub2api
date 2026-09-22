@@ -15,6 +15,7 @@ type keyRouteBillingProvider interface {
 	ResolveAPIKeyRouteSubscription(context.Context, *service.APIKey, *service.UserSubscription) (*service.UserSubscription, error)
 	ResolveChannelMappingAndRestrict(context.Context, *int64, string) (service.ChannelMappingResult, bool)
 	ReplaceModelInBody([]byte, string) []byte
+	RebindKeyRouteProfitControl(context.Context, *int64) context.Context
 }
 
 type keyRouteEligibilityChecker interface {
@@ -83,6 +84,9 @@ func bindSelectedKeyRoute(c *gin.Context, gateway keyRouteBillingProvider, billi
 	}
 	ctx := service.ContextWithAPIKeyRoute(c.Request.Context(), selected)
 	ctx = context.WithValue(ctx, selectedKeyRouteContextKey{}, *selected.GroupID)
+	if changed {
+		ctx = gateway.RebindKeyRouteProfitControl(ctx, selected.GroupID)
+	}
 	var currentSubscription *service.UserSubscription
 	if binding.Subscription != nil {
 		currentSubscription = *binding.Subscription

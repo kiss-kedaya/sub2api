@@ -170,6 +170,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForCapabilityAlongKeyRo
 	platformOverride ...string,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
 	return s.selectAlongKeyRoutes(ctx, apiKey, platformOverride, requestedModel, func(ctx context.Context, groupID *int64, groupPlatform []string, model string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+		ctx = s.withOpenAIProfitControlGate(ctx, groupID)
 		return s.SelectAccountWithSchedulerForCapability(
 			ctx, groupID, previousResponseID, sessionHash, model, excludedIDs,
 			requiredTransport, requiredCapability, requireCompact, previousResponseCanMove, useUpstreamTokenCost, groupPlatform...,
