@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv, Plugin } from 'vite'
+import { defineConfig, loadEnv, Plugin, searchForWorkspaceRoot } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import checker from 'vite-plugin-checker'
 import { resolve } from 'path'
@@ -161,6 +161,9 @@ export default defineConfig(({ mode }) => {
     server: {
       host: '0.0.0.0',
       port: devPort,
+      fs: {
+        allow: [searchForWorkspaceRoot(process.cwd()), resolve(__dirname, '..')],
+      },
       proxy: {
         '/api': {
           target: backendUrl,

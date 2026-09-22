@@ -140,6 +140,7 @@ export default {
     notFoundDescription: '当前条款文档不存在或已被管理员移除。',
     updatedAt: '更新日期：{date}',
     empty: '暂无正文内容',
+    navLabel: '法律与政策',
     loginAgreement: '登录条款',
     adminCompliance: '部署与运营合规承诺',
     loginAgreementPrompt: {

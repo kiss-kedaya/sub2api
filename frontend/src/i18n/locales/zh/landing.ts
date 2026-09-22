@@ -110,7 +110,8 @@ export default {
       button: '免费注册'
     },
     footer: {
-      allRightsReserved: '保留所有权利。'
+      allRightsReserved: '保留所有权利。',
+      riskStrip: '本站提供按原样的 API 中转。输出不代表本站立场。禁止违法、未成年人有害内容及无人工审核的高风险自动化场景。'
     }
   },
 

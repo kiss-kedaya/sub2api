@@ -168,6 +168,10 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/legal',
+    redirect: '/legal/privacy'
+  },
+  {
     path: '/legal/:documentId',
     name: 'LegalDocument',
     component: () => import('@/views/public/LegalDocumentView.vue'),
