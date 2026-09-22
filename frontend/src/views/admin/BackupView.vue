@@ -488,8 +488,19 @@ const scheduleForm = ref<BackupScheduleConfig>({
 })
 const savingSchedule = ref(false)
 const archiveForm = ref<BackupMonthlyArchiveConfig>({ enabled: false, days: [1], include_month_end: false, retain_count: 0 })
+// Disabling hides the archive parameters, so a save while disabled keeps the
+// persisted parameters and only turns the rule off.
+const savedArchive = ref<BackupMonthlyArchiveConfig>(cloneArchive(archiveForm.value))
+const archivePayload = computed<BackupMonthlyArchiveConfig>(() =>
+  archiveForm.value.enabled ? cloneArchive(archiveForm.value) : { ...cloneArchive(savedArchive.value), enabled: false },
+)
+function cloneArchive(config: BackupMonthlyArchiveConfig): BackupMonthlyArchiveConfig {
+  return { ...config, days: [...config.days] }
+}
 const scheduleValidationError = computed(() => {
-  if (![scheduleForm.value.retain_days, scheduleForm.value.retain_count, archiveForm.value.retain_count].every(value => Number.isSafeInteger(value) && value >= 0)) {
+  const counts = [scheduleForm.value.retain_days, scheduleForm.value.retain_count]
+  if (archiveForm.value.enabled) counts.push(archiveForm.value.retain_count)
+  if (!counts.every(value => Number.isSafeInteger(value) && value >= 0)) {
     return t('admin.backup.archive.invalidRetention')
   }
   if (archiveForm.value.enabled && !archiveForm.value.days.length && !archiveForm.value.include_month_end) {
@@ -753,6 +764,7 @@ async function loadSchedule() {
       include_month_end: cfg.monthly_archive?.include_month_end ?? false,
       retain_count: cfg.monthly_archive?.retain_count ?? 0,
     }
+    savedArchive.value = cloneArchive(archiveForm.value)
   } catch (error) {
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
   }
@@ -762,7 +774,9 @@ async function saveSchedule() {
   if (scheduleValidationError.value) return
   savingSchedule.value = true
   try {
-    await adminAPI.backup.updateSchedule({ ...scheduleForm.value, monthly_archive: { ...archiveForm.value, days: [...archiveForm.value.days] } })
+    const archive = archivePayload.value
+    await adminAPI.backup.updateSchedule({ ...scheduleForm.value, monthly_archive: archive })
+    savedArchive.value = cloneArchive(archive)
     appStore.showSuccess(t('admin.backup.schedule.saved'))
   } catch (error) {
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))

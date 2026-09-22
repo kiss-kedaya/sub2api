@@ -145,7 +145,7 @@ func TestBackupRetention_CleanupSeparatePoolsAndPermanentProtection(t *testing.T
 		store.objects[id] = []byte(id)
 		require.NoError(t, svc.saveRecord(ctx, r))
 	}
-	cfg := &BackupScheduleConfig{RetainDays: 1, RetainCount: 1, MonthlyArchive: &BackupMonthlyArchiveConfig{RetainCount: 1}}
+	cfg := &BackupScheduleConfig{RetainDays: 1, RetainCount: 1, MonthlyArchive: &BackupMonthlyArchiveConfig{Enabled: true, RetainCount: 1}}
 	require.NoError(t, svc.cleanupOldBackups(ctx, cfg))
 	for _, id := range []string{"running", "failed", "ordinary-new", "archive-new", "permanent", "restoring"} {
 		_, err := svc.GetBackupRecord(ctx, id)
@@ -165,6 +165,44 @@ func TestBackupRetention_CleanupSeparatePoolsAndPermanentProtection(t *testing.T
 	require.NoError(t, svc.cleanupOldBackups(ctx, cfg))
 	_, err = svc.GetBackupRecord(ctx, "permanent")
 	require.NoError(t, err)
+}
+
+func TestBackupRetention_DisabledRuleKeepsPersistedArchivePolicy(t *testing.T) {
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	store := newMockObjectStore()
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+	ctx := context.Background()
+	for id, started := range map[string]string{"newest": "2026-09-16T04:00:00Z", "middle": "2026-08-16T04:00:00Z", "oldest": "2026-07-16T04:00:00Z"} {
+		record := archiveRecord(id, started)
+		record.S3Key = id
+		record.MonthlyArchive = &BackupMonthlyArchive{RetainCount: 2}
+		store.objects[id] = []byte(id)
+		require.NoError(t, svc.saveRecord(ctx, record))
+	}
+	// The settings form hides the archive count once the rule is disabled, so a
+	// saved payload may still carry a smaller limit. It must not reach old archives.
+	cfg := &BackupScheduleConfig{RetainDays: 14, RetainCount: 10, MonthlyArchive: &BackupMonthlyArchiveConfig{Enabled: false, Days: []int{1}, RetainCount: 1}}
+	require.NoError(t, svc.cleanupOldBackups(ctx, cfg))
+	for _, id := range []string{"newest", "middle"} {
+		record, err := svc.GetBackupRecord(ctx, id)
+		require.NoError(t, err, id)
+		require.Equal(t, 2, record.MonthlyArchive.RetainCount, id)
+		require.Contains(t, store.objects, id)
+	}
+	// The persisted policy keeps applying while the rule is off.
+	_, err := svc.GetBackupRecord(ctx, "oldest")
+	require.ErrorIs(t, err, ErrBackupNotFound)
+	require.NotContains(t, store.objects, "oldest")
+	// Re-enabling the rule applies the new finite limit to the pool again.
+	cfg.MonthlyArchive.Enabled = true
+	require.NoError(t, svc.cleanupOldBackups(ctx, cfg))
+	newest, err := svc.GetBackupRecord(ctx, "newest")
+	require.NoError(t, err)
+	require.Equal(t, 1, newest.MonthlyArchive.RetainCount)
+	_, err = svc.GetBackupRecord(ctx, "middle")
+	require.ErrorIs(t, err, ErrBackupNotFound)
+	require.NotContains(t, store.objects, "middle")
 }
 
 func TestBackupRetention_Over100ArchivesRemainDiscoverable(t *testing.T) {
