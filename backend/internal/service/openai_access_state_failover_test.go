@@ -193,6 +193,26 @@ func TestOpenAICyberPolicyWrapped5xxNeverFailsOver(t *testing.T) {
 	require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeOAuth}, http.StatusBadGateway, body))
 }
 
+func TestShouldFailoverOpenAIPassthroughResponse_HTTP401RotatesAccounts(t *testing.T) {
+	disabledKey := []byte(`{"error":{"message":"API key is disabled","type":"authentication_error","code":"api_key_disabled"}}`)
+	invalidKey := []byte(`{"error":{"message":"Incorrect API key provided","type":"authentication_error","code":"invalid_api_key"}}`)
+	messageOnly := []byte(`{"error":{"message":"account is disabled"}}`)
+	permission := []byte(`{"error":{"type":"permission_error","code":"forbidden","message":"access denied for this request"}}`)
+	paramError := []byte(`{"error":{"type":"invalid_request_error","code":"unknown_parameter","message":"Unknown parameter"}}`)
+
+	for _, account := range []*Account{
+		{Type: AccountTypeAPIKey},
+		{Type: AccountTypeOAuth},
+	} {
+		require.True(t, shouldFailoverOpenAIPassthroughResponse(account, http.StatusUnauthorized, disabledKey))
+		require.True(t, shouldFailoverOpenAIPassthroughResponse(account, http.StatusUnauthorized, invalidKey))
+		require.True(t, shouldFailoverOpenAIPassthroughResponse(account, http.StatusUnauthorized, messageOnly))
+		require.True(t, shouldFailoverOpenAIPassthroughResponse(account, http.StatusForbidden, invalidKey))
+		require.False(t, shouldFailoverOpenAIPassthroughResponse(account, http.StatusForbidden, permission))
+		require.False(t, shouldFailoverOpenAIPassthroughResponse(account, http.StatusBadRequest, paramError))
+	}
+}
+
 func TestOpenAICapacityFailoverCarriesSafeTerminalResponse(t *testing.T) {
 	message := "Our servers are currently overloaded. Please try again later."
 	body := []byte(`{"error":{"code":"server_is_overloaded","message":"` + message + `"}}`)

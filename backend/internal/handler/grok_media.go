@@ -255,6 +255,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	var lastFailoverErr *service.UpstreamFailoverError
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	mediaEligibilityRejected := false
+	accountSlotBusySeen := false
 	switchCount := 0
 	videoCreateStartedAt := ""
 	if isGrokVideoCreateEndpoint(endpoint) {
@@ -296,12 +297,18 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			if maxConcurrency <= 0 {
 				maxConcurrency = 1
 			}
+			waitTimeout := 5 * time.Second
+			if h.cfg != nil {
+				if cfgTimeout := h.cfg.Gateway.Scheduling.StickySessionWaitTimeout; cfgTimeout > 0 && cfgTimeout < waitTimeout {
+					waitTimeout = cfgTimeout
+				}
+			}
 			selection = &service.AccountSelectionResult{
 				Account: boundAccount,
 				WaitPlan: &service.AccountWaitPlan{
 					AccountID:      boundAccount.ID,
 					MaxConcurrency: maxConcurrency,
-					Timeout:        5 * time.Second,
+					Timeout:        waitTimeout,
 					MaxWaiting:     32,
 				},
 			}
@@ -375,12 +382,18 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			}
 			if lastFailoverErr != nil {
 				h.handleFailoverExhausted(c, lastFailoverErr, false)
+			} else if accountSlotBusySeen {
+				h.handleOpenAIAccountSlotBusyExhausted(c, streamStarted, reqLog)
 			} else {
 				h.errorResponse(c, http.StatusBadGateway, "api_error", "Upstream request failed")
 			}
 			return
 		}
 		if selection == nil || selection.Account == nil {
+			if accountSlotBusySeen && lastFailoverErr == nil && boundLookupAccountID == 0 {
+				h.handleOpenAIAccountSlotBusyExhausted(c, streamStarted, reqLog)
+				return
+			}
 			if endpoint.IsGenerationRequest() {
 				markOpsRoutingCapacityLimited(c)
 				h.errorResponse(c, http.StatusServiceUnavailable, "grok_media_no_eligible_account", "No eligible Grok media accounts")
@@ -448,17 +461,35 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 		var slotResult openAISlotAcquireResult
 		accountReleaseFunc, slotResult = h.acquireResponsesAccountSlot(c, apiKey.GroupID, admissionSessionHash, selection, false, &streamStarted, reqLog)
-		if slotResult == openAISlotAcquireProfitVetoed {
-			// 媒体路径已显式豁免利润门（suppress 标记），此分支仅防御性兜底，
-			// 同样受否决上限约束。
-			if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
-				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
+		if boundLookupAccountID > 0 && slotResult == openAISlotAcquireBusy {
+			// Video status/content is pinned to the creating account; wait instead of rotating.
+			timeout := 5 * time.Second
+			maxConcurrency := account.Concurrency
+			if selection.WaitPlan != nil {
+				if selection.WaitPlan.Timeout > 0 {
+					timeout = selection.WaitPlan.Timeout
+				}
+				if selection.WaitPlan.MaxConcurrency > 0 {
+					maxConcurrency = selection.WaitPlan.MaxConcurrency
+				}
+			}
+			waitRelease, waitErr := h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(c, account.ID, maxConcurrency, timeout, false, &streamStarted)
+			if waitErr != nil {
+				if failoverClientGone(c) {
+					return
+				}
+				status, errType, code, message := concurrencyErrorResponse(waitErr, "account")
+				h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, streamStarted, false)
 				return
 			}
-			continue
-		}
-		if slotResult != openAISlotAcquireOK {
-			return
+			accountReleaseFunc = wrapReleaseOnDone(requestCtx, waitRelease)
+		} else {
+			switch h.openAISlotLoopAction(c, slotResult, account.ID, apiKey.GroupID, admissionSessionHash, failedAccountIDs, &profitVetoCount, streamStarted, reqLog, &accountSlotBusySeen) {
+			case openAISlotLoopStop:
+				return
+			case openAISlotLoopRotate:
+				continue
+			}
 		}
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
