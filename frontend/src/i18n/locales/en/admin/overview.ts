@@ -443,6 +443,8 @@ export default {
         submit: 'Confirm',
         submitting: 'Recording...',
         success: 'Recorded offline withdrawal of {amount}; {remaining} still available',
+        replayed: 'This offline withdrawal of {amount} was already recorded and was not deducted again; {remaining} was left available after it',
+        uncertainHint: 'The last submission returned no result and may already be recorded. The user and amount are locked; submitting again retries the same registration and never deducts twice.',
         amountRequired: 'Enter an amount greater than 0',
         amountExceeds: 'Amount cannot exceed the available quota'
       },

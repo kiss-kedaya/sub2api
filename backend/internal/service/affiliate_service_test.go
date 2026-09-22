@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -131,8 +132,9 @@ func TestIsValidAffiliateCodeFormat(t *testing.T) {
 }
 
 type affiliateWithdrawCall struct {
-	userID int64
-	amount float64
+	userID      int64
+	amount      float64
+	operationID string
 }
 
 type affiliateWithdrawRepoStub struct {
@@ -142,10 +144,12 @@ type affiliateWithdrawRepoStub struct {
 	err    error
 }
 
-func (s *affiliateWithdrawRepoStub) WithdrawQuota(_ context.Context, userID int64, amount float64) (*AffiliateWithdrawResult, error) {
-	s.calls = append(s.calls, affiliateWithdrawCall{userID: userID, amount: amount})
+func (s *affiliateWithdrawRepoStub) WithdrawQuota(_ context.Context, userID int64, amount float64, operationID string) (*AffiliateWithdrawResult, error) {
+	s.calls = append(s.calls, affiliateWithdrawCall{userID: userID, amount: amount, operationID: operationID})
 	return s.result, s.err
 }
+
+const testAffiliateWithdrawKey = "affiliate-withdraw-7-3f2b8c1e"
 
 // TestAdminWithdrawQuota_RejectsInvalidAmount 覆盖线下提现金额校验：非正数、
 // NaN/Inf、舍入到 8 位小数后为 0 或溢出的金额都在服务层拒绝，不进入仓储。
@@ -154,7 +158,7 @@ func TestAdminWithdrawQuota_RejectsInvalidAmount(t *testing.T) {
 	for _, amount := range []float64{0, -1, math.NaN(), math.Inf(1), math.Inf(-1), 1e-9, math.MaxFloat64} {
 		repo := &affiliateWithdrawRepoStub{}
 		svc := &AffiliateService{repo: repo}
-		_, err := svc.AdminWithdrawQuota(context.Background(), 1, amount)
+		_, err := svc.AdminWithdrawQuota(context.Background(), 1, amount, testAffiliateWithdrawKey)
 		require.ErrorIs(t, err, ErrAffiliateWithdrawAmountInvalid, "amount %v", amount)
 		require.Empty(t, repo.calls, "amount %v must not reach repository", amount)
 	}
@@ -165,9 +169,53 @@ func TestAdminWithdrawQuota_RejectsInvalidUser(t *testing.T) {
 	t.Parallel()
 	repo := &affiliateWithdrawRepoStub{}
 	svc := &AffiliateService{repo: repo}
-	_, err := svc.AdminWithdrawQuota(context.Background(), 0, 1)
+	_, err := svc.AdminWithdrawQuota(context.Background(), 0, 1, testAffiliateWithdrawKey)
 	require.Error(t, err)
 	require.Empty(t, repo.calls)
+}
+
+// TestAdminWithdrawQuota_RequiresValidIdempotencyKey 验证幂等键必填且须为
+// 可见 ASCII、不超过 128 字符；不合格的键不进入仓储。
+func TestAdminWithdrawQuota_RequiresValidIdempotencyKey(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		key  string
+		want error
+	}{
+		{key: "", want: ErrIdempotencyKeyRequired},
+		{key: "   ", want: ErrIdempotencyKeyRequired},
+		{key: "has space", want: ErrIdempotencyKeyInvalid},
+		{key: "登记", want: ErrIdempotencyKeyInvalid},
+		{key: strings.Repeat("k", 129), want: ErrIdempotencyKeyInvalid},
+	}
+	for _, tc := range cases {
+		repo := &affiliateWithdrawRepoStub{}
+		svc := &AffiliateService{repo: repo}
+		_, err := svc.AdminWithdrawQuota(context.Background(), 1, 1, tc.key)
+		require.ErrorIs(t, err, tc.want, "key %q", tc.key)
+		require.Empty(t, repo.calls, "key %q must not reach repository", tc.key)
+	}
+}
+
+// TestAdminWithdrawQuota_DerivesStableOperationID 验证仓储收到的 operation_id
+// 由幂等键确定性派生：同一个键（含首尾空白）得到同一个值，不同的键得到不同的值，
+// 且不是原始键本身。
+func TestAdminWithdrawQuota_DerivesStableOperationID(t *testing.T) {
+	t.Parallel()
+	repo := &affiliateWithdrawRepoStub{result: &AffiliateWithdrawResult{LedgerID: 1}}
+	svc := &AffiliateService{repo: repo}
+
+	for _, key := range []string{testAffiliateWithdrawKey, "  " + testAffiliateWithdrawKey + " ", testAffiliateWithdrawKey + "-2"} {
+		_, err := svc.AdminWithdrawQuota(context.Background(), 42, 10, key)
+		require.NoError(t, err)
+	}
+
+	require.Len(t, repo.calls, 3)
+	first := repo.calls[0].operationID
+	require.Regexp(t, `^[0-9a-f]{64}$`, first)
+	require.NotEqual(t, testAffiliateWithdrawKey, first)
+	require.Equal(t, first, repo.calls[1].operationID)
+	require.NotEqual(t, first, repo.calls[2].operationID)
 }
 
 // TestAdminWithdrawQuota_RoundsAmountToLedgerPrecision 验证金额按 8 位小数舍入后
@@ -178,18 +226,22 @@ func TestAdminWithdrawQuota_RoundsAmountToLedgerPrecision(t *testing.T) {
 	repo := &affiliateWithdrawRepoStub{result: want}
 	svc := &AffiliateService{repo: repo}
 
-	got, err := svc.AdminWithdrawQuota(context.Background(), 42, 12.3456789149)
+	got, err := svc.AdminWithdrawQuota(context.Background(), 42, 12.3456789149, testAffiliateWithdrawKey)
 	require.NoError(t, err)
 	require.Same(t, want, got)
-	require.Equal(t, []affiliateWithdrawCall{{userID: 42, amount: 12.34567891}}, repo.calls)
+	require.Len(t, repo.calls, 1)
+	require.Equal(t, int64(42), repo.calls[0].userID)
+	require.Equal(t, 12.34567891, repo.calls[0].amount)
 }
 
-// TestAdminWithdrawQuota_PropagatesInsufficientQuota 验证额度不足由仓储判定，
-// 服务层原样返回，前端据错误码提示。
-func TestAdminWithdrawQuota_PropagatesInsufficientQuota(t *testing.T) {
+// TestAdminWithdrawQuota_PropagatesRepositoryErrors 验证额度不足与同键不同参数
+// 由仓储判定，服务层原样返回，前端据错误码提示。
+func TestAdminWithdrawQuota_PropagatesRepositoryErrors(t *testing.T) {
 	t.Parallel()
-	repo := &affiliateWithdrawRepoStub{err: ErrAffiliateQuotaInsufficient}
-	svc := &AffiliateService{repo: repo}
-	_, err := svc.AdminWithdrawQuota(context.Background(), 1, 1)
-	require.ErrorIs(t, err, ErrAffiliateQuotaInsufficient)
+	for _, want := range []error{ErrAffiliateQuotaInsufficient, ErrIdempotencyKeyConflict} {
+		repo := &affiliateWithdrawRepoStub{err: want}
+		svc := &AffiliateService{repo: repo}
+		_, err := svc.AdminWithdrawQuota(context.Background(), 1, 1, testAffiliateWithdrawKey)
+		require.ErrorIs(t, err, want)
+	}
 }

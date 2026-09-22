@@ -22,7 +22,7 @@
             type="button"
             class="text-lg leading-none text-gray-400 hover:text-red-600 disabled:opacity-50"
             :title="t('admin.affiliates.withdraw.changeUser')"
-            :disabled="submitting"
+            :disabled="submitting || outcomeUncertain"
             data-test="withdraw-clear-user"
             @click="clearUser"
           >
@@ -84,13 +84,13 @@
             step="any"
             inputmode="decimal"
             class="input"
-            :disabled="!selectedUser || overviewLoading || submitting"
+            :disabled="!selectedUser || overviewLoading || submitting || outcomeUncertain"
             data-test="withdraw-amount"
           />
           <button
             type="button"
             class="btn btn-secondary shrink-0"
-            :disabled="!selectedUser || overviewLoading || submitting || availableQuota <= 0"
+            :disabled="!selectedUser || overviewLoading || submitting || outcomeUncertain || availableQuota <= 0"
             data-test="withdraw-fill-all"
             @click="fillAll"
           >
@@ -99,6 +99,14 @@
         </div>
         <p v-if="amountError" class="input-error-text" data-test="withdraw-amount-error">{{ amountError }}</p>
         <p v-else class="input-hint">{{ t('admin.affiliates.withdraw.amountHint') }}</p>
+      </div>
+
+      <div
+        v-if="outcomeUncertain"
+        class="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-700/50 dark:bg-blue-900/20 dark:text-blue-300"
+        data-test="withdraw-uncertain-hint"
+      >
+        {{ t('admin.affiliates.withdraw.uncertainHint') }}
       </div>
 
       <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-300">
@@ -132,6 +140,11 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { affiliatesAPI, type AffiliateWithdrawResult, type SimpleUser } from '@/api/admin/affiliates'
 import { extractApiErrorCode, extractI18nErrorMessage } from '@/utils/apiError'
+import {
+  completeAffiliateWithdrawOperation,
+  prepareAffiliateWithdrawOperation,
+  type AffiliateWithdrawOperation,
+} from './affiliateWithdrawOperation'
 
 const props = defineProps<{
   show: boolean
@@ -156,6 +169,9 @@ const availableQuota = ref(0)
 const overviewLoading = ref(false)
 const amount = ref<number | string>('')
 const submitting = ref(false)
+// 已提交、尚未拿到确定结果的登记。结果未知时锁定用户与金额，重试沿用它的幂等键。
+const pendingOperation = ref<AffiliateWithdrawOperation | null>(null)
+const outcomeUncertain = computed(() => pendingOperation.value?.outcomeUncertain === true)
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let searchSeq = 0
@@ -165,7 +181,7 @@ const amountText = computed(() => String(amount.value ?? '').trim())
 const parsedAmount = computed(() => (amountText.value === '' ? Number.NaN : Number(amountText.value)))
 
 const amountError = computed(() => {
-  if (!selectedUser.value || overviewLoading.value || amountText.value === '') return ''
+  if (outcomeUncertain.value || !selectedUser.value || overviewLoading.value || amountText.value === '') return ''
   const value = parsedAmount.value
   if (!Number.isFinite(value) || Math.round(value * LEDGER_SCALE) <= 0) {
     return t('admin.affiliates.withdraw.amountRequired')
@@ -176,14 +192,12 @@ const amountError = computed(() => {
   return ''
 })
 
-const canSubmit = computed(
-  () =>
-    selectedUser.value !== null &&
-    !overviewLoading.value &&
-    !submitting.value &&
-    amountText.value !== '' &&
-    amountError.value === '',
-)
+// 结果未知的登记可能已经扣减，重试不受刷新后的可提取额度约束。
+const canSubmit = computed(() => {
+  if (selectedUser.value === null || submitting.value) return false
+  if (outcomeUncertain.value) return true
+  return !overviewLoading.value && amountText.value !== '' && amountError.value === ''
+})
 
 function formatPreciseAmount(value: number): string {
   const [intPart, fraction = ''] = Number(value || 0).toFixed(8).replace(/0+$/, '').split('.')
@@ -240,7 +254,7 @@ async function loadAvailableQuota(userId: number) {
     availableQuota.value = 0
     // 从未产生过邀请返利的用户没有返利档案，概览接口返回 USER_NOT_FOUND，可提取额度即为 0。
     if (extractApiErrorCode(error) === 'USER_NOT_FOUND') return
-    selectedUser.value = null
+    if (!outcomeUncertain.value) selectedUser.value = null
     showError(error)
   } finally {
     if (seq === overviewSeq) overviewLoading.value = false
@@ -283,6 +297,7 @@ function resetForm() {
   overviewLoading.value = false
   amount.value = ''
   submitting.value = false
+  pendingOperation.value = null
 }
 
 function handleClose() {
@@ -293,11 +308,21 @@ function handleClose() {
 async function submit() {
   const user = selectedUser.value
   if (!user || !canSubmit.value) return
+  if (!pendingOperation.value) {
+    pendingOperation.value = prepareAffiliateWithdrawOperation(user.id, parsedAmount.value)
+  }
+  const operation = pendingOperation.value
   submitting.value = true
   try {
-    const result = await affiliatesAPI.withdrawUserQuota(user.id, { amount: parsedAmount.value })
+    const { result, replayed } = await affiliatesAPI.withdrawUserQuota(
+      operation.userId,
+      { amount: operation.amount },
+      operation.key,
+    )
+    completeAffiliateWithdrawOperation(operation)
+    pendingOperation.value = null
     appStore.showSuccess(
-      t('admin.affiliates.withdraw.success', {
+      t(replayed ? 'admin.affiliates.withdraw.replayed' : 'admin.affiliates.withdraw.success', {
         amount: `$${formatPreciseAmount(result.amount)}`,
         remaining: `$${formatPreciseAmount(result.available_quota_after)}`,
       }),
@@ -305,7 +330,16 @@ async function submit() {
     emit('success', result)
   } catch (error) {
     showError(error)
-    void loadAvailableQuota(user.id)
+    // 网络错误、超时、5xx 与 408/409 时服务端可能已经登记：保留这笔登记，
+    // 重试沿用同一请求与幂等键，直到拿到确定结果。
+    const status = (error as { status?: number } | null)?.status
+    if (!operation.outcomeUncertain && status && status >= 400 && status < 500 && status !== 408 && status !== 409) {
+      completeAffiliateWithdrawOperation(operation)
+      pendingOperation.value = null
+    } else {
+      operation.outcomeUncertain = true
+    }
+    void loadAvailableQuota(operation.userId)
   } finally {
     submitting.value = false
   }
