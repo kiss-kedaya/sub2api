@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -104,4 +106,70 @@ func TestIsInfiniteCanvasPath(t *testing.T) {
 	require.True(t, isInfiniteCanvasPath("/canvas/assets/app.js"))
 	require.False(t, isInfiniteCanvasPath("/infinite-canvas"))
 	require.False(t, isInfiniteCanvasPath("/v1/models"))
+}
+
+func TestInfiniteCanvasHandler_AllowsSameOriginEmbed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>canvas</html>"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "app.js"), []byte("console.log(1)"), 0o644))
+	t.Setenv("INFINITE_CANVAS_STATIC_DIR", dir)
+	t.Setenv("INFINITE_CANVAS_UPSTREAM", "")
+
+	r := gin.New()
+	r.Use(middleware.SecurityHeaders(config.CSPConfig{Enabled: true, Policy: ""}, nil))
+	r.Use(InfiniteCanvasHandler())
+	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "home") })
+	r.POST("/v1/messages", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	home := httptest.NewRecorder()
+	r.ServeHTTP(home, httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Equal(t, "DENY", home.Header().Get("X-Frame-Options"))
+	require.Contains(t, home.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'")
+	require.NotContains(t, home.Header().Get("Content-Security-Policy"), "frame-ancestors 'self'")
+
+	for _, path := range []string{"/canvas/", "/canvas/app.js"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, w.Code, path)
+		require.Equal(t, []string{"SAMEORIGIN"}, w.Header().Values("X-Frame-Options"), path)
+		csp := w.Header().Get("Content-Security-Policy")
+		require.Contains(t, csp, "frame-ancestors 'self'", path)
+		require.NotContains(t, csp, "frame-ancestors 'none'", path)
+		require.Contains(t, csp, "'nonce-", path)
+	}
+
+	api := httptest.NewRecorder()
+	r.ServeHTTP(api, httptest.NewRequest(http.MethodPost, "/v1/messages", nil))
+	require.Equal(t, "DENY", api.Header().Get("X-Frame-Options"))
+	require.Empty(t, api.Header().Get("Content-Security-Policy"))
+}
+
+func TestInfiniteCanvasHandler_OverridesUpstreamFrameDeny(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(w, "upstream canvas")
+	}))
+	t.Cleanup(upstream.Close)
+	t.Setenv("INFINITE_CANVAS_STATIC_DIR", t.TempDir())
+	t.Setenv("INFINITE_CANVAS_UPSTREAM", upstream.URL)
+
+	r := gin.New()
+	r.Use(middleware.SecurityHeaders(config.CSPConfig{Enabled: true, Policy: ""}, nil))
+	r.Use(InfiniteCanvasHandler())
+	gateway := httptest.NewServer(r)
+	t.Cleanup(gateway.Close)
+
+	resp, err := gateway.Client().Get(gateway.URL + "/canvas/")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "SAMEORIGIN", resp.Header.Get("X-Frame-Options"))
+	for _, csp := range resp.Header.Values("Content-Security-Policy") {
+		require.NotContains(t, csp, "frame-ancestors 'none'")
+		require.Contains(t, csp, "frame-ancestors 'self'")
+	}
 }

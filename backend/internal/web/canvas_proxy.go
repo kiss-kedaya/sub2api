@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -38,6 +39,12 @@ func InfiniteCanvasHandler() gin.HandlerFunc {
 				req.SetURL(parsed)
 				req.Out.Host = parsed.Host
 			},
+			ModifyResponse: func(res *http.Response) error {
+				if res != nil {
+					middleware.AllowSameOriginEmbedHeaders(res.Header)
+				}
+				return nil
+			},
 		}
 	}
 
@@ -48,6 +55,7 @@ func InfiniteCanvasHandler() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		middleware.AllowSameOriginEmbedHeaders(c.Writer.Header())
 		if c.Request.URL.Path == infiniteCanvasPathPrefix {
 			c.Redirect(http.StatusTemporaryRedirect, infiniteCanvasPathPrefix+"/")
 			c.Abort()
