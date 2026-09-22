@@ -34,9 +34,9 @@ func TestChatFallbackUsageDetailsReachResponsesClient(t *testing.T) {
 			var result *OpenAIForwardResult
 			var err error
 			if stream {
-				result, err = svc.streamChatCompletionsAsResponses(c, resp, "review-model", nil, nil, false, nil, "review-model", "review-model", nil, nil, time.Now())
+				result, err = svc.streamChatCompletionsAsResponses(c, resp, "review-model", nil, nil, false, nil, nil, "review-model", "review-model", nil, nil, time.Now())
 			} else {
-				result, err = svc.bufferChatCompletionsAsResponses(c, resp, "review-model", nil, nil, false, nil, "review-model", "review-model", nil, nil, time.Now())
+				result, err = svc.bufferChatCompletionsAsResponses(c, resp, "review-model", nil, nil, false, nil, nil, "review-model", "review-model", nil, nil, time.Now())
 			}
 			require.NoError(t, err)
 			require.Equal(t, http.StatusOK, rec.Code)

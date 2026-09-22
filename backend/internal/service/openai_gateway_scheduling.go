@@ -87,11 +87,12 @@ func openAIRequestPayloadView(body []byte) gjson.Result {
 }
 
 // explicitOpenAIRequestSessionID extends the common OpenAI session signals
-// with Grok's native conversation header only for requests authenticated to a
-// Grok group. This keeps an unrelated x-grok-conv-id header from changing
-// scheduling or upstream session behavior for non-Grok groups.
+// with Grok's native conversation header only for Grok groups or grok-*
+// models. Smart-route keys keep an OpenAI primary group, so the requested
+// model family must count. Unrelated OpenAI traffic still ignores a spoofed
+// x-grok-conv-id.
 //
-// For Grok groups only, previous_response_id is a last-resort sticky seed so
+// For those Grok requests, previous_response_id is a last-resort sticky seed so
 // multi-turn Responses chains stay on the same OAuth account when no explicit
 // session/conversation/prompt_cache_key is present. Non-Grok groups omit this
 // so HTTP OpenAI paths that delete previous_response_id before upstream are
@@ -102,13 +103,13 @@ func explicitOpenAIRequestSessionID(c *gin.Context, body []byte) string {
 	}
 
 	sessionID := explicitOpenAIHeaderSessionID(c)
-	if sessionID == "" && isGrokRequestContext(c) {
+	if sessionID == "" && isGrokRequestContext(c, body) {
 		sessionID = strings.TrimSpace(c.GetHeader(grokConversationIDHeader))
 	}
 	if sessionID == "" && len(body) > 0 {
 		sessionID = strings.TrimSpace(openAIRequestPayloadView(body).Get("prompt_cache_key").String())
 	}
-	if sessionID == "" && isGrokRequestContext(c) && len(body) > 0 {
+	if sessionID == "" && isGrokRequestContext(c, body) && len(body) > 0 {
 		sessionID = grokPreviousResponseSessionSeed(body)
 	}
 	return sessionID
@@ -173,7 +174,7 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 		return ""
 	}
 
-	if isGrokRequestContext(c) {
+	if isGrokRequestContext(c, body) {
 		sessionID = grokStickyAffinitySeed(sessionID, body)
 	}
 

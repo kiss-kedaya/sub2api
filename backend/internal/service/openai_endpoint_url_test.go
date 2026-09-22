@@ -21,6 +21,10 @@ func TestBuildOpenAIEndpointURLPreservesURLComponents(t *testing.T) {
 		{name: "fragment is removed", base: "https://upstream.example/v1#stale", endpoint: "/v1/alpha/search", want: "https://upstream.example/v1/alpha/search"},
 		{name: "ipv6", base: "http://[2001:db8::1]:8080/v1?tenant=a#stale", endpoint: "/v1/responses/input_tokens", want: "http://[2001:db8::1]:8080/v1/responses/input_tokens?tenant=a"},
 		{name: "already complete", base: "https://upstream.example/v1/images/generations?tenant=a", endpoint: "/v1/images/generations", want: "https://upstream.example/v1/images/generations?tenant=a"},
+		{name: "bare responses inserts v1", base: "https://upstream.example/responses", endpoint: "/v1/responses", want: "https://upstream.example/v1/responses"},
+		{name: "prefixed bare responses inserts v1", base: "https://upstream.example/openai/responses", endpoint: "/v1/responses", want: "https://upstream.example/openai/v1/responses"},
+		{name: "versioned responses stays", base: "https://open.bigmodel.cn/api/paas/v4/responses", endpoint: "/v1/responses", want: "https://open.bigmodel.cn/api/paas/v4/responses"},
+		{name: "bare chat completions inserts v1", base: "https://upstream.example/chat/completions", endpoint: "/v1/chat/completions", want: "https://upstream.example/v1/chat/completions"},
 	}
 
 	for _, tt := range tests {

@@ -230,3 +230,11 @@ func TestGrokDecoderCompatibility422FailsOverWithoutCooldown(t *testing.T) {
 	require.False(t, isGrokDecoderCompatibilityError(http.StatusUnprocessableEntity, []byte(`{"error":"messages[1].content is required"}`)))
 	require.False(t, isGrokDecoderCompatibilityError(http.StatusBadRequest, body))
 }
+
+func TestSanitizeGrokResponsesModelInputWrapsCompactStringInput(t *testing.T) {
+	patched, err := sanitizeGrokResponsesModelInput([]byte(`{"model":"grok-4.7","input":"ping","stream":false}`))
+	require.NoError(t, err)
+	require.Equal(t, "message", gjson.GetBytes(patched, "input.0.type").String())
+	require.Equal(t, "user", gjson.GetBytes(patched, "input.0.role").String())
+	require.Equal(t, "ping", gjson.GetBytes(patched, "input.0.content").String())
+}

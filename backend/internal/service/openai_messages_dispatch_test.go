@@ -35,7 +35,7 @@ func TestGroupResolveMessagesDispatchModel_GrokRequiresCrossClientMapping(t *tes
 	group := &Group{Platform: PlatformGrok}
 
 	xai.SetRuntimeModelMappingOptions(xai.ModelMappingOptions{})
-	require.Empty(t, group.ResolveMessagesDispatchModel("claude-sonnet-4-5"))
+	require.Equal(t, xai.DefaultTextModel, group.ResolveMessagesDispatchModel("claude-sonnet-4-5"))
 
 	xai.SetRuntimeModelMappingOptions(xai.ModelMappingOptions{
 		DefaultText:          "grok-build-0.1",
@@ -46,6 +46,12 @@ func TestGroupResolveMessagesDispatchModel_GrokRequiresCrossClientMapping(t *tes
 	require.Equal(t, "grok-build-0.1", group.ResolveMessagesDispatchModel("claude-haiku-4-5"))
 	require.Empty(t, group.ResolveMessagesDispatchModel("grok"))
 	require.Empty(t, group.ResolveMessagesDispatchModel("gpt-5.3-codex"))
+
+	xai.SetRuntimeModelMappingOptions(xai.ModelMappingOptions{DefaultText: "grok-4.3"})
+	require.Equal(t, "grok-4.3", group.ResolveMessagesDispatchModel("claude-sonnet-4-5"))
+
+	named := &Group{Platform: PlatformOpenAI, Name: "Grok分组"}
+	require.Equal(t, "grok-4.3", named.ResolveMessagesDispatchModel("claude-haiku-4-5"))
 }
 
 func TestSanitizeGroupMessagesDispatchFields_ClearsNonOpenAIPlatform(t *testing.T) {

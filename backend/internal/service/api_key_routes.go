@@ -220,6 +220,25 @@ func skipKeyRouteForCatalog(presence groupCatalogModelPresence, siblingHasPresen
 	}
 }
 
+// groupPassthroughsRequestedModel reports whether a group may still serve a
+// model that its account-mapping catalog does not list. Official routing
+// passthroughs unmapped IDs onto accounts of the matching platform; the catalog
+// is not a closed allowlist unless the group enabled one.
+func groupPassthroughsRequestedModel(group *Group, requestedModel string, schedulable map[string]struct{}) bool {
+	if group != nil && group.CustomModelsListEnabled() {
+		return false
+	}
+	detected, ok := DetectModelPlatform(requestedModel)
+	if !ok {
+		return false
+	}
+	if group != nil && (group.Platform == detected || group.Platform == PlatformComposite) {
+		return true
+	}
+	_, ok = schedulable[detected]
+	return ok
+}
+
 func keyRouteSiblingHasCatalogedModel(ctx context.Context, groupIDs []int64, requestedModel string, getModels groupCatalogModelLookup) bool {
 	requestedModel = strings.TrimSpace(requestedModel)
 	if requestedModel == "" || getModels == nil {
@@ -251,7 +270,15 @@ func (s *GatewayService) shouldTryKeyRouteGroup(ctx context.Context, groupID int
 	if group != nil && group.CustomModelsListEnabled() {
 		return true
 	}
-	return !skipKeyRouteForCatalog(s.groupCatalogHasRequestedModel(ctx, groupID, requestedModel), siblingHasPresent)
+	presence := s.groupCatalogHasRequestedModel(ctx, groupID, requestedModel)
+	if !skipKeyRouteForCatalog(presence, siblingHasPresent) {
+		return true
+	}
+	if siblingHasPresent {
+		return false
+	}
+	gid := groupID
+	return groupPassthroughsRequestedModel(group, requestedModel, s.GetSchedulablePlatforms(ctx, &gid))
 }
 
 func (s *GatewayService) groupCatalogUsableForRequest(ctx context.Context, groupID int64, requestPlatform, requestedModel string) bool {
@@ -260,16 +287,23 @@ func (s *GatewayService) groupCatalogUsableForRequest(ctx context.Context, group
 	}
 	gid := groupID
 	group := s.GroupPolicyForRequest(ctx, gid)
+	platforms := s.GetSchedulablePlatforms(ctx, &gid)
 	if group == nil {
-		return s.groupCatalogHasRequestedModel(ctx, groupID, requestedModel) != groupCatalogModelAbsent
+		if s.groupCatalogHasRequestedModel(ctx, groupID, requestedModel) != groupCatalogModelAbsent {
+			return true
+		}
+		return groupPassthroughsRequestedModel(nil, requestedModel, platforms)
 	}
-	if !groupUsableForRequest(group, requestPlatform, requestedModel, s.GetSchedulablePlatforms(ctx, &gid)) {
+	if !groupUsableForRequest(group, requestPlatform, requestedModel, platforms) {
 		return false
 	}
 	if group.CustomModelsListEnabled() {
 		return true
 	}
-	return s.groupCatalogHasRequestedModel(ctx, groupID, requestedModel) != groupCatalogModelAbsent
+	if s.groupCatalogHasRequestedModel(ctx, groupID, requestedModel) != groupCatalogModelAbsent {
+		return true
+	}
+	return groupPassthroughsRequestedModel(group, requestedModel, platforms)
 }
 
 // UpstreamPlatformForModel prefers the platform of a schedulable account that
@@ -288,11 +322,12 @@ func (s *GatewayService) UpstreamPlatformForModel(ctx context.Context, apiKey *A
 	if len(ids) == 0 && apiKey.Group != nil && apiKey.Group.ID > 0 {
 		ids = []int64{apiKey.Group.ID}
 	}
+	detected, detectedOK := DetectModelPlatform(model)
 	prefer := []string{
 		PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax,
 		PlatformAnthropic, PlatformGemini, PlatformAntigravity,
 	}
-	if detected, ok := DetectModelPlatform(model); ok && detected == PlatformGrok {
+	if detectedOK && detected == PlatformGrok {
 		prefer = []string{
 			PlatformGrok, PlatformOpenAI, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax,
 			PlatformAnthropic, PlatformGemini, PlatformAntigravity,
@@ -316,6 +351,23 @@ func (s *GatewayService) UpstreamPlatformForModel(ctx context.Context, apiKey *A
 			sawCatalog = true
 			if modelsAdmitRequestedModel(models, model) {
 				return platform, true
+			}
+		}
+	}
+	// Catalog miss is not a closed world. A grok-* (or gpt-*, claude-*) ID that
+	// no mapping lists yet still belongs on a matching-platform candidate group.
+	if detectedOK {
+		for _, gid := range ids {
+			gid := gid
+			group := s.GroupPolicyForRequest(ctx, gid)
+			if group == nil && apiKey.Group != nil && apiKey.Group.ID == gid {
+				group = apiKey.Group
+			}
+			if !groupAllowsRequestedModel(group, model) {
+				continue
+			}
+			if groupPassthroughsRequestedModel(group, model, s.GetSchedulablePlatforms(ctx, &gid)) {
+				return detected, true
 			}
 		}
 	}
@@ -422,7 +474,9 @@ func (r *apiKeyRouteIterator) next() (apiKeyRouteCandidate, bool) {
 				for !r.siblingHasPresent && r.loadNext() {
 				}
 			}
-			if skipKeyRouteForCatalog(candidate.presence, r.siblingHasPresent) {
+			if skipKeyRouteForCatalog(candidate.presence, r.siblingHasPresent) &&
+				(r.siblingHasPresent ||
+					!groupPassthroughsRequestedModel(candidate.key.Group, r.requestedModel, candidate.catalog.platforms)) {
 				continue
 			}
 		}

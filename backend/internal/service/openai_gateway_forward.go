@@ -22,7 +22,7 @@ import (
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
-	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
+	if shouldPreemptivelyConvertInboundResponsesToChat(account) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 	}
 	filteredBody, filterErr := filterOpenAIResponsesNoneReasoningEffortForAccount(account, body)
@@ -184,7 +184,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		originalModel = reqModel
 	}
 
-	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
+	if shouldPreemptivelyConvertInboundResponsesToChat(account) {
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
@@ -1210,6 +1210,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				)
 				continue
 			}
+			if shouldFallbackOpenAIResponsesToChatOnUnsupportedEndpoint(account, c, resp.StatusCode) {
+				logger.LegacyPrintf(
+					"service.openai_gateway",
+					"[OpenAI] /v1/responses unsupported, falling back to /v1/chat/completions (account: %s, status: %d)",
+					account.Name, resp.StatusCode,
+				)
+				SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
+				return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
+			}
 			if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
 				upstreamDetail := ""
 				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
@@ -1415,6 +1424,50 @@ func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
 		}
 	}
 	return !openai_compat.ShouldUseResponsesAPI(account.Extra)
+}
+
+func openaiResponsesSupportMode(account *Account) string {
+	if account == nil || account.Extra == nil {
+		return ""
+	}
+	mode, _ := account.Extra[openai_compat.ExtraKeyResponsesMode].(string)
+	return mode
+}
+
+// shouldPreemptivelyConvertInboundResponsesToChat 只用于入站 /v1/responses。
+// 管理员强制 Chat Completions、以及明确没有原生 Responses 的国产/Gemini 协议，才预降级。
+// 探针 false 不预降级：先打 /v1/responses（URL 会补 /v1），404/405 再回退。
+func shouldPreemptivelyConvertInboundResponsesToChat(account *Account) bool {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	if account.IsCNProvider() || account.IsGeminiOpenAIProtocol() {
+		switch account.GetAPIProtocol() {
+		case APIProtocolChatCompletions:
+			return true
+		case APIProtocolAdaptive:
+			return !account.usesNativeResponsesUpstream()
+		default:
+			return false
+		}
+	}
+	return openai_compat.NormalizeResponsesSupportMode(openaiResponsesSupportMode(account)) == openai_compat.ResponsesSupportModeForceChatCompletions
+}
+
+func shouldFallbackOpenAIResponsesToChatOnUnsupportedEndpoint(account *Account, c *gin.Context, status int) bool {
+	if isResponsesEndpointSupportedByStatus(status) {
+		return false
+	}
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	if isOpenAIResponsesCompactPath(c) {
+		return false
+	}
+	if shouldPreemptivelyConvertInboundResponsesToChat(account) {
+		return false
+	}
+	return true
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {

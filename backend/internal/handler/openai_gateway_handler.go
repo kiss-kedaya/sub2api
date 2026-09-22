@@ -313,6 +313,9 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 	if messagesDispatchExemptPlatform(apiKey.Group.Platform) {
 		return true
 	}
+	if apiKey.Group.IsGrokMessagesDispatchGroup() {
+		return true
+	}
 	resolved, resolvedOK := resolvedMessagesDispatchPlatform(c)
 	// OpenAI 平台但名叫 Grok 的分组、以及 Claude Code 把模型写成 grok-* 时，
 	// 路由已把目标解析成 grok/CN，不能再被 openai 分组的 allow_messages_dispatch 开关拦住。
