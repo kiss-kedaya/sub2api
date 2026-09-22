@@ -286,6 +286,71 @@ func extractUpstreamErrorMessage(body []byte) string {
 	return gjson.GetBytes(body, "message").String()
 }
 
+const upstreamBillingAccountFrozenRefCode int64 = 400901
+
+func isUpstreamBillingAccountFrozen(body []byte) bool {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return false
+	}
+	if isUpstreamBillingAccountFrozenNode(gjson.ParseBytes(body)) {
+		return true
+	}
+	inner := strings.TrimSpace(gjson.GetBytes(body, "error.message").String())
+	if strings.HasPrefix(inner, "{") && isUpstreamBillingAccountFrozenNode(gjson.Parse(inner)) {
+		return true
+	}
+	return isUpstreamBillingAccountFrozenMessage(extractUpstreamErrorMessage(body))
+}
+
+func isUpstreamBillingAccountFrozenNode(node gjson.Result) bool {
+	if !node.Exists() {
+		return false
+	}
+	if isUpstreamBillingAccountFrozenRefCode(node.Get("ref_code")) ||
+		isUpstreamBillingAccountFrozenRefCode(node.Get("error.ref_code")) {
+		return true
+	}
+	code := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		node.Get("code").String(),
+		node.Get("error.code").String(),
+	)))
+	if code != "billing" {
+		return false
+	}
+	return isUpstreamBillingAccountFrozenMessage(firstNonEmpty(
+		node.Get("message").String(),
+		node.Get("error.message").String(),
+	))
+}
+
+func isUpstreamBillingAccountFrozenRefCode(v gjson.Result) bool {
+	if !v.Exists() {
+		return false
+	}
+	switch v.Type {
+	case gjson.Number:
+		return v.Int() == upstreamBillingAccountFrozenRefCode
+	case gjson.String:
+		n, err := strconv.ParseInt(strings.TrimSpace(v.String()), 10, 64)
+		return err == nil && n == upstreamBillingAccountFrozenRefCode
+	default:
+		return false
+	}
+}
+
+func isUpstreamBillingAccountFrozenMessage(msg string) bool {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return false
+	}
+	if strings.Contains(msg, "\u8ba1\u8d39\u8d26\u6237\u5df2\u88ab\u51bb\u7ed3") {
+		return true
+	}
+	low := strings.ToLower(msg)
+	return strings.Contains(low, "billing account has been frozen") ||
+		strings.Contains(low, "billing account is frozen")
+}
+
 func extractUpstreamErrorCode(body []byte) string {
 	if code := strings.TrimSpace(gjson.GetBytes(body, "error.code").String()); code != "" {
 		return code

@@ -414,6 +414,13 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			msg := "Identity verification required (400): " + upstreamMsg
 			s.handleAuthError(ctx, account, msg)
 			shouldDisable = true
+		} else if isUpstreamBillingAccountFrozen(responseBody) {
+			msg := "Billing account frozen (400)"
+			if upstreamMsg != "" {
+				msg = "Billing account frozen (400): " + upstreamMsg
+			}
+			s.handleAuthError(ctx, account, msg)
+			shouldDisable = true
 		}
 		// 其他 400 错误（如参数问题）不处理，不禁用账号
 	case 401:
