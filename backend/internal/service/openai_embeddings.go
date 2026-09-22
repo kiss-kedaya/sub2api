@@ -54,6 +54,9 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	// 协议感知：Anthropic 协议账号的凭证 base_url 指向 /anthropic 端点，
 	// embeddings 需使用 OpenAI 格式 base。
 	baseURL := account.GetOpenAIFormatBaseURL()
+	if account.IsCloudflareOpenAI() && strings.TrimSpace(baseURL) == "" {
+		return nil, fmt.Errorf("invalid cloudflare account id")
+	}
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
 	}
