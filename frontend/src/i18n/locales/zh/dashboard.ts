@@ -176,7 +176,13 @@ export default {
         codexCli: 'Codex CLI',
         codexCliWs: 'Codex CLI (WebSocket)',
         grokCli: 'Grok CLI',
-        opencode: 'OpenCode'
+        opencode: 'OpenCode',
+        jev: 'typesafe/jev'
+      },
+      jev: {
+        description: 'typesafe/jev 用来做判断，不是聊天。把下面的说明交给编程助手，或直接用 curl。',
+        note: 'user 消息的 content 必须是 JSON。noul 表示是否，oul 表示多选。不要开流式。',
+        hint: '把这个文件存成 .agents/skills/typesafe-jev/SKILL.md。助手下次读到这个模型时会按这个格式调用。'
       },
       antigravity: {
         description: '为 Antigravity 分组配置 API 访问。请根据您使用的客户端选择对应的配置方式。',
