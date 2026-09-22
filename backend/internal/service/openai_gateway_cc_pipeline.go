@@ -185,6 +185,18 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	userAgent string,
 	grokCacheIdentity string,
 ) (*http.Response, error) {
+	wantStream := stream
+	if runURL, jevBody, matched, jevErr := prepareCloudflareJevUpstream(account, body); matched {
+		if jevErr != nil {
+			if c != nil && c.Writer != nil && !c.Writer.Written() {
+				writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", jevErr.Error())
+			}
+			return nil, jevErr
+		}
+		targetURL = runURL
+		body = jevBody
+		stream = false
+	}
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(body))
 	releaseUpstreamCtx()
@@ -194,7 +206,11 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	// 记录本次实际选择的协议端点，供错误日志和用量日志在没有
 	// OpenAIForwardResult（例如 503/传输失败）时使用。每次发送都覆盖，
 	// 避免 Gin context 在账号 failover 尝试之间残留旧端点。
-	SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
+	if strings.HasSuffix(targetURL, "/ai/run") {
+		SetActualOpenAIUpstreamEndpoint(c, "/ai/run")
+	} else {
+		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
+	}
 	upstreamReq = upstreamReq.WithContext(WithHTTPUpstreamProfile(upstreamReq.Context(), HTTPUpstreamProfileOpenAI))
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	upstreamReq.Header.Set("Authorization", "Bearer "+bearerToken)
@@ -235,6 +251,9 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+	}
+	if strings.HasSuffix(targetURL, "/ai/run") {
+		return adaptCloudflareJevResponse(resp, wantStream, "typesafe/jev"), nil
 	}
 	return resp, nil
 }
