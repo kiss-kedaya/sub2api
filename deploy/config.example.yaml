@@ -105,6 +105,9 @@ simple_mode:
   # 环境变量：SIMPLE_MODE_AUTO_CREATE_DEFAULT_GROUPS
   auto_create_default_groups: true
 
+# Enforce API-key 5h/1d/7d spending windows in simple mode; other billing stays disabled.
+simple_mode_key_rate_limit_enabled: false
+
 # =============================================================================
 # CORS Configuration
 # 跨域资源共享 (CORS) 配置
