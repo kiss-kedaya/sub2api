@@ -29,6 +29,10 @@ func TestAllowOpenAICompatibleMessagesDispatch_CNProvidersExempt(t *testing.T) {
 	require.False(t, allowOpenAICompatibleMessagesDispatch(nil, openaiOff))
 	openaiOn := &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI, AllowMessagesDispatch: true}}
 	require.True(t, allowOpenAICompatibleMessagesDispatch(nil, openaiOn))
+
+	namedGrok := &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI, Name: "Grok分组", AllowMessagesDispatch: false}}
+	require.True(t, allowOpenAICompatibleMessagesDispatch(nil, namedGrok),
+		"OpenAI 平台但名叫 Grok 的分组必须放行 Claude Code /v1/messages")
 }
 
 func TestAllowOpenAICompatibleMessagesDispatch_OpenAIGroupResolvedGrok(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -37,6 +38,21 @@ var (
 	Date      = "unknown"
 	BuildType = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
 )
+
+func toStartupString(v any) string {
+	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(fmtStartup(v), "\n", " "), "\r", " "))
+}
+
+func fmtStartup(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case error:
+		return t.Error()
+	default:
+		return "non-string panic"
+	}
+}
 
 func init() {
 	// 如果 Version 已通过 ldflags 注入（例如 -X main.Version=...），则不要覆盖。
@@ -162,6 +178,15 @@ func runSetupServer() {
 }
 
 func runMainServer() {
+	defer func() {
+		if rec := recover(); rec != nil {
+			_, _ = os.Stderr.WriteString("STARTUP PANIC: ")
+			_, _ = os.Stderr.WriteString(strings.TrimSpace(toStartupString(rec)))
+			_, _ = os.Stderr.WriteString("\n")
+			_, _ = os.Stderr.Write(debug.Stack())
+			os.Exit(2)
+		}
+	}()
 	cfg, err := config.LoadForBootstrap()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -185,6 +210,7 @@ func runMainServer() {
 	defer app.Cleanup()
 	profiler, err := startPprofServerFromEnv()
 	if err != nil {
+		_, _ = os.Stderr.WriteString("Failed to start pprof diagnostics: " + err.Error() + "\n")
 		log.Fatalf("Failed to start pprof diagnostics: %v", err)
 	}
 	if profiler != nil {
@@ -214,6 +240,7 @@ func runMainServer() {
 	// 启动服务器
 	go func() {
 		if err := app.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			_, _ = os.Stderr.WriteString("Failed to start server: " + err.Error() + "\n")
 			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()

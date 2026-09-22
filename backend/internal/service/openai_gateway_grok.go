@@ -87,6 +87,10 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if err != nil {
 		return nil, fmt.Errorf("apply grok Free function-tool cache route: %w", err)
 	}
+	patchedBody, err = applyGrokResponsesUpstreamStream(patchedBody, isOpenAIResponsesCompactPath(c))
+	if err != nil {
+		return nil, err
+	}
 
 	token, _, err := s.getRequestCredential(ctx, c, account)
 	if err != nil {
@@ -111,6 +115,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+		logGrokAPIKeyUpstreamResult(account, upstreamReq, resp, err)
 		if err != nil {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}
@@ -236,15 +241,15 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		}
 		return result
 	}
+	maxLineSize := defaultMaxLineSize
+	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+		maxLineSize = s.cfg.Gateway.MaxLineSize
+	}
+	resp.Body = newGrokResponsesBillingPingFilterBody(resp.Body, account, maxLineSize)
+	if hasGrokResponsesClientToolMapping(clientToolMapping) {
+		resp.Body = newGrokResponsesClientToolStreamBody(resp.Body, clientToolMapping, maxLineSize)
+	}
 	if reqStream {
-		maxLineSize := defaultMaxLineSize
-		if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
-			maxLineSize = s.cfg.Gateway.MaxLineSize
-		}
-		resp.Body = newGrokResponsesBillingPingFilterBody(resp.Body, account, maxLineSize)
-		if hasGrokResponsesClientToolMapping(clientToolMapping) {
-			resp.Body = newGrokResponsesClientToolStreamBody(resp.Body, clientToolMapping, maxLineSize)
-		}
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, upstreamModel)
 		if streamResult != nil {
 			usage = streamResult.usage
@@ -516,6 +521,20 @@ func trimGrokInvalidEncryptedContentRetryBody(body []byte) ([]byte, bool, error)
 
 func patchGrokResponsesBody(body []byte, upstreamModel string) ([]byte, error) {
 	return patchGrokResponsesBodyBase(body, upstreamModel)
+}
+
+// applyGrokResponsesUpstreamStream forces stream=true on the xAI request.
+// Grok/third-party gateways time out non-stream Responses (CF 524). Compact
+// stays unary JSON. The client still gets JSON when it asked for non-stream.
+func applyGrokResponsesUpstreamStream(body []byte, compact bool) ([]byte, error) {
+	if compact || len(body) == 0 || gjson.GetBytes(body, "stream").Bool() {
+		return body, nil
+	}
+	out, err := sjson.SetBytes(body, "stream", true)
+	if err != nil {
+		return nil, fmt.Errorf("force grok responses upstream stream: %w", err)
+	}
+	return out, nil
 }
 
 func patchGrokResponsesBodyWithClientTools(body []byte, upstreamModel string) ([]byte, apicompat.ResponsesClientToolMapping, error) {
@@ -1421,6 +1440,7 @@ func (s *OpenAIGatewayService) describeGrokComposerImage(
 	}
 
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	logGrokAPIKeyUpstreamResult(account, upstreamReq, resp, err)
 	if err != nil {
 		return "", OpenAIUsage{}, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
@@ -1598,7 +1618,11 @@ func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Acc
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileGrok))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
+	if gjson.GetBytes(body, "stream").Bool() {
+		req.Header.Set("Accept", "text/event-stream")
+	} else {
+		req.Header.Set("Accept", "application/json, text/event-stream")
+	}
 	if account.IsGrokOAuth() {
 		applyGrokCLIHeaders(req.Header)
 	}
@@ -1611,6 +1635,7 @@ func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Acc
 	// 账号级请求头覆写最后应用，使配置值优先于上面的内置默认头；
 	// 打到官方 CLI 网关时身份头仍由共享传输层最终强制。
 	account.ApplyHeaderOverrides(req.Header)
+	logGrokAPIKeyUpstreamDump(c, account, targetURL, req, body)
 	return req, nil
 }
 

@@ -2886,6 +2886,8 @@ func TestForwardGrokResponsesNonStreamingUsesCacheIdentityAndCachedUsage(t *test
 	require.Equal(t, 2, result.Usage.OutputTokens)
 	require.Equal(t, 4, result.Usage.CacheReadInputTokens)
 	require.Equal(t, "grok-4.6", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
+	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	identity := gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String()
 	require.NotEmpty(t, identity)
 	require.Equal(t, identity, upstream.lastReq.Header.Get(grokConversationIDHeader))
@@ -2897,6 +2899,70 @@ func TestForwardGrokResponsesNonStreamingUsesCacheIdentityAndCachedUsage(t *test
 	require.Equal(t, 1, repo.recoveryClearCalls)
 	require.Equal(t, observedLimitedAt, repo.recoveryObservedAt)
 	require.Equal(t, observedResetAt, repo.recoveryObservedReset)
+}
+
+func TestApplyGrokResponsesUpstreamStream(t *testing.T) {
+	forced, err := applyGrokResponsesUpstreamStream([]byte(`{"model":"grok","stream":false}`), false)
+	require.NoError(t, err)
+	require.True(t, gjson.GetBytes(forced, "stream").Bool())
+
+	already, err := applyGrokResponsesUpstreamStream([]byte(`{"model":"grok","stream":true}`), false)
+	require.NoError(t, err)
+	require.True(t, gjson.GetBytes(already, "stream").Bool())
+
+	compact, err := applyGrokResponsesUpstreamStream([]byte(`{"model":"grok","stream":false}`), true)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(compact, "stream").Bool())
+}
+
+func TestForwardGrokResponsesNonStreamingBuffersUpstreamSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"grok","input":"hi","stream":false}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("api_key", &APIKey{ID: 5204})
+
+	account := healthyGrokOAuthGatewayTestAccount(57, "access-token")
+	repo := &grokQuotaAccountRepo{
+		mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
+			accountsByID: map[int64]*Account{57: account},
+		},
+	}
+	sse := strings.Join([]string{
+		`event: response.completed`,
+		`data: {"type":"response.completed","response":{"id":"resp_grok_sse","object":"response","model":"grok-4.3","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":7,"output_tokens":2,"total_tokens":9,"input_tokens_details":{"cached_tokens":4}}}}`,
+		"",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type":   []string{"text/event-stream"},
+			"Xai-Request-Id": []string{"xai-sse-req"},
+		},
+		Body: io.NopCloser(strings.NewReader(sse)),
+	}}
+	svc := &OpenAIGatewayService{
+		httpUpstream:      upstream,
+		grokTokenProvider: NewGrokTokenProvider(repo, nil),
+		accountRepo:       repo,
+	}
+
+	result, err := svc.forwardGrokResponses(context.Background(), c, account, body, "grok", false, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.Stream)
+	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
+	require.Equal(t, "resp_grok_sse", result.ResponseID)
+	require.Equal(t, 7, result.Usage.InputTokens)
+	require.Equal(t, 2, result.Usage.OutputTokens)
+	require.Equal(t, 4, result.Usage.CacheReadInputTokens)
+	require.Equal(t, "application/json; charset=utf-8", recorder.Header().Get("Content-Type"))
+	require.Equal(t, "resp_grok_sse", gjson.Get(recorder.Body.String(), "id").String())
+	require.Equal(t, "ok", gjson.Get(recorder.Body.String(), "output.0.content.0.text").String())
 }
 
 func TestForwardGrokResponsesFailoverKeepsCacheIdentityAcrossAccounts(t *testing.T) {

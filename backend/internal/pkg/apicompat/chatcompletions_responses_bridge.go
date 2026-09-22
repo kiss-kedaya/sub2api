@@ -189,6 +189,44 @@ func CustomToolNames(tools []ResponsesTool) map[string]bool {
 	return out
 }
 
+const defaultLocalShellToolName = "local_shell"
+
+const localShellToolParameters = `{"type":"object","properties":{"command":{"type":"array","items":{"type":"string"},"description":"Command and arguments to execute."},"working_directory":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["command"]}`
+
+// LocalShellToolNames collects Responses local_shell tools so chat fallback
+// can restore local_shell_call items. Codex only routes that type to the terminal.
+func LocalShellToolNames(tools []ResponsesTool) map[string]bool {
+	var out map[string]bool
+	for _, tool := range tools {
+		if tool.Type != "local_shell" {
+			continue
+		}
+		name := strings.TrimSpace(tool.Name)
+		if name == "" {
+			name = defaultLocalShellToolName
+		}
+		if out == nil {
+			out = make(map[string]bool)
+		}
+		out[name] = true
+	}
+	return out
+}
+
+func executableResponsesToolName(tool ResponsesTool) string {
+	switch tool.Type {
+	case "function", "custom":
+		return strings.TrimSpace(tool.Name)
+	case "local_shell":
+		if name := strings.TrimSpace(tool.Name); name != "" {
+			return name
+		}
+		return defaultLocalShellToolName
+	default:
+		return ""
+	}
+}
+
 // FunctionToolNames collects explicitly declared top-level function tools.
 func FunctionToolNames(tools []ResponsesTool) map[string]bool {
 	var out map[string]bool
@@ -276,6 +314,21 @@ func customNameForStreamTool(state *ChatCompletionsToResponsesStreamState, name 
 		return customName
 	}
 	return name
+}
+
+func localShellToolCallName(name string, localShellTools, functionTools, customTools map[string]bool) (string, bool) {
+	if name == "" || functionTools[name] || customTools[name] {
+		return "", false
+	}
+	if localShellTools[name] {
+		return name, true
+	}
+	if len(localShellTools) == 1 && name == defaultLocalShellToolName {
+		for declared := range localShellTools {
+			return declared, true
+		}
+	}
+	return "", false
 }
 
 // HasToolSearchTool 判断 Responses 请求是否声明了 tool_search 服务端工具。chat 桥
@@ -484,7 +537,32 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			messages = appendAssistantToolCall(messages, toolCall, reasoningForAssistant())
 			pendingReasoning = ""
 			continue
-		case "function_call_output", "custom_tool_call_output", "tool_search_output":
+		case "local_shell_call":
+			arguments := rawString(item["arguments"])
+			if strings.TrimSpace(arguments) == "" {
+				if action := bytesTrimSpace(item["action"]); len(action) > 0 {
+					arguments = string(action)
+				}
+			}
+			if strings.TrimSpace(arguments) == "" {
+				arguments = "{}"
+			}
+			name := rawString(item["name"])
+			if name == "" {
+				name = defaultLocalShellToolName
+			}
+			toolCall := ChatToolCall{
+				ID:   rawString(item["call_id"]),
+				Type: "function",
+				Function: ChatFunctionCall{
+					Name:      name,
+					Arguments: arguments,
+				},
+			}
+			messages = appendAssistantToolCall(messages, toolCall, reasoningForAssistant())
+			pendingReasoning = ""
+			continue
+		case "function_call_output", "custom_tool_call_output", "tool_search_output", "local_shell_call_output":
 			outputRaw := bytesTrimSpace(item["output"])
 			if itemType == "tool_search_output" && (len(outputRaw) == 0 || string(outputRaw) == "null") {
 				// Newer clients return discoveries in tools[] without a separate
@@ -557,7 +635,8 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 
 		// Only genuine message items become chat messages. Codex emits other
 		// Responses item types with no Chat equivalent (web_search_call,
-		// local_shell_call, file_search_call, ...). Converting them via the
+		// file_search_call, ...). local_shell_call is converted above.
+		// Converting leftover types via the
 		// generic path would insert a spurious message between an assistant
 		// tool_calls message and its tool reply, which DeepSeek rejects
 		// ("insufficient tool messages following tool_calls message"). Skip them.
@@ -1044,12 +1123,14 @@ func responsesToolsToChatTools(tools []ResponsesTool) ([]ChatTool, error) {
 	// 不能静默降级（重复声明发给上游、回程还原到错误工具）。
 	topLevel := make(map[string]bool)
 	for _, tool := range tools {
-		if (tool.Type == "function" || tool.Type == "custom") && tool.Name != "" {
-			if topLevel[tool.Name] {
-				return nil, fmt.Errorf("duplicate top-level executable tool name %q; this upstream cannot disambiguate duplicate names, rename one of the tools", tool.Name)
-			}
-			topLevel[tool.Name] = true
+		name := executableResponsesToolName(tool)
+		if name == "" {
+			continue
 		}
+		if topLevel[name] {
+			return nil, fmt.Errorf("duplicate top-level executable tool name %q; this upstream cannot disambiguate duplicate names, rename one of the tools", name)
+		}
+		topLevel[name] = true
 	}
 	flatOwner := make(map[string]NamespacedToolName)
 	toolSearchDeclared := false
@@ -1075,6 +1156,20 @@ func responsesToolsToChatTools(tools []ResponsesTool) ([]ChatTool, error) {
 					Name:        tool.Name,
 					Description: tool.Description,
 					Parameters:  json.RawMessage(customToolInputSchema),
+				},
+			})
+		case "local_shell":
+			name := executableResponsesToolName(tool)
+			desc := strings.TrimSpace(tool.Description)
+			if desc == "" {
+				desc = "Run a local shell command."
+			}
+			out = append(out, ChatTool{
+				Type: "function",
+				Function: &ChatFunction{
+					Name:        name,
+					Description: desc,
+					Parameters:  json.RawMessage(localShellToolParameters),
 				},
 			})
 		case "tool_search":
@@ -1279,6 +1374,12 @@ func extractCustomToolCallInput(arguments string) string {
 // 的调用会还原为 tool_search_call 项；namespaceTools 是 namespace 子工具的摊平名
 // 映射（见 NamespaceToolNames），命中的调用还原为带 namespace 字段的 function_call 项。
 func ChatCompletionsResponseToResponses(resp *ChatCompletionsResponse, model string, customTools, functionTools map[string]bool, toolSearch bool, namespaceTools map[string]NamespacedToolName) *ResponsesResponse {
+	return ChatCompletionsResponseToResponsesWithLocalShell(resp, model, customTools, functionTools, toolSearch, namespaceTools, nil)
+}
+
+// ChatCompletionsResponseToResponsesWithLocalShell is ChatCompletionsResponseToResponses
+// plus local_shell restoration. Codex only routes type=local_shell_call to the terminal.
+func ChatCompletionsResponseToResponsesWithLocalShell(resp *ChatCompletionsResponse, model string, customTools, functionTools map[string]bool, toolSearch bool, namespaceTools map[string]NamespacedToolName, localShellTools map[string]bool) *ResponsesResponse {
 	id := ""
 	if resp != nil {
 		id = resp.ID
@@ -1315,7 +1416,7 @@ func ChatCompletionsResponseToResponses(resp *ChatCompletionsResponse, model str
 
 	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
-		out.Output = chatMessageToResponsesOutput(choice.Message, customTools, functionTools, toolSearch, namespaceTools)
+		out.Output = chatMessageToResponsesOutput(choice.Message, customTools, functionTools, toolSearch, namespaceTools, localShellTools)
 		if choice.FinishReason == "length" {
 			out.Status = "incomplete"
 			out.IncompleteDetails = &ResponsesIncompleteDetails{Reason: "max_output_tokens"}
@@ -1337,7 +1438,7 @@ func chatServiceTier(resp *ChatCompletionsResponse) string {
 	return resp.ServiceTier
 }
 
-func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTools map[string]bool, toolSearch bool, namespaceTools map[string]NamespacedToolName) []ResponsesOutput {
+func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTools map[string]bool, toolSearch bool, namespaceTools map[string]NamespacedToolName, localShellTools map[string]bool) []ResponsesOutput {
 	var outputs []ResponsesOutput
 	reasoning := message.reasoningText()
 	if reasoning != "" {
@@ -1381,6 +1482,17 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 				Name:   customName,
 				Input:  extractCustomToolCallInput(arguments),
 				Status: "completed",
+			})
+			continue
+		}
+		if localShellCallName, ok := localShellToolCallName(toolCall.Function.Name, localShellTools, functionTools, customTools); ok {
+			outputs = append(outputs, ResponsesOutput{
+				Type:      "local_shell_call",
+				ID:        generateItemID(),
+				CallID:    toolCall.ID,
+				Name:      localShellCallName,
+				Arguments: arguments,
+				Status:    "completed",
 			})
 			continue
 		}
@@ -1439,6 +1551,21 @@ func toolSearchCallArgumentsJSON(arguments string) json.RawMessage {
 	}
 	fallback, _ := json.Marshal(arguments)
 	return fallback
+}
+
+func localShellCallActionJSON(arguments string) any {
+	trimmed := strings.TrimSpace(arguments)
+	if trimmed == "" {
+		return map[string]any{"type": "exec"}
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &obj); err == nil && obj != nil {
+		if _, ok := obj["type"]; !ok {
+			obj["type"] = "exec"
+		}
+		return obj
+	}
+	return map[string]any{"type": "exec", "command": []any{trimmed}}
 }
 
 func emptyResponsesMessageOutput() ResponsesOutput {
@@ -1570,12 +1697,18 @@ type ChatCompletionsToResponsesStreamState struct {
 	// codex 按 namespace+name 路由。
 	NamespaceTools map[string]NamespacedToolName
 
+	// LocalShellTools 是客户端请求中 local_shell 工具的名字集合。命中的调用还原
+	// 为 local_shell_call，codex 只按该类型把命令交给终端。
+	LocalShellTools map[string]bool
+
 	// toolIsCustom 记录每个工具调用宣告时的类型判定，保证 added/done 事件的
 	// 项类型一致。
 	toolIsCustom map[int]bool
 
 	// toolIsToolSearch 记录工具调用是否判定为 tool_search 代理调用。
 	toolIsToolSearch map[int]bool
+
+	toolIsLocalShell map[int]bool
 
 	// toolNamespace 记录工具调用宣告时命中的 namespace 归属（见 NamespaceTools）。
 	toolNamespace map[int]NamespacedToolName
@@ -1599,6 +1732,7 @@ func NewChatCompletionsToResponsesStreamState(model string) *ChatCompletionsToRe
 		ToolOutputIndex:  make(map[int]int),
 		toolIsCustom:     make(map[int]bool),
 		toolIsToolSearch: make(map[int]bool),
+		toolIsLocalShell: make(map[int]bool),
 		toolNamespace:    make(map[int]NamespacedToolName),
 		toolAnnounced:    make(map[int]bool),
 	}
@@ -1617,7 +1751,7 @@ func (state *ChatCompletionsToResponsesStreamState) ValidateToolCallArguments() 
 		if toolCall == nil {
 			continue
 		}
-		if state.toolIsCustom[idx] || state.toolIsToolSearch[idx] {
+		if state.toolIsCustom[idx] || state.toolIsToolSearch[idx] || state.toolIsLocalShell[idx] {
 			continue
 		}
 		arguments := strings.TrimSpace(toolCall.Function.Arguments)
@@ -1732,7 +1866,7 @@ func ChatCompletionsChunkToResponsesEvents(
 				// arguments 是包裹 input 的 JSON 片段，无法增量还原为自由文本
 				// 输入，缓冲整份 arguments 收尾时一次性下发（见 closeChatToolItems）；
 				// tool_search 调用同样收尾时随 output_item.done 全量下发。
-				if state.toolAnnounced[idx] && !state.toolIsCustom[idx] && !state.toolIsToolSearch[idx] {
+				if state.toolAnnounced[idx] && !state.toolIsCustom[idx] && !state.toolIsToolSearch[idx] && !state.toolIsLocalShell[idx] {
 					events = append(events, chatToResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
 						OutputIndex: state.ToolOutputIndex[idx],
 						ItemID:      state.ToolItemIDs[idx],
@@ -1967,14 +2101,20 @@ func announceChatToolItem(
 	if state.toolAnnounced[idx] {
 		return nil
 	}
-	if !force && stored.Function.Name == "" && (len(state.CustomTools) > 0 || len(state.FunctionTools) > 0 || state.ToolSearchDeclared || len(state.NamespaceTools) > 0) {
+	if !force && stored.Function.Name == "" && (len(state.CustomTools) > 0 || len(state.FunctionTools) > 0 || state.ToolSearchDeclared || len(state.NamespaceTools) > 0 || len(state.LocalShellTools) > 0) {
 		return nil
 	}
 	state.toolAnnounced[idx] = true
 	customName, isCustom := customToolCallName(stored.Function.Name, state.CustomTools, state.FunctionTools, state.NamespaceTools)
-	isToolSearch := !isCustom && state.ToolSearchDeclared && stored.Function.Name == toolSearchProxyName
+	localShellName, isLocalShell := localShellToolCallName(stored.Function.Name, state.LocalShellTools, state.FunctionTools, state.CustomTools)
+	if isCustom {
+		isLocalShell = false
+		localShellName = ""
+	}
+	isToolSearch := !isCustom && !isLocalShell && state.ToolSearchDeclared && stored.Function.Name == toolSearchProxyName
 	state.toolIsCustom[idx] = isCustom
 	state.toolIsToolSearch[idx] = isToolSearch
+	state.toolIsLocalShell[idx] = isLocalShell
 	itemType := "function_call"
 	if isCustom {
 		itemType = "custom_tool_call"
@@ -1982,13 +2122,19 @@ func announceChatToolItem(
 	if isToolSearch {
 		itemType = "tool_search_call"
 	}
+	if isLocalShell {
+		itemType = "local_shell_call"
+	}
 	// namespace 子工具的调用仍按 function_call 生命周期下发，但 added/done 项要
 	// 还原为裸子工具名 + namespace 字段（codex 按 namespace+name 路由）。
 	itemName, itemNamespace := stored.Function.Name, ""
 	if isCustom {
 		itemName = customName
 	}
-	if ns, ok := state.NamespaceTools[stored.Function.Name]; ok && !isCustom && !isToolSearch {
+	if isLocalShell {
+		itemName = localShellName
+	}
+	if ns, ok := state.NamespaceTools[stored.Function.Name]; ok && !isCustom && !isToolSearch && !isLocalShell {
 		state.toolNamespace[idx] = ns
 		itemName, itemNamespace = ns.Name, ns.Namespace
 	}
@@ -2003,8 +2149,8 @@ func announceChatToolItem(
 			Status:    "in_progress",
 		},
 	})}
-	// 迟到宣告时补发已累积的参数增量（custom/tool_search 的输入收尾统一下发，不补发）。
-	if !isCustom && !isToolSearch && stored.Function.Arguments != "" {
+	// 迟到宣告时补发已累积的参数增量（custom/tool_search/local_shell 的输入收尾统一下发，不补发）。
+	if !isCustom && !isToolSearch && !isLocalShell && stored.Function.Arguments != "" {
 		events = append(events, chatToResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
 			OutputIndex: state.ToolOutputIndex[idx],
 			ItemID:      state.ToolItemIDs[idx],
@@ -2083,6 +2229,24 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 					Type:      "tool_search_call",
 					ID:        itemID,
 					CallID:    toolCall.ID,
+					Arguments: arguments,
+					Status:    "completed",
+				},
+			}))
+			continue
+		}
+		if state.toolIsLocalShell[i] {
+			name := toolCall.Function.Name
+			if name == "" {
+				name = defaultLocalShellToolName
+			}
+			events = append(events, chatToResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
+				OutputIndex: outputIndex,
+				Item: &ResponsesOutput{
+					Type:      "local_shell_call",
+					ID:        itemID,
+					CallID:    toolCall.ID,
+					Name:      name,
 					Arguments: arguments,
 					Status:    "completed",
 				},
@@ -2168,6 +2332,21 @@ func (state *ChatCompletionsToResponsesStreamState) chatOutput() []ResponsesOutp
 				Type:      "tool_search_call",
 				ID:        generateItemID(),
 				CallID:    toolCall.ID,
+				Arguments: arguments,
+				Status:    "completed",
+			})
+			continue
+		}
+		if state.toolIsLocalShell[i] {
+			name := toolCall.Function.Name
+			if name == "" {
+				name = defaultLocalShellToolName
+			}
+			outputs = append(outputs, ResponsesOutput{
+				Type:      "local_shell_call",
+				ID:        generateItemID(),
+				CallID:    toolCall.ID,
+				Name:      name,
 				Arguments: arguments,
 				Status:    "completed",
 			})

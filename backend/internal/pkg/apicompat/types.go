@@ -424,6 +424,18 @@ type ResponsesOutput struct {
 // 序列化，输出逐字节不变。
 func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
 	type responsesOutputAlias ResponsesOutput
+	if o.Type == "local_shell_call" {
+		m := map[string]any{
+			"type":    o.Type,
+			"id":      o.ID,
+			"call_id": o.CallID,
+			"action":  localShellCallActionJSON(o.Arguments),
+		}
+		if o.Status != "" {
+			m["status"] = o.Status
+		}
+		return json.Marshal(m)
+	}
 	if o.Type != "tool_search_call" {
 		return json.Marshal(responsesOutputAlias(o))
 	}
@@ -453,6 +465,37 @@ func (o *ResponsesOutput) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if kind.Type != "tool_search_call" {
+		if kind.Type == "local_shell_call" {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(data, &fields); err != nil {
+				return err
+			}
+			action, hasAction := fields["action"]
+			arguments, hasArguments := fields["arguments"]
+			delete(fields, "action")
+			delete(fields, "arguments")
+			normalized, err := json.Marshal(fields)
+			if err != nil {
+				return err
+			}
+			var decoded responsesOutputAlias
+			if err := json.Unmarshal(normalized, &decoded); err != nil {
+				return err
+			}
+			*o = ResponsesOutput(decoded)
+			switch {
+			case hasAction && string(action) != "null":
+				o.Arguments = string(action)
+			case hasArguments && string(arguments) != "null":
+				var argumentString string
+				if err := json.Unmarshal(arguments, &argumentString); err == nil {
+					o.Arguments = argumentString
+				} else {
+					o.Arguments = string(arguments)
+				}
+			}
+			return nil
+		}
 		var decoded responsesOutputAlias
 		if err := json.Unmarshal(data, &decoded); err != nil {
 			return err
