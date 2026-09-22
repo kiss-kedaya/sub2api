@@ -38,6 +38,28 @@ func TestCloudflareOpenAIRejectsUnsafeAccountID(t *testing.T) {
 	require.Error(t, validateCloudflareAccount(account))
 }
 
+func TestCloudflareOpenAIDoesNotSendTokenToOpenAI(t *testing.T) {
+	t.Parallel()
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeCloudflare,
+		Credentials: map[string]any{
+			"account_id": "a1b2c3d4e5f67890",
+			"api_key":    "cf-token",
+		},
+	}
+	require.True(t, shouldEstimateOpenAIInputTokensLocally(account))
+	svc := &OpenAIGatewayService{}
+	_, err := svc.buildOpenAIResponsesWSURL(account)
+	require.Error(t, err)
+	_, err = svc.buildInputTokensUpstreamRequest(context.Background(), nil, account, []byte(`{}`), "cf-token")
+	require.Error(t, err)
+	_, err = svc.buildUpstreamRequest(context.Background(), nil, account, []byte(`{}`), "cf-token", false, "", false)
+	require.Error(t, err)
+	_, err = svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), nil, account, []byte(`{}`), "cf-token")
+	require.Error(t, err)
+}
+
 func TestParseCloudflareModelSearchUsesName(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"success":true,"result":[{"id":"uuid-1","name":"@cf/meta/llama-3.1-8b-instruct"},{"id":"uuid-2","name":"  "},{"id":"uuid-3","name":"@cf/meta/llama-3.1-8b-instruct"}],"result_info":{"page":1,"per_page":50,"count":2,"total_count":2}}`)
