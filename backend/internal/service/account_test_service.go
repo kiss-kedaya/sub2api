@@ -218,12 +218,16 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	// Add locally supported image choices only to the OAuth test picker; keep the
 	// shared upstream catalog and API-key discovery authoritative.
 	if account != nil && account.IsOpenAIOAuthLike() {
+		passthrough := account.IsOpenAIPassthroughEnabled()
 		seen := make(map[string]bool, len(payload.Data))
 		for _, model := range payload.Data {
 			seen[model.ID] = true
 		}
 		for _, model := range openai.DefaultModels {
 			if IsGPTImageGenerationModel(model.ID) && account.IsModelSupported(model.ID) && !seen[model.ID] {
+				if !passthrough && !IsGPTImageGenerationModel(account.GetMappedModel(model.ID)) {
+					continue
+				}
 				payload.Data = append(payload.Data, model)
 				seen[model.ID] = true
 			}
@@ -234,11 +238,16 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 		// Judging by the target rather than the public name keeps a lookalike name
 		// (for example an alias spelled "gpt-image-*" that maps to a text model)
 		// from being synthesized into the picker.
+		// Passthrough keeps native image names without applying mapping targets.
 		for publicID := range account.GetModelMapping() {
 			if strings.Contains(publicID, "*") || seen[publicID] {
 				continue
 			}
-			if !IsGPTImageGenerationModel(account.GetMappedModel(publicID)) {
+			target := publicID
+			if !passthrough {
+				target = account.GetMappedModel(publicID)
+			}
+			if !IsGPTImageGenerationModel(target) {
 				continue
 			}
 			payload.Data = append(payload.Data, openai.Model{ID: publicID, Object: "model", Type: "model", OwnedBy: "openai", DisplayName: openaiCodexDisplayName(publicID)})
