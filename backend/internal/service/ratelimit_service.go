@@ -296,6 +296,9 @@ const (
 // 自定义错误码开启时覆盖后续所有逻辑（包括临时不可调度）。
 func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel ...string) ErrorPolicyResult {
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
+	if isUpstreamBillingAccountFrozen(responseBody) {
+		return ErrorPolicyMatched
+	}
 	if account.IsCustomErrorCodesEnabled() {
 		if account.ShouldHandleErrorCode(statusCode) {
 			return ErrorPolicyMatched
@@ -322,6 +325,19 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 	return ErrorPolicyNone
 }
 
+func (s *RateLimitService) disableIfUpstreamBillingAccountFrozen(ctx context.Context, account *Account, responseBody []byte) bool {
+	if s == nil || account == nil || !isUpstreamBillingAccountFrozen(responseBody) {
+		return false
+	}
+	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(responseBody))
+	msg := "Billing account frozen (400)"
+	if upstreamMsg != "" {
+		msg = "Billing account frozen (400): " + upstreamMsg
+	}
+	s.handleAuthError(ctx, account, msg)
+	return true
+}
+
 // HandleUpstreamError 处理上游错误响应，标记账号状态
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
@@ -329,6 +345,9 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// Team 联动熔断必须先于池模式/自定义错误码/临时不可调度的各类早退；
 	// 同请求内与 fastpath 调用点的重复触发由方法内去重吸收。
 	s.maybeHandleOpenAITeamLinkedError(ctx, account, statusCode, responseBody)
+	if s.disableIfUpstreamBillingAccountFrozen(ctx, account, responseBody) {
+		return true
+	}
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
 	// 池模式默认不标记本地账号状态；但管理员显式配置的临时不可调度规则优先。
@@ -412,13 +431,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		} else if strings.Contains(strings.ToLower(upstreamMsg), "identity verification is required") {
 			// KYC 身份验证要求 → 永久禁用，账号需完成身份验证后才能恢复
 			msg := "Identity verification required (400): " + upstreamMsg
-			s.handleAuthError(ctx, account, msg)
-			shouldDisable = true
-		} else if isUpstreamBillingAccountFrozen(responseBody) {
-			msg := "Billing account frozen (400)"
-			if upstreamMsg != "" {
-				msg = "Billing account frozen (400): " + upstreamMsg
-			}
 			s.handleAuthError(ctx, account, msg)
 			shouldDisable = true
 		}

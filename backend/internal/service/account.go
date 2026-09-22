@@ -1467,6 +1467,13 @@ func (a *Account) GetOpenAIBaseURL() string {
 			}
 		}
 	}
+	if a.IsCloudflareOpenAI() {
+		accountID, err := a.CloudflareAccountID()
+		if err != nil {
+			return ""
+		}
+		return cloudflareOpenAIBaseURL(accountID)
+	}
 	if a.Type == AccountTypeAPIKey || a.Type == AccountTypeUpstream {
 		if baseURL := strings.TrimSpace(a.GetCredential("base_url")); baseURL != "" {
 			return baseURL
@@ -1863,6 +1870,9 @@ func (a *Account) GetOpenAIApiKey() string {
 func (a *Account) GetOpenAIProtocolAPIKey() string {
 	if a == nil {
 		return ""
+	}
+	if a.IsCloudflareOpenAI() {
+		return a.GetCredential("api_key")
 	}
 	if a.IsCNProvider() || a.IsGeminiOpenAIProtocol() {
 		if a.Type != AccountTypeAPIKey {
