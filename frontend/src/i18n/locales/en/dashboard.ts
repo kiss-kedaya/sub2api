@@ -176,6 +176,12 @@ export default {
         codexCliWs: 'Codex CLI (WebSocket)',
         grokCli: 'Grok CLI',
         opencode: 'OpenCode',
+        jev: 'typesafe/jev',
+      },
+      jev: {
+        description: 'typesafe/jev judges a state. It is not a chat model. Give the skill below to a coding agent, or call it with curl.',
+        note: 'The user message content must be JSON. noul is yes/no, oul is one choice. Do not stream.',
+        hint: 'Save this file as .agents/skills/typesafe-jev/SKILL.md. The agent will use this schema the next time it calls the model.'
       },
       antigravity: {
         description: 'Configure API access for Antigravity group. Select the configuration method based on your client.',
