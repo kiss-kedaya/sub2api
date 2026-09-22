@@ -481,6 +481,56 @@ func TestAccountHandlerSyncUpstreamModelsPreviewGeminiCustomUsesOpenAIModels(t *
 	require.Equal(t, []string{"gemini-3.8-flash"}, resp.Data.Models)
 }
 
+func TestAccountHandlerSyncUpstreamModelsPreviewCloudflareUsesAccountID(t *testing.T) {
+	var captured string
+	upstream := &syncUpstreamHTTPUpstream{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"success":true,"result":[{"name":"@cf/meta/llama-3.2-3b-instruct"}],"result_info":{"total_count":1,"count":1}}`)),
+	}}
+	router := setupSyncUpstreamModelsRouter(newStubAdminService(), &capturingSyncUpstream{inner: upstream, captured: &captured})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/admin/accounts/models/sync-upstream-preview",
+		strings.NewReader(`{
+			"platform":"openai",
+			"type":"cloudflare",
+			"base_url":"https://api.openai.com",
+			"account_id":"df9b7a01eff429b0ecaeeea0366cde12",
+			"api_key":"cf-token"
+		}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, captured, "/client/v4/accounts/df9b7a01eff429b0ecaeeea0366cde12/ai/models/search?")
+	require.NotContains(t, captured, "api.openai.com")
+	var resp struct {
+		Data service.UpstreamModelCatalog `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, []string{"@cf/meta/llama-3.2-3b-instruct"}, resp.Data.Models)
+}
+
+func TestAccountHandlerSyncUpstreamModelsPreviewCloudflareRequiresAccountID(t *testing.T) {
+	router := setupSyncUpstreamModelsRouter(newStubAdminService(), &syncUpstreamHTTPUpstream{})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/admin/accounts/models/sync-upstream-preview",
+		strings.NewReader(`{"platform":"openai","type":"cloudflare","base_url":"https://api.openai.com","api_key":"cf-token"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "cloudflare account id")
+}
+
 func TestAccountHandlerSyncUpstreamModelsPreviewGeminiCustomInfersOpenAIModelsWithoutProtocol(t *testing.T) {
 	var captured string
 	upstream := &syncUpstreamHTTPUpstream{resp: &http.Response{

@@ -13,7 +13,7 @@ import (
 
 const (
 	cloudflareModelsPerPage   = 50
-	cloudflareModelsMaxPages  = 4
+	cloudflareModelsMaxPages  = 20
 	cloudflareModelsBodyLimit = 2 << 20
 )
 

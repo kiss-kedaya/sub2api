@@ -642,6 +642,7 @@ export interface SyncUpstreamPreviewParams {
   platform: string
   type: string
   base_url?: string
+  account_id?: string
   api_key: string
   api_protocol?: string
   api_base_urls?: Record<string, string>
