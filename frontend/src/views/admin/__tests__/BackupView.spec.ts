@@ -219,6 +219,35 @@ describe('admin BackupView', () => {
     expect(updateSchedule).not.toHaveBeenCalled()
   })
 
+  it('关闭月度归档后不提交隐藏的归档参数，重新启用时保留编辑值', async () => {
+    getSchedule.mockResolvedValue({ enabled: true, cron_expr: '0 4 * * *', retain_days: 14, retain_count: 10,
+      monthly_archive: { enabled: true, days: [1, 15], include_month_end: false, retain_count: 12 } })
+    const wrapper = mountBackupView()
+    await flushPromises()
+    await wrapper.get('[data-testid="archive-count"]').setValue(1)
+    await wrapper.get('[data-testid="archive-enabled"]').setValue(false)
+    expect(wrapper.find('[data-testid="archive-count"]').exists()).toBe(false)
+    const save = wrapper.get('[data-testid="backup-schedule"] .btn-primary')
+    await save.trigger('click')
+    await flushPromises()
+    expect(updateSchedule).toHaveBeenLastCalledWith(expect.objectContaining({ monthly_archive: { enabled: false, days: [1, 15], include_month_end: false, retain_count: 12 } }))
+    await wrapper.get('[data-testid="archive-enabled"]').setValue(true)
+    expect((wrapper.get('[data-testid="archive-count"]').element as HTMLInputElement).value).toBe('1')
+    // A hidden invalid count neither blocks saving nor reaches the request.
+    await wrapper.get('[data-testid="archive-count"]').setValue('')
+    expect(save.attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="archive-enabled"]').setValue(false)
+    expect(save.attributes('disabled')).toBeUndefined()
+    await save.trigger('click')
+    await flushPromises()
+    expect(updateSchedule).toHaveBeenLastCalledWith(expect.objectContaining({ monthly_archive: { enabled: false, days: [1, 15], include_month_end: false, retain_count: 12 } }))
+    await wrapper.get('[data-testid="archive-enabled"]').setValue(true)
+    await wrapper.get('[data-testid="archive-count"]').setValue(1)
+    await save.trigger('click')
+    await flushPromises()
+    expect(updateSchedule).toHaveBeenLastCalledWith(expect.objectContaining({ monthly_archive: { enabled: true, days: [1, 15], include_month_end: false, retain_count: 1 } }))
+  })
+
   it('加载归档设置并支持键盘关闭日期选择器', async () => {
     getSchedule.mockResolvedValue({ enabled: true, cron_expr: '0 4 * * *', retain_days: 14, retain_count: 10,
       monthly_archive: { enabled: true, days: [1, 15], include_month_end: true, retain_count: 23 } })

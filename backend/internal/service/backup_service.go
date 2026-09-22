@@ -1494,9 +1494,11 @@ func (s *BackupService) cleanupOldBackups(ctx context.Context, schedule *BackupS
 		if r.MonthlyArchive != nil {
 			if r.MonthlyArchive.RetainCount > 0 {
 				archiveCount++
-				// A new finite limit applies to the finite archive pool. Permanent
-				// archives remain protected even after the configuration changes.
-				if cfg := schedule.MonthlyArchive; cfg != nil && cfg.RetainCount > 0 && cfg.RetainCount != r.MonthlyArchive.RetainCount {
+				// A new finite limit applies to the finite archive pool only while the
+				// rule is enabled; a disabled rule leaves every archive on its persisted
+				// policy. Permanent archives remain protected even after the
+				// configuration changes.
+				if cfg := schedule.MonthlyArchive; cfg != nil && cfg.Enabled && cfg.RetainCount > 0 && cfg.RetainCount != r.MonthlyArchive.RetainCount {
 					r.MonthlyArchive.RetainCount = cfg.RetainCount
 					metadataChanged = true
 				}
