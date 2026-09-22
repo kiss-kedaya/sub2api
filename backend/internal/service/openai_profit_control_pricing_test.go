@@ -197,6 +197,27 @@ func TestOpenAIProfitControlStickyBindingOccursOnlyAfterTerminalAdmission(t *tes
 	require.Equal(t, cheapID, cache.sessionBindings[cacheKey], "无既有绑定时应在终检通过后建立粘性")
 }
 
+func TestOpenAIProfitControlStickyBindingYieldsAfterAuthFailure(t *testing.T) {
+	groupID := int64(81)
+	disabledID := int64(901)
+	cheapID := int64(902)
+	const sessionHash = "profit-sticky-auth"
+	const cacheKey = "openai:" + sessionHash
+	cache := &schedulerTestGatewayCache{
+		sessionBindings: map[string]int64{cacheKey: disabledID},
+	}
+	svc := &OpenAIGatewayService{cache: cache}
+	ctx := context.WithValue(context.Background(), openAIProfitControlGateCtxKey{}, &openAIProfitControlGate{
+		groupID:   groupID,
+		platform:  PlatformOpenAI,
+		threshold: 0.5,
+	})
+
+	svc.BlockAccountScheduling(&Account{ID: disabledID, Platform: PlatformOpenAI}, time.Time{}, "auth_error")
+	require.NoError(t, svc.BindStickySessionAfterProfitAdmission(ctx, &groupID, sessionHash, cheapID))
+	require.Equal(t, cheapID, cache.sessionBindings[cacheKey], "认证失败换号后必须覆盖利润门下的旧粘性")
+}
+
 // WithOpenAITurnPricingContext：长连接 turn 边界重新冻结 pricingAt 并按当前
 // 配置重装门（区别于请求级同门复用）；已装门时以门所属调度分组为准。
 func TestProfitControl_TurnPricingContext(t *testing.T) {

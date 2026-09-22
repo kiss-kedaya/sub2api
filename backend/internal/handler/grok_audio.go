@@ -54,6 +54,8 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	// Realtime is not an HTTP streaming response; using reqStream=true here would
 	// let the wait queue flush an SSE ping before the WebSocket handshake succeeds.
 	failed := map[int64]struct{}{}
+	profitVetoCount := 0
+	accountSlotBusySeen := false
 	var selection *service.AccountSelectionResult
 	var release func()
 	var token string
@@ -87,11 +89,10 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		var streamStarted bool
 		var slotStatus openAISlotAcquireResult
 		release, slotStatus = h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", candidate, false, &streamStarted, reqLog)
-		if slotStatus != openAISlotAcquireOK {
-			if slotStatus == openAISlotAcquireFailed {
-				return
-			}
-			failed[account.ID] = struct{}{}
+		switch h.openAISlotLoopAction(c, slotStatus, account.ID, apiKey.GroupID, "", failed, &profitVetoCount, streamStarted, reqLog, &accountSlotBusySeen) {
+		case openAISlotLoopStop:
+			return
+		case openAISlotLoopRotate:
 			continue
 		}
 		var credErr error
@@ -124,6 +125,8 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	if selection == nil || selection.Account == nil || release == nil || upstream == nil {
 		if !candidateSeen {
 			h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No available Grok accounts")
+		} else if accountSlotBusySeen {
+			h.handleOpenAIAccountSlotBusyExhausted(c, false, reqLog)
 		} else {
 			h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Grok realtime upstream unavailable")
 		}
@@ -229,6 +232,8 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 
 	failed := map[int64]struct{}{}
 	var last *service.UpstreamFailoverError
+	profitVetoCount := 0
+	accountSlotBusySeen := false
 	reqLog := requestLogger(c, "handler.openai_gateway.grok_voice", zap.String("endpoint", endpoint))
 	selectionModel := "grok-4.5"
 
@@ -258,6 +263,8 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 		if selectErr != nil || selection == nil || selection.Account == nil {
 			if last != nil {
 				h.handleFailoverExhausted(c, last, false)
+			} else if accountSlotBusySeen {
+				h.handleOpenAIAccountSlotBusyExhausted(c, false, reqLog)
 			} else {
 				h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No available Grok accounts")
 			}
@@ -266,17 +273,10 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 		account := selection.Account
 		var started bool
 		release, status := h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &started, reqLog)
-		if status == openAISlotAcquireProfitVetoed {
-			failed[account.ID] = struct{}{}
-			continue
-		}
-		if status != openAISlotAcquireOK {
-			// Failed already wrote error response (or transient reject).
-			if status == openAISlotAcquireFailed && len(failed) == 0 {
-				// Slot path wrote the response; stop.
-				return
-			}
-			failed[account.ID] = struct{}{}
+		switch h.openAISlotLoopAction(c, status, account.ID, apiKey.GroupID, "", failed, &profitVetoCount, started, reqLog, &accountSlotBusySeen) {
+		case openAISlotLoopStop:
+			return
+		case openAISlotLoopRotate:
 			continue
 		}
 		result, forwardErr := func() (*service.OpenAIForwardResult, error) {

@@ -834,6 +834,14 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	switch statusCode {
 	case http.StatusTooManyRequests, 529:
 		return true
+	case http.StatusUnauthorized:
+		// HTTP 401 is credential-scoped. Align passthrough with ClassifyUpstreamFailure
+		// so sticky sessions rotate instead of replaying the same disabled key.
+		return true
+	}
+	// Structured credential codes may arrive as 403 HTTP; ordinary permission/content 403s must not rotate accounts.
+	if openAIStreamCredentialAuthFailure(responseBody) {
+		return true
 	}
 	if account == nil || account.Type != AccountTypeAPIKey {
 		return false
