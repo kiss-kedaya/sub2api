@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/stretchr/testify/require"
 )
 
@@ -117,7 +118,13 @@ func TestFetchOpenAIAccountModelsOAuthLabelsLocalImageModelsLikeUpstream(t *test
 	newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"gpt-5.6-sol"}]}`)
 	svc := &AccountTestService{openaiGatewayService: &OpenAIGatewayService{}}
 	account := newCodexModelsTestAccount()
-	account.Credentials["model_mapping"] = map[string]any{"gpt-image-2.5-flare": "gpt-image-2.5-flare"}
+	// This case is about label sources, so it must configure the upstream slug it
+	// asserts on: the picker is scoped to the account mapping, and an unconfigured
+	// slug is intentionally absent (see the exclusion test below).
+	account.Credentials["model_mapping"] = map[string]any{
+		"gpt-5.6-sol":         "gpt-5.6-sol",
+		"gpt-image-2.5-flare": "gpt-image-2.5-flare",
+	}
 	models, err := svc.FetchOpenAIAccountModels(context.Background(), account)
 	require.NoError(t, err)
 	byID := make(map[string]string, len(models))
@@ -141,4 +148,52 @@ func TestFetchOpenAIAccountModelsOAuthRespectsImageAllowlist(t *testing.T) {
 	}
 	require.Contains(t, ids, "gpt-image-2.5-flare")
 	require.NotContains(t, ids, "gpt-image-2.5-sunburst")
+}
+
+func pickerModelIDs(models []openai.Model) []string {
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		ids = append(ids, model.ID)
+	}
+	return ids
+}
+
+// The picker is scoped to the account mapping: an upstream slug the account does
+// not configure must not become a testable choice.
+func TestFetchOpenAIAccountModelsOAuthExcludesUnconfiguredTextModels(t *testing.T) {
+	newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-6-astra"}]}`)
+	svc := &AccountTestService{openaiGatewayService: &OpenAIGatewayService{}}
+	account := newCodexModelsTestAccount()
+	account.Credentials["model_mapping"] = map[string]any{"gpt-5.6-sol": "gpt-5.6-sol"}
+
+	models, err := svc.FetchOpenAIAccountModels(context.Background(), account)
+	require.NoError(t, err)
+	require.Equal(t, []string{"gpt-5.6-sol"}, pickerModelIDs(models))
+}
+
+// An alias may point at a local image model that Codex discovery never lists, so
+// the picker has to resolve the target before deciding to offer the public name.
+func TestFetchOpenAIAccountModelsOAuthLocalImageAlias(t *testing.T) {
+	newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"gpt-6-astra"}]}`)
+	svc := &AccountTestService{openaiGatewayService: &OpenAIGatewayService{}}
+	account := newCodexModelsTestAccount()
+	account.Credentials["model_mapping"] = map[string]any{"paint": "gpt-image-2.5-flare"}
+
+	models, err := svc.FetchOpenAIAccountModels(context.Background(), account)
+	require.NoError(t, err)
+	require.Equal(t, []string{"paint"}, pickerModelIDs(models))
+	require.Equal(t, "paint", models[0].DisplayName)
+}
+
+// A public name that merely looks like an image model must not be enough to
+// synthesize a picker entry when its target is a text model.
+func TestFetchOpenAIAccountModelsOAuthImageLookalikeAliasIsNotSynthesized(t *testing.T) {
+	newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"gpt-5.6-sol"}]}`)
+	svc := &AccountTestService{openaiGatewayService: &OpenAIGatewayService{}}
+	account := newCodexModelsTestAccount()
+	account.Credentials["model_mapping"] = map[string]any{"gpt-image-2.5-lookalike": "text-target-missing"}
+
+	models, err := svc.FetchOpenAIAccountModels(context.Background(), account)
+	require.NoError(t, err)
+	require.Empty(t, pickerModelIDs(models))
 }

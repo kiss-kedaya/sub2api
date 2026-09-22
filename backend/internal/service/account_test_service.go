@@ -228,10 +228,21 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 				seen[model.ID] = true
 			}
 		}
-		for model := range account.GetModelMapping() {
-			if IsGPTImageGenerationModel(model) && !strings.Contains(model, "*") && !seen[model] {
-				payload.Data = append(payload.Data, openai.Model{ID: model, Object: "model", Type: "model", OwnedBy: "openai", DisplayName: openaiCodexDisplayName(model)})
+		// Image models that a configured alias points at are absent from the Codex
+		// manifest, so the projection alone cannot surface them. Resolve each public
+		// name to its target and keep the entry when that target is an image model.
+		// Judging by the target rather than the public name keeps a lookalike name
+		// (for example an alias spelled "gpt-image-*" that maps to a text model)
+		// from being synthesized into the picker.
+		for publicID := range account.GetModelMapping() {
+			if strings.Contains(publicID, "*") || seen[publicID] {
+				continue
 			}
+			if !IsGPTImageGenerationModel(account.GetMappedModel(publicID)) {
+				continue
+			}
+			payload.Data = append(payload.Data, openai.Model{ID: publicID, Object: "model", Type: "model", OwnedBy: "openai", DisplayName: openaiCodexDisplayName(publicID)})
+			seen[publicID] = true
 		}
 	}
 	return payload.Data, nil
