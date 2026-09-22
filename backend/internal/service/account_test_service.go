@@ -2126,14 +2126,27 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-			errMsg := fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
+		if s.shouldDisableAccountAfterTestUpstream(resp.StatusCode, body) {
+			errMsg := fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body))
+			if resp.StatusCode == http.StatusUnauthorized {
+				errMsg = fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
+			}
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
 	return s.processOpenAIChatCompletionsStream(c, resp.Body)
+}
+
+func (s *AccountTestService) shouldDisableAccountAfterTestUpstream(statusCode int, body []byte) bool {
+	if s == nil || s.accountRepo == nil {
+		return false
+	}
+	if statusCode == http.StatusUnauthorized {
+		return true
+	}
+	return isUpstreamBillingAccountFrozen(body)
 }
 
 // testOpenAICompactConnection probes native remote compaction v2 (streaming
