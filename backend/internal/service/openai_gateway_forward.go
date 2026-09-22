@@ -1483,6 +1483,9 @@ func shouldFallbackOpenAIResponsesToChatOnUnsupportedEndpoint(account *Account, 
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
+	if account.IsCloudflareOpenAI() {
+		return nil, cloudflareChatOnlyUpstreamError()
+	}
 	body = s.prepareCodexQuotaOverdraftBody(ctx, account, isOpenAIResponsesCompactPath(c), body)
 	// Determine target URL based on account type
 	var targetURL string

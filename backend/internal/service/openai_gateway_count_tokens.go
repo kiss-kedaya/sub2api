@@ -150,7 +150,7 @@ func prepareNativeOpenAIInputTokensCountRequest(body []byte, account *Account) (
 }
 
 func shouldEstimateOpenAIInputTokensLocally(account *Account) bool {
-	if account == nil || account.IsGrok() || account.IsCNProvider() || account.Type == AccountTypeUpstream {
+	if account == nil || account.IsGrok() || account.IsCNProvider() || account.IsCloudflareOpenAI() || account.Type == AccountTypeUpstream {
 		return true
 	}
 	if account.Type != AccountTypeAPIKey {
@@ -281,6 +281,20 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 	if account == nil {
 		writeAnthropicCountTokensError(c, http.StatusServiceUnavailable, "api_error", "No available OpenAI accounts")
 		return fmt.Errorf("count_tokens: missing account")
+	}
+
+	// Cloudflare Workers AI 没有 Responses input_tokens。本地估算，禁止把
+	// Cloudflare token 发到 api.openai.com。
+	if account.IsCloudflareOpenAI() {
+		estimated, err := estimateAnthropicCountTokensLocally(body)
+		if err != nil {
+			writeAnthropicCountTokensError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+			return fmt.Errorf("count_tokens: estimate cloudflare input tokens: %w", err)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"input_tokens": estimated,
+		})
+		return nil
 	}
 
 	// 国产供应商（全部协议，含 anthropic）：一律本地估算，不发上游请求。
@@ -449,6 +463,9 @@ func (s *OpenAIGatewayService) buildInputTokensUpstreamRequest(
 	body []byte,
 	token string,
 ) (*http.Request, error) {
+	if account.IsCloudflareOpenAI() {
+		return nil, cloudflareChatOnlyUpstreamError()
+	}
 	targetURL := openaiPlatformAPIInputTokensURL
 	if account.Type == AccountTypeAPIKey {
 		if baseURL := account.GetOpenAIBaseURL(); strings.TrimSpace(baseURL) != "" {

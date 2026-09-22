@@ -30,6 +30,9 @@ func (s *OpenAIGatewayService) buildOpenAIResponsesWSURL(account *Account) (stri
 	if account == nil {
 		return "", errors.New("account is nil")
 	}
+	if account.IsCloudflareOpenAI() {
+		return "", cloudflareChatOnlyUpstreamError()
+	}
 	var targetURL string
 	switch account.Type {
 	case AccountTypeOAuth:
