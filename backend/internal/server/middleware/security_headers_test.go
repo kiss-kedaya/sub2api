@@ -171,6 +171,40 @@ func TestSecurityHeaders(t *testing.T) {
 		assert.Empty(t, GetNonceFromContext(c))
 	})
 
+	t.Run("canvas_allows_same_origin_embed", func(t *testing.T) {
+		cfg := config.CSPConfig{Enabled: true, Policy: ""}
+		middleware := SecurityHeaders(cfg, nil)
+
+		for _, path := range []string{"/canvas/", "/canvas/assets/app.js"} {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, path, nil)
+			middleware(c)
+
+			assert.Equal(t, "SAMEORIGIN", w.Header().Get("X-Frame-Options"), path)
+			csp := w.Header().Get("Content-Security-Policy")
+			assert.Equal(t, 1, countDirectiveValue(csp, "frame-ancestors", "'self'"), path)
+			assert.Equal(t, 0, countDirectiveValue(csp, "frame-ancestors", "'none'"), path)
+			assert.Contains(t, csp, "'nonce-", path)
+			assert.Contains(t, csp, "script-src", path)
+		}
+	})
+
+	t.Run("home_still_denies_framing", func(t *testing.T) {
+		cfg := config.CSPConfig{Enabled: true, Policy: ""}
+		middleware := SecurityHeaders(cfg, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+		middleware(c)
+
+		assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
+		csp := w.Header().Get("Content-Security-Policy")
+		assert.Equal(t, 1, countDirectiveValue(csp, "frame-ancestors", "'none'"))
+		assert.Equal(t, 0, countDirectiveValue(csp, "frame-ancestors", "'self'"))
+	})
+
 	t.Run("csp_enabled_with_nonce_placeholder", func(t *testing.T) {
 		cfg := config.CSPConfig{
 			Enabled: true,
@@ -492,6 +526,40 @@ func TestAddToDirective(t *testing.T) {
 		assert.Equal(t, 0, countDirectiveValue(result, "child-frame-src", "'self'"))
 		assert.Equal(t, 1, countDirectiveValue(result, "child-frame-src", "https://legacy.example.com"))
 	})
+}
+
+func TestRewriteCSPFrameAncestors(t *testing.T) {
+	t.Run("replaces_none", func(t *testing.T) {
+		got := rewriteCSPFrameAncestors("default-src 'self'; frame-ancestors 'none'; base-uri 'self'", "'self'")
+		assert.Equal(t, 1, countDirectiveValue(got, "frame-ancestors", "'self'"))
+		assert.Equal(t, 0, countDirectiveValue(got, "frame-ancestors", "'none'"))
+		assert.Contains(t, got, "default-src 'self'")
+		assert.Contains(t, got, "base-uri 'self'")
+	})
+
+	t.Run("adds_when_missing", func(t *testing.T) {
+		got := rewriteCSPFrameAncestors("default-src 'self'; script-src 'self'", "'self'")
+		assert.Equal(t, 1, countDirectiveValue(got, "frame-ancestors", "'self'"))
+	})
+
+	t.Run("replaces_foreign_ancestors", func(t *testing.T) {
+		got := rewriteCSPFrameAncestors("frame-ancestors https://evil.example", "'self'")
+		assert.Equal(t, 1, countDirectiveValue(got, "frame-ancestors", "'self'"))
+		assert.NotContains(t, got, "evil.example")
+	})
+}
+
+func TestAllowSameOriginEmbedHeaders(t *testing.T) {
+	header := http.Header{}
+	header.Set("X-Frame-Options", "DENY")
+	header.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+
+	AllowSameOriginEmbedHeaders(header)
+
+	assert.Equal(t, []string{"SAMEORIGIN"}, header.Values("X-Frame-Options"))
+	csp := header.Get("Content-Security-Policy")
+	assert.Equal(t, 1, countDirectiveValue(csp, "frame-ancestors", "'self'"))
+	assert.Equal(t, 0, countDirectiveValue(csp, "frame-ancestors", "'none'"))
 }
 
 // Benchmark tests

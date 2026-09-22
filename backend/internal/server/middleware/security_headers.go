@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -128,8 +129,13 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 		}
 
 		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("X-Frame-Options", "DENY")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		if isSameOriginEmbedPath(c) {
+			// 无限画布页用同源 iframe 嵌 /canvas；XFO/CSP 必须在被嵌目标上放开。
+			c.Header("X-Frame-Options", "SAMEORIGIN")
+		} else {
+			c.Header("X-Frame-Options", "DENY")
+		}
 		if isAPIRoutePath(c) {
 			c.Next()
 			return
@@ -138,16 +144,46 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 		if cfg.Enabled {
 			// Generate nonce for this request
 			nonce, err := GenerateNonce()
+			csp := finalPolicy
 			if err != nil {
 				// crypto/rand 失败时降级为无 nonce 的 CSP 策略
 				log.Printf("[SecurityHeaders] %v — 降级为无 nonce 的 CSP", err)
-				c.Header("Content-Security-Policy", strings.ReplaceAll(finalPolicy, NonceTemplate, "'unsafe-inline'"))
+				csp = strings.ReplaceAll(finalPolicy, NonceTemplate, "'unsafe-inline'")
 			} else {
 				c.Set(CSPNonceKey, nonce)
-				c.Header("Content-Security-Policy", strings.ReplaceAll(finalPolicy, NonceTemplate, "'nonce-"+nonce+"'"))
+				csp = strings.ReplaceAll(finalPolicy, NonceTemplate, "'nonce-"+nonce+"'")
 			}
+			if isSameOriginEmbedPath(c) {
+				csp = rewriteCSPFrameAncestors(csp, "'self'")
+			}
+			c.Header("Content-Security-Policy", csp)
 		}
 		c.Next()
+	}
+}
+
+func isSameOriginEmbedPath(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	path := c.Request.URL.Path
+	return path == "/canvas" || strings.HasPrefix(path, "/canvas/")
+}
+
+// AllowSameOriginEmbedHeaders lets the same origin iframe this response.
+// Other pages keep DENY / frame-ancestors 'none'; only rewrite existing CSP.
+func AllowSameOriginEmbedHeaders(header http.Header) {
+	if header == nil {
+		return
+	}
+	header.Set("X-Frame-Options", "SAMEORIGIN")
+	values := header.Values("Content-Security-Policy")
+	if len(values) == 0 {
+		return
+	}
+	header.Del("Content-Security-Policy")
+	for _, csp := range values {
+		header.Add("Content-Security-Policy", rewriteCSPFrameAncestors(csp, "'self'"))
 	}
 }
 
@@ -210,6 +246,42 @@ func addToDirective(policy, directive, value string) string {
 		trimmed += ";"
 	}
 	return trimmed + " " + newCSPDirective(directive, value)
+}
+
+func rewriteCSPFrameAncestors(policy, value string) string {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		return "frame-ancestors " + value
+	}
+	start := 0
+	for start <= len(policy) {
+		end := len(policy)
+		if relativeEnd := strings.IndexByte(policy[start:], ';'); relativeEnd >= 0 {
+			end = start + relativeEnd
+		}
+		fields := strings.Fields(policy[start:end])
+		if len(fields) > 0 && fields[0] == "frame-ancestors" {
+			prefix := strings.TrimRight(policy[:start], " \t")
+			suffix := policy[end:]
+			var b strings.Builder
+			if prefix != "" {
+				b.WriteString(prefix)
+				if !strings.HasSuffix(prefix, ";") {
+					b.WriteString(";")
+				}
+				b.WriteByte(' ')
+			}
+			b.WriteString("frame-ancestors ")
+			b.WriteString(value)
+			b.WriteString(suffix)
+			return b.String()
+		}
+		if end == len(policy) {
+			break
+		}
+		start = end + 1
+	}
+	return addToDirective(policy, "frame-ancestors", value)
 }
 
 func cspDirectiveEnd(policy, directive string) (int, bool) {
