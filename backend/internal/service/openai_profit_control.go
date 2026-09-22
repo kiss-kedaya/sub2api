@@ -302,6 +302,7 @@ func attachSelectionProfitGate(ctx context.Context, sel *AccountSelectionResult)
 	if sel == nil {
 		return nil
 	}
+	sel.profitGateResolved = true
 	if gate, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && gate != nil {
 		sel.profitGate = gate
 	}
@@ -312,8 +313,17 @@ func attachSelectionProfitGate(ctx context.Context, sel *AccountSelectionResult)
 // handler 在拿到选号结果后必须用返回的 ctx 做抢槽后终检
 // （ProfitControlVetoLatest / GatewayProfitControlVetoLatest）与准入后粘性
 // 绑定，否则这两步会因为看不到调度栈内安装的门而退化为空操作。
+// 智能路由切到未开门/不支持利润门的分组（DeepSeek/Kimi 等）时，选号结果
+// 的门为 nil：必须清掉入口分组残留门，不能把 WithOpenAIRequestPricingContext
+// 装上的主组阈值带去否决备用组账号。
 func ContextWithSelectionProfitGate(ctx context.Context, sel *AccountSelectionResult) context.Context {
-	if sel == nil || sel.profitGate == nil {
+	if sel == nil || !sel.profitGateResolved {
+		return ctx
+	}
+	if sel.profitGate == nil {
+		if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil {
+			return context.WithValue(ctx, openAIProfitControlGateCtxKey{}, (*openAIProfitControlGate)(nil))
+		}
 		return ctx
 	}
 	if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing == sel.profitGate {

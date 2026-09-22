@@ -583,7 +583,8 @@ type AccountSelectionResult struct {
 	// profitGate 携带本次选号真实生效的利润门（无门为 nil）。门安装在调度栈的
 	// 局部 ctx 上，handler 必须经 ContextWithSelectionProfitGate 重放后才能在
 	// 调度栈之外做抢槽后终检与准入后粘性绑定。
-	profitGate *openAIProfitControlGate
+	profitGate         *openAIProfitControlGate
+	profitGateResolved bool
 }
 
 // ProfitGateActive 报告本次选号是否处于利润门之下。
