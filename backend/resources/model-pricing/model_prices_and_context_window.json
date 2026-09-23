@@ -767,15 +767,24 @@
     "supports_system_messages": true,
     "supports_tool_choice": true
   },
+  "deepseek-v4-flash-0731": {
+    "cache_creation_input_token_cost": 4e-08,
+    "cache_read_input_token_cost": 4e-08,
+    "input_cost_per_token": 2e-06,
+    "output_cost_per_token": 8e-06,
+    "litellm_provider": "deepseek",
+    "mode": "chat"
+  },
   "deepseek-v4-flash-vision-exp": {
-    "cache_read_input_token_cost": 7e-09,
-    "input_cost_per_token": 2.2e-07,
+    "cache_creation_input_token_cost": 4e-08,
+    "cache_read_input_token_cost": 4e-08,
+    "input_cost_per_token": 2e-06,
     "litellm_provider": "deepseek",
     "max_input_tokens": 1048576,
     "max_output_tokens": 393216,
     "max_tokens": 393216,
     "mode": "chat",
-    "output_cost_per_token": 6.6e-07,
+    "output_cost_per_token": 8e-06,
     "source": "https://api-docs.deepseek.com/quick_start/pricing",
     "supported_endpoints": [
       "/v1/chat/completions"
@@ -811,6 +820,30 @@
     "supports_response_schema": true,
     "supports_system_messages": true,
     "supports_tool_choice": true
+  },
+  "deepseek-v4-pro-0813": {
+    "cache_creation_input_token_cost": 4e-08,
+    "cache_read_input_token_cost": 4e-08,
+    "input_cost_per_token": 2e-06,
+    "output_cost_per_token": 8e-06,
+    "litellm_provider": "deepseek",
+    "mode": "chat"
+  },
+  "deepseek-v4.1-flash": {
+    "cache_creation_input_token_cost": 4e-08,
+    "cache_read_input_token_cost": 4e-08,
+    "input_cost_per_token": 2e-06,
+    "output_cost_per_token": 8e-06,
+    "litellm_provider": "deepseek",
+    "mode": "chat"
+  },
+  "deepseek-v4.1-flash-0910": {
+    "cache_creation_input_token_cost": 4e-08,
+    "cache_read_input_token_cost": 4e-08,
+    "input_cost_per_token": 2e-06,
+    "output_cost_per_token": 8e-06,
+    "litellm_provider": "deepseek",
+    "mode": "chat"
   },
   "gemini-2.0-flash": {
     "cache_read_input_token_cost": 2.5e-08,
@@ -2369,6 +2402,12 @@
     "supports_reasoning": true,
     "supports_service_tier": true
   },
+  "gemini-3.8-flash": {
+    "input_cost_per_token": 7.5e-07,
+    "output_cost_per_token": 3.75e-06,
+    "litellm_provider": "gemini",
+    "mode": "chat"
+  },
   "gemini-embedding-001": {
     "input_cost_per_token": 1.5e-07,
     "litellm_provider": "vertex_ai-embedding-models",
@@ -2712,6 +2751,38 @@
     "supports_tool_choice": true,
     "supports_url_context": true,
     "supports_vision": true
+  },
+  "glm-5.1": {
+    "cache_creation_input_token_cost": 2e-06,
+    "cache_read_input_token_cost": 2e-06,
+    "input_cost_per_token": 8e-06,
+    "output_cost_per_token": 2.8e-05,
+    "litellm_provider": "zhipu",
+    "mode": "chat"
+  },
+  "glm-5.2": {
+    "cache_creation_input_token_cost": 2e-06,
+    "cache_read_input_token_cost": 2e-06,
+    "input_cost_per_token": 8e-06,
+    "output_cost_per_token": 2.8e-05,
+    "litellm_provider": "zhipu",
+    "mode": "chat"
+  },
+  "glm-5.3": {
+    "cache_creation_input_token_cost": 2e-06,
+    "cache_read_input_token_cost": 2e-06,
+    "input_cost_per_token": 8e-06,
+    "output_cost_per_token": 2.8e-05,
+    "litellm_provider": "zhipu",
+    "mode": "chat"
+  },
+  "glm-5.3-flash": {
+    "cache_creation_input_token_cost": 2.3e-07,
+    "cache_read_input_token_cost": 2.3e-07,
+    "input_cost_per_token": 8e-07,
+    "output_cost_per_token": 2.8e-06,
+    "litellm_provider": "zhipu",
+    "mode": "chat"
   },
   "gpt-3.5-turbo": {
     "input_cost_per_token": 5e-07,
@@ -5891,6 +5962,74 @@
     "supports_parallel_function_calling": true,
     "supports_system_messages": true,
     "supports_tool_choice": true
+  },
+  "grok-4.5": {
+    "cache_creation_input_token_cost": 0,
+    "cache_read_input_token_cost": 3e-07,
+    "cache_read_input_token_cost_above_200k_tokens": 6e-07,
+    "input_cost_per_token": 2e-06,
+    "input_cost_per_token_above_200k_tokens": 4e-06,
+    "output_cost_per_token": 6e-06,
+    "output_cost_per_token_above_200k_tokens": 1.2e-05,
+    "litellm_provider": "grok",
+    "mode": "chat"
+  },
+  "grok-4.6": {
+    "cache_creation_input_token_cost": 0,
+    "cache_read_input_token_cost": 5e-07,
+    "cache_read_input_token_cost_above_200k_tokens": 1e-06,
+    "input_cost_per_token": 2e-06,
+    "input_cost_per_token_above_200k_tokens": 4e-06,
+    "output_cost_per_token": 6e-06,
+    "output_cost_per_token_above_200k_tokens": 1.2e-05,
+    "litellm_provider": "grok",
+    "mode": "chat"
+  },
+  "grok-4.7": {
+    "cache_creation_input_token_cost": 0,
+    "cache_read_input_token_cost": 5e-07,
+    "cache_read_input_token_cost_above_200k_tokens": 1e-06,
+    "input_cost_per_token": 2e-06,
+    "input_cost_per_token_above_200k_tokens": 4e-06,
+    "output_cost_per_token": 6e-06,
+    "output_cost_per_token_above_200k_tokens": 1.2e-05,
+    "litellm_provider": "grok",
+    "mode": "chat"
+  },
+  "grok-4.7-build-fast": {
+    "cache_creation_input_token_cost": 0,
+    "cache_read_input_token_cost": 1e-06,
+    "cache_read_input_token_cost_above_200k_tokens": 1.5e-06,
+    "input_cost_per_token": 4e-06,
+    "input_cost_per_token_above_200k_tokens": 6e-06,
+    "output_cost_per_token": 1.2e-05,
+    "output_cost_per_token_above_200k_tokens": 1.8e-05,
+    "litellm_provider": "grok",
+    "mode": "chat"
+  },
+  "kimi-k2.6": {
+    "cache_creation_input_token_cost": 0,
+    "cache_read_input_token_cost": 1.1e-06,
+    "input_cost_per_token": 6.5e-06,
+    "output_cost_per_token": 2.7e-05,
+    "litellm_provider": "kimi",
+    "mode": "chat"
+  },
+  "kimi-k2.7-code": {
+    "cache_creation_input_token_cost": 0,
+    "cache_read_input_token_cost": 1.3e-06,
+    "input_cost_per_token": 6.5e-06,
+    "output_cost_per_token": 2.7e-05,
+    "litellm_provider": "kimi",
+    "mode": "chat"
+  },
+  "kimi-k3": {
+    "cache_creation_input_token_cost": 0,
+    "cache_read_input_token_cost": 2e-06,
+    "input_cost_per_token": 2e-05,
+    "output_cost_per_token": 1e-04,
+    "litellm_provider": "kimi",
+    "mode": "chat"
   },
   "o1-2024-12-17": {
     "cache_read_input_token_cost": 7.5e-06,
