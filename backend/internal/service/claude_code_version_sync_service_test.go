@@ -18,6 +18,7 @@ type claudeCodeVersionSyncSettingRepoStub struct {
 	mu        sync.Mutex
 	values    map[string]string
 	getErr    error
+	getErrKey string
 	setErr    error
 	updatedAt time.Time
 	writes    []string
@@ -33,10 +34,14 @@ func newClaudeCodeVersionSyncSettingRepoStub(values map[string]string) *claudeCo
 func (r *claudeCodeVersionSyncSettingRepoStub) GetValue(_ context.Context, key string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.getErr != nil {
+	if r.getErr != nil && (r.getErrKey == "" || r.getErrKey == key) {
 		return "", r.getErr
 	}
-	return r.values[key], nil
+	value, ok := r.values[key]
+	if !ok {
+		return "", ErrSettingNotFound
+	}
+	return value, nil
 }
 
 func (r *claudeCodeVersionSyncSettingRepoStub) Set(_ context.Context, key, value string) error {
@@ -182,6 +187,7 @@ func TestClaudeCodeVersionSyncEnabledByDefaultOrOnError(t *testing.T) {
 				SettingKeyClaudeCodeVersionAutoSyncEnabled: tt.value,
 			})
 			repo.getErr = tt.getErr
+			repo.getErrKey = SettingKeyClaudeCodeVersionAutoSyncEnabled
 			github := &claudeCodeVersionSyncGitHubStub{releases: []*GitHubRelease{{TagName: "v2.1.280"}}}
 
 			newClaudeCodeVersionSyncService(repo, github).runOnce()
@@ -189,6 +195,20 @@ func TestClaudeCodeVersionSyncEnabledByDefaultOrOnError(t *testing.T) {
 			require.Equal(t, []string{"2.1.280"}, repo.syncedWrites())
 		})
 	}
+}
+
+func TestClaudeCodeVersionSyncKeepsValueOnCurrentVersionReadError(t *testing.T) {
+	repo := newClaudeCodeVersionSyncSettingRepoStub(map[string]string{
+		SettingKeyClaudeCodeClientVersionSynced: "2.1.281",
+	})
+	repo.getErr = errors.New("读取已有版本失败")
+	repo.getErrKey = SettingKeyClaudeCodeClientVersionSynced
+	github := &claudeCodeVersionSyncGitHubStub{latest: &GitHubRelease{TagName: "v2.1.280"}}
+
+	newClaudeCodeVersionSyncService(repo, github).runOnce()
+
+	require.Empty(t, repo.syncedWrites(), "无法确认已有版本时不得覆盖同步值")
+	require.Equal(t, "2.1.281", repo.values[SettingKeyClaudeCodeClientVersionSynced])
 }
 
 // 抓取失败保持既有值，不清空、不降级。两条取数路径都失败才算真正拿不到。
