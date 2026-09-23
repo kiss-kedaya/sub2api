@@ -44,6 +44,7 @@ const destinations = computed(() => {
     ...(!auth.isSimpleMode ? [{ path: '/usage', label: t('nav.usage'), icon: 'chart' as const }] : []),
     ...(!auth.isSimpleMode ? [{ path: '/redeem', label: t('nav.redeem'), icon: 'gift' as const }] : []),
     { path: '/profile', label: t('nav.profile'), icon: 'user' as const },
+    { path: '/tickets', label: t('tickets.title'), icon: 'chat' as const },
     ...(isFeatureFlagEnabled(FeatureFlags.channelMonitor) ? [{ path: '/monitor', label: t('nav.channelStatus'), icon: 'server' as const }] : []),
     ...(!auth.isSimpleMode && isFeatureFlagEnabled(FeatureFlags.payment) ? [{ path: '/purchase', label: t('nav.buySubscription'), icon: 'creditCard' as const }] : []),
   ]
@@ -52,6 +53,7 @@ const destinations = computed(() => {
     { path: '/admin/dashboard', label: t('admin.dashboard.title'), icon: 'chart' as const },
     { path: '/admin/accounts', label: t('admin.accounts.title'), icon: 'server' as const },
     { path: '/admin/users', label: t('admin.users.title'), icon: 'users' as const },
+    { path: '/admin/tickets', label: t('tickets.adminTitle'), icon: 'chat' as const },
     { path: '/admin/groups', label: t('admin.groups.title'), icon: 'grid' as const },
     { path: '/admin/usage', label: t('admin.usage.title'), icon: 'chart' as const },
     { path: '/admin/settings', label: t('admin.settings.title'), icon: 'cog' as const },

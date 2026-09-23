@@ -306,6 +306,20 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/tickets/:id(\\d+)?',
+    name: 'UserTickets',
+    component: () => import('@/views/TicketsView.vue'),
+    props: { admin: false },
+    meta: { requiresAuth: true, requiresAdmin: false, title: 'My tickets', titleKey: 'tickets.title' }
+  },
+  {
+    path: '/admin/tickets/:id(\\d+)?',
+    name: 'AdminTickets',
+    component: () => import('@/views/TicketsView.vue'),
+    props: { admin: true },
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Support inbox', titleKey: 'tickets.adminTitle' }
+  },
+  {
     path: '/profile',
     name: 'Profile',
     component: () => import('@/views/user/ProfileView.vue'),
