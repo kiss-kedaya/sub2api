@@ -508,3 +508,59 @@ func TestListGroups_TimePricingPassthrough(t *testing.T) {
 	// 展示单价为标准时段价
 	require.InDelta(t, 0.28e-6, *m.Pricing.InputPrice, 1e-15)
 }
+
+type stubPlazaListedModels struct {
+	models map[string][]string
+}
+
+func (s stubPlazaListedModels) GetAvailableModels(_ context.Context, _ *int64, platform string) []string {
+	return s.models[platform]
+}
+
+func TestListPlazaGroups_AccountListedModelsFillMissingAndKeepChannel(t *testing.T) {
+	channels := []Channel{plazaPricedChannel(1, "ch", []int64{10}, PlatformOpenAI, "gpt-5")}
+	groups := []Group{{
+		ID: 10, Name: "openai", Platform: PlatformOpenAI, RateMultiplier: 1,
+		ModelAllowlist: GroupModelAllowlist{Enabled: true, Models: []string{"gpt-5", "typesafe/jev"}},
+	}}
+	pricing := newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+		"typesafe/jev": {Mode: "chat", InputCostPerToken: 1e-6, OutputCostPerToken: 2e-6},
+	})
+	svc := newPlazaService(channels, groups, pricing)
+	svc.SetListedModelCatalog(stubPlazaListedModels{models: map[string][]string{
+		PlatformOpenAI:    {"GPT-5", "typesafe/jev", "gpt-*", "blocked-model", " "},
+		PlatformAnthropic: {"claude-should-not-leak"},
+	}})
+
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	byName := map[string]PlazaModel{}
+	for _, m := range out[0].Models {
+		byName[m.Name] = m
+	}
+	require.Len(t, byName, 2)
+	require.NotContains(t, byName, "GPT-5")
+	require.NotContains(t, byName, "blocked-model")
+	require.NotContains(t, byName, "claude-should-not-leak")
+	require.NotNil(t, byName["gpt-5"].Pricing)
+	require.InDelta(t, 3e-6, *byName["gpt-5"].Pricing.InputPrice, 1e-15)
+	require.Equal(t, PlatformOpenAI, byName["typesafe/jev"].Platform)
+	require.NotNil(t, byName["typesafe/jev"].Pricing)
+	require.InDelta(t, 1e-6, *byName["typesafe/jev"].Pricing.InputPrice, 1e-15)
+	require.InDelta(t, 2e-6, *byName["typesafe/jev"].Pricing.OutputPrice, 1e-15)
+}
+
+func TestListPlazaGroups_AccountListedModelsShowWithoutChannelPrice(t *testing.T) {
+	groups := []Group{{ID: 10, Name: "mapping-only", Platform: PlatformOpenAI, RateMultiplier: 1}}
+	svc := newPlazaService(nil, groups, nil)
+	svc.SetListedModelCatalog(stubPlazaListedModels{models: map[string][]string{
+		PlatformOpenAI: {"typesafe/jev"},
+	}})
+
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, []string{"typesafe/jev"}, []string{out[0].Models[0].Name})
+	require.Nil(t, out[0].Models[0].Pricing)
+}
