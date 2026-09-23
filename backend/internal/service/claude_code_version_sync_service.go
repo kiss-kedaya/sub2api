@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -129,7 +130,13 @@ func (s *ClaudeCodeVersionSyncService) runOnce() {
 		return
 	}
 
-	current := NormalizeClaudeCodeClientVersion(s.currentSyncedVersion(ctx))
+	current, err := s.settingRepo.GetValue(ctx, SettingKeyClaudeCodeClientVersionSynced)
+	if err != nil && !errors.Is(err, ErrSettingNotFound) {
+		// 无法确认已有版本时跳过写入，避免数据库短暂故障导致版本降级。
+		slog.Warn("claude_code_version_sync_current_read_failed", "error", err)
+		return
+	}
+	current = NormalizeClaudeCodeClientVersion(current)
 	// 只向前推进：上游偶发返回旧数据或重新发布历史 tag 时不把已同步的版本号降级。
 	if current != "" && CompareVersions(latest, current) <= 0 {
 		return
@@ -182,14 +189,6 @@ func (s *ClaudeCodeVersionSyncService) autoSyncEnabled(ctx context.Context) bool
 		return true
 	}
 	return strings.TrimSpace(value) == "true"
-}
-
-func (s *ClaudeCodeVersionSyncService) currentSyncedVersion(ctx context.Context) string {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyClaudeCodeClientVersionSynced)
-	if err != nil {
-		return ""
-	}
-	return value
 }
 
 // latestClaudeCodeStableReleaseVersion 从 release 列表里挑出最大的稳定版 CLI 版本号。
