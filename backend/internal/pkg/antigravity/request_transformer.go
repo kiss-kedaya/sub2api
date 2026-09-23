@@ -298,11 +298,9 @@ func filterOpenCodePrompt(text string) string {
 // from Antigravity system text. This is prompt metadata, not an HTTP header; it
 // can trigger RESOURCE_EXHAUSTED on the Google upstream. Keep this scoped to the
 // Antigravity transformer: native Anthropic OAuth may require the attribution.
-// claudeIdentityOpeners are the Claude Agent SDK identity sentences that some
-// Anthropic clients put at the start of a system block. Stripping the
-// x-anthropic-billing-header line alone is not enough: a request whose system
-// text still opens with this sentence is still rejected by the Google upstream
-// with 429 RESOURCE_EXHAUSTED (see docs/ANTIGRAVITY_ATTRIBUTION_429.md).
+// claudeIdentityOpeners 是部分 Anthropic 客户端放在系统块开头的 Claude Agent SDK 身份语句。
+// 仅移除 x-anthropic-billing-header 行还不够：如果系统文本仍以这些语句开头，
+// Google 上游仍会返回 429 RESOURCE_EXHAUSTED。
 //
 // The patterns are anchored at the start of a system block on purpose, so user
 // instructions that merely mention Claude or Anthropic are left untouched.
