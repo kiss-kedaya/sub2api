@@ -350,7 +350,7 @@ func TestDeepseekPricingFileMatchesOfficialRates(t *testing.T) {
 		input, output, cacheRead float64
 	}{
 		{"deepseek-v4-flash", 2.2e-7, 6.6e-7, 7e-9},
-		{"deepseek-v4-flash-vision-exp", 2.2e-7, 6.6e-7, 7e-9},
+		{"deepseek-v4-flash-vision-exp", 2e-6, 8e-6, 4e-8},
 		{"deepseek-v4-pro", 6.6e-7, 1.98e-6, 2.2e-8},
 	}
 	for _, tt := range tests {
