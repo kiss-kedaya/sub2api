@@ -67,6 +67,7 @@ type ModelPlazaService struct {
 	pricingService *PricingService
 	billingService *BillingService
 	resolver       *ModelPricingResolver
+	listedModels   plazaListedModelCatalog
 }
 
 // NewModelPlazaService 创建模型广场服务。
@@ -194,6 +195,7 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 	out := make([]PlazaGroup, 0, len(order))
 	for _, gid := range order {
 		pg := byGroup[gid]
+		s.appendAccountListedModels(ctx, pg, groupEnt[gid])
 		if len(pg.Models) == 0 {
 			continue
 		}
@@ -205,6 +207,15 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 		})
 		g := groupEnt[gid]
 		for j := range pg.Models {
+			if pricingNeedsFallback(pg.Models[j].Pricing) {
+				one := []SupportedModel{{
+					Name:     pg.Models[j].Name,
+					Platform: pg.Models[j].Platform,
+					Pricing:  pg.Models[j].Pricing,
+				}}
+				fillGlobalPricingFallback(s.pricingService, one)
+				pg.Models[j].Pricing = one[0].Pricing
+			}
 			s.fillDisplayPricing(ctx, &pg.Models[j], g)
 			pg.Models[j].OfficialPricing = s.lookupOfficialPricing(ctx, pg.Models[j].Name, officialMemo)
 		}
