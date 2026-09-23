@@ -442,7 +442,6 @@ const clientTabs = computed((): TabConfig[] => {
         { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'codex-ws', label: t('keys.useKeyModal.cliTabs.codexCliWs'), icon: TerminalIcon },
       ]
-      tabs.push({ id: 'jev', label: t('keys.useKeyModal.cliTabs.jev'), icon: SparkleIcon })
       if (props.allowMessagesDispatch) {
         tabs.push({ id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon })
       }
@@ -499,7 +498,7 @@ const openaiTabs: TabConfig[] = [
   { id: 'windows', label: 'Windows', icon: WindowsIcon }
 ]
 
-const showShellTabs = computed(() => activeClientTab.value !== 'opencode' && activeClientTab.value !== 'jev')
+const showShellTabs = computed(() => activeClientTab.value !== 'opencode')
 
 const showCodexAuthMode = computed(() =>
   props.platform === 'openai' &&
@@ -525,9 +524,6 @@ const platformDescription = computed(() => {
   }
   switch (props.platform) {
     case 'openai':
-      if (activeClientTab.value === 'jev') {
-        return t('keys.useKeyModal.jev.description')
-      }
       if (activeClientTab.value === 'claude') {
         return t('keys.useKeyModal.description')
       }
@@ -572,9 +568,6 @@ const platformNote = computed(() => {
   }
   switch (props.platform) {
     case 'openai':
-      if (activeClientTab.value === 'jev') {
-        return t('keys.useKeyModal.jev.note')
-      }
       if (activeClientTab.value === 'claude') {
         return t('keys.useKeyModal.note')
       }
@@ -701,47 +694,6 @@ const comment = (value: string) => wrapToken('text-slate-500', value)
 
 // Syntax highlighting helpers
 // Generate file configs based on platform and active tab
-function generateJevSkill(apiBase: string, apiKey: string): FileConfig {
-  const content = `---
-name: typesafe-jev
-description: Judge a state with yes/no or multiple-choice questions through this gateway. Use model typesafe/jev, not a normal chat model.
----
-
-# typesafe/jev
-
-Base URL: ${apiBase}
-Model: typesafe/jev
-Key: ${apiKey}
-
-This model does not chat. Send one user message whose content is JSON, or put the same object in input.
-
-\`\`\`bash
-curl ${apiBase}/chat/completions \\
-  -H "Authorization: Bearer ${apiKey}" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "typesafe/jev",
-    "stream": false,
-    "messages": [
-      {
-        "role": "user",
-        "content": "{\\"state\\":\\"The door is locked.\\",\\"questions\\":{\\"locked\\":{\\"type\\":\\"noul\\",\\"instructions\\":\\"Is the door locked?\\",\\"criteria\\":{\\"true\\":\\"locked\\",\\"false\\":\\"open\\"}}}}"
-      }
-    ]
-  }'
-\`\`\`
-
-noul is yes/no. oul is one choice, and criteria lists the labels.
-The assistant content is the upstream JSON result.
-Save this file as .agents/skills/typesafe-jev/SKILL.md so a coding agent loads the schema.
-`
-  return {
-    path: '.agents/skills/typesafe-jev/SKILL.md',
-    content,
-    hint: t('keys.useKeyModal.jev.hint')
-  }
-}
-
 const currentFiles = computed((): FileConfig[] => {
   const baseUrl = props.baseUrl || window.location.origin
   const apiKey = props.apiKey
@@ -779,10 +731,6 @@ const currentFiles = computed((): FileConfig[] => {
       default:
         return [generateOpenCodeConfig('openai', apiBase, apiKey)]
     }
-  }
-
-  if (activeClientTab.value === 'jev') {
-    return [generateJevSkill(apiBase, apiKey)]
   }
 
   switch (props.platform) {
