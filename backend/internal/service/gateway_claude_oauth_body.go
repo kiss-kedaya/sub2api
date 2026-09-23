@@ -767,14 +767,17 @@ func expandClaudeOAuthSystemPromptTextTemplate(body []byte, text string, expansi
 		return "", nil
 	}
 	expansionPrompt = defaultClaudeOAuthExpansionPrompt(expansionPrompt)
-	billingText, err := buildBillingAttributionText(body, claude.CLIVersion())
+	// 同一次展开内只取一次版本号，billing attribution / 指纹 / 占位符三处共用，
+	// 避免运行期版本翻转瞬间取到不同值。
+	cliVersion := claude.EffectiveCLIVersion()
+	billingText, err := buildBillingAttributionText(body, cliVersion)
 	if err != nil {
 		return "", err
 	}
-	fp := computeClaudeCodeFingerprint(body, claude.CLIVersion())
+	fp := computeClaudeCodeFingerprint(body, cliVersion)
 	replacer := strings.NewReplacer(
 		"{billing_header}", billingText,
-		"{cc_version}", claude.CLIVersion(),
+		"{cc_version}", cliVersion,
 		"{fp}", fp,
 		"{claude_code_system_prompt}", claudeCodeSystemPrompt,
 		"{claude_code_expansion_prompt}", expansionPrompt,
