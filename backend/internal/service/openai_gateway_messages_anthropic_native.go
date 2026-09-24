@@ -239,6 +239,9 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 	}
 
 	usage := parseClaudeUsageFromResponseBody(body)
+	if upstreamFinancialFailureEnvelope(body) {
+		defer GuardUpstreamFinancialError(c, 0, body)()
+	}
 	if IsForceCacheBilling(ctx) && usage.InputTokens > 0 {
 		body, err = classifyAnthropicResponseInputAsCacheRead(body, usage)
 		if err != nil {
@@ -318,8 +321,9 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
+	pendingErrorHeader := ""
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -434,8 +438,19 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 			}
 
 			line := ev.line
+			if strings.TrimSpace(line) == "event: error" {
+				pendingErrorHeader = line
+				continue
+			}
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				trimmed := strings.TrimSpace(data)
+				if upstreamFinancialFailureEnvelope([]byte(data)) || pendingErrorHeader != "" && IsUpstreamFinancialError(0, []byte(data)) {
+					setOpsUpstreamError(c, http.StatusBadGateway, extractUpstreamErrorMessage([]byte(data)), "")
+					if !clientDisconnected {
+						WriteUpstreamFinancialError(c, 0, []byte(data))
+					}
+					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
+				}
 				observer.ObserveAnthropic([]byte(trimmed))
 				if anthropicStreamEventIsTerminal("", trimmed) {
 					sawTerminalEvent = true
@@ -454,6 +469,10 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 
 			if !clientDisconnected {
 				restored := string(reverseToolNamesIfPresent(c, []byte(line)))
+				if pendingErrorHeader != "" {
+					restored = pendingErrorHeader + "\n" + restored
+					pendingErrorHeader = ""
+				}
 				if _, err := io.WriteString(w, restored); err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
