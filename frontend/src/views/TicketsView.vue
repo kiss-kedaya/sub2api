@@ -66,14 +66,21 @@
                 <button v-if="detail.ticket.status !== 'closed'" type="button" class="ticket-icon-button" :disabled="mutating" :title="t('tickets.close')" :aria-label="t('tickets.close')" @click="closeDialogOpen = true"><Icon name="xCircle" size="md" /></button>
               </div>
               <div class="ticket-detail-meta"><span>{{ t(`tickets.categories.${detail.ticket.category}`) }}</span><time :datetime="detail.ticket.created_at">{{ formatDate(detail.ticket.created_at) }}</time></div>
-              <dl v-if="admin && detail.requester" class="ticket-requester-info">
+              <template v-if="admin && detail.requester">
+              <dl class="ticket-requester-stats">
+                <div><dt>{{ t('tickets.todayTokens') }}</dt><dd :title="detail.requester.usage_stats_available ? undefined : t('tickets.statsUnavailable')">{{ detail.requester.usage_stats_available ? formatTokensK(detail.requester.today_tokens ?? 0) : '—' }}</dd></div>
+                <div><dt>{{ t('tickets.todayCost') }}</dt><dd class="ticket-user-balance" :title="detail.requester.usage_stats_available ? undefined : t('tickets.statsUnavailable')">{{ detail.requester.usage_stats_available ? formatCurrency(detail.requester.today_cost ?? 0) : '—' }}</dd></div>
+                <div><dt :title="t('tickets.rechargeStatsHint')">{{ t('tickets.recharged14d') }}</dt><dd class="ticket-user-balance" :title="detail.requester.recharge_stats_available ? undefined : t('tickets.statsUnavailable')">{{ detail.requester.recharge_stats_available ? formatCurrency(detail.requester.recharged_14d ?? 0) : '—' }}</dd></div>
+              </dl>
+              <dl class="ticket-requester-info">
                 <div><dt>{{ t('tickets.requester') }}</dt><dd>{{ detail.requester.username || detail.ticket.user_name || '#' + detail.requester.id }}<span class="ticket-requester-id">#{{ detail.requester.id }}</span></dd></div>
                 <div><dt>{{ t('tickets.balance') }}</dt><dd class="ticket-user-balance">{{ formatCurrency(detail.requester.balance) }}</dd></div>
                 <div><dt>{{ t('tickets.contact') }}</dt><dd>{{ detail.ticket.contact || t('tickets.noContact') }}</dd></div>
                 <div><dt>{{ t('tickets.accountStatus') }}</dt><dd>{{ detail.requester.status === 'active' ? t('tickets.active') : detail.requester.status === 'disabled' ? t('tickets.disabled') : detail.requester.status }}</dd></div>
                 <div class="ticket-requester-email"><dt>{{ t('common.email') }}</dt><dd>{{ detail.requester.email }}</dd></div>
-                <div><dt>{{ t('tickets.registered') }}</dt><dd>{{ shortDate(detail.requester.created_at) }}</dd></div>
+                <div class="ticket-requester-registered"><dt>{{ t('tickets.registered') }}</dt><dd>{{ shortDate(detail.requester.created_at) }}</dd></div>
               </dl>
+              </template>
               <div v-else-if="!admin && detail.ticket.contact" class="ticket-user-contact"><Icon name="userCircle" size="sm" /><span>{{ t('tickets.contact') }}: {{ detail.ticket.contact }}</span></div>
             </header>
 
@@ -119,7 +126,7 @@ import TicketStatusBadge from '@/components/tickets/TicketStatusBadge.vue'
 import TicketTimeline from '@/components/tickets/TicketTimeline.vue'
 import { useTicketWorkspace } from '@/composables/useTicketWorkspace'
 import { newClientID, ticketCategories, type CreateTicket } from '@/api/tickets'
-import { formatCurrency } from '@/utils/format'
+import { formatCurrency, formatTokensK } from '@/utils/format'
 import { isComposerSendKey } from '@/utils/ticketComposer'
 import '@/styles/tickets.css'
 
