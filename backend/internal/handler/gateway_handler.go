@@ -2050,6 +2050,10 @@ func (h *GatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotT
 }
 
 func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
+
+	if failoverErr != nil {
+		defer service.GuardUpstreamFinancialError(c, failoverErr.StatusCode, failoverErr.ResponseBody)()
+	}
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody
 	if service.IsOpenAISilentRefusalErrorBody(responseBody) {
@@ -2087,6 +2091,7 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 				c.Set(service.OpsSkipPassthroughKey, true)
 			}
 
+			defer service.GuardUpstreamFinancialError(c, respCode, []byte(msg))()
 			h.handleStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted)
 			return
 		}

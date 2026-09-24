@@ -1661,6 +1661,7 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 	requestedModel string,
 ) (*OpenAIForwardResult, error) {
 	body := s.readUpstreamErrorBody(resp)
+	defer GuardUpstreamFinancialError(c, resp.StatusCode, body)()
 	// Reconcile readiness before configurable passthrough branches can return;
 	// otherwise a Grok 429 can remain schedulable.
 	s.handleGrokAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
@@ -1838,6 +1839,9 @@ func adaptGrokVideoClientResponse(endpoint GrokMediaEndpoint, requestID string, 
 
 func writeGrokMediaResponse(c *gin.Context, resp *http.Response, body []byte, filter *responseheaders.CompiledHeaderFilter) {
 	if c == nil || resp == nil {
+		return
+	}
+	if upstreamFinancialFailureEnvelope(body) && WriteUpstreamFinancialError(c, 0, body) {
 		return
 	}
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, filter)

@@ -1729,6 +1729,10 @@ func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, stat
 
 // handleAnthropicFailoverExhausted maps upstream failover errors to Anthropic format.
 func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+
+	if failoverErr != nil {
+		defer service.GuardUpstreamFinancialError(c, failoverErr.StatusCode, failoverErr.ResponseBody)()
+	}
 	if failoverErr != nil {
 		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
 	}
@@ -3235,6 +3239,10 @@ func (h *OpenAIGatewayHandler) handleConcurrencyError(c *gin.Context, err error,
 }
 
 func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+
+	if failoverErr != nil {
+		defer service.GuardUpstreamFinancialError(c, failoverErr.StatusCode, failoverErr.ResponseBody)()
+	}
 	if failoverErr == nil {
 		h.handleFailoverExhaustedSimple(c, http.StatusBadGateway, streamStarted)
 		return
@@ -3328,6 +3336,7 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 				c.Set(service.OpsSkipPassthroughKey, true)
 			}
 
+			defer service.GuardUpstreamFinancialError(c, respCode, []byte(msg))()
 			h.handleStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted)
 			return
 		}

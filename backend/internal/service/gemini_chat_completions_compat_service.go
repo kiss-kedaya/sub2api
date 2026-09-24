@@ -819,6 +819,8 @@ func (s *GeminiMessagesCompatService) writeGeminiChatCompletionsMappedError(
 	upstreamRequestID string,
 	body []byte,
 ) error {
+
+	defer GuardUpstreamFinancialError(c, upstreamStatus, body)()
 	upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
 	setOpsUpstreamError(c, upstreamStatus, upstreamMsg, "")
 	if account != nil {
