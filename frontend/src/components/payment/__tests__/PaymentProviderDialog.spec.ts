@@ -95,6 +95,55 @@ function mountDialog(options: { editing?: ProviderInstance | null } = {}) {
   })
 }
 
+describe('PaymentProviderDialog callback URLs', () => {
+  it('preserves instance fee, multiplier, and EPUSDT redirect mode when normalizing callbacks', async () => {
+    const provider = providerFactory({
+      provider_key: 'epusdt', name: 'EPUSDT',
+      config: { pid: 'test-merchant', apiBase: 'https://pay.example.com' },
+      supported_types: ['epusdt'], payment_mode: 'redirect',
+      recharge_fee_rate: 2.5, balance_recharge_multiplier: 1.2,
+    })
+    const wrapper = mountDialog({ editing: provider })
+    ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(provider)
+    await nextTick()
+    const bases = wrapper.findAll('input').filter(input => input.classes().includes('!rounded-r-none'))
+    await bases[0].setValue(' https://notify.example.com/sub/// ')
+    await bases[1].setValue('https://return.example.com/')
+    await wrapper.find('form').trigger('submit')
+    const payload = wrapper.emitted('save')?.[0]?.[0] as Record<string, unknown>
+    expect(payload).toMatchObject({
+      provider_key: 'epusdt', payment_mode: 'redirect',
+      recharge_fee_rate: 2.5, balance_recharge_multiplier: 1.2,
+      config: { notifyUrl: 'https://notify.example.com/sub/api/v1/payments/callback', returnUrl: 'https://return.example.com/payment/result' },
+    })
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['https://notify.example.com/', 'https://return.example.com///', 'https://notify.example.com', 'https://return.example.com'],
+    [' https://notify.example.com/sub/ ', ' https://return.example.com/site/ ', 'https://notify.example.com/sub', 'https://return.example.com/site'],
+    ['https://notify.example.com', 'https://return.example.com', 'https://notify.example.com', 'https://return.example.com'],
+    ['', '', window.location.origin, window.location.origin],
+  ])('joins callback paths to %s and %s', async (notify, returnUrl, expectedNotify, expectedReturn) => {
+    const provider = providerFactory({
+      provider_key: 'easypay', name: 'EasyPay',
+      config: { pid: 'pid-1', apiBase: 'https://pay.example.com' },
+      supported_types: ['alipay'], payment_mode: 'qrcode',
+    })
+    const wrapper = mountDialog({ editing: provider })
+    ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(provider)
+    await nextTick()
+    const bases = wrapper.findAll('input').filter(input => input.classes().includes('!rounded-r-none'))
+    await bases[0].setValue(notify)
+    await bases[1].setValue(returnUrl)
+    await wrapper.find('form').trigger('submit')
+    const payload = wrapper.emitted('save')?.[0]?.[0] as { config: Record<string, string> }
+    expect(payload.config.notifyUrl).toBe(expectedNotify + '/api/v1/payment/webhook/easypay')
+    expect(payload.config.returnUrl).toBe(expectedReturn + '/payment/result')
+    wrapper.unmount()
+  })
+})
+
 describe('PaymentProviderDialog payment guide', () => {
   it('shows no payment guide for providers without a flow guide', () => {
     const wrapper = mountDialog()
