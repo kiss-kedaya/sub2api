@@ -327,6 +327,16 @@
           {{ t('common.close') }}
         </button>
         <button
+          v-if="canShowTestAllModels"
+          type="button"
+          data-test="test-all-models"
+          @click="startAllModelsTest"
+          :disabled="status === 'connecting'"
+          class="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500"
+        >
+          {{ status === 'connecting' && testingAllModels ? t('admin.accounts.testingAllModels') : t('admin.accounts.testAllModels') }}
+        </button>
+        <button
           @click="startTest"
           :disabled="!canStartTest"
           :class="[
@@ -372,10 +382,9 @@ import Select from '@/components/common/Select.vue'
 import TextArea from '@/components/common/TextArea.vue'
 import { Icon } from '@/components/icons'
 import { useClipboard } from '@/composables/useClipboard'
-import { buildApiUrl } from '@/api/client'
-import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
 import { adminAPI } from '@/api/admin'
 import type { Account, ClaudeModel } from '@/types'
+import { streamAccountModelTest } from '@/utils/accountModelTest'
 
 const { t } = useI18n()
 const { copyToClipboard } = useClipboard()
@@ -422,6 +431,8 @@ const uploadAudioDataURL = ref('')
 const uploadAudioName = ref('')
 const imageFileInput = ref<HTMLInputElement | null>(null)
 const audioFileInput = ref<HTMLInputElement | null>(null)
+const testingAllModels = ref(false)
+const suppressTerminalStatus = ref(false)
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
 const isGrokAccount = computed(() => props.account?.platform === 'grok')
 const openAITestModeOptions = computed(() => [
@@ -689,6 +700,18 @@ const canStartTest = computed(() => {
   return Boolean(selectedModelId.value)
 })
 
+const isGrokStandaloneMode = computed(() =>
+  isGrokAccount.value &&
+  (grokTestMode.value === 'search' ||
+    grokTestMode.value === 'tts' ||
+    grokTestMode.value === 'stt' ||
+    grokTestMode.value === 'realtime')
+)
+
+const canShowTestAllModels = computed(
+  () => !isGrokStandaloneMode.value && modelOptionsForMode.value.length > 1
+)
+
 const sortTestModels = (models: ClaudeModel[]) => {
   const priorityMap = new Map(prioritizedGeminiModels.map((id, index) => [id, index]))
 
@@ -799,6 +822,8 @@ const resetState = () => {
   generatedAudios.value = []
   generatedVideos.value = []
   previewImageUrl.value = ''
+  testingAllModels.value = false
+  suppressTerminalStatus.value = false
 }
 
 const handleClose = () => {
@@ -825,6 +850,40 @@ const scrollToBottom = async () => {
   }
 }
 
+const buildRequestBody = (modelId: string) => {
+  const requestBody: {
+    model_id: string
+    prompt: string
+    mode?: string
+    image_data_url?: string
+    audio_data_url?: string
+  } = {
+    model_id: modelId,
+    prompt: supportsPromptInput.value ? testPrompt.value.trim() : ''
+  }
+  if (isOpenAIAccount.value) {
+    requestBody.mode = testMode.value
+  }
+  if (isGrokAccount.value) {
+    requestBody.mode = grokTestMode.value
+    if (
+      grokTestMode.value === 'search' ||
+      grokTestMode.value === 'tts' ||
+      grokTestMode.value === 'stt' ||
+      grokTestMode.value === 'realtime'
+    ) {
+      requestBody.model_id = ''
+    }
+    if (uploadImageDataURL.value && (grokTestMode.value === 'image' || grokTestMode.value === 'video')) {
+      requestBody.image_data_url = uploadImageDataURL.value
+    }
+    if (uploadAudioDataURL.value && grokTestMode.value === 'stt') {
+      requestBody.audio_data_url = uploadAudioDataURL.value
+    }
+  }
+  return requestBody
+}
+
 const startTest = async () => {
   if (!props.account || !canStartTest.value) return
 
@@ -844,87 +903,83 @@ const startTest = async () => {
   abortController = new AbortController()
 
   try {
-    const requestBody: {
-      model_id: string
-      prompt: string
-      mode?: string
-      image_data_url?: string
-      audio_data_url?: string
-    } = {
-      model_id: showModelSelect.value ? selectedModelId.value : '',
-      prompt: supportsPromptInput.value ? testPrompt.value.trim() : ''
-    }
-    if (isOpenAIAccount.value) {
-      requestBody.mode = testMode.value
-    }
-    if (isGrokAccount.value) {
-      // Always send explicit Grok mode. search/tts/stt/realtime are standalone
-      // endpoints (no free-form model select). text/image/video use optional model.
-      requestBody.mode = grokTestMode.value
-      if (
-        grokTestMode.value === 'search' ||
-        grokTestMode.value === 'tts' ||
-        grokTestMode.value === 'stt' ||
-        grokTestMode.value === 'realtime'
-      ) {
-        requestBody.model_id = ''
-      }
-      if (uploadImageDataURL.value && (grokTestMode.value === 'image' || grokTestMode.value === 'video')) {
-        requestBody.image_data_url = uploadImageDataURL.value
-      }
-      if (uploadAudioDataURL.value && grokTestMode.value === 'stt') {
-        requestBody.audio_data_url = uploadAudioDataURL.value
-      }
-    }
-
-    // Use the configured API base; EventSource does not support POST.
-    const url = buildApiUrl(`/admin/accounts/${props.account.id}/test`)
-
-    // Use fetch with streaming for SSE since EventSource doesn't support POST
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
-        'Content-Type': 'application/json',
-        [ADMIN_UI_REQUEST_HEADER]: '1'
-      },
-      body: JSON.stringify(requestBody),
-      signal: abortController.signal
+    await streamAccountModelTest({
+      accountId: props.account.id,
+      body: buildRequestBody(showModelSelect.value ? selectedModelId.value : ''),
+      signal: abortController.signal,
+      onEvent: handleEvent
     })
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      status.value = 'idle'
+      return
     }
+    status.value = 'error'
+    const msg = error instanceof Error ? error.message : t('common.unknownError')
+    errorMessage.value = msg
+    addLine(t('admin.accounts.errorPrefix', { message: msg }), 'text-red-400')
+  }
+}
 
-    const reader = response.body?.getReader()
-    if (!reader) {
-      throw new Error(t('admin.accounts.grok.noResponseBody'))
-    }
+const startAllModelsTest = async () => {
+  if (!props.account || !canShowTestAllModels.value || status.value === 'connecting') return
 
-    const decoder = new TextDecoder()
-    let buffer = ''
+  const models = modelOptionsForMode.value.map((model) => model.id)
+  if (models.length === 0) return
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+  resetState()
+  testingAllModels.value = true
+  suppressTerminalStatus.value = true
+  status.value = 'connecting'
+  addLine(t('admin.accounts.startingTestForAccount', { name: props.account.name }), 'text-blue-400')
+  addLine(t('admin.accounts.testAllModelsProgress', { total: models.length }), 'text-gray-400')
+  addLine('', 'text-gray-300')
 
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
+  abortStream()
+  abortController = new AbortController()
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const jsonStr = line.slice(6).trim()
-          if (jsonStr) {
-            try {
-              const event = JSON.parse(jsonStr)
-              handleEvent(event)
-            } catch (e) {
-              console.error('Failed to parse SSE event:', e)
-            }
+  let failed = 0
+  try {
+    for (let index = 0; index < models.length; index++) {
+      if (abortController.signal.aborted) return
+      const modelId = models[index]
+      selectedModelId.value = modelId
+      streamingContent.value = ''
+      addLine(
+        t('admin.accounts.testingModelProgress', {
+          current: index + 1,
+          total: models.length,
+          model: modelId
+        }),
+        'text-cyan-400'
+      )
+      let lastSuccess = true
+      let lastError = ''
+      await streamAccountModelTest({
+        accountId: props.account.id,
+        body: buildRequestBody(modelId),
+        signal: abortController.signal,
+        onEvent: (event) => {
+          handleEvent(event)
+          if (event.type === 'test_complete') {
+            lastSuccess = Boolean(event.success)
+            if (!lastSuccess) lastError = event.error || t('admin.accounts.testFailed')
+          }
+          if (event.type === 'error') {
+            lastSuccess = false
+            lastError = event.error || t('common.unknownError')
           }
         }
+      })
+      if (!lastSuccess) {
+        failed += 1
+        addLine(t('admin.accounts.errorPrefix', { message: lastError || t('admin.accounts.testFailed') }), 'text-red-400')
       }
+      addLine('', 'text-gray-300')
+    }
+    status.value = failed > 0 ? 'error' : 'success'
+    if (failed > 0) {
+      errorMessage.value = t('admin.accounts.testAllModelsFailed', { failed, total: models.length })
     }
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') {
@@ -935,6 +990,9 @@ const startTest = async () => {
     const msg = error instanceof Error ? error.message : t('common.unknownError')
     errorMessage.value = msg
     addLine(t('admin.accounts.errorPrefix', { message: msg }), 'text-red-400')
+  } finally {
+    testingAllModels.value = false
+    suppressTerminalStatus.value = false
   }
 }
 
@@ -1028,17 +1086,21 @@ const handleEvent = (event: {
         addLine(streamingContent.value, 'text-green-300')
         streamingContent.value = ''
       }
-      if (event.success) {
-        status.value = 'success'
-      } else {
-        status.value = 'error'
-        errorMessage.value = event.error || t('admin.accounts.testFailed')
+      if (!suppressTerminalStatus.value) {
+        if (event.success) {
+          status.value = 'success'
+        } else {
+          status.value = 'error'
+          errorMessage.value = event.error || t('admin.accounts.testFailed')
+        }
       }
       break
 
     case 'error':
-      status.value = 'error'
-      errorMessage.value = event.error || t('common.unknownError')
+      if (!suppressTerminalStatus.value) {
+        status.value = 'error'
+        errorMessage.value = event.error || t('common.unknownError')
+      }
       if (streamingContent.value) {
         addLine(streamingContent.value, 'text-green-300')
         streamingContent.value = ''
