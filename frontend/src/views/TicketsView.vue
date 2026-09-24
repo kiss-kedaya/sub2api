@@ -7,7 +7,7 @@
           <div><h1>{{ t(admin ? 'tickets.adminTitle' : 'tickets.title') }}</h1><p>{{ t('tickets.count', { count: stats.total }) }}<span v-if="stats.unread" class="tickets-unread-summary">{{ t('tickets.unread') }} {{ stats.unread }}</span></p></div>
         </div>
         <div class="tickets-heading-actions">
-          <span class="tickets-sync" :class="{ 'tickets-sync-error': syncFailed }" role="status"><span></span>{{ t(refreshing ? 'tickets.refreshing' : syncFailed ? 'tickets.syncFailed' : 'tickets.synced') }}</span>
+          <span v-if="syncFailed" class="tickets-sync tickets-sync-error" role="status"><span></span>{{ t('tickets.syncFailed') }}</span>
           <button class="ticket-icon-button" type="button" :disabled="refreshing" :title="t('tickets.refresh')" :aria-label="t('tickets.refresh')" @click="refresh(true)"><Icon name="refresh" size="sm" :class="{ 'animate-spin': refreshing }" /></button>
           <button v-if="!admin" class="ticket-button ticket-button-primary" type="button" :disabled="stats.can_create === false || loading" @click="newTicketOpen = true"><Icon name="plus" size="sm" />{{ t('tickets.newTicket') }}</button>
         </div>
@@ -21,7 +21,7 @@
 
       <nav class="tickets-status-tabs" :aria-label="t('tickets.status')">
         <button v-for="status in statusTabs" :key="status || 'all'" type="button" :aria-pressed="filters.status === status" :class="{ active: filters.status === status }" @click="filters.status = status">
-          {{ t(status ? `tickets.statuses.${status}` : 'tickets.all') }}<span>{{ status ? stats[status] : stats.total }}</span>
+          {{ t(status === 'active' ? 'tickets.notClosed' : status ? `tickets.statuses.${status}` : 'tickets.all') }}<span>{{ status === 'active' ? stats.total - stats.closed : status ? stats[status] : stats.total }}</span>
         </button>
       </nav>
 
@@ -30,9 +30,7 @@
           <div class="tickets-list-tools">
             <label class="tickets-search"><Icon name="search" size="sm" /><input v-model="filters.search" type="search" maxlength="160" :aria-label="t('tickets.search')" :placeholder="t(admin ? 'tickets.adminSearch' : 'tickets.search')" /></label>
             <div class="tickets-list-filters">
-              <select v-if="admin" v-model="filters.assigned_to" class="ticket-select" :aria-label="t('tickets.assignee')"><option value="all">{{ t('tickets.allAssignees') }}</option><option value="mine">{{ t('tickets.mine') }}</option><option value="unassigned">{{ t('tickets.unassigned') }}</option></select>
               <select v-model="filters.category" class="ticket-select" :aria-label="t('tickets.category')"><option value="">{{ t('tickets.allCategories') }}</option><option v-for="category in ticketCategories" :key="category" :value="category">{{ t(`tickets.categories.${category}`) }}</option></select>
-              <select v-if="admin" v-model="filters.priority" class="ticket-select" :aria-label="t('tickets.priority')"><option value="">{{ t('tickets.allPriorities') }}</option><option v-for="priority in ticketPriorities" :key="priority" :value="priority">{{ t(`tickets.priorities.${priority}`) }}</option></select>
             </div>
           </div>
 
@@ -45,7 +43,7 @@
                 <span class="ticket-item-top"><span class="ticket-number">#{{ item.id }}</span><time :datetime="item.last_message_at" :title="formatDate(item.last_message_at)">{{ shortDate(item.last_message_at) }}</time></span>
                 <span class="ticket-item-subject"><strong>{{ item.subject }}</strong><span v-if="item.unread_count" class="ticket-unread" :aria-label="t('tickets.unread')">{{ item.unread_count > 99 ? '99+' : item.unread_count }}</span></span>
                 <span class="ticket-item-preview">{{ item.last_message_preview }}</span>
-                <span class="ticket-item-bottom"><TicketStatusBadge :status="item.status" /><span v-if="item.priority !== 'normal'" class="ticket-priority" :data-priority="item.priority">{{ t(`tickets.priorities.${item.priority}`) }}</span><span class="ticket-item-category">{{ admin ? item.user_name || item.user_email : t(`tickets.categories.${item.category}`) }}</span></span>
+                <span class="ticket-item-bottom"><TicketStatusBadge :status="item.status" /><span class="ticket-item-category">{{ admin ? item.user_name || item.user_email : t(`tickets.categories.${item.category}`) }}</span></span>
               </button>
             </template>
           </div>
@@ -57,7 +55,7 @@
         </aside>
 
         <section class="tickets-detail" :aria-label="t('tickets.selectDetail')" :aria-busy="detailLoading">
-          <div v-if="!selectedID" class="tickets-welcome"><Icon name="chat" size="xl" /><h2>{{ t('tickets.selectTicket') }}</h2><div class="tickets-welcome-counts"><span><strong>{{ stats.open + stats.in_progress }}</strong>{{ t('tickets.statuses.in_progress') }}</span><span><strong>{{ stats.resolved }}</strong>{{ t('tickets.statuses.resolved') }}</span></div></div>
+          <div v-if="!selectedID" class="tickets-welcome"><Icon name="chat" size="xl" /><h2>{{ t('tickets.selectTicket') }}</h2></div>
           <div v-else-if="detailLoading" class="tickets-empty" role="status"><Icon name="refresh" size="lg" class="animate-spin" /><p>{{ t('tickets.loading') }}</p></div>
           <div v-else-if="!detail" class="tickets-empty" role="alert"><Icon name="exclamationCircle" size="lg" /><p>{{ detailError || t('tickets.loadFailed') }}</p><button class="ticket-text-button" @click="refresh(true)">{{ t('tickets.retry') }}</button><button class="ticket-text-button" @click="back">{{ t('tickets.back') }}</button></div>
           <template v-else>
@@ -67,14 +65,7 @@
                 <div class="ticket-detail-title"><div><span class="ticket-number">#{{ detail.ticket.id }}</span><TicketStatusBadge :status="detail.ticket.status" /></div><h2>{{ detail.ticket.subject }}</h2></div>
                 <button v-if="detail.ticket.status !== 'closed'" type="button" class="ticket-icon-button" :disabled="mutating" :title="t('tickets.close')" :aria-label="t('tickets.close')" @click="closeDialogOpen = true"><Icon name="xCircle" size="md" /></button>
               </div>
-              <div class="ticket-detail-meta"><span>{{ t(`tickets.categories.${detail.ticket.category}`) }}</span><span class="ticket-priority" :data-priority="detail.ticket.priority">{{ t(`tickets.priorities.${detail.ticket.priority}`) }}</span><time :datetime="detail.ticket.created_at">{{ formatDate(detail.ticket.created_at) }}</time></div>
-              <div v-if="admin" class="ticket-admin-toolbar">
-                <select :value="detail.ticket.status" class="ticket-select" :disabled="mutating" :aria-label="t('tickets.status')" @change="changeStatus"><option v-for="status in ticketStatuses" :key="status" :value="status">{{ t(`tickets.statuses.${status}`) }}</option></select>
-                <select :value="detail.ticket.priority" class="ticket-select" :disabled="mutating" :aria-label="t('tickets.priority')" @change="changePriority"><option v-for="priority in ticketPriorities" :key="priority" :value="priority">{{ t(`tickets.priorities.${priority}`) }}</option></select>
-                <span class="ticket-assignee" :title="detail.ticket.assignee_name || t('tickets.unassigned')"><Icon name="userCircle" size="sm" />{{ detail.ticket.assignee_name || t('tickets.unassigned') }}</span>
-                <button v-if="detail.ticket.assignee_id !== auth.user?.id" class="ticket-text-button" :disabled="mutating" @click="update({ assigned_to: 'me' })">{{ t('tickets.claim') }}</button>
-                <button v-else class="ticket-text-button" :disabled="mutating" @click="update({ assigned_to: 'unassigned' })">{{ t('tickets.release') }}</button>
-              </div>
+              <div class="ticket-detail-meta"><span>{{ t(`tickets.categories.${detail.ticket.category}`) }}</span><time :datetime="detail.ticket.created_at">{{ formatDate(detail.ticket.created_at) }}</time></div>
               <dl v-if="admin && detail.requester" class="ticket-requester-info">
                 <div><dt>{{ t('tickets.requester') }}</dt><dd>{{ detail.requester.username || detail.ticket.user_name || '#' + detail.requester.id }}<span class="ticket-requester-id">#{{ detail.requester.id }}</span></dd></div>
                 <div><dt>{{ t('tickets.balance') }}</dt><dd class="ticket-user-balance">{{ formatCurrency(detail.requester.balance) }}</dd></div>
@@ -92,10 +83,9 @@
 
             <footer v-if="detail.ticket.status === 'closed'" class="ticket-closed-bar"><span><Icon name="lock" size="sm" />{{ t('tickets.closed') }}</span><button class="ticket-button" :disabled="mutating" @click="update({ status: 'open' })"><Icon name="refresh" size="sm" />{{ t('tickets.reopen') }}</button></footer>
             <form v-else class="ticket-composer" @submit.prevent="sendReply" @keydown="handleComposeKey">
-              <div v-if="admin" class="ticket-quick-replies"><Icon name="bolt" size="sm" /><select :value="''" :disabled="mutating" :aria-label="t('tickets.quickReply')" @change="insertQuickReply"><option value="" disabled>{{ t('tickets.quickReply') }}</option><option value="quickCheckText">{{ t('tickets.quickCheck') }}</option><option value="quickRequestText">{{ t('tickets.quickRequest') }}</option><option value="quickResolvedText">{{ t('tickets.quickResolved') }}</option></select></div>
               <label class="sr-only" for="ticket-reply">{{ t('tickets.reply') }}</label>
               <textarea id="ticket-reply" ref="replyInput" v-model="draft" maxlength="10000" :disabled="mutating" :placeholder="t('tickets.replyPlaceholder')" rows="3"></textarea>
-              <div class="ticket-composer-actions"><span class="ticket-character-count" aria-live="off">{{ draft.length }} / 10000</span><div><select v-if="admin" v-model="replyStatus" class="ticket-select" :disabled="mutating" :aria-label="t('tickets.status')"><option value="waiting_user">{{ t('tickets.statuses.waiting_user') }}</option><option value="in_progress">{{ t('tickets.statuses.in_progress') }}</option><option value="resolved">{{ t('tickets.statuses.resolved') }}</option></select><button type="submit" class="ticket-button ticket-button-primary" :disabled="mutating || !draft.trim()"><Icon :name="mutating ? 'refresh' : 'arrowUp'" size="sm" :class="{ 'animate-spin': mutating }" />{{ t(admin && replyStatus === 'resolved' ? 'tickets.sendResolve' : 'tickets.send') }}</button></div></div>
+              <div class="ticket-composer-actions"><span class="ticket-character-count" aria-live="off">{{ draft.length ? draft.length + ' / 10000' : '' }}</span><button type="submit" class="ticket-button ticket-button-primary" :disabled="mutating || !draft.trim()"><Icon :name="mutating ? 'refresh' : 'arrowUp'" size="sm" :class="{ 'animate-spin': mutating }" />{{ t('tickets.send') }}</button></div>
             </form>
           </template>
         </section>
@@ -106,7 +96,7 @@
       <form id="new-ticket-form" class="ticket-create-form" @submit.prevent="submitTicket">
         <div class="ticket-create-note"><Icon name="clock" size="sm" />{{ t('tickets.dailyLimit') }}</div>
         <label for="ticket-subject">{{ t('tickets.subject') }}<input id="ticket-subject" v-model="newTicket.subject" class="input" maxlength="160" required :placeholder="t('tickets.subjectPlaceholder')" :disabled="mutating" /></label>
-        <div class="ticket-create-grid"><label for="ticket-category">{{ t('tickets.category') }}<select id="ticket-category" v-model="newTicket.category" class="input" :disabled="mutating"><option v-for="category in ticketCategories" :key="category" :value="category">{{ t(`tickets.categories.${category}`) }}</option></select></label><label for="ticket-priority">{{ t('tickets.priority') }}<select id="ticket-priority" v-model="newTicket.priority" class="input" :disabled="mutating"><option v-for="priority in ticketPriorities" :key="priority" :value="priority">{{ t(`tickets.priorities.${priority}`) }}</option></select></label></div>
+        <label for="ticket-category">{{ t('tickets.category') }}<select id="ticket-category" v-model="newTicket.category" class="input" :disabled="mutating"><option v-for="category in ticketCategories" :key="category" :value="category">{{ t(`tickets.categories.${category}`) }}</option></select></label>
         <label for="ticket-contact">{{ t('tickets.contact') }}<input id="ticket-contact" v-model="newTicket.contact" class="input" maxlength="200" :placeholder="t('tickets.contactPlaceholder')" :disabled="mutating" autocomplete="off" /></label>
         <label for="ticket-content">{{ t('tickets.content') }}<textarea id="ticket-content" v-model="newTicket.content" class="input" rows="6" maxlength="10000" required :placeholder="t('tickets.contentPlaceholder')" :disabled="mutating"></textarea></label>
         <span class="ticket-character-count">{{ newTicket.content.length }} / 10000</span>
@@ -120,7 +110,6 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -129,25 +118,20 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import TicketStatusBadge from '@/components/tickets/TicketStatusBadge.vue'
 import TicketTimeline from '@/components/tickets/TicketTimeline.vue'
 import { useTicketWorkspace } from '@/composables/useTicketWorkspace'
-import { newClientID, ticketStatuses, ticketCategories, ticketPriorities, type CreateTicket, type TicketStatus, type TicketPriority, type TicketReply } from '@/api/tickets'
+import { newClientID, ticketCategories, type CreateTicket } from '@/api/tickets'
 import { formatCurrency } from '@/utils/format'
+import { isComposerSendKey } from '@/utils/ticketComposer'
 import '@/styles/tickets.css'
 
 const props = defineProps<{ admin: boolean }>()
 const { t, locale } = useI18n()
-const auth = useAuthStore()
 const app = useAppStore()
 const { filters, items, pages, stats, detail, selectedID, loading, detailLoading, loadingOlder, refreshing, mutating,
   listError, detailError, syncFailed, revision, draft, refresh, older, markRead, send, update, create, resetFilters, select, back, changePage } = useTicketWorkspace(toRef(props, 'admin'))
-const statusTabs: (TicketStatus | '')[] = ['', ...ticketStatuses]
-const hasFilters = computed(() => !!(filters.search || filters.status || filters.category || filters.priority || filters.assigned_to !== 'all'))
+const statusTabs = ['', 'active', 'closed'] as const
+const hasFilters = computed(() => !!(filters.search || filters.status || filters.category))
 const newTicketOpen = ref(false)
 const closeDialogOpen = ref(false)
-const replyStatuses = reactive<Record<string, NonNullable<TicketReply['status']>>>({})
-const replyStatus = computed({
-  get: () => replyStatuses[`${props.admin}:${selectedID.value}`] || 'waiting_user',
-  set: (value: NonNullable<TicketReply['status']>) => { replyStatuses[`${props.admin}:${selectedID.value}`] = value }
-})
 const replyInput = ref<HTMLTextAreaElement | null>(null)
 const timeline = ref<InstanceType<typeof TicketTimeline> | null>(null)
 const atBottom = ref(true)
@@ -189,31 +173,15 @@ async function loadOlder() {
 }
 async function sendReply() {
   const id = selectedID.value
-  if (await send(props.admin ? replyStatus.value : undefined)) {
+  if (await send()) {
     if (id === selectedID.value) { await timeline.value?.scrollToBottom(true); replyInput.value?.focus() }
   }
 }
 function handleComposeKey(event: KeyboardEvent) {
-  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) { event.preventDefault(); void sendReply() }
-}
-function insertQuickReply(event: Event) {
-  const select = event.target as HTMLSelectElement
-  if (select.value) draft.value += (draft.value ? '\n\n' : '') + t(`tickets.${select.value}`)
-  select.value = ''
-  replyInput.value?.focus()
-}
-function changeStatus(event: Event) {
-  const select = event.target as HTMLSelectElement
-  const status = select.value as TicketStatus
-  select.value = detail.value?.ticket.status || 'open'
-  if (status === 'closed') closeDialogOpen.value = true
-  else void update({ status })
-}
-function changePriority(event: Event) {
-  const select = event.target as HTMLSelectElement
-  const priority = select.value as TicketPriority
-  select.value = detail.value?.ticket.priority || 'normal'
-  void update({ priority })
+  if (!isComposerSendKey(event)) return
+  event.preventDefault()
+  if (mutating.value || !draft.value.trim()) return
+  void sendReply()
 }
 async function closeTicket() {
   closeDialogOpen.value = false

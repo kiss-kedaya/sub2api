@@ -39,4 +39,23 @@ describe('TicketTimeline', () => {
     expect(wrapper.find('img').exists()).toBe(false)
     expect(wrapper.get('[data-message-id="1"]').text()).toContain('<img src=x onerror=alert(1)>')
   })
+  it('keeps replies and closure history without workflow noise', () => {
+    const events: TicketMessage[] = [
+      ['assignment_changed', null, 20],
+      ['priority_changed', 'normal', 'urgent'],
+      ['status_changed', 'open', 'waiting_user'],
+      ['status_changed', 'waiting_user', 'open'],
+      ['status_changed', 'open', 'closed'],
+      ['status_changed', 'closed', 'open']
+    ].map(([event_type, from, to], index) => ({
+      ...conversation[2], id: index + 4, event_type: String(event_type), event_data: { from, to }
+    }))
+    const wrapper = mount(TicketTimeline, {
+      props: { messages: [...conversation, ...events], admin: true, hasMore: true, loadingOlder: false }
+    })
+    expect(wrapper.findAll('[data-message-id]').map(el => el.attributes('data-message-id'))).toEqual(['1', '2', '3', '8', '9'])
+    expect(wrapper.get('[data-message-id="8"]').text()).toContain('tickets.closed')
+    expect(wrapper.get('[data-message-id="9"]').text()).toContain('tickets.reopened')
+    expect(wrapper.find('.timeline-older').exists()).toBe(true)
+  })
 })

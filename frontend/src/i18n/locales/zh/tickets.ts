@@ -2,7 +2,7 @@ export default {
   tickets: {
     title: '我的工单', adminTitle: '工单管理', support: '工单支持',
     newTicket: '新建工单', create: '提交工单', created: '工单已提交',
-    all: '全部工单', total: '工单总数', unread: '有新消息',
+    all: '全部工单', notClosed: '未关闭', total: '工单总数', unread: '有新消息',
     search: '搜索工单编号或主题', adminSearch: '搜索编号、主题或用户',
     allCategories: '全部分类', allPriorities: '全部优先级', allAssignees: '全部负责人',
     mine: '由我负责', unassigned: '未分配', category: '问题分类', priority: '优先级',
@@ -24,7 +24,7 @@ export default {
     conversation: '沟通记录', older: '加载更早记录', newMessages: '查看新消息',
     reply: '回复内容', replyPlaceholder: '输入回复…', send: '发送回复',
     sendResolve: '回复并解决', sendWait: '回复并等待用户', sent: '回复已发送',
-    closed: '工单已关闭', resolved: '工单已解决', updated: '工单已更新',
+    closed: '工单已关闭', reopened: '工单已重新打开', resolved: '工单已解决', updated: '工单已更新',
     quickReply: '快捷回复', quickCheck: '正在排查', quickRequest: '补充信息', quickResolved: '处理完成',
     quickCheckText: '已收到反馈，正在核查。处理完成后会在此工单同步结果。',
     quickRequestText: '请补充发生时间、相关请求 ID 或订单号，以及完整错误信息，方便进一步定位。',
