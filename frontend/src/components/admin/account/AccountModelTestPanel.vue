@@ -3,16 +3,19 @@
     <div class="model-test-toolbar">
       <div class="model-test-toolbar-copy">
         <p class="model-test-kicker">{{ headline }}</p>
-        <p class="model-test-hint">{{ t('admin.accounts.batchTest.unboundedConcurrency') }}</p>
       </div>
       <div class="model-test-toolbar-controls">
-        <input
-          v-model="modelQuery"
-          type="search"
-          class="model-test-search"
-          :placeholder="t('admin.accounts.batchTest.filterModels')"
-          :disabled="catalogLoading && rows.length === 0"
-        />
+        <label class="model-test-search-wrap">
+          <Icon name="search" size="sm" aria-hidden="true" />
+          <input
+            v-model="modelQuery"
+            type="search"
+            class="model-test-search"
+            :placeholder="t('admin.accounts.batchTest.filterModels')"
+            :aria-label="t('admin.accounts.batchTest.filterModels')"
+            :disabled="catalogLoading && rows.length === 0"
+          />
+        </label>
         <label class="model-test-option">
           <input v-model="includeMedia" type="checkbox" :disabled="anyRunning" />
           <span>{{ t('admin.accounts.batchTest.includeMedia') }}</span>
@@ -24,26 +27,28 @@
       <button
         v-if="anyRunning"
         type="button"
-        class="btn btn-warning"
+        class="model-test-button is-stop"
         data-test="test-stop"
         @click="stopRun"
       >
+        <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" /></svg>
         {{ t('admin.accounts.batchTest.stop') }}
       </button>
       <template v-else>
         <button
           type="button"
-          class="btn btn-primary"
+          class="model-test-button is-primary"
           data-test="test-all-models"
           data-batch-test-start
           :disabled="!canTestAll"
           @click="startRun('all')"
         >
+          <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6 4.7a.8.8 0 0 1 1.2-.7l8.1 5.3a.8.8 0 0 1 0 1.4L7.2 16a.8.8 0 0 1-1.2-.7Z" /></svg>
           {{ testAllLabel }}
         </button>
         <button
           type="button"
-          class="btn btn-secondary"
+          class="model-test-button is-secondary"
           data-test="test-selected-models"
           :disabled="!canTestSelected"
           @click="startRun('selected')"
@@ -51,28 +56,37 @@
           {{ testSelectedLabel }}
         </button>
       </template>
-      <button type="button" class="model-test-text-btn" :disabled="running || visibleRows.length === 0" @click="selectVisible(true)">
-        {{ t('admin.accounts.batchTest.selectAll') }}
-      </button>
-      <button type="button" class="model-test-text-btn" :disabled="running || visibleRows.length === 0" @click="invertVisible">
-        {{ t('admin.accounts.batchTest.invert') }}
-      </button>
+      <div class="model-test-selection">
+        <button type="button" class="model-test-text-btn" :disabled="running || visibleRows.length === 0" @click="selectVisible(true)">
+          {{ t('admin.accounts.batchTest.selectAll') }}
+        </button>
+        <button type="button" class="model-test-text-btn" :disabled="running || visibleRows.length === 0" @click="invertVisible">
+          {{ t('admin.accounts.batchTest.invert') }}
+        </button>
+      </div>
       <button
         v-if="rows.length > 0"
         type="button"
-        class="model-test-text-btn"
+        :aria-pressed="onlyFailed"
+        class="model-test-filter"
         @click="onlyFailed = !onlyFailed"
       >
         {{ onlyFailed ? t('admin.accounts.batchTest.showAll') : t('admin.accounts.batchTest.onlyFailed') }}
       </button>
     </div>
 
-    <div class="model-test-progress" :aria-hidden="rows.length === 0">
+    <div v-if="counts.success + counts.failed + counts.running + counts.skipped > 0" class="model-test-progress">
       <div class="model-test-progress-bar">
         <span class="is-success" :style="{ width: progressSuccessPct }" />
         <span class="is-failed" :style="{ width: progressFailedPct }" />
       </div>
-      <div class="model-test-progress-meta">{{ summaryLabel }}</div>
+      <div class="model-test-progress-meta" role="status" :aria-label="summaryLabel">
+        <span class="model-test-counter is-success"><i />{{ counts.success }} {{ t('admin.accounts.batchTest.success') }}</span>
+        <span class="model-test-counter is-failed"><i />{{ counts.failed }} {{ t('admin.accounts.batchTest.failed') }}</span>
+        <span v-if="counts.running" class="model-test-counter is-running"><i />{{ counts.running }} {{ t('admin.accounts.batchTest.running') }}</span>
+        <span v-if="counts.skipped" class="model-test-counter"><i />{{ counts.skipped }} {{ t('admin.accounts.batchTest.skipped') }}</span>
+        <span class="model-test-completed">{{ counts.success + counts.failed + counts.skipped }} / {{ rows.length }}</span>
+      </div>
     </div>
 
     <div class="model-test-table-wrap">
@@ -149,16 +163,19 @@
                 v-if="canExpand(row)"
                 type="button"
                 class="model-test-text-btn"
+                :aria-expanded="row.expanded"
                 @click="row.expanded = !row.expanded"
               >
                 {{ row.expanded ? t('admin.accounts.batchTest.collapse') : t('admin.accounts.batchTest.expand') }}
               </button>
-              <pre v-if="row.expanded" class="model-test-result-full">{{ fullResult(row) }}</pre>
+              <div class="model-test-disclosure" :class="{ 'is-open': row.expanded }" :inert="row.expanded ? undefined : true">
+                <div><pre class="model-test-result-full">{{ row.expanded ? fullResult(row) : '' }}</pre></div>
+              </div>
             </td>
             <td class="model-test-actions-col">
               <button
                 type="button"
-                class="btn btn-secondary btn-sm"
+                class="model-test-button is-row"
                 :data-test="rowTestId(row)"
                 :disabled="running || row.status === 'running' || row.catalogFailed"
                 @click="testOne(row)"
@@ -190,6 +207,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
+import Icon from '@/components/icons/Icon.vue'
 import type { ClaudeModel } from '@/types'
 import {
   applyAccountModelTestEvent,
@@ -249,7 +267,7 @@ const showAccount = computed(() => props.variant !== 'single' && props.accounts.
 
 const headline = computed(() => {
   if (props.variant === 'single' && props.accounts[0]) {
-    return t('admin.accounts.batchTest.singleHeadline', { name: props.accounts[0].name, count: rows.value.length })
+    return t('admin.accounts.modelCount', { count: rows.value.length })
   }
   return t('admin.accounts.batchTest.selectedAccounts', { count: props.accounts.length })
 })
@@ -572,126 +590,94 @@ defineExpose({
 </script>
 
 <style scoped>
-.model-test { display: grid; min-width: 0; gap: 12px; color: var(--signal-text); }
-.model-test-toolbar,
-.model-test-actions,
-.model-test-progress-meta,
-.model-test-toolbar-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.model-test-toolbar { align-items: flex-start; }
+.model-test { --test-accent: #0f766e; --test-success: #15805d; --test-failed: #c2414c; display: grid; min-width: 0; gap: 16px; color: var(--signal-text); }
+:global(.dark .model-test) { --test-accent: #5eead4; --test-success: #6ee7b7; --test-failed: #fda4af; }
+.model-test-toolbar, .model-test-toolbar-controls, .model-test-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.model-test-toolbar { justify-content: space-between; }
 .model-test-kicker { margin: 0; font-size: 13px; font-weight: 650; }
-.model-test-hint,
-.model-test-progress-meta { margin: 0; font-size: 12px; color: var(--signal-muted); }
-.model-test-search {
-  min-height: 36px;
-  min-width: 180px;
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  background: var(--signal-surface);
-  color: var(--signal-text);
-  padding: 0 12px;
-}
-.model-test-option { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.model-test-text-btn {
-  color: var(--signal-accent);
-  font-size: 12px;
-  min-height: 30px;
-}
-.model-test-progress-bar {
-  display: flex;
-  height: 6px;
-  overflow: hidden;
-  border-radius: 99px;
-  background: var(--signal-line);
-}
-.model-test-progress-bar span { display: block; height: 100%; transition: width 180ms ease; }
-.model-test-progress-bar .is-success { background: #1f9d55; }
-.model-test-progress-bar .is-failed { background: #c4473a; }
-.model-test-table-wrap {
-  min-width: 0;
-  border: 1px solid var(--signal-line);
-  background: var(--signal-surface);
-  border-radius: 8px;
-  max-height: min(52vh, 560px);
-  overflow: auto;
-}
-.model-test-table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 12px; }
-.model-test-table th,
-.model-test-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--signal-line);
-  text-align: left;
-  vertical-align: top;
-}
-.model-test-table th { color: var(--signal-muted); font-weight: 600; position: sticky; top: 0; background: var(--signal-surface); z-index: 1; }
-.model-test-table tr.is-running { background: var(--signal-accent-soft); }
-.model-test-table tr.is-success { background: color-mix(in srgb, #1f9d55 8%, transparent); }
-.model-test-table tr.is-failed { background: color-mix(in srgb, #c4473a 8%, transparent); }
-.model-test-check { width: 36px; }
-.model-test-actions-col { width: 72px; white-space: nowrap; }
-.model-test-status { font-weight: 650; }
-.model-test-status.is-success { color: #1f9d55; }
-.model-test-status.is-failed { color: #c4473a; }
-.model-test-status.is-running { color: var(--signal-accent); }
-.model-test-status.is-skipped,
-.model-test-status.is-idle { color: var(--signal-muted); }
+.model-test-toolbar-controls { gap: 16px; }
+.model-test-search-wrap { display: flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid var(--signal-line); border-radius: 9px; background: var(--signal-surface); color: var(--signal-muted); transition: border-color 180ms ease, box-shadow 180ms ease; }
+.model-test-search-wrap:focus-within { border-color: var(--test-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--test-accent) 12%, transparent); }
+.model-test-search { min-height: 36px; width: 170px; min-width: 0; padding: 0; border: 0; outline: none; box-shadow: none; background: transparent; color: var(--signal-text); font-size: 12px; }
+.model-test-option { display: flex; align-items: center; gap: 7px; color: var(--signal-muted); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.model-test input[type=checkbox] { width: 14px; height: 14px; accent-color: var(--test-accent); cursor: pointer; }
+.model-test-actions { gap: 8px; }
+.model-test-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 13px; border: 1px solid var(--signal-line); border-radius: 9px; background: var(--signal-surface); color: var(--signal-text); font-size: 12px; font-weight: 600; white-space: nowrap; transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease; }
+.model-test-button svg { width: 15px; height: 15px; flex-shrink: 0; }
+.model-test-button.is-primary { background: #0f766e; border-color: #0f766e; color: #fff; box-shadow: 0 2px 4px #0f766e18; }
+.model-test-button.is-primary:hover:not(:disabled) { background: #115e59; border-color: #115e59; }
+.model-test-button.is-stop { color: var(--test-failed); border-color: color-mix(in srgb, var(--test-failed) 24%, var(--signal-line)); background: color-mix(in srgb, var(--test-failed) 6%, var(--signal-surface)); }
+.model-test-button:hover:not(:disabled) { border-color: var(--test-accent); background: color-mix(in srgb, var(--test-accent) 5%, var(--signal-surface)); }
+.model-test-button.is-stop:hover:not(:disabled) { border-color: var(--test-failed); background: color-mix(in srgb, var(--test-failed) 12%, var(--signal-surface)); }
+.model-test-button:active:not(:disabled) { transform: translateY(1px); }
+.model-test-button:disabled { opacity: .42; cursor: not-allowed; box-shadow: none; }
+.model-test-selection { display: flex; align-items: center; gap: 2px; margin-left: 6px; padding-left: 12px; border-left: 1px solid var(--signal-line); }
+.model-test-text-btn, .model-test-filter { min-height: 32px; padding: 0 9px; border-radius: 7px; color: var(--signal-muted); font-size: 12px; transition: color 160ms ease, background 160ms ease; }
+.model-test-text-btn:hover:not(:disabled), .model-test-filter:hover { color: var(--test-accent); background: color-mix(in srgb, var(--test-accent) 7%, transparent); }
+.model-test-text-btn:disabled { opacity: .4; cursor: not-allowed; }
+.model-test-filter { margin-left: auto; border: 1px solid transparent; }
+.model-test-filter[aria-pressed=true] { color: var(--test-failed); background: color-mix(in srgb, var(--test-failed) 7%, transparent); border-color: color-mix(in srgb, var(--test-failed) 18%, transparent); }
+.model-test :is(button, input):focus-visible { outline: 2px solid var(--test-accent); outline-offset: 3px; }
+.model-test-search:focus-visible { outline: none; }
+.model-test-progress { display: grid; gap: 9px; }
+.model-test-progress-bar { display: flex; height: 3px; overflow: hidden; border-radius: 99px; background: var(--signal-line); }
+.model-test-progress-bar span { display: block; height: 100%; transition: width 350ms cubic-bezier(.22, 1, .36, 1); }
+.model-test-progress-bar .is-success { background: var(--test-success); }
+.model-test-progress-bar .is-failed { background: var(--test-failed); }
+.model-test-progress-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; color: var(--signal-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.model-test-counter { display: inline-flex; align-items: center; gap: 6px; }
+.model-test-counter i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.model-test-counter.is-success { color: var(--test-success); }
+.model-test-counter.is-failed { color: var(--test-failed); }
+.model-test-counter.is-running { color: var(--test-accent); }
+.model-test-completed { margin-left: auto; }
+.model-test-table-wrap { min-width: 0; border: 1px solid var(--signal-line); background: var(--signal-surface); border-radius: 12px; max-height: min(55vh, 600px); overflow: auto; scrollbar-width: thin; }
+.model-test-table { width: 100%; min-width: 660px; border-collapse: collapse; font-size: 12px; }
+.model-test-table th, .model-test-table td { padding: 13px 14px; border-bottom: 1px solid var(--signal-line); text-align: left; vertical-align: top; }
+.model-test-table th { padding-top: 11px; padding-bottom: 11px; color: var(--signal-muted); font-size: 11px; font-weight: 500; position: sticky; top: 0; background: var(--signal-bg); z-index: 1; }
+.model-test-table tbody tr { transition: background 200ms ease; }
+.model-test-table tbody tr:last-child td { border-bottom: 0; }
+.model-test-table tbody tr:hover { background: color-mix(in srgb, var(--signal-muted) 4%, transparent); }
+.model-test-table tr.is-running { background: color-mix(in srgb, var(--test-accent) 4%, transparent); }
+.model-test-check { width: 34px; padding-right: 2px !important; }
+.model-test-actions-col { width: 76px; white-space: nowrap; }
+.model-test-status { display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; border-radius: 6px; font-size: 11px; white-space: nowrap; color: var(--signal-muted); background: var(--signal-bg); }
+.model-test-status::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.model-test-status.is-success { color: var(--test-success); background: color-mix(in srgb, var(--test-success) 8%, transparent); }
+.model-test-status.is-failed { color: var(--test-failed); background: color-mix(in srgb, var(--test-failed) 8%, transparent); }
+.model-test-status.is-running { color: var(--test-accent); background: color-mix(in srgb, var(--test-accent) 8%, transparent); }
+.model-test-status.is-running::before { width: 9px; height: 9px; border: 1.5px solid currentColor; border-right-color: transparent; background: transparent; animation: model-test-spin 900ms linear infinite; }
 .model-test-result { min-width: 220px; max-width: 420px; }
-.model-test-result-text {
-  margin: 0;
-  line-height: 1.45;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
-}
-.model-test-result-text.is-failed { color: #c4473a; }
-.model-test-result-text.is-success { color: var(--signal-text); }
-.model-test-result-full {
-  margin: 8px 0 0;
-  max-height: 180px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: var(--signal-bg);
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  padding: 8px;
-  font-size: 11px;
-}
+.model-test-result-text { margin: 0; line-height: 1.65; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.model-test-result-text.is-failed { color: var(--test-failed); }
+.model-test-result .model-test-text-btn { padding: 0; min-height: 26px; font-size: 11px; }
+.model-test-disclosure { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 220ms ease, opacity 220ms ease; }
+.model-test-disclosure.is-open { grid-template-rows: 1fr; opacity: 1; }
+.model-test-disclosure > div { overflow: hidden; min-height: 0; }
+.model-test-result-full { margin: 8px 0 0; max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-word; background: var(--signal-bg); border: 1px solid var(--signal-line); border-radius: 8px; padding: 10px 12px; font-size: 11px; line-height: 1.65; }
+.model-test-button.is-row { min-height: 28px; padding: 0 10px; border-radius: 7px; font-size: 11px; font-weight: 500; }
 .model-test-media { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.model-test-media img,
-.model-test-result video {
-  max-height: 120px;
-  max-width: 180px;
-  object-fit: contain;
-  border-radius: 8px;
-  border: 1px solid var(--signal-line);
-  background: var(--signal-bg);
-  cursor: zoom-in;
-}
-.model-test-result audio,
-.model-test-result video { width: 100%; margin-top: 8px; }
-.model-test-empty { padding: 18px 12px; text-align: center; color: var(--signal-muted); font-size: 12px; }
+.model-test-media img, .model-test-result video { max-height: 120px; max-width: 180px; object-fit: contain; border-radius: 8px; border: 1px solid var(--signal-line); background: var(--signal-bg); cursor: zoom-in; }
+.model-test-result audio, .model-test-result video { width: 100%; margin-top: 8px; }
+.model-test-empty { padding: 32px 16px; text-align: center; color: var(--signal-muted); font-size: 12px; }
 .mono { font-variant-numeric: tabular-nums; word-break: break-all; }
-.model-test-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.78);
-  padding: 16px;
-}
+.model-test-lightbox { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .78); padding: 16px; }
 .model-test-lightbox img { max-height: 90vh; max-width: 90vw; border-radius: 8px; }
-@media (max-width: 767px) {
-  .model-test-actions .btn { min-height: 40px; }
+@keyframes model-test-spin { to { transform: rotate(360deg); } }
+@media (max-width: 640px) {
+  .model-test { gap: 13px; }
+  .model-test-toolbar { gap: 10px; }
+  .model-test-toolbar-controls { width: 100%; gap: 10px; }
+  .model-test-search-wrap { flex: 1; min-width: 120px; }
   .model-test-search { width: 100%; }
+  .model-test-button, .model-test-text-btn, .model-test-filter { min-height: 40px; }
+  .model-test-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .model-test-selection { grid-column: 1; margin-left: 0; padding-left: 0; border: 0; }
+  .model-test-filter { justify-self: end; }
+  .model-test-table-wrap { max-height: 50vh; }
+  .model-test-progress-meta { gap: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .model-test *, .model-test *::before { animation: none !important; transition: none !important; }
 }
 </style>

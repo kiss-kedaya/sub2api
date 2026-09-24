@@ -60,6 +60,29 @@ describe('AccountModelTestPanel race regressions', () => {
     vi.restoreAllMocks()
   })
 
+  it('单账号工具栏不重复账号名和并发说明，未开始时不显示零统计', async () => {
+    const wrapper = mount(AccountModelTestPanel, { props: { show: true, accounts: [firstAccount], variant: 'single' } })
+    await flushPromises()
+    expect(wrapper.get('.model-test-kicker').text()).toBe('admin.accounts.modelCount')
+    expect(wrapper.get('.model-test-toolbar').text()).not.toContain(firstAccount.name)
+    expect(wrapper.text()).not.toContain('unboundedConcurrency')
+    expect(wrapper.find('.model-test-progress').exists()).toBe(false)
+    expect(wrapper.get('input[type="search"]').attributes('aria-label')).toBe('admin.accounts.batchTest.filterModels')
+  })
+
+  it('失败筛选按钮暴露选中状态，按钮保持在同一操作组', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+    const filter = wrapper.get('.model-test-filter')
+    expect(filter.attributes('aria-pressed')).toBe('false')
+    await filter.trigger('click')
+    expect(filter.attributes('aria-pressed')).toBe('true')
+    expect(wrapper.findAll('tbody tr')).toHaveLength(0)
+    await filter.trigger('click')
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.findAll('.model-test-selection button')).toHaveLength(2)
+  })
+
   it.each([
     ['all', 'success'],
     ['all', 'error'],
