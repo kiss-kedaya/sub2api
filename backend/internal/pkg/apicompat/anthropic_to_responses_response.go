@@ -434,6 +434,8 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 		// Emit function_call_arguments.done + output item done
 		events := []ResponsesStreamEvent{
 			makeResponsesEvent(state, "response.function_call_arguments.done", &ResponsesStreamEvent{
+				// The final arguments must match the JSON already emitted in deltas.
+				Arguments:   state.CurrentArgs,
 				OutputIndex: state.OutputIndex,
 				ItemID:      state.CurrentItemID,
 				CallID:      state.CurrentCallID,
