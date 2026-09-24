@@ -909,6 +909,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
 	body := s.readUpstreamErrorBody(resp)
+	defer GuardUpstreamFinancialError(c, resp.StatusCode, body)()
 
 	upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
 	upstreamDetail := ""
@@ -1102,6 +1103,11 @@ func buildOpenAIImagesStreamErrorBodyFromUpstream(err *OpenAIImagesUpstreamError
 		return buildOpenAIImagesStreamErrorBody("")
 	}
 	body := buildOpenAIImagesStreamErrorBody(err.clientMessage())
+	if IsUpstreamFinancialError(err.StatusCode, openAIImagesUpstreamErrorResponseBody(err)) {
+		// Keep the original failure for classification at the final write boundary.
+		body, _ = sjson.SetBytes(openAIImagesUpstreamErrorResponseBody(err), "error.status_code", err.StatusCode)
+		return body
+	}
 	body, _ = sjson.SetBytes(body, "error.type", err.clientErrorType())
 	if code := strings.TrimSpace(err.Code); code != "" {
 		body, _ = sjson.SetBytes(body, "error.code", code)
@@ -1120,6 +1126,7 @@ func writeOpenAIImagesUpstreamErrorResponse(c *gin.Context, err *OpenAIImagesUps
 		return false
 	}
 	StopOpenAIImagesJSONKeepaliveCommitted(c)
+	defer GuardUpstreamFinancialError(c, err.StatusCode, openAIImagesUpstreamErrorResponseBody(err))()
 	errorObj := gin.H{
 		"type":    err.clientErrorType(),
 		"message": err.clientMessage(),
@@ -1137,6 +1144,10 @@ func writeOpenAIImagesUpstreamErrorResponse(c *gin.Context, err *OpenAIImagesUps
 }
 
 func (s *OpenAIGatewayService) writeOpenAIImagesStreamEvent(c *gin.Context, flusher http.Flusher, eventName string, payload []byte) error {
+
+	if eventName == "error" && WriteUpstreamFinancialError(c, 0, payload) {
+		return nil
+	}
 	if strings.TrimSpace(eventName) != "" {
 		if _, err := fmt.Fprintf(c.Writer, "event: %s\n", eventName); err != nil {
 			return err

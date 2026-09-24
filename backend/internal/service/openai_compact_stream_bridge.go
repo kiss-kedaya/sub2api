@@ -94,6 +94,8 @@ func writeOpenAICompactSSEBridge(c *gin.Context, statusCode int, finalResponse [
 // response.failed 终止事件回传。仅用于心跳已提交 200、无法再按 HTTP 状态码
 // 回传错误的场景。
 func writeOpenAICompactSSEFailure(c *gin.Context, statusCode int, errorBody []byte) {
+
+	defer GuardUpstreamFinancialError(c, statusCode, errorBody)()
 	message := ""
 	if len(errorBody) > 0 {
 		message = sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(errorBody)))

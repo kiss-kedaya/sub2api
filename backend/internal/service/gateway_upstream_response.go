@@ -440,6 +440,7 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 	// Upstream returned a non-success HTTP status; count Ollama Cloud activity.
 	scheduleOllamaCloudUsageActivity(s.deferredService, account)
 	body, readErr := s.readUpstreamErrorBody(resp)
+	defer GuardUpstreamFinancialError(c, resp.StatusCode, body)()
 	if readErr != nil {
 		// 读取失败时 body 可能被截断，错误分类会基于不完整数据；记录日志以便排查，
 		// 避免静默吞掉导致误判。
@@ -617,6 +618,7 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 	MarkResponseCommitted(c)
 	// Capture upstream error body before side-effects consume the stream.
 	respBody, _ := s.readUpstreamErrorBody(resp)
+	defer GuardUpstreamFinancialError(c, resp.StatusCode, respBody)()
 	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
@@ -802,7 +804,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐帧仅整数
 	// 累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
 	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	// 设置更大的buffer以处理长行
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
@@ -971,6 +973,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 
 		eventType, _ := event["type"].(string)
+		if upstreamFinancialFailureEnvelope([]byte(dataLine)) {
+			return nil, dataLine, nil, &sseStreamErrorEventError{RawData: dataLine}
+		}
 		observer.ObserveAnthropic([]byte(dataLine))
 		if eventName == "" {
 			eventName = eventType
@@ -1479,6 +1484,9 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	observer.ObserveAnthropic(body)
+	if upstreamFinancialFailureEnvelope(body) {
+		defer GuardUpstreamFinancialError(c, 0, body)()
+	}
 
 	// 解析usage
 	var response struct {
