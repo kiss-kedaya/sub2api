@@ -1582,7 +1582,7 @@ export default {
         collapse: '收起',
         emptyOutput: '无返回',
         filterModels: '筛选模型',
-        unboundedConcurrency: '有多少任务就并发多少，不限制。每行都能看到返回内容和耗时。',
+        settings: '测试设置',
         promptHint: '生图/视频模型会带上这条提示词；普通对话模型仍发送默认 hi。',
         singleHeadline: '{name} · {count} 个模型',
         summaryBoard: '{success} 成功 / {failed} 失败 / {skipped} 跳过 / {running} 进行中 / {total}',

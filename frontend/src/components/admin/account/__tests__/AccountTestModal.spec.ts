@@ -125,6 +125,20 @@ function mountModal(account: Record<string, unknown> = {
 }
 
 describe('AccountTestModal', () => {
+  it('测试设置默认折叠，展开后保留填写内容', async () => {
+    const wrapper = mountModal()
+    const toggle = wrapper.get('.account-test-settings-toggle')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.get('.account-test-settings-content').attributes('inert')).toBeDefined()
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('.account-test-settings-content').attributes('inert')).toBeUndefined()
+    await wrapper.get('textarea').setValue('keep this prompt')
+    await toggle.trigger('click')
+    await toggle.trigger('click')
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('keep this prompt')
+  })
+
   beforeEach(() => {
     getAvailableModels.mockReset()
     getAvailableModels.mockResolvedValue([
