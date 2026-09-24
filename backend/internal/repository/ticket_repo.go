@@ -73,6 +73,10 @@ func (r *ticketRepository) List(ctx context.Context, actor service.TicketActor, 
 	args := []any{}
 	where := []string{ticketScope(actor, &args)}
 	for _, f := range []struct{ column, value string }{{"status", filter.Status}, {"priority", filter.Priority}, {"category", filter.Category}} {
+		if f.column == "status" && f.value == "active" {
+			where = append(where, "t.status <> 'closed'")
+			continue
+		}
 		if f.value != "" {
 			args = append(args, f.value)
 			where = append(where, fmt.Sprintf("t.%s = $%d", f.column, len(args)))

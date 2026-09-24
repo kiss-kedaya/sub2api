@@ -10,7 +10,7 @@
       </button>
     </div>
     <ol class="ticket-timeline" role="log" aria-live="polite" :aria-label="t('tickets.conversation')">
-      <li v-for="message in messages" :key="message.id" class="timeline-entry" :class="message.kind === 'event' ? 'timeline-event' : isSelf(message) ? 'timeline-self' : 'timeline-other'" :data-message-id="message.id" :data-author-role="message.author_role">
+      <li v-for="message in visibleMessages" :key="message.id" class="timeline-entry" :class="message.kind === 'event' ? 'timeline-event' : isSelf(message) ? 'timeline-self' : 'timeline-other'" :data-message-id="message.id" :data-author-role="message.author_role">
         <template v-if="message.kind === 'event'">
           <span class="timeline-event-label">{{ eventText(message) }}</span>
           <time :datetime="message.created_at" :title="fullTime(message.created_at)">{{ fullTime(message.created_at) }}</time>
@@ -32,30 +32,30 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
-import { ticketStatuses, ticketPriorities, type TicketMessage } from '@/api/tickets'
+import type { TicketMessage } from '@/api/tickets'
 
 const props = defineProps<{ messages: TicketMessage[]; admin: boolean; hasMore: boolean; loadingOlder: boolean }>()
 const emit = defineEmits<{ older: []; bottom: [value: boolean] }>()
 const { t, locale } = useI18n()
 const scroller = ref<HTMLElement | null>(null)
+const visibleMessages = computed(() => props.messages.filter(message => {
+  if (message.kind !== 'event') return true
+  if (message.event_type === 'assignment_changed' || message.event_type === 'priority_changed') return false
+  if (message.event_type === 'status_changed') return message.event_data?.from === 'closed' || message.event_data?.to === 'closed'
+  return true
+}))
 const isSelf = (message: TicketMessage) => message.author_role === (props.admin ? 'admin' : 'user')
 const author = (message: TicketMessage) => {
   if (!props.admin && message.author_role === 'admin') return t('tickets.team')
   return message.author_name || t(isSelf(message) ? 'tickets.you' : 'tickets.user')
 }
 const eventText = (message: TicketMessage) => {
-  const from = String(message.event_data?.from || '')
-  const to = String(message.event_data?.to || '')
-  if (message.event_type === 'status_changed' && ticketStatuses.some(s => s === from) && ticketStatuses.some(s => s === to)) {
-    return t('tickets.statusChanged', { from: t(`tickets.statuses.${from}`), to: t(`tickets.statuses.${to}`) })
+  if (message.event_type === 'status_changed') {
+    return t(message.event_data?.to === 'closed' ? 'tickets.closed' : 'tickets.reopened')
   }
-  if (message.event_type === 'priority_changed' && ticketPriorities.some(p => p === from) && ticketPriorities.some(p => p === to)) {
-    return t('tickets.priorityChanged', { from: t(`tickets.priorities.${from}`), to: t(`tickets.priorities.${to}`) })
-  }
-  if (message.event_type === 'assignment_changed') return t(to ? 'tickets.assignedEvent' : 'tickets.unassignedEvent')
   return message.content
 }
 const fullTime = (value: string) => new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-GB', {
