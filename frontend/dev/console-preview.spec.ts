@@ -127,7 +127,6 @@ describe('preview server isolation', () => {
       '/api/v1/redeem/history',
       '/api/v1/user/profile',
       '/api/v1/user/aff',
-      '/api/v1/user/cf-allowlist',
     ]
     for (const endpoint of endpoints) {
       expect((await http(endpoint)).status, endpoint).toBe(200)

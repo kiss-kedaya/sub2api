@@ -69,12 +69,17 @@ type TicketDetail struct {
 }
 
 type TicketRequester struct {
-	ID        int64     `json:"id"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
-	Balance   float64   `json:"balance"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                     int64     `json:"id"`
+	Username               string    `json:"username"`
+	Email                  string    `json:"email"`
+	Balance                float64   `json:"balance"`
+	Status                 string    `json:"status"`
+	CreatedAt              time.Time `json:"created_at"`
+	TodayTokens            int64     `json:"today_tokens"`
+	TodayCost              float64   `json:"today_cost"`
+	Recharged14d           float64   `json:"recharged_14d"`
+	UsageStatsAvailable    bool      `json:"usage_stats_available"`
+	RechargeStatsAvailable bool      `json:"recharge_stats_available"`
 }
 
 type TicketStats struct {

@@ -16,7 +16,7 @@ vi.mock('@/composables/useBatchImageAccess', () => ({
 }))
 
 const userPaths = ['/dashboard', '/keys', '/usage', '/monitor', '/available-channels', '/purchase',
-  '/orders', '/subscriptions', '/profile', '/redeem', '/affiliate', '/ip-allowlist',
+  '/orders', '/subscriptions', '/profile', '/redeem', '/affiliate',
   '/payment/qrcode', '/payment/result', '/payment/stripe', '/payment/airwallex',
   '/model-plaza', '/batch-image', '/infinite-canvas', '/custom/demo']
 const adminPaths = ['/admin/dashboard', '/admin/accounts', '/admin/groups', '/admin/users', '/admin/keys', '/admin/usage']

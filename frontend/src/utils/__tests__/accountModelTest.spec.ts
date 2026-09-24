@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  applyAccountModelTestEvent,
   buildAccountModelTestBody,
   consumeSSEBuffer,
+  createAccountModelTestOutput,
+  formatAccountModelTestDuration,
   groupJobsByAccount,
   inferGrokTestMode,
   isMediaHeavyModel,
@@ -102,6 +105,8 @@ describe('accountModelTest helpers', () => {
         ok: true,
         body: {
           getReader: () => ({
+            cancel: vi.fn().mockResolvedValue(undefined),
+            releaseLock: vi.fn(),
             read: vi.fn().mockImplementation(async () => {
               if (index < chunks.length) {
                 return { done: false, value: chunks[index++] }
@@ -132,5 +137,77 @@ describe('accountModelTest helpers', () => {
       prompt: '',
       mode: 'default'
     })
+  })
+
+  it('collects streamed text, media, and duration labels', () => {
+    const state = createAccountModelTestOutput()
+    applyAccountModelTestEvent(state, { type: 'content', text: 'hello ' })
+    applyAccountModelTestEvent(state, { type: 'content', text: 'world' })
+    applyAccountModelTestEvent(state, { type: 'image', image_url: 'data:image/png;base64,QQ==', mime_type: 'image/png' })
+    applyAccountModelTestEvent(state, { type: 'test_complete', success: true })
+    expect(state.output).toBe('hello world')
+    expect(state.success).toBe(true)
+    expect(state.images).toEqual([{ url: 'data:image/png;base64,QQ==', mimeType: 'image/png' }])
+    expect(formatAccountModelTestDuration(12)).toBe('12ms')
+    expect(formatAccountModelTestDuration(1500)).toBe('1.50s')
+  })
+
+  it.each(['null', '1', '[]', '{}', '{"type":"content","text":{}}', '{"type":"test_complete","success":"false"}', '[DONE]'])('ignores invalid SSE payload %s', (payload) => {
+    expect(parseSSEDataLine('data: ' + payload)).toBeNull()
+  })
+
+  it('keeps failure when a completion event follows an error', () => {
+    const state = createAccountModelTestOutput()
+    applyAccountModelTestEvent(state, { type: 'error', error: 'denied' })
+    applyAccountModelTestEvent(state, { type: 'test_complete', success: true })
+    expect(state.success).toBe(false)
+    expect(state.error).toBe('denied')
+  })
+
+  it('decodes split UTF-8, CRLF and a final unterminated event', async () => {
+    const bytes = new TextEncoder().encode('data: {"type":"content","text":"你好"}\r\ndata: {"type":"test_complete","success":true}')
+    const read = vi.fn()
+    for (const byte of bytes) read.mockResolvedValueOnce({ done: false, value: new Uint8Array([byte]) })
+    read.mockResolvedValue({ done: true })
+    const releaseLock = vi.fn()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read, releaseLock }) } }))
+    const onEvent = vi.fn()
+    await streamAccountModelTest({ accountId: 1, body: {}, onEvent })
+    expect(onEvent.mock.calls.map(([event]) => event)).toEqual([
+      { type: 'content', text: '你好' }, { type: 'test_complete', success: true }
+    ])
+    expect(releaseLock).toHaveBeenCalledOnce()
+  })
+
+  it('rejects truncated streams and releases the reader', async () => {
+    const releaseLock = vi.fn()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({
+      read: vi.fn().mockResolvedValue({ done: true }), releaseLock
+    }) } }))
+    await expect(streamAccountModelTest({ accountId: 1, body: {}, onEvent: vi.fn() })).rejects.toThrow('before completion')
+    expect(releaseLock).toHaveBeenCalledOnce()
+  })
+
+  it('preserves structured HTTP error details', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403, json: async () => ({ message: 'account disabled' }) }))
+    await expect(streamAccountModelTest({ accountId: 1, body: {}, onEvent: vi.fn() })).rejects.toThrow('HTTP 403: account disabled')
+  })
+
+  it('cancels a pending reader without dispatching late data', async () => {
+    let finishRead!: (result: { done: boolean }) => void
+    const cancel = vi.fn().mockImplementation(async () => finishRead({ done: true }))
+    const releaseLock = vi.fn()
+    const read = vi.fn().mockImplementation(() => new Promise((resolve) => { finishRead = resolve }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read, cancel, releaseLock }) } }))
+    const controller = new AbortController()
+    const onEvent = vi.fn()
+    const result = streamAccountModelTest({ accountId: 1, body: {}, signal: controller.signal, onEvent })
+    const rejected = expect(result).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+    controller.abort()
+    await rejected
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(releaseLock).toHaveBeenCalledOnce()
+    expect(onEvent).not.toHaveBeenCalled()
   })
 })

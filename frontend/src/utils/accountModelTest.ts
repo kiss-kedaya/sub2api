@@ -13,6 +13,24 @@ export interface AccountModelTestEvent {
   mime_type?: string
 }
 
+export interface AccountModelTestMedia {
+  url: string
+  mimeType?: string
+}
+
+export interface AccountModelTestOutput {
+  output: string
+  success?: boolean
+  error?: string
+  images: AccountModelTestMedia[]
+  audios: AccountModelTestMedia[]
+  videos: AccountModelTestMedia[]
+}
+
+export function createAccountModelTestOutput(): AccountModelTestOutput {
+  return { output: '', images: [], audios: [], videos: [] }
+}
+
 export interface StreamAccountModelTestOptions {
   accountId: number
   body: Record<string, unknown>
@@ -97,13 +115,72 @@ export function resolveBatchTestAccounts(
   })
 }
 
+export function formatAccountModelTestDuration(ms?: number): string {
+  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '-'
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(2)}s`
+}
+
+export function applyAccountModelTestEvent(
+  state: AccountModelTestOutput,
+  event: AccountModelTestEvent
+): void {
+  switch (event.type) {
+    case 'content':
+    case 'status':
+    case 'text':
+      if (event.text) state.output += event.text
+      break
+    case 'image':
+      if (event.image_url) {
+        state.images.push({ url: event.image_url, mimeType: event.mime_type })
+      }
+      break
+    case 'audio':
+      if (event.audio_url) {
+        state.audios.push({ url: event.audio_url, mimeType: event.mime_type })
+      }
+      break
+    case 'video':
+      if (event.video_url) {
+        state.videos.push({ url: event.video_url, mimeType: event.mime_type })
+      }
+      break
+    case 'test_complete':
+      if (state.success !== false) state.success = event.success === true
+      if (!event.success) state.error = event.error || state.error || ''
+      break
+    case 'error':
+      state.success = false
+      state.error = event.error || ''
+      break
+    default:
+      break
+  }
+}
+
+export function summarizeAccountModelTestOutput(state: AccountModelTestOutput): string {
+  if (state.error?.trim()) return state.error.trim()
+  const text = state.output.replace(/\s+/g, ' ').trim()
+  if (text) return text
+  return state.error?.trim() || ''
+}
+
 export function parseSSEDataLine(line: string): AccountModelTestEvent | null {
   const trimmed = line.trim()
   if (!trimmed.startsWith('data:')) return null
   const jsonStr = trimmed.slice(5).trim()
   if (!jsonStr) return null
   try {
-    return JSON.parse(jsonStr) as AccountModelTestEvent
+    const event: unknown = JSON.parse(jsonStr)
+    if (!event || typeof event !== 'object' || Array.isArray(event)) return null
+    const candidate = event as Record<string, unknown>
+    if (typeof candidate.type !== 'string') return null
+    for (const key of ['text', 'model', 'error', 'image_url', 'audio_url', 'video_url', 'mime_type']) {
+      if (candidate[key] !== undefined && typeof candidate[key] !== 'string') return null
+    }
+    if (candidate.success !== undefined && typeof candidate.success !== 'boolean') return null
+    return candidate as unknown as AccountModelTestEvent
   } catch {
     return null
   }
@@ -125,6 +202,10 @@ export function consumeSSEBuffer(
 }
 
 export async function streamAccountModelTest(opts: StreamAccountModelTestOptions): Promise<void> {
+  const checkAborted = () => {
+    if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  }
+  checkAborted()
   const url = buildApiUrl(`/admin/accounts/${opts.accountId}/test`)
   const response = await fetch(url, {
     method: 'POST',
@@ -138,7 +219,16 @@ export async function streamAccountModelTest(opts: StreamAccountModelTestOptions
   })
 
   if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`)
+    let message = ''
+    try {
+      const payload = await response.json()
+      const detail = payload?.message || payload?.error?.message || payload?.error
+      if (typeof detail === 'string') message = detail
+    } catch {
+      message = ''
+    }
+    checkAborted()
+    throw new Error([`HTTP ${response.status}`, message].filter(Boolean).join(': '))
   }
 
   const reader = response.body?.getReader()
@@ -148,16 +238,31 @@ export async function streamAccountModelTest(opts: StreamAccountModelTestOptions
 
   const decoder = new TextDecoder()
   let buffer = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer = consumeSSEBuffer(buffer, decoder.decode(value, { stream: true }), opts.onEvent)
+  let terminal = false
+  const onEvent = (event: AccountModelTestEvent) => {
+    checkAborted()
+    if (event.type === 'test_complete' || event.type === 'error') terminal = true
+    opts.onEvent(event)
   }
-
-  if (buffer.trim()) {
-    const event = parseSSEDataLine(buffer)
-    if (event) opts.onEvent(event)
+  const cancelReader = () => { void reader.cancel().catch(() => {}) }
+  opts.signal?.addEventListener('abort', cancelReader, { once: true })
+  try {
+    checkAborted()
+    while (true) {
+      const { done, value } = await reader.read()
+      checkAborted()
+      if (done) break
+      buffer = consumeSSEBuffer(buffer, decoder.decode(value, { stream: true }), onEvent)
+    }
+    buffer += decoder.decode()
+    if (buffer.trim()) {
+      const event = parseSSEDataLine(buffer)
+      if (event) onEvent(event)
+    }
+    if (!terminal) throw new Error('Account test stream ended before completion')
+  } finally {
+    opts.signal?.removeEventListener('abort', cancelReader)
+    reader.releaseLock()
   }
 }
 

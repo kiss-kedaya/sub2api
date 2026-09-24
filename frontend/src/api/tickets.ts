@@ -63,7 +63,19 @@ export interface TicketDetail {
   ticket: Ticket
   messages: TicketMessage[]
   has_more: boolean
-  requester?: { id: number; username: string; email: string; balance: number; status: string; created_at: string }
+  requester?: {
+    id: number
+    username: string
+    email: string
+    balance: number
+    status: string
+    created_at: string
+    today_tokens?: number
+    today_cost?: number
+    recharged_14d?: number
+    usage_stats_available?: boolean
+    recharge_stats_available?: boolean
+  }
 }
 
 export type TicketStats = Record<TicketStatus | 'total' | 'unread', number> & { can_create?: boolean; next_create_at?: string | null }

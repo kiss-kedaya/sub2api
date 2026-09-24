@@ -71,6 +71,15 @@ func ticketExpectLookup(mock sqlmock.Sqlmock, rows *sqlmock.Rows, lock bool, adm
 	expect.WillReturnRows(rows)
 }
 
+func ticketExpectRequesterStats(mock sqlmock.Sqlmock, userID, tokens int64, cost, recharged float64) {
+	mock.ExpectQuery(`FROM usage_dashboard_hourly_users`).
+		WithArgs(userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"tokens", "cost"}).AddRow(tokens, cost))
+	mock.ExpectQuery(`FROM payment_orders`).
+		WithArgs(userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"amount"}).AddRow(recharged))
+}
+
 func TestTicketRepositoryOwnerIsolation(t *testing.T) {
 	for _, action := range []string{"detail", "reply", "update", "read"} {
 		t.Run(action, func(t *testing.T) {
@@ -358,9 +367,15 @@ func TestTicketRepositoryAdminDetailRefreshesRequester(t *testing.T) {
 		mock.ExpectQuery("SELECT m.id, m.ticket_id").WillReturnRows(ticketMessageRows(100)).RowsWillBeClosed()
 		mock.ExpectQuery("SELECT id, COALESCE\\(username, ''\\), email, balance, status, created_at FROM users WHERE id = \\$1").WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"id", "username", "email", "balance", "status", "created_at"}).AddRow(7, "requester", "requester@example.test", balance, "active", ticketSQLTime))
 		mock.ExpectExec("INSERT INTO support_ticket_views").WithArgs(int64(10), int64(9), true, int64(100)).WillReturnResult(sqlmock.NewResult(0, 1))
+		ticketExpectRequesterStats(mock, 7, 128000, 3.25, 80)
 		detail, err := r.Detail(context.Background(), actor, 10, 0)
 		require.NoError(t, err)
 		require.Equal(t, balance, detail.Requester.Balance)
 		require.Equal(t, "requester", detail.Requester.Username)
+		require.Equal(t, int64(128000), detail.Requester.TodayTokens)
+		require.Equal(t, 3.25, detail.Requester.TodayCost)
+		require.Equal(t, 80.0, detail.Requester.Recharged14d)
+		require.True(t, detail.Requester.UsageStatsAvailable)
+		require.True(t, detail.Requester.RechargeStatsAvailable)
 	}
 }

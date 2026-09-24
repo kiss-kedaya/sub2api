@@ -1,4 +1,3 @@
-import { isIP } from 'node:net'
 import type {
   AdminUsageLog,
   DashboardStats,
@@ -94,7 +93,6 @@ export function createMockApi(now = new Date()) {
   })
   let nextId = data.keys.length + 1
   let nextOrderId = Math.max(...data.paymentOrders.map(order => order.id)) + 1
-  let nextAllowlistId = Math.max(...data.cfAllowlist.items.map(item => item.id)) + 1
   let nextRedeemId = Math.max(...data.redeemHistory.map(item => item.id)) + 1
   const usedDemoCodes = new Set<string>()
   const timezoneOf = (query: URLSearchParams) => {
@@ -603,7 +601,6 @@ export function createMockApi(now = new Date()) {
           return query.has('page') || query.has('page_size') ? page(data.redeemHistory, query) : data.redeemHistory
         }
         if (path === '/api/v1/user/aff') return data.affiliateDetail
-        if (path === '/api/v1/user/cf-allowlist') return { ...data.cfAllowlist, used_slots: data.cfAllowlist.items.length }
         if (path === '/api/v1/user/totp/status') return { enabled: false, enabled_at: null, feature_enabled: false }
         if (path === '/api/v1/user/totp/verification-method') return { method: 'password' }
         if (path === '/v1/models') return { object: 'list', data: data.models.map(id => ({ id, object: 'model', owned_by: 'local-demo' })) }
@@ -827,15 +824,6 @@ export function createMockApi(now = new Date()) {
         data.user.balance = Math.round((data.user.balance + amount) * 100) / 100
         return { transferred_quota: amount, balance: data.user.balance }
       }
-      if (method === 'POST' && path === '/api/v1/user/cf-allowlist') {
-        const ip = typeof body.ip === 'string' ? body.ip.trim() : ''
-        if (!isIP(ip)) throw new PreviewError(422, '请输入有效的 IPv4 或 IPv6 地址')
-        if (data.cfAllowlist.items.some(item => item.ip === ip)) throw new PreviewError(409, '该 IP 已在本地演示白名单中')
-        if (data.cfAllowlist.items.length >= data.cfAllowlist.max_slots) throw new PreviewError(409, '本地演示白名单名额已满')
-        const item = { id: nextAllowlistId++, ip, created_at: now.toISOString() }
-        data.cfAllowlist.items.push(item)
-        return item
-      }
       if (method === 'PUT' && path === '/api/v1/admin/settings') {
         if (!('payment_recharge_center_enabled' in body)) throw new PreviewError(405, '演示不支持修改其他系统设置')
         if ('payment_recharge_center_enabled' in body) {
@@ -881,13 +869,6 @@ export function createMockApi(now = new Date()) {
         }
         data.keys[index] = editKey(data.keys[index], body)
         return data.keys[index]
-      }
-      const allowlistDelete = path.match(/^\/api\/v1\/user\/cf-allowlist\/(\d+)$/)
-      if (method === 'DELETE' && allowlistDelete) {
-        const index = data.cfAllowlist.items.findIndex(item => item.id === Number(allowlistDelete[1]))
-        if (index < 0) throw new PreviewError(404, '本地演示 IP 不存在')
-        data.cfAllowlist.items.splice(index, 1)
-        return { message: '本地演示 IP 已移除' }
       }
       throw new PreviewError(501, '演示不支持此操作，不会写入或转发到真实后端')
     },
