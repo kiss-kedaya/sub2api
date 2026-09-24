@@ -19,86 +19,97 @@
         </span>
       </div>
 
-      <div class="account-test-advanced">
-        <div v-if="isGrokAccount" class="account-test-field">
-          <label>{{ t('admin.accounts.grok.testMode') }}</label>
-          <Select
-            v-model="grokTestMode"
-            :options="grokTestModeOptions"
-            :disabled="standaloneBusy"
-          />
-          <p>{{ t('admin.accounts.grok.testModeHint') }}</p>
-        </div>
-
-        <div v-if="isOpenAIAccount" class="account-test-field">
-          <label>{{ t('admin.accounts.openai.testMode') }}</label>
-          <Select
-            v-model="testMode"
-            :options="openAITestModeOptions"
-            data-test="openai-test-mode"
-          />
-        </div>
-
-        <TextArea
-          v-model="testPrompt"
-          :label="promptInputLabel"
-          :placeholder="promptInputPlaceholder"
-          :hint="promptInputHint"
-          :disabled="standaloneBusy"
-          rows="3"
-        />
-
-        <div v-if="supportsImageUpload" class="account-test-field">
-          <label>{{ imageUploadLabel }}</label>
-          <div class="account-test-file">
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="standaloneBusy" @click="imageFileInput?.click()">
-              {{ t('admin.accounts.grok.chooseImageFile') }}
-            </button>
-            <span>{{ uploadImageName || t('common.noFileSelected') }}</span>
-            <input
-              ref="imageFileInput"
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              class="hidden"
-              @change="onImageFileChange"
-            />
-          </div>
-          <img v-if="uploadImagePreview" :src="uploadImagePreview" :alt="t('admin.accounts.grok.uploadPreviewAlt')" class="account-test-upload-preview" />
-        </div>
-
-        <div v-if="supportsAudioUpload" class="account-test-field">
-          <label>{{ t('admin.accounts.grok.audioUploadLabel') }}</label>
-          <div class="account-test-file">
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="standaloneBusy" @click="audioFileInput?.click()">
-              {{ t('admin.accounts.grok.chooseAudioFile') }}
-            </button>
-            <span>{{ uploadAudioName || t('common.noFileSelected') }}</span>
-            <input
-              ref="audioFileInput"
-              type="file"
-              accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm"
-              class="hidden"
-              @change="onAudioFileChange"
-            />
-          </div>
-        </div>
-
-        <button
-          v-if="isGrokStandaloneMode"
-          type="button"
-          class="btn btn-secondary"
-          data-test="standalone-start"
-          :disabled="standaloneBusy"
-          @click="startStandalone"
-        >
-          {{ standaloneBusy ? t('admin.accounts.testing') : t('admin.accounts.startTest') }}
+      <div class="account-test-settings">
+        <button type="button" class="account-test-settings-toggle" :aria-expanded="settingsOpen" @click="settingsOpen = !settingsOpen">
+          <Icon name="cog" size="sm" aria-hidden="true" />
+          {{ t('admin.accounts.batchTest.settings') }}
+          <Icon name="chevronDown" size="sm" class="account-test-settings-chevron" aria-hidden="true" />
         </button>
-        <pre v-if="standaloneOutput" class="account-test-standalone">{{ standaloneOutput }}</pre>
-        <p v-if="standaloneDuration !== undefined" data-test="standalone-duration">
-          {{ t('admin.accounts.batchTest.duration') }}: {{ formatAccountModelTestDuration(standaloneDuration) }}
-        </p>
-        <audio v-for="(audio, index) in standaloneResult.audios" :key="'audio-' + index" :src="audio.url" controls />
-        <video v-for="(video, index) in standaloneResult.videos" :key="'video-' + index" :src="video.url" controls />
+        <div class="account-test-settings-content" :class="{ 'is-open': settingsOpen }" :inert="settingsOpen ? undefined : true">
+          <div class="account-test-settings-inner">
+            <div class="account-test-advanced">
+              <div v-if="isGrokAccount" class="account-test-field">
+                <label>{{ t('admin.accounts.grok.testMode') }}</label>
+                <Select
+                  v-model="grokTestMode"
+                  :options="grokTestModeOptions"
+                  :disabled="standaloneBusy"
+                />
+                <p>{{ t('admin.accounts.grok.testModeHint') }}</p>
+              </div>
+
+              <div v-if="isOpenAIAccount" class="account-test-field">
+                <label>{{ t('admin.accounts.openai.testMode') }}</label>
+                <Select
+                  v-model="testMode"
+                  :options="openAITestModeOptions"
+                  data-test="openai-test-mode"
+                />
+              </div>
+
+              <TextArea
+                v-model="testPrompt"
+                class="account-test-prompt"
+                :label="promptInputLabel"
+                :placeholder="promptInputPlaceholder"
+                :disabled="standaloneBusy"
+                rows="2"
+              />
+
+              <div v-if="supportsImageUpload" class="account-test-field">
+                <label>{{ imageUploadLabel }}</label>
+                <div class="account-test-file">
+                  <button type="button" class="btn btn-secondary btn-sm" :disabled="standaloneBusy" @click="imageFileInput?.click()">
+                    {{ t('admin.accounts.grok.chooseImageFile') }}
+                  </button>
+                  <span>{{ uploadImageName || t('common.noFileSelected') }}</span>
+                  <input
+                    ref="imageFileInput"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    class="hidden"
+                    @change="onImageFileChange"
+                  />
+                </div>
+                <img v-if="uploadImagePreview" :src="uploadImagePreview" :alt="t('admin.accounts.grok.uploadPreviewAlt')" class="account-test-upload-preview" />
+              </div>
+
+              <div v-if="supportsAudioUpload" class="account-test-field">
+                <label>{{ t('admin.accounts.grok.audioUploadLabel') }}</label>
+                <div class="account-test-file">
+                  <button type="button" class="btn btn-secondary btn-sm" :disabled="standaloneBusy" @click="audioFileInput?.click()">
+                    {{ t('admin.accounts.grok.chooseAudioFile') }}
+                  </button>
+                  <span>{{ uploadAudioName || t('common.noFileSelected') }}</span>
+                  <input
+                    ref="audioFileInput"
+                    type="file"
+                    accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm"
+                    class="hidden"
+                    @change="onAudioFileChange"
+                  />
+                </div>
+              </div>
+
+              <button
+                v-if="isGrokStandaloneMode"
+                type="button"
+                class="btn btn-secondary"
+                data-test="standalone-start"
+                :disabled="standaloneBusy"
+                @click="startStandalone"
+              >
+                {{ standaloneBusy ? t('admin.accounts.testing') : t('admin.accounts.startTest') }}
+              </button>
+              <pre v-if="standaloneOutput" class="account-test-standalone">{{ standaloneOutput }}</pre>
+              <p v-if="standaloneDuration !== undefined" data-test="standalone-duration">
+                {{ t('admin.accounts.batchTest.duration') }}: {{ formatAccountModelTestDuration(standaloneDuration) }}
+              </p>
+              <audio v-for="(audio, index) in standaloneResult.audios" :key="'audio-' + index" :src="audio.url" controls />
+              <video v-for="(video, index) in standaloneResult.videos" :key="'video-' + index" :src="video.url" controls />
+            </div>
+          </div>
+        </div>
       </div>
 
       <AccountModelTestPanel
@@ -124,6 +135,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
+import Icon from '@/components/icons/Icon.vue'
 import TextArea from '@/components/common/TextArea.vue'
 import AccountModelTestPanel from '@/components/admin/account/AccountModelTestPanel.vue'
 import type { Account } from '@/types'
@@ -147,6 +159,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const settingsOpen = ref(false)
 
 const testPrompt = ref('')
 const testMode = ref<'default' | 'compact'>('default')
@@ -226,15 +239,7 @@ const promptInputPlaceholder = computed(() => {
   return t('admin.accounts.imagePromptPlaceholder')
 })
 
-const promptInputHint = computed(() => {
-  if (grokTestMode.value === 'video') return t('admin.accounts.videoTestHint')
-  if (grokTestMode.value === 'search') return t('admin.accounts.grok.searchTestHint')
-  if (grokTestMode.value === 'tts') return t('admin.accounts.grok.ttsTestHint')
-  if (grokTestMode.value === 'stt') return t('admin.accounts.grok.sttTestHint')
-  if (grokTestMode.value === 'realtime') return t('admin.accounts.grok.realtimeTestHint')
-  if (grokTestMode.value === 'image') return t('admin.accounts.imageTestHint')
-  return t('admin.accounts.batchTest.promptHint')
-})
+
 
 const readFileAsDataURL = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -455,7 +460,7 @@ defineExpose({
 </script>
 
 <style scoped>
-.account-test { display: grid; gap: 12px; color: var(--signal-text); }
+.account-test { display: grid; min-width: 0; gap: 20px; color: var(--signal-text); }
 .account-test-head,
 .account-test-file {
   display: flex;
@@ -464,12 +469,11 @@ defineExpose({
   gap: 8px;
 }
 .account-test-head {
-  padding: 10px 12px;
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  background: var(--signal-surface);
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--signal-line);
 }
-.account-test-name { font-weight: 650; }
+.account-test-head > div { min-width: 0; }
+.account-test-name { font-size: 14px; font-weight: 650; overflow-wrap: anywhere; line-height: 1.6; }
 .account-test-meta { display: flex; gap: 8px; font-size: 12px; color: var(--signal-muted); }
 .account-test-type {
   text-transform: uppercase;
@@ -478,14 +482,15 @@ defineExpose({
   border-radius: 999px;
   background: var(--signal-bg);
 }
-.account-test-status { font-size: 12px; color: var(--signal-muted); }
-.account-test-status.is-active { color: #1f9d55; }
+.account-test-status { flex-shrink: 0; padding: 4px 9px; border-radius: 6px; font-size: 11px; color: var(--signal-muted); background: var(--signal-bg); }
+.account-test-status.is-active { color: #15805d; background: #15805d0d; }
+:global(.dark .account-test-status.is-active) { color: #6ee7b7; background: #6ee7b712; }
 .account-test-advanced {
   display: grid;
   gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
+  grid-template-columns: minmax(160px, 1fr) minmax(0, 2fr);
+  align-items: start;
+  padding: 4px 14px 14px;
   background: var(--signal-surface);
 }
 .account-test-field { display: grid; gap: 6px; }
@@ -505,5 +510,26 @@ defineExpose({
   white-space: pre-wrap;
   font-size: 12px;
 }
+.account-test-settings { border: 1px solid var(--signal-line); border-radius: 10px; background: var(--signal-surface); overflow: hidden; }
+.account-test-settings-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 11px 14px; font-size: 12px; font-weight: 500; color: var(--signal-muted); text-align: left; transition: color 160ms ease, background 160ms ease; }
+.account-test-settings-toggle:hover { color: var(--signal-text); background: var(--signal-bg); }
+.account-test-settings-toggle:focus-visible { outline: 2px solid #0f766e; outline-offset: -3px; }
+.account-test-settings-chevron { margin-left: auto; transition: transform 220ms ease; }
+.account-test-settings-toggle[aria-expanded=true] .account-test-settings-chevron { transform: rotate(180deg); }
+.account-test-settings-content { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 240ms ease, opacity 240ms ease; }
+.account-test-settings-content.is-open { grid-template-rows: 1fr; opacity: 1; }
+.account-test-settings-inner { min-height: 0; overflow: hidden; }
+.account-test-advanced > * { min-width: 0; }
+.account-test-prompt:first-child, .account-test-standalone, .account-test-advanced > audio, .account-test-advanced > video, [data-test="standalone-duration"] { grid-column: 1 / -1; }
+.account-test-file { flex-wrap: wrap; }
 .hidden { display: none; }
+@media (max-width: 640px) {
+  .account-test { gap: 16px; }
+  .account-test-head { align-items: flex-start; }
+  .account-test-advanced { grid-template-columns: minmax(0, 1fr); }
+  .account-test-name { font-size: 13px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .account-test-settings * { transition: none !important; }
+}
 </style>

@@ -1523,7 +1523,7 @@ export default {
         collapse: 'Collapse',
         emptyOutput: 'No output',
         filterModels: 'Filter models',
-        unboundedConcurrency: 'All jobs run at once. Each row shows the response and duration.',
+        settings: 'Test settings',
         promptHint: 'Image and video models use this prompt. Chat models still send the default hi.',
         singleHeadline: '{name} · {count} models',
         summaryBoard: '{success} passed / {failed} failed / {skipped} skipped / {running} running / {total}',
