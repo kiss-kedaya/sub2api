@@ -240,6 +240,7 @@ export async function streamAccountModelTest(opts: StreamAccountModelTestOptions
   let buffer = ''
   let terminal = false
   const onEvent = (event: AccountModelTestEvent) => {
+    if (terminal) return
     checkAborted()
     if (event.type === 'test_complete' || event.type === 'error') terminal = true
     opts.onEvent(event)
@@ -253,15 +254,17 @@ export async function streamAccountModelTest(opts: StreamAccountModelTestOptions
       checkAborted()
       if (done) break
       buffer = consumeSSEBuffer(buffer, decoder.decode(value, { stream: true }), onEvent)
+      if (terminal) break
     }
     buffer += decoder.decode()
-    if (buffer.trim()) {
+    if (!terminal && buffer.trim()) {
       const event = parseSSEDataLine(buffer)
       if (event) onEvent(event)
     }
     if (!terminal) throw new Error('Account test stream ended before completion')
   } finally {
     opts.signal?.removeEventListener('abort', cancelReader)
+    if (terminal) cancelReader()
     reader.releaseLock()
   }
 }
