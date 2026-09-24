@@ -1699,6 +1699,12 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			}
 			s.finalizeGeminiSSESignal(c, account, false, requestID, best, stats.dataEvents > 0, stats.fallback)
 			b, _ := json.Marshal(collected)
+			if upstreamFinancialFailureEnvelope(b) {
+				defer GuardUpstreamFinancialError(c, 0, b)()
+			}
+			if best.Kind == geminiSignalError {
+				defer GuardUpstreamFinancialError(c, best.Status, []byte(best.Detail))()
+			}
 			upstreamResponseModelObserverFromContext(c).ObserveGemini(b)
 			observeGeminiImageOutputs(c, b)
 			c.Data(http.StatusOK, "application/json", b)
@@ -1837,6 +1843,8 @@ func (s *GeminiMessagesCompatService) upstreamErrorDetail(body []byte) string {
 // 客户端统一收到 500 + 固定文案（由 write 按端点格式写出），不透传上游细节；
 // 上游真实状态码与错误信息仅记录到 ops 错误日志。
 func (s *GeminiMessagesCompatService) writeGeminiCustomCodeSkippedError(c *gin.Context, account *Account, upstreamStatus int, upstreamRequestID string, body []byte, write func()) error {
+
+	defer GuardUpstreamFinancialError(c, upstreamStatus, body)()
 	upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
 	upstreamDetail := s.upstreamErrorDetail(body)
 	setOpsUpstreamError(c, upstreamStatus, upstreamMsg, upstreamDetail)
@@ -1863,6 +1871,7 @@ func (s *GeminiMessagesCompatService) writeGeminiCustomCodeSkippedError(c *gin.C
 // 并记录 ops 错误事件。状态码保真：下游据此区分请求级错误与可重试的链路故障。
 func (s *GeminiMessagesCompatService) writeGeminiNativeUpstreamError(c *gin.Context, account *Account, resp *http.Response, respBody []byte, requestID string, isOAuth bool) error {
 	respBody = unwrapIfNeeded(isOAuth, respBody)
+	defer GuardUpstreamFinancialError(c, resp.StatusCode, respBody)()
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 	upstreamDetail := s.upstreamErrorDetail(respBody)
@@ -1924,6 +1933,8 @@ func sanitizeUpstreamErrorMessage(msg string) string {
 }
 
 func (s *GeminiMessagesCompatService) writeGeminiMappedError(c *gin.Context, account *Account, upstreamStatus int, upstreamRequestID string, body []byte) error {
+
+	defer GuardUpstreamFinancialError(c, upstreamStatus, body)()
 	MarkResponseCommitted(c)
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -2768,6 +2779,9 @@ func (s *GeminiMessagesCompatService) handleNativeNonStreamingResponse(c *gin.Co
 			respBody = unwrappedBody
 		}
 	}
+	if upstreamFinancialFailureEnvelope(respBody) {
+		defer GuardUpstreamFinancialError(c, 0, respBody)()
+	}
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -2776,6 +2790,13 @@ func (s *GeminiMessagesCompatService) handleNativeNonStreamingResponse(c *gin.Co
 	observeGeminiImageOutputs(c, respBody)
 	if sig, ok := detectGeminiResponseSignalInBody(respBody); ok {
 		s.markGeminiResponseSignal(c, account, sig, false, upstreamRequestID)
+		if sig.Kind == geminiSignalError && WriteUpstreamFinancialError(c, sig.Status, respBody) {
+			usage := extractGeminiUsage(respBody)
+			if usage == nil {
+				usage = &ClaudeUsage{}
+			}
+			return usage, nil
+		}
 	} else if isGeminiEmptyResponseBody(respBody) {
 		s.markGeminiEmptyResponse(c, account, false, upstreamRequestID)
 	}
@@ -2825,7 +2846,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 		return nil, errors.New("streaming not supported")
 	}
 
-	reader := bufio.NewReader(resp.Body)
+	reader := bufio.NewReader(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	usage := &ClaudeUsage{}
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
@@ -2835,16 +2856,22 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 	var best geminiResponseSignal
 	sawDataEvent := false
 	fallback := &geminiSSEFallbackBody{}
+	pendingErrorHeader := ""
 
 	for {
 		line, err := reader.ReadString('\n')
 		if len(line) > 0 {
 			trimmed := strings.TrimRight(line, "\r\n")
+			if strings.TrimSpace(trimmed) == "event: error" {
+				pendingErrorHeader = line
+				continue
+			}
 			if strings.HasPrefix(trimmed, "data:") {
 				payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
 				// Keepalive / done markers
 				if payload == "" || payload == "[DONE]" {
-					_, _ = io.WriteString(c.Writer, line)
+					_, _ = io.WriteString(c.Writer, pendingErrorHeader+line)
+					pendingErrorHeader = ""
 					flusher.Flush()
 				} else {
 					var rawToWrite string
@@ -2870,6 +2897,11 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					}
 					observer.ObserveGemini(rawBytes)
 					observeGeminiImageOutputs(c, rawBytes)
+					if upstreamFinancialFailureEnvelope(rawBytes) {
+						s.markGeminiResponseSignal(c, account, best, true, upstreamRequestID)
+						WriteUpstreamFinancialError(c, best.Status, rawBytes)
+						return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil
+					}
 
 					if firstTokenMs == nil {
 						ms := int(time.Since(startTime).Milliseconds())
@@ -2878,18 +2910,20 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 
 					if isOAuth {
 						// SSE format requires double newline (\n\n) to separate events
-						_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", rawToWrite)
+						_, _ = fmt.Fprintf(c.Writer, "%sdata: %s\n\n", pendingErrorHeader, rawToWrite)
 					} else {
 						// Pass-through for AI Studio responses.
-						_, _ = io.WriteString(c.Writer, line)
+						_, _ = io.WriteString(c.Writer, pendingErrorHeader+line)
 					}
+					pendingErrorHeader = ""
 					flusher.Flush()
 				}
 			} else {
 				if !sawDataEvent {
 					fallback.AddLine(trimmed)
 				}
-				_, _ = io.WriteString(c.Writer, line)
+				_, _ = io.WriteString(c.Writer, pendingErrorHeader+line)
+				pendingErrorHeader = ""
 				flusher.Flush()
 			}
 		}
