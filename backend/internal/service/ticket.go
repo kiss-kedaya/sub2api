@@ -212,7 +212,7 @@ func (s *TicketService) List(ctx context.Context, actor TicketActor, filter Tick
 		return nil, 0, err
 	}
 	if filter.Page < 1 || filter.PageSize < 1 || filter.PageSize > 100 || filter.Page > math.MaxInt/filter.PageSize ||
-		(filter.Status != "" && !ticketStatus(filter.Status)) || (filter.Priority != "" && !ticketPriority(filter.Priority)) ||
+		(filter.Status != "" && filter.Status != "active" && !ticketStatus(filter.Status)) || (filter.Priority != "" && !ticketPriority(filter.Priority)) ||
 		(filter.Category != "" && !ticketCategory(filter.Category)) || !utf8.ValidString(filter.Search) || utf8.RuneCountInString(filter.Search) > 160 || strings.ContainsRune(filter.Search, 0) {
 		return nil, 0, ticketInvalid("invalid ticket filters or pagination")
 	}

@@ -71,7 +71,7 @@ export interface TicketFilters {
   page: number
   page_size: number
   search?: string
-  status?: TicketStatus | ''
+  status?: TicketStatus | 'active' | ''
   category?: TicketCategory | ''
   priority?: TicketPriority | ''
   assigned_to?: 'all' | 'mine' | 'unassigned'
