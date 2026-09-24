@@ -912,6 +912,11 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 		return OpenAIUsage{}, 0, nil, err
 	}
 	body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
+	if upstreamFinancialFailureEnvelope(body) {
+		WriteUpstreamFinancialError(c, 0, body)
+		usage, _ := extractOpenAIUsageFromJSONBytes(body)
+		return usage, 0, nil, fmt.Errorf("images upstream financial error")
+	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := "application/json"
 	if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled {
@@ -954,6 +959,8 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	seenSSEData := false
 	fallbackTooLarge := false
 	var sseData openAISSEDataAccumulator
+	pendingErrorHeader := ""
+	financialTerminal := false
 
 	processSSEData := func(dataBytes []byte) {
 		seenSSEData = true
@@ -968,6 +975,24 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	}
 
 	processLine := func(line []byte) {
+		if financialTerminal {
+			return
+		}
+		trimmed := strings.TrimSpace(string(line))
+		if trimmed == "event: error" {
+			pendingErrorHeader = string(line)
+			return
+		}
+		if data, ok := extractOpenAISSEDataLine(strings.TrimRight(string(line), "\r\n")); ok {
+			if (pendingErrorHeader != "" || upstreamFinancialFailureEnvelope([]byte(data))) && WriteUpstreamFinancialError(c, 0, []byte(data)) {
+				financialTerminal = true
+				return
+			}
+		}
+		if pendingErrorHeader != "" {
+			line = append([]byte(pendingErrorHeader), line...)
+			pendingErrorHeader = ""
+		}
 		if len(line) == 0 {
 			return
 		}
@@ -1016,10 +1041,13 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	streamInterval := s.openAIImageStreamDataInterval()
 	keepaliveInterval := s.openAIImageStreamKeepaliveInterval()
 	if streamInterval <= 0 && keepaliveInterval <= 0 {
-		reader := bufio.NewReader(resp.Body)
+		reader := bufio.NewReader(newUpstreamErrorFrameReader(resp.Body, fallbackLimit))
 		for {
 			line, err := reader.ReadBytes('\n')
 			processLine(line)
+			if financialTerminal {
+				return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, fmt.Errorf("images upstream financial error")
+			}
 			if err == io.EOF {
 				break
 			}
@@ -1051,7 +1079,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
 	go func() {
 		defer close(events)
-		reader := bufio.NewReader(resp.Body)
+		reader := bufio.NewReader(newUpstreamErrorFrameReader(resp.Body, fallbackLimit))
 		for {
 			line, err := reader.ReadBytes('\n')
 			if len(line) > 0 {
@@ -1104,6 +1132,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 				return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, ev.err
 			}
 			processLine(ev.line)
+			if financialTerminal {
+				return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, fmt.Errorf("images upstream financial error")
+			}
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
 			if time.Since(lastRead) < streamInterval {

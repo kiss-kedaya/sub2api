@@ -104,6 +104,7 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 	defer closeBody()
 	if resp.StatusCode >= 400 {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		defer GuardUpstreamFinancialError(c, resp.StatusCode, errBody)()
 		return nil, s.writeGoogleError(c, resp.StatusCode, sanitizeUpstreamErrorMessage(extractGeminiBridgeErrorMessage(errBody)))
 	}
 
@@ -128,6 +129,7 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 		Duration: time.Since(start),
 	}
 	if status := geminiBridgeFailureStatus(raw, ""); status != 0 {
+		defer GuardUpstreamFinancialError(c, status, raw)()
 		result.NonBillableUpstreamError = geminiBridgeNonBillableFailure(status, raw) && !geminiBridgeHasOutput(raw, result.Usage)
 		return result, s.writeGoogleError(c, status, sanitizeUpstreamErrorMessage(extractGeminiBridgeErrorMessage(raw)))
 	}
@@ -298,6 +300,7 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 	var metadata map[string]any
 	var streamErr error
 	streamStatus := http.StatusBadGateway
+	financialFailure := false
 	streamMessage := "Gemini upstream stream did not complete"
 	finish := ""
 	terminal := false
@@ -347,6 +350,7 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 				result.NonBillableUpstreamError = true
 			}
 			streamStatus = status
+			financialFailure = financialFailure || IsUpstreamFinancialError(status, parsed.data)
 			streamErr = fmt.Errorf("gemini upstream stream failed: %s", parsed.eventType)
 			// A Responses error prelude can be followed by a terminal usage snapshot.
 			terminal = protocol != APIProtocolResponses || (parsed.eventType != "error" && parsed.eventType != "")
@@ -432,6 +436,10 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 		streamErr = errors.New("gemini upstream stream omitted usage")
 	}
 	if streamErr != nil {
+		if financialFailure {
+			WriteUpstreamFinancialError(c, http.StatusPaymentRequired, nil)
+			return result, streamErr
+		}
 		payload, _ := json.Marshal(map[string]any{"error": map[string]any{
 			"code": streamStatus, "status": googleapi.HTTPStatusToGoogleStatus(streamStatus), "message": streamMessage,
 		}, "usageMetadata": metadata})

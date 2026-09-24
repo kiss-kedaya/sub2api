@@ -1,6 +1,10 @@
 package service
 
-import "github.com/gin-gonic/gin"
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
 
 const errorPassthroughServiceContextKey = "error_passthrough_service"
 
@@ -41,6 +45,11 @@ func applyErrorPassthroughRule(
 	errType = defaultErrType
 	errMsg = defaultErrMsg
 
+	// Rules must not expose financial failures or bypass the existing retry/health path.
+	if IsUpstreamFinancialError(upstreamStatus, responseBody) {
+		return http.StatusBadGateway, "upstream_error", UpstreamUnavailableMessage, false
+	}
+
 	svc := getBoundErrorPassthroughService(c)
 	if svc == nil {
 		return status, errType, errMsg, false
@@ -68,5 +77,8 @@ func applyErrorPassthroughRule(
 
 	// 与现有 failover 场景保持一致：命中规则时统一返回 upstream_error。
 	errType = "upstream_error"
+	if upstreamFinancialMessage(errMsg) {
+		status, errMsg = http.StatusBadGateway, UpstreamUnavailableMessage
+	}
 	return status, errType, errMsg, true
 }

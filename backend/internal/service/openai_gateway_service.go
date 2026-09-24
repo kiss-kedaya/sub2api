@@ -969,6 +969,7 @@ func (s *OpenAIGatewayService) writeOpenAIWSFallbackErrorResponse(c *gin.Context
 		upstreamMessage = clientMessage
 	}
 
+	defer GuardUpstreamFinancialError(c, statusCode, []byte(upstreamMessage))()
 	setOpsUpstreamError(c, statusCode, upstreamMessage, "")
 	if account != nil {
 		proxyID, proxyName := opsUpstreamWSProxyAttribution(account)

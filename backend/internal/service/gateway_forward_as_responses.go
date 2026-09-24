@@ -183,6 +183,7 @@ func (s *GatewayService) ForwardAsResponses(
 		}
 
 		// Non-failover error: return Responses-formatted error to client
+		defer GuardUpstreamFinancialError(c, resp.StatusCode, respBody)()
 		writeResponsesError(c, mapUpstreamStatusCode(resp.StatusCode), "server_error", upstreamMsg)
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 	}
@@ -345,7 +346,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -371,6 +372,10 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		payload, ok := parseAnthropicSSEField(dataLine, "data")
 		if !ok {
 			continue
+		}
+
+		if upstreamFinancialFailureEnvelope([]byte(payload)) && WriteUpstreamFinancialError(c, 0, []byte(payload)) {
+			return &ForwardResult{Usage: usage}, fmt.Errorf("anthropic upstream financial error")
 		}
 
 		var event apicompat.AnthropicStreamEvent
@@ -507,7 +512,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	var firstTokenMs *int
 	firstChunk := true
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -612,6 +617,10 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		payload, ok := parseAnthropicSSEField(dataLine, "data")
 		if !ok {
 			continue
+		}
+
+		if upstreamFinancialFailureEnvelope([]byte(payload)) && WriteUpstreamFinancialError(c, 0, []byte(payload)) {
+			return resultWithUsage(), fmt.Errorf("anthropic upstream financial error")
 		}
 
 		var event apicompat.AnthropicStreamEvent
