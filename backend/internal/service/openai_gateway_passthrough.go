@@ -822,7 +822,7 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	if isOpenAIHTTPUpstreamAccessStateError(statusCode, "", responseBody) {
 		return true
 	}
-	if isUpstreamBillingAccountFrozen(responseBody) {
+	if isUpstreamBillingAccountFrozen(responseBody) || isUpstreamUsageLimitExhausted(responseBody) {
 		return true
 	}
 	if isOpenAIRequestBodyTooLargeError(statusCode, "", responseBody) {
