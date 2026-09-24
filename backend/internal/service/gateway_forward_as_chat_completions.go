@@ -169,6 +169,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 			}
 		}
 
+		defer GuardUpstreamFinancialError(c, resp.StatusCode, respBody)()
 		writeGatewayCCError(c, mapUpstreamStatusCode(resp.StatusCode), "server_error", upstreamMsg)
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 	}
@@ -227,7 +228,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -251,6 +252,10 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		payload, ok := extractOpenAISSEDataLine(scanner.Text())
 		if !ok {
 			continue
+		}
+
+		if upstreamFinancialFailureEnvelope([]byte(payload)) && WriteUpstreamFinancialError(c, 0, []byte(payload)) {
+			return &ForwardResult{Usage: usage}, fmt.Errorf("anthropic upstream financial error")
 		}
 
 		var event apicompat.AnthropicStreamEvent
@@ -382,7 +387,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	var firstTokenMs *int
 	firstChunk := true
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -460,6 +465,10 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		payload, ok := extractOpenAISSEDataLine(scanner.Text())
 		if !ok {
 			continue
+		}
+
+		if upstreamFinancialFailureEnvelope([]byte(payload)) && WriteUpstreamFinancialError(c, 0, []byte(payload)) {
+			return resultWithUsage(), fmt.Errorf("anthropic upstream financial error")
 		}
 
 		var event apicompat.AnthropicStreamEvent
