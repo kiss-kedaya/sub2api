@@ -11,6 +11,10 @@ import (
 // The gateway only wraps them into the inbound error envelope; it does not
 // rewrite 503 overloaded into a generic 502 "Upstream request failed".
 func WrapUpstreamErrorForClient(statusCode int, body []byte) (status int, errType, errCode, message string) {
+
+	if IsUpstreamFinancialError(statusCode, body) {
+		return http.StatusBadGateway, "upstream_error", "upstream_error", UpstreamUnavailableMessage
+	}
 	status = statusCode
 	if status < 400 || status > 599 {
 		status = http.StatusBadGateway

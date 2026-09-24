@@ -992,6 +992,8 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	requestBody []byte,
 	responseBody []byte,
 ) error {
+
+	defer GuardUpstreamFinancialError(c, resp.StatusCode, responseBody)()
 	MarkResponseCommitted(c)
 	body := s.redactAgentIdentitySensitiveBody(ctx, account, responseBody)
 
@@ -1629,6 +1631,9 @@ func applyOpenAIStreamFailedErrorPassthroughRule(
 	payload []byte,
 	failedMessage string,
 ) (status int, errType string, errMsg string, matched bool) {
+	if IsUpstreamFinancialError(0, payload) {
+		return http.StatusBadGateway, "upstream_error", UpstreamUnavailableMessage, true
+	}
 	ruleBody := openAIStreamFailedEventPassthroughBody(payload, failedMessage)
 	upstreamStatus := openAIStreamFailedEventSemanticStatus(payload, failedMessage)
 	return applyErrorPassthroughRule(
@@ -2123,6 +2128,13 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return
 		}
 		stopKeepalive()
+		if WriteUpstreamFinancialError(c, 0, bareErrorPayload) {
+			pendingLines = pendingLines[:0]
+			failureDelivered = true
+			clientOutputStarted = true
+			flushPending = false
+			return
+		}
 		if !writePendingLines() {
 			return
 		}
@@ -2241,6 +2253,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 			cyberHit := false
 			if eventType == "response.failed" || eventType == "error" {
+				// Financial bare-error preludes must resolve to one Responses terminal.
+				if IsUpstreamFinancialError(0, dataBytes) {
+					codexFailureTerminal = true
+				}
 				if codexFailureTerminal && eventType == "error" {
 					sawBareError = true
 					bareErrorPayload = append(bareErrorPayload[:0], dataBytes...)
@@ -2299,6 +2315,12 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					if shouldFailover {
 						return resultWithUsage(),
 							s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
+					}
+					if eventType == "response.failed" && IsUpstreamFinancialError(0, dataBytes) {
+						s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "stream_failed", dataBytes, failedMessage)
+						WriteUpstreamFinancialError(c, 0, dataBytes)
+						failureDelivered = true
+						return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 					}
 					if !cyberHit && !sawBareError {
 						if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
@@ -2494,6 +2516,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if err != nil {
 		return nil, err
 	}
+	if upstreamFinancialFailureEnvelope(body) {
+		defer GuardUpstreamFinancialError(c, 0, body)()
+	}
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -2574,6 +2599,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, true, terminalType, terminalPayload, msg, mappedModel); failoverErr != nil {
 			return nil, failoverErr
 		}
+		defer GuardUpstreamFinancialError(c, 0, terminalPayload)()
 		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 	}
 	finalResponse, ok := extractCodexFinalResponse(bodyText)

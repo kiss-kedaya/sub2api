@@ -495,6 +495,8 @@ func (s *AntigravityGatewayService) writeMappedAntigravityCompatError(
 	upstreamRequestID string,
 	body []byte,
 ) error {
+
+	defer GuardUpstreamFinancialError(c, upstreamStatus, body)()
 	MarkResponseCommitted(c)
 	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractAntigravityErrorMessage(body)))
 	setOpsUpstreamError(c, upstreamStatus, message, s.getUpstreamErrorDetail(body))

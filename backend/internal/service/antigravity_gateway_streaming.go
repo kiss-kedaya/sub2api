@@ -135,7 +135,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 	}
 
 	// 使用 Scanner 并限制单行大小，避免 ReadString 无上限导致 OOM
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.settingService.cfg)))
 	maxLineSize := defaultMaxLineSize
 	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
@@ -209,6 +209,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 	lastDataAt := time.Now()
 
 	cw := newAntigravityClientWriter(c.Writer, flusher, "antigravity gemini")
+	pendingErrorHeader := ""
 
 	// 仅发送一次错误事件，避免多次写入导致协议混乱
 	errorEventSent := false
@@ -245,6 +246,10 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 			line := ev.line
 			s.observeAntigravityGeminiSSELine(c, line)
 			trimmed := strings.TrimRight(line, "\r\n")
+			if strings.TrimSpace(trimmed) == "event: error" {
+				pendingErrorHeader = line + "\n"
+				continue
+			}
 			if strings.HasPrefix(trimmed, "data:") {
 				payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
 				if payload == "" || payload == "[DONE]" {
@@ -261,6 +266,12 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 				// 解析 usage
 				if u := extractGeminiUsage(inner); u != nil {
 					usage = u
+				}
+				if upstreamFinancialFailureEnvelope([]byte(payload)) {
+					if !cw.Disconnected() {
+						WriteUpstreamFinancialError(c, 0, []byte(payload))
+					}
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected()}, nil
 				}
 				var parsed map[string]any
 				if json.Unmarshal(inner, &parsed) == nil {
@@ -284,11 +295,13 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 					firstTokenMs = &ms
 				}
 
-				cw.Fprintf("data: %s\n\n", payload)
+				cw.Fprintf("%sdata: %s\n\n", pendingErrorHeader, payload)
+				pendingErrorHeader = ""
 				continue
 			}
 
-			cw.Fprintf("%s\n", line)
+			cw.Fprintf("%s%s\n", pendingErrorHeader, line)
+			pendingErrorHeader = ""
 
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
@@ -325,7 +338,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 	if upstreamResponseModelObserverFromContext(c) == nil {
 		beginUpstreamResponseModelObservation(c)
 	}
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.settingService.cfg)))
 	maxLineSize := defaultMaxLineSize
 	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
@@ -418,6 +431,10 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 
 			// 解包 v1internal 响应
 			inner, parseErr := s.unwrapV1InternalResponse([]byte(payload))
+			if upstreamFinancialFailureEnvelope([]byte(payload)) {
+				WriteUpstreamFinancialError(c, 0, []byte(payload))
+				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil
+			}
 			if parseErr != nil {
 				continue
 			}
@@ -688,6 +705,8 @@ func (s *AntigravityGatewayService) WriteMappedClaudeError(c *gin.Context, accou
 }
 
 func (s *AntigravityGatewayService) writeMappedClaudeError(c *gin.Context, account *Account, upstreamStatus int, upstreamRequestID string, body []byte) error {
+
+	defer GuardUpstreamFinancialError(c, upstreamStatus, body)()
 	MarkResponseCommitted(c)
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)

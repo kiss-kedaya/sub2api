@@ -426,8 +426,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
+	pendingErrorHeader := ""
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -545,8 +546,19 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			}
 
 			line := ev.line
+			if strings.TrimSpace(line) == "event: error" {
+				pendingErrorHeader = line
+				continue
+			}
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				trimmed := strings.TrimSpace(data)
+				if upstreamFinancialFailureEnvelope([]byte(data)) || pendingErrorHeader != "" && IsUpstreamFinancialError(0, []byte(data)) {
+					setOpsUpstreamError(c, http.StatusBadGateway, extractUpstreamErrorMessage([]byte(data)), "")
+					if !clientDisconnected {
+						WriteUpstreamFinancialError(c, 0, []byte(data))
+					}
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+				}
 				observer.ObserveAnthropic([]byte(trimmed))
 				if anthropicStreamEventIsTerminal("", trimmed) {
 					sawTerminalEvent = true
@@ -565,6 +577,10 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 
 			if !clientDisconnected {
 				restored := string(reverseToolNamesIfPresent(c, []byte(line)))
+				if pendingErrorHeader != "" {
+					restored = pendingErrorHeader + "\n" + restored
+					pendingErrorHeader = ""
+				}
 				if _, err := io.WriteString(w, restored); err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
@@ -898,6 +914,9 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 		contentType = "application/json"
 	}
 	body = reverseToolNamesIfPresent(c, body)
+	if upstreamFinancialFailureEnvelope(body) {
+		defer GuardUpstreamFinancialError(c, 0, body)()
+	}
 	c.Data(resp.StatusCode, contentType, body)
 	return usage, nil
 }
