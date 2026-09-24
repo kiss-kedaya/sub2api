@@ -170,7 +170,7 @@ describe('accountModelTest helpers', () => {
     for (const byte of bytes) read.mockResolvedValueOnce({ done: false, value: new Uint8Array([byte]) })
     read.mockResolvedValue({ done: true })
     const releaseLock = vi.fn()
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read, releaseLock }) } }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read, cancel: vi.fn().mockResolvedValue(undefined), releaseLock }) } }))
     const onEvent = vi.fn()
     await streamAccountModelTest({ accountId: 1, body: {}, onEvent })
     expect(onEvent.mock.calls.map(([event]) => event)).toEqual([
@@ -179,10 +179,26 @@ describe('accountModelTest helpers', () => {
     expect(releaseLock).toHaveBeenCalledOnce()
   })
 
+  it.each(['test_complete', 'error'])('finishes on %s without waiting for upstream EOF', async (type) => {
+    const encoder = new TextEncoder()
+    const payload = type === 'error' ? { type, error: 'denied' } : { type, success: true }
+    const read = vi.fn().mockResolvedValueOnce({ done: false, value: encoder.encode('data: ' + JSON.stringify(payload) + '\ndata: {"type":"content","text":"late"}\n') })
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    const releaseLock = vi.fn()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read, cancel, releaseLock }) } }))
+    const onEvent = vi.fn()
+    await streamAccountModelTest({ accountId: 1, body: {}, onEvent })
+    expect(read).toHaveBeenCalledOnce()
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(releaseLock).toHaveBeenCalledOnce()
+    expect(onEvent).toHaveBeenCalledOnce()
+    expect(onEvent).toHaveBeenCalledWith(payload)
+  })
+
   it('rejects truncated streams and releases the reader', async () => {
     const releaseLock = vi.fn()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({
-      read: vi.fn().mockResolvedValue({ done: true }), releaseLock
+      read: vi.fn().mockResolvedValue({ done: true }), cancel: vi.fn().mockResolvedValue(undefined), releaseLock
     }) } }))
     await expect(streamAccountModelTest({ accountId: 1, body: {}, onEvent: vi.fn() })).rejects.toThrow('before completion')
     expect(releaseLock).toHaveBeenCalledOnce()
