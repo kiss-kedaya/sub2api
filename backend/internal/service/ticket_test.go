@@ -234,6 +234,14 @@ func TestTicketUpdatePermissionsAndEvents(t *testing.T) {
 }
 
 func TestTicketFiltersAndCursorValidation(t *testing.T) {
+	for _, admin := range []bool{false, true} {
+		s, r, a := supportTicketTestService(admin)
+		_, _, err := s.List(context.Background(), a, TicketFilter{PaginationParams: pagination.DefaultPagination(), Status: "active"})
+		require.NoError(t, err)
+		require.True(t, r.listed)
+		_, err = s.Update(context.Background(), a, 10, UpdateTicketInput{Status: ticketTestString("active")})
+		require.Equal(t, 400, infraerrors.Code(err))
+	}
 	for _, change := range []func(*TicketFilter){
 		func(f *TicketFilter) { f.Page = 0 }, func(f *TicketFilter) { f.PageSize = 101 }, func(f *TicketFilter) { f.Page = int(^uint(0) >> 1) },
 		func(f *TicketFilter) { f.Status = "bad" }, func(f *TicketFilter) { f.Priority = "bad" }, func(f *TicketFilter) { f.Category = "bad" },

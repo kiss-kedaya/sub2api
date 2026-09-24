@@ -319,6 +319,37 @@ func TestTicketRepositoryListScopedBatchedAndNoEmail(t *testing.T) {
 	require.Empty(t, items[0].UserEmail)
 }
 
+func TestTicketRepositoryActiveListPreservesScopeAndPagination(t *testing.T) {
+	for _, admin := range []bool{false, true} {
+		t.Run(service.TicketActor{Admin: admin}.Role(), func(t *testing.T) {
+			r, mock := ticketSQLMock(t)
+			actor := service.TicketActor{UserID: 7, Admin: admin}
+			scope := `t.user_id = \$1`
+			args := []any{int64(7)}
+			if admin {
+				scope = "TRUE"
+				args = nil
+			}
+			count := mock.ExpectQuery(`SELECT COUNT\(\*\).*WHERE ` + scope + ` AND t.status <> 'closed'`)
+			list := mock.ExpectQuery(`SELECT t.id,.*WHERE ` + scope + ` AND t.status <> 'closed'.*ORDER BY t.updated_at DESC, t.id DESC LIMIT .* OFFSET`)
+			if len(args) == 0 {
+				count.WithArgs()
+				list.WithArgs(20, 20)
+			} else {
+				count.WithArgs(int64(7))
+				list.WithArgs(int64(7), 20, 20)
+			}
+			count.WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			list.WillReturnRows(ticketSQLRows("resolved", 20)).RowsWillBeClosed()
+			items, total, err := r.List(context.Background(), actor, service.TicketFilter{PaginationParams: pagination.PaginationParams{Page: 2, PageSize: 20}, Status: "active"})
+			require.NoError(t, err)
+			require.Equal(t, int64(1), total)
+			require.Len(t, items, 1)
+			require.Equal(t, "resolved", items[0].Status)
+		})
+	}
+}
+
 func TestTicketRepositoryAdminDetailRefreshesRequester(t *testing.T) {
 	r, mock := ticketSQLMock(t)
 	actor := service.TicketActor{UserID: 9, Admin: true}

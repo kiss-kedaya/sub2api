@@ -2,7 +2,7 @@ export default {
   tickets: {
     title: 'My tickets', adminTitle: 'Support inbox', support: 'Support',
     newTicket: 'New ticket', create: 'Submit ticket', created: 'Ticket submitted',
-    all: 'All tickets', total: 'Total tickets', unread: 'New messages',
+    all: 'All tickets', notClosed: 'Not closed', total: 'Total tickets', unread: 'New messages',
     search: 'Search ticket ID or subject', adminSearch: 'Search ID, subject or user',
     allCategories: 'All categories', allPriorities: 'All priorities', allAssignees: 'All assignees',
     mine: 'Assigned to me', unassigned: 'Unassigned', category: 'Category', priority: 'Priority',
@@ -24,7 +24,7 @@ export default {
     conversation: 'Conversation', older: 'Load earlier messages', newMessages: 'View new messages',
     reply: 'Reply', replyPlaceholder: 'Write a reply...', send: 'Send reply',
     sendResolve: 'Reply and resolve', sendWait: 'Reply and await user', sent: 'Reply sent',
-    closed: 'Ticket closed', resolved: 'Ticket resolved', updated: 'Ticket updated',
+    closed: 'Ticket closed', reopened: 'Ticket reopened', resolved: 'Ticket resolved', updated: 'Ticket updated',
     quickReply: 'Quick reply', quickCheck: 'Investigating', quickRequest: 'Need details', quickResolved: 'Completed',
     quickCheckText: 'Thank you for reporting this. We are investigating and will post an update here.',
     quickRequestText: 'Please share the time of the issue, the request or order ID, and the full error message.',
