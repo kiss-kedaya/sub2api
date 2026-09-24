@@ -9,7 +9,10 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(), stats: vi.fn(), detail: vi.fn(), reply: vi.fn(), update: vi.fn(), create: vi.fn(), read: vi.fn(),
   showSuccess: vi.fn(), showError: vi.fn()
 }))
-vi.mock('@/api/tickets', () => ({ ticketsAPI: () => mocks }))
+vi.mock('@/api/tickets', () => ({
+  ticketsAPI: () => mocks,
+  newClientID: () => '11111111-1111-4111-8111-111111111111'
+}))
 vi.mock('@/stores/app', () => ({ useAppStore: () => mocks }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 
