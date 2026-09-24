@@ -77,7 +77,7 @@ func TestSmartRouteLazyCatalogPreservesSelectionOrder(t *testing.T) {
 		{name: "known_backup_beats_unknown_primary", models: []string{"", "gpt-route-perf", "gpt-route-perf"}, want: []int64{2}, selected: 2},
 		{name: "known_support_remains_authoritative_after_failure", models: []string{"", "gpt-route-perf", "", "gpt-route-perf"}, fail: map[int64]bool{2: true}, want: []int64{2, 4}, selected: 4},
 		{name: "all_unknown_preserve_key_order", models: []string{"", "", ""}, fail: map[int64]bool{1: true}, want: []int64{1, 2}, selected: 2},
-		{name: "absent_models_are_skipped", models: []string{"different-model", "", "gpt-route-perf"}, want: []int64{3}, selected: 3},
+		{name: "unmapped_same_platform_model_preserves_priority", models: []string{"different-model", "", "gpt-route-perf"}, want: []int64{1}, selected: 1},
 		{name: "explicit_group_list_keeps_priority", models: []string{"", "gpt-route-perf"}, customFirst: true, want: []int64{1}, selected: 1},
 		{name: "inactive_sibling_does_not_hide_unknown", models: []string{"", "gpt-route-perf"}, inactiveLast: true, want: []int64{1}, selected: 1},
 		{name: "failed_known_does_not_enable_unknown", models: []string{"gpt-route-perf", ""}, fail: map[int64]bool{1: true}, want: []int64{1}},
