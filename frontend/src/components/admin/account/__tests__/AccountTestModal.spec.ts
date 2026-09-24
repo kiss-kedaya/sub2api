@@ -220,4 +220,24 @@ describe('AccountTestModal', () => {
       mode: 'compact'
     })
   })
+
+  it('测试全部模型会按目录顺序连打多次', async () => {
+    const wrapper = mountModal()
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    const button = wrapper.find('[data-test="test-all-models"]')
+    expect(button.exists()).toBe(true)
+    await button.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(global.fetch).toHaveBeenCalledTimes(3)
+    const bodies = (global.fetch as any).mock.calls.map(([, request]: [string, { body: string }]) => JSON.parse(request.body).model_id)
+    expect(bodies).toEqual([
+      'gemini-3.1-flash-image',
+      'gemini-2.5-flash-image',
+      'gemini-2.0-flash'
+    ])
+  })
 })
