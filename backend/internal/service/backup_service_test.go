@@ -1320,3 +1320,64 @@ func TestBackupService_StartRestore_SplitParts(t *testing.T) {
 	require.Equal(t, "completed", final.RestoreStatus)
 	require.Equal(t, dumpContent, dumper.restored)
 }
+
+func TestBackupService_S3ConfigStaysEncryptedAfterSecondSave(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+
+	_, err := svc.UpdateS3Config(context.Background(), BackupS3Config{
+		Bucket:          "my-bucket",
+		AccessKeyID:     "AKID",
+		SecretAccessKey: "original-secret",
+	})
+	require.NoError(t, err)
+
+	storedSecret := func() string {
+		raw, _ := repo.GetValue(context.Background(), settingKeyBackupS3Config)
+		var stored BackupS3Config
+		require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+		return stored.SecretAccessKey
+	}
+	require.Equal(t, "ENC:original-secret", storedSecret())
+
+	// 第二次保存不带 secret，只改别的字段。
+	_, err = svc.UpdateS3Config(context.Background(), BackupS3Config{
+		Bucket:      "my-bucket",
+		AccessKeyID: "AKID-NEW",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "ENC:original-secret", storedSecret(),
+		"secret must stay encrypted at rest after a save that inherits it")
+	require.NotEqual(t, "original-secret", storedSecret(), "secret must never be stored as plaintext")
+
+	// 第三次保存，确认不会反复套壳加密。
+	_, err = svc.UpdateS3Config(context.Background(), BackupS3Config{
+		Bucket:      "my-bucket",
+		AccessKeyID: "AKID-THIRD",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "ENC:original-secret", storedSecret(), "secret must not be double-encrypted")
+
+	internal, err := svc.loadS3Config(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "original-secret", internal.SecretAccessKey)
+	require.Equal(t, "AKID-THIRD", internal.AccessKeyID)
+}
+
+func TestBackupService_UpdateS3Config_InheritedSecretRejectsEphemeralKey(t *testing.T) {
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	before, err := repo.GetValue(context.Background(), settingKeyBackupS3Config)
+	require.NoError(t, err)
+	svc := newTestBackupServiceEphemeralKey(repo)
+
+	_, err = svc.UpdateS3Config(context.Background(), BackupS3Config{
+		Bucket:      "changed-bucket",
+		AccessKeyID: "AKID-NEW",
+	})
+	require.ErrorIs(t, err, ErrSecretEncryptionKeyNotConfigured)
+	after, err := repo.GetValue(context.Background(), settingKeyBackupS3Config)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "a rejected update must leave the encrypted configuration unchanged")
+}
