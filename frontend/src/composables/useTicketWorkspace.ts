@@ -2,7 +2,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } 
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
-import { ticketsAPI, type Ticket, type TicketDetail, type TicketFilters, type TicketStats, type TicketReply, type TicketUpdate, type CreateTicket } from '@/api/tickets'
+import { newClientID, ticketsAPI, type Ticket, type TicketDetail, type TicketFilters, type TicketStats, type TicketReply, type TicketUpdate, type CreateTicket } from '@/api/tickets'
 
 export function useTicketWorkspace(admin: Ref<boolean>) {
   const route = useRoute()
@@ -179,7 +179,7 @@ export function useTicketWorkspace(admin: Ref<boolean>) {
     const id = selectedID.value
     let attempt = replyAttempts.get(key)
     if (!attempt || attempt.content !== content || attempt.status !== status) {
-      attempt = { content, status, client_id: crypto.randomUUID() }
+      attempt = { content, status, client_id: newClientID() }
       replyAttempts.set(key, attempt)
     }
     const request = { content, status, client_id: attempt.client_id }
