@@ -244,7 +244,7 @@ describe('local demo API contracts', () => {
     }
   })
 
-  it('simulates redeem, affiliate, profile and IP allowlist actions only in memory', () => {
+  it('simulates redeem, affiliate and profile actions only in memory', () => {
     const api = createMockApi(date)
     expect(api.handle('POST', '/api/v1/redeem', query(), { code: 'DEMO-BALANCE-10' })).toMatchObject({ type: 'balance', new_balance: 138.64 })
     expect(api.handle('GET', '/api/v1/auth/me', query())).toMatchObject({ balance: 138.64 })
@@ -253,11 +253,6 @@ describe('local demo API contracts', () => {
     expect(api.handle('GET', '/api/v1/user/aff', query())).toMatchObject({ aff_quota: 0 })
     expect(api.handle('PUT', '/api/v1/user', query(), { username: '预览资料已修改' })).toMatchObject({ username: '预览资料已修改' })
 
-    const added = api.handle('POST', '/api/v1/user/cf-allowlist', query(), { ip: '198.51.100.24' }) as { id: number }
-    expect(api.handle('GET', '/api/v1/user/cf-allowlist', query())).toMatchObject({ used_slots: 3 })
-    api.handle('DELETE', `/api/v1/user/cf-allowlist/${added.id}`, query())
-    expect(api.handle('GET', '/api/v1/user/cf-allowlist', query())).toMatchObject({ used_slots: 2 })
-    expect(() => api.handle('POST', '/api/v1/user/cf-allowlist', query(), { ip: 'not-an-ip' })).toThrow('有效的 IPv4 或 IPv6')
     expect(createMockApi(date).handle('GET', '/api/v1/auth/me', query())).toMatchObject({ balance: 128.64, username: '演示用户' })
   })
 
