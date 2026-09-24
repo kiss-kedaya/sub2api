@@ -324,15 +324,19 @@ func isUpstreamBillingAccountFrozenNode(node gjson.Result) bool {
 }
 
 func isUpstreamBillingAccountFrozenRefCode(v gjson.Result) bool {
+	return upstreamRefCodeEquals(v, upstreamBillingAccountFrozenRefCode)
+}
+
+func upstreamRefCodeEquals(v gjson.Result, want int64) bool {
 	if !v.Exists() {
 		return false
 	}
 	switch v.Type {
 	case gjson.Number:
-		return v.Int() == upstreamBillingAccountFrozenRefCode
+		return v.Int() == want
 	case gjson.String:
 		n, err := strconv.ParseInt(strings.TrimSpace(v.String()), 10, 64)
-		return err == nil && n == upstreamBillingAccountFrozenRefCode
+		return err == nil && n == want
 	default:
 		return false
 	}
@@ -349,6 +353,39 @@ func isUpstreamBillingAccountFrozenMessage(msg string) bool {
 	low := strings.ToLower(msg)
 	return strings.Contains(low, "billing account has been frozen") ||
 		strings.Contains(low, "billing account is frozen")
+}
+
+// DeepSeek 400001「已达到使用限制或余额不足」是账号额度耗尽，不是参数 400。
+// 必须同时命中 ref_code 和这句话，避免把其它 invalid 400 当成停号。
+const upstreamUsageLimitExhaustedRefCode int64 = 400001
+
+func isUpstreamUsageLimitExhausted(body []byte) bool {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return false
+	}
+	if isUpstreamUsageLimitExhaustedNode(gjson.ParseBytes(body)) {
+		return true
+	}
+	inner := strings.TrimSpace(gjson.GetBytes(body, "error.message").String())
+	return strings.HasPrefix(inner, "{") && isUpstreamUsageLimitExhaustedNode(gjson.Parse(inner))
+}
+
+func isUpstreamUsageLimitExhaustedNode(node gjson.Result) bool {
+	if !node.Exists() {
+		return false
+	}
+	if !upstreamRefCodeEquals(node.Get("ref_code"), upstreamUsageLimitExhaustedRefCode) &&
+		!upstreamRefCodeEquals(node.Get("error.ref_code"), upstreamUsageLimitExhaustedRefCode) {
+		return false
+	}
+	return isUpstreamUsageLimitExhaustedMessage(firstNonEmpty(
+		node.Get("message").String(),
+		node.Get("error.message").String(),
+	))
+}
+
+func isUpstreamUsageLimitExhaustedMessage(msg string) bool {
+	return strings.Contains(strings.TrimSpace(msg), "\u5df2\u8fbe\u5230\u4f7f\u7528\u9650\u5236\u6216\u4f59\u989d\u4e0d\u8db3")
 }
 
 func extractUpstreamErrorCode(body []byte) string {

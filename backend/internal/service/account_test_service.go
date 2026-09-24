@@ -2160,7 +2160,7 @@ func (s *AccountTestService) shouldDisableAccountAfterTestUpstream(statusCode in
 	if statusCode == http.StatusUnauthorized {
 		return true
 	}
-	return isUpstreamBillingAccountFrozen(body)
+	return isUpstreamBillingAccountFrozen(body) || isUpstreamUsageLimitExhausted(body)
 }
 
 // testOpenAICompactConnection probes native remote compaction v2 (streaming

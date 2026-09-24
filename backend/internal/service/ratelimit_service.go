@@ -296,7 +296,7 @@ const (
 // 自定义错误码开启时覆盖后续所有逻辑（包括临时不可调度）。
 func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel ...string) ErrorPolicyResult {
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
-	if isUpstreamBillingAccountFrozen(responseBody) {
+	if isUpstreamBillingAccountFrozen(responseBody) || isUpstreamUsageLimitExhausted(responseBody) {
 		return ErrorPolicyMatched
 	}
 	if account.IsCustomErrorCodesEnabled() {
@@ -338,6 +338,19 @@ func (s *RateLimitService) disableIfUpstreamBillingAccountFrozen(ctx context.Con
 	return true
 }
 
+func (s *RateLimitService) disableIfUpstreamUsageLimitExhausted(ctx context.Context, account *Account, responseBody []byte) bool {
+	if s == nil || account == nil || !isUpstreamUsageLimitExhausted(responseBody) {
+		return false
+	}
+	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(responseBody))
+	msg := "Usage limit or balance exhausted (400001)"
+	if upstreamMsg != "" {
+		msg = "Usage limit or balance exhausted (400001): " + upstreamMsg
+	}
+	s.handleAuthError(ctx, account, msg)
+	return true
+}
+
 // HandleUpstreamError 处理上游错误响应，标记账号状态
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
@@ -346,6 +359,9 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// 同请求内与 fastpath 调用点的重复触发由方法内去重吸收。
 	s.maybeHandleOpenAITeamLinkedError(ctx, account, statusCode, responseBody)
 	if s.disableIfUpstreamBillingAccountFrozen(ctx, account, responseBody) {
+		return true
+	}
+	if s.disableIfUpstreamUsageLimitExhausted(ctx, account, responseBody) {
 		return true
 	}
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
