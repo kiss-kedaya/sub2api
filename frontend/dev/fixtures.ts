@@ -27,7 +27,6 @@ import type {
 } from '../src/api/channelMonitorV2'
 import type { UserMonitorDetail, UserMonitorView } from '../src/api/channelMonitor'
 import type { UserAvailableChannel } from '../src/api/channels'
-import type { CFAllowlistStatus } from '../src/api/cfAllowlist'
 import type { RedeemHistoryItem } from '../src/api/redeem'
 import type {
   CheckoutInfoResponse,
@@ -633,19 +632,6 @@ function createPageFixtures(now: Date, user: User, groups: Group[]) {
       { user_id: 900103, email: 'invitee-three@example.test', username: '演示受邀用户三', created_at: at(-6 * DAY), total_rebate: 32.5 },
     ],
   }
-  const cfAllowlist: CFAllowlistStatus = {
-    eligible: true,
-    threshold: 100,
-    total_recharged: 286,
-    max_slots: 3,
-    used_slots: 2,
-    detected_ip: '198.51.100.24',
-    configured: true,
-    items: [
-      { id: 1, ip: '192.0.2.10', created_at: at(-24 * DAY) },
-      { id: 2, ip: '203.0.113.18', created_at: at(-7 * DAY) },
-    ],
-  }
   return {
     monitorConfig,
     monitorCoverage,
@@ -665,7 +651,6 @@ function createPageFixtures(now: Date, user: User, groups: Group[]) {
     subscriptionProgress,
     redeemHistory,
     affiliateDetail,
-    cfAllowlist,
   }
 }
 

@@ -16,6 +16,40 @@ import (
 	"github.com/lib/pq"
 )
 
+const (
+	ticketRequesterHourlySQL = `SELECT
+		COALESCE(SUM(COALESCE(hourly.tokens, raw.tokens)), 0),
+		COALESCE(SUM(COALESCE(hourly.cost, raw.cost)), 0)
+		FROM generate_series($2::timestamptz, $3::timestamptz, interval '1 hour') AS hours(bucket_start)
+		LEFT JOIN LATERAL (
+			SELECT bucket_start,
+				input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens AS tokens,
+				actual_cost AS cost
+			FROM usage_dashboard_hourly_users
+			WHERE user_id = $1 AND bucket_start = hours.bucket_start
+				AND bucket_start + interval '1 hour' <= $3
+				AND computed_at >= bucket_start + interval '1 hour' AND total_requests > 0
+		) hourly ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT COALESCE(SUM(input_tokens::bigint + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS tokens,
+				COALESCE(SUM(actual_cost), 0) AS cost
+			FROM usage_logs
+			WHERE hourly.bucket_start IS NULL AND user_id = $1
+				AND created_at >= hours.bucket_start
+				AND created_at < LEAST(hours.bucket_start + interval '1 hour', $3::timestamptz)
+		) raw ON TRUE
+		WHERE hours.bucket_start < $3`
+	ticketRequesterUsageSQL = `SELECT COALESCE(SUM(input_tokens::bigint + output_tokens + cache_creation_tokens + cache_read_tokens), 0), COALESCE(SUM(actual_cost), 0)
+		FROM usage_logs
+		WHERE user_id = $1 AND created_at >= $2 AND created_at < $3`
+	ticketRequesterRechargeSQL = `SELECT COALESCE(SUM(amount), 0)
+		FROM payment_orders
+		WHERE user_id = $1 AND order_type = 'balance' AND status IN ('PAID', 'RECHARGING', 'COMPLETED')
+			AND paid_at >= $2 AND paid_at < $3`
+)
+
+var ticketStatsLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
+
 type ticketRepository struct{ db *sql.DB }
 
 func NewTicketRepository(db *sql.DB) service.TicketRepository { return &ticketRepository{db: db} }
@@ -244,7 +278,44 @@ func (r *ticketRepository) Detail(ctx context.Context, actor service.TicketActor
 			return nil, err
 		}
 	}
+	r.fillRequesterStats(ctx, detail.Requester)
 	return detail, nil
+}
+
+func (r *ticketRepository) fillRequesterStats(ctx context.Context, requester *service.TicketRequester) {
+	r.fillRequesterStatsAt(ctx, requester, time.Now())
+}
+
+func (r *ticketRepository) fillRequesterStatsAt(ctx context.Context, requester *service.TicketRequester, now time.Time) {
+	if r == nil || r.db == nil || requester == nil || requester.ID <= 0 {
+		return
+	}
+	requester.TodayTokens, requester.TodayCost, requester.Recharged14d = 0, 0, 0
+	requester.UsageStatsAvailable, requester.RechargeStatsAvailable = false, false
+	usageCtx, cancelUsage := context.WithTimeout(ctx, 750*time.Millisecond)
+	defer cancelUsage()
+	now = now.In(ticketStatsLocation)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, ticketStatsLocation)
+	var tokens int64
+	var cost float64
+	err := r.db.QueryRowContext(usageCtx, ticketRequesterHourlySQL, requester.ID, today, now).Scan(&tokens, &cost)
+	var pgErr *pq.Error
+	if isMissingRelationError(err) || errors.Is(err, sql.ErrNoRows) || (errors.As(err, &pgErr) && pgErr.Code == "42703") {
+		err = r.db.QueryRowContext(usageCtx, ticketRequesterUsageSQL, requester.ID, today, now).Scan(&tokens, &cost)
+	}
+	cancelUsage()
+	if err == nil {
+		requester.TodayTokens = tokens
+		requester.TodayCost = cost
+		requester.UsageStatsAvailable = true
+	}
+	rechargeCtx, cancelRecharge := context.WithTimeout(ctx, 750*time.Millisecond)
+	defer cancelRecharge()
+	var recharged float64
+	if err := r.db.QueryRowContext(rechargeCtx, ticketRequesterRechargeSQL, requester.ID, today.AddDate(0, 0, -13), now).Scan(&recharged); err == nil {
+		requester.Recharged14d = recharged
+		requester.RechargeStatsAvailable = true
+	}
 }
 
 func (r *ticketRepository) transaction(ctx context.Context, fn func(*sql.Tx) error) error {
