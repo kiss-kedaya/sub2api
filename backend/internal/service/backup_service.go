@@ -363,7 +363,10 @@ func (s *BackupService) UpdateS3Config(ctx context.Context, cfg BackupS3Config) 
 		if old != nil {
 			cfg.SecretAccessKey = old.SecretAccessKey
 		}
-	} else {
+	}
+
+	// loadS3Config decrypts inherited secrets, so both paths must encrypt before storage.
+	if cfg.SecretAccessKey != "" {
 		// 拒绝用自动生成的临时密钥加密：该密钥每次重启都会变化，落库的密文在
 		// 重启/升级后无法解密（#4524）。与支付、TOTP 的处理保持一致。
 		if !s.encryptionKeyConfigured {
