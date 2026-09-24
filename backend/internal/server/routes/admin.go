@@ -359,7 +359,12 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 
 func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	accounts := admin.Group("/accounts")
+	customUsage := h.Admin.Account.NewCustomUsageHandler()
 	{
+		accounts.GET("/:id/custom-usage-config", customUsage.GetConfig)
+		accounts.PUT("/:id/custom-usage-config", customUsage.PutConfig)
+		accounts.POST("/:id/custom-usage-query", customUsage.Query)
+		accounts.POST("/custom-usage-batch", customUsage.Batch)
 		accounts.GET("", h.Admin.Account.List)
 		accounts.GET("/upstream-billing-rates", h.Admin.Account.GetUpstreamBillingRates)
 		accounts.GET("/upstream-billing-probe/settings", h.Admin.Account.GetUpstreamBillingProbeSettings)

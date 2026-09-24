@@ -416,7 +416,8 @@ func redactAccountManagedExtra(extra map[string]any) map[string]any {
 	redacted := make(map[string]any, len(extra))
 	for key, value := range extra {
 		switch {
-		case key == service.OllamaCloudUsageSessionExtraKey,
+		case key == service.CustomUsageExtraKey,
+			key == service.OllamaCloudUsageSessionExtraKey,
 			key == service.OllamaCloudUsageAutoRefreshExtraKey,
 			key == service.OllamaCloudUsageSnapshotExtraKey:
 			continue
