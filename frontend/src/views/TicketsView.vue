@@ -129,7 +129,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import TicketStatusBadge from '@/components/tickets/TicketStatusBadge.vue'
 import TicketTimeline from '@/components/tickets/TicketTimeline.vue'
 import { useTicketWorkspace } from '@/composables/useTicketWorkspace'
-import { ticketStatuses, ticketCategories, ticketPriorities, type CreateTicket, type TicketStatus, type TicketPriority, type TicketReply } from '@/api/tickets'
+import { newClientID, ticketStatuses, ticketCategories, ticketPriorities, type CreateTicket, type TicketStatus, type TicketPriority, type TicketReply } from '@/api/tickets'
 import { formatCurrency } from '@/utils/format'
 import '@/styles/tickets.css'
 
@@ -152,7 +152,7 @@ const replyInput = ref<HTMLTextAreaElement | null>(null)
 const timeline = ref<InstanceType<typeof TicketTimeline> | null>(null)
 const atBottom = ref(true)
 const hasNewMessages = ref(false)
-const newTicket = reactive<CreateTicket>({ subject: '', content: '', contact: '', category: 'api', priority: 'normal', client_id: crypto.randomUUID() })
+const newTicket = reactive<CreateTicket>({ subject: '', content: '', contact: '', category: 'api', priority: 'normal', client_id: newClientID() })
 let lastTicketID = 0
 let lastMessageID = 0
 let createFingerprint = ''
@@ -222,10 +222,10 @@ async function closeTicket() {
 async function submitTicket() {
   if (!newTicket.subject.trim() || !newTicket.content.trim()) { app.showError(t('tickets.required')); return }
   const fingerprint = JSON.stringify([newTicket.subject, newTicket.content, newTicket.contact, newTicket.category, newTicket.priority])
-  if (fingerprint !== createFingerprint) { newTicket.client_id = crypto.randomUUID(); createFingerprint = fingerprint }
+  if (fingerprint !== createFingerprint) { newTicket.client_id = newClientID(); createFingerprint = fingerprint }
   if (await create({ ...newTicket, subject: newTicket.subject.trim(), content: newTicket.content.trim(), contact: newTicket.contact.trim() })) {
     newTicketOpen.value = false
-    Object.assign(newTicket, { subject: '', content: '', contact: '', category: 'api', priority: 'normal', client_id: crypto.randomUUID() })
+    Object.assign(newTicket, { subject: '', content: '', contact: '', category: 'api', priority: 'normal', client_id: newClientID() })
     createFingerprint = ''
   }
 }
