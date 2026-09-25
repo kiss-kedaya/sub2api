@@ -339,7 +339,29 @@
                 </div>
 
                 <!-- Update button -->
+                <div
+                  v-if="updateDisabled"
+                  class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
+                >
+                  <svg
+                    class="h-3.5 w-3.5 flex-shrink-0 text-blue-500 dark:text-blue-400"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <p class="text-xs text-blue-600 dark:text-blue-400">
+                    {{ t('version.updateDisabledHint') }}
+                  </p>
+                </div>
                 <button
+                  v-else
                   @click="handleUpdate"
                   :disabled="updating"
                   class="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
@@ -416,9 +438,31 @@
 
                   <transition name="rollback">
                     <div v-if="rollbackPanelOpen" class="mt-2 space-y-2">
+                      <!-- Deployment with online update disabled: rollback also disabled -->
+                      <div
+                        v-if="updateDisabled"
+                        class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
+                      >
+                        <svg
+                          class="h-3.5 w-3.5 flex-shrink-0 text-blue-500 dark:text-blue-400"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                          />
+                        </svg>
+                        <p class="min-w-0 flex-1 text-xs leading-4 text-blue-600 dark:text-blue-400">
+                          {{ t('version.rollbackDisabledHint') }}
+                        </p>
+                      </div>
                       <!-- Source build: online rollback unavailable, use git instead -->
                       <div
-                        v-if="!isReleaseBuild"
+                        v-else-if="!isReleaseBuild"
                         class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
                       >
                         <svg
@@ -707,6 +751,9 @@ function formatVersion(version?: string): string {
 const displayCurrentVersion = computed(() => formatVersion(currentVersion.value))
 const displayLatestVersion = computed(() => formatVersion(latestVersion.value))
 const hasUpdate = computed(() => appStore.hasUpdate)
+// 生产多实例部署（UPDATE_STRATEGY=disabled）禁止在线更新/回退：原地换二进制与
+// 按版本命名的 systemd 单元不匹配，会把当前版本跑死。
+const updateDisabled = computed(() => appStore.updateStrategy === 'disabled')
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
 

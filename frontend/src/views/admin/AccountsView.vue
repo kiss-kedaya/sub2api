@@ -2664,6 +2664,17 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+.accounts-workspace :deep(.layout-section-scrollable) {
+  overflow: hidden;
+}
+
+.accounts-table-stage :deep(.table-wrapper) {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
 .accounts-command-bar {
   padding-block: 1px;
 }
@@ -2675,7 +2686,10 @@ onUnmounted(() => {
 
 .accounts-table-stage {
   display: flex;
+  width: 100%;
+  max-width: 100%;
   min-height: 0;
+  min-width: 0;
   flex: 1 1 auto;
   flex-direction: column;
   overflow: hidden;

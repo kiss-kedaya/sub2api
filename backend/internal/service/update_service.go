@@ -27,6 +27,7 @@ var (
 	ErrNoUpdateAvailable         = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
 	ErrRollbackVersionNotAllowed = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
 	ErrUpdateOrchestratorMissing = infraerrors.InternalServer("UPDATE_ORCHESTRATOR_MISSING", "update orchestrator is not configured")
+	ErrUpdateDisabled            = infraerrors.BadRequest("UPDATE_DISABLED", "online update is disabled on this deployment; use the release rollout process")
 )
 
 const (
@@ -49,6 +50,7 @@ const (
 	updateStrategyBinary       = "binary"
 	updateStrategyRuntime      = "runtime"
 	updateStrategyOrchestrated = "orchestrated"
+	updateStrategyDisabled     = "disabled"
 )
 
 // UpdateCache defines cache operations for update service
@@ -154,7 +156,9 @@ func loadUpdateRuntimeConfig() updateRuntimeConfig {
 	if strategy == "" {
 		strategy = updateStrategyBinary
 	}
-	if strategy != updateStrategyBinary && strategy != updateStrategyRuntime && strategy != updateStrategyOrchestrated {
+	switch strategy {
+	case updateStrategyBinary, updateStrategyRuntime, updateStrategyOrchestrated, updateStrategyDisabled:
+	default:
 		strategy = updateStrategyBinary
 	}
 	return updateRuntimeConfig{
@@ -199,6 +203,10 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 // PerformUpdate downloads and applies the update
 // Uses atomic file replacement pattern for safe in-place updates
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
+	if s.updateRuntime.strategy == updateStrategyDisabled {
+		return ErrUpdateDisabled
+	}
+
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
 		return normalizeUpdateError(err)
@@ -399,6 +407,9 @@ func (s *UpdateService) updateTargetPath() (string, error) {
 
 // Rollback restores the previous version
 func (s *UpdateService) Rollback() error {
+	if s.updateRuntime.strategy == updateStrategyDisabled {
+		return ErrUpdateDisabled
+	}
 	if s.updateRuntime.strategy == updateStrategyOrchestrated {
 		return infraerrors.BadRequest("ROLLBACK_VERSION_REQUIRED", "select a release version for Docker rollback")
 	}
@@ -445,6 +456,9 @@ func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVer
 // The target must be one of the versions returned by ListRollbackVersions;
 // anything else (including the current version) is rejected.
 func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) error {
+	if s.updateRuntime.strategy == updateStrategyDisabled {
+		return ErrUpdateDisabled
+	}
 	target := strings.TrimPrefix(strings.TrimSpace(version), "v")
 	if target == "" {
 		return ErrRollbackVersionNotAllowed
