@@ -98,6 +98,22 @@ func customUsageResponse(body string, status int) *http.Response {
 	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}
 }
 
+func TestCustomUsageDefaultsFollowAccountCredential(t *testing.T) {
+	_, repo, _ := customUsageFixture(t)
+	c, secrets, configured := readCustomUsage(repo.accounts[1])
+	require.True(t, configured)
+	require.True(t, c.Enabled)
+	require.Equal(t, "general", c.Template)
+	require.Equal(t, 10, c.IntervalMinutes)
+	require.Equal(t, "https://billing.example.com", c.BaseURL)
+	require.Equal(t, "{{baseUrl}}/v1/usage", c.Request.URL)
+	require.Equal(t, "Bearer {{apiKey}}", c.Request.Headers["Authorization"])
+	require.Empty(t, secrets.APIKey)
+	prepared, err := prepareCustomUsage(repo.accounts[1], c, secrets)
+	require.NoError(t, err)
+	require.Equal(t, "Bearer sk-inherited-credential", prepared.request.Header.Get("Authorization"))
+}
+
 func TestCustomUsagePublicAddresses(t *testing.T) {
 	for _, tc := range []struct {
 		ip string

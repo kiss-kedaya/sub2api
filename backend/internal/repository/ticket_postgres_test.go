@@ -59,6 +59,7 @@ func ticketPostgres(t *testing.T) (*sql.DB, *service.TicketService, context.Cont
 		id BIGINT PRIMARY KEY, username TEXT, email TEXT NOT NULL, balance NUMERIC(20,8) NOT NULL DEFAULT 100,
 		status TEXT NOT NULL DEFAULT 'active', role TEXT NOT NULL DEFAULT 'user', deleted_at TIMESTAMPTZ,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());
+		CREATE TABLE settings (id BIGSERIAL PRIMARY KEY, key VARCHAR(100) UNIQUE NOT NULL, value TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
 		INSERT INTO users (id,username,email) SELECT n, 'user' || n, 'user' || n || '@example.test' FROM generate_series(1,30) n;
 		INSERT INTO users (id,username,email,role) VALUES (99,'support99','support99@example.test','admin'), (100,'support100','support100@example.test','admin');`)
 	require.NoError(t, err)
