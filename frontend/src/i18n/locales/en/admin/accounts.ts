@@ -1,5 +1,8 @@
+import customUsage from './customUsage'
+
 export default {
     accounts: {
+      customUsage,
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',

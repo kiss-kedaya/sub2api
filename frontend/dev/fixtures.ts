@@ -206,6 +206,7 @@ function createAdminFixtures(now: Date, groups: Group[], sourceKeys: ApiKey[], s
       notes: `${PREVIEW_LABEL}，不含真实凭据`,
       platform: group.platform === 'composite' ? 'openai' : group.platform,
       type: index % 3 === 0 ? 'oauth' : index % 3 === 1 ? 'apikey' : 'upstream',
+      ...(index % 3 === 1 ? { credentials: { base_url: 'https://upstream.example.com' } } : {}),
       credentials_status: { has_access_token: false, has_api_key: false },
       proxy_id: index % 3 === 0 ? 930001 : null,
       concurrency: 4 + index % 8,
