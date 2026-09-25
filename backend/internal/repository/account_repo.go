@@ -840,7 +840,8 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'ollama_cloud_usage_session',
 			extra -> 'ollama_cloud_usage_auto_refresh',
 			extra -> 'ollama_cloud_usage_snapshot',
-			COALESCE(extra, '{}'::jsonb)
+			COALESCE(extra, '{}'::jsonb),
+			credentials -> 'custom_usage_secrets'
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -867,6 +868,7 @@ func lockAndMergeAccountProbeExtra(
 		currentOllamaAutoRefresh     []byte
 		currentOllamaSnapshot        []byte
 		currentExtraJSON             []byte
+		currentCustomUsageSecrets    []byte
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -879,6 +881,7 @@ func lockAndMergeAccountProbeExtra(
 		&currentOllamaAutoRefresh,
 		&currentOllamaSnapshot,
 		&currentExtraJSON,
+		&currentCustomUsageSecrets,
 	); err != nil {
 		return nil, err
 	}
@@ -900,6 +903,19 @@ func lockAndMergeAccountProbeExtra(
 		}
 	}
 	extra := service.MergeOpenAICodexTicketExtra(copyJSONMap(normalizeJSONMap(account.Extra)), currentExtra)
+	delete(extra, service.CustomUsageExtraKey)
+	if currentConfig, exists := currentExtra[service.CustomUsageExtraKey]; exists {
+		extra[service.CustomUsageExtraKey] = currentConfig
+	}
+	managedSecrets, _, err := decodeAccountExtraJSON(currentCustomUsageSecrets)
+	if err != nil {
+		return nil, err
+	}
+	account.Credentials = copyJSONMap(normalizeJSONMap(account.Credentials))
+	delete(account.Credentials, service.CustomUsageCredentialsKey)
+	if managedSecrets != nil {
+		account.Credentials[service.CustomUsageCredentialsKey] = managedSecrets
+	}
 	for _, key := range []string{
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,
@@ -1024,7 +1040,10 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 	result, err := client.ExecContext(ctx, `
 		UPDATE accounts
 		SET
-			credentials = $1::jsonb,
+			credentials = ($1::jsonb - 'custom_usage_secrets')
+				|| CASE WHEN credentials ? 'custom_usage_secrets'
+					THEN jsonb_build_object('custom_usage_secrets', credentials -> 'custom_usage_secrets')
+					ELSE '{}'::jsonb END,
 			extra = CASE
 				-- 凭证整体未变化 ⇒ Ollama 组身份必然未变化；顶层 DISTINCT 守卫防止
 				-- 非 Ollama 账号的无变化持久化误清探测快照或重写 NULL extra。
