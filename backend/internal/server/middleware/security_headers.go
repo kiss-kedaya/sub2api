@@ -144,7 +144,7 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 		if cfg.Enabled {
 			// Generate nonce for this request
 			nonce, err := GenerateNonce()
-			csp := finalPolicy
+			var csp string
 			if err != nil {
 				// crypto/rand 失败时降级为无 nonce 的 CSP 策略
 				log.Printf("[SecurityHeaders] %v — 降级为无 nonce 的 CSP", err)
@@ -265,15 +265,15 @@ func rewriteCSPFrameAncestors(policy, value string) string {
 			suffix := policy[end:]
 			var b strings.Builder
 			if prefix != "" {
-				b.WriteString(prefix)
+				_, _ = b.WriteString(prefix)
 				if !strings.HasSuffix(prefix, ";") {
-					b.WriteString(";")
+					_, _ = b.WriteString(";")
 				}
-				b.WriteByte(' ')
+				_ = b.WriteByte(' ')
 			}
-			b.WriteString("frame-ancestors ")
-			b.WriteString(value)
-			b.WriteString(suffix)
+			_, _ = b.WriteString("frame-ancestors ")
+			_, _ = b.WriteString(value)
+			_, _ = b.WriteString(suffix)
 			return b.String()
 		}
 		if end == len(policy) {
