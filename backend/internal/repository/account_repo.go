@@ -3367,6 +3367,25 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	if updates.ProbeEnabled != nil {
 		whereClause += " AND type = $" + itoa(idx)
 		args = append(args, service.AccountTypeAPIKey)
+		idx++
+	}
+	if updates.CustomUsageExpected != nil {
+		if len(ids) != 1 {
+			return 0, service.ErrCustomUsageConfig
+		}
+		expectedCredentials, err := json.Marshal(normalizeJSONMap(updates.CustomUsageExpected.Credentials))
+		if err != nil {
+			return 0, err
+		}
+		expectedConfig, err := json.Marshal(updates.CustomUsageExpected.Config)
+		if err != nil {
+			return 0, err
+		}
+		whereClause += " AND type = 'apikey' AND credentials = $" + itoa(idx) + "::jsonb"
+		args = append(args, expectedCredentials)
+		idx++
+		whereClause += " AND COALESCE(extra -> 'custom_usage_config', 'null'::jsonb) = $" + itoa(idx) + "::jsonb"
+		args = append(args, expectedConfig)
 	}
 	query := "UPDATE accounts SET " + joinClauses(setClauses, ", ") + whereClause
 
