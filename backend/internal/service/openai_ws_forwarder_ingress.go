@@ -1180,7 +1180,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 				clientMessage := upstreamMessage
 				if eventType == "error" || eventType == "response.failed" {
-					if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
+					if IsUpstreamFinancialError(0, clientMessage) {
+						clientMessage = redactUpstreamFinancialEvent(clientMessage, eventType)
+					} else if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
 						clientMessage = rewritten
 					}
 				}
