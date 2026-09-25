@@ -62,8 +62,19 @@
             </label>
             <Input
               v-model="newPlan.cron_expression"
-              :placeholder="'*/30 * * * *'"
+              :placeholder="'*/5 * * * *'"
               :hint="t('admin.scheduledTests.cronHelp')"
+            />
+          </div>
+          <div class="sm:col-span-2">
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+              {{ t('admin.scheduledTests.prompt') }}
+            </label>
+            <textarea
+              v-model="newPlan.prompt_text"
+              rows="4"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-200"
+              :placeholder="t('admin.scheduledTests.promptPlaceholder')"
             />
           </div>
           <div>
@@ -272,8 +283,19 @@
                 </label>
                 <Input
                   v-model="editForm.cron_expression"
-                  :placeholder="'*/30 * * * *'"
+                  :placeholder="'*/5 * * * *'"
                   :hint="t('admin.scheduledTests.cronHelp')"
+                />
+              </div>
+              <div class="sm:col-span-2">
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                  {{ t('admin.scheduledTests.prompt') }}
+                </label>
+                <textarea
+                  v-model="editForm.prompt_text"
+                  rows="4"
+                  class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-200"
+                  :placeholder="t('admin.scheduledTests.promptPlaceholder')"
                 />
               </div>
               <div>
@@ -359,88 +381,97 @@
               {{ t('admin.scheduledTests.noResults') }}
             </div>
 
-            <!-- Results List -->
-            <div v-else class="max-h-64 space-y-2 overflow-y-auto">
-              <div
-                v-for="result in results"
-                :key="result.id"
-                class="rounded-lg border border-gray-100 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900"
-              >
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-2">
-                    <!-- Status Badge -->
+            <!-- Results History -->
+            <div v-else class="grid min-h-[28rem] grid-cols-1 gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]">
+              <div class="max-h-[32rem] space-y-2 overflow-y-auto pr-1">
+                <button
+                  v-for="result in results"
+                  :key="result.id"
+                  type="button"
+                  class="w-full rounded-lg border p-3 text-left transition-colors"
+                  :class="selectedResult?.id === result.id
+                    ? 'border-primary-400 bg-primary-50 dark:border-primary-500 dark:bg-primary-900/20'
+                    : 'border-gray-100 bg-gray-50 hover:border-gray-300 dark:border-dark-700 dark:bg-dark-900 dark:hover:border-dark-500'"
+                  @click="selectResult(result.id)"
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <span class="text-xs font-semibold text-gray-900 dark:text-gray-100">
+                      {{ formatDateTime(result.started_at) }}
+                    </span>
                     <span
                       :class="[
-                        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+                        'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium',
                         result.status === 'success'
                           ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
-                          : result.status === 'running'
-                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'
-                            : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'
+                          : result.status === 'degraded'
+                            ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
+                            : result.status === 'running'
+                              ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'
+                              : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'
                       ]"
                     >
-                      {{
-                        result.status === 'success'
-                          ? t('admin.scheduledTests.success')
-                          : result.status === 'running'
-                            ? t('admin.scheduledTests.running')
-                            : t('admin.scheduledTests.failed')
-                      }}
-                    </span>
-
-                    <!-- Latency -->
-                    <span v-if="result.latency_ms > 0" class="text-xs text-gray-500 dark:text-gray-400">
-                      {{ result.latency_ms }}ms
+                      {{ resultStatusLabel(result.status) }}
                     </span>
                   </div>
-
-                  <!-- Started At -->
-                  <span class="text-xs text-gray-400">
-                    {{ formatDateTime(result.started_at) }}
-                  </span>
-                </div>
-
-                <!-- Response / Error (collapsible) -->
-                <div v-if="result.error_message" class="mt-2">
-                  <div
-                    class="cursor-pointer text-xs font-medium text-red-600 dark:text-red-400"
-                    @click="toggleResultDetail(result.id)"
-                  >
-                    {{ t('admin.scheduledTests.errorMessage') }}
-                    <Icon
-                      name="chevronDown"
-                      size="sm"
-                      :class="[
-                        'inline transition-transform duration-200',
-                        expandedResultIds.has(result.id) ? 'rotate-180' : ''
-                      ]"
-                    />
+                  <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ result.latency_ms > 0 ? `${result.latency_ms}ms` : '—' }}
                   </div>
-                  <pre
-                    v-if="expandedResultIds.has(result.id)"
-                    class="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-red-50 p-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-300"
-                  >{{ result.error_message }}</pre>
-                </div>
-                <div v-else-if="result.response_text" class="mt-2">
-                  <div
-                    class="cursor-pointer text-xs font-medium text-gray-600 dark:text-gray-400"
-                    @click="toggleResultDetail(result.id)"
-                  >
-                    {{ t('admin.scheduledTests.responseText') }}
-                    <Icon
-                      name="chevronDown"
-                      size="sm"
-                      :class="[
-                        'inline transition-transform duration-200',
-                        expandedResultIds.has(result.id) ? 'rotate-180' : ''
-                      ]"
-                    />
+                </button>
+              </div>
+
+              <div v-if="selectedResult" class="min-w-0 rounded-xl border border-gray-200 bg-white dark:border-dark-600 dark:bg-dark-800">
+                <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 dark:border-dark-700">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                        {{ resultStatusLabel(selectedResult.status) }}
+                      </span>
+                      <span v-if="selectedResult.latency_ms > 0" class="text-xs text-gray-500 dark:text-gray-400">
+                        {{ selectedResult.latency_ms }}ms
+                      </span>
+                    </div>
+                    <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ formatDateTime(selectedResult.started_at) }}
+                      <span v-if="selectedResult.finished_at"> · {{ formatDateTime(selectedResult.finished_at) }}</span>
+                    </div>
                   </div>
-                  <pre
-                    v-if="expandedResultIds.has(result.id)"
-                    class="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-gray-100 p-2 text-xs text-gray-700 dark:bg-dark-800 dark:text-gray-300"
-                  >{{ result.response_text }}</pre>
+                  <div class="flex items-center gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-900">
+                    <button
+                      type="button"
+                      class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
+                      :class="previewMode === 'preview' ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'"
+                      @click="previewMode = 'preview'"
+                    >
+                      {{ t('admin.scheduledTests.preview') }}
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
+                      :class="previewMode === 'source' ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'"
+                      @click="previewMode = 'source'"
+                    >
+                      {{ t('admin.scheduledTests.source') }}
+                    </button>
+                  </div>
                 </div>
+
+                <div v-if="selectedResult.error_message" class="m-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-900/20 dark:text-red-300">
+                  <div class="mb-1 font-semibold">{{ t('admin.scheduledTests.errorMessage') }}</div>
+                  <pre class="whitespace-pre-wrap">{{ selectedResult.error_message }}</pre>
+                </div>
+
+                <div v-if="previewMode === 'preview' && isPreviewable(selectedResult.response_text)" class="overflow-hidden rounded-b-xl bg-gray-100 dark:bg-dark-900">
+                  <iframe
+                    :srcdoc="selectedResult.response_text"
+                    class="h-[26rem] w-full border-0 bg-white"
+                    sandbox="allow-scripts"
+                    :title="t('admin.scheduledTests.preview')"
+                  />
+                </div>
+                <pre
+                  v-else
+                  class="max-h-[28rem] min-h-[16rem] overflow-auto whitespace-pre-wrap break-words rounded-b-xl bg-gray-950 p-4 text-xs leading-5 text-gray-200"
+                >{{ selectedResult.response_text || selectedResult.error_message || t('admin.scheduledTests.noResponse') }}</pre>
               </div>
             </div>
           </div>
@@ -463,7 +494,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -479,6 +510,7 @@ import type { ScheduledTestPlan, ScheduledTestResult } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const defaultScheduledTestPrompt = '请生成可直接运行的单文件HTML，使用内联SVG绘制鹈鹕骑自行车的二维循环动画。画面以鹈鹕和自行车为主体，展示清晰的身体结构、踩踏动作和车轮转动，配合协调的背景、配色与层次。动画应流畅自然、衔接连续，并适配不同屏幕尺寸。禁止依赖外部资源，只输出完整HTML，不要代码围栏或解释文字。'
 
 const props = defineProps<{
   show: boolean
@@ -497,7 +529,9 @@ const loadingResults = ref(false)
 const plans = ref<ScheduledTestPlan[]>([])
 const results = ref<ScheduledTestResult[]>([])
 const expandedPlanId = ref<number | null>(null)
-const expandedResultIds = reactive(new Set<number>())
+const selectedResultId = ref<number | null>(null)
+const previewMode = ref<'preview' | 'source'>('preview')
+const selectedResult = computed(() => results.value.find((result) => result.id === selectedResultId.value) || null)
 const showAddForm = ref(false)
 const showDeleteConfirm = ref(false)
 const deletingPlan = ref<ScheduledTestPlan | null>(null)
@@ -505,6 +539,7 @@ const editingPlanId = ref<number | null>(null)
 const updating = ref(false)
 const editForm = reactive({
   model_id: '' as string,
+  prompt_text: '' as string,
   cron_expression: '' as string,
   max_results: '100' as string,
   enabled: true,
@@ -513,7 +548,8 @@ const editForm = reactive({
 
 const newPlan = reactive({
   model_id: '' as string,
-  cron_expression: '' as string,
+  prompt_text: defaultScheduledTestPrompt,
+  cron_expression: '*/5 * * * *' as string,
   max_results: '100' as string,
   enabled: true,
   auto_recover: false
@@ -521,7 +557,8 @@ const newPlan = reactive({
 
 const resetNewPlan = () => {
   newPlan.model_id = ''
-  newPlan.cron_expression = ''
+  newPlan.prompt_text = defaultScheduledTestPrompt
+  newPlan.cron_expression = '*/5 * * * *'
   newPlan.max_results = '100'
   newPlan.enabled = true
   newPlan.auto_recover = false
@@ -537,7 +574,8 @@ watch(
       plans.value = []
       results.value = []
       expandedPlanId.value = null
-      expandedResultIds.clear()
+      selectedResultId.value = null
+      previewMode.value = 'preview'
       showAddForm.value = false
       showDeleteConfirm.value = false
     }
@@ -564,6 +602,7 @@ const handleCreate = async () => {
     await adminAPI.scheduledTests.create({
       account_id: props.accountId,
       model_id: newPlan.model_id,
+      prompt_text: newPlan.prompt_text,
       cron_expression: newPlan.cron_expression,
       enabled: newPlan.enabled,
       max_results: maxResults,
@@ -596,6 +635,7 @@ const handleToggleEnabled = async (plan: ScheduledTestPlan, enabled: boolean) =>
 const startEdit = (plan: ScheduledTestPlan) => {
   editingPlanId.value = plan.id
   editForm.model_id = plan.model_id
+  editForm.prompt_text = plan.prompt_text || defaultScheduledTestPrompt
   editForm.cron_expression = plan.cron_expression
   editForm.max_results = String(plan.max_results)
   editForm.enabled = plan.enabled
@@ -612,6 +652,7 @@ const handleEdit = async () => {
   try {
     const updated = await adminAPI.scheduledTests.update(editingPlanId.value, {
       model_id: editForm.model_id,
+      prompt_text: editForm.prompt_text,
       cron_expression: editForm.cron_expression,
       max_results: Number(editForm.max_results) || 100,
       enabled: editForm.enabled,
@@ -657,15 +698,17 @@ const toggleExpand = async (planId: number) => {
   if (expandedPlanId.value === planId) {
     expandedPlanId.value = null
     results.value = []
-    expandedResultIds.clear()
+    selectedResultId.value = null
     return
   }
 
   expandedPlanId.value = planId
-  expandedResultIds.clear()
+  selectedResultId.value = null
+  previewMode.value = 'preview'
   loadingResults.value = true
   try {
     results.value = await adminAPI.scheduledTests.listResults(planId, 20)
+    selectedResultId.value = results.value[0]?.id ?? null
   } catch (error: any) {
     appStore.showError(error?.message || 'Failed to load results')
     results.value = []
@@ -674,11 +717,20 @@ const toggleExpand = async (planId: number) => {
   }
 }
 
-const toggleResultDetail = (resultId: number) => {
-  if (expandedResultIds.has(resultId)) {
-    expandedResultIds.delete(resultId)
-  } else {
-    expandedResultIds.add(resultId)
-  }
+const selectResult = (resultId: number) => {
+  selectedResultId.value = resultId
+  previewMode.value = 'preview'
+}
+
+const resultStatusLabel = (status: string) => {
+  if (status === 'success') return t('admin.scheduledTests.success')
+  if (status === 'degraded') return t('admin.scheduledTests.degraded')
+  if (status === 'running') return t('admin.scheduledTests.running')
+  return t('admin.scheduledTests.failed')
+}
+
+const isPreviewable = (response: string) => {
+  const content = response.trim().toLowerCase()
+  return content.startsWith('<!doctype html') || content.startsWith('<html')
 }
 </script>
