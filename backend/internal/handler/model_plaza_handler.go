@@ -21,6 +21,7 @@ type ModelPlazaHandler struct {
 	plazaService   *service.ModelPlazaService
 	apiKeyService  *service.APIKeyService
 	settingService *service.SettingService
+	gqcService     *service.GroupQualityCheckService
 }
 
 // NewModelPlazaHandler 创建模型广场 handler。
@@ -28,11 +29,13 @@ func NewModelPlazaHandler(
 	plazaService *service.ModelPlazaService,
 	apiKeyService *service.APIKeyService,
 	settingService *service.SettingService,
+	gqcService *service.GroupQualityCheckService,
 ) *ModelPlazaHandler {
 	return &ModelPlazaHandler{
 		plazaService:   plazaService,
 		apiKeyService:  apiKeyService,
 		settingService: settingService,
+		gqcService:     gqcService,
 	}
 }
 
@@ -95,6 +98,9 @@ type modelPlazaGroup struct {
 	// 分组是否启用长上下文阶梯计费；关闭时模型实付列只展示最低档/基础价。
 	LongContextPricingEnabled bool              `json:"long_context_pricing_enabled"`
 	Models                    []modelPlazaModel `json:"models"`
+	// QualityStatus 分组降智检测状态：healthy（近 1h 探测正常）/ suspect（降智占比≥50%）/
+	// unknown（未开启检测或无数据）；未开启检测的分组省略。
+	QualityStatus string `json:"quality_status,omitempty"`
 }
 
 // modelPlazaResponse 广场页响应。
@@ -149,9 +155,19 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 
 	visible := filterPlazaVisibleGroups(groups, allowedGroups, restrictPublicGroups)
 
+	// 降智检测状态仅是展示增强；服务未注入或查询失败时降级为不带徽章。
+	var qualityStatuses map[int64]*service.GroupQualityStatus
+	if h.gqcService != nil {
+		qualityStatuses, err = h.gqcService.ListGroupStatuses(c.Request.Context())
+		if err != nil {
+			slog.Warn("model_plaza_quality_statuses_failed", "error", err)
+			qualityStatuses = nil
+		}
+	}
+
 	out := make([]modelPlazaGroup, 0, len(visible))
 	for i := range visible {
-		out = append(out, toModelPlazaGroupDTO(&visible[i], userRates))
+		out = append(out, toModelPlazaGroupDTO(&visible[i], userRates, qualityStatuses))
 	}
 	response.Success(c, modelPlazaResponse{
 		Description: rt.Description,
@@ -184,7 +200,7 @@ func filterPlazaVisibleGroups(
 }
 
 // toModelPlazaGroupDTO 将 service 层广场分组映射为白名单 DTO,并合并用户专属倍率。
-func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64) modelPlazaGroup {
+func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64, qualityStatuses map[int64]*service.GroupQualityStatus) modelPlazaGroup {
 	models := make([]modelPlazaModel, 0, len(g.Models))
 	for i := range g.Models {
 		m := &g.Models[i]
@@ -216,6 +232,9 @@ func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64) mo
 	}
 	if rate, ok := userRates[g.ID]; ok {
 		dto.UserRateMultiplier = &rate
+	}
+	if status, ok := qualityStatuses[g.ID]; ok && status != nil && status.Enabled && status.Status != "unknown" {
+		dto.QualityStatus = status.Status
 	}
 	return dto
 }

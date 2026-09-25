@@ -667,7 +667,11 @@ export default {
     },
     badges: {
       exclusive: 'Exclusive',
-      subscription: 'Subscription'
+      subscription: 'Subscription',
+      quality: {
+        healthy: 'Healthy',
+        suspect: 'Suspect degradation'
+      }
     },
     detail: {
       noModels: 'No models configured for this group',

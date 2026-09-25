@@ -22,6 +22,14 @@
         <span v-if="group.subscription_type === 'subscription'" class="plaza-chip">
           {{ t('modelPlaza.badges.subscription') }}
         </span>
+        <span
+          v-if="group.quality_status"
+          class="plaza-chip"
+          :class="group.quality_status === 'suspect' ? 'plaza-chip-warn' : 'plaza-chip-ok'"
+        >
+          <Icon name="checkCircle" size="xs" class="h-3 w-3" />
+          {{ t(`modelPlaza.badges.quality.${group.quality_status}`) }}
+        </span>
       </div>
       <p v-if="group.description" class="plaza-group-copy">
         {{ group.description }}
@@ -135,6 +143,16 @@ const longContextNote = computed(() => {
   color: var(--signal-muted, #63636c);
   font-size: 12px;
   font-weight: 500;
+}
+
+.plaza-chip-ok {
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+}
+
+.plaza-chip-warn {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
 }
 
 .plaza-group-copy {

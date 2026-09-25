@@ -159,6 +159,40 @@
 
       <div class="card overflow-hidden !rounded-3xl !border-0 shadow-sm ring-1 ring-gray-900/5 dark:!bg-dark-800 dark:ring-dark-700">
         <div class="card-header !py-3">
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV2.settings.qualityTitle') }}</h3>
+          <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
+            {{ t('channelMonitorV2.settings.qualityHint') }}
+          </p>
+        </div>
+        <div class="max-h-[min(40vh,280px)] overflow-y-auto px-3 py-2 sm:px-4">
+          <div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
+            <div
+              v-for="group in groups"
+              :key="group.id"
+              class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition hover:bg-gray-50 dark:hover:bg-dark-800/60"
+            >
+              <Toggle
+                :model-value="qualityEnabled(group.id)"
+                :disabled="qualityUpdating.has(group.id)"
+                @update:model-value="toggleQualityCheck(group.id)"
+              />
+              <span class="min-w-0 flex-1 truncate font-medium text-gray-800 dark:text-gray-100">{{ group.name }}</span>
+              <span
+                v-if="qualityBadge(group.id)"
+                class="badge shrink-0"
+                :class="qualityBadgeClass(qualityStatuses[group.id]?.status)"
+              >
+                {{ qualityBadge(group.id) }}
+              </span>
+              <small class="shrink-0 text-xs text-gray-400">#{{ group.id }}</small>
+            </div>
+          </div>
+          <p v-if="groups.length === 0" class="empty-state py-8 text-sm text-gray-400">{{ t('channelMonitorV2.settings.groupsEmpty') }}</p>
+        </div>
+      </div>
+
+      <div class="card overflow-hidden !rounded-3xl !border-0 shadow-sm ring-1 ring-gray-900/5 dark:!bg-dark-800 dark:ring-dark-700">
+        <div class="card-header !py-3">
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV2.settings.errorsTitle') }}</h3>
           <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
             {{ t('channelMonitorV2.settings.errorsHint') }}
@@ -275,6 +309,7 @@ import {
   type MonitorConfig,
 } from '@/api/channelMonitorV2'
 import { adminAPI } from '@/api/admin'
+import { qualityCheckAPI, type GroupQualityCheckStatus } from '@/api/admin/qualityCheck'
 import type { AdminGroup } from '@/types'
 
 const { t, te } = useI18n()
@@ -284,6 +319,8 @@ const saving = ref(false)
 const draft = ref<MonitorConfig | null>(null)
 const original = ref('')
 const groups = ref<AdminGroup[]>([])
+const qualityStatuses = ref<Record<string, GroupQualityCheckStatus>>({})
+const qualityUpdating = ref(new Set<number>())
 
 const dirty = computed(() => (draft.value ? JSON.stringify(draft.value) !== original.value : false))
 const namedModelCount = computed(
@@ -354,6 +391,62 @@ function setModels(platform: MonitorConfig['platforms'][number], event: Event) {
   ].sort()
 }
 
+function qualityEnabled(groupId: number): boolean {
+  return Boolean(qualityStatuses.value[groupId]?.enabled)
+}
+
+function qualityBadge(groupId: number): string | null {
+  const status = qualityStatuses.value[groupId]
+  if (!status?.enabled || status.status === 'unknown') return null
+  const key = `channelMonitorV2.settings.qualityStatus.${status.status}`
+  return te(key) ? t(key) : status.status
+}
+
+function qualityBadgeClass(status?: GroupQualityCheckStatus['status']): string {
+  return status === 'suspect' ? 'badge-warning' : 'badge-success'
+}
+
+async function toggleQualityCheck(groupId: number) {
+  if (qualityUpdating.value.has(groupId)) return
+  const previous = qualityStatuses.value[groupId]
+  const enabled = !Boolean(previous?.enabled)
+  // Optimistic update: flip immediately, revert on failure.
+  qualityStatuses.value = {
+    ...qualityStatuses.value,
+    [groupId]: {
+      group_id: groupId,
+      enabled,
+      status: previous?.status ?? 'unknown',
+      checked_accounts: previous?.checked_accounts ?? 0,
+      degraded_accounts: previous?.degraded_accounts ?? 0,
+      last_run_at: previous?.last_run_at ?? null
+    }
+  }
+  qualityUpdating.value = new Set(qualityUpdating.value).add(groupId)
+  try {
+    await qualityCheckAPI.setEnabled(groupId, enabled)
+    const refreshed = await qualityCheckAPI.list()
+    qualityStatuses.value = refreshed
+  } catch (error) {
+    qualityStatuses.value = {
+      ...qualityStatuses.value,
+      [groupId]: previous ?? {
+        group_id: groupId,
+        enabled: false,
+        status: 'unknown',
+        checked_accounts: 0,
+        degraded_accounts: 0,
+        last_run_at: null
+      }
+    }
+    appStore.showError(extractApiErrorMessage(error, t('channelMonitorV2.settings.qualityToggleFailed')))
+  } finally {
+    const next = new Set(qualityUpdating.value)
+    next.delete(groupId)
+    qualityUpdating.value = next
+  }
+}
+
 function toggleGroup(id: number) {
   if (!draft.value) return
   draft.value.group_ids = draft.value.group_ids.includes(id)
@@ -411,10 +504,15 @@ function normalizeConfig(value: MonitorConfig): MonitorConfig {
 async function load() {
   loading.value = true
   try {
-    const [value, groupRows] = await Promise.all([getConfig(), adminAPI.groups.getAllIncludingInactive()])
+    const [value, groupRows, qualityRows] = await Promise.all([
+      getConfig(),
+      adminAPI.groups.getAllIncludingInactive(),
+      qualityCheckAPI.list().catch(() => ({}))
+    ])
     const normalized = normalizeConfig(value)
     draft.value = structuredClone(normalized)
     groups.value = groupRows
+    qualityStatuses.value = qualityRows
     original.value = JSON.stringify(normalized)
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t('channelMonitorV2.settings.loadFailed')))
