@@ -22,6 +22,7 @@ func TestAccountCustomUsageStaleEditDoesNotUndoRotation(t *testing.T) {
 	})
 	stale, err := repo.GetByID(ctx, account.ID)
 	require.NoError(t, err)
+	expected := &service.AccountCustomUsageExpected{Credentials: stale.Credentials, Config: stale.Extra[service.CustomUsageExtraKey]}
 	updatedSecrets := map[string]any{"api_key": "rotated-private-key"}
 	updatedConfig := map[string]any{"enabled": true, "template": "general"}
 	count, err := repo.BulkUpdate(ctx, []int64{account.ID}, service.AccountBulkUpdate{
@@ -30,6 +31,12 @@ func TestAccountCustomUsageStaleEditDoesNotUndoRotation(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
+	count, err = repo.BulkUpdate(ctx, []int64{account.ID}, service.AccountBulkUpdate{
+		Credentials:         map[string]any{service.CustomUsageCredentialsKey: map[string]any{"api_key": "stale-private-key"}},
+		CustomUsageExpected: expected,
+	})
+	require.NoError(t, err)
+	require.Zero(t, count)
 	stale.Name = "renamed-after-rotation"
 	require.NoError(t, repo.Update(ctx, stale))
 	current, err := repo.GetByID(ctx, account.ID)

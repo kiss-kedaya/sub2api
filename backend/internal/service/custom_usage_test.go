@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -66,6 +67,9 @@ func (r *customUsageTestRepo) BulkUpdate(_ context.Context, ids []int64, u Accou
 	for _, id := range ids {
 		a := r.accounts[id]
 		if a == nil {
+			continue
+		}
+		if expected := u.CustomUsageExpected; expected != nil && (!reflect.DeepEqual(expected.Credentials, a.Credentials) || !reflect.DeepEqual(expected.Config, a.Extra[CustomUsageExtraKey])) {
 			continue
 		}
 		a.Credentials = mergeMap(a.Credentials, u.Credentials)
