@@ -53,6 +53,8 @@ export default {
     noRollbackVersions: 'No versions available for rollback',
     loadVersionsFailed: 'Failed to load versions',
     rollbackSourceHint: 'Online rollback is not available for source builds',
+    updateDisabledHint: 'Online update is disabled on this deployment; use the release rollout process',
+    rollbackDisabledHint: 'Online rollback is disabled on this deployment; use the release rollout process',
     deployScript: 'Script',
     deployDocker: 'Docker',
     dockerEditCompose: 'Edit the image tag in docker-compose.yml',

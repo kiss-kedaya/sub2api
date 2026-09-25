@@ -70,6 +70,26 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
 }
 
+func TestUpdateServiceDisabledStrategyRejectsUpdateAndRollback(t *testing.T) {
+	t.Setenv("UPDATE_STRATEGY", "disabled")
+
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{
+			release: &GitHubRelease{
+				TagName: "v9.9.9",
+				Name:    "v9.9.9",
+			},
+		},
+		"0.1.132",
+		"release",
+	)
+
+	require.ErrorIs(t, svc.PerformUpdate(context.Background()), ErrUpdateDisabled)
+	require.ErrorIs(t, svc.Rollback(), ErrUpdateDisabled)
+	require.ErrorIs(t, svc.RollbackToVersion(context.Background(), "0.1.131"), ErrUpdateDisabled)
+}
+
 func TestUpdateServiceOrchestratedStrategyRequiresConfiguredRunner(t *testing.T) {
 	t.Setenv("UPDATE_STRATEGY", "orchestrated")
 	t.Setenv("UPDATE_ORCHESTRATOR", "")
