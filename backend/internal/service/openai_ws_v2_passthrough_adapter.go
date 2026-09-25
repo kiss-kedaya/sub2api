@@ -676,9 +676,17 @@ func (c *openAIWSClientFrameConn) WriteFrame(ctx context.Context, msgType coderw
 		}
 		eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
 		if eventType == "error" || eventType == "response.failed" {
-			if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(payload); changed {
+			if IsUpstreamFinancialError(0, payload) {
+				payload = redactUpstreamFinancialEvent(payload, eventType)
+			} else if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(payload); changed {
 				payload = rewritten
 			}
+		}
+	}
+	if msgType == coderws.MessageBinary {
+		eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+		if (eventType == "error" || eventType == "response.failed") && IsUpstreamFinancialError(0, payload) {
+			payload = redactUpstreamFinancialEvent(payload, eventType)
 		}
 	}
 	return c.conn.Write(ctx, msgType, payload)

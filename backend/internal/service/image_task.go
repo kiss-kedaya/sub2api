@@ -12,6 +12,7 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
 
@@ -347,7 +348,19 @@ func imageTaskToPublic(task *ImageTaskRecord) *ImageTask {
 		public.Result = nil
 		public.Error = nil
 	}
+	if task.Status == ImageTaskStatusFailed && !imageTaskHasLocalBillingError(task.Error) && IsUpstreamFinancialError(task.HTTPStatus, task.Error) {
+		public.HTTPStatus = http.StatusBadGateway
+		public.Error = imageTaskErrorJSON("upstream_error", UpstreamUnavailableMessage)
+	}
 	return public
+}
+
+func imageTaskHasLocalBillingError(body []byte) bool {
+	switch gjson.GetBytes(body, "type").String() {
+	case "insufficient_quota", "billing_error", "billing_service_error", "rate_limit_exceeded":
+		return true
+	}
+	return false
 }
 
 func firstImageTaskURL(result json.RawMessage) string {
