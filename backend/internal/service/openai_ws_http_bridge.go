@@ -712,7 +712,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			return nil
 		}
 		clientMessage := buildOpenAIWSHTTPBridgeFailedEvent(responseID, originalModel, bareErrorPayload, bareErrorMessage)
-		if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
+		if IsUpstreamFinancialError(0, clientMessage) {
+			clientMessage = redactUpstreamFinancialEvent(clientMessage, "response.failed")
+		} else if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
 			clientMessage = rewritten
 		}
 		messages := append(pendingClientMessages, clientMessage)
@@ -870,7 +872,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		// 仍使用未改写的 upstreamMessage。
 		clientMessage := upstreamMessage
 		if eventType == "error" || eventType == "response.failed" {
-			if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
+			if IsUpstreamFinancialError(0, clientMessage) {
+				clientMessage = redactUpstreamFinancialEvent(clientMessage, eventType)
+			} else if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
 				clientMessage = rewritten
 			}
 		}
