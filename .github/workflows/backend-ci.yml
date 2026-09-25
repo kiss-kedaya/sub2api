@@ -45,7 +45,7 @@ jobs:
         run: go test -race -tags=unit ./internal/service -run 'Test.*CodexTicket' -count=1
       - name: Custom usage and upstream error concurrency regression
         working-directory: backend
-        run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/admin -run 'Test(CustomUsage|.*UpstreamFinancial|.*FinancialError|.*FinancialStream)' -count=1
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/repository -run 'Test(CustomUsage|CrossCustomUsage|AccountCustomUsage|.*UpstreamFinancial|.*FinancialError|.*FinancialStream)' -count=1
       - name: Billing and media concurrency regression
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/handler ./internal/service ./internal/repository -run 'Test(GrokVideoDurable|MediaBilling|AsyncImage|ImageTask|OpenAIResponsesWebSocket.*(Balance|Subscription|Settlement)|SmartBilling|.*Refund.*Pending)' -count=1

@@ -152,12 +152,16 @@ func (s *CustomUsageService) PutConfig(ctx context.Context, id int64, c CustomUs
 	if json.Unmarshal(configJSON, &configMap) != nil || json.Unmarshal(secretJSON, &secretMap) != nil {
 		return nil, ErrCustomUsageConfig
 	}
-	n, err := s.repo.BulkUpdate(ctx, []int64{id}, AccountBulkUpdate{Credentials: map[string]any{CustomUsageCredentialsKey: secretMap}, Extra: map[string]any{CustomUsageExtraKey: configMap}})
+	n, err := s.repo.BulkUpdate(ctx, []int64{id}, AccountBulkUpdate{
+		Credentials:         map[string]any{CustomUsageCredentialsKey: secretMap},
+		Extra:               map[string]any{CustomUsageExtraKey: configMap},
+		CustomUsageExpected: &AccountCustomUsageExpected{Credentials: a.Credentials, Config: a.Extra[CustomUsageExtraKey]},
+	})
 	if err != nil {
 		return nil, infraerrors.ServiceUnavailable("CUSTOM_USAGE_SAVE_FAILED", "custom usage save failed")
 	}
 	if n != 1 {
-		return nil, ErrAccountNotFound
+		return nil, infraerrors.Conflict("CUSTOM_USAGE_CONFIG_CHANGED", "account configuration changed; reload before saving")
 	}
 	s.mu.Lock()
 	if entry := s.cache[id]; entry != nil {
