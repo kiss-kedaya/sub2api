@@ -6,6 +6,9 @@ import (
 )
 
 // GroupQualityCheckSettings is the per-group degradation (降智) detection config.
+// Enabling a group only makes its aggregated status visible to admins and end
+// users; the probes themselves come from the group accounts' scheduled test
+// plans.
 type GroupQualityCheckSettings struct {
 	GroupID         int64      `json:"group_id"`
 	Enabled         bool       `json:"enabled"`
@@ -15,7 +18,8 @@ type GroupQualityCheckSettings struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
-// GroupQualityCheckResult is one account probe inside a group quality check run.
+// GroupQualityCheckResult is one account probe aggregated for a group, sourced
+// from the per-account scheduled test results.
 type GroupQualityCheckResult struct {
 	ID           int64     `json:"id"`
 	GroupID      int64     `json:"group_id"`
@@ -26,13 +30,25 @@ type GroupQualityCheckResult struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-// GroupQualityCheckRepository persists group quality check settings/results.
+// GroupQualityBucketRow is one aggregated bucket of scheduled test results for
+// a group: how many accounts were checked and how many were degraded.
+type GroupQualityBucketRow struct {
+	GroupID     int64
+	BucketStart time.Time
+	Checked     int
+	Degraded    int
+}
+
+// GroupQualityCheckRepository persists the per-group toggle and reads the
+// aggregated probe history produced by scheduled test plans.
 type GroupQualityCheckRepository interface {
 	UpsertSettings(ctx context.Context, settings *GroupQualityCheckSettings) (*GroupQualityCheckSettings, error)
 	GetSettings(ctx context.Context, groupID int64) (*GroupQualityCheckSettings, error)
-	ListEnabledSettings(ctx context.Context) ([]*GroupQualityCheckSettings, error)
 	ListAllSettings(ctx context.Context) ([]*GroupQualityCheckSettings, error)
-	UpdateLastRun(ctx context.Context, groupID int64, lastRunAt time.Time) error
-	CreateResult(ctx context.Context, result *GroupQualityCheckResult) (*GroupQualityCheckResult, error)
+	// ListRecentResults returns the most recent scheduled test result per
+	// account in the group, limited to the given time window.
 	ListRecentResults(ctx context.Context, groupID int64, since time.Time, limit int) ([]*GroupQualityCheckResult, error)
+	// ListGroupBuckets aggregates scheduled test results per group and time
+	// bucket for the given window.
+	ListGroupBuckets(ctx context.Context, groupIDs []int64, since time.Time, bucketSeconds int64) ([]GroupQualityBucketRow, error)
 }
