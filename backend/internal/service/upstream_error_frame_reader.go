@@ -56,7 +56,7 @@ func (reader *upstreamErrorFrameReader) readFrame() ([]byte, error) {
 				return line, err
 			}
 		}
-		frame.Write(line)
+		_, _ = frame.Write(line)
 		if err == bufio.ErrBufferFull {
 			continue
 		}
