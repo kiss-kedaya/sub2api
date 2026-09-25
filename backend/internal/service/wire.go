@@ -642,11 +642,9 @@ func ProvideScheduledTestRunnerService(
 	cfg *config.Config,
 	lockCache LeaderLockCache,
 	db *sql.DB,
-	gqcRepo GroupQualityCheckRepository,
 ) *ScheduledTestRunnerService {
 	svc := NewScheduledTestRunnerService(planRepo, scheduledSvc, accountTestSvc, rateLimitSvc, cfg)
 	svc.SetLeaderLock(lockCache, db)
-	svc.SetGroupQualityCheckRepo(gqcRepo)
 	svc.Start()
 	return svc
 }
@@ -1048,9 +1046,10 @@ func ProvideChannelMonitorRunner(
 
 // ProvideChannelMonitorV2Service wires settings for user-facing privacy flags
 // (e.g. hide RPM/TPM throughput).
-func ProvideChannelMonitorV2Service(repo ChannelMonitorV2Repository, settingService *SettingService) *ChannelMonitorV2Service {
+func ProvideChannelMonitorV2Service(repo ChannelMonitorV2Repository, settingService *SettingService, quality *GroupQualityCheckService) *ChannelMonitorV2Service {
 	svc := NewChannelMonitorV2Service(repo)
 	svc.SetRuntimeReader(settingService)
+	svc.SetGroupQualityCheckService(quality)
 	return svc
 }
 

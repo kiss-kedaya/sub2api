@@ -108,7 +108,7 @@ export default {
       groupsEmpty: 'No groups available',
       qualityTitle: 'Degradation detection',
       qualityHint:
-        'Enable per-group scheduled degradation checks: every 15 minutes a few schedulable accounts are probed; suspected degraded accounts are paused and restored automatically. Users see group status in the model plaza.',
+        'Enable per-group degradation detection: it reuses the results of the accounts’ existing scheduled test plans instead of sending extra probes. Suspected degraded accounts are paused and restored automatically. Once enabled, the group shows its degradation status in channel status and the model plaza.',
       qualityStatus: {
         healthy: 'Healthy',
         suspect: 'Suspect',

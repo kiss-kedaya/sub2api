@@ -38,6 +38,8 @@
       :buckets="row.buckets"
       :countdown-seconds="countdownSeconds"
       :length="timelineLength"
+      :quality-buckets="row.quality_buckets ?? []"
+      :quality-enabled="row.quality_enabled ?? false"
     />
   </article>
 </template>
