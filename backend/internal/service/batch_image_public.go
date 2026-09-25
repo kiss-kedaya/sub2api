@@ -1205,6 +1205,12 @@ func BatchImageItemToPublic(item *BatchImageItem) BatchImagePublicItem {
 		Message: sanitizeBatchImagePublicMessage(batchImageDerefString(item.ErrorMessage)),
 		Source:  batchImageItemErrorSource(item),
 	}
+	if out.Error.Source == "provider" {
+		body, _ := json.Marshal(map[string]string{"code": batchImageDerefString(item.ErrorCode), "message": batchImageDerefString(item.ErrorMessage)})
+		if IsUpstreamFinancialError(0, body) {
+			out.Error = &BatchImagePublicError{Code: "upstream_error", Message: UpstreamUnavailableMessage}
+		}
+	}
 	return out
 }
 
