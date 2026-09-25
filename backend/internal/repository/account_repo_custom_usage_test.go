@@ -51,3 +51,19 @@ func TestAccountCustomUsageLockedEditPreservesCurrentManagedFields(t *testing.T)
 		})
 	}
 }
+
+func TestAccountCustomUsageBulkUpdateUsesAtomicComparison(t *testing.T) {
+	executor := &recordingSQLExecutor{result: rowsAffectedResult(0)}
+	repo := newAccountRepositoryWithSQL(nil, executor, nil)
+	count, err := repo.BulkUpdate(context.Background(), []int64{27}, service.AccountBulkUpdate{
+		Credentials:         map[string]any{service.CustomUsageCredentialsKey: map[string]any{"api_key": "new-private-key"}},
+		CustomUsageExpected: &service.AccountCustomUsageExpected{Credentials: map[string]any{"api_key": "gateway-key"}},
+	})
+	require.NoError(t, err)
+	require.Zero(t, count)
+	require.Len(t, executor.execQueries, 1)
+	require.Contains(t, executor.execQueries[0], "AND type = 'apikey' AND credentials = $3::jsonb")
+	require.Contains(t, executor.execQueries[0], "COALESCE(extra -> 'custom_usage_config', 'null'::jsonb) = $4::jsonb")
+	require.Equal(t, []byte(`{"api_key":"gateway-key"}`), executor.execArgs[0][2])
+	require.Equal(t, []byte(`null`), executor.execArgs[0][3])
+}
