@@ -127,12 +127,12 @@ func TestCustomUsageDialRevalidatesAndPinsDNS(t *testing.T) {
 		dials++
 		destination = addr
 		a, b := net.Pipe()
-		b.Close()
+		require.NoError(t, b.Close())
 		return a, nil
 	}}
 	conn, err := n.dialContext(t.Context(), "tcp", "billing.example.com:443")
 	require.NoError(t, err)
-	conn.Close()
+	require.NoError(t, conn.Close())
 	require.Equal(t, "8.8.8.8:443", destination)
 	_, err = n.dialContext(t.Context(), "tcp", "billing.example.com:443")
 	require.Error(t, err)
@@ -537,7 +537,9 @@ func TestCustomUsageIdentityChangedInFlight(t *testing.T) {
 				case "deletion":
 					delete(repo.accounts, 1)
 				case "disable":
-					repo.accounts[1].Extra[CustomUsageExtraKey].(map[string]any)["enabled"] = false
+					config, ok := repo.accounts[1].Extra[CustomUsageExtraKey].(map[string]any)
+					require.True(t, ok)
+					config["enabled"] = false
 				}
 				return customUsageResponse(`{"data":{"remaining":999}}`, 200), nil
 			})
@@ -688,7 +690,8 @@ func TestCustomUsagePlaceholdersAndClientPolicy(t *testing.T) {
 	require.Equal(t, "user 123", p.request.Header.Get("New-Api-User"))
 	client := newCustomUsageClient()
 	require.ErrorIs(t, client.CheckRedirect(nil, nil), http.ErrUseLastResponse)
-	transport := client.Transport.(*http.Transport)
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok)
 	require.Nil(t, transport.Proxy)
 	require.NotNil(t, transport.DialContext)
 	require.True(t, transport.DisableKeepAlives)

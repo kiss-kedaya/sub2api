@@ -338,7 +338,7 @@ func customUsageExpand(raw string, variables map[string]string, query bool, limi
 		if query && variable {
 			value = url.QueryEscape(value)
 		}
-		expanded.WriteString(value)
+		_, _ = expanded.WriteString(value)
 		return nil
 	})
 	if err != nil || expanded.Len() > limit {

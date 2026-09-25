@@ -398,7 +398,7 @@ func (s *CustomUsageService) fetch(ctx context.Context, p customUsagePrepared) C
 		result.Error = "invalid_response"
 		return result
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		result.Error = "redirect_blocked"
 		return result
