@@ -427,7 +427,9 @@ func TestUpstreamFinancialHeartbeatBoundary(t *testing.T) {
 				MarkOpenAICompactClientStream(c)
 				defer StartOpenAICompactSSEKeepalive(c, time.Hour)()
 				value, _ := c.Get(openAICompactSSEKeepaliveKey)
-				beat = value.(*openAICompactSSEKeepalive).beat
+				keepalive, ok := value.(*openAICompactSSEKeepalive)
+				require.True(t, ok)
+				beat = keepalive.beat
 			}
 			if started {
 				require.True(t, beat())

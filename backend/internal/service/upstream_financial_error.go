@@ -127,7 +127,7 @@ type upstreamFinancialErrorWriter struct {
 }
 
 func (w *upstreamFinancialErrorWriter) WriteHeader(_ int) {}
-func (w *upstreamFinancialErrorWriter) WriteHeaderNow()   { w.emit() }
+func (w *upstreamFinancialErrorWriter) WriteHeaderNow()   { _ = w.emit() }
 func (w *upstreamFinancialErrorWriter) Write(p []byte) (int, error) {
 	err := w.emit()
 	return len(p), err
