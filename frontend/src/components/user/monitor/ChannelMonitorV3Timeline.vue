@@ -48,6 +48,59 @@
       </div>
     </div>
 
+    <div
+      v-if="showQuality"
+      class="channel-signal-timeline__quality mt-2"
+      data-testid="channel-quality-timeline"
+    >
+      <div class="channel-signal-timeline__legend mb-1 flex justify-between text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+        <span>{{ t('monitorCommon.qualityLegend', { n: length }) }}</span>
+        <span v-if="qualityHasData" class="tabular-nums">{{ t('monitorCommon.qualityDegradedCount', { n: degradedTotal }) }}</span>
+      </div>
+      <div class="v3-timeline-bars" @mouseleave="clearHoveredQualityBar">
+        <div
+          v-for="(bar, index) in qualityBars"
+          :key="bar.key"
+          class="v3-bar-slot"
+          @mouseenter="setHoveredQualityBar(index, $event)"
+        >
+          <button
+            type="button"
+            class="v3-bar-hitbox"
+            :class="{
+              'is-active': hoveredQualityIndex === index,
+              'is-neighbor': qualityBarDistance(index) === 1,
+              'is-pressed': hoveredQualityIndex !== null && qualityBarDistance(index) > 0,
+            }"
+            :aria-label="bar.title || '-'"
+            @focus="setHoveredQualityBar(index, $event)"
+            @blur="clearHoveredQualityBar"
+          >
+            <span class="v3-bar-visual" :style="qualityBarMotionStyle(index)" aria-hidden="true">
+              <span
+                class="v3-soft-glass-bar"
+                :class="bar.colorClass"
+                :style="{ height: `${bar.heightPct}%`, animationDelay: `${index * 18}ms` }"
+              />
+            </span>
+          </button>
+
+          <Teleport to="body">
+            <Transition name="v3-timeline-tooltip">
+              <div
+                v-if="hoveredQualityIndex === index && bar.title"
+                class="v3-timeline-tooltip"
+                role="tooltip"
+                :style="qualityTooltipStyle"
+              >
+                {{ bar.title }}
+              </div>
+            </Transition>
+          </Teleport>
+        </div>
+      </div>
+    </div>
+
     <div class="channel-signal-timeline__axis mt-1 flex justify-between text-[9px] uppercase tracking-widest text-gray-400">
       <span>{{ t('monitorCommon.past') }}</span>
       <span>{{ t('monitorCommon.now') }}</span>
@@ -58,16 +111,20 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { MonitorMatrixBucket } from '@/api/channelMonitorV2'
+import type { MonitorMatrixBucket, MonitorQualityBucket } from '@/api/channelMonitorV2'
 import { availabilityBarClass, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
 
 const props = withDefaults(defineProps<{
   buckets?: MonitorMatrixBucket[]
   countdownSeconds: number
   length?: number
+  qualityBuckets?: MonitorQualityBucket[]
+  qualityEnabled?: boolean
 }>(), {
   buckets: () => [],
   length: 18,
+  qualityBuckets: () => [],
+  qualityEnabled: false,
 })
 
 const { t, locale } = useI18n()
@@ -151,11 +208,11 @@ const displayBars = computed<TimelineBar[]>(() => {
   const real = [...props.buckets]
     .sort((a, b) => Date.parse(a.bucket_start) - Date.parse(b.bucket_start))
     .slice(-props.length)
-  const bars: TimelineBar[] = Array.from({ length: Math.max(0, props.length - real.length) }, (_, index) => ({
-    key: `empty-${index}`,
-    ...STATUS_STYLE.unknown,
-    title: '',
-  }))
+  // Missing slots sit at the right (NOW) end: the window is bucket-aligned so the
+  // trailing slot is the current partial bucket, which is the one that can be
+  // empty right after a refresh. Padding at the front would wrongly show the gap
+  // as old history and shift every real bar one slot to the past.
+  const bars: TimelineBar[] = []
 
   for (const bucket of real) {
     const state = bucket.health.overall === 'healthy' || bucket.health.overall === 'warning' || bucket.health.overall === 'critical'
@@ -179,6 +236,11 @@ const displayBars = computed<TimelineBar[]>(() => {
       }),
     })
   }
+
+  const missing = Math.max(0, props.length - real.length)
+  for (let index = 0; index < missing; index += 1) {
+    bars.push({ key: `empty-${index}`, ...STATUS_STYLE.unknown, title: '' })
+  }
   return bars
 })
 
@@ -186,6 +248,106 @@ const tooltipStyle = computed(() => ({
   '--tooltip-left': `${tooltipPosition.value.left}px`,
   '--tooltip-top': `${tooltipPosition.value.top}px`,
   '--tooltip-x': tooltipPosition.value.x,
+}))
+
+const qualityBars = computed<TimelineBar[]>(() => {
+  const source = props.qualityBuckets ?? []
+  const slots: TimelineBar[] = Array.from({ length: Math.max(0, props.length) }, (_, index) => ({
+    key: `quality-empty-${index}`,
+    ...STATUS_STYLE.unknown,
+    title: '',
+  }))
+  if (slots.length === 0) return slots
+
+  // Place each probe in the same slot as its health bucket so both strips line
+  // up: reuse the health buckets' own slot order instead of recomputing a time
+  // axis that could disagree with how the health bars were laid out.
+  const slotByStart = new Map<number, number>()
+  ;[...props.buckets]
+    .sort((a, b) => Date.parse(a.bucket_start) - Date.parse(b.bucket_start))
+    .slice(-props.length)
+    .forEach((bucket, index) => {
+      const at = Date.parse(bucket.bucket_start)
+      if (Number.isFinite(at)) slotByStart.set(at, index)
+    })
+
+  for (const bucket of source) {
+    const at = Date.parse(bucket.bucket_start)
+    if (!Number.isFinite(at)) continue
+    let slot = slotByStart.get(at)
+    if (slot === undefined) {
+      // Health buckets may not cover this probe (e.g. no traffic in that slot):
+      // fall back to the newest slot rather than dropping the probe.
+      slot = slots.length - 1
+    }
+    const degraded = Math.max(0, bucket.degraded ?? 0)
+    const checked = Math.max(degraded, bucket.checked ?? 0)
+    slots[slot] = {
+      key: `quality-${bucket.bucket_start}`,
+      colorClass: degraded > 0 ? STATUS_STYLE.critical.colorClass : STATUS_STYLE.healthy.colorClass,
+      heightPct: STATUS_STYLE.healthy.heightPct,
+      title: t('monitorCommon.qualityTooltip', {
+        time: formatBucketTime(bucket.bucket_start),
+        checked,
+        degraded,
+      }),
+    }
+  }
+  return slots
+})
+
+const showQuality = computed(() => props.qualityEnabled || (props.qualityBuckets?.length ?? 0) > 0)
+const qualityHasData = computed(() => (props.qualityBuckets?.length ?? 0) > 0)
+const degradedTotal = computed(() => (props.qualityBuckets ?? []).reduce((sum, bucket) => sum + Math.max(0, bucket.degraded ?? 0), 0))
+
+const hoveredQualityIndex = ref<number | null>(null)
+const qualityTooltipPosition = ref({ left: 0, top: 0, x: '-50%' })
+
+function setHoveredQualityBar(index: number, event?: Event) {
+  hoveredQualityIndex.value = index
+  const target = event?.currentTarget
+  if (!(target instanceof HTMLElement) || typeof window === 'undefined') return
+  const rect = target.getBoundingClientRect()
+  const viewportGutter = 16
+  const maxTooltipWidth = Math.min(280, window.innerWidth - viewportGutter * 2)
+  const center = rect.left + rect.width / 2
+  if (center + maxTooltipWidth / 2 > window.innerWidth - viewportGutter) {
+    qualityTooltipPosition.value = { left: window.innerWidth - viewportGutter, top: rect.top - 8, x: '-100%' }
+  } else if (center - maxTooltipWidth / 2 < viewportGutter) {
+    qualityTooltipPosition.value = { left: viewportGutter, top: rect.top - 8, x: '0%' }
+  } else {
+    qualityTooltipPosition.value = { left: center, top: rect.top - 8, x: '-50%' }
+  }
+}
+
+function clearHoveredQualityBar() {
+  hoveredQualityIndex.value = null
+}
+
+function qualityBarDistance(index: number) {
+  return hoveredQualityIndex.value === null ? 0 : Math.abs(index - hoveredQualityIndex.value)
+}
+
+function qualityBarMotionStyle(index: number) {
+  const distance = qualityBarDistance(index)
+  if (hoveredQualityIndex.value === null) {
+    return { '--bar-scale': '1', '--bar-opacity': '1', '--bar-lift': '0px' }
+  }
+  const pressure = Math.exp(-distance / 2.8)
+  const scaleY = distance === 0 ? 1.1 : 1 - 0.06 * pressure
+  const opacity = distance === 0 ? 1 : 0.8 + (0.2 * (1 - pressure))
+  return {
+    '--bar-scale-x': '1',
+    '--bar-scale-y': scaleY.toFixed(3),
+    '--bar-opacity': opacity.toFixed(3),
+    '--bar-lift': distance === 0 ? '-1px' : '0px',
+  }
+}
+
+const qualityTooltipStyle = computed(() => ({
+  '--tooltip-left': `${qualityTooltipPosition.value.left}px`,
+  '--tooltip-top': `${qualityTooltipPosition.value.top}px`,
+  '--tooltip-x': qualityTooltipPosition.value.x,
 }))
 </script>
 

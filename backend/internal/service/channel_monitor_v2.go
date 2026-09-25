@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
 const (
@@ -252,6 +254,21 @@ type ChannelMonitorV2MatrixRow struct {
 	Metrics   ChannelMonitorV2Metric       `json:"metrics"`
 	Health    ChannelMonitorV2Health       `json:"health"`
 	Buckets   []ChannelMonitorV2TrendPoint `json:"buckets"`
+	// QualityBuckets is the group's degradation (降智) history, aligned to the
+	// same range/bucket as Buckets. Present only for groups with degradation
+	// detection enabled and only on group-scoped views.
+	QualityBuckets []ChannelMonitorV2QualityBucket `json:"quality_buckets,omitempty"`
+	// QualityEnabled marks a group whose degradation detection is switched on
+	// even when no probe has landed yet, so the UI can show an empty strip.
+	QualityEnabled bool `json:"quality_enabled,omitempty"`
+}
+
+// ChannelMonitorV2QualityBucket is one time bucket of a group's degradation
+// probes: how many accounts were checked and how many were degraded.
+type ChannelMonitorV2QualityBucket struct {
+	BucketStart time.Time `json:"bucket_start"`
+	Checked     int       `json:"checked"`
+	Degraded    int       `json:"degraded"`
 }
 
 type ChannelMonitorV2Matrix struct {
@@ -383,6 +400,7 @@ func ChannelMonitorV2BootstrapProgress(now, coveredFrom time.Time, hasData bool)
 type ChannelMonitorV2Service struct {
 	repo     ChannelMonitorV2Repository
 	settings channelMonitorRuntimeReader
+	quality  *GroupQualityCheckService
 	now      func() time.Time
 }
 
@@ -396,6 +414,15 @@ func (s *ChannelMonitorV2Service) SetRuntimeReader(r channelMonitorRuntimeReader
 		return
 	}
 	s.settings = r
+}
+
+// SetGroupQualityCheckService wires the degradation (降智) status source used to
+// decorate group matrix rows.
+func (s *ChannelMonitorV2Service) SetGroupQualityCheckService(quality *GroupQualityCheckService) {
+	if s == nil {
+		return
+	}
+	s.quality = quality
 }
 
 func (s *ChannelMonitorV2Service) hideThroughputForViewer(ctx context.Context, admin bool) bool {
@@ -549,7 +576,55 @@ func (s *ChannelMonitorV2Service) Matrix(ctx context.Context, filter ChannelMoni
 			}
 		}
 	}
+	s.attachQualityBuckets(ctx, matrix, filter)
 	return matrix, nil
+}
+
+// attachQualityBuckets decorates group-scoped matrix rows with each group's
+// degradation history. The probes come from the group accounts' scheduled test
+// plans, so this is a read-only join; groups without detection enabled get no
+// buckets and the UI omits the strip.
+func (s *ChannelMonitorV2Service) attachQualityBuckets(ctx context.Context, matrix *ChannelMonitorV2Matrix, filter ChannelMonitorV2Filter) {
+	if s == nil || s.quality == nil || matrix == nil || len(matrix.Items) == 0 || filter.Bucket <= 0 {
+		return
+	}
+	groupIDs := make([]int64, 0, len(matrix.Items))
+	for i := range matrix.Items {
+		if id := matrix.Items[i].GroupID; id != nil && *id > 0 {
+			groupIDs = append(groupIDs, *id)
+		}
+	}
+	if len(groupIDs) == 0 {
+		return
+	}
+	series, err := s.quality.ListGroupSeries(ctx, groupIDs, filter.Start, int64(filter.Bucket.Seconds()))
+	if err != nil {
+		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] quality buckets load failed: %v", err)
+		return
+	}
+	for i := range matrix.Items {
+		id := matrix.Items[i].GroupID
+		if id == nil {
+			continue
+		}
+		group, ok := series[*id]
+		if !ok || group == nil {
+			continue
+		}
+		matrix.Items[i].QualityEnabled = true
+		if len(group.Buckets) == 0 {
+			continue
+		}
+		buckets := make([]ChannelMonitorV2QualityBucket, 0, len(group.Buckets))
+		for _, bucket := range group.Buckets {
+			buckets = append(buckets, ChannelMonitorV2QualityBucket{
+				BucketStart: bucket.BucketStart,
+				Checked:     bucket.Checked,
+				Degraded:    bucket.Degraded,
+			})
+		}
+		matrix.Items[i].QualityBuckets = buckets
+	}
 }
 
 func ParseChannelMonitorV2GroupBy(value string) (ChannelMonitorV2GroupBy, error) {

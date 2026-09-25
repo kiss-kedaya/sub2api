@@ -32,7 +32,6 @@ type ScheduledTestRunnerService struct {
 	scheduledSvc   *ScheduledTestService
 	accountTestSvc *AccountTestService
 	rateLimitSvc   *RateLimitService
-	gqcRepo        GroupQualityCheckRepository
 	cfg            *config.Config
 
 	// lockCache/db elect one process to execute each cron tick across all
@@ -77,15 +76,6 @@ func (s *ScheduledTestRunnerService) SetLeaderLock(lockCache LeaderLockCache, db
 	}
 	s.lockCache = lockCache
 	s.db = db
-}
-
-// SetGroupQualityCheckRepo injects the group quality check repository used by
-// the group-level degradation detection pass.
-func (s *ScheduledTestRunnerService) SetGroupQualityCheckRepo(repo GroupQualityCheckRepository) {
-	if s == nil {
-		return
-	}
-	s.gqcRepo = repo
 }
 
 // Start begins the cron ticker (every minute).
@@ -158,28 +148,25 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] ListDue error: %v", err)
 		return
 	}
-	if len(plans) == 0 {
-		return
+
+	if len(plans) > 0 {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] found %d due plans", len(plans))
+
+		sem := make(chan struct{}, scheduledTestDefaultMaxWorkers)
+		var wg sync.WaitGroup
+
+		for _, plan := range plans {
+			sem <- struct{}{}
+			wg.Add(1)
+			go func(p *ScheduledTestPlan) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				s.runOnePlan(ctx, p)
+			}(plan)
+		}
+
+		wg.Wait()
 	}
-
-	logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] found %d due plans", len(plans))
-
-	sem := make(chan struct{}, scheduledTestDefaultMaxWorkers)
-	var wg sync.WaitGroup
-
-	for _, plan := range plans {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(p *ScheduledTestPlan) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			s.runOnePlan(ctx, p)
-		}(plan)
-	}
-
-	wg.Wait()
-
-	s.runGroupQualityChecks(ctx)
 }
 
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {
@@ -245,129 +232,6 @@ func (s *ScheduledTestRunnerService) updateScheduledQualityState(ctx context.Con
 		}
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d quality recovered", plan.ID, plan.AccountID)
 	}
-}
-
-// runGroupQualityChecks probes a few schedulable accounts per enabled group on
-// their configured interval, records the results, and pauses degraded accounts
-// until the next group check. It shares the runner's leader lock so only one
-// instance executes it per tick.
-func (s *ScheduledTestRunnerService) runGroupQualityChecks(ctx context.Context) {
-	if s == nil || s.gqcRepo == nil || s.accountTestSvc == nil || s.accountTestSvc.accountRepo == nil {
-		return
-	}
-
-	now := time.Now()
-	settings, err := s.gqcRepo.ListEnabledSettings(ctx)
-	if err != nil {
-		logger.LegacyPrintf("service.scheduled_test_runner", "[GroupQualityCheck] ListEnabledSettings error: %v", err)
-		return
-	}
-
-	type dueGroup struct {
-		settings *GroupQualityCheckSettings
-		accounts []Account
-	}
-	var due []dueGroup
-	for _, setting := range settings {
-		interval := time.Duration(setting.IntervalMinutes) * time.Minute
-		if interval <= 0 {
-			interval = defaultGroupQualityCheckIntervalMinutes * time.Minute
-		}
-		if setting.LastRunAt != nil && setting.LastRunAt.Add(interval).After(now) {
-			continue
-		}
-		accounts, err := s.accountTestSvc.accountRepo.ListSchedulableByGroupID(ctx, setting.GroupID)
-		if err != nil {
-			logger.LegacyPrintf("service.scheduled_test_runner", "[GroupQualityCheck] group=%d list accounts error: %v", setting.GroupID, err)
-			continue
-		}
-		if len(accounts) == 0 {
-			logger.LegacyPrintf("service.scheduled_test_runner", "[GroupQualityCheck] group=%d has no schedulable accounts", setting.GroupID)
-			continue
-		}
-		due = append(due, dueGroup{settings: setting, accounts: accounts})
-	}
-
-	if len(due) == 0 {
-		return
-	}
-
-	// Cap concurrent groups (3) and keep per-group probes at a small sample (5)
-	// so detection stays cheap while covering the group.
-	const maxGroupsConcurrent = 3
-	const maxAccountsPerGroup = 5
-
-	sem := make(chan struct{}, maxGroupsConcurrent)
-	var wg sync.WaitGroup
-
-	for _, item := range due {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(dg dueGroup) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			s.runOneGroupQualityCheck(ctx, dg.settings, dg.accounts, maxAccountsPerGroup)
-		}(item)
-	}
-
-	wg.Wait()
-}
-
-func (s *ScheduledTestRunnerService) runOneGroupQualityCheck(ctx context.Context, setting *GroupQualityCheckSettings, accounts []Account, maxAccounts int) {
-	groupID := setting.GroupID
-	interval := time.Duration(setting.IntervalMinutes) * time.Minute
-	if interval <= 0 {
-		interval = defaultGroupQualityCheckIntervalMinutes * time.Minute
-	}
-	now := time.Now()
-	pauseUntil := now.Add(interval)
-
-	if len(accounts) > maxAccounts {
-		accounts = accounts[:maxAccounts]
-	}
-
-	for _, account := range accounts {
-		result, err := s.accountTestSvc.RunTestBackground(ctx, account.ID, "", DefaultScheduledTestPrompt)
-		if err != nil {
-			logger.LegacyPrintf("service.scheduled_test_runner", "[GroupQualityCheck] group=%d account=%d RunTestBackground error: %v", groupID, account.ID, err)
-			continue
-		}
-		if _, err := s.gqcRepo.CreateResult(ctx, &GroupQualityCheckResult{
-			GroupID:      groupID,
-			AccountID:    account.ID,
-			Status:       result.Status,
-			ErrorMessage: result.ErrorMessage,
-			LatencyMs:    result.LatencyMs,
-		}); err != nil {
-			logger.LegacyPrintf("service.scheduled_test_runner", "[GroupQualityCheck] group=%d account=%d CreateResult error: %v", groupID, account.ID, err)
-		}
-
-		switch result.Status {
-		case "degraded":
-			if account.TempUnschedulableUntil != nil && account.TempUnschedulableUntil.After(now) &&
-				!strings.HasPrefix(account.TempUnschedulableReason, scheduledQualityReasonPrefix) {
-				logger.LegacyPrintf("service.scheduled_test_runner", "[GroupQualityCheck] group=%d account=%d pause skipped: another temporary reason is active", groupID, account.ID)
-				continue
-			}
-			reason := scheduledQualityReasonPrefix + " group=" + strconv.FormatInt(groupID, 10) + " " + result.ErrorMessage
-			if err := s.accountTestSvc.accountRepo.SetTempUnschedulable(ctx, account.ID, pauseUntil, reason); err != nil {
-				logger.LegacyPrintf("service.scheduled_test_runner", "[GroupQualityCheck] group=%d account=%d pause failed: %v", groupID, account.ID, err)
-				continue
-			}
-			logger.LegacyPrintf("service.scheduled_test_runner", "[GroupQualityCheck] group=%d account=%d degraded, paused until next check", groupID, account.ID)
-		case "success":
-			if strings.HasPrefix(account.TempUnschedulableReason, scheduledQualityReasonPrefix) {
-				if err := s.accountTestSvc.accountRepo.ClearTempUnschedulable(ctx, account.ID); err != nil {
-					logger.LegacyPrintf("service.scheduled_test_runner", "[GroupQualityCheck] group=%d account=%d recovery failed: %v", groupID, account.ID, err)
-				}
-			}
-		}
-	}
-
-	if err := s.gqcRepo.UpdateLastRun(ctx, groupID, now); err != nil {
-		logger.LegacyPrintf("service.scheduled_test_runner", "[GroupQualityCheck] group=%d UpdateLastRun error: %v", groupID, err)
-	}
-	logger.LegacyPrintf("service.scheduled_test_runner", "[GroupQualityCheck] group=%d checked %d accounts", groupID, len(accounts))
 }
 
 // tryRecoverAccount restores account runtime state with the same path as

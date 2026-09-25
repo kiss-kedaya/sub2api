@@ -158,6 +158,13 @@ export interface MonitorMatrixBucket {
   health: MonitorHealth
 }
 
+/** One bucket of a group's degradation (降智) probe history. */
+export interface MonitorQualityBucket {
+  bucket_start: string
+  checked: number
+  degraded: number
+}
+
 export interface MonitorMatrixRow {
   platform: string
   group_id?: number
@@ -166,6 +173,13 @@ export interface MonitorMatrixRow {
   metrics: MonitorMetric
   health: MonitorHealth
   buckets: MonitorMatrixBucket[]
+  /**
+   * Degradation probe history for this group, aligned to the selected range.
+   * Only present when degradation detection is enabled for the group.
+   */
+  quality_buckets?: MonitorQualityBucket[]
+  /** True when degradation detection is on for this group (even with no probes yet). */
+  quality_enabled?: boolean
 }
 
 export interface MonitorMatrixResponse {

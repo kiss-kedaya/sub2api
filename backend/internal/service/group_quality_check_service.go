@@ -20,16 +20,32 @@ const (
 
 // GroupQualityStatus is the aggregated degradation state of one group.
 type GroupQualityStatus struct {
-	GroupID         int64      `json:"group_id"`
-	Enabled         bool       `json:"enabled"`
-	Status          string     `json:"status"` // unknown | healthy | suspect
-	CheckedAccounts int        `json:"checked_accounts"`
-	DegradedAccounts int       `json:"degraded_accounts"`
-	LastRunAt       *time.Time `json:"last_run_at"`
+	GroupID          int64      `json:"group_id"`
+	Enabled          bool       `json:"enabled"`
+	Status           string     `json:"status"` // unknown | healthy | suspect
+	CheckedAccounts  int        `json:"checked_accounts"`
+	DegradedAccounts int        `json:"degraded_accounts"`
+	LastRunAt        *time.Time `json:"last_run_at"`
 }
 
-// GroupQualityCheckService manages per-group degradation detection config and
-// exposes aggregated status for admins and end users.
+// GroupQualityBucket is one time bucket of a group's degradation series.
+type GroupQualityBucket struct {
+	BucketStart time.Time `json:"bucket_start"`
+	Checked     int       `json:"checked"`
+	Degraded    int       `json:"degraded"`
+}
+
+// GroupQualitySeries is a group's degradation history aligned to the caller's
+// selected channel-monitor range.
+type GroupQualitySeries struct {
+	GroupID       int64                `json:"group_id"`
+	BucketSeconds int64                `json:"bucket_seconds"`
+	Buckets       []GroupQualityBucket `json:"buckets"`
+}
+
+// GroupQualityCheckService manages per-group degradation (降智) detection config
+// and exposes aggregated status. Probes are produced by the per-account
+// scheduled test plans; this service only toggles visibility and aggregates.
 type GroupQualityCheckService struct {
 	repo        GroupQualityCheckRepository
 	accountRepo AccountRepository
@@ -91,16 +107,16 @@ func (s *GroupQualityCheckService) GetGroupStatus(ctx context.Context, groupID i
 	}
 
 	status := &GroupQualityStatus{
-		GroupID:  groupID,
-		Enabled:  settings.Enabled,
-		Status:   "unknown",
+		GroupID:   groupID,
+		Enabled:   settings.Enabled,
+		Status:    "unknown",
 		LastRunAt: settings.LastRunAt,
 	}
 	if !settings.Enabled {
 		return status, nil
 	}
 
-	results, err := s.repo.ListRecentResults(ctx, groupID, time.Now().Add(-groupQualityStatusWindow), 50)
+	results, err := s.repo.ListRecentResults(ctx, groupID, time.Now().Add(-groupQualityStatusWindow), 200)
 	if err != nil {
 		return nil, err
 	}
@@ -109,11 +125,16 @@ func (s *GroupQualityCheckService) GetGroupStatus(ctx context.Context, groupID i
 	}
 
 	status.CheckedAccounts = len(results)
+	newest := results[0].CreatedAt
 	for _, result := range results {
 		if result.Status == "degraded" {
 			status.DegradedAccounts++
 		}
+		if result.CreatedAt.After(newest) {
+			newest = result.CreatedAt
+		}
 	}
+	status.LastRunAt = &newest
 
 	if status.DegradedAccounts == 0 {
 		status.Status = "healthy"
@@ -146,6 +167,76 @@ func (s *GroupQualityCheckService) ListGroupStatuses(ctx context.Context) (map[i
 			return nil, err
 		}
 		out[setting.GroupID] = status
+	}
+	return out, nil
+}
+
+// EnabledGroupIDs returns the group ids that currently have detection enabled.
+func (s *GroupQualityCheckService) EnabledGroupIDs(ctx context.Context) ([]int64, error) {
+	settings, err := s.repo.ListAllSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int64, 0, len(settings))
+	for _, setting := range settings {
+		if setting.Enabled {
+			out = append(out, setting.GroupID)
+		}
+	}
+	return out, nil
+}
+
+// ListGroupSeries returns each requested group's degradation buckets over the
+// given window, bucketed by bucketSeconds. Only groups with detection enabled
+// are returned; callers restrict groupIDs to what the viewer may see.
+func (s *GroupQualityCheckService) ListGroupSeries(
+	ctx context.Context,
+	groupIDs []int64,
+	since time.Time,
+	bucketSeconds int64,
+) (map[int64]*GroupQualitySeries, error) {
+	if len(groupIDs) == 0 || bucketSeconds <= 0 {
+		return map[int64]*GroupQualitySeries{}, nil
+	}
+	enabled, err := s.EnabledGroupIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(enabled) == 0 {
+		return map[int64]*GroupQualitySeries{}, nil
+	}
+	wanted := make([]int64, 0, len(enabled))
+	enabledSet := make(map[int64]struct{}, len(enabled))
+	for _, id := range enabled {
+		enabledSet[id] = struct{}{}
+	}
+	for _, id := range groupIDs {
+		if _, ok := enabledSet[id]; ok {
+			wanted = append(wanted, id)
+		}
+	}
+	if len(wanted) == 0 {
+		return map[int64]*GroupQualitySeries{}, nil
+	}
+
+	buckets, err := s.repo.ListGroupBuckets(ctx, wanted, since, bucketSeconds)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]*GroupQualitySeries, len(wanted))
+	for _, id := range wanted {
+		out[id] = &GroupQualitySeries{GroupID: id, BucketSeconds: bucketSeconds, Buckets: []GroupQualityBucket{}}
+	}
+	for _, bucket := range buckets {
+		series, ok := out[bucket.GroupID]
+		if !ok {
+			continue
+		}
+		series.Buckets = append(series.Buckets, GroupQualityBucket{
+			BucketStart: bucket.BucketStart,
+			Checked:     bucket.Checked,
+			Degraded:    bucket.Degraded,
+		})
 	}
 	return out, nil
 }
