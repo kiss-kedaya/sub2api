@@ -1,12 +1,12 @@
 <template>
-  <div ref="root" class="min-w-[8rem]" :aria-busy="state?.loading || false" data-testid="custom-usage-cell">
+  <div ref="root" class="min-w-[7rem]" :aria-busy="state?.loading || false" data-testid="custom-usage-cell">
     <span v-if="!eligible" class="text-sm text-gray-400">—</span>
     <template v-else>
       <div class="flex items-start gap-1.5">
         <div class="min-w-0">
           <CustomUsageResult v-if="state?.result?.configured" :result="state.result" />
           <span v-else-if="state?.loading" class="text-xs text-gray-400">{{ t('admin.accounts.customUsage.loading') }}</span>
-          <button v-else-if="state?.result" type="button" class="text-xs text-gray-500 hover:text-primary-600 dark:text-gray-400" @click="emit('configure')">{{ t('admin.accounts.customUsage.notConfigured') }}</button>
+          <button v-else-if="state?.result" type="button" class="text-xs text-gray-500 hover:text-primary-600 dark:text-gray-400" @click="emit('configure')">{{ t('admin.accounts.customUsage.configure') }}</button>
           <span v-else class="text-xs text-gray-400">—</span>
           <div v-if="state?.result?.configured && !state.result.enabled" class="text-xs text-gray-400">{{ t('admin.accounts.customUsage.disabled') }}</div>
         </div>

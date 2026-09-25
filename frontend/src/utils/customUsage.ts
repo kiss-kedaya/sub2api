@@ -21,7 +21,7 @@ export function usageTemplate(template: CustomUsageTemplate): Pick<CustomUsageCo
   }
 }
 export function createUsageDraft(baseUrl = ''): CustomUsageConfig {
-  return { enabled: false, template: 'general', base_url: baseUrl.replace(/\/+$/, ''), timeout_seconds: 10, interval_minutes: 0, ...usageTemplate('general') }
+  return { enabled: true, template: 'general', base_url: baseUrl.replace(/\/+$/, ''), timeout_seconds: 10, interval_minutes: 10, ...usageTemplate('general') }
 }
 
 export type UsageValidationError = 'invalidJson' | 'invalidHeaders' | 'invalidExtractor' | 'invalidUrl' | 'invalidTimeout' | 'invalidInterval' | 'invalidPlaceholder'
