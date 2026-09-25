@@ -59,7 +59,11 @@ func TestPgDumperHelperProcess(t *testing.T) {
 }
 
 func pgDumperHelperCommand(ctx context.Context, mode string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPgDumperHelperProcess$")
+	executable, err := os.Executable()
+	if err != nil {
+		panic(err)
+	}
+	cmd := exec.CommandContext(ctx, executable, "-test.run=^TestPgDumperHelperProcess$")
 	cmd.Env = append(os.Environ(), "SUB2API_PG_DUMP_TEST_HELPER="+mode)
 	return cmd
 }
