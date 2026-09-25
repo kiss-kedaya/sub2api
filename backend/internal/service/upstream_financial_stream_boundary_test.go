@@ -182,8 +182,8 @@ func TestUpstreamFinancialFrameReaderPreservesSuccess(t *testing.T) {
 
 func TestUpstreamFinancialFrameReaderDoesNotWaitForNextEvent(t *testing.T) {
 	source, sink := io.Pipe()
-	defer source.Close()
-	defer sink.Close()
+	defer func() { _ = source.Close() }()
+	defer func() { _ = sink.Close() }()
 	line := "data: {\"usage\":{\"total_tokens\":8}}\n"
 	result := make(chan string, 1)
 	go func() {
@@ -251,7 +251,7 @@ func TestUpstreamFinancialHTTPStreamingProtocols(t *testing.T) {
 				defer gateway.Close()
 				response, err := gateway.Client().Post(gateway.URL+path, "application/json", strings.NewReader("{}"))
 				require.NoError(t, err)
-				defer response.Body.Close()
+				defer func() { _ = response.Body.Close() }()
 				body, err := io.ReadAll(response.Body)
 				require.NoError(t, err)
 				require.Equal(t, 1, strings.Count(string(body), UpstreamUnavailableMessage), string(body))

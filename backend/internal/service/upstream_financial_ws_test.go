@@ -51,7 +51,7 @@ func TestUpstreamFinancialWSNativeModes(t *testing.T) {
 				})
 				defer server.Close()
 				client := dialPassthroughLifecycleClient(t, server)
-				defer client.CloseNow()
+				defer func() { _ = client.CloseNow() }()
 				var frames [][]byte
 				for len(frames) < len(events) {
 					frame, err := readPassthroughLifecycleFrame(t, client, 3*time.Second)
@@ -103,7 +103,7 @@ func TestUpstreamFinancialWSFrameBoundary(t *testing.T) {
 			if err != nil {
 				return
 			}
-			defer conn.CloseNow()
+			defer func() { _ = conn.CloseNow() }()
 			adapter := &openAIWSClientFrameConn{conn: conn}
 			for _, payload := range payloads {
 				if adapter.WriteFrame(request.Context(), kind, []byte(payload)) != nil {
