@@ -113,6 +113,9 @@ func RegisterAdminRoutes(
 		// 定时测试计划
 		registerScheduledTestRoutes(admin, h)
 
+		// 分组降智检测
+		registerGroupQualityCheckRoutes(admin, h)
+
 		// 渠道管理
 		registerChannelRoutes(admin, h)
 
@@ -732,6 +735,16 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	}
 	// Nested under accounts
 	admin.GET("/accounts/:id/scheduled-test-plans", h.Admin.ScheduledTest.ListByAccount)
+}
+
+func registerGroupQualityCheckRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	qc := admin.Group("/quality-check")
+	{
+		qc.GET("/groups", h.Admin.GroupQualityCheck.List)
+		qc.GET("/groups/:id", h.Admin.GroupQualityCheck.Get)
+		qc.PUT("/groups/:id", h.Admin.GroupQualityCheck.SetEnabled)
+		qc.GET("/groups/:id/results", h.Admin.GroupQualityCheck.ListResults)
+	}
 }
 
 func registerErrorPassthroughRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

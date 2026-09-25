@@ -106,6 +106,15 @@ export default {
       groupsSelected: '{count} groups selected',
       groupsAll: 'All groups',
       groupsEmpty: 'No groups available',
+      qualityTitle: 'Degradation detection',
+      qualityHint:
+        'Enable per-group scheduled degradation checks: every 15 minutes a few schedulable accounts are probed; suspected degraded accounts are paused and restored automatically. Users see group status in the model plaza.',
+      qualityStatus: {
+        healthy: 'Healthy',
+        suspect: 'Suspect',
+        unknown: 'Not checked',
+      },
+      qualityToggleFailed: 'Failed to save degradation check toggle',
       errorsTitle: 'Error categories and ignores',
       errorsHint:
         'Checked “ignore” categories are excluded from error rate and health score, but still appear greyed in the error breakdown. Unmatched errors roll into “Other”.',
