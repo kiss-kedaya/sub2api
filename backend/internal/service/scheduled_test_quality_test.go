@@ -32,16 +32,28 @@ func TestScheduledTestPromptIsForwarded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Claude payload: %v", err)
 	}
-	claudeMessage := claudePayload["messages"].([]map[string]any)[0]
-	claudeContent := claudeMessage["content"].([]map[string]any)[0]
-	if got := claudeContent["text"]; got != prompt {
+	claudeMessages, ok := claudePayload["messages"].([]map[string]any)
+	if !ok || len(claudeMessages) == 0 {
+		t.Fatalf("claude payload messages missing or malformed: %#v", claudePayload["messages"])
+	}
+	claudeContent, ok := claudeMessages[0]["content"].([]map[string]any)
+	if !ok || len(claudeContent) == 0 {
+		t.Fatalf("claude message content missing or malformed: %#v", claudeMessages[0]["content"])
+	}
+	if got := claudeContent[0]["text"]; got != prompt {
 		t.Fatalf("Claude prompt = %v, want %q", got, prompt)
 	}
 
 	responsesPayload := createOpenAITestPayload("responses-test", false, prompt)
-	responsesInput := responsesPayload["input"].([]map[string]any)[0]
-	responsesContent := responsesInput["content"].([]map[string]any)[0]
-	if got := responsesContent["text"]; got != prompt {
+	responsesInput, ok := responsesPayload["input"].([]map[string]any)
+	if !ok || len(responsesInput) == 0 {
+		t.Fatalf("responses payload input missing or malformed: %#v", responsesPayload["input"])
+	}
+	responsesContent, ok := responsesInput[0]["content"].([]map[string]any)
+	if !ok || len(responsesContent) == 0 {
+		t.Fatalf("responses input content missing or malformed: %#v", responsesInput[0]["content"])
+	}
+	if got := responsesContent[0]["text"]; got != prompt {
 		t.Fatalf("Responses prompt = %v, want %q", got, prompt)
 	}
 }
