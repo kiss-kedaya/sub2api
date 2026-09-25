@@ -35,20 +35,6 @@ func (r *groupQualityCheckRepository) GetSettings(ctx context.Context, groupID i
 	return scanGroupQualityCheckSettings(row)
 }
 
-func (r *groupQualityCheckRepository) ListEnabledSettings(ctx context.Context) ([]*service.GroupQualityCheckSettings, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT group_id, enabled, interval_minutes, last_run_at, created_at, updated_at
-		FROM group_quality_check_settings
-		WHERE enabled = true
-		ORDER BY group_id ASC
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	return scanGroupQualityCheckSettingsList(rows)
-}
-
 func (r *groupQualityCheckRepository) ListAllSettings(ctx context.Context) ([]*service.GroupQualityCheckSettings, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT group_id, enabled, interval_minutes, last_run_at, created_at, updated_at
@@ -62,38 +48,22 @@ func (r *groupQualityCheckRepository) ListAllSettings(ctx context.Context) ([]*s
 	return scanGroupQualityCheckSettingsList(rows)
 }
 
-func (r *groupQualityCheckRepository) UpdateLastRun(ctx context.Context, groupID int64, lastRunAt time.Time) error {
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE group_quality_check_settings SET last_run_at = $2, updated_at = NOW() WHERE group_id = $1
-	`, groupID, lastRunAt)
-	return err
-}
-
-func (r *groupQualityCheckRepository) CreateResult(ctx context.Context, result *service.GroupQualityCheckResult) (*service.GroupQualityCheckResult, error) {
-	row := r.db.QueryRowContext(ctx, `
-		INSERT INTO group_quality_check_results (group_id, account_id, status, error_message, latency_ms, created_at)
-		VALUES ($1, $2, $3, $4, $5, NOW())
-		RETURNING id, group_id, account_id, status, error_message, latency_ms, created_at
-	`, result.GroupID, result.AccountID, result.Status, result.ErrorMessage, result.LatencyMs)
-
-	out := &service.GroupQualityCheckResult{}
-	if err := row.Scan(
-		&out.ID, &out.GroupID, &out.AccountID, &out.Status, &out.ErrorMessage, &out.LatencyMs, &out.CreatedAt,
-	); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
+// ListRecentResults aggregates the group's accounts' scheduled test results.
+// Probes are produced by the per-account scheduled test plans, so this only
+// reads; nothing is written back. When an account has several plans, the newest
+// result per account wins so one noisy account cannot dominate the ratio.
 func (r *groupQualityCheckRepository) ListRecentResults(ctx context.Context, groupID int64, since time.Time, limit int) ([]*service.GroupQualityCheckResult, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, group_id, account_id, status, error_message, latency_ms, created_at
-		FROM group_quality_check_results
-		WHERE group_id = $1 AND created_at >= $2
-		ORDER BY created_at DESC
+		SELECT DISTINCT ON (p.account_id)
+		       r.id, p.account_id, r.status, r.error_message, r.latency_ms, r.created_at
+		FROM scheduled_test_results r
+		JOIN scheduled_test_plans p ON p.id = r.plan_id
+		JOIN account_groups ag ON ag.account_id = p.account_id AND ag.group_id = $1
+		WHERE r.created_at >= $2
+		ORDER BY p.account_id, r.created_at DESC
 		LIMIT $3
 	`, groupID, since, limit)
 	if err != nil {
@@ -103,18 +73,67 @@ func (r *groupQualityCheckRepository) ListRecentResults(ctx context.Context, gro
 
 	results := make([]*service.GroupQualityCheckResult, 0, limit)
 	for rows.Next() {
-		out := &service.GroupQualityCheckResult{}
+		out := &service.GroupQualityCheckResult{GroupID: groupID}
+		var errMsg sql.NullString
 		if err := rows.Scan(
-			&out.ID, &out.GroupID, &out.AccountID, &out.Status, &out.ErrorMessage, &out.LatencyMs, &out.CreatedAt,
+			&out.ID, &out.AccountID, &out.Status, &errMsg, &out.LatencyMs, &out.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
+		out.ErrorMessage = errMsg.String
 		results = append(results, out)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return results, nil
+}
+
+// ListGroupBuckets aggregates scheduled test results per group and time bucket.
+// Each account contributes only its newest result in the window so several
+// plans on one account cannot weight the bucket.
+func (r *groupQualityCheckRepository) ListGroupBuckets(ctx context.Context, groupIDs []int64, since time.Time, bucketSeconds int64) ([]service.GroupQualityBucketRow, error) {
+	if len(groupIDs) == 0 || bucketSeconds <= 0 {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		WITH latest AS (
+			SELECT DISTINCT ON (ag.group_id, p.account_id)
+			       ag.group_id,
+			       p.account_id,
+			       r.status,
+			       r.created_at
+			FROM scheduled_test_results r
+			JOIN scheduled_test_plans p ON p.id = r.plan_id
+			JOIN account_groups ag ON ag.account_id = p.account_id
+			WHERE ag.group_id = ANY($1) AND r.created_at >= $2
+			ORDER BY ag.group_id, p.account_id, r.created_at DESC
+		)
+		SELECT group_id,
+		       to_timestamp(floor(extract(epoch FROM created_at) / $3) * $3) AS bucket_start,
+		       COUNT(*) AS checked,
+		       COUNT(*) FILTER (WHERE status = 'degraded') AS degraded
+		FROM latest
+		GROUP BY group_id, bucket_start
+		ORDER BY group_id, bucket_start
+	`, groupIDs, since, bucketSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]service.GroupQualityBucketRow, 0, len(groupIDs)*8)
+	for rows.Next() {
+		var row service.GroupQualityBucketRow
+		if err := rows.Scan(&row.GroupID, &row.BucketStart, &row.Checked, &row.Degraded); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func scanGroupQualityCheckSettings(row *sql.Row) (*service.GroupQualityCheckSettings, error) {
