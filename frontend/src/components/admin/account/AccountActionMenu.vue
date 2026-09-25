@@ -15,6 +15,10 @@
               <Icon name="play" size="sm" class="text-green-500" :stroke-width="2" />
               {{ t('admin.accounts.testConnection') }}
             </button>
+            <button v-if="supportsCustomUsage(account)" @click="$emit('custom-usage', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-dark-700">
+              <Icon name="chart" size="sm" class="text-indigo-500" />
+              {{ t('admin.accounts.customUsage.title') }}
+            </button>
             <button @click="$emit('stats', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-dark-700">
               <Icon name="chart" size="sm" class="text-indigo-500" />
               {{ t('admin.accounts.viewStats') }}
@@ -68,9 +72,10 @@ import { useResizeObserver, useWindowSize } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@/components/icons'
 import type { Account } from '@/types'
+import { supportsCustomUsage } from '@/utils/customUsage'
 
 const props = defineProps<{ show: boolean; account: Account | null; anchorRect: DOMRect | null }>()
-const emit = defineEmits(['close', 'test', 'stats', 'schedule', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'create-spark-shadow'])
+const emit = defineEmits(['custom-usage', 'close', 'test', 'stats', 'schedule', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'create-spark-shadow'])
 const { t } = useI18n()
 const menuRef = ref<HTMLElement | null>(null)
 const { width: viewportWidth, height: viewportHeight } = useWindowSize()

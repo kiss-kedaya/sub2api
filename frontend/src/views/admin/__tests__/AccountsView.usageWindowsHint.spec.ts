@@ -169,6 +169,15 @@ describe('admin AccountsView usage windows hint', () => {
     expect(wrapper.get('[data-test="account-filters"]').attributes('data-group-count')).toBe('1')
   })
 
+  it('places upstream balance immediately to the right of usage windows', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const columns = wrapper.findComponent(DataTableStub).props('columns') as Array<{ key: string }>
+    const usage = columns.findIndex(column => column.key === 'usage')
+    expect(columns[usage + 1].key).toBe('custom_usage')
+    wrapper.unmount()
+  })
+
   it('renders an explanatory tooltip next to the usage windows column header', async () => {
     const wrapper = mountView()
     await flushPromises()
