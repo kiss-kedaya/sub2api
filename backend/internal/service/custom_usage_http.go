@@ -91,7 +91,7 @@ func (n customUsageNetwork) dialContext(ctx context.Context, network, address st
 	return nil, errors.New("connection_failed")
 }
 func customUsageValidateURL(raw string) (*url.URL, error) {
-	if strings.ContainsAny(raw, "\r\n\x00\\") || len(raw) > 8192 {
+	if strings.ContainsAny(raw, "\r\n\x00\\") || len(raw) > customUsageMaxURLBytes {
 		return nil, ErrCustomUsageConfig
 	}
 	if _, err := urlvalidator.ValidateHTTPURL(raw, true, urlvalidator.ValidationOptions{}); err != nil {
@@ -196,24 +196,7 @@ func prepareCustomUsage(a *Account, c CustomUsageConfig, secrets customUsageSecr
 			return out, ErrCustomUsageConfig
 		}
 	}
-	replace := func(value string, query bool) (string, error) {
-		for _, k := range []string{"baseUrl", "apiKey", "accessToken", "userId"} {
-			placeholder := "{{" + k + "}}"
-			if !strings.Contains(value, placeholder) {
-				continue
-			}
-			v := vars[k]
-			if v == "" {
-				return "", ErrCustomUsageConfig
-			}
-			if query && k != "baseUrl" {
-				v = url.QueryEscape(v)
-			}
-			value = strings.ReplaceAll(value, placeholder, v)
-		}
-		return value, nil
-	}
-	expanded, err := replace(raw, true)
+	expanded, err := customUsageExpand(raw, vars, true, customUsageMaxURLBytes)
 	if err != nil {
 		return out, err
 	}
@@ -227,7 +210,22 @@ func prepareCustomUsage(a *Account, c CustomUsageConfig, secrets customUsageSecr
 			return out, ErrCustomUsageConfig
 		}
 	}
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	headerBytes := len("Accept: application/json\r\nHost: \r\nUser-Agent: Go-http-client/1.1\r\nConnection: close\r\n\r\n") + len(u.Host)
+	for name, template := range c.Request.Headers {
+		length, err := customUsageExpandedLength(template, vars, false, customUsageMaxHeaderValueBytes)
+		if err != nil {
+			return out, err
+		}
+		headerBytes += len(name) + length + 4
+		if headerBytes > customUsageMaxHeaderBytes {
+			return out, ErrCustomUsageConfig
+		}
+	}
+	requestURL := u.String()
+	if len(requestURL) > customUsageMaxURLBytes {
+		return out, ErrCustomUsageConfig
+	}
+	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
 	if err != nil {
 		return out, ErrCustomUsageConfig
 	}
@@ -237,11 +235,22 @@ func prepareCustomUsage(a *Account, c CustomUsageConfig, secrets customUsageSecr
 		out.sensitive = append(out.sensitive, vs...)
 	}
 	for k, v := range c.Request.Headers {
-		value, err := replace(v, false)
+		value, err := customUsageExpand(v, vars, false, customUsageMaxHeaderValueBytes)
 		if err != nil || strings.ContainsAny(value, "\r\n\x00") {
 			return out, ErrCustomUsageConfig
 		}
 		req.Header.Set(k, value)
+		if strings.EqualFold(k, "Cookie") && value != "" {
+			cookies, err := http.ParseCookie(value)
+			if err != nil {
+				return out, ErrCustomUsageConfig
+			}
+			for _, cookie := range cookies {
+				if cookie.Value != "" {
+					out.sensitive = append(out.sensitive, cookie.Value)
+				}
+			}
+		}
 		if !strings.EqualFold(k, "Accept") && value != "" {
 			out.sensitive = append(out.sensitive, value)
 			if parts := strings.Fields(value); len(parts) == 2 && (strings.EqualFold(parts[0], "Bearer") || strings.EqualFold(parts[0], "Basic")) {

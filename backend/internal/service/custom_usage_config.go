@@ -18,8 +18,12 @@ const (
 	// CustomUsageExtraKey stores only a redacted, declarative configuration.
 	CustomUsageExtraKey = "custom_usage_config"
 	// CustomUsageCredentialsKey is never serialized by ordinary account DTOs.
-	CustomUsageCredentialsKey = "custom_usage_secrets"
-	CustomUsageMaxBatchSize   = 50
+	CustomUsageCredentialsKey      = "custom_usage_secrets"
+	CustomUsageMaxBatchSize        = 50
+	customUsageMaxURLBytes         = 8192
+	customUsageMaxHeaderValueBytes = 8192
+	customUsageMaxHeaderBytes      = 32 * 1024
+	customUsageMaxHeaderNameBytes  = 128
 )
 
 var ErrCustomUsageConfig = infraerrors.BadRequest("INVALID_CUSTOM_USAGE_CONFIG", "invalid custom usage configuration")
@@ -236,9 +240,14 @@ func normalizeCustomUsage(c *CustomUsageConfig) error {
 		}
 	}
 	seen := map[string]bool{}
+	headerBytes := 0
 	for k, v := range c.Request.Headers {
 		lower := strings.ToLower(k)
-		if k == "__proto__" || k == "constructor" || k == "prototype" || !customUsageHeaderName.MatchString(k) || seen[lower] || len(v) > 8192 || strings.ContainsAny(v, "\r\n\x00") {
+		if len(k) > customUsageMaxHeaderNameBytes || k == "__proto__" || k == "constructor" || k == "prototype" || !customUsageHeaderName.MatchString(k) || seen[lower] || len(v) > customUsageMaxHeaderValueBytes || strings.ContainsAny(v, "\r\n\x00") {
+			return ErrCustomUsageConfig
+		}
+		headerBytes += len(k) + len(v) + 4
+		if headerBytes > customUsageMaxHeaderBytes {
 			return ErrCustomUsageConfig
 		}
 		seen[lower] = true
@@ -266,6 +275,78 @@ func customUsageKnownTemplates(s string) bool {
 	}
 	return !strings.ContainsAny(s, "{}")
 }
+
+func customUsageTemplateParts(raw string, variables map[string]string, visit func(string, bool) error) error {
+	for {
+		start := strings.Index(raw, "{{")
+		if start < 0 {
+			return visit(raw, false)
+		}
+		if err := visit(raw[:start], false); err != nil {
+			return err
+		}
+		raw = raw[start+2:]
+		end := strings.Index(raw, "}}")
+		if end < 0 {
+			return ErrCustomUsageConfig
+		}
+		key := raw[:end]
+		value, exists := variables[key]
+		if !exists || value == "" {
+			return ErrCustomUsageConfig
+		}
+		if err := visit(value, key != "baseUrl"); err != nil {
+			return err
+		}
+		raw = raw[end+2:]
+	}
+}
+
+func customUsageExpandedLength(raw string, variables map[string]string, query bool, limit int) (int, error) {
+	length := 0
+	err := customUsageTemplateParts(raw, variables, func(value string, variable bool) error {
+		size := len(value)
+		if size > limit-length {
+			return ErrCustomUsageConfig
+		}
+		if query && variable {
+			for index := 0; index < len(value); index++ {
+				letter := value[index]
+				if (letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z') || (letter >= '0' && letter <= '9') || strings.ContainsRune("-_.~ ", rune(letter)) {
+					continue
+				}
+				if limit-length-size < 2 {
+					return ErrCustomUsageConfig
+				}
+				size += 2
+			}
+		}
+		length += size
+		return nil
+	})
+	return length, err
+}
+
+func customUsageExpand(raw string, variables map[string]string, query bool, limit int) (string, error) {
+	length, err := customUsageExpandedLength(raw, variables, query, limit)
+	if err != nil {
+		return "", err
+	}
+	var expanded strings.Builder
+	expanded.Grow(length)
+	err = customUsageTemplateParts(raw, variables, func(value string, variable bool) error {
+		if query && variable {
+			value = url.QueryEscape(value)
+		}
+		expanded.WriteString(value)
+		return nil
+	})
+	if err != nil || expanded.Len() > limit {
+		return "", ErrCustomUsageConfig
+	}
+	return expanded.String(), nil
+}
+
 func customUsagePath(path string) ([]string, error) {
 	if len(path) == 0 || len(path) > 256 || !customUsagePathSyntax.MatchString(path) {
 		return nil, errCustomUsageResponse
