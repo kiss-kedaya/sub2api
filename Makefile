@@ -1,6 +1,13 @@
 .PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/api/admin/__tests__/customUsage.spec.ts \
+	src/components/account/__tests__/CustomUsageCell.spec.ts \
+	src/components/account/__tests__/CustomUsageConfigModal.spec.ts \
+	src/components/admin/account/__tests__/AccountActionMenu.customUsage.spec.ts \
+	src/composables/__tests__/useCustomUsage.spec.ts \
+	src/utils/__tests__/customUsage.spec.ts \
+	src/utils/__tests__/accountModelTest.spec.ts \
 	src/i18n/__tests__/localeKeyCompleteness.spec.ts \
 	src/api/__tests__/client.spec.ts \
 	src/api/__tests__/tokenRefresh.spec.ts \
