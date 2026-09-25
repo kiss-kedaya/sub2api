@@ -147,14 +147,18 @@ type TicketRepository interface {
 	List(context.Context, TicketActor, TicketFilter) ([]Ticket, int64, error)
 	Stats(context.Context, TicketActor) (*TicketStats, error)
 	Detail(context.Context, TicketActor, int64, int64) (*TicketDetail, error)
+	EmailConversation(context.Context, int64, int64) (*TicketDetail, error)
+	ProcessPendingEmail(context.Context, func(context.Context, int64, int64) error) (bool, error)
 	Create(context.Context, TicketActor, CreateTicketInput, string) (int64, error)
 	Mutate(context.Context, TicketActor, int64, string, string, func(*Ticket) (*TicketChange, error)) error
 	MarkRead(context.Context, TicketActor, int64, int64) error
 }
 
 type TicketService struct {
-	repo  TicketRepository
-	users UserRepository
+	repo               TicketRepository
+	users              UserRepository
+	emailWake          chan struct{}
+	notificationEmails *NotificationEmailService
 }
 
 func NewTicketService(repo TicketRepository, users UserRepository) *TicketService {
@@ -301,6 +305,7 @@ func (s *TicketService) Reply(ctx context.Context, actor TicketActor, id int64, 
 	if err != nil {
 		return nil, err
 	}
+	var committedChange *TicketChange
 	err = s.repo.Mutate(ctx, actor, id, in.ClientID, hash, func(t *Ticket) (*TicketChange, error) {
 		if !actor.Admin && t.UserID != actor.UserID {
 			return nil, ErrTicketNotFound
@@ -311,10 +316,18 @@ func (s *TicketService) Reply(ctx context.Context, actor TicketActor, id int64, 
 		change := &TicketChange{Ticket: t}
 		ticketSetStatus(change, actor, status)
 		change.Messages = append(change.Messages, TicketMessage{AuthorID: &actor.UserID, AuthorRole: actor.Role(), Kind: "reply", Content: in.Content})
+		committedChange = change
 		return change, nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	if actor.Admin && committedChange != nil {
+		for _, message := range committedChange.Messages {
+			if message.Kind == "reply" && message.ID > 0 {
+				s.notifyTicketReply()
+			}
+		}
 	}
 	return s.repo.Detail(ctx, actor, id, 0)
 }

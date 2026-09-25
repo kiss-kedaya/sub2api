@@ -20,6 +20,7 @@ func TestCustomUsageCookieValuesNeverReachResultsOrCache(t *testing.T) {
 					config.Extractor.PlanName = &CustomUsageText{Path: "echo"}
 				} else {
 					config.Extractor.Unit = &CustomUsageText{Path: "echo"}
+					config.Extractor.Unit.Value = ""
 				}
 				_, err := usage.PutConfig(t.Context(), 1, config)
 				require.NoError(t, err)

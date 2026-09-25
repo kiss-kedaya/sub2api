@@ -147,7 +147,12 @@
   max-width: 1680px;
 }
 
-.console-signal .signal-main:has(> .signal-usage, > .admin-usage-workbench) {
+.console-signal .signal-main:has(> .signal-usage, > .admin-usage-workbench, > .accounts-workspace) {
+  max-width: none;
+}
+
+.console-signal .signal-main:has(.accounts-workspace) {
+  width: 100%;
   max-width: none;
 }
 

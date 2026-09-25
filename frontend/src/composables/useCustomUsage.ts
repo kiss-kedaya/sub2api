@@ -104,6 +104,7 @@ export function useCustomUsage(rows: Ref<AccountListItem[]>, active: Ref<boolean
             schedules.set(id, { enabled: true, interval_minutes: result.interval_minutes! })
           } else enqueue(id, 'config')
         }
+        if (result?.enabled && result.configured && !result.updated_at && !result.error) enqueue(id, 'query')
       }
     } catch {
       if (!controller.signal.aborted && generation === revision) ids.forEach(id => { if (canRun(id) && cacheVersions.get(id) === (versions.get(id) ?? 0)) patch(id, { error: true, loading: false }) })

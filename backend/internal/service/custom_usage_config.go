@@ -76,9 +76,11 @@ type CustomUsageConfig struct {
 // CustomUsageConfigView has the same editable shape but never includes stored secrets.
 type CustomUsageConfigView struct {
 	CustomUsageConfig
-	Configured     bool `json:"configured"`
-	HasAPIKey      bool `json:"has_api_key"`
-	HasAccessToken bool `json:"has_access_token"`
+	Configured             bool `json:"configured"`
+	HasAPIKey              bool `json:"has_api_key"`
+	HasAccessToken         bool `json:"has_access_token"`
+	UsesAccountAPIKey      bool `json:"uses_account_api_key"`
+	UsesAccountAccessToken bool `json:"uses_account_access_token"`
 }
 
 type customUsageSecrets struct {
@@ -92,11 +94,44 @@ func customUsageDefaults() CustomUsageConfig {
 	return CustomUsageConfig{Template: "custom", TimeoutSeconds: 10, Request: CustomUsageRequest{Method: http.MethodGet, Headers: map[string]string{}}}
 }
 
-func readCustomUsage(a *Account) (CustomUsageConfig, customUsageSecrets, bool) {
+func customUsageAccountDefaults(a *Account) (CustomUsageConfig, bool) {
 	c := customUsageDefaults()
+	if a == nil || a.Type != AccountTypeAPIKey || a.IsCredentialShadow() {
+		return c, false
+	}
+	base := strings.TrimRight(strings.TrimSpace(a.GetCredential("base_url")), "/")
+	if base == "" {
+		return c, false
+	}
+	return CustomUsageConfig{
+		Enabled:         true,
+		Template:        "general",
+		BaseURL:         base,
+		TimeoutSeconds:  10,
+		IntervalMinutes: 10,
+		Request: CustomUsageRequest{
+			URL:     "{{baseUrl}}/v1/usage",
+			Method:  http.MethodGet,
+			Headers: map[string]string{"Authorization": "Bearer {{apiKey}}"},
+		},
+		Extractor: CustomUsageExtractor{
+			Remaining: &CustomUsageNumber{Path: "remaining"},
+			Unit:      &CustomUsageText{Value: "USD"},
+		},
+	}, true
+}
+
+func readCustomUsage(a *Account) (CustomUsageConfig, customUsageSecrets, bool) {
+	c, configured := customUsageAccountDefaults(a)
 	var secrets customUsageSecrets
-	raw, configured := a.Extra[CustomUsageExtraKey]
-	if configured {
+	var raw any
+	explicitlyConfigured := false
+	if a != nil {
+		raw, explicitlyConfigured = a.Extra[CustomUsageExtraKey]
+	}
+	if explicitlyConfigured {
+		configured = true
+		c = customUsageDefaults()
 		b, err := json.Marshal(raw)
 		if err != nil || json.Unmarshal(b, &c) != nil {
 			c = customUsageDefaults()
@@ -104,8 +139,10 @@ func readCustomUsage(a *Account) (CustomUsageConfig, customUsageSecrets, bool) {
 			c.TimeoutSeconds = -1
 		}
 	}
-	if b, err := json.Marshal(a.Credentials[CustomUsageCredentialsKey]); err == nil {
-		_ = json.Unmarshal(b, &secrets)
+	if a != nil && explicitlyConfigured {
+		if b, err := json.Marshal(a.Credentials[CustomUsageCredentialsKey]); err == nil {
+			_ = json.Unmarshal(b, &secrets)
+		}
 	}
 	if secrets.RequestURL != "" {
 		c.Request.URL = secrets.RequestURL

@@ -2651,7 +2651,17 @@ onUnmounted(() => {
 
 <style scoped>
 .accounts-workspace {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
   gap: 12px;
+}
+
+.accounts-workspace :deep(.layout-section-scrollable),
+.accounts-workspace :deep(.table-scroll-container) {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
 }
 
 .accounts-command-bar {

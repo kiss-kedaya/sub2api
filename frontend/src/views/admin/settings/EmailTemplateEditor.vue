@@ -340,6 +340,11 @@ function localText(zh: string, en: string): string {
 }
 
 const eventDisplayMeta: Record<string, EventDisplayMeta> = {
+  "ticket.reply": {
+    label: "工单回复通知",
+    timing: "客服回复成功后发送给工单所属用户，包含截至该回复的完整对话记录。",
+    categoryLabel: "工单",
+  },
   "auth.verify_code": {
     label: "邮箱验证码",
     timing: "注册、绑定邮箱、OAuth 补全邮箱或 TOTP 邮箱校验时发送。",
@@ -403,6 +408,11 @@ const eventDisplayMeta: Record<string, EventDisplayMeta> = {
 };
 
 const eventDisplayMetaEn: Record<string, EventDisplayMeta> = {
+  "ticket.reply": {
+    label: "Ticket Reply",
+    timing: "Sent to the ticket owner after a support reply, including the complete conversation up to that reply.",
+    categoryLabel: "Support",
+  },
   "auth.verify_code": {
     label: "Email Verification Code",
     timing: "Sent for registration, email binding, OAuth pending email completion, or TOTP email verification.",

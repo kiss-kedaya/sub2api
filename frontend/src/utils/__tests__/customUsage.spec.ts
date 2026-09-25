@@ -7,8 +7,8 @@ describe('custom usage drafts', () => {
     expect(supportsCustomUsage({ type: 'oauth', credentials: { base_url: 'https://example.test' } })).toBe(false)
     expect(supportsCustomUsage({ type: 'apikey', credentials: { base_url: ' ' } })).toBe(false)
   })
-  it('defaults to a ten-second timeout and manual-only refresh', () => {
-    expect(draft()).toMatchObject({ timeout_seconds: 10, interval_minutes: 0 })
+  it('defaults to a ten-second timeout and scheduled refresh', () => {
+    expect(draft()).toMatchObject({ enabled: true, timeout_seconds: 10, interval_minutes: 10 })
     expect(validateUsageDraft(draft())).toBeNull()
   })
   it('uses the contracted NewAPI user endpoint and conversion', () => {
