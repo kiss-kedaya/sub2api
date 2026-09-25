@@ -617,11 +617,7 @@ func (s *ChannelMonitorV2Service) attachQualityBuckets(ctx context.Context, matr
 		}
 		buckets := make([]ChannelMonitorV2QualityBucket, 0, len(group.Buckets))
 		for _, bucket := range group.Buckets {
-			buckets = append(buckets, ChannelMonitorV2QualityBucket{
-				BucketStart: bucket.BucketStart,
-				Checked:     bucket.Checked,
-				Degraded:    bucket.Degraded,
-			})
+			buckets = append(buckets, ChannelMonitorV2QualityBucket(bucket))
 		}
 		matrix.Items[i].QualityBuckets = buckets
 	}

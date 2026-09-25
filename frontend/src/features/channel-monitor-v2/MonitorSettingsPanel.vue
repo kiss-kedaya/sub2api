@@ -409,7 +409,7 @@ function qualityBadgeClass(status?: GroupQualityCheckStatus['status']): string {
 async function toggleQualityCheck(groupId: number) {
   if (qualityUpdating.value.has(groupId)) return
   const previous = qualityStatuses.value[groupId]
-  const enabled = !Boolean(previous?.enabled)
+  const enabled = !previous?.enabled
   // Optimistic update: flip immediately, revert on failure.
   qualityStatuses.value = {
     ...qualityStatuses.value,
