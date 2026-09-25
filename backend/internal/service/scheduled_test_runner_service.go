@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +23,7 @@ const (
 	// leadership before its plans have finished.
 	scheduledTestRunnerLeaderLockKey = "scheduled-test-runner"
 	scheduledTestRunnerLeaderLockTTL = 10 * time.Minute
+	scheduledQualityReasonPrefix     = "scheduled_quality_check:"
 )
 
 // ScheduledTestRunnerService periodically scans due test plans and executes them.
@@ -168,7 +171,7 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 }
 
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {
-	result, err := s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, plan.ModelID)
+	result, err := s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, plan.ModelID, plan.PromptText)
 	if err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d RunTestBackground error: %v", plan.ID, err)
 		return
@@ -178,19 +181,57 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d SaveResult error: %v", plan.ID, err)
 	}
 
-	// Auto-recover account if test succeeded and auto_recover is enabled.
-	if result.Status == "success" && plan.AutoRecover {
-		s.tryRecoverAccount(ctx, plan.AccountID, plan.ID)
-	}
-
-	nextRun, err := computeNextRun(plan.CronExpression, time.Now())
+	now := time.Now()
+	nextRun, err := computeNextRun(plan.CronExpression, now)
 	if err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d computeNextRun error: %v", plan.ID, err)
 		return
 	}
 
-	if err := s.planRepo.UpdateAfterRun(ctx, plan.ID, time.Now(), nextRun); err != nil {
+	s.updateScheduledQualityState(ctx, plan, result, nextRun)
+
+	// Auto-recover account if test succeeded and auto_recover is enabled.
+	if result.Status == "success" && plan.AutoRecover {
+		s.tryRecoverAccount(ctx, plan.AccountID, plan.ID)
+	}
+
+	if err := s.planRepo.UpdateAfterRun(ctx, plan.ID, now, nextRun); err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d UpdateAfterRun error: %v", plan.ID, err)
+	}
+}
+
+func (s *ScheduledTestRunnerService) updateScheduledQualityState(ctx context.Context, plan *ScheduledTestPlan, result *ScheduledTestResult, nextRun time.Time) {
+	if s == nil || s.accountTestSvc == nil || s.accountTestSvc.accountRepo == nil || result == nil {
+		return
+	}
+
+	account, err := s.accountTestSvc.accountRepo.GetByID(ctx, plan.AccountID)
+	if err != nil {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d quality state read failed: %v", plan.ID, plan.AccountID, err)
+		return
+	}
+
+	if result.Status == "degraded" {
+		if account.TempUnschedulableUntil != nil && account.TempUnschedulableUntil.After(time.Now()) &&
+			!strings.HasPrefix(account.TempUnschedulableReason, scheduledQualityReasonPrefix) {
+			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d quality pause skipped: another temporary reason is active", plan.ID, plan.AccountID)
+			return
+		}
+		reason := scheduledQualityReasonPrefix + " plan=" + strconv.FormatInt(plan.ID, 10) + " " + result.ErrorMessage
+		if err := s.accountTestSvc.accountRepo.SetTempUnschedulable(ctx, plan.AccountID, nextRun, reason); err != nil {
+			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d quality pause failed: %v", plan.ID, plan.AccountID, err)
+			return
+		}
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d paused until next quality check", plan.ID, plan.AccountID)
+		return
+	}
+
+	if result.Status == "success" && strings.HasPrefix(account.TempUnschedulableReason, scheduledQualityReasonPrefix) {
+		if err := s.accountTestSvc.accountRepo.ClearTempUnschedulable(ctx, plan.AccountID); err != nil {
+			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d quality recovery failed: %v", plan.ID, plan.AccountID, err)
+			return
+		}
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d quality recovered", plan.ID, plan.AccountID)
 	}
 }
 
