@@ -5,9 +5,9 @@
       <p>{{ t('admin.accounts.customUsage.loadFailed') }}</p>
       <button class="btn btn-secondary" type="button" @click="load">{{ t('admin.accounts.customUsage.retry') }}</button>
     </div>
-    <form v-else id="custom-usage-form" class="space-y-5" @submit.prevent="save">
-      <div class="flex items-center justify-between gap-4 rounded-lg border border-gray-200 p-4 dark:border-dark-600">
-        <div><h4 class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ t('admin.accounts.customUsage.enabled') }}</h4><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ account?.name }}</p></div>
+    <form v-else id="custom-usage-form" class="space-y-4" @submit.prevent="save">
+      <div class="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-gray-50/70 px-4 py-3 dark:border-dark-600 dark:bg-dark-800/60">
+        <div><h4 class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ t('admin.accounts.customUsage.enabled') }}</h4><p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ account?.name }}</p></div>
         <Toggle v-model="draft.enabled" :disabled="busy" :aria-label="t('admin.accounts.customUsage.enabled')" />
       </div>
       <fieldset :disabled="busy" class="space-y-5">
@@ -28,13 +28,17 @@
             <label v-if="draft[field.has]" class="mt-2 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400"><input v-model="draft[field.clear]" type="checkbox" class="checkbox" @change="draft[field.name] = ''" />{{ t('admin.accounts.customUsage.clearSecret') }}</label>
           </div>
         </div>
-        <p class="input-hint">{{ t('admin.accounts.customUsage.secretHint') }}</p>
+        <div v-if="credentialMode || visibleSecretFields.length" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+          <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('admin.accounts.customUsage.credential') }}</span>
+          <span v-if="credentialMode" class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 dark:bg-emerald-900/25 dark:text-emerald-300">{{ credentialMode }}</span>
+          <span v-if="visibleSecretFields.length" class="text-gray-400 dark:text-dark-400">{{ t('admin.accounts.customUsage.credentialOverride') }}</span>
+        </div>
         <div :class="draft.template === 'newapi' || draft.template === 'custom' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'" class="grid gap-4">
           <div v-if="draft.template === 'newapi' || draft.template === 'custom'"><label for="custom-usage-user" class="input-label">{{ t('admin.accounts.customUsage.userId') }}</label><input id="custom-usage-user" v-model="draft.user_id" class="input" autocomplete="off" /></div>
           <div><label for="custom-usage-timeout" class="input-label">{{ t('admin.accounts.customUsage.timeout') }}</label><input id="custom-usage-timeout" v-model.number="draft.timeout_seconds" type="number" min="1" max="30" step="1" class="input" /></div>
           <div><label for="custom-usage-interval" class="input-label">{{ t('admin.accounts.customUsage.interval') }}</label><input id="custom-usage-interval" v-model.number="draft.interval_minutes" type="number" min="0" step="1" class="input" /></div>
         </div>
-        <p class="input-hint">{{ t('admin.accounts.customUsage.intervalHint') }}</p>
+        <p class="text-xs text-gray-400 dark:text-dark-400">{{ t('admin.accounts.customUsage.intervalDefault') }}</p>
         <section class="space-y-4 border-t border-gray-200 pt-4 dark:border-dark-600">
           <div><label for="custom-usage-url" class="input-label">{{ t('admin.accounts.customUsage.requestUrl') }}</label><div class="flex items-center gap-2"><span class="rounded bg-gray-100 px-2 py-2 text-xs font-medium text-gray-500 dark:bg-dark-700">GET</span><input id="custom-usage-url" v-model="draft.request.url" class="input font-mono text-sm" spellcheck="false" autocomplete="off" /></div></div>
           <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.customUsage.variables') }} <code v-for="variable in variables" :key="variable" class="mr-2 select-all">{{ variable }}</code></p>
@@ -76,7 +80,16 @@ const secretFields = [
   { name: 'api_key', has: 'has_api_key', clear: 'clear_api_key', label: 'apiKey' },
   { name: 'access_token', has: 'has_access_token', clear: 'clear_access_token', label: 'accessToken' }
 ] as const
-const visibleSecretFields = computed(() => secretFields.filter(field => draft.value.template === 'custom' || field.name === (draft.value.template === 'newapi' ? 'access_token' : 'api_key')))
+const visibleSecretFields = computed(() => secretFields.filter(field => {
+  if (draft.value.template === 'custom') return true
+  if (draft.value.template === 'newapi') return field.name === 'access_token' && (!draft.value.uses_account_access_token || draft.value.has_access_token)
+  return field.name === 'api_key' && (!draft.value.uses_account_api_key || draft.value.has_api_key)
+}))
+const credentialMode = computed(() => {
+  if (draft.value.template === 'newapi' && draft.value.uses_account_access_token) return t('admin.accounts.customUsage.followAccountCredential')
+  if (draft.value.template !== 'newapi' && draft.value.template !== 'custom' && draft.value.uses_account_api_key) return t('admin.accounts.customUsage.followAccountCredential')
+  return null
+})
 const draft = ref<CustomUsageConfig>(createUsageDraft())
 const headersText = ref('')
 const extractorText = ref('')

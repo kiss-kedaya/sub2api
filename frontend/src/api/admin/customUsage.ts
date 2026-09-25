@@ -24,6 +24,8 @@ export interface CustomUsageConfig {
   configured?: boolean
   has_api_key?: boolean
   has_access_token?: boolean
+  uses_account_api_key?: boolean
+  uses_account_access_token?: boolean
   clear_api_key?: boolean
   clear_access_token?: boolean
 }

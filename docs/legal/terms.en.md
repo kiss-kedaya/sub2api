@@ -2,7 +2,7 @@
 
 **Last updated: 22 September 2026**
 
-Welcome to this website (including kedaya.ai and other domains we actually use to provide the service, the "Website") and the related console, API and technical support (collectively, the "Service"). These Terms form a binding agreement between you and the operator of the Site ("we", "us", "our").
+Welcome to this website and the related console, API and technical support (collectively, the "Service"). These Terms form a binding agreement between you and the operator of the Site ("we", "us", "our").
 
 > By clicking agree, registering, signing in or calling the API, you confirm that you have read, understood and agree to these Terms, the Privacy Policy, the Acceptable Use Policy, the Disclaimer, the Refund Policy and the Data Processing Agreement. If you are not eligible or do not agree, do not use the Service.
 

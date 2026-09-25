@@ -286,6 +286,44 @@ func (r *ticketRepository) fillRequesterStats(ctx context.Context, requester *se
 	r.fillRequesterStatsAt(ctx, requester, time.Now())
 }
 
+func (r *ticketRepository) EmailConversation(ctx context.Context, id, throughMessageID int64) (*service.TicketDetail, error) {
+	ticket, err := getTicket(ctx, r.db, service.TicketActor{Admin: true}, id, false)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT m.id, m.ticket_id, m.author_id, m.author_role,
+		COALESCE(u.username, ''), m.content, m.kind, m.event_type, m.event_data, m.created_at
+		FROM support_ticket_messages m LEFT JOIN users u ON u.id = m.author_id
+		WHERE m.ticket_id = $1 AND m.id <= $2 ORDER BY m.id ASC`, id, throughMessageID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	detail := &service.TicketDetail{Ticket: ticket}
+	for rows.Next() {
+		var message service.TicketMessage
+		var data []byte
+		if err := rows.Scan(&message.ID, &message.TicketID, &message.AuthorID, &message.AuthorRole, &message.AuthorName, &message.Content, &message.Kind, &message.EventType, &data, &message.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, &message.EventData); err != nil {
+			return nil, fmt.Errorf("decode ticket event: %w", err)
+		}
+		detail.Messages = append(detail.Messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(detail.Messages) == 0 {
+		return nil, service.ErrTicketNotFound
+	}
+	latest := detail.Messages[len(detail.Messages)-1]
+	if latest.ID != throughMessageID || latest.AuthorRole != "admin" || latest.Kind != "reply" {
+		return nil, service.ErrTicketNotFound
+	}
+	return detail, nil
+}
+
 func (r *ticketRepository) fillRequesterStatsAt(ctx context.Context, requester *service.TicketRequester, now time.Time) {
 	if r == nil || r.db == nil || requester == nil || requester.ID <= 0 {
 		return
@@ -465,6 +503,11 @@ func ticketInsertMessage(ctx context.Context, tx *sql.Tx, ticket *service.Ticket
 		ticket.ID, m.AuthorID, m.AuthorRole, m.Content, m.Kind, m.EventType, string(data), clientID, hash).Scan(&m.ID, &m.CreatedAt)
 	if err != nil {
 		return err
+	}
+	if m.AuthorRole == "admin" && m.Kind == "reply" {
+		if err := queueTicketReplyEmail(ctx, tx, ticket.ID, m.ID); err != nil {
+			return err
+		}
 	}
 	ticket.LastMessageID, ticket.LastMessageAt = m.ID, m.CreatedAt
 	preview := []rune(m.Content)

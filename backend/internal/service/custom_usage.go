@@ -108,6 +108,17 @@ func (s *CustomUsageService) account(ctx context.Context, id int64) (*Account, e
 	return a, nil
 }
 
+func customUsageConfigView(a *Account, c CustomUsageConfig, secrets customUsageSecrets, configured bool) *CustomUsageConfigView {
+	return &CustomUsageConfigView{
+		CustomUsageConfig:      publicCustomUsage(c),
+		Configured:             configured,
+		HasAPIKey:              secrets.APIKey != "",
+		HasAccessToken:         secrets.AccessToken != "",
+		UsesAccountAPIKey:      secrets.APIKey == "" && a.GetCredential("api_key") != "",
+		UsesAccountAccessToken: secrets.AccessToken == "" && a.GetCredential("access_token") != "",
+	}
+}
+
 // GetConfig returns only editable public fields and credential-presence booleans.
 func (s *CustomUsageService) GetConfig(ctx context.Context, id int64) (*CustomUsageConfigView, error) {
 	a, err := s.account(ctx, id)
@@ -115,7 +126,7 @@ func (s *CustomUsageService) GetConfig(ctx context.Context, id int64) (*CustomUs
 		return nil, err
 	}
 	c, secrets, configured := readCustomUsage(a)
-	return &CustomUsageConfigView{CustomUsageConfig: publicCustomUsage(c), Configured: configured, HasAPIKey: secrets.APIKey != "", HasAccessToken: secrets.AccessToken != ""}, nil
+	return customUsageConfigView(a, c, secrets, configured), nil
 }
 
 // PutConfig validates before atomically merging the two managed map keys.
@@ -169,7 +180,7 @@ func (s *CustomUsageService) PutConfig(ctx context.Context, id int64, c CustomUs
 		entry.preview = customUsageCached{}
 	}
 	s.mu.Unlock()
-	return &CustomUsageConfigView{CustomUsageConfig: public, Configured: true, HasAPIKey: secrets.APIKey != "", HasAccessToken: secrets.AccessToken != ""}, nil
+	return customUsageConfigView(a, public, secrets, true), nil
 }
 func customUsageEmpty(c CustomUsageConfig, configured bool) CustomUsageResult {
 	return CustomUsageResult{Enabled: c.Enabled, Configured: configured, IntervalMinutes: c.IntervalMinutes}
