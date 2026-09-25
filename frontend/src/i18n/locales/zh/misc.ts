@@ -52,6 +52,8 @@ export default {
     noRollbackVersions: '暂无可回退的版本',
     loadVersionsFailed: '获取版本列表失败',
     rollbackSourceHint: '源码构建不支持在线回退',
+    updateDisabledHint: '本部署已禁用在线更新，请使用发布流程升级',
+    rollbackDisabledHint: '本部署已禁用在线回退，请使用发布流程回退',
     deployScript: '脚本部署',
     deployDocker: 'Docker',
     dockerEditCompose: '修改 docker-compose.yml 中的镜像版本',
