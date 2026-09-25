@@ -37,11 +37,12 @@ func TestTicketRequesterStatsIndependentBudgetsAndAvailability(t *testing.T) {
 				usage.WillReturnRows(sqlmock.NewRows([]string{"tokens", "cost"}).AddRow(0, 0))
 			}
 			recharge := mock.ExpectQuery(regexp.QuoteMeta(ticketRequesterRechargeSQL))
-			if mode == "both_timeout" || mode == "recharge_timeout" {
+			switch mode {
+			case "both_timeout", "recharge_timeout":
 				recharge.WillDelayFor(2 * time.Second).WillReturnRows(sqlmock.NewRows([]string{"amount"}).AddRow(1))
-			} else if mode == "reset_stale" {
+			case "reset_stale":
 				recharge.WillReturnError(errors.New("recharge unavailable"))
-			} else {
+			default:
 				recharge.WillReturnRows(sqlmock.NewRows([]string{"amount"}).AddRow(0))
 			}
 			requester := &service.TicketRequester{ID: 7, TodayTokens: 100, TodayCost: 5, Recharged14d: 8,
