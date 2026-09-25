@@ -13,6 +13,8 @@ import type {
 import type { MonitorMatrixGroupBy, MonitorMatrixRow } from '../src/api/channelMonitorV2'
 import type { PaymentOrder } from '../src/types/payment'
 import { createFixtures, makeKey, settings } from './fixtures'
+import { createUsageDraft, supportsCustomUsage, usagePayload, usageTemplate, validateUsageDraft } from '../src/utils/customUsage'
+import type { CustomUsageConfig, CustomUsageResult, CustomUsageTemplate } from '../src/api/admin/customUsage'
 
 export class PreviewError extends Error {
   constructor(public status: number, message: string) { super(message) }
@@ -85,6 +87,61 @@ function buckets<T extends UsageLog>(rows: T[], key: (row: T) => string) {
 
 export function createMockApi(now = new Date()) {
   const data = createFixtures(now)
+  const customUsageConfigs = new Map<number, CustomUsageConfig>()
+  const customUsageCache = new Map<number, CustomUsageResult>()
+  const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+  const customUsageAccount = (id: number) => {
+    const account = data.adminAccounts.find(item => item.id === id)
+    if (!account) throw new PreviewError(404, '本地演示账号不存在')
+    if (!supportsCustomUsage(account)) throw new PreviewError(422, '仅自定义地址的 API Key 账号支持用量查询')
+    return account
+  }
+  const defaultCustomUsage = (id: number) => ({ ...createUsageDraft(String(customUsageAccount(id).credentials?.base_url)), configured: false, has_api_key: false, has_access_token: false })
+  const readCustomUsageConfig = (id: number): CustomUsageConfig => {
+    customUsageAccount(id)
+    return copy(customUsageConfigs.get(id) ?? defaultCustomUsage(id))
+  }
+  function normalizePreviewUsage(id: number, body: Record<string, unknown>): CustomUsageConfig {
+    const previous = readCustomUsageConfig(id)
+    const config = copy(body) as unknown as CustomUsageConfig
+    try {
+      if (typeof config.enabled !== 'boolean' || !['custom', 'general', 'newapi', 'sub2api'].includes(config.template) || config.request?.method !== 'GET' || validateUsageDraft(config)) throw new Error('invalid')
+      for (const key of ['api_key', 'access_token'] as const) if (config[key] !== undefined && typeof config[key] !== 'string') throw new Error('invalid')
+      for (const key of ['clear_api_key', 'clear_access_token'] as const) if (config[key] !== undefined && typeof config[key] !== 'boolean') throw new Error('invalid')
+    } catch { throw new PreviewError(422, '无效的本地用量查询配置') }
+    const clean = usagePayload(config)
+    const hasAPIKey = config.clear_api_key ? false : !!config.api_key?.trim() || !!previous.has_api_key
+    const hasAccessToken = config.clear_access_token ? false : !!config.access_token?.trim() || !!previous.has_access_token
+    // Fixture mode retains presence flags only. No actual credential is persisted or transmitted.
+    delete clean.api_key; delete clean.access_token; delete clean.clear_api_key; delete clean.clear_access_token
+    const url = new URL(clean.request.url.replace('{{baseUrl}}', clean.base_url))
+    for (const key of [...url.searchParams.keys()]) {
+      if (!url.searchParams.get(key)?.includes('{{')) url.searchParams.set(key, '')
+    }
+    clean.request.url = url.toString().replace(clean.base_url, '{{baseUrl}}').replace(/%7B/gi, '{').replace(/%7D/gi, '}')
+    for (const [name, value] of Object.entries(clean.request.headers)) {
+      if (!['{{apiKey}}', 'Bearer {{apiKey}}', '{{accessToken}}', 'Bearer {{accessToken}}', '{{userId}}', 'application/json'].includes(value)) clean.request.headers[name] = ''
+    }
+    return { ...clean, configured: true, has_api_key: hasAPIKey, has_access_token: hasAccessToken }
+  }
+  function previewUsageResult(config: CustomUsageConfig, configured = true): CustomUsageResult {
+    const base = { enabled: config.enabled, configured, interval_minutes: config.interval_minutes, unit: '' }
+    if (!config.enabled || !configured) return base
+    const amounts: Record<CustomUsageTemplate, { remaining: number; used: number }> = {
+      general: { remaining: 128.64, used: 21.36 },
+      newapi: { remaining: 42.5, used: 7.5 },
+      sub2api: { remaining: 80.25, used: 19.75 },
+      custom: { remaining: 25, used: 5 },
+    }
+    return { ...base, ...amounts[config.template], unit: 'USD', plan_name: '本地演示 · ' + config.template, updated_at: now.toISOString() }
+  }
+  // Seed one example of each built-in template on the first account page.
+  data.adminAccounts.filter(supportsCustomUsage).reverse().slice(0, 3).forEach((account, index) => {
+    const template = (['general', 'newapi', 'sub2api'] as const)[index]
+    const config: CustomUsageConfig = { ...createUsageDraft(String(account.credentials?.base_url)), ...usageTemplate(template), enabled: true, configured: true, template, has_api_key: template !== 'newapi', has_access_token: template === 'newapi', ...(template === 'newapi' ? { user_id: '3064' } : {}) }
+    customUsageConfigs.set(account.id, config)
+    customUsageCache.set(account.id, previewUsageResult(config))
+  })
   const adminSettings = () => ({
     ...settings, ops_monitoring_enabled: false, ops_realtime_monitoring_enabled: false,
     ops_query_mode_default: 'auto', custom_menu_items: [],
@@ -355,6 +412,35 @@ export function createMockApi(now = new Date()) {
   return {
     user: data.user,
     handle(method: string, path: string, query: URLSearchParams, body: Record<string, unknown> = {}): unknown {
+      const usageConfigPath = path.match(/^\/api\/v1\/admin\/accounts\/(\d+)\/custom-usage-config$/)
+      if (usageConfigPath && method === 'GET') return readCustomUsageConfig(Number(usageConfigPath[1]))
+      if (usageConfigPath && method === 'PUT') {
+        const id = Number(usageConfigPath[1])
+        const config = normalizePreviewUsage(id, body)
+        customUsageConfigs.set(id, config)
+        customUsageCache.delete(id)
+        return copy(config)
+      }
+      const usageQueryPath = path.match(/^\/api\/v1\/admin\/accounts\/(\d+)\/custom-usage-query$/)
+      if (usageQueryPath && method === 'POST') {
+        if (body.force !== undefined && typeof body.force !== 'boolean') throw new PreviewError(422, '无效的 force 参数')
+        const id = Number(usageQueryPath[1])
+        const saved = readCustomUsageConfig(id)
+        if (body.config !== undefined && (!body.config || typeof body.config !== 'object' || Array.isArray(body.config))) throw new PreviewError(422, '无效的查询草稿')
+        const config = body.config === undefined ? saved : normalizePreviewUsage(id, body.config as Record<string, unknown>)
+        const result = previewUsageResult(config, !!config.configured)
+        // Draft tests never save configuration or replace the persisted cache.
+        if (body.config === undefined) customUsageCache.set(id, result)
+        return copy(result)
+      }
+      if (method === 'POST' && path === '/api/v1/admin/accounts/custom-usage-batch') {
+        if (!Array.isArray(body.account_ids) || body.account_ids.length === 0 || body.account_ids.length > 50 || body.account_ids.some(id => !Number.isSafeInteger(id) || Number(id) <= 0)) throw new PreviewError(422, '用量缓存批量查询最多 50 个账号')
+        return { items: Object.fromEntries([...new Set(body.account_ids as number[])].map(id => {
+          const config = readCustomUsageConfig(id)
+          // A cache miss is metadata only; this path never performs a query.
+          return [String(id), copy(customUsageCache.get(id) ?? { enabled: config.enabled, configured: !!config.configured, interval_minutes: config.interval_minutes, unit: '' })]
+        })) }
+      }
       if (method === 'GET') {
         if (path === '/setup/status') return { needs_setup: false, step: 'complete' }
         if (path === '/api/v1/settings/public') return settings
