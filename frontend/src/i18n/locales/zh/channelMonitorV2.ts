@@ -104,6 +104,15 @@ export default {
       groupsSelected: '已选择 {count} 个分组',
       groupsAll: '全部分组',
       groupsEmpty: '没有可选择的分组',
+      qualityTitle: '降智检测',
+      qualityHint:
+        '按分组开启定时降智检测：每 15 分钟抽测该组可调度账号，疑似降智的号暂停调度，恢复后自动放回。用户在模型广场可看到分组状态。',
+      qualityStatus: {
+        healthy: '正常',
+        suspect: '疑似降智',
+        unknown: '未检测',
+      },
+      qualityToggleFailed: '降智检测开关保存失败',
       errorsTitle: '错误分类与忽略',
       errorsHint:
         '勾选「忽略」的类别不计入错误率与健康分，仍在错误原因列表中以灰色显示并标记忽略。未匹配的错误归入「其他」。',

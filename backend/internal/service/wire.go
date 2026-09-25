@@ -642,9 +642,11 @@ func ProvideScheduledTestRunnerService(
 	cfg *config.Config,
 	lockCache LeaderLockCache,
 	db *sql.DB,
+	gqcRepo GroupQualityCheckRepository,
 ) *ScheduledTestRunnerService {
 	svc := NewScheduledTestRunnerService(planRepo, scheduledSvc, accountTestSvc, rateLimitSvc, cfg)
 	svc.SetLeaderLock(lockCache, db)
+	svc.SetGroupQualityCheckRepo(gqcRepo)
 	svc.Start()
 	return svc
 }
@@ -952,6 +954,7 @@ var ProviderSet = wire.NewSet(
 	ProvideIdempotencyCleanupService,
 	ProvideScheduledTestService,
 	ProvideScheduledTestRunnerService,
+	NewGroupQualityCheckService,
 	NewGroupCapacityService,
 	NewChannelService,
 	wire.Bind(new(ChannelCacheInvalidator), new(*ChannelService)),

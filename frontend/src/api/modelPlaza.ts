@@ -76,6 +76,8 @@ export interface ModelPlazaGroup {
   /** 分组是否启用长上下文阶梯计费；false 时实付列只展示最低档，官方阶梯仅供参考。 */
   long_context_pricing_enabled: boolean
   models: PlazaModel[]
+  /** 降智检测状态；未开启检测的分组省略。'healthy' | 'suspect' */
+  quality_status?: 'healthy' | 'suspect'
 }
 
 export interface ModelPlazaResponse {

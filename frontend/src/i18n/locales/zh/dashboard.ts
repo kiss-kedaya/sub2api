@@ -672,7 +672,11 @@ export default {
     },
     badges: {
       exclusive: '专属分组',
-      subscription: '订阅'
+      subscription: '订阅',
+      quality: {
+        healthy: '检测正常',
+        suspect: '疑似降智'
+      }
     },
     detail: {
       noModels: '该分组暂未配置模型',
