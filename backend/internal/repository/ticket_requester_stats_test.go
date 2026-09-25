@@ -225,7 +225,9 @@ func ticketStatsPGExplain(t *testing.T, db *sql.DB, query string, args ...any) {
 	visit = func(node map[string]any) {
 		if relation, ok := node["Relation Name"].(string); ok {
 			t.Logf("relation=%s node=%v index=%v rows=%v loops=%v removed=%v cond=%v", relation, node["Node Type"], node["Index Name"], node["Actual Rows"], node["Actual Loops"], node["Rows Removed by Filter"], node["Index Cond"])
-			if node["Actual Loops"].(float64) > 0 {
+			loops, ok := node["Actual Loops"].(float64)
+			require.True(t, ok)
+			if loops > 0 {
 				require.NotEqual(t, "Seq Scan", node["Node Type"], relation)
 			}
 		}
@@ -234,11 +236,15 @@ func ticketStatsPGExplain(t *testing.T, db *sql.DB, query string, args ...any) {
 		}
 		if children, ok := node["Plans"].([]any); ok {
 			for _, child := range children {
-				visit(child.(map[string]any))
+				childPlan, ok := child.(map[string]any)
+				require.True(t, ok)
+				visit(childPlan)
 			}
 		}
 	}
-	visit(plans[0]["Plan"].(map[string]any))
+	rootPlan, ok := plans[0]["Plan"].(map[string]any)
+	require.True(t, ok)
+	visit(rootPlan)
 }
 
 func TestTicketRequesterStatsLocalPGExplain(t *testing.T) {
