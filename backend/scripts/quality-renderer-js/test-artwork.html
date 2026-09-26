@@ -1,0 +1,22 @@
+<!DOCTYPE html><html><head><style>
+#box { position:absolute; left:0; top:200px; width:120px; height:120px; background:#e26448; }
+</style></head><body>
+<svg viewBox="0 0 960 640" width="960" height="640" xmlns="http://www.w3.org/2000/svg">
+  <rect id="track" x="0" y="150" width="960" height="6" fill="#ccc"/>
+  <circle id="ball" cx="120" cy="200" r="60" fill="#2f9e6b"/>
+</svg>
+<script>
+// rAF-driven: moves the ball across the SVG over a 4 second loop.
+(function () {
+  const ball = document.getElementById('ball');
+  const start = performance.now();
+  function tick() {
+    const t = ((performance.now() - start) / 1000) % 4;
+    ball.setAttribute('cx', String(120 + (t / 4) * 700));
+    ball.setAttribute('cy', String(200 + Math.sin(t * Math.PI) * 120));
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
+</body></html>
