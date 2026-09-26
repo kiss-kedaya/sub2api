@@ -736,7 +736,7 @@ func TestResolveOpenAIMessagesDispatchMappedModel(t *testing.T) {
 func TestOpenAIGatewayMessagesDispatchGateAllowsGrokGroups(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	t.Run("openai_group_without_dispatch_flag_is_rejected", func(t *testing.T) {
+	t.Run("openai_group_without_dispatch_flag_reaches_gateway_dependencies", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`))
@@ -756,9 +756,10 @@ func TestOpenAIGatewayMessagesDispatchGateAllowsGrokGroups(t *testing.T) {
 		h := &OpenAIGatewayHandler{}
 		h.Messages(c)
 
-		require.Equal(t, http.StatusForbidden, rec.Code)
-		require.Equal(t, "permission_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
-		require.Contains(t, rec.Body.String(), "This group does not allow /v1/messages dispatch")
+		// 闸门不再拦截 /v1/messages：没有 dispatch flag 的 openai 分组也会走到
+		// 网关依赖检查（裸 handler 缺依赖 → 503），而不是 403。
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+		require.NotContains(t, rec.Body.String(), "This group does not allow /v1/messages dispatch")
 	})
 
 	t.Run("grok_group_without_dispatch_flag_reaches_gateway_dependencies", func(t *testing.T) {

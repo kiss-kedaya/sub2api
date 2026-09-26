@@ -1,10 +1,14 @@
 package handler
 
-// CN 分组 /v1/messages 调度闸门回归（修复:正常途径创建的 CN 分组曾恒 403）：
-// sanitizeGroupMessagesDispatchFields 对非 openai/composite 平台强制 AllowMessagesDispatch
-// =false，故 CN 分组必须与 grok 一样在闸门处豁免，否则原生 Anthropic 直通
-//（Claude Code 主用例）永远不可达。composite 分组解析到 grok/CN 目标时按
-// 目标平台豁免，解析到 openai 目标仍受其可配置开关控制。
+// /v1/messages 调度闸门回归。
+//
+// 历史背景：sanitizeGroupMessagesDispatchFields 对非 openai/composite 平台强制
+// AllowMessagesDispatch=false，曾让 CN 分组恒 403，故补了平台豁免。闸门最初存在
+// 是因为 /v1/messages 走原生 Anthropic 直通，只对开放该能力的组合有意义。
+//
+// 现在 Anthropic 兼容平台会把 /v1/messages 按账号能力转成上游 Responses / Chat
+// Completions，这条入口不再依赖分组开关，因此闸门整体放行；下面的用例锁定这个
+// 语义，避免重启开关时把 grok/CN/composite 的既有豁免一起弄丢。
 
 import (
 	"net/http/httptest"
@@ -24,9 +28,10 @@ func TestAllowOpenAICompatibleMessagesDispatch_CNProvidersExempt(t *testing.T) {
 			"%s 分组必须豁免 allow_messages_dispatch 闸门", platform)
 	}
 
-	// 非回归：openai 分组仍受开关控制。
+	// openai 分组：开关已不再拦截，两种取值都放行。
 	openaiOff := &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI, AllowMessagesDispatch: false}}
-	require.False(t, allowOpenAICompatibleMessagesDispatch(nil, openaiOff))
+	require.True(t, allowOpenAICompatibleMessagesDispatch(nil, openaiOff),
+		"openai 分组不再受 allow_messages_dispatch 拦截")
 	openaiOn := &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI, AllowMessagesDispatch: true}}
 	require.True(t, allowOpenAICompatibleMessagesDispatch(nil, openaiOn))
 
@@ -48,30 +53,26 @@ func TestAllowOpenAICompatibleMessagesDispatch_OpenAIGroupResolvedGrok(t *testin
 func TestAllowOpenAICompatibleMessagesDispatch_CompositeResolvedTargets(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	newCompositeCtx := func(model string, allow bool) (*gin.Context, *service.APIKey) {
+	newCompositeCtx := func(model string) *gin.Context {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
-		apiKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformComposite, AllowMessagesDispatch: allow}}
+		apiKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformComposite, AllowMessagesDispatch: false}}
 		ensureCompositeTargetPlatform(c, apiKey, model)
-		return c, apiKey
+		return c
 	}
 
-	// 解析到 grok/CN 目标：与对应独立分组同语义豁免。
-	for _, model := range []string{"grok-4.3", "kimi-k2-thinking", "glm-5.2", "deepseek-v3.2"} {
-		c, apiKey := newCompositeCtx(model, false)
-		require.True(t, allowOpenAICompatibleMessagesDispatch(c, apiKey), "model=%s", model)
+	// composite 分组不再受开关约束：无论解析到哪个目标都放行。
+	for _, model := range []string{"grok-4.3", "kimi-k2-thinking", "glm-5.2", "deepseek-v3.2", "gpt-5.5"} {
+		c := newCompositeCtx(model)
+		require.True(t, allowOpenAICompatibleMessagesDispatch(c, &service.APIKey{
+			Group: &service.Group{Platform: service.PlatformComposite, AllowMessagesDispatch: false},
+		}), "model=%s", model)
 	}
 
-	// 解析到 openai 目标：受 composite 分组自身开关控制。
-	c, apiKey := newCompositeCtx("gpt-5.5", false)
-	require.False(t, allowOpenAICompatibleMessagesDispatch(c, apiKey))
-	c, apiKey = newCompositeCtx("gpt-5.5", true)
-	require.True(t, allowOpenAICompatibleMessagesDispatch(c, apiKey))
-
-	// 未解析出目标平台：保持拒绝，不放宽。
+	// 未解析出目标平台也放行，闸门不再是 403 来源。
 	cNone, _ := gin.CreateTestContext(httptest.NewRecorder())
 	cNone.Request = httptest.NewRequest("POST", "/v1/messages", nil)
-	require.False(t, allowOpenAICompatibleMessagesDispatch(cNone,
+	require.True(t, allowOpenAICompatibleMessagesDispatch(cNone,
 		&service.APIKey{Group: &service.Group{Platform: service.PlatformComposite, AllowMessagesDispatch: false}}))
 }
 
@@ -102,7 +103,6 @@ func TestAllowOpenAICompatibleMessagesDispatch_SmartRoutingResolvedOpenAI(t *tes
 		Group:         &service.Group{ID: primaryID, Platform: service.PlatformAnthropic, AllowMessagesDispatch: false},
 	}
 	ensureCompositeTargetPlatform(c, apiKey, "gpt-5")
-	// Smart-routing 非 composite 分组不得用模型名猜 resolved platform（0.1.262）。
-	// gpt-5 不能把 Anthropic 分组变成 OpenAI messages 豁免。
-	require.False(t, allowOpenAICompatibleMessagesDispatch(c, apiKey))
+	require.True(t, allowOpenAICompatibleMessagesDispatch(c, apiKey),
+		"闸门整体放行后，Anthropic 主分组也不再被 /v1/messages 开关拦截")
 }
