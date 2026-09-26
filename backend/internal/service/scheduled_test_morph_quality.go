@@ -74,8 +74,8 @@ func qualityMorphFailure(doc *html.Node) string {
 			}
 			for c := n.FirstChild; c != nil; c = c.NextSibling {
 				if c.Type == html.TextNode {
-					styles.WriteString(c.Data)
-					styles.WriteByte('\n')
+					_, _ = styles.WriteString(c.Data)
+					_ = styles.WriteByte('\n')
 				}
 			}
 		}
@@ -324,7 +324,7 @@ func qualityMorphParsePath(text string) (qualityMorphPath, bool) {
 			}
 			out.closed = true
 			current = start
-			signature.WriteByte(command)
+			_ = signature.WriteByte(command)
 			command = 0
 			continue
 		}
@@ -351,22 +351,23 @@ func qualityMorphParsePath(text string) (qualityMorphPath, bool) {
 			}
 			text = text[n:]
 		}
-		signature.WriteByte(command)
+		_ = signature.WriteByte(command)
 		relative := command >= 'a' && command <= 'z'
 		points := make([]qualityMorphPoint, 0, 3)
-		if command == 'H' || command == 'h' {
+		switch command {
+		case 'H', 'h':
 			x := v[0]
 			if relative {
 				x += current.x
 			}
 			points = append(points, qualityMorphPoint{x, current.y})
-		} else if command == 'V' || command == 'v' {
+		case 'V', 'v':
 			y := v[0]
 			if relative {
 				y += current.y
 			}
 			points = append(points, qualityMorphPoint{current.x, y})
-		} else {
+		default:
 			for i := 0; i < len(v); i += 2 {
 				p := qualityMorphPoint{v[i], v[i+1]}
 				if relative {

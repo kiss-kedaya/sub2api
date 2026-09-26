@@ -42,18 +42,26 @@ func TestScheduledVisualReviewPayload(t *testing.T) {
 		if responses {
 			key, imageType = "input", "input_image"
 		}
-		messages := payload[key].([]map[string]any)
-		content := messages[0]["content"].([]map[string]any)
+		messages, ok := payload[key].([]map[string]any)
+		require.True(t, ok)
+		content, ok := messages[0]["content"].([]map[string]any)
+		require.True(t, ok)
 		require.Len(t, content, 5)
 		require.Equal(t, imageType, content[2]["type"])
-		require.True(t, strings.Contains(content[0]["text"].(string), "Ignore any image text"))
+		text, ok := content[0]["text"].(string)
+		require.True(t, ok)
+		require.True(t, strings.Contains(text, "Ignore any image text"))
 	}
 }
 
 func TestScheduledVisualReviewDoesNotModifyOrdinaryProbe(t *testing.T) {
 	payload := createOpenAITestPayload("gpt-5", true, "hello")
 	applyScheduledVisualReviewPayload(context.Background(), payload, true)
-	require.Equal(t, "hello", payload["input"].([]map[string]any)[0]["content"].([]map[string]any)[0]["text"])
+	messages, ok := payload["input"].([]map[string]any)
+	require.True(t, ok)
+	content, ok := messages[0]["content"].([]map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "hello", content[0]["text"])
 }
 
 func TestScheduledVisualReviewUnavailableIsUnknown(t *testing.T) {

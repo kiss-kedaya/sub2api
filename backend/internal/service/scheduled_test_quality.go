@@ -78,17 +78,19 @@ func scheduledTestDocumentFailure(content string) string {
 		token := z.Token()
 		switch token.Data {
 		case "html":
-			if tt == html.StartTagToken {
+			switch tt {
+			case html.StartTagToken:
 				htmlDepth++
 				htmlCount++
-			} else if tt == html.EndTagToken {
+			case html.EndTagToken:
 				htmlDepth--
 			}
 		case "svg":
-			if tt == html.StartTagToken {
+			switch tt {
+			case html.StartTagToken:
 				svgDepth++
 				svgCount++
-			} else if tt == html.EndTagToken {
+			case html.EndTagToken:
 				svgDepth--
 			}
 		}
