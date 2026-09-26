@@ -246,9 +246,23 @@ jobs:
             exit 1
           fi
 
-          # 获取完整的 tag message（跳过第一行标题）
+          # 更新说明优先级：
+          #   1. docs/release-notes/<tag>.md —— 仓库内的发版说明，可评审、可回看
+          #   2. tag message body —— 兼容没有说明文件的旧 tag
+          # 两者都为空时直接失败，避免再发出一个没有说明的 release。
           TAG_REF="refs/tags/$TAG_NAME"
-          TAG_MESSAGE="$(git for-each-ref --format='%(contents:body)' "$TAG_REF")"
+          NOTES_FILE="docs/release-notes/${TAG_NAME}.md"
+          if [[ -f "$NOTES_FILE" ]]; then
+            TAG_MESSAGE="$(cat "$NOTES_FILE")"
+            echo "Using release notes from $NOTES_FILE (${#TAG_MESSAGE} chars)"
+          else
+            TAG_MESSAGE="$(git for-each-ref --format='%(contents:body)' "$TAG_REF")"
+            echo "No $NOTES_FILE; falling back to tag message (${#TAG_MESSAGE} chars)"
+          fi
+          if [[ -z "${TAG_MESSAGE//[[:space:]]/}" ]]; then
+            echo "::error::No release notes. Add docs/release-notes/${TAG_NAME}.md or a non-empty annotated tag message."
+            exit 1
+          fi
 
           # Keep untrusted release notes out of workflow-command logs.
           echo "Tag message length: ${#TAG_MESSAGE}"
