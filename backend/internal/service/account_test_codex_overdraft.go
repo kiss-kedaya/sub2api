@@ -13,6 +13,9 @@ func (s *AccountTestService) SetCodexQuotaOverdraftCoordinator(coordinator *Code
 }
 
 func (s *AccountTestService) prepareCodexQuotaOverdraftTestRequest(ctx context.Context, account *Account, payload []byte) (context.Context, []byte, bool) {
+	if isScheduledVisualReview(ctx) {
+		return ctx, payload, false
+	}
 	enabled, businessInjection := s.codexQuotaOverdraftTestRuntime(ctx)
 	if !enabled || !isCodexQuotaOverdraftAccount(account) {
 		return ctx, payload, false
@@ -35,6 +38,9 @@ func (s *AccountTestService) handleCodexQuotaOverdraftTest429(ctx context.Contex
 }
 
 func (s *AccountTestService) observeCodexQuotaOverdraftTestResult(ctx context.Context, account *Account, preferredModel string, injected bool) {
+	if isScheduledVisualReview(ctx) {
+		return
+	}
 	if s == nil || s.codexQuotaOverdraft == nil || !CodexQuotaOverdraftSchedulingEnabled(ctx) || !isCodexQuotaOverdraftAccount(account) {
 		return
 	}

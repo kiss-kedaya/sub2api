@@ -106,8 +106,34 @@ func TestGroupQualityCheckService_GetGroupStatus_Healthy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if status.Status != "healthy" || status.CheckedAccounts != 3 || status.DegradedAccounts != 0 {
-		t.Fatalf("expected healthy 3/0, got %+v", status)
+	if status.Status != "healthy" || status.CheckedAccounts != 2 || status.DegradedAccounts != 0 {
+		t.Fatalf("expected healthy 2/0 (transport failure excluded), got %+v", status)
+	}
+}
+
+func TestGroupQualityCheckService_GetGroupStatus_Inconclusive(t *testing.T) {
+	repo := newStubGroupQualityCheckRepo()
+	svc := NewGroupQualityCheckService(repo, nil)
+	if _, err := svc.SetGroupEnabled(context.Background(), 1, true); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	repo.addResult(1, 1, "unknown", now)
+	repo.addResult(1, 2, "failed", now)
+	status, err := svc.GetGroupStatus(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Status != "unknown" || status.CheckedAccounts != 0 || status.LastRunAt == nil {
+		t.Fatalf("inconclusive probes must not imply healthy: %+v", status)
+	}
+	repo.addResult(1, 3, "degraded", now)
+	status, err = svc.GetGroupStatus(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Status != "suspect" || status.CheckedAccounts != 1 || status.DegradedAccounts != 1 {
+		t.Fatalf("inconclusive probes must not dilute confirmed defects: %+v", status)
 	}
 }
 
