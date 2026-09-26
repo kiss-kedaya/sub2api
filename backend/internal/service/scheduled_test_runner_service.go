@@ -126,7 +126,7 @@ func (s *ScheduledTestRunnerService) Stop() {
 
 func (s *ScheduledTestRunnerService) runScheduled() {
 	lockCtx, cancelLock := context.WithTimeout(context.Background(), 2*time.Second)
-	release, acquired := tryAcquireSingletonLeaderLock(lockCtx, s.lockCache, s.db, scheduledTestRunnerLeaderLockKey, s.instanceID, scheduledTestRunnerLeaderLockTTL)
+	release, acquired := s.tryAcquireLeaderLock(lockCtx)
 	cancelLock()
 	if !acquired {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] tick skipped: this instance is not leader")
@@ -167,6 +167,27 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 
 		wg.Wait()
 	}
+}
+
+func (s *ScheduledTestRunnerService) tryAcquireLeaderLock(ctx context.Context) (func(), bool) {
+	if s.lockCache == nil {
+		return tryAcquireSingletonLeaderLock(ctx, nil, s.db, scheduledTestRunnerLeaderLockKey, s.instanceID, scheduledTestRunnerLeaderLockTTL)
+	}
+	// A peer may still hold Redis leadership when this instance loses Redis.
+	// Switching lock backends would allow the same plan to run twice.
+	acquired, err := s.lockCache.TryAcquireLeaderLock(ctx, scheduledTestRunnerLeaderLockKey, s.instanceID, scheduledTestRunnerLeaderLockTTL)
+	if err != nil {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] lock unavailable; skipping tick: %v", err)
+		return nil, false
+	}
+	if !acquired {
+		return nil, false
+	}
+	return func() {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = s.lockCache.ReleaseLeaderLock(releaseCtx, scheduledTestRunnerLeaderLockKey, s.instanceID)
+	}, true
 }
 
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {
@@ -257,10 +278,11 @@ func (s *ScheduledTestRunnerService) updateScheduledQualityState(ctx context.Con
 func (s *ScheduledTestRunnerService) tryRecoverAccount(ctx context.Context, plan *ScheduledTestPlan, account *Account) {
 	repo := s.accountTestSvc.accountRepo
 	if strings.HasPrefix(account.TempUnschedulableReason, scheduledQualityReasonPrefix) {
+		observedReason := account.TempUnschedulableReason
 		if s.scheduledSvc == nil {
 			return
 		}
-		cleared, err := s.scheduledSvc.clearScheduledQualityPause(ctx, plan.AccountID, account.TempUnschedulableReason)
+		cleared, err := s.scheduledSvc.clearScheduledQualityPause(ctx, plan.AccountID, observedReason)
 		if err != nil {
 			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d quality recovery failed: %v", plan.ID, err)
 			return
@@ -270,8 +292,16 @@ func (s *ScheduledTestRunnerService) tryRecoverAccount(ctx context.Context, plan
 			return
 		}
 		if s.rateLimitSvc != nil && s.rateLimitSvc.tempUnschedCache != nil {
-			if err := s.rateLimitSvc.tempUnschedCache.DeleteTempUnsched(ctx, plan.AccountID); err != nil {
+			cache, ok := s.rateLimitSvc.tempUnschedCache.(interface {
+				DeleteTempUnschedIfReason(context.Context, int64, string) (bool, error)
+			})
+			if !ok {
+				logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d conditional quality cache recovery unavailable", plan.ID)
+				return
+			}
+			if _, err := cache.DeleteTempUnschedIfReason(ctx, plan.AccountID, observedReason); err != nil {
 				logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d quality cache recovery failed: %v", plan.ID, err)
+				return
 			}
 		}
 	}

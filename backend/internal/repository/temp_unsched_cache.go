@@ -57,6 +57,21 @@ var tempUnschedSetScript = redis.NewScript(`
 	return 1
 `)
 
+var tempUnschedDeleteIfReasonScript = redis.NewScript(`
+	local existing = redis.call('GET', KEYS[1])
+	if not existing then
+		return 0
+	end
+	local ok, state = pcall(cjson.decode, existing)
+	if not ok or type(state) ~= 'table' or type(state.error_message) ~= 'string' then
+		return 0
+	end
+	if state.error_message ~= ARGV[1] then
+		return 0
+	end
+	return redis.call('DEL', KEYS[1])
+`)
+
 type tempUnschedCache struct {
 	rdb *redis.Client
 }
@@ -112,6 +127,16 @@ func (c *tempUnschedCache) GetTempUnsched(ctx context.Context, accountID int64) 
 func (c *tempUnschedCache) DeleteTempUnsched(ctx context.Context, accountID int64) error {
 	key := fmt.Sprintf("%s%d", tempUnschedPrefix, accountID)
 	return c.rdb.Del(ctx, key).Err()
+}
+
+// DeleteTempUnschedIfReason atomically compares the reason stored as error_message before deleting.
+func (c *tempUnschedCache) DeleteTempUnschedIfReason(ctx context.Context, accountID int64, expectedReason string) (bool, error) {
+	key := fmt.Sprintf("%s%d", tempUnschedPrefix, accountID)
+	deleted, err := tempUnschedDeleteIfReasonScript.Run(ctx, c.rdb, []string{key}, expectedReason).Int64()
+	if err != nil {
+		return false, err
+	}
+	return deleted == 1, nil
 }
 
 func (c *tempUnschedCache) openAIAPIKeyHealthKey(accountID int64) string {
