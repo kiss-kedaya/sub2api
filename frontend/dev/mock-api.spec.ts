@@ -289,7 +289,7 @@ describe('local custom usage fixtures', () => {
         const config = api.handle('GET', configPath(id), query()) as CustomUsageConfig
         expect(config.template).toBe(templates[index])
         const result = api.handle('POST', queryPath(id), query(), { force: true }) as CustomUsageResult
-        expect(result).toMatchObject({ enabled: true, configured: true, remaining: expect.any(Number), used: expect.any(Number), unit: 'USD', interval_minutes: 0 })
+        expect(result).toMatchObject({ enabled: true, configured: true, remaining: expect.any(Number), used: expect.any(Number), unit: 'USD', interval_minutes: config.interval_minutes })
       }
       api.handle('POST', batchPath, query(), { account_ids: [920023, 920020, 920017] })
       expect(fetchSpy).not.toHaveBeenCalled()
