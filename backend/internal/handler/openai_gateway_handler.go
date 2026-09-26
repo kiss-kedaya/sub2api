@@ -310,6 +310,9 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 	if apiKey == nil || apiKey.Group == nil {
 		return true
 	}
+	// /v1/messages 已不再是稳定的原生 Anthropic 直通入口：OpenAI 兼容平台会按
+	// 账号能力转成上游 Responses / Chat Completions，因此分组级开关不再拦截。
+	// 保留豁免判定与 composite 语义以便未来细化，但默认放行。
 	if messagesDispatchExemptPlatform(apiKey.Group.Platform) {
 		return true
 	}
@@ -322,13 +325,9 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 	if resolvedOK && messagesDispatchExemptPlatform(resolved) {
 		return true
 	}
-	// composite 分组解析到 openai 目标时，仍受其可配置开关控制。
 	if apiKey.Group.Platform == service.PlatformComposite {
-		return apiKey.Group.AllowMessagesDispatch
+		return true
 	}
-	// Smart-routing keys keep the primary group's Claude/OpenAI switch, but a
-	// request already resolved onto an OpenAI-compatible later group must not
-	// inherit the primary Claude group's messages-dispatch prohibition.
 	if apiKey.UsesRequestTargetPlatform() && resolvedOK {
 		switch resolved {
 		case service.PlatformOpenAI, service.PlatformGrok,
@@ -337,7 +336,7 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 			return true
 		}
 	}
-	return apiKey.Group.AllowMessagesDispatch
+	return true
 }
 
 func openAICompatibleTextTargetAllowed(c *gin.Context, apiKey *service.APIKey, model string) bool {
