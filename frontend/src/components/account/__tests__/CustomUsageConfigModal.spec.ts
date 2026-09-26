@@ -49,7 +49,7 @@ describe('CustomUsageConfigModal', () => {
     expect(body).not.toHaveProperty('api_key')
     expect(body).not.toHaveProperty('access_token')
     expect(body).not.toHaveProperty('has_api_key')
-    expect(wrapper.emitted('saved')).toEqual([[7, { enabled: true, interval_minutes: 0 }]])
+    expect(wrapper.emitted('saved')).toEqual([[7, { enabled: true, interval_minutes: 10 }]])
     expect(api.queryUsage).not.toHaveBeenCalled()
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
@@ -77,7 +77,7 @@ describe('CustomUsageConfigModal', () => {
     await setup()
     expect(wrapper.get<HTMLInputElement>('#custom-usage-base').element.value).toBe('https://example.test')
     expect(wrapper.get<HTMLInputElement>('#custom-usage-timeout').element.value).toBe('10')
-    expect(wrapper.get<HTMLInputElement>('#custom-usage-interval').element.value).toBe('0')
+    expect(wrapper.get<HTMLInputElement>('#custom-usage-interval').element.value).toBe('10')
     expect(api.queryUsage).not.toHaveBeenCalled()
   })
   it('does not overwrite an existing config after a load failure', async () => {
