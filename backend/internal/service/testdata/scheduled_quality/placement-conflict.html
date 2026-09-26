@@ -1,0 +1,7 @@
+<!doctype html><html><head><style>
+.leg { transform-box: fill-box; transform-origin: 50% 8%; animation: pedal .72s linear infinite; }
+@keyframes pedal { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+</style></head><body><svg viewBox="0 0 1000 620">
+<!-- Reduced reproduction of r1408239: CSS drops the limb's SVG translation. -->
+<g class="leg" transform="translate(482 397)"><path d="M0 0L19 45L-4 62"/></g>
+</svg></body></html>
