@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,6 +76,79 @@ func TestScheduledTestRunnerService_RunsAndReleasesLeaderLock(t *testing.T) {
 
 	require.Equal(t, int32(1), repo.listDueCalls.Load(), "the leader should scan due plans once")
 	require.Empty(t, cache.heldBy(scheduledTestRunnerLeaderLockKey), "the lock must be released after the tick")
+}
+
+func TestScheduledTestRunnerService_CacheErrorDoesNotSwitchLockBackend(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := &scheduledTestPlanRepoStub{}
+	runner := NewScheduledTestRunnerService(repo, nil, nil, nil, nil)
+	runner.alignmentDelay = 0
+	runner.SetLeaderLock(&fakeLeaderLockCache{acquireErr: context.DeadlineExceeded}, db)
+	runner.runScheduled()
+	require.Zero(t, repo.listDueCalls.Load())
+	require.NoError(t, mock.ExpectationsWereMet(), "Redis failure must not acquire an unrelated PostgreSQL lock")
+	runner.SetLeaderLock(&fakeLeaderLockCache{acquireErr: context.DeadlineExceeded}, nil)
+	runner.runScheduled()
+	require.Zero(t, repo.listDueCalls.Load(), "Redis failure must not run ungated")
+}
+
+type scheduledQualityConditionalCache struct {
+	TempUnschedCache
+	reason string
+	ids    []int64
+	err    error
+}
+
+func (c *scheduledQualityConditionalCache) DeleteTempUnsched(context.Context, int64) error {
+	panic("quality recovery must never unconditionally delete a runtime ban")
+}
+
+func (c *scheduledQualityConditionalCache) DeleteTempUnschedIfReason(_ context.Context, id int64, reason string) (bool, error) {
+	c.ids = append(c.ids, id)
+	if c.err != nil {
+		return false, c.err
+	}
+	if c.reason != reason {
+		return false, nil
+	}
+	c.reason = ""
+	return true, nil
+}
+
+func TestScheduledTestRunnerService_QualityRecoveryPreservesNewCacheBan(t *testing.T) {
+	for _, mode := range []string{"matching", "new_ban", "cache_error", "unsupported"} {
+		t.Run(mode, func(t *testing.T) {
+			reason := scheduledQualityReasonPrefix + " plan=1"
+			account := &Account{ID: 2, Status: StatusDisabled, Schedulable: false, TempUnschedulableReason: reason}
+			runner, repo, _ := scheduledQualityRunner(account, &scheduledQualityResultRepo{})
+			cache := &scheduledQualityConditionalCache{reason: reason}
+			if mode == "new_ban" {
+				cache.reason = "upstream quota exhausted"
+			}
+			if mode == "cache_error" {
+				cache.err = errors.New("Redis unavailable")
+			}
+			runner.rateLimitSvc.tempUnschedCache = cache
+			if mode == "unsupported" {
+				runner.rateLimitSvc.tempUnschedCache = &tempUnschedCacheStub{}
+			}
+			runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 1, AccountID: 2, CronExpression: "* * * * *"}, &ScheduledTestResult{Status: "success"})
+			if mode == "cache_error" || mode == "unsupported" {
+				require.False(t, account.Schedulable)
+				require.Zero(t, repo.recoveries)
+			} else {
+				require.True(t, account.Schedulable)
+				require.Equal(t, []int64{2}, cache.ids)
+			}
+			if mode == "matching" {
+				require.Empty(t, cache.reason)
+			} else if mode == "new_ban" {
+				require.Equal(t, "upstream quota exhausted", cache.reason)
+			}
+		})
+	}
 }
 
 type scheduledQualityAccountRepo struct {
