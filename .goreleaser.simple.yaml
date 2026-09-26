@@ -36,6 +36,18 @@ archives:
       - LICENSE*
       - README*
       - deploy/*
+      - src: backend/scripts/quality-renderer/*.mjs
+        dst: renderer
+        strip_parent: true
+      - src: backend/scripts/quality-renderer/package*.json
+        dst: renderer
+        strip_parent: true
+      - src: backend/scripts/quality-renderer/README.md
+        dst: renderer
+        strip_parent: true
+      - src: backend/scripts/quality-renderer/test/*.mjs
+        dst: renderer/test
+        strip_parent: true
 
 checksum:
   name_template: 'checksums.txt'

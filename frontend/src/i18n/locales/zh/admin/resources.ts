@@ -26,6 +26,7 @@ export default {
       errorMessage: '错误',
       success: '成功',
       degraded: '质量下降',
+      unknown: '无法判定',
       failed: '失败',
       running: '运行中',
       schedule: '定时测试',

@@ -124,9 +124,11 @@ func (s *GroupQualityCheckService) GetGroupStatus(ctx context.Context, groupID i
 		return status, nil
 	}
 
-	status.CheckedAccounts = len(results)
 	newest := results[0].CreatedAt
 	for _, result := range results {
+		if result.Status == "success" || result.Status == "degraded" {
+			status.CheckedAccounts++
+		}
 		if result.Status == "degraded" {
 			status.DegradedAccounts++
 		}
@@ -135,10 +137,13 @@ func (s *GroupQualityCheckService) GetGroupStatus(ctx context.Context, groupID i
 		}
 	}
 	status.LastRunAt = &newest
+	if status.CheckedAccounts == 0 {
+		return status, nil
+	}
 
 	if status.DegradedAccounts == 0 {
 		status.Status = "healthy"
-	} else if float64(status.DegradedAccounts)/float64(len(results)) >= groupQualitySuspectRatio {
+	} else if float64(status.DegradedAccounts)/float64(status.CheckedAccounts) >= groupQualitySuspectRatio {
 		status.Status = "suspect"
 	} else {
 		status.Status = "healthy"

@@ -1,0 +1,13 @@
+{
+  "name": "sub2-quality-renderer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20.19.0" },
+  "scripts": {
+    "render": "node render.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "dependencies": { "parse5": "8.0.1", "playwright": "1.63.0" },
+  "devDependencies": { "pngjs": "7.0.0" }
+}

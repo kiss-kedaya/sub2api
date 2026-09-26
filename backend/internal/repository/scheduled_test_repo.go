@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -39,7 +40,7 @@ func (r *scheduledTestPlanRepository) ListByAccountID(ctx context.Context, accou
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, account_id, model_id, prompt_text, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at
 		FROM scheduled_test_plans WHERE account_id = $1
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 	`, accountID)
 	if err != nil {
 		return nil, err
@@ -53,7 +54,7 @@ func (r *scheduledTestPlanRepository) ListDue(ctx context.Context, now time.Time
 		SELECT id, account_id, model_id, prompt_text, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at
 		FROM scheduled_test_plans
 		WHERE enabled = true AND next_run_at <= $1
-		ORDER BY next_run_at ASC
+		ORDER BY next_run_at ASC, id ASC
 	`, now)
 	if err != nil {
 		return nil, err
@@ -116,7 +117,7 @@ func (r *scheduledTestResultRepository) ListByPlanID(ctx context.Context, planID
 		SELECT id, plan_id, status, response_text, error_message, latency_ms, started_at, finished_at, created_at
 		FROM scheduled_test_results
 		WHERE plan_id = $1
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 		LIMIT $2
 	`, planID, limit)
 	if err != nil {
@@ -143,7 +144,7 @@ func (r *scheduledTestResultRepository) PruneOldResults(ctx context.Context, pla
 		DELETE FROM scheduled_test_results
 		WHERE id IN (
 			SELECT id FROM (
-				SELECT id, ROW_NUMBER() OVER (PARTITION BY plan_id ORDER BY created_at DESC) AS rn
+				SELECT id, ROW_NUMBER() OVER (PARTITION BY plan_id ORDER BY created_at DESC, id DESC) AS rn
 				FROM scheduled_test_results
 				WHERE plan_id = $1
 			) ranked
@@ -151,6 +152,30 @@ func (r *scheduledTestResultRepository) PruneOldResults(ctx context.Context, pla
 		)
 	`, planID, keepCount)
 	return err
+}
+
+// ClearScheduledQualityPause only clears the exact legacy quality reason read by
+// the runner. The outbox event and state change commit together.
+func (r *scheduledTestResultRepository) ClearScheduledQualityPause(ctx context.Context, accountID int64, reason string) (bool, error) {
+	if !strings.HasPrefix(reason, "scheduled_quality_check:") {
+		return false, nil
+	}
+	result, err := r.db.ExecContext(ctx, `WITH updated AS (
+		UPDATE accounts
+		SET temp_unschedulable_until = NULL,
+			temp_unschedulable_reason = NULL,
+			updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL AND temp_unschedulable_reason = $2
+		RETURNING id
+	)
+	INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
+	SELECT $3, id, NULL, NULL FROM updated
+	`, accountID, reason, service.SchedulerOutboxEventAccountChanged)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
 }
 
 // --- scan helpers ---

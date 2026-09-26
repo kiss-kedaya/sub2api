@@ -26,6 +26,7 @@ export default {
       errorMessage: 'Error',
       success: 'Success',
       degraded: 'Degraded',
+      unknown: 'Inconclusive',
       failed: 'Failed',
       running: 'Running',
       schedule: 'Schedule',

@@ -114,6 +114,7 @@ func (r *groupQualityCheckRepository) ListGroupBuckets(ctx context.Context, grou
 		       COUNT(*) AS checked,
 		       COUNT(*) FILTER (WHERE status = 'degraded') AS degraded
 		FROM latest
+		WHERE status IN ('success', 'degraded')
 		GROUP BY group_id, bucket_start
 		ORDER BY group_id, bucket_start
 	`, groupIDs, since, bucketSeconds)
