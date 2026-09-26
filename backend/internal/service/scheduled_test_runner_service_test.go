@@ -132,7 +132,7 @@ func TestScheduledTestRunnerService_QualityRecoveryPreservesNewCacheBan(t *testi
 			}
 			runner.rateLimitSvc.tempUnschedCache = cache
 			if mode == "unsupported" {
-				runner.rateLimitSvc.tempUnschedCache = &tempUnschedCacheStub{}
+				runner.rateLimitSvc.tempUnschedCache = &struct{ TempUnschedCache }{}
 			}
 			runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 1, AccountID: 2, CronExpression: "* * * * *"}, &ScheduledTestResult{Status: "success"})
 			if mode == "cache_error" || mode == "unsupported" {
@@ -142,9 +142,10 @@ func TestScheduledTestRunnerService_QualityRecoveryPreservesNewCacheBan(t *testi
 				require.True(t, account.Schedulable)
 				require.Equal(t, []int64{2}, cache.ids)
 			}
-			if mode == "matching" {
+			switch mode {
+			case "matching":
 				require.Empty(t, cache.reason)
-			} else if mode == "new_ban" {
+			case "new_ban":
 				require.Equal(t, "upstream quota exhausted", cache.reason)
 			}
 		})
