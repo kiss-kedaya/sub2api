@@ -20,10 +20,10 @@ type qualityCSS struct {
 }
 
 var (
-	qualitySimpleSelector = regexp.MustCompile("^(?:[a-zA-Z][a-zA-Z0-9-]*|\\*)?(?:[.#][a-zA-Z_][a-zA-Z0-9_-]*)*$")
-	qualitySelectorParts  = regexp.MustCompile("[.#]?[a-zA-Z_][a-zA-Z0-9_-]*|\\*")
-	qualityRotation       = regexp.MustCompile("^rotate\\(\\s*([-+]?(?:\\d*\\.)?\\d+)deg\\s*\\)$")
-	qualityTranslation    = regexp.MustCompile("^translate\\(\\s*([-+]?(?:\\d*\\.)?\\d+)[ ,]+([-+]?(?:\\d*\\.)?\\d+)\\s*\\)$")
+	qualitySimpleSelector = regexp.MustCompile(`^(?:[a-zA-Z][a-zA-Z0-9-]*|\*)?(?:[.#][a-zA-Z_][a-zA-Z0-9_-]*)*$`)
+	qualitySelectorParts  = regexp.MustCompile(`[.#]?[a-zA-Z_][a-zA-Z0-9_-]*|\*`)
+	qualityRotation       = regexp.MustCompile(`^rotate\(\s*([-+]?(?:\d*\.)?\d+)deg\s*\)$`)
+	qualityTranslation    = regexp.MustCompile(`^translate\(\s*([-+]?(?:\d*\.)?\d+)[ ,]+([-+]?(?:\d*\.)?\d+)\s*\)$`)
 )
 
 func scheduledTestAnimationQuality(content string) (string, string) {
@@ -54,8 +54,8 @@ func scheduledTestAnimationQuality(content string) (string, string) {
 			}
 			for c := n.FirstChild; c != nil; c = c.NextSibling {
 				if c.Type == html.TextNode {
-					styles.WriteString(c.Data)
-					styles.WriteByte('\n')
+					_, _ = styles.WriteString(c.Data)
+					_ = styles.WriteByte('\n')
 				}
 			}
 		}
@@ -143,7 +143,7 @@ func qualityMotionProperty(property string) bool {
 func qualityCSSValues(p *css.Parser) string {
 	var s strings.Builder
 	for _, token := range p.Values() {
-		s.Write(token.Data)
+		_, _ = s.Write(token.Data)
 	}
 	return strings.TrimSpace(s.String())
 }
