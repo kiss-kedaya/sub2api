@@ -146,6 +146,9 @@ deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
 docs/*
+# 发版说明：release workflow 从 docs/release-notes/<tag>.md 读取 GitHub Release 正文
+!docs/release-notes/
+!docs/release-notes/*.md
 !docs/ANTIGRAVITY_ATTRIBUTION_429.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
