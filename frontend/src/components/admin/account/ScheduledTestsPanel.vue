@@ -405,6 +405,8 @@
                           ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
                           : result.status === 'degraded'
                             ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
+                            : result.status === 'unknown'
+                              ? 'bg-gray-100 text-gray-700 dark:bg-gray-500/20 dark:text-gray-400'
                             : result.status === 'running'
                               ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'
                               : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'
@@ -455,8 +457,14 @@
                   </div>
                 </div>
 
-                <div v-if="selectedResult.error_message" class="m-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-900/20 dark:text-red-300">
-                  <div class="mb-1 font-semibold">{{ t('admin.scheduledTests.errorMessage') }}</div>
+                <div
+                  v-if="selectedResult.error_message"
+                  class="m-3 rounded-lg border p-3 text-xs"
+                  :class="selectedResult.status === 'unknown'
+                    ? 'border-gray-200 bg-gray-50 text-gray-600 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300'
+                    : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-900/20 dark:text-red-300'"
+                >
+                  <div class="mb-1 font-semibold">{{ t(selectedResult.status === 'unknown' ? 'admin.scheduledTests.unknown' : 'admin.scheduledTests.errorMessage') }}</div>
                   <pre class="whitespace-pre-wrap">{{ selectedResult.error_message }}</pre>
                 </div>
 
@@ -725,6 +733,7 @@ const selectResult = (resultId: number) => {
 const resultStatusLabel = (status: string) => {
   if (status === 'success') return t('admin.scheduledTests.success')
   if (status === 'degraded') return t('admin.scheduledTests.degraded')
+  if (status === 'unknown') return t('admin.scheduledTests.unknown')
   if (status === 'running') return t('admin.scheduledTests.running')
   return t('admin.scheduledTests.failed')
 }
