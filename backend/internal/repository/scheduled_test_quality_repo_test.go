@@ -1,4 +1,4 @@
-package service_test
+package repository_test
 
 import (
 	"context"
@@ -18,7 +18,7 @@ func TestScheduledTestService_PersistedHistoryOrdering(t *testing.T) {
 		t.Run(fmt.Sprint(retention), func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			repo := repository.NewScheduledTestResultRepository(db)
 			svc := service.NewScheduledTestService(nil, repo)
 			now := time.Now().UTC()
@@ -53,10 +53,11 @@ func TestScheduledTestService_LegacyPauseCompareAndClear(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
-			repo := repository.NewScheduledTestResultRepository(db).(interface {
+			defer func() { _ = db.Close() }()
+			repo, ok := repository.NewScheduledTestResultRepository(db).(interface {
 				ClearScheduledQualityPause(context.Context, int64, string) (bool, error)
 			})
+			require.True(t, ok)
 			reason := "scheduled_quality_check: plan=18 legacy"
 			if mode == "unrelated" {
 				reason = "other temporary ban"

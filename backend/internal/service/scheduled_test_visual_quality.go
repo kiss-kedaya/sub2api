@@ -201,6 +201,7 @@ func renderScheduledVisualFrames(ctx context.Context, document string) ([]schedu
 	if node == "" {
 		node = "node"
 	}
+	// #nosec G702 -- node and script are operator-controlled process environment, never request fields.
 	cmd := exec.CommandContext(ctx, node, script)
 	cmd.Stdin = strings.NewReader(document)
 	var output scheduledVisualLimitedBuffer
@@ -247,7 +248,7 @@ func (s *AccountTestService) assessScheduledVisualQuality(ctx context.Context, p
 		return "unknown", "quality check inconclusive: visual reviewer unavailable"
 	}
 	account, err := s.accountRepo.GetByID(ctx, plan.AccountID)
-	if err != nil || account == nil || !(account.IsOpenAI() || account.IsGeminiOpenAIProtocol() || (account.IsCNProvider() && (account.GetAPIProtocol() == APIProtocolResponses || account.GetAPIProtocol() == APIProtocolChatCompletions))) {
+	if err != nil || account == nil || (!account.IsOpenAI() && !account.IsGeminiOpenAIProtocol() && (!account.IsCNProvider() || (account.GetAPIProtocol() != APIProtocolResponses && account.GetAPIProtocol() != APIProtocolChatCompletions))) {
 		return "unknown", "quality check inconclusive: visual review protocol unsupported"
 	}
 	frames, err := renderScheduledVisualFrames(ctx, document)

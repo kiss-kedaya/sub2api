@@ -10,7 +10,7 @@ describe('upstream balance cell', () => {
   it('renders zero, timestamp, stale and safe error feedback without leaking raw responses', async () => {
     wrapper = mount(CustomUsageCell, { props: { account, state: { result: { enabled: true, configured: true, remaining: 0, unit: 'USD', updated_at: '2026-09-24T00:00:00Z', stale: true, error: 'private-token' } } } })
     expect(wrapper.get('[data-testid="custom-usage-remaining"]').text()).toBe('0 USD')
-    expect(wrapper.text()).toContain('admin.accounts.customUsage.updatedAt')
+    expect(wrapper.find('time').attributes('datetime')).toBe('2026-09-24T00:00:00Z')
     expect(wrapper.text()).toContain('admin.accounts.customUsage.stale')
     expect(wrapper.text()).not.toContain('private-token')
     await wrapper.get('[data-testid="custom-usage-refresh"]').trigger('click')

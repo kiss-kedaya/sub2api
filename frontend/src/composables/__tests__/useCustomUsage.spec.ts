@@ -26,7 +26,7 @@ describe('visible custom usage refresh', () => {
     api.queryUsage.mockResolvedValue({ ...result, remaining: 8 })
   })
   afterEach(() => { wrapper?.unmount(); vi.useRealTimers() })
-  it('does not query hidden rows and interval 0 never triggers automatic network queries', async () => {
+  it('does not query hidden rows and interval 0 never triggers periodic network queries', async () => {
     start(); await visible([1]); await vi.advanceTimersByTimeAsync(30 * 60000)
     expect(api.getCachedUsage).toHaveBeenCalledTimes(1)
     expect(api.getCachedUsage.mock.calls[0][0]).toEqual([1])
@@ -40,7 +40,8 @@ describe('visible custom usage refresh', () => {
     api.getCachedUsage.mockResolvedValue({ items: { 1: { ...result, interval_minutes: 0 } } })
     start(); await visible([1]); await vi.advanceTimersByTimeAsync(600000)
     expect(api.getConfig).not.toHaveBeenCalled()
-    expect(api.queryUsage).not.toHaveBeenCalled()
+    expect(api.queryUsage).toHaveBeenCalledTimes(1)
+    expect(api.queryUsage).toHaveBeenCalledWith(1, { force: false }, expect.any(AbortSignal))
   })
   it('loads cached snapshots in chunks of at most 50', async () => {
     api.getCachedUsage.mockImplementation(async (ids: number[]) => ({ items: Object.fromEntries(ids.map(id => [id, { ...result, enabled: false }])) }))
