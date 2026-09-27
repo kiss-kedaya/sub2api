@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
@@ -55,6 +56,54 @@ var (
 		LiteLLMProvider:         "openai",
 		Mode:                    "chat",
 		SupportsPromptCaching:   true,
+	}
+	// GPT-6 Sol: $2/MTok input, $10/MTok output; priority 2x; long-context threshold 272k.
+	openAIGPT6SolFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   2e-06,
+		InputCostPerTokenPriority:           4e-06,
+		OutputCostPerToken:                  1e-05,
+		OutputCostPerTokenPriority:          2e-05,
+		CacheCreationInputTokenCost:         2.5e-06,
+		CacheCreationInputTokenCostPriority: 5e-06,
+		CacheReadInputTokenCost:             2e-07,
+		CacheReadInputTokenCostPriority:     4e-07,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	// GPT-6 Luna: $0.1/MTok input, $0.5/MTok output; priority 2x.
+	openAIGPT6LunaFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   1e-07,
+		InputCostPerTokenPriority:           2e-07,
+		OutputCostPerToken:                  5e-07,
+		OutputCostPerTokenPriority:          1e-06,
+		CacheCreationInputTokenCost:         1.25e-07,
+		CacheCreationInputTokenCostPriority: 2.5e-07,
+		CacheReadInputTokenCost:             1e-08,
+		CacheReadInputTokenCostPriority:     2e-08,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
+	// Claude Opus 5.5: $4/MTok input, $20/MTok output; 5m cache write $5/MTok, 1h cache write $8/MTok; priority 2x.
+	claudeOpus55FallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                       4e-06,
+		InputCostPerTokenPriority:               8e-06,
+		OutputCostPerToken:                      2e-05,
+		OutputCostPerTokenPriority:              4e-05,
+		CacheCreationInputTokenCost:             5e-06,
+		CacheCreationInputTokenCostPriority:     1e-05,
+		CacheCreationInputTokenCostAbove1hr:     8e-06,
+		CacheReadInputTokenCost:                 4e-07,
+		CacheReadInputTokenCostPriority:         8e-07,
+		LiteLLMProvider:                         "anthropic",
+		Mode:                                    "chat",
+		SupportsPromptCaching:                   true,
 	}
 	openAIGPT6AstraFallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:                   1e-05,
@@ -1330,6 +1379,12 @@ func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 		pricing []string // 用于在定价数据中查找价格的模式（nil 则复用 match；可包含低版本 fallback）
 	}
 
+	// Opus 5.5 精确拦截：claude-opus-5-5 含子串 "claude-opus-5"，
+	// 会被下方 opus-5 系列（$5/$25）误捕。必须在 families 循环前先判。
+	if claude.IsOpus55(model) {
+		return claudeOpus55FallbackPricing
+	}
+
 	// 按特异性降序排列：高版本号在前，避免 "claude-opus-4"（opus-4 系列）
 	// 因子串关系误匹配 "claude-opus-4-7"（opus-4.7 系列）。
 	// 注意：原 map 实现存在 Go map 迭代随机性导致的同类 bug，此处改为有序切片修复。
@@ -1468,6 +1523,18 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 				Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.2-codex"))
 			return pricing
 		}
+	}
+
+	if openai.IsGPT6SolOrLunaModelSpelling(model) {
+		canonical := openai.CanonicalizeOpenAIModelAliasSpelling(model)
+		if strings.HasPrefix(canonical, "gpt-6-sol") {
+			logger.With(zap.String("component", "service.pricing")).
+				Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> gpt-6-sol(static)", model))
+			return openAIGPT6SolFallbackPricing
+		}
+		logger.With(zap.String("component", "service.pricing")).
+			Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> gpt-6-luna(static)", model))
+		return openAIGPT6LunaFallbackPricing
 	}
 
 	if isOpenAIGPT6AstraModel(model) {
