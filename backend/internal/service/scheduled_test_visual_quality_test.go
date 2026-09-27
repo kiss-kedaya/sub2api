@@ -1,7 +1,16 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"image"
+	"image/png"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -70,4 +79,68 @@ func TestScheduledVisualReviewUnavailableIsUnknown(t *testing.T) {
 	require.ErrorContains(t, err, "not configured")
 	status, _ := (&AccountTestService{}).assessScheduledVisualQuality(context.Background(), &ScheduledTestPlan{PromptText: "custom"}, "<html></html>")
 	require.Equal(t, "unknown", status)
+}
+
+func TestRenderScheduledVisualFramesContainerNotConfigured(t *testing.T) {
+	t.Setenv("SUB2API_QUALITY_RENDERER_JS_SCRIPT", "")
+	_, err := renderScheduledVisualFramesContainer(context.Background(), "<html></html>")
+	require.ErrorContains(t, err, "not configured")
+}
+
+// bashRunner 返回可用的 bash：Linux 用 /bin/bash，Windows 用 PATH 里的 Git Bash。
+func bashRunner(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return "/bin/bash"
+	}
+	path, err := exec.LookPath("bash")
+	require.NoError(t, err, "bash required for this test")
+	return path
+}
+
+func TestScheduledVisualFramesFallbackToContainer(t *testing.T) {
+	bash := bashRunner(t)
+	dir := t.TempDir()
+	failScript := filepath.ToSlash(filepath.Join(dir, "fail.sh"))
+	require.NoError(t, os.WriteFile(filepath.FromSlash(failScript), []byte("#!/bin/bash\nexit 1\n"), 0o755))
+
+	framesFile := filepath.ToSlash(filepath.Join(dir, "frames.json"))
+	require.NoError(t, os.WriteFile(filepath.FromSlash(framesFile), validScheduledVisualFramesJSON(t), 0o644))
+	containerScript := filepath.ToSlash(filepath.Join(dir, "container.sh"))
+	require.NoError(t, os.WriteFile(filepath.FromSlash(containerScript), []byte("#!/bin/bash\ncat "+framesFile+"\n"), 0o755))
+
+	t.Setenv("SUB2API_QUALITY_RENDERER_SCRIPT", failScript)
+	t.Setenv("SUB2API_QUALITY_RENDERER_NODE", bash)
+	t.Setenv("SUB2API_QUALITY_RENDERER_JS_SCRIPT", containerScript)
+	t.Setenv("SUB2API_QUALITY_RENDERER_JS_RUNNER", bash)
+
+	frames, err := renderScheduledVisualFramesWithFallback(context.Background(), "<html></html>")
+	require.NoError(t, err)
+	require.Len(t, frames, 4)
+	require.Greater(t, frames[1].Time, frames[0].Time)
+}
+
+func TestScheduledVisualFramesContainerRejectsInvalidFrames(t *testing.T) {
+	bash := bashRunner(t)
+	dir := t.TempDir()
+	badScript := filepath.ToSlash(filepath.Join(dir, "bad.sh"))
+	require.NoError(t, os.WriteFile(filepath.FromSlash(badScript), []byte("#!/bin/bash\necho '[{\"time\":0,\"png\":\"AAAA\"}]'\n"), 0o755))
+	t.Setenv("SUB2API_QUALITY_RENDERER_JS_SCRIPT", badScript)
+	t.Setenv("SUB2API_QUALITY_RENDERER_JS_RUNNER", bash)
+	_, err := renderScheduledVisualFramesContainer(context.Background(), "<html></html>")
+	require.ErrorContains(t, err, "invalid renderer frames")
+}
+
+func validScheduledVisualFramesJSON(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 960, 640))))
+	pngB64 := base64.StdEncoding.EncodeToString(buf.Bytes())
+	frames := make([]scheduledVisualFrame, 0, 4)
+	for _, ts := range []float64{0, 0.23, 0.51, 0.79} {
+		frames = append(frames, scheduledVisualFrame{Time: ts, PNG: pngB64})
+	}
+	data, err := json.Marshal(frames)
+	require.NoError(t, err)
+	return data
 }
