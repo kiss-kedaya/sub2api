@@ -316,12 +316,37 @@ func (s *AccountTestService) assessScheduledVisualQuality(ctx context.Context, p
 	if err != nil {
 		return "unknown", "quality check inconclusive: four-frame rendering unavailable"
 	}
-	ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
+	status, reason := s.runScheduledVisualReview(ctx, account, plan, document, frames)
+	if status != "degraded" {
+		return status, reason
+	}
+	// A single degraded verdict can be a sampling slip of the reviewing model.
+	// Confirm with a second, independent pass before letting it count towards
+	// a pause; a disagreement stays inconclusive and never gates scheduling.
+	confirmStatus, confirmReason := s.runScheduledVisualReview(ctx, account, plan, document, frames)
+	if confirmStatus != "degraded" {
+		logger.LegacyPrintf("service.quality",
+			"visual review degraded verdict not confirmed: account=%d model=%s second=%s",
+			plan.AccountID, plan.ModelID, confirmStatus)
+		return "unknown", "quality check inconclusive: degraded verdict unconfirmed"
+	}
+	logger.LegacyPrintf("service.quality",
+		"visual review degraded confirmed by second pass: account=%d model=%s", plan.AccountID, plan.ModelID)
+	if confirmReason == "" {
+		confirmReason = reason
+	}
+	return "degraded", confirmReason
+}
+
+// runScheduledVisualReview issues one review pass over the captured frames and
+// returns its verdict in the assessScheduledVisualQuality vocabulary.
+func (s *AccountTestService) runScheduledVisualReview(ctx context.Context, account *Account, plan *ScheduledTestPlan, document string, frames []scheduledVisualFrame) (string, string) {
+	reviewCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
-	ctx = context.WithValue(ctx, scheduledVisualReviewKey{}, frames)
+	reviewCtx = context.WithValue(reviewCtx, scheduledVisualReviewKey{}, frames)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = (&http.Request{}).WithContext(ctx)
+	c.Request = (&http.Request{}).WithContext(reviewCtx)
 	if err := s.testOpenAIAccountConnection(c, account, plan.ModelID, scheduledVisualReviewPrompt, AccountTestModeDefault); err != nil {
 		return s.scheduledVisualReviewFailure(plan, document, err.Error())
 	}
