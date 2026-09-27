@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -322,11 +323,48 @@ func (s *AccountTestService) assessScheduledVisualQuality(ctx context.Context, p
 	c, _ := gin.CreateTestContext(w)
 	c.Request = (&http.Request{}).WithContext(ctx)
 	if err := s.testOpenAIAccountConnection(c, account, plan.ModelID, scheduledVisualReviewPrompt, AccountTestModeDefault); err != nil {
-		return "unknown", "quality check inconclusive: visual review upstream failed"
+		return s.scheduledVisualReviewFailure(plan, document, err.Error())
 	}
 	text, upstreamError := parseTestSSEOutput(w.Body.String())
 	if upstreamError != "" {
-		return "unknown", "quality check inconclusive: visual review upstream failed"
+		return s.scheduledVisualReviewFailure(plan, document, upstreamError)
 	}
 	return parseScheduledVisualReview(text)
 }
+
+// scheduledVisualReviewFailure turns a failed review request into a verdict.
+// A 4xx means the request itself cannot succeed on that line/model (image
+// input rejected, payload too large, model missing) so retrying will never
+// heal it: fall back to the local structural evaluator instead of leaving the
+// plan permanently inconclusive. Transport and 5xx/408/429 failures stay
+// inconclusive so a transient upstream outage never gates scheduling.
+func (s *AccountTestService) scheduledVisualReviewFailure(plan *ScheduledTestPlan, document, detail string) (string, string) {
+	logger.LegacyPrintf("service.quality",
+		"visual review upstream failed: account=%d model=%s detail=%s", plan.AccountID, plan.ModelID, detail)
+	if reviewRequestErrorIsCapability(detail) {
+		status, reason := assessScheduledTestQuality(document, plan.PromptText)
+		logger.LegacyPrintf("service.quality",
+			"visual review capability error, fell back to local evaluation: account=%d model=%s status=%s", plan.AccountID, plan.ModelID, status)
+		return status, reason
+	}
+	return "unknown", "quality check inconclusive: visual review upstream failed"
+}
+
+// reviewRequestErrorIsCapability reports whether the review failure is a 4xx
+// other than 408/429, i.e. retrying cannot fix it.
+func reviewRequestErrorIsCapability(message string) bool {
+	match := scheduledVisualUpstreamStatus.FindStringSubmatch(message)
+	if match == nil {
+		return false
+	}
+	status, convErr := strconv.Atoi(match[1])
+	if convErr != nil {
+		return false
+	}
+	if status == http.StatusRequestTimeout || status == http.StatusTooManyRequests {
+		return false
+	}
+	return status >= 400 && status < 500
+}
+
+var scheduledVisualUpstreamStatus = regexp.MustCompile(`API returned (\d{3})`)

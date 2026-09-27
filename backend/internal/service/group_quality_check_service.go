@@ -159,6 +159,27 @@ func (s *GroupQualityCheckService) ListRecentResults(ctx context.Context, groupI
 	return s.repo.ListRecentResults(ctx, groupID, time.Now().Add(-24*time.Hour), limit)
 }
 
+// ListGroupEvents returns one group's verdict-bearing probe history for the
+// user-facing channel page. Only success/degraded runs are exposed; groups
+// without detection enabled report an empty history.
+func (s *GroupQualityCheckService) ListGroupEvents(ctx context.Context, groupID int64, limit int) ([]*GroupQualityEvent, error) {
+	settings, err := s.repo.GetSettings(ctx, groupID)
+	if err != nil || settings == nil || !settings.Enabled {
+		return []*GroupQualityEvent{}, nil
+	}
+	return s.repo.ListGroupEvents(ctx, groupID, limit)
+}
+
+// GetGroupEventArtwork returns one probe's stored artwork, scoped to its group
+// and to verdict-bearing runs only.
+func (s *GroupQualityCheckService) GetGroupEventArtwork(ctx context.Context, groupID, resultID int64) (string, error) {
+	settings, err := s.repo.GetSettings(ctx, groupID)
+	if err != nil || settings == nil || !settings.Enabled {
+		return "", ErrGroupQualityEventNotFound
+	}
+	return s.repo.GetGroupEventArtwork(ctx, groupID, resultID)
+}
+
 // ListGroupStatuses returns statuses for all groups that have a settings row.
 func (s *GroupQualityCheckService) ListGroupStatuses(ctx context.Context) (map[int64]*GroupQualityStatus, error) {
 	settings, err := s.repo.ListAllSettings(ctx)
