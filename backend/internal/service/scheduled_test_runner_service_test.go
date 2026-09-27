@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -158,6 +159,20 @@ type scheduledQualityAccountRepo struct {
 	reads, pauses, recoveries, clears int
 	readErr, pauseErr, recoveryErr    error
 	ids                               []int64
+	pauseReasons                      []string
+}
+
+// MarkScheduledQualityPause mirrors the repository's conditional stamp: an
+// unrelated runtime reason stays untouched.
+func (r *scheduledQualityAccountRepo) MarkScheduledQualityPause(_ context.Context, _ int64, reason string) error {
+	if r.account == nil {
+		return nil
+	}
+	if r.account.TempUnschedulableReason == "" || strings.HasPrefix(r.account.TempUnschedulableReason, scheduledQualityReasonPrefix) {
+		r.account.TempUnschedulableReason = reason
+		r.pauseReasons = append(r.pauseReasons, reason)
+	}
+	return nil
 }
 
 func (r *scheduledQualityAccountRepo) GetByID(context.Context, int64) (*Account, error) {
@@ -357,6 +372,12 @@ func TestScheduledTestRunnerService_ConsecutiveQualityResults(t *testing.T) {
 			require.Equal(t, len(tc.statuses), plans.updateCalls)
 			require.Equal(t, 2, results.keepCount)
 			require.LessOrEqual(t, len(results.results), 2)
+			if tc.wantPauses > 0 {
+				require.NotEmpty(t, repo.pauseReasons, "pause must stamp the quality reason")
+				require.Equal(t, scheduledQualityReasonPrefix+" plan=1", repo.pauseReasons[0])
+			} else {
+				require.Empty(t, repo.pauseReasons)
+			}
 		})
 	}
 }
@@ -490,6 +511,7 @@ func TestScheduledTestRunnerService_PausePreservesUnrelatedState(t *testing.T) {
 	require.Equal(t, "other error", account.ErrorMessage)
 	require.Equal(t, "other pause", account.TempUnschedulableReason)
 	require.Equal(t, &until, account.TempUnschedulableUntil)
+	require.Empty(t, repo.pauseReasons, "an unrelated pause reason must not be overwritten")
 }
 
 func TestScheduledTestRunnerService_RejectsUnpersistedOrForeignResult(t *testing.T) {
