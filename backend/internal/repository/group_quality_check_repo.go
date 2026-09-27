@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 type groupQualityCheckRepository struct {
@@ -117,7 +118,7 @@ func (r *groupQualityCheckRepository) ListGroupBuckets(ctx context.Context, grou
 		WHERE status IN ('success', 'degraded')
 		GROUP BY group_id, bucket_start
 		ORDER BY group_id, bucket_start
-	`, groupIDs, since, bucketSeconds)
+	`, pq.Array(groupIDs), since, bucketSeconds)
 	if err != nil {
 		return nil, err
 	}
