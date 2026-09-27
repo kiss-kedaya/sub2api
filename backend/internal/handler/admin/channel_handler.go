@@ -619,6 +619,10 @@ func (h *ChannelHandler) GetModelDefaultPricing(c *gin.Context) {
 		cacheWrite1hPrice = &pricing.CacheCreation1hPrice
 	}
 
+	var maxEffortMultiplier *float64
+	if v, ok := pricing.ReasoningEffortMultipliers["max"]; ok && v > 0 {
+		maxEffortMultiplier = &v
+	}
 	response.Success(c, gin.H{
 		"found":                           true,
 		"input_price":                     pricing.InputPricePerToken,
@@ -626,7 +630,7 @@ func (h *ChannelHandler) GetModelDefaultPricing(c *gin.Context) {
 		"cache_write_price":               cacheWritePrice,
 		"cache_write_1h_price":            cacheWrite1hPrice,
 		"cache_read_price":                pricing.CacheReadPricePerToken,
-		"max_reasoning_effort_multiplier": pricing.MaxReasoningEffortMultiplier,
+		"max_reasoning_effort_multiplier": maxEffortMultiplier,
 		"image_input_price":               pricing.ImageInputPricePerToken,
 		"image_output_price":              pricing.ImageOutputPricePerToken,
 	})

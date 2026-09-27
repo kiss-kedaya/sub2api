@@ -115,8 +115,8 @@ func tryCustomRules(
 			continue // 规则匹配但模型不在规则定价中，继续下一条
 		}
 		cost := calculateStatsCost(pricing, tokens, requestCount)
-		if cost != nil {
-			*cost *= maxReasoningEffortBillingMultiplier(model, reasoningEffort, nil)
+		if cost != nil && pricing.MaxReasoningEffortMultiplier != nil {
+			*cost *= reasoningEffortBillingMultiplier(reasoningEffort, map[string]float64{"max": *pricing.MaxReasoningEffortMultiplier})
 		}
 		return cost
 	}

@@ -149,6 +149,12 @@
                         </span>
                         <span class="flex-1 text-left">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
                       </button>
+                      <button class="account-tools-menu-item" @click="openBalanceAlert">
+                        <span class="account-tools-menu-icon bg-yellow-50 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-300">
+                          <Icon name="bell" size="sm" />
+                        </span>
+                        <span class="flex-1 text-left">{{ t('admin.accounts.balanceAlert.title') }}</span>
+                      </button>
 
                       <div class="account-menu-divider"></div>
                       <div class="account-menu-heading">
@@ -520,6 +526,14 @@
     </ConfirmDialog>
     <ErrorPassthroughRulesModal :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
     <TLSFingerprintProfilesModal :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
+    <BalanceAlertConfigModal
+      :show="showBalanceAlert"
+      :enabled="balanceAlertSettings.enabled"
+      :threshold="balanceAlertSettings.threshold"
+      :recharge-url="balanceAlertSettings.rechargeUrl"
+      @close="showBalanceAlert = false"
+      @saved="loadBalanceAlertSettings"
+    />
     <TotpStepUpDialog :controller="accountExportStepUp" />
   </AppLayout>
 </template>
@@ -568,6 +582,7 @@ import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
+import BalanceAlertConfigModal from '@/components/account/BalanceAlertConfigModal.vue'
 import { fetchAllAccountIds } from '@/utils/accountSelection'
 import { resolveBatchTestAccounts } from '@/utils/accountModelTest'
 import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
@@ -649,6 +664,8 @@ const showBatchTest = ref(false)
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
+const showBalanceAlert = ref(false)
+const balanceAlertSettings = ref({ enabled: false, threshold: 5, rechargeUrl: '' })
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
@@ -1430,7 +1447,8 @@ const isAnyModalOpen = computed(() => {
     showStats.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
-    showTLSFingerprintProfiles.value
+    showTLSFingerprintProfiles.value ||
+    showBalanceAlert.value
   )
 })
 
@@ -1599,6 +1617,25 @@ const openErrorPassthrough = () => {
 const openTLSFingerprintProfiles = () => {
   closeAccountToolsDropdown()
   showTLSFingerprintProfiles.value = true
+}
+
+const loadBalanceAlertSettings = async () => {
+  try {
+    const s = await adminAPI.settings.getSettings()
+    balanceAlertSettings.value = {
+      enabled: s.balance_low_notify_enabled ?? false,
+      threshold: s.balance_low_notify_threshold ?? 5,
+      rechargeUrl: s.balance_low_notify_recharge_url ?? '',
+    }
+  } catch (e) {
+    console.error('Failed to load balance alert settings:', e)
+  }
+}
+
+const openBalanceAlert = async () => {
+  closeAccountToolsDropdown()
+  await loadBalanceAlertSettings()
+  showBalanceAlert.value = true
 }
 
 const syncPendingListChanges = async () => {

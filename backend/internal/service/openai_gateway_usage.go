@@ -764,7 +764,7 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageTokenCost(
 		longContextBillingGate == nil || *longContextBillingGate,
 	)
 	if err == nil {
-		applyCostBreakdownMultiplier(breakdown, maxReasoningEffortBillingMultiplier(billingModel, reasoningEffort, nil))
+		applyCostBreakdownMultiplier(breakdown, reasoningEffortBillingMultiplier(reasoningEffort, nil))
 	}
 	return breakdown, err
 }

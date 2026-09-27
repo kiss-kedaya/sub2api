@@ -57,13 +57,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { CNProviderBalanceEntry, CNProviderBalanceResult } from '@/api/admin/cnProviders'
 import type { Account } from '@/types'
 import { platformTextClass } from '@/utils/platformColors'
 import { cnBalanceCellVisible } from './credentialsBuilder'
+
+// 后台轮询间隔 5 分钟，首次探测在挂载后随机延迟 0-60s 错开雪崩。
+const BALANCE_POLL_INTERVAL_MS = 5 * 60 * 1000
+const BALANCE_POLL_JITTER_MS = 60 * 1000
 
 const props = defineProps<{
   account: Account
@@ -179,6 +183,54 @@ watch(
     data.value = null
     error.value = null
     loading.value = false
+    restartPollTimer()
   }
 )
+
+// 后台静默刷新：不覆盖 loading 状态，不触发 error 展示，仅在成功时更新 data。
+const pollTimer = ref<ReturnType<typeof setTimeout> | null>(null)
+
+const schedulePoll = (delayMs: number) => {
+  if (pollTimer.value !== null) clearTimeout(pollTimer.value)
+  pollTimer.value = setTimeout(async () => {
+    pollTimer.value = null
+    if (!visible.value || document.hidden) {
+      // 页面不可见时跳过本次，延后再试
+      schedulePoll(BALANCE_POLL_INTERVAL_MS)
+      return
+    }
+    if (loading.value) {
+      // 用户正在手动探测，等下一轮
+      schedulePoll(BALANCE_POLL_INTERVAL_MS)
+      return
+    }
+    try {
+      const result = await adminAPI.cnProviders.queryBalance(props.account.id)
+      if (result.success) data.value = result
+    } catch {
+      // 静默失败，不影响已展示的快照
+    }
+    schedulePoll(BALANCE_POLL_INTERVAL_MS)
+  }, delayMs)
+}
+
+const restartPollTimer = () => {
+  if (pollTimer.value !== null) clearTimeout(pollTimer.value)
+  pollTimer.value = null
+  if (!visible.value) return
+  // 错峰：首次随机 0-60s 延迟，避免多账号同时触发请求雪崩
+  const jitter = Math.random() * BALANCE_POLL_JITTER_MS
+  schedulePoll(BALANCE_POLL_INTERVAL_MS + jitter)
+}
+
+onMounted(() => {
+  restartPollTimer()
+})
+
+onUnmounted(() => {
+  if (pollTimer.value !== null) {
+    clearTimeout(pollTimer.value)
+    pollTimer.value = null
+  }
+})
 </script>
