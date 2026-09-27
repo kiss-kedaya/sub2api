@@ -1217,3 +1217,21 @@ func healthBand(value, warning, critical float64) string {
 	}
 	return "healthy"
 }
+
+// QualityEvents returns one group's verdict-bearing degradation history for
+// the user-facing channel page. The caller has already restricted the group to
+// what the viewer may see; only success/degraded runs are ever exposed.
+func (s *ChannelMonitorV2Service) QualityEvents(ctx context.Context, groupID int64, limit int) ([]*GroupQualityEvent, error) {
+	if s == nil || s.quality == nil {
+		return nil, errors.New("quality check service unavailable")
+	}
+	return s.quality.ListGroupEvents(ctx, groupID, limit)
+}
+
+// QualityArtwork returns one probe's stored artwork, scoped to its group.
+func (s *ChannelMonitorV2Service) QualityArtwork(ctx context.Context, groupID, resultID int64) (string, error) {
+	if s == nil || s.quality == nil {
+		return "", errors.New("quality check service unavailable")
+	}
+	return s.quality.GetGroupEventArtwork(ctx, groupID, resultID)
+}

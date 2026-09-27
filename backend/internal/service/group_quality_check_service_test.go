@@ -5,12 +5,16 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 type stubGroupQualityCheckRepo struct {
 	settings map[int64]*GroupQualityCheckSettings
 	results  map[int64][]*GroupQualityCheckResult
 	buckets  map[int64][]GroupQualityBucketRow
+	events   map[int64][]*GroupQualityEvent
+	artworks map[int64]string
 }
 
 func newStubGroupQualityCheckRepo() *stubGroupQualityCheckRepo {
@@ -18,6 +22,8 @@ func newStubGroupQualityCheckRepo() *stubGroupQualityCheckRepo {
 		settings: make(map[int64]*GroupQualityCheckSettings),
 		results:  make(map[int64][]*GroupQualityCheckResult),
 		buckets:  make(map[int64][]GroupQualityBucketRow),
+		events:   make(map[int64][]*GroupQualityEvent),
+		artworks: make(map[int64]string),
 	}
 }
 
@@ -70,6 +76,22 @@ func (r *stubGroupQualityCheckRepo) ListGroupBuckets(ctx context.Context, groupI
 		out = append(out, r.buckets[id]...)
 	}
 	return out, nil
+}
+
+func (r *stubGroupQualityCheckRepo) ListGroupEvents(ctx context.Context, groupID int64, limit int) ([]*GroupQualityEvent, error) {
+	events := r.events[groupID]
+	if limit > 0 && len(events) > limit {
+		events = events[:limit]
+	}
+	return events, nil
+}
+
+func (r *stubGroupQualityCheckRepo) GetGroupEventArtwork(ctx context.Context, groupID, resultID int64) (string, error) {
+	text, ok := r.artworks[resultID]
+	if !ok {
+		return "", ErrGroupQualityEventNotFound
+	}
+	return text, nil
 }
 
 func (r *stubGroupQualityCheckRepo) addResult(groupID, accountID int64, status string, at time.Time) {
@@ -244,4 +266,41 @@ func TestGroupQualityCheckService_ListGroupSeries_NoEnabledGroups(t *testing.T) 
 	if len(series) != 0 {
 		t.Fatalf("expected empty series, got %+v", series)
 	}
+}
+
+func TestListGroupEventsOnlyWhenEnabled(t *testing.T) {
+	repo := newStubGroupQualityCheckRepo()
+	svc := NewGroupQualityCheckService(repo, nil)
+	repo.events[7] = []*GroupQualityEvent{{ID: 1, GroupID: 7, Status: "success"}}
+
+	events, err := svc.ListGroupEvents(context.Background(), 7, 30)
+	require.NoError(t, err)
+	require.Empty(t, events, "no settings row means detection never enabled")
+
+	repo.settings[7] = &GroupQualityCheckSettings{GroupID: 7, Enabled: true}
+	events, err = svc.ListGroupEvents(context.Background(), 7, 30)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+
+	repo.settings[7].Enabled = false
+	events, err = svc.ListGroupEvents(context.Background(), 7, 30)
+	require.NoError(t, err)
+	require.Empty(t, events)
+}
+
+func TestGetGroupEventArtworkRequiresEnabledGroup(t *testing.T) {
+	repo := newStubGroupQualityCheckRepo()
+	svc := NewGroupQualityCheckService(repo, nil)
+	repo.artworks[11] = "<html></html>"
+
+	_, err := svc.GetGroupEventArtwork(context.Background(), 7, 11)
+	require.ErrorIs(t, err, ErrGroupQualityEventNotFound)
+
+	repo.settings[7] = &GroupQualityCheckSettings{GroupID: 7, Enabled: true}
+	text, err := svc.GetGroupEventArtwork(context.Background(), 7, 11)
+	require.NoError(t, err)
+	require.Equal(t, "<html></html>", text)
+
+	_, err = svc.GetGroupEventArtwork(context.Background(), 7, 999)
+	require.ErrorIs(t, err, ErrGroupQualityEventNotFound)
 }
