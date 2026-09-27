@@ -10,7 +10,7 @@ import (
 // Transport success and quality approval are separate outcomes. An arbitrary
 // custom prompt has no local quality rubric and must not change account state.
 func assessScheduledTestQuality(response, prompt string) (string, string) {
-	if strings.TrimSpace(prompt) != "" && strings.TrimSpace(prompt) != DefaultScheduledTestPrompt {
+	if !isDefaultScheduledTestPrompt(prompt) {
 		return "unknown", "quality check inconclusive: custom prompt has no quality evaluator"
 	}
 	if len(response) > 1024*1024 {
