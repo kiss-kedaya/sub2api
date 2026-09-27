@@ -66,8 +66,18 @@ bash run.sh < artwork.html > frames.json
 
 `advance` 里回调走**微任务队列**而不是真实帧，所以跑 3 秒动画只要微秒级，不需要等 3 秒墙钟。步进结束后先清 `pumpQueue` 再关 playback，否则收尾动作本身会重新武装作品的回调（这个顺序踩过坑）。
 
+## 接入状态（2026-09-28）
+
+- **已接入 runner**：`assessScheduledVisualQuality` → `renderScheduledVisualFramesWithFallback`：
+  先跑内进程渲染器（拒脚本），失败后改走本容器路径。两条都失败仍是
+  `unknown`（"four-frame rendering unavailable"），绝不当 degraded。
+- Go 调用配置：
+  - `SUB2API_QUALITY_RENDERER_JS_SCRIPT`：`run.sh` 的绝对路径（设置了才启用容器路径）
+  - `SUB2API_QUALITY_RENDERER_JS_RUNNER`：启动器，默认 `/bin/bash`；服务用户没有 docker 权限时
+    设为 `/usr/bin/sudo`，并在 sudoers 里只放行这一个脚本（NOPASSWD，最小授权）
+- 并发：容器路径串行（同时最多 1 个容器）；Go 侧超时 260s > run.sh 内部默认 240s，
+  让 run.sh 先自行收尾，避免留下孤儿容器。
+
 ## 待完成
 
-- 接入 runner：`assessScheduledVisualQuality` 目前只调内进程渲染器；JS 作品需要先落到这条容器路径再走视觉审核。
 - 用真实的历史 unknown 样本回归（那 6 条 JS 驱动的作品）。
-- 决定容器路径的失败语义（容器起不来 → `unknown`，不能当 degraded）。

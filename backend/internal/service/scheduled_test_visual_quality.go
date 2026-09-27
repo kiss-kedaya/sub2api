@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
 )
 
@@ -41,6 +42,7 @@ type scheduledVisualFrame struct {
 type scheduledVisualReviewKey struct{}
 
 var scheduledVisualRenderSlot = make(chan struct{}, 1)
+var scheduledVisualContainerSlot = make(chan struct{}, 1)
 var scheduledVisualReviewFence = regexp.MustCompile("(?s)^```(?:json)?\\s*(.*?)\\s*```$")
 
 func isScheduledVisualReview(ctx context.Context) bool {
@@ -181,39 +183,15 @@ func (b *scheduledVisualLimitedBuffer) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-func renderScheduledVisualFrames(ctx context.Context, document string) ([]scheduledVisualFrame, error) {
-	if len(document) > 1024*1024 {
-		return nil, errors.New("document too large")
-	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	select {
-	case scheduledVisualRenderSlot <- struct{}{}:
-		defer func() { <-scheduledVisualRenderSlot }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	script := strings.TrimSpace(os.Getenv("SUB2API_QUALITY_RENDERER_SCRIPT"))
-	if script == "" || !filepath.IsAbs(script) {
-		return nil, errors.New("renderer not configured")
-	}
-	node := strings.TrimSpace(os.Getenv("SUB2API_QUALITY_RENDERER_NODE"))
-	if node == "" {
-		node = "node"
-	}
-	// #nosec G702 -- node and script are operator-controlled process environment, never request fields.
-	cmd := exec.CommandContext(ctx, node, script)
-	cmd.Stdin = strings.NewReader(document)
-	var output scheduledVisualLimitedBuffer
-	output.limit = 8 * 1024 * 1024
-	cmd.Stdout = &output
-	cmd.Stderr = io.Discard
-	cmd.WaitDelay = 2 * time.Second
-	if err := cmd.Run(); err != nil {
-		return nil, errors.New("visual renderer failed")
-	}
+const (
+	scheduledVisualFrameLimit    = 8 * 1024 * 1024
+	scheduledVisualDocumentLimit = 1024 * 1024
+)
+
+// parseScheduledVisualFrames 校验并解析渲染器输出（内进程与容器两条路径共用）。
+func parseScheduledVisualFrames(output []byte) ([]scheduledVisualFrame, error) {
 	var frames []scheduledVisualFrame
-	if err := json.Unmarshal(output.Bytes(), &frames); err != nil || len(frames) != 4 {
+	if err := json.Unmarshal(output, &frames); err != nil || len(frames) != 4 {
 		return nil, errors.New("invalid renderer frames")
 	}
 	previous := -1.0
@@ -234,6 +212,88 @@ func renderScheduledVisualFrames(ctx context.Context, document string) ([]schedu
 	return frames, nil
 }
 
+// runScheduledRenderer 把作品交给一个操作员配置的外部渲染命令：stdin 输入文档，stdout 取四帧 JSON。
+func runScheduledRenderer(ctx context.Context, runner, script, document string) ([]scheduledVisualFrame, error) {
+	// #nosec G702 -- runner and script are operator-controlled process environment, never request fields.
+	cmd := exec.CommandContext(ctx, runner, script)
+	cmd.Stdin = strings.NewReader(document)
+	var output scheduledVisualLimitedBuffer
+	output.limit = scheduledVisualFrameLimit
+	cmd.Stdout = &output
+	cmd.Stderr = io.Discard
+	cmd.WaitDelay = 2 * time.Second
+	if err := cmd.Run(); err != nil {
+		return nil, errors.New("visual renderer failed")
+	}
+	return parseScheduledVisualFrames(output.Bytes())
+}
+
+// renderScheduledVisualFrames 内进程渲染器（拒绝作品自带脚本）。
+func renderScheduledVisualFrames(ctx context.Context, document string) ([]scheduledVisualFrame, error) {
+	if len(document) > scheduledVisualDocumentLimit {
+		return nil, errors.New("document too large")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	select {
+	case scheduledVisualRenderSlot <- struct{}{}:
+		defer func() { <-scheduledVisualRenderSlot }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	script := strings.TrimSpace(os.Getenv("SUB2API_QUALITY_RENDERER_SCRIPT"))
+	if script == "" || !filepath.IsAbs(script) {
+		return nil, errors.New("renderer not configured")
+	}
+	runner := strings.TrimSpace(os.Getenv("SUB2API_QUALITY_RENDERER_NODE"))
+	if runner == "" {
+		runner = "node"
+	}
+	return runScheduledRenderer(ctx, runner, script, document)
+}
+
+// renderScheduledVisualFramesContainer 容器渲染器（qr-js/run.sh）：允许作品内联 JS，
+// 在隔离容器里执行并用虚拟时钟截四帧。未配置时返回错误，由调用方维持原 unknown 语义。
+func renderScheduledVisualFramesContainer(ctx context.Context, document string) ([]scheduledVisualFrame, error) {
+	if len(document) > scheduledVisualDocumentLimit {
+		return nil, errors.New("document too large")
+	}
+	script := strings.TrimSpace(os.Getenv("SUB2API_QUALITY_RENDERER_JS_SCRIPT"))
+	if script == "" || !filepath.IsAbs(script) {
+		return nil, errors.New("container renderer not configured")
+	}
+	runner := strings.TrimSpace(os.Getenv("SUB2API_QUALITY_RENDERER_JS_RUNNER"))
+	if runner == "" {
+		runner = "/bin/bash"
+	}
+	// run.sh 自带内部超时（默认 240s）；这里留出余量让它先自行收尾，避免留下孤儿容器。
+	ctx, cancel := context.WithTimeout(ctx, 260*time.Second)
+	defer cancel()
+	select {
+	case scheduledVisualContainerSlot <- struct{}{}:
+		defer func() { <-scheduledVisualContainerSlot }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return runScheduledRenderer(ctx, runner, script, document)
+}
+
+// renderScheduledVisualFramesWithFallback 先内进程渲染器；失败后（若已配置）改走容器渲染器。
+// 两条都失败仍返回错误——调用方按 inconclusive 处理，绝不当 degraded。
+func renderScheduledVisualFramesWithFallback(ctx context.Context, document string) ([]scheduledVisualFrame, error) {
+	frames, inProcessErr := renderScheduledVisualFrames(ctx, document)
+	if inProcessErr == nil {
+		return frames, nil
+	}
+	frames, containerErr := renderScheduledVisualFramesContainer(ctx, document)
+	if containerErr == nil {
+		logger.LegacyPrintf("service.quality", "visual review: in-process renderer failed (%v), container renderer succeeded", inProcessErr)
+		return frames, nil
+	}
+	logger.LegacyPrintf("service.quality", "visual review: both renderers failed: in-process=%v; container=%v", inProcessErr, containerErr)
+	return nil, containerErr
+}
+
 func (s *AccountTestService) assessScheduledVisualQuality(ctx context.Context, plan *ScheduledTestPlan, document string) (string, string) {
 	if strings.TrimSpace(plan.PromptText) != "" && strings.TrimSpace(plan.PromptText) != DefaultScheduledTestPrompt {
 		return "unknown", "quality check inconclusive: custom prompt has no quality evaluator"
@@ -251,7 +311,7 @@ func (s *AccountTestService) assessScheduledVisualQuality(ctx context.Context, p
 	if err != nil || account == nil || (!account.IsOpenAI() && !account.IsGeminiOpenAIProtocol() && (!account.IsCNProvider() || (account.GetAPIProtocol() != APIProtocolResponses && account.GetAPIProtocol() != APIProtocolChatCompletions))) {
 		return "unknown", "quality check inconclusive: visual review protocol unsupported"
 	}
-	frames, err := renderScheduledVisualFrames(ctx, document)
+	frames, err := renderScheduledVisualFramesWithFallback(ctx, document)
 	if err != nil {
 		return "unknown", "quality check inconclusive: four-frame rendering unavailable"
 	}
