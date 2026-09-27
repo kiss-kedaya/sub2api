@@ -155,6 +155,8 @@ func RegisterUserRoutes(
 			monitorV2.GET("/matrix", h.ChannelMonitorV2.Matrix)
 			monitorV2.GET("/errors", h.ChannelMonitorV2.Errors)
 			monitorV2.GET("/users", h.ChannelMonitorV2.Users)
+			monitorV2.GET("/quality-events", h.ChannelMonitorV2.QualityEvents)
+			monitorV2.GET("/quality-events/:id/artwork", h.ChannelMonitorV2.QualityArtwork)
 		}
 	}
 }

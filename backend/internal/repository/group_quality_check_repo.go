@@ -137,6 +137,67 @@ func (r *groupQualityCheckRepository) ListGroupBuckets(ctx context.Context, grou
 	return out, nil
 }
 
+// ListGroupEvents returns the group's most recent probes that produced a
+// verdict (success / degraded). Failed and inconclusive runs never surface to
+// end users, so the filter lives in SQL rather than the caller.
+func (r *groupQualityCheckRepository) ListGroupEvents(ctx context.Context, groupID int64, limit int) ([]*service.GroupQualityEvent, error) {
+	if limit <= 0 {
+		limit = 30
+	} else if limit > 100 {
+		limit = 100
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT r.id, ag.group_id, p.account_id, COALESCE(p.model_id, ''),
+		       r.status, COALESCE(r.error_message, ''), r.created_at
+		FROM scheduled_test_results r
+		JOIN scheduled_test_plans p ON p.id = r.plan_id
+		JOIN account_groups ag ON ag.account_id = p.account_id AND ag.group_id = $1
+		WHERE r.status IN ('success', 'degraded')
+		ORDER BY r.created_at DESC, r.id DESC
+		LIMIT $2
+	`, groupID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*service.GroupQualityEvent, 0, limit)
+	for rows.Next() {
+		event := &service.GroupQualityEvent{}
+		if err := rows.Scan(
+			&event.ID, &event.GroupID, &event.AccountID, &event.ModelID,
+			&event.Status, &event.ErrorMessage, &event.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetGroupEventArtwork returns one verdict-bearing probe's stored artwork,
+// scoped to the group so a viewer cannot read arbitrary results by id.
+func (r *groupQualityCheckRepository) GetGroupEventArtwork(ctx context.Context, groupID, resultID int64) (string, error) {
+	var text sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+		SELECT r.response_text
+		FROM scheduled_test_results r
+		JOIN scheduled_test_plans p ON p.id = r.plan_id
+		JOIN account_groups ag ON ag.account_id = p.account_id AND ag.group_id = $1
+		WHERE r.id = $2 AND r.status IN ('success', 'degraded')
+	`, groupID, resultID).Scan(&text)
+	if err == sql.ErrNoRows {
+		return "", service.ErrGroupQualityEventNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return text.String, nil
+}
+
 func scanGroupQualityCheckSettings(row *sql.Row) (*service.GroupQualityCheckSettings, error) {
 	out := &service.GroupQualityCheckSettings{}
 	if err := row.Scan(

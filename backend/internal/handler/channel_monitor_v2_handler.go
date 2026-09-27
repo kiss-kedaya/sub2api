@@ -169,6 +169,87 @@ func (h *ChannelMonitorV2Handler) Errors(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// QualityEvents GET /channel-monitor-v2/quality-events?group_id=&limit=
+// Surfaces the group's historical degradation probes that produced a verdict
+// (success / degraded). Failed or inconclusive runs stay internal to the admin.
+func (h *ChannelMonitorV2Handler) QualityEvents(c *gin.Context) {
+	groupID, ok := h.authorizedQualityGroup(c)
+	if !ok {
+		return
+	}
+	limit := 30
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+	events, err := h.service.QualityEvents(c.Request.Context(), groupID, limit)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"group_id": groupID, "events": events})
+}
+
+// QualityArtwork GET /channel-monitor-v2/quality-events/:id/artwork?group_id=
+// Returns the stored artwork of one verdict-bearing probe for hover preview.
+func (h *ChannelMonitorV2Handler) QualityArtwork(c *gin.Context) {
+	groupID, ok := h.authorizedQualityGroup(c)
+	if !ok {
+		return
+	}
+	resultID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || resultID <= 0 {
+		response.BadRequest(c, "invalid result id")
+		return
+	}
+	text, err := h.service.QualityArtwork(c.Request.Context(), groupID, resultID)
+	if err != nil {
+		if errors.Is(err, service.ErrGroupQualityEventNotFound) {
+			response.Error(c, http.StatusNotFound, err.Error())
+			return
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": resultID, "group_id": groupID, "response_text": text})
+}
+
+// authorizedQualityGroup resolves the requested group_id and verifies the
+// viewer may see it: administrators pass, ordinary viewers fail closed unless
+// the group is inside their available-group scope.
+func (h *ChannelMonitorV2Handler) authorizedQualityGroup(c *gin.Context) (int64, bool) {
+	groupID, err := strconv.ParseInt(strings.TrimSpace(c.Query("group_id")), 10, 64)
+	if err != nil || groupID <= 0 {
+		response.BadRequest(c, "invalid group_id")
+		return 0, false
+	}
+	if channelMonitorV2IsAdmin(c) {
+		return groupID, true
+	}
+	if h.apiKeyService == nil {
+		response.Error(c, http.StatusInternalServerError, "channel monitor group authorization unavailable")
+		return 0, false
+	}
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		response.Unauthorized(c, "user not found in context")
+		return 0, false
+	}
+	groups, err := h.apiKeyService.GetAvailableGroups(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return 0, false
+	}
+	for i := range groups {
+		if groups[i].ID == groupID {
+			return groupID, true
+		}
+	}
+	response.Error(c, http.StatusForbidden, "group not available")
+	return 0, false
+}
+
 func (h *ChannelMonitorV2Handler) users(c *gin.Context, admin bool) {
 	filter, ok := h.parseFilter(c)
 	if !ok {

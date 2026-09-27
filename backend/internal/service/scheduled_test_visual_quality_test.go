@@ -144,3 +144,36 @@ func validScheduledVisualFramesJSON(t *testing.T) []byte {
 	require.NoError(t, err)
 	return data
 }
+
+func TestReviewRequestErrorIsCapability(t *testing.T) {
+	for _, tc := range []struct {
+		message string
+		want    bool
+	}{
+		{`API returned 404: {"error":{"message":"Model not found"}}`, true},
+		{"API returned 400: image input not supported", true},
+		{"API returned 413: payload too large", true},
+		{"API returned 429: rate limited", false},
+		{"API returned 408: timeout", false},
+		{"API returned 502: error code: 502", false},
+		{"API returned 503: service unavailable", false},
+		{`Request failed: Post "http://x": dial tcp: connection refused`, false},
+		{"", false},
+	} {
+		require.Equal(t, tc.want, reviewRequestErrorIsCapability(tc.message), tc.message)
+	}
+}
+
+func TestScheduledVisualReviewFailureFallsBackToLocalEvaluation(t *testing.T) {
+	svc := &AccountTestService{}
+	doc := `<html><svg width="10" height="10" xmlns="http://www.w3.org/2000/svg"><circle r="4"><animate attributeName="r" to="5" dur="1s" repeatCount="indefinite"/></circle></svg></html>`
+	plan := &ScheduledTestPlan{AccountID: 1, ModelID: "gpt-6-astra", PromptText: DefaultScheduledTestPrompt}
+
+	status, reason := svc.scheduledVisualReviewFailure(plan, doc, "API returned 404: Model not found")
+	require.NotContains(t, reason, "visual review upstream failed")
+	require.NotEqual(t, "", status)
+
+	status2, reason2 := svc.scheduledVisualReviewFailure(plan, doc, "API returned 502: error code: 502")
+	require.Equal(t, "unknown", status2)
+	require.Contains(t, reason2, "visual review upstream failed")
+}
