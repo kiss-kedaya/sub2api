@@ -295,7 +295,7 @@ func renderScheduledVisualFramesWithFallback(ctx context.Context, document strin
 }
 
 func (s *AccountTestService) assessScheduledVisualQuality(ctx context.Context, plan *ScheduledTestPlan, document string) (string, string) {
-	if strings.TrimSpace(plan.PromptText) != "" && strings.TrimSpace(plan.PromptText) != DefaultScheduledTestPrompt {
+	if !isDefaultScheduledTestPrompt(plan.PromptText) {
 		return "unknown", "quality check inconclusive: custom prompt has no quality evaluator"
 	}
 	if len(document) > 1024*1024 {
