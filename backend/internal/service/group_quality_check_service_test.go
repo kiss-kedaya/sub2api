@@ -304,3 +304,42 @@ func TestGetGroupEventArtworkRequiresEnabledGroup(t *testing.T) {
 	_, err = svc.GetGroupEventArtwork(context.Background(), 7, 999)
 	require.ErrorIs(t, err, ErrGroupQualityEventNotFound)
 }
+
+type groupQualityAccountRepoStub struct {
+	AccountRepository
+	accounts []Account
+	cleared  []int64
+	enabled  []int64
+}
+
+func (s *groupQualityAccountRepoStub) ListByGroup(context.Context, int64) ([]Account, error) {
+	return s.accounts, nil
+}
+
+func (s *groupQualityAccountRepoStub) ClearTempUnschedulable(_ context.Context, id int64) error {
+	s.cleared = append(s.cleared, id)
+	return nil
+}
+
+func (s *groupQualityAccountRepoStub) SetSchedulable(_ context.Context, id int64, schedulable bool) error {
+	if schedulable {
+		s.enabled = append(s.enabled, id)
+	}
+	return nil
+}
+
+func TestGroupQualityCheckService_DisableClearsPausesAndReenables(t *testing.T) {
+	repo := newStubGroupQualityCheckRepo()
+	repo.settings[77] = &GroupQualityCheckSettings{GroupID: 77, Enabled: true}
+	accountRepo := &groupQualityAccountRepoStub{accounts: []Account{
+		{ID: 1, Schedulable: false, TempUnschedulableReason: scheduledQualityReasonPrefix + " plan=9"},
+		{ID: 2, Schedulable: true, TempUnschedulableReason: scheduledQualityReasonPrefix + " plan=9"},
+		{ID: 3, Schedulable: false, TempUnschedulableReason: "other reason"},
+	}}
+	svc := NewGroupQualityCheckService(repo, accountRepo)
+
+	_, err := svc.SetGroupEnabled(context.Background(), 77, false)
+	require.NoError(t, err)
+	require.Equal(t, []int64{1, 2}, accountRepo.cleared, "only quality-paused accounts are cleared")
+	require.Equal(t, []int64{1}, accountRepo.enabled, "a paused quality account is handed back to the scheduler")
+}

@@ -2876,6 +2876,25 @@ func (r *accountRepository) SetSchedulable(ctx context.Context, id int64, schedu
 	return nil
 }
 
+// MarkScheduledQualityPause stamps the scheduled-quality pause reason onto an
+// account paused by the degradation checker. It only writes when the current
+// reason is empty or already ours, so an unrelated runtime ban on the same
+// account is preserved, and it never touches temp_unschedulable_until: the
+// pause is cleared by a passing check, not by expiry.
+func (r *accountRepository) MarkScheduledQualityPause(ctx context.Context, id int64, reason string) error {
+	_, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts
+		SET temp_unschedulable_reason = $1,
+			updated_at = NOW()
+		WHERE id = $2
+			AND deleted_at IS NULL
+			AND (temp_unschedulable_reason IS NULL
+				OR temp_unschedulable_reason = ''
+				OR temp_unschedulable_reason LIKE 'scheduled_quality_check:%')
+	`, reason, id)
+	return err
+}
+
 func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now time.Time) (int64, error) {
 	rows, err := r.sql.QueryContext(ctx, `
 		UPDATE accounts
