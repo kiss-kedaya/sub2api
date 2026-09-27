@@ -8,6 +8,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,5 +68,23 @@ func TestGroupQualityRepository_GetGroupEventArtworkScoped(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"response_text"}))
 	_, err = repo.GetGroupEventArtwork(context.Background(), 43, 999)
 	require.ErrorIs(t, err, service.ErrGroupQualityEventNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGroupQualityRepository_ListGroupBucketsUsesPQArray(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := repository.NewGroupQualityCheckRepository(db)
+	now := time.Now().UTC()
+	mock.ExpectQuery("WITH latest AS").
+		WithArgs(pq.Array([]int64{43, 44}), sqlmock.AnyArg(), int64(300)).
+		WillReturnRows(sqlmock.NewRows([]string{"group_id", "bucket_start", "checked", "degraded"}).
+			AddRow(43, now, 2, 1))
+
+	rows, err := repo.ListGroupBuckets(context.Background(), []int64{43, 44}, now, 300)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, int64(43), rows[0].GroupID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
