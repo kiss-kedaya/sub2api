@@ -78,8 +78,16 @@ try {
   await page.waitForTimeout(120);
 
   const cycle = await page.evaluate(() => {
-    const svg = document.querySelector('svg');
-    if (!svg || document.querySelectorAll('svg').length !== 1) throw new Error('Invalid SVG artwork');
+    const svgs = [...document.querySelectorAll('svg')];
+    if (!svgs.length) throw new Error('Invalid SVG artwork');
+    // 取面积最大的 SVG 作为主作品，其余（内联图标、装饰、defs sprite）隐藏。
+    // 之前要求"全文档只能有一个 SVG"，会把带图标的正常作品整个误拒。
+    const area = (s) => { const r = s.getBoundingClientRect(); return r.width * r.height; };
+    const svg = svgs.reduce((a, b) => (area(b) > area(a) ? b : a));
+    svg.setAttribute('data-qr-main', '1');
+    for (const other of svgs) {
+      if (other !== svg) other.style.setProperty('display', 'none', 'important');
+    }
     for (const el of document.body.querySelectorAll('*')) {
       if (el !== svg && !svg.contains(el) && !el.contains(svg)) {
         el.style.setProperty('display', 'none', 'important');
@@ -110,7 +118,7 @@ try {
   });
 
   const bounded = cycle >= CYCLE_MIN && cycle <= CYCLE_MAX ? cycle : CYCLE_FALLBACK;
-  const artwork = page.locator('svg');
+  const artwork = page.locator('svg[data-qr-main]');
   const frames = [];
   for (const fraction of FRACTIONS) {
     const ms = bounded * fraction * 1000;
@@ -130,7 +138,9 @@ try {
 
   process.stdout.write(JSON.stringify(frames) + '\n');
 } catch (error) {
-  const known = /^(?:Invalid SVG|clock missing)/.test(error?.message || '');
+  // Playwright 会把 evaluate 内抛出的错误前缀成 "page.evaluate: Error: ..."，
+  // 不能锚定行首，否则已知错误全部落进"未知异常"分类。
+  const known = /Invalid SVG artwork|clock missing/.test(error?.message || '');
   const detail = process.env.QR_DEBUG === '1' ? '\n' + String(error?.stack || error) : '';
   process.stderr.write((known ? error.message : 'JS renderer failed (see container isolation)') + '\n' + detail);
   process.exitCode = 1;
