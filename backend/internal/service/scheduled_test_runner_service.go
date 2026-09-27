@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -267,6 +268,10 @@ func (s *ScheduledTestRunnerService) updateScheduledQualityState(ctx context.Con
 			}
 			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d paused after consecutive degraded results", plan.ID, plan.AccountID)
 		}
+		// Stamp the pause reason so the group-disable cleanup and the recovery
+		// path can recognise this account as paused by the quality checker.
+		// Best effort: an unstamped pause still recovers via a passing check.
+		s.markScheduledQualityPause(ctx, plan, scheduledQualityReasonPrefix+fmt.Sprintf(" plan=%d", plan.ID))
 		return
 	}
 
@@ -324,5 +329,19 @@ func (s *ScheduledTestRunnerService) tryRecoverAccount(ctx context.Context, plan
 			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d scheduling recovery failed: %v", plan.ID, err)
 			return
 		}
+	}
+}
+
+// markScheduledQualityPause records why the account was paused. The concrete
+// repository implements it; test doubles without it simply skip the stamp.
+func (s *ScheduledTestRunnerService) markScheduledQualityPause(ctx context.Context, plan *ScheduledTestPlan, reason string) {
+	marker, ok := s.accountTestSvc.accountRepo.(interface {
+		MarkScheduledQualityPause(context.Context, int64, string) error
+	})
+	if !ok {
+		return
+	}
+	if err := marker.MarkScheduledQualityPause(ctx, plan.AccountID, reason); err != nil {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d quality pause reason stamp failed: %v", plan.ID, plan.AccountID, err)
 	}
 }

@@ -89,6 +89,14 @@ func (s *GroupQualityCheckService) clearGroupQualityPauses(ctx context.Context, 
 		if strings.HasPrefix(account.TempUnschedulableReason, scheduledQualityReasonPrefix) {
 			if err := s.accountRepo.ClearTempUnschedulable(ctx, account.ID); err == nil {
 				cleared++
+				// The quality pause also flipped the persistent schedulable
+				// switch; hand the account back to the scheduler so disabling
+				// detection cannot leave it parked forever.
+				if !account.Schedulable {
+					if err := s.accountRepo.SetSchedulable(ctx, account.ID, true); err != nil {
+						logger.LegacyPrintf("service.group_quality_check", "[GroupQualityCheck] group=%d account=%d re-enable failed: %v", groupID, account.ID, err)
+					}
+				}
 			}
 		}
 	}
