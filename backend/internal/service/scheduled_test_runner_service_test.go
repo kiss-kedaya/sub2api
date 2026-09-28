@@ -287,6 +287,31 @@ func (r *scheduledQualityResultRepo) PruneOldResults(ctx context.Context, planID
 	return nil
 }
 
+func (r *scheduledQualityResultRepo) ListRejudgeCandidates(_ context.Context, before time.Time, limit int) ([]*ScheduledTestResult, error) {
+	var out []*ScheduledTestResult
+	for _, result := range r.results {
+		if result.Status == "degraded" && result.ResponseText != "" && result.CreatedAt.Before(before) &&
+			!strings.HasPrefix(result.ErrorMessage, qualityRejudgeMarkerPrefix) {
+			out = append(out, result)
+		}
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (r *scheduledQualityResultRepo) UpdateResultStatus(_ context.Context, id int64, status, errorMessage string) error {
+	for _, result := range r.results {
+		if result.ID == id {
+			result.Status = status
+			result.ErrorMessage = errorMessage
+			return nil
+		}
+	}
+	return nil
+}
+
 func (r *scheduledQualityResultRepo) ClearScheduledQualityPause(_ context.Context, id int64, reason string) (bool, error) {
 	r.clearCalls++
 	if r.clearErr != nil {

@@ -7,21 +7,21 @@ import (
 
 // ScheduledTestPlan represents a scheduled test plan domain model.
 type ScheduledTestPlan struct {
-	ID             int64      `json:"id"`
-	AccountID      int64      `json:"account_id"`
-	ModelID        string     `json:"model_id"`
-	PromptText     string     `json:"prompt_text"`
-	CronExpression string     `json:"cron_expression"`
-	Enabled        bool       `json:"enabled"`
-	MaxResults     int        `json:"max_results"`
-	AutoRecover    bool       `json:"auto_recover"`
+	ID             int64  `json:"id"`
+	AccountID      int64  `json:"account_id"`
+	ModelID        string `json:"model_id"`
+	PromptText     string `json:"prompt_text"`
+	CronExpression string `json:"cron_expression"`
+	Enabled        bool   `json:"enabled"`
+	MaxResults     int    `json:"max_results"`
+	AutoRecover    bool   `json:"auto_recover"`
 	// QualityCheckEnabled opts the plan into the degradation visual review.
 	// Plain plans keep the upstream scheduled-test behavior.
 	QualityCheckEnabled bool       `json:"quality_check_enabled"`
 	LastRunAt           *time.Time `json:"last_run_at"`
-	NextRunAt      *time.Time `json:"next_run_at"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	NextRunAt           *time.Time `json:"next_run_at"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 // ScheduledTestResult represents a single test execution result.
@@ -53,4 +53,9 @@ type ScheduledTestResultRepository interface {
 	Create(ctx context.Context, result *ScheduledTestResult) (*ScheduledTestResult, error)
 	ListByPlanID(ctx context.Context, planID int64, limit int) ([]*ScheduledTestResult, error)
 	PruneOldResults(ctx context.Context, planID int64, keepCount int) error
+	// ListRejudgeCandidates returns degraded results judged before the given
+	// time that still carry their artwork and were not re-checked yet.
+	ListRejudgeCandidates(ctx context.Context, before time.Time, limit int) ([]*ScheduledTestResult, error)
+	// UpdateResultStatus rewrites a stored verdict.
+	UpdateResultStatus(ctx context.Context, id int64, status, errorMessage string) error
 }
