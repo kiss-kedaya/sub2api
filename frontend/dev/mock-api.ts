@@ -12,6 +12,27 @@ import type {
 } from '../src/types'
 import type { MonitorMatrixGroupBy, MonitorMatrixRow } from '../src/api/channelMonitorV2'
 import type { PaymentOrder } from '../src/types/payment'
+import { readFileSync } from 'node:fs'
+
+// Local preview fixture: a real generated artwork so the hover player shows a
+// lifelike animation instead of a placeholder.
+const qualityDemoArtwork = readFileSync(new URL('./quality-demo-artwork.html', import.meta.url), 'utf8')
+const qualityDemoEvents = [
+  { id: 906, minutesAgo: 6, status: 'success', errorMessage: '' },
+  { id: 905, minutesAgo: 14, status: 'degraded', errorMessage: 'feet do not plausibly contact crank pedals; pedaling and wheel motion are not coordinated' },
+  { id: 904, minutesAgo: 26, status: 'success', errorMessage: '' },
+  { id: 903, minutesAgo: 41, status: 'success', errorMessage: '' },
+  { id: 902, minutesAgo: 58, status: 'success', errorMessage: '' },
+  { id: 901, minutesAgo: 73, status: 'degraded', errorMessage: 'bicycle structure is disconnected or incomplete' },
+].map((entry, index) => ({
+  id: entry.id,
+  group_id: 1,
+  account_id: 29170 - index,
+  model_id: 'gpt-5.6-sol',
+  status: entry.status,
+  error_message: entry.errorMessage,
+  created_at: new Date(Date.now() - entry.minutesAgo * 60_000).toISOString(),
+}))
 import { createFixtures, makeKey, settings } from './fixtures'
 import { createUsageDraft, supportsCustomUsage, usagePayload, usageTemplate, validateUsageDraft } from '../src/utils/customUsage'
 import type { CustomUsageConfig, CustomUsageResult, CustomUsageTemplate } from '../src/api/admin/customUsage'
@@ -386,6 +407,7 @@ export function createMockApi(now = new Date()) {
         group_id: groupBy.includes('group') ? row.group_id : undefined,
         group_name: groupBy.includes('group') ? row.group_name : undefined,
         model: groupBy.includes('model') ? model : undefined,
+        quality_enabled: groupBy.includes('group') ? Boolean(row.group_id) : false,
       }]
     })
   }
@@ -635,6 +657,13 @@ export function createMockApi(now = new Date()) {
         }
         if (path === '/api/v1/channel-monitor-v2/matrix') {
           return { coverage: data.monitorCoverage, group_by: query.get('group_by') || 'platform_group', items: selectedMonitorRows(query) }
+        }
+        if (path === '/api/v1/channel-monitor-v2/quality-events') {
+          return { group_id: Number(query.get('group_id')), events: qualityDemoEvents }
+        }
+        const qualityArtwork = path.match(/^\/api\/v1\/channel-monitor-v2\/quality-events\/(\d+)\/artwork$/)
+        if (qualityArtwork) {
+          return { id: Number(qualityArtwork[1]), group_id: Number(query.get('group_id')), response_text: qualityDemoArtwork }
         }
         if (path === '/api/v1/channel-monitor-v2/models') {
           const platforms = query.getAll('platform'), models = query.getAll('model')
