@@ -154,48 +154,6 @@ func (r *scheduledTestResultRepository) PruneOldResults(ctx context.Context, pla
 	return err
 }
 
-// ListRejudgeCandidates returns degraded verdicts from before the lenient
-// rubric shipped, oldest first, that still have their artwork and have not
-// been re-checked yet ("rechecked; " prefix marks a completed re-check).
-func (r *scheduledTestResultRepository) ListRejudgeCandidates(ctx context.Context, before time.Time, limit int) ([]*service.ScheduledTestResult, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, plan_id, status, response_text, error_message, latency_ms, started_at, finished_at, created_at
-		FROM scheduled_test_results
-		WHERE status = 'degraded'
-			AND created_at < $1
-			AND response_text <> ''
-			AND error_message NOT LIKE 'rechecked;%'
-		ORDER BY id ASC
-		LIMIT $2
-	`, before, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var results []*service.ScheduledTestResult
-	for rows.Next() {
-		out := &service.ScheduledTestResult{}
-		if err := rows.Scan(
-			&out.ID, &out.PlanID, &out.Status, &out.ResponseText, &out.ErrorMessage,
-			&out.LatencyMs, &out.StartedAt, &out.FinishedAt, &out.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		results = append(results, out)
-	}
-	return results, rows.Err()
-}
-
-func (r *scheduledTestResultRepository) UpdateResultStatus(ctx context.Context, id int64, status, errorMessage string) error {
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE scheduled_test_results
-		SET status = $2, error_message = $3
-		WHERE id = $1
-	`, id, status, errorMessage)
-	return err
-}
-
 // ClearScheduledQualityPause only clears the exact legacy quality reason read by
 // the runner. The outbox event and state change commit together.
 func (r *scheduledTestResultRepository) ClearScheduledQualityPause(ctx context.Context, accountID int64, reason string) (bool, error) {
