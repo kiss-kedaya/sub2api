@@ -21,7 +21,7 @@ describe('ScheduledTestsPanel quality results', () => {
     listByAccount.mockResolvedValue([{
       id: 1, account_id: 2, model_id: 'quality-test-model',
       cron_expression: '*/5 * * * *', enabled: true, max_results: 20,
-      auto_recover: false, next_run_at: '2026-09-26T10:00:00Z'
+      auto_recover: false, quality_check_enabled: false, next_run_at: '2026-09-26T10:00:00Z'
     }])
     listResults.mockResolvedValue([{
       id: 3, plan_id: 1, status: 'unknown', latency_ms: 1000,
@@ -46,5 +46,29 @@ describe('ScheduledTestsPanel quality results', () => {
     expect(wrapper.text()).not.toContain('admin.scheduledTests.errorMessage')
     expect(wrapper.text()).toContain('rendered evaluation required')
     expect(wrapper.get('iframe').attributes('sandbox')).toBe('allow-scripts')
+  })
+
+  it('marks only degradation-check plans with the quality badge', async () => {
+    listByAccount.mockResolvedValue([
+      {
+        id: 1, account_id: 2, model_id: 'plain-model',
+        cron_expression: '*/5 * * * *', enabled: true, max_results: 20,
+        auto_recover: false, quality_check_enabled: false, next_run_at: null
+      },
+      {
+        id: 2, account_id: 2, model_id: 'quality-model',
+        cron_expression: '*/5 * * * *', enabled: true, max_results: 20,
+        auto_recover: false, quality_check_enabled: true, next_run_at: null
+      }
+    ])
+    listResults.mockResolvedValue([])
+    const wrapper = mount(ScheduledTestsPanel, {
+      props: { show: false, accountId: 2, modelOptions: [] },
+      global: { stubs: { BaseDialog: { template: '<div><slot /></div>' }, ConfirmDialog: true } }
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    const badges = wrapper.findAll('span').filter(el => el.text() === 'admin.scheduledTests.qualityCheck')
+    expect(badges).toHaveLength(1)
   })
 })

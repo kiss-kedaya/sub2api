@@ -192,7 +192,17 @@ func (s *ScheduledTestRunnerService) tryAcquireLeaderLock(ctx context.Context) (
 }
 
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {
-	result, err := s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, plan.ModelID, plan.PromptText)
+	var (
+		result *ScheduledTestResult
+		err    error
+	)
+	if plan.QualityCheckEnabled {
+		result, err = s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, plan.ModelID, plan.PromptText)
+	} else {
+		// Plain plans keep the upstream behavior: the platform default test
+		// prompt, no artwork generation.
+		result, err = s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, plan.ModelID)
+	}
 	if err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d RunTestBackground error: %v", plan.ID, err)
 		return
@@ -202,7 +212,7 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 }
 
 func (s *ScheduledTestRunnerService) completePlanRun(ctx context.Context, plan *ScheduledTestPlan, result *ScheduledTestResult) {
-	if result != nil && result.Status == "success" {
+	if plan.QualityCheckEnabled && result != nil && result.Status == "success" {
 		var status, reason string
 		if s.qualityCheck != nil {
 			status, reason = s.qualityCheck(result.ResponseText, plan.PromptText)
@@ -216,9 +226,17 @@ func (s *ScheduledTestRunnerService) completePlanRun(ctx context.Context, plan *
 	}
 	if err := s.scheduledSvc.SaveResult(ctx, plan.ID, plan.MaxResults, result); err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d SaveResult error: %v", plan.ID, err)
-	} else {
-		// Never make a scheduling decision from old history after a failed write.
-		s.updateScheduledQualityState(ctx, plan, result)
+	} else if result != nil {
+		if plan.QualityCheckEnabled {
+			// Never make a scheduling decision from old history after a failed write.
+			s.updateScheduledQualityState(ctx, plan, result)
+		} else if result.Status == "success" && plan.AutoRecover && s.rateLimitSvc != nil {
+			// Upstream parity for plain plans: a passing test clears recoverable
+			// runtime state only when the plan opted into auto recovery.
+			if _, err := s.rateLimitSvc.RecoverAccountAfterSuccessfulTest(ctx, plan.AccountID); err != nil {
+				logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d auto-recover failed: %v", plan.ID, err)
+			}
+		}
 	}
 
 	now := time.Now()
