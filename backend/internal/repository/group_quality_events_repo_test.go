@@ -71,6 +71,33 @@ func TestGroupQualityRepository_GetGroupEventArtworkScoped(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestGroupQualityRepository_HidesStoppedAccounts(t *testing.T) {
+	// Accounts that stopped being scheduled must not surface in the channel
+	// status pages: their stale verdicts are excluded by the queries.
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := repository.NewGroupQualityCheckRepository(db)
+	now := time.Now().UTC()
+
+	// Each query must join accounts and require active + schedulable.
+	for _, pattern := range []string{
+		"SELECT r.id, ag.group_id, p.account_id",
+		"SELECT r.response_text",
+		"SELECT DISTINCT ON \\(p.account_id\\)",
+		"WITH latest AS",
+	} {
+		mock.ExpectQuery(pattern).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	}
+
+	_, _ = repo.ListGroupEvents(context.Background(), 43, 30)
+	_, _ = repo.GetGroupEventArtwork(context.Background(), 43, 1)
+	_, _ = repo.ListRecentResults(context.Background(), 43, now.Add(-time.Hour), 50)
+	_, _ = repo.ListGroupBuckets(context.Background(), []int64{43}, now.Add(-time.Hour), 300)
+
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestGroupQualityRepository_ListGroupBucketsUsesPQArray(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

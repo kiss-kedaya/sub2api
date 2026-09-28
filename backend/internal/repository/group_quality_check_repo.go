@@ -63,7 +63,12 @@ func (r *groupQualityCheckRepository) ListRecentResults(ctx context.Context, gro
 		FROM scheduled_test_results r
 		JOIN scheduled_test_plans p ON p.id = r.plan_id
 		JOIN account_groups ag ON ag.account_id = p.account_id AND ag.group_id = $1
+		JOIN accounts a ON a.id = p.account_id
 		WHERE r.created_at >= $2
+		  AND a.deleted_at IS NULL
+		  AND a.status = 'active'
+		  AND a.schedulable IS TRUE
+		  AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
 		ORDER BY p.account_id, r.created_at DESC
 		LIMIT $3
 	`, groupID, since, limit)
@@ -107,7 +112,12 @@ func (r *groupQualityCheckRepository) ListGroupBuckets(ctx context.Context, grou
 			FROM scheduled_test_results r
 			JOIN scheduled_test_plans p ON p.id = r.plan_id
 			JOIN account_groups ag ON ag.account_id = p.account_id
+			JOIN accounts a ON a.id = p.account_id
 			WHERE ag.group_id = ANY($1) AND r.created_at >= $2
+			  AND a.deleted_at IS NULL
+			  AND a.status = 'active'
+			  AND a.schedulable IS TRUE
+			  AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
 			ORDER BY ag.group_id, p.account_id, r.created_at DESC
 		)
 		SELECT group_id,
@@ -153,7 +163,12 @@ func (r *groupQualityCheckRepository) ListGroupEvents(ctx context.Context, group
 		FROM scheduled_test_results r
 		JOIN scheduled_test_plans p ON p.id = r.plan_id
 		JOIN account_groups ag ON ag.account_id = p.account_id AND ag.group_id = $1
+		JOIN accounts a ON a.id = p.account_id
 		WHERE r.status IN ('success', 'degraded')
+		  AND a.deleted_at IS NULL
+		  AND a.status = 'active'
+		  AND a.schedulable IS TRUE
+		  AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
 		ORDER BY r.created_at DESC, r.id DESC
 		LIMIT $2
 	`, groupID, limit)
@@ -188,7 +203,12 @@ func (r *groupQualityCheckRepository) GetGroupEventArtwork(ctx context.Context, 
 		FROM scheduled_test_results r
 		JOIN scheduled_test_plans p ON p.id = r.plan_id
 		JOIN account_groups ag ON ag.account_id = p.account_id AND ag.group_id = $1
+		JOIN accounts a ON a.id = p.account_id
 		WHERE r.id = $2 AND r.status IN ('success', 'degraded')
+		  AND a.deleted_at IS NULL
+		  AND a.status = 'active'
+		  AND a.schedulable IS TRUE
+		  AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
 	`, groupID, resultID).Scan(&text)
 	if err == sql.ErrNoRows {
 		return "", service.ErrGroupQualityEventNotFound
