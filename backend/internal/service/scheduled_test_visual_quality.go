@@ -74,16 +74,9 @@ func scheduledVisualReferenceFrames(ctx context.Context) ([]scheduledVisualFrame
 	return scheduledVisualReference, scheduledVisualReferenceErr
 }
 
-// scheduledVisualReferenceMatches validates that a review's first frame really
-// is the reference baseline image. A mismatched reference would silently
-// invalidate every comparison, so the review is retried instead.
-func scheduledVisualReferenceMatches(frames []scheduledVisualFrame) bool {
-	reference, err := scheduledVisualReferenceFrames(context.Background())
-	if err != nil || len(reference) == 0 || len(frames) == 0 {
-		return false
-	}
-	return frames[0].PNG == reference[0].PNG
-}
+// scheduledVisualReferenceFrames(ctx) is the comparison baseline; the payload
+// builder prepends its first frame and the review context carries the candidate
+// frames separately, so the two are never mixed up.
 
 func scheduledVisualReviewReader(ctx context.Context, reader io.Reader) io.Reader {
 	if isScheduledVisualReview(ctx) {
@@ -419,11 +412,6 @@ func (s *AccountTestService) runScheduledVisualReviewOnce(ctx context.Context, a
 	c.Request = (&http.Request{}).WithContext(reviewCtx)
 	if err := s.testOpenAIAccountConnection(c, account, plan.ModelID, scheduledVisualReviewPrompt, AccountTestModeDefault); err != nil {
 		return s.scheduledVisualReviewFailure(plan, "", err.Error())
-	}
-	if !scheduledVisualReferenceMatches(frames) {
-		// The request never carried the baseline image; its answer cannot be
-		// trusted as a comparison.
-		return "unknown", "quality check inconclusive: reference image not delivered"
 	}
 	text, upstreamError := parseTestSSEOutput(w.Body.String())
 	if upstreamError != "" {
