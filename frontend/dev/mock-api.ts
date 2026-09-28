@@ -407,7 +407,9 @@ export function createMockApi(now = new Date()) {
         group_id: groupBy.includes('group') ? row.group_id : undefined,
         group_name: groupBy.includes('group') ? row.group_name : undefined,
         model: groupBy.includes('model') ? model : undefined,
-        quality_enabled: groupBy.includes('group') ? Boolean(row.group_id) : false,
+        // Keep both card shapes on screen: the first group shows the layout
+        // without degradation detection enabled.
+        quality_enabled: groupBy.includes('group') ? Boolean(row.group_id) && index > 0 : false,
       }]
     })
   }
