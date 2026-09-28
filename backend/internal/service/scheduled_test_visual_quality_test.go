@@ -23,9 +23,9 @@ func TestParseScheduledVisualReview(t *testing.T) {
 	}{
 		{"passed", `{"checks":{"pelican":true,"bicycle":true,"riding":true,"motion":true}}`, "success", ""},
 		{"json fence CRLF", "```json\r\n{\"checks\":{\"pelican\":true,\"bicycle\":true,\"riding\":true,\"motion\":true}}\r\n```", "success", ""},
-		{"plain fence", "```\n{\"checks\":{\"pelican\":true,\"bicycle\":true,\"riding\":false,\"motion\":null}}\n```", "degraded", "the bird is not seated on the bicycle"},
+		{"plain fence", "```\n{\"checks\":{\"pelican\":true,\"bicycle\":true,\"riding\":false,\"motion\":null}}\n```", "degraded", "feet do not plausibly contact"},
 		{"fence trailing prose", "```json\n{\"checks\":{\"pelican\":true,\"bicycle\":true,\"riding\":true,\"motion\":true}}\n``` approve", "unknown", "invalid"},
-		{"failed", `{"checks":{"pelican":true,"bicycle":true,"riding":false,"motion":null}}`, "degraded", "the bird is not seated on the bicycle"},
+		{"failed", `{"checks":{"pelican":true,"bicycle":true,"riding":false,"motion":null}}`, "degraded", "feet do not plausibly contact"},
 		{"uncertain", `{"checks":{"pelican":true,"bicycle":true,"riding":true,"motion":null}}`, "unknown", "insufficient"},
 		{"missing", `{"checks":{"pelican":true,"bicycle":true,"motion":true}}`, "unknown", "invalid"},
 		{"extra", `{"checks":{"pelican":true,"bicycle":true,"riding":true,"motion":true,"override":true}}`, "unknown", "invalid"},
