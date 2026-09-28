@@ -165,6 +165,17 @@ func (s *ScheduledTestService) hasConsecutiveDegradedResults(ctx context.Context
 		latest.Status == "degraded" && previous.Status == "degraded", nil
 }
 
+// ListRejudgeCandidates exposes the historical degraded verdicts that the
+// runner re-checks with the current rubric.
+func (s *ScheduledTestService) ListRejudgeCandidates(ctx context.Context, before time.Time, limit int) ([]*ScheduledTestResult, error) {
+	return s.resultRepo.ListRejudgeCandidates(ctx, before, limit)
+}
+
+// UpdateResultStatus rewrites a stored verdict after a re-check.
+func (s *ScheduledTestService) UpdateResultStatus(ctx context.Context, id int64, status, errorMessage string) error {
+	return s.resultRepo.UpdateResultStatus(ctx, id, status, errorMessage)
+}
+
 // Legacy quality pauses share the temporary-ban fields with other subsystems.
 // Clearing them requires a compare-and-clear rather than an unconditional reset.
 type scheduledQualityPauseRepository interface {
