@@ -49,6 +49,7 @@
             >
               {{ hoveredEvent.status === 'degraded' ? t('monitorCommon.qualityHistoryDegraded') : t('monitorCommon.qualityHistoryPass') }}
             </span>
+            <span class="font-mono text-amber-300/90" data-testid="quality-history-event-id">#{{ hoveredEvent.id }}</span>
             <span class="text-gray-300">{{ formatFullTime(hoveredEvent.created_at) }}</span>
             <span v-if="hoveredEvent.model_id" class="truncate font-mono text-gray-400">{{ hoveredEvent.model_id }}</span>
           </div>
@@ -145,7 +146,7 @@ function formatFullTime(value: string) {
 
 function chipLabel(event: MonitorQualityEvent) {
   const status = event.status === 'degraded' ? t('monitorCommon.qualityHistoryDegraded') : t('monitorCommon.qualityHistoryPass')
-  return `${formatFullTime(event.created_at)} · ${status}`
+  return `#${event.id} · ${formatFullTime(event.created_at)} · ${status}`
 }
 
 function positionPopover(event?: Event) {

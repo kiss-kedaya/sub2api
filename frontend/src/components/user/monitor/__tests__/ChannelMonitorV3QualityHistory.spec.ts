@@ -89,6 +89,7 @@ describe('ChannelMonitorV3QualityHistory', () => {
     expect(frame.attributes('sandbox')).toBe('allow-scripts')
     expect(frame.attributes('srcdoc')).toContain('<svg>')
     expect(wrapper.text()).toContain('feet do not plausibly contact crank pedals')
+    expect(wrapper.get('[data-testid="quality-history-event-id"]').text()).toBe('#2')
   })
 
   it('reuses the cached artwork on a second hover', async () => {
