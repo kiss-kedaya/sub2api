@@ -19,10 +19,10 @@ const (
 	scheduledTestDefaultMaxWorkers = 10
 	disableScheduledTestRunnerEnv  = "SUB2API_DISABLE_SCHEDULED_TEST_RUNNER"
 	// The runner is instantiated by every API/worker process. Keep the lock
-	// longer than the five-minute execution context plus the bounded historical
-	// re-check phase so a slow tick cannot overlap the next one.
+	// longer than the five-minute execution context so a slow run cannot lose
+	// leadership before its plans have finished.
 	scheduledTestRunnerLeaderLockKey = "scheduled-test-runner"
-	scheduledTestRunnerLeaderLockTTL = 15 * time.Minute
+	scheduledTestRunnerLeaderLockTTL = 10 * time.Minute
 	scheduledQualityReasonPrefix     = "scheduled_quality_check:"
 )
 
@@ -34,9 +34,6 @@ type ScheduledTestRunnerService struct {
 	rateLimitSvc   *RateLimitService
 	cfg            *config.Config
 	qualityCheck   func(string, string) (string, string)
-	// rejudgeAssess is injectable so the historical re-check can be tested
-	// without the renderer and review upstream. Nil uses the real evaluator.
-	rejudgeAssess func(context.Context, *ScheduledTestPlan, string) (string, string)
 
 	// lockCache/db elect one process to execute each cron tick across all
 	// instances. With no backend configured the existing single-instance/test
@@ -171,10 +168,6 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 
 		wg.Wait()
 	}
-
-	// Bounded historical re-check of verdicts produced by the older, stricter
-	// rubric. Self-terminating once no candidates remain.
-	s.rejudgeLegacyQualityResults(ctx)
 }
 
 func (s *ScheduledTestRunnerService) tryAcquireLeaderLock(ctx context.Context) (func(), bool) {
