@@ -76,6 +76,9 @@
               class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-200"
               :placeholder="t('admin.scheduledTests.promptPlaceholder')"
             />
+            <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+              {{ t('admin.scheduledTests.promptHelp') }}
+            </p>
           </div>
           <div>
             <label class="mb-1 flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400">
@@ -115,6 +118,17 @@
               </label>
               <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
                 {{ t('admin.scheduledTests.autoRecoverHelp') }}
+              </p>
+            </div>
+          </div>
+          <div class="flex items-end">
+            <div>
+              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                <Toggle v-model="newPlan.quality_check_enabled" />
+                {{ t('admin.scheduledTests.qualityCheck') }}
+              </label>
+              <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                {{ t('admin.scheduledTests.qualityCheckHelp') }}
               </p>
             </div>
           </div>
@@ -194,6 +208,14 @@
                 class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400"
               >
                 {{ t('admin.scheduledTests.autoRecover') }}
+              </span>
+
+              <!-- Quality Check Badge -->
+              <span
+                v-if="plan.quality_check_enabled"
+                class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/20 dark:text-amber-400"
+              >
+                {{ t('admin.scheduledTests.qualityCheck') }}
               </span>
             </div>
 
@@ -297,6 +319,9 @@
                   class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-200"
                   :placeholder="t('admin.scheduledTests.promptPlaceholder')"
                 />
+                <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                  {{ t('admin.scheduledTests.promptHelp') }}
+                </p>
               </div>
               <div>
                 <label class="mb-1 flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400">
@@ -336,6 +361,17 @@
                   </label>
                   <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
                     {{ t('admin.scheduledTests.autoRecoverHelp') }}
+                  </p>
+                </div>
+              </div>
+              <div class="flex items-end">
+                <div>
+                  <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                    <Toggle v-model="editForm.quality_check_enabled" />
+                    {{ t('admin.scheduledTests.qualityCheck') }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                    {{ t('admin.scheduledTests.qualityCheckHelp') }}
                   </p>
                 </div>
               </div>
@@ -551,7 +587,8 @@ const editForm = reactive({
   cron_expression: '' as string,
   max_results: '100' as string,
   enabled: true,
-  auto_recover: false
+  auto_recover: false,
+  quality_check_enabled: false
 })
 
 const newPlan = reactive({
@@ -560,7 +597,8 @@ const newPlan = reactive({
   cron_expression: '*/5 * * * *' as string,
   max_results: '100' as string,
   enabled: true,
-  auto_recover: false
+  auto_recover: false,
+  quality_check_enabled: false
 })
 
 const resetNewPlan = () => {
@@ -570,6 +608,7 @@ const resetNewPlan = () => {
   newPlan.max_results = '100'
   newPlan.enabled = true
   newPlan.auto_recover = false
+  newPlan.quality_check_enabled = false
 }
 
 // Load plans when dialog opens
@@ -614,7 +653,8 @@ const handleCreate = async () => {
       cron_expression: newPlan.cron_expression,
       enabled: newPlan.enabled,
       max_results: maxResults,
-      auto_recover: newPlan.auto_recover
+      auto_recover: newPlan.auto_recover,
+      quality_check_enabled: newPlan.quality_check_enabled
     })
     appStore.showSuccess(t('admin.scheduledTests.createSuccess'))
     showAddForm.value = false
@@ -648,6 +688,7 @@ const startEdit = (plan: ScheduledTestPlan) => {
   editForm.max_results = String(plan.max_results)
   editForm.enabled = plan.enabled
   editForm.auto_recover = plan.auto_recover
+  editForm.quality_check_enabled = plan.quality_check_enabled
 }
 
 const cancelEdit = () => {
@@ -664,7 +705,8 @@ const handleEdit = async () => {
       cron_expression: editForm.cron_expression,
       max_results: Number(editForm.max_results) || 100,
       enabled: editForm.enabled,
-      auto_recover: editForm.auto_recover
+      auto_recover: editForm.auto_recover,
+      quality_check_enabled: editForm.quality_check_enabled
     })
     const index = plans.value.findIndex((p) => p.id === editingPlanId.value)
     if (index !== -1) {

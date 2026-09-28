@@ -44,7 +44,10 @@ export default {
       maxResultsTooltipExample: '例如填写 100，表示最多保存最近 100 次测试结果；第 101 次结果写入后，最早的一条会被清理。',
       maxResultsTooltipRange: '推荐填写范围：一般可填 20 到 200。只关注近期可用性时可填 20-50；需要回看较长时间的波动趋势时可填 100-200。',
       autoRecover: '自动恢复',
-      autoRecoverHelp: '测试成功后自动恢复异常状态的账号'
+      autoRecoverHelp: '测试成功后自动恢复异常状态的账号',
+      qualityCheck: '降智检测',
+      qualityCheckHelp: '开启后按降智检测流程评估生成结果（连续退化会暂停账号）；关闭时只做官方默认的连通性测试',
+      promptHelp: '仅开启“降智检测”时作为题目发送；关闭时使用官方默认测试提示词'
     },
 
     // Proxies Management

@@ -548,6 +548,46 @@ export function createMockApi(now = new Date()) {
         if (accountUsage) return data.usageByAccount[accountUsage[1]] ?? { updated_at: null, five_hour: null, seven_day: null, seven_day_sonnet: null }
         const accountToday = path.match(/^\/api\/v1\/admin\/accounts\/(\d+)\/today-stats$/)
         if (accountToday) return data.todayStatsByAccount[accountToday[1]] ?? { requests: 0, tokens: 0, cost: 0 }
+        const accountPlans = path.match(/^\/api\/v1\/admin\/accounts\/(\d+)\/scheduled-test-plans$/)
+        if (accountPlans) {
+          const accountId = Number(accountPlans[1])
+          return [
+            {
+              id: 1, account_id: accountId, model_id: 'gpt-6-astra',
+              prompt_text: '请生成可直接运行的单文件HTML，使用内联SVG绘制鹈鹕骑自行车的二维循环动画。',
+              cron_expression: '*/5 * * * *', enabled: true, max_results: 100,
+              auto_recover: true, quality_check_enabled: true,
+              last_run_at: data.now, next_run_at: data.now, created_at: data.now, updated_at: data.now,
+            },
+            {
+              id: 2, account_id: accountId, model_id: 'gpt-5.5',
+              prompt_text: '请生成可直接运行的单文件HTML，使用内联SVG绘制鹈鹕骑自行车的二维循环动画。',
+              cron_expression: '*/30 * * * *', enabled: false, max_results: 50,
+              auto_recover: false, quality_check_enabled: false,
+              last_run_at: null, next_run_at: null, created_at: data.now, updated_at: data.now,
+            },
+          ]
+        }
+        const planResults = path.match(/^\/api\/v1\/admin\/scheduled-test-plans\/(\d+)\/results$/)
+        if (planResults) {
+          return [
+            {
+              id: 11, plan_id: Number(planResults[1]), status: 'success', latency_ms: 16420,
+              response_text: '<!doctype html><html><body><svg viewBox="0 0 960 640"><circle cx="220" cy="470" r="70" fill="none" stroke="#333" stroke-width="6"/><circle cx="700" cy="470" r="70" fill="none" stroke="#333" stroke-width="6"/><animateTransform attributeName="transform" type="rotate" from="0 220 470" to="360 220 470" dur="2s" repeatCount="indefinite"/></svg></body></html>',
+              error_message: '', started_at: data.now, finished_at: data.now, created_at: data.now,
+            },
+            {
+              id: 12, plan_id: Number(planResults[1]), status: 'degraded', latency_ms: 15330,
+              response_text: '<!doctype html><html><body><svg viewBox="0 0 960 640"><rect x="120" y="120" width="300" height="200" fill="#ddd"/></svg></body></html>',
+              error_message: 'quality check failed: pelican anatomy is not recognizable', started_at: data.now, finished_at: data.now, created_at: data.now,
+            },
+            {
+              id: 13, plan_id: Number(planResults[1]), status: 'unknown', latency_ms: 890,
+              response_text: '',
+              error_message: 'quality check inconclusive: upstream review unavailable', started_at: data.now, finished_at: data.now, created_at: data.now,
+            },
+          ]
+        }
         if (path === '/api/v1/admin/groups') {
           const search = query.get('search')?.toLowerCase()
           const items = data.adminGroups.filter(group =>
@@ -948,6 +988,16 @@ export function createMockApi(now = new Date()) {
           data.checkoutInfo.recharge_center_enabled = body.payment_recharge_center_enabled
         }
         return adminSettings()
+      }
+      const planWrite = path.match(/^\/api\/v1\/admin\/scheduled-test-plans(?:\/(\d+))?$/)
+      if (planWrite) {
+        if (method === 'POST') {
+          return { ...body, id: 99, last_run_at: null, next_run_at: data.now, created_at: data.now, updated_at: data.now }
+        }
+        if (method === 'PUT') {
+          return { ...body, id: Number(planWrite[1]), account_id: 1, last_run_at: null, next_run_at: data.now, created_at: data.now, updated_at: data.now }
+        }
+        if (method === 'DELETE') return { message: 'deleted' }
       }
       if (method === 'PUT' && path === '/api/v1/settings/public') {
         if (body.channel_monitor_mode !== 'v1' && body.channel_monitor_mode !== 'v2') throw new PreviewError(422, '本地预览仅支持 v1 或 v2 监控模式')

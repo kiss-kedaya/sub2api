@@ -135,7 +135,7 @@ func TestScheduledTestRunnerService_QualityRecoveryPreservesNewCacheBan(t *testi
 			if mode == "unsupported" {
 				runner.rateLimitSvc.tempUnschedCache = &struct{ TempUnschedCache }{}
 			}
-			runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 1, AccountID: 2, CronExpression: "* * * * *"}, &ScheduledTestResult{Status: "success"})
+			runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 1, AccountID: 2, CronExpression: "* * * * *", QualityCheckEnabled: true}, &ScheduledTestResult{Status: "success"})
 			if mode == "cache_error" || mode == "unsupported" {
 				require.False(t, account.Schedulable)
 				require.Zero(t, repo.recoveries)
@@ -332,7 +332,7 @@ func TestScheduledTestRunnerService_UnapprovedOutputCannotRecover(t *testing.T) 
 			runner, repo, _ := scheduledQualityRunner(account, results)
 			runner.qualityCheck = nil
 			result := &ScheduledTestResult{Status: "success", ResponseText: tc.response}
-			runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 1, AccountID: 2, MaxResults: 2, CronExpression: "* * * * *"}, result)
+			runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 1, AccountID: 2, MaxResults: 2, CronExpression: "* * * * *", QualityCheckEnabled: true}, result)
 			require.Equal(t, tc.status, result.Status)
 			require.False(t, account.Schedulable)
 			require.Zero(t, repo.recoveries)
@@ -361,7 +361,7 @@ func TestScheduledTestRunnerService_ConsecutiveQualityResults(t *testing.T) {
 			account := &Account{ID: 2, Status: StatusActive, Schedulable: true}
 			results := &scheduledQualityResultRepo{}
 			runner, repo, plans := scheduledQualityRunner(account, results)
-			plan := &ScheduledTestPlan{ID: 1, AccountID: 2, CronExpression: "* * * * *", MaxResults: 1}
+			plan := &ScheduledTestPlan{ID: 1, AccountID: 2, CronExpression: "* * * * *", MaxResults: 1, QualityCheckEnabled: true}
 			for i, status := range tc.statuses {
 				runner.completePlanRun(context.Background(), plan, &ScheduledTestResult{Status: status})
 				require.Equal(t, tc.wantScheduling[i], account.Schedulable, "step %d: %s", i, status)
@@ -407,7 +407,7 @@ func TestScheduledTestRunnerService_QualityPersistenceFailures(t *testing.T) {
 			}
 			runner, repo, plans := scheduledQualityRunner(account, results)
 			current := &ScheduledTestResult{ID: 2, PlanID: 1, Status: "degraded"}
-			runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 1, AccountID: 2, MaxResults: 1, CronExpression: "* * * * *"}, current)
+			runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 1, AccountID: 2, MaxResults: 1, CronExpression: "* * * * *", QualityCheckEnabled: true}, current)
 			require.True(t, account.Schedulable)
 			require.Zero(t, repo.reads)
 			require.Zero(t, repo.pauses)
@@ -434,7 +434,7 @@ func TestScheduledTestRunnerService_SuccessEnablesOnlyTestedAccount(t *testing.T
 					Credentials: map[string]any{"api_key": "test-only-placeholder"},
 				}
 				runner, repo, _ := scheduledQualityRunner(account, &scheduledQualityResultRepo{})
-				runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 18, AccountID: 29173, AutoRecover: autoRecover, MaxResults: 1, CronExpression: "* * * * *"}, &ScheduledTestResult{Status: "success"})
+				runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 18, AccountID: 29173, AutoRecover: autoRecover, MaxResults: 1, CronExpression: "* * * * *", QualityCheckEnabled: true}, &ScheduledTestResult{Status: "success"})
 				require.Equal(t, StatusActive, account.Status)
 				require.True(t, account.Schedulable)
 				require.Equal(t, []int64{29173}, repo.ids)
@@ -475,7 +475,7 @@ func TestScheduledTestRunnerService_LegacyQualityPauseRecovery(t *testing.T) {
 				account.TempUnschedulableUntil = &expired
 			}
 			runner, _, _ := scheduledQualityRunner(account, results)
-			runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 1, AccountID: 2, CronExpression: "* * * * *"}, &ScheduledTestResult{Status: "success"})
+			runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 1, AccountID: 2, CronExpression: "* * * * *", QualityCheckEnabled: true}, &ScheduledTestResult{Status: "success"})
 			switch mode {
 			case "clear":
 				require.True(t, account.Schedulable)
@@ -501,7 +501,7 @@ func TestScheduledTestRunnerService_PausePreservesUnrelatedState(t *testing.T) {
 	until := time.Now().Add(time.Hour)
 	account := &Account{ID: 2, Status: StatusError, Schedulable: true, ErrorMessage: "other error", TempUnschedulableUntil: &until, TempUnschedulableReason: "other pause"}
 	runner, repo, _ := scheduledQualityRunner(account, &scheduledQualityResultRepo{})
-	plan := &ScheduledTestPlan{ID: 1, AccountID: 2, MaxResults: 1, CronExpression: "* * * * *"}
+	plan := &ScheduledTestPlan{ID: 1, AccountID: 2, MaxResults: 1, CronExpression: "* * * * *", QualityCheckEnabled: true}
 	for range 2 {
 		runner.completePlanRun(context.Background(), plan, &ScheduledTestResult{Status: "degraded"})
 	}
@@ -512,6 +512,41 @@ func TestScheduledTestRunnerService_PausePreservesUnrelatedState(t *testing.T) {
 	require.Equal(t, "other pause", account.TempUnschedulableReason)
 	require.Equal(t, &until, account.TempUnschedulableUntil)
 	require.Empty(t, repo.pauseReasons, "an unrelated pause reason must not be overwritten")
+}
+
+func TestScheduledTestRunnerService_PlainPlanKeepsUpstreamBehavior(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		status      string
+		autoRecover bool
+		wantClears  int
+	}{
+		{"success_without_auto_recover", "success", false, 0},
+		{"success_with_auto_recover", "success", true, 1},
+		{"failed_with_auto_recover", "failed", true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			account := &Account{ID: 2, Status: StatusError, Schedulable: true, ErrorMessage: "runtime error"}
+			results := &scheduledQualityResultRepo{}
+			runner, repo, _ := scheduledQualityRunner(account, results)
+			evaluated := false
+			runner.qualityCheck = func(string, string) (string, string) {
+				evaluated = true
+				return "success", ""
+			}
+			plan := &ScheduledTestPlan{ID: 1, AccountID: 2, MaxResults: 2, CronExpression: "* * * * *", AutoRecover: tc.autoRecover}
+			runner.completePlanRun(context.Background(), plan, &ScheduledTestResult{Status: tc.status})
+			require.False(t, evaluated, "a plain plan must not run the degradation evaluator")
+			require.Zero(t, repo.pauses, "a plain plan must never pause an account")
+			require.Zero(t, repo.recoveries, "a plain plan must not run the quality recovery path")
+			require.Equal(t, tc.wantClears, repo.clears)
+			if tc.wantClears > 0 {
+				require.Equal(t, StatusActive, account.Status)
+			} else {
+				require.Equal(t, StatusError, account.Status)
+			}
+		})
+	}
 }
 
 func TestScheduledTestRunnerService_RejectsUnpersistedOrForeignResult(t *testing.T) {
