@@ -45,6 +45,7 @@ describe('ScheduledTestsPanel quality results', () => {
     expect(wrapper.text()).not.toContain('admin.scheduledTests.failed')
     expect(wrapper.text()).not.toContain('admin.scheduledTests.errorMessage')
     expect(wrapper.text()).toContain('rendered evaluation required')
+    expect(wrapper.text()).toContain('#3')
     expect(wrapper.get('iframe').attributes('sandbox')).toBe('allow-scripts')
   })
 

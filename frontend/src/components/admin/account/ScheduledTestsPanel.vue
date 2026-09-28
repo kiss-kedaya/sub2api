@@ -451,8 +451,9 @@
                       {{ resultStatusLabel(result.status) }}
                     </span>
                   </div>
-                  <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    {{ result.latency_ms > 0 ? `${result.latency_ms}ms` : '—' }}
+                  <div class="mt-1 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                    <span class="font-mono text-[10px] text-gray-400 dark:text-gray-500">#{{ result.id }}</span>
+                    <span>{{ result.latency_ms > 0 ? `${result.latency_ms}ms` : '—' }}</span>
                   </div>
                 </button>
               </div>
@@ -469,7 +470,8 @@
                       </span>
                     </div>
                     <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      {{ formatDateTime(selectedResult.started_at) }}
+                      <span class="font-mono text-amber-600 dark:text-amber-400">#{{ selectedResult.id }}</span>
+                      · {{ formatDateTime(selectedResult.started_at) }}
                       <span v-if="selectedResult.finished_at"> · {{ formatDateTime(selectedResult.finished_at) }}</span>
                     </div>
                   </div>
