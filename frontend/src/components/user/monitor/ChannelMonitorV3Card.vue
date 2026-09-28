@@ -34,7 +34,7 @@
     </div>
 
     <ChannelMonitorV3Timeline
-      class="channel-signal-card__timeline mt-auto"
+      class="channel-signal-card__timeline mt-4"
       :buckets="row.buckets"
       :countdown-seconds="countdownSeconds"
       :length="timelineLength"
