@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
 // AnthropicToResponses converts an Anthropic Messages request directly into
@@ -11,6 +13,9 @@ import (
 // Chat Completions intermediary round-trip (e.g. thinking, cache_control,
 // structured system prompts).
 func AnthropicToResponses(req *AnthropicRequest) (*ResponsesRequest, error) {
+	if err := openai.ValidateGPT61SolReasoningEffort(req.Model, anthropicReasoningEffort(req)); err != nil {
+		return nil, err
+	}
 	input, err := convertAnthropicToResponsesInput(req.System, req.Messages)
 	if err != nil {
 		return nil, err
@@ -55,17 +60,18 @@ func AnthropicToResponses(req *AnthropicRequest) (*ResponsesRequest, error) {
 		out.Tools = convertAnthropicToolsToResponses(req.Tools)
 	}
 
-	// Determine reasoning effort: only output_config.effort controls the
-	// level; thinking.type is ignored. Default follows Codex CLI / airgate's
-	// Anthropic bridge shape, which uses medium when unset.
-	// Anthropic levels map 1:1 to OpenAI: low→low, medium→medium, high→high, max→xhigh.
-	effort := "medium"
-	if req.OutputConfig != nil && req.OutputConfig.Effort != "" {
-		effort = req.OutputConfig.Effort
+	// thinking.type=disabled 优先于 output_config.effort，显式关闭思考。
+	// 其余情况只看 output_config.effort，默认 medium。
+	// Anthropic levels map 1:1 to OpenAI: low->low, medium->medium, high->high, max->xhigh.
+	effort := anthropicReasoningEffort(req)
+	if openai.IsGPT61SolModelSpelling(req.Model) && req.OutputConfig != nil && req.OutputConfig.Effort == "max" && effort != "none" {
+		effort = "max"
 	}
 	out.Reasoning = &ResponsesReasoning{
-		Effort:  mapAnthropicEffortToResponses(effort),
-		Summary: "auto",
+		Effort: mapAnthropicEffortToResponses(effort),
+	}
+	if effort != "none" {
+		out.Reasoning.Summary = "auto"
 	}
 
 	// Convert tool_choice
@@ -432,6 +438,20 @@ func extractAnthropicTextFromBlocks(blocks []AnthropicContentBlock) string {
 //	medium → medium
 //	high   → high
 //	max    → xhigh
+//
+// anthropicReasoningEffort 解析 Anthropic 请求的思考档位。
+// thinking.type=disabled 显式关闭，优先于 output_config.effort；其余默认 medium。
+func anthropicReasoningEffort(req *AnthropicRequest) string {
+	if req.Thinking != nil && req.Thinking.Type == "disabled" {
+		return "none"
+	}
+	effort := "medium"
+	if req.OutputConfig != nil && req.OutputConfig.Effort != "" {
+		effort = req.OutputConfig.Effort
+	}
+	return effort
+}
+
 func mapAnthropicEffortToResponses(effort string) string {
 	if effort == "max" {
 		return "xhigh"
@@ -470,7 +490,29 @@ func boolPtr(v bool) *bool {
 // All gpt-5.x models are reasoning-only; the Responses API returns
 // "Unsupported parameter: temperature" if these fields are present.
 func isReasoningModel(model string) bool {
-	return strings.HasPrefix(model, "gpt-5")
+	major, ok := openAIModelGeneration(model)
+	return ok && major >= 5
+}
+
+// openAIModelGeneration 从 "gpt-N[.M][-suffix]" 里取代数 N。
+// 非 gpt 模型、以及没有数字代数的（gpt-image-1、gpt-audio）返回 false。
+func openAIModelGeneration(model string) (int, bool) {
+	rest, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-")
+	if !ok {
+		return 0, false
+	}
+	major, digits := 0, 0
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			break
+		}
+		major = major*10 + int(r-'0')
+		digits++
+	}
+	if digits == 0 {
+		return 0, false
+	}
+	return major, true
 }
 
 // normalizeToolParameters ensures the tool parameter schema is valid for
