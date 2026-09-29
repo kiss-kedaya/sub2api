@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -360,6 +361,24 @@ func anthToResHandleContentBlockStart(evt *AnthropicStreamEvent, state *Anthropi
 				Status: "in_progress",
 			},
 		}))
+
+	case "server_tool_use", "web_search_tool_result":
+		// 服务器侧工具块（web_search）：OpenAI Responses 没有对应类型，把
+		// server_tool_use 映射为 web_search_call output item（action 携带 query），
+		// 配套的 web_search_tool_result 块静默消费（结果已并入文本输出）。回程与
+		// Responses→Anthropic 的 resToAnthHandleWebSearchDone 双向对称，claude 客户端
+		// 回放会话时搜索历史不再被剥掉。
+		if evt.ContentBlock.Type == "web_search_tool_result" {
+			return nil
+		}
+		events = append(events, closeCurrentResponsesItem(state)...)
+
+		state.CurrentItemID = generateItemID()
+		state.CurrentItemType = "web_search_call"
+		state.CurrentCallID = evt.ContentBlock.ID
+		state.CurrentName = evt.ContentBlock.Name
+		// Input 是 server_tool_use 的 query 载荷（{"query": "..."}）。
+		state.CurrentSummary = extractWebSearchQuery(evt.ContentBlock.Input)
 	}
 
 	return events
@@ -443,6 +462,12 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 			}),
 		}
 		events = append(events, closeCurrentResponsesItem(state)...)
+		return events
+
+	case "web_search_call":
+		// 服务器侧搜索块结束：直接关掉当前 item（状态已在 closeCurrentResponsesItem
+		// 里折进 Outputs），不发参数 done（web_search_call 没有参数增量）。
+		events := append([]ResponsesStreamEvent(nil), closeCurrentResponsesItem(state)...)
 		return events
 
 	case "message":
@@ -547,6 +572,8 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 			args = "{}"
 		}
 		item.Arguments = args
+	case "web_search_call":
+		item.Action = &WebSearchAction{Query: state.CurrentSummary}
 	case "reasoning":
 		if state.CurrentSummary != "" {
 			item.Summary = []ResponsesSummary{{Type: "summary_text", Text: state.CurrentSummary}}
@@ -661,4 +688,20 @@ func generateItemID() string {
 	b := make([]byte, 12)
 	_, _ = rand.Read(b)
 	return "item_" + hex.EncodeToString(b)
+}
+
+// extractWebSearchQuery 从 server_tool_use 块的 Input（{"query": "..."}）里取
+// query；形状不符时返回空串（web_search_call 的 action 为空是合法形态）。
+func extractWebSearchQuery(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+	var obj struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return ""
+	}
+	return obj.Query
 }
