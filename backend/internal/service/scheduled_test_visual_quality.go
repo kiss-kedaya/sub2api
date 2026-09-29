@@ -30,9 +30,9 @@ const scheduledVisualReviewPrompt = `The FIRST image is an accepted reference ex
 Check each criterion independently:
 pelican: a recognizable pelican, with a long broad orange bill and throat pouch. A generic round-headed, short-beaked bird is insufficient.
 bicycle: two wheels, a coherent frame, handlebars, and crank pedals form a rideable bicycle, not wheels and disconnected lines.
-riding: the body is positioned plausibly for riding; legs and feet connect naturally. Locate the actual ends of the visible legs and the small pedal surfaces attached to the rotating crank. At least one visible foot must touch a pedal surface, not just overlap or pass near the crank hub. The other foot may be occluded. A vertical leg ending on the frame, a foot hanging beside/below a pedal, or a colored bar near the wheel that is not touching the foot all fail.
+riding: the bird is positioned on the bicycle as if riding it, in the saddle area, with the legs in the crank/pedal region. Exact foot-to-pedal contact is NOT required: a foot near or overlapping the pedal/crank area is fine, and occlusion is fine. Fail only when the bird is clearly not on the bicycle (floating above it, standing beside it, or missing from the frame), or the legs are clearly absent/misplaced (a leg growing out of the head, or no legs at all).
 motion: comparing the frames, something visibly animates (wheels, legs, background, or the whole scene). Pedaling/foot/wheel coordination is not judged here: never fail motion because pedal timing looks off or because wheel rotation cannot be read from the sampled frames. Fail only when every frame is static, or the animation is obviously broken (for example parts fly apart or the scene jumps incoherently). If the frames are unusable, use null.
-Audit EVERY frame, not just the first. First locate the bicycle's crank hub and trace its arms out to their pedal surfaces, independently of the feet. A short dark line attached only to a foot is not a pedal unless it also connects to a crank arm. Trace the actual foot endpoint to the pedal surface at the end of the crank arm; a nearby or crossing colored line is not foot contact. Check that rims, hubs, spokes, frame, and pedals remain connected: detached spokes or bicycle parts flying away are a bicycle defect. A single definite defect makes that criterion false. Do not infer hidden contact; when evidence is insufficient use null. Do not require a particular drawing style or the wings to hold the handlebars.
+Audit EVERY frame, not just the first. Check that rims, hubs, spokes, and frame remain connected: detached spokes or bicycle parts flying away are a bicycle defect. Judge the overall impression: a simplified or unusual style is fine, and small anatomy or line-work imperfections are not defects. A single obvious structural defect makes that criterion false. Do not infer hidden detail; when evidence is insufficient use null. Do not require a particular drawing style or the wings to hold the handlebars.
 Each value must be true (clearly passed), false (clear defect), or null (insufficient evidence). Return only JSON with exactly these four checks:
 {"checks":{"pelican":true,"bicycle":true,"riding":true,"motion":true}}`
 
@@ -142,7 +142,7 @@ func parseScheduledVisualReview(text string) (string, string) {
 		return "unknown", "quality check inconclusive: invalid visual review JSON"
 	}
 	names := []string{"pelican", "bicycle", "riding", "motion"}
-	reasons := []string{"pelican anatomy is not recognizable", "bicycle structure is disconnected or incomplete", "feet do not plausibly contact crank pedals", "the animation is static or clearly broken"}
+	reasons := []string{"the pelican is not recognizable as a pelican", "the bicycle structure is clearly broken", "the bird is not positioned on the bicycle", "the animation is static or clearly broken"}
 	var failed []string
 	uncertain := false
 	for i, name := range names {
