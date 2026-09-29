@@ -11,9 +11,13 @@ import (
 // native Responses request is sent to an upstream that only understands
 // function tools.
 type ResponsesClientToolMapping struct {
-	CustomTools    map[string]bool
-	ToolSearch     bool
-	NamespaceTools map[string]ResponsesNamespaceName
+	CustomTools map[string]bool
+	ToolSearch  bool
+	// LocalShellTools 记录 local_shell 工具的降级名集合（声明缺省时为
+	// defaultLocalShellToolName）。回程把对这些名字的 function_call 还原为
+	// local_shell_call（codex 只按该类型路由到终端）。
+	LocalShellTools map[string]bool
+	NamespaceTools  map[string]ResponsesNamespaceName
 }
 
 // AdaptResponsesClientTools lowers Codex client-only tools in req to
@@ -38,6 +42,7 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 	adapter := ResponsesClientToolMapping{CustomTools: make(map[string]bool)}
 	functionNames := make(map[string]bool)
 	customNames := make(map[string]bool)
+	localShellNames := make(map[string]bool)
 	for _, raw := range tools {
 		tool, ok := raw.(map[string]any)
 		if !ok {
@@ -53,6 +58,13 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 			if name != "" {
 				customNames[name] = true
 			}
+		case "local_shell":
+			// 声明缺省 name 时线上按 defaultLocalShellToolName 寻址，撞名检查
+			// 用归一后的名字。
+			if name == "" {
+				name = defaultLocalShellToolName
+			}
+			localShellNames[name] = true
 		case "tool_search":
 			adapter.ToolSearch = true
 		}
@@ -64,6 +76,13 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 	}
 	if adapter.ToolSearch && (functionNames[toolSearchProxyName] || customNames[toolSearchProxyName]) {
 		return ResponsesClientToolMapping{}, false, fmt.Errorf("built-in tool_search conflicts with a declared tool named %q; this upstream cannot disambiguate them, rename the tool", toolSearchProxyName)
+	}
+	// local_shell 降级为 function 工具；与客户端声明的 function/custom 工具撞名
+	// 时无法消歧（回程按名字还原），显式拒绝。
+	for name := range localShellNames {
+		if functionNames[name] || customNames[name] {
+			return ResponsesClientToolMapping{}, false, fmt.Errorf("local_shell tool %q conflicts with a declared tool of the same name; this upstream cannot disambiguate them, rename one of the tools", name)
+		}
 	}
 
 	// Namespace flattening also rewrites namespace-qualified history and choice.
@@ -115,6 +134,27 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 				"parameters":  json.RawMessage(toolSearchProxySchema),
 			})
 			changed = true
+		case "local_shell":
+			// codex 只把 type=local_shell_call 路由到终端；不降级时 Anthropic 400、
+			// Grok 白名单静默丢弃，模型拿不到 shell 工具。
+			shellName := name
+			if shellName == "" {
+				shellName = defaultLocalShellToolName
+			}
+			copy := copyClientTool(tool)
+			copy["type"] = "function"
+			copy["name"] = shellName
+			copy["parameters"] = json.RawMessage(localShellToolParameters)
+			if desc := strings.TrimSpace(stringValue(copy["description"])); desc == "" {
+				copy["description"] = "Run a local shell command."
+			}
+			delete(copy, "format")
+			if adapter.LocalShellTools == nil {
+				adapter.LocalShellTools = make(map[string]bool)
+			}
+			adapter.LocalShellTools[shellName] = true
+			lowered = append(lowered, copy)
+			changed = true
 		default:
 			lowered = append(lowered, raw)
 		}
@@ -137,6 +177,9 @@ func AdaptResponsesClientTools(req map[string]any) (ResponsesClientToolMapping, 
 	}
 	if len(adapter.CustomTools) == 0 {
 		adapter.CustomTools = nil
+	}
+	if len(adapter.LocalShellTools) == 0 {
+		adapter.LocalShellTools = nil
 	}
 	if len(adapter.NamespaceTools) == 0 {
 		adapter.NamespaceTools = nil
@@ -180,7 +223,7 @@ func AdaptResponsesClientToolsWithInheritedMapping(
 	if _, toolsPresent := req["tools"]; toolsPresent {
 		return AdaptResponsesClientTools(req)
 	}
-	if len(inherited.CustomTools) == 0 && !inherited.ToolSearch && len(inherited.NamespaceTools) == 0 {
+	if len(inherited.CustomTools) == 0 && !inherited.ToolSearch && len(inherited.LocalShellTools) == 0 && len(inherited.NamespaceTools) == 0 {
 		return ResponsesClientToolMapping{}, false, nil
 	}
 	if len(inheritedLoweredTools) > 0 && len(inheritedLoweredTools[0]) > 0 {
@@ -263,6 +306,23 @@ func rewriteClientToolHistory(value any, adapter *ResponsesClientToolMapping) (b
 					if err := normalizeToolSearchOutput(typed); err != nil {
 						return err
 					}
+					changed = true
+				}
+			case "local_shell_call":
+				// action 对象是线上形态；降级 function 的 arguments 是其 JSON 字符串。
+				if len(adapter.LocalShellTools) > 0 {
+					typed["type"] = "function_call"
+					typed["name"] = loweredLocalShellName(typed["name"])
+					typed["arguments"] = json.RawMessage(rawObjectString(typed["action"]))
+					delete(typed, "action")
+					normalizeLoweredFunctionItemID(typed)
+					changed = true
+				}
+			case "local_shell_call_output":
+				if len(adapter.LocalShellTools) > 0 {
+					typed["type"] = "function_call_output"
+					normalizeLoweredFunctionItemID(typed)
+					normalizeClientToolOutput(typed)
 					changed = true
 				}
 			}
@@ -456,6 +516,16 @@ func customToolCallArguments(input string) string {
 	return string(encoded)
 }
 
+// loweredLocalShellName 归一 local_shell 历史项的降级名：声明缺省时线上允许
+// 省略 name，降级后按 defaultLocalShellToolName 寻址。
+func loweredLocalShellName(value any) string {
+	name := strings.TrimSpace(stringValue(value))
+	if name == "" {
+		return defaultLocalShellToolName
+	}
+	return name
+}
+
 func rawObjectString(value any) string {
 	if text, ok := value.(string); ok {
 		return text
@@ -526,6 +596,19 @@ func restoreClientToolValue(value any, adapter *ResponsesClientToolMapping) bool
 				delete(typed, "name")
 				delete(typed, "namespace")
 				changed = true
+			} else if adapter.LocalShellTools[name] {
+				// 还原为 local_shell_call：arguments 字符串解回 action 对象线上形态，
+				// codex 只按该类型把命令路由到终端。
+				typed["type"] = "local_shell_call"
+				delete(typed, "name")
+				delete(typed, "namespace")
+				if action := strings.TrimSpace(rawObjectString(typed["arguments"])); action != "" && action != "{}" {
+					typed["action"] = json.RawMessage(action)
+				} else {
+					typed["action"] = map[string]any{"type": "exec"}
+				}
+				delete(typed, "arguments")
+				changed = true
 			}
 		}
 		for _, child := range typed {
@@ -589,12 +672,18 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 	switch event.Type {
 	case "response.output_item.added":
 		if call := r.recordItem(event); call != nil {
-			if call.kind == "custom" {
+			switch call.kind {
+			case "custom":
 				event.Item.Type = "custom_tool_call"
 				event.Item.Input = ""
 				event.Item.Arguments = ""
 				event.Item.Namespace = ""
-			} else {
+			case "local_shell":
+				event.Item.Type = "local_shell_call"
+				event.Item.Name = ""
+				event.Item.Arguments = ""
+				event.Item.Namespace = ""
+			default:
 				event.Item.Type = "tool_search_call"
 				event.Item.Name = ""
 				event.Item.Arguments = "{}"
@@ -674,7 +763,11 @@ func (r *ResponsesClientToolStreamRestorer) Restore(event ResponsesStreamEvent) 
 				event.Item.Arguments = ""
 				event.Item.Namespace = ""
 			} else {
-				event.Item.Type = "tool_search_call"
+				if call.kind == "local_shell" {
+					event.Item.Type = "local_shell_call"
+				} else {
+					event.Item.Type = "tool_search_call"
+				}
 				event.Item.Name = ""
 				event.Item.Arguments = call.arguments.String()
 				if strings.TrimSpace(event.Item.Arguments) == "" {
@@ -839,7 +932,10 @@ func (r *ResponsesClientToolStreamRestorer) clientToolEventPayload(payload []byt
 			return false
 		}
 		_, namespaceTool := r.adapter.NamespaceTools[raw.Item.Name]
-		return r.adapter.CustomTools[raw.Item.Name] || (r.adapter.ToolSearch && raw.Item.Name == toolSearchProxyName) || namespaceTool || r.calls[raw.Item.ID] != nil || r.calls[raw.Item.CallID] != nil
+		return r.adapter.CustomTools[raw.Item.Name] ||
+			(r.adapter.ToolSearch && raw.Item.Name == toolSearchProxyName) ||
+			r.adapter.LocalShellTools[raw.Item.Name] ||
+			namespaceTool || r.calls[raw.Item.ID] != nil || r.calls[raw.Item.CallID] != nil
 	}
 	if _, namespaceTool := r.adapter.NamespaceTools[raw.Name]; namespaceTool {
 		return true
@@ -882,12 +978,17 @@ func (r *ResponsesClientToolStreamRestorer) resequenceRaw(payload []byte, sequen
 }
 
 // responsesClientToolItemType maps a restorer call kind to the item type the
-// client sees.
+// client sees. local_shell 参数以 arguments 字符串随事件透传，done 项的线上
+// action 形态由 ResponsesOutput.MarshalJSON 统一处理。
 func responsesClientToolItemType(kind string) string {
-	if kind == "custom" {
+	switch kind {
+	case "custom":
 		return "custom_tool_call"
+	case "local_shell":
+		return "local_shell_call"
+	default:
+		return "tool_search_call"
 	}
-	return "tool_search_call"
 }
 
 func (r *ResponsesClientToolStreamRestorer) recordItem(event ResponsesStreamEvent) *responsesClientToolStreamCall {
@@ -900,6 +1001,8 @@ func (r *ResponsesClientToolStreamRestorer) recordItem(event ResponsesStreamEven
 		kind = "custom"
 	} else if r.adapter.ToolSearch && name == toolSearchProxyName {
 		kind = "tool_search"
+	} else if r.adapter.LocalShellTools[name] {
+		kind = "local_shell"
 	}
 	if kind == "" {
 		return nil
@@ -979,6 +1082,12 @@ func restoreResponsesOutputClientTools(outputs []ResponsesOutput, adapter *Respo
 			output.Type = "tool_search_call"
 			output.ID = retypedResponsesToolCallItemID(output.ID, output.Type)
 			output.Name = ""
+			output.Namespace = ""
+		} else if adapter.LocalShellTools[output.Name] {
+			output.Type = "local_shell_call"
+			output.ID = retypedResponsesToolCallItemID(output.ID, output.Type)
+			// Arguments 复用为 action 字段；MarshalJSON 负责 local_shell_call 的
+			// 线上形态（action 对象），此处只需保住参数串。
 			output.Namespace = ""
 		}
 		if name, ok := adapter.NamespaceTools[output.Name]; ok && output.Type == "function_call" {

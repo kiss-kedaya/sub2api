@@ -218,6 +218,10 @@ func restoreInheritedResponsesClientToolDeclarations(lowered []any, mapping Resp
 			copy := copyClientTool(tool)
 			copy["type"] = "custom"
 			restored = append(restored, copy)
+		case mapping.LocalShellTools[name]:
+			copy := copyClientTool(tool)
+			copy["type"] = "local_shell"
+			restored = append(restored, copy)
 		case mapping.NamespaceTools[name].Namespace != "":
 			identity := mapping.NamespaceTools[name]
 			child := copyClientTool(tool)
