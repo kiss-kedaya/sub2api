@@ -739,3 +739,78 @@ func TestResponsesClientToolStreamRestorer_RestoresAllTerminalEvents(t *testing.
 		})
 	}
 }
+
+func TestAdaptResponsesClientTools_LowersLocalShell(t *testing.T) {
+	req := map[string]any{
+		"tools": []any{
+			map[string]any{"type": "local_shell"},
+			map[string]any{"type": "function", "name": "read"},
+		},
+		"input": []any{
+			map[string]any{"type": "local_shell_call", "id": "lsc_1", "call_id": "sh1", "action": map[string]any{"type": "exec", "command": []any{"ls", "-la"}}},
+			map[string]any{"type": "local_shell_call_output", "id": "lsco_1", "call_id": "sh1", "output": "ok"},
+		},
+	}
+
+	mapping, changed, err := AdaptResponsesClientTools(req)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.True(t, mapping.LocalShellTools["local_shell"])
+
+	tools := requireResponsesClientToolValue[[]any](t, req["tools"])
+	require.Len(t, tools, 2)
+	shell := requireResponsesClientToolValue[map[string]any](t, tools[0])
+	require.Equal(t, "function", shell["type"])
+	require.Equal(t, "local_shell", shell["name"])
+
+	items := requireResponsesClientToolValue[[]any](t, req["input"])
+	call := requireResponsesClientToolValue[map[string]any](t, items[0])
+	require.Equal(t, "function_call", call["type"])
+	require.Equal(t, "local_shell", call["name"])
+	arguments := requireResponsesClientToolValue[json.RawMessage](t, call["arguments"])
+	require.JSONEq(t, `{"type":"exec","command":["ls","-la"]}`, string(arguments))
+	output := requireResponsesClientToolValue[map[string]any](t, items[1])
+	require.Equal(t, "function_call_output", output["type"])
+}
+
+func TestAdaptResponsesClientTools_RejectsLocalShellNameConflict(t *testing.T) {
+	_, _, err := AdaptResponsesClientTools(map[string]any{
+		"tools": []any{map[string]any{"type": "local_shell"}, map[string]any{"type": "function", "name": "local_shell"}},
+	})
+	require.Error(t, err)
+}
+
+func TestRestoreClientToolPayload_RestoresLocalShellCall(t *testing.T) {
+	mapping := ResponsesClientToolMapping{LocalShellTools: map[string]bool{"local_shell": true}}
+	payload := []byte(`{"type":"response.completed","response":{"id":"resp_sh","output":[{"type":"function_call","id":"item_sh","call_id":"sh1","name":"local_shell","arguments":"{\"type\":\"exec\",\"command\":[\"ls\"]}"}]}}`)
+
+	restored, changed, err := RestoreResponsesClientToolPayload(payload, mapping)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "local_shell_call", gjson.GetBytes(restored, "response.output.0.type").String())
+	require.Equal(t, "exec", gjson.GetBytes(restored, "response.output.0.action.type").String())
+	require.Equal(t, "ls", gjson.GetBytes(restored, "response.output.0.action.command.0").String())
+	require.False(t, gjson.GetBytes(restored, "response.output.0.arguments").Exists())
+}
+
+func TestResponsesClientToolStreamRestorer_RestoresLocalShellLifecycle(t *testing.T) {
+	restorer := NewResponsesClientToolStreamRestorer(ResponsesClientToolMapping{LocalShellTools: map[string]bool{"local_shell": true}})
+
+	added, changed, err := restorer.RestoreEvent([]byte(`{"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"function_call","id":"item_sh","call_id":"sh1","name":"local_shell"}}`))
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Len(t, added, 1)
+	require.Equal(t, "local_shell_call", gjson.GetBytes(added[0], "item.type").String())
+	require.Equal(t, int64(1), gjson.GetBytes(added[0], "sequence_number").Int())
+
+	// local_shell 的参数增量被 restorer 吸收（事件被吞掉），终端 done 统一下发。
+	_, changed, err = restorer.RestoreEvent([]byte(`{"type":"response.function_call_arguments.delta","sequence_number":2,"item_id":"item_sh","delta":"{\"type\":\"exec\",\"command\":[\"pwd\"]}"}`))
+	require.NoError(t, err)
+
+	done, changed, err := restorer.RestoreEvent([]byte(`{"type":"response.output_item.done","sequence_number":3,"output_index":0,"item":{"type":"function_call","id":"item_sh","call_id":"sh1","name":"local_shell","arguments":"{\"type\":\"exec\",\"command\":[\"pwd\"]}"}}`))
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Len(t, done, 1)
+	require.Equal(t, "local_shell_call", gjson.GetBytes(done[0], "item.type").String())
+	require.JSONEq(t, `{"type":"exec","command":["pwd"]}`, gjson.GetBytes(done[0], "item.action").Raw)
+}
