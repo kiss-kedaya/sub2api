@@ -123,7 +123,7 @@ func simplifyGrokRootObjectUnion(schema map[string]any) bool {
 }
 
 func hasResponsesClientToolMapping(mapping apicompat.ResponsesClientToolMapping) bool {
-	return len(mapping.CustomTools) > 0 || mapping.ToolSearch || len(mapping.NamespaceTools) > 0
+	return len(mapping.CustomTools) > 0 || mapping.ToolSearch || len(mapping.LocalShellTools) > 0 || len(mapping.NamespaceTools) > 0
 }
 
 func hasGrokResponsesClientToolMapping(mapping apicompat.ResponsesClientToolMapping) bool {
