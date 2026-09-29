@@ -121,6 +121,18 @@ func (s *AntigravityGatewayService) ForwardAsResponses(
 		return nil, s.writeAntigravityCompatError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 	}
 
+	// 与其他 Anthropic 上游链路一致：先降低 Codex 客户端专属工具（additional_tools
+	// 提升、custom/tool_search/local_shell 降级为 function、namespace 摊平），否则
+	// 这些工具以原始形态进入 Anthropic 转换——unknown tool type 400、additional_tools
+	// input 项被静默丢弃，模型拿不到客户端工具。
+	adaptedBody, _, err := adaptResponsesClientToolsForAnthropic(body)
+	if err != nil {
+		return nil, s.writeAntigravityCompatError(c, http.StatusBadRequest, "invalid_request_error", "Failed to adapt request tools")
+	}
+	if err := json.Unmarshal(adaptedBody, &request); err != nil {
+		return nil, s.writeAntigravityCompatError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+	}
+
 	claudeRequest, err := apicompat.ResponsesToAnthropicRequest(&request)
 	if err != nil {
 		return nil, s.writeAntigravityCompatError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
