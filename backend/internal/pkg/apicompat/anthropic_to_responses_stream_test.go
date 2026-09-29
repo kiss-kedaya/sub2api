@@ -1,6 +1,9 @@
 package apicompat
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // TestAnthropicEventToResponses_TextEmitsContentPart pins that a message text
 // stream emits response.content_part.added, and that it precedes the first
@@ -441,5 +444,45 @@ func TestAnthropicEventToResponses_ToolCallArgumentsDoneMatchesDeltas(t *testing
 	if done != streamed {
 		t.Errorf("function_call_arguments.done arguments = %q, want %q (must equal the streamed deltas)",
 			done, streamed)
+	}
+}
+
+func TestAnthropicEventToResponses_ServerToolUseBecomesWebSearchCall(t *testing.T) {
+	state := NewAnthropicEventToResponsesState()
+	state.Model = "claude-sonnet-4-5"
+
+	var events []ResponsesStreamEvent
+	feed := func(evt *AnthropicStreamEvent) {
+		events = append(events, AnthropicEventToResponsesEvents(evt, state)...)
+	}
+
+	idx := 0
+	feed(&AnthropicStreamEvent{Type: "message_start", Message: &AnthropicResponse{ID: "msg_1"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &idx, ContentBlock: &AnthropicContentBlock{
+		Type: "server_tool_use", ID: "srvtoolu_1", Name: "web_search",
+		Input: json.RawMessage(`{"query":"kedaya.ai"}`),
+	}})
+	feed(&AnthropicStreamEvent{Type: "content_block_stop", Index: &idx})
+	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &idx, ContentBlock: &AnthropicContentBlock{
+		Type: "web_search_tool_result", ToolUseID: "srvtoolu_1", Content: json.RawMessage(`[]`),
+	}})
+	feed(&AnthropicStreamEvent{Type: "content_block_stop", Index: &idx})
+	feed(&AnthropicStreamEvent{Type: "message_stop"})
+
+	var completed *ResponsesStreamEvent
+	for i := range events {
+		if events[i].Type == "response.completed" {
+			completed = &events[i]
+		}
+	}
+	if completed == nil || completed.Response == nil || len(completed.Response.Output) == 0 {
+		t.Fatalf("response.completed carries no output")
+	}
+	call := completed.Response.Output[0]
+	if call.Type != "web_search_call" {
+		t.Fatalf("output[0].type = %q, want web_search_call", call.Type)
+	}
+	if call.Action == nil || call.Action.Query != "kedaya.ai" {
+		t.Fatalf("action query = %+v, want kedaya.ai", call.Action)
 	}
 }
