@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -105,6 +106,66 @@ func ValidateHTTPSURL(raw string, opts ValidationOptions) (string, error) {
 	return ValidateHTTPURL(raw, false, opts)
 }
 
+// blockedResolvedPrefixes 是「解析后 IP」的封禁清单，全仓唯一来源。
+//
+// 为什么不能只用标准库的 IsLoopback/IsPrivate/IsLinkLocal*：那些覆盖不到
+// CGNAT（100.64.0.0/10，云厂商元数据服务常驻其中，如 100.100.100.200）、
+// benchmarking（198.18.0.0/15）、保留段（240.0.0.0/4）、组播（224.0.0.0/4，
+// 标准库只覆盖链路本地组播 224.0.0.0/24）、以及若干文档/过渡段。
+//
+// 该清单原先在 service/custom_usage_http.go 单独维护了一份「完整版」，
+// 两份口径不一致本身就是风险；这里合并为唯一来源，两边共用。
+var blockedResolvedPrefixes = func() []netip.Prefix {
+	ranges := []string{
+		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+		"168.63.129.16/32", "169.254.0.0/16", "172.16.0.0/12",
+		"192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16",
+		"198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
+		"224.0.0.0/4", "240.0.0.0/4",
+		"2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20",
+	}
+	out := make([]netip.Prefix, 0, len(ranges))
+	for _, r := range ranges {
+		out = append(out, netip.MustParsePrefix(r))
+	}
+	return out
+}()
+
+var globalUnicastV6Prefix = netip.MustParsePrefix("2000::/3")
+
+// IsPublicResolvedIP 判断一个解析后的 IP 是否属于可以安全出站的公网地址。
+//
+// 返回 false 的包括：无效地址、带 zone 的地址、回环、私网、链路本地、
+// 组播、未指定地址、非 2000::/3 的 IPv6，以及 blockedResolvedPrefixes 中的任何段。
+func IsPublicResolvedIP(ip netip.Addr) bool {
+	if !ip.IsValid() || ip.Zone() != "" {
+		return false
+	}
+	ip = ip.Unmap()
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	if ip.Is6() && !globalUnicastV6Prefix.Contains(ip) {
+		return false
+	}
+	for _, p := range blockedResolvedPrefixes {
+		if p.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+// IsPublicNetIP 是 IsPublicResolvedIP 的 net.IP 版本。
+func IsPublicNetIP(ip net.IP) bool {
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	return IsPublicResolvedIP(addr)
+}
+
 // ValidateResolvedIP 验证 DNS 解析后的 IP 地址是否安全
 // 用于防止 DNS Rebinding 攻击：在实际 HTTP 请求时调用此函数验证解析后的 IP
 func ValidateResolvedIP(host string) error {
@@ -117,8 +178,7 @@ func ValidateResolvedIP(host string) error {
 	}
 
 	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-			ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		if !IsPublicNetIP(ip) {
 			return fmt.Errorf("resolved ip %s is not allowed", ip.String())
 		}
 	}
