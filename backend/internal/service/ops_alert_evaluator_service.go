@@ -448,6 +448,13 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 	if rule == nil {
 		return 0, false
 	}
+	// 延迟分位数指标：读 usage_logs 做精确分位数，窗口封顶。
+	switch strings.TrimSpace(rule.MetricType) {
+	case OpsMetricP95LatencyMs, OpsMetricP99LatencyMs,
+		OpsMetricP95FirstTokenMs, OpsMetricP99FirstTokenMs:
+		return s.computeLatencyPercentileMetric(ctx, rule, start, end, platform, groupID)
+	}
+
 	// 部署一致性指标：读主机层脚本写出的状态文件，同样只读。
 	switch strings.TrimSpace(rule.MetricType) {
 	case OpsMetricDeployVersionMismatch, OpsMetricDeployCheckAgeSeconds:
@@ -725,6 +732,72 @@ func (s *OpsAlertEvaluatorService) computeDeployCheckMetric(rule *OpsAlertRule) 
 	case OpsMetricDeployCheckAgeSeconds:
 		// 过旧也要能算出来——这正是这个指标的用途。
 		return status.Age(now).Seconds(), true
+	}
+	return 0, false
+}
+
+// computeLatencyPercentileMetric 计算 p95/p99 延迟指标。
+//
+// 为什么不用现成的 `GetLatencyHistogram`：它的桶最大一档是无上界的 `2000ms+`，
+// 无法判断 p99 是否超过 3000ms（规则 3 的阈值），所以那两条规则此前形同虚设。
+// 这里走精确分位数的只读查询，窗口按 opsLatencyPercentileMaxWindow 封顶——
+// 分位数需要对窗口内的行排序，而 usage_logs 有 80+ GB。
+func (s *OpsAlertEvaluatorService) computeLatencyPercentileMetric(
+	ctx context.Context,
+	rule *OpsAlertRule,
+	start, end time.Time,
+	platform string,
+	groupID *int64,
+) (float64, bool) {
+	if s == nil || s.opsRepo == nil || rule == nil {
+		return 0, false
+	}
+	if !end.After(start) {
+		return 0, false
+	}
+	if end.Sub(start) > opsLatencyPercentileMaxWindow {
+		start = end.Add(-opsLatencyPercentileMaxWindow)
+		logger.LegacyPrintf("service.ops_alert_evaluator",
+			"[OpsAlertEvaluator] latency percentile %q window clamped to %s", rule.MetricType, opsLatencyPercentileMaxWindow)
+	}
+
+	percentiles, err := s.opsRepo.GetLatencyPercentiles(ctx, &OpsDashboardFilter{
+		StartTime: start,
+		EndTime:   end,
+		Platform:  platform,
+		GroupID:   groupID,
+		QueryMode: OpsQueryModeRaw,
+	}, start, end)
+	if err != nil {
+		logger.LegacyPrintf("service.ops_alert_evaluator",
+			"[OpsAlertEvaluator] latency percentiles failed (metric=%q): %v", rule.MetricType, err)
+		return 0, false
+	}
+	if percentiles == nil {
+		return 0, false
+	}
+
+	switch strings.TrimSpace(rule.MetricType) {
+	case OpsMetricP95LatencyMs:
+		if percentiles.SampleCount <= 0 {
+			return 0, false
+		}
+		return percentiles.P95Ms, true
+	case OpsMetricP99LatencyMs:
+		if percentiles.SampleCount <= 0 {
+			return 0, false
+		}
+		return percentiles.P99Ms, true
+	case OpsMetricP95FirstTokenMs:
+		if percentiles.FirstTokenSampleCount <= 0 {
+			return 0, false
+		}
+		return percentiles.FirstTokenP95Ms, true
+	case OpsMetricP99FirstTokenMs:
+		if percentiles.FirstTokenSampleCount <= 0 {
+			return 0, false
+		}
+		return percentiles.FirstTokenP99Ms, true
 	}
 	return 0, false
 }
