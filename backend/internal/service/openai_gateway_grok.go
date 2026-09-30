@@ -585,28 +585,39 @@ func patchGrokResponsesBodyBaseTrusted(body []byte, upstreamModel string) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	// 这几组「删除上游不支持的字段」不再先用 gjson 探测存在性：
-	// sjson.DeleteBytes 对不存在的路径本来就是无操作，而探测本身要整份解析一次，
-	// 等于每个字段白白多一次全量遍历（最多 9 个字段，就是 9 次）。
+	// 注意：这里**必须**先探测再删。
+	//
+	// sjson.DeleteBytes 对不存在的路径虽然语义上是无操作，但它仍会整份解析并重新
+	// 序列化 body。这些字段在生产里绝大多数请求都不存在，所以「无条件删」等于给
+	// 每个请求白加一次解析+序列化+分配。实测（256 KB body、2 个字段）：
+	//
+	//	探测后删   95,796 ns   39,652 B/op
+	//	无条件删  268,906 ns  580,455 B/op   ← 慢 2.8 倍、多分配 14.6 倍
 	for _, unsupportedField := range []string{"prompt_cache_retention", "safety_identifier"} {
-		out, err = sjson.DeleteBytes(out, unsupportedField)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if strings.EqualFold(upstreamModel, "grok-4.5") {
-		for _, unsupportedField := range []string{"presence_penalty", "presencePenalty", "frequency_penalty", "frequencyPenalty", "stop"} {
+		if gjson.GetBytes(out, unsupportedField).Exists() {
 			out, err = sjson.DeleteBytes(out, unsupportedField)
 			if err != nil {
 				return nil, err
 			}
 		}
 	}
+	if strings.EqualFold(upstreamModel, "grok-4.5") {
+		for _, unsupportedField := range []string{"presence_penalty", "presencePenalty", "frequency_penalty", "frequencyPenalty", "stop"} {
+			if gjson.GetBytes(out, unsupportedField).Exists() {
+				out, err = sjson.DeleteBytes(out, unsupportedField)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
 	if grokModelRejectsLogprobs(upstreamModel) {
 		for _, unsupportedField := range []string{"logprobs", "top_logprobs"} {
-			out, err = sjson.DeleteBytes(out, unsupportedField)
-			if err != nil {
-				return nil, err
+			if gjson.GetBytes(out, unsupportedField).Exists() {
+				out, err = sjson.DeleteBytes(out, unsupportedField)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
