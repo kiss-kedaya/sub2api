@@ -105,6 +105,9 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	// 7. Enforce cache_control block limit
 	anthropicBody = enforceCacheControlLimit(anthropicBody)
 
+	// 7b. Normalize cache_control ttl ordering (an 1h block must not follow a 5m one).
+	anthropicBody = normalizeCacheControlTTLOrder(anthropicBody)
+
 	// 8. Get access token
 	token, tokenType, err := s.GetAccessToken(ctx, account)
 	if err != nil {
