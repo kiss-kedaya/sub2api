@@ -444,6 +444,17 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 	if rule == nil {
 		return 0, false
 	}
+	// 计费看门狗指标：只读聚合，先于其它分支处理（它们走仓储查询而不是
+	// dashboard overview）。
+	switch strings.TrimSpace(rule.MetricType) {
+	case OpsMetricBillingZeroCostRequests,
+		OpsMetricBillingZeroCostRatio,
+		OpsMetricBillingNegativeBalanceUsers,
+		OpsMetricBillingCostSpikeRatio,
+		OpsMetricBillingStuckHolds:
+		return s.computeBillingAnomalyMetric(ctx, rule, start, end)
+	}
+
 	switch strings.TrimSpace(rule.MetricType) {
 	case "cpu_usage_percent":
 		if systemMetrics != nil && systemMetrics.CPUUsagePercent != nil {
@@ -616,6 +627,58 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 	default:
 		return 0, false
 	}
+}
+
+// computeBillingAnomalyMetric 计算计费看门狗指标。
+//
+// 只读：底层仓储只做 SELECT 聚合，不写余额、不写预扣、不写用量。
+// 窗口上限由 opsBillingMetricMaxWindow 兜底，避免规则里配了一个超大 window
+// 就把评估器 45s 的预算吃光、连带其它规则一起超时。
+func (s *OpsAlertEvaluatorService) computeBillingAnomalyMetric(
+	ctx context.Context,
+	rule *OpsAlertRule,
+	start, end time.Time,
+) (float64, bool) {
+	if s == nil || s.opsRepo == nil || rule == nil {
+		return 0, false
+	}
+	if !end.After(start) {
+		return 0, false
+	}
+	if end.Sub(start) > opsBillingMetricMaxWindow {
+		start = end.Add(-opsBillingMetricMaxWindow)
+		logger.LegacyPrintf("service.ops_alert_evaluator",
+			"[OpsAlertEvaluator] billing metric %q window clamped to %s", rule.MetricType, opsBillingMetricMaxWindow)
+	}
+
+	snapshot, err := s.opsRepo.GetBillingAnomalySnapshot(ctx, start, end)
+	if err != nil {
+		logger.LegacyPrintf("service.ops_alert_evaluator",
+			"[OpsAlertEvaluator] billing anomaly snapshot failed (metric=%q): %v", rule.MetricType, err)
+		return 0, false
+	}
+	if snapshot == nil {
+		return 0, false
+	}
+
+	switch strings.TrimSpace(rule.MetricType) {
+	case OpsMetricBillingZeroCostRequests:
+		return float64(snapshot.ZeroCostRequests), true
+	case OpsMetricBillingZeroCostRatio:
+		// 分母为 0 表示本窗没有任何计费用量，比例无意义，不触发。
+		if snapshot.MeteredRequests <= 0 {
+			return 0, false
+		}
+		return snapshot.ZeroCostRatio(), true
+	case OpsMetricBillingNegativeBalanceUsers:
+		return float64(snapshot.NegativeBalanceUsers), true
+	case OpsMetricBillingStuckHolds:
+		return float64(snapshot.StuckHolds), true
+	case OpsMetricBillingCostSpikeRatio:
+		// 上一窗没有基线时不可用，避免把「上一窗恰好没流量」误报成费用暴涨。
+		return snapshot.CostSpikeRatio()
+	}
+	return 0, false
 }
 
 func compareMetric(value float64, operator string, threshold float64) bool {
