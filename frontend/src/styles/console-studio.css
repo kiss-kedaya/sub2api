@@ -26,6 +26,13 @@
   --signal-draft-opacity: 1;
   --signal-draft-ink: #67879838;
   --signal-draft-line: #348fbc52;
+  /* motion tokens: 独角兽级动效体系（统一 easing 与时长） */
+  --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --motion-dur-fast: 140ms;
+  --motion-dur-base: 220ms;
+  --motion-dur-slow: 420ms;
   --signal-display-font: Georgia, 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', SimSun, serif;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -58,6 +65,12 @@
   --signal-draft-opacity: 1;
   --signal-draft-ink: #a0c7db30;
   --signal-draft-line: #77bfdf48;
+  --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --motion-dur-fast: 140ms;
+  --motion-dur-base: 220ms;
+  --motion-dur-slow: 420ms;
 }
 
 .console-signal .signal-sidebar {
@@ -652,54 +665,88 @@ body:has(.console-signal) > .select-dropdown-portal {
 
 @media (prefers-reduced-motion: no-preference) {
   .console-signal .signal-editorial-copy {
-    animation: console-content-enter 560ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    animation: console-content-enter 560ms var(--motion-out) backwards;
   }
 
   .console-signal .signal-editorial-heading::after {
-    animation: console-line-enter 700ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    animation: console-line-enter 700ms var(--motion-out) backwards;
   }
 
+  /* 卡片入场：stagger 展开（最多 9 张，超出统一走末位延迟） */
   .console-signal :is(.signal-lead-grid, .signal-stat-strip) > .signal-metric,
   .console-signal .admin-metric-grid > .card,
   .console-signal .plaza-group {
-    animation: console-content-enter 460ms cubic-bezier(0.16, 1, 0.3, 1) var(--console-enter-delay, 0ms) backwards;
+    animation: console-content-enter 460ms var(--motion-out) var(--console-enter-delay, 0ms) backwards;
   }
 
   .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(2) { --console-enter-delay: 45ms; }
   .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(3) { --console-enter-delay: 90ms; }
   .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(4) { --console-enter-delay: 135ms; }
+  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(5) { --console-enter-delay: 180ms; }
+  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(6) { --console-enter-delay: 225ms; }
+  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(n + 7) { --console-enter-delay: 270ms; }
 
+  /* 交互过渡统一走 motion token */
   .console-signal :is(.btn, .signal-actions button, .plaza-seg-item) {
-    transition: transform 180ms ease-out, background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+    transition: transform var(--motion-dur-fast) var(--motion-out),
+      background-color 160ms ease, color 160ms ease, border-color 160ms ease,
+      box-shadow var(--motion-dur-base) var(--motion-out);
   }
 
   .console-signal .signal-actions button > svg:last-child {
-    transition: transform 200ms ease;
+    transition: transform 200ms var(--motion-out);
   }
 
   .console-signal .signal-sidebar .sidebar-link > svg {
-    transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), color 160ms ease;
+    transition: transform 200ms var(--motion-out), color 160ms ease;
   }
 
   .console-signal :is(.btn, .signal-actions button):active:not(:disabled) {
     transform: translateY(1px) scale(0.985);
   }
 
+  /* 卡片 hover：轻微上浮 + 边缘提亮 + 外发光一次到位 */
+  .console-signal :is(.signal-lead-grid, .signal-stat-strip) > .signal-metric,
+  .console-signal .admin-metric-grid > .card,
+  .console-signal .signal-dashboard .signal-platform {
+    transition: transform var(--motion-dur-base) var(--motion-out),
+      border-color var(--motion-dur-base) ease, box-shadow var(--motion-dur-base) var(--motion-out);
+  }
+
+  .console-signal :is(.btn, .signal-actions button, .plaza-seg-item, .signal-sidebar .sidebar-link) {
+    transition-timing-function: var(--motion-out), ease, ease, ease;
+  }
+
   @media (hover: hover) and (pointer: fine) {
     .console-signal .signal-sidebar .sidebar-link:hover > svg { transform: translateX(2px); }
     .console-signal .signal-actions button:hover > svg:last-child { transform: translateX(4px); }
     .console-signal .btn-primary:hover:not(:disabled) { transform: translateY(-1px); }
+    .console-signal :is(.signal-lead-grid, .signal-stat-strip) > .signal-metric:hover,
+    .console-signal .admin-metric-grid > .card:hover {
+      transform: translateY(-2px);
+      border-color: var(--signal-control-line);
+      box-shadow: 0 6px 16px #2024260d, 0 2px 4px #20242608;
+    }
+    .dark :is(.signal-lead-grid, .signal-stat-strip) > .signal-metric:hover,
+    .dark .admin-metric-grid > .card:hover {
+      box-shadow: 0 8px 20px #00000033;
+    }
   }
-}
 
-@keyframes console-content-enter {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  /* 数值微动：指标刷新时轻微浮入，避免生硬替换 */
+  .console-signal .signal-value {
+    transition: opacity var(--motion-dur-fast) ease;
+  }
 }
 
 @keyframes console-line-enter {
   from { transform: scaleX(0); }
   to { transform: scaleX(1); }
+}
+
+@keyframes console-content-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (max-width: 639px) {
