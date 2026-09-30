@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/setting"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"golang.org/x/sync/singleflight"
@@ -336,7 +337,12 @@ func (r *settingRepository) GetAll(ctx context.Context) (map[string]string, erro
 
 		queryCtx, cancel := settingLoadContext(ctx)
 		defer cancel()
-		settings, err := r.client.Setting.Query().All(queryCtx)
+		// settings 表里 98% 的行是邮件投递台账（每封邮件一条、每个收件人哈希一条），
+		// 不是配置，而且全部通过 GetValue 按键读取。GetAll 只应返回真正的配置，
+		// 否则每次缓存未命中都要多读约 1.7 万行、并克隆一个同等规模的 map。
+		settings, err := r.client.Setting.Query().
+			Where(setting.Not(setting.Or(recordKeyPrefixPredicates()...))).
+			All(queryCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -365,6 +371,20 @@ func (r *settingRepository) GetAll(ctx context.Context) (map[string]string, erro
 		return map[string]string{}, nil
 	}
 	return cloneSettingValues(values), nil
+}
+
+// recordKeyPrefixPredicates 把「按记录存储的 settings 键」前缀转成 ent 谓词。
+// 前缀清单的唯一来源在 service.NotificationEmailRecordKeyPrefixes。
+func recordKeyPrefixPredicates() []predicate.Setting {
+	prefixes := service.NotificationEmailRecordKeyPrefixes()
+	preds := make([]predicate.Setting, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		if strings.TrimSpace(prefix) == "" {
+			continue
+		}
+		preds = append(preds, setting.KeyHasPrefix(prefix))
+	}
+	return preds
 }
 
 func cloneSettingValues(values map[string]string) map[string]string {
