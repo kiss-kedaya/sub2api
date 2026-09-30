@@ -244,8 +244,19 @@ func (s *CRSSyncService) fetchCRSExport(ctx context.Context, baseURL, username, 
 	}
 
 	client, err := httpclient.GetClient(httpclient.Options{
-		Timeout:            20 * time.Second,
-		ValidateResolvedIP: s.cfg.Security.URLAllowlist.Enabled,
+		Timeout: 20 * time.Second,
+		// 解析后 IP 校验（防 DNS Rebinding）只由 AllowPrivateHosts 决定，
+		// **不再绑在 allowlist 开关上**。
+		//
+		// 原先写的是 `URLAllowlist.Enabled`，等于把「关掉 allowlist」静默解释成
+		// 「连 rebinding 防护也一起关掉」——两件独立的事被耦合在一起。后果是
+		// ALLOWLIST_ENABLED=false + ALLOW_PRIVATE_HOSTS=false 这种配置**完全没有
+		// 解析 IP 校验**（线上正是 allowlist=false，只是私有地址也被显式允许，
+		// 所以暂时没暴露出来）。
+		//
+		// AllowPrivateHosts 的语义就是「是否放行私网/环回地址」，它才是唯一
+		// 相关的开关。
+		ValidateResolvedIP: !s.cfg.Security.URLAllowlist.AllowPrivateHosts,
 		AllowPrivateHosts:  s.cfg.Security.URLAllowlist.AllowPrivateHosts,
 	})
 	if err != nil {
