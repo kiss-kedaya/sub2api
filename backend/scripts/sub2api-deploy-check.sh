@@ -24,6 +24,9 @@ STATUS_FILE="${STATUS_FILE:-/opt/sub2api/deploy-check.status}"
 MAIN_PORT="${MAIN_PORT:-8228}"
 APP_USER="${APP_USER:-sub2api}"
 EXPECTED_PREFIX="${EXPECTED_PREFIX:-sub2api}"
+# 主线单元名。用于区分「正常重启的空窗期」与「自称 active 却没人监听」。
+# 留空则不做这个区分，空窗期会被判为不一致（会在每次发版时误报一次 P0）。
+MAIN_UNIT_DEFAULT_SUFFIX="${MAIN_UNIT_SUFFIX:--canary}"
 
 log() { printf '%s %s\n' "$(date -Is)" "$*" >&2; }
 
@@ -58,6 +61,8 @@ if [[ -z "$EXPECTED" ]]; then
   fail "expected version file is empty: $EXPECTED_VERSION_FILE"
 fi
 EXPECTED_BIN="${EXPECTED_PREFIX}-${EXPECTED}"
+# 主线单元名：默认 <prefix>-<version>-canary，可用 MAIN_UNIT 覆盖。
+MAIN_UNIT="${MAIN_UNIT:-${EXPECTED_BIN}${MAIN_UNIT_DEFAULT_SUFFIX}}"
 
 # --- 2. 找到主服务实际在跑的进程 ----------------------------------------------
 # 优先用监听端口定位：单元名可能撒谎，监听端口不会。
@@ -71,7 +76,18 @@ if [[ -z "$pid" ]] && command -v lsof >/dev/null 2>&1; then
 fi
 
 if [[ -z "$pid" ]]; then
-  fail "no process is listening on port ${MAIN_PORT} (expected ${EXPECTED_BIN})"
+  # 没有进程在监听，**不能**直接判定为版本不一致：正常发版/重启的那几秒就是空窗期。
+  # 本脚本只负责「版本一致性」，服务存活由现有的成功率/错误率规则负责，不要重复告警。
+  # 只有当单元自称 active 却没人监听时，才说明确实出了问题。
+  if [[ -n "$MAIN_UNIT" ]] && command -v systemctl >/dev/null 2>&1; then
+    unit_state="$(systemctl is-active "$MAIN_UNIT" 2>/dev/null || true)"
+    if [[ "$unit_state" != "active" ]]; then
+      log "SKIP: no listener on ${MAIN_PORT} and ${MAIN_UNIT} is ${unit_state:-unknown} (restart/deploy window, not a version mismatch)"
+      write_status 0 "no listener on ${MAIN_PORT}; unit ${MAIN_UNIT} is ${unit_state:-unknown}; version not compared"
+      exit 0
+    fi
+  fi
+  fail "no process is listening on port ${MAIN_PORT} but the unit reports active (expected ${EXPECTED_BIN})"
 fi
 if [[ ! -e "/proc/${pid}" ]]; then
   fail "pid ${pid} disappeared while checking (expected ${EXPECTED_BIN})"
