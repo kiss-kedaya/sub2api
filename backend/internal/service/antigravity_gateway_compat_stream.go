@@ -70,8 +70,8 @@ func (a *antigravityChatStreamAdapter) emitResponseEvent(event *apicompat.Respon
 }
 
 type antigravityResponsesStreamAdapter struct {
-	anthropicState    *apicompat.AnthropicEventToResponsesState
-	clientToolMapping apicompat.ResponsesClientToolMapping
+	anthropicState     *apicompat.AnthropicEventToResponsesState
+	clientToolMapping  apicompat.ResponsesClientToolMapping
 	clientToolRestorer *apicompat.ResponsesClientToolStreamRestorer
 }
 

@@ -12,12 +12,13 @@ import (
 // buildModelBody 造一个「顶层 model + 大段填充 + session.model」的真实形状请求体。
 func buildModelBody(targetSize int, model string) []byte {
 	var sb strings.Builder
-	sb.WriteString(`{"model":"` + model + `","session":{"model":"` + model + `"},"input":[`)
+	// strings.Builder 的写入永不失败，但 errcheck 要求显式忽略返回值。
+	_, _ = sb.WriteString(`{"model":"` + model + `","session":{"model":"` + model + `"},"input":[`)
 	filler := `{"role":"user","content":"` + strings.Repeat("x", 512) + `"},`
 	for sb.Len() < targetSize {
-		sb.WriteString(filler)
+		_, _ = sb.WriteString(filler)
 	}
-	sb.WriteString(`{"role":"user","content":"done"}]}`)
+	_, _ = sb.WriteString(`{"role":"user","content":"done"}]}`)
 	return []byte(sb.String())
 }
 
