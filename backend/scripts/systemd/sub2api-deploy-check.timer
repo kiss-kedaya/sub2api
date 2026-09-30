@@ -1,0 +1,15 @@
+[Unit]
+Description=Run the Sub2API deploy consistency check every 5 minutes
+Documentation=https://github.com/kiss-kedaya/sub2api
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+# 打散多台机器，避免同时打数据库/系统调用
+RandomizedDelaySec=45s
+Persistent=true
+Unit=sub2api-deploy-check.service
+
+[Install]
+WantedBy=timers.target

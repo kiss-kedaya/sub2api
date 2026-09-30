@@ -500,7 +500,8 @@ export default {
           system: 'System Metrics',
           group: 'Group-level Metrics (requires group_id)',
           account: 'Account-level Metrics',
-          billing: 'Billing Watchdog Metrics'
+          billing: 'Billing Watchdog Metrics',
+          deploy: 'Deploy Consistency Metrics'
         },
         metrics: {
           successRate: 'Success Rate (%)',
@@ -523,7 +524,9 @@ export default {
           billingZeroCostRatio: 'Zero-cost Request Ratio (%)',
           billingNegativeBalanceUsers: 'Users With Negative Balance',
           billingCostSpikeRatio: 'Cost Spike Ratio (%)',
-          billingStuckHolds: 'Stuck Holds'
+          billingStuckHolds: 'Stuck Holds',
+          deployVersionMismatch: 'Deploy Version Mismatch',
+          deployCheckAgeSeconds: 'Deploy Check Age (s)'
         },
         metricDescriptions: {
           successRate: 'Percentage of successful requests in the window (0-100).',
@@ -546,7 +549,9 @@ export default {
           billingZeroCostRatio: 'Zero-cost requests as a percentage of requests that consumed tokens. The absolute count tracks traffic volume, so the ratio is the better threshold target.',
           billingNegativeBalanceUsers: 'Users with a balance below zero that are not deleted. Should be 0; anything else points at a billing or concurrency defect.',
           billingCostSpikeRatio: 'Window cost divided by the previous window cost, times 100. Unavailable (never fires) when the previous window had no billable traffic.',
-          billingStuckHolds: 'Holds past their expiry that were never settled. A growing number means holds are leaking. Read-only: this metric never modifies those rows.'
+          billingStuckHolds: 'Holds past their expiry that were never settled. A growing number means holds are leaking. Read-only: this metric never modifies those rows.',
+          deployVersionMismatch: 'Set to 1 when the binary actually running (or the systemd unit it belongs to) does not match the expected version. Fed by the host-side periodic check, which catches incidents like a unit named for one version while the process runs another. Unavailable when the status file is missing or stale, so a dead watchdog never reports healthy.',
+          deployCheckAgeSeconds: 'Seconds since the last successful host-side deploy check. A steadily growing value means the watchdog itself stopped running (timer stopped or script failing).'
         },
         hints: {
           recommended: 'Recommended: operator {operator}, threshold {threshold}{unit}',
