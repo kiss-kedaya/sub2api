@@ -499,7 +499,8 @@ export default {
         metricGroups: {
           system: '系统指标',
           group: '分组级别指标（需 group_id）',
-          account: '账号级别指标'
+          account: '账号级别指标',
+          billing: '计费看门狗指标'
         },
         metrics: {
           successRate: '成功率 (%)',
@@ -517,7 +518,12 @@ export default {
           accountErrorCount: '错误账号数（不含临时不可调度）',
           accountErrorRatio: '错误账号比例 (%)',
           accountTempUnscheduledCount: '临时不可调度账号数',
-          overloadAccountCount: '过载账号数'
+          overloadAccountCount: '过载账号数',
+          billingZeroCostRequests: '零扣费请求数',
+          billingZeroCostRatio: '零扣费请求占比 (%)',
+          billingNegativeBalanceUsers: '负余额用户数',
+          billingCostSpikeRatio: '费用突增倍数 (%)',
+          billingStuckHolds: '卡住的预扣笔数'
         },
         metricDescriptions: {
           successRate: '统计窗口内成功请求占比（0~100）。',
@@ -535,7 +541,12 @@ export default {
           accountErrorCount: '统计窗口内产生错误的账号数量（不含临时不可调度）。',
           accountErrorRatio: '统计窗口内错误账号占比（0~100）。',
           accountTempUnscheduledCount: '当前处于临时不可调度状态的账号数量（如代理/凭据故障被自动摘除）。',
-          overloadAccountCount: '统计窗口内过载账号数量。'
+          overloadAccountCount: '统计窗口内过载账号数量。',
+          billingZeroCostRequests: '统计窗口内有 token 用量、但实际扣费为 0 的请求数。这是「用了不扣费」的直接信号，正常应长期为 0。',
+          billingZeroCostRatio: '统计窗口内零扣费请求占「有用量请求」的百分比。绝对量随流量波动，比例更适合设阈值。',
+          billingNegativeBalanceUsers: '余额小于 0 且未删除的用户数量。正常应为 0，出现即说明扣费/并发控制有异常。',
+          billingCostSpikeRatio: '统计窗口总扣费 ÷ 上一个等长窗口总扣费 × 100。上一窗没有计费流量时该指标不可用、不会触发。',
+          billingStuckHolds: '已过预扣有效期、但从未结算的预扣笔数。持续增长说明预扣泄漏。只读统计，不会改动这些记录。'
         },
         hints: {
           recommended: '推荐：运算符 {operator}，阈值 {threshold}{unit}',

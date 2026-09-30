@@ -499,7 +499,8 @@ export default {
         metricGroups: {
           system: 'System Metrics',
           group: 'Group-level Metrics (requires group_id)',
-          account: 'Account-level Metrics'
+          account: 'Account-level Metrics',
+          billing: 'Billing Watchdog Metrics'
         },
         metrics: {
           successRate: 'Success Rate (%)',
@@ -517,7 +518,12 @@ export default {
           accountErrorCount: 'Error Accounts (excluding temporarily unschedulable)',
           accountErrorRatio: 'Error Account Ratio (%)',
           accountTempUnscheduledCount: 'Temporarily Unschedulable Accounts',
-          overloadAccountCount: 'Overloaded Accounts'
+          overloadAccountCount: 'Overloaded Accounts',
+          billingZeroCostRequests: 'Zero-cost Requests',
+          billingZeroCostRatio: 'Zero-cost Request Ratio (%)',
+          billingNegativeBalanceUsers: 'Users With Negative Balance',
+          billingCostSpikeRatio: 'Cost Spike Ratio (%)',
+          billingStuckHolds: 'Stuck Holds'
         },
         metricDescriptions: {
           successRate: 'Percentage of successful requests in the window (0-100).',
@@ -535,7 +541,12 @@ export default {
           accountErrorCount: 'Number of error accounts within the window (excluding temporarily unschedulable).',
           accountErrorRatio: 'Error account ratio within the window (0-100).',
           accountTempUnscheduledCount: 'Number of accounts currently temporarily unschedulable (e.g. proxy/credential failure auto-eviction).',
-          overloadAccountCount: 'Number of overloaded accounts within the window.'
+          overloadAccountCount: 'Number of overloaded accounts within the window.',
+          billingZeroCostRequests: 'Requests in the window that consumed tokens but were charged zero. This is the direct signal for "used but not billed" and should stay at 0.',
+          billingZeroCostRatio: 'Zero-cost requests as a percentage of requests that consumed tokens. The absolute count tracks traffic volume, so the ratio is the better threshold target.',
+          billingNegativeBalanceUsers: 'Users with a balance below zero that are not deleted. Should be 0; anything else points at a billing or concurrency defect.',
+          billingCostSpikeRatio: 'Window cost divided by the previous window cost, times 100. Unavailable (never fires) when the previous window had no billable traffic.',
+          billingStuckHolds: 'Holds past their expiry that were never settled. A growing number means holds are leaking. Read-only: this metric never modifies those rows.'
         },
         hints: {
           recommended: 'Recommended: operator {operator}, threshold {threshold}{unit}',

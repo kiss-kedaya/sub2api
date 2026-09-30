@@ -54,6 +54,10 @@ type OpsRepository interface {
 	CreateAlertSilence(ctx context.Context, input *OpsAlertSilence) (*OpsAlertSilence, error)
 	IsAlertSilenced(ctx context.Context, ruleID int64, platform string, groupID *int64, region *string, now time.Time) (bool, error)
 
+	// Billing anomaly sample for the read-only billing watchdog metrics.
+	// Aggregates only; it must never write to balances, holds or usage rows.
+	GetBillingAnomalySnapshot(ctx context.Context, start, end time.Time) (*BillingAnomalySnapshot, error)
+
 	// Pre-aggregation (hourly/daily) used for long-window dashboard performance.
 	UpsertHourlyMetrics(ctx context.Context, startTime, endTime time.Time) error
 	UpsertDailyMetrics(ctx context.Context, startTime, endTime time.Time) error
