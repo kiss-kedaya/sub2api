@@ -400,10 +400,10 @@ func isClaudeCodeCredentialScopeError(msg string) bool {
 		strings.Contains(m, "cannot be used for other api requests")
 }
 
-// sseDataRe matches SSE data lines with optional whitespace after colon.
-// Some upstream APIs return non-standard "data:" without space (should be "data: ").
+// SSE 的 data 行改用 strings.CutPrefix + TrimLeft 解析，不再用正则：
+// 每个 SSE 事件都要处理一次，长回答动辄上千帧。上游还存在非标准的
+// "data:"（冒号后无空格）写法，CutPrefix 同样覆盖。
 var (
-	sseDataRe            = regexp.MustCompile(`^data:\s*`)
 	claudeCliUserAgentRe = regexp.MustCompile(`(?i)^claude-cli/\d+\.\d+\.\d+`)
 
 	// claudeCodePromptPrefixes 用于检测 Claude Code 系统提示词的前缀列表
