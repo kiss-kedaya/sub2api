@@ -448,11 +448,11 @@
   }
 
   .modal-enter-active {
-    transition: opacity 250ms ease-out;
+    transition: opacity 240ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
   }
 
   .modal-leave-active {
-    transition: opacity 200ms ease-in;
+    transition: opacity 180ms ease-in;
   }
 
   .modal-enter-from,
@@ -461,16 +461,17 @@
   }
 
   .modal-enter-active .modal-content {
-    transition: transform 250ms ease-out, opacity 250ms ease-out;
+    transition: transform 320ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)),
+      opacity 240ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
   }
 
   .modal-leave-active .modal-content {
-    transition: transform 200ms ease-in, opacity 200ms ease-in;
+    transition: transform 180ms ease-in, opacity 180ms ease-in;
   }
 
   .modal-enter-from .modal-content,
   .modal-leave-to .modal-content {
-    transform: scale(0.95);
+    transform: scale(0.96) translateY(10px);
     opacity: 0;
   }
 
