@@ -58,6 +58,10 @@ type OpsRepository interface {
 	// Aggregates only; it must never write to balances, holds or usage rows.
 	GetBillingAnomalySnapshot(ctx context.Context, start, end time.Time) (*BillingAnomalySnapshot, error)
 
+	// Latency percentiles for the p95/p99 alert metrics. Read-only aggregation
+	// over usage_logs, bounded by the caller's window.
+	GetLatencyPercentiles(ctx context.Context, filter *OpsDashboardFilter, start, end time.Time) (*OpsLatencyPercentiles, error)
+
 	// Pre-aggregation (hourly/daily) used for long-window dashboard performance.
 	UpsertHourlyMetrics(ctx context.Context, startTime, endTime time.Time) error
 	UpsertDailyMetrics(ctx context.Context, startTime, endTime time.Time) error

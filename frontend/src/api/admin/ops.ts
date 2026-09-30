@@ -696,6 +696,10 @@ export type MetricType =
   | 'billing_stuck_holds'
   | 'deploy_version_mismatch'
   | 'deploy_check_age_seconds'
+  | 'p95_latency_ms'
+  | 'p99_latency_ms'
+  | 'p95_first_token_ms'
+  | 'p99_first_token_ms'
 export type Operator = '>' | '>=' | '<' | '<=' | '==' | '!='
 
 export interface AlertRule {
