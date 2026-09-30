@@ -468,7 +468,9 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 		OpsMetricBillingZeroCostRatio,
 		OpsMetricBillingNegativeBalanceUsers,
 		OpsMetricBillingCostSpikeRatio,
-		OpsMetricBillingStuckHolds:
+		OpsMetricBillingStuckHolds,
+		OpsMetricBillingZeroCostRequestsDelta,
+		OpsMetricBillingNegativeBalanceUsersDelta:
 		return s.computeBillingAnomalyMetric(ctx, rule, start, end)
 	}
 
@@ -694,8 +696,49 @@ func (s *OpsAlertEvaluatorService) computeBillingAnomalyMetric(
 	case OpsMetricBillingCostSpikeRatio:
 		// 上一窗没有基线时不可用，避免把「上一窗恰好没流量」误报成费用暴涨。
 		return snapshot.CostSpikeRatio()
+	case OpsMetricBillingZeroCostRequestsDelta:
+		// 稳态下约为 0。绝对量长期非零（未定价模型），只有突增才值得报警。
+		return snapshot.ZeroCostRequestDelta(), true
+	case OpsMetricBillingNegativeBalanceUsersDelta:
+		return s.negativeBalanceUserDelta(ctx, snapshot.NegativeBalanceUsers)
 	}
 	return 0, false
+}
+
+// 负余额用户数是存量指标，没有「上一个窗口」可比，所以把基线放 Redis。
+// TTL 到期后自动重置，因此它回答的是「最近一个 TTL 周期内新增了多少」。
+const (
+	negativeBalanceBaselineKey = "ops:billing:negative_balance_users:baseline"
+	negativeBalanceBaselineTTL = time.Hour
+)
+
+// negativeBalanceUserDelta 返回负余额用户数相对基线的增量。
+//
+// 基线不存在时只负责建立基线并返回「不可用」——第一次运行不告警，
+// 否则每次 Redis 重启/过期都会立刻误报一次（基数有 1000+）。
+func (s *OpsAlertEvaluatorService) negativeBalanceUserDelta(ctx context.Context, current int64) (float64, bool) {
+	if s == nil || s.redisClient == nil {
+		return 0, false
+	}
+	created, err := s.redisClient.SetNX(ctx, negativeBalanceBaselineKey,
+		strconv.FormatInt(current, 10), negativeBalanceBaselineTTL).Result()
+	if err != nil {
+		logger.LegacyPrintf("service.ops_alert_evaluator",
+			"[OpsAlertEvaluator] negative balance baseline unavailable: %v", err)
+		return 0, false
+	}
+	if created {
+		return 0, false
+	}
+	raw, err := s.redisClient.Get(ctx, negativeBalanceBaselineKey).Result()
+	if err != nil {
+		return 0, false
+	}
+	base, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return float64(current - base), true
 }
 
 // computeDeployCheckMetric 计算部署一致性指标。

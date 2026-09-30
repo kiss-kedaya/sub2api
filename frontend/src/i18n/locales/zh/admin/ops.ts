@@ -527,6 +527,8 @@ export default {
           billingNegativeBalanceUsers: '负余额用户数',
           billingCostSpikeRatio: '费用突增倍数 (%)',
           billingStuckHolds: '卡住的预扣笔数',
+          billingZeroCostRequestsDelta: '零扣费请求增量',
+          billingNegativeBalanceUsersDelta: '负余额用户增量',
           deployVersionMismatch: '部署版本不一致',
           deployCheckAgeSeconds: '部署检查距今秒数'
         },
@@ -554,6 +556,8 @@ export default {
           billingNegativeBalanceUsers: '余额小于 0 且未删除的用户数量。正常应为 0，出现即说明扣费/并发控制有异常。',
           billingCostSpikeRatio: '统计窗口总扣费 ÷ 上一个等长窗口总扣费 × 100。上一窗没有计费流量时该指标不可用、不会触发。',
           billingStuckHolds: '已过预扣有效期、但从未结算的预扣笔数。持续增长说明预扣泄漏。只读统计，不会改动这些记录。',
+          billingZeroCostRequestsDelta: '本窗零扣费请求数减去上一个等长窗口。稳态下接近 0——绝对量在生产上长期非零（例如某个未定价的模型），用绝对值当阈值会变成每小时一封的骚扰，所以告警请用这个增量指标。',
+          billingNegativeBalanceUsersDelta: '负余额用户数相对基线的增量。基线存在 Redis 里、每小时自动重置，因此它回答的是「最近一小时新增了多少负余额用户」。稳态的缓慢累积不会报警。Redis 不可用时该指标报「不可用」而不会误报。',
           deployVersionMismatch: '实际在运行的二进制（或它所属的 systemd 单元）与期望版本不一致时为 1。由主机侧的定时检查写入，用于抓住「单元名与实际跑的版本不符」这类事故。状态文件过旧或缺失时该指标不可用，不会报告为正常。',
           deployCheckAgeSeconds: '距上一次成功的主机部署检查有多少秒。这个值持续增大说明看门狗本身没在跑（定时器停了或脚本报错）。'
         },
