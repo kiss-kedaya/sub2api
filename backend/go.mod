@@ -27,7 +27,7 @@ require (
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/imroc/req/v3 v3.59.0
-	github.com/klauspost/compress v1.18.2
+	github.com/klauspost/compress v1.18.7
 	github.com/lib/pq v1.10.9
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pquerna/otp v1.5.0
@@ -40,9 +40,9 @@ require (
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.11.1
 	github.com/stripe/stripe-go/v85 v85.0.0
+	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/captcha v1.3.52
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.52
-	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.40.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.40.0
 	github.com/tidwall/gjson v1.18.0
@@ -51,9 +51,9 @@ require (
 	github.com/wechatpay-apiv3/wechatpay-go v0.2.21
 	github.com/zeromicro/go-zero v1.9.4
 	go.uber.org/zap v1.24.0
-	golang.org/x/crypto v0.55.0
-	golang.org/x/image v0.41.0
-	golang.org/x/mod v0.38.0
+	golang.org/x/crypto v0.56.0
+	golang.org/x/image v0.45.0
+	golang.org/x/mod v0.40.0
 	golang.org/x/net v0.58.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/term v0.45.0
@@ -205,7 +205,7 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
-	golang.org/x/tools v0.48.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	modernc.org/libc v1.67.6 // indirect
