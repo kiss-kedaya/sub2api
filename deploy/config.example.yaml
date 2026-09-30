@@ -750,7 +750,7 @@ api_key_create:
   # Maximum API key creations per user per hour (custom and generated keys).
   # Deleting a key does not refund the count, which blocks delete/recreate loops.
   # 单个用户每小时可创建的 API Key 次数（自定义与自动生成均计入）；删除 Key 不返还次数，阻断删建循环
-  max_per_user_per_hour: 20
+  max_per_user_per_hour: 60
 
 # =============================================================================
 # Dashboard Cache Configuration
