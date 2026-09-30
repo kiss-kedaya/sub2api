@@ -3,7 +3,7 @@
     <div v-if="section !== 'platforms'" class="signal-lead-grid" :class="{ 'signal-lead-grid--simple': isSimple }">
       <div v-if="!isSimple" class="signal-metric signal-metric--balance">
         <p class="signal-label">{{ t('dashboard.balance') }} <span>USD</span></p>
-        <p class="signal-value">${{ formatBalance(balance) }}</p>
+        <p class="signal-value">$<AnimatedNumber :value="balance" :format="formatBalance" /></p>
         <div class="signal-metric-foot">
           <span>{{ t('dashboard.recentTotal') }} / {{ t('dashboard.actual') }}</span>
           <strong>${{ formatCost(stats?.total_actual_cost || 0) }}</strong>
@@ -12,7 +12,7 @@
       </div>
       <div class="signal-metric signal-metric--total">
         <p class="signal-label">{{ t('dashboard.recentTokens') }}</p>
-        <p class="signal-value">{{ formatTokens(stats?.total_tokens || 0) }} <small>tokens</small></p>
+        <p class="signal-value"><AnimatedNumber :value="stats?.total_tokens || 0" :format="formatTokens" /> <small>tokens</small></p>
         <dl class="signal-token-split">
           <div><dt>{{ t('dashboard.input') }}</dt><dd>{{ formatTokens(stats?.total_input_tokens || 0) }}</dd></div>
           <div><dt>{{ t('dashboard.output') }}</dt><dd>{{ formatTokens(stats?.total_output_tokens || 0) }}</dd></div>
@@ -25,7 +25,7 @@
     <div v-if="section !== 'platforms'" class="signal-stat-strip" :class="{ 'signal-stat-strip--models': $slots.models }">
       <div class="signal-metric signal-metric--tokens">
         <p class="signal-label">{{ t('dashboard.todayTokens') }}</p>
-        <p class="signal-value">{{ formatTokens(stats?.today_tokens || 0) }}</p>
+        <p class="signal-value"><AnimatedNumber :value="stats?.today_tokens || 0" :format="formatTokens" /></p>
         <div class="signal-metric-foot">
           <span>{{ t('dashboard.input') }} {{ formatTokens(stats?.today_input_tokens || 0) }} / {{ t('dashboard.output') }} {{ formatTokens(stats?.today_output_tokens || 0) }}</span>
           <span>{{ t('dashboard.cache') }} {{ formatTokens((stats?.today_cache_creation_tokens || 0) + (stats?.today_cache_read_tokens || 0)) }}</span>
@@ -33,17 +33,17 @@
       </div>
       <div class="signal-metric signal-metric--cost">
         <p class="signal-label"><Icon name="dollar" size="sm" />{{ t('dashboard.todayCost') }}</p>
-        <p class="signal-value" :title="t('dashboard.actual')">${{ formatCost(stats?.today_actual_cost || 0) }}</p>
+        <p class="signal-value" :title="t('dashboard.actual')">$<AnimatedNumber :value="stats?.today_actual_cost || 0" :format="formatCost" :duration="480" /></p>
         <div class="signal-metric-foot"><span>{{ t('dashboard.standard') }}</span><strong>${{ formatCost(stats?.today_cost || 0) }}</strong></div>
       </div>
       <div class="signal-metric">
         <p class="signal-label"><Icon name="chart" size="sm" />{{ t('dashboard.todayRequests') }}</p>
-        <p class="signal-value">{{ stats?.today_requests || 0 }}</p>
+        <p class="signal-value"><AnimatedNumber :value="stats?.today_requests || 0" :decimals="0" /></p>
         <div class="signal-metric-foot"><span>{{ t('dashboard.recentTotal') }}</span><strong>{{ formatNumber(stats?.total_requests || 0) }}</strong></div>
       </div>
       <div class="signal-metric">
         <p class="signal-label"><Icon name="key" size="sm" />{{ t('dashboard.apiKeys') }}</p>
-        <p class="signal-value">{{ stats?.total_api_keys || 0 }}</p>
+        <p class="signal-value"><AnimatedNumber :value="stats?.total_api_keys || 0" :decimals="0" /></p>
         <div class="signal-metric-foot"><span class="signal-active">{{ stats?.active_api_keys || 0 }} {{ t('common.active') }}</span></div>
       </div>
       <slot name="models" />
@@ -113,6 +113,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import AnimatedNumber from '@/components/common/AnimatedNumber.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import type { UserDashboardStats as UserStatsType } from '@/api/usage'
 import type { PlatformQuotaItem, GroupPlatform } from '@/types'
