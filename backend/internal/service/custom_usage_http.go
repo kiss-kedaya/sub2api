@@ -34,32 +34,13 @@ func newCustomUsageClient() *http.Client {
 	}}
 }
 
-var customUsageBlockedPrefixes = func() []netip.Prefix {
-	ranges := []string{"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "168.63.129.16/32", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20"}
-	out := make([]netip.Prefix, 0, len(ranges))
-	for _, r := range ranges {
-		out = append(out, netip.MustParsePrefix(r))
-	}
-	return out
-}()
-
+// customUsagePublicIP 判断解析后的 IP 是否可安全出站。
+//
+// 清单已统一到 urlvalidator.IsPublicResolvedIP（全仓唯一来源）：原先这里
+// 单独维护了一份完整版、而 urlvalidator.ValidateResolvedIP 只依赖标准库的
+// IsPrivate/IsLoopback/...，两份口径不一致导致 CGNAT 等段在一侧被放行。
 func customUsagePublicIP(ip netip.Addr) bool {
-	if !ip.IsValid() || ip.Zone() != "" {
-		return false
-	}
-	ip = ip.Unmap()
-	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-		return false
-	}
-	if ip.Is6() && !netip.MustParsePrefix("2000::/3").Contains(ip) {
-		return false
-	}
-	for _, p := range customUsageBlockedPrefixes {
-		if p.Contains(ip) {
-			return false
-		}
-	}
-	return true
+	return urlvalidator.IsPublicResolvedIP(ip)
 }
 func (n customUsageNetwork) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
