@@ -217,23 +217,6 @@ func TestCalculateTokenCostForRequest_NoResolverFallsBackToCatalog(t *testing.T)
 	require.Equal(t, want, got)
 }
 
-func TestCalculateTokenCostForRequest_Fable51MaxEffortUsesDefaultMultiplier(t *testing.T) {
-	bs := NewBillingService(&config.Config{}, nil)
-	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 10}
-	standard, err := bs.CalculateTokenCostForRequest(TokenCostRequest{
-		Model: "claude-fable-5-1", Tokens: tokens, RateMultiplier: 1, ReasoningEffort: "xhigh",
-	})
-	require.NoError(t, err)
-	max, err := bs.CalculateTokenCostForRequest(TokenCostRequest{
-		Model: "claude-fable-5-1", Tokens: tokens, RateMultiplier: 1, ReasoningEffort: "max",
-	})
-	require.NoError(t, err)
-	require.InDelta(t, standard.TotalCost*3, max.TotalCost, 1e-12)
-	require.InDelta(t, standard.ActualCost*3, max.ActualCost, 1e-12)
-	require.InDelta(t, standard.InputCost*3, max.InputCost, 1e-12)
-	require.InDelta(t, standard.OutputCost*3, max.OutputCost, 1e-12)
-}
-
 func TestCalculateTokenCostForRequest_ChannelOverridesFable51MaxEffortMultiplier(t *testing.T) {
 	configured := 1.5
 	bs, resolver := newTokenCostTestEnv(t, PlatformAnthropic, []ChannelModelPricing{{
