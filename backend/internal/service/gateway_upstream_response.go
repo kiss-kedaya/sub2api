@@ -938,8 +938,12 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				eventName = strings.TrimSpace(strings.TrimPrefix(trimmed, "event:"))
 				continue
 			}
-			if dataLine == "" && sseDataRe.MatchString(trimmed) {
-				dataLine = sseDataRe.ReplaceAllString(trimmed, "")
+			// 等价于原来的 `^data:\s*` 正则，但不必跑两趟正则引擎：
+			// 每个 SSE 事件都会走到这里，长回答动辄上千帧。
+			if dataLine == "" {
+				if rest, ok := strings.CutPrefix(trimmed, "data:"); ok {
+					dataLine = strings.TrimLeft(rest, " \t\n\f\r")
+				}
 			}
 		}
 
