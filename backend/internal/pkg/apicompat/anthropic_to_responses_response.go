@@ -164,6 +164,12 @@ type AnthropicEventToResponsesState struct {
 	CurrentCallID string
 	CurrentName   string
 
+	// PendingToolInput holds tool arguments that arrived complete on
+	// content_block_start instead of as input_json_delta. It is only consumed at
+	// content_block_stop, and only when no delta ever arrived, so a canonical
+	// Anthropic stream keeps its exact event sequence.
+	PendingToolInput string
+
 	// Content of the currently open item, folded into Outputs when it closes.
 	CurrentContent []ResponsesContentPart // message
 	CurrentArgs    string                 // function_call
@@ -350,6 +356,12 @@ func anthToResHandleContentBlockStart(evt *AnthropicStreamEvent, state *Anthropi
 		state.CurrentItemType = "function_call"
 		state.CurrentCallID = toResponsesCallID(evt.ContentBlock.ID)
 		state.CurrentName = evt.ContentBlock.Name
+		// The canonical Anthropic stream leaves input empty here and streams the
+		// arguments as input_json_delta, but Anthropic-compatible relays may put
+		// the complete arguments on this event and never send a delta. Keep them
+		// as a seed rather than emitting now: a delta, if one follows, is
+		// authoritative and must not be concatenated onto this JSON.
+		state.PendingToolInput = seedToolArguments(evt.ContentBlock.Input)
 
 		events = append(events, makeResponsesEvent(state, "response.output_item.added", &ResponsesStreamEvent{
 			OutputIndex: state.OutputIndex,
@@ -418,6 +430,9 @@ func anthToResHandleContentBlockDelta(evt *AnthropicStreamEvent, state *Anthropi
 		if evt.Delta.PartialJSON == "" {
 			return nil
 		}
+		// A real delta supersedes whatever content_block_start carried; keeping
+		// both would splice two complete JSON documents together.
+		state.PendingToolInput = ""
 		state.CurrentArgs += evt.Delta.PartialJSON
 		return []ResponsesStreamEvent{makeResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
 			OutputIndex: state.OutputIndex,
@@ -450,17 +465,30 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 		return events
 
 	case "function_call":
-		// Emit function_call_arguments.done + output item done
-		events := []ResponsesStreamEvent{
-			makeResponsesEvent(state, "response.function_call_arguments.done", &ResponsesStreamEvent{
-				// The final arguments must match the JSON already emitted in deltas.
-				Arguments:   state.CurrentArgs,
+		var events []ResponsesStreamEvent
+		// No delta ever arrived, so the arguments the upstream put on
+		// content_block_start are all there is. Emit them as one delta here so
+		// the done event below still repeats exactly what the deltas streamed.
+		if state.CurrentArgs == "" && state.PendingToolInput != "" {
+			state.CurrentArgs = state.PendingToolInput
+			events = append(events, makeResponsesEvent(state, "response.function_call_arguments.delta", &ResponsesStreamEvent{
 				OutputIndex: state.OutputIndex,
+				Delta:       state.PendingToolInput,
 				ItemID:      state.CurrentItemID,
 				CallID:      state.CurrentCallID,
 				Name:        state.CurrentName,
-			}),
+			}))
 		}
+		state.PendingToolInput = ""
+
+		// Emit function_call_arguments.done + output item done.
+		events = append(events, makeResponsesEvent(state, "response.function_call_arguments.done", &ResponsesStreamEvent{
+			OutputIndex: state.OutputIndex,
+			ItemID:      state.CurrentItemID,
+			CallID:      state.CurrentCallID,
+			Name:        state.CurrentName,
+			Arguments:   state.CurrentArgs,
+		}))
 		events = append(events, closeCurrentResponsesItem(state)...)
 		return events
 
@@ -547,6 +575,19 @@ func anthropicResponsesStreamTerminalState(stopReason string) (string, *Response
 	return "completed", nil
 }
 
+// seedToolArguments normalizes a tool_use content block's inline input into a
+// seed for the streaming converter. Empty, absent and no-argument payloads
+// return "" so the existing "{}" fallback still applies and no empty delta is
+// synthesized.
+func seedToolArguments(input json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(input))
+	switch trimmed {
+	case "", "{}", "null":
+		return ""
+	}
+	return trimmed
+}
+
 func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []ResponsesStreamEvent {
 	if state.CurrentItemType == "" {
 		return nil
@@ -588,6 +629,7 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 	state.CurrentName = ""
 	state.CurrentContent = nil
 	state.CurrentArgs = ""
+	state.PendingToolInput = ""
 	state.CurrentSummary = ""
 	state.TextAccum = ""
 	state.OutputIndex++
