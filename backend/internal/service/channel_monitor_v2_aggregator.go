@@ -279,6 +279,19 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 		return
 	}
 
+	// 每个 tick 都重新读一次持久化水位。它是「已经聚合到哪一分钟」的唯一真相，
+	// 而下面用它兜住被跳过的 tick（liveStart）。
+	//
+	// 只在进程启动时读一次（ensureCursor 的 cursorLoaded 短路）会有一个要命的后果：
+	// 运维想把 data_through 往回拨来回填历史空洞时，**必须重启进程才生效**。而生产
+	// 要求 24h 不停机、只接受滚动上线，重启是被严格限制的操作——不该为了补数据而重启。
+	// 一次单行读的开销相对每分钟一次聚合可以忽略。
+	if wm, wmErr := s.repo.GetAggregationWatermark(ctx); wmErr == nil && wm != nil && !wm.DataThrough.IsZero() {
+		s.mu.Lock()
+		s.liveThrough = wm.DataThrough.UTC().Truncate(time.Minute)
+		s.mu.Unlock()
+	}
+
 	s.mu.Lock()
 	cursor := s.backfillAt
 	hasData := s.hasAggregated
