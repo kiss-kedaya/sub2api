@@ -320,6 +320,23 @@ const metricDefinitions = computed(() => {
       recommendedOperator: '>',
       recommendedThreshold: 0
     },
+    // 增量指标：绝对量在生产上长期非零，用绝对值告警会变成每小时一封的骚扰。
+    {
+      type: 'billing_zero_cost_requests_delta',
+      group: 'billing',
+      label: t('admin.ops.alertRules.metrics.billingZeroCostRequestsDelta'),
+      description: t('admin.ops.alertRules.metricDescriptions.billingZeroCostRequestsDelta'),
+      recommendedOperator: '>',
+      recommendedThreshold: 300
+    },
+    {
+      type: 'billing_negative_balance_users_delta',
+      group: 'billing',
+      label: t('admin.ops.alertRules.metrics.billingNegativeBalanceUsersDelta'),
+      description: t('admin.ops.alertRules.metricDescriptions.billingNegativeBalanceUsersDelta'),
+      recommendedOperator: '>',
+      recommendedThreshold: 50
+    },
 
     // Deploy consistency metrics (fed by the host-side systemd timer).
     {

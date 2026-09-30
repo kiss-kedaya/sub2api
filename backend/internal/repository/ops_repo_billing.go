@@ -48,7 +48,12 @@ SELECT
       AND actual_cost = 0
   ) AS zero_cost_requests,
   COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $1 AND created_at < $2), 0) AS window_cost,
-  COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $3 AND created_at < $1), 0) AS previous_window_cost
+  COALESCE(SUM(actual_cost) FILTER (WHERE created_at >= $3 AND created_at < $1), 0) AS previous_window_cost,
+  COUNT(*) FILTER (
+    WHERE created_at >= $3 AND created_at < $1
+      AND (input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) > 0
+      AND actual_cost = 0
+  ) AS previous_zero_cost_requests
 FROM usage_logs
 WHERE created_at >= $3 AND created_at < $2`
 
@@ -57,6 +62,7 @@ WHERE created_at >= $3 AND created_at < $2`
 		&snapshot.ZeroCostRequests,
 		&snapshot.WindowCostUSD,
 		&snapshot.PreviousWindowCostUSD,
+		&snapshot.PreviousWindowZeroCostRequests,
 	); err != nil {
 		return nil, fmt.Errorf("billing anomaly usage window: %w", err)
 	}

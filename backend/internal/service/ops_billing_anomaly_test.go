@@ -207,6 +207,63 @@ func TestComputeBillingAnomalyMetric_RepoErrorIsNotAnAlert(t *testing.T) {
 	require.False(t, ok, "a query failure must not be reported as a billing anomaly")
 }
 
+// 绝对值指标在生产上长期非零（未定价模型持续产生零扣费请求），所以告警改用增量。
+func TestComputeBillingAnomalyMetric_ZeroCostDelta(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	ctx := context.Background()
+
+	t.Run("steady state reports about zero", func(t *testing.T) {
+		t.Parallel()
+		// 本窗 52 笔、上窗 50 笔 —— 稳态，不该告警。
+		repo := &billingStubOpsRepo{snapshot: &BillingAnomalySnapshot{
+			MeteredRequests: 9000, ZeroCostRequests: 52, PreviousWindowZeroCostRequests: 50,
+		}}
+		svc := &OpsAlertEvaluatorService{opsRepo: repo}
+
+		val, ok := svc.computeRuleMetric(ctx,
+			&OpsAlertRule{MetricType: OpsMetricBillingZeroCostRequestsDelta},
+			nil, now.Add(-5*time.Minute), now, "", nil)
+
+		require.True(t, ok)
+		require.InDelta(t, 2, val, 0.0001)
+		require.False(t, compareMetric(val, ">", 300), "steady state must not breach")
+	})
+
+	t.Run("a real surge is reported", func(t *testing.T) {
+		t.Parallel()
+		repo := &billingStubOpsRepo{snapshot: &BillingAnomalySnapshot{
+			MeteredRequests: 9000, ZeroCostRequests: 5000, PreviousWindowZeroCostRequests: 50,
+		}}
+		svc := &OpsAlertEvaluatorService{opsRepo: repo}
+
+		val, ok := svc.computeRuleMetric(ctx,
+			&OpsAlertRule{MetricType: OpsMetricBillingZeroCostRequestsDelta},
+			nil, now.Add(-5*time.Minute), now, "", nil)
+
+		require.True(t, ok)
+		require.InDelta(t, 4950, val, 0.0001)
+		require.True(t, compareMetric(val, ">", 300))
+	})
+}
+
+// 负余额是存量指标，基线在 Redis 上。Redis 不可用时必须报「不可用」而不是
+// 拿 0 当增量——否则基数 1000+ 会每次 Redis 抖动都误报一次。
+func TestComputeBillingAnomalyMetric_NegativeBalanceDeltaFailsSafe(t *testing.T) {
+	t.Parallel()
+
+	repo := &billingStubOpsRepo{snapshot: &BillingAnomalySnapshot{NegativeBalanceUsers: 1101}}
+	svc := &OpsAlertEvaluatorService{opsRepo: repo} // 没有 redisClient
+
+	now := time.Now().UTC()
+	_, ok := svc.computeRuleMetric(context.Background(),
+		&OpsAlertRule{MetricType: OpsMetricBillingNegativeBalanceUsersDelta},
+		nil, now.Add(-5*time.Minute), now, "", nil)
+
+	require.False(t, ok, "without a baseline the delta is unavailable, never zero")
+}
+
 func TestComputeBillingAnomalyMetric_NonBillingMetricNotIntercepted(t *testing.T) {
 	t.Parallel()
 
