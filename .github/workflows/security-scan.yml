@@ -27,8 +27,29 @@ jobs:
       - name: Run govulncheck
         working-directory: backend
         run: |
+          # pipefail 必须开：否则管道最后一个命令（tee）会盖掉 govulncheck 的退出码，
+          # 「代码真的调用到漏洞」这种情况就不会让 job 失败。
+          set -o pipefail
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          govulncheck -show verbose ./... 2>&1 | tee govulncheck.log
+      # govulncheck 只在**代码调用到**漏洞时失败。「依赖里有漏洞但没调用到」这类
+      # 发现（Module Results 段）既不失败也不打印，于是永远没人修 ——
+      # 2026-09-30 实测这样躺着 11 条（x/image 一个占 5 条）。这一步把它们显式暴露，
+      # 并且只要存在**有修复版**的就失败，防止继续堆积。
+      - name: Surface module-level vulnerabilities
+        if: always()
+        working-directory: backend
+        run: |
+          python3 ../tools/check_govulncheck_modules.py \
+            --log govulncheck.log \
+            --fail-on-fixable
+      - name: Upload govulncheck log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: govulncheck-log
+          path: backend/govulncheck.log
+          if-no-files-found: ignore
 
   frontend-security:
     runs-on: ubuntu-latest
