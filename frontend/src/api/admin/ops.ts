@@ -689,6 +689,11 @@ export type MetricType =
   | 'account_error_ratio'
   | 'account_temp_unscheduled_count'
   | 'overload_account_count'
+  | 'billing_zero_cost_requests'
+  | 'billing_zero_cost_ratio'
+  | 'billing_negative_balance_users'
+  | 'billing_cost_spike_ratio'
+  | 'billing_stuck_holds'
 export type Operator = '>' | '>=' | '<' | '<=' | '==' | '!='
 
 export interface AlertRule {

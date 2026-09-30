@@ -48,7 +48,7 @@ const saving = ref(false)
 const editingId = ref<number | null>(null)
 const draft = ref<AlertRule | null>(null)
 
-type MetricGroup = 'system' | 'group' | 'account'
+type MetricGroup = 'system' | 'group' | 'account' | 'billing'
 
 interface MetricDefinition {
   type: MetricType
@@ -240,6 +240,50 @@ const metricDefinitions = computed(() => {
       description: t('admin.ops.alertRules.metricDescriptions.overloadAccountCount'),
       recommendedOperator: '>',
       recommendedThreshold: 0
+    },
+
+    // Billing watchdog metrics (read-only aggregates; never mutate balances).
+    {
+      type: 'billing_zero_cost_requests',
+      group: 'billing',
+      label: t('admin.ops.alertRules.metrics.billingZeroCostRequests'),
+      description: t('admin.ops.alertRules.metricDescriptions.billingZeroCostRequests'),
+      recommendedOperator: '>',
+      recommendedThreshold: 0
+    },
+    {
+      type: 'billing_zero_cost_ratio',
+      group: 'billing',
+      label: t('admin.ops.alertRules.metrics.billingZeroCostRatio'),
+      description: t('admin.ops.alertRules.metricDescriptions.billingZeroCostRatio'),
+      recommendedOperator: '>',
+      recommendedThreshold: 5,
+      unit: '%'
+    },
+    {
+      type: 'billing_negative_balance_users',
+      group: 'billing',
+      label: t('admin.ops.alertRules.metrics.billingNegativeBalanceUsers'),
+      description: t('admin.ops.alertRules.metricDescriptions.billingNegativeBalanceUsers'),
+      recommendedOperator: '>',
+      recommendedThreshold: 0
+    },
+    {
+      type: 'billing_cost_spike_ratio',
+      group: 'billing',
+      label: t('admin.ops.alertRules.metrics.billingCostSpikeRatio'),
+      description: t('admin.ops.alertRules.metricDescriptions.billingCostSpikeRatio'),
+      recommendedOperator: '>',
+      recommendedThreshold: 200,
+      unit: '%'
+    },
+    {
+      type: 'billing_stuck_holds',
+      group: 'billing',
+      label: t('admin.ops.alertRules.metrics.billingStuckHolds'),
+      description: t('admin.ops.alertRules.metricDescriptions.billingStuckHolds'),
+      recommendedOperator: '>',
+      recommendedThreshold: 0
     }
   ] satisfies MetricDefinition[]
 })
@@ -266,7 +310,7 @@ const metricOptions = computed(() => {
     ]
   }
 
-  return [...buildGroup('system'), ...buildGroup('group'), ...buildGroup('account')]
+  return [...buildGroup('system'), ...buildGroup('group'), ...buildGroup('account'), ...buildGroup('billing')]
 })
 
 const operatorOptions = computed(() => {
