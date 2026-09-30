@@ -549,7 +549,8 @@ func patchGrokResponsesBodyWithClientTools(body []byte, upstreamModel string) ([
 	if err != nil {
 		return nil, apicompat.ResponsesClientToolMapping{}, err
 	}
-	patched, err := patchGrokResponsesBodyBase(adapted, upstreamModel)
+	// 入参在 :541 已用 json.Valid 校验过，这里走跳过重复校验的版本。
+	patched, err := patchGrokResponsesBodyBaseTrusted(adapted, upstreamModel)
 	if err != nil {
 		return nil, apicompat.ResponsesClientToolMapping{}, err
 	}
@@ -560,6 +561,16 @@ func patchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, erro
 	if !json.Valid(body) {
 		return nil, fmt.Errorf("invalid json request body")
 	}
+	return patchGrokResponsesBodyBaseTrusted(body, upstreamModel)
+}
+
+// patchGrokResponsesBodyBaseTrusted 与 patchGrokResponsesBodyBase 行为相同，
+// 但**跳过 json.Valid**。只允许在调用方已经校验过入参 JSON 时使用。
+//
+// json.Valid 是一次整份 body 扫描；Grok 链路上 patchGrokResponsesBodyWithClientTools
+// 已在入口校验，再走一遍是纯浪费（生产 pprof 里 encoding/json.checkValid 累计占
+// 11.39% CPU）。patchGrokResponsesBody 那条路径入参未校验，仍走带校验的包装。
+func patchGrokResponsesBodyBaseTrusted(body []byte, upstreamModel string) ([]byte, error) {
 	// sjson may reuse the input backing array; keep the caller's request bytes
 	// unchanged because the same body can be inspected for billing/retry paths.
 	out, err := sjson.SetBytes(append([]byte(nil), body...), "model", upstreamModel)
@@ -574,31 +585,28 @@ func patchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
+	// 这几组「删除上游不支持的字段」不再先用 gjson 探测存在性：
+	// sjson.DeleteBytes 对不存在的路径本来就是无操作，而探测本身要整份解析一次，
+	// 等于每个字段白白多一次全量遍历（最多 9 个字段，就是 9 次）。
 	for _, unsupportedField := range []string{"prompt_cache_retention", "safety_identifier"} {
-		if gjson.GetBytes(out, unsupportedField).Exists() {
+		out, err = sjson.DeleteBytes(out, unsupportedField)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if strings.EqualFold(upstreamModel, "grok-4.5") {
+		for _, unsupportedField := range []string{"presence_penalty", "presencePenalty", "frequency_penalty", "frequencyPenalty", "stop"} {
 			out, err = sjson.DeleteBytes(out, unsupportedField)
 			if err != nil {
 				return nil, err
 			}
 		}
 	}
-	if strings.EqualFold(upstreamModel, "grok-4.5") {
-		for _, unsupportedField := range []string{"presence_penalty", "presencePenalty", "frequency_penalty", "frequencyPenalty", "stop"} {
-			if gjson.GetBytes(out, unsupportedField).Exists() {
-				out, err = sjson.DeleteBytes(out, unsupportedField)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
 	if grokModelRejectsLogprobs(upstreamModel) {
 		for _, unsupportedField := range []string{"logprobs", "top_logprobs"} {
-			if gjson.GetBytes(out, unsupportedField).Exists() {
-				out, err = sjson.DeleteBytes(out, unsupportedField)
-				if err != nil {
-					return nil, err
-				}
+			out, err = sjson.DeleteBytes(out, unsupportedField)
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
