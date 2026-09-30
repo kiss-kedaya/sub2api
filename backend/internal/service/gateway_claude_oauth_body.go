@@ -1134,6 +1134,122 @@ func enforceCacheControlLimit(body []byte) []byte {
 	return body
 }
 
+// normalizeCacheControlTTLOrder 强制 Anthropic 的 cache_control TTL 顺序约束：
+// ttl="1h" 的块不得排在 ttl="5m" 的块之后，块的处理顺序是 tools → system → messages。
+// 省略 ttl 的 ephemeral 块走默认 5m，同样算 5m。
+//
+// 上游原文（2026-09-30 实测，6h 194 次，全部落在 apikey 中转账号 30761/30762 上）：
+//
+//	a ttl='1h' cache_control block must not come after a ttl='5m' cache_control
+//	block. Note that blocks are processed in the following order: tools, system, messages.
+//
+// 修法是**提升**而不是降级：把处理顺序里位于「最后一个 1h 块」之前的 ephemeral 块
+// 一并提升为 1h。降级成 5m 会偷偷缩短客户端明确要求的 1h 缓存（客户端开 1h 就是
+// 为了跨过 5 分钟空档复用前缀），代价远高于提升；而且 OAuth 链路上的
+// injectAnthropicCacheControlTTL1h 本来就把所有 ephemeral 块强制成 1h，提升与之一致。
+//
+// 取「最后一个 1h」而不是「第一个 1h」：tools 5m / system 1h / messages 5m /
+// messages 再有 1h 这种形态，只提升到第一个 1h 之后仍然违规。
+// 顶层 cache_control 不是 Messages API 的标准字段、处理位置不明，按**最后**一位处理——
+// 放最后可以保证无论上游把它当第一个还是最后一个块，提升完的顺序都合法。
+//
+// 没有任何 1h 的请求原样返回（先做一次字节扫描），常见路径零开销、也零行为变化。
+func normalizeCacheControlTTLOrder(body []byte) []byte {
+	if len(body) == 0 || !bytes.Contains(body, []byte(`"`+cacheTTLTarget1h+`"`)) {
+		return body
+	}
+
+	type cacheControlEntry struct {
+		path      string
+		ephemeral bool
+		ttl       string
+	}
+
+	entries := make([]cacheControlEntry, 0, 8)
+	addCacheControl := func(path string, cc gjson.Result) {
+		if !cc.IsObject() {
+			return
+		}
+		entries = append(entries, cacheControlEntry{
+			path:      path,
+			ephemeral: cc.Get("type").String() == "ephemeral",
+			ttl:       cc.Get("ttl").String(),
+		})
+	}
+	scanArray := func(array gjson.Result, pathf func(int) string) {
+		if !array.IsArray() {
+			return
+		}
+		idx := -1
+		array.ForEach(func(_, item gjson.Result) bool {
+			idx++
+			addCacheControl(pathf(idx), item.Get("cache_control"))
+			return true
+		})
+	}
+
+	scanArray(gjson.GetBytes(body, "tools"), func(i int) string {
+		return fmt.Sprintf("tools.%d.cache_control", i)
+	})
+	scanArray(gjson.GetBytes(body, "system"), func(i int) string {
+		return fmt.Sprintf("system.%d.cache_control", i)
+	})
+	if messages := gjson.GetBytes(body, "messages"); messages.IsArray() {
+		msgIdx := -1
+		messages.ForEach(func(_, msg gjson.Result) bool {
+			msgIdx++
+			content := msg.Get("content")
+			if content.IsArray() {
+				contentIdx := -1
+				content.ForEach(func(_, block gjson.Result) bool {
+					contentIdx++
+					addCacheControl(
+						fmt.Sprintf("messages.%d.content.%d.cache_control", msgIdx, contentIdx),
+						block.Get("cache_control"),
+					)
+					return true
+				})
+			}
+			return true
+		})
+	}
+	// 顶层 cache_control 排在最后（见 godoc 说明）。
+	addCacheControl("cache_control", gjson.GetBytes(body, "cache_control"))
+
+	last1h := -1
+	for i := range entries {
+		if entries[i].ttl == cacheTTLTarget1h {
+			last1h = i
+		}
+	}
+	if last1h <= 0 {
+		// 没有 1h，或 1h 已经排在第一位：任何位置都不可能出现 1h 跟在 5m 后面。
+		return body
+	}
+
+	needsPromotion := false
+	for i := 0; i < last1h; i++ {
+		if entries[i].ephemeral && entries[i].ttl != cacheTTLTarget1h {
+			needsPromotion = true
+			break
+		}
+	}
+	if !needsPromotion {
+		return body
+	}
+
+	out := body
+	for i := 0; i < last1h; i++ {
+		if !entries[i].ephemeral || entries[i].ttl == cacheTTLTarget1h {
+			continue
+		}
+		if next, err := sjson.SetBytes(out, entries[i].path+".ttl", cacheTTLTarget1h); err == nil {
+			out = next
+		}
+	}
+	return out
+}
+
 // injectAnthropicCacheControlTTL1h 将已有 ephemeral cache_control 块的 ttl 强制写为 1h。
 // 仅修改已经存在的 cache_control，不新增缓存断点。
 func injectAnthropicCacheControlTTL1h(body []byte) []byte {

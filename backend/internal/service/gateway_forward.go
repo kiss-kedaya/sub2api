@@ -312,6 +312,13 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		}
 	}
 
+	// cache_control ttl 顺序归一化：客户端自带「5m 断点在前、1h 断点在后」时上游会直接
+	// 400（tools → system → messages 顺序里 1h 不得跟在 5m 后面）。放在所有断点注入之后，
+	// 这样我们自己注入的 tools/system/messages 断点也一并被规整。见函数 godoc。
+	if err := replaceBody(normalizeCacheControlTTLOrder(body)); err != nil {
+		return nil, err
+	}
+
 	// 获取凭证
 	token, tokenType, err := s.GetAccessToken(ctx, account)
 	if err != nil {
