@@ -796,6 +796,18 @@ func grokSupportsReasoningEffort(model string) bool {
 	model = strings.ToLower(xai.StripGrokProviderPrefix(strings.TrimSpace(model)))
 	switch model {
 	case "grok-4.5", "grok-4.5-latest", "grok-4.6", "grok-4.6-latest",
+		// grok-4.7 与 grok-4.7-build-fast 原先漏在这个白名单外，于是
+		// normalizeGrokResponsesReasoningEffort 会**删掉** reasoning.effort /
+		// reasoning_effort，思考等级全部丢失。
+		//
+		// 线上实测这个是量最大的模型：近 24h grok-4.7 有 79,753 次请求、
+		// grok-4.7-build-fast 有 1,327 次，而 grok-4.6 才 59,997。
+		//
+		// 同时怀疑这就是那批 502 的来源之一：上游若把 reasoning 当作必填，
+		// 收到被我们删空字段的 body 就会报
+		// "Failed to deserialize the JSON body into the target type"——
+		// 近 6h 的该类错误 42 次里有 34 次正是 grok-4.7。
+		"grok-4.7", "grok-4.7-latest", "grok-4.7-build-fast",
 		"grok-4.3", "grok-4.3-latest",
 		"grok-3-mini", "grok-3-mini-fast", "grok-4.20-0309-reasoning",
 		"grok-4.20-reasoning", "grok-4.20-multi-agent-0309":
