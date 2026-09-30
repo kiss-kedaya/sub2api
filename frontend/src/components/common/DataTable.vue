@@ -1033,6 +1033,21 @@ tbody .sticky-col {
 }
 
 /* hover 状态保持 */
+/* 行 hover：背景提亮 + 首列轻微内缩（纸张对齐感）。过渡集中在颜色，不干扰虚拟化测量。 */
+@media (prefers-reduced-motion: no-preference) {
+  .table-wrapper tbody tr:not([aria-hidden]) {
+    transition: background-color 140ms ease;
+  }
+  .table-wrapper tbody tr:not([aria-hidden]) :is(td, .sticky-col) {
+    transition: padding-left 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .table-wrapper tbody tr:not([aria-hidden]):hover :is(td:first-child, .sticky-col:first-of-type) {
+      padding-left: 2px;
+    }
+  }
+}
+
 tbody tr:hover .sticky-col {
   background-color: rgb(249 250 251);
 }
