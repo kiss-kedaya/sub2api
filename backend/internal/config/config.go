@@ -2397,7 +2397,7 @@ func setDefaults() {
 	viper.SetDefault("api_key_auth_cache.invalid_abuse.block_seconds", 60)
 	viper.SetDefault("api_key_auth_cache.invalid_abuse.capacity", 16384)
 	viper.SetDefault("api_key_create.max_active_per_user", 200)
-	viper.SetDefault("api_key_create.max_per_user_per_hour", 20)
+	viper.SetDefault("api_key_create.max_per_user_per_hour", 60)
 
 	// Subscription auth L1 cache
 	viper.SetDefault("subscription_cache.l1_size", 16384)
