@@ -244,24 +244,23 @@ func isMeaningfulAntigravityCompatEvent(event *apicompat.AnthropicStreamEvent) b
 	if event == nil {
 		return false
 	}
-	if event.Type == "message_stop" {
-		return true
-	}
+	// 只有真正带内容的事件才算「有效数据」。message_stop、单独的 stop_reason、
+	// 单独的 signature 都不算：上游因工具调用畸形返回 MALFORMED_FUNCTION_CALL 时，
+	// 流的形状恰好就是「只有 message_stop / stop_reason、没有任何 text 或 tool_use」。
+	// 若把这类流判为有效，就不会触发 failover，客户端会拿到「成功但无输出」——
+	// 表现就是工具调用凭空消失。与上游 52c2f4cb1 口径一致。
 	if event.ContentBlock != nil {
 		block := event.ContentBlock
 		return block.Type == "tool_use" ||
 			block.Text != "" ||
 			block.Thinking != "" ||
-			block.Signature != "" ||
 			block.Source != nil
 	}
 	if event.Delta != nil {
 		delta := event.Delta
 		return delta.Text != "" ||
 			delta.PartialJSON != "" ||
-			delta.Thinking != "" ||
-			delta.Signature != "" ||
-			delta.StopReason != ""
+			delta.Thinking != ""
 	}
 	return false
 }
