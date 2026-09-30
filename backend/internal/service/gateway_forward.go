@@ -319,6 +319,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		return nil, err
 	}
 
+	// Claude 5.x（opus/sonnet 5.5+、fable-5 全系）已不接受 thinking.type="enabled"，
+	// 客户端仍按老协议发 enabled 时上游直接 400。模型名此处已映射为出站值。
+	if err := replaceBody(sanitizeAnthropicThinkingForModel(body, reqModel)); err != nil {
+		return nil, err
+	}
+
 	// 获取凭证
 	token, tokenType, err := s.GetAccessToken(ctx, account)
 	if err != nil {
