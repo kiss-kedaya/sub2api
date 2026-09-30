@@ -48,7 +48,7 @@ const saving = ref(false)
 const editingId = ref<number | null>(null)
 const draft = ref<AlertRule | null>(null)
 
-type MetricGroup = 'system' | 'group' | 'account' | 'billing'
+type MetricGroup = 'system' | 'group' | 'account' | 'billing' | 'deploy'
 
 interface MetricDefinition {
   type: MetricType
@@ -284,6 +284,24 @@ const metricDefinitions = computed(() => {
       description: t('admin.ops.alertRules.metricDescriptions.billingStuckHolds'),
       recommendedOperator: '>',
       recommendedThreshold: 0
+    },
+
+    // Deploy consistency metrics (fed by the host-side systemd timer).
+    {
+      type: 'deploy_version_mismatch',
+      group: 'deploy',
+      label: t('admin.ops.alertRules.metrics.deployVersionMismatch'),
+      description: t('admin.ops.alertRules.metricDescriptions.deployVersionMismatch'),
+      recommendedOperator: '>',
+      recommendedThreshold: 0
+    },
+    {
+      type: 'deploy_check_age_seconds',
+      group: 'deploy',
+      label: t('admin.ops.alertRules.metrics.deployCheckAgeSeconds'),
+      description: t('admin.ops.alertRules.metricDescriptions.deployCheckAgeSeconds'),
+      recommendedOperator: '>',
+      recommendedThreshold: 1200
     }
   ] satisfies MetricDefinition[]
 })
@@ -310,7 +328,13 @@ const metricOptions = computed(() => {
     ]
   }
 
-  return [...buildGroup('system'), ...buildGroup('group'), ...buildGroup('account'), ...buildGroup('billing')]
+  return [
+    ...buildGroup('system'),
+    ...buildGroup('group'),
+    ...buildGroup('account'),
+    ...buildGroup('billing'),
+    ...buildGroup('deploy')
+  ]
 })
 
 const operatorOptions = computed(() => {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Sub2API deploy consistency check (read-only)
+Documentation=https://github.com/kiss-kedaya/sub2api
+After=network-online.target
+
+[Service]
+Type=oneshot
+# 只读检查：不重启服务、不改单元、不碰数据库。
+ExecStart=/usr/local/bin/sub2api-deploy-check.sh
+# 检查失败不无限重试；systemd 会把失败写进 journal，应用侧靠 age 指标告警。
+SuccessExitStatus=0 1
