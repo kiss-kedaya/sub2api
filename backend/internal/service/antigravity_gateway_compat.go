@@ -43,6 +43,10 @@ type antigravityCompatRequest struct {
 	includeUsage    bool
 	startTime       time.Time
 	reasoningEffort *string
+	// clientToolMapping 记录请求侧对 Codex 客户端专属工具的降级（custom/
+	// tool_search/local_shell → function），回程据此还原调用项类型；空映射
+	// 表示请求未带这类工具，还原为空操作。
+	clientToolMapping apicompat.ResponsesClientToolMapping
 }
 
 type antigravityCompatUpstreamCall struct {
@@ -124,8 +128,9 @@ func (s *AntigravityGatewayService) ForwardAsResponses(
 	// 与其他 Anthropic 上游链路一致：先降低 Codex 客户端专属工具（additional_tools
 	// 提升、custom/tool_search/local_shell 降级为 function、namespace 摊平），否则
 	// 这些工具以原始形态进入 Anthropic 转换——unknown tool type 400、additional_tools
-	// input 项被静默丢弃，模型拿不到客户端工具。
-	adaptedBody, _, err := adaptResponsesClientToolsForAnthropic(body)
+	// input 项被静默丢弃，模型拿不到客户端工具。mapping 传给回程，把上游的
+	// function_call 还原为客户端认识的调用项类型。
+	adaptedBody, clientToolMapping, err := adaptResponsesClientToolsForAnthropic(body)
 	if err != nil {
 		return nil, s.writeAntigravityCompatError(c, http.StatusBadRequest, "invalid_request_error", "Failed to adapt request tools")
 	}
@@ -144,13 +149,14 @@ func (s *AntigravityGatewayService) ForwardAsResponses(
 	}
 
 	return s.forwardAntigravityCompat(ctx, c, account, antigravityCompatRequest{
-		protocol:        antigravityCompatResponses,
-		originalBody:    body,
-		claudeBody:      claudeBody,
-		originalModel:   request.Model,
-		clientStream:    request.Stream,
-		startTime:       time.Now(),
-		reasoningEffort: ExtractResponsesReasoningEffortFromBody(body),
+		protocol:          antigravityCompatResponses,
+		originalBody:      body,
+		claudeBody:        claudeBody,
+		originalModel:     request.Model,
+		clientStream:      request.Stream,
+		startTime:         time.Now(),
+		reasoningEffort:   ExtractResponsesReasoningEffortFromBody(body),
+		clientToolMapping: clientToolMapping,
 	})
 }
 
@@ -408,13 +414,13 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatSuccess(
 				call.request.includeUsage,
 			)
 		}
-		return s.handleResponsesStreamingFromAntigravity(c, resp, call.request.startTime, call.request.originalModel)
+		return s.handleResponsesStreamingFromAntigravity(c, resp, call.request.startTime, call.request.originalModel, call.request.clientToolMapping)
 	}
 
 	if call.request.protocol == antigravityCompatChatCompletions {
 		return s.handleChatCompletionsNonStreamingFromAntigravity(c, resp, call.request.startTime, call.request.originalModel)
 	}
-	return s.handleResponsesNonStreamingFromAntigravity(c, resp, call.request.startTime, call.request.originalModel)
+	return s.handleResponsesNonStreamingFromAntigravity(c, resp, call.request.startTime, call.request.originalModel, call.request.clientToolMapping)
 }
 
 func (s *AntigravityGatewayService) handleAntigravityCompatHTTPError(
@@ -558,6 +564,7 @@ func (s *AntigravityGatewayService) handleResponsesNonStreamingFromAntigravity(
 	resp *http.Response,
 	startTime time.Time,
 	originalModel string,
+	clientToolMapping apicompat.ResponsesClientToolMapping,
 ) (*antigravityStreamResult, error) {
 	claudeResponse, result, err := s.collectClaudeStreamResponse(c, resp, startTime, originalModel)
 	if err != nil {
@@ -567,7 +574,21 @@ func (s *AntigravityGatewayService) handleResponsesNonStreamingFromAntigravity(
 	if json.Unmarshal(claudeResponse, &anthropicResponse) != nil {
 		return nil, s.writeAntigravityCompatError(c, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 	}
-	c.JSON(http.StatusOK, apicompat.AnthropicToResponsesResponse(&anthropicResponse))
+	responsesResponse := apicompat.AnthropicToResponsesResponse(&anthropicResponse)
+	// 上游 function_call 还原为客户端工具类型（custom_tool_call/local_shell_call），
+	// codex 才能按类型路由调用到终端。先序列化，再对完整 JSON 做还原。
+	responsesBody, err := json.Marshal(responsesResponse)
+	if err != nil {
+		return nil, fmt.Errorf("marshal responses response: %w", err)
+	}
+	restored, _, err := apicompat.RestoreResponsesClientToolPayload(responsesBody, clientToolMapping)
+	if err != nil {
+		return nil, s.writeAntigravityCompatError(c, http.StatusBadGateway, "upstream_error", "Failed to restore client tools")
+	}
+	c.Header("Content-Type", "application/json")
+	if _, err := c.Writer.Write(restored); err != nil {
+		return nil, fmt.Errorf("write responses response: %w", err)
+	}
 	return result, nil
 }
 
