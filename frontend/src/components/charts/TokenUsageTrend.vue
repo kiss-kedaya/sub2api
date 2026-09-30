@@ -72,6 +72,25 @@ const chartColors = computed(() => ({
   cacheHitRate: '#8b5cf6'
 }))
 
+// 纵向渐变：峰顶约 18% 透明度，往下淡出到 2%，谷底透明。宽 1px 足够采样。
+const gradientCache = new WeakMap<object, CanvasGradient>()
+function makeAreaGradient(color: string) {
+  return (context: { chart: { chartArea?: { top: number; bottom: number; left: number; right: number }; canvas: HTMLCanvasElement } }) => {
+    const { chartArea, canvas } = context.chart
+    if (!chartArea || !canvas) return `${color}0c`
+    const key = chartArea as unknown as object
+    let gradient = gradientCache.get(key)
+    if (!gradient) {
+      gradient = canvas.getContext('2d')!.createLinearGradient(0, chartArea.top, 0, chartArea.bottom)
+      gradient.addColorStop(0, `${color}2e`)
+      gradient.addColorStop(0.72, `${color}14`)
+      gradient.addColorStop(1, `${color}00`)
+      gradientCache.set(key, gradient)
+    }
+    return gradient
+  }
+}
+
 const chartData = computed(() => {
   if (!props.trendData?.length) return null
 
@@ -81,10 +100,12 @@ const chartData = computed(() => {
       label: t('dashboard.totalUsage'),
       data: props.trendData.map(d => d.total_tokens),
       borderColor: chartColors.value.text,
-      backgroundColor: `${chartColors.value.text}0c`,
+      // 纵向渐变填充：峰顶浓、谷底透明，比平铺低透明度更有深度
+      backgroundColor: makeAreaGradient(chartColors.value.text),
       borderWidth: 2,
       pointRadius: 2,
       pointHoverRadius: 4,
+      pointBackgroundColor: chartColors.value.text,
       fill: true,
       tension: 0.25,
     }] : [
