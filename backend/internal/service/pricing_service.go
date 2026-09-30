@@ -92,18 +92,18 @@ var (
 	}
 	// Claude Opus 5.5: $4/MTok input, $20/MTok output; 5m cache write $5/MTok, 1h cache write $8/MTok; priority 2x.
 	claudeOpus55FallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:                       4e-06,
-		InputCostPerTokenPriority:               8e-06,
-		OutputCostPerToken:                      2e-05,
-		OutputCostPerTokenPriority:              4e-05,
-		CacheCreationInputTokenCost:             5e-06,
-		CacheCreationInputTokenCostPriority:     1e-05,
-		CacheCreationInputTokenCostAbove1hr:     8e-06,
-		CacheReadInputTokenCost:                 4e-07,
-		CacheReadInputTokenCostPriority:         8e-07,
-		LiteLLMProvider:                         "anthropic",
-		Mode:                                    "chat",
-		SupportsPromptCaching:                   true,
+		InputCostPerToken:                   4e-06,
+		InputCostPerTokenPriority:           8e-06,
+		OutputCostPerToken:                  2e-05,
+		OutputCostPerTokenPriority:          4e-05,
+		CacheCreationInputTokenCost:         5e-06,
+		CacheCreationInputTokenCostPriority: 1e-05,
+		CacheCreationInputTokenCostAbove1hr: 8e-06,
+		CacheReadInputTokenCost:             4e-07,
+		CacheReadInputTokenCostPriority:     8e-07,
+		LiteLLMProvider:                     "anthropic",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
 	}
 	openAIGPT6AstraFallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:                   1e-05,

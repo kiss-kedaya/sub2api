@@ -14,8 +14,8 @@ type opsRepoMock struct {
 	ListSystemLogsFn              func(ctx context.Context, filter *OpsSystemLogFilter) (*OpsSystemLogList, error)
 	DeleteSystemLogsFn            func(ctx context.Context, filter *OpsSystemLogCleanupFilter) (int64, error)
 	InsertSystemLogCleanupAuditFn func(ctx context.Context, input *OpsSystemLogCleanupAudit) error
-	GetBillingAnomalySnapshotFn  func(ctx context.Context, start, end time.Time) (*BillingAnomalySnapshot, error)
-	GetLatencyPercentilesFn      func(ctx context.Context, filter *OpsDashboardFilter, start, end time.Time) (*OpsLatencyPercentiles, error)
+	GetBillingAnomalySnapshotFn   func(ctx context.Context, start, end time.Time) (*BillingAnomalySnapshot, error)
+	GetLatencyPercentilesFn       func(ctx context.Context, filter *OpsDashboardFilter, start, end time.Time) (*OpsLatencyPercentiles, error)
 }
 
 func (m *opsRepoMock) InsertErrorLog(ctx context.Context, input *OpsInsertErrorLogInput) (int64, error) {

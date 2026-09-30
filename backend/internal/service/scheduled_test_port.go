@@ -7,21 +7,21 @@ import (
 
 // ScheduledTestPlan represents a scheduled test plan domain model.
 type ScheduledTestPlan struct {
-	ID             int64      `json:"id"`
-	AccountID      int64      `json:"account_id"`
-	ModelID        string     `json:"model_id"`
-	PromptText     string     `json:"prompt_text"`
-	CronExpression string     `json:"cron_expression"`
-	Enabled        bool       `json:"enabled"`
-	MaxResults     int        `json:"max_results"`
-	AutoRecover    bool       `json:"auto_recover"`
+	ID             int64  `json:"id"`
+	AccountID      int64  `json:"account_id"`
+	ModelID        string `json:"model_id"`
+	PromptText     string `json:"prompt_text"`
+	CronExpression string `json:"cron_expression"`
+	Enabled        bool   `json:"enabled"`
+	MaxResults     int    `json:"max_results"`
+	AutoRecover    bool   `json:"auto_recover"`
 	// QualityCheckEnabled opts the plan into the degradation visual review.
 	// Plain plans keep the upstream scheduled-test behavior.
 	QualityCheckEnabled bool       `json:"quality_check_enabled"`
 	LastRunAt           *time.Time `json:"last_run_at"`
-	NextRunAt      *time.Time `json:"next_run_at"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	NextRunAt           *time.Time `json:"next_run_at"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 // ScheduledTestResult represents a single test execution result.
