@@ -72,16 +72,13 @@ jobs:
       - name: Verify production frontend build
         working-directory: frontend
         run: pnpm run build
-      - name: Verify rollout rollback simulations
-        run: |
-          python3 deploy/rollout/test_rollout329_guard.py
-          python3 deploy/rollout/test_rollout330_guard.py
-          python3 deploy/rollout/test_rollout331_guard.py
-          python3 deploy/rollout/test_rollout332_guard.py
-          python3 deploy/rollout/test_rollout333_guard.py
-          python3 deploy/rollout/test_rollout334_guard.py
-          python3 deploy/rollout/test_rollout335_guard.py
-          python3 deploy/rollout/test_rollout336_guard.py
+      # 原先这里逐个 python3 执行 deploy/rollout/test_rollout329..336_guard.py。
+      # 这些脚本从未被 git 跟踪（它们只存在于 .artifacts/，而 .artifacts/ 在
+      # .gitignore 里），CI 的干净检出上根本不存在对应文件，于是这一步自 2026-09-27
+      # 起每次都以 "No such file or directory" 失败，把整个 CI 拖红。
+      # 其中 329~332、334~336 连本地 .artifacts/ 里都没有。
+      # 需要这些守卫回归进 CI，先把脚本提交到未被忽略的目录（如 deploy/tests/），
+      # 再在这里按实际路径调用。
 
   golangci-lint:
     runs-on: ubuntu-latest

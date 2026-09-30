@@ -804,7 +804,9 @@ func TestResponsesClientToolStreamRestorer_RestoresLocalShellLifecycle(t *testin
 	require.Equal(t, int64(1), gjson.GetBytes(added[0], "sequence_number").Int())
 
 	// local_shell 的参数增量被 restorer 吸收（事件被吞掉），终端 done 统一下发。
-	_, changed, err = restorer.RestoreEvent([]byte(`{"type":"response.function_call_arguments.delta","sequence_number":2,"item_id":"item_sh","delta":"{\"type\":\"exec\",\"command\":[\"pwd\"]}"}`))
+	// 这个 delta 的 changed 结果随后就被下一行的重新声明覆盖、从未被读取，
+	// 所以显式丢弃，避免 ineffassign。
+	_, _, err = restorer.RestoreEvent([]byte(`{"type":"response.function_call_arguments.delta","sequence_number":2,"item_id":"item_sh","delta":"{\"type\":\"exec\",\"command\":[\"pwd\"]}"}`))
 	require.NoError(t, err)
 
 	done, changed, err := restorer.RestoreEvent([]byte(`{"type":"response.output_item.done","sequence_number":3,"output_index":0,"item":{"type":"function_call","id":"item_sh","call_id":"sh1","name":"local_shell","arguments":"{\"type\":\"exec\",\"command\":[\"pwd\"]}"}}`))
