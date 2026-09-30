@@ -106,9 +106,21 @@ fi
 
 # --- 4. 顺带核对单元名与 ExecStart -------------------------------------------
 # 单元名与实际二进制不符，正是当初把 2.0.29/2.0.30 两次「部署」变成空转的原因。
-unit="$(systemctl status "$pid" 2>/dev/null | head -1 | sed -n 's/^.*\(\S*\.service\).*$/\1/p')"
-if [[ -z "$unit" ]]; then
-  unit="$(grep -ho '[a-zA-Z0-9@_.-]*\.service' "/proc/${pid}/cgroup" 2>/dev/null | head -1)"
+#
+# 取单元名的顺序（原先只用第一种，且正则贪婪匹配，实测在 2.0.35 上只抓到 ".service"，
+# 于是下面「单元是 active 才算真故障」的保护静默失效）：
+#   1) cgroup 路径末尾的 <unit>.service —— 最可靠，直接来自内核
+#   2) 按 MainPID 反查 systemd —— cgroup 格式变了也能兜住
+unit="$(sed -n 's#.*/\([^/]*\.service\)$#\1#p' "/proc/${pid}/cgroup" 2>/dev/null | head -1)"
+if [[ -z "$unit" ]] && command -v systemctl >/dev/null 2>&1; then
+  unit="$(systemctl list-units --type=service --state=running --no-legend --plain 'sub2api*' 2>/dev/null \
+    | awk '{print $1}' \
+    | while read -r candidate; do
+        if [[ "$(systemctl show -p MainPID --value "$candidate" 2>/dev/null)" == "$pid" ]]; then
+          printf '%s\n' "$candidate"
+          break
+        fi
+      done)"
 fi
 if [[ -n "$unit" ]]; then
   exec_start="$(systemctl show -p ExecStart --value "$unit" 2>/dev/null | grep -o '/[^ ;]*' | head -1)"
