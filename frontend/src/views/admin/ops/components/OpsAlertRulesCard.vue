@@ -170,6 +170,41 @@ const metricDefinitions = computed(() => {
       recommendedOperator: '>',
       recommendedThreshold: 10
     },
+    // 延迟分位数：此前只存在于 i18n 与数据库规则里，前后端都没有定义，
+    // 导致「P95/P99 延迟过高」两条规则永远不会触发。
+    {
+      type: 'p95_latency_ms',
+      group: 'system',
+      label: t('admin.ops.alertRules.metrics.p95'),
+      description: t('admin.ops.alertRules.metricDescriptions.p95'),
+      recommendedOperator: '>',
+      recommendedThreshold: 2000
+    },
+    {
+      type: 'p99_latency_ms',
+      group: 'system',
+      label: t('admin.ops.alertRules.metrics.p99'),
+      description: t('admin.ops.alertRules.metricDescriptions.p99'),
+      recommendedOperator: '>',
+      recommendedThreshold: 3000
+    },
+    // 首字延迟才是用户感知的「网关快不快」；总时长主要取决于模型生成长度。
+    {
+      type: 'p95_first_token_ms',
+      group: 'system',
+      label: t('admin.ops.alertRules.metrics.p95FirstToken'),
+      description: t('admin.ops.alertRules.metricDescriptions.p95FirstToken'),
+      recommendedOperator: '>',
+      recommendedThreshold: 60000
+    },
+    {
+      type: 'p99_first_token_ms',
+      group: 'system',
+      label: t('admin.ops.alertRules.metrics.p99FirstToken'),
+      description: t('admin.ops.alertRules.metricDescriptions.p99FirstToken'),
+      recommendedOperator: '>',
+      recommendedThreshold: 120000
+    },
 
     // Group-level metrics (requires group_id filter)
     {

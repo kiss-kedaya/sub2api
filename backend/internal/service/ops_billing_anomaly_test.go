@@ -42,6 +42,13 @@ func (s *billingStubOpsRepo) GetDashboardOverview(
 	return &OpsDashboardOverview{}, nil
 }
 
+// GetLatencyPercentiles 让延迟分位数分支能跑（本文件的用例不会走到它）。
+func (s *billingStubOpsRepo) GetLatencyPercentiles(
+	context.Context, *OpsDashboardFilter, time.Time, time.Time,
+) (*OpsLatencyPercentiles, error) {
+	return &OpsLatencyPercentiles{}, nil
+}
+
 func TestComputeBillingAnomalyMetric_ZeroCostRequests(t *testing.T) {
 	t.Parallel()
 
