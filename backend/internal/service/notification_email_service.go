@@ -48,6 +48,23 @@ const (
 	notificationEmailUnsubscribeTTL       = 365 * 24 * time.Hour
 )
 
+// NotificationEmailRecordKeyPrefixes 返回「按记录存储、不是配置」的 settings 键前缀。
+//
+// 这些键是**每封邮件一条、每个收件人哈希一条**的投递台账（线上实测
+// notification_email_delivery: 12,850 条 + notification_email_locale:email: 4,085 条），
+// 占 settings 表总行数的 98%，且全部通过 GetValue 按键读取，从不走 GetAll。
+//
+// GetAll 是「读出全部配置」的语义，不该把这些台账装进内存——否则每次缓存未命中
+// 都要多读 1.7 万行、并克隆一个同等规模的 map。repository 的 GetAll 用这份清单
+// 排除它们；在这里导出是为了保持单一来源，避免两边前缀写歪。
+func NotificationEmailRecordKeyPrefixes() []string {
+	return []string{
+		notificationEmailDeliveryKeyPrefix,
+		notificationEmailLocaleUserKeyPrefix,
+		notificationEmailLocaleEmailKeyPrefix,
+	}
+}
+
 var (
 	notificationEmailPlaceholderPattern = regexp.MustCompile(`{{\s*([a-zA-Z][a-zA-Z0-9_]*)\s*}}`)
 	notificationEmailLocales            = []string{notificationEmailDefaultLocale, notificationEmailLocaleChinese}
