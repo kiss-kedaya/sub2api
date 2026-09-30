@@ -26,6 +26,21 @@ const (
 	// OpsMetricBillingStuckHolds 已过期但从未结算的预扣笔数。
 	// 持续增长说明预扣泄漏（用户被占住额度或漏扣）。
 	OpsMetricBillingStuckHolds = "billing_stuck_holds"
+
+	// OpsMetricBillingZeroCostRequestsDelta 本窗零扣费请求数 − 上一等长窗。
+	//
+	// 为什么要有它：`billing_zero_cost_requests` 是绝对值，而生产上它**长期非零**
+	// （某个未定价的模型持续产生零扣费请求，约 600 次/小时）。用「> 0」当阈值
+	// 等于每小时发一封 P0，直接变成告警疲劳。增量指标在稳态下约为 0，
+	// 只有出现真正的突增才告警。
+	OpsMetricBillingZeroCostRequestsDelta = "billing_zero_cost_requests_delta"
+
+	// OpsMetricBillingNegativeBalanceUsersDelta 负余额用户数相对基线的增量。
+	//
+	// 负余额用户数是**存量指标**，没有「上一个窗口」可言，所以基线存 Redis
+	// （每小时重置一次，见 negativeBalanceBaselineTTL）。这样稳态的缓慢累积
+	// 不会报警，只有明显的新增才报。
+	OpsMetricBillingNegativeBalanceUsersDelta = "billing_negative_balance_users_delta"
 )
 
 // opsBillingMetricMaxWindow 限制计费指标实际扫描的时间窗。
@@ -48,6 +63,9 @@ type BillingAnomalySnapshot struct {
 	WindowCostUSD float64
 	// PreviousWindowCostUSD：紧邻的上一个等长窗口 sum(actual_cost)。
 	PreviousWindowCostUSD float64
+
+	// PreviousWindowZeroCostRequests：上一等长窗内「有用量但 actual_cost = 0」的请求数。
+	PreviousWindowZeroCostRequests int64
 
 	// NegativeBalanceUsers：balance < 0 且未软删的用户数。
 	NegativeBalanceUsers int64
@@ -72,4 +90,13 @@ func (s *BillingAnomalySnapshot) CostSpikeRatio() (float64, bool) {
 		return 0, false
 	}
 	return s.WindowCostUSD / s.PreviousWindowCostUSD * 100, true
+}
+
+// ZeroCostRequestDelta 返回本窗相对上一窗的零扣费请求数增量。
+// 稳态下接近 0；明显为正说明零扣费在突增。
+func (s *BillingAnomalySnapshot) ZeroCostRequestDelta() float64 {
+	if s == nil {
+		return 0
+	}
+	return float64(s.ZeroCostRequests - s.PreviousWindowZeroCostRequests)
 }

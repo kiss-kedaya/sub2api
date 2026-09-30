@@ -527,6 +527,8 @@ export default {
           billingNegativeBalanceUsers: 'Users With Negative Balance',
           billingCostSpikeRatio: 'Cost Spike Ratio (%)',
           billingStuckHolds: 'Stuck Holds',
+          billingZeroCostRequestsDelta: 'Zero-cost Request Delta',
+          billingNegativeBalanceUsersDelta: 'Negative Balance User Delta',
           deployVersionMismatch: 'Deploy Version Mismatch',
           deployCheckAgeSeconds: 'Deploy Check Age (s)'
         },
@@ -554,6 +556,8 @@ export default {
           billingNegativeBalanceUsers: 'Users with a balance below zero that are not deleted. Should be 0; anything else points at a billing or concurrency defect.',
           billingCostSpikeRatio: 'Window cost divided by the previous window cost, times 100. Unavailable (never fires) when the previous window had no billable traffic.',
           billingStuckHolds: 'Holds past their expiry that were never settled. A growing number means holds are leaking. Read-only: this metric never modifies those rows.',
+          billingZeroCostRequestsDelta: 'Zero-cost requests in this window minus the previous equal window. It sits near 0 in steady state: the absolute count stays non-zero in production (for example an unpriced model), so thresholding on the absolute value turns into one alert per hour. Prefer this delta for alerting.',
+          billingNegativeBalanceUsersDelta: 'Growth in the number of users with a negative balance since a baseline. The baseline lives in Redis and resets hourly, so this answers "how many were added in the last hour"; slow steady accumulation does not alert. Reports unavailable rather than a false reading when Redis is down.',
           deployVersionMismatch: 'Set to 1 when the binary actually running (or the systemd unit it belongs to) does not match the expected version. Fed by the host-side periodic check, which catches incidents like a unit named for one version while the process runs another. Unavailable when the status file is missing or stale, so a dead watchdog never reports healthy.',
           deployCheckAgeSeconds: 'Seconds since the last successful host-side deploy check. A steadily growing value means the watchdog itself stopped running (timer stopped or script failing).'
         },

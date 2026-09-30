@@ -694,6 +694,8 @@ export type MetricType =
   | 'billing_negative_balance_users'
   | 'billing_cost_spike_ratio'
   | 'billing_stuck_holds'
+  | 'billing_zero_cost_requests_delta'
+  | 'billing_negative_balance_users_delta'
   | 'deploy_version_mismatch'
   | 'deploy_check_age_seconds'
   | 'p95_latency_ms'
