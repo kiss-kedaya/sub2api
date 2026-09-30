@@ -19,7 +19,20 @@ const (
 	channelMonitorV2BootstrapFirst = 2 * time.Hour
 	// Always refresh a small trailing window so late writes land without
 	// re-aggregating large history every tick.
+	//
+	// 注意：这个窗口只覆盖「上一条 tick 到这一条 tick 之间」。任何一次 tick 被跳过
+	// （抢不到 leader 锁、运行超过 RunTimeout、进程重启、GC 停顿），中间那几分钟就
+	// 落在固定窗口之外，**永远不会被重算**，于是 1m 事实表出现空洞、前端显示
+	// 「样本不足」。线上实测就出现过 18:17–18:47、18:50–19:07 这种整段缺失，
+	// 而 usage_logs 在那几分钟里每分钟有一千多条记录（源数据是完整的）。
+	//
+	// 因此真正的兜底不是把这个常量调大，而是让窗口起点取
+	// min(now-RecentOverlap, 上次成功写入的 data_through)，见 run() 里的
+	// liveStart。这样缺口会被下一次成功运行自动补上，而稳态开销不变。
 	channelMonitorV2RecentOverlap = 2 * time.Minute
+	// 追赶上限：长时间停机后不要一次重算出一整天的窗口（那会把一次 tick 拖到
+	// 远超 RunTimeout，反而把缺口撕得更大）。超出部分交给历史回填慢慢走。
+	channelMonitorV2LiveMaxCatchUp = 6 * time.Hour
 	// Overlap/error SQL can exceed the 30s Postgres statement_timeout during
 	// storms; keep the Go deadline above SET LOCAL 180s in RecomputeRange.
 	channelMonitorV2RunTimeout = 3 * time.Minute
@@ -68,6 +81,10 @@ type ChannelMonitorV2Aggregator struct {
 	backfillAt       time.Time
 	backfillChunk    time.Duration
 	backfillFailures int
+	// liveThrough 是持久化水位（watermarks.data_through）的内存镜像，即「已经
+	// 成功聚合到哪一分钟」。实时窗口用它兜住被跳过的 tick：只要它落后于
+	// now-RecentOverlap，窗口就从它开始重算，把空洞补回来。
+	liveThrough time.Time
 	// lastBackfillAt is the last time this process attempted a historical chunk.
 	// Live 90m ticks do not update it.
 	lastBackfillAt time.Time
@@ -281,13 +298,27 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 	}
 
 	// Always refresh the trailing overlap so late usage/error writes land in 1m facts.
+	//
+	// 起点还要兜住被跳过的 tick：只要持久化水位落后于 now-RecentOverlap，说明中间
+	// 那几分钟从没被重算过，就从水位开始补（上限 LiveMaxCatchUp，避免长时间停机后
+	// 一次 tick 被拖到远超 RunTimeout）。稳态下水位每 tick 都等于 now，这一步是空操作。
 	liveStart := now.Add(-channelMonitorV2RecentOverlap)
+	s.mu.Lock()
+	if !s.liveThrough.IsZero() && s.liveThrough.Before(liveStart) {
+		liveStart = s.liveThrough
+	}
+	s.mu.Unlock()
+	if floor := now.Add(-channelMonitorV2LiveMaxCatchUp); liveStart.Before(floor) {
+		liveStart = floor
+	}
 	startedLive := time.Now()
 	if err := s.repo.RecomputeLiveRange(ctx, liveStart, now); err != nil {
 		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] overlap aggregation failed: %v", err)
 		return
 	}
 	s.mu.Lock()
+	// 成功后推进内存水位，下一次 tick 只需覆盖 now-RecentOverlap。
+	s.liveThrough = now
 	lastBackfill := s.lastBackfillAt
 	s.mu.Unlock()
 	if !channelMonitorV2AllowBackfill(time.Since(startedLive), lastBackfill, now) {
@@ -459,6 +490,10 @@ func (s *ChannelMonitorV2Aggregator) ensureCursor(ctx context.Context, now time.
 		}
 		if wm.HasData || !wm.DataThrough.IsZero() {
 			s.hasAggregated = true
+			// 持久化水位改成内存镜像，供实时窗口兜住被跳过的 tick。
+			if !wm.DataThrough.IsZero() {
+				s.liveThrough = wm.DataThrough.UTC().Truncate(time.Minute)
+			}
 			// Legacy rows may have data_through but null backfill_cursor (older workers).
 			// Infer cursor from data_through − initial window so we do not re-bootstrap
 			// only 2h and claim zero progress forever.
