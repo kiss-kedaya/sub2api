@@ -52,6 +52,37 @@ fail() {
   exit 1
 }
 
+# 「运行中的二进制 != EXPECTED_VERSION」是**部署中间态**：先换二进制、后改期望值，
+# 中间必然有一段不一致窗口。用绝对值阈值（>0）报警，等于每次正常发版都报一次，
+# 而且只要期望值没跟上就**一直报**——和之前计费规则把「持续状态」当「事件」是同一个错误。
+#
+# 所以这条单独走宽限窗口：不一致必须**持续**超过 MISMATCH_GRACE_SECONDS 才算错。
+# 「第一次见到不一致」的时刻落盘，所以对 systemd timer 的调用间隔不敏感。
+# 结构性故障（期望值文件缺失、自称 active 却没人监听）不走这里，仍立即上报。
+MISMATCH_GRACE_SECONDS="${MISMATCH_GRACE_SECONDS:-900}"
+MISMATCH_SINCE_FILE="${MISMATCH_SINCE_FILE:-/opt/sub2api/deploy-check.mismatch-since}"
+
+clear_mismatch_state() {
+  rm -f "$MISMATCH_SINCE_FILE" 2>/dev/null || true
+}
+
+fail_version_mismatch() {
+  local detail="$1" now since age
+  now="$(date +%s)"
+  since="$(cat "$MISMATCH_SINCE_FILE" 2>/dev/null || true)"
+  if [[ ! "$since" =~ ^[0-9]+$ ]]; then
+    since="$now"
+    printf '%s\n' "$since" > "$MISMATCH_SINCE_FILE" 2>/dev/null || true
+  fi
+  age=$(( now - since ))
+  if (( age < MISMATCH_GRACE_SECONDS )); then
+    log "PENDING: $detail (${age}s < ${MISMATCH_GRACE_SECONDS}s grace, treating as deploy window)"
+    write_status 0 "${detail}; pending ${age}s of ${MISMATCH_GRACE_SECONDS}s grace"
+    exit 0
+  fi
+  fail "${detail}; persisted ${age}s (grace was ${MISMATCH_GRACE_SECONDS}s)"
+}
+
 # --- 1. 期望版本 --------------------------------------------------------------
 if [[ ! -r "$EXPECTED_VERSION_FILE" ]]; then
   fail "expected version file missing: $EXPECTED_VERSION_FILE"
@@ -101,8 +132,10 @@ actual_bin="$(basename "$exe")"
 
 # --- 3. 二进制版本比对 --------------------------------------------------------
 if [[ "$actual_bin" != "$EXPECTED_BIN" ]]; then
-  fail "running binary is ${actual_bin} but expected ${EXPECTED_BIN} (pid ${pid}, exe ${exe})"
+  fail_version_mismatch "running binary is ${actual_bin} but expected ${EXPECTED_BIN} (pid ${pid}, exe ${exe})"
 fi
+# 一致了：清掉宽限状态，下一次不一致重新计时。
+clear_mismatch_state
 
 # --- 4. 顺带核对单元名与 ExecStart -------------------------------------------
 # 单元名与实际二进制不符，正是当初把 2.0.29/2.0.30 两次「部署」变成空转的原因。
