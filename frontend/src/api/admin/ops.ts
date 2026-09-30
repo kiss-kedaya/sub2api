@@ -694,6 +694,8 @@ export type MetricType =
   | 'billing_negative_balance_users'
   | 'billing_cost_spike_ratio'
   | 'billing_stuck_holds'
+  | 'deploy_version_mismatch'
+  | 'deploy_check_age_seconds'
 export type Operator = '>' | '>=' | '<' | '<=' | '==' | '!='
 
 export interface AlertRule {

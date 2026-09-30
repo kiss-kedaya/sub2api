@@ -55,6 +55,10 @@ type OpsAlertEvaluatorService struct {
 	skipLogAt time.Time
 
 	warnNoRedisOnce sync.Once
+
+	// deployStatusPathOverride 仅供测试注入状态文件路径；生产恒为空，
+	// 此时走默认路径或 SUB2API_DEPLOY_CHECK_STATUS_FILE。
+	deployStatusPathOverride string
 }
 
 type opsAlertRuleState struct {
@@ -444,6 +448,12 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 	if rule == nil {
 		return 0, false
 	}
+	// 部署一致性指标：读主机层脚本写出的状态文件，同样只读。
+	switch strings.TrimSpace(rule.MetricType) {
+	case OpsMetricDeployVersionMismatch, OpsMetricDeployCheckAgeSeconds:
+		return s.computeDeployCheckMetric(rule)
+	}
+
 	// 计费看门狗指标：只读聚合，先于其它分支处理（它们走仓储查询而不是
 	// dashboard overview）。
 	switch strings.TrimSpace(rule.MetricType) {
@@ -677,6 +687,44 @@ func (s *OpsAlertEvaluatorService) computeBillingAnomalyMetric(
 	case OpsMetricBillingCostSpikeRatio:
 		// 上一窗没有基线时不可用，避免把「上一窗恰好没流量」误报成费用暴涨。
 		return snapshot.CostSpikeRatio()
+	}
+	return 0, false
+}
+
+// computeDeployCheckMetric 计算部署一致性指标。
+//
+// 数据来自主机层 systemd timer 写出的状态文件（见 ops_deploy_check.go），
+// 应用只读不写。为什么不由应用自己检测：进程看不到自己的 systemd 单元名，
+// 沙箱也读不到单元文件，而「单元名与实际运行的二进制不符」正是要抓的故障。
+func (s *OpsAlertEvaluatorService) computeDeployCheckMetric(rule *OpsAlertRule) (float64, bool) {
+	if s == nil || rule == nil {
+		return 0, false
+	}
+
+	// 路径来自默认值或 SUB2API_DEPLOY_CHECK_STATUS_FILE（见 ops_deploy_check.go）。
+	// 该字段仅供测试注入，生产恒为空。
+	status, err := ReadDeployCheckStatus(s.deployStatusPathOverride)
+	if err != nil {
+		// 状态文件缺失/损坏：说明看门狗自己没在跑。此时不能把
+		// 「版本不一致」报成 0（那等于看门狗死了却显示健康），
+		// 交给 deploy_check_age_seconds 去告警。
+		return 0, false
+	}
+
+	now := time.Now().UTC()
+	switch strings.TrimSpace(rule.MetricType) {
+	case OpsMetricDeployVersionMismatch:
+		// 状态过旧不可信，不报「健康」也不报「异常」。
+		if status.Stale(now) {
+			return 0, false
+		}
+		if status.VersionMismatch {
+			return 1, true
+		}
+		return 0, true
+	case OpsMetricDeployCheckAgeSeconds:
+		// 过旧也要能算出来——这正是这个指标的用途。
+		return status.Age(now).Seconds(), true
 	}
 	return 0, false
 }

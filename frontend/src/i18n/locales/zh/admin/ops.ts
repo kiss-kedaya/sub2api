@@ -500,7 +500,8 @@ export default {
           system: '系统指标',
           group: '分组级别指标（需 group_id）',
           account: '账号级别指标',
-          billing: '计费看门狗指标'
+          billing: '计费看门狗指标',
+          deploy: '部署一致性指标'
         },
         metrics: {
           successRate: '成功率 (%)',
@@ -523,7 +524,9 @@ export default {
           billingZeroCostRatio: '零扣费请求占比 (%)',
           billingNegativeBalanceUsers: '负余额用户数',
           billingCostSpikeRatio: '费用突增倍数 (%)',
-          billingStuckHolds: '卡住的预扣笔数'
+          billingStuckHolds: '卡住的预扣笔数',
+          deployVersionMismatch: '部署版本不一致',
+          deployCheckAgeSeconds: '部署检查距今秒数'
         },
         metricDescriptions: {
           successRate: '统计窗口内成功请求占比（0~100）。',
@@ -546,7 +549,9 @@ export default {
           billingZeroCostRatio: '统计窗口内零扣费请求占「有用量请求」的百分比。绝对量随流量波动，比例更适合设阈值。',
           billingNegativeBalanceUsers: '余额小于 0 且未删除的用户数量。正常应为 0，出现即说明扣费/并发控制有异常。',
           billingCostSpikeRatio: '统计窗口总扣费 ÷ 上一个等长窗口总扣费 × 100。上一窗没有计费流量时该指标不可用、不会触发。',
-          billingStuckHolds: '已过预扣有效期、但从未结算的预扣笔数。持续增长说明预扣泄漏。只读统计，不会改动这些记录。'
+          billingStuckHolds: '已过预扣有效期、但从未结算的预扣笔数。持续增长说明预扣泄漏。只读统计，不会改动这些记录。',
+          deployVersionMismatch: '实际在运行的二进制（或它所属的 systemd 单元）与期望版本不一致时为 1。由主机侧的定时检查写入，用于抓住「单元名与实际跑的版本不符」这类事故。状态文件过旧或缺失时该指标不可用，不会报告为正常。',
+          deployCheckAgeSeconds: '距上一次成功的主机部署检查有多少秒。这个值持续增大说明看门狗本身没在跑（定时器停了或脚本报错）。'
         },
         hints: {
           recommended: '推荐：运算符 {operator}，阈值 {threshold}{unit}',
