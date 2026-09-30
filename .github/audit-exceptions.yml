@@ -1,44 +1,48 @@
 version: 1
+# 高危/严重依赖漏洞的豁免清单。
+#
+# 判定逻辑见 tools/check_pnpm_audit_exceptions.py：只对「当前 pnpm audit 结果里
+# 仍然出现」的高危/严重项校验是否有豁免、以及豁免是否过期。
+# 因此**漏洞已经消失的条目会被静默忽略**——这类陈旧条目要及时删掉，
+# 否则会给人「我们在跟踪」的假象。
 exceptions:
+  # ---------------------------------------------------------------- 仍然需要
+  # 2026-09-30 复核：本项目对 xlsx 是**纯写**用法（只调 aoa_to_sheet /
+  # sheet_add_aoa / book_new / book_append_sheet / write），一个解析 API 都没有，
+  # 而这两条 advisory 都在解析路径上，因此不可达。
+  #
+  # 关键改进：这个「不可达」原先只是注释里的一句话，是个会悄悄失效的前提——
+  # 只要以后有人写一句 XLSX.read(用户上传的文件)，豁免立刻从合理变成错误，
+  # 而清单不会知道。现在由测试强制：Makefile 的 FRONTEND_CRITICAL_VITEST 里
+  # 列了 src/__tests__/xlsxWriteOnly.spec.ts，引入解析 API 或同步 import 就会
+  # 让 CI 失败。
   - package: xlsx
     advisory: "GHSA-4r6h-8v6p-xvw6"
     severity: high
-    reason: "Admin export only; switched to dynamic import to reduce exposure (CVE-2023-30533)"
-    mitigation: "Load only on export; restrict export permissions and data scope"
-    expires_on: "2026-10-06"
+    reason: "Prototype pollution lives in the PARSE path (XLSX.read on an untrusted workbook). This repo never parses xlsx — the only call sites are utils.aoa_to_sheet / sheet_add_aoa / book_new / book_append_sheet / write in the admin UsageView export."
+    mitigation: "Write-only usage, lazily imported; CI test src/__tests__/xlsxWriteOnly.spec.ts fails if any parsing API or eager import appears"
+    expires_on: "2027-04-06"
     owner: "security@your-domain"
   - package: xlsx
     advisory: "GHSA-5pgg-2g8v-p4x9"
     severity: high
-    reason: "Admin export only; switched to dynamic import to reduce exposure (CVE-2024-22363)"
-    mitigation: "Load only on export; restrict export permissions and data scope"
-    expires_on: "2026-10-06"
-    owner: "security@your-domain"
-  - package: lodash
-    advisory: "GHSA-r5fr-rjxr-66jc"
-    severity: high
-    reason: "lodash _.template not used with untrusted input; only internal admin UI templates"
-    mitigation: "No user-controlled template strings; plan to migrate to lodash-es tree-shaken imports"
-    expires_on: "2026-07-02"
-    owner: "security@your-domain"
-  - package: lodash-es
-    advisory: "GHSA-r5fr-rjxr-66jc"
-    severity: high
-    reason: "lodash-es _.template not used with untrusted input; only internal admin UI templates"
-    mitigation: "No user-controlled template strings; plan to migrate to native JS alternatives"
-    expires_on: "2026-07-02"
-    owner: "security@your-domain"
-  - package: axios
-    advisory: "GHSA-3p68-rc4w-qgx5"
-    severity: critical
-    reason: "NO_PROXY bypass not exploitable; all API calls go to known endpoints via server-side proxy"
-    mitigation: "Proxy configuration not user-controlled; upgrade when axios releases fix"
-    expires_on: "2026-07-10"
+    reason: "ReDoS is in the PARSE path for malicious workbooks. Same write-only justification as GHSA-4r6h-8v6p-xvw6."
+    mitigation: "Write-only usage, lazily imported; CI test src/__tests__/xlsxWriteOnly.spec.ts fails if any parsing API or eager import appears"
+    expires_on: "2027-04-06"
     owner: "security@your-domain"
   - package: nanoid
     advisory: "GHSA-2v37-7h3g-55p8"
     severity: high
-    reason: "Custom generator with size=0 not used; all nanoid calls use default size or positive values"
+    reason: "Custom generator with size=0 not used; all nanoid calls use default size or positive values. Re-checked 2026-09-30 and still absent from the production audit output."
     mitigation: "No zero-size custom generators in codebase; upgrade when nanoid releases fix"
-    expires_on: "2026-10-13"
+    expires_on: "2026-12-31"
     owner: "security@your-domain"
+
+  # ---------------------------------------------------------------- 已失效，已删除
+  # 以下三条在 2026-09-30 复核时已经不在 pnpm audit 结果里，检查脚本不会校验它们，
+  # 继续留着只会造成「已被跟踪」的误导：
+  #   lodash    GHSA-r5fr-rjxr-66jc  (过期 2026-07-02)
+  #   lodash-es GHSA-r5fr-rjxr-66jc  (过期 2026-07-02)
+  #   axios     GHSA-3p68-rc4w-qgx5  (critical，过期 2026-07-10)
+  # 后者尤其值得注意：一条 critical 豁免过期两个多月却没让 CI 变红，
+  # 仅仅因为该 advisory 已不在结果中——这正是「过期但静默」的典型。
