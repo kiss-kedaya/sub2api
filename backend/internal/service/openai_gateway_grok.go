@@ -557,6 +557,34 @@ func patchGrokResponsesBodyWithClientTools(body []byte, upstreamModel string) ([
 	return patched, mapping, nil
 }
 
+// grokResponsesMaxOutputTokensCap 是 Grok Responses 的输出上限。
+//
+// 上游对超过模型上限的 max_output_tokens 直接 400：
+//
+//	Field 'max_output_tokens' must be at most 128000
+//
+// 线上实测该错误 12 小时内 48 次，全部来自客户端带了超限值，与我们自己无关，
+// 但**整个请求会因此被拒**，所以在这里夹到上限比把 400 透传给用户好。
+//
+// 注意：这是一个**模型无关的上限**。若某个 Grok 模型的真实上限低于此值，
+// 夹到 128000 仍会被上游拒——那种情况需要按模型细化（或改成按账号 extra 配置，
+// 参照 ollamaCloudMaxTokensCap 的做法）。
+const grokResponsesMaxOutputTokensCap = 128000
+
+// clampGrokResponsesMaxOutputTokens 把超限的 max_output_tokens 夹到上限。
+// 未设置、非数字、或已在上限内时原样返回。
+func clampGrokResponsesMaxOutputTokens(body []byte) ([]byte, error) {
+	value := gjson.GetBytes(body, "max_output_tokens")
+	if !value.Exists() || value.Type != gjson.Number || value.Int() <= grokResponsesMaxOutputTokensCap {
+		return body, nil
+	}
+	out, err := sjson.SetBytes(body, "max_output_tokens", grokResponsesMaxOutputTokensCap)
+	if err != nil {
+		return nil, fmt.Errorf("clamp grok max_output_tokens: %w", err)
+	}
+	return out, nil
+}
+
 func patchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, error) {
 	if !json.Valid(body) {
 		return nil, fmt.Errorf("invalid json request body")
@@ -578,6 +606,11 @@ func patchGrokResponsesBodyBaseTrusted(body []byte, upstreamModel string) ([]byt
 		return nil, err
 	}
 	out, err = normalizeGrokResponsesReasoningEffort(out, upstreamModel)
+	if err != nil {
+		return nil, err
+	}
+	// 超限的 max_output_tokens 会被上游 400 拒掉整个请求，夹到上限。
+	out, err = clampGrokResponsesMaxOutputTokens(out)
 	if err != nil {
 		return nil, err
 	}
