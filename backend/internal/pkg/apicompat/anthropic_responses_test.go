@@ -1840,3 +1840,29 @@ func TestMessageStartSSE_StopReasonIsJSONNull(t *testing.T) {
 	require.Contains(t, sse, `"stop_reason":null`)
 	require.NotContains(t, sse, `"stop_reason":""`)
 }
+
+func TestResponsesToAnthropicRequest_ReplaysWebSearchCallHistory(t *testing.T) {
+	input := []byte(`[
+		{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"kedaya.ai"}},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"总结一下"}]}
+	]`)
+	req := &ResponsesRequest{Model: "claude-sonnet-4-5", Input: input}
+
+	anthropicReq, err := ResponsesToAnthropicRequest(req)
+	require.NoError(t, err)
+	require.Len(t, anthropicReq.Messages, 2)
+
+	var assistantBlocks []AnthropicContentBlock
+	require.NoError(t, json.Unmarshal(anthropicReq.Messages[0].Content, &assistantBlocks))
+	require.Len(t, assistantBlocks, 1)
+	require.Equal(t, "server_tool_use", assistantBlocks[0].Type)
+	require.Equal(t, "web_search", assistantBlocks[0].Name)
+	require.Equal(t, "srvtoolu_ws_1", assistantBlocks[0].ID)
+	require.JSONEq(t, `{"query":"kedaya.ai"}`, string(assistantBlocks[0].Input))
+
+	var userBlocks []AnthropicContentBlock
+	require.NoError(t, json.Unmarshal(anthropicReq.Messages[1].Content, &userBlocks))
+	require.Len(t, userBlocks, 1)
+	require.Equal(t, "text", userBlocks[0].Type)
+	require.Equal(t, "总结一下", userBlocks[0].Text)
+}

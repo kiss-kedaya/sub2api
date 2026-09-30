@@ -19,6 +19,9 @@ var anthropicInboundBlockTypes = map[string]bool{
 	"tool_result":       true,
 	"thinking":          true,
 	"redacted_thinking": true,
+	// 服务器侧工具（web_search 等）：Anthropic 原生语义，回放历史时合法。
+	"server_tool_use":        true,
+	"web_search_tool_result": true,
 }
 
 func responsesToAnthropicMessages(t *testing.T, input string) []AnthropicMessage {
@@ -91,7 +94,8 @@ func TestResponsesToAnthropic_UnknownItemTypeContentIsSanitized(t *testing.T) {
 	]`)
 
 	requireAnthropicMessagesAreSendable(t, messages)
-	require.Empty(t, messages, "整条内容都无法映射时不应发出消息")
+	require.Len(t, messages, 1)
+	require.Contains(t, string(messages[0].Content), "server_tool_use")
 }
 
 // 未知 item type 里夹带的可识别文本仍然保留，不做无谓丢弃。
