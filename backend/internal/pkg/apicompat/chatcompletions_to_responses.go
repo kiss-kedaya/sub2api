@@ -142,7 +142,7 @@ func chatSystemToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []ResponsesInputItem{{Role: m.Role, Content: content}}, nil
+	return []ResponsesInputItem{{Type: "message", Role: m.Role, Content: content}}, nil
 }
 
 // chatUserToResponses converts a user message, handling both plain strings and
@@ -156,7 +156,7 @@ func chatUserToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []ResponsesInputItem{{Role: "user", Content: content}}, nil
+	return []ResponsesInputItem{{Type: "message", Role: "user", Content: content}}, nil
 }
 
 // chatAssistantToResponses converts an assistant message. If there is both
@@ -191,7 +191,7 @@ func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, ResponsesInputItem{Role: "assistant", Content: partsJSON})
+		items = append(items, ResponsesInputItem{Type: "message", Role: "assistant", Content: partsJSON})
 	}
 
 	// Emit one function_call item per tool_call.
