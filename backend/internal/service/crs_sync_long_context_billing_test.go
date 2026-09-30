@@ -158,6 +158,11 @@ func runCRSOpenAILongContextSync(t *testing.T, repo AccountRepository, source cr
 
 	cfg := &config.Config{}
 	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	// 本测试用 httptest 起在 127.0.0.1 上，所以必须**显式**声明允许私网地址。
+	// 解析后 IP 校验（防 DNS Rebinding）现在只由 AllowPrivateHosts 决定，
+	// 不再和 allowlist 开关耦合——测试打到环回地址就该表明这一点，
+	// 而不是依赖「校验恰好是关着的」。
+	cfg.Security.URLAllowlist.AllowPrivateHosts = true
 	service := NewCRSSyncService(repo, nil, nil, nil, nil, cfg)
 	result, err := service.SyncFromCRS(context.Background(), SyncFromCRSInput{
 		BaseURL:  server.URL,
