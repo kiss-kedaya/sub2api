@@ -54,6 +54,40 @@ func adaptGrokResponsesClientTools(body []byte) ([]byte, apicompat.ResponsesClie
 	return adaptResponsesClientToolsForFunctionUpstream(body, "Grok")
 }
 
+// grokRootUnionNeedsSafeFallback 判断函数工具的 parameters 根是否是 xAI 会拒绝的
+// 非法联合：anyOf/oneOf 的任一分支 type 不是 object。上游 f4820c00d 引入，
+// fd872550d 放宽为不再要求根 type 缺失（根已声明 object 但分支混合时同样非法）。
+// 仅作兜底：优先走 simplifyGrokRootObjectUnion 的精确摊平，保留工具契约。
+//
+// 注意：带 $ref 的分支**不适用**本兜底。本仓库刻意保留无法解析的 $ref
+// （见 simplifyGrokRootObjectUnion 的注释）：把带 $ref 的联合降级成空对象 schema
+// 会悄悄改掉工具契约 —— 模型收到一个「无参数」的工具，比上游 400 更糟。
+// 这条约束由 TestSanitizeGrokResponsesToolsPreservesUnresolvedRootRefs 锁定。
+func grokRootUnionNeedsSafeFallback(schema map[string]any) bool {
+	if schema == nil {
+		return false
+	}
+	for _, keyword := range []string{"anyOf", "oneOf"} {
+		branches, ok := schema[keyword].([]any)
+		if !ok || len(branches) == 0 {
+			continue
+		}
+		for _, raw := range branches {
+			branch, ok := raw.(map[string]any)
+			if !ok {
+				return true
+			}
+			if strings.TrimSpace(stringValue(branch["$ref"])) != "" {
+				return false
+			}
+			if !strings.EqualFold(strings.TrimSpace(stringValue(branch["type"])), "object") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func simplifyGrokRootObjectUnion(schema map[string]any) bool {
 	branches, ok := schema["oneOf"].([]any)
 	if !ok || len(branches) == 0 {

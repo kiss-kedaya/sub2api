@@ -1208,7 +1208,25 @@ func sanitizeGrokResponsesToolSchemaUnions(body []byte) ([]byte, error) {
 			continue
 		}
 		parameters, ok := tool["parameters"].(map[string]any)
-		if ok && simplifyGrokRootObjectUnion(parameters) {
+		if !ok {
+			continue
+		}
+		if simplifyGrokRootObjectUnion(parameters) {
+			tool["strict"] = false
+			changed = true
+			continue
+		}
+		// Fallback (upstream f4820c00d + fd872550d): the precise flattener above
+		// declines mixed-type unions (a branch whose type is neither object nor
+		// null) and anyOf roots. xAI rejects those roots outright, so replace the
+		// whole schema with a permissive object and relax strict rather than
+		// forwarding a request that is guaranteed to 400.
+		if grokRootUnionNeedsSafeFallback(parameters) {
+			tool["parameters"] = map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{},
+				"additionalProperties": true,
+			}
 			tool["strict"] = false
 			changed = true
 		}
