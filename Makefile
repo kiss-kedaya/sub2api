@@ -9,6 +9,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/utils/__tests__/customUsage.spec.ts \
 	src/utils/__tests__/accountModelTest.spec.ts \
 	src/i18n/__tests__/localeKeyCompleteness.spec.ts \
+	src/__tests__/xlsxWriteOnly.spec.ts \
 	src/api/__tests__/client.spec.ts \
 	src/api/__tests__/tokenRefresh.spec.ts \
 	src/api/__tests__/channelMonitorV2.spec.ts \
