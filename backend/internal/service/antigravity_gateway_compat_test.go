@@ -459,7 +459,7 @@ func TestAntigravityCompatEmptyStreamTriggersFailover(t *testing.T) {
 		{
 			name: "responses",
 			run: func(svc *AntigravityGatewayService, c *gin.Context, resp *http.Response) (*antigravityStreamResult, error) {
-				return svc.handleResponsesStreamingFromAntigravity(c, resp, time.Now(), "gemini-3.1-pro-high")
+				return svc.handleResponsesStreamingFromAntigravity(c, resp, time.Now(), "gemini-3.1-pro-high", apicompat.ResponsesClientToolMapping{})
 			},
 		},
 	}
@@ -502,7 +502,7 @@ func TestAntigravityCompatUsageOnlyStreamTriggersFailover(t *testing.T) {
 		{
 			name: "responses",
 			run: func(svc *AntigravityGatewayService, c *gin.Context, resp *http.Response) (*antigravityStreamResult, error) {
-				return svc.handleResponsesStreamingFromAntigravity(c, resp, time.Now(), "gemini-3.1-pro-high")
+				return svc.handleResponsesStreamingFromAntigravity(c, resp, time.Now(), "gemini-3.1-pro-high", apicompat.ResponsesClientToolMapping{})
 			},
 		},
 	}
@@ -693,7 +693,7 @@ func TestAntigravityCompatStreamErrorCommitsSingleTerminalFrame(t *testing.T) {
 		},
 	}
 
-	result, err := svc.handleResponsesStreamingFromAntigravity(c, resp, time.Now(), "gemini-3.1-pro-high")
+	result, err := svc.handleResponsesStreamingFromAntigravity(c, resp, time.Now(), "gemini-3.1-pro-high", apicompat.ResponsesClientToolMapping{})
 
 	require.Error(t, err)
 	require.Nil(t, result)
@@ -713,7 +713,7 @@ func TestAntigravityCompatKeepaliveAfterFirstEvent(t *testing.T) {
 	done := make(chan error, 1)
 
 	go func() {
-		_, err := svc.handleResponsesStreamingFromAntigravity(c, resp, time.Now(), "gemini-3.1-pro-high")
+		_, err := svc.handleResponsesStreamingFromAntigravity(c, resp, time.Now(), "gemini-3.1-pro-high", apicompat.ResponsesClientToolMapping{})
 		done <- err
 	}()
 	_, err := io.WriteString(

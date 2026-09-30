@@ -70,13 +70,19 @@ func (a *antigravityChatStreamAdapter) emitResponseEvent(event *apicompat.Respon
 }
 
 type antigravityResponsesStreamAdapter struct {
-	anthropicState *apicompat.AnthropicEventToResponsesState
+	anthropicState    *apicompat.AnthropicEventToResponsesState
+	clientToolMapping apicompat.ResponsesClientToolMapping
+	clientToolRestorer *apicompat.ResponsesClientToolStreamRestorer
 }
 
-func newAntigravityResponsesStreamAdapter(model string) *antigravityResponsesStreamAdapter {
+func newAntigravityResponsesStreamAdapter(model string, clientToolMapping apicompat.ResponsesClientToolMapping) *antigravityResponsesStreamAdapter {
 	state := apicompat.NewAnthropicEventToResponsesState()
 	state.Model = model
-	return &antigravityResponsesStreamAdapter{anthropicState: state}
+	var restorer *apicompat.ResponsesClientToolStreamRestorer
+	if clientToolMapping.CustomTools != nil || clientToolMapping.ToolSearch || clientToolMapping.LocalShellTools != nil || clientToolMapping.NamespaceTools != nil {
+		restorer = apicompat.NewResponsesClientToolStreamRestorer(clientToolMapping)
+	}
+	return &antigravityResponsesStreamAdapter{anthropicState: state, clientToolMapping: clientToolMapping, clientToolRestorer: restorer}
 }
 
 func (a *antigravityResponsesStreamAdapter) Emit(event *apicompat.AnthropicStreamEvent, writer *antigravityClientWriter) {
@@ -97,8 +103,26 @@ func (a *antigravityResponsesStreamAdapter) WriteError(writer *antigravityClient
 
 func (a *antigravityResponsesStreamAdapter) emitResponseEvent(event apicompat.ResponsesStreamEvent, writer *antigravityClientWriter) {
 	if data, err := apicompat.ResponsesEventToSSE(event); err == nil {
-		writer.Write([]byte(data))
+		writer.Write(a.restoreClientToolPayload([]byte(data)))
 	}
+}
+
+// restoreClientToolPayload 把上游的 function_call 还原为客户端工具类型
+// （custom_tool_call/local_shell_call），codex 才能按类型路由调用到终端。
+func (a *antigravityResponsesStreamAdapter) restoreClientToolPayload(data []byte) []byte {
+	if a.clientToolRestorer == nil {
+		return data
+	}
+	restored, _, err := a.clientToolRestorer.RestoreEvent(data)
+	if err != nil || len(restored) == 0 {
+		return data
+	}
+	// 自定义工具的完成事件可能展开为多个 payload；逐一写回由调用方 flush。
+	var out []byte
+	for _, payload := range restored {
+		out = append(out, payload...)
+	}
+	return out
 }
 
 type antigravityCompatScanEvent struct {
@@ -462,13 +486,14 @@ func (s *AntigravityGatewayService) handleResponsesStreamingFromAntigravity(
 	resp *http.Response,
 	startTime time.Time,
 	originalModel string,
+	clientToolMapping apicompat.ResponsesClientToolMapping,
 ) (*antigravityStreamResult, error) {
 	return s.handleAntigravityCompatStream(
 		c,
 		resp,
 		startTime,
 		originalModel,
-		newAntigravityResponsesStreamAdapter(originalModel),
+		newAntigravityResponsesStreamAdapter(originalModel, clientToolMapping),
 		"antigravity responses stream",
 	)
 }
