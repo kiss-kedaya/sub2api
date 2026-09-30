@@ -175,10 +175,23 @@ func sanitizeGrokResponsesModelInput(body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("serialize Grok Responses model input: %w", err)
 	}
-	updated, err := sjson.SetRawBytes(body, "input", encoded)
-	if err != nil {
-		return nil, fmt.Errorf("set Grok Responses model input: %w", err)
+	// 这里直接用 gjson 已经算好的字节跨度拼接，省掉 sjson.SetRawBytes 又要整份
+	// 解析一遍 body 的开销。input 在上文每次改写 body 之后都重新取过，所以
+	// Index / Raw 对当前 body 是有效的；而 sjson 相对拼接唯一的额外能力是
+	// 「键不存在时创建」，可这里 input 必然存在（上文已 Exists 且判定为数组）。
+	end := input.Index + len(input.Raw)
+	if input.Index < 0 || input.Index > len(body) || end > len(body) {
+		// 跨度不可信时退回原路径，行为完全不变。
+		updated, setErr := sjson.SetRawBytes(body, "input", encoded)
+		if setErr != nil {
+			return nil, fmt.Errorf("set Grok Responses model input: %w", setErr)
+		}
+		return updated, nil
 	}
+	updated := make([]byte, 0, len(body)-len(input.Raw)+len(encoded))
+	updated = append(updated, body[:input.Index]...)
+	updated = append(updated, encoded...)
+	updated = append(updated, body[end:]...)
 	return updated, nil
 }
 
