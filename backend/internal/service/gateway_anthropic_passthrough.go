@@ -310,9 +310,11 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	token string,
 ) (*http.Request, []byte, error) {
 	body = stripDeferredToolCacheControl(body)
-	// 透传路径只替换认证，但 cache_control 的 ttl 顺序是上游硬约束：
-	// 客户端自带「5m 在前、1h 在后」会让上游 400，规整一下不改变其它任何字段。
+	// 透传路径只替换认证，但这两条是上游硬约束，不规整就是必然 400：
+	//   - cache_control 的 ttl 顺序（1h 不得跟在 5m 后面）
+	//   - Claude 5.x 不接受 thinking.type="enabled"
 	body = normalizeCacheControlTTLOrder(body)
+	body = sanitizeAnthropicThinkingForModel(body, gjson.GetBytes(body, "model").String())
 	targetURL := claudeAPIURL
 	baseURL := account.GetBaseURL()
 	if baseURL != "" {
