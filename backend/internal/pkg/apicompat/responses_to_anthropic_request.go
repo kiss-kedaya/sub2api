@@ -150,6 +150,25 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 				Content: blockJSON,
 			})
 
+		case item.Type == "web_search_call":
+			// web_search_call 历史项 → assistant message 里的 server_tool_use 块。
+			// Anthropic 转发过的搜索历史（本轮由 AnthropicToResponsesResponse 映射回
+			// web_search_call）必须以 server_tool_use 形态回放，否则在请求转换的
+			// default 分支被静默丢弃，搜索上下文跨轮丢失。与响应方向的合成
+			// （responses_to_anthropic.go resToAnthHandleWebSearchDone）同一形状。
+			inputJSON, _ := json.Marshal(webSearchCallAction(item.actionRaw))
+			block := AnthropicContentBlock{
+				Type:  "server_tool_use",
+				ID:    "srvtoolu_" + item.ID,
+				Name:  "web_search",
+				Input: inputJSON,
+			}
+			blockJSON, _ := json.Marshal([]AnthropicContentBlock{block})
+			messages = append(messages, AnthropicMessage{
+				Role:    "assistant",
+				Content: blockJSON,
+			})
+
 		case item.Type == "function_call_output":
 			// function_call_output → user message with tool_result block
 			contentJSON := responsesFunctionOutputToAnthropicContent(item)
@@ -728,4 +747,23 @@ func convertResponsesToAnthropicToolChoice(raw json.RawMessage) (json.RawMessage
 
 	// Pass through unknown
 	return raw, nil
+}
+
+// webSearchCallAction 把 web_search_call 历史项的 action 原文归一为
+// server_tool_use 的 Input 载荷：合法对象原样保留，缺省/形状不符回退空 query
+// （与响应方向的 resToAnthHandleWebSearchDone 兜底一致）。
+func webSearchCallAction(raw json.RawMessage) map[string]string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return map[string]string{"query": ""}
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return map[string]string{"query": ""}
+	}
+	query := ""
+	if q, ok := obj["query"]; ok {
+		_ = json.Unmarshal(q, &query)
+	}
+	return map[string]string{"query": query}
 }

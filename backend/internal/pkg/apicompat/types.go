@@ -280,6 +280,10 @@ type ResponsesInputItem struct {
 	// type=function_call_output
 	Output    string `json:"output,omitempty"`
 	outputRaw json.RawMessage
+
+	// type=web_search_call：线上 action 对象（{type, query}），保留原文供
+	// Responses→Anthropic 回放合成 server_tool_use 块。
+	actionRaw json.RawMessage
 }
 
 func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
@@ -287,12 +291,17 @@ func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		*alias
 		Output json.RawMessage `json:"output"`
+		Action json.RawMessage `json:"action"`
 	}
 
 	*i = ResponsesInputItem{}
 	wire.alias = (*alias)(i)
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
+	}
+
+	if action := bytes.TrimSpace(wire.Action); len(action) > 0 && !bytes.Equal(action, []byte("null")) {
+		i.actionRaw = append(i.actionRaw[:0], action...)
 	}
 
 	output := bytes.TrimSpace(wire.Output)
