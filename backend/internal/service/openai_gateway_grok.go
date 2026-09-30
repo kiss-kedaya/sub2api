@@ -796,6 +796,12 @@ func grokSupportsReasoningEffort(model string) bool {
 	model = strings.ToLower(xai.StripGrokProviderPrefix(strings.TrimSpace(model)))
 	switch model {
 	case "grok-4.5", "grok-4.5-latest", "grok-4.6", "grok-4.6-latest",
+		// grok-4.7 与 grok-4.7-build-fast 原先漏在这个白名单外，于是
+		// normalizeGrokResponsesReasoningEffort 会**删掉** reasoning.effort /
+		// reasoning_effort，思考等级全部丢失。
+		//
+		// 必须保留该系列的 reasoning 参数，避免兼容上游因必需字段缺失而拒绝请求。
+		"grok-4.7", "grok-4.7-latest", "grok-4.7-build-fast",
 		"grok-4.3", "grok-4.3-latest",
 		"grok-3-mini", "grok-3-mini-fast", "grok-4.20-0309-reasoning",
 		"grok-4.20-reasoning", "grok-4.20-multi-agent-0309":
