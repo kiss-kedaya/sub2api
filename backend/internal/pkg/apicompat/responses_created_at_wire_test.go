@@ -164,3 +164,23 @@ func TestResponsesStreamEvent_CreatedAtSurvivesUnmarshalRemarshal(t *testing.T) 
 
 	require.EqualValues(t, 1700000123, requireCreatedAt(t, responseObjectOf(t, evt)))
 }
+
+// 部分 OpenAI 兼容上游（deepseek 中转）把 created_at 序列化成带小数的 JSON 数字。
+// 裸 int64 会让整帧 Unmarshal 失败，/v1/messages 回程因此跳过 usage 解析，
+// 使用记录变成 0 入 0 出。浮点必须能解，且回写时仍是整数。
+func TestResponsesStreamEvent_FractionalCreatedAtKeepsUsage(t *testing.T) {
+	upstream := []byte(`{"type":"response.completed","response":{"id":"resp_9","object":"response",` +
+		`"created_at":1790892388.0,"model":"deepseek-v4-flash","status":"completed","output":[],` +
+		`"usage":{"input_tokens":5,"output_tokens":10,"total_tokens":15}}}`)
+
+	var evt ResponsesStreamEvent
+	require.NoError(t, json.Unmarshal(upstream, &evt), "浮点 created_at 不得让整帧反序列化失败")
+	require.NotNil(t, evt.Response)
+	require.EqualValues(t, 1790892388, evt.Response.CreatedAt)
+	require.NotNil(t, evt.Response.Usage, "usage 必须随帧解出，否则计费记成 0")
+	require.Equal(t, 5, evt.Response.Usage.InputTokens)
+	require.Equal(t, 10, evt.Response.Usage.OutputTokens)
+
+	require.EqualValues(t, 1790892388, requireCreatedAt(t, responseObjectOf(t, evt)),
+		"回写给客户端的 created_at 必须是整数")
+}
