@@ -39,7 +39,7 @@ func TestApplyCLIBillingHeaders(t *testing.T) {
 	require.Equal(t, CLITokenAuthValue, req.Header.Get(CLITokenAuthHeader))
 	require.Equal(t, CLIClientVersion, req.Header.Get(CLIClientVersionHeader))
 	require.Equal(t, CLIUserAgent(CLIClientVersion), req.UserAgent())
-	require.Equal(t, "headless", req.Header.Get("x-grok-client-mode"))
+	require.Equal(t, "interactive", req.Header.Get("x-grok-client-mode"))
 }
 
 func TestBuildBillingSummaryWeeklyAndMonthly(t *testing.T) {
