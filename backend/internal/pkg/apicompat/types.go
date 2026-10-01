@@ -366,6 +366,34 @@ func (t *ResponsesTool) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// unixSeconds 是 unix 秒时间戳，序列化成 JSON 整数，但反序列化同时接受
+// 整数和浮点。部分 OpenAI 兼容上游把 created_at 写成 1790892388.0，
+// 裸 int64 会让整帧 Unmarshal 失败。
+type unixSeconds int64
+
+func (u *unixSeconds) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || string(data) == "null" {
+		*u = 0
+		return nil
+	}
+	var n int64
+	if err := json.Unmarshal(data, &n); err == nil {
+		*u = unixSeconds(n)
+		return nil
+	}
+	var f float64
+	if err := json.Unmarshal(data, &f); err != nil {
+		return err
+	}
+	*u = unixSeconds(f)
+	return nil
+}
+
+func (u unixSeconds) MarshalJSON() ([]byte, error) {
+	return json.Marshal(int64(u))
+}
+
 // ResponsesResponse is the non-streaming response from POST /v1/responses.
 type ResponsesResponse struct {
 	ID     string `json:"id"`
@@ -374,7 +402,10 @@ type ResponsesResponse struct {
 	// it non-optional and abort with `missing field 'created_at'` when it is
 	// absent, so it is always emitted — no omitempty. Same rule as ID (see the
 	// "clients treat it as required" fallback in ChatCompletionsResponseToAnthropic).
-	CreatedAt   int64             `json:"created_at"`
+	// 类型用 unixSeconds：部分 OpenAI 兼容上游（如 deepseek 中转）把 created_at 序列化成
+	// 带小数的 JSON 数字（1790892388.0）。裸 int64 会让整帧 Unmarshal 失败，
+	// /v1/messages 回程因此跳过 usage 解析，使用记录变成 0 入 0 出。
+	CreatedAt   unixSeconds       `json:"created_at"`
 	Model       string            `json:"model"`
 	Status      string            `json:"status"` // "completed" | "incomplete" | "failed"
 	Output      []ResponsesOutput `json:"output"`

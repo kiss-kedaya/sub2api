@@ -27,7 +27,7 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 	out := &ResponsesResponse{
 		ID:        id,
 		Object:    "response",
-		CreatedAt: time.Now().Unix(),
+		CreatedAt: unixSeconds(time.Now().Unix()),
 		Model:     resp.Model,
 	}
 
@@ -650,7 +650,7 @@ func makeResponsesCreatedEvent(state *AnthropicEventToResponsesState) ResponsesS
 		Response: &ResponsesResponse{
 			ID:        state.ResponseID,
 			Object:    "response",
-			CreatedAt: state.Created,
+			CreatedAt: unixSeconds(state.Created),
 			Model:     state.Model,
 			Status:    "in_progress",
 			Output:    []ResponsesOutput{},
@@ -700,7 +700,7 @@ func makeResponsesCompletedEvent(
 		Response: &ResponsesResponse{
 			ID:                state.ResponseID,
 			Object:            "response",
-			CreatedAt:         state.Created,
+			CreatedAt:         unixSeconds(state.Created),
 			Model:             state.Model,
 			Status:            status,
 			Output:            outputs,

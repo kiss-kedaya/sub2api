@@ -1401,7 +1401,7 @@ func ChatCompletionsResponseToResponsesWithLocalShell(resp *ChatCompletionsRespo
 	out := &ResponsesResponse{
 		ID:          id,
 		Object:      "response",
-		CreatedAt:   createdAt,
+		CreatedAt:   unixSeconds(createdAt),
 		Model:       model,
 		Status:      "completed",
 		ServiceTier: chatServiceTier(resp),
@@ -1943,7 +1943,7 @@ func FinalizeChatCompletionsResponsesStream(state *ChatCompletionsToResponsesStr
 		Response: &ResponsesResponse{
 			ID:                state.ResponseID,
 			Object:            "response",
-			CreatedAt:         state.Created,
+			CreatedAt:         unixSeconds(state.Created),
 			Model:             state.Model,
 			Status:            status,
 			ServiceTier:       state.ServiceTier,
@@ -1964,7 +1964,7 @@ func ensureChatToResponsesCreated(state *ChatCompletionsToResponsesStreamState) 
 		Response: &ResponsesResponse{
 			ID:          state.ResponseID,
 			Object:      "response",
-			CreatedAt:   state.Created,
+			CreatedAt:   unixSeconds(state.Created),
 			Model:       state.Model,
 			Status:      "in_progress",
 			ServiceTier: state.ServiceTier,
