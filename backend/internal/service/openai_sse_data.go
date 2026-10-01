@@ -2,9 +2,11 @@ package service
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // openAISSEDataFrame validates one SSE data payload and caches the effective
@@ -56,6 +58,35 @@ func newOpenAISSEDataFrame(data []byte, fallbackEventType string, trustedJSON bo
 
 func (f openAISSEDataFrame) isDone() bool {
 	return bytes.Equal(f.trimmed, []byte("[DONE]"))
+}
+
+// normalizeFractionalCreatedAtForClient 把 Responses 帧里的浮点 created_at 收成整数。
+// 部分 OpenAI 兼容上游把它序列化成 1790892388.0。下游若是官方版，created_at 是裸
+// int64，整帧反序列化会失败、用量被记成 0。透传路径是字节级转发，必须在写出前改掉。
+// 只改带小数点的数字，整数原样返回，避免无谓的重编码。
+func normalizeFractionalCreatedAtForClient(payload []byte) ([]byte, bool) {
+	if len(payload) == 0 || !bytes.Contains(payload, []byte("created_at")) {
+		return payload, false
+	}
+	updated := payload
+	changed := false
+	for _, path := range []string{"created_at", "response.created_at"} {
+		value := gjson.GetBytes(updated, path)
+		if value.Type != gjson.Number || !strings.Contains(value.Raw, ".") {
+			continue
+		}
+		seconds, err := strconv.ParseFloat(value.Raw, 64)
+		if err != nil {
+			continue
+		}
+		next, err := sjson.SetBytes(updated, path, int64(seconds))
+		if err != nil {
+			return payload, false
+		}
+		updated = next
+		changed = true
+	}
+	return updated, changed
 }
 
 type openAISSEDataAccumulator struct {

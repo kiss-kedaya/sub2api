@@ -2361,6 +2361,12 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if openAISSEFrameMayContainImageOutput(frame) {
 				imageCounter.AddSSEFrame(frame)
 			}
+			if normalizedData, normalized := normalizeFractionalCreatedAtForClient(dataBytes); normalized {
+				dataBytes = normalizedData
+				trimmedData = strings.TrimSpace(string(normalizedData))
+				line = "data: " + string(normalizedData)
+				frame = parseTrustedOpenAISSEDataFrame(dataBytes, eventType)
+			}
 			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(
 				dataBytes,
 				eventType,
@@ -2569,6 +2575,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if err != nil {
 		return nil, fmt.Errorf("restore OpenAI Responses client tools: %w", err)
 	}
+	if normalized, changed := normalizeFractionalCreatedAtForClient(body); changed {
+		body = normalized
+	}
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}
@@ -2640,6 +2649,9 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	logOpenAISuccessMissingUsage(c.Request.Context(), c, account, resp, usage, terminalType, false)
+	if normalized, changed := normalizeFractionalCreatedAtForClient(body); changed {
+		body = normalized
+	}
 
 	contentType := "application/json; charset=utf-8"
 	if !ok {
