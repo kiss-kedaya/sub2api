@@ -28,12 +28,12 @@ func TestApplyCLIProxyHeadersMeetsUpstreamMinimumVersion(t *testing.T) {
 	}
 }
 
-func TestCLIUserAgentMatchesOfficialHeadlessCapture(t *testing.T) {
-	// 来源：官方 CLI 1.0.46 在 Linux x86_64 的本地 Responses 抓包。
+func TestCLIUserAgentMatchesOfficialInteractiveCapture(t *testing.T) {
+	// 来源：官方 CLI 1.0.46 交互式界面在 Linux x86_64 的主 Responses 请求抓包。
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("该抓包样本来自 Linux x86_64")
 	}
-	require.Equal(t, "grok-shell/1.0.46 (linux; x86_64)", CLIUserAgent("1.0.46"))
+	require.Equal(t, "grok-pager/1.0.46 grok-shell/1.0.46 (linux; x86_64)", CLIUserAgent("1.0.46"))
 }
 
 func TestResolveCLIVersionDefaultsToPinnedClientVersion(t *testing.T) {
@@ -77,7 +77,7 @@ func TestApplyCLIProxyHeaders(t *testing.T) {
 	require.Equal(t, CLIClientVersion, req.Header.Get("x-grok-client-version"))
 	require.Equal(t, CLIClientIdentifier, req.Header.Get("x-grok-client-identifier"))
 	require.Equal(t, CLITokenAuth, req.Header.Get("X-XAI-Token-Auth"))
-	require.Equal(t, "headless", req.Header.Get("x-grok-client-mode"))
+	require.Equal(t, "interactive", req.Header.Get("x-grok-client-mode"))
 	require.Equal(t, "authenticate-response", req.Header.Get("x-authenticateresponse"))
 	require.Equal(t, CLIUserAgent(CLIClientVersion), req.Header.Get("User-Agent"))
 }

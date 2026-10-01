@@ -25,11 +25,11 @@ const (
 	// CLITokenAuth is required by cli-chat-proxy for Grok Build OAuth tokens.
 	CLITokenAuth = "xai-grok-cli"
 
-	// CLIClientIdentifier is the x-grok-client-identifier value used by Grok shell/CLI.
-	CLIClientIdentifier = "grok-shell"
+	// CLIClientIdentifier 对齐官方交互式 CLI 主请求的客户端标识。
+	CLIClientIdentifier = "grok-pager"
 
-	// CLIClientMode 对齐官方 CLI 无界面运行模式。
-	CLIClientMode = "headless"
+	// CLIClientMode 对齐官方 CLI 正常交互模式。
+	CLIClientMode = "interactive"
 )
 
 // ResolveCLIVersion returns a supported CLI client version.
@@ -55,7 +55,7 @@ func IsSupportedCLIVersion(version string) bool {
 		semver.Compare(canonical, minimum) >= 0
 }
 
-// CLIUserAgent 对齐官方 CLI 无界面模式的 UA，平台名称使用 Rust 的格式。
+// CLIUserAgent 对齐官方交互式 CLI 的 UA，平台名称使用 Rust 的格式。
 func CLIUserAgent(version string) string {
 	if strings.TrimSpace(version) == "" {
 		version = CLIClientVersion
@@ -72,7 +72,7 @@ func CLIUserAgent(version string) string {
 	case "386":
 		arch = "x86"
 	}
-	return "grok-shell/" + version + " (" + platform + "; " + arch + ")"
+	return "grok-pager/" + version + " grok-shell/" + version + " (" + platform + "; " + arch + ")"
 }
 
 // ApplyCLIProxyHeaders stamps the fixed Grok CLI identity when the request
