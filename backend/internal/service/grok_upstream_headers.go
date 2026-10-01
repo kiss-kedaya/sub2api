@@ -17,7 +17,7 @@ const (
 	grokClientModeHeader       = xai.CLIClientMode
 )
 
-// defaultGrokUpstreamUserAgent is the pinned Grok CLI / workspace UA.
+// defaultGrokUpstreamUserAgent 使用固定版本的官方 CLI 无界面模式 UA。
 // Grok upstream must not forward Claude Code / Codex / browser client UAs.
 func defaultGrokUpstreamUserAgent() string {
 	return xai.CLIUserAgent(xai.ResolveCLIVersion())
