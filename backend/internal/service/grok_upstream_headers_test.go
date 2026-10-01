@@ -38,7 +38,7 @@ func TestApplyDefaultGrokUpstreamHeadersHonorsCLIVersionOverride(t *testing.T) {
 
 	require.Equal(t, "1.0.14", req.Header.Get("x-grok-client-version"))
 	require.Equal(t, xai.CLIUserAgent("1.0.14"), req.Header.Get("User-Agent"))
-	require.Equal(t, "grok-shell", req.Header.Get("x-grok-client-identifier"))
+	require.Equal(t, "grok-pager", req.Header.Get("x-grok-client-identifier"))
 }
 
 func TestResolveGrokUpstreamUserAgentNeverPassthrough(t *testing.T) {

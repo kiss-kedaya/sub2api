@@ -1734,7 +1734,7 @@ func applyGrokCLIHeaders(headers http.Header) {
 	headers.Set("X-Grok-Client-Version", version)
 	headers.Set("x-grok-client-version", version)
 	headers.Set("x-grok-client-identifier", xai.CLIClientIdentifier)
-	// 对齐官方 CLI 无界面模式，网关请求与额度探测共用身份。
+	// 对齐官方 CLI 交互模式，网关请求与额度探测共用身份。
 	headers.Set("X-Grok-Client-Mode", xai.CLIClientMode)
 }
 
