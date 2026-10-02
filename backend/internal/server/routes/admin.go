@@ -364,7 +364,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 	accounts := admin.Group("/accounts")
 	accounts.Use(func(c *gin.Context) {
 		if subject, ok := middleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
-			c.Request = c.Request.WithContext(service.WithAccountOwnerScope(c.Request.Context(), subject.UserID))
+			c.Request = c.Request.WithContext(service.WithAccountOwnerScope(c.Request.Context(), subject.UserID, c.GetString(middleware.ContextKeyAuthEmail)))
 		}
 		c.Next()
 	})
