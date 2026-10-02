@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -320,4 +321,62 @@ func TestSyncBalanceCacheAfterDeduction_SynchronousWhenInflightEnabled(t *testin
 	require.Equal(t, int32(1), cache.deducts.Load(), "cache deduction must land before the billing task returns")
 	bal, _ := cache.GetUserBalance(context.Background(), 3)
 	require.InDelta(t, 0.75, bal, 1e-12)
+}
+
+// 计费侧：requested 来源下别名本身无价 → billableModelWithFallback 回退到映射模型。
+// 准入估算必须同口径地 > 0，且等于按回退模型的估算。
+func TestInflightEstimate_RequestedSourceUnpricedAliasFallsBackLikeBilling(t *testing.T) {
+	groupID := int64(30)
+	ch := Channel{
+		ID:                 3,
+		Status:             StatusActive,
+		GroupIDs:           []int64{groupID},
+		BillingModelSource: BillingModelSourceRequested,
+		ModelMapping: map[string]map[string]string{
+			"anthropic": {"req-alias": "claude-sonnet-4-5"},
+		},
+	}
+	cs := newTestChannelService(makeStandardRepo(ch, map[int64]string{groupID: "anthropic"}))
+	svc := newInflightEstimateGateway(t, cs)
+	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: groupID, Platform: PlatformAnthropic, RateMultiplier: 1}}
+	ctx := context.Background()
+
+	billed := svc.billableModelWithFallback(ctx, apiKey, "req-alias", "claude-sonnet-4-5", "req-alias")
+	require.Equal(t, "claude-sonnet-4-5", billed, "precondition: billing falls back to the mapped model")
+
+	est, priced := svc.EstimateInflightReservation(ctx, apiKey, InflightEstimateRequest{Model: "req-alias", BodyBytes: 4000, MaxTokens: 1000})
+	require.True(t, priced)
+	require.Greater(t, est, 0.0)
+	direct, _ := svc.EstimateInflightReservation(ctx, apiKey, InflightEstimateRequest{Model: billed, BodyBytes: 4000, MaxTokens: 1000})
+	require.InDelta(t, direct, est, 1e-12)
+}
+
+// 计费侧：别名仅在账号级映射（无渠道映射）→ UpstreamModel 为账号映射模型，计费回退到它。
+// 准入时账号未选定：按分组内候选账号映射模型的最高估算。
+func TestInflightEstimate_AccountLevelMappingFallsBackLikeBilling(t *testing.T) {
+	groupID := int64(31)
+	svc := newInflightEstimateGateway(t, nil)
+	svc.accountRepo = &modelsListAccountRepoStub{byGroup: map[int64][]Account{groupID: {
+		{ID: 1, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-31": "claude-sonnet-4-5"}}},
+		{ID: 2, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-31": "claude-opus-4-1"}}},
+	}}}
+	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: groupID, Platform: PlatformAnthropic, RateMultiplier: 1}}
+	ctx := context.Background()
+
+	_, ok := EstimateInflightReservationCost(svc.billingService, svc.cfg.Billing.InflightReservation, "acct-alias-31", 4000, 1000, 1)
+	require.False(t, ok, "precondition: alias has no pricing")
+
+	est, priced := svc.EstimateInflightReservation(ctx, apiKey, InflightEstimateRequest{Model: "acct-alias-31", BodyBytes: 4000, MaxTokens: 1000})
+	require.True(t, priced)
+	req := InflightEstimateRequest{BodyBytes: 4000, MaxTokens: 1000}
+	best := 0.0
+	for _, upstream := range []string{"claude-sonnet-4-5", "claude-opus-4-1"} {
+		billed := svc.billableModelWithFallback(ctx, apiKey, "acct-alias-31", upstream, "acct-alias-31")
+		require.Equal(t, upstream, billed, "precondition: billing charges the account-mapped model")
+		req.Model = billed
+		c, _ := svc.EstimateInflightReservation(ctx, apiKey, req)
+		require.Greater(t, c, 0.0)
+		best = math.Max(best, c)
+	}
+	require.InDelta(t, best, est, 1e-12, "estimate = max over candidate account-mapped billing models")
 }
