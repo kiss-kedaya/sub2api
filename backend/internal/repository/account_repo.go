@@ -321,16 +321,20 @@ func (r *accountRepository) CreateWithAccountGroups(ctx context.Context, account
 }
 
 func (r *accountRepository) applyAccountOwnerScope(ctx context.Context, q *dbent.AccountQuery) *dbent.AccountQuery {
-	adminID, ok := service.AccountOwnerScopeFromContext(ctx)
+	adminID, seeLegacy, ok := service.AccountOwnerScopeDetail(ctx)
 	if !ok || q == nil {
 		return q
 	}
 	return q.Where(dbpredicate.Account(func(s *entsql.Selector) {
 		col := s.C("created_by")
-		s.Where(entsql.Or(
-			entsql.IsNull(col),
-			entsql.EQ(col, adminID),
-		))
+		if seeLegacy {
+			s.Where(entsql.Or(
+				entsql.IsNull(col),
+				entsql.EQ(col, adminID),
+			))
+			return
+		}
+		s.Where(entsql.EQ(col, adminID))
 	}))
 }
 
@@ -343,7 +347,7 @@ func (r *accountRepository) stampAccountOwner(ctx context.Context, account *serv
 }
 
 func (r *accountRepository) ensureAccountOwnerVisible(ctx context.Context, id int64) error {
-	adminID, ok := service.AccountOwnerScopeFromContext(ctx)
+	adminID, seeLegacy, ok := service.AccountOwnerScopeDetail(ctx)
 	if !ok || r == nil || r.sql == nil || id <= 0 {
 		return nil
 	}
@@ -364,7 +368,7 @@ func (r *accountRepository) ensureAccountOwnerVisible(ctx context.Context, id in
 		v := createdBy.Int64
 		owner = &v
 	}
-	if !service.AccountVisibleToOwner(owner, adminID) {
+	if !service.AccountVisibleToOwner(owner, adminID, seeLegacy) {
 		return service.ErrAccountNotFound
 	}
 	return rows.Err()
