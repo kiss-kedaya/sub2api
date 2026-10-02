@@ -40,6 +40,19 @@ func TestClaudeResetStatusNativeContract(t *testing.T) {
 	require.NotContains(t, string(b), `"id"`)
 	require.NotContains(t, string(b), "launch")
 	require.NotContains(t, string(b), "synthetic-token")
+	require.NotContains(t, string(b), "selection_token")
+}
+func TestClaudeResetPastCooldownIsCleared(t *testing.T) {
+	now := time.Now()
+	past := now.Add(-time.Minute)
+	no := false
+	g := claudeResetGrant{ID: "grant", ResetsLeft: 1, UsableNow: true, UseRequiresLimit: &no, Clears: []string{"five_hour"}}
+	r := projectClaudeResetCredits(&claudeResetBlock{Eligible: true, NextGrantID: g.ID, CooldownUntil: &past, Grants: []claudeResetGrant{g}}, now)
+	require.Nil(t, r.CooldownUntil)
+	require.Equal(t, 1, r.AvailableCount)
+	future := now.Add(time.Hour)
+	r = projectClaudeResetCredits(&claudeResetBlock{Eligible: true, NextGrantID: g.ID, CooldownUntil: &future, Grants: []claudeResetGrant{g}}, now)
+	require.Equal(t, &future, r.CooldownUntil)
 }
 func TestClaudeResetEligibilityFailClosed(t *testing.T) {
 	now := time.Now()

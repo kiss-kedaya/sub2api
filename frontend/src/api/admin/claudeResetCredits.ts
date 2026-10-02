@@ -1,7 +1,6 @@
 import { apiClient } from '../client'
 
 export interface ClaudeResetCredit {
-  selection_token: string
   label: string
   resets_left: number
   starts_at?: string
