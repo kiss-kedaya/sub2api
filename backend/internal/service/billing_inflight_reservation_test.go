@@ -4,7 +4,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -356,10 +358,11 @@ func TestInflightEstimate_RequestedSourceUnpricedAliasFallsBackLikeBilling(t *te
 func TestInflightEstimate_AccountLevelMappingFallsBackLikeBilling(t *testing.T) {
 	groupID := int64(31)
 	svc := newInflightEstimateGateway(t, nil)
-	svc.accountRepo = &modelsListAccountRepoStub{byGroup: map[int64][]Account{groupID: {
+	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformAnthropic): {
 		{ID: 1, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-31": "claude-sonnet-4-5"}}},
 		{ID: 2, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-31": "claude-opus-4-1"}}},
 	}}}
+	attachInflightSnapshot(svc, snap)
 	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: groupID, Platform: PlatformAnthropic, RateMultiplier: 1}}
 	ctx := context.Background()
 
@@ -379,4 +382,119 @@ func TestInflightEstimate_AccountLevelMappingFallsBackLikeBilling(t *testing.T) 
 		best = math.Max(best, c)
 	}
 	require.InDelta(t, best, est, 1e-12, "estimate = max over candidate account-mapped billing models")
+}
+
+type inflightSnapshotCacheStub struct {
+	SchedulerCache
+	mu       sync.Mutex
+	byBucket map[string][]Account
+	reads    atomic.Int64
+}
+
+func inflightBucketKey(groupID int64, platform string) string {
+	return fmt.Sprintf("%d|%s", groupID, platform)
+}
+
+func (c *inflightSnapshotCacheStub) set(groupID int64, platform string, accounts []Account) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.byBucket[inflightBucketKey(groupID, platform)] = accounts
+}
+
+func (c *inflightSnapshotCacheStub) GetSnapshot(ctx context.Context, bucket SchedulerBucket) ([]*Account, bool, error) {
+	c.reads.Add(1)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	src := c.byBucket[inflightBucketKey(bucket.GroupID, bucket.Platform)]
+	out := make([]*Account, 0, len(src))
+	for i := range src {
+		a := src[i]
+		out = append(out, &a)
+	}
+	return out, true, nil
+}
+
+// inflightCountingAccountRepo 统计请求路径上的任何直接查库。
+type inflightCountingAccountRepo struct {
+	AccountRepository
+	dbCalls atomic.Int64
+}
+
+func (r *inflightCountingAccountRepo) ListSchedulableByGroupID(ctx context.Context, groupID int64) ([]Account, error) {
+	r.dbCalls.Add(1)
+	return nil, nil
+}
+
+func attachInflightSnapshot(svc *GatewayService, snap *inflightSnapshotCacheStub) *inflightCountingAccountRepo {
+	repo := &inflightCountingAccountRepo{}
+	svc.accountRepo = repo
+	svc.schedulerSnapshot = NewSchedulerSnapshotService(snap, nil, repo, nil, svc.cfg)
+	return repo
+}
+
+// 已定价模型永不查账号映射；随机未定价模型名不直接查库、不产生按模型名的缓存（内存有界）。
+func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
+	groupID := int64(40)
+	svc := newInflightEstimateGateway(t, nil)
+	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformAnthropic): {
+		{ID: 1, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-40": "claude-sonnet-4-5"}}},
+	}}}
+	repo := attachInflightSnapshot(svc, snap)
+	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: groupID, Platform: PlatformAnthropic, RateMultiplier: 1}}
+	ctx := context.Background()
+
+	for i := 0; i < 100; i++ {
+		_, priced := svc.EstimateInflightReservation(ctx, apiKey, InflightEstimateRequest{Model: "claude-sonnet-4-5", BodyBytes: 4000, MaxTokens: 1000})
+		require.True(t, priced)
+	}
+	require.Zero(t, snap.reads.Load(), "priced models must never trigger account-mapping lookup")
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	const n = 20000
+	for i := 0; i < n; i++ {
+		_, priced := svc.EstimateInflightReservation(ctx, apiKey, InflightEstimateRequest{Model: fmt.Sprintf("rand-%d-%d", i, time.Now().UnixNano()), BodyBytes: 4000, MaxTokens: 1000})
+		require.False(t, priced)
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	require.Zero(t, repo.dbCalls.Load(), "no direct DB query on the request path")
+	require.Equal(t, int64(n), snap.reads.Load(), "unpriced lookups read the scheduler snapshot only")
+	require.Less(t, int64(after.HeapAlloc)-int64(before.HeapAlloc), int64(8<<20), "no per-model cache growth")
+}
+
+// 无分组 API Key：使用调度器的未分组账号池，估算与计费回退的账号映射模型同口径。
+func TestInflightEstimate_NoGroupKeyUsesUngroupedAccountMapping(t *testing.T) {
+	svc := newInflightEstimateGateway(t, nil)
+	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(0, PlatformAnthropic): {
+		{ID: 1, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"acct-alias-nog": "claude-opus-4-1"}}},
+	}}}
+	attachInflightSnapshot(svc, snap)
+	apiKey := &APIKey{User: &User{ID: 1}}
+	ctx := context.Background()
+
+	est, priced := svc.EstimateInflightReservation(ctx, apiKey, InflightEstimateRequest{Model: "acct-alias-nog", BodyBytes: 4000, MaxTokens: 1000})
+	require.True(t, priced)
+	direct, ok := svc.EstimateInflightReservation(ctx, apiKey, InflightEstimateRequest{Model: "claude-opus-4-1", BodyBytes: 4000, MaxTokens: 1000})
+	require.True(t, ok)
+	require.InDelta(t, direct, est, 1e-12)
+}
+
+// 管理员新增账号映射后立即生效（不缓存负结果）。
+func TestInflightEstimate_AccountMappingNoNegativeCaching(t *testing.T) {
+	groupID := int64(41)
+	svc := newInflightEstimateGateway(t, nil)
+	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{}}
+	attachInflightSnapshot(svc, snap)
+	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: groupID, Platform: PlatformAnthropic, RateMultiplier: 1}}
+	ctx := context.Background()
+	req := InflightEstimateRequest{Model: "acct-alias-41", BodyBytes: 4000, MaxTokens: 1000}
+
+	_, priced := svc.EstimateInflightReservation(ctx, apiKey, req)
+	require.False(t, priced)
+	snap.set(groupID, PlatformAnthropic, []Account{{ID: 9, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"acct-*": "claude-sonnet-4-5"}}}})
+	est, priced := svc.EstimateInflightReservation(ctx, apiKey, req)
+	require.True(t, priced, "new mapping (incl. wildcard) visible on next request")
+	require.Greater(t, est, 0.0)
 }
