@@ -227,7 +227,7 @@ func TestClaudeResetRedeemDuplicateOrgAccountsConcurrentOnlyOnePost(t *testing.T
 }
 
 func TestClaudeResetRedeemUnknownOutcomeFencesOrganization(t *testing.T) {
-	for _, claim := range []string{"network-error", `{broken`, `{"result":"weird"}`, `{"result":"unavailable"}`, `{"result":"reset","reason":"reset_unconfirmed"}`, "http-500"} {
+	for _, claim := range []string{"network-error", `{broken`, `{"result":"weird"}`, `{"result":"unavailable","reason":"stamp_indeterminate"}`, `{"result":"reset","reason":"reset_unconfirmed"}`, "http-500"} {
 		t.Run(claim, func(t *testing.T) {
 			f := &redeemFake{claim: claim}
 			if claim == "http-500" {
@@ -255,6 +255,11 @@ func TestClaudeResetRedeemUnknownOutcomeFencesOrganization(t *testing.T) {
 				require.Equal(t, "CLAUDE_RESET_UNRESOLVED", infraerrors.Reason(err))
 			}
 			require.Equal(t, 1, f.postCount())
+
+			// Still blocked past the short unavailable fence.
+			s.now = func() time.Time { return time.Now().Add(claudeResetUnavailableFenceTTL + time.Minute) }
+			_, err = s.Redeem(context.Background(), 1, "op-new")
+			require.Equal(t, "CLAUDE_RESET_UNRESOLVED", infraerrors.Reason(err))
 
 			// Once the fence has settled, a fresh query is authoritative again.
 			s.now = func() time.Time { return time.Now().Add(claudeResetUnknownFenceTTL + time.Minute) }
@@ -292,7 +297,7 @@ func TestClaudeResetRedeemMapsUpstreamResults(t *testing.T) {
 		{`{"result":"already_used"}`, ClaudeResetOutcomeAlreadyUsed, 0},
 		{`{"result":"not_limited"}`, ClaudeResetOutcomeNotLimited, 0},
 		{`{"result":"cooldown","cooldown_until":"2099-01-01T00:00:00Z"}`, ClaudeResetOutcomeCooldown, 0},
-		{`{"result":"ineligible","reason":"plan_changed"}`, ClaudeResetOutcomeIneligible, 0},
+		{`{"result":"ineligible","reason":"tenure"}`, ClaudeResetOutcomeIneligible, 0},
 		{`{"result":"unavailable","reason":"stamp_indeterminate"}`, ClaudeResetOutcomeUnknown, 0},
 		{`{}`, ClaudeResetOutcomeIneligible, http.StatusForbidden},
 	}
@@ -307,7 +312,7 @@ func TestClaudeResetRedeemMapsUpstreamResults(t *testing.T) {
 				require.NotNil(t, out.CooldownUntil)
 			}
 			if tc.outcome == ClaudeResetOutcomeIneligible && tc.http == 0 {
-				require.Equal(t, "plan_changed", out.Reason)
+				require.Equal(t, "tenure", out.Reason)
 			}
 			// Definite outcomes never block a later confirmation.
 			if tc.outcome != ClaudeResetOutcomeUnknown {
@@ -326,4 +331,38 @@ func TestClaudeResetRedeemSanitizesUpstreamReason(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, out.Reason)
 	require.Equal(t, []string{"five_hour"}, out.Cleared)
+}
+
+func TestClaudeResetRedeemExplicitUnavailableFencesBriefly(t *testing.T) {
+	f := &redeemFake{claim: `{"result":"unavailable","reason":"grant_next"}`}
+	s, _, _ := newRedeemService(t, f)
+	out, err := s.Redeem(context.Background(), 1, "op-1")
+	require.NoError(t, err)
+	require.Equal(t, ClaudeResetOutcomeUnknown, out.Outcome)
+	require.Equal(t, claudeResetReasonUnavailable, out.Reason)
+
+	s.locks = &redeemLeaseStub{}
+	_, err = s.Redeem(context.Background(), 2, "op-new")
+	require.Equal(t, "CLAUDE_RESET_UPSTREAM_UNAVAILABLE", infraerrors.Reason(err))
+	require.Equal(t, 1, f.postCount())
+
+	s.now = func() time.Time { return time.Now().Add(claudeResetUnavailableFenceTTL + time.Minute) }
+	f.claim = `{"result":"reset"}`
+	out, err = s.Redeem(context.Background(), 1, "op-later")
+	require.NoError(t, err)
+	require.Equal(t, ClaudeResetOutcomeReset, out.Outcome)
+	require.Equal(t, 2, f.postCount())
+}
+
+func TestClaudeResetRedeemNeverEchoesGrantIDs(t *testing.T) {
+	f := &redeemFake{claim: `{"result":"reset","reason":"grant_next","cleared":["five_hour","grant_next","launch","seven_day_overage_included"]}`}
+	s, _, _ := newRedeemService(t, f)
+	out, err := s.Redeem(context.Background(), 1, "op-1")
+	require.NoError(t, err)
+	raw, err := json.Marshal(out)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "grant_next")
+	require.NotContains(t, string(raw), "launch")
+	require.Empty(t, out.Reason)
+	require.Equal(t, []string{"five_hour", "seven_day_overage_included"}, out.Cleared)
 }
