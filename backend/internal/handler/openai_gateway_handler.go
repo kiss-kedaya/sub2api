@@ -258,13 +258,21 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	return base
 }
 
-func wrapUsageRecordTaskContext(parent context.Context, task service.UsageRecordTask) service.UsageRecordTask {
+// wrapUsageRecordTaskContext 包装计费任务：复制请求级 context 值，并接管请求的在途余额预留引用。
+// 返回的 abandon 在任务未被执行（被丢弃）时必须调用以归还预留引用；任务执行结束时（含 panic）
+// 自动归还，此时余额缓存已在计费路径中同步扣减。
+func wrapUsageRecordTaskContext(parent context.Context, task service.UsageRecordTask) (service.UsageRecordTask, func()) {
 	if task == nil {
-		return nil
+		return nil, func() {}
+	}
+	done := func() {}
+	if parent != nil {
+		done = service.InflightReservationFromContext(parent).Acquire()
 	}
 	return func(ctx context.Context) {
+		defer done()
 		task(usageRecordContext(parent, ctx))
-	}
+	}, done
 }
 
 func openAICompatibleRequestPlatform(ctx context.Context, apiKey *service.APIKey) string {
@@ -627,7 +635,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 
 	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
-	inflightRelease, err := reserveInflightBalance(c.Request.Context(), h.billingCacheService, h.gatewayService, apiKey, subscription, reqModel, body)
+	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, body))
 	if err != nil {
 		reqLog.Info("openai.inflight_reservation_rejected", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
@@ -1336,6 +1344,18 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
+
+	// 余额模式在途预留（与计费同口径估算；计费任务扣减余额缓存后才释放）。
+	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, body))
+	if inflightErr != nil {
+		status, code, message, retryAfter := billingErrorDetails(inflightErr)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
+		return
+	}
+	defer inflightDone()
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
@@ -2922,7 +2942,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					if !transferred {
 						return errDuplicateBalancePreauthorizationUsageTask
 					}
-					wrapUsageRecordTaskContext(ctx, task)(settleCtx)
+					task, _ = wrapUsageRecordTaskContext(ctx, task)
+					task(settleCtx)
 					return billingErr
 				}
 			},
@@ -3193,7 +3214,7 @@ func (h *OpenAIGatewayHandler) submitMandatoryUsageRecordTask(parent context.Con
 			zap.String("component", "handler.openai_gateway.usage"),
 		).Error("openai.balance_preauthorization_duplicate_usage_task", zap.Error(errDuplicateBalancePreauthorizationUsageTask))
 	}
-	task = wrapUsageRecordTaskContext(parent, task)
+	task, _ = wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
 		if mode := h.usageRecordWorkerPool.Submit(task); !mode.Dropped() {
 			return

@@ -4,10 +4,12 @@ import (
 	"context"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/google/uuid"
 )
 
@@ -22,13 +24,166 @@ type InflightBalanceReservationCache interface {
 	ReleaseInflightBalance(ctx context.Context, userID int64, requestID string) error
 }
 
+// InflightBalanceReservationRenewer 可选：续期仍存活的预留（流式长请求期间防止 TTL 过期）。
+type InflightBalanceReservationRenewer interface {
+	// RenewInflightBalance 若 requestID 仍存在则把其过期时间推迟到 now+ttl；返回是否仍存在。
+	RenewInflightBalance(ctx context.Context, userID int64, requestID string, ttl time.Duration) (bool, error)
+}
+
 const (
 	defaultInflightReservationTTL      = 15 * time.Minute
 	defaultInflightDefaultMaxTokens    = 8192
 	inflightReservationReleaseTimeout  = 2 * time.Second
 	inflightReservationReserveTimeout  = 2 * time.Second
+	inflightReservationRenewTimeout    = 2 * time.Second
 	inflightInputBytesPerTokenEstimate = 4
+	inflightUnpricedLogInterval        = time.Minute
 )
+
+// InflightReservation 一次请求的在途预留句柄。
+//
+// 生命周期（引用计数，归零时释放一次）：
+//   - 创建时持有 1 个「handler」引用，并启动续期协程（每 ttl/3 续期一次）。
+//   - handler 提交计费任务时通过 Acquire 再取一个引用，由计费任务在余额缓存
+//     实际扣减之后归还（任务被丢弃时由提交方立即归还）。
+//   - handler 返回时调用 HandlerDone：停止续期并归还 handler 引用。
+//
+// 因此预留会一直保持到「handler 结束 且 所有计费任务已完成扣减」，
+// 从而消除「handler 已返回、异步计费尚未落地」窗口内的透支。handler 结束后
+// 不再续期，所以最长持有时间受 TTL 约束（计费任务卡死时预留自动过期）。
+// 所有方法对 nil 接收者安全。
+type InflightReservation struct {
+	cache     InflightBalanceReservationCache
+	userID    int64
+	requestID string
+	amount    float64
+	ttl       time.Duration
+
+	refs        atomic.Int64
+	releaseOnce sync.Once
+	stopOnce    sync.Once
+	closeOnce   sync.Once
+	stopRenew   chan struct{}
+	renewDone   chan struct{}
+}
+
+// Amount 预留金额。
+func (r *InflightReservation) Amount() float64 {
+	if r == nil {
+		return 0
+	}
+	return r.amount
+}
+
+// Acquire 为一个异步计费任务增加引用；返回的 done 幂等，必须在任务结束（或被丢弃）时调用。
+// 预留已释放时返回 no-op。
+func (r *InflightReservation) Acquire() func() {
+	if r == nil {
+		return noopRelease
+	}
+	for {
+		cur := r.refs.Load()
+		if cur <= 0 {
+			return noopRelease
+		}
+		if r.refs.CompareAndSwap(cur, cur+1) {
+			break
+		}
+	}
+	var once sync.Once
+	return func() { once.Do(r.decRef) }
+}
+
+// HandlerDone handler 结束：停止续期并归还 handler 引用（幂等）。
+func (r *InflightReservation) HandlerDone() {
+	if r == nil {
+		return
+	}
+	r.stopOnce.Do(func() {
+		r.stopRenewal()
+		r.decRef()
+	})
+}
+
+// Release 立即释放预留（幂等），不论引用计数。
+func (r *InflightReservation) Release() {
+	if r == nil {
+		return
+	}
+	r.stopRenewal()
+	r.releaseOnce.Do(func() {
+		r.refs.Store(0)
+		relCtx, relCancel := context.WithTimeout(context.Background(), inflightReservationReleaseTimeout)
+		defer relCancel()
+		if err := r.cache.ReleaseInflightBalance(relCtx, r.userID, r.requestID); err != nil {
+			logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation release failed for user %d (expires by ttl): %v", r.userID, err)
+		}
+	})
+}
+
+func (r *InflightReservation) decRef() {
+	if r.refs.Add(-1) <= 0 {
+		r.Release()
+	}
+}
+
+func (r *InflightReservation) stopRenewal() {
+	if r.stopRenew == nil {
+		return
+	}
+	r.closeOnce.Do(func() { close(r.stopRenew) })
+	<-r.renewDone
+}
+
+func (r *InflightReservation) startRenewal(renewer InflightBalanceReservationRenewer) {
+	interval := r.ttl / 3
+	if interval < 10*time.Millisecond {
+		interval = 10 * time.Millisecond
+	}
+	r.stopRenew = make(chan struct{})
+	r.renewDone = make(chan struct{})
+	go func() {
+		defer close(r.renewDone)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-r.stopRenew:
+				return
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(context.Background(), inflightReservationRenewTimeout)
+				alive, err := renewer.RenewInflightBalance(ctx, r.userID, r.requestID, r.ttl)
+				cancel()
+				if err != nil {
+					logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation renew failed for user %d: %v", r.userID, err)
+					continue
+				}
+				if !alive {
+					return
+				}
+			}
+		}
+	}()
+}
+
+type inflightReservationCtxKey struct{}
+
+// WithInflightReservation 把预留句柄挂到 context 上，供计费任务提交时交接。
+func WithInflightReservation(ctx context.Context, r *InflightReservation) context.Context {
+	if r == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, inflightReservationCtxKey{}, r)
+}
+
+// InflightReservationFromContext 读取 context 中的预留句柄（可能为 nil）。
+func InflightReservationFromContext(ctx context.Context) *InflightReservation {
+	if ctx == nil {
+		return nil
+	}
+	r, _ := ctx.Value(inflightReservationCtxKey{}).(*InflightReservation)
+	return r
+}
 
 func noopRelease() {}
 
@@ -49,37 +204,59 @@ func (s *BillingCacheService) InflightReservationEnabled() bool {
 	return ok
 }
 
-// ReserveInflightBalance 在余额模式下为本次请求登记在途预留。
+// InflightReservationFailClosedOnUnpriced 无法估算费用时是否拒绝请求（默认 false = fail-open）。
+func (s *BillingCacheService) InflightReservationFailClosedOnUnpriced() bool {
+	cfg, ok := s.inflightReservationConfig()
+	return ok && cfg.FailClosedOnUnpriced
+}
+
+// ReserveInflightBalance 简化封装：返回释放函数，不续期、不做计费交接（预留最长存活 TTL）。
+func (s *BillingCacheService) ReserveInflightBalance(ctx context.Context, user *User, group *Group, subscription *UserSubscription, estimate float64) (func(), error) {
+	r, err := s.reserveInflight(ctx, user, group, subscription, estimate, false)
+	if err != nil {
+		return noopRelease, err
+	}
+	if r == nil {
+		return noopRelease, nil
+	}
+	return r.Release, nil
+}
+
+// ReserveInflight 在余额模式下为本次请求登记在途预留。
 //
-// 必须在 CheckBillingEligibility 通过后调用。返回的 release 必须在请求结束时调用
-// （所有路径，建议 defer），多次调用安全。
+// 必须在 CheckBillingEligibility 通过后调用。返回的句柄可能为 nil（未预留）；
+// 调用方须在 handler 结束时调用 HandlerDone（nil 安全）。
 //
 // 以下情况直接放行且不登记预留（fail-open，保持旧行为）：
 // 开关关闭 / 简易模式 / 订阅模式 / estimate <= 0 / 缓存不支持 / 余额读取失败 / Redis 执行失败。
 // 仅当 Redis 明确判定 缓存余额 - 在途合计 < estimate（且已有在途请求）时返回 ErrInsufficientBalance。
-func (s *BillingCacheService) ReserveInflightBalance(ctx context.Context, user *User, group *Group, subscription *UserSubscription, estimate float64) (func(), error) {
+func (s *BillingCacheService) ReserveInflight(ctx context.Context, user *User, group *Group, subscription *UserSubscription, estimate float64) (*InflightReservation, error) {
+	return s.reserveInflight(ctx, user, group, subscription, estimate, true)
+}
+
+func (s *BillingCacheService) reserveInflight(ctx context.Context, user *User, group *Group, subscription *UserSubscription, estimate float64, renew bool) (*InflightReservation, error) {
 	cfg, ok := s.inflightReservationConfig()
 	if !ok || user == nil {
-		return noopRelease, nil
+		return nil, nil
 	}
 	if group != nil && group.IsSubscriptionType() && subscription != nil {
-		return noopRelease, nil
+		return nil, nil
 	}
 	if cfg.MaxReservationUSD > 0 && estimate > cfg.MaxReservationUSD {
 		estimate = cfg.MaxReservationUSD
 	}
 	if estimate <= 0 || math.IsNaN(estimate) || math.IsInf(estimate, 0) {
-		return noopRelease, nil
+		return nil, nil
 	}
 	rc, ok := s.cache.(InflightBalanceReservationCache)
 	if !ok || rc == nil {
-		return noopRelease, nil
+		return nil, nil
 	}
 
 	balance, err := s.GetUserBalance(ctx, user.ID)
 	if err != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation balance read failed for user %d (fail-open): %v", user.ID, err)
-		return noopRelease, nil
+		return nil, nil
 	}
 
 	ttl := defaultInflightReservationTTL
@@ -92,41 +269,121 @@ func (s *BillingCacheService) ReserveInflightBalance(ctx context.Context, user *
 	cancel()
 	if err != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation failed for user %d (fail-open): %v", user.ID, err)
-		return noopRelease, nil
+		return nil, nil
 	}
 	if !allowed {
 		logger.LegacyPrintf("service.billing_cache", "inflight reservation rejected: user=%d balance=%.6f inflight=%.6f estimate=%.6f", user.ID, balance, inflight, estimate)
-		return noopRelease, ErrInsufficientBalance
+		return nil, ErrInsufficientBalance
 	}
 
-	var once sync.Once
-	userID := user.ID
-	return func() {
-		once.Do(func() {
-			relCtx, relCancel := context.WithTimeout(context.Background(), inflightReservationReleaseTimeout)
-			defer relCancel()
-			if err := rc.ReleaseInflightBalance(relCtx, userID, requestID); err != nil {
-				logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation release failed for user %d (expires by ttl): %v", userID, err)
-			}
-		})
-	}, nil
+	r := &InflightReservation{cache: rc, userID: user.ID, requestID: requestID, amount: estimate, ttl: ttl}
+	r.refs.Store(1)
+	if renewer, ok := s.cache.(InflightBalanceReservationRenewer); renew && ok && renewer != nil {
+		r.startRenewal(renewer)
+	}
+	return r, nil
 }
 
-// EstimateInflightReservationCost 估算单请求的保守费用（USD，已乘倍率）。
-//
-//	input_tokens  = min(bodyBytes / 4, max_input_tokens)
-//	output_tokens = min(max_tokens 或 default_max_tokens, max_output_tokens)
-//	cost = (input_tokens × 输入单价 + output_tokens × 输出单价) × rateMultiplier
-//
-// 无法取得定价时返回 (0, false)，调用方应 fail-open。
-func EstimateInflightReservationCost(billing *BillingService, cfg config.InflightReservationConfig, model string, bodyBytes, maxTokens int, rateMultiplier float64) (float64, bool) {
-	if billing == nil || model == "" || rateMultiplier <= 0 {
-		return 0, false
+// ============================================
+// 费用估算
+// ============================================
+
+// InflightEstimateKind 估算口径。
+type InflightEstimateKind int
+
+const (
+	// InflightEstimateToken 文本/对话类：输入估算 + 输出上限（按次渠道定价时按次计）。
+	InflightEstimateToken InflightEstimateKind = iota
+	// InflightEstimateImage 图片生成：按张计（取所有尺寸档最高单价）。
+	InflightEstimateImage
+	// InflightEstimatePerRequest 按次类（独立搜索等）：仅按渠道/分组按次价与搜索附加费，不做 token 估算。
+	InflightEstimatePerRequest
+	// InflightEstimateVideo 视频生成：按秒 × 条数（分组/模型视频价）。
+	InflightEstimateVideo
+	// InflightEstimateAudio 语音（tts/stt/realtime）：按 AudioMode/AudioUnits 计。
+	InflightEstimateAudio
+)
+
+// InflightEstimateRequest 单请求估算输入。
+type InflightEstimateRequest struct {
+	Model     string
+	BodyBytes int
+	MaxTokens int
+	Kind      InflightEstimateKind
+	// Units 按次/按张数量（<=0 视为 1）。
+	Units int
+	// SearchCalls 叠加的搜索次数（按分组 search_price_per_1k 计）。
+	SearchCalls int
+	// 视频：分辨率与时长（秒）。
+	VideoResolution      string
+	VideoDurationSeconds int
+	// 音频：模式（tts/stt/realtime）与计量单位（百万字符/小时/分钟）。
+	AudioMode  string
+	AudioUnits float64
+}
+
+// inflightEstimateDeps 两种网关 service 共用的估算依赖。
+type inflightEstimateDeps struct {
+	cfg            *config.Config
+	billing        *BillingService
+	resolver       *ModelPricingResolver
+	resolveMapping func(ctx context.Context, groupID int64, model string) ChannelMappingResult
+	userGroupRate  func(ctx context.Context, userID, groupID int64, groupDefault float64) float64
+}
+
+var inflightUnpricedLastLog atomic.Int64
+
+func logInflightUnpriced(model string, groupID *int64) {
+	now := time.Now().UnixNano()
+	last := inflightUnpricedLastLog.Load()
+	if now-last < int64(inflightUnpricedLogInterval) || !inflightUnpricedLastLog.CompareAndSwap(last, now) {
+		return
 	}
-	pricing, err := billing.GetModelPricing(model)
-	if err != nil || pricing == nil {
-		return 0, false
+	var gid int64
+	if groupID != nil {
+		gid = *groupID
 	}
+	logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation cannot price model=%q group=%d; request admitted without reservation (fail-open, throttled log)", model, gid)
+}
+
+// inflightBillingModelCandidates 与计费路径一致地挑选计费模型：
+// channel_mapped（默认）→ 映射后模型；requested → 请求模型；
+// upstream / response_model 在准入时未知 → 取请求模型与映射模型两者较高估算。
+func inflightBillingModelCandidates(ctx context.Context, deps inflightEstimateDeps, apiKey *APIKey, model string) []string {
+	if apiKey == nil || apiKey.GroupID == nil || deps.resolveMapping == nil {
+		return []string{model}
+	}
+	m := deps.resolveMapping(ctx, *apiKey.GroupID, model)
+	mapped := m.MappedModel
+	if mapped == "" || mapped == model {
+		return []string{model}
+	}
+	switch m.BillingModelSource {
+	case BillingModelSourceRequested:
+		return []string{model}
+	case BillingModelSourceChannelMapped, "":
+		// 计费侧对无价映射模型会回落到具体转发模型；此处同时估算请求模型，取较高者。
+		return []string{mapped, model}
+	default:
+		return []string{mapped, model}
+	}
+}
+
+func (d inflightEstimateDeps) rates(ctx context.Context, apiKey *APIKey) (text, image float64) {
+	rate := 1.0
+	if d.cfg != nil && d.cfg.Default.RateMultiplier > 0 {
+		rate = d.cfg.Default.RateMultiplier
+	}
+	if apiKey != nil && apiKey.GroupID != nil && apiKey.Group != nil {
+		rate = apiKey.Group.RateMultiplier
+		if d.userGroupRate != nil && apiKey.User != nil {
+			rate = d.userGroupRate(ctx, apiKey.User.ID, *apiKey.GroupID, rate)
+		}
+	}
+	return computePeakAwareMultipliers(apiKey, rate, timezone.Now())
+}
+
+func tokenCounts(cfg config.InflightReservationConfig, bodyBytes, maxTokens int) (int, int) {
 	inputTokens := 0
 	if bodyBytes > 0 {
 		inputTokens = bodyBytes / inflightInputBytesPerTokenEstimate
@@ -144,8 +401,165 @@ func EstimateInflightReservationCost(billing *BillingService, cfg config.Infligh
 	if cfg.MaxOutputTokens > 0 && outputTokens > cfg.MaxOutputTokens {
 		outputTokens = cfg.MaxOutputTokens
 	}
+	return inputTokens, outputTokens
+}
+
+func maxPerRequestPrice(resolved *ResolvedPricing) float64 {
+	if resolved == nil {
+		return 0
+	}
+	p := resolved.DefaultPerRequestPrice
+	for _, tier := range resolved.RequestTiers {
+		if tier.PerRequestPrice != nil && *tier.PerRequestPrice > p {
+			p = *tier.PerRequestPrice
+		}
+	}
+	return p
+}
+
+func validCost(v float64) bool { return v > 0 && !math.IsNaN(v) && !math.IsInf(v, 0) }
+
+// estimateOne 估算单个候选计费模型（未乘倍率的 token 部分与按次部分分开返回，便于套用不同倍率）。
+func (d inflightEstimateDeps) estimateOne(ctx context.Context, apiKey *APIKey, model string, req InflightEstimateRequest, textRate, imageRate float64) float64 {
+	cfg := inflightReservationCfg(d.cfg)
+	units := req.Units
+	if units <= 0 {
+		units = 1
+	}
+	var resolved *ResolvedPricing
+	if d.resolver != nil {
+		in := PricingInput{Model: model}
+		if apiKey != nil {
+			in.GroupID = apiKey.GroupID
+			in.Group = apiKey.Group
+		}
+		resolved = d.resolver.Resolve(ctx, in)
+	}
+
+	inputTokens, outputTokens := tokenCounts(cfg, req.BodyBytes, req.MaxTokens)
+	tokenCost := func() float64 {
+		var pricing *ModelPricing
+		if resolved != nil && (resolved.Mode == BillingModeToken || resolved.Mode == "") && d.resolver != nil {
+			pricing = d.resolver.GetIntervalPricing(resolved, inputTokens)
+		}
+		if pricing == nil && d.billing != nil {
+			pricing, _ = d.billing.GetModelPricing(model)
+		}
+		if pricing == nil {
+			return 0
+		}
+		return (float64(inputTokens)*pricing.InputPricePerToken + float64(outputTokens)*pricing.OutputPricePerToken) * textRate
+	}
+
+	var cost float64
+	perRequestMode := resolved != nil && (resolved.Mode == BillingModePerRequest || resolved.Mode == BillingModeImage || resolved.Mode == BillingModeVideo)
+	switch req.Kind {
+	case InflightEstimateImage:
+		if perRequestMode {
+			cost = maxPerRequestPrice(resolved) * float64(units) * imageRate
+		}
+		if d.billing != nil {
+			cfgImg := imagePriceConfigFromAPIKey(apiKey)
+			for _, tier := range []string{ImageBillingSize1K, ImageBillingSize2K, ImageBillingSize4K} {
+				if b := d.billing.CalculateImageCost(model, tier, units, cfgImg, imageRate); b != nil && b.ActualCost > cost {
+					cost = b.ActualCost
+				}
+			}
+		}
+		if cost <= 0 {
+			cost = tokenCost()
+		}
+	case InflightEstimateVideo:
+		if perRequestMode {
+			cost = maxPerRequestPrice(resolved) * float64(units) * math.Max(textRate, imageRate)
+		}
+		if d.billing != nil {
+			if b := d.billing.CalculateVideoCost(model, req.VideoResolution, units, req.VideoDurationSeconds, videoPriceConfigFromAPIKey(apiKey), math.Max(textRate, imageRate)); b != nil && b.ActualCost > cost {
+				cost = b.ActualCost
+			}
+		}
+	case InflightEstimateAudio:
+		if perRequestMode && resolved.Mode == BillingModePerRequest {
+			u := req.AudioUnits
+			if u <= 0 {
+				u = 1
+			}
+			cost = maxPerRequestPrice(resolved) * u * textRate
+		}
+		if d.billing != nil && req.AudioUnits > 0 {
+			if b := d.billing.CalculateAudioCost(req.AudioMode, req.AudioUnits, groupAudioPriceConfigFromAPIKey(apiKey), textRate); b != nil && b.ActualCost > cost {
+				cost = b.ActualCost
+			}
+		}
+	default:
+		if perRequestMode {
+			rate := textRate
+			if resolved.Mode == BillingModeImage {
+				rate = imageRate
+			}
+			cost = maxPerRequestPrice(resolved) * float64(units) * rate
+		} else if req.Kind != InflightEstimatePerRequest {
+			cost = tokenCost()
+		}
+	}
+	if req.SearchCalls > 0 {
+		if d.billing != nil {
+			if b := d.billing.CalculateSearchCost(req.SearchCalls, groupSearchPricePer1kFromAPIKey(apiKey), textRate); b != nil && b.ActualCost > 0 {
+				cost += b.ActualCost
+			}
+		}
+	}
+	if !validCost(cost) {
+		return 0
+	}
+	return cost
+}
+
+// estimate 返回保守的单请求费用（USD，已乘倍率）；无法定价返回 (0,false)。
+func (d inflightEstimateDeps) estimate(ctx context.Context, apiKey *APIKey, req InflightEstimateRequest) (float64, bool) {
+	if apiKey == nil || apiKey.User == nil {
+		return 0, false
+	}
+	if req.Model == "" || (req.Kind == InflightEstimateAudio && req.AudioUnits <= 0) {
+		// 非计量请求（媒体状态查询、custom-voices 等）：无需预留，也不算「无法定价」。
+		return 0, true
+	}
+	textRate, imageRate := d.rates(ctx, apiKey)
+	if textRate <= 0 && imageRate <= 0 {
+		// 免费分组：不计费，也无需预留。
+		return 0, true
+	}
+	best := 0.0
+	for _, m := range inflightBillingModelCandidates(ctx, d, apiKey, req.Model) {
+		if c := d.estimateOne(ctx, apiKey, m, req, textRate, imageRate); c > best {
+			best = c
+		}
+	}
+	if best <= 0 {
+		logInflightUnpriced(req.Model, apiKey.GroupID)
+		return 0, false
+	}
+	return best, true
+}
+
+// EstimateInflightReservationCost 仅用基础定价的简化估算（保留给无 resolver 的调用方/测试）。
+//
+//	input_tokens  = min(bodyBytes / 4, max_input_tokens)
+//	output_tokens = min(max_tokens 或 default_max_tokens, max_output_tokens)
+//	cost = (input_tokens × 输入单价 + output_tokens × 输出单价) × rateMultiplier
+//
+// 无法取得定价时返回 (0, false)，调用方应 fail-open。
+func EstimateInflightReservationCost(billing *BillingService, cfg config.InflightReservationConfig, model string, bodyBytes, maxTokens int, rateMultiplier float64) (float64, bool) {
+	if billing == nil || model == "" || rateMultiplier <= 0 {
+		return 0, false
+	}
+	pricing, err := billing.GetModelPricing(model)
+	if err != nil || pricing == nil {
+		return 0, false
+	}
+	inputTokens, outputTokens := tokenCounts(cfg, bodyBytes, maxTokens)
 	cost := (float64(inputTokens)*pricing.InputPricePerToken + float64(outputTokens)*pricing.OutputPricePerToken) * rateMultiplier
-	if cost <= 0 || math.IsNaN(cost) || math.IsInf(cost, 0) {
+	if !validCost(cost) {
 		return 0, false
 	}
 	return cost, true
@@ -158,41 +572,37 @@ func inflightReservationCfg(cfg *config.Config) config.InflightReservationConfig
 	return cfg.Billing.InflightReservation
 }
 
-func groupRateMultiplierOrOne(group *Group) float64 {
-	if group == nil {
-		return 1
+func (s *GatewayService) inflightEstimateDeps() inflightEstimateDeps {
+	d := inflightEstimateDeps{cfg: s.cfg, billing: s.billingService, resolver: s.resolver}
+	if s.channelService != nil {
+		d.resolveMapping = s.channelService.ResolveChannelMapping
 	}
-	return group.RateMultiplier
+	d.userGroupRate = s.getUserGroupRateMultiplier
+	return d
 }
 
-// EstimateInflightReservation 使用网关计费倍率估算在途预留金额；0 表示不预留。
-func (s *GatewayService) EstimateInflightReservation(ctx context.Context, apiKey *APIKey, model string, bodyBytes, maxTokens int) float64 {
-	if s == nil || apiKey == nil || apiKey.User == nil {
-		return 0
+// EstimateInflightReservation 与计费路径同口径（计费模型 / ModelPricingResolver / 倍率）估算在途预留金额。
+// 第二个返回值为 false 表示无法定价（调用方 fail-open 或按配置 fail-closed）。
+func (s *GatewayService) EstimateInflightReservation(ctx context.Context, apiKey *APIKey, req InflightEstimateRequest) (float64, bool) {
+	if s == nil {
+		return 0, false
 	}
-	rate := groupRateMultiplierOrOne(apiKey.Group)
-	if apiKey.GroupID != nil && apiKey.Group != nil {
-		rate = s.getUserGroupRateMultiplier(ctx, apiKey.User.ID, *apiKey.GroupID, rate)
-	}
-	cost, ok := EstimateInflightReservationCost(s.billingService, inflightReservationCfg(s.cfg), model, bodyBytes, maxTokens, rate)
-	if !ok {
-		return 0
-	}
-	return cost
+	return s.inflightEstimateDeps().estimate(ctx, apiKey, req)
 }
 
-// EstimateInflightReservation 使用 OpenAI 网关计费倍率估算在途预留金额；0 表示不预留。
-func (s *OpenAIGatewayService) EstimateInflightReservation(ctx context.Context, apiKey *APIKey, model string, bodyBytes, maxTokens int) float64 {
-	if s == nil || apiKey == nil || apiKey.User == nil {
-		return 0
+func (s *OpenAIGatewayService) inflightEstimateDeps() inflightEstimateDeps {
+	d := inflightEstimateDeps{cfg: s.cfg, billing: s.billingService, resolver: s.resolver}
+	if s.channelService != nil {
+		d.resolveMapping = s.channelService.ResolveChannelMapping
 	}
-	rate := groupRateMultiplierOrOne(apiKey.Group)
-	if apiKey.GroupID != nil && apiKey.Group != nil && s.userGroupRateResolver != nil {
-		rate = s.userGroupRateResolver.Resolve(ctx, apiKey.User.ID, *apiKey.GroupID, rate)
+	d.userGroupRate = s.ResolveUserGroupRateMultiplier
+	return d
+}
+
+// EstimateInflightReservation 同 GatewayService.EstimateInflightReservation（OpenAI 网关倍率口径）。
+func (s *OpenAIGatewayService) EstimateInflightReservation(ctx context.Context, apiKey *APIKey, req InflightEstimateRequest) (float64, bool) {
+	if s == nil {
+		return 0, false
 	}
-	cost, ok := EstimateInflightReservationCost(s.billingService, inflightReservationCfg(s.cfg), model, bodyBytes, maxTokens, rate)
-	if !ok {
-		return 0
-	}
-	return cost
+	return s.inflightEstimateDeps().estimate(ctx, apiKey, req)
 }
