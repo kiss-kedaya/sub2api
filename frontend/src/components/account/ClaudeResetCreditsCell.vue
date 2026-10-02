@@ -36,7 +36,7 @@
       </button>
     </div>
 
-    <div v-if="visible && status && (primaryCredit || !status.eligible || status.cooldown_until)" class="flex flex-wrap items-center gap-1">
+    <div v-if="visible && status && (primaryCredit || !status.eligible || cooldownActive)" class="flex flex-wrap items-center gap-1">
       <span
         v-if="primaryCredit?.expires_at"
         data-testid="claude-reset-expiry"
@@ -55,8 +55,8 @@
       <span v-if="!status.eligible" class="text-[10px] text-amber-600 dark:text-amber-400">
         {{ t('admin.accounts.claudeResetCredits.ineligible') }}
       </span>
-      <span v-if="status.cooldown_until" class="text-[10px] text-amber-600 dark:text-amber-400">
-        {{ t('admin.accounts.claudeResetCredits.cooldown', { time: formatTime(status.cooldown_until, 'short') }) }}
+      <span v-if="cooldownActive" data-testid="claude-reset-cooldown" class="text-[10px] text-amber-600 dark:text-amber-400">
+        {{ t('admin.accounts.claudeResetCredits.cooldown', { time: formatTime(status.cooldown_until!, 'short') }) }}
       </span>
     </div>
 
@@ -81,7 +81,7 @@ let generation = 0
 
 const visible = computed(() => props.account.platform === 'anthropic' && props.account.type === 'oauth')
 
-watch(() => props.account.id, () => { generation++; status.value = null; loading.value = false; error.value = false })
+watch(() => [props.account.id, props.account.platform, props.account.type], () => { generation++; status.value = null; loading.value = false; error.value = false })
 
 // 与 OpenAIQuotaResetCell 的到期时间格式保持一致
 const formatTime = (value: string, style: 'short' | 'full'): string => {
@@ -98,7 +98,19 @@ const totalResets = computed(() => (status.value?.credits ?? []).reduce((sum, c)
 // 优先展示下一张会被使用的券（仅它可能 redeemable），否则取最早到期的一张
 const primaryCredit = computed(() => {
   const credits = status.value?.credits ?? []
-  return credits.find(c => c.redeemable) ?? [...credits].sort((a, b) => (a.expires_at ?? '9999').localeCompare(b.expires_at ?? '9999'))[0] ?? null
+  return credits.find(c => c.redeemable) ?? [...credits].sort((a, b) => expiryMs(a.expires_at) - expiryMs(b.expires_at))[0] ?? null
+})
+
+// 缺失或无法解析的到期时间排在最后
+function expiryMs(value?: string): number {
+  const ms = value ? new Date(value).getTime() : NaN
+  return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms
+}
+
+// 仅在冷却时间仍在未来时提示（后端已清理过期值，这里防御性再判断一次）
+const cooldownActive = computed(() => {
+  const until = status.value?.cooldown_until
+  return !!until && new Date(until).getTime() > Date.now()
 })
 
 const creditTitle = computed(() => {

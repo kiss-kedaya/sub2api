@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,7 +21,6 @@ const claudeResetUsageURL = "https://api.anthropic.com/api/oauth/usage?cedar_emb
 
 // ClaudeResetCredit is deliberately free of upstream grant and organization IDs.
 type ClaudeResetCredit struct {
-	SelectionToken   string             `json:"selection_token"`
 	Label            string             `json:"label"`
 	ResetsLeft       int                `json:"resets_left"`
 	StartsAt         *time.Time         `json:"starts_at,omitempty"`
@@ -138,50 +135,43 @@ func (s *ClaudeResetCreditService) headers(ctx context.Context, req *http.Reques
 	req.Header.Set("User-Agent", "claude-cli/"+claude.CLIVersion()+" (external, cli)")
 }
 
-func (s *ClaudeResetCreditService) query(ctx context.Context, id int64) (*ClaudeResetCredits, *claudeResetBlock, error) {
+func (s *ClaudeResetCreditService) query(ctx context.Context, id int64) (*ClaudeResetCredits, error) {
 	_, token, proxy, err := s.account(ctx, id)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeResetUsageURL, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	s.headers(ctx, req, token)
 	resp, err := s.do(req, proxy)
 	if err != nil {
-		return nil, nil, infraerrors.ServiceUnavailable("CLAUDE_RESET_QUERY_FAILED", "reset status request failed")
+		return nil, infraerrors.ServiceUnavailable("CLAUDE_RESET_QUERY_FAILED", "reset status request failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, infraerrors.New(http.StatusBadGateway, "CLAUDE_RESET_QUERY_FAILED", fmt.Sprintf("reset status upstream HTTP %d", resp.StatusCode))
+		return nil, infraerrors.New(http.StatusBadGateway, "CLAUDE_RESET_QUERY_FAILED", fmt.Sprintf("reset status upstream HTTP %d", resp.StatusCode))
 	}
 	var envelope map[string]json.RawMessage
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&envelope); err != nil || envelope == nil {
-		return nil, nil, infraerrors.New(http.StatusBadGateway, "CLAUDE_RESET_STATUS_INVALID", "invalid reset status")
+		return nil, infraerrors.New(http.StatusBadGateway, "CLAUDE_RESET_STATUS_INVALID", "invalid reset status")
 	}
 	if _, ok := envelope["error"]; ok {
-		return nil, nil, infraerrors.New(http.StatusBadGateway, "CLAUDE_RESET_STATUS_INVALID", "invalid reset status")
+		return nil, infraerrors.New(http.StatusBadGateway, "CLAUDE_RESET_STATUS_INVALID", "invalid reset status")
 	}
 	var block *claudeResetBlock
 	raw, present := envelope["cedar_ember"]
 	if present && string(raw) != "null" {
 		if err = json.Unmarshal(raw, &block); err != nil || block == nil || block.Grants == nil {
-			return nil, nil, infraerrors.New(http.StatusBadGateway, "CLAUDE_RESET_STATUS_INVALID", "invalid reset grants")
+			return nil, infraerrors.New(http.StatusBadGateway, "CLAUDE_RESET_STATUS_INVALID", "invalid reset grants")
 		}
 	}
-	result := projectClaudeResetCredits(block, s.now())
-	return result, block, nil
+	return projectClaudeResetCredits(block, s.now()), nil
 }
 
 func (s *ClaudeResetCreditService) Query(ctx context.Context, id int64) (*ClaudeResetCredits, error) {
-	r, _, e := s.query(ctx, id)
-	return r, e
-}
-
-func claudeGrantSelection(g claudeResetGrant) string {
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", g.ID, g.ResetsLeft)))
-	return hex.EncodeToString(h[:])
+	return s.query(ctx, id)
 }
 
 func projectClaudeResetCredits(b *claudeResetBlock, now time.Time) *ClaudeResetCredits {
@@ -190,7 +180,9 @@ func projectClaudeResetCredits(b *claudeResetBlock, now time.Time) *ClaudeResetC
 		return r
 	}
 	r.Eligible = b.Eligible
-	r.CooldownUntil = b.CooldownUntil
+	if b.CooldownUntil != nil && now.Before(*b.CooldownUntil) {
+		r.CooldownUntil = b.CooldownUntil
+	}
 	r.WeeklyResetsAt = b.WeeklyResetsAt
 	for _, g := range b.Grants {
 		if !claudeResetGrantIDPattern.MatchString(g.ID) || len(g.Clears) == 0 || g.ResetsLeft <= 0 || g.Paused || (g.StartsAt != nil && now.Before(*g.StartsAt)) || (g.EndsAt != nil && !now.Before(*g.EndsAt)) {
@@ -204,7 +196,7 @@ func projectClaudeResetCredits(b *claudeResetBlock, now time.Time) *ClaudeResetC
 				used[k] = v
 			}
 		}
-		r.Credits = append(r.Credits, ClaudeResetCredit{SelectionToken: claudeGrantSelection(g), Label: g.Label, ResetsLeft: g.ResetsLeft, StartsAt: g.StartsAt, ExpiresAt: g.EndsAt, Clears: g.Clears, PercentUsed: used, Blocking: g.Blocking, UseRequiresLimit: requires, Redeemable: usable})
+		r.Credits = append(r.Credits, ClaudeResetCredit{Label: g.Label, ResetsLeft: g.ResetsLeft, StartsAt: g.StartsAt, ExpiresAt: g.EndsAt, Clears: g.Clears, PercentUsed: used, Blocking: g.Blocking, UseRequiresLimit: requires, Redeemable: usable})
 		if usable {
 			r.AvailableCount += g.ResetsLeft
 		}
