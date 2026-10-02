@@ -56,10 +56,17 @@ var (
 		return {1, tostring(sum), count}
 	`)
 
-	// KEYS: [1]=zset [2]=hash  ARGV: [1]=member [2]=expire_at_ms [3]=key_ttl_ms
-	// 仅当成员仍存在时续期（XX），并把两个 key 的 TTL 至少延长到 key_ttl_ms。
+	// KEYS: [1]=zset [2]=hash  ARGV: [1]=member [2]=expire_at_ms [3]=key_ttl_ms [4]=now_ms
+	// 仅当成员仍存在且尚未过期（score > now）时续期（XX），并把两个 key 的 TTL 至少延长到 key_ttl_ms。
+	// 已过期但尚未被惰性清理的成员不得被复活：顺手清掉并返回 0。
 	renewInflightBalanceScript = redis.NewScript(`
-		if not redis.call('ZSCORE', KEYS[1], ARGV[1]) then
+		local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+		if not score then
+			return 0
+		end
+		if tonumber(score) <= tonumber(ARGV[4]) then
+			redis.call('ZREM', KEYS[1], ARGV[1])
+			redis.call('HDEL', KEYS[2], ARGV[1])
 			return 0
 		end
 		redis.call('ZADD', KEYS[1], 'XX', tonumber(ARGV[2]), ARGV[1])
@@ -123,7 +130,8 @@ func (c *billingCache) RenewInflightBalance(ctx context.Context, userID int64, r
 	if ttlMs <= 0 {
 		ttlMs = 1
 	}
-	n, err := renewInflightBalanceScript.Run(ctx, c.rdb, []string{zkey, hkey}, requestID, time.Now().UnixMilli()+ttlMs, ttlMs).Int64()
+	now := time.Now().UnixMilli()
+	n, err := renewInflightBalanceScript.Run(ctx, c.rdb, []string{zkey, hkey}, requestID, now+ttlMs, ttlMs, now).Int64()
 	if err != nil {
 		return false, err
 	}
