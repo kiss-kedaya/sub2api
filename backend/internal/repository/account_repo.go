@@ -165,7 +165,15 @@ func (r *accountRepository) invalidateModelAvailabilityCache() {
 }
 
 func (r *accountRepository) Create(ctx context.Context, account *service.Account) error {
+	if account != nil && account.CreatedBy == nil {
+		if adminID, ok := service.AccountOwnerScopeFromContext(ctx); ok {
+			account.CreatedBy = &adminID
+		}
+	}
 	if err := createAccountRecord(ctx, r.client, account); err != nil {
+		return err
+	}
+	if err := r.stampAccountOwner(ctx, account); err != nil {
 		return err
 	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, buildSchedulerGroupPayload(account.GroupIDs)); err != nil {
@@ -251,6 +259,11 @@ func (r *accountRepository) CreateWithAccountGroups(ctx context.Context, account
 	if account == nil {
 		return service.ErrAccountNilInput
 	}
+	if account.CreatedBy == nil {
+		if adminID, ok := service.AccountOwnerScopeFromContext(ctx); ok {
+			account.CreatedBy = &adminID
+		}
+	}
 	tx, err := r.client.Tx(ctx)
 	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
 		return err
@@ -300,8 +313,61 @@ func (r *accountRepository) CreateWithAccountGroups(ctx context.Context, account
 			return err
 		}
 	}
+	if err := r.stampAccountOwner(ctx, account); err != nil {
+		return err
+	}
 	invalidateModelAvailabilityCachesAfterCommit(ctx)
 	return nil
+}
+
+func (r *accountRepository) applyAccountOwnerScope(ctx context.Context, q *dbent.AccountQuery) *dbent.AccountQuery {
+	adminID, ok := service.AccountOwnerScopeFromContext(ctx)
+	if !ok || q == nil {
+		return q
+	}
+	return q.Where(dbpredicate.Account(func(s *entsql.Selector) {
+		col := s.C("created_by")
+		s.Where(entsql.Or(
+			entsql.IsNull(col),
+			entsql.EQ(col, adminID),
+		))
+	}))
+}
+
+func (r *accountRepository) stampAccountOwner(ctx context.Context, account *service.Account) error {
+	if r == nil || r.sql == nil || account == nil || account.CreatedBy == nil || *account.CreatedBy <= 0 || account.ID <= 0 {
+		return nil
+	}
+	_, err := r.sql.ExecContext(ctx, "UPDATE accounts SET created_by = $1 WHERE id = $2 AND created_by IS NULL", *account.CreatedBy, account.ID)
+	return err
+}
+
+func (r *accountRepository) ensureAccountOwnerVisible(ctx context.Context, id int64) error {
+	adminID, ok := service.AccountOwnerScopeFromContext(ctx)
+	if !ok || r == nil || r.sql == nil || id <= 0 {
+		return nil
+	}
+	rows, err := r.sql.QueryContext(ctx, "SELECT created_by FROM accounts WHERE id = $1", id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return service.ErrAccountNotFound
+	}
+	var createdBy sql.NullInt64
+	if err := rows.Scan(&createdBy); err != nil {
+		return err
+	}
+	var owner *int64
+	if createdBy.Valid {
+		v := createdBy.Int64
+		owner = &v
+	}
+	if !service.AccountVisibleToOwner(owner, adminID) {
+		return service.ErrAccountNotFound
+	}
+	return rows.Err()
 }
 
 func (r *accountRepository) GetByID(ctx context.Context, id int64) (*service.Account, error) {
@@ -316,6 +382,9 @@ func (r *accountRepository) GetByID(ctx context.Context, id int64) (*service.Acc
 	}
 	if len(accounts) == 0 {
 		return nil, service.ErrAccountNotFound
+	}
+	if err := r.ensureAccountOwnerVisible(ctx, id); err != nil {
+		return nil, err
 	}
 	return &accounts[0], nil
 }
@@ -490,9 +559,7 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 		return []*service.Account{}, nil
 	}
 
-	entAccounts, err := r.client.Account.
-		Query().
-		Where(dbaccount.IDIn(uniqueIDs...)).
+	entAccounts, err := r.applyAccountOwnerScope(ctx, r.client.Account.Query().Where(dbaccount.IDIn(uniqueIDs...))).
 		WithProxy().
 		All(ctx)
 	if err != nil {
@@ -1241,7 +1308,7 @@ func (r *accountRepository) accountListFilteredQuery(platform, accountType, stat
 }
 
 func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
-	q := r.accountListFilteredQuery(platform, accountType, status, search, groupID, privacyMode)
+	q := r.applyAccountOwnerScope(ctx, r.accountListFilteredQuery(platform, accountType, status, search, groupID, privacyMode))
 	// Clone before Count so interceptor-appended predicates (SoftDeleteMixin's
 	// deleted_at IS NULL) don't accumulate on the shared builder and pollute the
 	// subsequent list query. Same pattern used in group_repo/promo_code_repo/user_repo
@@ -1271,7 +1338,7 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 }
 
 func (r *accountRepository) ListAllWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, error) {
-	accounts, err := r.accountListFilteredQuery(platform, accountType, status, search, groupID, privacyMode).All(ctx)
+	accounts, err := r.applyAccountOwnerScope(ctx, r.accountListFilteredQuery(platform, accountType, status, search, groupID, privacyMode)).All(ctx)
 	if err != nil {
 		return nil, err
 	}
