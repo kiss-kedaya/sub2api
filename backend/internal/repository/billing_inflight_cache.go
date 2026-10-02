@@ -56,6 +56,23 @@ var (
 		return {1, tostring(sum), count}
 	`)
 
+	// KEYS: [1]=zset [2]=hash  ARGV: [1]=member [2]=expire_at_ms [3]=key_ttl_ms
+	// 仅当成员仍存在时续期（XX），并把两个 key 的 TTL 至少延长到 key_ttl_ms。
+	renewInflightBalanceScript = redis.NewScript(`
+		if not redis.call('ZSCORE', KEYS[1], ARGV[1]) then
+			return 0
+		end
+		redis.call('ZADD', KEYS[1], 'XX', tonumber(ARGV[2]), ARGV[1])
+		local ttl = tonumber(ARGV[3])
+		if redis.call('PTTL', KEYS[1]) < ttl then
+			redis.call('PEXPIRE', KEYS[1], ttl)
+		end
+		if redis.call('PTTL', KEYS[2]) < ttl then
+			redis.call('PEXPIRE', KEYS[2], ttl)
+		end
+		return 1
+	`)
+
 	releaseInflightBalanceScript = redis.NewScript(`
 		redis.call('ZREM', KEYS[1], ARGV[1])
 		redis.call('HDEL', KEYS[2], ARGV[1])
@@ -99,4 +116,21 @@ func (c *billingCache) ReleaseInflightBalance(ctx context.Context, userID int64,
 	return releaseInflightBalanceScript.Run(ctx, c.rdb, []string{zkey, hkey}, requestID).Err()
 }
 
-var _ service.InflightBalanceReservationCache = (*billingCache)(nil)
+// RenewInflightBalance 实现 service.InflightBalanceReservationRenewer。
+func (c *billingCache) RenewInflightBalance(ctx context.Context, userID int64, requestID string, ttl time.Duration) (bool, error) {
+	zkey, hkey := billingInflightKeys(userID)
+	ttlMs := ttl.Milliseconds()
+	if ttlMs <= 0 {
+		ttlMs = 1
+	}
+	n, err := renewInflightBalanceScript.Run(ctx, c.rdb, []string{zkey, hkey}, requestID, time.Now().UnixMilli()+ttlMs, ttlMs).Int64()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+var (
+	_ service.InflightBalanceReservationCache   = (*billingCache)(nil)
+	_ service.InflightBalanceReservationRenewer = (*billingCache)(nil)
+)

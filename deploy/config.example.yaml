@@ -1189,8 +1189,11 @@ billing:
   inflight_reservation:
     # 默认关闭；需要防止并发透支时再显式打开
     enabled: false
-    # Max lifetime of a single reservation (self-heals leaked reservations)
-    # 单条预留最长存活时间（秒），泄漏的预留到期自动释放
+    # Reservation TTL. Renewed every ttl/3 while the request is running; after the
+    # handler returns it is held (not renewed) until the async billing task has
+    # deducted the cached balance, so a stuck billing task frees it after at most one TTL.
+    # 预留 TTL（秒）。请求进行中每 ttl/3 续期；请求结束后不再续期，保持到异步计费
+    # 扣减余额缓存后释放，计费任务卡死时最多一个 TTL 后自动失效
     ttl_seconds: 900
     # Output tokens assumed when the request has no max_tokens
     # 请求未携带 max_tokens 时假定的输出 token 数
@@ -1202,6 +1205,10 @@ billing:
     # Cap for a single reservation in USD (0 = no cap)
     # 单请求预留金额上限（USD，0 为不设上限）
     max_reservation_usd: 0
+    # When a request cannot be priced (no base / group / channel pricing for the
+    # billing model), reject it instead of admitting it without reservation.
+    # 无法为请求定价（计费模型无基础/分组/渠道定价）时拒绝请求；默认 false 为放行不预留（节流告警日志）
+    fail_closed_on_unpriced: false
 
 # =============================================================================
 # Turnstile Configuration

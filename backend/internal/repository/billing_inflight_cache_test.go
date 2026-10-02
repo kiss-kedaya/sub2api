@@ -209,3 +209,61 @@ func TestInflightReservation_ScriptErrorSurfaces(t *testing.T) {
 	require.False(t, errors.Is(err, context.Canceled))
 	_ = rdb.Close()
 }
+
+// 回归：原实现在 handler 返回时即释放预留，而计费（RecordUsage → 余额缓存扣减）是异步的，
+// 窗口内的顺序请求看到「在途=0 且余额未扣」全部放行（余额 $1、5×$0.9 → -4.40）。
+// 现在预留由计费任务在余额缓存扣减之后才释放。
+func TestInflightReservation_SequentialInBillingWindowAdmitsOnlyWhatBalanceCovers(t *testing.T) {
+	_, cache, svc := newInflightTestEnv(t, true, 60)
+	ctx := context.Background()
+	user := &service.User{ID: 77}
+	require.NoError(t, cache.SetUserBalance(ctx, user.ID, 1.0))
+
+	const cost = 0.9
+	var pendingBilling []func()
+	admitted := 0
+	for i := 0; i < 5; i++ {
+		res, err := svc.ReserveInflight(ctx, user, nil, nil, cost)
+		if err != nil {
+			require.ErrorIs(t, err, service.ErrInsufficientBalance)
+			continue
+		}
+		admitted++
+		taskDone := res.Acquire() // handler submits the async billing task
+		res.HandlerDone()         // handler returns before billing lands
+		pendingBilling = append(pendingBilling, func() {
+			require.NoError(t, cache.DeductUserBalance(ctx, user.ID, cost))
+			taskDone()
+		})
+	}
+	require.Equal(t, 1, admitted, "requests arriving before billing lands must not be admitted")
+
+	for _, bill := range pendingBilling {
+		bill()
+	}
+	bal, err := cache.GetUserBalance(ctx, user.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 0.1, bal, 1e-9)
+	require.Equal(t, int64(0), inflightCount(t, cache, user.ID))
+}
+
+func TestInflightReservation_RenewalKeepsStreamingReservationAlive(t *testing.T) {
+	_, cache, svc := newInflightTestEnv(t, true, 1)
+	ctx := context.Background()
+	user := &service.User{ID: 78}
+	require.NoError(t, cache.SetUserBalance(ctx, user.ID, 1.0))
+
+	res, err := svc.ReserveInflight(ctx, user, nil, nil, 0.8)
+	require.NoError(t, err)
+	time.Sleep(2500 * time.Millisecond) // streaming well past the 1s TTL
+	_, err = svc.ReserveInflight(ctx, user, nil, nil, 0.8)
+	require.ErrorIs(t, err, service.ErrInsufficientBalance, "renewed reservation must still count")
+	require.Equal(t, int64(1), inflightCount(t, cache, user.ID))
+
+	res.HandlerDone()
+	require.Equal(t, int64(0), inflightCount(t, cache, user.ID))
+
+	ok, err := cache.RenewInflightBalance(ctx, user.ID, "missing", time.Second)
+	require.NoError(t, err)
+	require.False(t, ok, "renew must not resurrect a released reservation")
+}
