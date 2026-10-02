@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/google/uuid"
+	gocache "github.com/patrickmn/go-cache"
 )
 
 // InflightBalanceReservationCache 余额在途预留的缓存能力（可选）。
@@ -329,6 +332,51 @@ type inflightEstimateDeps struct {
 	resolver       *ModelPricingResolver
 	resolveMapping func(ctx context.Context, groupID int64, model string) ChannelMappingResult
 	userGroupRate  func(ctx context.Context, userID, groupID int64, groupDefault float64) float64
+	// accountMappedModels 返回分组内可调度账号对 model 的账号级映射结果（去重，不含 model 本身）。
+	// 准入时账号尚未选定，计费侧 billableModelWithFallback 会回退到实际转发模型（UpstreamModel，
+	// 即账号映射后的模型），因此这里取所有候选映射模型的最高估算。
+	accountMappedModels func(ctx context.Context, groupID int64, model string) []string
+}
+
+// inflightAccountMappingCache 缓存「分组 + 模型 → 账号级映射模型集合」，避免未定价别名每次请求都查库。
+var inflightAccountMappingCache = gocache.New(30*time.Second, time.Minute)
+
+func inflightAccountMappedModelsFromRepo(repo AccountRepository) func(ctx context.Context, groupID int64, model string) []string {
+	if repo == nil {
+		return nil
+	}
+	return func(ctx context.Context, groupID int64, model string) []string {
+		model = strings.TrimSpace(model)
+		if groupID <= 0 || model == "" {
+			return nil
+		}
+		key := fmt.Sprintf("%d|%s", groupID, model)
+		if v, ok := inflightAccountMappingCache.Get(key); ok {
+			if out, ok := v.([]string); ok {
+				return out
+			}
+		}
+		accounts, err := repo.ListSchedulableByGroupID(ctx, groupID)
+		if err != nil {
+			return nil
+		}
+		seen := map[string]struct{}{}
+		var out []string
+		for i := range accounts {
+			mapped, matched := accounts[i].ResolveMappedModel(model)
+			mapped = strings.TrimSpace(mapped)
+			if !matched || mapped == "" || mapped == model {
+				continue
+			}
+			if _, dup := seen[mapped]; dup {
+				continue
+			}
+			seen[mapped] = struct{}{}
+			out = append(out, mapped)
+		}
+		inflightAccountMappingCache.Set(key, out, gocache.DefaultExpiration)
+		return out
+	}
 }
 
 var inflightUnpricedLastLog atomic.Int64
@@ -347,26 +395,32 @@ func logInflightUnpriced(model string, groupID *int64) {
 }
 
 // inflightBillingModelCandidates 与计费路径一致地挑选计费模型：
-// channel_mapped（默认）→ 映射后模型；requested → 请求模型；
-// upstream / response_model 在准入时未知 → 取请求模型与映射模型两者较高估算。
-func inflightBillingModelCandidates(ctx context.Context, deps inflightEstimateDeps, apiKey *APIKey, model string) []string {
-	if apiKey == nil || apiKey.GroupID == nil || deps.resolveMapping == nil {
-		return []string{model}
+// 返回 primary（计费侧首选的计费模型）与 fallbacks（计费侧 billableModelWithFallback
+// 在首选模型查无价时回退到的实际转发模型：渠道映射模型 → 账号级映射模型）。
+//   - channel_mapped（默认）→ 映射后模型（同时估算请求模型，取较高者）；
+//   - requested → 请求模型；
+//   - upstream / response_model 在准入时未知 → 取请求模型与映射模型两者较高估算。
+func inflightBillingModelCandidates(ctx context.Context, deps inflightEstimateDeps, apiKey *APIKey, model string) (primary, fallbacks []string) {
+	if apiKey == nil || apiKey.GroupID == nil {
+		return []string{model}, nil
 	}
-	m := deps.resolveMapping(ctx, *apiKey.GroupID, model)
-	mapped := m.MappedModel
-	if mapped == "" || mapped == model {
-		return []string{model}
+	upstreamInput := model
+	primary = []string{model}
+	if deps.resolveMapping != nil {
+		m := deps.resolveMapping(ctx, *apiKey.GroupID, model)
+		if mapped := m.MappedModel; mapped != "" && mapped != model {
+			upstreamInput = mapped
+			if m.BillingModelSource == BillingModelSourceRequested {
+				fallbacks = append(fallbacks, mapped)
+			} else {
+				primary = []string{mapped, model}
+			}
+		}
 	}
-	switch m.BillingModelSource {
-	case BillingModelSourceRequested:
-		return []string{model}
-	case BillingModelSourceChannelMapped, "":
-		// 计费侧对无价映射模型会回落到具体转发模型；此处同时估算请求模型，取较高者。
-		return []string{mapped, model}
-	default:
-		return []string{mapped, model}
+	if deps.accountMappedModels != nil {
+		fallbacks = append(fallbacks, deps.accountMappedModels(ctx, *apiKey.GroupID, upstreamInput)...)
 	}
+	return primary, fallbacks
 }
 
 func (d inflightEstimateDeps) rates(ctx context.Context, apiKey *APIKey) (text, image float64) {
@@ -529,9 +583,23 @@ func (d inflightEstimateDeps) estimate(ctx context.Context, apiKey *APIKey, req 
 		// 免费分组：不计费，也无需预留。
 		return 0, true
 	}
-	best := 0.0
-	for _, m := range inflightBillingModelCandidates(ctx, d, apiKey, req.Model) {
-		if c := d.estimateOne(ctx, apiKey, m, req, textRate, imageRate); c > best {
+	primary, fallbacks := inflightBillingModelCandidates(ctx, d, apiKey, req.Model)
+	bestOf := func(models []string) float64 {
+		best := 0.0
+		for _, m := range models {
+			if c := d.estimateOne(ctx, apiKey, m, req, textRate, imageRate); c > best {
+				best = c
+			}
+		}
+		return best
+	}
+	best := bestOf(primary)
+	// composite 分组：计费侧除非别名有显式渠道价，否则按实际转发的具体模型计费；
+	// 别名本身可能命中家族模糊价（低估），因此与候选具体模型一起取最高。
+	composite := apiKey.Group != nil && apiKey.Group.Platform == PlatformComposite
+	if best <= 0 || composite {
+		// 与 billableModelWithFallback 同口径：首选模型无价时回退到实际转发模型。
+		if c := bestOf(fallbacks); c > best {
 			best = c
 		}
 	}
@@ -578,6 +646,7 @@ func (s *GatewayService) inflightEstimateDeps() inflightEstimateDeps {
 		d.resolveMapping = s.channelService.ResolveChannelMapping
 	}
 	d.userGroupRate = s.getUserGroupRateMultiplier
+	d.accountMappedModels = inflightAccountMappedModelsFromRepo(s.accountRepo)
 	return d
 }
 
@@ -596,6 +665,7 @@ func (s *OpenAIGatewayService) inflightEstimateDeps() inflightEstimateDeps {
 		d.resolveMapping = s.channelService.ResolveChannelMapping
 	}
 	d.userGroupRate = s.ResolveUserGroupRateMultiplier
+	d.accountMappedModels = inflightAccountMappedModelsFromRepo(s.accountRepo)
 	return d
 }
 

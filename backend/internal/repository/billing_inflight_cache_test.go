@@ -267,3 +267,21 @@ func TestInflightReservation_RenewalKeepsStreamingReservationAlive(t *testing.T)
 	require.NoError(t, err)
 	require.False(t, ok, "renew must not resurrect a released reservation")
 }
+
+func TestInflightReservation_RenewDoesNotResurrectExpiredMember(t *testing.T) {
+	_, cache, _ := newInflightTestEnv(t, true, 60)
+	ctx := context.Background()
+	userID := int64(79)
+	zkey, hkey := billingInflightKeys(userID)
+	// 已过期但尚未被惰性清理的成员（score 在过去）。
+	require.NoError(t, cache.rdb.ZAdd(ctx, zkey, redis.Z{Score: float64(time.Now().UnixMilli() - 1000), Member: "stale"}).Err())
+	require.NoError(t, cache.rdb.HSet(ctx, hkey, "stale", "0.5").Err())
+
+	ok, err := cache.RenewInflightBalance(ctx, userID, "stale", time.Minute)
+	require.NoError(t, err)
+	require.False(t, ok, "renew must not resurrect an expired member")
+	require.Equal(t, int64(0), inflightCount(t, cache, userID))
+	exists, err := cache.rdb.HExists(ctx, hkey, "stale").Result()
+	require.NoError(t, err)
+	require.False(t, exists)
+}
