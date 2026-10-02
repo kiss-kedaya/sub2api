@@ -32,7 +32,7 @@
             d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
           />
         </svg>
-        {{ t('admin.accounts.claudeResetCredits.count') }}<span v-if="status" class="ml-0.5 tabular-nums">{{ status.available_count }}</span>
+        {{ t('admin.accounts.claudeResetCredits.count') }}<span v-if="status" class="ml-0.5 tabular-nums">{{ totalResets }}</span>
       </button>
     </div>
 
@@ -44,6 +44,13 @@
         :title="creditTitle"
       >
         {{ t('admin.accounts.claudeResetCredits.expiresAt', { time: formatTime(primaryCredit.expires_at, 'short') }) }}
+      </span>
+      <span
+        v-if="status.eligible && totalResets > 0 && status.available_count === 0"
+        data-testid="claude-reset-not-usable"
+        class="text-[10px] text-gray-500 dark:text-gray-400"
+      >
+        {{ t('admin.accounts.claudeResetCredits.notUsableNow') }}
       </span>
       <span v-if="!status.eligible" class="text-[10px] text-amber-600 dark:text-amber-400">
         {{ t('admin.accounts.claudeResetCredits.ineligible') }}
@@ -85,8 +92,14 @@ const formatTime = (value: string, style: 'short' | 'full'): string => {
   return new Intl.DateTimeFormat(undefined, options).format(date)
 }
 
-// 上游按 next_grant_id 排序，第一张即下一张会被使用的券
-const primaryCredit = computed(() => status.value?.credits[0] ?? null)
+// 与 Codex 的「次数」一致：显示持有的剩余次数，而不是此刻可兑换的次数
+const totalResets = computed(() => (status.value?.credits ?? []).reduce((sum, c) => sum + c.resets_left, 0))
+
+// 优先展示下一张会被使用的券（仅它可能 redeemable），否则取最早到期的一张
+const primaryCredit = computed(() => {
+  const credits = status.value?.credits ?? []
+  return credits.find(c => c.redeemable) ?? [...credits].sort((a, b) => (a.expires_at ?? '9999').localeCompare(b.expires_at ?? '9999'))[0] ?? null
+})
 
 const creditTitle = computed(() => {
   const credit = primaryCredit.value
