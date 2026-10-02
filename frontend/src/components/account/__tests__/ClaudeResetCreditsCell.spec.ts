@@ -30,6 +30,28 @@ describe('Claude reset credit status', () => {
     expect(expiry.attributes('title')).toContain('Launch reset')
   })
 
+  it('counts held resets and prefers the next redeemable grant', async () => {
+    const later = { ...credit, selection_token: 'a', label: 'Later', expires_at: '2026-12-01T00:00:00Z', redeemable: false }
+    const next = { ...credit, selection_token: 'b', label: 'Next', expires_at: '2026-11-01T00:00:00Z', redeemable: true }
+    getCredits.mockResolvedValue({ ...snapshot, available_count: 1, credits: [later, next] })
+    const wrapper = mount(ClaudeResetCreditsCell, { props: { account } })
+    await countButton(wrapper).trigger('click')
+    await flushPromises()
+    expect(countButton(wrapper).text()).toBe('admin.accounts.claudeResetCredits.count2')
+    expect(wrapper.get('[data-testid="claude-reset-expiry"]').attributes('title')).toContain('Next')
+    expect(wrapper.find('[data-testid="claude-reset-not-usable"]').exists()).toBe(false)
+  })
+
+  it('flags held resets that cannot be used yet', async () => {
+    const waiting = { ...credit, use_requires_limit: true, redeemable: false }
+    getCredits.mockResolvedValue({ ...snapshot, available_count: 0, credits: [waiting] })
+    const wrapper = mount(ClaudeResetCreditsCell, { props: { account } })
+    await countButton(wrapper).trigger('click')
+    await flushPromises()
+    expect(countButton(wrapper).text()).toBe('admin.accounts.claudeResetCredits.count1')
+    expect(wrapper.find('[data-testid="claude-reset-not-usable"]').exists()).toBe(true)
+  })
+
   it('offers no redeem action', () => {
     const wrapper = mount(ClaudeResetCreditsCell, { props: { account } })
     expect(wrapper.findAll('button')).toHaveLength(1)
