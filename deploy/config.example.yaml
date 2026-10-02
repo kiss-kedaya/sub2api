@@ -1179,6 +1179,29 @@ billing:
   # Cache TTL (seconds) for per-user × per-platform quota records
   # 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口
   user_platform_quota_cache_ttl_seconds: 86400
+  # In-flight balance reservation (Redis): at admission, estimate per-request cost
+  # (input estimate + output price x max_tokens) and atomically require
+  # cached_balance - in-flight reservations >= estimate. Released when the request ends.
+  # The first in-flight request of a user is always admitted (same as before).
+  # Fails open when the estimate cannot be computed or Redis is unavailable.
+  # 余额模式在途预留：准入时估算单请求费用，要求 缓存余额 - 在途预留合计 >= 估算；
+  # 用户无在途请求时始终放行（与旧行为一致）；估算失败/Redis 不可用时 fail-open。
+  inflight_reservation:
+    # 默认关闭；需要防止并发透支时再显式打开
+    enabled: false
+    # Max lifetime of a single reservation (self-heals leaked reservations)
+    # 单条预留最长存活时间（秒），泄漏的预留到期自动释放
+    ttl_seconds: 900
+    # Output tokens assumed when the request has no max_tokens
+    # 请求未携带 max_tokens 时假定的输出 token 数
+    default_max_tokens: 8192
+    # Cap for estimated output / input tokens
+    # 估算输出 / 输入 token 上限
+    max_output_tokens: 128000
+    max_input_tokens: 200000
+    # Cap for a single reservation in USD (0 = no cap)
+    # 单请求预留金额上限（USD，0 为不设上限）
+    max_reservation_usd: 0
 
 # =============================================================================
 # Turnstile Configuration
