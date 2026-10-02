@@ -942,6 +942,9 @@ type InflightReservationConfig struct {
 	MaxInputTokens int `mapstructure:"max_input_tokens"`
 	// MaxReservationUSD 单请求预留金额上限；0 表示不设上限。
 	MaxReservationUSD float64 `mapstructure:"max_reservation_usd"`
+	// FailClosedOnUnpriced 无法为请求估算费用（模型/分组/渠道均无定价）时是否拒绝请求。
+	// 默认 false：放行且不预留（fail-open，节流告警日志）。
+	FailClosedOnUnpriced bool `mapstructure:"fail_closed_on_unpriced"`
 }
 
 type CircuitBreakerConfig struct {
@@ -2180,6 +2183,7 @@ func setDefaults() {
 	viper.SetDefault("billing.inflight_reservation.max_output_tokens", 128000)
 	viper.SetDefault("billing.inflight_reservation.max_input_tokens", 200000)
 	viper.SetDefault("billing.inflight_reservation.max_reservation_usd", 0)
+	viper.SetDefault("billing.inflight_reservation.fail_closed_on_unpriced", false)
 
 	// Turnstile
 	viper.SetDefault("turnstile.required", false)
