@@ -61,6 +61,7 @@ type Account struct {
 	SessionWindowStatus string
 
 	ParentAccountID *int64 // non-nil → 影子账号（不持凭据，透传母账号凭据）
+	CreatedBy       *int64 // 上传这只号的管理员；空表示功能上线前的历史号
 	QuotaDimension  string // 用量维度："" / "global" / "spark"
 
 	Proxy         *Proxy
