@@ -1,28 +1,66 @@
 <template>
-  <div v-if="account.platform === 'anthropic' && account.type === 'oauth'" class="space-y-1 text-xs">
-    <button type="button" class="text-blue-600 disabled:opacity-50" :disabled="loading" @click="refresh">
-      {{ t('admin.accounts.claudeResetCredits.query') }}
-    </button>
-    <p v-if="error" role="alert">{{ t('admin.accounts.claudeResetCredits.error') }}</p>
-    <template v-if="status">
-      <p>{{ t('admin.accounts.claudeResetCredits.count', { count: status.available_count }) }}</p>
-      <p v-if="!status.eligible">{{ t('admin.accounts.claudeResetCredits.ineligible') }}</p>
-      <p v-if="status.cooldown_until">{{ t('admin.accounts.claudeResetCredits.cooldown', { time: status.cooldown_until }) }}</p>
-      <p v-if="status.weekly_resets_at">{{ t('admin.accounts.claudeResetCredits.weekly', { time: status.weekly_resets_at }) }}</p>
-      <div v-for="credit in status.credits" :key="credit.selection_token" class="rounded border p-1">
-        <p>{{ credit.label }} · {{ credit.resets_left }}</p>
-        <p v-if="credit.expires_at">{{ t('admin.accounts.claudeResetCredits.expires', { time: credit.expires_at }) }}</p>
-        <p>{{ t('admin.accounts.claudeResetCredits.clears', { windows: credit.clears.join(', ') }) }}</p>
-        <p v-for="(percent, window) in credit.percent_used" :key="window">{{ window }}: {{ percent }}%</p>
-        <p v-if="credit.blocking.length">{{ credit.blocking.join(', ') }}</p>
-      </div>
-      <p class="text-gray-500">{{ t('admin.accounts.claudeResetCredits.fetched', { time: status.fetched_at }) }}</p>
-    </template>
+  <div class="space-y-1">
+    <!--
+      Same action row layout as OpenAIQuotaResetCell: the parent's local
+      "查询" button is passed in via #pre-actions so related buttons share one
+      row. The reset count only shows for Anthropic OAuth accounts; the slot always
+      renders. This cell is read-only — it never redeems a reset.
+    -->
+    <div class="flex flex-wrap items-center gap-1.5">
+      <slot name="pre-actions" />
+
+      <button
+        v-if="visible"
+        type="button"
+        data-testid="claude-reset-count"
+        class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+        :disabled="loading"
+        :title="countButtonTitle"
+        @click="refresh"
+      >
+        <svg
+          class="h-2.5 w-2.5"
+          :class="{ 'animate-spin': loading }"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+          />
+        </svg>
+        {{ t('admin.accounts.claudeResetCredits.count') }}<span v-if="status" class="ml-0.5 tabular-nums">{{ status.available_count }}</span>
+      </button>
+    </div>
+
+    <div v-if="visible && status && (primaryCredit || !status.eligible || status.cooldown_until)" class="flex flex-wrap items-center gap-1">
+      <span
+        v-if="primaryCredit?.expires_at"
+        data-testid="claude-reset-expiry"
+        class="inline-flex max-w-full items-center rounded bg-gray-100 px-1.5 py-0.5 text-[10px] leading-4 text-gray-600 tabular-nums dark:bg-dark-800 dark:text-gray-300"
+        :title="creditTitle"
+      >
+        {{ t('admin.accounts.claudeResetCredits.expiresAt', { time: formatTime(primaryCredit.expires_at, 'short') }) }}
+      </span>
+      <span v-if="!status.eligible" class="text-[10px] text-amber-600 dark:text-amber-400">
+        {{ t('admin.accounts.claudeResetCredits.ineligible') }}
+      </span>
+      <span v-if="status.cooldown_until" class="text-[10px] text-amber-600 dark:text-amber-400">
+        {{ t('admin.accounts.claudeResetCredits.cooldown', { time: formatTime(status.cooldown_until, 'short') }) }}
+      </span>
+    </div>
+
+    <div v-if="visible && error" role="alert" class="text-[10px] text-red-600 dark:text-red-400">
+      {{ t('admin.accounts.claudeResetCredits.error') }}
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Account } from '@/types'
 import { getClaudeResetCredits, type ClaudeResetCredits } from '@/api/admin/claudeResetCredits'
@@ -33,7 +71,40 @@ const status = ref<ClaudeResetCredits | null>(null)
 const loading = ref(false)
 const error = ref(false)
 let generation = 0
+
+const visible = computed(() => props.account.platform === 'anthropic' && props.account.type === 'oauth')
+
 watch(() => props.account.id, () => { generation++; status.value = null; loading.value = false; error.value = false })
+
+// 与 OpenAIQuotaResetCell 的到期时间格式保持一致
+const formatTime = (value: string, style: 'short' | 'full'): string => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const options: Intl.DateTimeFormatOptions = { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+  if (style === 'full') options.year = 'numeric'
+  return new Intl.DateTimeFormat(undefined, options).format(date)
+}
+
+// 上游按 next_grant_id 排序，第一张即下一张会被使用的券
+const primaryCredit = computed(() => status.value?.credits[0] ?? null)
+
+const creditTitle = computed(() => {
+  const credit = primaryCredit.value
+  if (!credit) return ''
+  const lines = [credit.label]
+  if (credit.expires_at) lines.push(t('admin.accounts.claudeResetCredits.expiresAtFull', { time: formatTime(credit.expires_at, 'full') }))
+  if (credit.clears.length) lines.push(t('admin.accounts.claudeResetCredits.clears', { windows: credit.clears.join(', ') }))
+  if (credit.use_requires_limit) lines.push(t('admin.accounts.claudeResetCredits.requiresLimit'))
+  return lines.join('\n')
+})
+
+const countButtonTitle = computed(() => {
+  if (!status.value) return t('admin.accounts.claudeResetCredits.countTooltipLoad')
+  return [
+    t('admin.accounts.claudeResetCredits.countTooltipRefresh'),
+    t('admin.accounts.claudeResetCredits.fetched', { time: formatTime(status.value.fetched_at, 'full') })
+  ].join('\n')
+})
 
 async function refresh() {
   if (loading.value) return
