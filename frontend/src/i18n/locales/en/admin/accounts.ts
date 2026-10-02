@@ -893,7 +893,19 @@ export default {
 	  autoPause5hDisabled: 'Disable 5h auto-pause',
 	  autoPause7dDisabled: 'Disable 7d auto-pause',
 	  autoPauseDisabledHint: 'When enabled, this account is never auto-paused (even if a global default threshold is configured).',
-	  claudeResetCredits: {"query": "Claude reset credits", "error": "Could not refresh reset credits. No reset was performed.", "count": "Available resets: {count}", "ineligible": "This account is not eligible.", "cooldown": "Cooldown until {time}", "weekly": "Weekly window resets at {time}", "expires": "Expires at {time}", "clears": "Clears: {windows}", "fetched": "Checked at {time}"},
+	  claudeResetCredits: {
+	    count: 'Resets',
+	    countTooltipLoad: 'Check remaining Claude resets (read-only, never consumes one)',
+	    countTooltipRefresh: 'Refresh remaining Claude resets (read-only, never consumes one)',
+	    fetched: 'Checked at {time}',
+	    error: 'Could not check reset credits',
+	    ineligible: 'This account cannot use resets right now',
+	    cooldown: 'Cooldown until {time}',
+	    expiresAt: 'Expires {time}',
+	    expiresAtFull: 'Reset credit expires at: {time}',
+	    clears: 'Clears windows: {windows}',
+	    requiresLimit: 'Usable only after hitting a limit'
+	  },
       autoResetCredit: {
 	    title: 'Automatically use reset credits',
 	    hint: 'Uses the earliest-expiring available credit only when actual usage reaches a threshold. Off by default; the account remains paused if no credit is available or reset fails.',
