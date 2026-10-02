@@ -323,6 +323,19 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 	defer stopStreamHeaderKeepalive()
 
+	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
+	inflightRelease, err := reserveInflightBalance(c.Request.Context(), h.billingCacheService, h.gatewayService, apiKey, subscription, reqModel, body)
+	if err != nil {
+		reqLog.Info("gateway.inflight_reservation_rejected", zap.Error(err))
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		return
+	}
+	defer inflightRelease()
+
 	// 设置请求所属分组 ID（用于渠道级功能判断，如 WebSearch 模拟）
 	parsedReq.GroupID = apiKey.GroupID
 

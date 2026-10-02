@@ -175,6 +175,19 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	}
 	defer stopStreamHeaderKeepalive()
 
+	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
+	inflightRelease, err := reserveInflightBalance(c.Request.Context(), h.billingCacheService, h.gatewayService, apiKey, subscription, reqModel, body)
+	if err != nil {
+		reqLog.Info("gateway.cc.inflight_reservation_rejected", zap.Error(err))
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.chatCompletionsErrorResponse(c, status, code, message)
+		return
+	}
+	defer inflightRelease()
+
 	// Parse request for session hash
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, _ := service.ParseGatewayRequest(bodyRef, "chat_completions")
