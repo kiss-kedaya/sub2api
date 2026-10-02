@@ -904,6 +904,7 @@ export default {
 	    expiresAt: 'Expires {time}',
 	    expiresAtFull: 'Reset credit expires at: {time}',
 	    clears: 'Clears windows: {windows}',
+	    notUsableNow: 'Not usable now',
 	    requiresLimit: 'Usable only after hitting a limit'
 	  },
       autoResetCredit: {

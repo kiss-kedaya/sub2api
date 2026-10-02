@@ -976,6 +976,7 @@ export default {
 	    expiresAt: '到期 {time}',
 	    expiresAtFull: '重置次数到期时间：{time}',
 	    clears: '可清除窗口：{windows}',
+	    notUsableNow: '暂不可用',
 	    requiresLimit: '需达到限额后才能使用'
 	  },
       autoResetCredit: {
