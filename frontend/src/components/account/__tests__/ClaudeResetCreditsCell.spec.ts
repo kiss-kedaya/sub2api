@@ -7,7 +7,7 @@ vi.mock('@/api/admin/claudeResetCredits', () => ({ getClaudeResetCredits: getCre
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const account = { id: 1, platform: 'anthropic', type: 'oauth' } as Account
 const credit = {
-  selection_token: 'tok', label: 'Launch reset', resets_left: 1,
+  label: 'Launch reset', resets_left: 1,
   expires_at: '2026-10-22T16:00:00Z', clears: ['five_hour', 'seven_day'],
   percent_used: {}, blocking: [], use_requires_limit: false, redeemable: true
 }
@@ -31,8 +31,8 @@ describe('Claude reset credit status', () => {
   })
 
   it('counts held resets and prefers the next redeemable grant', async () => {
-    const later = { ...credit, selection_token: 'a', label: 'Later', expires_at: '2026-12-01T00:00:00Z', redeemable: false }
-    const next = { ...credit, selection_token: 'b', label: 'Next', expires_at: '2026-11-01T00:00:00Z', redeemable: true }
+    const later = { ...credit, label: 'Later', expires_at: '2026-12-01T00:00:00Z', redeemable: false }
+    const next = { ...credit, label: 'Next', expires_at: '2026-11-01T00:00:00Z', redeemable: true }
     getCredits.mockResolvedValue({ ...snapshot, available_count: 1, credits: [later, next] })
     const wrapper = mount(ClaudeResetCreditsCell, { props: { account } })
     await countButton(wrapper).trigger('click')
@@ -70,6 +70,41 @@ describe('Claude reset credit status', () => {
     await flushPromises()
     expect(countButton(wrapper).exists()).toBe(false)
     expect(wrapper.find('[data-testid="local-query"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="claude-reset-expiry"]').exists()).toBe(false)
+  })
+
+  it('falls back to the earliest parsed expiry across offsets, invalid last', async () => {
+    const a = { ...credit, label: 'Tokyo', expires_at: '2026-11-01T08:00:00+09:00', redeemable: false }
+    const b = { ...credit, label: 'Chicago', expires_at: '2026-10-31T20:00:00-05:00', redeemable: false }
+    const bad = { ...credit, label: 'Bad', expires_at: 'not-a-date', redeemable: false }
+    const none = { ...credit, label: 'None', expires_at: undefined, redeemable: false }
+    getCredits.mockResolvedValue({ ...snapshot, available_count: 0, credits: [none, bad, b, a] })
+    const wrapper = mount(ClaudeResetCreditsCell, { props: { account } })
+    await countButton(wrapper).trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="claude-reset-expiry"]').attributes('title')).toContain('Tokyo')
+    expect(wrapper.get('[data-testid="claude-reset-expiry"]').attributes('title')).not.toContain('Chicago')
+  })
+
+  it('hides a cooldown hint that is already in the past', async () => {
+    getCredits.mockResolvedValue({ ...snapshot, cooldown_until: '2000-01-01T00:00:00Z' })
+    const wrapper = mount(ClaudeResetCreditsCell, { props: { account } })
+    await countButton(wrapper).trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="claude-reset-cooldown"]').exists()).toBe(false)
+  })
+
+  it('discards in-flight responses when the same account changes type', async () => {
+    let resolve!: (value: typeof snapshot) => void
+    getCredits.mockReturnValue(new Promise(r => { resolve = r }))
+    const wrapper = mount(ClaudeResetCreditsCell, { props: { account } })
+    await countButton(wrapper).trigger('click')
+    await wrapper.setProps({ account: { ...account, type: 'setup-token' } })
+    await wrapper.setProps({ account: { ...account } })
+    resolve(snapshot)
+    await flushPromises()
+    expect(countButton(wrapper).text()).toBe('admin.accounts.claudeResetCredits.count')
+    expect(countButton(wrapper).attributes('disabled')).toBeUndefined()
     expect(wrapper.find('[data-testid="claude-reset-expiry"]').exists()).toBe(false)
   })
 })
