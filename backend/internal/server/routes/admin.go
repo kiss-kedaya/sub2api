@@ -362,6 +362,12 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 
 func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	accounts := admin.Group("/accounts")
+	accounts.Use(func(c *gin.Context) {
+		if subject, ok := middleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
+			c.Request = c.Request.WithContext(service.WithAccountOwnerScope(c.Request.Context(), subject.UserID))
+		}
+		c.Next()
+	})
 	customUsage := h.Admin.Account.NewCustomUsageHandler()
 	{
 		accounts.GET("/:id/custom-usage-config", customUsage.GetConfig)
