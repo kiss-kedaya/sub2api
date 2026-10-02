@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -30,6 +29,10 @@ const (
 	// the upstream outcome has certainly settled; after that a fresh query is
 	// authoritative again (a consumed credit shows up as a lower count or cooldown).
 	claudeResetUnknownFenceTTL = 24 * time.Hour
+	// An explicit, well-formed "unavailable" answer means nothing was claimed, so it
+	// only fences briefly instead of locking the organization out for a day.
+	claudeResetUnavailableFenceTTL = 15 * time.Minute
+	claudeResetReasonUnavailable   = "upstream_unavailable"
 
 	ClaudeResetOutcomeReset       = "reset"
 	ClaudeResetOutcomeAlreadyUsed = "already_used"
@@ -39,7 +42,17 @@ const (
 	ClaudeResetOutcomeUnknown     = "unknown"
 )
 
-var claudeResetReasonPattern = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+// Only known reason codes and window names reach clients, so an upstream value can
+// never echo a grant ID or other identifier.
+var (
+	claudeResetKnownReasons = map[string]bool{
+		"no_grant": true, "unknown_grant": true, "not_next_grant": true, "grant_id_required": true,
+		"tenure": true, "other_experiment": true, "stamp_indeterminate": true, "reset_unconfirmed": true,
+		"authorization_rejected": true, "claim_unconfirmed": true, claudeResetReasonUnavailable: true,
+		"result_persistence_failed": true,
+	}
+	claudeResetKnownWindows = map[string]bool{"five_hour": true, "seven_day": true, "seven_day_overage_included": true}
+)
 
 // ClaudeResetOutcome is the sanitized redemption result. It never carries grant,
 // organization, or upstream request IDs.
@@ -157,7 +170,11 @@ func (s *ClaudeResetCreditService) redeemOnce(ctx context.Context, id int64, ope
 			// A crashed or interrupted attempt of this same confirmation: never resend.
 			return &ClaudeResetOutcome{Outcome: prior.Outcome, Reason: prior.Reason, Replayed: true}, nil
 		}
-		if prior.Outcome == ClaudeResetOutcomeUnknown && s.now().Before(prior.At.Add(claudeResetUnknownFenceTTL)) {
+		if prior.Outcome == ClaudeResetOutcomeUnknown && prior.Reason == claudeResetReasonUnavailable {
+			if s.now().Before(prior.At.Add(claudeResetUnavailableFenceTTL)) {
+				return nil, infraerrors.Conflict("CLAUDE_RESET_UPSTREAM_UNAVAILABLE", "reset service was unavailable; retry after a while")
+			}
+		} else if prior.Outcome == ClaudeResetOutcomeUnknown && s.now().Before(prior.At.Add(claudeResetUnknownFenceTTL)) {
 			return nil, infraerrors.Conflict("CLAUDE_RESET_UNRESOLVED", "previous reset outcome is unconfirmed; redemption is blocked for now")
 		}
 	}
@@ -295,7 +312,7 @@ func (s *ClaudeResetCreditService) claim(ctx context.Context, token, proxy, org,
 		return unknown
 	}
 	reason := ""
-	if claudeResetReasonPattern.MatchString(result.Reason) {
+	if claudeResetKnownReasons[result.Reason] {
 		reason = result.Reason
 	}
 	if reason == "stamp_indeterminate" || reason == "reset_unconfirmed" {
@@ -305,16 +322,13 @@ func (s *ClaudeResetCreditService) claim(ctx context.Context, token, proxy, org,
 	case ClaudeResetOutcomeReset, ClaudeResetOutcomeAlreadyUsed, ClaudeResetOutcomeNotLimited, ClaudeResetOutcomeCooldown, ClaudeResetOutcomeIneligible:
 		out := &ClaudeResetOutcome{Outcome: result.Result, Reason: reason, CooldownUntil: result.CooldownUntil}
 		for _, w := range result.Cleared {
-			if claudeResetReasonPattern.MatchString(w) {
+			if claudeResetKnownWindows[w] {
 				out.Cleared = append(out.Cleared, w)
 			}
 		}
 		return out
 	case "unavailable":
-		if reason == "" {
-			reason = "upstream_unavailable"
-		}
-		return &ClaudeResetOutcome{Outcome: ClaudeResetOutcomeUnknown, Reason: reason}
+		return &ClaudeResetOutcome{Outcome: ClaudeResetOutcomeUnknown, Reason: claudeResetReasonUnavailable}
 	default:
 		return unknown
 	}
