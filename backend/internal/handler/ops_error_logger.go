@@ -1111,6 +1111,12 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			releaseOpsCaptureWriter(w)
 		}()
 		c.Writer = w
+		// 入站请求头快照：在业务处理之前采一次（后续中间件/服务可能改写请求体，
+		// 但原始头不会再变）。上游出站与回程头由 HTTPUpstream 装饰器回写。
+		service.SetOpsRequestHeaders(c, c.Request.Header)
+		// 把 gin.Context 挂到 request context，供只拿得到 *http.Request 的
+		// 上游调用层回写头快照（见 service.CaptureOpsUpstreamHeaders）。
+		c.Request = c.Request.WithContext(service.WithOpsGinContext(c.Request.Context(), c))
 		c.Next()
 		w.finalizeCapture()
 
@@ -1248,6 +1254,11 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				return nil
 			}(),
 			UserAgent: c.GetHeader("User-Agent"),
+
+			// 三份头快照（入站 / 出站 / 回程）。快照在采集阶段已脱敏并截断。
+			RequestHeaders:          service.GetOpsRequestHeaders(c),
+			UpstreamRequestHeaders:  service.GetOpsUpstreamRequestHeaders(c),
+			UpstreamResponseHeaders: service.GetOpsUpstreamResponseHeaders(c),
 
 			ErrorPhase:        phase,
 			ErrorType:         normalizedType,
@@ -1404,6 +1415,9 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *service.OpsService, finalStatu
 	if entry.RequestID == "" {
 		entry.RequestID = c.Writer.Header().Get("X-Request-Id")
 	}
+	entry.RequestHeaders = service.GetOpsRequestHeaders(c)
+	entry.UpstreamRequestHeaders = service.GetOpsUpstreamRequestHeaders(c)
+	entry.UpstreamResponseHeaders = service.GetOpsUpstreamResponseHeaders(c)
 	entry.Model = c.GetString(opsModelKey)
 	entry.RequestedModel = entry.Model
 	entry.Stream = c.GetBool(opsStreamKey)

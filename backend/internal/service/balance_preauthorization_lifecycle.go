@@ -103,6 +103,9 @@ type BalancePreauthorizationService struct {
 	wallet          balancePreauthorizationWallet
 	watermarkWallet balancePreauthorizationWatermarkedWallet
 	repo            balancePreauthorizationRepository
+	// switchSource 提供「预扣 hold」的运行时开关（管理员设置页 > 部署配置）。
+	// 由构造函数从 billingCacheService 注入；未注入时回退 cfg，行为与改动前一致。
+	switchSource *BillingCacheService
 }
 
 func NewBalancePreauthorizationService(
@@ -117,6 +120,7 @@ func NewBalancePreauthorizationService(
 		repo:           repo,
 	}
 	service.snapshotReader, _ = repo.(balancePreauthorizationSnapshotReader)
+	service.switchSource = billingCacheService
 	if billingCacheService != nil {
 		service.wallet = billingCacheService.cache
 		service.watermarkWallet, _ = billingCacheService.cache.(balancePreauthorizationWatermarkedWallet)
@@ -179,7 +183,28 @@ func (s *BalancePreauthorizationService) RequiresPreauthorization(billingType in
 	if s == nil || billingType != BillingTypeBalance {
 		return false
 	}
-	return s.cfg == nil || (s.cfg.RunMode != config.RunModeSimple && s.cfg.Billing.BalancePreauthorizationEnabled)
+	return s.balanceHoldRuntimeEnabled(context.Background())
+}
+
+// balanceHoldRuntimeEnabled 读「预扣 hold」的当前生效开关。
+//
+// 判定顺序：部署配置的简易模式恒关 -> 运行时开关（设置页 > 部署配置）。
+// switchSource 未注入（测试 / 轻量嵌入）时退化为读 cfg，保持改动前的语义。
+func (s *BalancePreauthorizationService) balanceHoldRuntimeEnabled(ctx context.Context) bool {
+	if s == nil {
+		return false
+	}
+	if s.cfg == nil {
+		// 无配置（部分测试与嵌入式构造）：保持改动前的「启用」语义。
+		return true
+	}
+	if s.cfg.RunMode == config.RunModeSimple {
+		return false
+	}
+	if s.switchSource != nil {
+		return s.switchSource.BalanceHoldEnabled(ctx)
+	}
+	return s.cfg.Billing.BalancePreauthorizationEnabled
 }
 
 // Preauthorize returns nil without touching billing state in simple or
@@ -191,7 +216,7 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	if s == nil {
 		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization service is nil"))
 	}
-	if s.cfg != nil && (s.cfg.RunMode == config.RunModeSimple || !s.cfg.Billing.BalancePreauthorizationEnabled) {
+	if !s.balanceHoldRuntimeEnabled(ctx) {
 		return nil, nil
 	}
 	if request.BillingType == BillingTypeSubscription {

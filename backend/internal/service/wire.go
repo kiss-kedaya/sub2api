@@ -800,7 +800,9 @@ func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupReposit
 	return svc
 }
 
-// ProvideBillingCacheService wires BillingCacheService with its RPM dependencies.
+// ProvideBillingCacheService wires BillingCacheService with its RPM dependencies
+// and injects the settings service so the two preauthorization systems can read
+// the admin-managed runtime switches from the settings page.
 func ProvideBillingCacheService(
 	cache BillingCache,
 	userRepo UserRepository,
@@ -810,8 +812,11 @@ func ProvideBillingCacheService(
 	rateRepo UserGroupRateRepository,
 	cfg *config.Config,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	settingService *SettingService,
 ) *BillingCacheService {
-	return NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg, userPlatformQuotaRepo)
+	svc := NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg, userPlatformQuotaRepo)
+	svc.SetSettingServiceForBilling(settingService)
+	return svc
 }
 
 // ProvideAPIKeyService wires APIKeyService and connects rate-limit cache invalidation.

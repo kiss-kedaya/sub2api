@@ -55,6 +55,7 @@ export async function getById(id: number): Promise<ApiKey> {
  * @param quota - Optional quota limit in USD (0 = unlimited)
  * @param expiresInDays - Optional days until expiry (undefined = never expires)
  * @param rateLimitData - Optional rate limit fields
+ * @param anthropicCacheTtlMode - Optional Anthropic cache_control TTL override
  * @returns Created API key
  */
 export async function create(
@@ -67,6 +68,7 @@ export async function create(
   expiresInDays?: number,
   rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
   groupIds?: number[],
+  anthropicCacheTtlMode?: 'inherit' | 'off' | '1h' | '5m',
   options?: { idempotencyKey?: string }
 ): Promise<ApiKey> {
   const payload: CreateApiKeyRequest = { name }
@@ -99,6 +101,10 @@ export async function create(
   }
   if (rateLimitData?.rate_limit_7d && rateLimitData.rate_limit_7d > 0) {
     payload.rate_limit_7d = rateLimitData.rate_limit_7d
+  }
+  // 密钥级 Anthropic cache TTL 覆盖；inherit 是服务端默认值，不必发送。
+  if (anthropicCacheTtlMode && anthropicCacheTtlMode !== 'inherit') {
+    payload.anthropic_cache_ttl_mode = anthropicCacheTtlMode
   }
 
   const { data } = await apiClient.post<ApiKey>('/keys', payload, options?.idempotencyKey

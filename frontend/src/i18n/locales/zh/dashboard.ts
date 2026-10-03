@@ -317,6 +317,13 @@ export default {
     rateLimit5h: '5小时限额 (USD)',
     rateLimit1d: '日限额 (USD)',
     rateLimit7d: '7天限额 (USD)',
+    anthropicCacheTtlMode: 'Anthropic 缓存 TTL',
+    anthropicCacheTtlModeHint:
+      '仅对该密钥打到 Anthropic 平台上游时生效。跟随全局 = 由管理员开关决定；关闭 = 不注入；强制 1h / 强制 5m = 本密钥覆盖全局。密钥级设置优先。',
+    anthropicCacheTtlInherit: '跟随全局设置',
+    anthropicCacheTtlOff: '关闭（不注入）',
+    anthropicCacheTtl1h: '强制 1 小时缓存',
+    anthropicCacheTtl5m: '强制 5 分钟缓存',
     rateLimitHint: '设置此密钥在指定时间窗口内的最大消费额。0 = 无限制。',
     rateLimitUsage: '速率限制用量',
     resetRateLimitUsage: '重置速率限制用量',

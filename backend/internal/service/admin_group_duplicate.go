@@ -143,6 +143,7 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 		SupportedModelScopes:            append([]string(nil), source.SupportedModelScopes...),
 		SortOrder:                       source.SortOrder,
 		AllowMessagesDispatch:           source.AllowMessagesDispatch,
+		CrossProtocolConversionEnabled:  source.CrossProtocolConversionEnabled,
 		AllowLive:                       source.AllowLive,
 		ForceOpenAIFast:                 source.ForceOpenAIFast,
 		FreeOpenAIFast:                  source.FreeOpenAIFast,

@@ -131,6 +131,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	// ShouldUseResponsesAPI 分流：该类账号经 probe 落标
 	// openai_responses_supported=false，会先命中下方的 CC 直转分支。
 	if account.IsAnthropicProtocol() {
+		// OpenAI 协议族（CC 入站）跨到 Anthropic 协议族，受分组级跨协议转换开关约束。
+		if !crossProtocolConversionAllowedFromContext(c) {
+			writeChatCompletionsError(c, http.StatusBadRequest, crossProtocolDisabledCode, crossProtocolDisabledMessage)
+			return nil, CrossProtocolConversionError{}
+		}
 		return s.forwardChatCompletionsViaNativeAnthropic(ctx, c, account, body, defaultMappedModel)
 	}
 

@@ -115,6 +115,13 @@ func (APIKey) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			Comment("Start time of the current 7d rate limit window"),
+
+		// Anthropic 缓存 TTL 注入覆盖 (added by migration 252)
+		// 取值：inherit（跟随管理员全局设置）/ off（不注入）/ 1h / 5m。
+		field.String("anthropic_cache_ttl_mode").
+			MaxLen(16).
+			Default("inherit").
+			Comment("Anthropic cache_control TTL 注入覆盖：inherit/off/1h/5m"),
 	}
 }
 

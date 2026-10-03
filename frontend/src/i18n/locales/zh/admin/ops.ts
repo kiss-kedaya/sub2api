@@ -347,11 +347,15 @@ export default {
         message: '消息',
         rootCause: '根因',
         diagnosticPayloads: '诊断载荷',
+        headerSnapshots: '请求头 / 响应头快照',
         payloads: {
           client: '客户端响应',
           upstream_message: '上游消息',
           upstream_detail: '上游详情',
-          upstream_events: '上游事件'
+          upstream_events: '上游事件',
+          request_headers: '客户端请求头（客户端 -> 网关）',
+          upstream_request_headers: '发往上游的请求头（网关 -> 上游）',
+          upstream_response_headers: '上游响应头（上游 -> 网关）'
         },
         basicInfo: '基本信息',
         platform: '平台',

@@ -27,6 +27,9 @@ type APIKeyAuthSnapshot struct {
 	RateLimit5h float64 `json:"rate_limit_5h"`
 	RateLimit1d float64 `json:"rate_limit_1d"`
 	RateLimit7d float64 `json:"rate_limit_7d"`
+	// AnthropicCacheTTLMode 密钥级 Anthropic cache_control TTL 覆盖：
+	// inherit|off|1h|5m。必须随认证快照缓存，网关热路径不再回查数据库。
+	AnthropicCacheTTLMode string `json:"anthropic_cache_ttl_mode"`
 }
 
 // APIKeyAuthUserSnapshot 用户快照
@@ -107,13 +110,19 @@ type APIKeyAuthGroupSnapshot struct {
 	SupportedModelScopes []string `json:"supported_model_scopes,omitempty"`
 
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
-	AllowMessagesDispatch       bool                              `json:"allow_messages_dispatch"`
-	AllowLive                   bool                              `json:"allow_live"`
-	ForceOpenAIFast             bool                              `json:"force_openai_fast"`
-	FreeOpenAIFast              bool                              `json:"free_openai_fast"`
-	DefaultMappedModel          string                            `json:"default_mapped_model,omitempty"`
-	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config,omitempty"`
-	ModelAllowlist              GroupModelAllowlist               `json:"model_allowlist,omitempty"`
+	AllowMessagesDispatch bool `json:"allow_messages_dispatch"`
+	// CrossProtocolConversionEnabled 分组级跨协议转换开关。网关热路径按认证快照判定，
+	// 必须随快照缓存。用指针而不是 bool：Redis 里的快照由新旧两版进程共享，旧版写的
+	// 快照没有这个字段——必须能和"显式 false"区分开，见 snapshotCrossProtocolEnabled。
+	// 不靠升 apiKeyAuthSnapshotVersion 来区分：缓存键不含版本，升版会让新旧进程在
+	// 灰度期互相把对方的条目判失效，每次 L1 未命中都打到数据库认证查询上。
+	CrossProtocolConversionEnabled *bool                             `json:"cross_protocol_conversion_enabled,omitempty"`
+	AllowLive                      bool                              `json:"allow_live"`
+	ForceOpenAIFast                bool                              `json:"force_openai_fast"`
+	FreeOpenAIFast                 bool                              `json:"free_openai_fast"`
+	DefaultMappedModel             string                            `json:"default_mapped_model,omitempty"`
+	MessagesDispatchModelConfig    OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config,omitempty"`
+	ModelAllowlist                 GroupModelAllowlist               `json:"model_allowlist,omitempty"`
 	// CodexModelsManifestConfig 与 ModelAllowlist 一样在认证快照分组里透传，
 	// Codex /models handler 直接读认证分组对象。
 	CodexModelsManifestConfig GroupCodexModelsManifestConfig `json:"codex_models_manifest_config,omitempty"`

@@ -460,7 +460,11 @@ func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&after)
 	require.Zero(t, repo.dbCalls.Load(), "no direct DB query on the request path")
-	require.Equal(t, int64(n), snap.reads.Load(), "unpriced lookups read the scheduler snapshot only")
+	// 调度快照带进程内解码缓存（snapshotDecodeCacheTTL），同一个 (group, platform)
+	// bucket 在 TTL 内只读一次快照，其后全部本地命中——所以这里是"至多 n 次"而不是
+	// "恰好 n 次"。真正要守的是上面那行"热路径不查库"。
+	require.LessOrEqual(t, snap.reads.Load(), int64(n), "unpriced lookups must not read the snapshot more than once per request")
+	require.Greater(t, snap.reads.Load(), int64(0), "unpriced lookups must read the scheduler snapshot at least once")
 	require.Less(t, int64(after.HeapAlloc)-int64(before.HeapAlloc), int64(8<<20), "no per-model cache growth")
 }
 

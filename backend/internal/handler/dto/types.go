@@ -74,18 +74,20 @@ type APIKey struct {
 	CurrentConcurrency int `json:"current_concurrency"`
 
 	// Rate limit fields
-	RateLimit5h   float64    `json:"rate_limit_5h"`
-	RateLimit1d   float64    `json:"rate_limit_1d"`
-	RateLimit7d   float64    `json:"rate_limit_7d"`
-	Usage5h       float64    `json:"usage_5h"`
-	Usage1d       float64    `json:"usage_1d"`
-	Usage7d       float64    `json:"usage_7d"`
-	Window5hStart *time.Time `json:"window_5h_start"`
-	Window1dStart *time.Time `json:"window_1d_start"`
-	Window7dStart *time.Time `json:"window_7d_start"`
-	Reset5hAt     *time.Time `json:"reset_5h_at,omitempty"`
-	Reset1dAt     *time.Time `json:"reset_1d_at,omitempty"`
-	Reset7dAt     *time.Time `json:"reset_7d_at,omitempty"`
+	RateLimit5h float64 `json:"rate_limit_5h"`
+	RateLimit1d float64 `json:"rate_limit_1d"`
+	RateLimit7d float64 `json:"rate_limit_7d"`
+	// AnthropicCacheTTLMode 密钥级 Anthropic cache_control TTL 覆盖：inherit/off/1h/5m。
+	AnthropicCacheTTLMode string     `json:"anthropic_cache_ttl_mode"`
+	Usage5h               float64    `json:"usage_5h"`
+	Usage1d               float64    `json:"usage_1d"`
+	Usage7d               float64    `json:"usage_7d"`
+	Window5hStart         *time.Time `json:"window_5h_start"`
+	Window1dStart         *time.Time `json:"window_1d_start"`
+	Window7dStart         *time.Time `json:"window_7d_start"`
+	Reset5hAt             *time.Time `json:"reset_5h_at,omitempty"`
+	Reset1dAt             *time.Time `json:"reset_1d_at,omitempty"`
+	Reset7dAt             *time.Time `json:"reset_7d_at,omitempty"`
 
 	User  *User  `json:"user,omitempty"`
 	Group *Group `json:"group,omitempty"`
@@ -143,6 +145,8 @@ type Group struct {
 
 	// OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch"`
+	// 分组级跨协议转换开关（Anthropic 协议族 <-> OpenAI 协议族），默认 false。
+	CrossProtocolConversionEnabled bool `json:"cross_protocol_conversion_enabled"`
 	// OpenAI Live 接口开关
 	AllowLive bool `json:"allow_live"`
 

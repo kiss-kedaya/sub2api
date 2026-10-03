@@ -45,6 +45,10 @@ type CreateAPIKeyRequest struct {
 	RateLimit5h *float64 `json:"rate_limit_5h"`
 	RateLimit1d *float64 `json:"rate_limit_1d"`
 	RateLimit7d *float64 `json:"rate_limit_7d"`
+
+	// AnthropicCacheTTLMode 密钥级 Anthropic cache_control TTL 覆盖：
+	// inherit（默认，跟随管理员全局设置）/ off / 1h / 5m。
+	AnthropicCacheTTLMode string `json:"anthropic_cache_ttl_mode"`
 }
 
 // UpdateAPIKeyRequest represents the update API key request payload
@@ -64,6 +68,10 @@ type UpdateAPIKeyRequest struct {
 	RateLimit1d         *float64 `json:"rate_limit_1d"`
 	RateLimit7d         *float64 `json:"rate_limit_7d"`
 	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // 重置限速用量
+
+	// AnthropicCacheTTLMode 密钥级 Anthropic cache_control TTL 覆盖
+	// （nil = 不修改；合法值 inherit/off/1h/5m）。
+	AnthropicCacheTTLMode *string `json:"anthropic_cache_ttl_mode"`
 }
 
 func validAPIKeyLimit(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 }
@@ -219,6 +227,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	if req.RateLimit7d != nil {
 		svcReq.RateLimit7d = *req.RateLimit7d
 	}
+	svcReq.AnthropicCacheTTLMode = req.AnthropicCacheTTLMode
 
 	executeUserIdempotentJSON(c, "user.api_keys.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		key, err := h.apiKeyService.Create(ctx, subject.UserID, svcReq)
@@ -263,6 +272,8 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		RateLimit1d:         req.RateLimit1d,
 		RateLimit7d:         req.RateLimit7d,
 		ResetRateLimitUsage: req.ResetRateLimitUsage,
+
+		AnthropicCacheTTLMode: req.AnthropicCacheTTLMode,
 	}
 	if req.Name != "" {
 		svcReq.Name = &req.Name

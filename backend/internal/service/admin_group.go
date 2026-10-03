@@ -609,6 +609,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		MCPXMLInject:                    mcpXMLInject,
 		SupportedModelScopes:            input.SupportedModelScopes,
 		AllowMessagesDispatch:           input.AllowMessagesDispatch,
+		CrossProtocolConversionEnabled:  input.CrossProtocolConversionEnabled,
 		AllowLive:                       input.AllowLive,
 		ForceOpenAIFast:                 input.ForceOpenAIFast,
 		FreeOpenAIFast:                  input.FreeOpenAIFast,
@@ -984,6 +985,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	// OpenAI Messages 调度配置
 	if input.AllowMessagesDispatch != nil {
 		group.AllowMessagesDispatch = *input.AllowMessagesDispatch
+	}
+	if input.CrossProtocolConversionEnabled != nil {
+		group.CrossProtocolConversionEnabled = *input.CrossProtocolConversionEnabled
 	}
 	if input.AllowLive != nil {
 		group.AllowLive = *input.AllowLive

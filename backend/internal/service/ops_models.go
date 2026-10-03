@@ -99,6 +99,14 @@ type OpsErrorLogDetail struct {
 
 	// Bound (non-deleted) key prefix, snapshotted at error time.
 	APIKeyPrefix string `json:"api_key_prefix,omitempty"`
+
+	// 三份头快照（已脱敏 + 截断）：
+	//   RequestHeaders          客户端 -> 网关
+	//   UpstreamRequestHeaders  网关   -> 上游（最后一次尝试）
+	//   UpstreamResponseHeaders 上游   -> 网关（最后一次尝试）
+	RequestHeaders          OpsHeaderSnapshot `json:"request_headers,omitempty"`
+	UpstreamRequestHeaders  OpsHeaderSnapshot `json:"upstream_request_headers,omitempty"`
+	UpstreamResponseHeaders OpsHeaderSnapshot `json:"upstream_response_headers,omitempty"`
 }
 
 type OpsErrorLogFilter struct {

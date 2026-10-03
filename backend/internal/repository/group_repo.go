@@ -135,6 +135,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetModelRoutingEnabled(groupIn.ModelRoutingEnabled).
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
+		SetCrossProtocolConversionEnabled(groupIn.CrossProtocolConversionEnabled).
 		SetAllowLive(groupIn.AllowLive).
 		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
 		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).
@@ -316,6 +317,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetModelRoutingEnabled(groupIn.ModelRoutingEnabled).
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
+		SetCrossProtocolConversionEnabled(groupIn.CrossProtocolConversionEnabled).
 		SetAllowLive(groupIn.AllowLive).
 		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
 		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).

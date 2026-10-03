@@ -312,6 +312,13 @@ export default {
     rateLimit5h: '5-Hour Limit (USD)',
     rateLimit1d: 'Daily Limit (USD)',
     rateLimit7d: '7-Day Limit (USD)',
+    anthropicCacheTtlMode: 'Anthropic cache TTL',
+    anthropicCacheTtlModeHint:
+      'Applies only when this key resolves to an Anthropic upstream. Inherit = follow the admin switch; Off = no injection; Force 1h / Force 5m = this key overrides the global setting. Key-level wins.',
+    anthropicCacheTtlInherit: 'Inherit global setting',
+    anthropicCacheTtlOff: 'Off (no injection)',
+    anthropicCacheTtl1h: 'Force 1-hour cache',
+    anthropicCacheTtl5m: 'Force 5-minute cache',
     rateLimitHint: 'Set the maximum spending for this key within each time window. 0 = unlimited.',
     rateLimitUsage: 'Rate Limit Usage',
     resetRateLimitUsage: 'Reset Rate Limit Usage',
