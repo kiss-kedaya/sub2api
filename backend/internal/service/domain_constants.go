@@ -662,6 +662,12 @@ const (
 	SettingKeyClaudeOAuthSystemPromptBlocks = "claude_oauth_system_prompt_blocks"
 	// SettingKeyEnableAnthropicCacheTTL1hInjection 是否对 Anthropic OAuth/SetupToken 请求体注入 1h cache_control ttl（默认 false）
 	SettingKeyEnableAnthropicCacheTTL1hInjection = "enable_anthropic_cache_ttl_1h_injection"
+	// SettingKeyBillingBalancePreauthorizationEnabled 余额模式「预扣 hold」运行时开关（默认 false）。
+	// 空值时回退到部署配置 billing.balance_preauthorization_enabled，保证存量环境行为不变。
+	SettingKeyBillingBalancePreauthorizationEnabled = "billing_balance_preauthorization_enabled"
+	// SettingKeyBillingInflightReservationEnabled 余额模式「在途预留」运行时开关（默认 false）。
+	// 空值时回退到部署配置 billing.inflight_reservation.enabled。
+	SettingKeyBillingInflightReservationEnabled = "billing_inflight_reservation_enabled"
 	// SettingKeyEnableClientDatelineNormalization 是否对 Anthropic OAuth/SetupToken 账号
 	// 的 /v1/messages 请求体做客户端 dateline 归一化（默认 true）。
 	// 归一化把 system prompt / <system-reminder> 块中 "Today's date is …" 语句里的

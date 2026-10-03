@@ -163,7 +163,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// CN 供应商 anthropic 协议账号：/v1/responses 入站是交叉协议组合
 	// （Responses 客户端 × Anthropic 上游），转成 Anthropic 请求走原生端点。
 	// 不能落到下面的 raw-CC 分支——其 URL 构造会把 anthropic base 当 CC base 用。
+	//
+	// 这是 OpenAI 协议族跨到 Anthropic 协议族，受分组级跨协议转换开关约束：
+	// 关闭时返回可诊断的 400，不再静默转换。
 	if account.IsAnthropicProtocol() {
+		if !crossProtocolConversionAllowedFromContext(c) {
+			writeResponsesError(c, http.StatusBadRequest, crossProtocolDisabledCode, crossProtocolDisabledMessage)
+			return nil, CrossProtocolConversionError{}
+		}
 		return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, reqModel)
 	}
 	if account.IsOpenAIApiKey() {

@@ -476,6 +476,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	}
 	updates[SettingKeyClaudeOAuthSystemPromptBlocks] = settings.ClaudeOAuthSystemPromptBlocks
 	updates[SettingKeyEnableAnthropicCacheTTL1hInjection] = strconv.FormatBool(settings.EnableAnthropicCacheTTL1hInjection)
+	// 两套预扣费系统运行时开关：显式写入 true/false（管理员在设置页选定后立即生效）。
+	updates[SettingKeyBillingBalancePreauthorizationEnabled] = strconv.FormatBool(settings.BalancePreauthorizationEnabled)
+	updates[SettingKeyBillingInflightReservationEnabled] = strconv.FormatBool(settings.InflightReservationEnabled)
 	updates[SettingKeyRewriteMessageCacheControl] = strconv.FormatBool(settings.RewriteMessageCacheControl)
 	updates[SettingKeyEnableClientDatelineNormalization] = strconv.FormatBool(settings.EnableClientDatelineNormalization)
 	updates[SettingKeyAntigravityUserAgentVersion] = antigravity.NormalizeUserAgentVersion(settings.AntigravityUserAgentVersion)
@@ -807,6 +810,8 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	}
 	// codex_cli_only 加固策略缓存：设置更新后强制下次重载（涉及 4 个键 + JSON 解析，直接置过期）。
 	s.codexRestrictionPolicySF.Forget("codex_restriction_policy")
+	// 预扣费系统运行时开关：置空缓存，读下一请求即取新值。
+	s.InvalidateBillingPreauthorizationRuntimeCache()
 	s.codexRestrictionPolicyCache.Store(&cachedCodexRestrictionPolicy{expiresAt: 0})
 	if s.onUpdate != nil {
 		s.onUpdate() // Invalidate cache after settings update

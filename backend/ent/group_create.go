@@ -690,6 +690,20 @@ func (_c *GroupCreate) SetNillableAllowMessagesDispatch(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field.
+func (_c *GroupCreate) SetCrossProtocolConversionEnabled(v bool) *GroupCreate {
+	_c.mutation.SetCrossProtocolConversionEnabled(v)
+	return _c
+}
+
+// SetNillableCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableCrossProtocolConversionEnabled(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetCrossProtocolConversionEnabled(*v)
+	}
+	return _c
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_c *GroupCreate) SetAllowLive(v bool) *GroupCreate {
 	_c.mutation.SetAllowLive(v)
@@ -1147,6 +1161,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultAllowMessagesDispatch
 		_c.mutation.SetAllowMessagesDispatch(v)
 	}
+	if _, ok := _c.mutation.CrossProtocolConversionEnabled(); !ok {
+		v := group.DefaultCrossProtocolConversionEnabled
+		_c.mutation.SetCrossProtocolConversionEnabled(v)
+	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		v := group.DefaultAllowLive
 		_c.mutation.SetAllowLive(v)
@@ -1354,6 +1372,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.AllowMessagesDispatch(); !ok {
 		return &ValidationError{Name: "allow_messages_dispatch", err: errors.New(`ent: missing required field "Group.allow_messages_dispatch"`)}
+	}
+	if _, ok := _c.mutation.CrossProtocolConversionEnabled(); !ok {
+		return &ValidationError{Name: "cross_protocol_conversion_enabled", err: errors.New(`ent: missing required field "Group.cross_protocol_conversion_enabled"`)}
 	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		return &ValidationError{Name: "allow_live", err: errors.New(`ent: missing required field "Group.allow_live"`)}
@@ -1644,6 +1665,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.AllowMessagesDispatch(); ok {
 		_spec.SetField(group.FieldAllowMessagesDispatch, field.TypeBool, value)
 		_node.AllowMessagesDispatch = value
+	}
+	if value, ok := _c.mutation.CrossProtocolConversionEnabled(); ok {
+		_spec.SetField(group.FieldCrossProtocolConversionEnabled, field.TypeBool, value)
+		_node.CrossProtocolConversionEnabled = value
 	}
 	if value, ok := _c.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
@@ -2708,6 +2733,18 @@ func (u *GroupUpsert) SetAllowMessagesDispatch(v bool) *GroupUpsert {
 // UpdateAllowMessagesDispatch sets the "allow_messages_dispatch" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateAllowMessagesDispatch() *GroupUpsert {
 	u.SetExcluded(group.FieldAllowMessagesDispatch)
+	return u
+}
+
+// SetCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field.
+func (u *GroupUpsert) SetCrossProtocolConversionEnabled(v bool) *GroupUpsert {
+	u.Set(group.FieldCrossProtocolConversionEnabled, v)
+	return u
+}
+
+// UpdateCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCrossProtocolConversionEnabled() *GroupUpsert {
+	u.SetExcluded(group.FieldCrossProtocolConversionEnabled)
 	return u
 }
 
@@ -3953,6 +3990,20 @@ func (u *GroupUpsertOne) SetAllowMessagesDispatch(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateAllowMessagesDispatch() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateAllowMessagesDispatch()
+	})
+}
+
+// SetCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field.
+func (u *GroupUpsertOne) SetCrossProtocolConversionEnabled(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCrossProtocolConversionEnabled(v)
+	})
+}
+
+// UpdateCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCrossProtocolConversionEnabled() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCrossProtocolConversionEnabled()
 	})
 }
 
@@ -5399,6 +5450,20 @@ func (u *GroupUpsertBulk) SetAllowMessagesDispatch(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateAllowMessagesDispatch() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateAllowMessagesDispatch()
+	})
+}
+
+// SetCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field.
+func (u *GroupUpsertBulk) SetCrossProtocolConversionEnabled(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCrossProtocolConversionEnabled(v)
+	})
+}
+
+// UpdateCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCrossProtocolConversionEnabled() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCrossProtocolConversionEnabled()
 	})
 }
 

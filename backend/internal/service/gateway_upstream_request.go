@@ -105,6 +105,11 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	finalBetaHeader, finalBetaShouldSet := s.computeFinalAnthropicBeta(
 		tokenType, mimicClaudeCode, modelID, clientHeaders, body, effectiveDropSet,
 	)
+	// body 声明了 thinking.display="updates" 时补上它的必需 beta（伪装路径会整份
+	// 替换客户端 beta，透传路径不会自动补，两种情况下都会被上游 400）。
+	if beta := ensureThinkingDisplayUpdatesBeta(finalBetaHeader, body, effectiveDropSet); beta != finalBetaHeader {
+		finalBetaHeader, finalBetaShouldSet = beta, true
+	}
 
 	// 账号覆写了 anthropic-beta 时，覆写值即最终上游值（由下方 ApplyHeaderOverrides 写入）：
 	// body 能力净化必须以覆写值为准，否则 header/body 不对称会被上游 400。

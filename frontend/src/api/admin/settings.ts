@@ -630,6 +630,9 @@ export interface SystemSettings {
   claude_oauth_system_prompt: string;
   claude_oauth_system_prompt_blocks: string;
   enable_anthropic_cache_ttl_1h_injection: boolean;
+  // 两套预扣费系统的运行时开关（默认都关）
+  billing_balance_preauthorization_enabled: boolean;
+  billing_inflight_reservation_enabled: boolean;
   rewrite_message_cache_control: boolean;
   enable_client_dateline_normalization: boolean;
   antigravity_user_agent_version: string;
@@ -953,6 +956,8 @@ export interface UpdateSettingsRequest {
   claude_oauth_system_prompt?: string;
   claude_oauth_system_prompt_blocks?: string;
   enable_anthropic_cache_ttl_1h_injection?: boolean;
+  billing_balance_preauthorization_enabled?: boolean;
+  billing_inflight_reservation_enabled?: boolean;
   rewrite_message_cache_control?: boolean;
   enable_client_dateline_normalization?: boolean;
   antigravity_user_agent_version?: string;

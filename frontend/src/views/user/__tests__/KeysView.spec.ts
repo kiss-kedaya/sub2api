@@ -347,7 +347,7 @@ describe('user KeysView column settings', () => {
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
     expect(createKey).toHaveBeenCalledWith('Provider key', 3, undefined, [], [], 0, undefined,
-      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, undefined)
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, undefined, 'inherit')
     wrapper.unmount()
   })
 

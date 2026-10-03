@@ -347,11 +347,15 @@ export default {
         message: 'Message',
         rootCause: 'Root Cause',
         diagnosticPayloads: 'Diagnostic Payloads',
+        headerSnapshots: 'Request / Response Header Snapshots',
         payloads: {
           client: 'Client Response',
           upstream_message: 'Upstream Message',
           upstream_detail: 'Upstream Detail',
-          upstream_events: 'Upstream Events'
+          upstream_events: 'Upstream Events',
+          request_headers: 'Client request headers (client -> gateway)',
+          upstream_request_headers: 'Outbound request headers (gateway -> upstream)',
+          upstream_response_headers: 'Upstream response headers (upstream -> gateway)'
         },
         basicInfo: 'Basic Info',
         platform: 'Platform',

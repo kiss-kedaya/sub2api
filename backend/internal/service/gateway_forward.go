@@ -306,8 +306,10 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		logger.LegacyPrintf("service.gateway", "Model mapping applied: %s -> %s (account: %s, source=%s)", originalModel, mappedModel, account.Name, mappingSource)
 	}
 
-	if s.shouldInjectAnthropicCacheTTL1h(ctx, account) {
-		if err := replaceBody(injectAnthropicCacheControlTTL1h(body)); err != nil {
+	// Anthropic cache_control TTL：密钥级覆盖优先于管理员全局开关（见
+	// anthropic_cache_ttl_override.go）。inherit 时行为与改动前一字不变。
+	if ttlMode, applyTTL := s.resolveAnthropicCacheTTLMode(ctx, c, account); applyTTL {
+		if err := replaceBody(forceEphemeralCacheControlTTL(body, ttlMode)); err != nil {
 			return nil, err
 		}
 	}

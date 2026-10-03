@@ -411,6 +411,30 @@ func (s *BillingService) initFallbackPricing() {
 	s.fallbackPrices["claude-opus-4.8"] = pricingWithPriorityMultiplier(s.fallbackPrices["claude-opus-4.7"], 2)
 	s.fallbackPrices["claude-opus-5"] = pricingWithPriorityMultiplier(s.fallbackPrices["claude-opus-4.8"], 2)
 
+	// Claude Sonnet 5.5（标准 $2/$10；5m 缓存写 $2.5、1h $4；缓存读 $0.2）。
+	s.fallbackPrices["claude-sonnet-5-5"] = &ModelPricing{
+		InputPricePerToken:         2e-6,
+		OutputPricePerToken:        10e-6,
+		CacheCreationPricePerToken: 2.5e-6,
+		CacheCreation5mPrice:       2.5e-6,
+		CacheCreation1hPrice:       4e-6,
+		CacheReadPricePerToken:     0.2e-6,
+		SupportsCacheBreakdown:     true,
+	}
+
+	// Claude Opus 5.5（标准 $4/$20；5m 缓存写 $5、1h $8；缓存读 $0.2；Fast/priority 2x）。
+	// 必须单独建条目：claude-opus-5-5 含子串 "claude-opus-5"，getFallbackPricing 的
+	// 系列判定会把它当成 Opus 5 按 $5/$25 计费——那是 25% 超收。
+	s.fallbackPrices["claude-opus-5-5"] = &ModelPricing{
+		InputPricePerToken:         4e-6,
+		OutputPricePerToken:        20e-6,
+		CacheCreationPricePerToken: 5e-6,
+		CacheCreation5mPrice:       5e-6,
+		CacheCreation1hPrice:       8e-6,
+		CacheReadPricePerToken:     0.2e-6,
+		SupportsCacheBreakdown:     true,
+	}
+
 	// Claude Fable 5.x uses the same input/output and cache-write prices, while
 	// Fable 5.1 reduces cache reads from $1 to $0.25 per MTok.
 	s.fallbackPrices["claude-fable-5"] = &ModelPricing{
@@ -956,6 +980,10 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 		return s.fallbackPrices["claude-fable-5"]
 	}
 	if strings.Contains(modelLower, "opus") {
+		// Opus 5.5 最先判：它含子串 "opus-5"，落到下面会被当成 Opus 5（$5/$25）计费。
+		if claude.IsOpus55(modelLower) {
+			return s.fallbackPrices["claude-opus-5-5"]
+		}
 		// "opus-5" 必须先判：不能用裸 "5" 匹配，否则 claude-opus-4-5 会被误判。
 		if strings.Contains(modelLower, "opus-5") || strings.Contains(modelLower, "opus5") {
 			return s.fallbackPrices["claude-opus-5"]
@@ -975,6 +1003,11 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 		return s.fallbackPrices["claude-3-opus"]
 	}
 	if strings.Contains(modelLower, "sonnet") {
+		// Sonnet 5.5 最先判：含 "sonnet-5"，落到下面 "4" 判定之外会进 claude-3-5-sonnet，
+		// 或（目录缺失时）被当成 sonnet-4 系列按 $3/$15 计费。
+		if claude.IsSonnet55(modelLower) {
+			return s.fallbackPrices["claude-sonnet-5-5"]
+		}
 		if strings.Contains(modelLower, "4") && !strings.Contains(modelLower, "3") {
 			return s.fallbackPrices["claude-sonnet-4"]
 		}

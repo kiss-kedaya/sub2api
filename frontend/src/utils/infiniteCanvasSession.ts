@@ -111,6 +111,7 @@ async function prepareInfiniteCanvasApiKey(
       undefined,
       undefined,
       groupIds,
+      undefined,
       { idempotencyKey: crypto.randomUUID() },
     )
     assertUserScope(userScope)

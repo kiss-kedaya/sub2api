@@ -80,6 +80,8 @@ type APIKeyUpdateFields struct {
 	RateLimitUsage bool
 	// IPRules 覆盖 ip_whitelist 与 ip_blacklist。
 	IPRules bool
+	// AnthropicCacheTTLMode 覆盖 anthropic_cache_ttl_mode 一列。
+	AnthropicCacheTTLMode bool
 }
 
 // IsEmpty 报告该次 Update 是否不写任何列。
@@ -234,6 +236,10 @@ type CreateAPIKeyRequest struct {
 	RateLimit5h float64 `json:"rate_limit_5h"`
 	RateLimit1d float64 `json:"rate_limit_1d"`
 	RateLimit7d float64 `json:"rate_limit_7d"`
+
+	// AnthropicCacheTTLMode 本密钥对 Anthropic cache_control TTL 的覆盖：
+	// inherit（跟随管理员全局设置）/ off / 1h / 5m。空值按 inherit 处理。
+	AnthropicCacheTTLMode string `json:"anthropic_cache_ttl_mode"`
 }
 
 // UpdateAPIKeyRequest 更新API Key请求
@@ -256,6 +262,10 @@ type UpdateAPIKeyRequest struct {
 	RateLimit1d         *float64 `json:"rate_limit_1d"`
 	RateLimit7d         *float64 `json:"rate_limit_7d"`
 	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // Reset all usage counters to 0
+
+	// AnthropicCacheTTLMode 本密钥的 Anthropic cache_control TTL 覆盖
+	// （nil = 不修改；合法值 inherit/off/1h/5m）。
+	AnthropicCacheTTLMode *string `json:"anthropic_cache_ttl_mode"`
 }
 
 func validateAPIKeyLimit(v float64) error {
@@ -594,6 +604,8 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		RateLimit5h: req.RateLimit5h,
 		RateLimit1d: req.RateLimit1d,
 		RateLimit7d: req.RateLimit7d,
+
+		AnthropicCacheTTLMode: NormalizeAnthropicCacheTTLMode(req.AnthropicCacheTTLMode),
 	}
 
 	// Set expiration time if specified
@@ -949,6 +961,10 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	if req.RateLimit7d != nil {
 		apiKey.RateLimit7d = *req.RateLimit7d
 		fields.RateLimits = true
+	}
+	if req.AnthropicCacheTTLMode != nil {
+		apiKey.AnthropicCacheTTLMode = NormalizeAnthropicCacheTTLMode(*req.AnthropicCacheTTLMode)
+		fields.AnthropicCacheTTLMode = true
 	}
 	resetRateLimit := req.ResetRateLimitUsage != nil && *req.ResetRateLimitUsage
 	if resetRateLimit {

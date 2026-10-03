@@ -351,6 +351,8 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		RateLimit5h:   apiKey.RateLimit5h,
 		RateLimit1d:   apiKey.RateLimit1d,
 		RateLimit7d:   apiKey.RateLimit7d,
+
+		AnthropicCacheTTLMode: NormalizeAnthropicCacheTTLMode(apiKey.AnthropicCacheTTLMode),
 		User: APIKeyAuthUserSnapshot{
 			ID:                                apiKey.User.ID,
 			Status:                            apiKey.User.Status,
@@ -429,6 +431,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			MCPXMLInject:                    apiKey.Group.MCPXMLInject,
 			SupportedModelScopes:            apiKey.Group.SupportedModelScopes,
 			AllowMessagesDispatch:           apiKey.Group.AllowMessagesDispatch,
+			CrossProtocolConversionEnabled:  boolPtr(apiKey.Group.CrossProtocolConversionEnabled),
 			AllowLive:                       apiKey.Group.AllowLive,
 			ForceOpenAIFast:                 apiKey.Group.ForceOpenAIFast,
 			FreeOpenAIFast:                  apiKey.Group.FreeOpenAIFast,
@@ -472,6 +475,8 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		RateLimit5h:   snapshot.RateLimit5h,
 		RateLimit1d:   snapshot.RateLimit1d,
 		RateLimit7d:   snapshot.RateLimit7d,
+
+		AnthropicCacheTTLMode: NormalizeAnthropicCacheTTLMode(snapshot.AnthropicCacheTTLMode),
 		User: &User{
 			ID:                                snapshot.User.ID,
 			Status:                            snapshot.User.Status,
@@ -534,6 +539,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			MCPXMLInject:                    snapshot.Group.MCPXMLInject,
 			SupportedModelScopes:            snapshot.Group.SupportedModelScopes,
 			AllowMessagesDispatch:           snapshot.Group.AllowMessagesDispatch,
+			CrossProtocolConversionEnabled:  snapshotCrossProtocolEnabled(snapshot.Group.CrossProtocolConversionEnabled),
 			AllowLive:                       snapshot.Group.AllowLive,
 			ForceOpenAIFast:                 snapshot.Group.ForceOpenAIFast,
 			FreeOpenAIFast:                  snapshot.Group.FreeOpenAIFast,
@@ -556,4 +562,15 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 	}
 	s.compileAPIKeyIPRules(apiKey)
 	return apiKey
+}
+
+// snapshotCrossProtocolEnabled 解析认证快照里的跨协议开关。
+// nil = 快照由不认识该字段的旧版进程写入：按"允许"处理。这与迁移 251 的回填一致
+// （升级前已有的分组都回填为 true），保证灰度期间旧版写的缓存不会让新版把
+// 原本可用的跨协议请求误判为 400。新版写入的快照总是带显式值。
+func snapshotCrossProtocolEnabled(v *bool) bool {
+	if v == nil {
+		return true
+	}
+	return *v
 }

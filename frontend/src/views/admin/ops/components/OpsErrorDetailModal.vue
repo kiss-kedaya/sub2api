@@ -137,6 +137,25 @@
         <div class="mt-3 break-words text-sm font-medium text-amber-900 dark:text-amber-100">{{ rootCauseMessage }}</div>
       </div>
 
+      <div v-if="headerSnapshotSections.length" class="rounded-xl bg-gray-50 p-6 dark:bg-dark-900">
+        <h3 class="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">{{ t('admin.ops.errorDetail.headerSnapshots') }}</h3>
+        <div class="mt-4 space-y-4">
+          <div v-for="section in headerSnapshotSections" :key="section.key">
+            <div class="mb-2 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ diagnosticPayloadLabel(section.key) }}</div>
+            <div class="max-h-[360px] overflow-auto rounded-xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
+              <table class="w-full text-xs">
+                <tbody>
+                  <tr v-for="row in section.rows" :key="row.name" class="border-b border-gray-100 last:border-b-0 dark:border-dark-700">
+                    <td class="w-56 break-all px-3 py-1.5 font-mono font-bold text-gray-700 align-top dark:text-gray-200">{{ row.name }}</td>
+                    <td class="break-all px-3 py-1.5 font-mono text-gray-800 dark:text-gray-100">{{ row.value }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="rounded-xl bg-gray-50 p-6 dark:bg-dark-900">
         <h3 class="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">{{ t('admin.ops.errorDetail.diagnosticPayloads') }}</h3>
         <div v-if="!diagnosticPayloadSections.length" class="mt-4 text-sm text-gray-500 dark:text-gray-400">{{ t('common.noData') }}</div>
@@ -267,7 +286,14 @@ const showUpstreamList = computed(() => props.errorType === 'request')
 
 const requestId = computed(() => detail.value?.request_id || detail.value?.client_request_id || '')
 
-type DiagnosticPayloadKey = 'client' | 'upstream_message' | 'upstream_detail' | 'upstream_events'
+type DiagnosticPayloadKey =
+  | 'client'
+  | 'upstream_message'
+  | 'upstream_detail'
+  | 'upstream_events'
+  | 'request_headers'
+  | 'upstream_request_headers'
+  | 'upstream_response_headers'
 
 const rootCauseMessage = computed(() => {
   const current = detail.value
@@ -304,6 +330,25 @@ const failureKindClass = computed(() => {
     default:
       return 'bg-gray-50 text-gray-700 ring-gray-200 dark:bg-dark-800 dark:text-gray-200 dark:ring-dark-600'
   }
+})
+
+// 头快照：键值表展示，按头名排序。凭据类头在采集端就已丢弃，这里不会出现。
+const headerSnapshotSections = computed(() => {
+  const current = detail.value
+  if (!current) return []
+  const sections: Array<{ key: DiagnosticPayloadKey; rows: Array<{ name: string; value: string }> }> = []
+  const build = (key: DiagnosticPayloadKey, snapshot?: Record<string, string> | null) => {
+    if (!snapshot) return
+    const rows = Object.entries(snapshot)
+      .filter(([name, value]) => name && String(value || '').trim())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => ({ name, value: String(value) }))
+    if (rows.length) sections.push({ key, rows })
+  }
+  build('request_headers', current.request_headers)
+  build('upstream_request_headers', current.upstream_request_headers)
+  build('upstream_response_headers', current.upstream_response_headers)
+  return sections
 })
 
 const diagnosticPayloadSections = computed(() => {

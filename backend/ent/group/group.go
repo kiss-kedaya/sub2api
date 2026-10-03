@@ -116,6 +116,8 @@ const (
 	FieldSortOrder = "sort_order"
 	// FieldAllowMessagesDispatch holds the string denoting the allow_messages_dispatch field in the database.
 	FieldAllowMessagesDispatch = "allow_messages_dispatch"
+	// FieldCrossProtocolConversionEnabled holds the string denoting the cross_protocol_conversion_enabled field in the database.
+	FieldCrossProtocolConversionEnabled = "cross_protocol_conversion_enabled"
 	// FieldAllowLive holds the string denoting the allow_live field in the database.
 	FieldAllowLive = "allow_live"
 	// FieldForceOpenaiFast holds the string denoting the force_openai_fast field in the database.
@@ -273,6 +275,7 @@ var Columns = []string{
 	FieldSupportedModelScopes,
 	FieldSortOrder,
 	FieldAllowMessagesDispatch,
+	FieldCrossProtocolConversionEnabled,
 	FieldAllowLive,
 	FieldForceOpenaiFast,
 	FieldFreeOpenaiFast,
@@ -396,6 +399,8 @@ var (
 	DefaultSortOrder int
 	// DefaultAllowMessagesDispatch holds the default value on creation for the "allow_messages_dispatch" field.
 	DefaultAllowMessagesDispatch bool
+	// DefaultCrossProtocolConversionEnabled holds the default value on creation for the "cross_protocol_conversion_enabled" field.
+	DefaultCrossProtocolConversionEnabled bool
 	// DefaultAllowLive holds the default value on creation for the "allow_live" field.
 	DefaultAllowLive bool
 	// DefaultForceOpenaiFast holds the default value on creation for the "force_openai_fast" field.
@@ -672,6 +677,11 @@ func BySortOrder(opts ...sql.OrderTermOption) OrderOption {
 // ByAllowMessagesDispatch orders the results by the allow_messages_dispatch field.
 func ByAllowMessagesDispatch(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAllowMessagesDispatch, opts...).ToFunc()
+}
+
+// ByCrossProtocolConversionEnabled orders the results by the cross_protocol_conversion_enabled field.
+func ByCrossProtocolConversionEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCrossProtocolConversionEnabled, opts...).ToFunc()
 }
 
 // ByAllowLive orders the results by the allow_live field.

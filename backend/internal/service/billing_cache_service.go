@@ -114,6 +114,9 @@ type BillingCacheService struct {
 	cfg                   *config.Config
 	circuitBreaker        *billingCircuitBreaker
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	// settingService 可选注入；用于读取设置页里的「预扣费系统运行时开关」。
+	// 未注入时这些开关回退部署配置，行为与改动前一致。
+	settingService *SettingService
 
 	cacheWriteChan     chan cacheWriteTask
 	cacheWriteWg       sync.WaitGroup
@@ -334,9 +337,10 @@ func (s *BillingCacheService) GetUserBalance(ctx context.Context, userID int64) 
 
 	// A nil config is retained as the legacy strict mode for focused tests and
 	// lightweight embeddings. Production always supplies cfg, so the feature
-	// switch is authoritative there.
+	// switch is authoritative there. 开关读取走运行时视图：管理员在设置页改完
+	// 当期生效，未配置时回退部署配置。
 	useLiveBalance := s.cfg == nil ||
-		(s.cfg.RunMode != config.RunModeSimple && s.cfg.Billing.BalancePreauthorizationEnabled)
+		(s.cfg.RunMode != config.RunModeSimple && s.BalanceHoldEnabled(ctx))
 	if useLiveBalance {
 		liveBalance, exists, err := s.cache.GetLiveBalance(ctx, userID)
 		if err != nil {
@@ -1059,7 +1063,7 @@ func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) 
 // checkBalanceEligibility 检查余额模式资格
 func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64) error {
 	var ownHold float64
-	if ctx != nil && (s.cfg == nil || s.cfg.Billing.BalancePreauthorizationEnabled) {
+	if ctx != nil && (s.cfg == nil || s.BalanceHoldEnabled(ctx)) {
 		if keyID, ok := ctx.Value(apiKeyRouteBalanceEligibilityKey{}).(int64); ok {
 			if guard, exists := BalancePreauthorizationGuardFromContext(ctx); exists && guard.core != nil {
 				guard.core.mu.Lock()

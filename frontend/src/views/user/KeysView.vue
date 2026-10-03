@@ -936,6 +936,18 @@
           </div>
         </div>
 
+        <!-- Anthropic Cache TTL Override -->
+        <div class="space-y-2">
+          <label class="input-label">{{ t('keys.anthropicCacheTtlMode') }}</label>
+          <select v-model="formData.anthropic_cache_ttl_mode" class="input">
+            <option value="inherit">{{ t('keys.anthropicCacheTtlInherit') }}</option>
+            <option value="off">{{ t('keys.anthropicCacheTtlOff') }}</option>
+            <option value="1h">{{ t('keys.anthropicCacheTtl1h') }}</option>
+            <option value="5m">{{ t('keys.anthropicCacheTtl5m') }}</option>
+          </select>
+          <p class="input-hint">{{ t('keys.anthropicCacheTtlModeHint') }}</p>
+        </div>
+
         <!-- Expiration Section -->
         <div class="space-y-3">
           <div class="flex items-center justify-between">
@@ -1506,7 +1518,9 @@ const formData = ref({
   rate_limit_7d: null as number | null,
   enable_expiration: false,
   expiration_preset: '30' as '7' | '30' | '90' | 'custom',
-  expiration_date: ''
+  expiration_date: '',
+  // Anthropic cache_control TTL 覆盖：inherit/off/1h/5m
+  anthropic_cache_ttl_mode: 'inherit' as 'inherit' | 'off' | '1h' | '5m'
 })
 
 // 自定义Key验证
@@ -1841,7 +1855,8 @@ const editKey = (key: ApiKey) => {
     rate_limit_7d: key.rate_limit_7d || null,
     enable_expiration: hasExpiration,
     expiration_preset: 'custom',
-    expiration_date: key.expires_at ? formatDateTimeLocal(key.expires_at) : ''
+    expiration_date: key.expires_at ? formatDateTimeLocal(key.expires_at) : '',
+    anthropic_cache_ttl_mode: (key.anthropic_cache_ttl_mode || 'inherit') as 'inherit' | 'off' | '1h' | '5m'
   }
   showEditModal.value = true
 }
@@ -2006,6 +2021,7 @@ const handleSubmit = async () => {
         rate_limit_5h: rateLimitData.rate_limit_5h,
         rate_limit_1d: rateLimitData.rate_limit_1d,
         rate_limit_7d: rateLimitData.rate_limit_7d,
+        anthropic_cache_ttl_mode: formData.value.anthropic_cache_ttl_mode,
       }
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
@@ -2023,7 +2039,8 @@ const handleSubmit = async () => {
         quota,
         expiresInDays,
         rateLimitData,
-        formData.value.smart_routing ? formData.value.group_ids : undefined
+        formData.value.smart_routing ? formData.value.group_ids : undefined,
+        formData.value.anthropic_cache_ttl_mode
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -2086,7 +2103,8 @@ const closeModals = () => {
     rate_limit_7d: null,
     enable_expiration: false,
     expiration_preset: '30',
-    expiration_date: ''
+    expiration_date: '',
+    anthropic_cache_ttl_mode: 'inherit'
   }
 }
 

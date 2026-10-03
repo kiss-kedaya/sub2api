@@ -949,8 +949,10 @@ func newGrokCredentialFailoverHandler(t *testing.T, mode string) (*OpenAIGateway
 	h := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(cache), billingCache, &service.APIKeyService{}, nil, nil, nil, nil, cfg)
 	apiKey := &service.APIKey{
 		ID: 902, GroupID: &groupID,
-		User:  &service.User{ID: 903, Status: service.StatusActive},
-		Group: &service.Group{ID: groupID, Platform: service.PlatformGrok, Status: service.StatusActive, Hydrated: true, AllowImageGeneration: true},
+		User: &service.User{ID: 903, Status: service.StatusActive},
+		// 本用例验证的是凭据失效后的换号链路，需要 /v1/messages 能跨协议转发到
+		// Grok 的 Responses 上游；跨协议转换默认关闭，这里显式打开。
+		Group: &service.Group{ID: groupID, Platform: service.PlatformGrok, Status: service.StatusActive, Hydrated: true, AllowImageGeneration: true, CrossProtocolConversionEnabled: true},
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

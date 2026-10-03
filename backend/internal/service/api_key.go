@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -65,6 +66,52 @@ type APIKey struct {
 	Window5hStart *time.Time // Start of current 5h window
 	Window1dStart *time.Time // Start of current 1d window
 	Window7dStart *time.Time // Start of current 7d window
+
+	// AnthropicCacheTTLMode 是本密钥对 Anthropic cache_control TTL 注入的覆盖：
+	// inherit（跟随管理员全局设置）/ off（不注入）/ 1h / 5m。
+	// 仅在请求最终落在 Anthropic 平台分组（含智能路由解析出的 anthropic 目标）时生效。
+	AnthropicCacheTTLMode string
+}
+
+// AnthropicCacheTTLMode* 是 APIKey.AnthropicCacheTTLMode 的合法取值。
+const (
+	AnthropicCacheTTLModeInherit = "inherit"
+	AnthropicCacheTTLModeOff     = "off"
+	AnthropicCacheTTLMode1h      = "1h"
+	AnthropicCacheTTLMode5m      = "5m"
+)
+
+// NormalizeAnthropicCacheTTLMode 归一化密钥级缓存 TTL 模式，非法值按 inherit 处理。
+func NormalizeAnthropicCacheTTLMode(mode string) string {
+	switch strings.TrimSpace(strings.ToLower(mode)) {
+	case AnthropicCacheTTLModeOff:
+		return AnthropicCacheTTLModeOff
+	case AnthropicCacheTTLMode1h:
+		return AnthropicCacheTTLMode1h
+	case AnthropicCacheTTLMode5m:
+		return AnthropicCacheTTLMode5m
+	default:
+		return AnthropicCacheTTLModeInherit
+	}
+}
+
+// ResolveAnthropicCacheTTLMode 返回本密钥实际生效的 TTL 模式。
+// 密钥级设置优先；仅当密钥为 inherit 时才读管理员全局开关。
+//
+// 设计取舍：密钥级只覆盖「注入与 ttl 取值」，不改写全局开关本身，也不回写设置，
+// 因此不会与管理员设置页的全局开关互相污染——两者是覆盖关系而非合并关系。
+func (k *APIKey) ResolveAnthropicCacheTTLMode(global1hEnabled bool) string {
+	mode := AnthropicCacheTTLModeInherit
+	if k != nil {
+		mode = NormalizeAnthropicCacheTTLMode(k.AnthropicCacheTTLMode)
+	}
+	if mode != AnthropicCacheTTLModeInherit {
+		return mode
+	}
+	if global1hEnabled {
+		return AnthropicCacheTTLMode1h
+	}
+	return AnthropicCacheTTLModeOff
 }
 
 func (k *APIKey) IsActive() bool {
