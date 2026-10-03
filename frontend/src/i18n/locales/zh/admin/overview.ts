@@ -1173,7 +1173,7 @@ export default {
         allowDispatchHint: '启用后，此 OpenAI 分组的 API Key 可以通过 /v1/messages 端点调度请求',
         crossProtocolTitle: '跨协议转换',
         crossProtocolEnabled: '允许 Anthropic 协议族 <-> OpenAI 协议族互转',
-        crossProtocolHint: '默认关闭。关闭时 /v1/messages 只能落在 Anthropic 类上游，/v1/responses 与 /v1/chat/completions 只能落在 OpenAI 类上游；跨族请求返回 400 并说明原因，不再静默转换。开启后恢复转换（thinking 回传、工具调用、用量分桶可能出问题）。协议族内部的 chat <-> responses 互转不受此开关影响。',
+        crossProtocolHint: '账号有原生端点时始终先走原生转发（/v1/messages 走原生 Anthropic，/v1/responses 与 /v1/chat/completions 走原生 OpenAI），这个开关不影响。只有账号没有对应的原生端点时，才由它决定：开 = 转换协议兜底；关 = 返回 400 并说明原因，不静默转换。OpenAI 协议族内部的 chat <-> responses 互转不受影响。',
         familyMappingTitle: '系列默认映射',
         familyMappingHint: '当请求命中 Opus、Sonnet、Haiku 系列时，会优先使用这里配置的目标模型。',
         opusModel: 'Opus 映射模型',

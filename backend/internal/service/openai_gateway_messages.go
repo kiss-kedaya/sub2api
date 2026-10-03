@@ -52,15 +52,15 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, err
 	}
 
-	// 显式 Anthropic 协议的账号（供应商原生 /v1/messages 端点）零转换直通，
-	// 完整保留 thinking / tool_use / cache 语义，适配 Claude Code 等原生客户端。
+	// 原生优先（与官方 Wei-Shaw/sub2api 一致）：显式 anthropic 协议与 adaptive 协议的
+	// 账号都有供应商原生 /v1/messages 端点，入站 /v1/messages 零转换直通，完整保留
+	// thinking / tool_use / cache 语义——不论分组是否开了跨协议转换，都先走这条。
+	// 跨协议转换只在账号确实没有原生 Anthropic 端点时才作为兜底（见下方开关）。
 	//
-	// adaptive 账号不再走这条直通：实测多个国产上游的 /v1/messages 端点不返回
-	// prompt 缓存（deepseek 恒为 0），而同一 key 的 /v1/responses 与
-	// /v1/chat/completions 都命中。下面的分流会按账号自身能力选端点——
-	// 有原生 Responses 的平台走 Responses，其余回退 Chat Completions，
-	// 两条路都会命中上游缓存。
-	if account.IsAnthropicProtocol() {
+	// 2026-09-26（424684b6e）曾把 adaptive 改走 Responses/Chat 转换以换取上游缓存
+	// 命中（部分国产中转的 /v1/messages 不返回 prompt 缓存）。2026-10-03 按运营要求
+	// 改回原生优先：转换链反复丢参数的代价高于缓存命中率。
+	if account.IsAnthropicProtocol() || account.IsAdaptiveAPIProtocol() {
 		// 同协议族（messages 入站 -> Anthropic 原生上游），不涉及跨协议转换。
 		return s.forwardAnthropicViaNativeAnthropicEndpoint(ctx, c, account, body, defaultMappedModel)
 	}
