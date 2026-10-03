@@ -37,6 +37,14 @@ func (s *GatewayService) ForwardAsResponses(
 ) (*ForwardResult, error) {
 	startTime := time.Now()
 
+	// 分组级跨协议转换开关：Anthropic 平台分组收到 /v1/responses（OpenAI 协议族），
+	// 必须经 Responses→Anthropic 转换链。与 ForwardAsChatCompletions 同口径：
+	// 关闭时返回可诊断的 400，不静默转换。
+	if !CrossProtocolConversionAllowed(getAPIKeyFromContext(c)) {
+		writeResponsesError(c, http.StatusBadRequest, crossProtocolDisabledCode, crossProtocolDisabledMessage)
+		return nil, CrossProtocolConversionError{}
+	}
+
 	normalizedBody, normalized, err := normalizeOpenAIResponsesLegacyIngress(body)
 	if err != nil {
 		return nil, err

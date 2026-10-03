@@ -1175,7 +1175,7 @@ export default {
         allowDispatchHint: 'When enabled, API keys in this OpenAI group can dispatch requests through /v1/messages endpoint',
         crossProtocolTitle: 'Cross-protocol conversion',
         crossProtocolEnabled: 'Allow Anthropic <-> OpenAI protocol family conversion',
-        crossProtocolHint: 'Off by default. When off, /v1/messages can only reach Anthropic-family upstreams and /v1/responses or /v1/chat/completions can only reach OpenAI-family upstreams; cross-family requests return a 400 explaining why instead of silently converting. Turning it on restores conversion (thinking passthrough, tool calls and usage buckets may break). chat <-> responses conversion inside the OpenAI family is unaffected.',
+        crossProtocolHint: 'Requests always go to the native endpoint of the account first (/v1/messages to native Anthropic, /v1/responses and /v1/chat/completions to native OpenAI); this switch does not change that. Only when the account has no native endpoint for the request does it decide: on = convert as a fallback; off = return a 400 explaining why instead of silently converting. chat <-> responses inside the OpenAI family is unaffected.',
         familyMappingTitle: 'Family Default Mapping',
         familyMappingHint: 'Requests that match the Opus, Sonnet, or Haiku families will prefer the target model configured here.',
         opusModel: 'Opus Target Model',
