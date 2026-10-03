@@ -355,7 +355,7 @@ func (r *accountRepository) ensureAccountOwnerVisible(ctx context.Context, id in
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		return service.ErrAccountNotFound
 	}

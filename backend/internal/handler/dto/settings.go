@@ -202,14 +202,17 @@ type SystemSettings struct {
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
 
 	// Gateway forwarding behavior
-	OpenAITTFTMode                          string `json:"openai_ttft_mode"`
-	EnableFingerprintUnification            bool   `json:"enable_fingerprint_unification"`
-	EnableMetadataPassthrough               bool   `json:"enable_metadata_passthrough"`
-	EnableCCHSigning                        bool   `json:"enable_cch_signing"`
-	EnableClaudeOAuthSystemPromptInjection  bool   `json:"enable_claude_oauth_system_prompt_injection"`
-	ClaudeOAuthSystemPrompt                 string `json:"claude_oauth_system_prompt"`
-	ClaudeOAuthSystemPromptBlocks           string `json:"claude_oauth_system_prompt_blocks"`
-	EnableAnthropicCacheTTL1hInjection      bool   `json:"enable_anthropic_cache_ttl_1h_injection"`
+	OpenAITTFTMode                         string `json:"openai_ttft_mode"`
+	EnableFingerprintUnification           bool   `json:"enable_fingerprint_unification"`
+	EnableMetadataPassthrough              bool   `json:"enable_metadata_passthrough"`
+	EnableCCHSigning                       bool   `json:"enable_cch_signing"`
+	EnableClaudeOAuthSystemPromptInjection bool   `json:"enable_claude_oauth_system_prompt_injection"`
+	ClaudeOAuthSystemPrompt                string `json:"claude_oauth_system_prompt"`
+	ClaudeOAuthSystemPromptBlocks          string `json:"claude_oauth_system_prompt_blocks"`
+	EnableAnthropicCacheTTL1hInjection     bool   `json:"enable_anthropic_cache_ttl_1h_injection"`
+	// 两套预扣费系统的运行时开关（默认都关）。
+	BalancePreauthorizationEnabled          bool   `json:"billing_balance_preauthorization_enabled"`
+	InflightReservationEnabled              bool   `json:"billing_inflight_reservation_enabled"`
 	RewriteMessageCacheControl              bool   `json:"rewrite_message_cache_control"`
 	EnableClientDatelineNormalization       bool   `json:"enable_client_dateline_normalization"`
 	AntigravityUserAgentVersion             string `json:"antigravity_user_agent_version"`

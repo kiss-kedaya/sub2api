@@ -1657,6 +1657,17 @@
             {{ t("admin.groups.openaiMessages.allowDispatchHint") }}
           </p>
 
+          <!-- 跨协议转换开关（Anthropic 协议族 <-> OpenAI 协议族），默认关闭 -->
+          <div class="flex items-center justify-between mt-3">
+            <label class="text-sm text-gray-600 dark:text-gray-400">{{
+              t("admin.groups.openaiMessages.crossProtocolEnabled")
+            }}</label>
+            <Toggle v-model="createForm.cross_protocol_conversion_enabled" />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiMessages.crossProtocolHint") }}
+          </p>
+
           <div
             v-if="
               createForm.platform === 'openai' &&
@@ -3305,6 +3316,17 @@
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {{ t("admin.groups.openaiMessages.allowDispatchHint") }}
+          </p>
+
+          <!-- 跨协议转换开关（Anthropic 协议族 <-> OpenAI 协议族），默认关闭 -->
+          <div class="flex items-center justify-between mt-3">
+            <label class="text-sm text-gray-600 dark:text-gray-400">{{
+              t("admin.groups.openaiMessages.crossProtocolEnabled")
+            }}</label>
+            <Toggle v-model="editForm.cross_protocol_conversion_enabled" />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiMessages.crossProtocolHint") }}
           </p>
 
           <div
@@ -5004,6 +5026,8 @@ const createForm = reactive({
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
+  // 跨协议转换（Anthropic 协议族 <-> OpenAI 协议族），默认关闭
+  cross_protocol_conversion_enabled: false,
   allow_live: false,
   opus_mapped_model: createMessagesDispatchDefaults.opus_mapped_model,
   sonnet_mapped_model: createMessagesDispatchDefaults.sonnet_mapped_model,
@@ -5369,6 +5393,8 @@ const editForm = reactive({
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
+  // 跨协议转换（Anthropic 协议族 <-> OpenAI 协议族），默认关闭
+  cross_protocol_conversion_enabled: false,
   allow_live: false,
   default_mapped_model: '',
   opus_mapped_model: editMessagesDispatchDefaults.opus_mapped_model,
@@ -5950,6 +5976,8 @@ const handleCreateGroup = async () => {
         createForm.platform,
         createForm.supported_model_scopes,
       ),
+      cross_protocol_conversion_enabled:
+        createForm.cross_protocol_conversion_enabled,
       messages_dispatch_model_config:
         createForm.platform === "openai"
           ? messagesDispatchFormStateToConfig({
@@ -6308,6 +6336,8 @@ const handleUpdateGroup = async () => {
               exact_model_mappings: editForm.exact_model_mappings,
             })
           : undefined,
+      cross_protocol_conversion_enabled:
+        editForm.cross_protocol_conversion_enabled,
       reasoning_effort_mappings: reasoningEffortMappingsToAPI(
         editForm.reasoning_effort_mappings,
       ),

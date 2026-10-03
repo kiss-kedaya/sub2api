@@ -28,6 +28,12 @@ const (
 	BetaMidConversationOutputConfig = "mid-conversation-output-config-2026-07-01"
 	BetaExtendedCacheTTL            = "extended-cache-ttl-2025-04-11"
 
+	// BetaThinkingDisplayUpdates 是 thinking.display="updates" 的必需 beta。
+	// 缺它时官方只接受 summarized / omitted，会回 400：
+	//   thinking.display: Input should be 'summarized', 'omitted'
+	// 不放进默认伪装 beta 集合：只在请求 body 声明了 display=updates 时由网关补上。
+	BetaThinkingDisplayUpdates = "thinking-display-updates-2026-08-18"
+
 	// Server-side fallback fields are accepted only when the corresponding
 	// beta is explicitly present. These tokens must not be added to the
 	// default mimic headers because they change upstream fallback behavior.

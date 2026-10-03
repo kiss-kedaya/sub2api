@@ -85,10 +85,14 @@ var (
 		CacheCreationInputTokenCostPriority: 2.5e-07,
 		CacheReadInputTokenCost:             1e-08,
 		CacheReadInputTokenCostPriority:     2e-08,
-		SupportsServiceTier:                 true,
-		LiteLLMProvider:                     "openai",
-		Mode:                                "chat",
-		SupportsPromptCaching:               true,
+		// 与 catalog 及 sol 常量同口径：超 272k 走长上下文倍率。
+		LongContextInputTokenThreshold:  272_000,
+		LongContextInputCostMultiplier:  2,
+		LongContextOutputCostMultiplier: 1.5,
+		SupportsServiceTier:             true,
+		LiteLLMProvider:                 "openai",
+		Mode:                            "chat",
+		SupportsPromptCaching:           true,
 	}
 	// Claude Opus 5.5: $4/MTok input, $20/MTok output; 5m cache write $5/MTok, 1h cache write $8/MTok; priority 2x.
 	claudeOpus55FallbackPricing = &LiteLLMModelPricing{
@@ -99,8 +103,8 @@ var (
 		CacheCreationInputTokenCost:         5e-06,
 		CacheCreationInputTokenCostPriority: 1e-05,
 		CacheCreationInputTokenCostAbove1hr: 8e-06,
-		CacheReadInputTokenCost:             4e-07,
-		CacheReadInputTokenCostPriority:     8e-07,
+		CacheReadInputTokenCost:             2e-07,
+		CacheReadInputTokenCostPriority:     4e-07,
 		LiteLLMProvider:                     "anthropic",
 		Mode:                                "chat",
 		SupportsPromptCaching:               true,
@@ -139,6 +143,7 @@ var (
 		Mode:                                "chat",
 		SupportsPromptCaching:               true,
 	}
+	// Claude Sonnet 5.5: $2/MTok input, $10/MTok output; 5m cache write $2.5/MTok, 1h cache write $4/MTok; cache read $0.2/MTok.
 	claudeSonnet55FallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken: 2e-6, OutputCostPerToken: 10e-6,
 		CacheCreationInputTokenCost: 2.5e-6, CacheCreationInputTokenCostAbove1hr: 4e-6,
@@ -1291,6 +1296,17 @@ func (s *PricingService) buildModelLookupCandidates(modelLower string) []string 
 		lastSegment(modelLower),
 		lastSegment(strings.TrimPrefix(modelLower, "models/")),
 	}
+	// 点号写法变体：用户会打 anthropic/claude-opus-5.5，而目录键是
+	// claude-opus-5-5。不补这一条，点号写法匹配不上精确键，只能落到系列模糊匹配，
+	// 可能命中错误的旧系列价（超收）。同时补 -thinking 剥离变体。
+	for _, c := range append([]string(nil), rawCandidates...) {
+		if v := claude.DottedVersionToHyphen(c); v != c {
+			rawCandidates = append(rawCandidates, v)
+		}
+		if v := strings.TrimSuffix(c, "-thinking"); v != c {
+			rawCandidates = append(rawCandidates, v)
+		}
+	}
 	normalized := normalizeModelNameForPricing(modelLower)
 
 	// A tier-specific entry should take precedence when the pricing catalog gains
@@ -1410,6 +1426,12 @@ func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 	// 会被下方 opus-5 系列（$5/$25）误捕。必须在 families 循环前先判。
 	if claude.IsOpus55(model) {
 		return claudeOpus55FallbackPricing
+	}
+
+	// Sonnet 5.5 精确拦截：内置目录没有 claude-sonnet-5-5 条目，落到下方 sonnet
+	// 系列会被 "4-5" 捕获，按 claude-sonnet-4-5（$3/$15）计费——50% 超收。
+	if claude.IsSonnet55(model) {
+		return claudeSonnet55FallbackPricing
 	}
 
 	// 按特异性降序排列：高版本号在前，避免 "claude-opus-4"（opus-4 系列）

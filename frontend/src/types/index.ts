@@ -608,6 +608,8 @@ export interface Group {
   fallback_group_id_on_invalid_request: number | null
   // OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
   allow_messages_dispatch?: boolean
+  // 分组级跨协议转换开关（Anthropic 协议族 <-> OpenAI 协议族），默认关闭
+  cross_protocol_conversion_enabled?: boolean
   // OpenAI Live 接口开关
   allow_live: boolean
   default_mapped_model?: string
@@ -753,6 +755,8 @@ export interface ApiKey {
   reset_5h_at: string | null
   reset_1d_at: string | null
   reset_7d_at: string | null
+  // Anthropic cache_control TTL 覆盖：inherit/off/1h/5m
+  anthropic_cache_ttl_mode?: 'inherit' | 'off' | '1h' | '5m'
 }
 
 export interface CreateApiKeyRequest {
@@ -767,6 +771,7 @@ export interface CreateApiKeyRequest {
   rate_limit_5h?: number
   rate_limit_1d?: number
   rate_limit_7d?: number
+  anthropic_cache_ttl_mode?: 'inherit' | 'off' | '1h' | '5m'
 }
 
 export interface UpdateApiKeyRequest {
@@ -783,6 +788,7 @@ export interface UpdateApiKeyRequest {
   rate_limit_1d?: number
   rate_limit_7d?: number
   reset_rate_limit_usage?: boolean
+  anthropic_cache_ttl_mode?: 'inherit' | 'off' | '1h' | '5m'
 }
 
 export interface CreateGroupRequest {
@@ -835,6 +841,7 @@ export interface CreateGroupRequest {
   model_allowlist?: ModelAllowlist
   codex_models_manifest_config?: CodexModelsManifestConfig
   allow_messages_dispatch?: boolean
+  cross_protocol_conversion_enabled?: boolean
   allow_live?: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
@@ -901,6 +908,7 @@ export interface UpdateGroupRequest {
   model_allowlist?: ModelAllowlist
   codex_models_manifest_config?: CodexModelsManifestConfig
   allow_messages_dispatch?: boolean
+  cross_protocol_conversion_enabled?: boolean
   allow_live?: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig

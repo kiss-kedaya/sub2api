@@ -66,6 +66,8 @@ type APIKey struct {
 	Window1dStart *time.Time `json:"window_1d_start,omitempty"`
 	// Start time of the current 7d rate limit window
 	Window7dStart *time.Time `json:"window_7d_start,omitempty"`
+	// Anthropic cache_control TTL 注入覆盖：inherit/off/1h/5m
+	AnthropicCacheTTLMode string `json:"anthropic_cache_ttl_mode,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the APIKeyQuery when eager-loading is set.
 	Edges        APIKeyEdges `json:"edges"`
@@ -127,7 +129,7 @@ func (*APIKey) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case apikey.FieldID, apikey.FieldUserID, apikey.FieldGroupID:
 			values[i] = new(sql.NullInt64)
-		case apikey.FieldKey, apikey.FieldName, apikey.FieldStatus:
+		case apikey.FieldKey, apikey.FieldName, apikey.FieldStatus, apikey.FieldAnthropicCacheTTLMode:
 			values[i] = new(sql.NullString)
 		case apikey.FieldCreatedAt, apikey.FieldUpdatedAt, apikey.FieldDeletedAt, apikey.FieldLastUsedAt, apikey.FieldExpiresAt, apikey.FieldWindow5hStart, apikey.FieldWindow1dStart, apikey.FieldWindow7dStart:
 			values[i] = new(sql.NullTime)
@@ -301,6 +303,12 @@ func (_m *APIKey) assignValues(columns []string, values []any) error {
 				_m.Window7dStart = new(time.Time)
 				*_m.Window7dStart = value.Time
 			}
+		case apikey.FieldAnthropicCacheTTLMode:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field anthropic_cache_ttl_mode", values[i])
+			} else if value.Valid {
+				_m.AnthropicCacheTTLMode = value.String
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -434,6 +442,9 @@ func (_m *APIKey) String() string {
 		builder.WriteString("window_7d_start=")
 		builder.WriteString(v.Format(time.ANSIC))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("anthropic_cache_ttl_mode=")
+	builder.WriteString(_m.AnthropicCacheTTLMode)
 	builder.WriteByte(')')
 	return builder.String()
 }

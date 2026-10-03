@@ -238,9 +238,12 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// The detector is enabled by default for compatibility with the
 		// production rollout; deployment config remains the emergency master
 		// switch. Synthetic business-request injection stays explicitly off.
-		SettingKeyCodexQuotaOverdraftEnabled:                         "true",
-		SettingKeyCodexQuotaOverdraftBusinessInjectionEnabled:        "false",
-		SettingKeyEnableAnthropicCacheTTL1hInjection:                 "false",
+		SettingKeyCodexQuotaOverdraftEnabled:                  "true",
+		SettingKeyCodexQuotaOverdraftBusinessInjectionEnabled: "false",
+		SettingKeyEnableAnthropicCacheTTL1hInjection:          "false",
+		// 两套预扣费系统默认都关；空串表示"未配置"，读取时回退部署配置。
+		SettingKeyBillingBalancePreauthorizationEnabled:              "",
+		SettingKeyBillingInflightReservationEnabled:                  "",
 		SettingKeyRewriteMessageCacheControl:                         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyEnableClientDatelineNormalization:                  "true",
 		SettingKeyAntigravityUserAgentVersion:                        "",
@@ -870,6 +873,12 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.ClaudeOAuthSystemPrompt = settings[SettingKeyClaudeOAuthSystemPrompt]
 	result.ClaudeOAuthSystemPromptBlocks = settings[SettingKeyClaudeOAuthSystemPromptBlocks]
 	result.EnableAnthropicCacheTTL1hInjection = settings[SettingKeyEnableAnthropicCacheTTL1hInjection] == "true"
+	if v, ok := settings[SettingKeyBillingBalancePreauthorizationEnabled]; ok && v != "" {
+		result.BalancePreauthorizationEnabled = v == "true"
+	}
+	if v, ok := settings[SettingKeyBillingInflightReservationEnabled]; ok && v != "" {
+		result.InflightReservationEnabled = v == "true"
+	}
 	if v, ok := settings[SettingKeyRewriteMessageCacheControl]; ok && v != "" {
 		result.RewriteMessageCacheControl = v == "true"
 	} else {

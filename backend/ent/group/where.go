@@ -285,6 +285,11 @@ func AllowMessagesDispatch(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAllowMessagesDispatch, v))
 }
 
+// CrossProtocolConversionEnabled applies equality check predicate on the "cross_protocol_conversion_enabled" field. It's identical to CrossProtocolConversionEnabledEQ.
+func CrossProtocolConversionEnabled(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCrossProtocolConversionEnabled, v))
+}
+
 // AllowLive applies equality check predicate on the "allow_live" field. It's identical to AllowLiveEQ.
 func AllowLive(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAllowLive, v))
@@ -2273,6 +2278,16 @@ func AllowMessagesDispatchEQ(v bool) predicate.Group {
 // AllowMessagesDispatchNEQ applies the NEQ predicate on the "allow_messages_dispatch" field.
 func AllowMessagesDispatchNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldAllowMessagesDispatch, v))
+}
+
+// CrossProtocolConversionEnabledEQ applies the EQ predicate on the "cross_protocol_conversion_enabled" field.
+func CrossProtocolConversionEnabledEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCrossProtocolConversionEnabled, v))
+}
+
+// CrossProtocolConversionEnabledNEQ applies the NEQ predicate on the "cross_protocol_conversion_enabled" field.
+func CrossProtocolConversionEnabledNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldCrossProtocolConversionEnabled, v))
 }
 
 // AllowLiveEQ applies the EQ predicate on the "allow_live" field.

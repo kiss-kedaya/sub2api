@@ -100,6 +100,14 @@ type OpsInsertErrorLogInput struct {
 	RequestType *int16
 	UserAgent   string
 
+	// 三份头快照（已脱敏 + 截断）。空 map 表示本次没有可记录的头。
+	//   RequestHeaders          客户端 -> 网关
+	//   UpstreamRequestHeaders  网关   -> 上游
+	//   UpstreamResponseHeaders 上游   -> 网关
+	RequestHeaders          OpsHeaderSnapshot
+	UpstreamRequestHeaders  OpsHeaderSnapshot
+	UpstreamResponseHeaders OpsHeaderSnapshot
+
 	ErrorPhase        string
 	ErrorType         string
 	Severity          string
