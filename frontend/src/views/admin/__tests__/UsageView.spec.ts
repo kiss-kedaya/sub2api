@@ -46,7 +46,9 @@ const formatLocalDate = (date: Date): string => {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  const time = [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map(value => String(value).padStart(2, '0')).join(':')
+  return `${year}-${month}-${day}T${time}`
 }
 
 vi.mock('@/api/admin', () => ({
@@ -210,6 +212,28 @@ describe('admin UsageView route filters', () => {
     expect(getById).toHaveBeenCalledWith(42, true)
     expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 42 }), expect.anything())
     expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('route-user@test.com')
+  })
+
+  it('applies the detail filter range to logs, statistics and charts and resets pagination', async () => {
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+    ;(wrapper.vm as any).pagination.page = 4
+    const range = { startDate: '2026-10-03T04:43:28', endDate: '2026-10-03T05:02:08', preset: null }
+    wrapper.findComponent(UsageFiltersStub).vm.$emit('date-range-change', range)
+    await flushPromises()
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
+      page: 1, start_date: range.startDate, end_date: range.endDate,
+    }), expect.anything())
+    expect(getStats).toHaveBeenLastCalledWith(expect.objectContaining({
+      start_date: range.startDate, end_date: range.endDate,
+    }))
+    expect(getSnapshotV2).toHaveBeenLastCalledWith(expect.objectContaining({
+      start_date: range.startDate, end_date: range.endDate,
+    }))
+    expect(wrapper.findComponent({ name: 'DateRangePicker' }).attributes()).toMatchObject({
+      startdate: range.startDate, enddate: range.endDate,
+    })
+    wrapper.unmount()
   })
 
   it('does not apply a stale routed user label after user_id changes', async () => {
@@ -665,6 +689,8 @@ describe('admin UsageView errors tab filter forwarding', () => {
     vm.filters.model = 'gpt-5.3-codex'
     vm.filters.account_id = 7
     vm.filters.group_id = 3
+    vm.filters.start_date = '2026-10-03T04:43:28'
+    vm.filters.end_date = '2026-10-03T05:02:08'
     await flushPromises()
 
     // 切换到「错误请求」标签（第二个 tab 按钮）触发 loadAdminErrors
@@ -677,6 +703,8 @@ describe('admin UsageView errors tab filter forwarding', () => {
       model: 'gpt-5.3-codex',
       account_id: 7,
       group_id: 3,
+      start_time: new Date('2026-10-03T04:43:28').toISOString(),
+      end_time: new Date(new Date('2026-10-03T05:02:08').getTime() + 1000).toISOString(),
     }))
   })
 })
