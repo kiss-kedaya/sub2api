@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
 import UsageFilters from '../UsageFilters.vue'
+import DateRangePicker from '@/components/common/DateRangePicker.vue'
 
 // --- i18n messages (only what UsageFilters needs) ---
 const messages: Record<string, string> = {
@@ -50,6 +51,7 @@ vi.mock('vue-i18n', async () => {
     ...actual,
     useI18n: () => ({
       t: (key: string) => messages[key] ?? key,
+      locale: { value: 'en' },
     }),
   }
 })
@@ -118,6 +120,23 @@ function deferred<T>() {
 
   return { promise, resolve, reject }
 }
+
+describe('UsageFilters date range', () => {
+  it('reuses the shared picker and emits only the applied range', async () => {
+    const wrapper = mountFilters()
+    const picker = wrapper.findComponent(DateRangePicker)
+    expect(wrapper.find('[data-testid="usage-date-range-filter"]').exists()).toBe(true)
+    expect(picker.props()).toMatchObject({ startDate: '2026-05-01', endDate: '2026-05-28' })
+    const range = { startDate: '2026-05-10', endDate: '2026-05-11', preset: null }
+    picker.vm.$emit('change', range)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('date-range-change')).toEqual([[range]])
+    expect(wrapper.emitted('change')).toBeUndefined()
+    await wrapper.setProps({ startDate: '2026-05-12', endDate: '2026-05-13' })
+    expect(picker.props()).toMatchObject({ startDate: '2026-05-12', endDate: '2026-05-13' })
+    wrapper.unmount()
+  })
+})
 
 describe('UsageFilters — user search dropdown', () => {
   beforeEach(() => {

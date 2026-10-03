@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,17 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
+
+// Match cc-switch's protocol selection: native endpoints win over conversion,
+// but managed Codex OAuth credentials must keep their Responses wire protocol.
+// Adaptive is not proof that a native Messages endpoint exists (e.g. Gemini).
+func shouldForwardMessagesViaNativeAnthropic(account *Account) bool {
+	if account == nil || account.UsesOpenAICodexProtocol() {
+		return false
+	}
+	return account.IsAnthropicProtocol() ||
+		(account.IsAdaptiveAPIProtocol() && strings.TrimSpace(account.GetAnthropicProtocolBaseURL()) != "")
+}
 
 // forwardAnthropicViaNativeAnthropicEndpoint 将 Anthropic Messages 请求零转换
 // 直通到国产供应商的原生 Anthropic 端点。仅做模型名映射与少量 body 清洗
@@ -133,7 +145,21 @@ func (s *OpenAIGatewayService) nativeAnthropicTargetURL(account *Account) (strin
 	if err != nil {
 		return "", fmt.Errorf("invalid base_url: %w", err)
 	}
-	return strings.TrimRight(validatedURL, "/") + "/v1/messages", nil
+	u, err := url.Parse(validatedURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid base_url: %w", err)
+	}
+	path := strings.TrimRight(u.Path, "/")
+	switch {
+	case strings.HasSuffix(path, "/v1/messages"):
+		u.Path = path
+	case strings.HasSuffix(path, "/v1"):
+		u.Path = path + "/messages"
+	default:
+		u.Path = path + "/v1/messages"
+	}
+	u.RawPath = ""
+	return u.String(), nil
 }
 
 func (s *OpenAIGatewayService) buildNativeAnthropicUpstreamRequest(
