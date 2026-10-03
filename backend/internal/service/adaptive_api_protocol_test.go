@@ -152,7 +152,9 @@ func TestAdaptiveProtocolRoutesKimiResponsesShapedChatToNativeResponses(t *testi
 // adaptive 账号的 /v1/messages 不再直通上游 /v1/messages：实测多个国产上游的该
 // 端点不返回 prompt 缓存。现在改为按账号能力落到 Responses（有原生端点）或
 // Chat Completions，两条路都会命中上游缓存。
-func TestAdaptiveProtocolRoutesMessagesToChatForChatOnlyProvider(t *testing.T) {
+// 原生优先（与官方一致）：adaptive 账号有供应商原生 Anthropic 端点，入站
+// /v1/messages 零转换直通，不再转成 Chat Completions。
+func TestAdaptiveProtocolRoutesMessagesToNativeAnthropicForChatOnlyProvider(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"glm-4.7","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
@@ -164,12 +166,14 @@ func TestAdaptiveProtocolRoutesMessagesToChatForChatOnlyProvider(t *testing.T) {
 
 	_, err := svc.ForwardAsAnthropic(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), account, body, "", "")
 	require.Error(t, err)
-	require.Equal(t, "http://chat.example/v1/chat/completions", upstream.lastReq.URL.String())
+	require.Equal(t, "http://anthropic.example/v1/messages", upstream.lastReq.URL.String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "messages").IsArray())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 }
 
-func TestAdaptiveProtocolRoutesMessagesToResponsesForResponsesCapableProvider(t *testing.T) {
+// 即使上游同时有原生 Responses 端点，/v1/messages 也走原生 Anthropic 端点，
+// 不再转成 Responses。
+func TestAdaptiveProtocolRoutesMessagesToNativeAnthropicForResponsesCapableProvider(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"deepseek-v4","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
 	upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
@@ -182,9 +186,29 @@ func TestAdaptiveProtocolRoutesMessagesToResponsesForResponsesCapableProvider(t 
 
 	_, err := svc.ForwardAsAnthropic(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), account, body, "", "")
 	require.Error(t, err)
-	require.Equal(t, "http://responses.example/v1/responses", upstream.lastReq.URL.String())
-	require.True(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
-	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
+	require.Equal(t, "http://anthropic.example/v1/messages", upstream.lastReq.URL.String())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "messages").IsArray())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
+}
+
+// 原生优先不依赖跨协议开关：开关关着，adaptive 账号的 /v1/messages 仍然能直通
+// 原生 Anthropic 端点（同协议族，不涉及转换），不会被误判成跨协议而 400。
+func TestAdaptiveProtocolNativeMessagesUnaffectedByCrossProtocolSwitch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"glm-4.7","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+	account := adaptiveProtocolTestAccount(PlatformZhipu, map[string]any{
+		APIProtocolChatCompletions: "http://chat.example",
+		APIProtocolAnthropic:       "http://anthropic.example",
+	})
+	c := adaptiveProtocolTestContext("/v1/messages", body)
+	c.Set("api_key", &APIKey{Group: &Group{ID: 1, Platform: PlatformZhipu, CrossProtocolConversionEnabled: false}})
+
+	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
+	require.False(t, IsCrossProtocolConversionDisabled(err), "native same-family passthrough must not be blocked by the cross-protocol switch")
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "http://anthropic.example/v1/messages", upstream.lastReq.URL.String())
 }
 
 // 显式 anthropic 协议仍然是零转换直通（供应商自有原生 Anthropic 端点）。

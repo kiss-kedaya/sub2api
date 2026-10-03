@@ -1637,6 +1637,20 @@
           </p>
         </div>
 
+        <!-- 跨协议转换开关：所有平台的分组都有（Anthropic 协议族 <-> OpenAI 协议族）。
+             账号有原生端点时始终先走原生转发，开关只决定"没有原生端点时"能否转换兜底。 -->
+        <div class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4">
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-600 dark:text-gray-400">{{
+              t("admin.groups.openaiMessages.crossProtocolEnabled")
+            }}</label>
+            <Toggle v-model="createForm.cross_protocol_conversion_enabled" />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiMessages.crossProtocolHint") }}
+          </p>
+        </div>
+
         <!-- OpenAI Messages 调度配置（OpenAI 与 Composite 平台） -->
         <div
           v-if="supportsMessagesDispatchPlatform(createForm.platform)"
@@ -1655,17 +1669,6 @@
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {{ t("admin.groups.openaiMessages.allowDispatchHint") }}
-          </p>
-
-          <!-- 跨协议转换开关（Anthropic 协议族 <-> OpenAI 协议族），默认关闭 -->
-          <div class="flex items-center justify-between mt-3">
-            <label class="text-sm text-gray-600 dark:text-gray-400">{{
-              t("admin.groups.openaiMessages.crossProtocolEnabled")
-            }}</label>
-            <Toggle v-model="createForm.cross_protocol_conversion_enabled" />
-          </div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            {{ t("admin.groups.openaiMessages.crossProtocolHint") }}
           </p>
 
           <div
@@ -3298,6 +3301,20 @@
           </p>
         </div>
 
+        <!-- 跨协议转换开关：所有平台的分组都有（Anthropic 协议族 <-> OpenAI 协议族）。
+             账号有原生端点时始终先走原生转发，开关只决定"没有原生端点时"能否转换兜底。 -->
+        <div class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4">
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-600 dark:text-gray-400">{{
+              t("admin.groups.openaiMessages.crossProtocolEnabled")
+            }}</label>
+            <Toggle v-model="editForm.cross_protocol_conversion_enabled" />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiMessages.crossProtocolHint") }}
+          </p>
+        </div>
+
         <!-- OpenAI Messages 调度配置（OpenAI 与 Composite 平台） -->
         <div
           v-if="supportsMessagesDispatchPlatform(editForm.platform)"
@@ -3316,17 +3333,6 @@
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {{ t("admin.groups.openaiMessages.allowDispatchHint") }}
-          </p>
-
-          <!-- 跨协议转换开关（Anthropic 协议族 <-> OpenAI 协议族），默认关闭 -->
-          <div class="flex items-center justify-between mt-3">
-            <label class="text-sm text-gray-600 dark:text-gray-400">{{
-              t("admin.groups.openaiMessages.crossProtocolEnabled")
-            }}</label>
-            <Toggle v-model="editForm.cross_protocol_conversion_enabled" />
-          </div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            {{ t("admin.groups.openaiMessages.crossProtocolHint") }}
           </p>
 
           <div
@@ -6138,6 +6144,9 @@ const handleEdit = async (group: AdminGroup) => {
     group.allow_messages_dispatch ||
     messagesDispatchFormState.allow_messages_dispatch;
   editForm.allow_live = group.allow_live ?? false;
+  // 必须回填已保存的值：否则编辑任意分组都显示"关"，一点保存就把开关静默关掉。
+  editForm.cross_protocol_conversion_enabled =
+    group.cross_protocol_conversion_enabled ?? false;
   editForm.opus_mapped_model = messagesDispatchFormState.opus_mapped_model;
   editForm.sonnet_mapped_model = messagesDispatchFormState.sonnet_mapped_model;
   editForm.haiku_mapped_model = messagesDispatchFormState.haiku_mapped_model;
@@ -6233,6 +6242,7 @@ const closeEditModal = () => {
   editForm.audio_stt_price_per_hour = null;
   resetMessagesDispatchFormState(editForm);
   editForm.allow_live = false;
+  editForm.cross_protocol_conversion_enabled = false;
   resetModelAllowlistState(editModelAllowlistState);
   editCodexManifestConfig.value = createCodexManifestDefaults();
   editCodexManifestAccountNames.value = {};

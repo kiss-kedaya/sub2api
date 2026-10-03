@@ -449,7 +449,11 @@ func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
 	}
 	require.Zero(t, snap.reads.Load(), "priced models must never trigger account-mapping lookup")
 
+	// 量"保留的堆"而不是"瞬时堆"：单次 runtime.GC() 之后读 HeapAlloc 会把尚未
+	// 回收的浮动垃圾（20000 次 fmt.Sprintf 等）算进去，在 CI/负载下随机冒到
+	// 9~12MB 误报；连跑两次 GC 才是稳定的保留量（实测 8 万次调用稳定在 2~3.5MB）。
 	var before, after runtime.MemStats
+	runtime.GC()
 	runtime.GC()
 	runtime.ReadMemStats(&before)
 	const n = 20000
@@ -457,6 +461,7 @@ func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
 		_, priced := svc.EstimateInflightReservation(ctx, apiKey, InflightEstimateRequest{Model: fmt.Sprintf("rand-%d-%d", i, time.Now().UnixNano()), BodyBytes: 4000, MaxTokens: 1000})
 		require.False(t, priced)
 	}
+	runtime.GC()
 	runtime.GC()
 	runtime.ReadMemStats(&after)
 	require.Zero(t, repo.dbCalls.Load(), "no direct DB query on the request path")
