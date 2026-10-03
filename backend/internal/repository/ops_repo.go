@@ -56,10 +56,13 @@ INSERT INTO ops_error_logs (
   response_latency_ms,
   time_to_first_token_ms,
   created_at,
-  api_key_prefix
+  api_key_prefix,
+  request_headers,
+  upstream_request_headers,
+  upstream_response_headers
 )`
 
-const opsErrorLogInsertColumnCount = 38
+const opsErrorLogInsertColumnCount = 41
 const opsErrorLogInsertChunkSize = 128
 
 func opsErrorLogValuePlaceholders(base int) string {
@@ -184,7 +187,41 @@ func opsInsertErrorLogArgs(input *service.OpsInsertErrorLogInput) []any {
 		opsNullInt64(input.TimeToFirstTokenMs),
 		input.CreatedAt,
 		opsNullString(input.APIKeyPrefix),
+		opsNullJSONBHeaderSnapshot(input.RequestHeaders),
+		opsNullJSONBHeaderSnapshot(input.UpstreamRequestHeaders),
+		opsNullJSONBHeaderSnapshot(input.UpstreamResponseHeaders),
 	}
+}
+
+// decodeOpsHeaderSnapshot 把详情查询里取回的 JSONB 文本解析回头快照。
+// 空串（NULL 列）或解析失败都返回 nil，前端按「无记录」展示。
+func decodeOpsHeaderSnapshot(raw string) service.OpsHeaderSnapshot {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		return nil
+	}
+	out := service.OpsHeaderSnapshot{}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// opsNullJSONBHeaderSnapshot 把脱敏后的头快照序列化成 JSONB 参数。
+// 空快照写 NULL，避免为「没有头可记」的请求产生无意义的空对象。
+func opsNullJSONBHeaderSnapshot(snapshot service.OpsHeaderSnapshot) any {
+	if len(snapshot) == 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		// 序列化失败不能影响错误记录本身；丢弃这一份快照。
+		return nil
+	}
+	return string(encoded)
 }
 
 // opsErrorLogsOrderBy builds the ORDER BY clause from a whitelist, mirroring
@@ -485,7 +522,10 @@ SELECT
   e.time_to_first_token_ms,
   COALESCE(e.api_key_prefix, ''),
   COALESCE(ak.name, ''),
-  ak.deleted_at
+  ak.deleted_at,
+  COALESCE(e.request_headers::text, ''),
+  COALESCE(e.upstream_request_headers::text, ''),
+  COALESCE(e.upstream_response_headers::text, '')
 FROM ops_error_logs e
 LEFT JOIN users u ON e.user_id = u.id
 LEFT JOIN accounts a ON e.account_id = a.id
@@ -512,6 +552,9 @@ LIMIT 1`
 	var requestType sql.NullInt64
 	var detailAPIKeyName string
 	var detailAPIKeyDeletedAt sql.NullTime
+	var requestHeadersJSON string
+	var upstreamRequestHeadersJSON string
+	var upstreamResponseHeadersJSON string
 
 	err := r.db.QueryRowContext(ctx, q, id).Scan(
 		&out.ID,
@@ -560,10 +603,16 @@ LIMIT 1`
 		&out.APIKeyPrefix,
 		&detailAPIKeyName,
 		&detailAPIKeyDeletedAt,
+		&requestHeadersJSON,
+		&upstreamRequestHeadersJSON,
+		&upstreamResponseHeadersJSON,
 	)
 	if err != nil {
 		return nil, err
 	}
+	out.RequestHeaders = decodeOpsHeaderSnapshot(requestHeadersJSON)
+	out.UpstreamRequestHeaders = decodeOpsHeaderSnapshot(upstreamRequestHeadersJSON)
+	out.UpstreamResponseHeaders = decodeOpsHeaderSnapshot(upstreamResponseHeadersJSON)
 
 	out.StatusCode = int(statusCode.Int64)
 	if resolvedAt.Valid {

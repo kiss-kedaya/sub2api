@@ -971,6 +971,11 @@ export interface OpsErrorDetail extends OpsErrorLog {
 
   // Bound (non-deleted) key prefix, snapshotted at error time
   api_key_prefix?: string | null
+
+  // 三份头快照（已脱敏 + 截断，键为小写头名）
+  request_headers?: Record<string, string> | null
+  upstream_request_headers?: Record<string, string> | null
+  upstream_response_headers?: Record<string, string> | null
 }
 
 export type OpsErrorLogsResponse = PaginatedResponse<OpsErrorLog>

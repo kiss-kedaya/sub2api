@@ -381,6 +381,10 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 		setHeaderRaw(req.Header, "anthropic-version", "2023-06-01")
 	}
 
+	// body 声明了 thinking.display="updates" 时补上它的必需 beta（透传路径原样转发
+	// 客户端 beta，不会自动补；账号级覆写仍在下一行最终生效）。
+	applyThinkingDisplayUpdatesBetaHeader(req.Header, body)
+
 	// 账号级请求头覆写（最终生效，覆盖上面所有来源的同名头）
 	account.ApplyHeaderOverrides(req.Header)
 

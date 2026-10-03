@@ -102,6 +102,9 @@ func TestSmartRouteHandlerFallbackUpdatesForwardingAndUsage(t *testing.T) {
 			}
 			for _, group := range []*service.Group{primary, backup} {
 				group.AllowMessagesDispatch = true
+				// /v1/messages 打到 OpenAI 上游要跨协议转换，本用例验证的是
+				// 智能路由回退链路，显式打开该分组的跨协议转换开关。
+				group.CrossProtocolConversionEnabled = true
 				group.ModelAllowlist = service.GroupModelsListConfig{Enabled: true, Models: []string{"gpt-5.1"}}
 			}
 			account := service.Account{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, GroupIDs: []int64{backup.ID}, Credentials: map[string]any{

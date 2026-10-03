@@ -975,6 +975,20 @@ func (_u *GroupUpdate) SetNillableAllowMessagesDispatch(v *bool) *GroupUpdate {
 	return _u
 }
 
+// SetCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field.
+func (_u *GroupUpdate) SetCrossProtocolConversionEnabled(v bool) *GroupUpdate {
+	_u.mutation.SetCrossProtocolConversionEnabled(v)
+	return _u
+}
+
+// SetNillableCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableCrossProtocolConversionEnabled(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetCrossProtocolConversionEnabled(*v)
+	}
+	return _u
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_u *GroupUpdate) SetAllowLive(v bool) *GroupUpdate {
 	_u.mutation.SetAllowLive(v)
@@ -1854,6 +1868,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AllowMessagesDispatch(); ok {
 		_spec.SetField(group.FieldAllowMessagesDispatch, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.CrossProtocolConversionEnabled(); ok {
+		_spec.SetField(group.FieldCrossProtocolConversionEnabled, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
@@ -3169,6 +3186,20 @@ func (_u *GroupUpdateOne) SetNillableAllowMessagesDispatch(v *bool) *GroupUpdate
 	return _u
 }
 
+// SetCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field.
+func (_u *GroupUpdateOne) SetCrossProtocolConversionEnabled(v bool) *GroupUpdateOne {
+	_u.mutation.SetCrossProtocolConversionEnabled(v)
+	return _u
+}
+
+// SetNillableCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableCrossProtocolConversionEnabled(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetCrossProtocolConversionEnabled(*v)
+	}
+	return _u
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_u *GroupUpdateOne) SetAllowLive(v bool) *GroupUpdateOne {
 	_u.mutation.SetAllowLive(v)
@@ -4078,6 +4109,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.AllowMessagesDispatch(); ok {
 		_spec.SetField(group.FieldAllowMessagesDispatch, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.CrossProtocolConversionEnabled(); ok {
+		_spec.SetField(group.FieldCrossProtocolConversionEnabled, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)

@@ -182,6 +182,20 @@ func NewHTTPUpstream(cfg *config.Config) service.HTTPUpstream {
 	}
 }
 
+// captureUpstreamHeadersForOps 把一次上游调用的出站请求头与回程响应头写进
+// 错误记录用的头快照（ops_error_logs）。三处调用点（Do / DoWithTLS 的落点）各调一次，
+// 而不是用装饰器包接口——装饰器会改变 NewHTTPUpstream 的返回类型，测试里
+// 断言具体类型的用例会全部失败。
+//
+// 函数对 nil 安全；取不到 gin.Context（非 HTTP 链路）时静默跳过。
+// 头快照只是诊断增强，任何情况下都不得影响转发与计费主链路。
+func captureUpstreamHeadersForOps(req *http.Request, resp *http.Response) {
+	if req == nil {
+		return
+	}
+	service.CaptureOpsUpstreamHeaders(req.Context(), req, resp)
+}
+
 // Do 执行 HTTP 请求
 // 根据隔离策略获取或创建客户端，并跟踪请求生命周期
 //
@@ -222,8 +236,8 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := servertiming.Do(client, req)
+	captureUpstreamHeadersForOps(req, resp)
 	if err != nil {
-		s.recordOpenAIHTTP2Failure(profile, entry.protocolMode, entry.proxyKey, err)
 		// 请求失败，立即减少计数
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
@@ -286,6 +300,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := servertiming.Do(client, req)
+	captureUpstreamHeadersForOps(req, resp)
 	if err != nil {
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())

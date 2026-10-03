@@ -61,7 +61,16 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 有原生 Responses 的平台走 Responses，其余回退 Chat Completions，
 	// 两条路都会命中上游缓存。
 	if account.IsAnthropicProtocol() {
+		// 同协议族（messages 入站 -> Anthropic 原生上游），不涉及跨协议转换。
 		return s.forwardAnthropicViaNativeAnthropicEndpoint(ctx, c, account, body, defaultMappedModel)
+	}
+
+	// 分组级跨协议转换开关：到这里说明上游不是 Anthropic 族，本次请求必然要
+	// 把 Anthropic Messages 转成 OpenAI 族的 Chat Completions 或 Responses。
+	// 默认关闭时直接返回可诊断的 400，不再静默转换。
+	if !crossProtocolConversionAllowedFromContext(c) {
+		writeAnthropicError(c, http.StatusBadRequest, crossProtocolDisabledCode, crossProtocolDisabledMessage)
+		return nil, CrossProtocolConversionError{}
 	}
 
 	// 固定 chat_completions 的 CN 账号，以及不支持 Responses 的其他 APIKey

@@ -239,6 +239,10 @@ func (Group) Fields() []ent.Field {
 		field.Bool("allow_messages_dispatch").
 			Default(false).
 			Comment("是否允许 /v1/messages 调度到此 OpenAI 分组"),
+		// 分组级跨协议转换开关 (added by migration 251)
+		field.Bool("cross_protocol_conversion_enabled").
+			Default(false).
+			Comment("是否允许本分组做 Anthropic 协议族 <-> OpenAI 协议族 的跨协议转换（默认关闭）"),
 		field.Bool("allow_live").
 			Default(false).
 			Comment("是否允许此 OpenAI 分组访问 Live 接口"),

@@ -389,6 +389,13 @@ func (s *SchedulerSnapshotService) listSchedulableAccounts(ctx context.Context, 
 		if err != nil {
 			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache read failed: bucket=%s err=%v", bucket.String(), err)
 		} else if hit {
+			// 空快照不做本地解码缓存：管理员新增号池账号后，下一次请求必须立刻看见。
+			// 若把空集缓存起来，在 TTL（5s，版本化 30s）内新号对在途估算和模型列表
+			// 都不可见——这是运营侧的"加了号却看不到"。空组本身是错误路径，每次穿透
+			// 到共享缓存读一次 Redis 的代价可以接受。
+			if len(cached) == 0 {
+				return derefAccounts(cached), useMixed, nil
+			}
 			ttl := snapshotDecodeCacheTTL
 			if versioned {
 				ttl = snapshotDecodeVersionedTTL
@@ -503,6 +510,12 @@ func (s *SchedulerSnapshotService) storeDecodedSnapshot(bucket SchedulerBucket, 
 		return
 	}
 	key := bucket.String()
+	// 空快照不进本地解码缓存（与 listSchedulableAccounts 的读路径同口径）。
+	// 但必须删掉旧条目：否则上一份非空快照会继续命中，删掉的号还会被选中。
+	if len(accounts) == 0 {
+		s.decodeCache.Delete(key)
+		return
+	}
 	// Publishing a snapshot must not inherit an unbounded cache-version read:
 	// optional third-party readers may perform network I/O. A short detached
 	// timeout keeps the local decode seed fast while the normal TTL remains the

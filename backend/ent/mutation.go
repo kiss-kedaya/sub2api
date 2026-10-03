@@ -108,51 +108,52 @@ const (
 // APIKeyMutation represents an operation that mutates the APIKey nodes in the graph.
 type APIKeyMutation struct {
 	config
-	op                 Op
-	typ                string
-	id                 *int64
-	created_at         *time.Time
-	updated_at         *time.Time
-	deleted_at         *time.Time
-	key                *string
-	name               *string
-	status             *string
-	last_used_at       *time.Time
-	ip_whitelist       *[]string
-	appendip_whitelist []string
-	ip_blacklist       *[]string
-	appendip_blacklist []string
-	quota              *float64
-	addquota           *float64
-	quota_used         *float64
-	addquota_used      *float64
-	expires_at         *time.Time
-	rate_limit_5h      *float64
-	addrate_limit_5h   *float64
-	rate_limit_1d      *float64
-	addrate_limit_1d   *float64
-	rate_limit_7d      *float64
-	addrate_limit_7d   *float64
-	usage_5h           *float64
-	addusage_5h        *float64
-	usage_1d           *float64
-	addusage_1d        *float64
-	usage_7d           *float64
-	addusage_7d        *float64
-	window_5h_start    *time.Time
-	window_1d_start    *time.Time
-	window_7d_start    *time.Time
-	clearedFields      map[string]struct{}
-	user               *int64
-	cleareduser        bool
-	group              *int64
-	clearedgroup       bool
-	usage_logs         map[int64]struct{}
-	removedusage_logs  map[int64]struct{}
-	clearedusage_logs  bool
-	done               bool
-	oldValue           func(context.Context) (*APIKey, error)
-	predicates         []predicate.APIKey
+	op                       Op
+	typ                      string
+	id                       *int64
+	created_at               *time.Time
+	updated_at               *time.Time
+	deleted_at               *time.Time
+	key                      *string
+	name                     *string
+	status                   *string
+	last_used_at             *time.Time
+	ip_whitelist             *[]string
+	appendip_whitelist       []string
+	ip_blacklist             *[]string
+	appendip_blacklist       []string
+	quota                    *float64
+	addquota                 *float64
+	quota_used               *float64
+	addquota_used            *float64
+	expires_at               *time.Time
+	rate_limit_5h            *float64
+	addrate_limit_5h         *float64
+	rate_limit_1d            *float64
+	addrate_limit_1d         *float64
+	rate_limit_7d            *float64
+	addrate_limit_7d         *float64
+	usage_5h                 *float64
+	addusage_5h              *float64
+	usage_1d                 *float64
+	addusage_1d              *float64
+	usage_7d                 *float64
+	addusage_7d              *float64
+	window_5h_start          *time.Time
+	window_1d_start          *time.Time
+	window_7d_start          *time.Time
+	anthropic_cache_ttl_mode *string
+	clearedFields            map[string]struct{}
+	user                     *int64
+	cleareduser              bool
+	group                    *int64
+	clearedgroup             bool
+	usage_logs               map[int64]struct{}
+	removedusage_logs        map[int64]struct{}
+	clearedusage_logs        bool
+	done                     bool
+	oldValue                 func(context.Context) (*APIKey, error)
+	predicates               []predicate.APIKey
 }
 
 var _ ent.Mutation = (*APIKeyMutation)(nil)
@@ -1390,6 +1391,42 @@ func (m *APIKeyMutation) ResetWindow7dStart() {
 	delete(m.clearedFields, apikey.FieldWindow7dStart)
 }
 
+// SetAnthropicCacheTTLMode sets the "anthropic_cache_ttl_mode" field.
+func (m *APIKeyMutation) SetAnthropicCacheTTLMode(s string) {
+	m.anthropic_cache_ttl_mode = &s
+}
+
+// AnthropicCacheTTLMode returns the value of the "anthropic_cache_ttl_mode" field in the mutation.
+func (m *APIKeyMutation) AnthropicCacheTTLMode() (r string, exists bool) {
+	v := m.anthropic_cache_ttl_mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAnthropicCacheTTLMode returns the old "anthropic_cache_ttl_mode" field's value of the APIKey entity.
+// If the APIKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *APIKeyMutation) OldAnthropicCacheTTLMode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAnthropicCacheTTLMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAnthropicCacheTTLMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAnthropicCacheTTLMode: %w", err)
+	}
+	return oldValue.AnthropicCacheTTLMode, nil
+}
+
+// ResetAnthropicCacheTTLMode resets all changes to the "anthropic_cache_ttl_mode" field.
+func (m *APIKeyMutation) ResetAnthropicCacheTTLMode() {
+	m.anthropic_cache_ttl_mode = nil
+}
+
 // ClearUser clears the "user" edge to the User entity.
 func (m *APIKeyMutation) ClearUser() {
 	m.cleareduser = true
@@ -1532,7 +1569,7 @@ func (m *APIKeyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *APIKeyMutation) Fields() []string {
-	fields := make([]string, 0, 23)
+	fields := make([]string, 0, 24)
 	if m.created_at != nil {
 		fields = append(fields, apikey.FieldCreatedAt)
 	}
@@ -1602,6 +1639,9 @@ func (m *APIKeyMutation) Fields() []string {
 	if m.window_7d_start != nil {
 		fields = append(fields, apikey.FieldWindow7dStart)
 	}
+	if m.anthropic_cache_ttl_mode != nil {
+		fields = append(fields, apikey.FieldAnthropicCacheTTLMode)
+	}
 	return fields
 }
 
@@ -1656,6 +1696,8 @@ func (m *APIKeyMutation) Field(name string) (ent.Value, bool) {
 		return m.Window1dStart()
 	case apikey.FieldWindow7dStart:
 		return m.Window7dStart()
+	case apikey.FieldAnthropicCacheTTLMode:
+		return m.AnthropicCacheTTLMode()
 	}
 	return nil, false
 }
@@ -1711,6 +1753,8 @@ func (m *APIKeyMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldWindow1dStart(ctx)
 	case apikey.FieldWindow7dStart:
 		return m.OldWindow7dStart(ctx)
+	case apikey.FieldAnthropicCacheTTLMode:
+		return m.OldAnthropicCacheTTLMode(ctx)
 	}
 	return nil, fmt.Errorf("unknown APIKey field %s", name)
 }
@@ -1880,6 +1924,13 @@ func (m *APIKeyMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetWindow7dStart(v)
+		return nil
+	case apikey.FieldAnthropicCacheTTLMode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAnthropicCacheTTLMode(v)
 		return nil
 	}
 	return fmt.Errorf("unknown APIKey field %s", name)
@@ -2154,6 +2205,9 @@ func (m *APIKeyMutation) ResetField(name string) error {
 		return nil
 	case apikey.FieldWindow7dStart:
 		m.ResetWindow7dStart()
+		return nil
+	case apikey.FieldAnthropicCacheTTLMode:
+		m.ResetAnthropicCacheTTLMode()
 		return nil
 	}
 	return fmt.Errorf("unknown APIKey field %s", name)
@@ -22157,6 +22211,7 @@ type GroupMutation struct {
 	sort_order                              *int
 	addsort_order                           *int
 	allow_messages_dispatch                 *bool
+	cross_protocol_conversion_enabled       *bool
 	allow_live                              *bool
 	force_openai_fast                       *bool
 	free_openai_fast                        *bool
@@ -24912,6 +24967,42 @@ func (m *GroupMutation) ResetAllowMessagesDispatch() {
 	m.allow_messages_dispatch = nil
 }
 
+// SetCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field.
+func (m *GroupMutation) SetCrossProtocolConversionEnabled(b bool) {
+	m.cross_protocol_conversion_enabled = &b
+}
+
+// CrossProtocolConversionEnabled returns the value of the "cross_protocol_conversion_enabled" field in the mutation.
+func (m *GroupMutation) CrossProtocolConversionEnabled() (r bool, exists bool) {
+	v := m.cross_protocol_conversion_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCrossProtocolConversionEnabled returns the old "cross_protocol_conversion_enabled" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldCrossProtocolConversionEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCrossProtocolConversionEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCrossProtocolConversionEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCrossProtocolConversionEnabled: %w", err)
+	}
+	return oldValue.CrossProtocolConversionEnabled, nil
+}
+
+// ResetCrossProtocolConversionEnabled resets all changes to the "cross_protocol_conversion_enabled" field.
+func (m *GroupMutation) ResetCrossProtocolConversionEnabled() {
+	m.cross_protocol_conversion_enabled = nil
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (m *GroupMutation) SetAllowLive(b bool) {
 	m.allow_live = &b
@@ -25921,7 +26012,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 66)
+	fields := make([]string, 0, 67)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26071,6 +26162,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.allow_messages_dispatch != nil {
 		fields = append(fields, group.FieldAllowMessagesDispatch)
+	}
+	if m.cross_protocol_conversion_enabled != nil {
+		fields = append(fields, group.FieldCrossProtocolConversionEnabled)
 	}
 	if m.allow_live != nil {
 		fields = append(fields, group.FieldAllowLive)
@@ -26228,6 +26322,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.SortOrder()
 	case group.FieldAllowMessagesDispatch:
 		return m.AllowMessagesDispatch()
+	case group.FieldCrossProtocolConversionEnabled:
+		return m.CrossProtocolConversionEnabled()
 	case group.FieldAllowLive:
 		return m.AllowLive()
 	case group.FieldForceOpenaiFast:
@@ -26369,6 +26465,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldSortOrder(ctx)
 	case group.FieldAllowMessagesDispatch:
 		return m.OldAllowMessagesDispatch(ctx)
+	case group.FieldCrossProtocolConversionEnabled:
+		return m.OldCrossProtocolConversionEnabled(ctx)
 	case group.FieldAllowLive:
 		return m.OldAllowLive(ctx)
 	case group.FieldForceOpenaiFast:
@@ -26759,6 +26857,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAllowMessagesDispatch(v)
+		return nil
+	case group.FieldCrossProtocolConversionEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCrossProtocolConversionEnabled(v)
 		return nil
 	case group.FieldAllowLive:
 		v, ok := value.(bool)
@@ -27532,6 +27637,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldAllowMessagesDispatch:
 		m.ResetAllowMessagesDispatch()
+		return nil
+	case group.FieldCrossProtocolConversionEnabled:
+		m.ResetCrossProtocolConversionEnabled()
 		return nil
 	case group.FieldAllowLive:
 		m.ResetAllowLive()
@@ -50963,7 +51071,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 25)
+	fields := make([]string, 0, 26)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}

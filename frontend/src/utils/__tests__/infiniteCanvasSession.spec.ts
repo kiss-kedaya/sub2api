@@ -82,6 +82,7 @@ describe('ensureInfiniteCanvasApiKey', () => {
       undefined,
       undefined,
       [4, 1, 9],
+      undefined,
       { idempotencyKey: expect.any(String) },
     )
     expect(session).toMatchObject({ apiKey: 'sk-new', created: true, groupIds: [4, 1, 9] })

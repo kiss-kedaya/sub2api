@@ -182,12 +182,15 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 
 // SettingService 系统设置服务
 type SettingService struct {
-	settingRepo                        SettingRepository
-	defaultSubGroupReader              DefaultSubscriptionGroupReader
-	proxyRepo                          ProxyRepository // for resolving websearch provider proxy URLs
-	cfg                                *config.Config
-	onUpdate                           func() // Callback when settings are updated (for cache invalidation)
-	version                            string // Application version
+	settingRepo           SettingRepository
+	defaultSubGroupReader DefaultSubscriptionGroupReader
+	proxyRepo             ProxyRepository // for resolving websearch provider proxy URLs
+	cfg                   *config.Config
+	// billingPreauthRuntimeCache 缓存「预扣费系统运行时开关」的 SettingsService 视图，
+	// 短 TTL，避免计费热路径每请求打 settings 表。
+	billingPreauthRuntimeCache         atomic.Value // *cachedBillingPreauthorizationRuntime
+	onUpdate                           func()       // Callback when settings are updated (for cache invalidation)
+	version                            string       // Application version
 	webSearchManagerBuilder            WebSearchManagerBuilder
 	antigravityUAVersionCache          atomic.Value // *cachedAntigravityUserAgentVersion
 	antigravityUAVersionSF             singleflight.Group
@@ -487,6 +490,15 @@ func NewSettingService(settingRepo SettingRepository, cfg *config.Config) *Setti
 		settingRepo: settingRepo,
 		cfg:         cfg,
 	}
+}
+
+// InvalidateBillingPreauthorizationRuntimeCache 使「预扣费系统运行时开关」的
+// 进程内缓存立即失效。设置更新路径调用它，管理员改完当期生效而不是等 TTL。
+func (s *SettingService) InvalidateBillingPreauthorizationRuntimeCache() {
+	if s == nil {
+		return
+	}
+	s.billingPreauthRuntimeCache.Store((*cachedBillingPreauthorizationRuntime)(nil))
 }
 
 // SetDefaultSubscriptionGroupReader injects an optional group reader for default subscription validation.
