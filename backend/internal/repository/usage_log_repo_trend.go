@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
 
@@ -315,7 +316,7 @@ func (r *usageLogRepository) getUsageTrendWithFilters(ctx context.Context, start
 	// When dimension rollup reads are enabled, a coverage miss must fall back to
 	// the raw query. The legacy hourly aggregate has no watermark/tail contract
 	// and could otherwise return stale data for unsupported filters.
-	if !r.rollupReadEnabled.Load() && shouldUsePreaggregatedTrend(granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, billingMode, upstreamModelMismatch, nativeCompactionV2) {
+	if !r.rollupReadEnabled.Load() && wholeUsageTrendBuckets(startTime, endTime, granularity) && shouldUsePreaggregatedTrend(granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, billingMode, upstreamModelMismatch, nativeCompactionV2) {
 		aggregated, aggregatedErr := r.getUsageTrendFromAggregates(ctx, startTime, endTime, granularity)
 		if aggregatedErr == nil && len(aggregated) > 0 {
 			return aggregated, nil
@@ -404,6 +405,20 @@ func shouldUsePreaggregatedTrend(granularity string, userID, apiKeyID, accountID
 		billingMode == "" &&
 		upstreamModelMismatch == nil &&
 		nativeCompactionV2 == nil
+}
+
+// Legacy aggregates cannot represent partial hours/days. Keep precise ranges on
+// the existing time-bounded raw query rather than silently including whole buckets.
+func wholeUsageTrendBuckets(start, end time.Time, granularity string) bool {
+	for _, value := range []time.Time{start.In(timezone.Location()), end.In(timezone.Location())} {
+		if value.Minute() != 0 || value.Second() != 0 || value.Nanosecond() != 0 {
+			return false
+		}
+		if granularity != "hour" && value.Hour() != 0 {
+			return false
+		}
+	}
+	return end.After(start)
 }
 
 func (r *usageLogRepository) getUsageTrendFromAggregates(ctx context.Context, startTime, endTime time.Time, granularity string) (results []TrendDataPoint, err error) {

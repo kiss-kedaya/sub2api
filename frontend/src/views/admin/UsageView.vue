@@ -11,6 +11,7 @@
             <div class="usage-control-cluster">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
               <DateRangePicker
+                include-time
                 v-model:start-date="startDate"
                 v-model:end-date="endDate"
                 @change="onDateRangeChange"
@@ -87,7 +88,7 @@
           </button>
         </div>
 
-        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
           <template #after-reset>
             <div v-if="activeTab !== 'ranking'" class="relative" ref="columnDropdownRef">
               <button
@@ -284,7 +285,9 @@ const formatLD = (d: Date) => {
   const year = d.getFullYear()
   const month = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  const time = [d.getHours(), d.getMinutes(), d.getSeconds()]
+    .map(value => String(value).padStart(2, '0')).join(':')
+  return `${year}-${month}-${day}T${time}`
 }
 const getLast24HoursRangeDates = (): { start: string; end: string } => {
   const end = new Date()
@@ -295,8 +298,8 @@ const getLast24HoursRangeDates = (): { start: string; end: string } => {
   }
 }
 const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
-  const startTime = new Date(`${start}T00:00:00`).getTime()
-  const endTime = new Date(`${end}T00:00:00`).getTime()
+  const startTime = new Date(start.includes('T') ? start : `${start}T00:00:00`).getTime()
+  const endTime = new Date(end.includes('T') ? end : `${end}T00:00:00`).getTime()
   const daysDiff = Math.ceil((endTime - startTime) / (1000 * 60 * 60 * 24))
   return daysDiff <= 1 ? 'hour' : 'day'
 }
@@ -625,7 +628,8 @@ const exportToExcel = async () => {
     if(!c.signal.aborted) {
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Usage')
-      saveAs(new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `usage_${filters.value.start_date}_to_${filters.value.end_date}.xlsx`)
+      const filename = `usage_${filters.value.start_date}_to_${filters.value.end_date}.xlsx`.replace(/:/g, '-')
+      saveAs(new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), filename)
       appStore.showSuccess(t('usage.exportSuccess'))
     }
   } catch (error) { console.error('Failed to export:', error); appStore.showError('Export Failed') }
@@ -816,8 +820,12 @@ const showErrorModal = ref(false)
 const selectedErrorId = ref<number | null>(null)
 
 // 注意：'YYYY-MM-DDT00:00:00' 无时区后缀，按本地时区解析后再转 UTC——与页面其它日期处理语义一致，刻意如此，勿改成 'T00:00:00Z'
-const toRFC3339 = (d: string | undefined, endOfDay = false): string | undefined =>
-  d ? new Date(d + (endOfDay ? 'T23:59:59.999' : 'T00:00:00')).toISOString() : undefined
+const toRFC3339 = (d: string | undefined, endOfRange = false): string | undefined => {
+  if (!d) return undefined
+  const date = new Date(d.includes('T') ? d : d + (endOfRange ? 'T23:59:59' : 'T00:00:00'))
+  // Error-log queries use [start, end), just like usage queries.
+  return new Date(date.getTime() + (endOfRange ? 1000 : 0)).toISOString()
+}
 
 const loadAdminErrors = async () => {
   errLoading.value = true
