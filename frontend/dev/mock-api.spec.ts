@@ -13,6 +13,17 @@ const date = new Date('2026-09-17T13:00:00Z')
 const query = (value = '') => new URLSearchParams(value)
 
 describe('local demo API contracts', () => {
+  it('filters admin usage down to one exact second without including its neighbor', () => {
+    const api = createMockApi(date)
+    const all = api.handle('GET', '/api/v1/admin/usage', query('page_size=100&timezone=UTC')) as PaginatedResponse<AdminUsageLog>
+    const target = all.items[0]
+    const second = target.created_at.slice(0, 19)
+    const params = new URLSearchParams({ start_date: second, end_date: second, timezone: 'UTC' })
+    const result = api.handle('GET', '/api/v1/admin/usage', params) as PaginatedResponse<AdminUsageLog>
+    expect(result.items.map(row => row.id)).toContain(target.id)
+    expect(result.items.every(row => row.created_at.slice(0, 19) === second)).toBe(true)
+    expect(api.handle('GET', '/api/v1/admin/usage/stats', params)).toMatchObject({ total_requests: result.total })
+  })
   it('serves paginated redemption history while keeping legacy array reads', () => {
     const api = createMockApi(date)
     const legacy = api.handle('GET', '/api/v1/redeem/history', query()) as unknown[]

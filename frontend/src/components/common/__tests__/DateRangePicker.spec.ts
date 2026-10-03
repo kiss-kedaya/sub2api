@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
@@ -92,5 +92,61 @@ describe('DateRangePicker', () => {
         preset: 'last24Hours'
       }
     ])
+  })
+})
+
+describe('DateRangePicker second precision', () => {
+  afterEach(() => vi.useRealTimers())
+
+  const mountSeconds = () => mount(DateRangePicker, {
+    props: { startDate: '2026-10-03T04:43:28', endDate: '2026-10-03T05:02:08', includeTime: true },
+    global: { stubs: { Icon: true } },
+  })
+
+  it('shows and emits seconds without truncating to dates or minutes', async () => {
+    const wrapper = mountSeconds()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('04:43:28')
+    expect(wrapper.text()).toContain('05:02:08')
+    await wrapper.find('.date-picker-trigger').trigger('click')
+    const inputs = wrapper.findAll('input[type="datetime-local"]')
+    expect(inputs).toHaveLength(2)
+    expect(inputs[0].attributes('step')).toBe('1')
+    await inputs[1].setValue('2026-10-03T05:02:09')
+    await wrapper.find('.date-picker-apply').trigger('click')
+    expect(wrapper.emitted('change')?.[0]).toEqual([{
+      startDate: '2026-10-03T04:43:28', endDate: '2026-10-03T05:02:09', preset: null,
+    }])
+    wrapper.unmount()
+  })
+
+  it('rejects reversed and empty ranges but allows a single second', async () => {
+    const wrapper = mountSeconds()
+    await wrapper.find('.date-picker-trigger').trigger('click')
+    const inputs = wrapper.findAll('input')
+    await inputs[1].setValue('2026-10-03T04:43:27')
+    expect(wrapper.find('.date-picker-apply').attributes('disabled')).toBeDefined()
+    await inputs[1].setValue('')
+    expect(wrapper.find('.date-picker-apply').attributes('disabled')).toBeDefined()
+    await inputs[1].setValue('2026-10-03T04:43:28')
+    expect(wrapper.find('.date-picker-apply').attributes('disabled')).toBeUndefined()
+    await wrapper.find('.date-picker-apply').trigger('click')
+    expect(wrapper.emitted('change')?.[0]).toEqual([{
+      startDate: '2026-10-03T04:43:28', endDate: '2026-10-03T04:43:28', preset: null,
+    }])
+    wrapper.unmount()
+  })
+
+  it('uses a real rolling 24-hour window including seconds', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 9, 3, 15, 20, 37))
+    const wrapper = mountSeconds()
+    await wrapper.find('.date-picker-trigger').trigger('click')
+    await wrapper.findAll('.date-picker-preset').find(node => node.text() === 'Last 24 Hours')!.trigger('click')
+    await wrapper.find('.date-picker-apply').trigger('click')
+    expect(wrapper.emitted('change')?.[0]).toEqual([{
+      startDate: '2026-10-02T15:20:37', endDate: '2026-10-03T15:20:37', preset: 'last24Hours',
+    }])
+    wrapper.unmount()
   })
 })

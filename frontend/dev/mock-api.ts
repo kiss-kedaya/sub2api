@@ -66,13 +66,15 @@ function sort<T extends object>(items: T[], query: URLSearchParams, allowed: str
   })
 }
 
-function dateLabel(timestamp: string, timezone: string, hourly = false) {
+function dateLabel(timestamp: string, timezone: string, hourly = false, seconds = false) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-    ...(hourly ? { hour: '2-digit', hourCycle: 'h23' as const } : {}),
+    ...(hourly || seconds ? { hour: '2-digit', hourCycle: 'h23' as const } : {}),
+    ...(seconds ? { minute: '2-digit', second: '2-digit' } as const : {}),
   }).formatToParts(new Date(timestamp))
   const value = (type: string) => parts.find(part => part.type === type)?.value
-  return `${value('year')}-${value('month')}-${value('day')}${hourly ? ` ${value('hour')}:00` : ''}`
+  const day = `${value('year')}-${value('month')}-${value('day')}`
+  return seconds ? `${day}T${value('hour')}:${value('minute')}:${value('second')}` : `${day}${hourly ? ` ${value('hour')}:00` : ''}`
 }
 
 function summarize(rows: UsageLog[]) {
@@ -221,7 +223,7 @@ export function createMockApi(now = new Date()) {
     const timezone = timezoneOf(query)
     const start = query.get('start_date'), end = query.get('end_date')
     for (const date of [start, end]) {
-      if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)))) {
+      if (date && (!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2})?$/.test(date) || !Number.isFinite(Date.parse(date)))) {
         throw new PreviewError(400, '无效的日期')
       }
     }
@@ -234,8 +236,9 @@ export function createMockApi(now = new Date()) {
       const model = query.get('model')?.toLowerCase()
       if (model && !row.model.toLowerCase().includes(model)) return false
       if (start || end) {
-        const date = dateLabel(row.created_at, timezone)
-        if ((start && date < start) || (end && date > end)) return false
+        const date = dateLabel(row.created_at, timezone, false, true)
+        if ((start && date < (start.includes('T') ? start : start + 'T00:00:00')) ||
+            (end && date > (end.includes('T') ? end : end + 'T23:59:59'))) return false
       }
       return true
     })

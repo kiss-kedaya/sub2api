@@ -4,6 +4,15 @@
     <div class="flex flex-wrap items-end justify-between gap-4">
       <!-- Left: filters (allowed to wrap to multiple rows) -->
       <div class="flex flex-1 flex-wrap items-end gap-4">
+        <div class="w-full sm:w-auto" data-testid="usage-date-range-filter">
+          <label class="input-label">{{ t('admin.dashboard.timeRange') }}</label>
+          <DateRangePicker
+            include-time
+            :start-date="startDate"
+            :end-date="endDate"
+            @change="onDateRangeChange"
+          />
+        </div>
         <!-- User Search -->
         <div ref="userSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
           <label class="input-label">{{ t('admin.usage.userFilter') }}</label>
@@ -203,6 +212,7 @@ import { ref, onMounted, onUnmounted, toRef, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
+import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import { COMMON_ERROR_STATUS_CODES } from '@/utils/errorBadges'
 import type { SimpleApiKey, SimpleUser } from '@/api/admin/usage'
 
@@ -231,6 +241,9 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits([
   'update:modelValue',
+  'update:startDate',
+  'update:endDate',
+  'date-range-change',
   'change',
   'refresh',
   'reset',
@@ -240,6 +253,11 @@ const emit = defineEmits([
 
 const { t } = useI18n()
 const filters = toRef(props, 'modelValue')
+const onDateRangeChange = (range: { startDate: string; endDate: string; preset: string | null }) => {
+  emit('update:startDate', range.startDate)
+  emit('update:endDate', range.endDate)
+  emit('date-range-change', range)
+}
 
 const userSearchRef = ref<HTMLElement | null>(null)
 const apiKeySearchRef = ref<HTMLElement | null>(null)

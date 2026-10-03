@@ -33,10 +33,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
-	// 工具 Schema 清洗必须先于所有分流：下游每条路径（原生 Anthropic 直通、
-	// Chat Completions 转换、Responses 转换）都会把 tools 原样带给上游，而
-	// xAI / Moonshot 等严格校验方会因 input_schema 里的 required:null 或
-	// type:null 直接 400。
+	// Preserve the existing platform-scoped repairs for invalid tool schemas.
+	// This is shared validation, not protocol conversion; valid schemas and
+	// vendor-specific request fields remain unchanged on the native path.
 	if sanitized, changed, err := sanitizeOpenAIResponsesToolSchemasForPlatform(body, account.Platform); err != nil {
 		return nil, err
 	} else if changed {
@@ -44,24 +43,22 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
-	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
-		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
-	}
 	setCodexToolNameReverse(c, nil)
 	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
 		return nil, err
 	}
 
-	// 原生优先（与官方 Wei-Shaw/sub2api 一致）：显式 anthropic 协议与 adaptive 协议的
-	// 账号都有供应商原生 /v1/messages 端点，入站 /v1/messages 零转换直通，完整保留
+	// 原生优先：显式 anthropic 或实际配置了原生端点的 adaptive 账号，
+	// 入站 /v1/messages 直通，保留
 	// thinking / tool_use / cache 语义——不论分组是否开了跨协议转换，都先走这条。
 	// 跨协议转换只在账号确实没有原生 Anthropic 端点时才作为兜底（见下方开关）。
 	//
 	// 2026-09-26（424684b6e）曾把 adaptive 改走 Responses/Chat 转换以换取上游缓存
 	// 命中（部分国产中转的 /v1/messages 不返回 prompt 缓存）。2026-10-03 按运营要求
 	// 改回原生优先：转换链反复丢参数的代价高于缓存命中率。
-	if account.IsAnthropicProtocol() || account.IsAdaptiveAPIProtocol() {
+	if shouldForwardMessagesViaNativeAnthropic(account) {
 		// 同协议族（messages 入站 -> Anthropic 原生上游），不涉及跨协议转换。
+		SetActualOpenAIUpstreamEndpoint(c, "/v1/messages")
 		return s.forwardAnthropicViaNativeAnthropicEndpoint(ctx, c, account, body, defaultMappedModel)
 	}
 
@@ -76,6 +73,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 固定 chat_completions 的 CN 账号，以及不支持 Responses 的其他 APIKey
 	// 账号，均将 Messages 转为 CC；固定 responses 的 CN 账号不受探针旧值覆盖。
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
+		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 		return s.forwardAnthropicViaRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
 

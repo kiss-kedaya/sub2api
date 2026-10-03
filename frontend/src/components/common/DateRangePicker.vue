@@ -37,13 +37,15 @@
         <div class="date-picker-divider"></div>
 
         <!-- Custom date range inputs -->
-        <div class="date-picker-custom">
+        <div class="date-picker-custom" :class="includeTime && 'date-picker-custom-time'">
           <div class="date-picker-field">
             <label class="date-picker-label">{{ t('dates.startDate') }}</label>
             <input
-              type="date"
+              :type="includeTime ? 'datetime-local' : 'date'"
+              :step="includeTime ? 1 : undefined"
+              :aria-label="t('dates.startDate')"
               v-model="localStartDate"
-              :max="localEndDate || tomorrow"
+              :max="localEndDate || maximumDate"
               class="date-picker-input"
               @change="onDateChange"
             />
@@ -54,10 +56,12 @@
           <div class="date-picker-field">
             <label class="date-picker-label">{{ t('dates.endDate') }}</label>
             <input
-              type="date"
+              :type="includeTime ? 'datetime-local' : 'date'"
+              :step="includeTime ? 1 : undefined"
+              :aria-label="t('dates.endDate')"
               v-model="localEndDate"
               :min="localStartDate"
-              :max="tomorrow"
+              :max="maximumDate"
               class="date-picker-input"
               @change="onDateChange"
             />
@@ -66,7 +70,7 @@
 
         <!-- Apply button -->
         <div class="date-picker-actions">
-          <button @click="apply" class="date-picker-apply">
+          <button @click="apply" :disabled="!validRange" class="date-picker-apply disabled:cursor-not-allowed disabled:opacity-50">
             {{ t('dates.apply') }}
           </button>
         </div>
@@ -89,6 +93,7 @@ interface DatePreset {
 interface Props {
   startDate: string
   endDate: string
+  includeTime?: boolean
 }
 
 interface Emits {
@@ -97,16 +102,27 @@ interface Emits {
   (e: 'change', range: { startDate: string; endDate: string; preset: string | null }): void
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), { includeTime: false })
 const emit = defineEmits<Emits>()
 
 const { t, locale } = useI18n()
 
 const isOpen = ref(false)
 const containerRef = ref<HTMLElement | null>(null)
-const localStartDate = ref(props.startDate)
-const localEndDate = ref(props.endDate)
+const normalizeInput = (value: string, end = false): string => {
+  if (!props.includeTime || !value) return value
+  if (!value.includes('T')) return value + (end ? 'T23:59:59' : 'T00:00:00')
+  return value.length === 16 ? value + ':00' : value.slice(0, 19)
+}
+const localStartDate = ref(normalizeInput(props.startDate))
+const localEndDate = ref(normalizeInput(props.endDate, true))
 const activePreset = ref<string | null>('last24Hours')
+const maximumDate = computed(() => normalizeInput(tomorrow.value, true))
+const validRange = computed(() => {
+  const start = new Date(localStartDate.value).getTime()
+  const end = new Date(localEndDate.value).getTime()
+  return Number.isFinite(start) && Number.isFinite(end) && start <= end
+})
 
 const today = computed(() => {
   // Use local timezone to avoid UTC timezone issues
@@ -131,6 +147,12 @@ const formatDateToString = (date: Date): string => {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+const formatTimestamp = (date: Date): string => {
+  const time = [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map(value => String(value).padStart(2, '0')).join(':')
+  return `${formatDateToString(date)}T${time}`
 }
 
 const presets: DatePreset[] = [
@@ -159,8 +181,8 @@ const presets: DatePreset[] = [
       const end = new Date()
       const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
       return {
-        start: formatDateToString(start),
-        end: formatDateToString(end)
+        start: props.includeTime ? formatTimestamp(start) : formatDateToString(start),
+        end: props.includeTime ? formatTimestamp(end) : formatDateToString(end)
       }
     }
   },
@@ -235,8 +257,14 @@ const displayValue = computed(() => {
 })
 
 const formatDate = (dateStr: string): string => {
-  const date = new Date(dateStr + 'T00:00:00')
+  const date = new Date(dateStr.includes('T') ? dateStr : dateStr + 'T00:00:00')
   const dateLocale = locale.value === 'zh' ? 'zh-CN' : 'en-US'
+  if (props.includeTime) {
+    return date.toLocaleString(dateLocale, {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    })
+  }
   return date.toLocaleDateString(dateLocale, { month: 'short', day: 'numeric' })
 }
 
@@ -246,8 +274,8 @@ const isPresetActive = (preset: DatePreset): boolean => {
 
 const selectPreset = (preset: DatePreset) => {
   const range = preset.getRange()
-  localStartDate.value = range.start
-  localEndDate.value = range.end
+  localStartDate.value = normalizeInput(range.start)
+  localEndDate.value = normalizeInput(range.end, true)
   activePreset.value = preset.value
 }
 
@@ -256,7 +284,7 @@ const onDateChange = () => {
   activePreset.value = null
   for (const preset of presets) {
     const range = preset.getRange()
-    if (range.start === localStartDate.value && range.end === localEndDate.value) {
+    if (normalizeInput(range.start) === localStartDate.value && normalizeInput(range.end, true) === localEndDate.value) {
       activePreset.value = preset.value
       break
     }
@@ -268,6 +296,9 @@ const toggle = () => {
 }
 
 const apply = () => {
+  if (!validRange.value) return
+  localStartDate.value = normalizeInput(localStartDate.value)
+  localEndDate.value = normalizeInput(localEndDate.value, true)
   emit('update:startDate', localStartDate.value)
   emit('update:endDate', localEndDate.value)
   emit('change', {
@@ -294,7 +325,7 @@ const handleEscape = (event: KeyboardEvent) => {
 watch(
   () => props.startDate,
   (val) => {
-    localStartDate.value = val
+    localStartDate.value = normalizeInput(val)
     onDateChange()
   }
 )
@@ -302,7 +333,7 @@ watch(
 watch(
   () => props.endDate,
   (val) => {
-    localEndDate.value = val
+    localEndDate.value = normalizeInput(val, true)
     onDateChange()
   }
 )
@@ -381,6 +412,14 @@ onUnmounted(() => {
 
 .date-picker-custom {
   @apply flex items-end gap-2 p-3;
+}
+
+.date-picker-custom-time {
+  @apply flex-col items-stretch;
+}
+
+.date-picker-custom-time .date-picker-separator {
+  @apply hidden;
 }
 
 .date-picker-field {
