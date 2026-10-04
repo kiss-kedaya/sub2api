@@ -16,17 +16,26 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type wrappedUpstreamFailoverHTTP struct {
 	service.HTTPUpstream
-	mu  sync.Mutex
-	ids []int64
+	mu     sync.Mutex
+	ids    []int64
+	bodies [][]byte
+	auths  []string
 }
 
-func (u *wrappedUpstreamFailoverHTTP) Do(_ *http.Request, _ string, id int64, _ int) (*http.Response, error) {
+func (u *wrappedUpstreamFailoverHTTP) Do(req *http.Request, _ string, id int64, _ int) (*http.Response, error) {
+	payload, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
 	u.mu.Lock()
 	u.ids = append(u.ids, id)
+	u.bodies = append(u.bodies, payload)
+	u.auths = append(u.auths, req.Header.Get("Authorization"))
 	u.mu.Unlock()
 	body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_failed_fixture\"}}\n\n" +
 		"data: {\"type\":\"response.failed\",\"sequence_number\":8,\"response\":{\"id\":\"resp_failed_fixture\",\"status\":\"failed\",\"error\":{\"code\":\"upstream_error\",\"message\":\"Upstream access forbidden, please contact administrator\"}}}\n\n"
@@ -73,8 +82,16 @@ func TestOpenAIResponsesWrappedUpstreamFailureActuallyCallsFallback(t *testing.T
 			h.Responses(c)
 			upstream.mu.Lock()
 			ids := append([]int64(nil), upstream.ids...)
+			bodies := append([][]byte(nil), upstream.bodies...)
+			auths := append([]string(nil), upstream.auths...)
 			upstream.mu.Unlock()
 			require.Equal(t, []int64{9910, 9911}, ids, "must make a real second upstream call, not only record a switch")
+			require.Equal(t, []string{"Bearer fixture-9910", "Bearer fixture-9911"}, auths, "the fallback request must use the second account credential")
+			for _, body := range bodies {
+				require.Equal(t, "gpt-6-astra", gjson.GetBytes(body, "model").String(), "failover must retain the requested model")
+				require.Contains(t, string(body), "hello", "failover must retain the original input")
+				require.True(t, gjson.GetBytes(body, "stream").Bool())
+			}
 			require.Equal(t, http.StatusOK, recorder.Code)
 			require.Contains(t, recorder.Body.String(), "healthy fallback")
 			require.NotContains(t, recorder.Body.String(), "resp_failed_fixture")
