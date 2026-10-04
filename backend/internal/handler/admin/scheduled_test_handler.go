@@ -224,7 +224,15 @@ func (h *ScheduledTestHandler) ListResults(c *gin.Context) {
 		limit = l
 	}
 
-	results, err := h.scheduledTestSvc.ListResults(c.Request.Context(), planID, limit)
+	afterID := int64(0)
+	if raw := c.Query("after_id"); raw != "" {
+		afterID, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || afterID < 0 {
+			response.BadRequest(c, "invalid result cursor")
+			return
+		}
+	}
+	results, err := h.scheduledTestSvc.ListResultsAfter(c.Request.Context(), planID, limit, afterID)
 	if err != nil {
 		response.InternalError(c, err.Error())
 		return

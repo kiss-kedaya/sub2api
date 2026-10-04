@@ -18,6 +18,29 @@ vi.mock('vue-i18n', async (importOriginal) => ({
 }))
 
 describe('ScheduledTestsPanel quality results', () => {
+  it('does not reload unchanged reports or poll while the page is hidden', async () => {
+    vi.useFakeTimers()
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const plan = { id: 1, account_id: 2, model_id: 'perf-model', enabled: true, max_results: 20, quality_provider: 'pelican', last_run_at: '2026-10-04T00:00:00Z' }
+    listByAccount.mockReset().mockResolvedValue([plan])
+    listResults.mockReset().mockResolvedValue([{ id: 3, plan_id: 1, status: 'success', response_text: '<html>fixture</html>' }])
+    const wrapper = mount(ScheduledTestsPanel, { props: { show: false, accountId: 2, modelOptions: [] }, global: { stubs: { BaseDialog: { template: '<div><slot /></div>' }, ConfirmDialog: true } } })
+    try {
+      await wrapper.setProps({ show: true }); await flushPromises()
+      await wrapper.findAll('div').find(el => el.classes().includes('cursor-pointer') && el.text().includes('perf-model'))!.trigger('click'); await flushPromises()
+      expect(listResults).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(30000); await flushPromises()
+      expect(listResults).toHaveBeenCalledTimes(1)
+      listByAccount.mockResolvedValue([{ ...plan, last_run_at: '2026-10-04T00:05:00Z' }])
+      listResults.mockResolvedValue([{ id: 4, plan_id: 1, status: 'success', response_text: '<html>new</html>' }])
+      await vi.advanceTimersByTimeAsync(15000); await flushPromises()
+      expect(listResults).toHaveBeenLastCalledWith(1, 20, 3)
+      visibility.mockReturnValue('hidden')
+      const before = listByAccount.mock.calls.length
+      await vi.advanceTimersByTimeAsync(30000); await flushPromises()
+      expect(listByAccount).toHaveBeenCalledTimes(before)
+    } finally { wrapper.unmount(); visibility.mockRestore(); vi.useRealTimers() }
+  })
   it('shows active audit progress instead of selecting old Pelican artwork after switching', async () => {
     listByAccount.mockResolvedValue([{ id: 1, account_id: 2, model_id: 'gpt-6-astra', cron_expression: '*/5 * * * *',
       enabled: true, max_results: 20, auto_recover: false, quality_check_enabled: true, quality_provider: 'chanshui',
@@ -30,8 +53,7 @@ describe('ScheduledTestsPanel quality results', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="audit-progress"]').exists()).toBe(true)
     expect(wrapper.find('iframe').exists()).toBe(false)
-    await wrapper.get('[data-testid="show-all-results"]').setValue(true)
-    expect(wrapper.find('iframe').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="show-all-results"]').exists()).toBe(false)
   })
   it('loads and saves the provider and section selection when editing a plan', async () => {
     const plan = { id: 1, account_id: 2, model_id: 'gpt-test', cron_expression: '*/5 * * * *',
