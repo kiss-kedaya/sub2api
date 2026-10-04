@@ -171,6 +171,8 @@ export function createMockApi(now = new Date()) {
     payment_recharge_center_enabled: data.checkoutInfo.recharge_center_enabled === true,
     payment_enabled_types: data.paymentConfig.enabled_payment_types,
   })
+  const scheduledPlanOverrides = new Map<number, Record<string, unknown>>()
+  let nextScheduledPlanID = 99
   let nextId = data.keys.length + 1
   let nextOrderId = Math.max(...data.paymentOrders.map(order => order.id)) + 1
   let nextRedeemId = Math.max(...data.redeemHistory.map(item => item.id)) + 1
@@ -559,20 +561,35 @@ export function createMockApi(now = new Date()) {
               id: 1, account_id: accountId, model_id: 'gpt-6-astra',
               prompt_text: '请生成可直接运行的单文件HTML，使用内联SVG绘制鹈鹕骑自行车的二维循环动画。',
               cron_expression: '*/5 * * * *', enabled: true, max_results: 100,
-              auto_recover: true, quality_check_enabled: true,
+              auto_recover: true, quality_check_enabled: true, quality_provider: 'pelican',
               last_run_at: data.now, next_run_at: data.now, created_at: data.now, updated_at: data.now,
             },
             {
               id: 2, account_id: accountId, model_id: 'gpt-5.5',
               prompt_text: '请生成可直接运行的单文件HTML，使用内联SVG绘制鹈鹕骑自行车的二维循环动画。',
               cron_expression: '*/30 * * * *', enabled: false, max_results: 50,
-              auto_recover: false, quality_check_enabled: false,
+              auto_recover: false, quality_check_enabled: true, quality_provider: 'chanshui',
+              quality_config: { base_url: 'https://chanshui.dev', protocol: 'auto', timeout: 360, sections: ['fingerprint'],
+                stop_condition: { match: 'any', rules: [{ type: 'fingerprint_mismatch' }] } },
               last_run_at: null, next_run_at: null, created_at: data.now, updated_at: data.now,
             },
-          ]
+          ].map(plan => ({ ...plan, ...scheduledPlanOverrides.get(plan.id) }))
+            .filter(plan => !scheduledPlanOverrides.get(plan.id)?.deleted)
+            .concat([...scheduledPlanOverrides.values()].filter(plan => Number(plan.id) >= 99 && plan.account_id === accountId && !plan.deleted) as any)
         }
         const planResults = path.match(/^\/api\/v1\/admin\/scheduled-test-plans\/(\d+)\/results$/)
         if (planResults) {
+          if (Number(planResults[1]) === 2) return [{
+            id: 21, plan_id: 2, status: 'audit_pass', latency_ms: 30000,
+            response_text: JSON.stringify({ provider: 'chanshui', audit_id: 'demo-audit-no-remote-request',
+              audit_status: 'done', decision: { status: 'audit_pass', reason: '演示：模型指纹一致，停止条件未命中；不是线上检测。' },
+              verdict: { total: { score: 56, max: 100 }, integrity: { score: 78 },
+                fingerprint: { top_model: 'gpt-5.5', note: '演示数据，不是在线检测。' },
+                tools: { status: 'pass', reason: '演示：工具回传通过' },
+                cache: { status: 'unknown', reason: '演示：缓存证据不足' }, iq: { score: null, complete: false } },
+              probes: [{ id: 'Q1', status: 'queued' }], skipped: [{ id: 'thinking', reason: '非 Claude 模型跳过' }] }),
+            error_message: '', started_at: data.now, finished_at: data.now, created_at: data.now,
+          }]
           return [
             {
               id: 11, plan_id: Number(planResults[1]), status: 'success', latency_ms: 16420,
@@ -995,12 +1012,16 @@ export function createMockApi(now = new Date()) {
       const planWrite = path.match(/^\/api\/v1\/admin\/scheduled-test-plans(?:\/(\d+))?$/)
       if (planWrite) {
         if (method === 'POST') {
-          return { ...body, id: 99, last_run_at: null, next_run_at: data.now, created_at: data.now, updated_at: data.now }
+          const plan = { ...body, id: nextScheduledPlanID++, last_run_at: null, next_run_at: data.now, created_at: data.now, updated_at: data.now }
+          scheduledPlanOverrides.set(plan.id, plan)
+          return plan
         }
         if (method === 'PUT') {
-          return { ...body, id: Number(planWrite[1]), account_id: 1, last_run_at: null, next_run_at: data.now, created_at: data.now, updated_at: data.now }
+          const id = Number(planWrite[1])
+          scheduledPlanOverrides.set(id, { ...scheduledPlanOverrides.get(id), ...body, id })
+          return { ...body, id, account_id: 1, last_run_at: null, next_run_at: data.now, created_at: data.now, updated_at: data.now }
         }
-        if (method === 'DELETE') return { message: 'deleted' }
+        if (method === 'DELETE') { scheduledPlanOverrides.set(Number(planWrite[1]), { id: Number(planWrite[1]), deleted: true }); return { message: 'deleted' } }
       }
       if (method === 'PUT' && path === '/api/v1/settings/public') {
         if (body.channel_monitor_mode !== 'v1' && body.channel_monitor_mode !== 'v2') throw new PreviewError(422, '本地预览仅支持 v1 或 v2 监控模式')

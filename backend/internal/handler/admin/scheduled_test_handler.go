@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -12,32 +13,52 @@ import (
 // ScheduledTestHandler handles admin scheduled-test-plan management.
 type ScheduledTestHandler struct {
 	scheduledTestSvc *service.ScheduledTestService
+	adminSvc         service.AdminService
 }
 
 // NewScheduledTestHandler creates a new ScheduledTestHandler.
-func NewScheduledTestHandler(scheduledTestSvc *service.ScheduledTestService) *ScheduledTestHandler {
-	return &ScheduledTestHandler{scheduledTestSvc: scheduledTestSvc}
+func NewScheduledTestHandler(scheduledTestSvc *service.ScheduledTestService, adminSvc service.AdminService) *ScheduledTestHandler {
+	return &ScheduledTestHandler{scheduledTestSvc: scheduledTestSvc, adminSvc: adminSvc}
+}
+
+func (h *ScheduledTestHandler) authorizeAccount(c *gin.Context, id int64) bool {
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 || h.adminSvc == nil {
+		response.Forbidden(c, "administrator account access required")
+		return false
+	}
+	ctx := service.WithAccountOwnerScope(c.Request.Context(), subject.UserID, c.GetString(middleware.ContextKeyAuthEmail))
+	if _, err := h.adminSvc.GetAccount(ctx, id); err != nil {
+		response.NotFound(c, "account not found")
+		return false
+	}
+	c.Request = c.Request.WithContext(ctx)
+	return true
 }
 
 type createScheduledTestPlanRequest struct {
-	AccountID           int64  `json:"account_id" binding:"required"`
-	ModelID             string `json:"model_id"`
-	PromptText          string `json:"prompt_text"`
-	CronExpression      string `json:"cron_expression" binding:"required"`
-	Enabled             *bool  `json:"enabled"`
-	MaxResults          int    `json:"max_results"`
-	AutoRecover         *bool  `json:"auto_recover"`
-	QualityCheckEnabled *bool  `json:"quality_check_enabled"`
+	AccountID           int64                   `json:"account_id" binding:"required"`
+	ModelID             string                  `json:"model_id"`
+	PromptText          string                  `json:"prompt_text"`
+	CronExpression      string                  `json:"cron_expression" binding:"required"`
+	Enabled             *bool                   `json:"enabled"`
+	MaxResults          int                     `json:"max_results"`
+	AutoRecover         *bool                   `json:"auto_recover"`
+	QualityCheckEnabled *bool                   `json:"quality_check_enabled"`
+	QualityProvider     string                  `json:"quality_provider"`
+	QualityConfig       *service.ChanshuiConfig `json:"quality_config"`
 }
 
 type updateScheduledTestPlanRequest struct {
-	ModelID             string `json:"model_id"`
-	PromptText          string `json:"prompt_text"`
-	CronExpression      string `json:"cron_expression"`
-	Enabled             *bool  `json:"enabled"`
-	MaxResults          int    `json:"max_results"`
-	AutoRecover         *bool  `json:"auto_recover"`
-	QualityCheckEnabled *bool  `json:"quality_check_enabled"`
+	ModelID             string                  `json:"model_id"`
+	PromptText          string                  `json:"prompt_text"`
+	CronExpression      string                  `json:"cron_expression"`
+	Enabled             *bool                   `json:"enabled"`
+	MaxResults          int                     `json:"max_results"`
+	AutoRecover         *bool                   `json:"auto_recover"`
+	QualityCheckEnabled *bool                   `json:"quality_check_enabled"`
+	QualityProvider     *string                 `json:"quality_provider"`
+	QualityConfig       *service.ChanshuiConfig `json:"quality_config"`
 }
 
 // ListByAccount GET /admin/accounts/:id/scheduled-test-plans
@@ -48,6 +69,9 @@ func (h *ScheduledTestHandler) ListByAccount(c *gin.Context) {
 		return
 	}
 
+	if !h.authorizeAccount(c, accountID) {
+		return
+	}
 	plans, err := h.scheduledTestSvc.ListPlansByAccount(c.Request.Context(), accountID)
 	if err != nil {
 		response.InternalError(c, err.Error())
@@ -64,6 +88,9 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if !h.authorizeAccount(c, req.AccountID) {
+		return
+	}
 	plan := &service.ScheduledTestPlan{
 		AccountID:      req.AccountID,
 		ModelID:        req.ModelID,
@@ -80,6 +107,10 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 	}
 	if req.QualityCheckEnabled != nil {
 		plan.QualityCheckEnabled = *req.QualityCheckEnabled
+	}
+	plan.QualityProvider = req.QualityProvider
+	if req.QualityConfig != nil {
+		plan.QualityConfig = *req.QualityConfig
 	}
 
 	created, err := h.scheduledTestSvc.CreatePlan(c.Request.Context(), plan)
@@ -105,6 +136,9 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	}
 
 	var req updateScheduledTestPlanRequest
+	if !h.authorizeAccount(c, existing.AccountID) {
+		return
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
@@ -131,6 +165,12 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	if req.QualityCheckEnabled != nil {
 		existing.QualityCheckEnabled = *req.QualityCheckEnabled
 	}
+	if req.QualityProvider != nil {
+		existing.QualityProvider = *req.QualityProvider
+	}
+	if req.QualityConfig != nil {
+		existing.QualityConfig = *req.QualityConfig
+	}
 
 	updated, err := h.scheduledTestSvc.UpdatePlan(c.Request.Context(), existing)
 	if err != nil {
@@ -148,6 +188,14 @@ func (h *ScheduledTestHandler) Delete(c *gin.Context) {
 		return
 	}
 
+	existing, err := h.scheduledTestSvc.GetPlan(c.Request.Context(), planID)
+	if err != nil {
+		response.NotFound(c, "plan not found")
+		return
+	}
+	if !h.authorizeAccount(c, existing.AccountID) {
+		return
+	}
 	if err := h.scheduledTestSvc.DeletePlan(c.Request.Context(), planID); err != nil {
 		response.InternalError(c, err.Error())
 		return
@@ -163,6 +211,14 @@ func (h *ScheduledTestHandler) ListResults(c *gin.Context) {
 		return
 	}
 
+	existing, err := h.scheduledTestSvc.GetPlan(c.Request.Context(), planID)
+	if err != nil {
+		response.NotFound(c, "plan not found")
+		return
+	}
+	if !h.authorizeAccount(c, existing.AccountID) {
+		return
+	}
 	limit := 50
 	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 {
 		limit = l
