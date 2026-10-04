@@ -582,6 +582,8 @@ export default {
     qualityPelican: "Pelican",
     qualityAuditTotal: "Audit score",
     qualityAuditCandidate: "Candidate model",
+    qualityAuditTestedModel: 'Tested model',
+    qualityAuditActualModel: 'Actual model',
     qualitySections: {"fingerprint": "Fingerprint", "injection": "Injection", "hidden": "Hidden instructions", "cache": "Cache", "tools": "Tools", "web": "Web", "knowledge": "Knowledge cutoff", "thinking": "Thinking", "iq": "IQ"},
     qualityArtworkLoading: 'Loading animation…',
     qualityArtworkFailed: 'Failed to load animation',

@@ -587,6 +587,8 @@ export default {
     qualityPelican: "鹈鹕",
     qualityAuditTotal: "本次总分",
     qualityAuditCandidate: "候选模型",
+    qualityAuditTestedModel: '检测模型',
+    qualityAuditActualModel: '实际模型',
     qualitySections: {"fingerprint": "模型指纹", "injection": "注入大小", "hidden": "隐藏指令", "cache": "缓存", "tools": "工具调用", "web": "联网", "knowledge": "知识截止日期", "thinking": "思维链", "iq": "IQ"},
     qualityArtworkLoading: '动画加载中…',
     qualityArtworkFailed: '动画加载失败',
