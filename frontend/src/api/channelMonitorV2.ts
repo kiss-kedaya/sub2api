@@ -286,6 +286,12 @@ export async function updateConfig(config: MonitorConfig) {
 
 /** One historical degradation probe that produced a verdict (success/degraded). */
 export interface MonitorQualityEvent {
+  quality_provider?: 'pelican' | 'chanshui'
+  audit_summary?: {
+    score: number | null
+    candidate_model: string
+    sections: { name: string; status: string; score: number | null }[]
+  }
   id: number
   group_id: number
   account_id: number

@@ -28,7 +28,10 @@ const qualityDemoEvents = [
   id: entry.id,
   group_id: 1,
   account_id: 29170 - index,
-  model_id: 'gpt-5.6-sol',
+  model_id: index === 0 ? 'gpt-6-astra' : 'gpt-5.6-sol',
+  quality_provider: index === 0 ? 'chanshui' : 'pelican',
+  // Synthetic public summary; no external audit request or private report.
+  audit_summary: index === 0 ? { score: 100, candidate_model: 'gpt-6-astra', sections: [{ name: 'fingerprint', status: '', score: null }] } : undefined,
   status: entry.status,
   error_message: entry.errorMessage,
   created_at: new Date(Date.now() - entry.minutesAgo * 60_000).toISOString(),

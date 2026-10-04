@@ -67,7 +67,7 @@ func (r *groupQualityCheckRepository) ListRecentResults(ctx context.Context, gro
 		WHERE r.created_at >= $2
 		  AND a.deleted_at IS NULL
 		  AND a.status = 'active'
-		  AND a.schedulable IS TRUE
+		  AND (a.schedulable IS TRUE OR (jsonb_typeof(a.extra->'chanshui_quality_pauses')='object' AND a.extra->'chanshui_quality_pauses'<>'{}'::jsonb))
 		  AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
 		ORDER BY p.account_id, r.created_at DESC
 		LIMIT $3
@@ -116,16 +116,16 @@ func (r *groupQualityCheckRepository) ListGroupBuckets(ctx context.Context, grou
 			WHERE ag.group_id = ANY($1) AND r.created_at >= $2
 			  AND a.deleted_at IS NULL
 			  AND a.status = 'active'
-			  AND a.schedulable IS TRUE
+			  AND (a.schedulable IS TRUE OR (jsonb_typeof(a.extra->'chanshui_quality_pauses')='object' AND a.extra->'chanshui_quality_pauses'<>'{}'::jsonb))
 			  AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
 			ORDER BY ag.group_id, p.account_id, r.created_at DESC
 		)
 		SELECT group_id,
 		       to_timestamp(floor(extract(epoch FROM created_at) / $3) * $3) AS bucket_start,
 		       COUNT(*) AS checked,
-		       COUNT(*) FILTER (WHERE status = 'degraded') AS degraded
+		       COUNT(*) FILTER (WHERE status IN ('degraded', 'audit_fail')) AS degraded
 		FROM latest
-		WHERE status IN ('success', 'degraded')
+		WHERE status IN ('success', 'degraded', 'audit_pass', 'audit_fail')
 		GROUP BY group_id, bucket_start
 		ORDER BY group_id, bucket_start
 	`, pq.Array(groupIDs), since, bucketSeconds)
@@ -159,15 +159,16 @@ func (r *groupQualityCheckRepository) ListGroupEvents(ctx context.Context, group
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT r.id, ag.group_id, p.account_id, COALESCE(p.model_id, ''),
-		       r.status, COALESCE(r.error_message, ''), r.created_at
+		       r.status, COALESCE(r.error_message, ''), r.created_at,
+		       CASE WHEN r.status IN ('audit_pass', 'audit_fail') THEN COALESCE(r.response_text, '') ELSE '' END
 		FROM scheduled_test_results r
 		JOIN scheduled_test_plans p ON p.id = r.plan_id
 		JOIN account_groups ag ON ag.account_id = p.account_id AND ag.group_id = $1
 		JOIN accounts a ON a.id = p.account_id
-		WHERE r.status IN ('success', 'degraded')
+		WHERE r.status IN ('success', 'degraded', 'audit_pass', 'audit_fail')
 		  AND a.deleted_at IS NULL
 		  AND a.status = 'active'
-		  AND a.schedulable IS TRUE
+		  AND (a.schedulable IS TRUE OR (jsonb_typeof(a.extra->'chanshui_quality_pauses')='object' AND a.extra->'chanshui_quality_pauses'<>'{}'::jsonb))
 		  AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
 		ORDER BY r.created_at DESC, r.id DESC
 		LIMIT $2
@@ -180,12 +181,14 @@ func (r *groupQualityCheckRepository) ListGroupEvents(ctx context.Context, group
 	out := make([]*service.GroupQualityEvent, 0, limit)
 	for rows.Next() {
 		event := &service.GroupQualityEvent{}
+		var rawAudit string
 		if err := rows.Scan(
 			&event.ID, &event.GroupID, &event.AccountID, &event.ModelID,
-			&event.Status, &event.ErrorMessage, &event.CreatedAt,
+			&event.Status, &event.ErrorMessage, &event.CreatedAt, &rawAudit,
 		); err != nil {
 			return nil, err
 		}
+		service.PopulateGroupQualityAudit(event, rawAudit)
 		out = append(out, event)
 	}
 	if err := rows.Err(); err != nil {
@@ -207,7 +210,7 @@ func (r *groupQualityCheckRepository) GetGroupEventArtwork(ctx context.Context, 
 		WHERE r.id = $2 AND r.status IN ('success', 'degraded')
 		  AND a.deleted_at IS NULL
 		  AND a.status = 'active'
-		  AND a.schedulable IS TRUE
+		  AND (a.schedulable IS TRUE OR (jsonb_typeof(a.extra->'chanshui_quality_pauses')='object' AND a.extra->'chanshui_quality_pauses'<>'{}'::jsonb))
 		  AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
 	`, groupID, resultID).Scan(&text)
 	if err == sql.ErrNoRows {

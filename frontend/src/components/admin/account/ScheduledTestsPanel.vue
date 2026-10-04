@@ -405,6 +405,16 @@
             <div class="mb-2 text-xs font-medium text-gray-600 dark:text-gray-400">
               {{ t('admin.scheduledTests.results') }}
             </div>
+            <div v-if="plan.quality_check_enabled && plan.quality_provider === 'chanshui'" class="mb-3 rounded-lg bg-blue-50 p-3 text-xs text-blue-800 dark:bg-blue-900/20 dark:text-blue-200" data-testid="audit-progress" role="status">
+              <div class="font-medium">{{ t('admin.scheduledTests.chanshui') }} · {{ auditProgressLabel(plan) }}</div>
+              <div v-if="plan.active_audit?.id" class="mt-1 font-mono">{{ plan.active_audit.id }}</div>
+              <div v-if="plan.next_run_at" class="mt-1">{{ t('admin.scheduledTests.nextRun') }}: {{ formatDateTime(plan.next_run_at) }}</div>
+              <p class="mt-1">{{ t('admin.scheduledTests.auditHistoryHint') }}</p>
+            </div>
+            <label v-if="plan.quality_provider === 'chanshui' || results.some(result => parseChanshuiReport(result.response_text))" class="mb-3 flex items-center gap-2 text-xs text-gray-500">
+              <input v-model="showAllResults" type="checkbox" data-testid="show-all-results" />
+              {{ t('admin.scheduledTests.showAllMethods') }}
+            </label>
 
             <!-- Results Loading -->
             <div v-if="loadingResults" class="flex items-center justify-center py-4">
@@ -414,7 +424,7 @@
 
             <!-- No Results -->
             <div
-              v-else-if="results.length === 0"
+              v-else-if="displayedResults.length === 0"
               class="py-4 text-center text-xs text-gray-500 dark:text-gray-400"
             >
               {{ t('admin.scheduledTests.noResults') }}
@@ -424,7 +434,7 @@
             <div v-else class="grid min-h-[28rem] grid-cols-1 gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]">
               <div class="max-h-[32rem] space-y-2 overflow-y-auto pr-1">
                 <button
-                  v-for="result in results"
+                  v-for="result in displayedResults"
                   :key="result.id"
                   type="button"
                   class="w-full rounded-lg border p-3 text-left transition-colors"
@@ -458,6 +468,7 @@
                   </div>
                   <div class="mt-1 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                     <span class="font-mono text-[10px] text-gray-400 dark:text-gray-500">#{{ result.id }}</span>
+                    <span>{{ t(parseChanshuiReport(result.response_text) ? 'admin.scheduledTests.chanshui' : 'admin.scheduledTests.legacyResult') }}</span>
                     <span>{{ result.latency_ms > 0 ? `${result.latency_ms}ms` : '—' }}</span>
                   </div>
                 </button>
@@ -587,7 +598,14 @@ const results = ref<ScheduledTestResult[]>([])
 const expandedPlanId = ref<number | null>(null)
 const selectedResultId = ref<number | null>(null)
 const previewMode = ref<'preview' | 'source'>('preview')
-const selectedResult = computed(() => results.value.find((result) => result.id === selectedResultId.value) || null)
+const showAllResults = ref(false)
+const displayedResults = computed(() => {
+  if (showAllResults.value) return results.value
+  const plan = plans.value.find(plan => plan.id === expandedPlanId.value)
+  const isAudit = plan?.quality_check_enabled && plan.quality_provider === 'chanshui'
+  return results.value.filter(result => !!parseChanshuiReport(result.response_text) === !!isAudit)
+})
+const selectedResult = computed(() => displayedResults.value.find((result) => result.id === selectedResultId.value) || displayedResults.value[0] || null)
 const selectedAudit = computed(() => parseChanshuiReport(selectedResult.value?.response_text || ''))
 const showAddForm = ref(false)
 const showDeleteConfirm = ref(false)
@@ -795,6 +813,7 @@ const handleDelete = async () => {
 }
 
 const toggleExpand = async (planId: number) => {
+  showAllResults.value = false
   if (expandedPlanId.value === planId) {
     expandedPlanId.value = null
     results.value = []
@@ -807,7 +826,7 @@ const toggleExpand = async (planId: number) => {
   previewMode.value = 'preview'
   loadingResults.value = true
   try {
-    results.value = await adminAPI.scheduledTests.listResults(planId, 20)
+    results.value = await adminAPI.scheduledTests.listResults(planId, plans.value.find(plan => plan.id === planId)?.max_results || 20)
     selectedResultId.value = results.value[0]?.id ?? null
   } catch (error: any) {
     appStore.showError(error?.message || 'Failed to load results')
@@ -820,6 +839,15 @@ const toggleExpand = async (planId: number) => {
 const selectResult = (resultId: number) => {
   selectedResultId.value = resultId
   previewMode.value = 'preview'
+}
+
+function auditProgressLabel(plan: ScheduledTestPlan) {
+  if (!plan.enabled) return t('admin.scheduledTests.auditPlanDisabled')
+  const state = plan.active_audit?.status
+  if (state === 'running') return t('admin.scheduledTests.auditRunning')
+  if (state === 'queued') return t('admin.scheduledTests.auditQueued')
+  if (state === 'submitting') return t('admin.scheduledTests.auditSubmitting')
+  return t('admin.scheduledTests.auditWaiting')
 }
 
 const resultStatusLabel = (status: string) => {

@@ -1,6 +1,9 @@
 .PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/components/admin/account/__tests__/ScheduledTestsPanel.spec.ts \
+	src/components/admin/account/__tests__/ScheduledQualityConfig.spec.ts \
+	src/components/user/monitor/__tests__/ChannelMonitorV3QualityHistory.spec.ts \
 	src/api/admin/__tests__/customUsage.spec.ts \
 	src/components/account/__tests__/CustomUsageCell.spec.ts \
 	src/components/account/__tests__/CustomUsageConfigModal.spec.ts \
