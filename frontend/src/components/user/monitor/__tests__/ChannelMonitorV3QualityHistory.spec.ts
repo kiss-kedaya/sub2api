@@ -45,6 +45,17 @@ function mountHistory(props: Record<string, unknown> = {}) {
 }
 
 describe('ChannelMonitorV3QualityHistory', () => {
+  it('shows tested and actual models without a duplicate fingerprint row or chip provider label', async () => {
+    mockedEvents.mockResolvedValue([{ ...event(9, 'degraded'), model_id: 'gpt-6-astra', quality_provider: 'chanshui',
+      audit_summary: { score: 0, candidate_model: 'gpt-5.6-luna', sections: [{ name: 'fingerprint', status: '', score: null }] } }])
+    const wrapper = mountHistory(); await flushPromises()
+    await wrapper.get('[data-testid="quality-history-chip-9"]').trigger('mouseenter'); await flushPromises()
+    expect(wrapper.get('[data-testid="quality-tested-model"]').text()).toContain('gpt-6-astra')
+    expect(wrapper.get('[data-testid="quality-actual-model"]').text()).toContain('gpt-5.6-luna')
+    expect(wrapper.get('[data-testid="quality-audit-summary"]').text()).not.toContain('monitorCommon.qualitySections.fingerprint')
+    expect(wrapper.get('[data-testid="quality-history-chip-9"]').text()).not.toContain('monitorCommon.qualityChanshui')
+    expect(mockedArtwork).not.toHaveBeenCalled()
+  })
   it('shows a safe Chanshui summary without requesting artwork', async () => {
     mockedEvents.mockResolvedValue([{ ...event(9, 'success'), quality_provider: 'chanshui',
       audit_summary: { score: 100, candidate_model: 'gpt-6-astra', sections: [{ name: 'fingerprint', status: '', score: null }] } }])
