@@ -411,10 +411,6 @@
               <div v-if="plan.next_run_at" class="mt-1">{{ t('admin.scheduledTests.nextRun') }}: {{ formatDateTime(plan.next_run_at) }}</div>
               <p class="mt-1">{{ t('admin.scheduledTests.auditHistoryHint') }}</p>
             </div>
-            <label v-if="plan.quality_provider === 'chanshui' || results.some(result => parseChanshuiReport(result.response_text))" class="mb-3 flex items-center gap-2 text-xs text-gray-500">
-              <input v-model="showAllResults" type="checkbox" data-testid="show-all-results" />
-              {{ t('admin.scheduledTests.showAllMethods') }}
-            </label>
 
             <!-- Results Loading -->
             <div v-if="loadingResults" class="flex items-center justify-center py-4">
@@ -468,7 +464,7 @@
                   </div>
                   <div class="mt-1 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                     <span class="font-mono text-[10px] text-gray-400 dark:text-gray-500">#{{ result.id }}</span>
-                    <span>{{ t(parseChanshuiReport(result.response_text) ? 'admin.scheduledTests.chanshui' : 'admin.scheduledTests.legacyResult') }}</span>
+                    <span>{{ t(auditReports.get(result.id) ? 'admin.scheduledTests.chanshui' : 'admin.scheduledTests.legacyResult') }}</span>
                     <span>{{ result.latency_ms > 0 ? `${result.latency_ms}ms` : '—' }}</span>
                   </div>
                 </button>
@@ -598,15 +594,19 @@ const results = ref<ScheduledTestResult[]>([])
 const expandedPlanId = ref<number | null>(null)
 const selectedResultId = ref<number | null>(null)
 const previewMode = ref<'preview' | 'source'>('preview')
-const showAllResults = ref(false)
+// Cache parsed evidence by immutable result object, not repeatedly in render/filter.
+const reportCache = new WeakMap<ScheduledTestResult, ReturnType<typeof parseChanshuiReport>>()
+const auditReports = computed(() => new Map(results.value.map(result => {
+  if (!reportCache.has(result)) reportCache.set(result, parseChanshuiReport(result.response_text))
+  return [result.id, reportCache.get(result)] as const
+})))
 const displayedResults = computed(() => {
-  if (showAllResults.value) return results.value
   const plan = plans.value.find(plan => plan.id === expandedPlanId.value)
   const isAudit = plan?.quality_check_enabled && plan.quality_provider === 'chanshui'
-  return results.value.filter(result => !!parseChanshuiReport(result.response_text) === !!isAudit)
+  return results.value.filter(result => !!auditReports.value.get(result.id) === !!isAudit)
 })
 const selectedResult = computed(() => displayedResults.value.find((result) => result.id === selectedResultId.value) || displayedResults.value[0] || null)
-const selectedAudit = computed(() => parseChanshuiReport(selectedResult.value?.response_text || ''))
+const selectedAudit = computed(() => selectedResult.value ? auditReports.value.get(selectedResult.value.id) : null)
 const showAddForm = ref(false)
 const showDeleteConfirm = ref(false)
 const deletingPlan = ref<ScheduledTestPlan | null>(null)
@@ -649,11 +649,16 @@ const resetNewPlan = () => {
 }
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+let refreshInFlight = false
+let resultsRevision: string | null = null
+const planRevision = (plan?: ScheduledTestPlan) => JSON.stringify([plan?.last_run_at, plan?.quality_provider, plan?.quality_check_enabled, plan?.max_results])
+const resultLimit = (plan?: ScheduledTestPlan) => Math.min(Math.max(plan?.max_results || 50, 1), 200)
 function stopRefresh() { if (refreshTimer) clearInterval(refreshTimer); refreshTimer = null }
 onUnmounted(stopRefresh)
 const refreshOpenPanel = async () => {
   const accountId = props.accountId
-  if (!props.show || !accountId || creating.value || updating.value) return
+  if (!props.show || !accountId || creating.value || updating.value || loadingResults.value || refreshInFlight || document.visibilityState === 'hidden') return
+  refreshInFlight = true
   try {
     const latest = await adminAPI.scheduledTests.listByAccount(accountId)
     if (!props.show || props.accountId !== accountId) return
@@ -661,13 +666,23 @@ const refreshOpenPanel = async () => {
     const planId = expandedPlanId.value
     if (planId) {
       const plan = latest.find(item => item.id === planId)
-      const latestResults = await adminAPI.scheduledTests.listResults(planId, plan?.max_results || 50)
+      if (!plan) return
+      const revision = planRevision(plan)
+      if (revision === resultsRevision) return
+      const afterId = results.value.reduce((id, result) => Math.max(id, result.id), 0)
+      const latestResults = await adminAPI.scheduledTests.listResults(planId, resultLimit(plan), afterId)
       if (props.show && expandedPlanId.value === planId && props.accountId === accountId) {
-        results.value = latestResults
-        if (!latestResults.some(item => item.id === selectedResultId.value)) selectedResultId.value = latestResults[0]?.id ?? null
+        if (latestResults.length) {
+          const known = new Set(results.value.map(result => result.id))
+          results.value = [...latestResults.filter(result => !known.has(result.id)), ...results.value]
+            .sort((a, b) => b.id - a.id).slice(0, resultLimit(plan))
+        }
+        resultsRevision = revision
+        if (!results.value.some(item => item.id === selectedResultId.value)) selectedResultId.value = results.value[0]?.id ?? null
       }
     }
   } catch { /* Background refresh must not spam error toasts. */ }
+  finally { refreshInFlight = false }
 }
 
 // Load plans when dialog opens
@@ -813,7 +828,7 @@ const handleDelete = async () => {
 }
 
 const toggleExpand = async (planId: number) => {
-  showAllResults.value = false
+  resultsRevision = null
   if (expandedPlanId.value === planId) {
     expandedPlanId.value = null
     results.value = []
@@ -826,7 +841,12 @@ const toggleExpand = async (planId: number) => {
   previewMode.value = 'preview'
   loadingResults.value = true
   try {
-    results.value = await adminAPI.scheduledTests.listResults(planId, plans.value.find(plan => plan.id === planId)?.max_results || 20)
+    const plan = plans.value.find(plan => plan.id === planId)
+    const revision = planRevision(plan)
+    const loaded = await adminAPI.scheduledTests.listResults(planId, resultLimit(plan))
+    if (!props.show || expandedPlanId.value !== planId) return
+    results.value = loaded
+    resultsRevision = revision
     selectedResultId.value = results.value[0]?.id ?? null
   } catch (error: any) {
     appStore.showError(error?.message || 'Failed to load results')

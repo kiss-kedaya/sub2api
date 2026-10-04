@@ -148,18 +148,18 @@ async function load() {
 
 watch([() => props.groupId, () => props.enabled], () => { void load() }, { immediate: true })
 
+const chipTimeFormatter = computed(() => new Intl.DateTimeFormat(locale.value || undefined, { hour: '2-digit', minute: '2-digit' }))
+const fullTimeFormatter = computed(() => new Intl.DateTimeFormat(locale.value || undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }))
 function formatChipTime(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '--:--'
-  return new Intl.DateTimeFormat(locale.value || undefined, { hour: '2-digit', minute: '2-digit' }).format(date)
+  return chipTimeFormatter.value.format(date)
 }
 
 function formatFullTime(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '-'
-  return new Intl.DateTimeFormat(locale.value || undefined, {
-    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  }).format(date)
+  return fullTimeFormatter.value.format(date)
 }
 
 function chipLabel(event: MonitorQualityEvent) {
@@ -223,6 +223,7 @@ async function loadArtwork(event: MonitorQualityEvent) {
   try {
     const html = await getQualityArtwork(props.groupId, event.id, controller.signal)
     artworkCache.set(event.id, html)
+    if (artworkCache.size > 30) artworkCache.delete(artworkCache.keys().next().value!)
     if (artworkAbort !== controller) return
     artworkHtml.value = html
     artworkState.value = html ? 'ready' : 'failed'
@@ -235,7 +236,7 @@ async function loadArtwork(event: MonitorQualityEvent) {
 }
 
 let refreshTimer: ReturnType<typeof setInterval> | undefined
-onMounted(() => { refreshTimer = setInterval(() => { if (props.enabled && !loading.value && !hovered.value) void load() }, 60000) })
+onMounted(() => { refreshTimer = setInterval(() => { if (props.enabled && !loading.value && !hovered.value && document.visibilityState !== 'hidden') void load() }, 60000) })
 onBeforeUnmount(() => {
   loadGeneration++
   if (refreshTimer) clearInterval(refreshTimer)

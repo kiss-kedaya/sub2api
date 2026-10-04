@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"testing"
 	"time"
 
@@ -12,6 +13,19 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+func TestScheduledTestService_IncrementalResultsAreBoundedAndPlanScoped(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	svc := service.NewScheduledTestService(nil, repository.NewScheduledTestResultRepository(db))
+	mock.ExpectQuery(regexp.QuoteMeta(`WHERE plan_id = $1 AND id > $3 ORDER BY created_at DESC, id DESC LIMIT $2`)).
+		WithArgs(int64(18), 200, int64(100)).WillReturnRows(sqlmock.NewRows([]string{"id", "plan_id", "status", "response_text", "error_message", "latency_ms", "started_at", "finished_at", "created_at"}))
+	results, err := svc.ListResultsAfter(context.Background(), 18, 100000, 100)
+	require.NoError(t, err)
+	require.Empty(t, results)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
 func TestScheduledTestService_PersistedHistoryOrdering(t *testing.T) {
 	for _, retention := range []int{0, 1, 2, 50} {

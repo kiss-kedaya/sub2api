@@ -129,7 +129,34 @@ func (s *ScheduledTestService) ListResults(ctx context.Context, planID int64, li
 	if limit <= 0 {
 		limit = 50
 	}
-	return s.resultRepo.ListByPlanID(ctx, planID, limit)
+	return s.resultRepo.ListByPlanID(ctx, planID, min(limit, 200))
+}
+
+// Polling reads only newly persisted results, avoiding repeated transfer of
+// large HTML/artwork and audit evidence. Authorization remains in the handler.
+func (s *ScheduledTestService) ListResultsAfter(ctx context.Context, planID int64, limit int, afterID int64) ([]*ScheduledTestResult, error) {
+	if afterID <= 0 {
+		return s.ListResults(ctx, planID, limit)
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if repo, ok := s.resultRepo.(interface {
+		ListByPlanIDAfter(context.Context, int64, int, int64) ([]*ScheduledTestResult, error)
+	}); ok {
+		return repo.ListByPlanIDAfter(ctx, planID, min(limit, 200), afterID)
+	}
+	results, err := s.ListResults(ctx, planID, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*ScheduledTestResult, 0, len(results))
+	for _, result := range results {
+		if result != nil && result.ID > afterID {
+			out = append(out, result)
+		}
+	}
+	return out, nil
 }
 
 // SaveResult inserts a result and keeps at least the two records needed for

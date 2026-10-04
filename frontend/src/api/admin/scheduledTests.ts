@@ -64,11 +64,11 @@ export async function deletePlan(id: number): Promise<void> {
  * @param limit - Optional max number of results to return
  * @returns List of test results
  */
-export async function listResults(planId: number, limit?: number): Promise<ScheduledTestResult[]> {
+export async function listResults(planId: number, limit?: number, afterId?: number): Promise<ScheduledTestResult[]> {
   const { data } = await apiClient.get<ScheduledTestResult[]>(
     `/admin/scheduled-test-plans/${planId}/results`,
     {
-      params: limit ? { limit } : undefined
+      params: { ...(limit ? { limit } : {}), ...(afterId && afterId > 0 ? { after_id: afterId } : {}) }
     }
   )
   return data ?? []
