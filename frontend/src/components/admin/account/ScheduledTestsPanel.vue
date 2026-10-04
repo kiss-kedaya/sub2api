@@ -66,7 +66,8 @@
               :hint="t('admin.scheduledTests.cronHelp')"
             />
           </div>
-          <div class="sm:col-span-2">
+          <ScheduledQualityConfig v-if="newPlan.quality_check_enabled" v-model:provider="newPlan.quality_provider" v-model:config="newPlan.quality_config" :model="newPlan.model_id" />
+          <div v-if="newPlan.quality_provider !== 'chanshui' || !newPlan.quality_check_enabled" class="sm:col-span-2">
             <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
               {{ t('admin.scheduledTests.prompt') }}
             </label>
@@ -113,11 +114,11 @@
           <div class="flex items-end">
             <div>
               <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                <Toggle v-model="newPlan.auto_recover" />
+                <Toggle :model-value="newPlan.quality_check_enabled && newPlan.quality_provider === 'chanshui' ? true : newPlan.auto_recover" :disabled="newPlan.quality_check_enabled && newPlan.quality_provider === 'chanshui'" @update:model-value="newPlan.auto_recover = $event" />
                 {{ t('admin.scheduledTests.autoRecover') }}
               </label>
               <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
-                {{ t('admin.scheduledTests.autoRecoverHelp') }}
+                {{ t(newPlan.quality_check_enabled && newPlan.quality_provider === 'chanshui' ? 'admin.scheduledTests.auditPolicyHint' : 'admin.scheduledTests.autoRecoverHelp') }}
               </p>
             </div>
           </div>
@@ -142,7 +143,7 @@
           </button>
           <button
             @click="handleCreate"
-            :disabled="!newPlan.model_id || !newPlan.cron_expression || creating"
+            :disabled="!newPlan.model_id || !newPlan.cron_expression || creating || (newPlan.quality_check_enabled && newPlan.quality_provider === 'chanshui' && !isChanshuiPolicyValid(newPlan.quality_config))"
             class="flex items-center gap-1.5 rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Icon v-if="creating" name="refresh" size="sm" class="animate-spin" :stroke-width="2" />
@@ -204,7 +205,7 @@
 
               <!-- Auto Recover Badge -->
               <span
-                v-if="plan.auto_recover"
+                v-if="plan.auto_recover || (plan.quality_check_enabled && plan.quality_provider === 'chanshui')"
                 class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400"
               >
                 {{ t('admin.scheduledTests.autoRecover') }}
@@ -220,6 +221,7 @@
             </div>
 
             <div class="flex items-center gap-3">
+              <span v-if="plan.active_audit" class="text-xs text-blue-600" :title="plan.active_audit.id">{{ t('admin.scheduledTests.auditPending') }} · {{ plan.active_audit.status }}</span>
               <!-- Last Run -->
               <div v-if="plan.last_run_at" class="hidden text-right text-xs text-gray-500 dark:text-gray-400 sm:block">
                 <div>{{ t('admin.scheduledTests.lastRun') }}</div>
@@ -309,7 +311,8 @@
                   :hint="t('admin.scheduledTests.cronHelp')"
                 />
               </div>
-              <div class="sm:col-span-2">
+              <ScheduledQualityConfig v-if="editForm.quality_check_enabled" v-model:provider="editForm.quality_provider" v-model:config="editForm.quality_config" :model="editForm.model_id" />
+              <div v-if="editForm.quality_provider !== 'chanshui' || !editForm.quality_check_enabled" class="sm:col-span-2">
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
                   {{ t('admin.scheduledTests.prompt') }}
                 </label>
@@ -356,11 +359,11 @@
               <div class="flex items-end">
                 <div>
                   <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                    <Toggle v-model="editForm.auto_recover" />
+                    <Toggle :model-value="editForm.quality_check_enabled && editForm.quality_provider === 'chanshui' ? true : editForm.auto_recover" :disabled="editForm.quality_check_enabled && editForm.quality_provider === 'chanshui'" @update:model-value="editForm.auto_recover = $event" />
                     {{ t('admin.scheduledTests.autoRecover') }}
                   </label>
                   <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
-                    {{ t('admin.scheduledTests.autoRecoverHelp') }}
+                    {{ t(editForm.quality_check_enabled && editForm.quality_provider === 'chanshui' ? 'admin.scheduledTests.auditPolicyHint' : 'admin.scheduledTests.autoRecoverHelp') }}
                   </p>
                 </div>
               </div>
@@ -385,7 +388,7 @@
               </button>
               <button
                 @click="handleEdit"
-                :disabled="!editForm.model_id || !editForm.cron_expression || updating"
+                :disabled="!editForm.model_id || !editForm.cron_expression || updating || (editForm.quality_check_enabled && editForm.quality_provider === 'chanshui' && !isChanshuiPolicyValid(editForm.quality_config))"
                 class="flex items-center gap-1.5 rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Icon v-if="updating" name="refresh" size="sm" class="animate-spin" :stroke-width="2" />
@@ -437,9 +440,11 @@
                     <span
                       :class="[
                         'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium',
-                        result.status === 'success'
+                        (result.status === 'success' || result.status === 'audit_pass')
                           ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
-                          : result.status === 'degraded'
+                          : result.status === 'completed'
+                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'
+                          : (result.status === 'degraded' || result.status === 'audit_fail')
                             ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'
                             : result.status === 'unknown'
                               ? 'bg-gray-100 text-gray-700 dark:bg-gray-500/20 dark:text-gray-400'
@@ -475,7 +480,7 @@
                       <span v-if="selectedResult.finished_at"> · {{ formatDateTime(selectedResult.finished_at) }}</span>
                     </div>
                   </div>
-                  <div class="flex items-center gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-900">
+                  <div v-if="!selectedAudit" class="flex items-center gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-900">
                     <button
                       type="button"
                       class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
@@ -498,15 +503,16 @@
                 <div
                   v-if="selectedResult.error_message"
                   class="m-3 rounded-lg border p-3 text-xs"
-                  :class="selectedResult.status === 'unknown'
+                  :class="selectedResult.status === 'unknown' || selectedResult.status === 'completed' || selectedResult.status === 'audit_pass'
                     ? 'border-gray-200 bg-gray-50 text-gray-600 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300'
                     : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-900/20 dark:text-red-300'"
                 >
-                  <div class="mb-1 font-semibold">{{ t(selectedResult.status === 'unknown' ? 'admin.scheduledTests.unknown' : 'admin.scheduledTests.errorMessage') }}</div>
+                  <div class="mb-1 font-semibold">{{ t(selectedResult.status === 'audit_pass' ? 'admin.scheduledTests.auditPassed' : selectedResult.status === 'audit_fail' ? 'admin.scheduledTests.auditStopped' : selectedResult.status === 'completed' ? 'admin.scheduledTests.auditCompleted' : selectedResult.status === 'unknown' ? 'admin.scheduledTests.unknown' : 'admin.scheduledTests.errorMessage') }}</div>
                   <pre class="whitespace-pre-wrap">{{ selectedResult.error_message }}</pre>
                 </div>
 
-                <div v-if="previewMode === 'preview' && isPreviewable(selectedResult.response_text)" class="overflow-hidden rounded-b-xl bg-gray-100 dark:bg-dark-900">
+                <ChanshuiAuditReport v-if="selectedAudit" :report="selectedAudit" />
+                <div v-else-if="previewMode === 'preview' && isPreviewable(selectedResult.response_text)" class="overflow-hidden rounded-b-xl bg-gray-100 dark:bg-dark-900">
                   <iframe
                     :srcdoc="selectedResult.response_text"
                     class="h-[26rem] w-full border-0 bg-white"
@@ -540,7 +546,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -553,6 +559,10 @@ import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
 import type { ScheduledTestPlan, ScheduledTestResult } from '@/types'
+
+import ScheduledQualityConfig from './ScheduledQualityConfig.vue'
+import ChanshuiAuditReport from './ChanshuiAuditReport.vue'
+import { defaultChanshuiConfig, completeChanshuiConfig, isChanshuiPolicyValid, parseChanshuiReport } from '@/utils/scheduledTestQuality'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -578,6 +588,7 @@ const expandedPlanId = ref<number | null>(null)
 const selectedResultId = ref<number | null>(null)
 const previewMode = ref<'preview' | 'source'>('preview')
 const selectedResult = computed(() => results.value.find((result) => result.id === selectedResultId.value) || null)
+const selectedAudit = computed(() => parseChanshuiReport(selectedResult.value?.response_text || ''))
 const showAddForm = ref(false)
 const showDeleteConfirm = ref(false)
 const deletingPlan = ref<ScheduledTestPlan | null>(null)
@@ -590,7 +601,9 @@ const editForm = reactive({
   max_results: '100' as string,
   enabled: true,
   auto_recover: false,
-  quality_check_enabled: false
+  quality_check_enabled: false,
+  quality_provider: 'pelican' as 'pelican' | 'chanshui',
+  quality_config: defaultChanshuiConfig()
 })
 
 const newPlan = reactive({
@@ -600,7 +613,9 @@ const newPlan = reactive({
   max_results: '100' as string,
   enabled: true,
   auto_recover: false,
-  quality_check_enabled: false
+  quality_check_enabled: false,
+  quality_provider: 'pelican' as 'pelican' | 'chanshui',
+  quality_config: defaultChanshuiConfig()
 })
 
 const resetNewPlan = () => {
@@ -611,6 +626,30 @@ const resetNewPlan = () => {
   newPlan.enabled = true
   newPlan.auto_recover = false
   newPlan.quality_check_enabled = false
+  newPlan.quality_provider = 'pelican'
+  newPlan.quality_config = defaultChanshuiConfig()
+}
+
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+function stopRefresh() { if (refreshTimer) clearInterval(refreshTimer); refreshTimer = null }
+onUnmounted(stopRefresh)
+const refreshOpenPanel = async () => {
+  const accountId = props.accountId
+  if (!props.show || !accountId || creating.value || updating.value) return
+  try {
+    const latest = await adminAPI.scheduledTests.listByAccount(accountId)
+    if (!props.show || props.accountId !== accountId) return
+    plans.value = latest
+    const planId = expandedPlanId.value
+    if (planId) {
+      const plan = latest.find(item => item.id === planId)
+      const latestResults = await adminAPI.scheduledTests.listResults(planId, plan?.max_results || 50)
+      if (props.show && expandedPlanId.value === planId && props.accountId === accountId) {
+        results.value = latestResults
+        if (!latestResults.some(item => item.id === selectedResultId.value)) selectedResultId.value = latestResults[0]?.id ?? null
+      }
+    }
+  } catch { /* Background refresh must not spam error toasts. */ }
 }
 
 // Load plans when dialog opens
@@ -619,7 +658,10 @@ watch(
   async (visible) => {
     if (visible && props.accountId) {
       await loadPlans()
+      stopRefresh()
+      if (props.show) refreshTimer = setInterval(() => { void refreshOpenPanel() }, 15000)
     } else {
+      stopRefresh()
       plans.value = []
       results.value = []
       expandedPlanId.value = null
@@ -656,7 +698,9 @@ const handleCreate = async () => {
       enabled: newPlan.enabled,
       max_results: maxResults,
       auto_recover: newPlan.auto_recover,
-      quality_check_enabled: newPlan.quality_check_enabled
+      quality_check_enabled: newPlan.quality_check_enabled,
+      quality_provider: newPlan.quality_provider,
+      quality_config: newPlan.quality_config
     })
     appStore.showSuccess(t('admin.scheduledTests.createSuccess'))
     showAddForm.value = false
@@ -691,6 +735,8 @@ const startEdit = (plan: ScheduledTestPlan) => {
   editForm.enabled = plan.enabled
   editForm.auto_recover = plan.auto_recover
   editForm.quality_check_enabled = plan.quality_check_enabled
+  editForm.quality_provider = plan.quality_provider || 'pelican'
+  editForm.quality_config = completeChanshuiConfig(plan.quality_config)
 }
 
 const cancelEdit = () => {
@@ -708,7 +754,9 @@ const handleEdit = async () => {
       max_results: Number(editForm.max_results) || 100,
       enabled: editForm.enabled,
       auto_recover: editForm.auto_recover,
-      quality_check_enabled: editForm.quality_check_enabled
+      quality_check_enabled: editForm.quality_check_enabled,
+      quality_provider: editForm.quality_provider,
+      quality_config: editForm.quality_config
     })
     const index = plans.value.findIndex((p) => p.id === editingPlanId.value)
     if (index !== -1) {
@@ -775,6 +823,9 @@ const selectResult = (resultId: number) => {
 }
 
 const resultStatusLabel = (status: string) => {
+  if (status === 'audit_pass') return t('admin.scheduledTests.auditPassed')
+  if (status === 'audit_fail') return t('admin.scheduledTests.auditStopped')
+  if (status === 'completed') return t('admin.scheduledTests.auditCompleted')
   if (status === 'success') return t('admin.scheduledTests.success')
   if (status === 'degraded') return t('admin.scheduledTests.degraded')
   if (status === 'unknown') return t('admin.scheduledTests.unknown')
