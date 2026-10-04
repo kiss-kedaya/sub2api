@@ -1728,7 +1728,11 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	if isOpenAIUpstreamAccessStateError(message, payload) {
 		return true
 	}
-	if openAIStreamFailedEventErrorCode(payload) == "upstream_error" {
+	relayErrorType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.type").String()))
+	if relayErrorType == "" {
+		relayErrorType = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.type").String()))
+	}
+	if openAIStreamFailedEventErrorCode(payload) == "upstream_error" && (relayErrorType == "" || relayErrorType == "upstream_error") {
 		return openAIStreamFailedEventShouldFailover(payload, message)
 	}
 	switch openAIStreamFailedEventSemanticStatus(payload, message) {
