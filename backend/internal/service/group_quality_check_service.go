@@ -134,10 +134,10 @@ func (s *GroupQualityCheckService) GetGroupStatus(ctx context.Context, groupID i
 
 	newest := results[0].CreatedAt
 	for _, result := range results {
-		if result.Status == "success" || result.Status == "degraded" {
+		if result.Status == "success" || result.Status == "degraded" || result.Status == "audit_pass" || result.Status == "audit_fail" {
 			status.CheckedAccounts++
 		}
-		if result.Status == "degraded" {
+		if result.Status == "degraded" || result.Status == "audit_fail" {
 			status.DegradedAccounts++
 		}
 		if result.CreatedAt.After(newest) {

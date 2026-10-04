@@ -29,6 +29,7 @@
         @blur="clearHover"
       >
         <span class="quality-history-chip__dot" aria-hidden="true" />
+        <span v-if="event.quality_provider === 'chanshui'" class="text-[9px]">{{ t('monitorCommon.qualityChanshui') }}</span>
         <span class="quality-history-chip__time tabular-nums">{{ formatChipTime(event.created_at) }}</span>
       </button>
     </div>
@@ -50,6 +51,7 @@
               {{ hoveredEvent.status === 'degraded' ? t('monitorCommon.qualityHistoryDegraded') : t('monitorCommon.qualityHistoryPass') }}
             </span>
             <span class="font-mono text-amber-300/90" data-testid="quality-history-event-id">#{{ hoveredEvent.id }}</span>
+            <span>{{ t(hoveredEvent.quality_provider === 'chanshui' ? 'monitorCommon.qualityChanshui' : 'monitorCommon.qualityPelican') }}</span>
             <span class="text-gray-300">{{ formatFullTime(hoveredEvent.created_at) }}</span>
             <span v-if="hoveredEvent.model_id" class="truncate font-mono text-gray-400">{{ hoveredEvent.model_id }}</span>
           </div>
@@ -59,7 +61,15 @@
           >
             {{ hoveredEvent.error_message }}
           </div>
-          <div class="quality-history-popover__viewport">
+          <div v-if="hoveredEvent.quality_provider === 'chanshui'" class="space-y-2 p-3 text-xs text-gray-200" data-testid="quality-audit-summary">
+            <div>{{ t('monitorCommon.qualityAuditTotal') }}: {{ hoveredEvent.audit_summary?.score ?? '—' }} / 100</div>
+            <div>{{ t('monitorCommon.qualityAuditCandidate') }}: {{ hoveredEvent.audit_summary?.candidate_model || '—' }}</div>
+            <div v-for="section in hoveredEvent.audit_summary?.sections || []" :key="section.name" class="flex justify-between gap-3">
+              <span>{{ t(`monitorCommon.qualitySections.${section.name}`) }}</span>
+              <span>{{ section.status || '—' }}<template v-if="section.score != null"> · {{ section.score }}</template></span>
+            </div>
+          </div>
+          <div v-else class="quality-history-popover__viewport">
             <div v-if="artworkState === 'loading'" class="grid h-full place-items-center text-[10px] text-gray-400">
               {{ t('monitorCommon.qualityArtworkLoading') }}
             </div>
@@ -82,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getQualityArtwork, getQualityEvents, type MonitorQualityEvent } from '@/api/channelMonitorV2'
 
@@ -109,8 +119,11 @@ let artworkAbort: AbortController | null = null
 
 const hoveredEvent = computed(() => (hoveredIndex.value === null ? null : events.value[hoveredIndex.value] ?? null))
 const degradedCount = computed(() => events.value.filter((event) => event.status === 'degraded').length)
+let loadGeneration = 0
 
 async function load() {
+  const generation = ++loadGeneration
+  const groupId = props.groupId
   if (!props.enabled || !props.groupId) {
     events.value = []
     return
@@ -118,13 +131,15 @@ async function load() {
   loading.value = true
   loadFailed.value = false
   try {
-    const list = await getQualityEvents(props.groupId, 30)
+    const list = await getQualityEvents(groupId!, 30)
+    if (generation !== loadGeneration) return
     events.value = Array.isArray(list) ? list : []
   } catch {
+    if (generation !== loadGeneration) return
     loadFailed.value = true
     events.value = []
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
@@ -183,6 +198,13 @@ function clearHover() {
 }
 
 async function loadArtwork(event: MonitorQualityEvent) {
+  if (event.quality_provider === 'chanshui') {
+    artworkAbort?.abort()
+    artworkAbort = null
+    artworkState.value = 'idle'
+    artworkHtml.value = ''
+    return
+  }
   if (!props.groupId) return
   const cached = artworkCache.get(event.id)
   if (cached !== undefined) {
@@ -209,7 +231,11 @@ async function loadArtwork(event: MonitorQualityEvent) {
   }
 }
 
+let refreshTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => { refreshTimer = setInterval(() => { if (props.enabled && !loading.value && !hovered.value) void load() }, 60000) })
 onBeforeUnmount(() => {
+  loadGeneration++
+  if (refreshTimer) clearInterval(refreshTimer)
   artworkAbort?.abort()
 })
 
