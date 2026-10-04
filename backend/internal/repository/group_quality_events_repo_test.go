@@ -2,6 +2,7 @@ package repository_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -12,18 +13,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGroupQualityRepository_ChanshuiPublicSummaryIsAllowlisted(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := repository.NewGroupQualityCheckRepository(db)
+	mock.ExpectQuery("(?s)SELECT r.id.*'audit_pass'.*chanshui_quality_pauses").WithArgs(int64(43), 30).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "group_id", "account_id", "model_id", "status", "error_message", "created_at", "response_text"}).
+			AddRow(11, 43, 7, "gpt-6-astra", "audit_pass", "private reason", time.Now(), `{"provider":"chanshui","audit_id":"private-audit","base_url":"https://private.example","verdict":{"total":{"score":100,"max":100},"fingerprint":{"top_model":"gpt-6-astra","api_key":"private-key"},"tools":{"status":"pass","reason":"private prompt"}},"probes":[{"private":"payload"}]}`))
+	events, err := repo.ListGroupEvents(context.Background(), 43, 30)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	raw, err := json.Marshal(events[0])
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"quality_provider":"chanshui"`)
+	require.Contains(t, string(raw), `"candidate_model":"gpt-6-astra"`)
+	require.Contains(t, string(raw), `"status":"success"`)
+	require.NotContains(t, string(raw), "private")
+	require.NotContains(t, string(raw), "probes")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestGroupQualityRepository_ListGroupEvents(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 	repo := repository.NewGroupQualityCheckRepository(db)
 	now := time.Now().UTC()
-	columns := []string{"id", "group_id", "account_id", "model_id", "status", "error_message", "created_at"}
+	columns := []string{"id", "group_id", "account_id", "model_id", "status", "error_message", "created_at", "response_text"}
 	mock.ExpectQuery("SELECT r.id, ag.group_id, p.account_id").
 		WithArgs(int64(43), 30).
 		WillReturnRows(sqlmock.NewRows(columns).
-			AddRow(11, 43, 7, "claude-sonnet-5", "degraded", "feet do not plausibly contact crank pedals", now).
-			AddRow(10, 43, 7, "claude-sonnet-5", "success", "", now.Add(-time.Minute)))
+			AddRow(11, 43, 7, "claude-sonnet-5", "degraded", "feet do not plausibly contact crank pedals", now, "").
+			AddRow(10, 43, 7, "claude-sonnet-5", "success", "", now.Add(-time.Minute), ""))
 
 	events, err := repo.ListGroupEvents(context.Background(), 43, 30)
 	require.NoError(t, err)
@@ -42,7 +64,7 @@ func TestGroupQualityRepository_ListGroupEventsClampsLimit(t *testing.T) {
 	repo := repository.NewGroupQualityCheckRepository(db)
 	mock.ExpectQuery("SELECT r.id, ag.group_id, p.account_id").
 		WithArgs(int64(9), 100).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "group_id", "account_id", "model_id", "status", "error_message", "created_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "group_id", "account_id", "model_id", "status", "error_message", "created_at", "response_text"}))
 
 	events, err := repo.ListGroupEvents(context.Background(), 9, 5000)
 	require.NoError(t, err)

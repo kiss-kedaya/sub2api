@@ -18,6 +18,21 @@ vi.mock('vue-i18n', async (importOriginal) => ({
 }))
 
 describe('ScheduledTestsPanel quality results', () => {
+  it('shows active audit progress instead of selecting old Pelican artwork after switching', async () => {
+    listByAccount.mockResolvedValue([{ id: 1, account_id: 2, model_id: 'gpt-6-astra', cron_expression: '*/5 * * * *',
+      enabled: true, max_results: 20, auto_recover: false, quality_check_enabled: true, quality_provider: 'chanshui',
+      active_audit: { id: 'fixture-audit', status: 'running' } }])
+    listResults.mockResolvedValue([{ id: 3, plan_id: 1, status: 'success', response_text: '<html>old pelican</html>', latency_ms: 2 }])
+    const wrapper = mount(ScheduledTestsPanel, { props: { show: false, accountId: 2, modelOptions: [] },
+      global: { stubs: { BaseDialog: { template: '<div><slot /></div>' }, ConfirmDialog: true } } })
+    await wrapper.setProps({ show: true }); await flushPromises()
+    await wrapper.findAll('div').find(el => el.classes().includes('cursor-pointer') && el.text().includes('gpt-6-astra'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="audit-progress"]').exists()).toBe(true)
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    await wrapper.get('[data-testid="show-all-results"]').setValue(true)
+    expect(wrapper.find('iframe').exists()).toBe(true)
+  })
   it('loads and saves the provider and section selection when editing a plan', async () => {
     const plan = { id: 1, account_id: 2, model_id: 'gpt-test', cron_expression: '*/5 * * * *',
       enabled: true, max_results: 20, auto_recover: false, quality_check_enabled: true,

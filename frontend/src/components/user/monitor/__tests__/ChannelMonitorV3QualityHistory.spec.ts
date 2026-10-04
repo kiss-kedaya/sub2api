@@ -1,5 +1,5 @@
-import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MonitorQualityEvent } from '@/api/channelMonitorV2'
 import ChannelMonitorV3QualityHistory from '../ChannelMonitorV3QualityHistory.vue'
 import { getQualityArtwork, getQualityEvents } from '@/api/channelMonitorV2'
@@ -23,6 +23,7 @@ vi.mock('@/api/channelMonitorV2', () => ({
 
 const mockedEvents = vi.mocked(getQualityEvents)
 const mockedArtwork = vi.mocked(getQualityArtwork)
+enableAutoUnmount(afterEach)
 
 function event(id: number, status: 'success' | 'degraded'): MonitorQualityEvent {
   return {
@@ -44,6 +45,17 @@ function mountHistory(props: Record<string, unknown> = {}) {
 }
 
 describe('ChannelMonitorV3QualityHistory', () => {
+  it('shows a safe Chanshui summary without requesting artwork', async () => {
+    mockedEvents.mockResolvedValue([{ ...event(9, 'success'), quality_provider: 'chanshui',
+      audit_summary: { score: 100, candidate_model: 'gpt-6-astra', sections: [{ name: 'fingerprint', status: '', score: null }] } }])
+    const wrapper = mountHistory(); await flushPromises()
+    await wrapper.get('[data-testid="quality-history-chip-9"]').trigger('mouseenter'); await flushPromises()
+    expect(mockedArtwork).not.toHaveBeenCalled()
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="quality-audit-summary"]').text()).toContain('gpt-6-astra')
+    expect(wrapper.text()).toContain('100')
+    wrapper.unmount()
+  })
   beforeEach(() => {
     vi.clearAllMocks()
   })
