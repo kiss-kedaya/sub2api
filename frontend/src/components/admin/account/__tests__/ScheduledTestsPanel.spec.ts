@@ -4,19 +4,39 @@ import ScheduledTestsPanel from '../ScheduledTestsPanel.vue'
 
 enableAutoUnmount(afterEach)
 
-const { listByAccount, listResults } = vi.hoisted(() => ({
+const { listByAccount, listResults, update } = vi.hoisted(() => ({
   listByAccount: vi.fn(),
-  listResults: vi.fn()
+  listResults: vi.fn(),
+  update: vi.fn(),
 }))
 
-vi.mock('@/api/admin', () => ({ adminAPI: { scheduledTests: { listByAccount, listResults } } }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: vi.fn() }) }))
+vi.mock('@/api/admin', () => ({ adminAPI: { scheduledTests: { listByAccount, listResults, update } } }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn() }) }))
 vi.mock('vue-i18n', async (importOriginal) => ({
   ...await importOriginal<typeof import('vue-i18n')>(),
   useI18n: () => ({ t: (key: string) => key })
 }))
 
 describe('ScheduledTestsPanel quality results', () => {
+  it('loads and saves the provider and section selection when editing a plan', async () => {
+    const plan = { id: 1, account_id: 2, model_id: 'gpt-test', cron_expression: '*/5 * * * *',
+      enabled: true, max_results: 20, auto_recover: false, quality_check_enabled: true,
+      quality_provider: 'chanshui', quality_config: { base_url: 'https://audit.example', protocol: 'auto', timeout: 120, sections: ['fingerprint', 'tools'] } }
+    listByAccount.mockResolvedValue([plan])
+    update.mockResolvedValue(plan)
+    const wrapper = mount(ScheduledTestsPanel, {
+      props: { show: false, accountId: 2, modelOptions: [] },
+      global: { stubs: { BaseDialog: { template: '<div><slot /></div>' }, ConfirmDialog: true } },
+    })
+    await wrapper.setProps({ show: true }); await flushPromises()
+    await wrapper.get('button[title="admin.scheduledTests.editPlan"]').trigger('click')
+    expect((wrapper.get('[data-testid="chanshui-service-url"]').element as HTMLInputElement).value).toBe('https://audit.example')
+    expect((wrapper.get('input[data-section="tools"]').element as HTMLInputElement).checked).toBe(true)
+    await wrapper.findAll('button').find(button => button.text() === 'common.save')!.trigger('click')
+    await flushPromises()
+    expect(update).toHaveBeenCalledWith(1, expect.objectContaining({ quality_provider: 'chanshui', quality_config: expect.objectContaining(plan.quality_config) }))
+    expect(JSON.stringify(update.mock.calls.at(-1))).not.toContain('api_key')
+  })
   it('keeps inconclusive responses distinct from success and failure', async () => {
     listByAccount.mockResolvedValue([{
       id: 1, account_id: 2, model_id: 'quality-test-model',

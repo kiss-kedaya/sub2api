@@ -102,6 +102,9 @@ func normalizeScheduledTestPlan(plan *ScheduledTestPlan) error {
 	if plan == nil {
 		return fmt.Errorf("scheduled test plan is required")
 	}
+	if err := normalizeScheduledQualityProvider(plan); err != nil {
+		return err
+	}
 	plan.PromptText = strings.TrimSpace(plan.PromptText)
 	if plan.PromptText == "" {
 		plan.PromptText = DefaultScheduledTestPrompt

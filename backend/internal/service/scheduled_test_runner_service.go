@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -34,6 +35,7 @@ type ScheduledTestRunnerService struct {
 	rateLimitSvc   *RateLimitService
 	cfg            *config.Config
 	qualityCheck   func(string, string) (string, string)
+	chanshuiClient *http.Client
 
 	// lockCache/db elect one process to execute each cron tick across all
 	// instances. With no backend configured the existing single-instance/test
@@ -192,6 +194,23 @@ func (s *ScheduledTestRunnerService) tryAcquireLeaderLock(ctx context.Context) (
 }
 
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {
+	if plan.QualityCheckEnabled && plan.QualityProvider == QualityProviderChanshui {
+		result, wait, err := s.runChanshuiPlan(ctx, plan)
+		if err != nil {
+			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d audit step failed: %v", plan.ID, err)
+			return
+		}
+		if wait > 0 {
+			if repo, ok := s.planRepo.(ScheduledChanshuiRepository); ok {
+				if err := repo.DeferChanshuiPlan(ctx, plan.ID, time.Now().Add(wait)); err != nil {
+					logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d audit defer failed", plan.ID)
+				}
+			}
+			return
+		}
+		s.completePlanRun(ctx, plan, result)
+		return
+	}
 	var (
 		result *ScheduledTestResult
 		err    error
@@ -212,7 +231,7 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 }
 
 func (s *ScheduledTestRunnerService) completePlanRun(ctx context.Context, plan *ScheduledTestPlan, result *ScheduledTestResult) {
-	if plan.QualityCheckEnabled && result != nil && result.Status == "success" {
+	if plan.QualityCheckEnabled && plan.QualityProvider != QualityProviderChanshui && result != nil && result.Status == "success" {
 		var status, reason string
 		if s.qualityCheck != nil {
 			status, reason = s.qualityCheck(result.ResponseText, plan.PromptText)
@@ -227,7 +246,28 @@ func (s *ScheduledTestRunnerService) completePlanRun(ctx context.Context, plan *
 	if err := s.scheduledSvc.SaveResult(ctx, plan.ID, plan.MaxResults, result); err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d SaveResult error: %v", plan.ID, err)
 	} else if result != nil {
-		if plan.QualityCheckEnabled {
+		if plan.QualityCheckEnabled && plan.QualityProvider == QualityProviderChanshui {
+			if result.Status == "audit_pass" || result.Status == "audit_fail" {
+				if s.accountTestSvc == nil {
+					return
+				}
+				stateRepo, ok := s.accountTestSvc.accountRepo.(ScheduledChanshuiAccountState)
+				if !ok {
+					logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d conditional audit scheduling unavailable", plan.ID)
+					return
+				}
+				if _, err := stateRepo.ApplyChanshuiQualityState(ctx, plan.AccountID, plan.ID, plan.UpdatedAt, result.Status == "audit_fail"); err != nil {
+					logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d audit scheduling update failed", plan.ID)
+					return
+				}
+			}
+			if repo, ok := s.planRepo.(ScheduledChanshuiRepository); ok {
+				if err := repo.SetChanshuiAudit(ctx, plan.ID, nil); err != nil {
+					logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d audit state clear failed", plan.ID)
+					return
+				}
+			}
+		} else if plan.QualityCheckEnabled {
 			// Never make a scheduling decision from old history after a failed write.
 			s.updateScheduledQualityState(ctx, plan, result)
 		} else if result.Status == "success" && plan.AutoRecover && s.rateLimitSvc != nil {
@@ -299,6 +339,10 @@ func (s *ScheduledTestRunnerService) updateScheduledQualityState(ctx context.Con
 }
 
 func (s *ScheduledTestRunnerService) tryRecoverAccount(ctx context.Context, plan *ScheduledTestPlan, account *Account) {
+	// A Pelican pass cannot release another detector's outstanding pause.
+	if HasChanshuiQualityPause(account) {
+		return
+	}
 	repo := s.accountTestSvc.accountRepo
 	if strings.HasPrefix(account.TempUnschedulableReason, scheduledQualityReasonPrefix) {
 		observedReason := account.TempUnschedulableReason

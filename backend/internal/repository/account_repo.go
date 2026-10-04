@@ -2079,6 +2079,20 @@ func (r *accountRepository) syncSchedulerAccountSnapshots(ctx context.Context, a
 }
 
 func (r *accountRepository) ClearError(ctx context.Context, id int64) error {
+	if r.sql != nil {
+		_, err := r.sql.ExecContext(ctx, `WITH changed AS (
+ UPDATE accounts SET status='active',error_message='',
+ schedulable=CASE WHEN jsonb_typeof(extra->'chanshui_quality_pauses')='object'
+  AND extra->'chanshui_quality_pauses'<>'{}'::jsonb THEN FALSE ELSE TRUE END,
+ updated_at=NOW() WHERE id=$1 AND status='error' AND deleted_at IS NULL RETURNING id
+ ) INSERT INTO scheduler_outbox(event_type,account_id,group_id,payload) SELECT $2,id,NULL,NULL FROM changed`, id, service.SchedulerOutboxEventAccountChanged)
+		if err != nil {
+			return err
+		}
+		r.syncSchedulerAccountSnapshot(ctx, id)
+		r.invalidateModelAvailabilityCacheAfterCommit(ctx)
+		return nil
+	}
 	_, err := r.client.Account.Update().
 		// SetError marks an errored account unschedulable. Restrict the
 		// restoration to that state so clearing a stale message on an
@@ -2930,21 +2944,10 @@ func (r *accountRepository) UpdateSessionWindowEnd(ctx context.Context, id int64
 }
 
 func (r *accountRepository) SetSchedulable(ctx context.Context, id int64, schedulable bool) error {
-	_, err := r.client.Account.Update().
-		Where(dbaccount.IDEQ(id)).
-		SetSchedulable(schedulable).
-		Save(ctx)
-	if err != nil {
-		return err
-	}
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
-		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue schedulable change failed: account=%d err=%v", id, err)
-	}
-	if !schedulable {
-		r.syncSchedulerAccountSnapshot(ctx, id)
-	}
-	r.invalidateModelAvailabilityCacheAfterCommit(ctx)
-	return nil
+	// Reuse the transactional update/outbox path, including explicit manual
+	// overrides of audit-owned pauses. Other recovery flows cannot clear them.
+	_, err := r.BulkUpdate(ctx, []int64{id}, service.AccountBulkUpdate{Schedulable: &schedulable})
+	return err
 }
 
 // MarkScheduledQualityPause stamps the scheduled-quality pause reason onto an
@@ -3313,6 +3316,8 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		return 0, nil
 	}
 	updates.Extra = stripCodexFingerprintSeedFromExtraUpdate(updates.Extra)
+	_, manualScope := service.AccountOwnerScopeFromContext(ctx)
+	manualSchedulingOverride := manualScope && (updates.Schedulable != nil || updates.Status != nil)
 
 	setClauses := make([]string, 0, 8)
 	args := make([]any, 0, 8)
@@ -3367,7 +3372,11 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		idx++
 	}
 	if updates.Schedulable != nil {
-		setClauses = append(setClauses, "schedulable = $"+itoa(idx))
+		if *updates.Schedulable && !manualScope {
+			setClauses = append(setClauses, "schedulable = CASE WHEN jsonb_typeof(extra->'chanshui_quality_pauses')='object' AND extra->'chanshui_quality_pauses'<>'{}'::jsonb THEN FALSE ELSE $"+itoa(idx)+" END")
+		} else {
+			setClauses = append(setClauses, "schedulable = $"+itoa(idx))
+		}
 		args = append(args, *updates.Schedulable)
 		idx++
 	}
@@ -3400,7 +3409,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				" AND "+ollamaCloudBaseURLMatchesSQL(credentialPlaceholder+"::jsonb ->> 'base_url'")+")")
 	}
 
-	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
+	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed || manualSchedulingOverride {
 		extraExpression := "COALESCE(extra, '{}'::jsonb)"
 		if len(updates.Extra) > 0 {
 			payload, err := json.Marshal(updates.Extra)
@@ -3441,6 +3450,9 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		}
 		if updates.EnsureCodexFingerprintSeed {
 			extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
+		}
+		if manualSchedulingOverride {
+			extraExpression = "(" + extraExpression + ") - 'chanshui_quality_pauses'"
 		}
 		setClauses = append(setClauses, "extra = "+extraExpression)
 	}
