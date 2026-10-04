@@ -1504,6 +1504,12 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 			return status
 		}
 	}
+	// A relay's structured upstream_error is a gateway failure, not a client
+	// permission denial merely because its message includes "forbidden".
+	// Explicit statuses above and explicit request/auth types remain authoritative.
+	if code == "upstream_error" && (errType == "" || errType == "upstream_error") {
+		return http.StatusBadGateway
+	}
 	switch {
 	case strings.Contains(combined, "rate_limit"):
 		return http.StatusTooManyRequests
@@ -1721,6 +1727,9 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	}
 	if isOpenAIUpstreamAccessStateError(message, payload) {
 		return true
+	}
+	if openAIStreamFailedEventErrorCode(payload) == "upstream_error" {
+		return openAIStreamFailedEventShouldFailover(payload, message)
 	}
 	switch openAIStreamFailedEventSemanticStatus(payload, message) {
 	case http.StatusForbidden:
