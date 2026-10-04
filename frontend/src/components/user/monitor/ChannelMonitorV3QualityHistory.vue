@@ -29,7 +29,6 @@
         @blur="clearHover"
       >
         <span class="quality-history-chip__dot" aria-hidden="true" />
-        <span v-if="event.quality_provider === 'chanshui'" class="text-[9px]">{{ t('monitorCommon.qualityChanshui') }}</span>
         <span class="quality-history-chip__time tabular-nums">{{ formatChipTime(event.created_at) }}</span>
       </button>
     </div>
@@ -53,7 +52,7 @@
             <span class="font-mono text-amber-300/90" data-testid="quality-history-event-id">#{{ hoveredEvent.id }}</span>
             <span>{{ t(hoveredEvent.quality_provider === 'chanshui' ? 'monitorCommon.qualityChanshui' : 'monitorCommon.qualityPelican') }}</span>
             <span class="text-gray-300">{{ formatFullTime(hoveredEvent.created_at) }}</span>
-            <span v-if="hoveredEvent.model_id" class="truncate font-mono text-gray-400">{{ hoveredEvent.model_id }}</span>
+            <span v-if="hoveredEvent.model_id && hoveredEvent.quality_provider !== 'chanshui'" class="truncate font-mono text-gray-400">{{ hoveredEvent.model_id }}</span>
           </div>
           <div
             v-if="hoveredEvent.status === 'degraded' && hoveredEvent.error_message"
@@ -63,10 +62,14 @@
           </div>
           <div v-if="hoveredEvent.quality_provider === 'chanshui'" class="space-y-2 p-3 text-xs text-gray-200" data-testid="quality-audit-summary">
             <div>{{ t('monitorCommon.qualityAuditTotal') }}: {{ hoveredEvent.audit_summary?.score ?? '—' }} / 100</div>
-            <div>{{ t('monitorCommon.qualityAuditCandidate') }}: {{ hoveredEvent.audit_summary?.candidate_model || '—' }}</div>
-            <div v-for="section in hoveredEvent.audit_summary?.sections || []" :key="section.name" class="flex justify-between gap-3">
+            <div class="break-all" data-testid="quality-tested-model">{{ t('monitorCommon.qualityAuditTestedModel') }}：{{ hoveredEvent.model_id || '—' }}</div>
+            <div class="break-all" data-testid="quality-actual-model">{{ t('monitorCommon.qualityAuditActualModel') }}：{{ hoveredEvent.audit_summary?.candidate_model || '—' }}</div>
+            <div v-for="section in (hoveredEvent.audit_summary?.sections || []).filter(section => section.name !== 'fingerprint')" :key="section.name" class="flex justify-between gap-3">
               <span>{{ t(`monitorCommon.qualitySections.${section.name}`) }}</span>
-              <span>{{ section.status || '—' }}<template v-if="section.score != null"> · {{ section.score }}</template></span>
+              <span class="min-w-0 break-all text-right">
+                {{ section.status || '—' }}
+                <template v-if="section.score != null"> · {{ section.score }}</template>
+              </span>
             </div>
           </div>
           <div v-else class="quality-history-popover__viewport">
