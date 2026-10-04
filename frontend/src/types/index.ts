@@ -2404,6 +2404,26 @@ export interface TotpLogin2FARequest {
 
 // ==================== Scheduled Test Types ====================
 
+export interface ChanshuiQualityConfig {
+  base_url: string
+  protocol: 'auto' | 'chat' | 'anthropic' | 'openai'
+  timeout: number
+  sections: string[]
+  stop_condition?: ChanshuiStopCondition
+}
+
+export interface ChanshuiStopRule {
+  type: 'fingerprint_mismatch' | 'total_score_below' | 'section_status'
+  threshold?: number | null
+  section?: string
+  status?: string
+}
+export interface ChanshuiStopCondition {
+  match: 'any' | 'all'
+  expected_model: string
+  rules: ChanshuiStopRule[]
+}
+
 export interface ScheduledTestPlan {
   id: number
   account_id: number
@@ -2414,6 +2434,9 @@ export interface ScheduledTestPlan {
   max_results: number
   auto_recover: boolean
   quality_check_enabled: boolean
+  quality_provider?: 'pelican' | 'chanshui'
+  quality_config?: ChanshuiQualityConfig
+  active_audit?: { id: string; status: string; started_at: string; expires_at: number }
   last_run_at: string | null
   next_run_at: string | null
   created_at: string
@@ -2441,6 +2464,8 @@ export interface CreateScheduledTestPlanRequest {
   max_results?: number
   auto_recover?: boolean
   quality_check_enabled?: boolean
+  quality_provider?: 'pelican' | 'chanshui'
+  quality_config?: ChanshuiQualityConfig
 }
 
 export interface UpdateScheduledTestPlanRequest {
@@ -2451,6 +2476,8 @@ export interface UpdateScheduledTestPlanRequest {
   max_results?: number
   auto_recover?: boolean
   quality_check_enabled?: boolean
+  quality_provider?: 'pelican' | 'chanshui'
+  quality_config?: ChanshuiQualityConfig
 }
 
 // Payment types

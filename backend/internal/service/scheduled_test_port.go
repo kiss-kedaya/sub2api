@@ -17,11 +17,14 @@ type ScheduledTestPlan struct {
 	AutoRecover    bool   `json:"auto_recover"`
 	// QualityCheckEnabled opts the plan into the degradation visual review.
 	// Plain plans keep the upstream scheduled-test behavior.
-	QualityCheckEnabled bool       `json:"quality_check_enabled"`
-	LastRunAt           *time.Time `json:"last_run_at"`
-	NextRunAt           *time.Time `json:"next_run_at"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	QualityCheckEnabled bool               `json:"quality_check_enabled"`
+	QualityProvider     string             `json:"quality_provider"`
+	QualityConfig       ChanshuiConfig     `json:"quality_config"`
+	ActiveAudit         *ChanshuiAuditView `json:"active_audit,omitempty"`
+	LastRunAt           *time.Time         `json:"last_run_at"`
+	NextRunAt           *time.Time         `json:"next_run_at"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
 }
 
 // ScheduledTestResult represents a single test execution result.
