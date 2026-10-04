@@ -45,6 +45,21 @@ function mountHistory(props: Record<string, unknown> = {}) {
 }
 
 describe('ChannelMonitorV3QualityHistory', () => {
+  it('pauses periodic history requests when the page is hidden', async () => {
+    vi.useFakeTimers()
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    mockedEvents.mockResolvedValue([])
+    const wrapper = mountHistory()
+    try {
+      await flushPromises()
+      expect(mockedEvents).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(120000)
+      expect(mockedEvents).toHaveBeenCalledTimes(1)
+      visibility.mockReturnValue('visible')
+      await vi.advanceTimersByTimeAsync(60000); await flushPromises()
+      expect(mockedEvents).toHaveBeenCalledTimes(2)
+    } finally { wrapper.unmount(); visibility.mockRestore(); vi.useRealTimers() }
+  })
   it('shows tested and actual models without a duplicate fingerprint row or chip provider label', async () => {
     mockedEvents.mockResolvedValue([{ ...event(9, 'degraded'), model_id: 'gpt-6-astra', quality_provider: 'chanshui',
       audit_summary: { score: 0, candidate_model: 'gpt-5.6-luna', sections: [{ name: 'fingerprint', status: '', score: null }] } }])

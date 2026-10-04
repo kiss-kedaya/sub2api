@@ -122,13 +122,23 @@ func (r *scheduledTestResultRepository) Create(ctx context.Context, result *serv
 }
 
 func (r *scheduledTestResultRepository) ListByPlanID(ctx context.Context, planID int64, limit int) ([]*service.ScheduledTestResult, error) {
+	return r.ListByPlanIDAfter(ctx, planID, limit, 0)
+}
+
+func (r *scheduledTestResultRepository) ListByPlanIDAfter(ctx context.Context, planID int64, limit int, afterID int64) ([]*service.ScheduledTestResult, error) {
+	filter := ""
+	args := []any{planID, limit}
+	if afterID > 0 {
+		filter = " AND id > $3"
+		args = append(args, afterID)
+	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, plan_id, status, response_text, error_message, latency_ms, started_at, finished_at, created_at
 		FROM scheduled_test_results
-		WHERE plan_id = $1
+		WHERE plan_id = $1`+filter+`
 		ORDER BY created_at DESC, id DESC
 		LIMIT $2
-	`, planID, limit)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
