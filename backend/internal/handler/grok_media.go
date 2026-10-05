@@ -124,7 +124,8 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	setOpsEndpointContext(c, "", int16(service.RequestTypeSync))
 
 	if endpoint.IsGenerationRequest() {
-		if !service.GroupAllowsImageGeneration(apiKey.Group) {
+		c.Request = c.Request.WithContext(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
+		if len(apiKey.CandidateGroupIDs()) <= 1 && !service.GroupAllowsImageGeneration(apiKey.Group) {
 			h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 			return
 		}
@@ -586,6 +587,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
 
 		if err != nil {
+			if endpoint.IsGenerationRequest() {
+				h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionHash, account, err)
+			}
 			if createJob != nil && !videoRequestRejected {
 				if !videoRequestStarted {
 					if refundErr := h.gatewayService.FailGrokVideoBillingJob(requestCtx, createJob); refundErr != nil {
@@ -636,7 +640,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				}
 				if failoverErr.RetryableOnSameAccount {
 					retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-					if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+					if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 						sameAccountRetryCount[account.ID]++
 						retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
 						reqLog.Warn("grok_media.pool_mode_same_account_retry",

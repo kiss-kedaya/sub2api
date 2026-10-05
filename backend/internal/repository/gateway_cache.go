@@ -50,7 +50,53 @@ func (c *gatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, s
 
 func (c *gatewayCache) SetSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, ttl time.Duration) error {
 	key := buildSessionKey(groupID, sessionHash)
-	return c.rdb.Set(ctx, key, accountID, ttl).Err()
+	return setHealthySessionScript.Run(ctx, c.rdb, []string{key, fmt.Sprintf("%s:failed:%d", key, accountID)}, accountID, ttl.Milliseconds()).Err()
+}
+
+var setHealthySessionScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return 1
+`)
+
+var invalidateFailedSessionScript = redis.NewScript(`
+if ARGV[4] == '1' then
+  redis.call('SET', KEYS[2], '1', 'EX', 60)
+  if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('DEL', KEYS[1]) end
+end
+if ARGV[5] == '1' then
+  redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', ARGV[2])
+  redis.call('ZADD', KEYS[3], ARGV[3], ARGV[1])
+  redis.call('EXPIRE', KEYS[3], 60)
+end
+return 1
+`)
+
+func (c *gatewayCache) InvalidateFailedSession(ctx context.Context, groupID, userID int64, sessionHash string, accountID int64) error {
+	key := buildSessionKey(groupID, sessionHash)
+	now := time.Now().Unix()
+	hasSession, hasUser := 0, 0
+	if sessionHash != "" {
+		hasSession = 1
+	}
+	if userID > 0 {
+		hasUser = 1
+	}
+	return invalidateFailedSessionScript.Run(ctx, c.rdb, []string{key, fmt.Sprintf("%s:failed:%d", key, accountID), fmt.Sprintf("upstream_failed_user:%d:%d", groupID, userID)}, accountID, now, now+60, hasSession, hasUser).Err()
+}
+
+func (c *gatewayCache) FailedUserAccounts(ctx context.Context, groupID, userID int64) ([]int64, error) {
+	values, err := c.rdb.ZRangeByScore(ctx, fmt.Sprintf("upstream_failed_user:%d:%d", groupID, userID), &redis.ZRangeBy{Min: fmt.Sprintf("(%d", time.Now().Unix()), Max: "+inf"}).Result()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(values))
+	for _, value := range values {
+		if id, err := strconv.ParseInt(value, 10, 64); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
 }
 
 func (c *gatewayCache) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {

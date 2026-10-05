@@ -510,6 +510,9 @@ func (r *apiKeyRouteIterator) loadNext() bool {
 		if routed == nil || routed.Group == nil || !groupAllowsRequestedModel(routed.Group, r.requestedModel) {
 			continue
 		}
+		if OpenAIImageGenerationIntentFromContext(r.ctx) && !GroupAllowsImageGeneration(routed.Group) {
+			continue
+		}
 		routeCtx := ContextWithAPIKeyRoute(r.ctx, routed)
 		mapping, restricted := r.resolveMapping(routeCtx, routed.GroupID, r.requestedModel)
 		if restricted {

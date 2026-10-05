@@ -570,7 +570,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// Codex 在所有请求中被动声明 image_gen namespace，宽泛检测会导致禁了生图的
 	// 分组中所有 Codex 请求被 403（#4447），并误占生图并发槽位。
 	imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, body)
-	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
+	if imageIntent {
+		c.Request = c.Request.WithContext(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
+	}
+	if imageIntent && len(apiKey.CandidateGroupIDs()) <= 1 && !service.GroupAllowsImageGeneration(apiKey.Group) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
 	}
@@ -933,6 +936,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionHash, account, err)
 			if result != nil && result.ClientDisconnect {
 				reqLog.Info("openai.client_disconnected",
 					zap.Int64("account_id", account.ID),
@@ -981,7 +985,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					// 池模式：同账号重试
 					if shouldRetryNext && failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-						if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+						if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 							sameAccountRetryCount[account.ID]++
 							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
 							reqLog.Warn("openai.pool_mode_same_account_retry",
@@ -1009,7 +1013,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					}
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
-					h.clearStickyAfterUpstreamAccountSwitch(c.Request.Context(), apiKey.GroupID, sessionHash)
+
 					lastFailoverErr = failoverErr
 					if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 						submitResponsesUsage(result)
@@ -1585,6 +1589,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionHash, account, err)
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_messages.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
@@ -1612,7 +1617,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					// 池模式：同账号重试
 					if shouldRetryNext && failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-						if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+						if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 							sameAccountRetryCount[account.ID]++
 							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
 							reqLog.Warn("openai_messages.pool_mode_same_account_retry",
@@ -1640,7 +1645,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					}
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
-					h.clearStickyAfterUpstreamAccountSwitch(c.Request.Context(), apiKey.GroupID, sessionHash)
+
 					lastFailoverErr = failoverErr
 					if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 						submitMessagesUsage(result)
@@ -2287,7 +2292,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 
 	imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage)
-	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
+	if imageIntent {
+		ctx = service.WithOpenAIImageGenerationIntent(ctx)
+		c.Request = c.Request.WithContext(ctx)
+	}
+	if imageIntent && len(apiKey.CandidateGroupIDs()) <= 1 && !service.GroupAllowsImageGeneration(apiKey.Group) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.ImageGenerationPermissionMessage())
 		return
 	}
@@ -2400,7 +2409,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			return false
 		}
 		retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-		if !sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+		if service.PreferAlternativeUpstream(c.Request.Context()) || !sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 			return false
 		}
 		sameAccountRetryCount[account.ID]++
@@ -2419,6 +2428,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 	}
 	handleWSFailover := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
+		h.gatewayService.InvalidateUpstreamAffinity(ctx, apiKey.GroupID, sessionHash, account, failoverErr)
 		if ctx.Err() != nil {
 			return false
 		}
@@ -2435,7 +2445,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 		h.gatewayService.RecordOpenAIAccountSwitch()
 		failedAccountIDs[account.ID] = struct{}{}
-		h.clearStickyAfterUpstreamAccountSwitch(ctx, apiKey.GroupID, sessionHash)
+
 		lastFailoverErr = failoverErr
 		if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 			closeOpenAIWSFailoverExhausted(c, wsConn, failoverErr)
@@ -2878,6 +2888,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					turnErr,
 				)
 				if turnErr != nil {
+					h.gatewayService.InvalidateUpstreamAffinity(ctx, apiKey.GroupID, sessionHash, account, turnErr)
 					if result == nil || result.ImageCount <= 0 {
 						return
 					}
@@ -3258,13 +3269,6 @@ func (h *OpenAIGatewayHandler) acquireImageGenerationSlot(c *gin.Context, stream
 }
 
 // handleConcurrencyError handles concurrency-related acquire errors.
-
-func (h *OpenAIGatewayHandler) clearStickyAfterUpstreamAccountSwitch(ctx context.Context, groupID *int64, sessionHash string) {
-	if h == nil || h.gatewayService == nil {
-		return
-	}
-	h.gatewayService.ClearStickySession(ctx, groupID, sessionHash)
-}
 
 func (h *OpenAIGatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotType string, streamStarted bool) {
 	status, errType, code, message := concurrencyErrorResponse(err, slotType)

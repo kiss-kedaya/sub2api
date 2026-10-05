@@ -237,6 +237,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			return
 		}
 
+		h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionHash, account, err)
 		var failoverErr *service.UpstreamFailoverError
 		if !errors.As(err, &failoverErr) {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestedModel, false, result), false, nil, err)
@@ -261,7 +262,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		}
 		if failoverErr.RetryableOnSameAccount {
 			retryLimit := account.GetPoolModeRetryCount()
-			if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+			if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 				sameAccountRetryCount[account.ID]++
 				retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
 				reqLog.Warn("openai_alpha_search.same_account_retry",
