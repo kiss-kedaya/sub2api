@@ -6,7 +6,7 @@ func TestIsGrokModerationRefusal(t *testing.T) {
 	if !IsGrokModerationRefusal(PlatformGrok, []byte(`status_code=403, I'm sorry, I can't help with that request.`)) {
 		t.Fatal("expected Grok refusal to match")
 	}
-	if !IsGrokModerationRefusal(PlatformGrok, []byte(`IM SORRY, I CAN'T HELP WITH THAT REQUEST.`)) {
+	if !IsGrokModerationRefusal(PlatformGrok, []byte(`I'M SORRY, I CAN'T HELP WITH THAT REQUEST.`)) {
 		t.Fatal("expected case-insensitive refusal to match")
 	}
 	if IsGrokModerationRefusal(PlatformGrok, []byte(`I'm sorry`)) {
