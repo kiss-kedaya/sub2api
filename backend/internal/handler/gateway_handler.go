@@ -643,6 +643,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				})
 			}
 			if err != nil {
+				h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionKey, account, err)
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化
@@ -1086,6 +1087,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 
 			if err != nil {
+				h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), currentAPIKey.GroupID, sessionKey, account, err)
 				// Beta policy block: return 400 immediately, no failover
 				var betaBlockedErr *service.BetaBlockedError
 				if errors.As(err, &betaBlockedErr) {

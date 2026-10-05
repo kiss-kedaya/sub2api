@@ -49,7 +49,7 @@ func (s *GatewayService) PrepareSchedulerRequestContext(ctx context.Context) con
 	// projection remains available as an explicit emergency switch for rollback
 	// diagnostics, but is disabled by default to preserve the 0-DB invariant.
 	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
-	return withUserPlatformQuotaRequestContext(ctx)
+	return withUpstreamAttempts(withUserPlatformQuotaRequestContext(ctx))
 }
 
 // SelectAccountForModel 选择支持指定模型的账号（粘性会话+优先级+模型映射）
