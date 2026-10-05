@@ -86,7 +86,7 @@ func (c *gatewayCache) InvalidateFailedSession(ctx context.Context, groupID, use
 }
 
 func (c *gatewayCache) FailedUserAccounts(ctx context.Context, groupID, userID int64) ([]int64, error) {
-	values, err := c.rdb.ZRangeByScore(ctx, fmt.Sprintf("upstream_failed_user:%d:%d", groupID, userID), &redis.ZRangeBy{Min: fmt.Sprintf("(%d", time.Now().Unix()), Max: "+inf"}).Result()
+	values, err := c.rdb.ZRangeArgs(ctx, redis.ZRangeArgs{Key: fmt.Sprintf("upstream_failed_user:%d:%d", groupID, userID), Start: fmt.Sprintf("(%d", time.Now().Unix()), Stop: "+inf", ByScore: true}).Result()
 	if err != nil {
 		return nil, err
 	}
