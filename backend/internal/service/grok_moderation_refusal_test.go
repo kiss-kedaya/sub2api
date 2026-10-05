@@ -3,11 +3,17 @@ package service
 import "testing"
 
 func TestIsGrokModerationRefusal(t *testing.T) {
-	if !IsGrokModerationRefusal(PlatformGrok, []byte(`status_code=403, I'm sorry, I can't help`)) {
+	if !IsGrokModerationRefusal(PlatformGrok, []byte(`status_code=403, I'm sorry, I can't help with that request.`)) {
 		t.Fatal("expected Grok refusal to match")
 	}
-	if !IsGrokModerationRefusal(PlatformGrok, []byte(`IM SORRY: SAFETY_CHECK_TYPE`)) {
+	if !IsGrokModerationRefusal(PlatformGrok, []byte(`IM SORRY, I CAN'T HELP WITH THAT REQUEST.`)) {
 		t.Fatal("expected case-insensitive refusal to match")
+	}
+	if IsGrokModerationRefusal(PlatformGrok, []byte(`I'm sorry`)) {
+		t.Fatal("incomplete refusal must not match")
+	}
+	if IsGrokModerationRefusal(PlatformGrok, []byte(`I'm sorry, I can't help`)) {
+		t.Fatal("truncated refusal must not match")
 	}
 	if IsGrokModerationRefusal(PlatformOpenAI, []byte(`I'm sorry`)) {
 		t.Fatal("non-Grok refusal must not match")

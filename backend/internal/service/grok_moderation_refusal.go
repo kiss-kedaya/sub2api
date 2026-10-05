@@ -3,6 +3,7 @@ package service
 import "strings"
 
 const grokModerationRefusalBillingCost = 0.035
+const grokModerationRefusalText = "i'm sorry, i can't help with that request."
 
 // IsGrokModerationRefusal reports the provider-specific refusal signature that
 // must be surfaced unchanged and settled as a billable request. Keep this
@@ -12,7 +13,7 @@ func IsGrokModerationRefusal(platform string, body []byte) bool {
 		return false
 	}
 	text := strings.ToLower(string(body))
-	return strings.Contains(text, "i'm sorry") || strings.Contains(text, "im sorry")
+	return strings.Contains(text, grokModerationRefusalText)
 }
 
 func GrokModerationRefusalBillingCost() float64 { return grokModerationRefusalBillingCost }
