@@ -72,6 +72,7 @@ func (e GrokMediaEndpoint) IsImageGenerationRequest() bool {
 type GrokMediaRequestInfo struct {
 	Model           string
 	Prompt          string
+	Quality         string
 	N               int
 	Size            string
 	SizeTier        string
@@ -161,6 +162,7 @@ func parseGrokMediaJSONRequest(body []byte, info *GrokMediaRequestInfo) {
 	}
 	info.Model = strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	info.Prompt = strings.TrimSpace(gjson.GetBytes(body, "prompt").String())
+	info.Quality = strings.TrimSpace(gjson.GetBytes(body, "quality").String())
 	info.Size = strings.TrimSpace(gjson.GetBytes(body, "size").String())
 	info.AspectRatio = strings.TrimSpace(gjson.GetBytes(body, "aspect_ratio").String())
 	assignGrokMediaResolution(strings.TrimSpace(gjson.GetBytes(body, "resolution").String()), info)
@@ -290,6 +292,8 @@ func parseGrokMediaMultipartRequest(contentType string, body []byte, info *GrokM
 			info.Model = value
 		case "prompt":
 			info.Prompt = value
+		case "quality":
+			info.Quality = value
 		case "size":
 			info.Size = value
 		case "aspect_ratio":
@@ -1268,6 +1272,9 @@ func prepareGrokMediaForwardBody(endpoint GrokMediaEndpoint, body []byte, conten
 	if info.ImageResolution != "" {
 		payload["resolution"] = info.ImageResolution
 	}
+	if info.Quality != "" {
+		payload["quality"] = info.Quality
+	}
 	if info.AspectRatio != "" {
 		payload["aspect_ratio"] = info.AspectRatio
 	}
@@ -1731,7 +1738,8 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 	}
 
 	kind := "http_error"
-	if s.shouldFailoverGrokUpstreamError(resp.StatusCode, body) {
+	qualityMismatch := isGrokImageQualityUnsupported(resp.StatusCode, requestedModel, body)
+	if qualityMismatch || s.shouldFailoverGrokUpstreamError(resp.StatusCode, body) {
 		kind = "failover"
 	}
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -1747,6 +1755,17 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 		Detail:             upstreamDetail,
 	})
 	if kind == "failover" {
+		if qualityMismatch {
+			return nil, &UpstreamFailoverError{
+				StatusCode:        resp.StatusCode,
+				ResponseBody:      body,
+				ResponseHeaders:   resp.Header.Clone(),
+				Reason:            GrokImageQualityUnsupportedReason,
+				NextAccountAction: NextAccountRetry,
+				ClientStatusCode:  http.StatusBadRequest,
+				ClientMessage:     upstreamMsg,
+			}
+		}
 		retryable, retryDelay, retryDeadline, retryMax := grokSameAccountRetryMetadata(account, resp.StatusCode, body)
 		return nil, &UpstreamFailoverError{
 			StatusCode:               resp.StatusCode,
