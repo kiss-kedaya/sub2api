@@ -853,6 +853,13 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 	// 计算费用
 	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	if result.ForcedBillingCost > 0 {
+		cost = &CostBreakdown{
+			TotalCost:   result.ForcedBillingCost,
+			ActualCost:  result.ForcedBillingCost,
+			BillingMode: string(BillingModePerRequest),
+		}
+	}
 	// response_model：按上游成功响应自报的模型计费（渠道显式开启才生效）。
 	// 采纳条件见 responseModelBillingDeclaration + hasIdentifiedResponseModelPricing
 	// + responseModelBillingAdoptable。任一条件不满足都静默回落基线，即开启本模式前的
@@ -876,7 +883,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// Preserve rejected-request usage for diagnostics without charging it.
-	if result.NonBillableUpstreamError {
+	if result.NonBillableUpstreamError && result.ForcedBillingCost <= 0 {
 		billingMode := string(BillingModeToken)
 		if cost != nil && strings.TrimSpace(cost.BillingMode) != "" {
 			billingMode = cost.BillingMode
@@ -885,7 +892,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// 判断计费方式：订阅模式 vs 余额模式
-	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
+	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType() && !result.ForceBalanceBilling
 	billingType := BillingTypeBalance
 	if isSubscriptionBilling {
 		billingType = BillingTypeSubscription
