@@ -113,6 +113,19 @@ func (s *PaymentService) confirmPayment(ctx context.Context, oid int64, tradeNo 
 		s.writeAuditLog(ctx, o.ID, "PAYMENT_AMOUNT_MISMATCH", pk, map[string]any{"expected": o.PayAmount, "paid": paid, "tradeNo": tradeNo})
 		return fmt.Errorf("amount mismatch: expected %s, got %s", strconv.FormatFloat(o.PayAmount, 'f', -1, 64), strconv.FormatFloat(paid, 'f', -1, 64))
 	}
+	if strings.EqualFold(strings.TrimSpace(pk), payment.TypeEasyPay) || strings.EqualFold(expectedProviderKey, payment.TypeEasyPay) {
+		// Completed/refund-state callbacks are acknowledgements only. They must
+		// neither re-credit the user nor depend on a still-available provider.
+		if o.Status == OrderStatusCompleted || psIsRefundStatus(o.Status) {
+			return nil
+		}
+		if err := s.verifyEasyPaySettlement(ctx, o, tradeNo, paid); err != nil {
+			s.writeAuditLog(ctx, o.ID, "PAYMENT_UPSTREAM_VERIFY_FAILED", payment.TypeEasyPay, map[string]any{
+				"reason": err.Error(),
+			})
+			return err
+		}
+	}
 	return s.toPaid(ctx, o, tradeNo, paid, pk)
 }
 

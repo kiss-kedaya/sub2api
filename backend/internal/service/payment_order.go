@@ -106,6 +106,11 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if oauthResp != nil {
 		return oauthResp, nil
 	}
+	// Reject an attacker-controlled result-page query before an order is stored
+	// or a signed checkout request is sent to the provider.
+	if _, err := CanonicalizeReturnURL(req.ReturnURL, req.SrcHost, req.SrcURL); err != nil {
+		return nil, err
+	}
 	order, err := s.createOrderInTx(ctx, req, user, plan, cfg, orderAmount, limitAmount, feeRate, payAmount, sel)
 	if err != nil {
 		return nil, err

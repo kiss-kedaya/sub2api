@@ -244,11 +244,17 @@ func CanonicalizeReturnURL(raw string, srcHost string, srcURL string) (string, e
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must use http or https")
 	}
+	// The browser supplies only the destination. All result parameters are
+	// generated server-side after this check; preserving caller-supplied query
+	// fields would let a signed checkout URL be reinterpreted as a callback.
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.User != nil {
+		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must not contain query parameters or credentials")
+	}
 	parsed.Fragment = ""
 	if parsed.Path == "" {
 		parsed.Path = "/"
 	}
-	if parsed.Path != paymentResultReturnPath {
+	if parsed.Path != paymentResultReturnPath || parsed.EscapedPath() != paymentResultReturnPath || parsed.Opaque != "" {
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must target the canonical internal payment result page")
 	}
 	if !allowedReturnURLHost(parsed.Host, srcHost, srcURL) {
@@ -285,6 +291,13 @@ func buildPaymentReturnURL(base string, orderID int64, outTradeNo string, resume
 	}
 	if !parsed.IsAbs() || parsed.Host == "" {
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must be a valid absolute URL")
+	}
+	if (parsed.Scheme != "https" && parsed.Scheme != "http") ||
+		parsed.Path != paymentResultReturnPath || parsed.EscapedPath() != paymentResultReturnPath || parsed.Opaque != "" {
+		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must target the canonical internal payment result page")
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.User != nil {
+		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must not contain query parameters or credentials")
 	}
 	parsed.Fragment = ""
 

@@ -20,6 +20,7 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 		wantStatus  string
 		wantTradeNo string
 		wantAmount  float64
+		wantError   bool
 	}{
 		{
 			name:        "top level trade success is paid",
@@ -39,7 +40,7 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			name:        "empty trade status with paid numeric status stays pending",
 			body:        `{"code":1,"trade_status":"","status":1,"money":"12.34"}`,
 			wantStatus:  payment.ProviderStatusPending,
-			wantTradeNo: orderID,
+			wantTradeNo: "",
 			wantAmount:  12.34,
 		},
 		{
@@ -53,27 +54,29 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			name:        "legacy numeric paid status remains compatible",
 			body:        `{"code":1,"status":1,"money":"3.21"}`,
 			wantStatus:  payment.ProviderStatusPaid,
-			wantTradeNo: orderID,
+			wantTradeNo: "",
 			wantAmount:  3.21,
 		},
 		{
 			name:        "legacy numeric non paid status is pending",
 			body:        `{"code":1,"status":0,"money":"3.21"}`,
 			wantStatus:  payment.ProviderStatusPending,
-			wantTradeNo: orderID,
+			wantTradeNo: "",
 			wantAmount:  3.21,
 		},
 		{
-			name:        "query failure with missing status is pending",
+			name:        "query failure with missing status is an error",
+			wantError:   true,
 			body:        `{"code":0,"msg":"订单不存在"}`,
 			wantStatus:  payment.ProviderStatusPending,
-			wantTradeNo: orderID,
+			wantTradeNo: "",
 		},
 		{
-			name:        "missing fields are pending",
+			name:        "missing fields are an error",
+			wantError:   true,
 			body:        `{}`,
 			wantStatus:  payment.ProviderStatusPending,
-			wantTradeNo: orderID,
+			wantTradeNo: "",
 		},
 	}
 
@@ -104,6 +107,12 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 
 			provider := newTestEasyPay(t, server.URL)
 			resp, err := provider.QueryOrder(context.Background(), orderID)
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("expected failed query to return an error")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("QueryOrder returned error: %v", err)
 			}

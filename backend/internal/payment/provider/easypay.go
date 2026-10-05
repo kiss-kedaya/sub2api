@@ -305,11 +305,15 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 		"act": "order", "pid": e.config["pid"],
 		"key": e.config["pkey"], "out_trade_no": tradeNo,
 	}
-	body, err := e.post(ctx, e.apiBase()+"/api.php", params)
+	body, httpStatus, err := e.postRaw(ctx, e.apiBase()+"/api.php", params)
 	if err != nil {
 		return nil, fmt.Errorf("easypay query: %w", err)
 	}
+	if httpStatus < http.StatusOK || httpStatus >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("easypay query failed (HTTP %d)", httpStatus)
+	}
 	type easyPayQueryData struct {
+		OutTradeNo  *string `json:"out_trade_no"`
 		TradeStatus *string `json:"trade_status"`
 		Status      *int    `json:"status"`
 		Money       *string `json:"money"`
@@ -318,6 +322,7 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 	var resp struct {
 		Code        int              `json:"code"`
 		Msg         string           `json:"msg"`
+		OutTradeNo  *string          `json:"out_trade_no"`
 		TradeStatus *string          `json:"trade_status"`
 		Status      *int             `json:"status"`
 		Money       *string          `json:"money"`
@@ -326,6 +331,14 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("easypay parse query: %w", err)
+	}
+	if resp.Code != easypayCodeSuccess {
+		return nil, fmt.Errorf("easypay query was not successful")
+	}
+	for _, upstreamOrder := range []*string{resp.OutTradeNo, resp.Data.OutTradeNo} {
+		if upstreamOrder != nil && strings.TrimSpace(*upstreamOrder) != "" && strings.TrimSpace(*upstreamOrder) != strings.TrimSpace(tradeNo) {
+			return nil, fmt.Errorf("easypay query returned a different out_trade_no")
+		}
 	}
 	status := payment.ProviderStatusPending
 	if resp.TradeStatus != nil {
@@ -350,12 +363,12 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 	} else if resp.Data.Money != nil {
 		money = *resp.Data.Money
 	}
-	responseTradeNo := tradeNo
-	if resp.TradeNo != nil {
-		if *resp.TradeNo != "" {
-			responseTradeNo = *resp.TradeNo
-		}
-	} else if resp.Data.TradeNo != nil && *resp.Data.TradeNo != "" {
+	// Do not substitute out_trade_no for an absent gateway trade_no. Callers
+	// must be able to distinguish a real upstream transaction identifier.
+	responseTradeNo := ""
+	if resp.TradeNo != nil && strings.TrimSpace(*resp.TradeNo) != "" {
+		responseTradeNo = strings.TrimSpace(*resp.TradeNo)
+	} else if resp.Data.TradeNo != nil && strings.TrimSpace(*resp.Data.TradeNo) != "" {
 		responseTradeNo = *resp.Data.TradeNo
 	}
 
@@ -372,6 +385,11 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	values, err := url.ParseQuery(rawBody)
 	if err != nil {
 		return nil, fmt.Errorf("parse notify: %w", err)
+	}
+	for key, entries := range values {
+		if len(entries) != 1 {
+			return nil, fmt.Errorf("duplicate notify parameter %q", key)
+		}
 	}
 	// url.ParseQuery already decodes values — no additional decode needed.
 	params := make(map[string]string)
