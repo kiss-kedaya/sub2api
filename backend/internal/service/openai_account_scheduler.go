@@ -2336,7 +2336,7 @@ func (s *OpenAIGatewayService) PrepareSchedulerRequestContext(ctx context.Contex
 	// switch; installing it by default issues a PostgreSQL projection query for
 	// every scheduling pass.
 	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
-	return withUserPlatformQuotaRequestContext(ctx)
+	return withUpstreamAttempts(withUserPlatformQuotaRequestContext(ctx))
 }
 
 // RefreshSchedulerRequestContext starts a new freshness scope for a new turn

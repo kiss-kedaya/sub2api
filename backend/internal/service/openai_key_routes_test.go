@@ -7,6 +7,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSelectAlongKeyRoutesImagePermissionUsesCandidate(t *testing.T) {
+	groups := []*Group{
+		{ID: 1, Platform: PlatformAnthropic, Status: StatusActive, Hydrated: true},
+		{ID: 2, Platform: PlatformGrok, Status: StatusActive, Hydrated: true, AllowImageGeneration: true},
+	}
+	accounts := []*Account{
+		{ID: 11, Platform: PlatformOpenAI, GroupIDs: []int64{1}, Credentials: map[string]any{"model_mapping": map[string]any{"grok-imagine-image-2.0": "grok-imagine-image-2.0"}}},
+		{ID: 12, Platform: PlatformGrok, GroupIDs: []int64{2}, Credentials: map[string]any{"model_mapping": map[string]any{"grok-imagine-image-2.0": "grok-imagine-image-2.0"}}},
+	}
+	snapshot, _ := newSmartRouteCoreSnapshot(groups, accounts...)
+	svc := &OpenAIGatewayService{schedulerSnapshot: snapshot}
+	key := &APIKey{User: &User{}, GroupID: &groups[0].ID, Group: groups[0], RouteGroupIDs: []int64{1, 2}}
+	var tried []int64
+	_, _, _, err := svc.selectAlongKeyRoutes(WithOpenAIImageGenerationIntent(context.Background()), key, []string{PlatformGrok}, "grok-imagine-image-2.0", func(_ context.Context, gid *int64, _ []string, _ string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+		tried = append(tried, *gid)
+		return nil, OpenAIAccountScheduleDecision{}, ErrNoAvailableAccounts
+	})
+	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+	require.Equal(t, []int64{2}, tried, "disabled primary must not block or receive image traffic")
+}
+
 func TestOpenAICatalogModels_UsesMappedGeminiKeys(t *testing.T) {
 	gid := int64(32)
 	svc := &OpenAIGatewayService{

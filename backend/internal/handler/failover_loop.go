@@ -275,7 +275,7 @@ func (s *FailoverState) HandleFailoverError(
 
 	// 同账号重试不算切换账号，粘性会话仅在实际切换时强制缓存计费。
 	retryCount := s.SameAccountRetryCount[accountID]
-	sameAccountRetry := sameAccountRetryAllowed(failoverErr, retryCount, retryLimit)
+	sameAccountRetry := !service.PreferAlternativeUpstream(ctx) && sameAccountRetryAllowed(failoverErr, retryCount, retryLimit)
 	if needForceCacheBilling(s.hasBoundSession, failoverErr, sameAccountRetry) {
 		s.ForceCacheBilling = true
 	}
@@ -299,7 +299,7 @@ func (s *FailoverState) HandleFailoverError(
 	}
 
 	// 同账号重试用尽，执行临时封禁
-	if failoverErr.RetryableOnSameAccount {
+	if failoverErr.RetryableOnSameAccount && !service.PreferAlternativeUpstream(ctx) {
 		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
 	}
 

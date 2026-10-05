@@ -208,3 +208,36 @@ func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhen
 	require.Equal(t, "failover", events[0].Kind)
 	require.Equal(t, "failover", events[1].Kind)
 }
+
+// Smart routing must skip the disabled primary before checking image permission.
+func TestOpenAIImagesSmartRouteDisabledPrimary(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	primary := &service.Group{ID: 9, Platform: service.PlatformAnthropic, Status: service.StatusActive, Hydrated: true}
+	backup := &service.Group{ID: 17, Platform: service.PlatformOpenAI, Status: service.StatusActive, Hydrated: true, AllowImageGeneration: true}
+	account := service.Account{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true, GroupIDs: []int64{17}, Credentials: map[string]any{"access_token": "synthetic"}}
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	backup.ModelAllowlist = service.GroupModelsListConfig{Enabled: true, Models: []string{"gpt-image-2"}}
+	repo := openAIImagesFailoverAccountRepo{accounts: []service.Account{account}}
+	snapshot := service.NewSchedulerSnapshotService(&smartRouteHandlerSnapshot{fakeSchedulerCache{accounts: []*service.Account{&account}}}, nil, repo, smartRouteHandlerGroups{groups: map[int64]*service.Group{9: primary, 17: backup}}, cfg)
+	for _, id := range []int64{9, 17} {
+		_, err := snapshot.GetGroupByIDLite(context.Background(), id)
+		require.NoError(t, err)
+	}
+	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeSimple}, nil)
+	t.Cleanup(billing.Stop)
+	upstream := &openAIImagesFailoverHTTPUpstream{}
+	gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, snapshot, nil, nil, nil, billing, upstream, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(nil), billing, &service.APIKeyService{}, nil, nil, nil, nil, cfg)
+	key := &service.APIKey{ID: 7, UserID: 42, User: &service.User{ID: 42, Status: service.StatusActive}, GroupID: &primary.ID, Group: primary, RouteGroupIDs: []int64{9, 17}}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewBufferString(`{"model":"gpt-image-2","prompt":"cat"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(middleware2.ContextKeyAPIKey), key)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 42})
+	h.Images(c)
+	require.NotEqual(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Equal(t, []int64{1}, upstream.calls(), "request must reach enabled candidate: %s", rec.Body.String())
+	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
+}

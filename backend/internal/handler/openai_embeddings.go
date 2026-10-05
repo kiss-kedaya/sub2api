@@ -257,6 +257,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
 
 		if err != nil {
+			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, "", account, err)
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				if c.Writer.Size() != writerSizeBeforeForward {
@@ -279,6 +280,9 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				if failoverErr.RetryableOnSameAccount {
 					currentRetryCount := sameAccountRetryCount[account.ID]
 					nextRetryCount, retryDelay, retry := poolModeSameAccountRetry(account, failoverErr, currentRetryCount)
+					if service.PreferAlternativeUpstream(c.Request.Context()) {
+						retry = false
+					}
 					if retry {
 						sameAccountRetryCount[account.ID] = nextRetryCount
 						reqLog.Warn("openai_embeddings.pool_mode_same_account_retry",
@@ -299,7 +303,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), false, nil, err)
 				h.gatewayService.RecordOpenAIAccountSwitch()
 				failedAccountIDs[account.ID] = struct{}{}
-				h.clearStickyAfterUpstreamAccountSwitch(c.Request.Context(), apiKey.GroupID, "")
+
 				lastFailoverErr = failoverErr
 				if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
 					h.handleFailoverExhausted(c, failoverErr, false)

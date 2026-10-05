@@ -796,6 +796,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionKey, account, err)
 			var failoverErr *service.UpstreamFailoverError
 			if result == nil && errors.As(err, &failoverErr) {
 				failoverAction := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
