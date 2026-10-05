@@ -617,6 +617,13 @@ type ForwardResult struct {
 	Model           string
 	// Keep usage from deterministic pre-output request failures, but do not bill it.
 	NonBillableUpstreamError bool
+	// ForcedBillingCost charges a deterministic upstream rejection through the
+	// normal usage settlement path. It is intentionally zero for ordinary
+	// failures and is only set by narrowly classified provider policies.
+	ForcedBillingCost float64
+	// ForceBalanceBilling keeps provider-policy charges on the user's balance
+	// even when the request otherwise has a subscription billing context.
+	ForceBalanceBilling bool
 
 	// UpstreamModel is the actual upstream model after mapping.
 	// Prefer empty when it is identical to Model; persistence normalizes equal values away as no-op mappings.
