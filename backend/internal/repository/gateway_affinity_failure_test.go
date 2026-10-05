@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,4 +57,32 @@ func TestFailedAffinityWithoutSessionStillAvoidsAccount(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []int64{11}, ids)
 	require.False(t, server.Exists(buildSessionKey(7, "")+":failed:11"))
+}
+
+func TestFailedAffinityConcurrentLateErrorsPreserveReplacement(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	cache := &gatewayCache{rdb: client}
+	ctx := context.Background()
+	require.NoError(t, cache.InvalidateFailedSession(ctx, 7, 9, "s", 11))
+	require.NoError(t, cache.SetSessionAccountID(ctx, 7, "s", 12, time.Hour))
+	errors := make(chan error, 32)
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errors <- cache.InvalidateFailedSession(ctx, 7, 9, "s", 11)
+			errors <- cache.SetSessionAccountID(ctx, 7, "s", 11, time.Hour)
+		}()
+	}
+	wg.Wait()
+	close(errors)
+	for err := range errors {
+		require.NoError(t, err)
+	}
+	bound, err := cache.GetSessionAccountID(ctx, 7, "s")
+	require.NoError(t, err)
+	require.Equal(t, int64(12), bound)
 }

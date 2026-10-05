@@ -27,7 +27,8 @@ func (s *failedAffinityCacheStub) InvalidateFailedSession(ctx context.Context, _
 
 func TestUpstreamPreferencesTriesUnusedBeforeBoundedFallback(t *testing.T) {
 	ctx := withUpstreamAttempts(context.Background())
-	state := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts)
+	state, ok := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts)
+	require.True(t, ok)
 	state.failed[1] = true
 	excluded := map[int64]struct{}{1: {}, 3: {}}
 	var attempts []int64
@@ -82,5 +83,7 @@ func TestUpstreamAffinityCleanupSurvivesCanceledRequest(t *testing.T) {
 	svc.InvalidateUpstreamAffinity(ctx, nil, "current", &Account{ID: 1}, errors.New("stream failed"))
 	require.Equal(t, []string{"openai:current", "openai:legacy"}, cache.invalidated)
 	require.False(t, cache.canceled)
-	require.Contains(t, ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts).failed, int64(1))
+	state, ok := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts)
+	require.True(t, ok)
+	require.Contains(t, state.failed, int64(1))
 }
