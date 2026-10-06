@@ -63,10 +63,13 @@ pnpm-debug.log*
 # 环境配置
 # ===================
 .env
+.env.*
 .env.local
 .env.*.local
 *.env
 !.env.example
+!.env.sample
+!.env.template
 docker-compose.override.yml
 
 # ===================
@@ -174,3 +177,63 @@ output/
 .vite/
 # 本地闭源插件开发目录及构建产物不进入 Sub2API 仓库
 /plugins/
+
+# Private security/deployment outputs. Keep patterns scoped so source directories named security-* remain trackable.
+/.private-artifacts/**
+/.security-artifacts/**
+/private/**
+/private-*/**
+/security-private/**
+/private-security-*/**
+/private-source-*/**
+/private-ops*/**
+/deploy-private/**
+/deploy-logs/**
+/security-reports/**
+/SECURITY-*.md
+/SECURITY-REVIEW-*.md
+/.deploy/
+/_tmp_cleanup_*/
+/source.tar.gz
+/private-*.tar.gz
+/private-*.tgz
+.env.production
+.env.staging
+.env.development
+credentials.json
+credentials*.json
+.netrc
+id_rsa
+id_rsa_*
+id_ed25519
+id_ed25519_*
+*.dsn
+*.secret
+*.secrets
+*.token
+*.jwt
+*.credentials
+*.credential
+*.keyfile
+*.p12
+*.pfx
+*.jks
+*.keystore
+security.db
+/*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+*.dump
+/backups/**
+**/backups/**
+/*.zip
+/*.7z
+/*.rar
+/*.sha256
+security-audit*.json
+bandit-audit*.json
+gitleaks*.json
