@@ -9,6 +9,7 @@ import type {
   Proxy,
   PublicSettings,
   SubscriptionProgress,
+  SubscriptionUsageWindow,
   UsageLog,
   User,
   UserAffiliateDetail,
@@ -577,7 +578,8 @@ function createPageFixtures(now: Date, user: User, groups: Group[]) {
     alipay_force_qrcode: true,
   }
   const paymentConfig: PaymentConfig = {
-    payment_enabled: true,
+    enabled: true,
+    recharge_center_enabled: true,
     min_amount: checkoutInfo.global_min,
     max_amount: checkoutInfo.global_max,
     daily_limit: 5000,
@@ -605,13 +607,23 @@ function createPageFixtures(now: Date, user: User, groups: Group[]) {
     { id: 6102, user_id: user.id, group_id: groups[1].id, status: 'active', starts_at: at(-38 * DAY), daily_usage_usd: 13.7, weekly_usage_usd: 41.2, monthly_usage_usd: 166.8, daily_window_start: at(-21 * 60 * 60_000), weekly_window_start: at(-5 * DAY), monthly_window_start: at(-8 * DAY), created_at: at(-38 * DAY), updated_at: at(-35 * 60_000), expires_at: at(52 * DAY), group: groups[1] },
     { id: 6103, user_id: user.id, group_id: groups[2].id, status: 'expired', starts_at: at(-70 * DAY), daily_usage_usd: 0, weekly_usage_usd: 0, monthly_usage_usd: 98.3, daily_window_start: null, weekly_window_start: null, monthly_window_start: at(-70 * DAY), created_at: at(-70 * DAY), updated_at: at(-10 * DAY), expires_at: at(-10 * DAY), group: groups[2] },
   ]
+  const usageWindow = (used: number, limit: number | null | undefined, start: string | null, resetSeconds: number): SubscriptionUsageWindow => ({
+    limit_usd: limit ?? 0,
+    used_usd: used,
+    remaining_usd: limit ? Math.max(limit - used, 0) : 0,
+    percentage: limit ? used / limit * 100 : 0,
+    window_start: start ?? at(-resetSeconds * 1000),
+    resets_at: at((resetSeconds - 3_600) * 1000),
+    resets_in_seconds: resetSeconds,
+  })
   const subscriptionProgress: SubscriptionProgress[] = subscriptions.filter(item => item.status === 'active').map(item => ({
-    subscription_id: item.id,
-    daily: { used: item.daily_usage_usd, limit: item.group?.daily_limit_usd ?? null, percentage: item.group?.daily_limit_usd ? item.daily_usage_usd / item.group.daily_limit_usd * 100 : 0, reset_in_seconds: 57_600 },
-    weekly: { used: item.weekly_usage_usd, limit: item.group?.weekly_limit_usd ?? null, percentage: item.group?.weekly_limit_usd ? item.weekly_usage_usd / item.group.weekly_limit_usd * 100 : 0, reset_in_seconds: 345_600 },
-    monthly: { used: item.monthly_usage_usd, limit: item.group?.monthly_limit_usd ?? null, percentage: item.group?.monthly_limit_usd ? item.monthly_usage_usd / item.group.monthly_limit_usd * 100 : 0, reset_in_seconds: 1_555_200 },
-    expires_at: item.expires_at,
-    days_remaining: item.expires_at ? Math.ceil((Date.parse(item.expires_at) - now.getTime()) / DAY) : null,
+    id: item.id,
+    group_name: item.group?.name ?? `#${item.group_id}`,
+    expires_at: item.expires_at ?? '',
+    expires_in_days: item.expires_at ? Math.max(Math.ceil((Date.parse(item.expires_at) - now.getTime()) / DAY), 0) : 0,
+    daily: usageWindow(item.daily_usage_usd, item.group?.daily_limit_usd, item.daily_window_start, 57_600),
+    weekly: usageWindow(item.weekly_usage_usd, item.group?.weekly_limit_usd, item.weekly_window_start, 345_600),
+    monthly: usageWindow(item.monthly_usage_usd, item.group?.monthly_limit_usd, item.monthly_window_start, 1_555_200),
   }))
   const redeemHistory: RedeemHistoryItem[] = [
     { id: 9103, code: 'DEMO-SUB-USED', type: 'subscription', value: 30, status: 'used', used_at: at(-12 * DAY), created_at: at(-15 * DAY), group_id: groups[0].id, validity_days: 30, group: { id: groups[0].id, name: groups[0].name } },
