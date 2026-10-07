@@ -118,6 +118,9 @@ func normalizeUserRole(role, fallback string) (string, error) {
 }
 
 func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInput) (*User, error) {
+	if err := validateUserSchedulingLimits(&input.Concurrency, &input.RPMLimit); err != nil {
+		return nil, err
+	}
 	balance := 0.0
 	if input.Balance != nil {
 		balance = *input.Balance
@@ -195,6 +198,12 @@ func (s *adminServiceImpl) assignDefaultSubscriptions(ctx context.Context, userI
 }
 
 func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *UpdateUserInput) (*User, error) {
+	if err := RequireConfiguredPoolOwner(ctx, id); err != nil {
+		return nil, err
+	}
+	if err := validateUserSchedulingLimits(input.Concurrency, input.RPMLimit); err != nil {
+		return nil, err
+	}
 	// 校验用户专属分组倍率：必须 > 0（nil 合法，表示清除专属倍率）
 	if input.GroupRates != nil {
 		for groupID, rate := range input.GroupRates {
@@ -357,6 +366,9 @@ func sameInt64Set(a, b []int64) bool {
 }
 
 func (s *adminServiceImpl) DeleteUser(ctx context.Context, id int64) error {
+	if err := RequireConfiguredPoolOwner(ctx, id); err != nil {
+		return err
+	}
 	// Protect admin users: cannot delete admin accounts
 	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
@@ -448,6 +460,12 @@ func (s *adminServiceImpl) deleteUserWithAPIKeys(ctx context.Context, userID int
 }
 
 func (s *adminServiceImpl) BatchUpdateConcurrency(ctx context.Context, userIDs []int64, value int, mode string) (int, error) {
+	// Negative deltas remain valid in add mode; absolute limits must be non-negative.
+	if mode == "set" {
+		if err := validateUserSchedulingLimits(&value, nil); err != nil {
+			return 0, err
+		}
+	}
 	cleaned := make([]int64, 0, len(userIDs))
 	for _, uid := range userIDs {
 		if uid > 0 {
@@ -481,6 +499,9 @@ func (s *adminServiceImpl) BatchUpdateConcurrency(ctx context.Context, userIDs [
 }
 
 func (s *adminServiceImpl) BatchUpdateLimits(ctx context.Context, userIDs []int64, concurrency, rpmLimit *int) (int, error) {
+	if err := validateUserSchedulingLimits(concurrency, rpmLimit); err != nil {
+		return 0, err
+	}
 	if concurrency == nil && rpmLimit == nil {
 		return 0, fmt.Errorf("at least one of concurrency or rpm_limit is required")
 	}
@@ -907,6 +928,9 @@ func redeemCodeHistoryTime(code RedeemCode) time.Time {
 }
 
 func (s *adminServiceImpl) BindUserAuthIdentity(ctx context.Context, userID int64, input AdminBindAuthIdentityInput) (*AdminBoundAuthIdentity, error) {
+	if err := RequireConfiguredPoolOwner(ctx, userID); err != nil {
+		return nil, err
+	}
 	if userID <= 0 {
 		return nil, infraerrors.BadRequest("INVALID_INPUT", "user_id must be greater than 0")
 	}

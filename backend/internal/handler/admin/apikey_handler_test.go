@@ -157,6 +157,40 @@ func TestAdminAPIKeyHandler_ResetRateLimitUsage(t *testing.T) {
 	require.Nil(t, resp.Data.APIKey.Window7dStart)
 }
 
+func TestAdminAPIKeyHandler_InvalidGroupDoesNotResetUsage(t *testing.T) {
+	svc := &orderedAPIKeyAdminService{
+		stubAdminService: newStubAdminService(),
+		groupErr:         infraerrors.BadRequest("GROUP_NOT_FOUND", "target group not found"),
+	}
+	router := setupAPIKeyHandler(svc)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/api-keys/10", bytes.NewBufferString(`{"group_id":999,"reset_rate_limit_usage":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, []string{"group"}, svc.calls)
+}
+
+type orderedAPIKeyAdminService struct {
+	*stubAdminService
+	groupErr error
+	calls    []string
+}
+
+func (s *orderedAPIKeyAdminService) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID int64, groupID *int64) (*service.AdminUpdateAPIKeyGroupIDResult, error) {
+	s.calls = append(s.calls, "group")
+	if s.groupErr != nil {
+		return nil, s.groupErr
+	}
+	return s.stubAdminService.AdminUpdateAPIKeyGroupID(ctx, keyID, groupID)
+}
+
+func (s *orderedAPIKeyAdminService) AdminResetAPIKeyRateLimitUsage(ctx context.Context, keyID int64) (*service.APIKey, error) {
+	s.calls = append(s.calls, "reset")
+	return s.stubAdminService.AdminResetAPIKeyRateLimitUsage(ctx, keyID)
+}
+
 func TestAdminAPIKeyHandler_UpdateGroup_ServiceError(t *testing.T) {
 	svc := &failingUpdateGroupService{
 		stubAdminService: newStubAdminService(),

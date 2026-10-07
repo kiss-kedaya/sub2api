@@ -68,7 +68,7 @@ func TestChanshuiBulkUpdateManualOverrideAndBackgroundRecovery(t *testing.T) {
 			repo := newAccountRepositoryWithSQL(nil, exec, nil)
 			ctx := context.Background()
 			if manual {
-				ctx = service.WithAccountOwnerScope(ctx, 7, "fixture@example.test")
+				ctx = service.WithAccountOwnerScope(ctx, 7, 0)
 			}
 			require.NoError(t, repo.SetSchedulable(ctx, 2, enabled))
 			require.Len(t, exec.execQueries, 1)

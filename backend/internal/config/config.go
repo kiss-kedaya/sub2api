@@ -730,6 +730,9 @@ type ForwardedClientIPSettings struct {
 }
 
 type SecurityConfig struct {
+	// AccountPoolOwnerUserID grants one verified admin visibility of the entire pool.
+	// Zero disables pool-wide access; this server-only setting is not editable through the UI.
+	AccountPoolOwnerUserID int64 `mapstructure:"account_pool_owner_user_id"`
 	URLAllowlist    URLAllowlistConfig   `mapstructure:"url_allowlist"`
 	ResponseHeaders ResponseHeaderConfig `mapstructure:"response_headers"`
 	CSP             CSPConfig            `mapstructure:"csp"`
@@ -2136,6 +2139,7 @@ func setDefaults() {
 	viper.SetDefault("webauthn.rp_origins", []string{})
 
 	// Security
+	viper.SetDefault("security.account_pool_owner_user_id", int64(0))
 	viper.SetDefault("security.url_allowlist.enabled", false)
 	viper.SetDefault("security.url_allowlist.upstream_hosts", []string{
 		"api.openai.com",
@@ -2779,6 +2783,9 @@ func setEnvReachableDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if c.Security.AccountPoolOwnerUserID < 0 {
+		return fmt.Errorf("security.account_pool_owner_user_id must be non-negative")
+	}
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
 	if err != nil {
 		return fmt.Errorf("security.forwarded_client_ip_headers: %w", err)

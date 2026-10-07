@@ -321,19 +321,12 @@ func (r *accountRepository) CreateWithAccountGroups(ctx context.Context, account
 }
 
 func (r *accountRepository) applyAccountOwnerScope(ctx context.Context, q *dbent.AccountQuery) *dbent.AccountQuery {
-	adminID, seeLegacy, ok := service.AccountOwnerScopeDetail(ctx)
-	if !ok || q == nil {
+	adminID, fullPool, ok := service.AccountOwnerScopeDetail(ctx)
+	if !ok || fullPool || q == nil {
 		return q
 	}
 	return q.Where(dbpredicate.Account(func(s *entsql.Selector) {
 		col := s.C("created_by")
-		if seeLegacy {
-			s.Where(entsql.Or(
-				entsql.IsNull(col),
-				entsql.EQ(col, adminID),
-			))
-			return
-		}
 		s.Where(entsql.EQ(col, adminID))
 	}))
 }
@@ -347,8 +340,8 @@ func (r *accountRepository) stampAccountOwner(ctx context.Context, account *serv
 }
 
 func (r *accountRepository) ensureAccountOwnerVisible(ctx context.Context, id int64) error {
-	adminID, seeLegacy, ok := service.AccountOwnerScopeDetail(ctx)
-	if !ok || r == nil || r.sql == nil || id <= 0 {
+	adminID, fullPool, ok := service.AccountOwnerScopeDetail(ctx)
+	if !ok || fullPool || r == nil || r.sql == nil || id <= 0 {
 		return nil
 	}
 	rows, err := r.sql.QueryContext(ctx, "SELECT created_by FROM accounts WHERE id = $1", id)
@@ -368,7 +361,7 @@ func (r *accountRepository) ensureAccountOwnerVisible(ctx context.Context, id in
 		v := createdBy.Int64
 		owner = &v
 	}
-	if !service.AccountVisibleToOwner(owner, adminID, seeLegacy) {
+	if !service.AccountVisibleToOwner(owner, adminID, fullPool) {
 		return service.ErrAccountNotFound
 	}
 	return rows.Err()
@@ -629,7 +622,7 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 //   - 不加载完整的账号实体及其关联数据（Groups、Proxy 等）
 //   - 适用于删除前的存在性检查等只需判断有无的场景
 func (r *accountRepository) ExistsByID(ctx context.Context, id int64) (bool, error) {
-	exists, err := r.client.Account.Query().Where(dbaccount.IDEQ(id)).Exist(ctx)
+	exists, err := r.applyAccountOwnerScope(ctx, r.client.Account.Query().Where(dbaccount.IDEQ(id))).Exist(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -645,7 +638,7 @@ func (r *accountRepository) GetByCRSAccountID(ctx context.Context, crsAccountID 
 	// 排除 spark 影子账号(parent_account_id 非空):影子不持凭据,绝不能被 CRS 当作普通账号
 	// 更新而覆盖 type/credentials/proxy。即便影子 Extra 被误写入 crs_account_id 也不会命中
 	// (外审第7轮 P1)。
-	m, err := r.client.Account.Query().
+	m, err := r.applyAccountOwnerScope(ctx, r.client.Account.Query()).
 		Where(dbaccount.ParentAccountIDIsNil()).
 		Where(func(s *entsql.Selector) {
 			s.Where(sqljson.ValueEQ(dbaccount.FieldExtra, crsAccountID, sqljson.Path("crs_account_id")))
@@ -671,14 +664,20 @@ func (r *accountRepository) GetByCRSAccountID(ctx context.Context, crsAccountID 
 func (r *accountRepository) ListCRSAccountIDs(ctx context.Context) (map[string]int64, error) {
 	// parent_account_id IS NULL 排除 spark 影子账号:影子不是 CRS 账号,绝不能进 CRS 同步映射
 	// (否则会被当普通账号更新而覆盖 type/credentials/proxy)(外审第7轮 P1)。
-	rows, err := r.sql.QueryContext(ctx, `
+	query := `
 		SELECT id, extra->>'crs_account_id'
 		FROM accounts
 		WHERE deleted_at IS NULL
 			AND parent_account_id IS NULL
 			AND extra->>'crs_account_id' IS NOT NULL
 			AND extra->>'crs_account_id' != ''
-	`)
+	`
+	var args []any
+	if adminID, fullPool, scoped := service.AccountOwnerScopeDetail(ctx); scoped && !fullPool {
+		query += " AND created_by = $1"
+		args = append(args, adminID)
+	}
+	rows, err := r.sql.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -725,6 +724,9 @@ func (r *accountRepository) updateAccount(
 ) error {
 	if account == nil {
 		return nil
+	}
+	if err := r.ensureAccountOwnerVisible(ctx, account.ID); err != nil {
+		return err
 	}
 
 	baseCtx := ctx
@@ -3466,6 +3468,11 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	whereClause := " WHERE id = ANY($" + itoa(idx) + ") AND deleted_at IS NULL"
 	args = append(args, pq.Array(ids))
 	idx++
+	if adminID, fullPool, scoped := service.AccountOwnerScopeDetail(ctx); scoped && !fullPool {
+		whereClause += " AND created_by = $" + itoa(idx)
+		args = append(args, adminID)
+		idx++
+	}
 	if updates.ProbeEnabled != nil {
 		whereClause += " AND type = $" + itoa(idx)
 		args = append(args, service.AccountTypeAPIKey)
@@ -3965,7 +3972,7 @@ func itoa(v int) string {
 // FindByExtraField finds accounts by key-value pairs in the extra field.
 // Uses PostgreSQL JSONB @> operator for efficient queries (requires GIN index).
 func (r *accountRepository) FindByExtraField(ctx context.Context, key string, value any) ([]service.Account, error) {
-	accounts, err := r.client.Account.Query().
+	accounts, err := r.applyAccountOwnerScope(ctx, r.client.Account.Query()).
 		Where(
 			dbaccount.DeletedAtIsNil(),
 			func(s *entsql.Selector) {

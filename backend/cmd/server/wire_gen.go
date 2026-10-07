@@ -334,7 +334,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, ticketHandler, channelMonitorUserHandler, channelMonitorV2Handler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, passkeyHandler, handlerPaymentHandler, paymentWebhookHandler, availableChannelHandler, modelPlazaHandler, asyncImageHandler, batchImageHandler, idempotencyCoordinator, idempotencyCleanupService, openAIQuotaAutoResetService)
 	jwtAuthMiddleware := middleware.NewJWTAuthMiddleware(authService, userService, settingService, auditLogService)
 	optionalJWTAuthMiddleware := middleware.NewOptionalJWTAuthMiddleware(authService, userService, settingService, auditLogService)
-	adminAuthMiddleware := middleware.NewAdminAuthMiddleware(authService, userService, settingService, auditLogService)
+	adminAuthMiddleware := middleware.NewAdminAuthMiddleware(authService, userService, settingService, auditLogService, configConfig)
 	apiKeyAuthMiddleware := middleware.NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, configConfig)
 	auditLogMiddleware := middleware.NewAuditLogMiddleware(auditLogService)
 	stepUpAuthMiddleware := middleware.NewStepUpAuthMiddleware(totpService, userService, settingService)

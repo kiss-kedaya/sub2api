@@ -229,6 +229,9 @@ func NewAccountService(accountRepo AccountRepository, groupRepo GroupRepository)
 
 // Create 创建账号
 func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (*Account, error) {
+	if err := ValidateAccountSchedulingFields(&req.Concurrency, &req.Priority); err != nil {
+		return nil, err
+	}
 	// 验证分组是否存在（如果指定了分组）
 	if len(req.GroupIDs) > 0 {
 		if err := s.validateGroupIDsExist(ctx, req.GroupIDs); err != nil {
@@ -324,6 +327,9 @@ func (s *AccountService) ListByGroup(ctx context.Context, groupID int64) ([]Acco
 
 // Update 更新账号
 func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccountRequest) (*Account, error) {
+	if err := ValidateAccountSchedulingFields(req.Concurrency, req.Priority); err != nil {
+		return nil, err
+	}
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get account: %w", err)
