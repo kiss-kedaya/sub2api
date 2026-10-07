@@ -1233,12 +1233,20 @@ func grokMediaSignedVideoContentURL(body []byte, requestID string) (string, erro
 		return "", nil
 	}
 	parsed, err := url.Parse(rawURL)
-	if err != nil || !strings.EqualFold(parsed.Scheme, "https") ||
-		!strings.EqualFold(parsed.Hostname(), "vidgen.x.ai") ||
-		(parsed.Port() != "" && parsed.Port() != "443") || parsed.User != nil {
-		return "", fmt.Errorf("grok media status returned an unsupported video content URL")
+	if err != nil {
+		return "", fmt.Errorf("grok media status returned an invalid video content URL: %w", err)
 	}
-	return parsed.String(), nil
+	if strings.EqualFold(parsed.Scheme, "https") &&
+		strings.EqualFold(parsed.Hostname(), "vidgen.x.ai") &&
+		(parsed.Port() == "" || parsed.Port() == "443") &&
+		parsed.User == nil {
+		return parsed.String(), nil
+	}
+	// Relays also answer with their own public CDN links (e.g. cdn.<relay>),
+	// which are neither the official signed URL nor the relay's content
+	// endpoint. An upstream-supplied URL is never fetched here: fall back to the
+	// authenticated content endpoint instead of failing the whole download.
+	return "", nil
 }
 
 func isGrokCLIProxyTarget(rawURL string) bool {
