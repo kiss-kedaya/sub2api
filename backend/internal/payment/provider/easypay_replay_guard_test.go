@@ -66,3 +66,36 @@ func TestEasyPayMissingGatewayTradeNumberStaysEmpty(t *testing.T) {
 	require.Equal(t, payment.ProviderStatusPaid, resp.Status)
 	require.Empty(t, resp.TradeNo, "merchant order number is not a gateway transaction number")
 }
+
+func TestEasyPayNotificationRejectsUnknownParams(t *testing.T) {
+	// Upstream issue #7881: an order-creation signature replayed as a notify,
+	// with the smuggled pair riding inside return_url. Any key outside the
+	// genuine async notify set must fail closed.
+	for _, extra := range []string{"return_url", "notify_url", "cid", "device", "clientip", "trade_status_extra"} {
+		t.Run(extra, func(t *testing.T) {
+			p := &EasyPay{config: map[string]string{"pid": "fixture-merchant", "pkey": "fixture-secret"}}
+			params := map[string]string{"pid": "fixture-merchant", "money": "80.00", "trade_no": "fixture-trade", "out_trade_no": "fixture-order", "trade_status": "TRADE_SUCCESS", "sign_type": "MD5"}
+			params[extra] = "x&trade_status=TRADE_SUCCESS"
+			params["sign"] = easyPaySign(params, "fixture-secret")
+			values := url.Values{}
+			for k, v := range params {
+				values.Set(k, v)
+			}
+			_, err := p.VerifyNotification(context.Background(), values.Encode(), nil)
+			require.ErrorContains(t, err, "unexpected notify param")
+		})
+	}
+}
+
+func TestEasyPayNotificationAcceptsGenuineCallback(t *testing.T) {
+	p := &EasyPay{config: map[string]string{"pid": "fixture-merchant", "pkey": "fixture-secret"}}
+	params := map[string]string{"pid": "fixture-merchant", "money": "80.00", "trade_no": "fixture-trade", "out_trade_no": "fixture-order", "trade_status": "TRADE_SUCCESS", "sign_type": "MD5", "name": "fixture", "type": "alipay", "param": ""}
+	params["sign"] = easyPaySign(params, "fixture-secret")
+	values := url.Values{}
+	for k, v := range params {
+		values.Set(k, v)
+	}
+	got, err := p.VerifyNotification(context.Background(), values.Encode(), nil)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+}
