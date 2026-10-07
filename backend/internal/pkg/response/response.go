@@ -5,6 +5,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
@@ -169,7 +170,7 @@ func PaginatedWithResult(c *gin.Context, items any, pagination *PaginationResult
 // ParsePagination 解析分页参数
 func ParsePagination(c *gin.Context) (page, pageSize int) {
 	page = 1
-	pageSize = 20
+	pageSize, _ = paginationLimits(c)
 
 	if p := c.Query("page"); p != "" {
 		if val, err := parseInt(p); err == nil && val > 0 {
@@ -188,16 +189,57 @@ func ParsePagination(c *gin.Context) (page, pageSize int) {
 		}
 	}
 
+	pageSize = ClampPageSize(c, pageSize)
+	// Pagination repositories calculate (page-1)*pageSize. Reject values that
+	// would overflow int before they reach an offset calculation.
+	if page > 1 && page-1 > math.MaxInt/pageSize {
+		page = 1
+	}
 	return page, pageSize
 }
 
-func parseInt(s string) (int, error) {
-	var result int
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, nil
-		}
-		result = result*10 + int(c-'0')
+const paginationLimitsKey = "response.pagination_limits"
+const paginationLimitsLoaderKey = "response.pagination_limits_loader"
+
+type paginationLimitValues struct {
+	defaultSize int
+	maxSize     int
+}
+
+// SetPaginationLimitsLoader defers settings reads until a handler needs pagination.
+func SetPaginationLimitsLoader(c *gin.Context, loader func() (int, int)) {
+	c.Set(paginationLimitsLoaderKey, loader)
+}
+
+func paginationLimits(c *gin.Context) (int, int) {
+	if value, exists := c.Get(paginationLimitsKey); exists {
+		limits := value.(paginationLimitValues)
+		return limits.defaultSize, limits.maxSize
 	}
-	return result, nil
+	defaultSize, maxSize := 20, 1000
+	if value, exists := c.Get(paginationLimitsLoaderKey); exists {
+		defaultSize, maxSize = value.(func() (int, int))()
+	}
+	if maxSize < 1 || maxSize > 1000 {
+		maxSize = 1000
+	}
+	if defaultSize < 1 {
+		defaultSize = 20
+	}
+	defaultSize = min(defaultSize, maxSize)
+	c.Set(paginationLimitsKey, paginationLimitValues{defaultSize, maxSize})
+	return defaultSize, maxSize
+}
+
+// ClampPageSize also covers handlers with stricter or cursor-based parsers.
+func ClampPageSize(c *gin.Context, pageSize int) int {
+	defaultSize, maxSize := paginationLimits(c)
+	if pageSize < 1 {
+		return defaultSize
+	}
+	return min(pageSize, maxSize)
+}
+
+func parseInt(s string) (int, error) {
+	return strconv.Atoi(s)
 }
