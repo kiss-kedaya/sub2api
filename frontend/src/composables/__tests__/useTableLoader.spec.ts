@@ -40,6 +40,14 @@ describe('useTableLoader', () => {
   // --- 基础加载 ---
 
   describe('基础加载', () => {
+    it('uses the actual page size returned by the server', async () => {
+      const fetchFn = vi.fn().mockResolvedValue({ items: [], total: 120, pages: 3, page_size: 50 })
+      const { load, pagination } = useTableLoader({ fetchFn, pageSize: 1000 })
+      await load()
+      expect(pagination.page_size).toBe(50)
+      expect(pagination.pages).toBe(3)
+    })
+
     it('load 执行 fetchFn 并更新 items', async () => {
       const mockItems = [{ id: 1, name: 'item1' }, { id: 2, name: 'item2' }]
       const fetchFn = createMockFetchFn(mockItems, 2, 1)

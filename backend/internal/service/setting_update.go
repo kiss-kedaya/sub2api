@@ -99,6 +99,18 @@ func (s *SettingService) refreshCachedSettingsAfterWrite(ctx context.Context, se
 }
 
 func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, settings *SystemSettings) (map[string]string, error) {
+	if settings.TableDefaultPageSize != 0 || settings.TablePageSizeOptions != nil {
+		defaultSize, options := normalizeTablePreferences(settings.TableDefaultPageSize, settings.TablePageSizeOptions)
+		if settings.TableDefaultPageSize != 0 {
+			defaultSize = settings.TableDefaultPageSize
+		}
+		if settings.TablePageSizeOptions != nil {
+			options = settings.TablePageSizeOptions
+		}
+		if err := ValidateTablePreferences(defaultSize, options); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.validateDefaultSubscriptionGroups(ctx, settings.DefaultSubscriptions); err != nil {
 		return nil, err
 	}
@@ -698,6 +710,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	if settings == nil {
 		return
 	}
+	s.publishTablePaginationLimits(settings.TableDefaultPageSize, settings.TablePageSizeOptions)
 	// Publish the Codex gates together with the other in-process setting caches;
 	// this makes a panel change take effect immediately on the writer replica.
 	s.publishCodexQuotaOverdraftRuntime(CodexQuotaOverdraftRuntimeSettings{
