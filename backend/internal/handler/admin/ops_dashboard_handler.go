@@ -308,6 +308,7 @@ func parseOpsOpenAITokenStatsFilter(c *gin.Context) (*service.OpsOpenAITokenStat
 		}
 		filter.PageSize = pageSize
 	}
+	filter.PageSize = response.ClampPageSize(c, filter.PageSize)
 	return filter, nil
 }
 

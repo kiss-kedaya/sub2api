@@ -66,6 +66,7 @@ export function useTicketWorkspace(admin: Ref<boolean>) {
       if (!active || sequence !== listSequence) return
       items.value = list.items
       total.value = list.total
+      if (list.page_size > 0 && list.page_size !== filters.page_size) filters.page_size = list.page_size
       stats.value = counts
       listError.value = ''
       if (filters.page > pages.value) { filters.page = pages.value; void loadList(quiet) }

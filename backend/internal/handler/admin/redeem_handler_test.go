@@ -36,6 +36,16 @@ func TestRedeemGenerationStoredResponseLimitCoversMaximumBatch(t *testing.T) {
 	require.LessOrEqual(t, len(raw), redeemGenerationStoredResponseLimit)
 }
 
+func TestRedeemStatsDoesNotReturnMockZeroes(t *testing.T) {
+	h := NewRedeemHandler(newStubAdminService(), nil)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/redeem-codes/stats", nil)
+
+	h.GetStats(c)
+
+	assert.Equal(t, http.StatusNotImplemented, c.Writer.Status())
+}
+
 // newCreateAndRedeemHandler creates a RedeemHandler with a non-nil (but minimal)
 // RedeemService so that CreateAndRedeem's nil guard passes and we can test the
 // parameter-validation layer that runs before any service call.

@@ -27,7 +27,7 @@ func (h *ScheduledTestHandler) authorizeAccount(c *gin.Context, id int64) bool {
 		response.Forbidden(c, "administrator account access required")
 		return false
 	}
-	ctx := service.WithAccountOwnerScope(c.Request.Context(), subject.UserID, c.GetString(middleware.ContextKeyAuthEmail))
+	ctx := service.EnsureAccountOwnerScope(c.Request.Context(), subject.UserID)
 	if _, err := h.adminSvc.GetAccount(ctx, id); err != nil {
 		response.NotFound(c, "account not found")
 		return false
@@ -51,10 +51,10 @@ type createScheduledTestPlanRequest struct {
 
 type updateScheduledTestPlanRequest struct {
 	ModelID             string                  `json:"model_id"`
-	PromptText          string                  `json:"prompt_text"`
-	CronExpression      string                  `json:"cron_expression"`
+	PromptText          *string                 `json:"prompt_text"`
+	CronExpression      *string                 `json:"cron_expression"`
 	Enabled             *bool                   `json:"enabled"`
-	MaxResults          int                     `json:"max_results"`
+	MaxResults          *int                    `json:"max_results"`
 	AutoRecover         *bool                   `json:"auto_recover"`
 	QualityCheckEnabled *bool                   `json:"quality_check_enabled"`
 	QualityProvider     *string                 `json:"quality_provider"`
@@ -147,17 +147,17 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	if req.ModelID != "" {
 		existing.ModelID = req.ModelID
 	}
-	if req.PromptText != "" {
-		existing.PromptText = req.PromptText
+	if req.PromptText != nil {
+		existing.PromptText = *req.PromptText
 	}
-	if req.CronExpression != "" {
-		existing.CronExpression = req.CronExpression
+	if req.CronExpression != nil {
+		existing.CronExpression = *req.CronExpression
 	}
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
 	}
-	if req.MaxResults > 0 {
-		existing.MaxResults = req.MaxResults
+	if req.MaxResults != nil {
+		existing.MaxResults = *req.MaxResults
 	}
 	if req.AutoRecover != nil {
 		existing.AutoRecover = *req.AutoRecover

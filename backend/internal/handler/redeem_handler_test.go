@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,20 @@ type historyRepo struct {
 	userID      int64
 	params      pagination.PaginationParams
 	legacyLimit int
+}
+
+func TestRedeemHistoryConfiguredPageLimit(t *testing.T) {
+	repo := &historyRepo{}
+	h := NewRedeemHandler(service.NewRedeemService(repo, nil, nil, nil, nil, nil, nil, nil))
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/api/v1/redeem/history?page_size=1000", nil)
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 7})
+	response.SetPaginationLimitsLoader(c, func() (int, int) { return 20, 50 })
+	h.GetHistory(c)
+	require.Equal(t, 200, w.Code)
+	require.Equal(t, 50, repo.params.PageSize)
+	require.Contains(t, w.Body.String(), `"page_size":50`)
 }
 
 func (r *historyRepo) ListByUser(_ context.Context, userID int64, limit int) ([]service.RedeemCode, error) {
