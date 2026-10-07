@@ -91,19 +91,21 @@ func (h *TicketHandler) list(c *gin.Context, admin bool) {
 		return
 	}
 	page, size := response.ParsePagination(c)
+	size = min(size, 100)
 	for _, parameter := range []struct {
 		name   string
 		target *int
 	}{{"page", &page}, {"page_size", &size}} {
 		if raw, exists := c.GetQuery(parameter.name); exists {
 			value, err := strconv.Atoi(raw)
-			if err != nil || value < 1 {
+			if err != nil || value < 1 || (parameter.name == "page_size" && value > 100) {
 				response.BadRequest(c, "invalid pagination")
 				return
 			}
 			*parameter.target = value
 		}
 	}
+	size = response.ClampPageSize(c, size)
 	filter := service.TicketFilter{PaginationParams: pagination.PaginationParams{Page: page, PageSize: size},
 		Search: c.Query("search"), Status: c.Query("status"), Priority: c.Query("priority"), Category: c.Query("category"), AssignedTo: c.Query("assigned_to")}
 	items, total, err := h.tickets.List(c.Request.Context(), actor, filter)

@@ -47,3 +47,14 @@ func TestRedeemExportSortDefaults(t *testing.T) {
 	require.Equal(t, "id", adminSvc.lastListRedeemCodes.sortBy)
 	require.Equal(t, "desc", adminSvc.lastListRedeemCodes.sortOrder)
 }
+
+func TestRedeemExportRejectsSilentTruncation(t *testing.T) {
+	router, adminSvc := setupRedeemExportRouter()
+	adminSvc.redeemTotal = 10001
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/redeem-codes/export", nil))
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "narrow the filters")
+}
