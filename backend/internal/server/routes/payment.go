@@ -28,6 +28,7 @@ func RegisterPaymentRoutes(
 	authenticated.Use(middleware.BackendModeUserGuard(settingService))
 	// 面板全局按用户限流
 	authenticated.Use(panelRateLimiter.Global())
+	authenticated.Use(middleware.TablePagination(settingService))
 	{
 		authenticated.GET("/config", paymentHandler.GetPaymentConfig)
 		authenticated.GET("/checkout-info", paymentHandler.GetCheckoutInfo)
@@ -76,6 +77,7 @@ func RegisterPaymentRoutes(
 	// --- Admin payment endpoints (admin auth) ---
 	adminGroup := v1.Group("/admin/payment")
 	adminGroup.Use(gin.HandlerFunc(adminAuth))
+	adminGroup.Use(middleware.TablePagination(settingService))
 	adminGroup.Use(gin.HandlerFunc(auditLog))
 	adminGroup.Use(middleware.AdminComplianceGuard(settingService))
 	{

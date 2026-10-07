@@ -26,7 +26,10 @@ export type OrderType = 'balance' | 'subscription'
 // ==================== Configuration ====================
 
 export interface PaymentConfig {
-  payment_enabled: boolean
+  /** Backend uses `enabled`; `payment_enabled` is kept optional for old cached payloads. */
+  enabled: boolean
+  payment_enabled?: boolean
+  recharge_center_enabled: boolean
   min_amount: number
   max_amount: number
   daily_limit: number
@@ -38,19 +41,21 @@ export interface PaymentConfig {
   enabled_payment_types: PaymentType[]
   help_image_url: string
   help_text: string
-  stripe_publishable_key: string
+  stripe_publishable_key?: string
 }
 
 export interface MethodLimit {
+  payment_type?: string
   currency?: string
   display_name?: string
   daily_limit: number
-  daily_used: number
-  daily_remaining: number
+  /** Optional legacy/derived fields; current backend does not emit these. */
+  daily_used?: number
+  daily_remaining?: number
+  available?: boolean
   single_min: number
   single_max: number
   fee_rate: number
-  available: boolean
   /** null/undefined inherits checkout recharge_fee_rate; 0 is an explicit override */
   recharge_fee_rate?: number | null
   /** null/undefined inherits checkout balance_recharge_multiplier */
@@ -71,7 +76,7 @@ export interface CheckoutInfoResponse {
   methods: Record<string, MethodLimit>
   global_min: number
   global_max: number
-  plans: SubscriptionPlan[]
+  plans: CheckoutPlan[]
   balance_disabled: boolean
   balance_recharge_multiplier: number
   /** Subscription CNY conversion rate (1 USD = X CNY); 0 = disabled, plan price is charged as-is */
@@ -106,10 +111,26 @@ export interface PaymentOrder {
   refund_amount: number
   refund_reason?: string
   refund_requested_at?: string
-  refund_requested_by?: number
+  refund_requested_by?: string
   refund_request_reason?: string
   plan_id?: number
   provider_instance_id?: string
+}
+
+/** Raw plan DTO returned by GET /payment/plans and admin plan endpoints. */
+export interface ApiSubscriptionPlan extends Omit<SubscriptionPlan, 'features'> {
+  features: string
+  created_at?: string
+  updated_at?: string
+}
+
+/** Plan DTO embedded in checkout-info. The backend pre-parses features and omits admin fields. */
+export type CheckoutPlan = Omit<SubscriptionPlan, 'features' | 'for_sale' | 'sort_order'> & {
+  features: string[]
+  product_name?: string
+  /** Legacy cached payloads may still carry admin-only fields. */
+  for_sale?: boolean
+  sort_order?: number
 }
 
 // ==================== Plans & Channels ====================
@@ -136,22 +157,12 @@ export interface SubscriptionPlan {
   currency?: string
   validity_days: number
   validity_unit: string
+  product_name?: string
   /** Stored as JSON string in backend; API layer should parse before use */
   features: string[]
-  for_sale: boolean
-  sort_order: number
-}
-
-export interface PaymentChannel {
-  id: number
-  group_id?: number
-  name: string
-  platform: string
-  rate_multiplier: number
-  description: string
-  models: string[]
-  features: string[]
-  enabled: boolean
+  /** Omitted by checkout-info; present on the raw plans endpoint. */
+  for_sale?: boolean
+  sort_order?: number
 }
 
 // ==================== Providers ====================
@@ -160,7 +171,7 @@ export interface ProviderInstance {
   id: number
   provider_key: string
   name: string
-  config: Record<string, string>
+  config: Record<string, string> | null
   supported_types: string[]
   enabled: boolean
   payment_mode: string

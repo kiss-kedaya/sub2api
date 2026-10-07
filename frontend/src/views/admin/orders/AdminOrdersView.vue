@@ -179,6 +179,7 @@ async function loadOrders() {
     })
     orders.value = res.data.items || []
     orderPagination.total = res.data.total || 0
+    if (res.data.page_size > 0) orderPagination.page_size = res.data.page_size
   } catch (err: unknown) {
     appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
   } finally { ordersLoading.value = false }
@@ -222,9 +223,8 @@ async function showOrderDetail(order: PaymentOrder) {
   showDetailDialog.value = true
   try {
     const res = await adminPaymentAPI.getOrder(order.id)
-    const data = res.data as unknown as Record<string, unknown>
-    if (data.order) selectedOrder.value = data.order as PaymentOrder
-    orderAuditLogs.value = ((data.auditLogs || data.audit_logs || []) as unknown) as AuditLog[]
+    selectedOrder.value = res.data.order
+    orderAuditLogs.value = res.data.auditLogs
   } catch (_err: unknown) { /* keep cached order data */ }
 }
 

@@ -6,9 +6,8 @@
 import { apiClient } from '../client'
 import type {
   DashboardStats,
+  ApiSubscriptionPlan,
   PaymentOrder,
-  PaymentChannel,
-  SubscriptionPlan,
   ProviderInstance
 } from '@/types/payment'
 import type { BasePaginationResponse } from '@/types'
@@ -61,6 +60,22 @@ export interface RefundResult {
   subscription_days_deducted?: number
 }
 
+export interface AdminOrderDetail {
+  order: PaymentOrder
+  auditLogs: Array<{
+    id: number
+    action: string
+    detail: string | null
+    operator: string | null
+    created_at: string
+  }>
+}
+
+export interface ProviderInstanceResponse extends ProviderInstance {
+  /** Config is already decrypted and sensitive keys are omitted by the server. */
+  config: Record<string, string> | null
+}
+
 export const adminPaymentAPI = {
   // ==================== Config ====================
 
@@ -102,7 +117,7 @@ export const adminPaymentAPI = {
 
   /** Get a specific order by ID */
   getOrder(id: number) {
-    return apiClient.get<PaymentOrder>(`/admin/payment/orders/${id}`)
+    return apiClient.get<AdminOrderDetail>(`/admin/payment/orders/${id}`)
   },
 
   /** Cancel an order (admin) */
@@ -125,43 +140,21 @@ export const adminPaymentAPI = {
     return apiClient.post<RefundResult>(`/admin/payment/orders/${id}/refund/query`)
   },
 
-  // ==================== Channels ====================
-
-  /** Get all payment channels */
-  getChannels() {
-    return apiClient.get<PaymentChannel[]>('/admin/payment/channels')
-  },
-
-  /** Create a payment channel */
-  createChannel(data: Partial<PaymentChannel>) {
-    return apiClient.post<PaymentChannel>('/admin/payment/channels', data)
-  },
-
-  /** Update a payment channel */
-  updateChannel(id: number, data: Partial<PaymentChannel>) {
-    return apiClient.put<PaymentChannel>(`/admin/payment/channels/${id}`, data)
-  },
-
-  /** Delete a payment channel */
-  deleteChannel(id: number) {
-    return apiClient.delete(`/admin/payment/channels/${id}`)
-  },
-
   // ==================== Subscription Plans ====================
 
   /** Get all subscription plans */
   getPlans() {
-    return apiClient.get<SubscriptionPlan[]>('/admin/payment/plans')
+    return apiClient.get<ApiSubscriptionPlan[]>('/admin/payment/plans')
   },
 
   /** Create a subscription plan */
   createPlan(data: Record<string, unknown>) {
-    return apiClient.post<SubscriptionPlan>('/admin/payment/plans', data)
+    return apiClient.post<ApiSubscriptionPlan>('/admin/payment/plans', data)
   },
 
   /** Update a subscription plan */
   updatePlan(id: number, data: Record<string, unknown>) {
-    return apiClient.put<SubscriptionPlan>(`/admin/payment/plans/${id}`, data)
+    return apiClient.put<ApiSubscriptionPlan>(`/admin/payment/plans/${id}`, data)
   },
 
   /** Delete a subscription plan */
@@ -173,17 +166,17 @@ export const adminPaymentAPI = {
 
   /** Get all provider instances */
   getProviders() {
-    return apiClient.get<ProviderInstance[]>('/admin/payment/providers')
+    return apiClient.get<ProviderInstanceResponse[]>('/admin/payment/providers')
   },
 
   /** Create a provider instance */
   createProvider(data: Partial<ProviderInstance>) {
-    return apiClient.post<ProviderInstance>('/admin/payment/providers', data)
+    return apiClient.post<ProviderInstanceResponse>('/admin/payment/providers', data)
   },
 
   /** Update a provider instance */
   updateProvider(id: number, data: Partial<ProviderInstance>) {
-    return apiClient.put<ProviderInstance>(`/admin/payment/providers/${id}`, data)
+    return apiClient.put<ProviderInstanceResponse>(`/admin/payment/providers/${id}`, data)
   },
 
   /** Delete a provider instance */
