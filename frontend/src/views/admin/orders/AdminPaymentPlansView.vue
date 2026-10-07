@@ -82,7 +82,7 @@ import { adminPaymentAPI } from '@/api/admin/payment'
 import type { AdminPaymentConfig } from '@/api/admin/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import adminAPI from '@/api/admin'
-import type { SubscriptionPlan } from '@/types/payment'
+import type { ApiSubscriptionPlan, SubscriptionPlan } from '@/types/payment'
 import type { AdminGroup } from '@/types'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -158,7 +158,7 @@ async function loadPlans() {
   try {
     const res = await adminPaymentAPI.getPlans()
     // Backend returns features as newline-separated string; parse to array
-    plans.value = (res.data || []).map((p: Omit<SubscriptionPlan, 'features'> & { features: string | string[] }) => ({
+    plans.value = (res.data || []).map((p: ApiSubscriptionPlan) => ({
       ...p,
       features: typeof p.features === 'string'
         ? p.features.split('\n').map((f: string) => f.trim()).filter(Boolean)

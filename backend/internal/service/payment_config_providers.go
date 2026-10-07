@@ -61,20 +61,34 @@ func (s *PaymentConfigService) ListProviderInstancesWithConfig(ctx context.Conte
 	}
 	result := make([]ProviderInstanceResponse, 0, len(instances))
 	for _, inst := range instances {
-		resp := ProviderInstanceResponse{
-			ID: int64(inst.ID), ProviderKey: inst.ProviderKey, Name: inst.Name,
-			SupportedTypes: splitTypes(inst.SupportedTypes), Limits: inst.Limits,
-			Enabled: inst.Enabled, RefundEnabled: inst.RefundEnabled, AllowUserRefund: inst.AllowUserRefund,
-			SortOrder: inst.SortOrder, PaymentMode: inst.PaymentMode,
-			RechargeFeeRate: inst.RechargeFeeRate, BalanceRechargeMultiplier: inst.BalanceRechargeMultiplier,
-		}
-		resp.Config, err = s.decryptAndMaskConfig(inst.ProviderKey, inst.Config)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt config for instance %d: %w", inst.ID, err)
+		resp, responseErr := s.ProviderInstanceResponse(ctx, inst)
+		if responseErr != nil {
+			return nil, responseErr
 		}
 		result = append(result, resp)
 	}
 	return result, nil
+}
+
+// ProviderInstanceResponse projects an entity into the safe admin DTO. It is
+// also used by create/update handlers so encrypted provider config never leaks.
+func (s *PaymentConfigService) ProviderInstanceResponse(_ context.Context, inst *dbent.PaymentProviderInstance) (ProviderInstanceResponse, error) {
+	if inst == nil {
+		return ProviderInstanceResponse{}, fmt.Errorf("provider instance is nil")
+	}
+	resp := ProviderInstanceResponse{
+		ID: int64(inst.ID), ProviderKey: inst.ProviderKey, Name: inst.Name,
+		SupportedTypes: splitTypes(inst.SupportedTypes), Limits: inst.Limits,
+		Enabled: inst.Enabled, RefundEnabled: inst.RefundEnabled, AllowUserRefund: inst.AllowUserRefund,
+		SortOrder: inst.SortOrder, PaymentMode: inst.PaymentMode,
+		RechargeFeeRate: inst.RechargeFeeRate, BalanceRechargeMultiplier: inst.BalanceRechargeMultiplier,
+	}
+	var err error
+	resp.Config, err = s.decryptAndMaskConfig(inst.ProviderKey, inst.Config)
+	if err != nil {
+		return ProviderInstanceResponse{}, fmt.Errorf("decrypt config for instance %d: %w", inst.ID, err)
+	}
+	return resp, nil
 }
 
 // decryptAndMaskConfig returns the stored config with sensitive fields omitted.

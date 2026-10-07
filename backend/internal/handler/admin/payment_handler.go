@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -50,11 +52,17 @@ func (h *PaymentHandler) GetDashboard(c *gin.Context) {
 // GET /api/v1/admin/payment/orders
 func (h *PaymentHandler) ListOrders(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
+	pageSize = min(pageSize, 100)
 	var userID int64
 	if uid := c.Query("user_id"); uid != "" {
 		if v, err := strconv.ParseInt(uid, 10, 64); err == nil {
 			userID = v
 		}
+	}
+	startTime, endTime, err := parsePaymentOrderDateRange(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
 	orders, total, err := h.paymentService.AdminListOrders(c.Request.Context(), userID, service.OrderListParams{
 		Page:        page,
@@ -63,12 +71,39 @@ func (h *PaymentHandler) ListOrders(c *gin.Context) {
 		OrderType:   c.Query("order_type"),
 		PaymentType: c.Query("payment_type"),
 		Keyword:     c.Query("keyword"),
+		StartTime:   startTime,
+		EndTime:     endTime,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 	response.Paginated(c, sanitizeAdminPaymentOrdersForResponse(orders), int64(total), page, pageSize)
+}
+
+// parsePaymentOrderDateRange accepts date-only values and second-precision timestamps.
+// The end boundary is exclusive, so an explicit end second remains inclusive.
+func parsePaymentOrderDateRange(c *gin.Context) (*time.Time, *time.Time, error) {
+	userTZ := c.Query("timezone")
+	var start, end *time.Time
+	if raw := strings.TrimSpace(c.Query("start_date")); raw != "" {
+		value, err := parseUsageDateBoundary(raw, userTZ, false)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Invalid start_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
+		}
+		start = &value
+	}
+	if raw := strings.TrimSpace(c.Query("end_date")); raw != "" {
+		value, err := parseUsageDateBoundary(raw, userTZ, true)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Invalid end_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
+		}
+		end = &value
+	}
+	if start != nil && end != nil && !start.Before(*end) {
+		return nil, nil, fmt.Errorf("start_date must not be after end_date")
+	}
+	return start, end, nil
 }
 
 // GetOrderDetail returns detailed information about a single order.
@@ -424,7 +459,12 @@ func (h *PaymentHandler) CreateProvider(c *gin.Context) {
 		return
 	}
 	h.paymentService.RefreshProviders(c.Request.Context())
-	response.Created(c, inst)
+	safe, err := h.configService.ProviderInstanceResponse(c.Request.Context(), inst)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Created(c, safe)
 }
 
 // UpdateProvider updates an existing payment provider instance.
@@ -445,7 +485,12 @@ func (h *PaymentHandler) UpdateProvider(c *gin.Context) {
 		return
 	}
 	h.paymentService.RefreshProviders(c.Request.Context())
-	response.Success(c, inst)
+	safe, err := h.configService.ProviderInstanceResponse(c.Request.Context(), inst)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, safe)
 }
 
 // DeleteProvider deletes a payment provider instance.

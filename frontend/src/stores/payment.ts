@@ -6,7 +6,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { paymentAPI } from '@/api/payment'
-import type { PaymentConfig, PaymentOrder, SubscriptionPlan, CreateOrderRequest } from '@/types/payment'
+import type { PaymentConfig, PaymentOrder, SubscriptionPlan, ApiSubscriptionPlan, CreateOrderRequest } from '@/types/payment'
 
 export const usePaymentStore = defineStore('payment', () => {
   // ==================== State ====================
@@ -54,7 +54,7 @@ export const usePaymentStore = defineStore('payment', () => {
     try {
       const response = await paymentAPI.getPlans()
       // Backend returns features as newline-separated string; parse to array
-      plans.value = (response.data || []).map((p: Omit<SubscriptionPlan, 'features'> & { features: string | string[] }) => ({
+      plans.value = (response.data || []).map((p: ApiSubscriptionPlan) => ({
         ...p,
         features: typeof p.features === 'string'
           ? p.features.split('\n').map((f: string) => f.trim()).filter(Boolean)

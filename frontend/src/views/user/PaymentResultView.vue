@@ -111,7 +111,7 @@ import {
 import { usePaymentStore } from '@/stores/payment'
 import { useAuthStore } from '@/stores/auth'
 import { paymentAPI } from '@/api/payment'
-import type { PublicOrderVerifyResult } from '@/api/payment'
+import type { PublicOrderResult, PublicOrderVerifyResult } from '@/api/payment'
 import type { OrderStatus, PaymentOrder } from '@/types/payment'
 import { formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 import { normalizePaymentMethodForDisplay, paymentMethodI18nKey } from './paymentUx'
@@ -124,7 +124,7 @@ const router = useRouter()
 const paymentStore = usePaymentStore()
 const authStore = useAuthStore()
 
-type ResolvedOrder = PaymentOrder | PublicOrderVerifyResult
+type ResolvedOrder = PaymentOrder | PublicOrderResult | PublicOrderVerifyResult
 
 const order = ref<ResolvedOrder | null>(null)
 const loading = ref(true)
