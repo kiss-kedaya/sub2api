@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -377,19 +378,9 @@ func (h *RedeemHandler) Expire(c *gin.Context) {
 // GetStats handles getting redeem code statistics
 // GET /api/v1/admin/redeem-codes/stats
 func (h *RedeemHandler) GetStats(c *gin.Context) {
-	// Return mock data for now
-	response.Success(c, gin.H{
-		"total_codes":             0,
-		"active_codes":            0,
-		"used_codes":              0,
-		"expired_codes":           0,
-		"total_value_distributed": 0.0,
-		"by_type": gin.H{
-			"balance":     0,
-			"concurrency": 0,
-			"trial":       0,
-		},
-	})
+	// There is no aggregate query behind this route. Do not expose mock zeroes as
+	// financial statistics; add a repository aggregate before enabling it.
+	response.Error(c, http.StatusNotImplemented, "redeem code statistics are not implemented")
 }
 
 // Export handles exporting redeem codes to CSV
@@ -404,10 +395,14 @@ func (h *RedeemHandler) Export(c *gin.Context) {
 		search = search[:100]
 	}
 
-	// Get all codes without pagination (use large page size)
-	codes, _, err := h.adminService.ListRedeemCodes(c.Request.Context(), 1, 10000, codeType, status, search, sortBy, sortOrder)
+	const exportLimit = 10000
+	codes, total, err := h.adminService.ListRedeemCodes(c.Request.Context(), 1, exportLimit, codeType, status, search, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
+		return
+	}
+	if total > exportLimit {
+		response.BadRequest(c, fmt.Sprintf("export matches %d redeem codes; narrow the filters to %d or fewer", total, exportLimit))
 		return
 	}
 

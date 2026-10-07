@@ -1,6 +1,9 @@
 package admin
 
 import (
+	"errors"
+	"io"
+
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -93,7 +96,10 @@ type CreateBackupRequest struct {
 
 func (h *BackupHandler) CreateBackup(c *gin.Context) {
 	var req CreateBackupRequest
-	_ = c.ShouldBindJSON(&req) // 允许空 body
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.BadRequest(c, "Invalid request body")
+		return
+	}
 
 	expireDays := 14 // 默认14天过期
 	if req.ExpireDays != nil {

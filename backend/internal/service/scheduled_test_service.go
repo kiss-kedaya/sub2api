@@ -89,6 +89,9 @@ func (s *ScheduledTestService) UpdatePlan(ctx context.Context, plan *ScheduledTe
 	if err := normalizeScheduledTestPlan(plan); err != nil {
 		return nil, err
 	}
+	if plan.MaxResults <= 0 {
+		plan.MaxResults = 50
+	}
 	nextRun, err := computeNextRun(plan.CronExpression, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("invalid cron expression: %w", err)

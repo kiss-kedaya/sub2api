@@ -96,7 +96,7 @@ func (h *PromptAdminHandler) ListEvents(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	result, err := h.service.ListEvents(c.Request.Context(), filter, page, pageSize)
+	result, err := h.service.ListEvents(c.Request.Context(), filter, page, response.ClampPageSize(c, pageSize))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

@@ -87,6 +87,7 @@ func (h *RedeemHandler) GetHistory(c *gin.Context) {
 		if pageSize > 100 {
 			pageSize = 100
 		}
+		pageSize = response.ClampPageSize(c, pageSize)
 		if page-1 > int(^uint(0)>>1)/pageSize {
 			response.BadRequest(c, "Invalid page")
 			return
