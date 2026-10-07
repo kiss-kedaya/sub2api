@@ -765,6 +765,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize, setPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useAppStore } from '@/stores/app'
 import { keysAPI } from '@/api'
+import { fetchPaginatedItems } from '@/utils/paginatedItems'
 import {
   cancelBatchImageJob,
   deleteBatchImageJobRecord,
@@ -1241,8 +1242,9 @@ function readFileAsBase64(file: File): Promise<string> {
 async function loadApiKeys() {
   loadingKeys.value = true
   try {
-    const response = await keysAPI.list(1, 100, { status: 'active', sort_by: 'created_at', sort_order: 'desc' })
-    apiKeys.value = response.items || []
+    apiKeys.value = await fetchPaginatedItems(
+      (page, size) => keysAPI.list(page, size, { status: 'active', sort_by: 'created_at', sort_order: 'desc' }), 100, 100
+    )
     if (!selectedApiKey.value && geminiApiKeys.value.length > 0) {
       form.apiKeyId = geminiApiKeys.value[0].id
     }

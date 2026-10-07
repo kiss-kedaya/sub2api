@@ -1,4 +1,13 @@
 import { apiClient } from '../client'
+import type { AxiosResponseTransformer } from 'axios'
+
+// Plugin configuration is a raw JSON object and may legitimately contain code,
+// message or data. Shield successful values from the shared envelope interceptor
+// while preserving normal auth/error envelopes for failed requests.
+const configResponse: AxiosResponseTransformer = (raw, _headers, status) => {
+  const value = typeof raw === 'string' ? JSON.parse(raw) : raw
+  return status && status >= 200 && status < 300 ? { pluginConfig: value } : value
+}
 
 export interface PluginCapability {
   id: string
@@ -121,16 +130,20 @@ export async function remove(id: number): Promise<void> {
 }
 
 export async function getConfig(id: number): Promise<Record<string, unknown>> {
-  const { data } = await apiClient.get<Record<string, unknown>>(`/admin/plugins/${id}/config`)
-  return data
+  const { data } = await apiClient.get<{ pluginConfig: Record<string, unknown> }>(`/admin/plugins/${id}/config`, {
+    transformResponse: [configResponse]
+  })
+  return data.pluginConfig
 }
 
 export async function saveConfig(
   id: number,
   config: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
-  const { data } = await apiClient.put<Record<string, unknown>>(`/admin/plugins/${id}/config`, config)
-  return data
+  const { data } = await apiClient.put<{ pluginConfig: Record<string, unknown> }>(`/admin/plugins/${id}/config`, config, {
+    transformResponse: [configResponse]
+  })
+  return data.pluginConfig
 }
 
 export async function test(id: number): Promise<PluginTestResult> {

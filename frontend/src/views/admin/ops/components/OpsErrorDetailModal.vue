@@ -258,6 +258,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores'
 import { opsAPI, type OpsErrorDetail } from '@/api/admin/ops'
 import { formatDateTime } from '@/utils/format'
+import { fetchPaginatedItems } from '@/utils/paginatedItems'
 import { resolveUpstreamPayload } from '../utils/errorDetailResponse'
 import { classifyUpstreamFailureBody, type UpstreamFailureKind } from '@/utils/upstreamFailure'
 
@@ -437,12 +438,13 @@ function toggleUpstreamDetail(id: number) {
 async function fetchCorrelatedUpstreamErrors(requestErrorId: number) {
   correlatedUpstreamLoading.value = true
   try {
-    const res = await opsAPI.listRequestErrorUpstreamErrors(
-      requestErrorId,
-      { page: 1, page_size: 100, view: 'all' },
-      { include_detail: true }
+    correlatedUpstream.value = await fetchPaginatedItems(
+      (page, pageSize) => opsAPI.listRequestErrorUpstreamErrors(
+        requestErrorId,
+        { page, page_size: pageSize, view: 'all' },
+        { include_detail: true }
+      ), 100, 100
     )
-    correlatedUpstream.value = res.items || []
   } catch (err) {
     console.error('[OpsErrorDetailModal] Failed to load correlated upstream errors', err)
     correlatedUpstream.value = []

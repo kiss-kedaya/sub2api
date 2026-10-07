@@ -330,6 +330,26 @@ describe('EditAccountModal', () => {
 
   afterEach(() => vi.useRealTimers())
 
+  it('saves zero priority without the previous minimum-one restriction', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    const priority = wrapper.get<HTMLInputElement>('[data-tour="account-form-priority"]')
+    expect(priority.attributes('min')).toBe('0')
+    expect(priority.attributes('step')).toBe('1')
+    await priority.setValue(-1)
+    expect(priority.element.checkValidity()).toBe(false)
+    await priority.setValue(0.5)
+    expect(priority.element.checkValidity()).toBe(false)
+    await priority.setValue(0)
+    expect(priority.element.checkValidity()).toBe(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.priority).toBe(0)
+    wrapper.unmount()
+  })
+
   it('sets expiry presets from now instead of extending the saved expiry', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2028-02-29T12:34:00'))

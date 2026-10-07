@@ -46,6 +46,14 @@
           </div>
         </div>
       </div>
+      <Pagination
+        v-if="!loading && total > 0"
+        :total="total"
+        :page="page"
+        :page-size="pageSize"
+        @update:page="changePage"
+        @update:page-size="changePageSize"
+      />
     </div>
   </BaseDialog>
 
@@ -113,6 +121,8 @@ import { adminAPI } from '@/api/admin'
 import { formatDateTime } from '@/utils/format'
 import type { AdminUser, AdminGroup, ApiKey } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 
@@ -124,6 +134,9 @@ const appStore = useAppStore()
 const apiKeys = ref<ApiKey[]>([])
 const allGroups = ref<AdminGroup[]>([])
 const loading = ref(false)
+const page = ref(1)
+const pageSize = ref(getPersistedPageSize())
+const total = ref(0)
 let requestVersion = 0
 const updatingKeyIds = ref(new Set<number>())
 const groupSelectorKeyId = ref<number | null>(null)
@@ -149,6 +162,8 @@ watch(() => [props.show, props.user?.id] as const, ([show], _, onCleanup) => {
   onCleanup(() => { requestVersion++ })
   closeGroupSelector()
   apiKeys.value = []
+  page.value = 1
+  total.value = 0
   if (show && props.user) {
     load()
     loadGroups()
@@ -158,18 +173,34 @@ watch(() => [props.show, props.user?.id] as const, ([show], _, onCleanup) => {
 const load = async () => {
   if (!props.user) return
   const version = ++requestVersion
+  closeGroupSelector()
   apiKeys.value = []
   loading.value = true
   groupButtonRefs.value.clear()
   try {
-    const res = await adminAPI.users.getUserApiKeys(props.user.id)
-    if (version === requestVersion) apiKeys.value = res.items || []
+    const res = await adminAPI.users.getUserApiKeys(props.user.id, page.value, pageSize.value)
+    if (version !== requestVersion) return
+    apiKeys.value = res.items || []
+    total.value = res.total
+    page.value = res.page
+    pageSize.value = res.page_size
   } catch (error) {
     if (version !== requestVersion) return
     console.error('Failed to load API keys:', error)
   } finally {
     if (version === requestVersion) loading.value = false
   }
+}
+
+const changePage = (nextPage: number) => {
+  page.value = nextPage
+  load()
+}
+
+const changePageSize = (nextPageSize: number) => {
+  pageSize.value = nextPageSize
+  page.value = 1
+  load()
 }
 
 const loadGroups = async () => {

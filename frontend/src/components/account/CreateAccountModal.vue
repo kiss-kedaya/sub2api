@@ -3039,7 +3039,8 @@
           <input
             v-model.number="form.priority"
             type="number"
-            min="1"
+            min="0"
+            step="1"
             class="input"
             data-tour="account-form-priority"
           />

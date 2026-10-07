@@ -12,7 +12,6 @@ import {
 import type {
   User,
   ChangePasswordRequest,
-  NotifyEmailEntry,
   UserAuthProvider,
   UserAffiliateDetail,
   AffiliateTransferResponse,
@@ -38,7 +37,6 @@ export async function updateProfile(profile: {
   avatar_url?: string | null
   balance_notify_enabled?: boolean
   balance_notify_threshold?: number | null
-  balance_notify_extra_emails?: NotifyEmailEntry[]
 }): Promise<User> {
   const { data } = await apiClient.put<User>('/user', profile)
   return data
@@ -89,7 +87,7 @@ export async function removeNotifyEmail(email: string): Promise<void> {
 
 /**
  * Toggle a notify email's disabled state
- * @param email - Email address (empty string for primary email placeholder)
+ * @param email - Actual email address, including the account-bound primary email
  * @param disabled - Whether to disable the email
  */
 export async function toggleNotifyEmail(email: string, disabled: boolean): Promise<User> {

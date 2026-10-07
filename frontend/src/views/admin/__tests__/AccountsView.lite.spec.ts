@@ -9,20 +9,24 @@ const {
   listAccounts,
   listWithEtag,
   getById,
+  refreshCredentials,
   getBatchTodayStats,
   getUpstreamBillingProbeSettings,
   getAllProxies,
   getAllGroups,
-  showError
+  showError,
+  showWarning
 } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
   getById: vi.fn(),
+  refreshCredentials: vi.fn(),
   getBatchTodayStats: vi.fn(),
   getUpstreamBillingProbeSettings: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
-  showError: vi.fn()
+  showError: vi.fn(),
+  showWarning: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -30,6 +34,7 @@ vi.mock('@/api/admin', () => ({
     accounts: {
       list: listAccounts,
       getById,
+      refreshCredentials,
       listWithEtag,
       getBatchTodayStats,
       getUpstreamBillingProbeSettings,
@@ -44,7 +49,7 @@ vi.mock('@/api/admin', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showError, showSuccess: vi.fn(), showInfo: vi.fn() })
+  useAppStore: () => ({ showError, showWarning, showSuccess: vi.fn(), showInfo: vi.fn() })
 }))
 
 vi.mock('@/stores/auth', () => ({
@@ -61,6 +66,7 @@ const DataTableStub = defineComponent({
   template: `
     <div>
       <div v-for="row in data" :key="row.id">
+        <span data-test="account-name">{{ row.name }}</span>
         <slot name="cell-groups" :row="row" />
         <slot name="cell-actions" :row="row" />
       </div>
@@ -158,16 +164,38 @@ describe('admin AccountsView lite account list', () => {
     listAccounts.mockReset().mockResolvedValue({ items: [listRow], total: 1, page: 1, page_size: 20, pages: 1 })
     listWithEtag.mockReset().mockResolvedValue({ notModified: true, etag: 'compact-etag', data: null })
     getById.mockReset().mockResolvedValue(fullAccount)
+    refreshCredentials.mockReset().mockResolvedValue(fullAccount)
     getBatchTodayStats.mockReset().mockResolvedValue({ stats: {} })
     getUpstreamBillingProbeSettings.mockReset().mockResolvedValue({ enabled: true })
     getAllProxies.mockReset().mockResolvedValue([])
     getAllGroups.mockReset().mockResolvedValue([{ id: 7, name: 'codex', platform: 'openai' }])
     showError.mockReset()
+    showWarning.mockReset()
   })
 
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  it('patches the refreshed account and displays the temporary warning after clicking refresh', async () => {
+    refreshCredentials.mockResolvedValue({
+      ...fullAccount,
+      name: 'refreshed account',
+      warning: 'missing_project_id_temporary',
+      message: 'Token refreshed; project ID will be retried automatically',
+    })
+    const wrapper = mountView(false)
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'common.more')!.trigger('click')
+    const menu = new DOMWrapper(document.body.querySelector('.action-menu-content')!)
+    await menu.findAll('button').find(button => button.text() === 'admin.accounts.refreshToken')!.trigger('click')
+    await flushPromises()
+    expect(refreshCredentials).toHaveBeenCalledWith(42)
+    expect(wrapper.get('[data-test="account-name"]').text()).toBe('refreshed account')
+    expect(showWarning).toHaveBeenCalledWith('Token refreshed; project ID will be retried automatically')
+    expect(listAccounts).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 
   it('keeps lite=1 on the initial list request', async () => {

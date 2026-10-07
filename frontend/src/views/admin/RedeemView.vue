@@ -619,6 +619,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { adminAPI } from '@/api/admin'
+import { fetchPaginatedItems } from '@/utils/paginatedItems'
 import {
   formatDateTime,
   getBrowserTimeZone,
@@ -1122,8 +1123,10 @@ const confirmDelete = async () => {
 const confirmDeleteUnused = async () => {
   try {
     // Get all unused codes and delete them
-    const unusedCodesResponse = await adminAPI.redeem.list(1, 1000, { status: 'unused' })
-    const unusedCodeIds = unusedCodesResponse.items.map((code) => code.id)
+    const unusedCodes = await fetchPaginatedItems(
+      (page, size) => adminAPI.redeem.list(page, size, { status: 'unused' }), 1000, 1000
+    )
+    const unusedCodeIds = unusedCodes.map((code) => code.id)
 
     if (unusedCodeIds.length === 0) {
       appStore.showInfo(t('admin.redeem.noUnusedCodes'))

@@ -78,7 +78,6 @@
                   {{ t('redeem.redeemSuccess') }}
                 </h2>
                 <div class="mt-2 text-sm text-emerald-700 dark:text-emerald-400">
-                  <p>{{ redeemResult.message }}</p>
                   <div class="mt-3 space-y-1">
                     <p v-if="redeemResult.type === 'balance'" class="font-medium">
                       {{ t('redeem.added') }}: ${{ redeemResult.value.toFixed(2) }}
@@ -89,21 +88,21 @@
                     </p>
                     <p v-else-if="redeemResult.type === 'subscription'" class="font-medium">
                       {{ t('redeem.subscriptionAssigned') }}
-                      <span v-if="redeemResult.group_name"> - {{ redeemResult.group_name }}</span>
+                      <span v-if="redeemResult.group?.name"> - {{ redeemResult.group.name }}</span>
                       <span v-if="redeemResult.validity_days">
                         ({{
                           t('redeem.subscriptionDays', { days: redeemResult.validity_days })
                         }})</span
                       >
                     </p>
-                    <p v-if="redeemResult.new_balance !== undefined">
+                    <p v-if="redeemResult.type === 'balance' && userRefreshedAfterRedeem && user">
                       {{ t('redeem.newBalance') }}:
-                      <span class="font-semibold">${{ redeemResult.new_balance.toFixed(2) }}</span>
+                      <span class="font-semibold">${{ user.balance.toFixed(2) }}</span>
                     </p>
-                    <p v-if="redeemResult.new_concurrency !== undefined">
+                    <p v-if="redeemResult.type === 'concurrency' && userRefreshedAfterRedeem && user">
                       {{ t('redeem.newConcurrency') }}:
                       <span class="font-semibold"
-                        >{{ redeemResult.new_concurrency }} {{ t('redeem.requests') }}</span
+                        >{{ user.concurrency }} {{ t('redeem.requests') }}</span
                       >
                     </p>
                   </div>
@@ -354,6 +353,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { useSubscriptionStore } from '@/stores/subscriptions'
 import { redeemAPI, authAPI, type RedeemHistoryItem } from '@/api'
+import type { RedeemCode } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { formatDateTime } from '@/utils/format'
@@ -367,15 +367,8 @@ const user = computed(() => authStore.user)
 
 const redeemCode = ref('')
 const submitting = ref(false)
-const redeemResult = ref<{
-  message: string
-  type: string
-  value: number
-  new_balance?: number
-  new_concurrency?: number
-  group_name?: string
-  validity_days?: number
-} | null>(null)
+const redeemResult = ref<RedeemCode | null>(null)
+const userRefreshedAfterRedeem = ref(false)
 const errorMessage = ref('')
 
 // History data
@@ -462,6 +455,7 @@ const handleRedeem = async () => {
   submitting.value = true
   errorMessage.value = ''
   redeemResult.value = null
+  userRefreshedAfterRedeem.value = false
 
   try {
     const result = await redeemAPI.redeem(redeemCode.value.trim())
@@ -471,6 +465,7 @@ const handleRedeem = async () => {
     // Refresh user data to get updated balance/concurrency
     try {
       await authStore.refreshUser()
+      userRefreshedAfterRedeem.value = true
     } catch (error) {
       console.error('Failed to refresh user after redeem:', error)
       appStore.showWarning(t('redeem.userRefreshFailed'))

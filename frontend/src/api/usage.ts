@@ -164,7 +164,7 @@ export async function query(
 
 /**
  * Get usage statistics for a specific period
- * @param period - Time period ('today', 'week', 'month', 'year')
+ * @param period - Supported period ('today', 'week', 'month'); use start_date/end_date for a custom range
  * @param apiKeyId - Optional API key ID filter
  * @returns Usage statistics
  */
@@ -346,16 +346,20 @@ export async function getDashboardApiKeysUsage(
     signal?: AbortSignal
   }
 ): Promise<BatchApiKeysUsageResponse> {
-  const { data } = await apiClient.post<BatchApiKeysUsageResponse>(
-    '/usage/dashboard/api-keys-usage',
-    {
-      api_key_ids: apiKeyIds
-    },
-    {
-      signal: options?.signal
-    }
-  )
-  return data
+  const ids = [...new Set(apiKeyIds)]
+  const stats: BatchApiKeysUsageResponse['stats'] = {}
+  // The server caps each request at 100 IDs, independently of table pagination.
+  // Fetch sequentially to keep larger page sizes from causing a request burst.
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    options?.signal?.throwIfAborted()
+    const { data } = await apiClient.post<BatchApiKeysUsageResponse>(
+      '/usage/dashboard/api-keys-usage',
+      { api_key_ids: ids.slice(offset, offset + 100) },
+      { signal: options?.signal }
+    )
+    Object.assign(stats, data.stats)
+  }
+  return { stats }
 }
 
 export async function listMyErrorRequests(

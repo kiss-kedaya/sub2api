@@ -8979,6 +8979,7 @@ import {
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSimpleUser } from "@/api/admin/affiliates";
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
+import { parseTableDefaultPageSizeInput, parseTablePageSizeOptionsInput } from "@/utils/tablePreferences";
 import { useAppStore } from "@/stores";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
 import { normalizeVisibleMethod } from "@/components/payment/paymentFlow";
@@ -10878,33 +10879,6 @@ function formatTablePageSizeOptions(options: number[]): string {
   return options.join(", ");
 }
 
-function parseTablePageSizeOptionsInput(raw: string): number[] | null {
-  const tokens = raw
-    .split(",")
-    .map((token) => token.trim())
-    .filter((token) => token.length > 0);
-
-  if (tokens.length === 0) {
-    return null;
-  }
-
-  const parsed = tokens.map((token) => Number(token));
-  if (parsed.some((value) => !Number.isInteger(value))) {
-    return null;
-  }
-
-  const deduped = Array.from(new Set(parsed)).sort((a, b) => a - b);
-  if (
-    deduped.some(
-      (value) => value < tablePageSizeMin || value > tablePageSizeMax,
-    )
-  ) {
-    return null;
-  }
-
-  return deduped;
-}
-
 // ── codex_cli_only 黑/白名单结构化编辑（行 ↔ JSON）──
 interface CodexClientRow {
   originator: string;
@@ -11238,14 +11212,8 @@ function findDuplicateDefaultSubscription(
 async function saveSettings() {
   saving.value = true;
   try {
-    const normalizedTableDefaultPageSize = Math.floor(
-      Number(form.table_default_page_size),
-    );
-    if (
-      !Number.isInteger(normalizedTableDefaultPageSize) ||
-      normalizedTableDefaultPageSize < tablePageSizeMin ||
-      normalizedTableDefaultPageSize > tablePageSizeMax
-    ) {
+    const normalizedTableDefaultPageSize = parseTableDefaultPageSizeInput(form.table_default_page_size);
+    if (normalizedTableDefaultPageSize === null) {
       appStore.showError(
         t("admin.settings.site.tableDefaultPageSizeRangeError", {
           min: tablePageSizeMin,
@@ -12961,6 +12929,8 @@ async function loadAffiliateUsers() {
     });
     affiliateState.entries = res.items ?? [];
     affiliateState.total = res.total ?? 0;
+    if (res.page > 0) affiliateState.page = res.page;
+    if (res.page_size > 0) affiliateState.pageSize = res.page_size;
     // Drop selections that are no longer visible.
     const visibleIds = new Set(affiliateState.entries.map((e) => e.user_id));
     affiliateState.selected = affiliateState.selected.filter((id) => visibleIds.has(id));

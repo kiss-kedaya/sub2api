@@ -6,7 +6,6 @@
 import { apiClient } from '../client'
 import type {
   UserSubscription,
-  SubscriptionProgress,
   AssignSubscriptionRequest,
   BulkAssignSubscriptionRequest,
   ExtendSubscriptionRequest,
@@ -56,16 +55,6 @@ export async function list(
  */
 export async function getById(id: number): Promise<UserSubscription> {
   const { data } = await apiClient.get<UserSubscription>(`/admin/subscriptions/${id}`)
-  return data
-}
-
-/**
- * Get subscription progress
- * @param id - Subscription ID
- * @returns Subscription progress with usage stats
- */
-export async function getProgress(id: number): Promise<SubscriptionProgress> {
-  const { data } = await apiClient.get<SubscriptionProgress>(`/admin/subscriptions/${id}/progress`)
   return data
 }
 
@@ -193,7 +182,6 @@ export async function listByUser(
 export const subscriptionsAPI = {
   list,
   getById,
-  getProgress,
   assign,
   bulkAssign,
   extend,

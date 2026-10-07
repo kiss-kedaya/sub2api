@@ -214,6 +214,27 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
 
   afterEach(() => vi.useRealTimers())
 
+  it('accepts zero priority and rejects negative or fractional input', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('zero priority')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    const priority = wrapper.get<HTMLInputElement>('[data-tour="account-form-priority"]')
+    expect(priority.attributes('min')).toBe('0')
+    expect(priority.attributes('step')).toBe('1')
+    await priority.setValue(-1)
+    expect(priority.element.checkValidity()).toBe(false)
+    await priority.setValue(0.5)
+    expect(priority.element.checkValidity()).toBe(false)
+    await priority.setValue(0)
+    expect(priority.element.checkValidity()).toBe(true)
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createAccountMock.mock.calls[0]?.[0]?.priority).toBe(0)
+    wrapper.unmount()
+  })
+
   it('sets month and year expiry presets without submitting the account form', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-01-31T12:34:00'))

@@ -311,9 +311,16 @@ export async function testAccount(id: number): Promise<{
  * @param id - Account ID
  * @returns Updated account
  */
-export async function refreshCredentials(id: number): Promise<Account> {
-  const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/refresh`)
-  return data
+export type AccountRefreshResult = Account & { message?: string; warning?: string }
+
+export async function refreshCredentials(id: number): Promise<AccountRefreshResult> {
+  const { data } = await apiClient.post<Account | { message: string; warning: string }>(
+    `/admin/accounts/${id}/refresh`
+  )
+  if ('id' in data) return data
+  // The temporary project ID warning omits the account; fetch its updated state for the list.
+  const account = await getById(id)
+  return { ...account, message: data.message, warning: data.warning }
 }
 
 /**
