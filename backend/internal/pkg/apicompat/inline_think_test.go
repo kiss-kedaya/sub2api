@@ -13,8 +13,8 @@ func runInlineThink(deltas ...string) (string, string) {
 	var splitter InlineThinkSplitter
 	var thinking, text strings.Builder
 	collect := func(th, tx string) {
-		thinking.WriteString(th)
-		text.WriteString(tx)
+		_, _ = thinking.WriteString(th)
+		_, _ = text.WriteString(tx)
 	}
 	for _, delta := range deltas {
 		collect(splitter.Push(delta))
@@ -129,10 +129,10 @@ func TestStream_InlineThinkingTagNotInBody(t *testing.T) {
 	for _, event := range events {
 		switch event.Type {
 		case "response.reasoning_summary_text.delta":
-			thinking.WriteString(event.Delta)
+			_, _ = thinking.WriteString(event.Delta)
 			assert.NotContains(t, event.Delta, "thinking>")
 		case "response.output_text.delta":
-			text.WriteString(event.Delta)
+			_, _ = text.WriteString(event.Delta)
 			assert.NotContains(t, event.Delta, "thinking>")
 		}
 	}
@@ -180,10 +180,10 @@ func TestAnthropicStream_InlineThinkingTagNotInBody(t *testing.T) {
 		}
 		switch event.Delta.Type {
 		case "thinking_delta":
-			thinking.WriteString(event.Delta.Thinking)
+			_, _ = thinking.WriteString(event.Delta.Thinking)
 			assert.NotContains(t, event.Delta.Thinking, "thinking>")
 		case "text_delta":
-			text.WriteString(event.Delta.Text)
+			_, _ = text.WriteString(event.Delta.Text)
 			assert.NotContains(t, event.Delta.Text, "thinking>")
 		}
 	}
