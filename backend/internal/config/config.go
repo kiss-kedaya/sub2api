@@ -732,12 +732,12 @@ type ForwardedClientIPSettings struct {
 type SecurityConfig struct {
 	// AccountPoolOwnerUserID grants one verified admin visibility of the entire pool.
 	// Zero disables pool-wide access; this server-only setting is not editable through the UI.
-	AccountPoolOwnerUserID int64 `mapstructure:"account_pool_owner_user_id"`
-	URLAllowlist    URLAllowlistConfig   `mapstructure:"url_allowlist"`
-	ResponseHeaders ResponseHeaderConfig `mapstructure:"response_headers"`
-	CSP             CSPConfig            `mapstructure:"csp"`
-	ProxyFallback   ProxyFallbackConfig  `mapstructure:"proxy_fallback"`
-	ProxyProbe      ProxyProbeConfig     `mapstructure:"proxy_probe"`
+	AccountPoolOwnerUserID int64                `mapstructure:"account_pool_owner_user_id"`
+	URLAllowlist           URLAllowlistConfig   `mapstructure:"url_allowlist"`
+	ResponseHeaders        ResponseHeaderConfig `mapstructure:"response_headers"`
+	CSP                    CSPConfig            `mapstructure:"csp"`
+	ProxyFallback          ProxyFallbackConfig  `mapstructure:"proxy_fallback"`
+	ProxyProbe             ProxyProbeConfig     `mapstructure:"proxy_probe"`
 	// TrustForwardedIPForAPIKeyACL enables legacy raw forwarded-header takeover.
 	// When disabled, server.trusted_proxies is authoritative for all client-IP consumers.
 	TrustForwardedIPForAPIKeyACL  bool                                       `mapstructure:"trust_forwarded_ip_for_api_key_acl"`

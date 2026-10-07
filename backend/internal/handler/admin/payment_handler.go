@@ -89,14 +89,14 @@ func parsePaymentOrderDateRange(c *gin.Context) (*time.Time, *time.Time, error) 
 	if raw := strings.TrimSpace(c.Query("start_date")); raw != "" {
 		value, err := parseUsageDateBoundary(raw, userTZ, false)
 		if err != nil {
-			return nil, nil, fmt.Errorf("Invalid start_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
+			return nil, nil, fmt.Errorf("invalid start_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 		}
 		start = &value
 	}
 	if raw := strings.TrimSpace(c.Query("end_date")); raw != "" {
 		value, err := parseUsageDateBoundary(raw, userTZ, true)
 		if err != nil {
-			return nil, nil, fmt.Errorf("Invalid end_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
+			return nil, nil, fmt.Errorf("invalid end_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
 		}
 		end = &value
 	}
