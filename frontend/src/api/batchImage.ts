@@ -192,12 +192,27 @@ export async function listBatchImageItems(
   batchId: string,
   status = '',
 ): Promise<BatchImageItemsResponse> {
-  const query = status ? `?status=${encodeURIComponent(status)}` : ''
-  const response = await fetch(buildGatewayUrl(`/v1/images/batches/${encodeURIComponent(batchId)}/items${query}`), {
-    headers: authHeaders(apiKey),
-  })
-  if (!response.ok) throw await parseBatchImageError(response)
-  return response.json()
+  const data: BatchImageItem[] = []
+  let cursor = 0
+  let object = 'list'
+  const limit = 100
+
+  for (;;) {
+    const params = new URLSearchParams({ limit: String(limit), cursor: String(cursor) })
+    if (status) params.set('status', status)
+    const response = await fetch(buildGatewayUrl(`/v1/images/batches/${encodeURIComponent(batchId)}/items?${params.toString()}`), {
+      headers: authHeaders(apiKey),
+    })
+    if (!response.ok) throw await parseBatchImageError(response)
+    const page: BatchImageItemsResponse = await response.json()
+    object = page.object || object
+    const pageData = page.data || []
+    data.push(...pageData)
+    if (!page.has_more || pageData.length === 0) {
+      return { object, data, has_more: false }
+    }
+    cursor += pageData.length
+  }
 }
 
 export async function cancelBatchImageJob(apiKey: string, batchId: string): Promise<BatchImageJob> {

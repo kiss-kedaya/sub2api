@@ -2460,6 +2460,7 @@ const handleRefresh = async (a: Account) => {
     const updated = await adminAPI.accounts.refreshCredentials(a.id)
     patchAccountInList(updated)
     enterAutoRefreshSilentWindow()
+    if (updated.warning && updated.message) appStore.showWarning(updated.message)
   } catch (error) {
     console.error('Failed to refresh credentials:', error)
   }

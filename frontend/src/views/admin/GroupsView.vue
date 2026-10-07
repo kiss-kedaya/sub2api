@@ -212,13 +212,13 @@
               >
                 <div
                   v-if="
-                    row.daily_limit_usd ||
-                    row.weekly_limit_usd ||
-                    row.monthly_limit_usd
+                    row.daily_limit_usd != null ||
+                    row.weekly_limit_usd != null ||
+                    row.monthly_limit_usd != null
                   "
                   class="flex flex-wrap items-center gap-x-1 gap-y-0.5"
                 >
-                  <span v-if="row.daily_limit_usd" class="whitespace-nowrap">
+                  <span v-if="row.daily_limit_usd != null" class="whitespace-nowrap">
                     <span
                       v-if="usageLoading"
                       class="font-medium text-gray-400 dark:text-gray-500"
@@ -244,23 +244,23 @@
                   </span>
                   <span
                     v-if="
-                      row.daily_limit_usd &&
-                      (row.weekly_limit_usd || row.monthly_limit_usd)
+                      row.daily_limit_usd != null &&
+                      (row.weekly_limit_usd != null || row.monthly_limit_usd != null)
                     "
                     class="mx-1 text-gray-300 dark:text-gray-600"
                     >·</span
                   >
-                  <span v-if="row.weekly_limit_usd" class="whitespace-nowrap"
+                  <span v-if="row.weekly_limit_usd != null" class="whitespace-nowrap"
                     >{{ formatUsd(row.weekly_limit_usd) }}/{{
                       t("admin.groups.limitWeek")
                     }}</span
                   >
                   <span
-                    v-if="row.weekly_limit_usd && row.monthly_limit_usd"
+                    v-if="row.weekly_limit_usd != null && row.monthly_limit_usd != null"
                     class="mx-1 text-gray-300 dark:text-gray-600"
                     >·</span
                   >
-                  <span v-if="row.monthly_limit_usd" class="whitespace-nowrap"
+                  <span v-if="row.monthly_limit_usd != null" class="whitespace-nowrap"
                     >{{ formatUsd(row.monthly_limit_usd) }}/{{
                       t("admin.groups.limitMonth")
                     }}</span
@@ -5884,10 +5884,10 @@ const normalizeOptionalLimit = (
       return null;
     }
     const parsed = Number(trimmed);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
   }
 
-  return Number.isFinite(value) && value > 0 ? value : null;
+  return Number.isFinite(value) && value >= 0 ? value : null;
 };
 
 const normalizeRateMultiplier = (

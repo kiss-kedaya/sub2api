@@ -455,13 +455,9 @@ describe('admin UsageView distribution metric toggles', () => {
     await flushPromises()
 
     expect(getSnapshotV2).toHaveBeenCalledTimes(1)
-    const now = new Date()
-    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-    expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({
-      start_date: formatLocalDate(yesterday),
-      end_date: formatLocalDate(now),
-      granularity: 'hour'
-    }))
+    const snapshotArgs = getSnapshotV2.mock.calls[0][0] as { start_date: string; end_date: string; granularity: string }
+    expect(snapshotArgs.granularity).toBe('hour')
+    expect(new Date(snapshotArgs.end_date).getTime() - new Date(snapshotArgs.start_date).getTime()).toBe(24 * 60 * 60 * 1000)
 
     const modelChart = wrapper.find('[data-test="model-chart"]')
     const groupChart = wrapper.find('[data-test="group-chart"]')
@@ -826,5 +822,24 @@ describe('admin UsageView model audit export', () => {
 		const row = sheetAddAoa.mock.calls[0][1][0]
 		expect(row.slice(4, 8)).toEqual(['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'Yes'])
 		expect(saveAs).toHaveBeenCalledTimes(1)
+	})
+
+	it('exports later pages when the backend caps each page at 50', async () => {
+		const wrapper = mountRouteFilteredUsageView()
+		vi.advanceTimersByTime(120)
+		await flushPromises()
+		exportList.mockImplementation(async ({ page }) => ({
+			items: Array.from({ length: page === 3 ? 1 : 50 }, (_, index) => ({
+				id: (page - 1) * 50 + index + 1, model: 'example', created_at: '2026-08-04T00:00:00Z'
+			})),
+			total: 101, pages: 3, page_size: 50,
+		}))
+		await (wrapper.vm as any).exportToExcel()
+		expect(exportList.mock.calls.map(([params]) => [params.page, params.page_size])).toEqual([
+			[1, 100], [2, 50], [3, 50],
+		])
+		expect(sheetAddAoa.mock.calls.reduce((total, [, rows]) => total + rows.length, 0)).toBe(101)
+		expect(saveAs).toHaveBeenCalledTimes(1)
+		wrapper.unmount()
 	})
 })

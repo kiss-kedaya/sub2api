@@ -237,6 +237,7 @@ import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { fetchPaginatedItems } from '@/utils/paginatedItems'
 import { adminAPI } from '@/api/admin'
 import { keysAPI } from '@/api/keys'
 import { userGroupsAPI } from '@/api/groups'
@@ -787,11 +788,10 @@ async function openMyKeyPicker() {
   if (myActiveKeys.value.length > 0) return
   myKeysLoading.value = true
   try {
-    const [res, rates] = await Promise.all([
-      keysAPI.list(1, 100, { status: 'active' }),
+    const [items, rates] = await Promise.all([
+      fetchPaginatedItems((page, size) => keysAPI.list(page, size, { status: 'active' }), 100, 100),
       userGroupsAPI.getUserGroupRates(),
     ])
-    const items = res.items || []
     const now = Date.now()
     myActiveKeys.value = items.filter(k => {
       if (k.status !== 'active') return false

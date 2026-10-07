@@ -252,6 +252,7 @@ import Icon from '@/components/icons/Icon.vue'
 import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
+import { fetchPaginatedItems } from '@/utils/paginatedItems'
 import { getBillingModeLabel, getDisplayBillingMode as resolveDisplayBillingMode } from '@/utils/billingMode'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import type {
@@ -653,14 +654,10 @@ const exportToCSV = async () => {
   exporting.value = true
   appStore.showInfo(t('usage.preparingExport'))
   try {
-    const allLogs: UsageLog[] = []
-    const pageSize = 100
-    const exportParams = buildUsageListParams(1, pageSize)
-    const totalPages = Math.ceil(pagination.total / pageSize)
-    for (let page = 1; page <= totalPages; page++) {
-      const response = await usageAPI.query({ ...exportParams, page })
-      allLogs.push(...response.items)
-    }
+    const exportParams = buildUsageListParams(1, 100)
+    const allLogs = await fetchPaginatedItems(
+      (page, pageSize) => usageAPI.query({ ...exportParams, page, page_size: pageSize }), 100
+    )
     if (allLogs.length === 0) {
       appStore.showWarning(t('usage.noDataToExport'))
       return
