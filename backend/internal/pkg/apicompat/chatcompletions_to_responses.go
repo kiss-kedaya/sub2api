@@ -254,12 +254,12 @@ func parseAssistantContent(raw json.RawMessage) (string, string, error) {
 				continue
 			}
 			if thinking.Len() > 0 {
-				thinking.WriteString("\n")
+				_, _ = thinking.WriteString("\n")
 			}
-			thinking.WriteString(chunk)
+			_, _ = thinking.WriteString(chunk)
 		default:
 			if partText != "" {
-				text.WriteString(partText)
+				_, _ = text.WriteString(partText)
 			}
 		}
 	}
