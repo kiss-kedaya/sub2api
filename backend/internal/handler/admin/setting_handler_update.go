@@ -613,11 +613,15 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		adminRechargeRebateEnabled = *req.AdminRechargeRebateEnabled
 	}
 	// 通用表格配置：兼容旧客户端未传字段时保留当前值。
-	if req.TableDefaultPageSize <= 0 {
+	if _, sent := sentFields[service.SettingKeyTableDefaultPageSize]; !sent {
 		req.TableDefaultPageSize = previousSettings.TableDefaultPageSize
 	}
-	if req.TablePageSizeOptions == nil {
+	if _, sent := sentFields[service.SettingKeyTablePageSizeOptions]; !sent {
 		req.TablePageSizeOptions = previousSettings.TablePageSizeOptions
+	}
+	if err := service.ValidateTablePreferences(req.TableDefaultPageSize, req.TablePageSizeOptions); err != nil {
+		response.ErrorFrom(c, err)
+		return
 	}
 	req.SMTPHost = strings.TrimSpace(req.SMTPHost)
 	req.SMTPUsername = strings.TrimSpace(req.SMTPUsername)

@@ -466,18 +466,18 @@ func (h *DataManagementHandler) ListBackupJobs(c *gin.Context) {
 		return
 	}
 
-	pageSize := int32(20)
+	pageSize := 20
 	if raw := strings.TrimSpace(c.Query("page_size")); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil || v <= 0 {
 			response.BadRequest(c, "Invalid page_size")
 			return
 		}
-		pageSize = int32(v)
+		pageSize = v
 	}
 
 	result, err := h.dataManagementService.ListBackupJobs(c.Request.Context(), service.DataManagementListBackupJobsInput{
-		PageSize:   pageSize,
+		PageSize:   int32(response.ClampPageSize(c, pageSize)),
 		PageToken:  c.Query("page_token"),
 		Status:     c.Query("status"),
 		BackupType: c.Query("backup_type"),

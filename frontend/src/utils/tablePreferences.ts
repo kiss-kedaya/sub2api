@@ -4,11 +4,19 @@ const MAX_TABLE_PAGE_SIZE = 1000
 export const DEFAULT_TABLE_PAGE_SIZE = 20
 export const DEFAULT_TABLE_PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 
-const sanitizePageSize = (value: unknown): number | null => {
+export const parseTableDefaultPageSizeInput = (value: unknown): number | null => {
   const size = Number(value)
   if (!Number.isInteger(size)) return null
   if (size < MIN_TABLE_PAGE_SIZE || size > MAX_TABLE_PAGE_SIZE) return null
   return size
+}
+
+export const parseTablePageSizeOptionsInput = (raw: string): number[] | null => {
+  const tokens = raw.split(',').map((token) => token.trim())
+  if (tokens.some((token) => !/^\d+$/.test(token))) return null
+  const values = tokens.map(parseTableDefaultPageSizeInput)
+  if (values.some((value) => value === null)) return null
+  return Array.from(new Set(values as number[])).sort((a, b) => a - b)
 }
 
 const parsePageSizeForSelection = (value: unknown): number | null => {
@@ -30,7 +38,7 @@ const getSanitizedConfiguredOptions = (): number[] => {
   return Array.from(
     new Set(
       configured
-        .map((value) => sanitizePageSize(value))
+        .map((value) => parseTableDefaultPageSizeInput(value))
         .filter((value): value is number => value !== null)
     )
   ).sort((a, b) => a - b)
@@ -46,7 +54,7 @@ const normalizePageSizeToOptions = (value: number, options: number[]): number =>
 }
 
 export const getConfiguredTableDefaultPageSize = (): number => {
-  const configured = sanitizePageSize(getInjectedAppConfig()?.table_default_page_size)
+  const configured = parseTableDefaultPageSizeInput(getInjectedAppConfig()?.table_default_page_size)
   if (configured === null) {
     return DEFAULT_TABLE_PAGE_SIZE
   }

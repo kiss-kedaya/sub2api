@@ -691,6 +691,12 @@ func TestParsePagination(t *testing.T) {
 			wantPage:     1,
 			wantPageSize: 20,
 		},
+		{
+			name:         "page整数溢出_使用默认值",
+			query:        "page=999999999999999999999999999999",
+			wantPage:     1,
+			wantPageSize: 20,
+		},
 	}
 
 	for _, tt := range tests {
@@ -740,37 +746,37 @@ func Test_parseInt(t *testing.T) {
 			name:    "包含字母_返回0",
 			input:   "abc",
 			wantVal: 0,
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name:    "数字开头接字母_返回0",
 			input:   "12a",
 			wantVal: 0,
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name:    "包含负号_返回0",
 			input:   "-1",
 			wantVal: 0,
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name:    "包含小数点_返回0",
 			input:   "1.5",
 			wantVal: 0,
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name:    "包含空格_返回0",
 			input:   "1 2",
 			wantVal: 0,
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name:    "空字符串",
 			input:   "",
 			wantVal: 0,
-			wantErr: false,
+			wantErr: true,
 		},
 	}
 
