@@ -307,3 +307,15 @@ func TestGroupHandlerSimpleModeBlocksAdvancedOperations(t *testing.T) {
 		})
 	}
 }
+
+func TestGroupStatsDoesNotReturnMockZeroes(t *testing.T) {
+	h := NewGroupHandlerWithConfig(newStubAdminService(), nil, nil, &config.Config{})
+	r := gin.New()
+	r.GET("/groups/:id/stats", h.GetStats)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/groups/1/stats", nil))
+
+	require.Equal(t, http.StatusNotImplemented, rec.Code)
+	require.NotContains(t, rec.Body.String(), `"total_requests":0`)
+}

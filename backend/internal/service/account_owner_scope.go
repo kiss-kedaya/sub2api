@@ -1,23 +1,19 @@
 package service
 
-import (
-	"context"
-	"strings"
-)
+import "context"
 
 type accountOwnerScopeKey struct{}
 
 type accountOwnerScope struct {
-	AdminID   int64
-	SeeLegacy bool
+	AdminID     int64
+	FullPool    bool
+	PoolOwnerID int64
 }
 
-const legacyPoolOwnerEmail = "admin@sub2api.local"
-
-// WithAccountOwnerScope marks the current admin. Account-pool queries then
-// return only accounts uploaded by that admin. Accounts with no uploader are
-// visible only to admin@sub2api.local.
-func WithAccountOwnerScope(ctx context.Context, adminID int64, email string) context.Context {
+// WithAccountOwnerScope records a verified admin and the server-configured pool
+// owner. Only that positive user ID may access all uploads, including legacy
+// accounts. Email addresses and request parameters never grant this permission.
+func WithAccountOwnerScope(ctx context.Context, adminID, poolOwnerUserID int64) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -25,9 +21,19 @@ func WithAccountOwnerScope(ctx context.Context, adminID int64, email string) con
 		return ctx
 	}
 	return context.WithValue(ctx, accountOwnerScopeKey{}, accountOwnerScope{
-		AdminID:   adminID,
-		SeeLegacy: strings.EqualFold(strings.TrimSpace(email), legacyPoolOwnerEmail),
+		AdminID:     adminID,
+		FullPool:    poolOwnerUserID > 0 && adminID == poolOwnerUserID,
+		PoolOwnerID: poolOwnerUserID,
 	})
+}
+
+// EnsureAccountOwnerScope preserves authentication's scope for the same admin.
+// Callers without a matching authenticated scope receive only their own uploads.
+func EnsureAccountOwnerScope(ctx context.Context, adminID int64) context.Context {
+	if scopedID, _, ok := AccountOwnerScopeDetail(ctx); ok && scopedID == adminID {
+		return ctx
+	}
+	return WithAccountOwnerScope(ctx, adminID, 0)
 }
 
 func AccountOwnerScopeFromContext(ctx context.Context) (int64, bool) {
@@ -35,7 +41,8 @@ func AccountOwnerScopeFromContext(ctx context.Context) (int64, bool) {
 	return id, ok
 }
 
-func AccountOwnerScopeDetail(ctx context.Context) (adminID int64, seeLegacy bool, ok bool) {
+// AccountOwnerScopeDetail returns the verified admin's ID and pool-wide access.
+func AccountOwnerScopeDetail(ctx context.Context) (adminID int64, fullPool bool, ok bool) {
 	if ctx == nil {
 		return 0, false, false
 	}
@@ -43,19 +50,28 @@ func AccountOwnerScopeDetail(ctx context.Context) (adminID int64, seeLegacy bool
 	if !isScope || scope.AdminID <= 0 {
 		return 0, false, false
 	}
-	return scope.AdminID, scope.SeeLegacy, true
+	return scope.AdminID, scope.FullPool, true
 }
 
-// AccountVisibleToOwner reports whether an admin may see this pool account.
-// A nil or non-positive uploader is a legacy account. seeLegacy is true only
-// for admin@sub2api.local. adminID <= 0 means the caller is outside the
-// admin pool scope, so nothing is hidden.
-func AccountVisibleToOwner(createdBy *int64, adminID int64, seeLegacy bool) bool {
-	if adminID <= 0 {
+// AccountPoolOwnerScope returns the authenticated administrator and the
+// server-configured pool owner. The configured owner ID is carried in the
+// authenticated request context; it is never read from request parameters.
+func AccountPoolOwnerScope(ctx context.Context) (adminID, poolOwnerID int64, configured, ok bool) {
+	if ctx == nil {
+		return 0, 0, false, false
+	}
+	scope, isScope := ctx.Value(accountOwnerScopeKey{}).(accountOwnerScope)
+	if !isScope || scope.AdminID <= 0 {
+		return 0, 0, false, false
+	}
+	return scope.AdminID, scope.PoolOwnerID, scope.PoolOwnerID > 0, true
+}
+
+// AccountVisibleToOwner applies the same visibility policy to individual reads
+// and batch operations. Unscoped background/gateway calls retain their behavior.
+func AccountVisibleToOwner(createdBy *int64, adminID int64, fullPool bool) bool {
+	if adminID <= 0 || fullPool {
 		return true
 	}
-	if createdBy == nil || *createdBy <= 0 {
-		return seeLegacy
-	}
-	return *createdBy == adminID
+	return createdBy != nil && *createdBy == adminID
 }

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -57,6 +59,9 @@ func (f *optionalLimitField) UnmarshalJSON(data []byte) error {
 
 	var number float64
 	if err := json.Unmarshal(trimmed, &number); err == nil {
+		if math.IsNaN(number) || math.IsInf(number, 0) {
+			return fmt.Errorf("limit must be finite")
+		}
 		f.value = &number
 		return nil
 	}
@@ -71,6 +76,9 @@ func (f *optionalLimitField) UnmarshalJSON(data []byte) error {
 		number, err = strconv.ParseFloat(text, 64)
 		if err != nil {
 			return fmt.Errorf("invalid numeric limit value %q: %w", text, err)
+		}
+		if math.IsNaN(number) || math.IsInf(number, 0) {
+			return fmt.Errorf("limit must be finite")
 		}
 		f.value = &number
 		return nil
@@ -922,14 +930,10 @@ func (h *GroupHandler) GetStats(c *gin.Context) {
 		return
 	}
 
-	// Return mock data for now
-	response.Success(c, gin.H{
-		"total_api_keys":  0,
-		"active_api_keys": 0,
-		"total_requests":  0,
-		"total_cost":      0.0,
-	})
-	_ = groupID // TODO: implement actual stats
+	// The endpoint has no aggregate implementation. Never return plausible-looking
+	// zeroes: callers would treat them as real usage data.
+	_ = groupID
+	response.Error(c, http.StatusNotImplemented, "group statistics are not implemented")
 }
 
 // GetUsageSummary returns today's, yesterday's, and cumulative cost for all groups.

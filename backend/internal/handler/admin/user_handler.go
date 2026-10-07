@@ -65,8 +65,8 @@ type CreateUserRequest struct {
 	Notes                string   `json:"notes"`
 	Role                 string   `json:"role" binding:"omitempty,oneof=admin user"`
 	Balance              *float64 `json:"balance"`
-	Concurrency          int      `json:"concurrency"`
-	RPMLimit             int      `json:"rpm_limit"`
+	Concurrency          int      `json:"concurrency" binding:"gte=0"`
+	RPMLimit             int      `json:"rpm_limit" binding:"gte=0"`
 	AllowedGroups        []int64  `json:"allowed_groups"`
 	RestrictPublicGroups bool     `json:"restrict_public_groups"`
 }
@@ -80,8 +80,8 @@ type UpdateUserRequest struct {
 	Notes                *string  `json:"notes"`
 	Role                 string   `json:"role" binding:"omitempty,oneof=admin user"`
 	Balance              *float64 `json:"balance"`
-	Concurrency          *int     `json:"concurrency"`
-	RPMLimit             *int     `json:"rpm_limit"`
+	Concurrency          *int     `json:"concurrency" binding:"omitempty,gte=0"`
+	RPMLimit             *int     `json:"rpm_limit" binding:"omitempty,gte=0"`
 	Status               string   `json:"status" binding:"omitempty,oneof=active disabled"`
 	AllowedGroups        *[]int64 `json:"allowed_groups"`
 	RestrictPublicGroups *bool    `json:"restrict_public_groups"`

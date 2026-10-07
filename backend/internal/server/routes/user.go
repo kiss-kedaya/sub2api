@@ -22,6 +22,7 @@ func RegisterUserRoutes(
 	authenticated.Use(middleware.BackendModeUserGuard(settingService))
 	// 面板全局按用户限流：防止单个账号高频刷接口打爆数据库
 	authenticated.Use(panelRateLimiter.Global())
+	authenticated.Use(middleware.TablePagination(settingService))
 	// 用户管理面变更类操作入审计（含 TOTP 启用/禁用、step-up 验证、密码修改等安全事件）
 	authenticated.Use(gin.HandlerFunc(auditLog))
 	registerTicketRoutes(authenticated, h.Ticket)

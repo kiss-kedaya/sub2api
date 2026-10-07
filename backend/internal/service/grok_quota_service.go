@@ -138,6 +138,9 @@ func grokBillingHasAuthoritativeQuota(billing *xai.BillingSummary) bool {
 }
 
 func (s *GrokQuotaService) ProbeUsage(ctx context.Context, accountID int64) (*GrokQuotaProbeResult, error) {
+	if err := s.authorizeQuotaAccount(ctx, accountID); err != nil {
+		return nil, err
+	}
 	return s.runProbeFlight(ctx, "active:"+strconv.FormatInt(accountID, 10), func(sharedCtx context.Context) (*GrokQuotaProbeResult, error) {
 		return s.probeUsage(sharedCtx, accountID)
 	})
@@ -244,9 +247,28 @@ func (s *GrokQuotaService) probeUsage(ctx context.Context, accountID int64) (*Gr
 // ProbeBilling only calls the xAI billing endpoints. Account usage refreshes
 // use this method so opening the account list never consumes model quota.
 func (s *GrokQuotaService) ProbeBilling(ctx context.Context, accountID int64) (*GrokQuotaProbeResult, error) {
+	if err := s.authorizeQuotaAccount(ctx, accountID); err != nil {
+		return nil, err
+	}
 	return s.runProbeFlight(ctx, "billing:"+strconv.FormatInt(accountID, 10), func(sharedCtx context.Context) (*GrokQuotaProbeResult, error) {
 		return s.probeBilling(sharedCtx, accountID)
 	})
+}
+
+// runProbeFlight deliberately detaches the request context so one cancelled
+// HTTP request cannot cancel a shared upstream probe. Authorization must happen
+// before that detachment while the administrator scope is still present.
+func (s *GrokQuotaService) authorizeQuotaAccount(ctx context.Context, accountID int64) error {
+	if _, _, scoped := AccountOwnerScopeDetail(ctx); !scoped {
+		return nil
+	}
+	if s == nil || s.accountRepo == nil {
+		return infraerrors.New(http.StatusInternalServerError, "GROK_QUOTA_NOT_CONFIGURED", "grok quota service is not configured")
+	}
+	if _, err := s.accountRepo.GetByID(ctx, accountID); err != nil {
+		return infraerrors.Newf(http.StatusNotFound, "GROK_QUOTA_ACCOUNT_NOT_FOUND", "account not found: %v", err)
+	}
+	return nil
 }
 
 // ProbeMediaEligibility refreshes billing state and evaluates the persisted
