@@ -2,12 +2,14 @@ package admin
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 func TestSanitizeAdminPaymentOrderForResponseAddsCurrency(t *testing.T) {
@@ -45,6 +47,23 @@ func TestSanitizeAdminPaymentOrderForResponseAddsCurrency(t *testing.T) {
 	}
 	if strings.Contains(string(body), "provider_snapshot") {
 		t.Fatalf("expected provider_snapshot to be omitted, got %s", string(body))
+	}
+}
+
+func TestParsePaymentOrderDateRangeIncludesExplicitEndSecond(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	req := httptest.NewRequest("GET", "/api/v1/admin/payment/orders?start_date=2026-10-07T12:34:56&end_date=2026-10-07T12:35:56", nil)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = req
+	start, end, err := parsePaymentOrderDateRange(c)
+	if err != nil {
+		t.Fatalf("parse payment order range: %v", err)
+	}
+	if start == nil || end == nil || !end.After(*start) {
+		t.Fatalf("expected ordered date range, got start=%v end=%v", start, end)
+	}
+	if end.Sub(*start) != time.Minute+time.Second {
+		t.Fatalf("expected explicit end second to be inclusive, got range %s", end.Sub(*start))
 	}
 }
 

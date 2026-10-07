@@ -343,6 +343,7 @@ func (h *PaymentHandler) GetMyOrders(c *gin.Context) {
 	}
 
 	page, pageSize := response.ParsePagination(c)
+	pageSize = min(pageSize, 100)
 	orders, total, err := h.paymentService.GetUserOrders(c.Request.Context(), subject.UserID, service.OrderListParams{
 		Page:        page,
 		PageSize:    pageSize,

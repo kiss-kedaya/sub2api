@@ -134,6 +134,7 @@ async function fetchOrders() {
     })
     orders.value = res.data.items || []
     pagination.total = res.data.total || 0
+    if (res.data.page_size > 0) pagination.page_size = res.data.page_size
   } catch (err: unknown) {
     appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
   } finally {
