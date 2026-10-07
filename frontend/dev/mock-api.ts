@@ -763,7 +763,7 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/subscriptions/progress') return data.subscriptionProgress
         const subscriptionProgress = path.match(/^\/api\/v1\/subscriptions\/(\d+)\/progress$/)
         if (subscriptionProgress) {
-          const progress = data.subscriptionProgress.find(item => item.subscription_id === Number(subscriptionProgress[1]))
+          const progress = data.subscriptionProgress.find(item => item.id === Number(subscriptionProgress[1]))
           if (!progress) throw new PreviewError(404, '本地演示订阅不存在')
           return progress
         }
