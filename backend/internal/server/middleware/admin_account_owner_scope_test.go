@@ -18,15 +18,15 @@ func TestAdminAuthAccountPoolOwnerUsesStableID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		name, email, role, status string
-		id, ownerID int64
-		wantAll bool
-		wantStatus int
+		id, ownerID               int64
+		wantAll                   bool
+		wantStatus                int
 	}{
 		{"owner original email", "first@example.test", service.RoleAdmin, service.StatusActive, 7, 7, true, 200},
 		{"owner changed email", "renamed@example.test", service.RoleAdmin, service.StatusActive, 7, 7, true, 200},
 		{"other admin claims legacy email", "admin@sub2api.local", service.RoleAdmin, service.StatusActive, 8, 7, false, 200},
 		{"other admin", "other@example.test", service.RoleAdmin, service.StatusActive, 8, 7, false, 200},
-		{"disabled owner setting", "admin@sub2api.local", service.RoleAdmin, service.StatusActive, 7, 0, false, 200},
+		{"unconfigured owner leaves scope untouched", "admin@sub2api.local", service.RoleAdmin, service.StatusActive, 7, 0, true, 200},
 		{"configured non-admin", "user@example.test", service.RoleUser, service.StatusActive, 7, 7, false, 403},
 		{"disabled configured admin", "owner@example.test", service.RoleAdmin, service.StatusDisabled, 7, 7, false, 401},
 	} {
@@ -44,11 +44,13 @@ func TestAdminAuthAccountPoolOwnerUsesStableID(t *testing.T) {
 				called := false
 				router.GET("/accounts", func(c *gin.Context) {
 					called = true
-					ctx := service.EnsureAccountOwnerScope(c.Request.Context(), tc.id)
-					id, all, ok := service.AccountOwnerScopeDetail(ctx)
-					require.True(t, ok)
-					require.Equal(t, tc.id, id)
-					require.Equal(t, tc.wantAll, all)
+					// The middleware installs a scope only when an owner is configured.
+					id, all, ok := service.AccountOwnerScopeDetail(c.Request.Context())
+					require.Equal(t, tc.ownerID > 0, ok)
+					if ok {
+						require.Equal(t, tc.id, id)
+						require.Equal(t, tc.wantAll, all)
+					}
 					c.Status(http.StatusOK)
 				})
 				req := httptest.NewRequest(http.MethodGet, "/accounts?account_pool_owner_user_id=8&see_all=true", nil)
@@ -57,7 +59,9 @@ func TestAdminAuthAccountPoolOwnerUsesStableID(t *testing.T) {
 					req.Header.Set("Connection", "Upgrade")
 					req.Header.Set("Upgrade", "websocket")
 					req.Header.Set("Sec-WebSocket-Protocol", "sub2api-admin, jwt."+token)
-				} else { req.Header.Set("Authorization", "Bearer "+token) }
+				} else {
+					req.Header.Set("Authorization", "Bearer "+token)
+				}
 				w := httptest.NewRecorder()
 				router.ServeHTTP(w, req)
 				require.Equal(t, tc.wantStatus, w.Code, w.Body.String())

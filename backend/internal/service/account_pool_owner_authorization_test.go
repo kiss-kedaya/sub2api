@@ -15,7 +15,7 @@ func TestConfiguredPoolOwnerAuthorization(t *testing.T) {
 		blocked bool
 	}{
 		{"worker unchanged", context.Background(), 7, false},
-		{"default configuration unchanged", WithAccountOwnerScope(context.Background(), 8, 0), 7, false},
+		{"admin under another configured owner", WithAccountOwnerScope(context.Background(), 8, 7), 7, true},
 		{"owner global key", WithAccountOwnerScope(context.Background(), 7, 7), 0, false},
 		{"owner self", WithAccountOwnerScope(context.Background(), 7, 7), 7, false},
 		{"other admin global key", WithAccountOwnerScope(context.Background(), 8, 7), 0, true},

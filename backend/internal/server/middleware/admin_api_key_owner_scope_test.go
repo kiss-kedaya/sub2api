@@ -33,7 +33,7 @@ func TestAdminAPIKeyEstablishesOnlyVerifiedOwnerScope(t *testing.T) {
 	}{
 		{"renamed owner", &service.User{ID: 7, Email: "renamed@example.test", Role: service.RoleAdmin, Status: service.StatusActive}, 7, "test-admin-key", 200, true},
 		{"different configured owner", &service.User{ID: 7, Role: service.RoleAdmin, Status: service.StatusActive}, 8, "test-admin-key", 200, false},
-		{"disabled setting", &service.User{ID: 7, Role: service.RoleAdmin, Status: service.StatusActive}, 0, "test-admin-key", 200, false},
+		{"unconfigured owner leaves scope untouched", &service.User{ID: 7, Role: service.RoleAdmin, Status: service.StatusActive}, 0, "test-admin-key", 200, true},
 		{"inactive admin", &service.User{ID: 7, Role: service.RoleAdmin, Status: service.StatusDisabled}, 7, "test-admin-key", 403, false},
 		{"non admin", &service.User{ID: 7, Role: service.RoleUser, Status: service.StatusActive}, 7, "test-admin-key", 403, false},
 		{"missing admin", nil, 7, "test-admin-key", 403, false},
@@ -48,10 +48,13 @@ func TestAdminAPIKeyEstablishesOnlyVerifiedOwnerScope(t *testing.T) {
 			called := false
 			r.GET("/accounts", func(c *gin.Context) {
 				called = true
+				// The middleware installs a scope only when an owner is configured.
 				id, fullPool, ok := service.AccountOwnerScopeDetail(c.Request.Context())
-				require.True(t, ok)
-				require.Equal(t, tc.user.ID, id)
-				require.Equal(t, tc.fullPool, fullPool)
+				require.Equal(t, tc.owner > 0, ok)
+				if ok {
+					require.Equal(t, tc.user.ID, id)
+					require.Equal(t, tc.fullPool, fullPool)
+				}
 				c.Status(http.StatusOK)
 			})
 			req := httptest.NewRequest(http.MethodGet, "/accounts?see_all=true", nil)
