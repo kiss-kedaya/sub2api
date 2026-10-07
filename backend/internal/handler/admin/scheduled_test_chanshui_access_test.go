@@ -52,6 +52,8 @@ func TestScheduledChanshuiConfigurationAndResultsRequireAccountOwnership(t *test
 			r.Use(func(c *gin.Context) {
 				c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 7})
 				c.Set(middleware.ContextKeyAuthEmail, "other-admin@example.test")
+				// Restricted means an owner is configured and it is not this admin.
+				c.Request = c.Request.WithContext(service.WithAccountOwnerScope(c.Request.Context(), 7, 9))
 				c.Next()
 			})
 			r.POST("/plans", h.Create)
