@@ -86,7 +86,7 @@ type stubAdminService struct {
 		sortOrder string
 		calls     int
 	}
-	redeemTotal int64
+	redeemTotal                  int64
 	lastGenerateRedeemCodesInput *service.GenerateRedeemCodesInput
 	mu                           sync.Mutex
 }

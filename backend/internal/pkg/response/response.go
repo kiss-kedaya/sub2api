@@ -213,12 +213,15 @@ func SetPaginationLimitsLoader(c *gin.Context, loader func() (int, int)) {
 
 func paginationLimits(c *gin.Context) (int, int) {
 	if value, exists := c.Get(paginationLimitsKey); exists {
-		limits := value.(paginationLimitValues)
-		return limits.defaultSize, limits.maxSize
+		if limits, ok := value.(paginationLimitValues); ok {
+			return limits.defaultSize, limits.maxSize
+		}
 	}
 	defaultSize, maxSize := 20, 1000
 	if value, exists := c.Get(paginationLimitsLoaderKey); exists {
-		defaultSize, maxSize = value.(func() (int, int))()
+		if loader, ok := value.(func() (int, int)); ok && loader != nil {
+			defaultSize, maxSize = loader()
+		}
 	}
 	if maxSize < 1 || maxSize > 1000 {
 		maxSize = 1000
