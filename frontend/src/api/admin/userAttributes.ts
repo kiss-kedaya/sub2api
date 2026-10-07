@@ -88,8 +88,8 @@ export async function getUserAttributeValues(userId: number): Promise<UserAttrib
 export async function updateUserAttributeValues(
   userId: number,
   values: UserAttributeValuesMap
-): Promise<{ message: string }> {
-  const { data } = await apiClient.put<{ message: string }>(
+): Promise<UserAttributeValue[]> {
+  const { data } = await apiClient.put<UserAttributeValue[]>(
     `/admin/users/${userId}/attributes`,
     { values }
   )

@@ -219,10 +219,14 @@ export async function toggleStatus(id: number, status: 'active' | 'disabled'): P
 /**
  * Get user's API keys
  * @param id - User ID
- * @returns List of user's API keys
+ * @param page - Page number (defaults to 1)
+ * @param pageSize - Number of keys per page (defaults to 20)
+ * @returns Paginated user's API keys
  */
-export async function getUserApiKeys(id: number): Promise<PaginatedResponse<ApiKey>> {
-  const { data } = await apiClient.get<PaginatedResponse<ApiKey>>(`/admin/users/${id}/api-keys`)
+export async function getUserApiKeys(id: number, page = 1, pageSize = 20): Promise<PaginatedResponse<ApiKey>> {
+  const { data } = await apiClient.get<PaginatedResponse<ApiKey>>(`/admin/users/${id}/api-keys`, {
+    params: { page, page_size: pageSize }
+  })
   return data
 }
 

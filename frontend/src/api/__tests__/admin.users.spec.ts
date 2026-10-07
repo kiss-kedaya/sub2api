@@ -1,18 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { post } = vi.hoisted(() => ({
+const { post, get } = vi.hoisted(() => ({
   post: vi.fn(),
+  get: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({
   apiClient: {
     post,
+    get,
   },
 }))
 
 import {
   batchUpdateLimits,
   bindUserAuthIdentity,
+  getUserApiKeys,
   type AdminBindAuthIdentityRequest,
   type AdminBoundAuthIdentity,
   type BatchUpdateUserLimitsRequest,
@@ -146,5 +149,23 @@ describe('admin users api auth identity binding', () => {
     expect(result).toEqual({ affected: 2 })
     expect(batchRequestContractExact).toBe(true)
     expect(batchResponseContractExact).toBe(true)
+  })
+})
+
+
+describe('admin user API key pagination', () => {
+  beforeEach(() => get.mockReset())
+
+  it('forwards the requested page and page size without dropping pagination metadata', async () => {
+    const page = { items: [{ id: 21, name: 'page-two-key' }], total: 21, page: 2, page_size: 20, pages: 2 }
+    get.mockResolvedValue({ data: page })
+    await expect(getUserApiKeys(9, 2, 20)).resolves.toEqual(page)
+    expect(get).toHaveBeenCalledWith('/admin/users/9/api-keys', { params: { page: 2, page_size: 20 } })
+  })
+
+  it('keeps a bounded default for callers that omit pagination', async () => {
+    get.mockResolvedValue({ data: { items: [], total: 0, page: 1, page_size: 20, pages: 0 } })
+    await getUserApiKeys(9)
+    expect(get).toHaveBeenCalledWith('/admin/users/9/api-keys', { params: { page: 1, page_size: 20 } })
   })
 })

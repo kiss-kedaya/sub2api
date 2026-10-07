@@ -217,6 +217,7 @@ export interface PublicSettings {
   promo_code_enabled: boolean
   password_reset_enabled: boolean
   invitation_code_enabled: boolean
+  totp_enabled?: boolean
   login_agreement_enabled?: boolean
   login_agreement_mode?: 'modal' | 'checkbox' | string
   login_agreement_updated_at?: string
@@ -241,6 +242,8 @@ export interface PublicSettings {
   home_content: string
   compact_home_enabled: boolean
   hide_ccs_import_button: boolean
+  purchase_subscription_enabled?: boolean
+  purchase_subscription_url?: string
   payment_enabled: boolean
   risk_control_enabled: boolean
   table_default_page_size: number
@@ -266,6 +269,7 @@ export interface PublicSettings {
   balance_low_notify_enabled: boolean
   account_quota_notify_enabled: boolean
   balance_low_notify_threshold: number
+  balance_low_notify_recharge_url?: string
   channel_monitor_enabled: boolean
   /** Exclusive mode: v1 active probes or v2 passive aggregation. Default v2. */
   channel_monitor_mode?: 'v1' | 'v2'
@@ -280,7 +284,8 @@ export interface PublicSettings {
   model_plaza_enabled: boolean
   model_plaza_require_auth: boolean
   plugin_management_enabled: boolean
-  service_quota_enabled: boolean
+  /** Removed from the public API; retained only for old injected configs. */
+  service_quota_enabled?: boolean
   affiliate_enabled: boolean
   allow_user_view_error_requests?: boolean
 }
@@ -2083,27 +2088,28 @@ export interface UserSubscription {
 }
 
 export interface SubscriptionProgress {
-  subscription_id: number
-  daily: {
-    used: number
-    limit: number | null
-    percentage: number
-    reset_in_seconds: number | null
-  } | null
-  weekly: {
-    used: number
-    limit: number | null
-    percentage: number
-    reset_in_seconds: number | null
-  } | null
-  monthly: {
-    used: number
-    limit: number | null
-    percentage: number
-    reset_in_seconds: number | null
-  } | null
-  expires_at: string | null
-  days_remaining: number | null
+  id: number
+  group_name: string
+  expires_at: string
+  expires_in_days: number
+  daily: SubscriptionUsageWindow | null
+  weekly: SubscriptionUsageWindow | null
+  monthly: SubscriptionUsageWindow | null
+}
+
+export interface SubscriptionUsageWindow {
+  limit_usd: number
+  used_usd: number
+  remaining_usd: number
+  percentage: number
+  window_start: string
+  resets_at: string
+  resets_in_seconds: number
+}
+
+export interface SubscriptionProgressInfo {
+  subscription: UserSubscription
+  progress: SubscriptionProgress | null
 }
 
 export interface AssignSubscriptionRequest {
@@ -2163,6 +2169,7 @@ export interface UserErrorListParams {
 }
 
 export interface UsageQueryParams {
+  period?: 'today' | 'week' | 'month'
   page?: number
   page_size?: number
   api_key_id?: number

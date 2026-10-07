@@ -150,29 +150,6 @@ export async function expire(id: number): Promise<RedeemCode> {
 }
 
 /**
- * Get redeem code statistics
- * @returns Statistics about redeem codes
- */
-export async function getStats(): Promise<{
-  total_codes: number
-  active_codes: number
-  used_codes: number
-  expired_codes: number
-  total_value_distributed: number
-  by_type: Record<RedeemCodeType, number>
-}> {
-  const { data } = await apiClient.get<{
-    total_codes: number
-    active_codes: number
-    used_codes: number
-    expired_codes: number
-    total_value_distributed: number
-    by_type: Record<RedeemCodeType, number>
-  }>('/admin/redeem-codes/stats')
-  return data
-}
-
-/**
  * Export redeem codes to CSV
  * @param filters - Optional filters
  * @returns CSV data as blob
@@ -199,7 +176,6 @@ export const redeemAPI = {
   batchDelete,
   batchUpdate,
   expire,
-  getStats,
   exportCodes
 }
 

@@ -142,7 +142,7 @@ const DataTableStub = defineComponent({
     columns: { type: Array, default: () => [] },
     loading: { type: Boolean, default: false }
   },
-  template: '<div><div v-for="row in data" :key="row.id"><slot name="cell-actions" :row="row" /></div></div>'
+  template: '<div><div v-for="row in data" :key="row.id"><div data-testid="group-billing"><slot name="cell-billing_type" :row="row" /></div><slot name="cell-actions" :row="row" /></div></div>'
 })
 
 const BaseDialogStub = defineComponent({
@@ -322,6 +322,42 @@ describe('GroupsView duplicate action', () => {
 
     expect(updateGroup).toHaveBeenCalledTimes(1)
     expect(showError).toHaveBeenCalledWith('group name already exists')
+    wrapper.unmount()
+  })
+
+  it('preserves explicit zero subscription limits when saving and keeps blank limits unlimited', async () => {
+    listGroups.mockResolvedValue({
+      items: [{ ...sourceGroup, subscription_type: 'subscription', daily_limit_usd: 0, weekly_limit_usd: 0, monthly_limit_usd: 0 }],
+      total: 1, page: 1, page_size: 20, pages: 1
+    })
+    updateGroup.mockResolvedValue(sourceGroup)
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="group-billing"]').text()).not.toContain('admin.groups.subscription.noLimit')
+    expect(wrapper.get('[data-testid="group-billing"]').text()).toContain('admin.groups.limitDay')
+    const editButton = wrapper.findAll('button').find((button) => button.text() === 'common.edit')!
+    await editButton.trigger('click')
+    await flushPromises()
+    const limits = wrapper.findAll('#edit-group-form input[placeholder="admin.groups.subscription.noLimit"]')
+    expect(limits).toHaveLength(3)
+    for (const input of limits) expect((input.element as HTMLInputElement).value).toBe('0')
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenLastCalledWith(42, expect.objectContaining({
+      daily_limit_usd: 0, weekly_limit_usd: 0, monthly_limit_usd: 0
+    }))
+
+    await editButton.trigger('click')
+    await flushPromises()
+    const reopened = wrapper.findAll('#edit-group-form input[placeholder="admin.groups.subscription.noLimit"]')
+    await reopened[0].setValue('')
+    await reopened[1].setValue('12.5')
+    await reopened[2].setValue('0')
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    expect(updateGroup).toHaveBeenLastCalledWith(42, expect.objectContaining({
+      daily_limit_usd: null, weekly_limit_usd: 12.5, monthly_limit_usd: 0
+    }))
     wrapper.unmount()
   })
 

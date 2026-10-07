@@ -583,7 +583,7 @@ const exportToExcel = async () => {
   if (exporting.value) return; exporting.value = true; exportProgress.show = true
   const c = new AbortController(); exportAbortController = c
   try {
-    let p = 1; let total = pagination.total; let exportedCount = 0
+    let p = 1; let total = pagination.total; let exportedCount = 0; let pageSize = 100
     const XLSX = await import('xlsx')
     const headers = [
       t('usage.time'), t('admin.usage.user'), t('usage.apiKeyFilter'),
@@ -601,10 +601,12 @@ const exportToExcel = async () => {
     const ws = XLSX.utils.aoa_to_sheet([headers])
     while (true) {
       const res = await adminUsageAPI.list(
-        buildUsageListParams(p, 100, true),
+        buildUsageListParams(p, pageSize, true),
         { signal: c.signal }
       )
       if (c.signal.aborted) break; if (p === 1) { total = res.total; exportProgress.total = total }
+      if (p > 1 && res.page_size && res.page_size !== pageSize) throw new Error('Pagination size changed during export')
+      pageSize = res.page_size || pageSize
       const rows = (res.items || []).map((log: AdminUsageLog) => [
         log.created_at, log.user?.email || '', log.api_key?.name || '', log.account?.name || '', log.model,
         log.upstream_model || log.model, log.upstream_response_model || '', log.upstream_model_mismatch == null ? '' : t(log.upstream_model_mismatch ? 'common.yes' : 'common.no'), formatReasoningEffort(log.reasoning_effort), formatReasoningEffort(log.upstream_reasoning_effort || log.reasoning_effort), log.group?.name || '',
@@ -623,7 +625,9 @@ const exportToExcel = async () => {
       exportedCount += rows.length
       exportProgress.current = exportedCount
       exportProgress.progress = total > 0 ? Math.min(100, Math.round(exportedCount / total * 100)) : 0
-      if (exportedCount >= total || res.items.length < 100) break; p++
+      if (exportedCount >= total) break
+      if (rows.length === 0) throw new Error('Incomplete usage export')
+      p++
     }
     if(!c.signal.aborted) {
       const wb = XLSX.utils.book_new()

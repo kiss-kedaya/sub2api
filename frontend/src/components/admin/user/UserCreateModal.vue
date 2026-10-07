@@ -39,7 +39,7 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.users.columns.concurrency') }}</label>
-          <input v-model.number="form.concurrency" type="number" class="input" />
+          <input v-model.number="form.concurrency" type="number" min="0" step="1" class="input" />
         </div>
       </div>
       <div>

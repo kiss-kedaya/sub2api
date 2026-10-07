@@ -98,6 +98,26 @@ describe('BulkEditAccountModal', () => {
     } as any)
   })
 
+  it('sends zero priority in bulk updates and rejects invalid numeric input', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('#bulk-edit-priority-enabled').setValue(true)
+    const priority = wrapper.get<HTMLInputElement>('#bulk-edit-priority')
+    expect(priority.attributes('min')).toBe('0')
+    expect(priority.attributes('step')).toBe('1')
+    await priority.setValue(-1)
+    expect(priority.element.checkValidity()).toBe(false)
+    await priority.setValue(0.5)
+    expect(priority.element.checkValidity()).toBe(false)
+    await priority.setValue(0)
+    expect(priority.element.checkValidity()).toBe(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith(
+      [1, 2], expect.objectContaining({ priority: 0 })
+    )
+    wrapper.unmount()
+  })
+
   it('批量修改倍率时提示自动同步账号需要先关闭同步', async () => {
     const wrapper = mountModal()
 

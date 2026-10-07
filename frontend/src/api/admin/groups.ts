@@ -241,26 +241,6 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
 }
 
 /**
- * Get group statistics
- * @param id - Group ID
- * @returns Group usage statistics
- */
-export async function getStats(id: number): Promise<{
-  total_api_keys: number
-  active_api_keys: number
-  total_requests: number
-  total_cost: number
-}> {
-  const { data } = await apiClient.get<{
-    total_api_keys: number
-    active_api_keys: number
-    total_requests: number
-    total_cost: number
-  }>(`/admin/groups/${id}/stats`)
-  return data
-}
-
-/**
  * Get API keys in a group
  * @param id - Group ID
  * @param page - Page number
@@ -483,7 +463,6 @@ export const groupsAPI = {
   update,
   delete: deleteGroup,
   toggleStatus,
-  getStats,
   getGroupApiKeys,
   listCompositeRoutes,
   createCompositeRoute,

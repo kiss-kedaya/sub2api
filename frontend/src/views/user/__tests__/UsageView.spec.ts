@@ -428,7 +428,10 @@ describe('user UsageView', () => {
   })
 
   it('keeps the initial filters, sort, and filename while exporting multiple pages', async () => {
-    const pageResponse = { items: [usageLog], total: 101, pages: 2 }
+    const pageResponse = {
+      items: Array.from({ length: 50 }, (_, id) => ({ ...usageLog, id: id + 1 })),
+      total: 101, pages: 3, page_size: 50
+    }
     query.mockResolvedValue(pageResponse)
     const wrapper = mountUsageView()
     await flushPromises()
@@ -440,9 +443,11 @@ describe('user UsageView', () => {
     let resolveFirstPage!: (value: typeof pageResponse) => void
     const firstPage = new Promise<typeof pageResponse>((resolve) => { resolveFirstPage = resolve })
     query.mockClear()
-    query.mockImplementation((params, options) =>
-      !options && params.page === 1 ? firstPage : Promise.resolve(pageResponse)
-    )
+    query.mockImplementation((params, options) => {
+      if (!options && params.page === 1) return firstPage
+      if (!options && params.page === 3) return Promise.resolve({ ...pageResponse, items: [{ ...usageLog, id: 101 }] })
+      return Promise.resolve(pageResponse)
+    })
     const originalCreateObjectURL = window.URL.createObjectURL
     const originalRevokeObjectURL = window.URL.revokeObjectURL
     window.URL.createObjectURL = vi.fn(() => 'blob:usage-export')
@@ -477,7 +482,11 @@ describe('user UsageView', () => {
       await flushPromises()
 
       const exportCalls = query.mock.calls.filter((call) => call.length === 1)
-      expect.soft(exportCalls).toEqual([[initialParams], [{ ...initialParams, page: 2 }]])
+      expect.soft(exportCalls).toEqual([
+        [initialParams],
+        [{ ...initialParams, page: 2, page_size: 50 }],
+        [{ ...initialParams, page: 3, page_size: 50 }],
+      ])
       expect.soft(filename).toBe('usage_2026-03-01_to_2026-03-08.csv')
       expect(showSuccess).toHaveBeenCalledWith('Export success')
       expect(showError).not.toHaveBeenCalled()

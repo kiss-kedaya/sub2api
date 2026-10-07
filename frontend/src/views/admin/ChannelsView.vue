@@ -631,6 +631,7 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { fetchPaginatedItems } from '@/utils/paginatedItems'
 import { adminAPI } from '@/api/admin'
 import type { Channel, ChannelModelPricing, CreateChannelRequest, UpdateChannelRequest, AccountStatsPricingRule } from '@/api/admin/channels'
 import type { PricingFormEntry } from '@/components/admin/channel/types'
@@ -1313,8 +1314,9 @@ async function loadGroups() {
 
 async function loadAllChannelsForConflict() {
   try {
-    const response = await adminAPI.channels.list(1, 1000)
-    allChannelsForConflict.value = response.items || []
+    allChannelsForConflict.value = await fetchPaginatedItems(
+      (page, size) => adminAPI.channels.list(page, size), 1000, 1000
+    )
   } catch (error) {
     // Fallback to current page data
     allChannelsForConflict.value = channels.value
