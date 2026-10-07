@@ -129,3 +129,49 @@ func TestIsValidAffiliateCodeFormat(t *testing.T) {
 		})
 	}
 }
+
+type batchRateRecordingAffiliateRepo struct {
+	*paymentFulfillmentAffiliateRepoStub
+	ids []int64
+}
+
+func (r *batchRateRecordingAffiliateRepo) BatchSetUserRebateRate(_ context.Context, ids []int64, _ *float64) error {
+	r.ids = append([]int64(nil), ids...)
+	return nil
+}
+
+func TestAdminBatchSetUserRebateRateCountDeduplicatesInvalidIDs(t *testing.T) {
+	repo := &batchRateRecordingAffiliateRepo{paymentFulfillmentAffiliateRepoStub: &paymentFulfillmentAffiliateRepoStub{}}
+	svc := NewAffiliateService(repo, nil, nil, nil)
+	rate := 25.0
+	affected, err := svc.AdminBatchSetUserRebateRateCount(context.Background(), []int64{7, 7, 0, -3, 9}, &rate)
+	require.NoError(t, err)
+	require.Equal(t, 2, affected)
+	require.Equal(t, []int64{7, 9}, repo.ids)
+}
+
+type atomicSettingsRecordingAffiliateRepo struct {
+	*paymentFulfillmentAffiliateRepoStub
+	updateCalls int
+}
+
+func (r *atomicSettingsRecordingAffiliateRepo) UpdateUserSettings(_ context.Context, _ int64, _ *string, _ *float64, _ bool) error {
+	r.updateCalls++
+	return nil
+}
+
+func (r *atomicSettingsRecordingAffiliateRepo) ClearUserSettings(context.Context, int64) error {
+	return nil
+}
+
+func TestAdminUpdateUserSettingsValidatesBeforeAtomicWrite(t *testing.T) {
+	repo := &atomicSettingsRecordingAffiliateRepo{paymentFulfillmentAffiliateRepoStub: &paymentFulfillmentAffiliateRepoStub{}}
+	svc := NewAffiliateService(repo, nil, nil, nil)
+	badRate := math.NaN()
+	code := "VIP2026"
+	require.Error(t, svc.AdminUpdateUserSettings(context.Background(), 7, &code, &badRate, false))
+	require.Zero(t, repo.updateCalls)
+	rate := 12.5
+	require.NoError(t, svc.AdminUpdateUserSettings(context.Background(), 7, &code, &rate, false))
+	require.Equal(t, 1, repo.updateCalls)
+}
