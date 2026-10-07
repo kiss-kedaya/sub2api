@@ -32,6 +32,9 @@ func NewAffiliateHandler(affiliateService *service.AffiliateService, adminServic
 // GET /api/v1/admin/affiliates/users
 func (h *AffiliateHandler) ListUsers(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
+	// Keep the repository's dedicated limit without changing the page size
+	// again after the response pagination has been determined.
+	pageSize = min(pageSize, 200)
 	search := c.Query("search")
 
 	entries, total, err := h.affiliateService.AdminListCustomUsers(c.Request.Context(), service.AffiliateAdminFilter{
@@ -49,7 +52,7 @@ func (h *AffiliateHandler) ListUsers(c *gin.Context) {
 // UpdateUserSettings updates a user's affiliate settings.
 // PUT /api/v1/admin/affiliates/users/:user_id
 //
-// Both fields are optional and applied independently.
+// Both fields are optional and committed together when supplied.
 type UpdateAffiliateUserRequest struct {
 	AffCode              *string  `json:"aff_code"`
 	AffRebateRatePercent *float64 `json:"aff_rebate_rate_percent"`
@@ -71,23 +74,9 @@ func (h *AffiliateHandler) UpdateUserSettings(c *gin.Context) {
 		return
 	}
 
-	if req.AffCode != nil {
-		if err := h.affiliateService.AdminUpdateUserAffCode(c.Request.Context(), userID, *req.AffCode); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-	}
-
-	if req.ClearRebateRate {
-		if err := h.affiliateService.AdminSetUserRebateRate(c.Request.Context(), userID, nil); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-	} else if req.AffRebateRatePercent != nil {
-		if err := h.affiliateService.AdminSetUserRebateRate(c.Request.Context(), userID, req.AffRebateRatePercent); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
+	if err := h.affiliateService.AdminUpdateUserSettings(c.Request.Context(), userID, req.AffCode, req.AffRebateRatePercent, req.ClearRebateRate); err != nil {
+		response.ErrorFrom(c, err)
+		return
 	}
 
 	response.Success(c, gin.H{"user_id": userID})
@@ -97,8 +86,7 @@ func (h *AffiliateHandler) UpdateUserSettings(c *gin.Context) {
 // the exclusive rebate rate AND regenerates the invite code as a new system
 // random one. Conceptually this "removes the user from the custom list".
 //
-// Both writes happen in this handler; failure of one leaves the other applied,
-// but the operation is idempotent so the admin can re-run it safely.
+// Both writes are committed by the service in one transaction.
 // DELETE /api/v1/admin/affiliates/users/:user_id
 func (h *AffiliateHandler) ClearUserSettings(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
@@ -106,11 +94,7 @@ func (h *AffiliateHandler) ClearUserSettings(c *gin.Context) {
 		response.BadRequest(c, "Invalid user_id")
 		return
 	}
-	if err := h.affiliateService.AdminSetUserRebateRate(c.Request.Context(), userID, nil); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	if _, err := h.affiliateService.AdminResetUserAffCode(c.Request.Context(), userID); err != nil {
+	if err := h.affiliateService.AdminClearUserSettings(c.Request.Context(), userID); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -150,11 +134,12 @@ func (h *AffiliateHandler) BatchSetRate(c *gin.Context) {
 	if req.Clear {
 		rate = nil
 	}
-	if err := h.affiliateService.AdminBatchSetUserRebateRate(c.Request.Context(), req.UserIDs, rate); err != nil {
+	affected, err := h.affiliateService.AdminBatchSetUserRebateRateCount(c.Request.Context(), req.UserIDs, rate)
+	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, gin.H{"affected": len(req.UserIDs)})
+	response.Success(c, gin.H{"affected": affected})
 }
 
 // AffiliateUserSummary is the minimal user shape returned by LookupUsers,

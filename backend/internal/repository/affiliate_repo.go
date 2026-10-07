@@ -1012,6 +1012,103 @@ WHERE user_id = $2`, code, userID)
 	})
 }
 
+// UpdateUserSettings applies the optional code/rate changes in one database
+// transaction. Validation is performed by the service before this method.
+func (r *affiliateRepository) UpdateUserSettings(ctx context.Context, userID int64, affCode *string, ratePercent *float64, clearRate bool) error {
+	if userID <= 0 {
+		return service.ErrUserNotFound
+	}
+	return r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		if _, err := ensureUserAffiliateWithClient(txCtx, txClient, userID); err != nil {
+			return err
+		}
+		if affCode != nil {
+			res, err := txClient.ExecContext(txCtx, `
+UPDATE user_affiliates
+SET aff_code = $1,
+    aff_code_custom = true,
+    updated_at = NOW()
+WHERE user_id = $2`, *affCode, userID)
+			if err != nil {
+				if isAffiliateUniqueViolation(err) {
+					return service.ErrAffiliateCodeTaken
+				}
+				return fmt.Errorf("update aff_code: %w", err)
+			}
+			if affected, _ := res.RowsAffected(); affected == 0 {
+				return service.ErrUserNotFound
+			}
+		}
+		if clearRate || ratePercent != nil {
+			res, err := txClient.ExecContext(txCtx, `
+UPDATE user_affiliates
+SET aff_rebate_rate_percent = $1,
+    updated_at = NOW()
+WHERE user_id = $2`, nullableArg(ratePercent), userID)
+			if err != nil {
+				return fmt.Errorf("set aff_rebate_rate_percent: %w", err)
+			}
+			if affected, _ := res.RowsAffected(); affected == 0 {
+				return service.ErrUserNotFound
+			}
+		}
+		return nil
+	})
+}
+
+// regenerateAffiliateCode replaces aff_code with a fresh system code inside an
+// existing transaction, retrying on unique collisions. clearRate also drops the
+// exclusive rebate rate. op labels any returned error.
+func regenerateAffiliateCode(ctx context.Context, txClient *dbent.Client, userID int64, clearRate bool, op string) (string, error) {
+	query := `
+UPDATE user_affiliates
+SET aff_code = $1,
+    aff_code_custom = false,
+    updated_at = NOW()
+WHERE user_id = $2`
+	if clearRate {
+		query = `
+UPDATE user_affiliates
+SET aff_code = $1,
+    aff_code_custom = false,
+    aff_rebate_rate_percent = NULL,
+    updated_at = NOW()
+WHERE user_id = $2`
+	}
+	for i := 0; i < affiliateCodeMaxAttempts; i++ {
+		candidate, err := generateAffiliateCode()
+		if err != nil {
+			return "", err
+		}
+		res, err := txClient.ExecContext(ctx, query, candidate, userID)
+		if err != nil {
+			if isAffiliateUniqueViolation(err) {
+				continue
+			}
+			return "", fmt.Errorf("%s: %w", op, err)
+		}
+		if affected, _ := res.RowsAffected(); affected == 0 {
+			return "", service.ErrUserNotFound
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("%s: exhausted attempts", op)
+}
+
+// ClearUserSettings clears both admin overrides in one transaction.
+func (r *affiliateRepository) ClearUserSettings(ctx context.Context, userID int64) error {
+	if userID <= 0 {
+		return service.ErrUserNotFound
+	}
+	return r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		if _, err := ensureUserAffiliateWithClient(txCtx, txClient, userID); err != nil {
+			return err
+		}
+		_, err := regenerateAffiliateCode(txCtx, txClient, userID, true, "clear affiliate settings")
+		return err
+	})
+}
+
 // ResetUserAffCode 把 aff_code 还原为系统随机码，并清除 aff_code_custom 标记。
 func (r *affiliateRepository) ResetUserAffCode(ctx context.Context, userID int64) (string, error) {
 	if userID <= 0 {
@@ -1022,31 +1119,12 @@ func (r *affiliateRepository) ResetUserAffCode(ctx context.Context, userID int64
 		if _, err := ensureUserAffiliateWithClient(txCtx, txClient, userID); err != nil {
 			return err
 		}
-		for i := 0; i < affiliateCodeMaxAttempts; i++ {
-			candidate, codeErr := generateAffiliateCode()
-			if codeErr != nil {
-				return codeErr
-			}
-			res, err := txClient.ExecContext(txCtx, `
-UPDATE user_affiliates
-SET aff_code = $1,
-    aff_code_custom = false,
-    updated_at = NOW()
-WHERE user_id = $2`, candidate, userID)
-			if err != nil {
-				if isAffiliateUniqueViolation(err) {
-					continue
-				}
-				return fmt.Errorf("reset aff_code: %w", err)
-			}
-			affected, _ := res.RowsAffected()
-			if affected == 0 {
-				return service.ErrUserNotFound
-			}
-			newCode = candidate
-			return nil
+		code, err := regenerateAffiliateCode(txCtx, txClient, userID, false, "reset aff_code")
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("reset aff_code: exhausted attempts")
+		newCode = code
+		return nil
 	})
 	if err != nil {
 		return "", err
@@ -1083,28 +1161,52 @@ WHERE user_id = $2`, nullableArg(ratePercent), userID)
 
 // BatchSetUserRebateRate 批量为多个用户设置专属比例（nil 清除）。
 func (r *affiliateRepository) BatchSetUserRebateRate(ctx context.Context, userIDs []int64, ratePercent *float64) error {
+	_, err := r.BatchSetUserRebateRateCount(ctx, userIDs, ratePercent)
+	return err
+}
+
+// BatchSetUserRebateRateCount returns the number of rows updated by the
+// database, rather than the number of IDs supplied by the caller.
+func (r *affiliateRepository) BatchSetUserRebateRateCount(ctx context.Context, userIDs []int64, ratePercent *float64) (int, error) {
 	if len(userIDs) == 0 {
-		return nil
+		return 0, nil
 	}
-	return r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
-		for _, uid := range userIDs {
-			if uid <= 0 {
-				continue
-			}
+	seen := make(map[int64]struct{}, len(userIDs))
+	cleaned := make([]int64, 0, len(userIDs))
+	for _, uid := range userIDs {
+		if uid <= 0 {
+			continue
+		}
+		if _, ok := seen[uid]; ok {
+			continue
+		}
+		seen[uid] = struct{}{}
+		cleaned = append(cleaned, uid)
+	}
+	if len(cleaned) == 0 {
+		return 0, nil
+	}
+	updated := 0
+	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		for _, uid := range cleaned {
 			if _, err := ensureUserAffiliateWithClient(txCtx, txClient, uid); err != nil {
 				return err
 			}
 		}
-		_, err := txClient.ExecContext(txCtx, `
+		res, err := txClient.ExecContext(txCtx, `
 UPDATE user_affiliates
 SET aff_rebate_rate_percent = $1,
     updated_at = NOW()
-WHERE user_id = ANY($2)`, nullableArg(ratePercent), pq.Array(userIDs))
+WHERE user_id = ANY($2)`, nullableArg(ratePercent), pq.Array(cleaned))
 		if err != nil {
 			return fmt.Errorf("batch set aff_rebate_rate_percent: %w", err)
 		}
+		if affected, err := res.RowsAffected(); err == nil {
+			updated = int(affected)
+		}
 		return nil
 	})
+	return updated, err
 }
 
 // nullableArg unwraps a *float64 into an interface{} suitable for SQL parameter

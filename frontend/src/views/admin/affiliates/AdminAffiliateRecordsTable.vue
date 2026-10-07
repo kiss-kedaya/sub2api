@@ -268,6 +268,7 @@ async function loadRecords() {
     const res = await fetchRecords(buildParams())
     records.value = res.items || []
     pagination.total = res.total || 0
+    if (res.page_size > 0) pagination.page_size = res.page_size
   } catch (error) {
     appStore.showError(extractI18nErrorMessage(error, t, 'admin.affiliates.errors', t('common.error')))
   } finally {
