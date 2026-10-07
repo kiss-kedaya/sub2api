@@ -217,7 +217,10 @@ func TestForwardGrokMediaContentFetchesValidatedSignedURLWithoutCredentials(t *t
 	require.Empty(t, upstream.requests[1].Header.Get("Authorization"))
 	require.Empty(t, upstream.requests[1].Header.Get("User-Agent"))
 	require.Equal(t, "bytes=0-12", upstream.requests[1].Header.Get("Range"))
-	require.True(t, HTTPUpstreamRedirectsDisabled(upstream.requests[1].Context()))
+	// content 请求改为允许跟随上游重定向（第三方中转用 302 跳 CDN），
+	// 但仍逐跳校验落点是否为公网地址。
+	require.True(t, HTTPUpstreamPublicHostsOnly(upstream.requests[1].Context()))
+	require.False(t, HTTPUpstreamRedirectsDisabled(upstream.requests[1].Context()))
 }
 
 func TestForwardGrokMediaContentFollowsAuthenticatedSub2APIRelay(t *testing.T) {
@@ -272,6 +275,36 @@ func TestForwardGrokMediaContentRejectsUntrustedSignedURL(t *testing.T) {
 	require.Len(t, upstream.requests, 1)
 }
 
+// 第三方中转的 content 端点用 302 跳自己的 CDN。content 请求必须允许跟随，
+// 否则用户拿到 502 而不是视频。此处断言请求上下文带的是 PublicHostsOnly
+// （跟随 + 逐跳公网校验），而不是 Disabled（直接拒 3xx）。
+func TestForwardGrokMediaContentAllowsUpstreamRedirects(t *testing.T) {
+	upstream := &grokMediaContentUpstreamStub{
+		responses: []*http.Response{grokMediaContentStatusResponse(`{"status":"completed"}`), {
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"video/mp4"}},
+			Body:       io.NopCloser(strings.NewReader("video-payload")),
+		}},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	c, recorder := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", nil)
+
+	result, err := svc.ForwardGrokMedia(
+		context.Background(), c, grokMediaContentTestAccount(),
+		GrokMediaEndpointVideoContent, "task-1", nil, "",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "video-payload", recorder.Body.String())
+	require.Len(t, upstream.requests, 2)
+
+	contentReq := upstream.requests[1]
+	require.True(t, HTTPUpstreamPublicHostsOnly(contentReq.Context()),
+		"content lookup must allow following an upstream redirect")
+	require.False(t, HTTPUpstreamRedirectsDisabled(contentReq.Context()),
+		"content lookup must not blanket-reject 3xx responses")
+}
 func TestGrokMediaSignedVideoContentURLRejectsDeceptiveOrigins(t *testing.T) {
 	for _, rawURL := range []string{
 		"https://vidgen.x.ai.attacker.invalid/video.mp4",

@@ -1145,8 +1145,14 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		}
 	}
 
+	// Upstream content endpoints are allowed to answer with a redirect to their
+	// own CDN (第三方中转普遍用 302 跳 CDN). Follow it, but validate every hop's
+	// resolved address so a relay cannot point this credential-bearing request
+	// at a private/loopback target.
+	// ponytail: follows up to 10 hops like the shared redirectChecker; raise only
+	// if a real provider chains further.
 	contentReq, err := http.NewRequestWithContext(
-		WithHTTPUpstreamRedirectsDisabled(upstreamCtx),
+		WithHTTPUpstreamPublicHostsOnly(upstreamCtx),
 		http.MethodGet,
 		contentURL,
 		nil,
@@ -1176,8 +1182,11 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	}
 	defer func() { _ = contentResp.Body.Close() }()
 	contentRequestID := firstNonEmpty(contentResp.Header.Get("x-request-id"), contentResp.Header.Get("xai-request-id"), statusRequestID)
+	// A 3xx still visible here means the redirect was refused or the chain ended
+	// without reaching content; surface it as an upstream error instead of a
+	// generic failure so the cause is diagnosable.
 	if contentResp.StatusCode >= 300 && contentResp.StatusCode < 400 {
-		return nil, fmt.Errorf("grok media signed content redirect is not allowed")
+		return nil, fmt.Errorf("grok media content redirect was not followed (status %d)", contentResp.StatusCode)
 	}
 	if contentResp.StatusCode >= 400 && contentResp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
 		return s.handleGrokMediaErrorResponse(ctx, contentResp, c, account, contentRequestID, "")
