@@ -18,7 +18,7 @@ func TestBulkUpdateAppliesAccountOwnerScope(t *testing.T) {
 		wantOwner bool
 		ownerID   int64
 	}{
-		{name: "ordinary admin", ctx: service.WithAccountOwnerScope(context.Background(), 7, 0), wantOwner: true, ownerID: 7},
+		{name: "restricted admin under a different owner", ctx: service.WithAccountOwnerScope(context.Background(), 7, 9), wantOwner: true, ownerID: 7},
 		{name: "pool owner", ctx: service.WithAccountOwnerScope(context.Background(), 7, 7)},
 		{name: "unscoped worker", ctx: context.Background()},
 	} {

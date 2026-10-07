@@ -63,7 +63,7 @@ func TestAccountUpdateRejectsOtherAndLegacyBeforeMutation(t *testing.T) {
 				WithArgs(int64(12)).WillReturnRows(sqlmock.NewRows([]string{"created_by"}).AddRow(createdBy))
 			// No Ent client: reaching the write transaction would panic.
 			repo := newAccountRepositoryWithSQL(nil, db, nil)
-			err = repo.Update(service.WithAccountOwnerScope(context.Background(), 7, 0), &service.Account{ID: 12})
+			err = repo.Update(service.WithAccountOwnerScope(context.Background(), 7, 9), &service.Account{ID: 12})
 			require.ErrorIs(t, err, service.ErrAccountNotFound)
 			require.NoError(t, mock.ExpectationsWereMet())
 		})

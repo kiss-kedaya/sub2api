@@ -27,13 +27,16 @@ func WithAccountOwnerScope(ctx context.Context, adminID, poolOwnerUserID int64) 
 	})
 }
 
-// EnsureAccountOwnerScope preserves authentication's scope for the same admin.
-// Callers without a matching authenticated scope receive only their own uploads.
+// EnsureAccountOwnerScope returns the context unchanged unless authentication
+// already installed a scope for this same admin. It never invents a restricted
+// scope: whether per-admin isolation applies is decided by the admin auth
+// middleware from security.account_pool_owner_user_id, so a deployment that
+// never configures an owner keeps whole-pool visibility.
 func EnsureAccountOwnerScope(ctx context.Context, adminID int64) context.Context {
 	if scopedID, _, ok := AccountOwnerScopeDetail(ctx); ok && scopedID == adminID {
 		return ctx
 	}
-	return WithAccountOwnerScope(ctx, adminID, 0)
+	return ctx
 }
 
 func AccountOwnerScopeFromContext(ctx context.Context) (int64, bool) {
