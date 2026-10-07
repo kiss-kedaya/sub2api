@@ -149,6 +149,8 @@ deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
 docs/*
+# 文档索引含运维信息，继续跟随 docs/* 忽略。
+# 运维目录 docs/ops/ 保持忽略：含服务器 IP、防护策略、脚本
 # 发版说明：release workflow 从 docs/release-notes/<tag>.md 读取 GitHub Release 正文
 !docs/release-notes/
 !docs/release-notes/*.md
@@ -237,3 +239,16 @@ security.db
 security-audit*.json
 bandit-audit*.json
 gitleaks*.json
+
+# Local operations and contract-review evidence (never force-add these).
+/api-contract-review*/
+/ops-records*/
+/ops-private*/
+/handoff-private*/
+/API-CONTRACT-*.csv
+/API-CONTRACT-*.json
+/API-CONTRACT-*.md
+/OPS-RECORD-*.md
+/routes-runtime.json
+/inventory-overlay.json
+/inventory_test.go
