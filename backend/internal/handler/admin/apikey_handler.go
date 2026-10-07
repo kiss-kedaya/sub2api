@@ -43,21 +43,22 @@ func (h *AdminAPIKeyHandler) UpdateGroup(c *gin.Context) {
 		return
 	}
 
-	var resetKey *service.APIKey
-	if req.ResetRateLimitUsage != nil && *req.ResetRateLimitUsage {
-		resetKey, err = h.adminService.AdminResetAPIKeyRateLimitUsage(c.Request.Context(), keyID)
-		if err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-	}
-
+	// Validate and apply the group operation first. A bad group ID must not
+	// reset rate-limit usage as a side effect of the same request.
 	result, err := h.adminService.AdminUpdateAPIKeyGroupID(c.Request.Context(), keyID, req.GroupID)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	if resetKey != nil && req.GroupID == nil {
+	if req.ResetRateLimitUsage != nil && *req.ResetRateLimitUsage {
+		resetKey, resetErr := h.adminService.AdminResetAPIKeyRateLimitUsage(c.Request.Context(), keyID)
+		if resetErr != nil {
+			response.ErrorFrom(c, resetErr)
+			return
+		}
+		// With group_id omitted the first operation is a no-op, so use the
+		// reset response. When both fields are present, refresh the response
+		// from the reset operation as it contains the latest usage counters.
 		result.APIKey = resetKey
 	}
 

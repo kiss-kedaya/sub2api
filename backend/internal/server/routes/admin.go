@@ -27,6 +27,7 @@ func RegisterAdminRoutes(
 	admin.Use(gin.HandlerFunc(adminAuth))
 	// 面板全局按用户限流（默认管理员豁免，可在系统设置中关闭豁免）
 	admin.Use(panelRateLimiter.Global())
+	admin.Use(middleware.TablePagination(settingService))
 	// 审计中间件挂在认证之后：所有管理面变更类操作 + 敏感读取入审计日志
 	admin.Use(gin.HandlerFunc(auditLog))
 	admin.Use(middleware.AdminComplianceGuard(settingService))
@@ -364,10 +365,11 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 	accounts := admin.Group("/accounts")
 	accounts.Use(func(c *gin.Context) {
 		if subject, ok := middleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
-			c.Request = c.Request.WithContext(service.WithAccountOwnerScope(c.Request.Context(), subject.UserID, c.GetString(middleware.ContextKeyAuthEmail)))
+			c.Request = c.Request.WithContext(service.EnsureAccountOwnerScope(c.Request.Context(), subject.UserID))
 		}
 		c.Next()
 	})
+	accounts.Use(h.Admin.Account.RequireAccountOwnerAccess)
 	customUsage := h.Admin.Account.NewCustomUsageHandler()
 	{
 		accounts.GET("/:id/custom-usage-config", customUsage.GetConfig)

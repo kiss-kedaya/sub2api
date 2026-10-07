@@ -93,7 +93,7 @@ func ticketRouteEnvironment(t *testing.T) (*gin.Engine, map[int64]string, *ticke
 	v1 := r.Group("/api/v1")
 	audit := middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() })
 	RegisterUserRoutes(v1, h, middleware.NewJWTAuthMiddleware(auth, userService, nil, nil), audit, nil, nil)
-	RegisterAdminRoutes(v1, h, middleware.NewAdminAuthMiddleware(auth, userService, nil, nil), audit, middleware.StepUpAuthMiddleware(func(c *gin.Context) { c.Next() }), nil, nil)
+	RegisterAdminRoutes(v1, h, middleware.NewAdminAuthMiddleware(auth, userService, nil, nil, cfg), audit, middleware.StepUpAuthMiddleware(func(c *gin.Context) { c.Next() }), nil, nil)
 	tokens := map[int64]string{}
 	for id, u := range users.users {
 		token, err := auth.GenerateToken(context.Background(), u)

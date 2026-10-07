@@ -86,6 +86,7 @@ type stubAdminService struct {
 		sortOrder string
 		calls     int
 	}
+	redeemTotal int64
 	lastGenerateRedeemCodesInput *service.GenerateRedeemCodesInput
 	mu                           sync.Mutex
 }
@@ -717,7 +718,11 @@ func (s *stubAdminService) ListRedeemCodes(ctx context.Context, page, pageSize i
 	s.lastListRedeemCodes.sortBy = sortBy
 	s.lastListRedeemCodes.sortOrder = sortOrder
 	s.lastListRedeemCodes.calls++
-	return s.redeems, int64(len(s.redeems)), nil
+	total := s.redeemTotal
+	if total == 0 {
+		total = int64(len(s.redeems))
+	}
+	return s.redeems, total, nil
 }
 
 func (s *stubAdminService) GetRedeemCode(ctx context.Context, id int64) (*service.RedeemCode, error) {

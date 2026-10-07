@@ -1017,6 +1017,10 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	if err := service.ValidateAccountSchedulingFields(&req.Concurrency, &req.Priority); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	if err := service.ValidateOpenAILongContextBillingExtra(req.Platform, req.Extra); err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -1156,6 +1160,10 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	var req UpdateAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := service.ValidateAccountSchedulingFields(req.Concurrency, req.Priority); err != nil {
+		response.ErrorFrom(c, err)
 		return
 	}
 	if req.RateMultiplier != nil && *req.RateMultiplier < 0 {
@@ -2079,6 +2087,10 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 		return
 	}
 	for _, item := range req.Accounts {
+		if err := service.ValidateAccountSchedulingFields(&item.Concurrency, &item.Priority); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
 		if err := service.ValidateOpenAILongContextBillingExtra(item.Platform, item.Extra); err != nil {
 			response.ErrorFrom(c, err)
 			return
@@ -2305,6 +2317,10 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	var req BulkUpdateAccountsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := service.ValidateAccountSchedulingFields(req.Concurrency, req.Priority); err != nil {
+		response.ErrorFrom(c, err)
 		return
 	}
 	if req.RateMultiplier != nil && *req.RateMultiplier < 0 {
@@ -2699,6 +2715,9 @@ func (h *AccountHandler) GetBatchTodayStats(c *gin.Context) {
 		return
 	}
 
+	if !h.requireAccountBatchOwnerAccess(c, accountIDs) {
+		return
+	}
 	cacheKey := buildAccountTodayStatsBatchCacheKey(accountIDs)
 	if cached, ok := accountTodayStatsBatchCache.Get(cacheKey); ok {
 		if cached.ETag != "" {
@@ -2748,6 +2767,9 @@ func (h *AccountHandler) GetBatchUsage(c *gin.Context) {
 		return
 	}
 
+	if !h.requireAccountBatchOwnerAccess(c, accountIDs) {
+		return
+	}
 	usageByAccount, errorsByAccount, err := h.accountUsageService.GetUsageBatch(c.Request.Context(), accountIDs, req.Force)
 	if err != nil {
 		response.ErrorFrom(c, err)

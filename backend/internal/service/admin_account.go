@@ -228,6 +228,9 @@ func (s *adminServiceImpl) findDuplicateByOperationID(ctx context.Context, opera
 // It is used when the idempotency coordinator cannot confirm whether response persistence
 // succeeded, and deliberately never repeats the create side effect.
 func (s *adminServiceImpl) RecoverDuplicateAccount(ctx context.Context, id int64, actorScope, operationKey string) (*Account, error) {
+	if err := s.requireAccountOwnerAccess(ctx, id); err != nil {
+		return nil, err
+	}
 	return s.findDuplicateByOperationID(ctx, duplicateAccountOperationID(id, actorScope, operationKey))
 }
 
@@ -410,6 +413,9 @@ func normalizeOpenAILongContextBillingUpdateExtra(account *Account, input *Updat
 // Grok media eligibility helpers live in account_grok_media_eligibility.go.
 
 func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]any) (*Account, error) {
+	if err := ValidateAccountSchedulingFields(&input.Concurrency, &input.Priority); err != nil {
+		return nil, err
+	}
 	accountExtra = MergeOpenAICodexTicketExtra(accountExtra, nil)
 	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
@@ -474,6 +480,9 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if err := ValidateAccountSchedulingFields(&input.Concurrency, &input.Priority); err != nil {
+		return nil, err
+	}
 	input.Credentials = StripCustomUsageManaged(input.Credentials, CustomUsageCredentialsKey)
 	input.Extra = StripCustomUsageManaged(input.Extra, CustomUsageExtraKey)
 	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
@@ -572,6 +581,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
+	if err := ValidateAccountSchedulingFields(input.Concurrency, input.Priority); err != nil {
+		return nil, err
+	}
 	input.Credentials = StripCustomUsageManaged(input.Credentials, CustomUsageCredentialsKey)
 	input.Extra = StripCustomUsageManaged(input.Extra, CustomUsageExtraKey)
 	account, err := s.accountRepo.GetByID(ctx, id)
@@ -908,6 +920,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 // UpdateAccountExtra 仅对 Extra JSONB 做 key 级合并，避免覆盖其它运行态键
 // （如 model_rate_limits / passive_usage_* 等）。
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
+	if err := s.requireAccountOwnerAccess(ctx, id); err != nil {
+		return err
+	}
 	updates = StripCustomUsageManaged(updates, CustomUsageExtraKey)
 	updates = MergeOpenAICodexTicketExtra(updates, nil)
 	updates = sanitizedCodexFingerprintExtraUpdates(updates)
@@ -936,6 +951,9 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 // BulkUpdateAccounts updates multiple accounts in one request.
 // It merges credentials/extra keys instead of overwriting the whole object.
 func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error) {
+	if err := ValidateAccountSchedulingFields(input.Concurrency, input.Priority); err != nil {
+		return nil, err
+	}
 	input.Credentials = StripCustomUsageManaged(input.Credentials, CustomUsageCredentialsKey)
 	input.Extra = StripCustomUsageManaged(input.Extra, CustomUsageExtraKey)
 	// Managed probe/session state may only enter through dedicated typed endpoints.
@@ -982,8 +1000,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
+	_, _, scoped := AccountOwnerScopeDetail(ctx)
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if scoped || len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -994,6 +1013,15 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	for _, account := range cachedTargets {
 		if account != nil {
 			targetsByID[account.ID] = account
+		}
+	}
+	if scoped {
+		// Authorize the complete target set before any column, group-binding, or
+		// shadow-proxy write. GetByIDs omits missing and inaccessible accounts.
+		for _, accountID := range input.AccountIDs {
+			if _, visible := targetsByID[accountID]; !visible {
+				return nil, ErrAccountNotFound
+			}
 		}
 	}
 	if openAISettings.any() {
@@ -1263,6 +1291,9 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 }
 
 func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
+	if err := s.requireAccountOwnerAccess(ctx, id); err != nil {
+		return err
+	}
 	// 级联删除 spark 影子账号（先删影子，再删母账号）
 	shadows, err := s.accountRepo.ListShadowsByParent(ctx, id)
 	if err != nil {
@@ -1289,6 +1320,9 @@ func (s *adminServiceImpl) RefreshAccountCredentials(ctx context.Context, id int
 }
 
 func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Account, error) {
+	if err := s.requireAccountOwnerAccess(ctx, id); err != nil {
+		return nil, err
+	}
 	if err := s.accountRepo.ClearError(ctx, id); err != nil {
 		return nil, err
 	}
@@ -1311,10 +1345,16 @@ func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Ac
 }
 
 func (s *adminServiceImpl) SetAccountError(ctx context.Context, id int64, errorMsg string) error {
+	if err := s.requireAccountOwnerAccess(ctx, id); err != nil {
+		return err
+	}
 	return s.accountRepo.SetError(ctx, id, errorMsg)
 }
 
 func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error) {
+	if err := s.requireAccountOwnerAccess(ctx, id); err != nil {
+		return nil, err
+	}
 	if err := s.accountRepo.SetSchedulable(ctx, id, schedulable); err != nil {
 		return nil, err
 	}
@@ -1326,6 +1366,9 @@ func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, 
 }
 
 func (s *adminServiceImpl) RevertAccountProxyFallback(ctx context.Context, id int64) error {
+	if err := s.requireAccountOwnerAccess(ctx, id); err != nil {
+		return err
+	}
 	if err := s.accountRepo.RevertProxyFallback(ctx, id); err != nil {
 		return err
 	}
