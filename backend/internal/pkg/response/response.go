@@ -240,6 +240,13 @@ func ClampPageSize(c *gin.Context, pageSize int) int {
 	return min(pageSize, maxSize)
 }
 
+// parseInt accepts digits only. strconv.Atoi would also take a leading sign or
+// surrounding whitespace, which these query parameters must not allow.
 func parseInt(s string) (int, error) {
+	for _, char := range s {
+		if char < '0' || char > '9' {
+			return 0, strconv.ErrSyntax
+		}
+	}
 	return strconv.Atoi(s)
 }
