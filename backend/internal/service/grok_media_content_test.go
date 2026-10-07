@@ -257,22 +257,38 @@ func TestForwardGrokMediaContentFollowsAuthenticatedSub2APIRelay(t *testing.T) {
 	}
 }
 
-func TestForwardGrokMediaContentRejectsUntrustedSignedURL(t *testing.T) {
+// 上游给了一条不能信任的 URL（云元数据地址 / 伪装域名）时，绝不带着账号凭据去取它：
+// 回退到带鉴权的 content 端点，并且那条 URL 一次都不能出现在请求里。
+func TestForwardGrokMediaContentFallsBackWhenSignedURLUntrusted(t *testing.T) {
+	untrustedURL := "http://169.254.169.254/latest/meta-data"
 	upstream := &grokMediaContentUpstreamStub{
 		responses: []*http.Response{
-			grokMediaContentStatusResponse(`{"status":"done","video":{"url":"http://169.` + `254.169.254/latest/meta-data"}}`),
+			grokMediaContentStatusResponse(`{"status":"done","video":{"url":"` + untrustedURL + `"}}`),
+			{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"video/mp4"}},
+				Body:       io.NopCloser(strings.NewReader("video-payload")),
+			},
 		},
 	}
 	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
-	c, _ := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", nil)
+	c, recorder := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", nil)
 
 	_, err := svc.ForwardGrokMedia(
 		context.Background(), c, grokMediaContentTestAccount(),
 		GrokMediaEndpointVideoContent, "task-1", nil, "",
 	)
 
-	require.ErrorContains(t, err, "unsupported video content URL")
-	require.Len(t, upstream.requests, 1)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "video-payload", recorder.Body.String())
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://relay.example/v1/videos/task-1/content", upstream.requests[1].URL.String())
+	require.Equal(t, "Bearer upstream-key", upstream.requests[1].Header.Get("Authorization"))
+	for _, req := range upstream.requests {
+		require.NotContains(t, req.URL.String(), "169.254.169.254",
+			"an untrusted upstream-supplied URL must never be requested")
+	}
 }
 
 // 第三方中转的 content 端点用 302 跳自己的 CDN。content 请求必须允许跟随，
@@ -305,27 +321,61 @@ func TestForwardGrokMediaContentAllowsUpstreamRedirects(t *testing.T) {
 	require.False(t, HTTPUpstreamRedirectsDisabled(contentReq.Context()),
 		"content lookup must not blanket-reject 3xx responses")
 }
-func TestGrokMediaSignedVideoContentURLRejectsDeceptiveOrigins(t *testing.T) {
+
+// 只有官方 vidgen.x.ai 签名 URL 会被直接取用；伪装域名、私有地址、以及中转自家
+// 的 CDN 链接一律返回空串，由调用方改用带鉴权的 content 端点。
+func TestGrokMediaSignedVideoContentURLIgnoresUntrustedOrigins(t *testing.T) {
 	for _, rawURL := range []string{
 		"https://vidgen.x.ai.attacker.invalid/video.mp4",
 		"https://vidgen.x.ai" + "@attacker.invalid/video.mp4",
 		"https://vidgen.x.ai:444/video.mp4",
 		"http://vidgen.x.ai/video.mp4",
+		"https://cdn.relay.example/m/task-1.mp4",
 	} {
 		t.Run(rawURL, func(t *testing.T) {
-			_, err := grokMediaSignedVideoContentURL([]byte(`{"video":{"url":"`+rawURL+`"}}`), "task-1")
-			require.ErrorContains(t, err, "unsupported video content URL")
+			got, err := grokMediaSignedVideoContentURL([]byte(`{"video":{"url":"`+rawURL+`"}}`), "task-1")
+			require.NoError(t, err)
+			require.Empty(t, got)
 		})
 	}
 }
 
-func TestGrokMediaSignedVideoContentURLRejectsDifferentRelayTask(t *testing.T) {
-	_, err := grokMediaSignedVideoContentURL(
+func TestGrokMediaSignedVideoContentURLIgnoresDifferentRelayTask(t *testing.T) {
+	got, err := grokMediaSignedVideoContentURL(
 		[]byte(`{"video":{"url":"/v1/videos/task-2/content"}}`),
 		"task-1",
 	)
 
-	require.ErrorContains(t, err, "unsupported video content URL")
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
+
+// 中转（如 cdn.<relay>）返回自家 CDN 链接时，必须走带鉴权的 content 端点，
+// 而不是把整单请求打成 502。
+func TestForwardGrokMediaContentFollowsRelayCDNLink(t *testing.T) {
+	upstream := &grokMediaContentUpstreamStub{
+		responses: []*http.Response{
+			grokMediaContentStatusResponse(`{"id":"task-1","status":"done","video":{"url":"https://cdn.relay.example/m/abc"}}`),
+			{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"video/mp4"}},
+				Body:       io.NopCloser(strings.NewReader("video-payload")),
+			},
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	c, recorder := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", nil)
+
+	_, err := svc.ForwardGrokMedia(
+		context.Background(), c, grokMediaContentTestAccount(),
+		GrokMediaEndpointVideoContent, "task-1", nil, "",
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://relay.example/v1/videos/task-1/content", upstream.requests[1].URL.String())
+	require.Equal(t, "Bearer upstream-key", upstream.requests[1].Header.Get("Authorization"))
 }
 
 func TestForwardGrokVideoStatusRewritesOnlyProtectedContentURL(t *testing.T) {
