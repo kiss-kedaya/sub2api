@@ -56,25 +56,29 @@ func TestAccountOwnerScopeUsesConfiguredUserID(t *testing.T) {
 	}
 }
 
-func TestEnsureAccountOwnerScopePreservesOnlyMatchingIdentity(t *testing.T) {
+func TestEnsureAccountOwnerScopeNeverInventsAScope(t *testing.T) {
 	owner := WithAccountOwnerScope(context.Background(), 7, 7)
 	for _, tc := range []struct {
 		name    string
 		ctx     context.Context
 		adminID int64
+		wantID  int64
 		wantAll bool
+		wantOK  bool
 	}{
-		{"account route preserves owner", owner, 7, true},
-		{"scheduled route preserves owner", owner, 7, true},
-		{"another identity cannot inherit owner", owner, 8, false},
-		{"missing scope stays restricted", context.Background(), 7, false},
+		{"account route preserves owner", owner, 7, 7, true, true},
+		{"scheduled route preserves owner", owner, 7, 7, true, true},
+		{"another identity inherits nothing new", owner, 8, 7, true, true},
+		{"unscoped context stays unscoped", context.Background(), 7, 0, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := EnsureAccountOwnerScope(tc.ctx, tc.adminID)
 			id, all, ok := AccountOwnerScopeDetail(ctx)
-			require.True(t, ok)
-			require.Equal(t, tc.adminID, id)
-			require.Equal(t, tc.wantAll, all)
+			require.Equal(t, tc.wantOK, ok)
+			if tc.wantOK {
+				require.Equal(t, tc.wantID, id)
+				require.Equal(t, tc.wantAll, all)
+			}
 		})
 	}
 }
