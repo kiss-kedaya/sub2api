@@ -270,6 +270,9 @@ type ResponsesInputItem struct {
 
 	// type=reasoning (multi-turn replay of encrypted reasoning)
 	EncryptedContent string `json:"encrypted_content,omitempty"`
+	// Summary carries plaintext thinking for relays that have no encrypted
+	// reasoning blob. It must not be folded into the assistant message body.
+	Summary []ResponsesSummary `json:"summary,omitempty"`
 
 	// type=function_call or type=custom_tool_call
 	CallID    string `json:"call_id,omitempty"`

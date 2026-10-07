@@ -454,7 +454,8 @@ func ChatCompletionsResponseToAnthropic(resp *ChatCompletionsResponse, model str
 // + the reasoning→thinking mapping in ResponsesToAnthropic.
 func chatMessageToAnthropicBlocks(message ChatMessage) []AnthropicContentBlock {
 	var blocks []AnthropicContentBlock
-	reasoning := message.reasoningText()
+	text := chatMessageContentText(message.Content)
+	reasoning, text := splitChatReasoningAndText(message.reasoningText(), text)
 
 	if reasoning != "" {
 		blocks = append(blocks, AnthropicContentBlock{
@@ -463,7 +464,6 @@ func chatMessageToAnthropicBlocks(message ChatMessage) []AnthropicContentBlock {
 		})
 	}
 
-	text := chatMessageContentText(message.Content)
 	// DeepSeek reasoning-only fallback: when there is no text and no tool calls,
 	// surface the reasoning content as visible text so the turn isn't empty.
 	if text == "" && strings.TrimSpace(reasoning) != "" && len(message.ToolCalls) == 0 {
@@ -578,6 +578,9 @@ type ChatCompletionsToAnthropicStreamState struct {
 	pendingToolCallID map[int]string
 	pendingToolArgs   map[int]string
 
+	// inlineThink peels a leading <think>/<thinking> block out of content.
+	inlineThink InlineThinkSplitter
+
 	// Reasoning (DeepSeek-style): reasoning_content streamed before content.
 	// No separate reasoning block index — it uses ContentBlockIndex like the
 	// Responses bridge's ReasoningIndex, but since blocks are sequential we
@@ -651,12 +654,12 @@ func ChatCompletionsChunkToAnthropicEvents(
 
 		// Text content → text block (closes any open thinking block first).
 		if choice.Delta.Content != nil && *choice.Delta.Content != "" {
-			events = append(events, closeCCAnthropicBlockIfOpen(state, "thinking")...)
-			events = append(events, ensureCCAnthropicTextBlock(state)...)
-			events = append(events, ccAnthropicDelta(state, &AnthropicDelta{
-				Type: "text_delta",
-				Text: *choice.Delta.Content,
-			})...)
+			thinking, text := state.inlineThink.Push(*choice.Delta.Content)
+			events = append(events, emitCCInlineThink(state, thinking, text)...)
+		}
+		if len(choice.Delta.ToolCalls) > 0 || (choice.FinishReason != nil && *choice.FinishReason != "") {
+			thinking, text := state.inlineThink.Flush()
+			events = append(events, emitCCInlineThink(state, thinking, text)...)
 		}
 
 		// Tool calls → tool_use blocks.
@@ -684,6 +687,8 @@ func FinalizeChatCompletionsAnthropicStream(state *ChatCompletionsToAnthropicStr
 	if !state.MessageStartSent {
 		events = append(events, ensureCCAnthropicMessageStart(state)...)
 	}
+	thinking, text := state.inlineThink.Flush()
+	events = append(events, emitCCInlineThink(state, thinking, text)...)
 
 	// Announce tools whose name never arrived so their buffered arguments are
 	// not silently dropped. The double-conversion path announced these
@@ -722,6 +727,29 @@ func FinalizeChatCompletionsAnthropicStream(state *ChatCompletionsToAnthropicStr
 		AnthropicStreamEvent{Type: "message_stop"},
 	)
 	state.MessageStopSent = true
+	return events
+}
+
+func emitCCInlineThink(state *ChatCompletionsToAnthropicStreamState, thinking, text string) []AnthropicStreamEvent {
+	if state == nil || (thinking == "" && text == "") {
+		return nil
+	}
+	var events []AnthropicStreamEvent
+	if thinking != "" {
+		events = append(events, ensureCCAnthropicThinkingBlock(state)...)
+		events = append(events, ccAnthropicDelta(state, &AnthropicDelta{
+			Type:     "thinking_delta",
+			Thinking: thinking,
+		})...)
+	}
+	if text != "" {
+		events = append(events, closeCCAnthropicBlockIfOpen(state, "thinking")...)
+		events = append(events, ensureCCAnthropicTextBlock(state)...)
+		events = append(events, ccAnthropicDelta(state, &AnthropicDelta{
+			Type: "text_delta",
+			Text: text,
+		})...)
+	}
 	return events
 }
 

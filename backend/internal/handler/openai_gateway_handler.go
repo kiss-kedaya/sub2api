@@ -718,6 +718,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		stopStreamHeaderKeepalive = service.StartOpenAIStreamSSEKeepalive(c, h.openAICompactKeepaliveInterval())
 	}
 	defer stopStreamHeaderKeepalive()
+	c.Request = c.Request.WithContext(service.WithOpenAIPreferNativeResponses(c.Request.Context()))
 
 	for {
 		// Streaming Forward intentionally detaches the upstream request so usage can
@@ -2482,7 +2483,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 继续按建连时刻的谷价计费。生图意图只影响能力路由与图片计费，不关门。
 	// 建连时刻只用于选号/准入，不作为任何 turn 的计费定价时刻。
 	wsPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(ctx, apiKey.GroupID)
-	ctx = wsPricingCtx
+	ctx = service.WithOpenAIPreferNativeResponses(wsPricingCtx)
 
 	for {
 		if ctx.Err() != nil {

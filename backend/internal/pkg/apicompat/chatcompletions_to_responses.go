@@ -171,28 +171,32 @@ func chatUserToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 // empty/nil and there are tool_calls, only function_call items are emitted.
 func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	var items []ResponsesInputItem
-	content := ""
+	text := ""
+	thinking := strings.TrimSpace(m.ReasoningContent)
 
-	if m.ReasoningContent != "" {
-		content = "<thinking>" + m.ReasoningContent + "</thinking>"
-	}
-
-	// Emit assistant message with output_text if content is non-empty.
 	if len(m.Content) > 0 {
-		s, err := parseAssistantContent(m.Content)
+		parsedText, parsedThinking, err := parseAssistantContent(m.Content)
 		if err != nil {
 			return nil, err
 		}
-		if s != "" {
-			if content != "" {
-				content += "\n"
-			}
-			content += s
+		text = parsedText
+		if thinking == "" {
+			thinking = strings.TrimSpace(parsedThinking)
 		}
 	}
 
-	if content != "" {
-		parts := []ResponsesContentPart{{Type: "output_text", Text: content}}
+	if thinking != "" {
+		items = append(items, ResponsesInputItem{
+			Type: "reasoning",
+			Summary: []ResponsesSummary{{
+				Type: "summary_text",
+				Text: thinking,
+			}},
+		})
+	}
+
+	if text != "" {
+		parts := []ResponsesContentPart{{Type: "output_text", Text: text}}
 		partsJSON, err := json.Marshal(parts)
 		if err != nil {
 			return nil, err
@@ -217,74 +221,49 @@ func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	return items, nil
 }
 
-// parseAssistantContent returns assistant content as plain text.
-//
-// Supported formats:
-// - JSON string
-// - JSON array of typed parts (e.g. [{"type":"text","text":"..."}])
-//
-// For structured thinking/reasoning parts, it preserves semantics by wrapping
-// the text in explicit tags so downstream can still distinguish it from normal text.
-func parseAssistantContent(raw json.RawMessage) (string, error) {
+// parseAssistantContent splits assistant content into visible text and thinking.
+// Thinking stays off the message body.
+func parseAssistantContent(raw json.RawMessage) (string, string, error) {
 	if len(raw) == 0 {
-		return "", nil
+		return "", "", nil
 	}
 
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		return s, nil
+		return s, "", nil
 	}
 
 	var parts []map[string]any
 	if err := json.Unmarshal(raw, &parts); err != nil {
-		// Keep compatibility with prior behavior: unsupported assistant content
-		// formats are ignored instead of failing the whole request conversion.
-		return "", nil
+		return "", "", nil
 	}
 
-	var b strings.Builder
-	write := func(v string) error {
-		_, err := b.WriteString(v)
-		return err
-	}
-	for _, p := range parts {
-		typ, _ := p["type"].(string)
-		text, _ := p["text"].(string)
-		thinking, _ := p["thinking"].(string)
-
+	var text strings.Builder
+	var thinking strings.Builder
+	for _, part := range parts {
+		typ, _ := part["type"].(string)
+		partText, _ := part["text"].(string)
+		partThinking, _ := part["thinking"].(string)
 		switch typ {
 		case "thinking", "reasoning":
-			if thinking != "" {
-				if err := write("<thinking>"); err != nil {
-					return "", err
-				}
-				if err := write(thinking); err != nil {
-					return "", err
-				}
-				if err := write("</thinking>"); err != nil {
-					return "", err
-				}
-			} else if text != "" {
-				if err := write("<thinking>"); err != nil {
-					return "", err
-				}
-				if err := write(text); err != nil {
-					return "", err
-				}
-				if err := write("</thinking>"); err != nil {
-					return "", err
-				}
+			chunk := partThinking
+			if chunk == "" {
+				chunk = partText
 			}
+			if chunk == "" {
+				continue
+			}
+			if thinking.Len() > 0 {
+				thinking.WriteString("\n")
+			}
+			thinking.WriteString(chunk)
 		default:
-			if text != "" {
-				if err := write(text); err != nil {
-					return "", err
-				}
+			if partText != "" {
+				text.WriteString(partText)
 			}
 		}
 	}
-
-	return b.String(), nil
+	return text.String(), thinking.String(), nil
 }
 
 // chatToolToResponses converts a tool result message (role=tool) into a

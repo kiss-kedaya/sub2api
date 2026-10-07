@@ -59,6 +59,21 @@ func ResponsesToAnthropic(resp *ResponsesResponse, model string) *AnthropicRespo
 				Name:  item.Name,
 				Input: sanitizeAnthropicToolUseInput(item.Name, item.Arguments),
 			})
+		case "local_shell_call":
+			name := item.Name
+			if name == "" {
+				name = defaultLocalShellToolName
+			}
+			raw := item.Arguments
+			if strings.TrimSpace(raw) == "" {
+				raw = "{}"
+			}
+			blocks = append(blocks, AnthropicContentBlock{
+				Type:  "tool_use",
+				ID:    fromResponsesCallID(item.CallID),
+				Name:  name,
+				Input: sanitizeAnthropicToolUseInput(name, raw),
+			})
 		case "web_search_call":
 			toolUseID := "srvtoolu_" + item.ID
 			query := ""
@@ -338,7 +353,7 @@ func resToAnthHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 	switch evt.Item.Type {
 	// function_call 与 custom_tool_call（custom/freeform 工具，如新版 apply_patch）
 	// 同样映射为 Anthropic 的 tool_use 块。
-	case "function_call", "custom_tool_call":
+	case "function_call", "custom_tool_call", "local_shell_call":
 		var events []AnthropicStreamEvent
 		events = append(events, closeCurrentBlock(state)...)
 
@@ -346,7 +361,11 @@ func resToAnthHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 		state.OutputIndexToBlockIdx[evt.OutputIndex] = idx
 		state.ContentBlockOpen = true
 		state.CurrentBlockType = "tool_use"
-		state.CurrentToolName = evt.Item.Name
+		name := evt.Item.Name
+		if evt.Item.Type == "local_shell_call" && name == "" {
+			name = defaultLocalShellToolName
+		}
+		state.CurrentToolName = name
 		state.CurrentToolArgs = ""
 		state.CurrentToolHadDelta = false
 		state.HasToolCall = true
@@ -357,7 +376,7 @@ func resToAnthHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 			ContentBlock: &AnthropicContentBlock{
 				Type:  "tool_use",
 				ID:    fromResponsesCallID(evt.Item.CallID),
-				Name:  evt.Item.Name,
+				Name:  name,
 				Input: json.RawMessage("{}"),
 			},
 		})
@@ -555,6 +574,9 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 	if evt.Item.Type == "web_search_call" && evt.Item.Status == "completed" {
 		return resToAnthHandleWebSearchDone(evt, state)
 	}
+	if evt.Item.Type == "local_shell_call" {
+		return resToAnthFinishLocalShell(evt, state)
+	}
 
 	// Capture encrypted_content on reasoning item done (often only present here).
 	if evt.Item.Type == "reasoning" {
@@ -567,6 +589,43 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 		return closeCurrentBlock(state)
 	}
 	return nil
+}
+
+// resToAnthFinishLocalShell emits the shell action on output_item.done.
+// Chat-bridged local_shell_call does not stream function_call_arguments deltas.
+func resToAnthFinishLocalShell(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
+	var events []AnthropicStreamEvent
+	if _, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]; !ok {
+		events = append(events, resToAnthHandleOutputItemAdded(evt, state)...)
+	}
+	if !state.ContentBlockOpen || state.CurrentBlockType != "tool_use" || state.CurrentToolHadDelta {
+		events = append(events, closeCurrentBlock(state)...)
+		return events
+	}
+	raw := "{}"
+	if evt.Item != nil && strings.TrimSpace(evt.Item.Arguments) != "" {
+		raw = evt.Item.Arguments
+	}
+	name := state.CurrentToolName
+	if name == "" {
+		name = defaultLocalShellToolName
+	}
+	if raw != "{}" {
+		blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]
+		if !ok {
+			blockIdx = state.ContentBlockIndex
+		}
+		events = append(events, AnthropicStreamEvent{
+			Type:  "content_block_delta",
+			Index: &blockIdx,
+			Delta: &AnthropicDelta{
+				Type:        "input_json_delta",
+				PartialJSON: string(sanitizeAnthropicToolUseInput(name, raw)),
+			},
+		})
+	}
+	events = append(events, closeCurrentBlock(state)...)
+	return events
 }
 
 // resToAnthHandleWebSearchDone converts an OpenAI web_search_call output item

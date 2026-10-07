@@ -104,6 +104,10 @@ type OpenAIAccountScheduleRequest struct {
 	// remaining candidate, in strict Account.Priority layers, so a lower
 	// priority account cannot hide behind the probe window.
 	FillScheduling bool
+	// PreferNativeResponses is set for inbound /v1/responses. Native accounts
+	// stay ahead of accounts that must be rewritten to chat completions.
+	// Advanced scheduling remains off unless its own setting is enabled.
+	PreferNativeResponses bool
 }
 
 type OpenAIAccountScheduleDecision struct {
@@ -1125,6 +1129,25 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		return append(primary, overflow...)
 	}
 
+	orderPool := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+		if !req.PreferNativeResponses || len(pool) < 2 {
+			return buildSelectionOrder(pool)
+		}
+		native := make([]openAIAccountCandidateScore, 0, len(pool))
+		convert := make([]openAIAccountCandidateScore, 0)
+		for _, candidate := range pool {
+			if openAIAccountServesInboundResponsesNatively(candidate.account) {
+				native = append(native, candidate)
+				continue
+			}
+			convert = append(convert, candidate)
+		}
+		if len(native) == 0 || len(convert) == 0 {
+			return buildSelectionOrder(pool)
+		}
+		return append(buildSelectionOrder(native), buildSelectionOrder(convert)...)
+	}
+
 	if req.RequireCompact {
 		supported := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
 		unknown := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
@@ -1137,15 +1160,15 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 			}
 		}
 		selectionOrder := make([]openAIAccountCandidateScore, 0, len(plan.allCandidates))
-		selectionOrder = append(selectionOrder, buildSelectionOrder(supported)...)
-		selectionOrder = append(selectionOrder, buildSelectionOrder(unknown)...)
+		selectionOrder = append(selectionOrder, orderPool(supported)...)
+		selectionOrder = append(selectionOrder, orderPool(unknown)...)
 		if len(plan.staleSnapshotCompactRetry) > 0 && s.service.schedulerSnapshot != nil {
 			selectionOrder = append(selectionOrder, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry)...)
 		}
 		return selectionOrder
 	}
 
-	return buildSelectionOrder(plan.candidates)
+	return orderPool(plan.candidates)
 }
 
 // buildOpenAIFillSelectionOrder performs the failover "fill" walk.  Accounts
@@ -2712,6 +2735,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		RequireCompact:          requireCompact,
 		ExcludedIDs:             excludedIDs,
 		FillScheduling:          len(excludedIDs) > 0,
+		PreferNativeResponses:   openAIPreferNativeResponses(ctx),
 	})
 }
 

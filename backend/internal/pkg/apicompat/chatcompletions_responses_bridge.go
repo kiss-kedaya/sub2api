@@ -1440,7 +1440,8 @@ func chatServiceTier(resp *ChatCompletionsResponse) string {
 
 func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTools map[string]bool, toolSearch bool, namespaceTools map[string]NamespacedToolName, localShellTools map[string]bool) []ResponsesOutput {
 	var outputs []ResponsesOutput
-	reasoning := message.reasoningText()
+	text := chatMessageContentText(message.Content)
+	reasoning, text := splitChatReasoningAndText(message.reasoningText(), text)
 	if reasoning != "" {
 		outputs = append(outputs, ResponsesOutput{
 			Type: "reasoning",
@@ -1451,8 +1452,6 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 			}},
 		})
 	}
-
-	text := chatMessageContentText(message.Content)
 	if text == "" && strings.TrimSpace(reasoning) != "" && len(message.ToolCalls) == 0 {
 		text = reasoning
 	}
@@ -1701,6 +1700,9 @@ type ChatCompletionsToResponsesStreamState struct {
 	// 为 local_shell_call，codex 只按该类型把命令交给终端。
 	LocalShellTools map[string]bool
 
+	// inlineThink peels a leading <think>/<thinking> block out of content.
+	inlineThink InlineThinkSplitter
+
 	// toolIsCustom 记录每个工具调用宣告时的类型判定，保证 added/done 事件的
 	// 项类型一致。
 	toolIsCustom map[int]bool
@@ -1813,18 +1815,12 @@ func ChatCompletionsChunkToResponsesEvents(
 			}))
 		}
 		if choice.Delta.Content != nil && *choice.Delta.Content != "" {
-			// First real content closes the reasoning item, then opens the
-			// message item and its output_text content part.
-			events = append(events, closeChatReasoningItem(state)...)
-			events = append(events, ensureChatToResponsesMessageItem(state)...)
-			events = append(events, ensureChatToResponsesTextPart(state)...)
-			_, _ = state.Text.WriteString(*choice.Delta.Content)
-			events = append(events, chatToResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
-				OutputIndex:  state.MessageIndex,
-				ContentIndex: 0,
-				Delta:        *choice.Delta.Content,
-				ItemID:       state.MessageItemID,
-			}))
+			thinking, text := state.inlineThink.Push(*choice.Delta.Content)
+			events = append(events, emitChatInlineThink(state, thinking, text)...)
+		}
+		if len(choice.Delta.ToolCalls) > 0 || (choice.FinishReason != nil && *choice.FinishReason != "") {
+			thinking, text := state.inlineThink.Flush()
+			events = append(events, emitChatInlineThink(state, thinking, text)...)
 		}
 		for _, toolCall := range choice.Delta.ToolCalls {
 			idx := 0
@@ -1893,6 +1889,9 @@ func FinalizeChatCompletionsResponsesStream(state *ChatCompletionsToResponsesStr
 	var events []ResponsesStreamEvent
 	events = append(events, ensureChatToResponsesCreated(state)...)
 
+	thinking, text := state.inlineThink.Flush()
+	events = append(events, emitChatInlineThink(state, thinking, text)...)
+
 	// Close a reasoning item that never transitioned to content (reasoning-only
 	// or empty completion).
 	events = append(events, closeChatReasoningItem(state)...)
@@ -1952,6 +1951,40 @@ func FinalizeChatCompletionsResponsesStream(state *ChatCompletionsToResponsesStr
 			IncompleteDetails: incompleteDetails,
 		},
 	}))
+	return events
+}
+
+func emitChatInlineThink(state *ChatCompletionsToResponsesStreamState, thinking, text string) []ResponsesStreamEvent {
+	if state == nil || (thinking == "" && text == "") {
+		return nil
+	}
+	if thinking != "" && state.ReasoningDone {
+		text = thinking + text
+		thinking = ""
+	}
+	var events []ResponsesStreamEvent
+	if thinking != "" {
+		events = append(events, ensureChatReasoningItem(state)...)
+		_, _ = state.Reasoning.WriteString(thinking)
+		events = append(events, chatToResponsesEvent(state, "response.reasoning_summary_text.delta", &ResponsesStreamEvent{
+			OutputIndex:  state.ReasoningIndex,
+			SummaryIndex: 0,
+			Delta:        thinking,
+			ItemID:       state.ReasoningItemID,
+		}))
+	}
+	if text != "" {
+		events = append(events, closeChatReasoningItem(state)...)
+		events = append(events, ensureChatToResponsesMessageItem(state)...)
+		events = append(events, ensureChatToResponsesTextPart(state)...)
+		_, _ = state.Text.WriteString(text)
+		events = append(events, chatToResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
+			OutputIndex:  state.MessageIndex,
+			ContentIndex: 0,
+			Delta:        text,
+			ItemID:       state.MessageItemID,
+		}))
+	}
 	return events
 }
 

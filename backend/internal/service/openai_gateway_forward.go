@@ -1473,6 +1473,34 @@ func shouldPreemptivelyConvertInboundResponsesToChat(account *Account) bool {
 	return openai_compat.NormalizeResponsesSupportMode(openaiResponsesSupportMode(account)) == openai_compat.ResponsesSupportModeForceChatCompletions
 }
 
+// openAIAccountServesInboundResponsesNatively reports that an inbound
+// /v1/responses request can stay on this account without a preemptive rewrite
+// to chat completions. Probe-unknown OpenAI keys still count: forward tries
+// /v1/responses first and only falls back on 404/405.
+func openAIAccountServesInboundResponsesNatively(account *Account) bool {
+	return account != nil && !shouldPreemptivelyConvertInboundResponsesToChat(account)
+}
+
+type openAIPreferNativeResponsesContextKey struct{}
+
+// WithOpenAIPreferNativeResponses marks an inbound /v1/responses selection.
+// Legacy and advanced schedulers both keep native accounts ahead of accounts
+// that must be converted. The advanced scheduler stays off unless enabled.
+func WithOpenAIPreferNativeResponses(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, openAIPreferNativeResponsesContextKey{}, true)
+}
+
+func openAIPreferNativeResponses(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	enabled, _ := ctx.Value(openAIPreferNativeResponsesContextKey{}).(bool)
+	return enabled
+}
+
 func shouldFallbackOpenAIResponsesToChatOnUnsupportedEndpoint(account *Account, c *gin.Context, status int) bool {
 	if isResponsesEndpointSupportedByStatus(status) {
 		return false
