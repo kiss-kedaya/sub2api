@@ -210,6 +210,18 @@ type AffiliateService struct {
 	billingCacheService  *BillingCacheService
 }
 
+// affiliateUserSettingsAtomic is implemented by the SQL repository so the
+// admin's two optional settings are committed together. The fallback keeps
+// lightweight test repositories compatible while production uses one tx.
+type affiliateUserSettingsAtomic interface {
+	UpdateUserSettings(ctx context.Context, userID int64, affCode *string, ratePercent *float64, clearRate bool) error
+	ClearUserSettings(ctx context.Context, userID int64) error
+}
+
+type affiliateBatchRateCounter interface {
+	BatchSetUserRebateRateCount(ctx context.Context, userIDs []int64, ratePercent *float64) (int, error)
+}
+
 func NewAffiliateService(repo AffiliateRepository, settingService *SettingService, authCacheInvalidator APIKeyAuthCacheInvalidator, billingCacheService *BillingCacheService) *AffiliateService {
 	return &AffiliateService{
 		repo:                 repo,
@@ -520,12 +532,64 @@ func (s *AffiliateService) AdminUpdateUserAffCode(ctx context.Context, userID in
 	return s.repo.UpdateUserAffCode(ctx, userID, code)
 }
 
+// AdminUpdateUserSettings validates both fields before entering the repository
+// transaction, preventing a valid code from being committed when the rate is
+// rejected (and vice versa).
+func (s *AffiliateService) AdminUpdateUserSettings(ctx context.Context, userID int64, rawCode *string, ratePercent *float64, clearRate bool) error {
+	if s == nil || s.repo == nil {
+		return infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate service unavailable")
+	}
+	var code *string
+	if rawCode != nil {
+		v := strings.ToUpper(strings.TrimSpace(*rawCode))
+		if !isValidAffiliateCodeFormat(v) {
+			return ErrAffiliateCodeInvalid
+		}
+		code = &v
+	}
+	if clearRate {
+		ratePercent = nil
+	} else if err := validateExclusiveRate(ratePercent); err != nil {
+		return err
+	}
+	if code == nil && !clearRate && ratePercent == nil {
+		return nil
+	}
+	if atomicRepo, ok := s.repo.(affiliateUserSettingsAtomic); ok {
+		return atomicRepo.UpdateUserSettings(ctx, userID, code, ratePercent, clearRate)
+	}
+	if code != nil {
+		if err := s.repo.UpdateUserAffCode(ctx, userID, *code); err != nil {
+			return err
+		}
+	}
+	if clearRate || ratePercent != nil {
+		return s.repo.SetUserRebateRate(ctx, userID, ratePercent)
+	}
+	return nil
+}
+
 // AdminResetUserAffCode 重置用户邀请码为系统随机码。
 func (s *AffiliateService) AdminResetUserAffCode(ctx context.Context, userID int64) (string, error) {
 	if s == nil || s.repo == nil {
 		return "", infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate service unavailable")
 	}
 	return s.repo.ResetUserAffCode(ctx, userID)
+}
+
+// AdminClearUserSettings clears the rate and regenerates the code atomically.
+func (s *AffiliateService) AdminClearUserSettings(ctx context.Context, userID int64) error {
+	if s == nil || s.repo == nil {
+		return infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate service unavailable")
+	}
+	if atomicRepo, ok := s.repo.(affiliateUserSettingsAtomic); ok {
+		return atomicRepo.ClearUserSettings(ctx, userID)
+	}
+	if err := s.repo.SetUserRebateRate(ctx, userID, nil); err != nil {
+		return err
+	}
+	_, err := s.repo.ResetUserAffCode(ctx, userID)
+	return err
 }
 
 // AdminSetUserRebateRate 设置/清除用户专属返利比例。ratePercent==nil 表示清除。
@@ -541,22 +605,40 @@ func (s *AffiliateService) AdminSetUserRebateRate(ctx context.Context, userID in
 
 // AdminBatchSetUserRebateRate 批量设置/清除用户专属返利比例。
 func (s *AffiliateService) AdminBatchSetUserRebateRate(ctx context.Context, userIDs []int64, ratePercent *float64) error {
+	_, err := s.AdminBatchSetUserRebateRateCount(ctx, userIDs, ratePercent)
+	return err
+}
+
+// AdminBatchSetUserRebateRateCount returns rows actually updated, after
+// dropping invalid IDs and de-duplicating the request.
+func (s *AffiliateService) AdminBatchSetUserRebateRateCount(ctx context.Context, userIDs []int64, ratePercent *float64) (int, error) {
 	if s == nil || s.repo == nil {
-		return infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate service unavailable")
+		return 0, infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate service unavailable")
 	}
 	if err := validateExclusiveRate(ratePercent); err != nil {
-		return err
+		return 0, err
 	}
 	cleaned := make([]int64, 0, len(userIDs))
+	seen := make(map[int64]struct{}, len(userIDs))
 	for _, uid := range userIDs {
 		if uid > 0 {
+			if _, ok := seen[uid]; ok {
+				continue
+			}
+			seen[uid] = struct{}{}
 			cleaned = append(cleaned, uid)
 		}
 	}
 	if len(cleaned) == 0 {
-		return nil
+		return 0, nil
 	}
-	return s.repo.BatchSetUserRebateRate(ctx, cleaned, ratePercent)
+	if counter, ok := s.repo.(affiliateBatchRateCounter); ok {
+		return counter.BatchSetUserRebateRateCount(ctx, cleaned, ratePercent)
+	}
+	if err := s.repo.BatchSetUserRebateRate(ctx, cleaned, ratePercent); err != nil {
+		return 0, err
+	}
+	return len(cleaned), nil
 }
 
 // AdminListCustomUsers 列出有专属配置的用户。
