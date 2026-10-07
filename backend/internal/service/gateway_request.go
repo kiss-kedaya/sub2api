@@ -19,6 +19,26 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// ErrDuplicateModelField is returned when the request body declares the
+// top-level "model" field more than once. Route selection and billing read the
+// first value while a last-wins JSON decoder would forward the second, so a
+// duplicate lets the upstream model diverge from the billed model.
+var ErrDuplicateModelField = errors.New("duplicate model field in request body")
+
+// hasDuplicateTopLevelKey reports whether the top-level JSON object declares key
+// more than once (case-insensitively). Reuses the already-parsed gjson view, so
+// it costs no extra decode on the hot path.
+func hasDuplicateTopLevelKey(jsonStr, key string) bool {
+	seen := 0
+	gjson.Parse(jsonStr).ForEach(func(k, _ gjson.Result) bool {
+		if strings.EqualFold(k.String(), key) {
+			seen++
+		}
+		return seen < 2
+	})
+	return seen > 1
+}
+
 var (
 	// 这些字节模式用于 fast-path 判断，避免每次 []byte("...") 产生临时分配。
 	patternTypeThinking         = []byte(`"type":"thinking"`)
@@ -188,6 +208,9 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 
 	// 只在当前函数内零拷贝读取 JSON 字段；ReplaceBody 后必须重新进入本函数刷新派生状态。
 	jsonStr := *(*string)(unsafe.Pointer(&bodyBytes))
+	if hasDuplicateTopLevelKey(jsonStr, "model") {
+		return ErrDuplicateModelField
+	}
 	clearGatewayRequestDerivedState(parsed)
 	parsed.protocol = protocol
 

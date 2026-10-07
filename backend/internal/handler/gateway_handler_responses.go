@@ -194,7 +194,11 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	// Parse request for session hash
 	bodyRef := service.NewRequestBodyRef(body)
-	parsedReq, _ := service.ParseGatewayRequest(bodyRef, "responses")
+	parsedReq, parseErr := service.ParseGatewayRequest(bodyRef, "responses")
+	if errors.Is(parseErr, service.ErrDuplicateModelField) {
+		h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error", parseErr.Error())
+		return
+	}
 	if parsedReq == nil {
 		parsedReq = &service.ParsedRequest{Model: reqModel, Stream: reqStream, Body: bodyRef}
 	}
