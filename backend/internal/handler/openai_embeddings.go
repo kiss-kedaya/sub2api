@@ -65,6 +65,10 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
+	if openAIConflictingModels(c.GetHeader("Content-Type"), body) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", service.ErrDuplicateModelField.Error())
+		return
+	}
 
 	modelResult := gjson.GetBytes(body, "model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || strings.TrimSpace(modelResult.String()) == "" {

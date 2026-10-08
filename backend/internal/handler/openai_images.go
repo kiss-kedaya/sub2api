@@ -69,6 +69,10 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		setOpsRequestContext(c, "", false)
 	}
 
+	if openAIConflictingModels(c.GetHeader("Content-Type"), body) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", service.ErrDuplicateModelField.Error())
+		return
+	}
 	parsed, err := h.gatewayService.ParseOpenAIImagesRequest(c, body)
 	if err != nil {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())

@@ -89,6 +89,28 @@ func FromBodyForRoute(routePath, contentType string, body []byte) string {
 	return candidates[0]
 }
 
+// ConflictingModelCandidates reports that parsers could bill one model and
+// forward another. Identical repeats are not a conflict.
+func ConflictingModelCandidates(candidates []string) bool {
+	var first string
+	seen := false
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if !seen {
+			first = candidate
+			seen = true
+			continue
+		}
+		if candidate != first {
+			return true
+		}
+	}
+	return false
+}
+
 // FromJSON 从 JSON 请求体提取模型名：顶层 `model` 优先，其次 `session.model`（Live）。
 func FromJSON(body []byte) string {
 	model, _ := JSONModelPath(body)
