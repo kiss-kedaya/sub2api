@@ -129,16 +129,23 @@ func TestDedupeResponsesCallIDs(t *testing.T) {
 	items, ok := out.([]any)
 	require.True(t, ok)
 	require.Len(t, items, 5)
-	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855", items[0].(map[string]any)["call_id"])
-	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855~2", items[1].(map[string]any)["call_id"])
-	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855", items[2].(map[string]any)["call_id"])
-	require.Equal(t, "ok", items[2].(map[string]any)["output"])
-	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855~2", items[3].(map[string]any)["call_id"])
-	require.Equal(t, "fail", items[3].(map[string]any)["output"])
+	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855", responseItemField(t, items, 0, "call_id"))
+	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855~2", responseItemField(t, items, 1, "call_id"))
+	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855", responseItemField(t, items, 2, "call_id"))
+	require.Equal(t, "ok", responseItemField(t, items, 2, "output"))
+	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855~2", responseItemField(t, items, 3, "call_id"))
+	require.Equal(t, "fail", responseItemField(t, items, 3, "output"))
 
 	same, changed := DedupeResponsesCallIDs(out)
 	require.False(t, changed)
 	require.Equal(t, out, same)
+}
+
+func responseItemField(t *testing.T, items []any, index int, key string) any {
+	t.Helper()
+	item, ok := items[index].(map[string]any)
+	require.True(t, ok)
+	return item[key]
 }
 
 func TestDedupeChatToolCallIDs(t *testing.T) {
@@ -150,10 +157,18 @@ func TestDedupeChatToolCallIDs(t *testing.T) {
 	]`), &messages))
 	out, changed := DedupeChatToolCallIDs(messages)
 	require.True(t, changed)
-	items := out.([]any)
-	calls := items[0].(map[string]any)["tool_calls"].([]any)
-	require.Equal(t, "call_a", calls[0].(map[string]any)["id"])
-	require.Equal(t, "call_a~2", calls[1].(map[string]any)["id"])
-	require.Equal(t, "call_a", items[1].(map[string]any)["tool_call_id"])
-	require.Equal(t, "call_a~2", items[2].(map[string]any)["tool_call_id"])
+	items, ok := out.([]any)
+	require.True(t, ok)
+	first, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	calls, ok := first["tool_calls"].([]any)
+	require.True(t, ok)
+	call0, ok := calls[0].(map[string]any)
+	require.True(t, ok)
+	call1, ok := calls[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "call_a", call0["id"])
+	require.Equal(t, "call_a~2", call1["id"])
+	require.Equal(t, "call_a", responseItemField(t, items, 1, "tool_call_id"))
+	require.Equal(t, "call_a~2", responseItemField(t, items, 2, "tool_call_id"))
 }
