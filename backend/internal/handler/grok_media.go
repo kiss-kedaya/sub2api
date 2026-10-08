@@ -107,6 +107,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	}
 
 	contentType := c.GetHeader("Content-Type")
+	if openAIConflictingModels(contentType, body) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", service.ErrDuplicateModelField.Error())
+		return
+	}
 	requestInfo := service.ParseGrokMediaRequest(contentType, body)
 	requestModel := requestInfo.Model
 	routingModel := service.NormalizeGrokMediaModelForEndpoint(endpoint, requestModel, requestInfo.HasInputImage())

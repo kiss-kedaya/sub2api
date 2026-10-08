@@ -480,6 +480,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
 	}
+	if openAIConflictingModels(c.GetHeader("Content-Type"), body) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", service.ErrDuplicateModelField.Error())
+		return
+	}
 
 	// 使用 gjson 只读提取字段做校验，避免完整 Unmarshal
 	modelResult := gjson.GetBytes(body, "model")
@@ -1284,6 +1288,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	if !gjson.ValidBytes(body) {
 		logRequestBodyParseFailure(reqLog, body, nil)
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return
+	}
+	if openAIConflictingModels(c.GetHeader("Content-Type"), body) {
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", service.ErrDuplicateModelField.Error())
 		return
 	}
 
@@ -2244,6 +2252,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "invalid JSON payload")
 		return
 	}
+	if openAIConflictingModels("application/json", firstMessage) {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.ErrDuplicateModelField.Error())
+		return
+	}
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
 	if reqModel == "" {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
@@ -2714,6 +2726,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				if !gjson.ValidBytes(payload) {
 					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
+				}
+				if openAIConflictingModels("application/json", payload) {
+					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, service.ErrDuplicateModelField.Error(), service.ErrDuplicateModelField)
 				}
 				model := strings.TrimSpace(originalModel)
 				if model == "" {
@@ -3743,6 +3758,10 @@ func isOpenAIWSUpgradeRequest(r *http.Request) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(strings.TrimSpace(r.Header.Get("Connection"))), "upgrade")
+}
+
+func openAIConflictingModels(contentType string, body []byte) bool {
+	return requestmodel.ConflictingModelCandidates(requestmodel.FromBodyCandidates("", contentType, body))
 }
 
 // blockedModelAllowlistCandidate 对全部候选模型逐一校验分组白名单，返回第一个
