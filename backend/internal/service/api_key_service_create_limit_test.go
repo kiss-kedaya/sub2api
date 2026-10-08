@@ -146,13 +146,12 @@ func TestAPIKeyServiceCreate_CountErrorFailsClosed(t *testing.T) {
 	require.Empty(t, repo.created)
 }
 
-func TestAPIKeyServiceCreate_RedisErrorFailsOpen(t *testing.T) {
+func TestAPIKeyServiceCreate_RedisErrorFailsClosed(t *testing.T) {
 	repo, cache := newCreateLimitStubs()
 	cache.incrErr = errors.New("redis down")
 	svc := newCreateLimitService(repo, cache, 0, 1)
 
-	for i := 0; i < 3; i++ {
-		_, err := svc.Create(context.Background(), 7, CreateAPIKeyRequest{Name: "k"})
-		require.NoError(t, err)
-	}
+	_, err := svc.Create(context.Background(), 7, CreateAPIKeyRequest{Name: "k"})
+	require.ErrorIs(t, err, ErrBillingServiceUnavailable)
+	require.Empty(t, repo.created)
 }

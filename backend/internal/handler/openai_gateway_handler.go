@@ -190,6 +190,14 @@ func openAIAccountScheduleModel(c *gin.Context, account *service.Account, forwar
 	return service.ResolveOpenAIAccountUpstreamModelForRequest(account, forwardModel, requireCompact)
 }
 
+func rewriteInboundDeepSeekCallIDs(apiKey *service.APIKey, model string, body []byte) []byte {
+	platform := ""
+	if apiKey != nil && apiKey.Group != nil {
+		platform = apiKey.Group.Platform
+	}
+	return service.RewriteInboundDeepSeekCallIDs(platform, model, body)
+}
+
 func resolveOpenAIMessagesDispatchMappedModel(c *gin.Context, apiKey *service.APIKey, requestedModel string) string {
 	if apiKey == nil || apiKey.Group == nil {
 		return ""
@@ -318,9 +326,7 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 	if apiKey == nil || apiKey.Group == nil {
 		return true
 	}
-	// /v1/messages 已不再是稳定的原生 Anthropic 直通入口：OpenAI 兼容平台会按
-	// 账号能力转成上游 Responses / Chat Completions，因此分组级开关不再拦截。
-	// 保留豁免判定与 composite 语义以便未来细化，但默认放行。
+	// grok/CN 仍豁免。其余分组关掉「允许 messages 分发」就 403。
 	if messagesDispatchExemptPlatform(apiKey.Group.Platform) {
 		return true
 	}
@@ -334,7 +340,7 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 		return true
 	}
 	if apiKey.Group.Platform == service.PlatformComposite {
-		return true
+		return apiKey.Group.AllowMessagesDispatch
 	}
 	if apiKey.UsesRequestTargetPlatform() && resolvedOK {
 		switch resolved {
@@ -344,7 +350,7 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 			return true
 		}
 	}
-	return true
+	return apiKey.Group.AllowMessagesDispatch
 }
 
 func openAICompatibleTextTargetAllowed(c *gin.Context, apiKey *service.APIKey, model string) bool {
@@ -492,6 +498,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	body = rewriteInboundDeepSeekCallIDs(apiKey, reqModel, body)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
@@ -1301,6 +1308,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	body = rewriteInboundDeepSeekCallIDs(apiKey, reqModel, body)
 	if service.IsChatUnsupportedMediaModel(reqModel) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "This model is not supported on the Messages endpoint")
 		return
@@ -2257,6 +2265,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
+	firstMessage = rewriteInboundDeepSeekCallIDs(apiKey, reqModel, firstMessage)
 	if reqModel == "" {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
@@ -2711,7 +2720,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			MaxReasoningEffortOverLimit: maxReasoningEffortOverLimit,
 			ReasoningEffortMappings:     reasoningEffortMappings,
 			TurnStarted:                 recordTurnStart,
-			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
+			BeforeRequest: func(turn int, payload []byte, originalModel string) ([]byte, error) {
 				c.Set(securityAuditWSTurnContextKey, turn)
 				service.BeginOpsStreamTurn(c, turn)
 				setCyberTurnBody(turn, payload)
@@ -2719,16 +2728,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// passthrough ingress 都能在 BeforeTurn 及上游写入前无副作用地拒绝。
 				// BeforeTurn 中保留同一检查作为防御式兜底。
 				if cyberBlockedThisConn {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
-				}
-				if turn == 1 {
-					return nil
-				}
-				if !gjson.ValidBytes(payload) {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
-				}
-				if openAIConflictingModels("application/json", payload) {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, service.ErrDuplicateModelField.Error(), service.ErrDuplicateModelField)
+					return nil, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
 				}
 				model := strings.TrimSpace(originalModel)
 				if model == "" {
@@ -2736,6 +2736,18 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				if model == "" {
 					model = reqModel
+				}
+				if turn > 1 {
+					payload = rewriteInboundDeepSeekCallIDs(apiKey, model, payload)
+				}
+				if turn == 1 {
+					return payload, nil
+				}
+				if !gjson.ValidBytes(payload) {
+					return nil, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
+				}
+				if openAIConflictingModels("application/json", payload) {
+					return nil, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, service.ErrDuplicateModelField.Error(), service.ErrDuplicateModelField)
 				}
 				// 分组级模型白名单：后续 turn 同样校验客户端模型（省略 model 时
 				// 沿用会话实际生效模型，含 session.update 轮换后的模型），不通过
@@ -2746,13 +2758,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if blocked := blockedModelAllowlistCandidate(apiKey.Group, candidates); blocked != "" {
 					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
 					middleware2.MarkIngressRejected(c, middleware2.IngressRejectModelNotAllowed)
-					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, fmt.Sprintf("Model %q is not available for this group", blocked), nil)
+					return nil, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, fmt.Sprintf("Model %q is not available for this group", blocked), nil)
 				}
 				if decision := h.checkSecurityAuditStage(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, model, payload, "subsequent_turn"); decision != nil && !decision.AllowNextStage {
 					writeSecurityAuditWSError(ctx, wsConn, decision)
-					return service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
+					return nil, service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
 				}
-				return nil
+				return payload, nil
 			},
 			MapRequestModel: func(turn int, originalModel string) (string, error) {
 				model := strings.TrimSpace(originalModel)

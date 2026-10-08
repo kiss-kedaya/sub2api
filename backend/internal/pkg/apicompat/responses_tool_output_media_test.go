@@ -114,3 +114,46 @@ func TestLiftResponsesToolOutputMediaKeepsParallelBatchContiguous(t *testing.T) 
 		require.Equal(t, text, contentPart["text"])
 	}
 }
+
+func TestDedupeResponsesCallIDs(t *testing.T) {
+	var input any
+	require.NoError(t, json.Unmarshal([]byte(`[
+		{"type":"custom_tool_call","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","name":"apply_patch"},
+		{"type":"custom_tool_call","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","name":"apply_patch"},
+		{"type":"custom_tool_call_output","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","output":"ok"},
+		{"type":"custom_tool_call_output","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","output":"fail"},
+		{"type":"message","role":"user","content":"next"}
+	]`), &input))
+	out, changed := DedupeResponsesCallIDs(input)
+	require.True(t, changed)
+	items, ok := out.([]any)
+	require.True(t, ok)
+	require.Len(t, items, 5)
+	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855", items[0].(map[string]any)["call_id"])
+	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855~2", items[1].(map[string]any)["call_id"])
+	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855", items[2].(map[string]any)["call_id"])
+	require.Equal(t, "ok", items[2].(map[string]any)["output"])
+	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855~2", items[3].(map[string]any)["call_id"])
+	require.Equal(t, "fail", items[3].(map[string]any)["output"])
+
+	same, changed := DedupeResponsesCallIDs(out)
+	require.False(t, changed)
+	require.Equal(t, out, same)
+}
+
+func TestDedupeChatToolCallIDs(t *testing.T) {
+	var messages any
+	require.NoError(t, json.Unmarshal([]byte(`[
+		{"role":"assistant","tool_calls":[{"id":"call_a","type":"function"},{"id":"call_a","type":"function"}]},
+		{"role":"tool","tool_call_id":"call_a","content":"one"},
+		{"role":"tool","tool_call_id":"call_a","content":"two"}
+	]`), &messages))
+	out, changed := DedupeChatToolCallIDs(messages)
+	require.True(t, changed)
+	items := out.([]any)
+	calls := items[0].(map[string]any)["tool_calls"].([]any)
+	require.Equal(t, "call_a", calls[0].(map[string]any)["id"])
+	require.Equal(t, "call_a~2", calls[1].(map[string]any)["id"])
+	require.Equal(t, "call_a", items[1].(map[string]any)["tool_call_id"])
+	require.Equal(t, "call_a~2", items[2].(map[string]any)["tool_call_id"])
+}

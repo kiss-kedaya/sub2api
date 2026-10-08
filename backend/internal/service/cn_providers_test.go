@@ -861,6 +861,37 @@ func TestNormalizeDeepSeekResponsesRequestBody(t *testing.T) {
 	require.Equal(t, string(body), string(normalizeDeepSeekResponsesRequestBody(openai, body)))
 }
 
+func TestNormalizeDeepSeekResponsesRequestBodyDropsDuplicateCallID(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"model":"alias-without-prefix","store":true,"input":[{"type":"custom_tool_call","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","name":"apply_patch"},{"type":"custom_tool_call","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","name":"apply_patch"},{"type":"custom_tool_call_output","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","output":"ok"},{"type":"custom_tool_call_output","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","output":"fail"}]}`)
+	account := &Account{
+		Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
+	}
+	normalized := normalizeDeepSeekResponsesRequestBody(account, body)
+	require.Equal(t, 4, len(gjson.GetBytes(normalized, "input").Array()))
+	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855", gjson.GetBytes(normalized, "input.0.call_id").String())
+	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855~2", gjson.GetBytes(normalized, "input.1.call_id").String())
+	require.Equal(t, "ok", gjson.GetBytes(normalized, "input.2.output").String())
+	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855~2", gjson.GetBytes(normalized, "input.3.call_id").String())
+
+	byModel := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	modelBody := []byte(`{"model":"deepseek-v4.1-flash","input":[{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call_output","call_id":"call_a","output":"1"}]}`)
+	modelNormalized := normalizeDeepSeekResponsesRequestBody(byModel, modelBody)
+	require.Equal(t, 3, len(gjson.GetBytes(modelNormalized, "input").Array()))
+	require.Equal(t, "call_a~2", gjson.GetBytes(modelNormalized, "input.1.call_id").String())
+	require.Equal(t, "call_a", gjson.GetBytes(modelNormalized, "input.2.call_id").String())
+	require.True(t, gjson.GetBytes(modelNormalized, "store").Exists() == false || gjson.GetBytes(modelNormalized, "store").Raw == "")
+
+	kimi := &Account{
+		Platform: PlatformKimi, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
+	}
+	kimiBody := []byte(`{"model":"kimi-k2","store":true,"input":[{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call","call_id":"call_a","name":"do"}]}`)
+	kimiNormalized := normalizeDeepSeekResponsesRequestBody(kimi, kimiBody)
+	require.Equal(t, 2, len(gjson.GetBytes(kimiNormalized, "input").Array()))
+}
+
 // TestGetAnthropicAPIKeyAuthScheme_CNProvider CN 账号可经 extra 覆写鉴权方案，
 // 默认保持 x-api-key。
 func TestGetAnthropicAPIKeyAuthScheme_CNProvider(t *testing.T) {

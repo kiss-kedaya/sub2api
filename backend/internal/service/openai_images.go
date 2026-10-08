@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
@@ -198,6 +199,9 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 	}
 
 	contentType := strings.TrimSpace(c.GetHeader("Content-Type"))
+	if requestmodel.ConflictingModelCandidates(requestmodel.FromBodyCandidates("", contentType, body)) {
+		return nil, ErrDuplicateModelField
+	}
 	req := &OpenAIImagesRequest{
 		Endpoint:    endpoint,
 		ContentType: contentType,

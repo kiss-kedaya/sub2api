@@ -472,7 +472,7 @@ func (s *APIKeyService) checkAPIKeyRateLimit(ctx context.Context, userID int64) 
 
 // checkAPIKeyCreateLimits 校验创建 API Key 的防滥用限制（对自定义与自动生成的 Key 一视同仁）。
 // 数量上限按未删除的 Key 计；创建次数按固定窗口累计，删除 Key 不返还次数，
-// 以阻断"删除后反复新建"的循环。Redis 出错时与自定义 Key 限流一致，不阻止用户操作。
+// 以阻断"删除后反复新建"的循环。配了每小时上限时 Redis 出错就拒绝创建。
 func (s *APIKeyService) checkAPIKeyCreateLimits(ctx context.Context, userID int64) error {
 	if s.cfg == nil {
 		return nil
@@ -489,7 +489,7 @@ func (s *APIKeyService) checkAPIKeyCreateLimits(ctx context.Context, userID int6
 	if maxPerHour := s.cfg.APIKeyCreate.MaxPerUserPerHour; maxPerHour > 0 && s.cache != nil {
 		count, err := s.cache.IncrementCreateCount(ctx, userID, apiKeyCreateCountWindow)
 		if err != nil {
-			return nil
+			return ErrBillingServiceUnavailable.WithCause(err)
 		}
 		if count > int64(maxPerHour) {
 			return ErrAPIKeyCreateLimited
