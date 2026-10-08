@@ -116,3 +116,15 @@ func BenchmarkFromBodyCandidates(b *testing.B) {
 		})
 	}
 }
+
+func TestConflictingModelCandidates(t *testing.T) {
+	if !ConflictingModelCandidates(FromBodyCandidates("", "application/json", []byte(`{"model":"cheap-model","model":"gpt-6-astra"}`))) {
+		t.Fatal("different duplicate models must conflict")
+	}
+	if ConflictingModelCandidates(FromBodyCandidates("", "application/json", []byte(`{"model":"gpt-6-astra","model":"gpt-6-astra"}`))) {
+		t.Fatal("identical duplicate models must not conflict")
+	}
+	if ConflictingModelCandidates(FromBodyCandidates("", "application/json", []byte(`{"model":"gpt-6-astra","input":{"model":"other"}}`))) {
+		t.Fatal("nested model must not conflict")
+	}
+}
