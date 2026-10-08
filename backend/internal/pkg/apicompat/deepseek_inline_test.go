@@ -86,3 +86,15 @@ func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+func TestExtractDeepSeekInline_AnalysisAndSummaryLeaveBody(t *testing.T) {
+	raw := "look.\n\n<analysis>\nplan</analysis>\n\n<summary>\n1. next\n</summary>"
+	visible, reasoning, calls := ExtractDeepSeekInline(raw)
+	assert.Empty(t, calls)
+	assert.Contains(t, visible, "look.")
+	assert.NotContains(t, visible, "<analysis>")
+	assert.NotContains(t, visible, "<summary>")
+	assert.NotContains(t, visible, "plan")
+	assert.Contains(t, reasoning, "plan")
+	assert.Contains(t, reasoning, "1. next")
+}
