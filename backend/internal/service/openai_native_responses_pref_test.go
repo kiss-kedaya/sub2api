@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
@@ -33,4 +34,13 @@ func TestPrioritizeNativeResponsesAccountsKeepsConvertersBehind(t *testing.T) {
 	})
 	require.Equal(t, int64(2), loaded[0].account.ID)
 	require.Equal(t, int64(1), loaded[1].account.ID)
+}
+
+func TestStickyYieldsWhenInboundResponsesWouldConvert(t *testing.T) {
+	chat := &Account{ID: 29159, Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_protocol": APIProtocolChatCompletions}}
+	native := &Account{ID: 29161, Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_protocol": APIProtocolResponses}}
+	ctx := WithOpenAIPreferNativeResponses(context.Background())
+	require.True(t, openAIStickyYieldsToNativeResponses(ctx, chat))
+	require.False(t, openAIStickyYieldsToNativeResponses(ctx, native))
+	require.False(t, openAIStickyYieldsToNativeResponses(context.Background(), chat))
 }

@@ -1068,6 +1068,9 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
+	if openAIStickyYieldsToNativeResponses(ctx, account) {
+		return nil
+	}
 
 	// 刷新会话 TTL 并返回账号
 	// Refresh session TTL and return account
@@ -1302,6 +1305,8 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				} else if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+				} else if openAIStickyYieldsToNativeResponses(ctx, account) {
+					// 入站 responses 不黏在必须降级的账号上，交给后面的原生优先。
 				} else {
 					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 					if err == nil && result != nil && result.Acquired {

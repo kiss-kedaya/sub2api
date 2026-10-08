@@ -1501,6 +1501,12 @@ func openAIPreferNativeResponses(ctx context.Context) bool {
 	return enabled
 }
 
+// openAIStickyYieldsToNativeResponses is true when an inbound /v1/responses
+// session is stuck on an account that must be rewritten to chat completions.
+func openAIStickyYieldsToNativeResponses(ctx context.Context, account *Account) bool {
+	return openAIPreferNativeResponses(ctx) && !openAIAccountServesInboundResponsesNatively(account)
+}
+
 func shouldFallbackOpenAIResponsesToChatOnUnsupportedEndpoint(account *Account, c *gin.Context, status int) bool {
 	if isResponsesEndpointSupportedByStatus(status) {
 		return false
