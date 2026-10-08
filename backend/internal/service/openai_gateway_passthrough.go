@@ -2170,6 +2170,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	attachSSEScannerBuffer(scanner, scanBuf[:], maxLineSize)
 	defer putSSEScannerBuf64K(scanBuf)
 	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
+	var deepSeekPass deepSeekPassthrough
+	rewriteDeepSeek := account != nil && account.Platform == PlatformDeepseek
 
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
@@ -2185,6 +2187,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 
 	for documentScanner.Scan() {
+		var deepSeekBefore, deepSeekAfter []string
+		dropDeepSeekLine := false
 		if ctx.Err() != nil || (c.Request != nil && c.Request.Context().Err() != nil) {
 			clientDisconnected = true
 		}
@@ -2390,7 +2394,20 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				line = "data: " + string(sanitizedData)
 				frame = parseTrustedOpenAISSEDataFrame(dataBytes, eventType)
 			}
+			if rewriteDeepSeek && trimmedData != "" && trimmedData != "[DONE]" {
+				before, after, next, drop := deepSeekPass.rewrite(c, eventType, dataBytes)
+				deepSeekBefore, deepSeekAfter, dropDeepSeekLine = before, after, drop
+				if next != nil {
+					dataBytes = next
+					trimmedData = strings.TrimSpace(string(next))
+					line = "data: " + string(next)
+					frame = parseTrustedOpenAISSEDataFrame(dataBytes, eventType)
+				}
+			}
 			lineStartsClientOutput = forceFlushFailedEvent || openAIStreamFrameStartsClientOutput(frame)
+			if len(deepSeekBefore) > 0 || len(deepSeekAfter) > 0 {
+				lineStartsClientOutput = true
+			}
 			if lineStartsClientOutput && trimmedData != "[DONE]" && !openAIStreamEventTypeIsTerminal(eventType) {
 				semanticOutputSeen = true
 			}
@@ -2418,6 +2435,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 		}
 
+		if dropDeepSeekLine && len(deepSeekBefore) == 0 && len(deepSeekAfter) == 0 {
+			continue
+		}
+
 		if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 			if !clientOutputStarted && !lineStartsClientOutput {
 				pendingLines = append(pendingLines, line)
@@ -2433,6 +2454,30 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					continue
 				}
 			}
+			writeDeepSeekLines := func(lines []string) bool {
+				for _, extra := range lines {
+					if _, err := fmt.Fprintln(w, extra); err != nil {
+						clientDisconnected = true
+						logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+						return false
+					}
+					clientOutputStarted = true
+					flushPending = true
+					if extra == "" {
+						flushPendingOutput()
+					}
+				}
+				return true
+			}
+			if len(deepSeekBefore) > 0 && !writeDeepSeekLines(deepSeekBefore) {
+				continue
+			}
+			if dropDeepSeekLine {
+				if len(deepSeekAfter) > 0 {
+					_ = writeDeepSeekLines(deepSeekAfter)
+				}
+				continue
+			}
 			if _, err := fmt.Fprintln(w, line); err != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
@@ -2441,6 +2486,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				flushPending = true
 				if line == "" {
 					flushPendingOutput()
+				}
+				if len(deepSeekAfter) > 0 && !writeDeepSeekLines(deepSeekAfter) {
+					continue
 				}
 				// 语义输出帧计量：累加已发字节作 token 上界，跨预扣窗口时补扣。
 				// 补扣失败（钱包不足或不可用）主动中止上游流，避免继续产生无法
@@ -2588,6 +2636,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if err != nil {
 		return nil, fmt.Errorf("restore OpenAI Responses client tools: %w", err)
 	}
+	if account != nil && account.Platform == PlatformDeepseek {
+		body = rewriteDeepSeekResponseBody(c, body)
+	}
 	if normalized, changed := normalizeFractionalCreatedAtForClient(body); changed {
 		body = normalized
 	}
@@ -2662,6 +2713,9 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	logOpenAISuccessMissingUsage(c.Request.Context(), c, account, resp, usage, terminalType, false)
+	if account != nil && account.Platform == PlatformDeepseek {
+		body = rewriteDeepSeekResponseBody(c, body)
+	}
 	if normalized, changed := normalizeFractionalCreatedAtForClient(body); changed {
 		body = normalized
 	}

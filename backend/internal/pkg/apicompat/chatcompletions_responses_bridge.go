@@ -1442,6 +1442,27 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 	var outputs []ResponsesOutput
 	text := chatMessageContentText(message.Content)
 	reasoning, text := splitChatReasoningAndText(message.reasoningText(), text)
+	visible, extraReasoning, inlineCalls := ExtractDeepSeekInline(text)
+	if strings.TrimSpace(reasoning) == "" {
+		reasoning = extraReasoning
+	}
+	text = visible
+	for _, call := range inlineCalls {
+		if strings.TrimSpace(call.Arguments) == "" {
+			call.Arguments = "{}"
+		}
+		if call.CallID == "" {
+			call.CallID = generateItemID()
+		}
+		message.ToolCalls = append(message.ToolCalls, ChatToolCall{
+			ID:   call.CallID,
+			Type: "function",
+			Function: ChatFunctionCall{
+				Name:      call.Name,
+				Arguments: call.Arguments,
+			},
+		})
+	}
 	if reasoning != "" {
 		outputs = append(outputs, ResponsesOutput{
 			Type: "reasoning",
@@ -1452,7 +1473,7 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 			}},
 		})
 	}
-	if text == "" && strings.TrimSpace(reasoning) != "" && len(message.ToolCalls) == 0 {
+	if text == "" && strings.TrimSpace(reasoning) != "" && len(message.ToolCalls) == 0 && len(inlineCalls) == 0 {
 		text = reasoning
 	}
 	if text != "" || len(message.ToolCalls) == 0 {
@@ -1702,6 +1723,8 @@ type ChatCompletionsToResponsesStreamState struct {
 
 	// inlineThink peels a leading <think>/<thinking> block out of content.
 	inlineThink InlineThinkSplitter
+	// deepseekInline peels DeepSeek DSML and non-leading think tags out of content.
+	deepseekInline DeepSeekInlineFilter
 
 	// toolIsCustom 记录每个工具调用宣告时的类型判定，保证 added/done 事件的
 	// 项类型一致。
@@ -1816,11 +1839,15 @@ func ChatCompletionsChunkToResponsesEvents(
 		}
 		if choice.Delta.Content != nil && *choice.Delta.Content != "" {
 			thinking, text := state.inlineThink.Push(*choice.Delta.Content)
-			events = append(events, emitChatInlineThink(state, thinking, text)...)
+			text, more, callEvents := state.absorbDeepSeek(text, false)
+			events = append(events, emitChatInlineThink(state, thinking+more, text)...)
+			events = append(events, callEvents...)
 		}
 		if len(choice.Delta.ToolCalls) > 0 || (choice.FinishReason != nil && *choice.FinishReason != "") {
 			thinking, text := state.inlineThink.Flush()
-			events = append(events, emitChatInlineThink(state, thinking, text)...)
+			text, more, callEvents := state.absorbDeepSeek(text, true)
+			events = append(events, emitChatInlineThink(state, thinking+more, text)...)
+			events = append(events, callEvents...)
 		}
 		for _, toolCall := range choice.Delta.ToolCalls {
 			idx := 0
@@ -1890,7 +1917,9 @@ func FinalizeChatCompletionsResponsesStream(state *ChatCompletionsToResponsesStr
 	events = append(events, ensureChatToResponsesCreated(state)...)
 
 	thinking, text := state.inlineThink.Flush()
-	events = append(events, emitChatInlineThink(state, thinking, text)...)
+	text, more, callEvents := state.absorbDeepSeek(text, true)
+	events = append(events, emitChatInlineThink(state, thinking+more, text)...)
+	events = append(events, callEvents...)
 
 	// Close a reasoning item that never transitioned to content (reasoning-only
 	// or empty completion).
