@@ -3,6 +3,7 @@ package apicompat
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -164,4 +165,141 @@ func isResponsesToolOutputItem(item map[string]any) bool {
 	default:
 		return false
 	}
+}
+
+// DedupeResponsesCallIDs renames a repeated call_id so DeepSeek does not
+// reject the request. The first tool call and its first output keep the
+// original id. Later calls and outputs of that id are paired onto id~2, id~3.
+func DedupeResponsesCallIDs(input any) (any, bool) {
+	items, ok := input.([]any)
+	if !ok || len(items) < 2 {
+		return input, false
+	}
+	callOrd := make(map[string]int, len(items))
+	outputOrd := make(map[string]int, len(items))
+	assigned := make(map[string][]string, len(items))
+	changed := false
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		callID, slot, tracked := responsesCallIDSlot(item)
+		if !tracked {
+			continue
+		}
+		if slot == "call" {
+			n := callOrd[callID]
+			callOrd[callID] = n + 1
+			newID := callID
+			if n > 0 {
+				newID = duplicateCallID(callID, n+1)
+				item["call_id"] = newID
+				changed = true
+			}
+			assigned[callID] = append(assigned[callID], newID)
+			continue
+		}
+		n := outputOrd[callID]
+		outputOrd[callID] = n + 1
+		if n == 0 {
+			continue
+		}
+		newID := duplicateCallID(callID, n+1)
+		if ids := assigned[callID]; n < len(ids) {
+			newID = ids[n]
+		}
+		item["call_id"] = newID
+		changed = true
+	}
+	if !changed {
+		return input, false
+	}
+	return items, true
+}
+
+// DedupeChatToolCallIDs is the chat-completions form of DedupeResponsesCallIDs.
+// Assistant tool_calls[].id and the following tool messages share one sequence.
+func DedupeChatToolCallIDs(messages any) (any, bool) {
+	items, ok := messages.([]any)
+	if !ok || len(items) < 2 {
+		return messages, false
+	}
+	callOrd := make(map[string]int, len(items))
+	assigned := make(map[string][]string, len(items))
+	changed := false
+	for _, raw := range items {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		calls, ok := msg["tool_calls"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawCall := range calls {
+			call, ok := rawCall.(map[string]any)
+			if !ok {
+				continue
+			}
+			callID := strings.TrimSpace(stringValue(call["id"]))
+			if callID == "" {
+				continue
+			}
+			n := callOrd[callID]
+			callOrd[callID] = n + 1
+			newID := callID
+			if n > 0 {
+				newID = duplicateCallID(callID, n+1)
+				call["id"] = newID
+				changed = true
+			}
+			assigned[callID] = append(assigned[callID], newID)
+		}
+	}
+	outputOrd := make(map[string]int, len(items))
+	for _, raw := range items {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		callID := strings.TrimSpace(stringValue(msg["tool_call_id"]))
+		if callID == "" {
+			continue
+		}
+		n := outputOrd[callID]
+		outputOrd[callID] = n + 1
+		if n == 0 {
+			continue
+		}
+		newID := duplicateCallID(callID, n+1)
+		if ids := assigned[callID]; n < len(ids) {
+			newID = ids[n]
+		}
+		msg["tool_call_id"] = newID
+		changed = true
+	}
+	if !changed {
+		return messages, false
+	}
+	return items, true
+}
+
+func duplicateCallID(id string, n int) string {
+	return id + "~" + strconv.Itoa(n)
+}
+
+func responsesCallIDSlot(item map[string]any) (callID, slot string, ok bool) {
+	callID = strings.TrimSpace(stringValue(item["call_id"]))
+	if callID == "" {
+		return "", "", false
+	}
+	itemType := strings.TrimSpace(stringValue(item["type"]))
+	if itemType == "" || itemType == "message" {
+		return "", "", false
+	}
+	if strings.Contains(itemType, "output") {
+		return callID, "output", true
+	}
+	return callID, "call", true
 }

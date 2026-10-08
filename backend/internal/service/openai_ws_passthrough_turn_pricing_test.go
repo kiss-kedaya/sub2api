@@ -171,12 +171,12 @@ func testPassthroughIngressFreezesSubsequentTurnBeforeRequestPolicy(t *testing.T
 			beforeTurnCalls <- turn
 			return nil
 		},
-		BeforeRequest: func(turn int, _ []byte, _ string) error {
+		BeforeRequest: func(turn int, payload []byte, _ string) ([]byte, error) {
 			if turn == 2 {
 				beforeRequestEntered <- time.Now()
 				<-releaseBeforeRequest
 			}
-			return nil
+			return payload, nil
 		},
 	}
 

@@ -30,8 +30,8 @@ func TestAllowOpenAICompatibleMessagesDispatch_CNProvidersExempt(t *testing.T) {
 
 	// openai 分组：开关已不再拦截，两种取值都放行。
 	openaiOff := &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI, AllowMessagesDispatch: false}}
-	require.True(t, allowOpenAICompatibleMessagesDispatch(nil, openaiOff),
-		"openai 分组不再受 allow_messages_dispatch 拦截")
+	require.False(t, allowOpenAICompatibleMessagesDispatch(nil, openaiOff),
+		"openai 分组关掉 allow_messages_dispatch 必须拒绝")
 	openaiOn := &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI, AllowMessagesDispatch: true}}
 	require.True(t, allowOpenAICompatibleMessagesDispatch(nil, openaiOn))
 
@@ -61,18 +61,20 @@ func TestAllowOpenAICompatibleMessagesDispatch_CompositeResolvedTargets(t *testi
 		return c
 	}
 
-	// composite 分组不再受开关约束：无论解析到哪个目标都放行。
-	for _, model := range []string{"grok-4.3", "kimi-k2-thinking", "glm-5.2", "deepseek-v3.2", "gpt-5.5"} {
+	// grok/CN 目标仍豁免。解析到 OpenAI 时，composite 开关关掉就拒绝。
+	for _, model := range []string{"grok-4.3", "kimi-k2-thinking", "glm-5.2", "deepseek-v3.2"} {
 		c := newCompositeCtx(model)
 		require.True(t, allowOpenAICompatibleMessagesDispatch(c, &service.APIKey{
 			Group: &service.Group{Platform: service.PlatformComposite, AllowMessagesDispatch: false},
 		}), "model=%s", model)
 	}
+	require.False(t, allowOpenAICompatibleMessagesDispatch(newCompositeCtx("gpt-5.5"), &service.APIKey{
+		Group: &service.Group{Platform: service.PlatformComposite, AllowMessagesDispatch: false},
+	}))
 
-	// 未解析出目标平台也放行，闸门不再是 403 来源。
 	cNone, _ := gin.CreateTestContext(httptest.NewRecorder())
 	cNone.Request = httptest.NewRequest("POST", "/v1/messages", nil)
-	require.True(t, allowOpenAICompatibleMessagesDispatch(cNone,
+	require.False(t, allowOpenAICompatibleMessagesDispatch(cNone,
 		&service.APIKey{Group: &service.Group{Platform: service.PlatformComposite, AllowMessagesDispatch: false}}))
 }
 
@@ -103,6 +105,6 @@ func TestAllowOpenAICompatibleMessagesDispatch_SmartRoutingResolvedOpenAI(t *tes
 		Group:         &service.Group{ID: primaryID, Platform: service.PlatformAnthropic, AllowMessagesDispatch: false},
 	}
 	ensureCompositeTargetPlatform(c, apiKey, "gpt-5")
-	require.True(t, allowOpenAICompatibleMessagesDispatch(c, apiKey),
-		"闸门整体放行后，Anthropic 主分组也不再被 /v1/messages 开关拦截")
+	require.False(t, allowOpenAICompatibleMessagesDispatch(c, apiKey),
+		"未解析到后续分组时，主分组开关关掉就拒绝")
 }
