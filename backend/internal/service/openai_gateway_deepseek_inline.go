@@ -164,7 +164,7 @@ func (st *deepSeekPassthrough) openReasoning(c *gin.Context, text string) []stri
 			"part":          map[string]any{"type": "summary_text", "text": ""},
 		})...)
 	}
-	st.reasoningText.WriteString(text)
+	_, _ = st.reasoningText.WriteString(text)
 	return append(lines, deepSeekSSE(c, map[string]any{
 		"type":          "response.reasoning_summary_text.delta",
 		"output_index":  st.reasoningIndex,
