@@ -13,6 +13,8 @@ import (
 var inlineThinkPairs = [][2]string{
 	{"<think>", "</think>"},
 	{"<thinking>", "</thinking>"},
+	{"<analysis>", "</analysis>"},
+	{"<summary>", "</summary>"},
 }
 
 const inlineThinkSeparators = "\r\n"

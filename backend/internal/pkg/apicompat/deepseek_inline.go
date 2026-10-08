@@ -40,8 +40,9 @@ const (
 )
 
 type DeepSeekInlineFilter struct {
-	mode deepSeekMode
-	buf  string
+	mode     deepSeekMode
+	buf      string
+	closeTag string
 }
 
 func (f *DeepSeekInlineFilter) Push(delta string) DeepSeekPiece {
@@ -65,6 +66,7 @@ func (f *DeepSeekInlineFilter) Flush() DeepSeekPiece {
 	switch f.mode {
 	case deepSeekThink:
 		f.mode = deepSeekText
+		f.closeTag = ""
 		piece.Reasoning += rest
 	case deepSeekDSML:
 		f.mode = deepSeekText
@@ -85,11 +87,14 @@ func (f *DeepSeekInlineFilter) drain(flush bool) DeepSeekPiece {
 	for {
 		switch f.mode {
 		case deepSeekThink:
-			if idx, tag, ok := findThinkCloseTag(f.buf); ok {
-				piece.Reasoning += strings.TrimRight(f.buf[:idx], inlineThinkSeparators)
-				f.buf = f.buf[idx+len(tag):]
-				f.mode = deepSeekText
-				continue
+			if f.closeTag != "" {
+				if idx := strings.Index(f.buf, f.closeTag); idx >= 0 {
+					piece.Reasoning += strings.TrimRight(f.buf[:idx], inlineThinkSeparators)
+					f.buf = f.buf[idx+len(f.closeTag):]
+					f.closeTag = ""
+					f.mode = deepSeekText
+					continue
+				}
 			}
 			if flush {
 				return piece
@@ -134,6 +139,7 @@ func (f *DeepSeekInlineFilter) drain(flush bool) DeepSeekPiece {
 			case bracketPartial:
 				return piece
 			case bracketThinkOpen:
+				f.closeTag = thinkCloseFor(f.buf)
 				f.buf = f.buf[end:]
 				f.mode = deepSeekThink
 			case bracketDSMLOpen:
@@ -190,6 +196,15 @@ func classifyDeepSeekBracket(s string) (idx int, kind bracketKind, end int) {
 		return at, bracketPartial, 0
 	}
 	return at, bracketLiteral, 1
+}
+
+func thinkCloseFor(open string) string {
+	for _, pair := range inlineThinkPairs {
+		if strings.HasPrefix(open, pair[0]) {
+			return pair[1]
+		}
+	}
+	return ""
 }
 
 func matchThinkOpen(s string) (bracketKind, int, bool) {
