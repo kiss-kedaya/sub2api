@@ -63,13 +63,16 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	if apiKey.Group != nil {
 		platform = apiKey.Group.Platform
 	}
-	if platform != service.PlatformOpenAI && platform != service.PlatformGrok {
-		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "Images API is not supported for this platform")
-		return
-	}
-	if !service.GroupAllowsImageGeneration(apiKey.Group) {
-		imageTaskJSONError(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
-		return
+	// 多分组跟同步生图一样：入口组没开或不是 openai/grok 时，后面的组还能接。
+	if len(apiKey.CandidateGroupIDs()) <= 1 {
+		if platform != service.PlatformOpenAI && platform != service.PlatformGrok {
+			imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "Images API is not supported for this platform")
+			return
+		}
+		if !service.GroupAllowsImageGeneration(apiKey.Group) {
+			imageTaskJSONError(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
+			return
+		}
 	}
 	if h == nil || h.tasks == nil || h.execute == nil {
 		imageTaskError(c, service.ErrImageTaskUnavailable)
@@ -87,6 +90,10 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	}
 	if len(body) == 0 {
 		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
+		return
+	}
+	if openAIConflictingModels(c.GetHeader("Content-Type"), body) {
+		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", service.ErrDuplicateModelField.Error())
 		return
 	}
 	if asyncImageRequestStreams(c.GetHeader("Content-Type"), body) {

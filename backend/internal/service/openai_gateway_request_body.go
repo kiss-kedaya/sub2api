@@ -134,35 +134,113 @@ func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body m
 // Responses 均不支持服务端状态存储，携带这些字段会被拒绝）。
 // 非原生 Responses 协议账号原样返回。
 func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte {
-	if account == nil || !account.UsesNativeCNResponses() {
+	native := account != nil && account.UsesNativeCNResponses()
+	dedupe := deepSeekDuplicateCallIDRewrite(account, body)
+	if !native && !dedupe {
 		return body
 	}
-	normalized, err := sjson.SetBytes(body, "store", false)
-	if err != nil {
-		return body
-	}
-	if stripped, err := sjson.DeleteBytes(normalized, "previous_response_id"); err == nil {
-		normalized = stripped
+	normalized := body
+	if native {
+		var err error
+		normalized, err = sjson.SetBytes(body, "store", false)
+		if err != nil {
+			return body
+		}
+		if stripped, err := sjson.DeleteBytes(normalized, "previous_response_id"); err == nil {
+			normalized = stripped
+		}
 	}
 
 	var requestBody map[string]any
 	if err := decodeOpenAIJSONUseNumber(normalized, &requestBody); err != nil {
 		return normalized
 	}
-	input, exists := requestBody["input"]
-	if !exists {
-		return normalized
+	changed := false
+	if input, exists := requestBody["input"]; exists {
+		if native {
+			if lifted, did := apicompat.LiftResponsesToolOutputMedia(input); did {
+				input = lifted
+				changed = true
+			}
+		}
+		if dedupe {
+			if deduped, did := apicompat.DedupeResponsesCallIDs(input); did {
+				input = deduped
+				changed = true
+			}
+		}
+		if changed {
+			requestBody["input"] = input
+		}
 	}
-	liftedInput, changed := apicompat.LiftResponsesToolOutputMedia(input)
+	if dedupe {
+		if messages, ok := requestBody["messages"]; ok {
+			if deduped, did := apicompat.DedupeChatToolCallIDs(messages); did {
+				requestBody["messages"] = deduped
+				changed = true
+			}
+		}
+	}
 	if !changed {
 		return normalized
 	}
-	requestBody["input"] = liftedInput
 	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
 	if err != nil {
 		return normalized
 	}
 	return rebuilt
+}
+
+// RewriteInboundDeepSeekCallIDs renames repeated tool call ids on the request
+// that just arrived. Outbound normalize still does this again for the account
+// that is actually selected.
+func RewriteInboundDeepSeekCallIDs(groupPlatform, model string, body []byte) []byte {
+	if !deepSeekCallIDScope(groupPlatform, model) || len(body) == 0 {
+		return body
+	}
+	var requestBody map[string]any
+	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {
+		return body
+	}
+	changed := false
+	if input, ok := requestBody["input"]; ok {
+		if next, did := apicompat.DedupeResponsesCallIDs(input); did {
+			requestBody["input"] = next
+			changed = true
+		}
+	}
+	if messages, ok := requestBody["messages"]; ok {
+		if next, did := apicompat.DedupeChatToolCallIDs(messages); did {
+			requestBody["messages"] = next
+			changed = true
+		}
+	}
+	if !changed {
+		return body
+	}
+	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
+	if err != nil {
+		return body
+	}
+	return rebuilt
+}
+
+func deepSeekCallIDScope(platform, model string) bool {
+	if strings.EqualFold(strings.TrimSpace(platform), PlatformDeepseek) {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek")
+}
+
+// deepSeekDuplicateCallIDRewrite reports that this Responses body is going to
+// DeepSeek, either because the account/group platform is DeepSeek or the model
+// name starts with deepseek. Those upstreams reject a repeated call_id.
+func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
+	platform := ""
+	if account != nil {
+		platform = account.Platform
+	}
+	return deepSeekCallIDScope(platform, gjson.GetBytes(body, "model").String())
 }
 
 func trimOpenAIEncryptedReasoningItems(reqBody map[string]any) bool {

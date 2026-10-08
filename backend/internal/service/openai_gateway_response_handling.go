@@ -404,6 +404,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 
 	needModelReplace := originalModel != mappedModel
+	var deepSeekPass deepSeekPassthrough
+	rewriteDeepSeek := account != nil && account.Platform == PlatformDeepseek
 	streamOutputAccumulator := apicompat.NewBufferedResponseAccumulator()
 	streamDoneItems := newResponsesStreamOutputItems()
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
@@ -751,6 +753,48 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				line = "data: " + data
 				frame = parseTrustedOpenAISSEDataFrame(dataBytes, eventType)
 				eventType = frame.eventType
+			}
+			if rewriteDeepSeek {
+				before, after, next, drop := deepSeekPass.rewrite(c, eventType, dataBytes)
+				writeDeepSeek := func(lines []string) bool {
+					for _, extra := range lines {
+						if _, err := writePendingString(extra + "\n"); err != nil {
+							handlePendingWriteError(err)
+							return false
+						}
+						eventShouldFlush = true
+					}
+					return true
+				}
+				if !writeDeepSeek(before) {
+					return
+				}
+				if drop {
+					_ = writeDeepSeek(after)
+					return
+				}
+				if next != nil {
+					dataBytes = next
+					data = string(next)
+					line = "data: " + data
+					frame = parseTrustedOpenAISSEDataFrame(dataBytes, eventType)
+				}
+				if len(after) > 0 {
+					if _, err := writePendingString(line); err != nil {
+						handlePendingWriteError(err)
+						return
+					}
+					if _, err := writePendingString("\n"); err != nil {
+						handlePendingWriteError(err)
+						return
+					}
+					eventInProgress = true
+					eventShouldFlush = true
+					if !writeDeepSeek(after) {
+						return
+					}
+					return
+				}
 			}
 			restoredData, restoreErr := restoreGrokResponsesClientToolPayload(c, dataBytes)
 			if restoreErr != nil {
@@ -1809,6 +1853,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	// Replace model in response if needed
 	if originalModel != mappedModel {
 		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
+	}
+	if account != nil && account.Platform == PlatformDeepseek {
+		body = rewriteDeepSeekResponseBody(c, body)
 	}
 	body, err = restoreGrokResponsesClientToolPayload(c, body)
 	if err != nil {
