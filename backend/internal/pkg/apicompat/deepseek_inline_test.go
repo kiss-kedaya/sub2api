@@ -69,7 +69,7 @@ func TestStream_DeepSeekDSMLBecomesFunctionCall(t *testing.T) {
 	for _, event := range events {
 		switch event.Type {
 		case "response.output_text.delta":
-			text.WriteString(event.Delta)
+			_, _ = text.WriteString(event.Delta)
 			assert.NotContains(t, event.Delta, "DSML")
 		case "response.output_item.done":
 			if event.Item != nil && (event.Item.Type == "function_call" || event.Item.Type == "local_shell_call") && event.Item.Name == "bash" {
