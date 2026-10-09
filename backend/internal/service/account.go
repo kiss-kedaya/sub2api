@@ -334,7 +334,7 @@ func (a *Account) IsOpenAICompatible() bool {
 	if a == nil {
 		return false
 	}
-	if a.Platform == PlatformOpenAI || a.Platform == PlatformGrok || a.IsCNProvider() {
+	if a.Platform == PlatformOpenAI || a.Platform == PlatformGrok || a.IsCNProvider() || a.IsCline() || a.IsCommandCode() {
 		return true
 	}
 	return a.IsGeminiOpenAIProtocol()
@@ -1458,7 +1458,7 @@ func (a *Account) IsOpenAIApiKey() bool {
 // 适用 openai 与国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）；grok 走 GetGrokBaseURL，
 // 此处对 grok 返回 "" 以保持原有行为。
 func (a *Account) GetOpenAIBaseURL() string {
-	if !a.IsOpenAI() && !a.IsCNProvider() && !a.IsGeminiOpenAIProtocol() {
+	if !a.IsOpenAI() && !a.IsCNProvider() && !a.IsGeminiOpenAIProtocol() && !a.IsCline() && !a.IsCommandCode() {
 		return ""
 	}
 	if (a.IsCNProvider() || a.IsGeminiOpenAIProtocol()) && a.IsAdaptiveAPIProtocol() {
@@ -1496,6 +1496,10 @@ func (a *Account) GetOpenAIBaseURL() string {
 		return DefaultDeepseekBaseURL
 	case PlatformMiniMax:
 		return DefaultMiniMaxBaseURL
+	case PlatformCline:
+		return DefaultClineBaseURL
+	case PlatformCommandCode:
+		return DefaultCommandCodeBaseURL
 	default:
 		return "https://api.openai.com"
 	}
@@ -1875,7 +1879,7 @@ func (a *Account) GetOpenAIProtocolAPIKey() string {
 	if a.IsCloudflareOpenAI() {
 		return a.GetCredential("api_key")
 	}
-	if a.IsCNProvider() || a.IsGeminiOpenAIProtocol() {
+	if a.IsCNProvider() || a.IsGeminiOpenAIProtocol() || a.IsCline() || a.IsCommandCode() {
 		if a.Type != AccountTypeAPIKey {
 			return ""
 		}

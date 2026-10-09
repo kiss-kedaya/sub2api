@@ -78,7 +78,7 @@ func IsOpenAICompatibleUpstreamPlatform(platform string) bool {
 
 func isOpenAICompatibleUpstreamPlatform(platform string) bool {
 	switch strings.TrimSpace(platform) {
-	case PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
+	case PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformCline, PlatformCommandCode:
 		return true
 	default:
 		return false
@@ -152,6 +152,7 @@ func groupCatalogPlatforms() []string {
 	return []string{
 		PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity,
 		PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax,
+		PlatformCline, PlatformCommandCode,
 	}
 }
 
@@ -324,12 +325,12 @@ func (s *GatewayService) UpstreamPlatformForModel(ctx context.Context, apiKey *A
 	}
 	detected, detectedOK := DetectModelPlatform(model)
 	prefer := []string{
-		PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax,
+		PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformCline, PlatformCommandCode,
 		PlatformAnthropic, PlatformGemini, PlatformAntigravity,
 	}
 	if detectedOK && detected == PlatformGrok {
 		prefer = []string{
-			PlatformGrok, PlatformOpenAI, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax,
+			PlatformGrok, PlatformOpenAI, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformCline, PlatformCommandCode,
 			PlatformAnthropic, PlatformGemini, PlatformAntigravity,
 		}
 	}
