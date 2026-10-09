@@ -45,6 +45,8 @@ const (
 	PlatformZhipu       = domain.PlatformZhipu
 	PlatformDeepseek    = domain.PlatformDeepseek
 	PlatformMiniMax     = domain.PlatformMiniMax
+	PlatformCline       = domain.PlatformCline
+	PlatformCommandCode = domain.PlatformCommandCode
 )
 
 // AllPlatforms 返回所有支持的平台列表
@@ -59,6 +61,8 @@ func AllPlatforms() []string {
 		PlatformZhipu,
 		PlatformDeepseek,
 		PlatformMiniMax,
+		PlatformCline,
+		PlatformCommandCode,
 	}
 }
 

@@ -1657,6 +1657,10 @@ func defaultModelIDsForPlatform(platform string) []string {
 		return claude.DefaultModelIDs()
 	case service.PlatformGrok:
 		return xai.DefaultModelIDs()
+	case service.PlatformCline:
+		return []string{service.DefaultClineTestModel}
+	case service.PlatformCommandCode:
+		return []string{service.DefaultCommandCodeTestModel}
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
