@@ -869,18 +869,18 @@ func TestNormalizeDeepSeekResponsesRequestBodyDropsDuplicateCallID(t *testing.T)
 		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
 	}
 	normalized := normalizeDeepSeekResponsesRequestBody(account, body)
-	require.Equal(t, 4, len(gjson.GetBytes(normalized, "input").Array()))
+	require.Equal(t, 2, len(gjson.GetBytes(normalized, "input").Array()))
 	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855", gjson.GetBytes(normalized, "input.0.call_id").String())
-	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855~2", gjson.GetBytes(normalized, "input.1.call_id").String())
-	require.Equal(t, "ok", gjson.GetBytes(normalized, "input.2.output").String())
-	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855~2", gjson.GetBytes(normalized, "input.3.call_id").String())
+	require.Equal(t, "custom_tool_call", gjson.GetBytes(normalized, "input.0.type").String())
+	require.Equal(t, "ok", gjson.GetBytes(normalized, "input.1.output").String())
+	require.False(t, gjson.GetBytes(normalized, "input.2").Exists())
 
 	byModel := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	modelBody := []byte(`{"model":"deepseek-v4.1-flash","input":[{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call_output","call_id":"call_a","output":"1"}]}`)
 	modelNormalized := normalizeDeepSeekResponsesRequestBody(byModel, modelBody)
-	require.Equal(t, 3, len(gjson.GetBytes(modelNormalized, "input").Array()))
-	require.Equal(t, "call_a~2", gjson.GetBytes(modelNormalized, "input.1.call_id").String())
-	require.Equal(t, "call_a", gjson.GetBytes(modelNormalized, "input.2.call_id").String())
+	require.Equal(t, 2, len(gjson.GetBytes(modelNormalized, "input").Array()))
+	require.Equal(t, "call_a", gjson.GetBytes(modelNormalized, "input.0.call_id").String())
+	require.Equal(t, "1", gjson.GetBytes(modelNormalized, "input.1.output").String())
 	require.True(t, gjson.GetBytes(modelNormalized, "store").Exists() == false || gjson.GetBytes(modelNormalized, "store").Raw == "")
 
 	kimi := &Account{
