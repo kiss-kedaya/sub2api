@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
@@ -47,13 +48,12 @@ func requireHTTP2Configured(t *testing.T, tr *http.Transport, msg string) {
 func TestEnableHTTP2KeepAlive_EnablesPingHealthCheck(t *testing.T) {
 	tr := &http.Transport{}
 
-	h2, err := enableHTTP2KeepAlive(tr)
+	err := enableHTTP2KeepAlive(tr)
 	require.NoError(t, err)
-	require.NotNil(t, h2, "必须返回已配置的 *http2.Transport")
+	require.NotNil(t, tr.HTTP2)
 
-	require.Positive(t, h2.ReadIdleTimeout, "必须启用空闲 PING 探测以剔除死连接")
-	require.Equal(t, longStreamHTTP2ReadIdleTimeout, h2.ReadIdleTimeout)
-	require.Equal(t, longStreamHTTP2PingTimeout, h2.PingTimeout, "PING 无响应必须有超时判定")
+	require.Equal(t, longStreamHTTP2ReadIdleTimeout, tr.HTTP2.SendPingTimeout)
+	require.Equal(t, longStreamHTTP2PingTimeout, tr.HTTP2.PingTimeout)
 	requireHTTP2Configured(t, tr, "http2 必须已挂到底层 http.Transport 上")
 }
 
@@ -87,10 +87,13 @@ func TestBuildUpstreamTransport_LongStreamH2_NegotiatesHTTP2(t *testing.T) {
 	tr, err := buildUpstreamTransport(http2KeepAliveTestPoolSettings(), nil, upstreamProtocolModeLongStreamH2)
 	require.NoError(t, err)
 	defer tr.CloseIdleConnections()
-	require.NotNil(t, tr.TLSClientConfig)
 	roots := x509.NewCertPool()
 	roots.AddCert(srv.Certificate())
-	tr.TLSClientConfig.RootCAs = roots
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{RootCAs: roots}
+	} else {
+		tr.TLSClientConfig.RootCAs = roots
+	}
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
 	require.NoError(t, err)
