@@ -666,6 +666,9 @@ type UsageLog struct {
 	// BillingMode 计费模式：token/image
 	BillingMode *string `json:"billing_mode,omitempty"`
 
+	// Inflight 为 true 时这一行还没结束。ActualCost 是在途余额预留，不是最终价格。
+	Inflight bool `json:"inflight,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 
 	User         *User             `json:"user,omitempty"`

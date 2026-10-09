@@ -1,0 +1,253 @@
+package middleware
+
+import (
+	"context"
+	"net/http"
+	"net/netip"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+)
+
+// Scanner-only traps. Real panel, gateway, payment return, canvas, and assets are not in this list.
+var honeypotPrefixes = []string{
+	"/.aws",
+	"/.bzr",
+	"/.dockerenv",
+	"/.ds_store",
+	"/.env",
+	"/.git",
+	"/.hg",
+	"/.ssh",
+	"/.svn",
+	"/_ignition",
+	"/actuator",
+	"/adminer",
+	"/api/install",
+	"/autodiscover",
+	"/boaform",
+	"/cgi-bin",
+	"/cfide",
+	"/dana-na",
+	"/debug/pprof",
+	"/debug/vars",
+	"/druid",
+	"/ecp",
+	"/elmah.axd",
+	"/exchange",
+	"/goform",
+	"/gponform",
+	"/heapdump",
+	"/hnap1",
+	"/horizon",
+	"/id_rsa",
+	"/invoker",
+	"/jenkins",
+	"/jmx-console",
+	"/jndi",
+	"/jolokia",
+	"/manager/html",
+	"/manager/text",
+	"/myadmin",
+	"/owa",
+	"/phpmyadmin",
+	"/pma",
+	"/rdweb",
+	"/remote/login",
+	"/server-info",
+	"/server-status",
+	"/solr",
+	"/sslvpn",
+	"/telescope",
+	"/trace.axd",
+	"/v2/api-docs",
+	"/v3/api-docs",
+	"/vendor/phpunit",
+	"/web-console",
+	"/web.config",
+	"/wp-admin",
+	"/wp-config.php",
+	"/wp-content",
+	"/wp-includes",
+	"/wp-login.php",
+	"/xmlrpc.php",
+	"/swagger",
+	"/swagger-ui",
+	"/swagger-ui.html",
+}
+
+var honeypotExts = []string{".php", ".asp", ".aspx", ".jsp", ".cgi", ".axd", ".sql"}
+
+const (
+	honeypotBanTTL       = 24 * time.Hour
+	honeypotBanKeyPrefix = "kedaya:security:v1:ban:"
+)
+
+// honeypotExemptNets are the edge's own exempt CIDRs. A callback that shows
+// up as one of these addresses must not be banned again.
+var honeypotExemptNets = []netip.Prefix{
+	netip.MustParsePrefix("51.222.42.218/32"),
+	netip.MustParsePrefix("51.161.119.83/32"),
+	netip.MustParsePrefix("2607:5300:203:7cda::/64"),
+	netip.MustParsePrefix("2607:5300:203:7153::/64"),
+}
+
+func Honeypot(rdb *redis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request == nil || c.Request.URL == nil {
+			c.Next()
+			return
+		}
+		class := honeypotClass(c)
+		if class == "" {
+			c.Next()
+			return
+		}
+		MarkIngressRejected(c, IngressRejectHoneypot)
+		noteHoneypotBan(rdb, SecurityClientIP(c), class)
+		c.Header("Cache-Control", "no-store")
+		c.AbortWithStatus(http.StatusNotFound)
+	}
+}
+
+func honeypotClass(c *gin.Context) string {
+	path, rawPath, rawQuery := honeypotRequestParts(c)
+	if honeypotTraversal(path) || honeypotTraversal(rawPath) || honeypotQuery(rawQuery) || honeypotSignature(c) {
+		return "scanner"
+	}
+	if honeypotPath(path) {
+		if strings.HasSuffix(honeypotNorm(path), ".php") {
+			return "unknown_php"
+		}
+		return "trap"
+	}
+	return ""
+}
+
+func noteHoneypotBan(rdb *redis.Client, ip, class string) {
+	if rdb == nil {
+		return
+	}
+	key, value, ok := honeypotBanSpec(ip, class)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	// NX keeps a longer edge ban intact. ponytail: fixed 24h, edge escalates on its own hits.
+	_ = rdb.SetNX(ctx, key, value, honeypotBanTTL).Err()
+}
+
+func honeypotBanSpec(ip, class string) (key, value string, ok bool) {
+	switch class {
+	case "trap", "unknown_php", "scanner":
+	default:
+		return "", "", false
+	}
+	addr, err := netip.ParseAddr(strings.TrimSpace(ip))
+	if err != nil {
+		return "", "", false
+	}
+	addr = addr.Unmap()
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() || honeypotExempt(addr) {
+		return "", "", false
+	}
+	return honeypotBanKeyPrefix + addr.String(), class, true
+}
+
+func honeypotExempt(addr netip.Addr) bool {
+	for _, prefix := range honeypotExemptNets {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+func honeypotRequestParts(c *gin.Context) (path, rawPath, rawQuery string) {
+	path = c.Request.URL.Path
+	rawQuery = c.Request.URL.RawQuery
+	rawPath = c.Request.RequestURI
+	if i := strings.IndexByte(rawPath, '?'); i >= 0 {
+		rawPath = rawPath[:i]
+	}
+	if c.Request.URL.RawPath != "" {
+		rawPath = c.Request.URL.RawPath
+	}
+	return path, rawPath, rawQuery
+}
+
+func honeypotTraversal(s string) bool {
+	if s == "" {
+		return false
+	}
+	if strings.Contains(s, "..") || strings.Contains(s, "\x00") {
+		return true
+	}
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "%2e%2e") || strings.Contains(lower, "%00") || strings.Contains(lower, "%252e")
+}
+
+func honeypotQuery(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	lower := strings.ToLower(raw)
+	return strings.Contains(lower, "php://") ||
+		strings.Contains(lower, "phar://") ||
+		strings.Contains(lower, "expect://") ||
+		strings.Contains(lower, "gopher://") ||
+		strings.Contains(lower, "dict://") ||
+		strings.Contains(lower, "xdebug_session") ||
+		strings.Contains(lower, "auto_prepend_file") ||
+		strings.Contains(lower, "allow_url_include") ||
+		strings.Contains(lower, "auto_append_file") ||
+		strings.Contains(lower, "x-amz-algorithm") ||
+		strings.Contains(lower, "x-amz-credential")
+}
+
+func honeypotSignature(c *gin.Context) bool {
+	auth := strings.ToLower(strings.TrimSpace(c.GetHeader("Authorization")))
+	if strings.HasPrefix(auth, "aws4-hmac-sha256") || strings.HasPrefix(auth, "aws ") {
+		return true
+	}
+	return c.GetHeader("X-Amz-Algorithm") != "" || c.GetHeader("X-Amz-Credential") != ""
+}
+
+func honeypotPath(path string) bool {
+	p := honeypotNorm(path)
+	if p == "" || p == "/" {
+		return false
+	}
+	for _, prefix := range honeypotPrefixes {
+		if p == prefix || strings.HasPrefix(p, prefix+"/") || strings.HasPrefix(p, prefix+".") {
+			return true
+		}
+	}
+	base := p
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		base = p[i+1:]
+	}
+	for _, ext := range honeypotExts {
+		if strings.HasSuffix(base, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func honeypotNorm(path string) string {
+	p := strings.ToLower(strings.TrimSpace(path))
+	if p == "" {
+		return ""
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	for strings.Contains(p, "//") {
+		p = strings.ReplaceAll(p, "//", "/")
+	}
+	return strings.TrimRight(p, "/")
+}

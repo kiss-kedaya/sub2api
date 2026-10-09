@@ -49,6 +49,10 @@ func (f *DeepSeekInlineFilter) Push(delta string) DeepSeekPiece {
 	if f == nil {
 		return DeepSeekPiece{Text: delta}
 	}
+	// 普通文本没有 '<'，也没有未完成的标签，直接吐出。流式热路径不进扫描。
+	if f.mode == deepSeekText && f.buf == "" && strings.IndexByte(delta, '<') < 0 {
+		return DeepSeekPiece{Text: delta}
+	}
 	f.buf += delta
 	return f.drain(false)
 }

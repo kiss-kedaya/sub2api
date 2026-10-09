@@ -219,6 +219,23 @@ func (h *UsageHandler) List(c *gin.Context) {
 	for i := range records {
 		out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
 	}
+	if page == 1 && service.QueryIncludesUsageInflight(c.Query("include_inflight")) {
+		finished := make(map[string]struct{}, len(out))
+		for i := range out {
+			if out[i].RequestID != "" {
+				finished[out[i].RequestID] = struct{}{}
+			}
+		}
+		now := time.Now()
+		live := service.VisibleUsageInflight(c.Request.Context(), filters.UserID, filters, finished)
+		if len(live) > 0 {
+			head := make([]dto.AdminUsageLog, 0, len(live))
+			for _, row := range live {
+				head = append(head, dto.AdminUsageLogFromInflight(row, now))
+			}
+			out = append(head, out...)
+		}
+	}
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 

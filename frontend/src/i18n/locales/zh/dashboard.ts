@@ -410,6 +410,8 @@ export default {
     type: '类型',
     tokens: 'Token',
     cost: '费用',
+    inflightReservedHint: '不是最终价格，只是预留余额',
+    inflightElapsed: '已运行',
     firstToken: '首 Token',
     duration: '耗时',
     latency: '延迟',
