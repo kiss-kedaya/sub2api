@@ -4,7 +4,7 @@
 
 # Sub2API
 
-[![Go](https://img.shields.io/badge/Go-1.26.6-00ADD8.svg)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.26.9-00ADD8.svg)](https://go.dev/)
 [![Vue](https://img.shields.io/badge/Vue-3.4+-4FC08D.svg)](https://vuejs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791.svg)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-7+-DC382D.svg)](https://redis.io/)
@@ -43,7 +43,7 @@
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Go 1.26.6、Gin、Ent |
+| 后端 | Go 1.26.9、Gin、Ent |
 | 前端 | Vue 3、Vite、TailwindCSS、pnpm |
 | 数据库 | PostgreSQL 15+ |
 | 缓存 | Redis 7+ |
