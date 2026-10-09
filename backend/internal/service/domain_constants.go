@@ -48,11 +48,13 @@ const (
 	PlatformAntigravity = domain.PlatformAntigravity
 	PlatformGrok        = domain.PlatformGrok
 	// 国产 OpenAI 兼容供应商（与 grok 一样经 OpenAI 网关转发）。
-	PlatformKimi      = domain.PlatformKimi
-	PlatformZhipu     = domain.PlatformZhipu
-	PlatformDeepseek  = domain.PlatformDeepseek
-	PlatformMiniMax   = domain.PlatformMiniMax
-	PlatformComposite = domain.PlatformComposite
+	PlatformKimi        = domain.PlatformKimi
+	PlatformZhipu       = domain.PlatformZhipu
+	PlatformDeepseek    = domain.PlatformDeepseek
+	PlatformMiniMax     = domain.PlatformMiniMax
+	PlatformCline       = domain.PlatformCline
+	PlatformCommandCode = domain.PlatformCommandCode
+	PlatformComposite   = domain.PlatformComposite
 	// PlatformKiro is retained for unsupported-platform threshold tests and legacy
 	// account rows. Scheduling-threshold evaluation never pauses kiro accounts.
 	PlatformKiro = "kiro"
@@ -82,6 +84,9 @@ const (
 	DefaultDeepseekBaseURL    = "https://api.deepseek.com"
 	// MiniMax 按量付费与 Coding/Token Plan 共用推理域名，靠 API Key 区分套餐。
 	DefaultMiniMaxBaseURL = "https://api.minimaxi.com/v1"
+	// Cline / Command Code 的官方默认基址。账号自己填了 base_url 时仍优先。
+	DefaultClineBaseURL       = "https://api.cline.bot/api/v1"
+	DefaultCommandCodeBaseURL = "https://api.commandcode.ai/provider/v1"
 )
 
 // 国产供应商 Anthropic 协议端点的默认 base_url（上游路径为 {base}/v1/messages）。
@@ -117,6 +122,8 @@ var AllowedQuotaPlatforms = []string{
 	PlatformZhipu,
 	PlatformDeepseek,
 	PlatformMiniMax,
+	PlatformCline,
+	PlatformCommandCode,
 }
 
 // AllowedSchedulingThresholdPlatforms 是允许设置账号自动停调阈值的平台列表。

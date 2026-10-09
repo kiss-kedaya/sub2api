@@ -1330,6 +1330,10 @@ func normalizeOpenAIResponseFormatSchemasBody(body []byte) ([]byte, bool, error)
 }
 
 func normalizeOpenAIResponsesWebSocketCompatibilityBody(body []byte, account *Account, responsesLite bool) ([]byte, bool, error) {
+	return normalizeOpenAIResponsesCompatibilityBody(body, account, responsesLite, false)
+}
+
+func normalizeOpenAIResponsesCompatibilityBody(body []byte, account *Account, responsesLite bool, compact bool) ([]byte, bool, error) {
 	if account == nil || !account.IsOpenAI() {
 		return body, false, nil
 	}
@@ -1451,6 +1455,14 @@ func normalizeOpenAIResponsesWebSocketCompatibilityBody(body []byte, account *Ac
 			normalized = schemaBody
 			changed = true
 		}
+	}
+	if account.IsOpenAIOAuthLike() && !compact {
+		webSearchBody, webSearchChanged, webSearchErr := ensureOpenAIOAuthWebSearchToolForHistoryBody(normalized, responsesLite)
+		if webSearchErr != nil {
+			return body, false, fmt.Errorf("normalize websocket body: %w", webSearchErr)
+		}
+		normalized = webSearchBody
+		changed = changed || webSearchChanged
 	}
 	// Keep this last: earlier compatibility passes may filter or rebuild input.
 	// Remote compaction v2 requires one trigger as the final input item.

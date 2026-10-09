@@ -1083,6 +1083,10 @@ func ChannelMonitorV2HealthForWithThresholds(metrics ChannelMonitorV2Metric, thr
 		Overall: "unknown", ErrorRate: "unknown", TTFT: "unknown", Cache: "unknown",
 		MinimumSample: thresholds.MinimumSample, Thresholds: thresholds,
 	}
+	// 没有请求样本时不拿延迟或缓存把渠道标成健康。
+	if metrics.RequestCount < result.MinimumSample {
+		return result
+	}
 
 	type scored struct {
 		score  float64

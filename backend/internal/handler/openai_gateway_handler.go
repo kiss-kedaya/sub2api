@@ -346,7 +346,7 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 		switch resolved {
 		case service.PlatformOpenAI, service.PlatformGrok,
 			service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek,
-			service.PlatformGemini:
+			service.PlatformGemini, service.PlatformCline, service.PlatformCommandCode:
 			return true
 		}
 	}
@@ -356,7 +356,8 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 func openAICompatibleTextTargetAllowed(c *gin.Context, apiKey *service.APIKey, model string) bool {
 	return compositeTargetPlatformAllowed(c, apiKey, model,
 		service.PlatformOpenAI, service.PlatformGrok,
-		service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax)
+		service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax,
+		service.PlatformCline, service.PlatformCommandCode)
 }
 
 // isResponsesWebSocketCompositePlatform 限定 composite 分组在 Responses WebSocket
@@ -1929,6 +1930,79 @@ func (p *openAIWSTurnPricing) currentOr(fallback time.Time) time.Time {
 	return fallback
 }
 
+type openAIWSTurnAPIKeyLookup interface {
+	GetByKey(ctx context.Context, key string) (*service.APIKey, error)
+}
+
+// 长连接只在建连时取了一次 API Key。后续 turn 再读认证缓存里的分组，
+// 分组调价才能作用到已经打开的连接。Key 换组、查失败、平台或订阅类型变了，仍用建连快照。
+type openAIWSTurnBillingAPIKeys struct {
+	mu   sync.Mutex
+	keys map[int]*service.APIKey
+}
+
+func (k *openAIWSTurnBillingAPIKeys) begin(ctx context.Context, apiKeyService *service.APIKeyService, turn int, conn *service.APIKey) context.Context {
+	turnKey := conn
+	if turn > 1 && apiKeyService != nil {
+		turnKey = refreshOpenAIWSTurnBillingAPIKey(ctx, apiKeyService, conn)
+	}
+	k.set(turn, turnKey)
+	return withOpenAIWSTurnBillingGroup(ctx, turnKey)
+}
+
+func (k *openAIWSTurnBillingAPIKeys) set(turn int, key *service.APIKey) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.keys == nil {
+		k.keys = make(map[int]*service.APIKey, 2)
+	}
+	for t := range k.keys {
+		if t < turn-1 {
+			delete(k.keys, t)
+		}
+	}
+	k.keys[turn] = key
+}
+
+func (k *openAIWSTurnBillingAPIKeys) forTurn(turn int, conn *service.APIKey) *service.APIKey {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if key := k.keys[turn]; key != nil {
+		return key
+	}
+	return conn
+}
+
+func refreshOpenAIWSTurnBillingAPIKey(ctx context.Context, lookup openAIWSTurnAPIKeyLookup, conn *service.APIKey) *service.APIKey {
+	if lookup == nil || conn == nil || conn.Key == "" || conn.GroupID == nil || conn.Group == nil {
+		return conn
+	}
+	latest, err := lookup.GetByKey(ctx, conn.Key)
+	if err != nil || latest == nil || latest.ID != conn.ID || latest.GroupID == nil || *latest.GroupID != *conn.GroupID {
+		return conn
+	}
+	group := latest.Group
+	if group == nil || group.ID != conn.Group.ID ||
+		group.Platform != conn.Group.Platform ||
+		group.SubscriptionType != conn.Group.SubscriptionType {
+		return conn
+	}
+	turnKey := *conn
+	turnKey.Group = group
+	return &turnKey
+}
+
+func withOpenAIWSTurnBillingGroup(ctx context.Context, turnKey *service.APIKey) context.Context {
+	if turnKey == nil || turnKey.Group == nil {
+		return ctx
+	}
+	current, ok := ctx.Value(ctxkey.Group).(*service.Group)
+	if !ok || current == nil || current == turnKey.Group || current.ID != turnKey.Group.ID {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxkey.Group, turnKey.Group)
+}
+
 // recordOpenAIProfitVeto 记录 OpenAI 侧选号循环的一次利润门终检否决：把账号
 // 加入本请求排除集并递增否决计数。返回 false 表示否决次数已达
 // maxProfitVetoAttempts，调用方必须停止重选并按「无可用账号」终止。
@@ -2711,6 +2785,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// turn 级定价：首轮回退到 TurnStarted 的所属 turn 时刻；后续 turn 由
 		// BeforeTurn 重新冻结 pricingAt 并按最新门复核当前账号。
 		var turnPricing openAIWSTurnPricing
+		var turnBillingAPIKeys openAIWSTurnBillingAPIKeys
 		turnBilling := newOpenAIWSTurnBillingGuard(openAIWSTurnSettlementTimeout)
 		hooks := &service.OpenAIWSIngressHooks{
 			ClientLifecycleContext:      clientLifecycleCtx,
@@ -2828,7 +2903,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					// 长连接跨峰谷/倍率刷新防护：每个 turn 按当前时刻重装门并复核
 					// 当前账号，越线即要求客户端重连重选（连接绑定单一上游账号，
 					// 无法中途换号）。本 turn 的准入与计费共用同一 pricingAt。
-					turnCtx, turnAt := h.gatewayService.WithOpenAITurnPricingContext(ctx, apiKey.GroupID)
+					turnBillingCtx := turnBillingAPIKeys.begin(ctx, h.apiKeyService, turn, apiKey)
+					turnCtx, turnAt := h.gatewayService.WithOpenAITurnPricingContext(turnBillingCtx, apiKey.GroupID)
 					if _, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(turnCtx, account); vetoed {
 						reqLog.Info("openai.websocket_turn_profit_vetoed",
 							zap.Int("turn", turn),
@@ -2950,13 +3026,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 				sessionID := service.ExtractClientSessionID(c)
 				turnRecordPricingAt := turnPricing.currentOr(turnStart)
+				turnBillingAPIKey := turnBillingAPIKeys.forTurn(turn, apiKey)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 				settleTurn = func(settleCtx context.Context) error {
 					var billingErr error
 					task := service.UsageRecordTask(func(taskCtx context.Context) {
 						billingErr = h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 							Result:             result,
-							APIKey:             apiKey,
+							APIKey:             turnBillingAPIKey,
 							User:               apiKey.User,
 							Account:            account,
 							Subscription:       subscription,

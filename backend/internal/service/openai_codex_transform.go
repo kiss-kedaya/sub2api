@@ -93,6 +93,8 @@ type codexOAuthTransformOptions struct {
 	SkipDefaultInstructions             bool
 	PreserveToolCallIDs                 bool
 	OmitPromotedSystemMessagesFromInput bool
+	// ResponsesLite 决定补上的 web_search 放顶层还是 additional_tools。
+	ResponsesLite bool
 }
 
 const (
@@ -344,6 +346,11 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		} else {
 			reqBody["input"] = []any{}
 		}
+		result.Modified = true
+	}
+
+	// 输入过滤之后再看最终历史。compact 的报文形态不动。
+	if !opts.IsCompact && ensureOpenAIOAuthWebSearchToolForHistory(reqBody, opts.ResponsesLite) {
 		result.Modified = true
 	}
 

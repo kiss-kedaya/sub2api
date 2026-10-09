@@ -24,11 +24,13 @@ const (
 	PlatformAntigravity = "antigravity"
 	PlatformGrok        = "grok"
 	// 国产 OpenAI 兼容供应商（经 OpenAI 网关转发，按 Chat Completions 协议）。
-	PlatformKimi      = "kimi"     // Kimi (月之暗面 / Moonshot)
-	PlatformZhipu     = "zhipu"    // 智谱 GLM (bigmodel)
-	PlatformDeepseek  = "deepseek" // DeepSeek
-	PlatformMiniMax   = "minimax"  // MiniMax (M 系列)
-	PlatformComposite = "composite"
+	PlatformKimi        = "kimi"         // Kimi (月之暗面 / Moonshot)
+	PlatformZhipu       = "zhipu"        // 智谱 GLM (bigmodel)
+	PlatformDeepseek    = "deepseek"     // DeepSeek
+	PlatformMiniMax     = "minimax"      // MiniMax (M 系列)
+	PlatformCline       = "cline"        // Cline 多模型聚合，仅 Chat Completions
+	PlatformCommandCode = "command_code" // Command Code，按模型分流
+	PlatformComposite   = "composite"
 )
 
 // Account mode constants 区分国产供应商的「按量付费（余额）」与「Coding Plan」两种接入方式。
