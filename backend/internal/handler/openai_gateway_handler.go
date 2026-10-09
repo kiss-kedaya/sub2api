@@ -1930,10 +1930,6 @@ func (p *openAIWSTurnPricing) currentOr(fallback time.Time) time.Time {
 	return fallback
 }
 
-type openAIWSTurnAPIKeyLookup interface {
-	GetByKey(ctx context.Context, key string) (*service.APIKey, error)
-}
-
 // 长连接只在建连时取了一次 API Key。后续 turn 再读认证缓存里的分组，
 // 分组调价才能作用到已经打开的连接。Key 换组、查失败、平台或订阅类型变了，仍用建连快照。
 type openAIWSTurnBillingAPIKeys struct {
@@ -1973,11 +1969,11 @@ func (k *openAIWSTurnBillingAPIKeys) forTurn(turn int, conn *service.APIKey) *se
 	return conn
 }
 
-func refreshOpenAIWSTurnBillingAPIKey(ctx context.Context, lookup openAIWSTurnAPIKeyLookup, conn *service.APIKey) *service.APIKey {
-	if lookup == nil || conn == nil || conn.Key == "" || conn.GroupID == nil || conn.Group == nil {
+func refreshOpenAIWSTurnBillingAPIKey(ctx context.Context, apiKeyService *service.APIKeyService, conn *service.APIKey) *service.APIKey {
+	if apiKeyService == nil || conn == nil || conn.Key == "" || conn.GroupID == nil || conn.Group == nil {
 		return conn
 	}
-	latest, err := lookup.GetByKey(ctx, conn.Key)
+	latest, err := apiKeyService.GetByKey(ctx, conn.Key)
 	if err != nil || latest == nil || latest.ID != conn.ID || latest.GroupID == nil || *latest.GroupID != *conn.GroupID {
 		return conn
 	}
