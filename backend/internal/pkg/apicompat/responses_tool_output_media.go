@@ -3,7 +3,6 @@ package apicompat
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -167,126 +166,104 @@ func isResponsesToolOutputItem(item map[string]any) bool {
 	}
 }
 
-// DedupeResponsesCallIDs renames a repeated call_id so DeepSeek does not
-// reject the request. The first tool call and its first output keep the
-// original id. Later calls and outputs of that id are paired onto id~2, id~3.
+// DedupeResponsesCallIDs drops a repeated call_id. The first tool call and
+// its first output stay. Later copies are the same call, not a second one.
 func DedupeResponsesCallIDs(input any) (any, bool) {
 	items, ok := input.([]any)
 	if !ok || len(items) < 2 {
 		return input, false
 	}
-	callOrd := make(map[string]int, len(items))
-	outputOrd := make(map[string]int, len(items))
-	assigned := make(map[string][]string, len(items))
+	seenCall := make(map[string]struct{}, len(items))
+	seenOut := make(map[string]struct{}, len(items))
+	out := make([]any, 0, len(items))
 	changed := false
 	for _, raw := range items {
 		item, ok := raw.(map[string]any)
 		if !ok {
+			out = append(out, raw)
 			continue
 		}
 		callID, slot, tracked := responsesCallIDSlot(item)
 		if !tracked {
+			out = append(out, raw)
 			continue
 		}
-		if slot == "call" {
-			n := callOrd[callID]
-			callOrd[callID] = n + 1
-			newID := callID
-			if n > 0 {
-				newID = duplicateCallID(callID, n+1)
-				item["call_id"] = newID
-				changed = true
-			}
-			assigned[callID] = append(assigned[callID], newID)
+		seen := seenCall
+		if slot == "output" {
+			seen = seenOut
+		}
+		if _, dup := seen[callID]; dup {
+			changed = true
 			continue
 		}
-		n := outputOrd[callID]
-		outputOrd[callID] = n + 1
-		if n == 0 {
-			continue
-		}
-		newID := duplicateCallID(callID, n+1)
-		if ids := assigned[callID]; n < len(ids) {
-			newID = ids[n]
-		}
-		item["call_id"] = newID
-		changed = true
+		seen[callID] = struct{}{}
+		out = append(out, raw)
 	}
 	if !changed {
 		return input, false
 	}
-	return items, true
+	return out, true
 }
 
-// DedupeChatToolCallIDs is the chat-completions form of DedupeResponsesCallIDs.
-// Assistant tool_calls[].id and the following tool messages share one sequence.
+// DedupeChatToolCallIDs drops a repeated chat tool id. The first assistant
+// tool_calls entry and the first tool message keep it.
 func DedupeChatToolCallIDs(messages any) (any, bool) {
 	items, ok := messages.([]any)
 	if !ok || len(items) < 2 {
 		return messages, false
 	}
-	callOrd := make(map[string]int, len(items))
-	assigned := make(map[string][]string, len(items))
+	seenCall := make(map[string]struct{}, len(items))
+	seenOut := make(map[string]struct{}, len(items))
+	out := make([]any, 0, len(items))
 	changed := false
 	for _, raw := range items {
 		msg, ok := raw.(map[string]any)
 		if !ok {
+			out = append(out, raw)
 			continue
 		}
-		calls, ok := msg["tool_calls"].([]any)
-		if !ok {
-			continue
-		}
-		for _, rawCall := range calls {
-			call, ok := rawCall.(map[string]any)
-			if !ok {
-				continue
+		if calls, ok := msg["tool_calls"].([]any); ok {
+			kept := make([]any, 0, len(calls))
+			for _, rawCall := range calls {
+				call, ok := rawCall.(map[string]any)
+				if !ok {
+					kept = append(kept, rawCall)
+					continue
+				}
+				callID := strings.TrimSpace(stringValue(call["id"]))
+				if callID == "" {
+					kept = append(kept, rawCall)
+					continue
+				}
+				if _, dup := seenCall[callID]; dup {
+					changed = true
+					continue
+				}
+				seenCall[callID] = struct{}{}
+				kept = append(kept, rawCall)
 			}
-			callID := strings.TrimSpace(stringValue(call["id"]))
-			if callID == "" {
-				continue
+			if len(kept) != len(calls) {
+				if len(kept) == 0 {
+					delete(msg, "tool_calls")
+				} else {
+					msg["tool_calls"] = kept
+				}
 			}
-			n := callOrd[callID]
-			callOrd[callID] = n + 1
-			newID := callID
-			if n > 0 {
-				newID = duplicateCallID(callID, n+1)
-				call["id"] = newID
-				changed = true
-			}
-			assigned[callID] = append(assigned[callID], newID)
-		}
-	}
-	outputOrd := make(map[string]int, len(items))
-	for _, raw := range items {
-		msg, ok := raw.(map[string]any)
-		if !ok {
-			continue
 		}
 		callID := strings.TrimSpace(stringValue(msg["tool_call_id"]))
-		if callID == "" {
-			continue
+		if callID != "" {
+			if _, dup := seenOut[callID]; dup {
+				changed = true
+				continue
+			}
+			seenOut[callID] = struct{}{}
 		}
-		n := outputOrd[callID]
-		outputOrd[callID] = n + 1
-		if n == 0 {
-			continue
-		}
-		newID := duplicateCallID(callID, n+1)
-		if ids := assigned[callID]; n < len(ids) {
-			newID = ids[n]
-		}
-		msg["tool_call_id"] = newID
-		changed = true
+		out = append(out, msg)
 	}
 	if !changed {
 		return messages, false
 	}
-	return items, true
-}
-
-func duplicateCallID(id string, n int) string {
-	return id + "~" + strconv.Itoa(n)
+	return out, true
 }
 
 func responsesCallIDSlot(item map[string]any) (callID, slot string, ok bool) {
