@@ -405,6 +405,8 @@ export default {
     type: 'Type',
     tokens: 'Tokens',
     cost: 'Cost',
+    inflightReservedHint: 'Not the final price. Reserved balance only.',
+    inflightElapsed: 'Elapsed',
     firstToken: 'First Token',
     duration: 'Duration',
     latency: 'Latency',
