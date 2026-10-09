@@ -1770,6 +1770,8 @@ export interface UsageLog {
   billing_mode?: string | null
 
   created_at: string
+  /** 请求还没结束。actual_cost 是预留余额，不是最终价格。 */
+  inflight?: boolean
 
   user?: User
   api_key?: ApiKey
@@ -2187,6 +2189,7 @@ export interface UsageQueryParams {
   timezone?: string
   sort_by?: string
   sort_order?: 'asc' | 'desc'
+  include_inflight?: boolean
 }
 
 // ==================== Account Usage Statistics ====================

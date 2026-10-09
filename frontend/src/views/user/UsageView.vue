@@ -458,25 +458,45 @@ const buildUsageListParams = (page: number, pageSize: number): UsageQueryParams 
   sort_order: sortState.sort_order,
 })
 
-const loadLogs = async () => {
-  abortController?.abort()
-  const controller = new AbortController()
-  abortController = controller
-  loading.value = true
+let logsGeneration = 0
+let inflightPoll: number | undefined
+const loadLogs = async (silent = false) => {
+  if (silent && loading.value) return
+  const generation = silent ? logsGeneration : ++logsGeneration
+  if (!silent) {
+    abortController?.abort()
+    abortController = new AbortController()
+    loading.value = true
+  }
+  const controller = silent ? new AbortController() : abortController!
   try {
     const res = await usageAPI.query(buildUsageListParams(pagination.page, pagination.page_size), {
       signal: controller.signal,
     })
+    if (generation !== logsGeneration) return
     if (!controller.signal.aborted) {
       usageLogs.value = res.items
       pagination.total = res.total
+      syncInflightPoll()
     }
   } catch (error: any) {
-    if (error?.name !== 'AbortError' && error?.code !== 'ERR_CANCELED') {
+    if (!silent && error?.name !== 'AbortError' && error?.code !== 'ERR_CANCELED') {
       appStore.showError(t('usage.failedToLoad'))
     }
   } finally {
-    if (abortController === controller) loading.value = false
+    if (!silent && abortController === controller) loading.value = false
+  }
+}
+const syncInflightPoll = () => {
+  const hasInflight = activeTab.value === 'usage' && usageLogs.value.some((row) => row.inflight)
+  if (hasInflight && inflightPoll === undefined) {
+    inflightPoll = window.setInterval(() => {
+      if (activeTab.value === 'usage') void loadLogs(true)
+    }, 2000)
+  }
+  if (!hasInflight && inflightPoll !== undefined) {
+    window.clearInterval(inflightPoll)
+    inflightPoll = undefined
   }
 }
 
@@ -654,7 +674,7 @@ const exportToCSV = async () => {
   exporting.value = true
   appStore.showInfo(t('usage.preparingExport'))
   try {
-    const exportParams = buildUsageListParams(1, 100)
+    const exportParams = { ...buildUsageListParams(1, 100), include_inflight: false }
     const allLogs = await fetchPaginatedItems(
       (page, pageSize) => usageAPI.query({ ...exportParams, page, page_size: pageSize }), 100
     )
@@ -918,6 +938,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   abortController?.abort()
+  if (inflightPoll !== undefined) window.clearInterval(inflightPoll)
   document.removeEventListener('click', handleColumnClickOutside)
 })
 

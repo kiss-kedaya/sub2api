@@ -380,7 +380,8 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
 const buildUsageListParams = (
   page: number,
   pageSize: number,
-  exactTotal: boolean
+  exactTotal: boolean,
+  includeInflight = true
 ): AdminUsageQueryParams => {
   const requestType = filters.value.request_type
   const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
@@ -391,19 +392,48 @@ const buildUsageListParams = (
     ...filters.value,
     stream: legacyStream === null ? undefined : legacyStream,
     sort_by: sortState.sort_by,
-    sort_order: sortState.sort_order
+    sort_order: sortState.sort_order,
+    include_inflight: includeInflight
   }
 }
 
-const loadLogs = async () => {
-  abortController?.abort(); const c = new AbortController(); abortController = c; loading.value = true
+let logsGeneration = 0
+let inflightPoll: number | undefined
+const loadLogs = async (silent = false) => {
+  if (silent && loading.value) return
+  const generation = silent ? logsGeneration : ++logsGeneration
+  if (!silent) {
+    abortController?.abort()
+    abortController = new AbortController()
+    loading.value = true
+  }
+  const c = silent ? new AbortController() : abortController!
   try {
     const res = await adminAPI.usage.list(
       buildUsageListParams(pagination.page, pagination.page_size, false),
       { signal: c.signal }
     )
-    if(!c.signal.aborted) { usageLogs.value = res.items; pagination.total = res.total }
-  } catch (error: any) { if(error?.name !== 'AbortError') console.error('Failed to load usage logs:', error) } finally { if(abortController === c) loading.value = false }
+    if (generation !== logsGeneration || c.signal.aborted) return
+    usageLogs.value = res.items
+    pagination.total = res.total
+    syncInflightPoll()
+  } catch (error: any) {
+    if (!silent && error?.name !== 'AbortError') console.error('Failed to load usage logs:', error)
+  } finally {
+    if (!silent && abortController === c) loading.value = false
+  }
+}
+const syncInflightPoll = () => {
+  const hasInflight = activeTab.value === 'usage' && usageLogs.value.some((row) => row.inflight)
+  if (hasInflight && inflightPoll === undefined) {
+    inflightPoll = window.setInterval(() => {
+      if (activeTab.value === 'usage') void loadLogs(true)
+    }, 2000)
+  }
+  if (!hasInflight && inflightPoll !== undefined) {
+    window.clearInterval(inflightPoll)
+    inflightPoll = undefined
+  }
 }
 const loadStats = async (force = false) => {
   const seq = ++statsReqSeq
@@ -601,7 +631,7 @@ const exportToExcel = async () => {
     const ws = XLSX.utils.aoa_to_sheet([headers])
     while (true) {
       const res = await adminUsageAPI.list(
-        buildUsageListParams(p, pageSize, true),
+        buildUsageListParams(p, pageSize, true, false),
         { signal: c.signal }
       )
       if (c.signal.aborted) break; if (p === 1) { total = res.total; exportProgress.total = total }
@@ -893,7 +923,7 @@ onMounted(() => {
   loadSavedErrColumns()
   document.addEventListener('click', handleColumnClickOutside)
 })
-onUnmounted(() => { abortController?.abort(); exportAbortController?.abort(); document.removeEventListener('click', handleColumnClickOutside) })
+onUnmounted(() => { abortController?.abort(); exportAbortController?.abort(); if (inflightPoll !== undefined) window.clearInterval(inflightPoll); document.removeEventListener('click', handleColumnClickOutside) })
 
 watch(modelDistributionSource, (source) => {
   void loadModelStats(source)

@@ -214,8 +214,17 @@
                 data-testid="long-context-billing-marker"
                 class="inline-flex items-center rounded px-1 py-px text-[10px] font-semibold leading-tight bg-amber-100 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/20 dark:text-amber-300 dark:ring-amber-500/30"
               >x2</span>
+              <div
+                v-if="row.inflight"
+                class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-amber-100 dark:bg-amber-500/20"
+                :title="t('usage.inflightReservedHint')"
+                :aria-label="t('usage.inflightReservedHint')"
+              >
+                <Icon name="infoCircle" size="xs" class="text-amber-600 dark:text-amber-300" />
+              </div>
               <!-- Cost Detail Tooltip -->
               <div
+                v-else
                 class="group relative"
                 @mouseenter="showTooltip($event, row)"
                 @mouseleave="hideTooltip"
@@ -237,22 +246,22 @@
             <span
               class="w-1 shrink-0 rounded-full"
               :class="row.first_token_ms != null
-                ? ['bg-gradient-to-b from-40% to-60%', LATENCY_BAR_FROM_CLASSES[firstTokenSeverity(row.first_token_ms)], LATENCY_BAR_TO_CLASSES[durationSeverity(row.duration_ms ?? 0)]]
-                : LATENCY_BAR_CLASSES[durationSeverity(row.duration_ms ?? 0)]"
+                ? ['bg-gradient-to-b from-40% to-60%', LATENCY_BAR_FROM_CLASSES[firstTokenSeverity(row.first_token_ms)], LATENCY_BAR_TO_CLASSES[durationSeverity(displayDuration(row) ?? 0)]]
+                : LATENCY_BAR_CLASSES[durationSeverity(displayDuration(row) ?? 0)]"
               aria-hidden="true"
             ></span>
             <div class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstToken') }}</span>
               <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(row.first_token_ms)]">{{ formatDuration(row.first_token_ms) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
-              <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyDuration') }}</span>
-              <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(row.duration_ms ?? 0)]">{{ formatDuration(row.duration_ms) }}</span>
+              <span class="text-gray-400 dark:text-gray-500">{{ row.inflight ? t('usage.inflightElapsed') : t('usage.latencyDuration') }}</span>
+              <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(displayDuration(row) ?? 0)]">{{ formatDuration(displayDuration(row)) }}</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.outputRate') }}</span>
               <span
                 class="font-medium tabular-nums text-violet-600 dark:text-violet-400"
                 :title="t('usage.outputRateHint')"
               >
-                {{ formatOutputRate(row.output_tokens, row.first_token_ms, row.duration_ms) }}
+                {{ formatOutputRate(row.output_tokens, row.first_token_ms, displayDuration(row)) }}
               </span>
             </div>
           </div>
@@ -539,7 +548,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime, formatReasoningEffort, reasoningEffortValuesEqual } from '@/utils/format'
@@ -622,6 +631,30 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 const appStore = useAppStore()
+const nowMs = ref(Date.now())
+let inflightClock: number | undefined
+const hasInflightRow = computed(() => props.data.some((row) => row.inflight))
+watch(hasInflightRow, (on) => {
+  if (inflightClock !== undefined) {
+    window.clearInterval(inflightClock)
+    inflightClock = undefined
+  }
+  if (!on) return
+  nowMs.value = Date.now()
+  inflightClock = window.setInterval(() => {
+    nowMs.value = Date.now()
+  }, 1000)
+}, { immediate: true })
+onUnmounted(() => {
+  if (inflightClock !== undefined) window.clearInterval(inflightClock)
+})
+const displayDuration = (row: { inflight?: boolean; created_at?: string; duration_ms?: number | null }) => {
+  if (row.inflight && row.created_at) {
+    const started = Date.parse(row.created_at)
+    if (!Number.isNaN(started)) return Math.max(0, nowMs.value - started)
+  }
+  return row.duration_ms
+}
 const copiedRequestId = ref<string | null>(null)
 const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint
