@@ -1273,6 +1273,8 @@ function generateRoutedCodexFiles(
     zhipu: 'Zhipu',
     deepseek: 'DeepSeek',
     minimax: 'MiniMax',
+    cline: 'Cline',
+    command_code: 'Command Code',
     composite: 'Composite'
   }
   const label = labels[platform]
