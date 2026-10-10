@@ -428,8 +428,8 @@ func TestRewriteGrokMediaVideoContentURLsRewritesSignedVideoURL(t *testing.T) {
 }
 
 func TestShouldHideGrokMediaUpstreamURL(t *testing.T) {
-	require.True(t, shouldHideGrokMediaUpstreamURL("https://api.mysandbox.vip/v1/videos/task-1/content"))
-	require.True(t, shouldHideGrokMediaUpstreamURL("https://aipro.hk.cn/v1/videos/task-1"))
+	require.True(t, shouldHideGrokMediaUpstreamURL("https://media-vendor.example.com/v1/videos/task-1/content"))
+	require.True(t, shouldHideGrokMediaUpstreamURL("https://upstream-provider.example.com/v1/videos/task-1"))
 	require.True(t, shouldHideGrokMediaUpstreamURL("/v1/videos/task-1/content"))
 	require.False(t, shouldHideGrokMediaUpstreamURL("https://vidgen.x.ai/task-1.mp4"))
 	require.False(t, shouldHideGrokMediaUpstreamURL("https://api.x.ai/v1/videos/task-1/content"))
@@ -444,7 +444,7 @@ func grokMediaJSONResponse(status int, body string) *http.Response {
 }
 
 func TestForwardGrokVideoStatusFallsBackToGenerationsPath(t *testing.T) {
-	statusBody := `{"id":"task-1","status":"completed","url":"https://api.mysandbox.vip/v1/videos/generations/task-1/content","video_url":"https://vidgen.x.ai/task-1.mp4"}`
+	statusBody := `{"id":"task-1","status":"completed","url":"https://media-vendor.example.com/v1/videos/generations/task-1/content","video_url":"https://vidgen.x.ai/task-1.mp4"}`
 	upstream := &grokMediaContentUpstreamStub{
 		responses: []*http.Response{
 			grokMediaJSONResponse(http.StatusNotFound, `{"error":{"message":"Video request not found","type":"not_found_error"}}`),
@@ -466,11 +466,11 @@ func TestForwardGrokVideoStatusFallsBackToGenerationsPath(t *testing.T) {
 	require.Equal(t, "https://relay.example/v1/videos/generations/task-1", upstream.requests[1].URL.String())
 	require.Equal(t, "/v1/videos/task-1/content", gjson.Get(recorder.Body.String(), "url").String())
 	require.Equal(t, "https://vidgen.x.ai/task-1.mp4", gjson.Get(recorder.Body.String(), "video_url").String())
-	require.NotContains(t, recorder.Body.String(), "mysandbox.vip")
+	require.NotContains(t, recorder.Body.String(), "media-vendor.example.com")
 }
 
 func TestIsGrokMediaVideoContentURLAcceptsGenerationsPath(t *testing.T) {
-	require.True(t, isGrokMediaVideoContentURL("https://api.mysandbox.vip/v1/videos/generations/task-1/content", "task-1"))
+	require.True(t, isGrokMediaVideoContentURL("https://media-vendor.example.com/v1/videos/generations/task-1/content", "task-1"))
 	require.True(t, isGrokMediaVideoContentURL("/v1/videos/generations/task-1/content", "task-1"))
-	require.False(t, isGrokMediaVideoContentURL("https://api.mysandbox.vip/v1/videos/generations/task-2/content", "task-1"))
+	require.False(t, isGrokMediaVideoContentURL("https://media-vendor.example.com/v1/videos/generations/task-2/content", "task-1"))
 }

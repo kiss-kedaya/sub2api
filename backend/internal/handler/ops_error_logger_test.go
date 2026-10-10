@@ -462,7 +462,7 @@ func TestOpsErrorLoggerMiddleware_SkipsRecoveredHeaderTimeout(t *testing.T) {
 	router.POST("/v1/responses", func(c *gin.Context) {
 		c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{
 			UpstreamStatusCode: 0,
-			Message:            `Post "https://rc.lukyface.com/v1/responses": http2: timeout awaiting response headers`,
+			Message:            `Post "https://relay-vendor.example.com/v1/responses": http2: timeout awaiting response headers`,
 		}})
 		c.JSON(http.StatusOK, gin.H{"status": "completed"})
 	})

@@ -1231,7 +1231,7 @@ func TestLogGrokAPIKeyUpstreamDumpWritesStderr(t *testing.T) {
 		os.Stderr = old
 	})
 
-	req, err := http.NewRequest(http.MethodPost, "https://router.91topgo.com/v1/responses", nil)
+	req, err := http.NewRequest(http.MethodPost, "https://relay-router.example.com/v1/responses", nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer secret-token")
 	req.Header.Set("Content-Type", "application/json")

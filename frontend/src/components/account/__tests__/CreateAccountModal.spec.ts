@@ -578,13 +578,13 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await selectButtonByText(wrapper, 'Gemini')
     await selectButtonByText(wrapper, 'admin.accounts.gemini.accountType.apiKeyTitle')
     const inputs = wrapper.findAll('form#create-account-form input[type="text"]')
-    await inputs[1].setValue('https://mdkj.lol/v1')
+    await inputs[1].setValue('https://custom-relay.example.com/v1')
     await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-gemini')
 
     expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('syncCredentials')).toMatchObject({
       platform: 'gemini',
       type: 'apikey',
-      base_url: 'https://mdkj.lol/v1',
+      base_url: 'https://custom-relay.example.com/v1',
       api_key: 'sk-gemini',
       api_protocol: 'chat_completions'
     })

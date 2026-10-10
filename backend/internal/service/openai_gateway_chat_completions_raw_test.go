@@ -38,7 +38,7 @@ func TestBuildOpenAIChatCompletionsURL(t *testing.T) {
 		{"domain with trailing slash", "https://api.openai.com/", "https://api.openai.com/v1/chat/completions"},
 		// 第三方上游常见形式
 		{"third-party bare domain", "https://api.deepseek.com", "https://api.deepseek.com/v1/chat/completions"},
-		{"third-party with path prefix", "https://api.gptgod.online/api", "https://api.gptgod.online/api/v1/chat/completions"},
+		{"third-party with path prefix", "https://api.gpt-relay.example.com/api", "https://api.gpt-relay.example.com/api/v1/chat/completions"},
 		{"third-party versioned path", "https://open.bigmodel.cn/api/paas/v4", "https://open.bigmodel.cn/api/paas/v4/chat/completions"},
 		// 带空白字符
 		{"whitespace trimmed", "  https://api.openai.com/v1  ", "https://api.openai.com/v1/chat/completions"},
@@ -71,7 +71,7 @@ func TestBuildOpenAIResponsesURL_ProbeURL(t *testing.T) {
 		{"third-party /responses inserts v1", "https://relay.example/responses", "https://relay.example/v1/responses"},
 		{"third-party bare domain", "https://api.deepseek.com", "https://api.deepseek.com/v1/responses"},
 		{"third-party versioned path", "https://open.bigmodel.cn/api/paas/v4", "https://open.bigmodel.cn/api/paas/v4/responses"},
-		{"only domain, no scheme", "api.gptgod.online", "api.gptgod.online/v1/responses"},
+		{"only domain, no scheme", "api.gpt-relay.example.com", "api.gpt-relay.example.com/v1/responses"},
 	}
 
 	for _, tt := range tests {

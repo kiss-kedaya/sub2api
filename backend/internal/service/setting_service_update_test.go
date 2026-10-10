@@ -864,8 +864,8 @@ func TestSettingService_UpdateSettings_RejectsInvalidPaymentVisibleMethodSource(
 func TestSettingService_PasskeySwitchPersistsAndDefaultsToConfigured(t *testing.T) {
 	cfg := &config.Config{WebAuthn: config.WebAuthnConfig{
 		Enabled:   true,
-		RPID:      "sub3.nebula-spaces.com",
-		RPOrigins: []string{"https://sub3.nebula-spaces.com"},
+		RPID:      "sso.example.com",
+		RPOrigins: []string{"https://sso.example.com"},
 	}}
 	runtimeRepo := &forwardedIPMigrationRepoStub{values: map[string]string{}}
 	runtimeService := NewSettingService(runtimeRepo, cfg)

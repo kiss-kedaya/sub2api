@@ -614,7 +614,7 @@ func TestGetAPIProtocol(t *testing.T) {
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
-			"base_url": "https://mdkj.lol/v1",
+			"base_url": "https://custom-relay.example.com/v1",
 		},
 	}
 	require.True(t, custom.IsGeminiOpenAIProtocol())
