@@ -101,12 +101,39 @@ func TestHoneypotTrapsAndPasses(t *testing.T) {
 		t.Fatalf("php wrapper got %d", w.Code)
 	}
 
+	// SigV4 走真实 API 路径不再当扫描器：放行给后续鉴权（这里 NoRoute/ok 返回 200）。
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=abc")
 	r.ServeHTTP(w, req)
-	if w.Code != http.StatusNotFound || w.Header().Get("X-Test-Reason") != string(IngressRejectHoneypot) {
-		t.Fatalf("aws sig got %d reason=%q", w.Code, w.Header().Get("X-Test-Reason"))
+	if w.Code != http.StatusOK || w.Header().Get("X-Test-Reason") != "" {
+		t.Fatalf("aws sig on real path got %d reason=%q", w.Code, w.Header().Get("X-Test-Reason"))
+	}
+
+	// 但把本网关当 S3/aws 端点扫（trap 路径 + SigV4）仍然 404 封禁。
+	for _, tc := range []struct {
+		path   string
+		header string
+		value  string
+	}{
+		{"/.aws/credentials", "Authorization", "AWS4-HMAC-SHA256 Credential=abc"},
+		{"/.env", "X-Amz-Credential", "abc/20260101/us-east-1/s3/aws4_request"},
+	} {
+		w = httptest.NewRecorder()
+		req = httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req.Header.Set(tc.header, tc.value)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound || w.Header().Get("X-Test-Reason") != string(IngressRejectHoneypot) {
+			t.Fatalf("aws sig on trap %s got %d reason=%q", tc.path, w.Code, w.Header().Get("X-Test-Reason"))
+		}
+	}
+
+	// S3 预签名回链（X-Amz-* 在 query）打真实路径也不能被误封。
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/v1/models?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=abc", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || w.Header().Get("X-Test-Reason") != "" {
+		t.Fatalf("presigned on real path got %d reason=%q", w.Code, w.Header().Get("X-Test-Reason"))
 	}
 
 	w = httptest.NewRecorder()

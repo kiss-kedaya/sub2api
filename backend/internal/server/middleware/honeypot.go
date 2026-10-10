@@ -114,10 +114,17 @@ func Honeypot(rdb *redis.Client) gin.HandlerFunc {
 
 func honeypotClass(c *gin.Context) string {
 	path, rawPath, rawQuery := honeypotRequestParts(c)
-	if honeypotTraversal(path) || honeypotTraversal(rawPath) || honeypotQuery(rawQuery) || honeypotSignature(c) {
+	if honeypotTraversal(path) || honeypotTraversal(rawPath) || honeypotQuery(rawQuery) {
 		return "scanner"
 	}
+	// SigV4 只在“本网关根本不存在的路径”上才算扫描（如把这里当 S3/aws 端点扫）。
+	// 合法的 S3 预签名回链、任何正常 SigV4 调用方走真实 API 路径时，这里放行，
+	// 由后续鉴权返回 401，不再直接 404 + 封 IP。honeypotPath 已覆盖 /.aws、/.env 等
+	// 扫描器特征路径，所以拦得住的仍然是扫描器。
 	if honeypotPath(path) {
+		if honeypotSignature(c) {
+			return "scanner"
+		}
 		if strings.HasSuffix(honeypotNorm(path), ".php") {
 			return "unknown_php"
 		}
@@ -203,17 +210,31 @@ func honeypotQuery(raw string) bool {
 		strings.Contains(lower, "xdebug_session") ||
 		strings.Contains(lower, "auto_prepend_file") ||
 		strings.Contains(lower, "allow_url_include") ||
-		strings.Contains(lower, "auto_append_file") ||
-		strings.Contains(lower, "x-amz-algorithm") ||
-		strings.Contains(lower, "x-amz-credential")
+		strings.Contains(lower, "auto_append_file")
+	// 注意：x-amz-* 不再在这里判。真实路径上的 S3 预签名回链会带这些参数，
+	// 误判就会封正常调用方的 IP。SigV4 的判定收在 honeypotSignature，只在
+	// 与 honeypotPath 命中的扫描器路径一起出现时才升级为 scanner。
 }
 
+// honeypotSignature 报告请求是否自称 Cos/S3 端点（SigV4）：Authorization 头
+// 是 aws4-hmac-sha256 / aws，或带了 X-Amz-Algorithm / X-Amz-Credential（头或 query）。
+// 本网关是 API 入口，不是 S3 端点，所以这本身不是罪证，调用方要配合路径一起判。
 func honeypotSignature(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
 	auth := strings.ToLower(strings.TrimSpace(c.GetHeader("Authorization")))
 	if strings.HasPrefix(auth, "aws4-hmac-sha256") || strings.HasPrefix(auth, "aws ") {
 		return true
 	}
-	return c.GetHeader("X-Amz-Algorithm") != "" || c.GetHeader("X-Amz-Credential") != ""
+	if c.GetHeader("X-Amz-Algorithm") != "" || c.GetHeader("X-Amz-Credential") != "" {
+		return true
+	}
+	if c.Request != nil && c.Request.URL != nil {
+		raw := strings.ToLower(c.Request.URL.RawQuery)
+		return strings.Contains(raw, "x-amz-algorithm") || strings.Contains(raw, "x-amz-credential")
+	}
+	return false
 }
 
 func honeypotPath(path string) bool {
