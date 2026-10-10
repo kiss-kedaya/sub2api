@@ -1314,6 +1314,12 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "This model is not supported on the Messages endpoint")
 		return
 	}
+	// 与 Anthropic 入口同一口径：opus-5-5 的非法参数直接 400，且必须在默认值
+	// 注入之前按客户端原始请求判定。
+	if message, ok := ValidateStrictOpusMessagesRequest(reqModel, body); !ok {
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", message)
+		return
+	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
