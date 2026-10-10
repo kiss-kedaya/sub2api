@@ -774,6 +774,8 @@ describe('admin UsageTable request ID column', () => {
   it('renders and copies the request ID', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
+    // useClipboard 只在安全上下文（HTTPS/localhost）走 navigator.clipboard。
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
 
     const wrapper = mount(UsageTable, {
       props: {
@@ -798,9 +800,39 @@ describe('admin UsageTable request ID column', () => {
     expect(appStoreMocks.showSuccess).toHaveBeenCalledWith('Request ID copied')
   })
 
+  it('copies over HTTP (insecure context) via the execCommand fallback', async () => {
+    // 回归：IP 直连 HTTP 下 navigator.clipboard 不存在，旧实现直接抛错、点了没反应。
+    const execCommand = vi.fn().mockReturnValue(true)
+    vi.stubGlobal('navigator', {})
+    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
+    Object.defineProperty(document, 'execCommand', { value: execCommand, configurable: true })
+
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, request_id: 'req-http-fallback' }],
+        loading: false,
+        columns: [{ key: 'request_id', label: 'Request ID' }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    await wrapper.get('button[title="Copy to clipboard"]').trigger('click')
+
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect(appStoreMocks.showSuccess).toHaveBeenCalledWith('Request ID copied')
+  })
+
   it('renders and copies the upstream ID', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
 
     const wrapper = mount(UsageTable, {
       props: {

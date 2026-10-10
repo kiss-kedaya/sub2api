@@ -555,7 +555,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useAppStore } from '@/stores/app'
+import { useClipboard } from '@/composables/useClipboard'
 import { formatDateTime, formatReasoningEffort, reasoningEffortValuesEqual } from '@/utils/format'
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
@@ -635,7 +635,6 @@ const emit = defineEmits<{
   ipGeoBatchFailed: []
 }>()
 const { t } = useI18n()
-const appStore = useAppStore()
 const displayDuration = (row: { duration_ms?: number | null }) => row.duration_ms
 const copiedRequestId = ref<string | null>(null)
 const showAccountBilling = props.showAccountBilling
@@ -699,17 +698,17 @@ const handleBatchFetchIpGeo = async () => {
   }
 }
 
+const { copyToClipboard } = useClipboard()
+
 const copyIdentifier = async (value: string, copiedMessage: string) => {
-  try {
-    await navigator.clipboard.writeText(value)
-    copiedRequestId.value = value
-    appStore.showSuccess(copiedMessage)
-    window.setTimeout(() => {
-      if (copiedRequestId.value === value) copiedRequestId.value = null
-    }, 2000)
-  } catch {
-    appStore.showError(t('common.copyFailed'))
-  }
+  // 复用 useClipboard：navigator.clipboard 在非安全上下文（HTTP/IP 直连）下为
+  // undefined，裸调用会静默失败，这里走 textarea + execCommand 降级。
+  const ok = await copyToClipboard(value, copiedMessage)
+  if (!ok) return
+  copiedRequestId.value = value
+  window.setTimeout(() => {
+    if (copiedRequestId.value === value) copiedRequestId.value = null
+  }, 2000)
 }
 
 const copyRequestId = (requestId: string) => copyIdentifier(requestId, t('admin.usage.requestIdCopied'))
