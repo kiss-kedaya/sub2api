@@ -132,11 +132,11 @@ func TestHandleOpenAIUpstreamTransportError_TransientFailsOverWithoutEviction(t 
 func TestHandleOpenAIUpstreamTransportError_HeaderTimeoutDoesNotUnschedule(t *testing.T) {
 	repo := &openaiTransportAccountRepoStub{}
 	svc := &OpenAIGatewayService{accountRepo: repo}
-	account := &Account{ID: 101, Name: "lukyface", Platform: PlatformOpenAI}
+	account := &Account{ID: 101, Name: "third-party-relay", Platform: PlatformOpenAI}
 	c, rec := newOpenAITransportErrTestContext()
 
 	err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account,
-		errors.New(`Post "https://rc.lukyface.com/v1/responses": http2: timeout awaiting response headers`), false)
+		errors.New(`Post "https://relay-vendor.example.com/v1/responses": http2: timeout awaiting response headers`), false)
 
 	var fo *UpstreamFailoverError
 	require.True(t, errors.As(err, &fo))

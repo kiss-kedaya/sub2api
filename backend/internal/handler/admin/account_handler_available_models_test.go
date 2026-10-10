@@ -463,7 +463,7 @@ func TestAccountHandlerSyncUpstreamModelsPreviewGeminiCustomUsesOpenAIModels(t *
 		strings.NewReader(`{
 			"platform":"gemini",
 			"type":"apikey",
-			"base_url":"https://mdkj.lol/v1",
+			"base_url":"https://custom-relay.example.com/v1",
 			"api_key":"sk-gemini",
 			"api_protocol":"chat_completions"
 		}`),
@@ -472,7 +472,7 @@ func TestAccountHandlerSyncUpstreamModelsPreviewGeminiCustomUsesOpenAIModels(t *
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "https://mdkj.lol/v1/models", captured)
+	require.Equal(t, "https://custom-relay.example.com/v1/models", captured)
 	require.NotContains(t, captured, "/v1beta/models")
 	var resp struct {
 		Data service.UpstreamModelCatalog `json:"data"`
@@ -547,7 +547,7 @@ func TestAccountHandlerSyncUpstreamModelsPreviewGeminiCustomInfersOpenAIModelsWi
 		strings.NewReader(`{
 			"platform":"gemini",
 			"type":"apikey",
-			"base_url":"https://mdkj.lol",
+			"base_url":"https://custom-relay.example.com",
 			"api_key":"sk-gemini"
 		}`),
 	)
@@ -555,7 +555,7 @@ func TestAccountHandlerSyncUpstreamModelsPreviewGeminiCustomInfersOpenAIModelsWi
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "https://mdkj.lol/v1/models", captured)
+	require.Equal(t, "https://custom-relay.example.com/v1/models", captured)
 	require.NotContains(t, captured, "/v1beta/models")
 }
 

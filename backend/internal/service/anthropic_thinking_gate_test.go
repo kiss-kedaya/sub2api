@@ -140,7 +140,7 @@ func TestForwardAnthropicAPIKeyConvertsEnabledThinkingForOpus55(t *testing.T) {
 		deferredService:      &DeferredService{},
 	}
 	account := &Account{
-		ID: 29168, Name: "mdkj.lol", Platform: PlatformAnthropic, Type: AccountTypeAPIKey,
+		ID: 29168, Name: "custom-relay.example.com", Platform: PlatformAnthropic, Type: AccountTypeAPIKey,
 		Concurrency: 1,
 		Credentials: map[string]any{"api_key": "k", "base_url": "https://api.anthropic.com"},
 		Status:      StatusActive, Schedulable: true,

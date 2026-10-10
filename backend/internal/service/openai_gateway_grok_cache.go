@@ -182,7 +182,7 @@ func isGrokRequestContext(c *gin.Context, bodies ...[]byte) bool {
 	}
 	// Smart-route keys keep an OpenAI primary group. Trust the requested model
 	// family before that label, otherwise Grok sanitizers never run and
-	// third-party gateways (91topgo) reject the OpenAI-shaped body with 502.
+	// third-party gateways (third-party relays) reject the OpenAI-shaped body with 502.
 	if model := grokRequestModelHint(c, bodies...); model != "" {
 		if platform, ok := DetectModelPlatform(model); ok {
 			return platform == PlatformGrok
@@ -246,7 +246,7 @@ func applyGrokResponsesCacheIdentity(body, intentSourceBody []byte, identity str
 }
 
 // stripGrokAPIKeyOpenAICompatFields drops OpenAI-only Responses fields that
-// third-party Grok API keys (for example 91topgo) reject with a bare 502.
+// third-party Grok API keys (for example third-party relays) reject with a bare 502.
 func stripGrokAPIKeyOpenAICompatFields(body []byte) ([]byte, error) {
 	out := body
 	for _, field := range []string{"store", "include", "previous_response_id", "service_tier"} {

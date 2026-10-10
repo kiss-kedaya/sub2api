@@ -18,7 +18,7 @@ import (
 )
 
 func TestGrokProductionAccountsPassthroughUnlistedGrok47(t *testing.T) {
-	mysandbox := &Account{
+	mediaVendor := &Account{
 		ID: 29088, Platform: PlatformGrok, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{
 			"model_mapping": map[string]any{
@@ -40,12 +40,12 @@ func TestGrokProductionAccountsPassthroughUnlistedGrok47(t *testing.T) {
 	}
 	empty := &Account{ID: 1, Platform: PlatformGrok, Type: AccountTypeAPIKey, Credentials: map[string]any{}}
 
-	require.False(t, mysandbox.IsModelSupported("grok-4.7"))
+	require.False(t, mediaVendor.IsModelSupported("grok-4.7"))
 	require.True(t, topgo.IsModelSupported("grok-4.7"))
 	require.True(t, empty.IsModelSupported("grok-4.7"))
 	require.Equal(t, "grok-4.7", empty.GetMappedModel("grok-4.7"))
 	require.Equal(t, "grok-4.7", topgo.GetMappedModel("grok-4.7"))
-	require.False(t, mysandbox.IsModelSupported("gpt-5.6-sol"))
+	require.False(t, mediaVendor.IsModelSupported("gpt-5.6-sol"))
 }
 
 func TestForwardGrokResponsesStripsOpenAIFieldsForAPIKeyPing(t *testing.T) {
@@ -58,7 +58,7 @@ func TestForwardGrokResponsesStripsOpenAIFieldsForAPIKeyPing(t *testing.T) {
 	}}
 	svc := &OpenAIGatewayService{httpUpstream: upstream}
 	account := grokProtocolAPIKeyAccount(29131)
-	account.Credentials["base_url"] = "https://router.91topgo.com/v1"
+	account.Credentials["base_url"] = "https://relay-router.example.com/v1"
 	account.Credentials["model_mapping"] = map[string]any{"grok-4.7": "grok-4.7"}
 
 	recorder := httptest.NewRecorder()

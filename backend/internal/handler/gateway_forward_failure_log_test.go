@@ -57,7 +57,7 @@ func TestLogGatewayForwardFailure_TypedRateLimitHasNoStack(t *testing.T) {
 func TestLogGatewayForwardFailure_HeaderTimeoutIsWarn(t *testing.T) {
 	core, observed := observer.New(zapcore.DebugLevel)
 	log := zap.New(core, zap.AddStacktrace(zapcore.ErrorLevel))
-	err := errors.New(`Post "https://aipro.hk.cn/v1/images/generations": timeout awaiting response headers`)
+	err := errors.New(`Post "https://upstream-provider.example.com/v1/images/generations": timeout awaiting response headers`)
 
 	logGatewayForwardFailure(log, nil, "openai.images.forward_failed", err)
 

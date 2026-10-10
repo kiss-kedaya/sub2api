@@ -1067,7 +1067,7 @@ func (s *httpUpstreamService) resolveProtocolMode(profile service.HTTPUpstreamPr
 	if profile != service.HTTPUpstreamProfileOpenAI {
 		return upstreamProtocolModeDefault
 	}
-	// Third-party OpenAI-compatible hosts (lukyface etc.) often stall before the
+	// Third-party OpenAI-compatible hosts often stall before the
 	// first HEADERS frame and mishandle HTTP/2 PING. Force HTTP/1.1 so a slow
 	// first byte is not aborted as "timeout awaiting response headers".
 	if destHost != "" && !isOfficialOpenAIUpstreamHost(destHost) {

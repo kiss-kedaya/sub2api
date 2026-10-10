@@ -302,12 +302,12 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
 			"api_key":      "gemini-key",
-			"base_url":     "https://mdkj.lol",
+			"base_url":     "https://custom-relay.example.com",
 			"api_protocol": APIProtocolResponses,
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, "https://mdkj.lol/v1/models", geminiProtocolReq.URL.String())
+	require.Equal(t, "https://custom-relay.example.com/v1/models", geminiProtocolReq.URL.String())
 	require.Equal(t, "Bearer gemini-key", geminiProtocolReq.Header.Get("Authorization"))
 	require.Empty(t, geminiProtocolReq.Header.Get("x-goog-api-key"))
 
@@ -316,11 +316,11 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
 			"api_key":  "gemini-key",
-			"base_url": "https://mdkj.lol/v1",
+			"base_url": "https://custom-relay.example.com/v1",
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, "https://mdkj.lol/v1/models", geminiCustomNoProtocolReq.URL.String())
+	require.Equal(t, "https://custom-relay.example.com/v1/models", geminiCustomNoProtocolReq.URL.String())
 	require.Equal(t, "Bearer gemini-key", geminiCustomNoProtocolReq.Header.Get("Authorization"))
 	require.Empty(t, geminiCustomNoProtocolReq.Header.Get("x-goog-api-key"))
 

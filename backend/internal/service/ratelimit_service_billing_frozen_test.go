@@ -19,7 +19,7 @@ func TestIsUpstreamBillingAccountFrozen(t *testing.T) {
 		body string
 		want bool
 	}{
-		{name: "senseaudio payload", body: billingAccountFrozenBody, want: true},
+		{name: "audio-vendor payload", body: billingAccountFrozenBody, want: true},
 		{name: "string ref_code", body: `{"code":"billing","message":"frozen","ref_code":"400901"}`, want: true},
 		{name: "nested error.ref_code", body: `{"error":{"code":"billing","message":"\u8ba1\u8d39\u8d26\u6237\u5df2\u88ab\u51bb\u7ed3","ref_code":400901}}`, want: true},
 		{name: "message json blob", body: `{"error":{"message":"{\"code\":\"billing\",\"message\":\"\u8ba1\u8d39\u8d26\u6237\u5df2\u88ab\u51bb\u7ed3\",\"ref_code\":400901}"}}`, want: true},
@@ -44,7 +44,7 @@ func TestHandleUpstreamError_BillingAccountFrozenDisablesAndStopsSameAccountRetr
 		Type:        AccountTypeAPIKey,
 		Status:      StatusActive,
 		Schedulable: true,
-		Name:        "senseaudio",
+		Name:        "audio-vendor",
 	}
 
 	shouldDisable := svc.HandleUpstreamError(context.Background(), account, http.StatusBadRequest, http.Header{}, []byte(billingAccountFrozenBody), "deepseek-v4.1-flash")
@@ -90,7 +90,7 @@ func TestHandleUpstreamError_PoolModeBillingAccountFrozenStillDisables(t *testin
 		Type:        AccountTypeAPIKey,
 		Status:      StatusActive,
 		Schedulable: true,
-		Name:        "senseaudio-pool",
+		Name:        "audio-vendor-pool",
 		Credentials: map[string]any{"pool_mode": true},
 	}
 

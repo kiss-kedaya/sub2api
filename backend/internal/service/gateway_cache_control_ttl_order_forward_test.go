@@ -51,7 +51,7 @@ func TestForwardAnthropicAPIKeyNormalizesTTLOrderBeforeUpstream(t *testing.T) {
 
 	account := &Account{
 		ID:          30761,
-		Name:        "ocapi.cc",
+		Name:        "api-relay.example.com",
 		Platform:    PlatformAnthropic,
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,

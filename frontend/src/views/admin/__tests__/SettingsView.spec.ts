@@ -375,8 +375,8 @@ const baseSettingsResponse = {
   totp_encryption_key_configured: false,
   passkey_enabled: true,
   passkey_configured: true,
-  passkey_rp_id: "sub3.nebula-spaces.com",
-  passkey_rp_origins: ["https://sub3.nebula-spaces.com"],
+  passkey_rp_id: "sso.example.com",
+  passkey_rp_origins: ["https://sso.example.com"],
   default_balance: 0,
   default_concurrency: 1,
   default_subscriptions: [],
@@ -852,8 +852,8 @@ describe("admin SettingsView payment visible method controls", () => {
     const settings = wrapper.get('[data-testid="passkey-settings"]');
     const toggle = settings.get('[data-testid="passkey-toggle"]');
     expect(toggle.attributes("disabled")).toBeUndefined();
-    expect(settings.text()).toContain("sub3.nebula-spaces.com");
-    expect(settings.text()).toContain("https://sub3.nebula-spaces.com");
+    expect(settings.text()).toContain("sso.example.com");
+    expect(settings.text()).toContain("https://sso.example.com");
     expect(settings.text()).not.toContain("webauthn.enabled");
 
     await toggle.setValue(false);

@@ -351,7 +351,7 @@ func (a *Account) IsGeminiOpenAIProtocol() bool {
 		return true
 	case "":
 		// 创建账号点同步时经常还不带 api_protocol。官方 Google 地址继续走
-		// /v1beta/models；自定义中转（mdkj.lol 这类）默认按 OpenAI /v1/models。
+		// /v1beta/models；自定义中转地址默认按 OpenAI /v1/models。
 		return usesCustomGeminiOpenAICompatibleBaseURL(a.GetCredential("base_url"))
 	default:
 		return false
