@@ -7,6 +7,16 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+func TestBuildOpsErrorLogsWhere_RequestIDMatchesEitherColumn(t *testing.T) {
+	where, args := buildOpsErrorLogsWhere(&service.OpsErrorLogFilter{RequestID: "fcfb9013"})
+	if !strings.Contains(where, "e.request_id") || !strings.Contains(where, "e.client_request_id") || !strings.Contains(where, "ILIKE") {
+		t.Fatalf("request id search should hit both columns: %s", where)
+	}
+	if len(args) != 1 || args[0] != "%fcfb9013%" {
+		t.Fatalf("args %+v", args)
+	}
+}
+
 func TestBuildOpsErrorLogsWhere_UserScopedFilters(t *testing.T) {
 	uid := int64(42)
 	kid := int64(7)

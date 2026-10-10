@@ -262,7 +262,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 	for i := range records {
 		out = append(out, *dto.UsageLogFromService(&records[i]))
 	}
-	if page == 1 && service.QueryIncludesUsageInflight(c.Query("include_inflight")) {
+	if page == 1 && (service.QueryIncludesUsageInflight(c.Query("include_inflight")) || parsed.Filters.RequestID != "") {
 		finished := make(map[string]struct{}, len(out))
 		for i := range out {
 			if out[i].RequestID != "" {
@@ -752,16 +752,13 @@ func queryInflightOnly(c *gin.Context) bool {
 }
 
 func (h *UsageHandler) writeUserInflightOnly(c *gin.Context, filters usagestats.UsageLogFilters) {
+	page, pageSize := response.ParsePagination(c)
 	now := time.Now()
 	live := service.VisibleUsageInflight(c.Request.Context(), filters.UserID, filters, nil)
-	out := make([]dto.UsageLog, 0, len(live))
-	for _, row := range live {
+	pageRows, total := service.PageUsageInflight(live, page, pageSize)
+	out := make([]dto.UsageLog, 0, len(pageRows))
+	for _, row := range pageRows {
 		out = append(out, dto.UsageLogFromInflight(row, now))
 	}
-	total := len(out)
-	pageSize := total
-	if pageSize == 0 {
-		pageSize = 1
-	}
-	response.Paginated(c, out, int64(total), 1, pageSize)
+	response.Paginated(c, out, int64(total), page, 10)
 }
