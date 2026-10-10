@@ -1070,10 +1070,11 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, pq.Array(known))
 		clauses = append(clauses, "NOT (COALESCE(e.upstream_status_code, e.status_code, 0) = ANY($"+itoa(len(args))+"))")
 	}
-	// Exact correlation keys (preferred for request↔upstream linkage).
+	// 使用记录搜索框只传 request_id。库里可能是 client: 前缀，错误表拆成 request_id / client_request_id。
 	if rid := strings.TrimSpace(filter.RequestID); rid != "" {
-		args = append(args, rid)
-		clauses = append(clauses, "COALESCE(e.request_id,'') = $"+itoa(len(args)))
+		args = append(args, "%"+rid+"%")
+		n := itoa(len(args))
+		clauses = append(clauses, "(COALESCE(e.request_id,'') ILIKE $"+n+" OR COALESCE(e.client_request_id,'') ILIKE $"+n+")")
 	}
 	if crid := strings.TrimSpace(filter.ClientRequestID); crid != "" {
 		args = append(args, crid)

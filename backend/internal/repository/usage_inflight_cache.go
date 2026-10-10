@@ -20,7 +20,7 @@ import (
 // ponytail: 管理员一次最多展开 500 个用户。超过再改成按用户分页，不要 SCAN。
 const (
 	usageInflightUsersKey = "usage:inflight:users"
-	usageInflightTTL      = 20 * time.Minute
+	usageInflightTTL      = time.Hour
 	usageInflightDoneTTL  = 2 * time.Minute
 	usageInflightUserCap  = 500
 )
@@ -121,18 +121,54 @@ func (c *usageInflightCache) ListAll(ctx context.Context) ([]service.UsageInflig
 	if len(ids) > usageInflightUserCap {
 		ids = ids[:usageInflightUserCap]
 	}
-	out := make([]service.UsageInflightSnapshot, 0, len(ids))
+	pipe := c.rdb.Pipeline()
+	type inflightHashCmd struct {
+		userID int64
+		id     string
+		cmd    *redis.MapStringStringCmd
+	}
+	cmds := make([]inflightHashCmd, 0, len(ids))
 	for _, id := range ids {
 		userID, convErr := strconv.ParseInt(id, 10, 64)
 		if convErr != nil {
-			_ = c.rdb.SRem(ctx, usageInflightUsersKey, id).Err()
+			pipe.SRem(ctx, usageInflightUsersKey, id)
 			continue
 		}
-		rows, listErr := c.ListUser(ctx, userID)
-		if listErr != nil {
-			return out, listErr
+		cmds = append(cmds, inflightHashCmd{userID: userID, id: id, cmd: pipe.HGetAll(ctx, usageInflightHashKey(userID))})
+	}
+	if _, err = pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, err
+	}
+	now := time.Now().UnixMilli()
+	out := make([]service.UsageInflightSnapshot, 0, len(cmds))
+	stale := make([]string, 0)
+	for _, item := range cmds {
+		raw, cmdErr := item.cmd.Result()
+		if cmdErr != nil || len(raw) == 0 {
+			if cmdErr == nil || cmdErr == redis.Nil {
+				stale = append(stale, item.id)
+			}
+			continue
 		}
-		out = append(out, rows...)
+		live := 0
+		for _, payload := range raw {
+			var snap service.UsageInflightSnapshot
+			if json.Unmarshal([]byte(payload), &snap) != nil || snap.ExpiresAtMs <= now {
+				continue
+			}
+			live++
+			out = append(out, snap)
+		}
+		if live == 0 {
+			stale = append(stale, item.id)
+		}
+	}
+	if len(stale) > 0 {
+		clean := c.rdb.Pipeline()
+		for _, id := range stale {
+			clean.SRem(ctx, usageInflightUsersKey, id)
+		}
+		_, _ = clean.Exec(ctx)
 	}
 	return out, nil
 }

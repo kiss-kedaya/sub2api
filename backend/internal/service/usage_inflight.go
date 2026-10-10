@@ -119,7 +119,11 @@ func VisibleUsageInflight(ctx context.Context, userID int64, filters usagestats.
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	listCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 300*time.Millisecond)
+	timeout := 300 * time.Millisecond
+	if userID <= 0 {
+		timeout = time.Second
+	}
+	listCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 	var (
 		rows []UsageInflightSnapshot
@@ -153,7 +157,7 @@ func filterUsageInflight(rows []UsageInflightSnapshot, filters usagestats.UsageL
 		if _, done := finished[row.RequestID]; done {
 			continue
 		}
-		if requestID != "" && row.RequestID != requestID {
+		if requestID != "" && !strings.Contains(strings.ToLower(row.RequestID), strings.ToLower(requestID)) {
 			continue
 		}
 		if filters.APIKeyID != 0 && row.APIKeyID != filters.APIKeyID {
@@ -199,6 +203,28 @@ func inflightRequestTypeMatches(row UsageInflightSnapshot, kind RequestType) boo
 	default:
 		return false
 	}
+}
+
+const usageInflightPageSize = 10
+
+// PageUsageInflight 固定每页 10 条。调用方要下一页就再传 page。
+func PageUsageInflight(rows []UsageInflightSnapshot, page, pageSize int) ([]UsageInflightSnapshot, int) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize != usageInflightPageSize {
+		pageSize = usageInflightPageSize
+	}
+	total := len(rows)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return rows[start:end], total
 }
 
 // InflightUsageRowID 给在途行一个负数主键，避免和已落库 id 撞车，也避免多条都是 0。

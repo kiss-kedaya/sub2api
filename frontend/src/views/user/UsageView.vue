@@ -197,19 +197,23 @@
       </div>
 
       <template v-if="activeTab === 'usage'">
-        <button type="button" class="mb-3 inline-flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-300" @click="toggleInflight">
-          <span>{{ inflightOpen ? '▾' : '▸' }}</span>
-          {{ t('usage.inflightFold') }}
+        <button type="button" class="mb-3 flex w-full items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-gray-800 hover:bg-gray-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-100 dark:hover:bg-dark-700" @click="toggleInflight">
+          <Icon name="chevronDown" size="sm" :class="['text-gray-400 transition-transform', inflightOpen ? '' : '-rotate-90']" />
+          <span>{{ t('usage.inflightFold') }}</span>
+          <span v-if="inflightTotal" class="ml-auto text-xs font-normal text-gray-400">{{ inflightRows.length }}/{{ inflightTotal }}</span>
         </button>
         <UsageTable
           v-if="inflightOpen"
-          class="mb-4"
+          class="mb-3"
           :data="inflightRows"
           :loading="inflightLoading"
           :columns="visibleColumns"
           :show-account-billing="false"
           :show-upstream-endpoint="false"
         />
+        <button v-if="inflightOpen && inflightHasMore" type="button" class="btn btn-secondary mb-4 w-full" :disabled="inflightLoading" @click="loadMoreInflight">
+          {{ inflightLoading ? t('common.loading') : t('usage.inflightMore') }}
+        </button>
         <UsageTable
           :data="usageLogs"
           :loading="loading"
@@ -486,24 +490,36 @@ let logsGeneration = 0
 const inflightOpen = ref(false)
 const inflightRows = ref<UsageLog[]>([])
 const inflightLoading = ref(false)
-const loadInflight = async () => {
+const inflightPage = ref(1)
+const inflightTotal = ref(0)
+const inflightHasMore = computed(() => inflightRows.value.length < inflightTotal.value)
+const loadInflight = async (append = false) => {
+  const page = append ? inflightPage.value + 1 : 1
   inflightLoading.value = true
   try {
     const res = await usageAPI.query({
-      ...buildUsageListParams(1, 1),
+      ...buildUsageListParams(page, 10),
+      page,
+      page_size: 10,
       include_inflight: true,
       inflight_only: true,
     })
-    inflightRows.value = res.items
+    const items = res.items || []
+    inflightRows.value = append ? inflightRows.value.concat(items) : items
+    inflightTotal.value = res.total || 0
+    inflightPage.value = page
   } catch (error) {
     console.error('[UsageView] loadInflight failed:', error)
   } finally {
     inflightLoading.value = false
   }
 }
+const loadMoreInflight = () => {
+  if (!inflightLoading.value && inflightHasMore.value) void loadInflight(true)
+}
 const toggleInflight = () => {
   inflightOpen.value = !inflightOpen.value
-  if (inflightOpen.value) void loadInflight()
+  if (inflightOpen.value) void loadInflight(false)
 }
 const loadLogs = async (silent = false) => {
   if (silent && loading.value) return
@@ -522,7 +538,7 @@ const loadLogs = async (silent = false) => {
     if (!controller.signal.aborted) {
       usageLogs.value = res.items
       pagination.total = res.total
-      if (inflightOpen.value) void loadInflight()
+      if (inflightOpen.value) void loadInflight(false)
     }
   } catch (error: any) {
     if (!silent && error?.name !== 'AbortError' && error?.code !== 'ERR_CANCELED') {
@@ -618,6 +634,7 @@ const applyFilters = () => {
 
 const refreshData = () => {
   void loadLogs()
+  if (inflightOpen.value) void loadInflight(false)
   void loadStats()
   void loadModelStats()
   void loadChartData()
