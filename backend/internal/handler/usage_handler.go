@@ -208,6 +208,7 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 			UserID:             subject.UserID,
 			APIKeyID:           apiKeyID,
 			GroupID:            groupID,
+			RequestID:          strings.TrimSpace(c.Query("request_id")),
 			Model:              strings.TrimSpace(c.Query("model")),
 			ModelFilterSource:  usagestats.ModelSourceRequested,
 			RequestType:        requestType,
@@ -244,6 +245,11 @@ func (h *UsageHandler) List(c *gin.Context) {
 		PageSize:  pageSize,
 		SortBy:    c.DefaultQuery("sort_by", "created_at"),
 		SortOrder: c.DefaultQuery("sort_order", "desc"),
+	}
+
+	if queryInflightOnly(c) {
+		h.writeUserInflightOnly(c, parsed.Filters)
+		return
 	}
 
 	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, parsed.Filters)
@@ -300,7 +306,7 @@ func (h *UsageHandler) ListErrors(c *gin.Context) {
 		pageSize = 100
 	}
 
-	filter := &service.OpsErrorLogFilter{Page: page, PageSize: pageSize}
+	filter := &service.OpsErrorLogFilter{Page: page, PageSize: pageSize, RequestID: strings.TrimSpace(c.Query("request_id"))}
 
 	// Date range (half-open [start, end)), reuse usage-list semantics.
 	userTZ := c.Query("timezone")
@@ -738,4 +744,24 @@ func (h *UsageHandler) GetMyAPIKeyDailyUsage(c *gin.Context) {
 		"start_date": startTime.Format("2006-01-02"),
 		"end_date":   endTime.AddDate(0, 0, -1).Format("2006-01-02"),
 	})
+}
+
+func queryInflightOnly(c *gin.Context) bool {
+	value, err := strconv.ParseBool(strings.TrimSpace(c.Query("inflight_only")))
+	return err == nil && value
+}
+
+func (h *UsageHandler) writeUserInflightOnly(c *gin.Context, filters usagestats.UsageLogFilters) {
+	now := time.Now()
+	live := service.VisibleUsageInflight(c.Request.Context(), filters.UserID, filters, nil)
+	out := make([]dto.UsageLog, 0, len(live))
+	for _, row := range live {
+		out = append(out, dto.UsageLogFromInflight(row, now))
+	}
+	total := len(out)
+	pageSize := total
+	if pageSize == 0 {
+		pageSize = 1
+	}
+	response.Paginated(c, out, int64(total), 1, pageSize)
 }

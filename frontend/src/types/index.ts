@@ -2168,6 +2168,7 @@ export interface UserErrorListParams {
   // 服务端排序,列白名单见后端 opsErrorLogsOrderBy(created_at/model/status_code)
   sort_by?: string
   sort_order?: 'asc' | 'desc'
+  request_id?: string
 }
 
 export interface UsageQueryParams {
@@ -2190,6 +2191,8 @@ export interface UsageQueryParams {
   sort_by?: string
   sort_order?: 'asc' | 'desc'
   include_inflight?: boolean
+  inflight_only?: boolean
+  request_id?: string
 }
 
 // ==================== Account Usage Statistics ====================
