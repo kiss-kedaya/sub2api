@@ -30,6 +30,7 @@ type UsageInflightSnapshot struct {
 	Stream           bool      `json:"stream,omitempty"`
 	WebSocket        bool      `json:"websocket,omitempty"`
 	StartedAt        time.Time `json:"started_at"`
+	UpdatedAt        time.Time `json:"updated_at,omitempty"`
 	FirstTokenMs     *int      `json:"first_token_ms,omitempty"`
 	InputTokens      int       `json:"input_tokens"`
 	OutputTokens     int       `json:"output_tokens"`

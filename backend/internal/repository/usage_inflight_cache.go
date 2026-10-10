@@ -33,6 +33,20 @@ func NewUsageInflightCache(rdb *redis.Client) service.UsageInflightStore {
 	return &usageInflightCache{rdb: rdb}
 }
 
+const usageInflightHeartbeatStale = 60 * time.Second
+
+// usageInflightLive 超过 1 分钟没有心跳的行当结束。旧数据没有 updated_at，就用开始时间。
+func usageInflightLive(snap service.UsageInflightSnapshot, now time.Time) bool {
+	if snap.ExpiresAtMs > 0 && snap.ExpiresAtMs <= now.UnixMilli() {
+		return false
+	}
+	stamp := snap.UpdatedAt
+	if stamp.IsZero() {
+		stamp = snap.StartedAt
+	}
+	return !stamp.IsZero() && now.Sub(stamp) <= usageInflightHeartbeatStale
+}
+
 func usageInflightHashKey(userID int64) string {
 	return fmt.Sprintf("usage:inflight:{%d}", userID)
 }
@@ -90,12 +104,12 @@ func (c *usageInflightCache) ListUser(ctx context.Context, userID int64) ([]serv
 		}
 		return nil, err
 	}
-	now := time.Now().UnixMilli()
+	now := time.Now()
 	out := make([]service.UsageInflightSnapshot, 0, len(raw))
 	var expired []string
 	for field, payload := range raw {
 		var snap service.UsageInflightSnapshot
-		if json.Unmarshal([]byte(payload), &snap) != nil || snap.ExpiresAtMs <= now {
+		if json.Unmarshal([]byte(payload), &snap) != nil || !usageInflightLive(snap, now) {
 			expired = append(expired, field)
 			continue
 		}
@@ -139,9 +153,14 @@ func (c *usageInflightCache) ListAll(ctx context.Context) ([]service.UsageInflig
 	if _, err = pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return nil, err
 	}
-	now := time.Now().UnixMilli()
+	now := time.Now()
 	out := make([]service.UsageInflightSnapshot, 0, len(cmds))
 	stale := make([]string, 0)
+	type inflightDrop struct {
+		userID int64
+		field  string
+	}
+	drops := make([]inflightDrop, 0)
 	for _, item := range cmds {
 		raw, cmdErr := item.cmd.Result()
 		if cmdErr != nil || len(raw) == 0 {
@@ -151,9 +170,10 @@ func (c *usageInflightCache) ListAll(ctx context.Context) ([]service.UsageInflig
 			continue
 		}
 		live := 0
-		for _, payload := range raw {
+		for field, payload := range raw {
 			var snap service.UsageInflightSnapshot
-			if json.Unmarshal([]byte(payload), &snap) != nil || snap.ExpiresAtMs <= now {
+			if json.Unmarshal([]byte(payload), &snap) != nil || !usageInflightLive(snap, now) {
+				drops = append(drops, inflightDrop{userID: item.userID, field: field})
 				continue
 			}
 			live++
@@ -162,6 +182,13 @@ func (c *usageInflightCache) ListAll(ctx context.Context) ([]service.UsageInflig
 		if live == 0 {
 			stale = append(stale, item.id)
 		}
+	}
+	if len(drops) > 0 {
+		clean := c.rdb.Pipeline()
+		for _, drop := range drops {
+			clean.HDel(ctx, usageInflightHashKey(drop.userID), drop.field)
+		}
+		_, _ = clean.Exec(ctx)
 	}
 	if len(stale) > 0 {
 		clean := c.rdb.Pipeline()
