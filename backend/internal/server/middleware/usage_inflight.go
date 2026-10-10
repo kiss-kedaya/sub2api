@@ -74,6 +74,21 @@ func trackUsageInflight(c *gin.Context) func() {
 		state.mu.Unlock()
 		state.refresh()
 	})
+	reqCtx := c.Request.Context()
+	go func() {
+		select {
+		case <-reqCtx.Done():
+			state.mu.Lock()
+			state.closed = true
+			persisted := state.persisted
+			state.gen.Add(1)
+			state.mu.Unlock()
+			if persisted {
+				service.DeleteUsageInflight(context.Background(), userID, requestID)
+			}
+		case <-state.done:
+		}
+	}()
 	return func() {
 		timer.Stop()
 		state.mu.Lock()
