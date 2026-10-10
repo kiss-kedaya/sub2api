@@ -141,6 +141,25 @@ func VisibleUsageInflight(ctx context.Context, userID int64, filters usagestats.
 	return filterUsageInflight(rows, filters, finished)
 }
 
+// billingRequestIDBase 去掉落库行 request id 的 "client:"/"local:" 前缀，
+// 让落库行和在途快照（只存裸 id，见 middleware/usage_inflight.go）能对上。
+// web_search:/grok-video: 等 forced id 不带前缀，保持原样。
+func billingRequestIDBase(requestID string) string {
+	id := strings.TrimSpace(requestID)
+	for _, prefix := range []string{"client:", "local:"} {
+		if strings.HasPrefix(id, prefix) {
+			return strings.TrimSpace(id[len(prefix):])
+		}
+	}
+	return id
+}
+
+// NormalizeUsageRequestIDKey 供列表侧把落库行的 request id 归一成裸 id，
+// 这样在途行与已落库行的去重键才一致。
+func NormalizeUsageRequestIDKey(requestID string) string {
+	return billingRequestIDBase(requestID)
+}
+
 func filterUsageInflight(rows []UsageInflightSnapshot, filters usagestats.UsageLogFilters, finished map[string]struct{}) []UsageInflightSnapshot {
 	if filters.BillingType != nil || strings.TrimSpace(filters.BillingMode) != "" || filters.UpstreamModelMismatch != nil {
 		return nil
@@ -155,7 +174,9 @@ func filterUsageInflight(rows []UsageInflightSnapshot, filters usagestats.UsageL
 		if row.RequestID == "" {
 			continue
 		}
-		if _, done := finished[row.RequestID]; done {
+		// 在途快照存的是裸 request id，落库行带了 "client:"/"local:" 前缀
+		// （见 resolveUsageBillingRequestID），比对前统一去掉前缀，否则去重永远失效。
+		if _, done := finished[billingRequestIDBase(row.RequestID)]; done {
 			continue
 		}
 		if requestID != "" && !strings.Contains(strings.ToLower(row.RequestID), strings.ToLower(requestID)) {
