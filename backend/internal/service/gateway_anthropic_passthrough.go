@@ -310,6 +310,12 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	token string,
 ) (*http.Request, []byte, error) {
 	body = stripDeferredToolCacheControl(body)
+	// 密钥级 cache TTL 覆盖（见 anthropic_cache_ttl_override.go）：正常 Forward 路径在
+	// 透传分支之前就 return 了，这里必须自己补上，否则密钥上设的「强制 1h/5m」对
+	// passthrough 账号完全无效。inherit 时 resolve 返回 apply=false，一字不改。
+	if ttlMode, applyTTL := s.resolveAnthropicCacheTTLMode(ctx, c, account); applyTTL {
+		body = forceEphemeralCacheControlTTL(body, ttlMode)
+	}
 	// 透传路径只替换认证，但这两条是上游硬约束，不规整就是必然 400：
 	//   - cache_control 的 ttl 顺序（1h 不得跟在 5m 后面）
 	//   - Claude 5.x 不接受 thinking.type="enabled"
@@ -384,6 +390,10 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	// body 声明了 thinking.display="updates" 时补上它的必需 beta（透传路径原样转发
 	// 客户端 beta，不会自动补；账号级覆写仍在下一行最终生效）。
 	applyThinkingDisplayUpdatesBetaHeader(req.Header, body)
+
+	// body 里有 ttl="1h" 断点（客户端自带，或上面密钥级覆盖刚写入）时必须带
+	// extended-cache-ttl beta，否则上游静默按 5m 建缓存。
+	applyExtendedCacheTTLBetaHeader(req.Header, body)
 
 	// 账号级请求头覆写（最终生效，覆盖上面所有来源的同名头）
 	account.ApplyHeaderOverrides(req.Header)
