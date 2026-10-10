@@ -34,15 +34,25 @@ func TestEnsureOpenAIOAuthWebSearchToolForHistoryLiteUsesAdditionalTools(t *test
 	if _, ok := req["tools"]; ok {
 		t.Fatal("lite must not add top-level tools")
 	}
-	input := req["input"].([]any)
+	input, ok := req["input"].([]any)
+	if !ok {
+		t.Fatalf("input is not an array: %T", req["input"])
+	}
 	if len(input) != 3 {
 		t.Fatalf("input len=%d", len(input))
 	}
-	added := input[1].(map[string]any)
+	added, ok := input[1].(map[string]any)
+	if !ok {
+		t.Fatalf("inserted block is not a map: %T", input[1])
+	}
 	if added["type"] != "additional_tools" {
 		t.Fatalf("inserted=%v", added)
 	}
-	if input[2].(map[string]any)["type"] != "compaction_trigger" {
+	last, ok := input[2].(map[string]any)
+	if !ok {
+		t.Fatalf("last block is not a map: %T", input[2])
+	}
+	if last["type"] != "compaction_trigger" {
 		t.Fatal("compaction trigger must stay last")
 	}
 }
