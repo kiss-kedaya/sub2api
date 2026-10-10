@@ -49,8 +49,11 @@ func TestTrackUsageInflightRecordsFirstByteThenDeletes(t *testing.T) {
 	router := gin.New()
 	router.Use(ClientRequestID())
 	router.GET("/v1/responses", func(c *gin.Context) {
-		c.Set(string(ContextKeyAPIKey), &service.APIKey{ID: 4, UserID: 8, User: &service.User{ID: 8, Email: "duck@kedaya.ai"}})
+		c.Set(string(ContextKeyAPIKey), &service.APIKey{ID: 4, UserID: 8, Name: "duck-key", User: &service.User{ID: 8, Email: "duck@kedaya.ai"}})
 		c.Set(string(ContextKeyUser), AuthSubject{UserID: 8})
+		c.Set("_gateway_inbound_endpoint", "/v1/responses")
+		c.Set("openai_actual_upstream_endpoint", "/v1/chat/completions")
+		c.Request = c.Request.WithContext(service.WithRequestedReasoningEffort(c.Request.Context(), "high"))
 		stop := trackUsageInflight(c)
 		defer stop()
 		c.Writer.WriteHeader(http.StatusOK)
@@ -73,7 +76,7 @@ func TestTrackUsageInflightRecordsFirstByteThenDeletes(t *testing.T) {
 	}
 	select {
 	case row := <-seen:
-		if row.Email != "duck@kedaya.ai" {
+		if row.Email != "duck@kedaya.ai" || row.APIKeyName != "duck-key" || row.InboundEndpoint != "/v1/responses" || row.UpstreamEndpoint != "/v1/chat/completions" || row.ReasoningEffort != "high" {
 			t.Fatalf("row=%+v", row)
 		}
 	default:

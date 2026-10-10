@@ -193,7 +193,12 @@ func (s *BillingCacheService) inflightReservationConfig() (config.InflightReserv
 		return config.InflightReservationConfig{}, false
 	}
 	cfg := s.cfg.Billing.InflightReservation
-	if !cfg.Enabled || s.cfg.RunMode == config.RunModeSimple {
+	if s.cfg.RunMode == config.RunModeSimple {
+		return cfg, false
+	}
+	// 设置页优先。部署默认关时，后台打开也要登记预留，使用记录才有金额。
+	cfg.Enabled = s.BillingPreauthorizationRuntime(context.Background()).InflightReservation
+	if !cfg.Enabled {
 		return cfg, false
 	}
 	return cfg, true

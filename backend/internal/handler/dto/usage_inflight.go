@@ -47,10 +47,30 @@ func UsageLogFromInflight(row service.UsageInflightSnapshot, now time.Time) Usag
 	if row.Email != "" {
 		log.User = &User{ID: row.UserID, Email: row.Email}
 	}
+	if row.APIKeyID > 0 || row.APIKeyName != "" {
+		log.APIKey = &APIKey{ID: row.APIKeyID, Name: row.APIKeyName}
+	}
+	if row.ReasoningEffort != "" {
+		effort := row.ReasoningEffort
+		log.ReasoningEffort = &effort
+	}
+	if row.InboundEndpoint != "" {
+		endpoint := row.InboundEndpoint
+		log.InboundEndpoint = &endpoint
+	}
+	if row.IPAddress != "" {
+		addr := row.IPAddress
+		log.IPAddress = &addr
+	}
 	return log
 }
 
 // AdminUsageLogFromInflight 管理员看到同一条在途记录，并带上用户邮箱。
 func AdminUsageLogFromInflight(row service.UsageInflightSnapshot, now time.Time) AdminUsageLog {
-	return AdminUsageLog{UsageLog: UsageLogFromInflight(row, now)}
+	log := AdminUsageLog{UsageLog: UsageLogFromInflight(row, now)}
+	if row.UpstreamEndpoint != "" {
+		endpoint := row.UpstreamEndpoint
+		log.UpstreamEndpoint = &endpoint
+	}
+	return log
 }

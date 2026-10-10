@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -58,10 +59,11 @@ func trackUsageInflight(c *gin.Context) func() {
 		snap.AccountID = accountID
 	}
 	snap.ReservedAmount = service.InflightReservationFromContext(c.Request.Context()).Amount()
+	fillUsageInflightDisplay(c, &snap)
 
 	state := &usageInflightWriteState{ginCtx: c, snap: snap, done: make(chan struct{})}
 	c.Writer = &usageInflightWriter{ResponseWriter: c.Writer, state: state}
-	// ponytail: 1s 内结束的请求不碰 Redis。使用记录页 2s 刷一次，晚 1s 出现无感。
+	// ponytail: 满 1 秒写一次。首字若在这次之后才到，再补写一次。页面自己刷新才变。
 	timer := time.AfterFunc(time.Second, func() {
 		state.mu.Lock()
 		if state.closed {
@@ -71,16 +73,6 @@ func trackUsageInflight(c *gin.Context) func() {
 		state.persisted = true
 		state.mu.Unlock()
 		state.refresh()
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-state.done:
-				return
-			case <-ticker.C:
-				state.refresh()
-			}
-		}
 	})
 	return func() {
 		timer.Stop()
@@ -185,15 +177,20 @@ func (s *usageInflightWriteState) note(n int) {
 	}
 	s.mu.Lock()
 	now := time.Now()
+	flushFirst := false
 	if s.first == nil {
 		ms := int(now.Sub(s.snap.StartedAt).Milliseconds())
 		if ms < 0 {
 			ms = 0
 		}
 		s.first = &ms
+		flushFirst = s.persisted
 	}
 	s.bytes += n
 	s.mu.Unlock()
+	if flushFirst {
+		s.refresh()
+	}
 }
 
 func (s *usageInflightWriteState) snapshotLocked() service.UsageInflightSnapshot {
@@ -215,6 +212,7 @@ func (s *usageInflightWriteState) snapshotLocked() service.UsageInflightSnapshot
 			snap.Stream = true
 		}
 	}
+	fillUsageInflightDisplay(s.ginCtx, &snap)
 	s.snap = snap
 	return snap
 }
@@ -270,4 +268,40 @@ func (w *usageInflightWriter) WriteString(data string) (int, error) {
 	n, err := w.ResponseWriter.WriteString(data)
 	w.state.note(n)
 	return n, err
+}
+
+func fillUsageInflightDisplay(c *gin.Context, snap *service.UsageInflightSnapshot) {
+	if c == nil || snap == nil {
+		return
+	}
+	if value, exists := c.Get(string(ContextKeyAPIKey)); exists {
+		if key, ok := value.(*service.APIKey); ok && key != nil {
+			if name := strings.TrimSpace(key.Name); name != "" {
+				snap.APIKeyName = name
+			}
+		}
+	}
+	if v, ok := c.Get("_gateway_inbound_endpoint"); ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			snap.InboundEndpoint = strings.TrimSpace(s)
+		}
+	}
+	if snap.InboundEndpoint == "" && c.Request != nil && c.Request.URL != nil {
+		snap.InboundEndpoint = strings.TrimSpace(c.Request.URL.Path)
+	}
+	if endpoint := strings.TrimSpace(service.GetActualOpenAIUpstreamEndpoint(c)); endpoint != "" {
+		snap.UpstreamEndpoint = endpoint
+	} else if v, ok := c.Get("_gateway_actual_upstream_endpoint"); ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			snap.UpstreamEndpoint = strings.TrimSpace(s)
+		}
+	}
+	if c.Request != nil {
+		if effort := service.RequestedReasoningEffortFromContext(c.Request.Context()); effort != nil {
+			snap.ReasoningEffort = *effort
+		}
+	}
+	if addr := strings.TrimSpace(ip.GetClientIP(c)); addr != "" {
+		snap.IPAddress = addr
+	}
 }

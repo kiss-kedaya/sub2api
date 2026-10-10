@@ -15,21 +15,26 @@ import (
 // UsageInflightSnapshot 是一条还没写进 usage_logs 的在途请求。
 // 只放 Redis。请求结束就删，避免和落库行重复。
 type UsageInflightSnapshot struct {
-	RequestID      string    `json:"request_id"`
-	UserID         int64     `json:"user_id"`
-	APIKeyID       int64     `json:"api_key_id"`
-	GroupID        int64     `json:"group_id,omitempty"`
-	AccountID      int64     `json:"account_id,omitempty"`
-	Email          string    `json:"email,omitempty"`
-	Model          string    `json:"model,omitempty"`
-	Stream         bool      `json:"stream,omitempty"`
-	WebSocket      bool      `json:"websocket,omitempty"`
-	StartedAt      time.Time `json:"started_at"`
-	FirstTokenMs   *int      `json:"first_token_ms,omitempty"`
-	InputTokens    int       `json:"input_tokens"`
-	OutputTokens   int       `json:"output_tokens"`
-	ReservedAmount float64   `json:"reserved_amount"`
-	ExpiresAtMs    int64     `json:"expires_at_ms"`
+	RequestID        string    `json:"request_id"`
+	UserID           int64     `json:"user_id"`
+	APIKeyID         int64     `json:"api_key_id"`
+	GroupID          int64     `json:"group_id,omitempty"`
+	AccountID        int64     `json:"account_id,omitempty"`
+	Email            string    `json:"email,omitempty"`
+	APIKeyName       string    `json:"api_key_name,omitempty"`
+	Model            string    `json:"model,omitempty"`
+	ReasoningEffort  string    `json:"reasoning_effort,omitempty"`
+	InboundEndpoint  string    `json:"inbound_endpoint,omitempty"`
+	UpstreamEndpoint string    `json:"upstream_endpoint,omitempty"`
+	IPAddress        string    `json:"ip_address,omitempty"`
+	Stream           bool      `json:"stream,omitempty"`
+	WebSocket        bool      `json:"websocket,omitempty"`
+	StartedAt        time.Time `json:"started_at"`
+	FirstTokenMs     *int      `json:"first_token_ms,omitempty"`
+	InputTokens      int       `json:"input_tokens"`
+	OutputTokens     int       `json:"output_tokens"`
+	ReservedAmount   float64   `json:"reserved_amount"`
+	ExpiresAtMs      int64     `json:"expires_at_ms"`
 }
 
 // UsageInflightStore 在途请求的 Redis 读写。Redis 不可用时实现应直接返回，不能挡请求。

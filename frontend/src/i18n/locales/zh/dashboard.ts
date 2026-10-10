@@ -411,6 +411,8 @@ export default {
     tokens: 'Token',
     cost: '费用',
     inflightReservedHint: '不是最终价格，只是预留余额',
+    inflightRunning: '正在请求',
+    inflightRunningHint: '请求还没结束。点刷新才会更新时长和费用。',
     inflightElapsed: '已运行',
     firstToken: '首 Token',
     duration: '耗时',

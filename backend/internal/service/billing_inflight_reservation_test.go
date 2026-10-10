@@ -507,3 +507,45 @@ func TestInflightEstimate_AccountMappingNoNegativeCaching(t *testing.T) {
 	require.True(t, priced, "new mapping (incl. wildcard) visible on next request")
 	require.Greater(t, est, 0.0)
 }
+
+type inflightToggleSettingRepo struct{ values map[string]string }
+
+func (r inflightToggleSettingRepo) Get(context.Context, string) (*Setting, error) {
+	return nil, ErrSettingNotFound
+}
+func (r inflightToggleSettingRepo) GetValue(context.Context, string) (string, error) {
+	return "", ErrSettingNotFound
+}
+func (r inflightToggleSettingRepo) Set(context.Context, string, string) error { return nil }
+func (r inflightToggleSettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, key := range keys {
+		if v, ok := r.values[key]; ok {
+			out[key] = v
+		}
+	}
+	return out, nil
+}
+func (r inflightToggleSettingRepo) SetMultiple(context.Context, map[string]string) error { return nil }
+func (r inflightToggleSettingRepo) GetAll(context.Context) (map[string]string, error) {
+	return r.values, nil
+}
+func (r inflightToggleSettingRepo) Delete(context.Context, string) error { return nil }
+
+func TestInflightReservationFollowsSettingsToggle(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Billing.InflightReservation.TTLSeconds = 60
+	cache := newMemInflightCache(10)
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(svc.Stop)
+	require.False(t, svc.InflightReservationEnabled())
+	svc.SetSettingServiceForBilling(NewSettingService(inflightToggleSettingRepo{values: map[string]string{
+		SettingKeyBillingInflightReservationEnabled: "true",
+	}}, cfg))
+	require.True(t, svc.InflightReservationEnabled())
+	res, err := svc.ReserveInflight(context.Background(), &User{ID: 1}, nil, nil, 0.5)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.InDelta(t, 0.5, res.Amount(), 1e-9)
+	res.Release()
+}
