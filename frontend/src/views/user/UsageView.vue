@@ -489,7 +489,7 @@ const inflightLoading = ref(false)
 const loadInflight = async () => {
   inflightLoading.value = true
   try {
-    const res = await usageAPI.list({
+    const res = await usageAPI.query({
       ...buildUsageListParams(1, 1),
       include_inflight: true,
       inflight_only: true,
