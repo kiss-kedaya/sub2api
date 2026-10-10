@@ -228,7 +228,8 @@ func (h *UsageHandler) List(c *gin.Context) {
 		finished := make(map[string]struct{}, len(out))
 		for i := range out {
 			if out[i].RequestID != "" {
-				finished[out[i].RequestID] = struct{}{}
+				// 与在途快照的裸 request id 对齐，否则同一条请求会在途/落库各出一行。
+				finished[service.NormalizeUsageRequestIDKey(out[i].RequestID)] = struct{}{}
 			}
 		}
 		now := time.Now()

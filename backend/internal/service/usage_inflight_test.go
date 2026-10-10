@@ -52,3 +52,33 @@ func TestFilterUsageInflightMatchesRequestIDFragment(t *testing.T) {
 		t.Fatalf("fragment should match, got %+v", got)
 	}
 }
+
+// 落库行带 client:/local: 前缀，调用方 List 用 NormalizeUsageRequestIDKey 归一成裸 id
+// 后建 finished，才能和在途行的裸 id 对上；不归一就一条请求出两行。
+func TestFilterUsageInflightDropsFinishedBareID(t *testing.T) {
+	uuid := "fcfb9013-144a-4994-a2e7-f40eb688adc5"
+	rows := []UsageInflightSnapshot{{RequestID: uuid}}
+	// 归一后的键命中。
+	if got := filterUsageInflight(rows, usagestats.UsageLogFilters{}, map[string]struct{}{NormalizeUsageRequestIDKey("client:" + uuid): {}}); len(got) != 0 {
+		t.Fatalf("normalized key should drop inflight row, got %+v", got)
+	}
+	// 不带前缀的落库行也命中。
+	if got := filterUsageInflight(rows, usagestats.UsageLogFilters{}, map[string]struct{}{uuid: {}}); len(got) != 0 {
+		t.Fatalf("bare key should drop inflight row, got %+v", got)
+	}
+}
+
+func TestNormalizeUsageRequestIDKey(t *testing.T) {
+	uuid := "fcfb9013-144a-4994-a2e7-f40eb688adc5"
+	for _, tc := range []struct{ in, want string }{
+		{"client:" + uuid, uuid},
+		{"local:" + uuid, uuid},
+		{"  client:" + uuid + " ", uuid},
+		{"web_search:" + uuid, "web_search:" + uuid},
+		{uuid, uuid},
+	} {
+		if got := NormalizeUsageRequestIDKey(tc.in); got != tc.want {
+			t.Fatalf("NormalizeUsageRequestIDKey(%q)=%q want %q", tc.in, got, tc.want)
+		}
+	}
+}
