@@ -1130,6 +1130,7 @@ export type OpsErrorListQueryParams = {
   // 服务端排序,列白名单见后端 opsErrorLogsOrderBy(created_at/model/status_code)
   sort_by?: string
   sort_order?: 'asc' | 'desc'
+  request_id?: string
 }
 
 // Legacy unified endpoints

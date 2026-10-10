@@ -209,6 +209,11 @@ func (h *UsageHandler) List(c *gin.Context) {
 		ExactTotal:            exactTotal,
 	}
 
+	if adminInflightOnly(c) {
+		writeAdminInflightOnly(c, filters)
+		return
+	}
+
 	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, filters)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -669,4 +674,24 @@ func (h *UsageHandler) CancelCleanupTask(c *gin.Context) {
 	}
 	logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 清理任务已取消: task=%d operator=%d", taskID, subject.UserID)
 	response.Success(c, gin.H{"id": taskID, "status": service.UsageCleanupStatusCanceled})
+}
+
+func adminInflightOnly(c *gin.Context) bool {
+	value, err := strconv.ParseBool(strings.TrimSpace(c.Query("inflight_only")))
+	return err == nil && value
+}
+
+func writeAdminInflightOnly(c *gin.Context, filters usagestats.UsageLogFilters) {
+	now := time.Now()
+	live := service.VisibleUsageInflight(c.Request.Context(), filters.UserID, filters, nil)
+	out := make([]dto.AdminUsageLog, 0, len(live))
+	for _, row := range live {
+		out = append(out, dto.AdminUsageLogFromInflight(row, now))
+	}
+	total := len(out)
+	pageSize := total
+	if pageSize == 0 {
+		pageSize = 1
+	}
+	response.Paginated(c, out, int64(total), 1, pageSize)
 }

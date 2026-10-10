@@ -128,6 +128,20 @@
         </UsageFilters>
 
         <div v-show="activeTab === 'usage'" class="usage-detail-content">
+          <button type="button" class="mb-3 inline-flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-300" @click="toggleInflight">
+            <span>{{ inflightOpen ? '▾' : '▸' }}</span>
+            {{ t('usage.inflightFold') }}
+          </button>
+          <UsageTable
+            v-if="inflightOpen"
+            flat
+            class="mb-4"
+            :data="inflightRows"
+            :loading="inflightLoading"
+            :columns="visibleColumns"
+            :show-account-billing="true"
+            :show-upstream-endpoint="true"
+          />
           <UsageTable
             flat
             :data="usageLogs"
@@ -381,7 +395,7 @@ const buildUsageListParams = (
   page: number,
   pageSize: number,
   exactTotal: boolean,
-  includeInflight = true
+  includeInflight = false
 ): AdminUsageQueryParams => {
   const requestType = filters.value.request_type
   const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
@@ -398,6 +412,27 @@ const buildUsageListParams = (
 }
 
 let logsGeneration = 0
+const inflightOpen = ref(false)
+const inflightRows = ref<AdminUsageLog[]>([])
+const inflightLoading = ref(false)
+const loadInflight = async () => {
+  inflightLoading.value = true
+  try {
+    const res = await adminAPI.usage.list({
+      ...buildUsageListParams(1, 1, false, true),
+      inflight_only: true,
+    })
+    inflightRows.value = res.items || []
+  } catch (error) {
+    console.error('Failed to load inflight usage:', error)
+  } finally {
+    inflightLoading.value = false
+  }
+}
+const toggleInflight = () => {
+  inflightOpen.value = !inflightOpen.value
+  if (inflightOpen.value) void loadInflight()
+}
 const loadLogs = async (silent = false) => {
   if (silent && loading.value) return
   const generation = silent ? logsGeneration : ++logsGeneration
@@ -415,6 +450,7 @@ const loadLogs = async (silent = false) => {
     if (generation !== logsGeneration || c.signal.aborted) return
     usageLogs.value = res.items
     pagination.total = res.total
+    if (inflightOpen.value) void loadInflight()
   } catch (error: any) {
     if (!silent && error?.name !== 'AbortError') console.error('Failed to load usage logs:', error)
   } finally {
@@ -861,6 +897,7 @@ const loadAdminErrors = async () => {
       account_id: filters.value.account_id ?? undefined,
       group_id: filters.value.group_id ?? undefined,
       model: filters.value.model || undefined,
+      request_id: filters.value.request_id?.trim() || undefined,
       phase: filters.value.error_phase || undefined,
       category: filters.value.error_category || undefined,
       status_codes: filters.value.status_code != null ? String(filters.value.status_code) : undefined,
