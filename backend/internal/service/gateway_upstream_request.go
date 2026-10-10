@@ -111,6 +111,12 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		finalBetaHeader, finalBetaShouldSet = beta, true
 	}
 
+	// body 里有 ttl="1h" 的 ephemeral 断点（客户端自带，或密钥级/全局 TTL 改写写入）时
+	// 必须带上 extended-cache-ttl beta，否则上游不报错、静默按 5m 建缓存。
+	if beta := ensureExtendedCacheTTLBeta(finalBetaHeader, body, effectiveDropSet); beta != finalBetaHeader {
+		finalBetaHeader, finalBetaShouldSet = beta, true
+	}
+
 	// 账号覆写了 anthropic-beta 时，覆写值即最终上游值（由下方 ApplyHeaderOverrides 写入）：
 	// body 能力净化必须以覆写值为准，否则 header/body 不对称会被上游 400。
 	if beta, ok := account.HeaderOverrideValue("anthropic-beta"); ok {
