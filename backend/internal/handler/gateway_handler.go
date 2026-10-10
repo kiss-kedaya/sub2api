@@ -198,6 +198,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "This model is not supported on the Messages endpoint")
 		return
 	}
+	// claude-opus-5-5 对非法参数直接 400，必须在任何默认值注入（service 层的
+	// OAuth 归一化会补 max_tokens / temperature）之前、对客户端原始语义校验。
+	if message, ok := ValidateStrictOpusMessagesRequest(reqModel, body); !ok {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", message)
+		return
+	}
 	bindRequestedReasoningEffort(c, body, reqModel)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if policyBody, changed, err := applyAnthropicReasoningEffortPolicyForRequest(c, apiKey, body); err != nil {
