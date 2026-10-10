@@ -11,6 +11,26 @@ task_plan.md
 HANDOFF_*.md
 LOCAL_HANDOFF_CONTEXT.md
 
+# 本地经验与审计记录：含真实 API key、上游域名、服务器 IP/口令。
+# 以前只写在 .git/info/exclude 里，那是本地文件、不随仓库走，
+# 换台机器 clone 就没有这层保护。必须写进 .gitignore。
+.learnings/
+private-audits/
+ops-private/
+.tmp-audit/
+.tmp_diff_snapshot.txt
+
+# 监控栈配置里写着两台生产机的 IP 与端口分配
+deploy/observability/
+
+# 任何名字带这些词的文件一律不进仓库（凭据/交接/审计）
+*credential*.md
+*credentials*.json
+*secrets*.md
+*secrets*.json
+*handoff*.md
+*-audit-local*.md
+
 # 本地编译出来的发行包
 backend/dist/
 backend/backend/
