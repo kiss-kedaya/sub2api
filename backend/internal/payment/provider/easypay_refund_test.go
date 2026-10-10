@@ -19,12 +19,12 @@ func TestNormalizeEasyPayAPIBase(t *testing.T) {
 		input string
 		want  string
 	}{
-		{input: "https://zpayz.cn", want: "https://zpayz.cn"},
-		{input: "https://zpayz.cn/", want: "https://zpayz.cn"},
-		{input: "https://zpayz.cn/mapi.php", want: "https://zpayz.cn"},
-		{input: "https://zpayz.cn/submit.php", want: "https://zpayz.cn"},
-		{input: "https://zpayz.cn/api.php", want: "https://zpayz.cn"},
-		{input: "https://zpayz.cn/api.php?act=refund", want: "https://zpayz.cn"},
+		{input: "https://pay-gateway.example.com", want: "https://pay-gateway.example.com"},
+		{input: "https://pay-gateway.example.com/", want: "https://pay-gateway.example.com"},
+		{input: "https://pay-gateway.example.com/mapi.php", want: "https://pay-gateway.example.com"},
+		{input: "https://pay-gateway.example.com/submit.php", want: "https://pay-gateway.example.com"},
+		{input: "https://pay-gateway.example.com/api.php", want: "https://pay-gateway.example.com"},
+		{input: "https://pay-gateway.example.com/api.php?act=refund", want: "https://pay-gateway.example.com"},
 	}
 
 	for _, tt := range tests {

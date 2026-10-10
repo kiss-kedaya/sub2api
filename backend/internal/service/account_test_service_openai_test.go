@@ -723,7 +723,7 @@ func TestAccountTestService_BillingFrozenDisablesAccount(t *testing.T) {
 		Concurrency: 1,
 		Credentials: map[string]any{
 			"api_key":  "sk-test",
-			"base_url": "https://senseaudio.cn",
+			"base_url": "https://audio-vendor.example.com",
 		},
 		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: false},
 	}

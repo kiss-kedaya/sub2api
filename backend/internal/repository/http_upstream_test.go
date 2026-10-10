@@ -705,7 +705,7 @@ func (s *HTTPUpstreamSuite) TestOpenAIThirdPartyHostForcesHTTP1() {
 		OpenAIHTTP2: config.GatewayOpenAIHTTP2Config{Enabled: true},
 	}
 	svc := s.newService()
-	entry, err := svc.getClientEntry("", 1, 1, service.HTTPUpstreamProfileOpenAI, false, false, "rc.lukyface.com")
+	entry, err := svc.getClientEntry("", 1, 1, service.HTTPUpstreamProfileOpenAI, false, false, "relay-vendor.example.com")
 	require.NoError(s.T(), err)
 	transport, ok := entry.client.Transport.(*http.Transport)
 	require.True(s.T(), ok, "expected *http.Transport")
@@ -730,8 +730,8 @@ func TestIsOfficialOpenAIUpstreamHost(t *testing.T) {
 	require.True(t, isOfficialOpenAIUpstreamHost("api.openai.com"))
 	require.True(t, isOfficialOpenAIUpstreamHost("chatgpt.com"))
 	require.True(t, isOfficialOpenAIUpstreamHost("API.OpenAI.com:443"))
-	require.False(t, isOfficialOpenAIUpstreamHost("rc.lukyface.com"))
-	require.False(t, isOfficialOpenAIUpstreamHost("api.lukyface.com"))
+	require.False(t, isOfficialOpenAIUpstreamHost("relay-vendor.example.com"))
+	require.False(t, isOfficialOpenAIUpstreamHost("relay-vendor-api.example.com"))
 	require.False(t, isOfficialOpenAIUpstreamHost(""))
 }
 

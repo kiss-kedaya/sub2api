@@ -22,7 +22,7 @@ func TestGeminiCustomProtocolSkipsAIStudioQuota(t *testing.T) {
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
 			"api_key":      "gemini-key",
-			"base_url":     "https://mdkj.lol",
+			"base_url":     "https://custom-relay.example.com",
 			"api_protocol": APIProtocolResponses,
 		},
 	}
