@@ -129,31 +129,37 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 			}
 		}
 	}
-	if forcePlatform == service.PlatformAntigravity {
-		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(agModels)})
-		return
-	}
-
+	// 本地目录只来自账号的真实映射（agModels）。禁止再用 gemini.DefaultModels()
+	// 之类的内置全量目录合成 200：分组里混着 OpenAI 兼容账号或 Antigravity 账号时，
+	// 内置目录会列出这个分组根本跑不了的模型，客户端拿到的列表和实际能力对不上。
 	writeLocalCatalog := func() {
-		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(mergeGeminiModelLists(gemini.DefaultModels(), agModels))})
+		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(agModels)})
 	}
-
-	account, err := h.selectGeminiStudioAccount(c.Request.Context(), apiKey)
-	if err != nil {
-		// Official sub2api / Gemini SDK sync GET /v1beta/models before generateContent.
-		// Gemini groups that only have OpenAI-compat or Antigravity accounts must still
-		// return a Google-format catalog instead of 503, or the client shows "sync failed".
+	if forcePlatform == service.PlatformAntigravity {
 		writeLocalCatalog()
 		return
 	}
-	if account != nil && account.IsGeminiOpenAIProtocol() {
+
+	account, err := h.selectGeminiStudioAccount(c.Request.Context(), apiKey)
+	if err != nil || account == nil || account.IsGeminiOpenAIProtocol() {
+		// 没有可选的 Gemini 原生账号，或账号走 OpenAI 兼容上游：两种情况都拿不到
+		// Google 格式目录，也没有上游响应可透传，只能回本地真实映射（空就是空）。
+		// 这里仍然返回 200 空目录而不是 503：Gemini SDK 在 generateContent 前会先
+		// sync GET /v1beta/models，503 会让客户端直接报 "sync failed"。
 		writeLocalCatalog()
 		return
 	}
 
 	res, err := h.geminiCompatService.ForwardAIStudioGET(c.Request.Context(), account, "/v1beta/models")
-	if err != nil || res == nil || shouldFallbackGeminiModels(res) || res.StatusCode >= 400 {
+	if err != nil || res == nil {
+		// 上游没返回任何响应体，没有东西可透传，同样只回本地真实映射。
 		writeLocalCatalog()
+		return
+	}
+	if shouldFallbackGeminiModels(res) || res.StatusCode >= 400 {
+		// 上游目录不可用（含 401/403 scope 不足）：透传上游自己的状态码和错误体，
+		// 让客户端看到真实失败原因，而不是一份 200 的假目录。
+		writeUpstreamResponse(c, res)
 		return
 	}
 	if res.StatusCode == http.StatusOK && len(agModels) > 0 {
@@ -168,22 +174,6 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		}
 	}
 	writeUpstreamResponse(c, res)
-}
-
-// mergeGeminiModelLists keeps native metadata when both sources advertise a model.
-func mergeGeminiModelLists(native, extra []gemini.Model) []gemini.Model {
-	result := append([]gemini.Model{}, native...)
-	seen := make(map[string]bool, len(native))
-	for _, model := range native {
-		seen[model.Name] = true
-	}
-	for _, model := range extra {
-		if !seen[model.Name] {
-			result = append(result, model)
-			seen[model.Name] = true
-		}
-	}
-	return result
 }
 
 // appendUpstreamGeminiModels preserves unknown model metadata and envelope fields.

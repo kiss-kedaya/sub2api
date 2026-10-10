@@ -63,7 +63,9 @@ func TestGeminiNativeModelsUsesAccountMappings(t *testing.T) {
 				require.Contains(t, names, "models/gemini-synced-custom")
 			} else {
 				require.NotContains(t, names, "models/gemini-synced-custom")
-				require.Contains(t, names, "models/gemini-2.5-pro")
+				// 本地目录只来自账号真实映射；没有映射就是空目录，
+				// 不再补内置全量目录里那批模型。
+				require.Empty(t, names)
 			}
 			require.NotContains(t, names, "models/claude-custom")
 			if tt.allowlist {
@@ -103,14 +105,16 @@ func (u *geminiMixedModelsUpstream) Do(_ *http.Request, _ string, _ int64, _ int
 }
 func TestGeminiNativeModelsMergesNativeUpstream(t *testing.T) {
 	for _, tt := range []struct {
-		name           string
-		status         int
-		body           string
-		expectedNative string
+		name string
+		// expectPassthrough 为 true 时断言上游响应被原样透传（状态码 + 响应体），
+		// 不再合成 200 目录，也不再出现内置全量目录条目。
+		expectPassthrough bool
+		status            int
+		body              string
 	}{
-		{"native", 200, `{"models":[{"name":"models/gemini-native","inputTokenLimit":123}],"nextPageToken":"next"}`, "models/gemini-native"},
-		{"scope fallback", 403, `{"error":"insufficient authentication scopes"}`, "models/gemini-2.5-pro"},
-		{"upstream error", 429, `{"error":"rate limited"}`, "models/gemini-2.5-pro"},
+		{"native", false, 200, `{"models":[{"name":"models/gemini-native","inputTokenLimit":123}],"nextPageToken":"next"}`},
+		{"scope fallback", true, 403, `{"error":"insufficient authentication scopes"}`},
+		{"upstream error", true, 429, `{"error":"rate limited"}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			id := int64(46)
@@ -125,14 +129,20 @@ func TestGeminiNativeModelsMergesNativeUpstream(t *testing.T) {
 			c.Request = httptest.NewRequest(http.MethodGet, "/v1beta/models", nil)
 			c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{GroupID: &id, Group: &service.Group{ID: id, Platform: service.PlatformGemini}})
 			h.GeminiV1BetaListModels(c)
-			require.Equal(t, 200, rec.Code, rec.Body.String())
-			require.Contains(t, rec.Body.String(), tt.expectedNative)
-			require.Contains(t, rec.Body.String(), "models/gemini-synced-custom")
-			if tt.status == 200 {
-				require.Contains(t, rec.Body.String(), `"inputTokenLimit":123`)
-				require.Contains(t, rec.Body.String(), `"nextPageToken":"next"`)
+			// 内置全量目录永远不再出现在响应里。
+			require.NotContains(t, rec.Body.String(), "models/gemini-2.5-pro")
+			if tt.expectPassthrough {
+				require.Equal(t, tt.status, rec.Code, rec.Body.String())
+				require.JSONEq(t, tt.body, rec.Body.String())
 				require.Equal(t, "native-id", rec.Header().Get("X-Request-Id"))
+				return
 			}
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), "models/gemini-native")
+			require.Contains(t, rec.Body.String(), "models/gemini-synced-custom")
+			require.Contains(t, rec.Body.String(), `"inputTokenLimit":123`)
+			require.Contains(t, rec.Body.String(), `"nextPageToken":"next"`)
+			require.Equal(t, "native-id", rec.Header().Get("X-Request-Id"))
 		})
 	}
 }
@@ -145,6 +155,8 @@ func (r *geminiMappingFailureRepo) ListSchedulableByGroupIDAndPlatforms(_ contex
 	return nil, errors.New("catalog temporarily unavailable")
 }
 
+// 目录来源不可用时只回本地真实映射（这里为空），不再补内置全量目录；
+// 仍然返回 200，避免 Gemini SDK 在 generateContent 前的 sync GET 直接报 "sync failed"。
 func TestGeminiNativeModelsKeepsLocalFallback(t *testing.T) {
 	for _, compat := range []*service.GeminiMessagesCompatService{
 		nil,
@@ -157,7 +169,10 @@ func TestGeminiNativeModelsKeepsLocalFallback(t *testing.T) {
 		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{GroupID: &id, Group: &service.Group{ID: id, Platform: service.PlatformGemini}})
 		(&GatewayHandler{geminiCompatService: compat}).GeminiV1BetaListModels(c)
 		require.Equal(t, http.StatusOK, rec.Code)
-		require.Contains(t, rec.Body.String(), "models/gemini-2.5-pro")
+		require.NotContains(t, rec.Body.String(), "models/gemini-2.5-pro")
+		var got gemini.ModelsListResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.Empty(t, got.Models)
 	}
 }
 
