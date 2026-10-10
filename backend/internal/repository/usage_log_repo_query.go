@@ -117,7 +117,8 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		args = append(args, filters.GroupID)
 	}
 	if requestID := strings.TrimSpace(filters.RequestID); requestID != "" {
-		like := "%" + requestID + "%"
+		// 转义 % _ \ 后再拼装饰符，否则用户输入的通配符会放大匹配面（`%` 直接命中全表）。
+		like := "%" + escapeLikePattern(requestID) + "%"
 		conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR upstream_request_id ILIKE $%d)", len(args)+1, len(args)+1))
 		args = append(args, like)
 	}
