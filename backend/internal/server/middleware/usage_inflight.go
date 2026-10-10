@@ -74,6 +74,23 @@ func trackUsageInflight(c *gin.Context) func() {
 		state.mu.Unlock()
 		state.refresh()
 	})
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-state.done:
+				return
+			case <-ticker.C:
+				state.mu.Lock()
+				closed := state.closed || !state.persisted
+				state.mu.Unlock()
+				if !closed {
+					state.refresh()
+				}
+			}
+		}
+	}()
 	reqCtx := c.Request.Context()
 	go func() {
 		select {
@@ -228,6 +245,7 @@ func (s *usageInflightWriteState) snapshotLocked() service.UsageInflightSnapshot
 		}
 	}
 	fillUsageInflightDisplay(s.ginCtx, &snap)
+	snap.UpdatedAt = time.Now()
 	s.snap = snap
 	return snap
 }
