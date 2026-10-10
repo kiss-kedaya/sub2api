@@ -1069,6 +1069,8 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		return nil
 	}
 	if openAIStickyYieldsToNativeResponses(ctx, account) {
+		// 与下面 selectBestAccount 的 Layer 1 同因：不清键就会每轮换号、断上下文。
+		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
 
@@ -1307,6 +1309,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				} else if openAIStickyYieldsToNativeResponses(ctx, account) {
 					// 入站 responses 不黏在必须降级的账号上，交给后面的原生优先。
+					// 必须清键：否则会话命中旧绑定→让位→重选→setStickySessionAccountID
+					// 又写回，每轮换号，带 previous_response_id 的对话会断上下文。
+					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				} else {
 					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 					if err == nil && result != nil && result.Acquired {
