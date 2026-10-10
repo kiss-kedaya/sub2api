@@ -459,7 +459,6 @@ const buildUsageListParams = (page: number, pageSize: number): UsageQueryParams 
 })
 
 let logsGeneration = 0
-let inflightPoll: number | undefined
 const loadLogs = async (silent = false) => {
   if (silent && loading.value) return
   const generation = silent ? logsGeneration : ++logsGeneration
@@ -477,7 +476,6 @@ const loadLogs = async (silent = false) => {
     if (!controller.signal.aborted) {
       usageLogs.value = res.items
       pagination.total = res.total
-      syncInflightPoll()
     }
   } catch (error: any) {
     if (!silent && error?.name !== 'AbortError' && error?.code !== 'ERR_CANCELED') {
@@ -487,19 +485,6 @@ const loadLogs = async (silent = false) => {
     if (!silent && abortController === controller) loading.value = false
   }
 }
-const syncInflightPoll = () => {
-  const hasInflight = activeTab.value === 'usage' && usageLogs.value.some((row) => row.inflight)
-  if (hasInflight && inflightPoll === undefined) {
-    inflightPoll = window.setInterval(() => {
-      if (activeTab.value === 'usage') void loadLogs(true)
-    }, 2000)
-  }
-  if (!hasInflight && inflightPoll !== undefined) {
-    window.clearInterval(inflightPoll)
-    inflightPoll = undefined
-  }
-}
-
 const loadStats = async () => {
   const seq = ++statsReqSeq
   endpointStatsLoading.value = true
@@ -938,7 +923,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   abortController?.abort()
-  if (inflightPoll !== undefined) window.clearInterval(inflightPoll)
   document.removeEventListener('click', handleColumnClickOutside)
 })
 

@@ -406,6 +406,8 @@ export default {
     tokens: 'Tokens',
     cost: 'Cost',
     inflightReservedHint: 'Not the final price. Reserved balance only.',
+    inflightRunning: 'In progress',
+    inflightRunningHint: 'Still running. Duration and cost update when you refresh.',
     inflightElapsed: 'Elapsed',
     firstToken: 'First Token',
     duration: 'Duration',

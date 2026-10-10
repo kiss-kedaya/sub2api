@@ -208,7 +208,12 @@
         <template #cell-cost="{ row }">
           <div class="text-sm">
             <div class="flex items-center gap-1.5">
-              <span class="font-medium text-green-600 dark:text-green-400">${{ row.actual_cost?.toFixed(8) || '0.00000000' }}</span>
+              <span
+                v-if="row.inflight"
+                class="inline-flex items-center rounded px-1.5 py-px text-[11px] font-semibold leading-tight bg-amber-100 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/20 dark:text-amber-300 dark:ring-amber-500/30"
+                :title="(row.actual_cost ?? 0) > 0 ? t('usage.inflightReservedHint') : t('usage.inflightRunningHint')"
+              >{{ t('usage.inflightRunning') }}</span>
+              <span v-if="!row.inflight || (row.actual_cost ?? 0) > 0" class="font-medium text-green-600 dark:text-green-400">${{ row.actual_cost?.toFixed(8) || '0.00000000' }}</span>
               <span
                 v-if="row.long_context_billing_applied"
                 data-testid="long-context-billing-marker"
@@ -548,7 +553,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime, formatReasoningEffort, reasoningEffortValuesEqual } from '@/utils/format'
@@ -631,30 +636,7 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 const appStore = useAppStore()
-const nowMs = ref(Date.now())
-let inflightClock: number | undefined
-const hasInflightRow = computed(() => props.data.some((row) => row.inflight))
-watch(hasInflightRow, (on) => {
-  if (inflightClock !== undefined) {
-    window.clearInterval(inflightClock)
-    inflightClock = undefined
-  }
-  if (!on) return
-  nowMs.value = Date.now()
-  inflightClock = window.setInterval(() => {
-    nowMs.value = Date.now()
-  }, 1000)
-}, { immediate: true })
-onUnmounted(() => {
-  if (inflightClock !== undefined) window.clearInterval(inflightClock)
-})
-const displayDuration = (row: { inflight?: boolean; created_at?: string; duration_ms?: number | null }) => {
-  if (row.inflight && row.created_at) {
-    const started = Date.parse(row.created_at)
-    if (!Number.isNaN(started)) return Math.max(0, nowMs.value - started)
-  }
-  return row.duration_ms
-}
+const displayDuration = (row: { duration_ms?: number | null }) => row.duration_ms
 const copiedRequestId = ref<string | null>(null)
 const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint
