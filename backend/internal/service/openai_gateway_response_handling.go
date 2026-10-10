@@ -1056,9 +1056,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if streamEarlyErr != nil {
 				return resultWithUsage(), streamEarlyErr
 			}
-			// Grok terminal events carry final usage. Do not hold the account slot
-			// (or report an idle timeout) while waiting for the HTTP body to close.
-			if account != nil && account.IsGrok() && sawTerminalEvent && terminalEventType != "error" && ev.line == "" {
+			// Terminal event already carries final usage. Do not hold the slot
+			// or skip billing while the upstream keeps the body open.
+			if sawTerminalEvent && terminalEventType != "error" && ev.line == "" {
 				_ = resp.Body.Close()
 				return finalizeStream()
 			}
