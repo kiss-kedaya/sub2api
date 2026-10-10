@@ -146,6 +146,10 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			apikey.FieldRateLimit5h,
 			apikey.FieldRateLimit1d,
 			apikey.FieldRateLimit7d,
+			// 密钥级 Anthropic cache_control TTL 覆盖。少这一列，鉴权快照里
+			// AnthropicCacheTTLMode 恒为空 -> 归一化成 inherit -> 网关读不到
+			// 管理员设的「强制 1h」，整条注入链路静默失效。
+			apikey.FieldAnthropicCacheTTLMode,
 		).
 		WithUser(func(q *dbent.UserQuery) {
 			q.Select(
