@@ -407,6 +407,8 @@ export default {
     cost: 'Cost',
     inflightReservedHint: 'Not the final price. Reserved balance only.',
     inflightRunning: 'In progress',
+    inflightFold: 'In-flight requests',
+    requestIdPlaceholder: 'Search request ID',
     inflightRunningHint: 'Still running. Duration and cost update when you refresh.',
     inflightElapsed: 'Elapsed',
     firstToken: 'First Token',
