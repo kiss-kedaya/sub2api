@@ -22,10 +22,15 @@ import (
 type CryptoHandler struct {
 	addresses *addresses.Service
 	store     cryptopay.SettingStore
+	service   *cryptopay.Service
 }
 
-func NewCryptoHandler(addressService *addresses.Service, settings *service.SettingService) *CryptoHandler {
-	return &CryptoHandler{addresses: addressService, store: cryptopay.NewServiceSettingStore(settings)}
+func NewCryptoHandler(addressService *addresses.Service, settings *service.SettingService, cryptoSvc *cryptopay.Service) *CryptoHandler {
+	return &CryptoHandler{
+		addresses: addressService,
+		store:     cryptopay.NewServiceSettingStore(settings),
+		service:   cryptoSvc,
+	}
 }
 
 // GetDepositAddresses returns (or lazily assigns) the caller's addresses.
@@ -91,7 +96,56 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// Apply immediately: rebuild pools and restart the scan worker.
+	if h.service != nil {
+		h.service.Reload(c.Request.Context())
+	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"saved": true}})
+}
+
+// AdminSweepPlan returns the current dry-run sweep plan.
+// GET /api/v1/admin/crypto/sweep/plan
+func (h *CryptoHandler) AdminSweepPlan(c *gin.Context) {
+	if h.service == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	plan, err := h.service.BuildSweepPlan(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": plan})
+}
+
+// AdminSweepRecords lists sweep history.
+// GET /api/v1/admin/crypto/sweep/records
+func (h *CryptoHandler) AdminSweepRecords(c *gin.Context) {
+	if h.service == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	records, err := h.service.ListSweepRecords(c.Request.Context(), c.Query("chain"), 100)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": records})
+}
+
+// AdminListDeposits lists observed deposits for reconciliation.
+// GET /api/v1/admin/crypto/deposits
+func (h *CryptoHandler) AdminListDeposits(c *gin.Context) {
+	if h.service == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	deposits, err := h.service.ListDeposits(c.Request.Context(), c.Query("chain"), c.Query("status"), 100)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": deposits})
 }
 
 // AdminListAddresses lists assignments with optional family/status filters.
