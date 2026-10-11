@@ -9,7 +9,7 @@
 │   ├─ scanner     扫链（BSC/Polygon/Plasma/Solana）      │
 │   ├─ ledger      入账 → 复用 payment fulfillment        │
 │   ├─ sweeper     归集调度（阈值/两段式/记录）           │
-│   └─ rpc         自有 RPC 轮换（多端点）            │
+│   └─ rpc         自有 RPC 轮换（多端点）                │
 │                                                         │
 │  admin UI / 用户直充页（Vue 组件增量）                  │
 └──────────────┬──────────────────────────────────────────┘
