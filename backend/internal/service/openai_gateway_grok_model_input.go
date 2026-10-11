@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -51,8 +52,122 @@ func sanitizeGrokResponsesModelInput(body []byte) ([]byte, error) {
 		return body, nil
 	}
 
+	encoded, fast := encodeGrokSimpleMessages(input)
+	if fast && encoded == nil {
+		return body, nil
+	}
+	if !fast {
+		var err error
+		encoded, err = encodeGrokResponsesModelInput(input.Raw)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// 这里直接用 gjson 已经算好的字节跨度拼接，省掉 sjson.SetRawBytes 又要整份
+	// 解析一遍 body 的开销。input 在上文每次改写 body 之后都重新取过，所以
+	// Index / Raw 对当前 body 是有效的；而 sjson 相对拼接唯一的额外能力是
+	// 「键不存在时创建」，可这里 input 必然存在（上文已 Exists 且判定为数组）。
+	end := input.Index + len(input.Raw)
+	if input.Index < 0 || input.Index > len(body) || end > len(body) {
+		// 跨度不可信时退回原路径，行为完全不变。
+		updated, setErr := sjson.SetRawBytes(body, "input", encoded)
+		if setErr != nil {
+			return nil, fmt.Errorf("set Grok Responses model input: %w", setErr)
+		}
+		return updated, nil
+	}
+	updated := make([]byte, 0, len(body)-len(input.Raw)+len(encoded))
+	updated = append(updated, body[:input.Index]...)
+	updated = append(updated, encoded...)
+	updated = append(updated, body[end:]...)
+	return updated, nil
+}
+
+// Only plain text messages bypass replay normalization. Any unfamiliar shape
+// falls back as a whole so call pairing and image lifting keep their ordering.
+func encodeGrokSimpleMessages(input gjson.Result) ([]byte, bool) {
+	if !utf8.ValidString(input.Raw) || strings.Contains(input.Raw, `\u`) || !json.Valid([]byte(input.Raw)) {
+		return nil, false
+	}
+	insertions := make([]int, 0)
+	plain := true
+	gjson.Parse(input.Raw).ForEach(func(_, item gjson.Result) bool {
+		if !item.IsObject() {
+			plain = false
+			return false
+		}
+		seen := uint8(0)
+		item.ForEach(func(key, _ gjson.Result) bool {
+			var bit uint8
+			switch key.Str {
+			case "type":
+				bit = 1
+			case "role":
+				bit = 2
+			case "content":
+				bit = 4
+			case "id":
+				bit = 8
+			case "status":
+				bit = 16
+			default:
+				plain = false
+				return false
+			}
+			if seen&bit != 0 {
+				plain = false
+				return false
+			}
+			seen |= bit
+			return true
+		})
+		if !plain {
+			return false
+		}
+		typ, role, content := item.Get("type"), item.Get("role"), item.Get("content")
+		r := strings.ToLower(strings.TrimSpace(role.Str))
+		if (typ.Exists() && (typ.Type != gjson.String || strings.ToLower(strings.TrimSpace(typ.Str)) != "message")) ||
+			role.Type != gjson.String || r == "" || r == "tool" || r == "function" ||
+			content.Type != gjson.String || strings.TrimSpace(content.Str) == "" {
+			plain = false
+			return false
+		}
+		if (seen&8 != 0 && item.Get("id").Type != gjson.String) || (seen&16 != 0 && item.Get("status").Type != gjson.String) {
+			plain = false
+			return false
+		}
+		if r == "assistant" && seen&(8|16) != 0 {
+			id, status := item.Get("id"), item.Get("status")
+			if id.Type != gjson.String || status.Type != gjson.String || strings.TrimSpace(id.Str) == "" || strings.TrimSpace(status.Str) == "" {
+				plain = false
+				return false
+			}
+		}
+		if !typ.Exists() {
+			insertions = append(insertions, item.Index+1)
+		}
+		return true
+	})
+	if !plain {
+		return nil, false
+	}
+	if len(insertions) == 0 {
+		return nil, true
+	}
+	const field = `"type":"message",`
+	encoded := make([]byte, 0, len(input.Raw)+len(insertions)*len(field))
+	cursor := 0
+	for _, at := range insertions {
+		encoded = append(encoded, input.Raw[cursor:at]...)
+		encoded = append(encoded, field...)
+		cursor = at
+	}
+	return append(encoded, input.Raw[cursor:]...), true
+}
+
+func encodeGrokResponsesModelInput(raw string) ([]byte, error) {
 	var items []any
-	decoder := json.NewDecoder(bytes.NewReader([]byte(input.Raw)))
+	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
 	decoder.UseNumber()
 	if err := decoder.Decode(&items); err != nil {
 		return nil, fmt.Errorf("parse Grok Responses model input: %w", err)
@@ -175,24 +290,7 @@ func sanitizeGrokResponsesModelInput(body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("serialize Grok Responses model input: %w", err)
 	}
-	// 这里直接用 gjson 已经算好的字节跨度拼接，省掉 sjson.SetRawBytes 又要整份
-	// 解析一遍 body 的开销。input 在上文每次改写 body 之后都重新取过，所以
-	// Index / Raw 对当前 body 是有效的；而 sjson 相对拼接唯一的额外能力是
-	// 「键不存在时创建」，可这里 input 必然存在（上文已 Exists 且判定为数组）。
-	end := input.Index + len(input.Raw)
-	if input.Index < 0 || input.Index > len(body) || end > len(body) {
-		// 跨度不可信时退回原路径，行为完全不变。
-		updated, setErr := sjson.SetRawBytes(body, "input", encoded)
-		if setErr != nil {
-			return nil, fmt.Errorf("set Grok Responses model input: %w", setErr)
-		}
-		return updated, nil
-	}
-	updated := make([]byte, 0, len(body)-len(input.Raw)+len(encoded))
-	updated = append(updated, body[:input.Index]...)
-	updated = append(updated, encoded...)
-	updated = append(updated, body[end:]...)
-	return updated, nil
+	return encoded, nil
 }
 
 type grokToolOutputImage struct {
