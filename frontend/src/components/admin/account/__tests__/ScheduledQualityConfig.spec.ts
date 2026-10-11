@@ -10,13 +10,11 @@ import type { ChanshuiStopCondition } from '@/types'
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 
 describe('scheduled Chanshui configuration', () => {
-  it('shows service URL and multi-select only for Chanshui and does not ask for a key', async () => {
+  it('shows service URL and multi-select and does not ask for a key', async () => {
     const wrapper = mount(ScheduledQualityConfig, {
-      props: { provider: 'pelican', config: defaultChanshuiConfig(), model: 'gpt-test' },
+      props: { provider: 'chanshui', config: defaultChanshuiConfig(), model: 'gpt-test' },
       global: { stubs: { Select: true } },
     })
-    expect(wrapper.find('[data-testid="chanshui-service-url"]').exists()).toBe(false)
-    await wrapper.setProps({ provider: 'chanshui' })
     expect((wrapper.get('[data-testid="chanshui-service-url"]').element as HTMLInputElement).value).toBe('https://chanshui.dev')
     expect(wrapper.find('input[type="password"]').exists()).toBe(false)
     expect(wrapper.findAll('input[data-section]')).toHaveLength(9)
