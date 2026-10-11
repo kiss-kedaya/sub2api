@@ -159,3 +159,102 @@ func (s *Service) BuildSweepPlan(ctx context.Context) (*sweeper.Plan, error) {
 	}
 	return planner.BuildPlan(ctx)
 }
+
+// SweepRecord is one sweep_records row for the admin UI.
+type SweepRecord struct {
+	ID          int64   `json:"id"`
+	Chain       string  `json:"chain"`
+	FromAddress string  `json:"from_address"`
+	ToAddress   string  `json:"to_address"`
+	Token       string  `json:"token"`
+	Amount      string  `json:"amount"`
+	GasTxHash   string  `json:"gas_tx_hash"`
+	SweepTxHash string  `json:"sweep_tx_hash"`
+	Status      string  `json:"status"`
+	Error       string  `json:"error"`
+	CreatedAt   string  `json:"created_at"`
+}
+
+// ListSweepRecords returns recent sweep records, optionally filtered.
+func (s *Service) ListSweepRecords(ctx context.Context, chain string, limit int) ([]SweepRecord, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := `SELECT id, chain, from_address, to_address, token, amount::text,
+	                 gas_tx_hash, sweep_tx_hash, status, error, created_at
+	            FROM sweep_records`
+	args := []any{}
+	if chain != "" {
+		query += ` WHERE chain = $1`
+		args = append(args, chain)
+	}
+	query += ` ORDER BY id DESC LIMIT ` + fmt.Sprintf("%d", limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list sweep records: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []SweepRecord
+	for rows.Next() {
+		var r SweepRecord
+		var created time.Time
+		if err := rows.Scan(&r.ID, &r.Chain, &r.FromAddress, &r.ToAddress, &r.Token,
+			&r.Amount, &r.GasTxHash, &r.SweepTxHash, &r.Status, &r.Error, &created); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DepositRecord is one deposit_transactions row for reconciliation.
+type DepositRecord struct {
+	ID          int64  `json:"id"`
+	Chain       string `json:"chain"`
+	TxHash      string `json:"tx_hash"`
+	LogIndex    int    `json:"log_index"`
+	FromAddress string `json:"from_address"`
+	ToAddress   string `json:"to_address"`
+	Token       string `json:"token"`
+	Amount      string `json:"amount"`
+	Status      string `json:"status"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// ListDeposits returns recent deposit observations, optionally filtered.
+func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit int) ([]DepositRecord, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
+	                 token, amount::text, status, created_at
+	            FROM deposit_transactions WHERE 1=1`
+	args := []any{}
+	if chain != "" {
+		args = append(args, chain)
+		query += fmt.Sprintf(" AND chain = $%d", len(args))
+	}
+	if status != "" {
+		args = append(args, status)
+		query += fmt.Sprintf(" AND status = $%d", len(args))
+	}
+	query += ` ORDER BY id DESC LIMIT ` + fmt.Sprintf("%d", limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list deposits: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []DepositRecord
+	for rows.Next() {
+		var r DepositRecord
+		var created time.Time
+		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
+			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &created); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
