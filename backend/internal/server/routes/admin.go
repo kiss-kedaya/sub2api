@@ -136,9 +136,6 @@ func RegisterAdminRoutes(
 		// 链上直充（内置渠道：配置 / 地址 / 归集）
 		RegisterCryptoAdminRoutes(admin, h.Crypto)
 
-		// 链上直充（内置渠道：配置 / 地址 / 归集）
-		RegisterCryptoAdminRoutes(admin, h.Crypto)
-
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
 	}
