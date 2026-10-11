@@ -19,6 +19,9 @@ const (
 	TypeEasyPay      PaymentType = "easypay"
 	TypeAirwallex    PaymentType = "airwallex"
 	TypeEpusdt       PaymentType = "epusdt"
+	// TypeCrypto is the built-in on-chain deposit channel (per-user HD
+	// addresses + scanning). Additive; disabled unless configured.
+	TypeCrypto       PaymentType = "crypto"
 )
 
 // Order status constants shared across payment and service layers.
@@ -89,6 +92,8 @@ func GetBasePaymentType(t string) string {
 		return TypeAirwallex
 	case t == TypeEpusdt:
 		return TypeEpusdt
+	case t == TypeCrypto:
+		return TypeCrypto
 	case t == TypeStripe || t == TypeCard || t == TypeLink:
 		return TypeStripe
 	case len(t) >= len(TypeAlipay) && t[:len(TypeAlipay)] == TypeAlipay:
