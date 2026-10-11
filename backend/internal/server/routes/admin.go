@@ -133,6 +133,12 @@ func RegisterAdminRoutes(
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
 
+		// 链上直充（内置渠道：配置 / 地址 / 归集）
+		RegisterCryptoAdminRoutes(admin, h.Crypto)
+
+		// 链上直充（内置渠道：配置 / 地址 / 归集）
+		RegisterCryptoAdminRoutes(admin, h.Crypto)
+
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
 	}

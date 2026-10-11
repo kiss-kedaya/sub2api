@@ -2,9 +2,23 @@ package cryptopay
 
 import (
 	"context"
+	"database/sql"
 
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
+
+// NewAddressService builds the address pool service: reads the signer socket
+// path from config (falling back to the default) and wires the signer client.
+func NewAddressService(db *sql.DB, settings *service.SettingService) *addresses.Service {
+	socket := DefaultCryptoConfig().SignerSocket
+	if settings != nil {
+		if cfg, err := LoadConfig(context.Background(), NewServiceSettingStore(settings)); err == nil && cfg.SignerSocket != "" {
+			socket = cfg.SignerSocket
+		}
+	}
+	return addresses.NewService(addresses.NewRepo(db), addresses.NewSignerClient(socket))
+}
 
 // ServiceSettingStore adapts the shared SettingService to the narrow
 // SettingStore the crypto config needs, so the cryptopay package does not
