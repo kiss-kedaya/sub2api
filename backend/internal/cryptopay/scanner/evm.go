@@ -31,6 +31,11 @@ const transferTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4
 // batchSize bounds how many addresses go into one eth_getLogs filter.
 const batchSize = 200
 
+// evmFirstRunLookback is how far back the first scan reaches so deposits
+// landing just before boot are still caught. Bounded: full-history backfill
+// is the reconciliation job's concern, not the live scanner's.
+const evmFirstRunLookback = 200
+
 // EVMScanner scans ERC20 transfers for a set of watched addresses.
 type EVMScanner struct {
 	pool *rpc.Pool
