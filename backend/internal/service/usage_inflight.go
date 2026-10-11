@@ -12,6 +12,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
 
+// UsageInflightRequestContextKey publishes immutable request metadata through Gin's locked key store, so background snapshots never read a changing Request pointer.
+const UsageInflightRequestContextKey = "usage_inflight_request_context"
+
 // UsageInflightSnapshot 是一条还没写进 usage_logs 的在途请求。
 // 只放 Redis。请求结束就删，避免和落库行重复。
 type UsageInflightSnapshot struct {

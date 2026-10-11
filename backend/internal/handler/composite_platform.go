@@ -119,7 +119,9 @@ func bindRequestedReasoningEffort(c *gin.Context, body []byte, model string) {
 	if effort == nil {
 		return
 	}
-	c.Request = c.Request.WithContext(service.WithRequestedReasoningEffort(c.Request.Context(), *effort))
+	ctx := service.WithRequestedReasoningEffort(c.Request.Context(), *effort)
+	c.Request = c.Request.WithContext(ctx)
+	c.Set(service.UsageInflightRequestContextKey, ctx)
 }
 
 func stampOpenAIRequestedReasoningEffort(result *service.OpenAIForwardResult, c *gin.Context) {
