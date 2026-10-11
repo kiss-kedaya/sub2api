@@ -187,6 +187,7 @@ export default {
     plugins: 'Plugins',
     proxies: 'Proxies',
     redeemCodes: 'Redeem Codes',
+    cryptoDeposits: 'Crypto Deposits',
     ops: 'Ops',
     promoCodes: 'Promo Codes',
     settings: 'Settings',
