@@ -129,7 +129,9 @@ func (s *Service) reload(ctx context.Context) {
 	if s.worker != nil {
 		s.worker.Stop()
 	}
-	s.worker = scanner.NewWorker(s.pools, chainConfigs, cursor, led, addressLister, 15*time.Second, 2000)
+	// 5s poll: finality is decided by the chain's safe tag, so a tighter
+	// interval only shortens detection latency, not safety.
+	s.worker = scanner.NewWorker(s.db, s.pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
 	s.worker.Start()
 
 	s.signer = sweeper.NewSignerClient(cfg.SignerSocket)
