@@ -8,8 +8,11 @@ package cryptopay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 // Setting keys live under the "crypto." namespace so fork users who never
@@ -145,6 +148,10 @@ type SettingStore interface {
 func LoadConfig(ctx context.Context, store SettingStore) (CryptoConfig, error) {
 	raw, err := store.GetCryptoSetting(ctx, SettingKeyCryptoConfig)
 	if err != nil {
+		// A never-saved key is the normal first-run state: return defaults.
+		if errors.Is(err, service.ErrSettingNotFound) {
+			return DefaultCryptoConfig(), nil
+		}
 		return DefaultCryptoConfig(), err
 	}
 	cfg := DefaultCryptoConfig()
