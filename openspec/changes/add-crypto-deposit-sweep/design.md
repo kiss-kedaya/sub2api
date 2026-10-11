@@ -78,12 +78,30 @@
 **执行（EVM 两段式）**：
 ```
 1. 汇总候选地址（余额≥下限）
-2. 检查每个地址 gas 余额 < 阈值 → 主钱包打 gas（BNB/POL）→ 等确认
-3. 对每个地址：构造全额 ERC20 transfer → signer 签名 → 广播 → 等确认
+2. 【主路径 EIP-7702】gas 账户发一笔 type-4 交易：
+   - authorization_list 含子地址对 SweepDelegator 的委托（仅首次）
+   - to = 子地址，data = execute(token, hotWallet, amount)
+   - gas 由 gas 账户支付，子地址无需原生币
+3. 【兜底路径】链不支持 7702 或委托被拒时，回退两段式：
+   先给子地址打 gas → 确认 → 子地址自己发归集
 4. 写 sweep_records（tx/gas 消耗/状态/失败原因）
 ```
 
 **执行（Solana）**：费用极低，直接由热钱包给子地址打少量 SOL → 签名归集。
+
+**EIP-7702 无 Gas 归集（主路径）**：
+
+2026-10-12 实测：BSC（60 块内 24 笔 type-4）、Polygon（30 块内 55 笔）、
+Plasma（800 块内 3 笔）均支持 7702。
+
+- 委托合约：自部署极简 `SweepDelegator`，只允许 gas 账户调用、只能转
+  ERC20 到白名单热钱包——委托后即使 auth 被复用也无法被第三方利用。
+- 首次归集：auth（子地址→SweepDelegator）+ execute 打包进同一笔 type-4
+  交易；之后委托已上链，后续归集不再需要 auth。
+- 对比两段式：省掉每地址预充交易与残留 gas 币，资金占用和交易数都减半；
+  归集一笔完成，无需等两笔确认。
+- 前提：signer 服务需支持 EIP-7702 auth 签名（secp256k1，签
+  keccak256(0x05 || rlp([chain_id, address, nonce]))）与 type-4 交易组装。
 
 **安全**：
 - signer 白名单：只允许转出到归集热钱包地址；单笔上限（默认 5000 USDT）；日累计上限。

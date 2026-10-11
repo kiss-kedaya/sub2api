@@ -67,6 +67,8 @@ type PoolStore interface {
 	FreePoolCount(ctx context.Context, family string) (int64, error)
 	ExistingAssignment(ctx context.Context, userID int64, family string) (*Assignment, error)
 	AssignFromPool(ctx context.Context, userID int64, family string) (*Assignment, error)
+	ListByUser(ctx context.Context, userID int64) ([]Assignment, error)
+	SetStatus(ctx context.Context, id int64, status string) error
 }
 
 // Service coordinates pool top-up and lazy assignment.
@@ -162,4 +164,14 @@ func (s *Service) EnsurePool(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ListByUser exposes the user's assignments to the HTTP layer.
+func (s *Service) ListByUser(ctx context.Context, userID int64) ([]Assignment, error) {
+	return s.repo.ListByUser(ctx, userID)
+}
+
+// SetStatus exposes assignment status changes to the admin layer.
+func (s *Service) SetStatus(ctx context.Context, id int64, status string) error {
+	return s.repo.SetStatus(ctx, id, status)
 }

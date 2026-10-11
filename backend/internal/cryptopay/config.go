@@ -10,8 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 // Setting keys live under the "crypto." namespace so fork users who never
@@ -136,9 +134,16 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	return cfg, nil
 }
 
+// SettingStore is the narrow persistence surface the config needs: read and
+// write one settings key. *SettingService-backed adapters implement it.
+type SettingStore interface {
+	GetCryptoSetting(ctx context.Context, key string) (string, error)
+	SetCryptoSetting(ctx context.Context, key, value string) error
+}
+
 // LoadConfig reads and normalizes the config from settings.
-func LoadConfig(ctx context.Context, repo service.SettingRepository) (CryptoConfig, error) {
-	raw, err := repo.GetValue(ctx, SettingKeyCryptoConfig)
+func LoadConfig(ctx context.Context, store SettingStore) (CryptoConfig, error) {
+	raw, err := store.GetCryptoSetting(ctx, SettingKeyCryptoConfig)
 	if err != nil {
 		return DefaultCryptoConfig(), err
 	}
@@ -152,7 +157,7 @@ func LoadConfig(ctx context.Context, repo service.SettingRepository) (CryptoConf
 }
 
 // SaveConfig validates and persists the config.
-func SaveConfig(ctx context.Context, repo service.SettingRepository, cfg CryptoConfig) error {
+func SaveConfig(ctx context.Context, store SettingStore, cfg CryptoConfig) error {
 	normalized, err := NormalizeConfig(cfg)
 	if err != nil {
 		return err
@@ -161,5 +166,5 @@ func SaveConfig(ctx context.Context, repo service.SettingRepository, cfg CryptoC
 	if err != nil {
 		return err
 	}
-	return repo.Set(ctx, SettingKeyCryptoConfig, string(data))
+	return store.SetCryptoSetting(ctx, SettingKeyCryptoConfig, string(data))
 }
