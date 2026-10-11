@@ -22,6 +22,17 @@ export default {
     disable: 'Disable',
     enable: 'Enable',
     loadPlan: 'Build sweep plan (dry-run)',
-    totalToSweep: 'Total to sweep'
+    totalToSweep: 'Total to sweep',
+    groupChannel: 'Channel',
+    groupChannelDesc: 'Enable the channel and pick the chains to watch',
+    enabledHint: 'When off, no scanning, crediting or sweeping runs',
+    chainsHint: 'One EVM address serves all EVM chains; Solana is separate',
+    groupRpc: 'RPC Endpoints',
+    groupRpcDesc: 'Own nodes for scanning. Multiple endpoints rotate on failure',
+    groupSweep: 'Sweep',
+    groupSweepDesc: 'Thresholds and the hot wallet that receives swept funds',
+    globalThresholdHint: 'Sweep only runs when the total reaches this value',
+    groupSigner: 'Signing Service',
+    groupSignerDesc: 'Isolated process holding the seed; never exposed publicly'
   }
 }

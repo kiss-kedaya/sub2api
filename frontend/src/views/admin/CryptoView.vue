@@ -1,175 +1,238 @@
 <template>
   <AppLayout>
-    <div class="crypto-admin">
-      <div class="crypto-admin__tabs">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          class="crypto-admin__tab"
-          :class="{ 'crypto-admin__tab--active': activeTab === tab.id }"
-          @click="switchTab(tab.id)"
-        >
-          {{ tab.label }}
-        </button>
-      </div>
-
-      <!-- Config -->
-      <section v-if="activeTab === 'config'" class="crypto-admin__panel">
-        <div v-if="loadingConfig" class="crypto-admin__loading">{{ t('common.loading') }}</div>
-        <form v-else-if="config" class="crypto-admin__form" @submit.prevent="saveConfig">
-          <label class="crypto-admin__row">
-            <span>{{ t('admin.crypto.enabled') }}</span>
-            <input v-model="config.enabled" type="checkbox" />
-          </label>
-
-          <label class="crypto-admin__row">
-            <span>{{ t('admin.crypto.chains') }}</span>
-            <input
-              :value="config.chains.join(',')"
-              class="input"
-              placeholder="bsc,polygon,plasma,solana"
-              @change="(e) => (config!.chains = splitList((e.target as HTMLInputElement).value))"
-            />
-          </label>
-
-          <label v-for="chain in config.chains" :key="`rpc-${chain}`" class="crypto-admin__row">
-            <span>{{ t('admin.crypto.rpc') }} · {{ chain }}</span>
-            <input
-              :value="config.rpc[chain] ?? ''"
-              class="input"
-              :placeholder="t('admin.crypto.rpcPlaceholder')"
-              @change="(e) => setRPC(chain, (e.target as HTMLInputElement).value)"
-            />
-          </label>
-
-          <label class="crypto-admin__row">
-            <span>{{ t('admin.crypto.globalThreshold') }}</span>
-            <input v-model.number="config.sweep_global_threshold" type="number" step="1" class="input" />
-          </label>
-
-          <label class="crypto-admin__row">
-            <span>{{ t('admin.crypto.hotWalletEvm') }}</span>
-            <input v-model="config.hot_wallet_evm" class="input" placeholder="0x…" />
-          </label>
-
-          <label class="crypto-admin__row">
-            <span>{{ t('admin.crypto.hotWalletSolana') }}</span>
-            <input v-model="config.hot_wallet_solana" class="input" placeholder="…" />
-          </label>
-
-          <label class="crypto-admin__row">
-            <span>{{ t('admin.crypto.signerSocket') }}</span>
-            <input v-model="config.signer_socket" class="input" />
-          </label>
-
-          <div class="crypto-admin__actions">
-            <button type="submit" class="btn btn-primary" :disabled="savingConfig">
-              {{ savingConfig ? t('common.saving') : t('common.save') }}
-            </button>
-            <span v-if="configSaved" class="crypto-admin__saved">{{ t('common.saved') }}</span>
+    <div class="crypto-view">
+      <div class="card crypto-view__card">
+        <div class="crypto-view__header">
+          <div class="crypto-view__icon">
+            <Icon name="wallet" size="md" />
           </div>
-        </form>
-      </section>
-
-      <!-- Addresses -->
-      <section v-if="activeTab === 'addresses'" class="crypto-admin__panel">
-        <div class="crypto-admin__filters">
-          <input
-            v-model.number="addressUserId"
-            type="number"
-            class="input"
-            :placeholder="t('admin.crypto.userId')"
-            @keyup.enter="loadAddresses"
-          />
-          <button class="btn btn-secondary" @click="loadAddresses">{{ t('common.search') }}</button>
+          <div class="min-w-0">
+            <h1 class="crypto-view__title">{{ t('admin.crypto.title') }}</h1>
+            <p class="crypto-view__desc">{{ t('admin.crypto.description') }}</p>
+          </div>
         </div>
-        <table v-if="addresses.length" class="crypto-admin__table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>{{ t('admin.crypto.family') }}</th>
-              <th>{{ t('admin.crypto.address') }}</th>
-              <th>{{ t('common.status') }}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in addresses" :key="row.id">
-              <td>{{ row.id }}</td>
-              <td>{{ row.family }}</td>
-              <td class="crypto-admin__mono">{{ row.address }}</td>
-              <td>{{ row.status }}</td>
-              <td>
-                <button
-                  class="btn btn-secondary btn-sm"
-                  @click="toggleAddress(row)"
-                >
-                  {{ row.status === 'active' ? t('admin.crypto.disable') : t('admin.crypto.enable') }}
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div v-else class="crypto-admin__empty">{{ t('common.noData') }}</div>
-      </section>
 
-      <!-- Sweep -->
-      <section v-if="activeTab === 'sweep'" class="crypto-admin__panel">
-        <div class="crypto-admin__filters">
-          <button class="btn btn-secondary" @click="loadSweepPlan">{{ t('admin.crypto.loadPlan') }}</button>
-          <button class="btn btn-secondary" @click="loadSweepRecords">{{ t('common.refresh') }}</button>
+        <div class="crypto-view__tabs" role="tablist">
+          <button
+            v-for="tab in tabs"
+            :key="tab.id"
+            type="button"
+            role="tab"
+            class="crypto-view__tab"
+            :class="{ 'crypto-view__tab--active': activeTab === tab.id }"
+            :aria-selected="activeTab === tab.id"
+            @click="switchTab(tab.id)"
+          >
+            {{ tab.label }}
+          </button>
         </div>
-        <div v-if="sweepPlan" class="crypto-admin__plan">
-          <p>
-            {{ t('admin.crypto.totalToSweep') }}: <strong>{{ sweepPlan.TotalUSD.toFixed(2) }} USDT</strong>
-            <span v-if="sweepPlan.DryRun" class="crypto-admin__badge">dry-run</span>
-          </p>
-          <table v-if="sweepPlan.Entries?.length" class="crypto-admin__table">
+
+        <!-- Configuration -->
+        <div v-if="activeTab === 'config'" class="crypto-view__panel">
+          <div v-if="loadingConfig" class="crypto-view__empty">
+            <LoadingSpinner />
+          </div>
+          <template v-else-if="config">
+            <div class="crypto-view__group">
+              <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupChannel') }}</h4>
+              <p class="crypto-view__group-desc">{{ t('admin.crypto.groupChannelDesc') }}</p>
+              <div class="crypto-view__switch-row">
+                <div class="space-y-0.5">
+                  <label class="crypto-view__label">{{ t('admin.crypto.enabled') }}</label>
+                  <p class="crypto-view__hint">{{ t('admin.crypto.enabledHint') }}</p>
+                </div>
+                <Toggle v-model="config.enabled" />
+              </div>
+              <div class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.chains') }}</label>
+                <input
+                  :value="config.chains.join(',')"
+                  class="input"
+                  placeholder="bsc,polygon,plasma,solana"
+                  @change="(e) => (config!.chains = splitList((e.target as HTMLInputElement).value))"
+                />
+                <p class="crypto-view__hint">{{ t('admin.crypto.chainsHint') }}</p>
+              </div>
+            </div>
+
+            <div class="crypto-view__divider"></div>
+
+            <div class="crypto-view__group">
+              <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupRpc') }}</h4>
+              <p class="crypto-view__group-desc">{{ t('admin.crypto.groupRpcDesc') }}</p>
+              <div v-for="chain in config.chains" :key="`rpc-${chain}`" class="crypto-view__field">
+                <label class="crypto-view__label">{{ chain }}</label>
+                <input
+                  :value="config.rpc[chain] ?? ''"
+                  class="input"
+                  :placeholder="t('admin.crypto.rpcPlaceholder')"
+                  @change="(e) => setRPC(chain, (e.target as HTMLInputElement).value)"
+                />
+              </div>
+            </div>
+
+            <div class="crypto-view__divider"></div>
+
+            <div class="crypto-view__group">
+              <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupSweep') }}</h4>
+              <p class="crypto-view__group-desc">{{ t('admin.crypto.groupSweepDesc') }}</p>
+              <div class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.globalThreshold') }}</label>
+                <input
+                  v-model.number="config.sweep_global_threshold"
+                  type="number"
+                  step="1"
+                  class="input"
+                />
+                <p class="crypto-view__hint">{{ t('admin.crypto.globalThresholdHint') }}</p>
+              </div>
+              <div class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.hotWalletEvm') }}</label>
+                <input v-model="config.hot_wallet_evm" class="input" placeholder="0x…" />
+              </div>
+              <div class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.hotWalletSolana') }}</label>
+                <input v-model="config.hot_wallet_solana" class="input" placeholder="…" />
+              </div>
+            </div>
+
+            <div class="crypto-view__divider"></div>
+
+            <div class="crypto-view__group">
+              <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupSigner') }}</h4>
+              <p class="crypto-view__group-desc">{{ t('admin.crypto.groupSignerDesc') }}</p>
+              <div class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.signerSocket') }}</label>
+                <input v-model="config.signer_socket" class="input" />
+              </div>
+            </div>
+
+            <div class="crypto-view__actions">
+              <button class="btn btn-primary" :disabled="savingConfig" @click="saveConfig">
+                {{ savingConfig ? t('common.saving') : t('common.save') }}
+              </button>
+              <span v-if="configSaved" class="crypto-view__saved">{{ t('common.saved') }}</span>
+            </div>
+          </template>
+        </div>
+
+        <!-- Addresses -->
+        <div v-if="activeTab === 'addresses'" class="crypto-view__panel">
+          <div class="crypto-view__filters">
+            <input
+              v-model.number="addressUserId"
+              type="number"
+              class="input"
+              :placeholder="t('admin.crypto.userId')"
+              @keyup.enter="loadAddresses"
+            />
+            <button class="btn btn-secondary" @click="loadAddresses">
+              {{ t('common.search') }}
+            </button>
+          </div>
+          <table v-if="addresses.length" class="crypto-view__table">
             <thead>
               <tr>
-                <th>{{ t('admin.crypto.chain') }}</th>
+                <th>ID</th>
+                <th>{{ t('admin.crypto.family') }}</th>
                 <th>{{ t('admin.crypto.address') }}</th>
-                <th>{{ t('admin.crypto.amount') }}</th>
+                <th>{{ t('common.status') }}</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(e, i) in sweepPlan.Entries" :key="i">
-                <td>{{ e.Chain }}</td>
-                <td class="crypto-admin__mono">{{ e.Address }}</td>
-                <td>{{ e.AmountDecimal.toFixed(2) }}</td>
+              <tr v-for="row in addresses" :key="row.id">
+                <td>{{ row.id }}</td>
+                <td>{{ row.family }}</td>
+                <td class="crypto-view__mono">{{ row.address }}</td>
+                <td>
+                  <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
+                    {{ row.status }}
+                  </span>
+                </td>
+                <td>
+                  <button class="btn btn-secondary btn-sm" @click="toggleAddress(row)">
+                    {{ row.status === 'active' ? t('admin.crypto.disable') : t('admin.crypto.enable') }}
+                  </button>
+                </td>
               </tr>
             </tbody>
           </table>
+          <div v-else class="crypto-view__empty-text">{{ t('common.noData') }}</div>
         </div>
-        <table v-if="sweepRecords.length" class="crypto-admin__table">
-          <thead>
-            <tr>
-              <th>{{ t('admin.crypto.chain') }}</th>
-              <th>{{ t('admin.crypto.from') }}</th>
-              <th>{{ t('admin.crypto.amount') }}</th>
-              <th>{{ t('common.status') }}</th>
-              <th>TX</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in sweepRecords" :key="row.id">
-              <td>{{ row.chain }}</td>
-              <td class="crypto-admin__mono">{{ short(row.from_address) }}</td>
-              <td>{{ row.amount }}</td>
-              <td>{{ row.status }}</td>
-              <td class="crypto-admin__mono">{{ short(row.sweep_tx_hash) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
+
+        <!-- Sweep -->
+        <div v-if="activeTab === 'sweep'" class="crypto-view__panel">
+          <div class="crypto-view__filters">
+            <button class="btn btn-secondary" @click="loadSweepPlan">
+              {{ t('admin.crypto.loadPlan') }}
+            </button>
+            <button class="btn btn-secondary" @click="loadSweepRecords">
+              {{ t('common.refresh') }}
+            </button>
+          </div>
+
+          <div v-if="sweepPlan" class="crypto-view__plan">
+            <p class="crypto-view__plan-total">
+              {{ t('admin.crypto.totalToSweep') }}:
+              <strong>{{ sweepPlan.TotalUSD.toFixed(2) }} USDT</strong>
+              <span v-if="sweepPlan.DryRun" class="crypto-view__badge">dry-run</span>
+            </p>
+            <table v-if="sweepPlan.Entries?.length" class="crypto-view__table">
+              <thead>
+                <tr>
+                  <th>{{ t('admin.crypto.chain') }}</th>
+                  <th>{{ t('admin.crypto.address') }}</th>
+                  <th>{{ t('admin.crypto.amount') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(e, i) in sweepPlan.Entries" :key="i">
+                  <td>{{ e.Chain }}</td>
+                  <td class="crypto-view__mono">{{ e.Address }}</td>
+                  <td>{{ e.AmountDecimal.toFixed(2) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <table v-if="sweepRecords.length" class="crypto-view__table">
+            <thead>
+              <tr>
+                <th>{{ t('admin.crypto.chain') }}</th>
+                <th>{{ t('admin.crypto.from') }}</th>
+                <th>{{ t('admin.crypto.amount') }}</th>
+                <th>{{ t('common.status') }}</th>
+                <th>TX</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in sweepRecords" :key="row.id">
+                <td>{{ row.chain }}</td>
+                <td class="crypto-view__mono">{{ short(row.from_address) }}</td>
+                <td>{{ row.amount }}</td>
+                <td>
+                  <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
+                    {{ row.status }}
+                  </span>
+                </td>
+                <td class="crypto-view__mono">{{ short(row.sweep_tx_hash) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else-if="!sweepPlan" class="crypto-view__empty-text">{{ t('common.noData') }}</div>
+        </div>
+      </div>
     </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import Toggle from '@/components/common/Toggle.vue'
 import {
   getCryptoConfig,
   getSweepPlan,
@@ -185,11 +248,11 @@ import {
 
 const { t } = useI18n()
 
-const tabs = [
+const tabs = computed(() => [
   { id: 'config', label: t('admin.crypto.tabConfig') },
   { id: 'addresses', label: t('admin.crypto.tabAddresses') },
   { id: 'sweep', label: t('admin.crypto.tabSweep') }
-]
+])
 const activeTab = ref('config')
 
 const config = ref<CryptoConfig | null>(null)
@@ -270,75 +333,171 @@ onMounted(loadConfig)
 </script>
 
 <style scoped>
-.crypto-admin {
+.crypto-view {
   padding: 1rem;
 }
-.crypto-admin__tabs {
+.crypto-view__card {
+  overflow: hidden;
+  padding: 0;
+}
+.crypto-view__header {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--signal-line, rgba(127, 127, 127, 0.18));
 }
-.crypto-admin__tab {
-  padding: 0.4rem 0.9rem;
-  border-radius: 0.4rem;
-  border: 1px solid transparent;
-  background: transparent;
-  cursor: pointer;
+.crypto-view__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.5rem;
+  background: var(--signal-accent-soft, rgba(99, 102, 241, 0.12));
+  color: var(--signal-accent, #6366f1);
+  font-size: 1.125rem;
 }
-.crypto-admin__tab--active {
-  border-color: var(--color-primary, #6366f1);
+.crypto-view__title {
+  font-size: 1.125rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
-.crypto-admin__form {
+.crypto-view__desc {
+  font-size: 0.8125rem;
+  color: var(--signal-muted, #6b7280);
+}
+.crypto-view__tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.25rem;
+  margin: 0.75rem 1.25rem 0;
+  padding: 0.25rem;
+  border-radius: 0.75rem;
+  background: rgba(127, 127, 127, 0.08);
+}
+.crypto-view__tab {
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--signal-muted, #6b7280);
+  transition: all 0.15s;
+}
+.crypto-view__tab--active {
+  background: var(--signal-surface, #fff);
+  color: var(--signal-text, #111827);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.crypto-view__panel {
+  padding: 1.25rem;
+}
+.crypto-view__group {
   display: grid;
   gap: 0.75rem;
-  max-width: 42rem;
 }
-.crypto-admin__row {
+.crypto-view__group-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.crypto-view__group-desc {
+  font-size: 0.75rem;
+  color: var(--signal-muted, #6b7280);
+  margin-top: -0.5rem;
+}
+.crypto-view__field {
   display: grid;
-  grid-template-columns: 12rem 1fr;
-  align-items: center;
-  gap: 0.5rem;
+  gap: 0.375rem;
 }
-.crypto-admin__filters {
+.crypto-view__label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+.crypto-view__hint {
+  font-size: 0.6875rem;
+  color: var(--signal-muted, #6b7280);
+}
+.crypto-view__switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--signal-line, rgba(127, 127, 127, 0.18));
+  border-radius: 0.5rem;
+}
+.crypto-view__divider {
+  height: 1px;
+  margin: 1.25rem 0;
+  background: var(--signal-line, rgba(127, 127, 127, 0.18));
+}
+.crypto-view__filters {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
 }
-.crypto-admin__table {
+.crypto-view__table {
   width: 100%;
   border-collapse: collapse;
 }
-.crypto-admin__table th,
-.crypto-admin__table td {
-  padding: 0.4rem 0.6rem;
-  border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+.crypto-view__table th,
+.crypto-view__table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--signal-line, rgba(127, 127, 127, 0.12));
   text-align: left;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
-.crypto-admin__mono {
-  font-family: ui-monospace, monospace;
+.crypto-view__table th {
+  font-weight: 500;
+  color: var(--signal-muted, #6b7280);
 }
-.crypto-admin__empty,
-.crypto-admin__loading {
+.crypto-view__mono {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.crypto-view__badge {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  background: rgba(127, 127, 127, 0.12);
+}
+.crypto-view__badge--active,
+.crypto-view__badge--swept {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+}
+.crypto-view__badge--disabled,
+.crypto-view__badge--failed {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+}
+.crypto-view__empty {
+  display: flex;
+  justify-content: center;
+  padding: 2rem;
+}
+.crypto-view__empty-text {
   padding: 2rem;
   text-align: center;
-  opacity: 0.6;
+  font-size: 0.8125rem;
+  color: var(--signal-muted, #6b7280);
 }
-.crypto-admin__actions {
+.crypto-view__actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.75rem;
-  margin-top: 0.5rem;
+  margin-top: 1.25rem;
 }
-.crypto-admin__saved {
-  color: var(--color-success, #22c55e);
+.crypto-view__saved {
+  font-size: 0.8125rem;
+  color: #16a34a;
 }
-.crypto-admin__badge {
-  margin-left: 0.5rem;
-  padding: 0.1rem 0.4rem;
-  border-radius: 0.25rem;
-  background: rgba(99, 102, 241, 0.15);
-  font-size: 0.75rem;
+.crypto-view__plan {
+  margin-bottom: 1rem;
+}
+.crypto-view__plan-total {
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
 }
 </style>
