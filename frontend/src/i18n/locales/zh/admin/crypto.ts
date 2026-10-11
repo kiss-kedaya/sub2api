@@ -22,6 +22,17 @@ export default {
     disable: '停用',
     enable: '启用',
     loadPlan: '生成归集计划（试运行）',
-    totalToSweep: '待归集合计'
+    totalToSweep: '待归集合计',
+    groupChannel: '渠道',
+    groupChannelDesc: '启用渠道并选择要监听的链',
+    enabledHint: '关闭后不扫链、不入账、不归集',
+    chainsHint: '一个 EVM 地址覆盖所有 EVM 链；Solana 独立地址',
+    groupRpc: 'RPC 节点',
+    groupRpcDesc: '扫链用的自有节点，多端点自动轮换',
+    groupSweep: '归集',
+    groupSweepDesc: '归集阈值与收款热钱包',
+    globalThresholdHint: '合计达到该值才触发归集',
+    groupSigner: '签名服务',
+    groupSignerDesc: '持有种子的隔离进程，不对外暴露'
   }
 }
