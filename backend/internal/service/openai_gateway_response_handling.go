@@ -385,6 +385,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if errorEventSent || clientDisconnected || failureDelivered {
 			return
 		}
+		s.markOpenAIStreamFinalFailure(c, account, false, upstreamRequestID, false)
 		errorEventSent = true
 		payload := `{"type":"error","sequence_number":0,"error":{"type":"upstream_error","message":` + strconv.Quote(reason) + `,"code":` + strconv.Quote(reason) + `}}`
 		if err := flushBuffered(); err != nil {
@@ -485,11 +486,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		flushPending("Client disconnected during final flush, returning collected usage")
 		if !sawTerminalEvent {
 			if openAIStreamClientOutputStarted(c, clientOutputStarted) && !clientDisconnected {
+				s.markOpenAIStreamFinalFailure(c, account, false, upstreamRequestID, false)
 				s.recordOpenAIProxyStreamDisconnect(account, errors.New("stream ended before terminal event"), upstreamRequestID)
 			}
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete: missing terminal event")
 		}
 		if sawFailedEvent {
+			s.markOpenAIStreamFinalFailure(c, account, false, upstreamRequestID, true)
 			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 		}
 		logOpenAISuccessMissingUsage(ctx, c, account, resp, usage, terminalEventType, clientDisconnected)
@@ -538,6 +541,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		// 客户端断开/取消请求时，上游读取往往会返回 context canceled。
 		// /v1/responses 的 SSE 事件必须符合 OpenAI 协议；这里不注入自定义 error event，避免下游 SDK 解析失败。
 		if errors.Is(scanErr, context.Canceled) || errors.Is(scanErr, context.DeadlineExceeded) {
+			if ctx.Err() == nil && (c.Request == nil || c.Request.Context().Err() == nil) && !clientDisconnected {
+				s.markOpenAIStreamFinalFailure(c, account, false, upstreamRequestID, false)
+			}
 			if eventShouldFlush {
 				flushPending("Client disconnected during canceled stream flush, returning collected usage")
 			}
@@ -1069,6 +1075,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				continue
 			}
 			if failureDelivered {
+				s.markOpenAIStreamFinalFailure(c, account, false, upstreamRequestID, true)
 				return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 			}
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
@@ -2059,6 +2066,9 @@ func buildOpenAIResponseFailedSSE(responseID, model string, source []byte, fallb
 		code = "upstream_error"
 	}
 	message := extractOpenAISSEErrorMessage(source)
+	if openAIStreamHasUpstream524(source) {
+		message = "Upstream request timed out (524)"
+	}
 	if message == "" {
 		message = strings.TrimSpace(fallbackMessage)
 	}
@@ -2102,6 +2112,16 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 		return redactUpstreamFinancialEvent(payload, eventType), true
 	}
 	updated := payload
+	if openAIStreamHasUpstream524(payload) {
+		for _, path := range []string{"response.error.message", "error.message", "message"} {
+			if gjson.GetBytes(updated, path).Exists() {
+				next, err := sjson.SetBytes(updated, path, "Upstream request timed out (524)")
+				if err == nil {
+					updated = next
+				}
+			}
+		}
+	}
 	// 容量降载码对 Codex CLI 是致命错误；事件既然要写给客户端（failover 已不可用），
 	// 就改写为客户端可重试的错误码。error 帧与 response.failed 都要改：上游降载
 	// 总是先推 error 帧再收 failed，两帧携带同一个错误。
