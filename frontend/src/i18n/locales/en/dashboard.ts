@@ -409,7 +409,7 @@ export default {
     inflightRunning: 'In progress',
     inflightFold: 'In-flight requests',
     inflightMore: 'Show more',
-    requestIdPlaceholder: 'Search request ID',
+    requestIdPlaceholder: 'Request/upstream ID; =exact, ^prefix',
     inflightRunningHint: 'Still running. Duration and cost update when you refresh.',
     inflightElapsed: 'Elapsed',
     firstToken: 'First Token',

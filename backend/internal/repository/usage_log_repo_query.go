@@ -116,12 +116,7 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		conditions = append(conditions, fmt.Sprintf("group_id = $%d", len(args)+1))
 		args = append(args, filters.GroupID)
 	}
-	if requestID := strings.TrimSpace(filters.RequestID); requestID != "" {
-		// 转义 % _ \ 后再拼装饰符，否则用户输入的通配符会放大匹配面（`%` 直接命中全表）。
-		like := "%" + escapeLikePattern(requestID) + "%"
-		conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR upstream_request_id ILIKE $%d)", len(args)+1, len(args)+1))
-		args = append(args, like)
-	}
+	conditions, args = appendUsageRequestIDCondition(conditions, args, filters.RequestID)
 	conditions, args = appendUsageLogModelWhereCondition(conditions, args, filters.Model, filters.ModelFilterSource)
 	conditions, args = appendRequestTypeOrStreamWhereCondition(conditions, args, filters.RequestType, filters.Stream)
 	conditions, args = appendNativeCompactionV2WhereCondition(conditions, args, filters.NativeCompactionV2, "")
@@ -161,6 +156,30 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		return nil, nil, err
 	}
 	return logs, page, nil
+}
+
+// Exact IDs use the existing btree indexes; prefixes/fragments use migration 256's trigram indexes.
+func appendUsageRequestIDCondition(conditions []string, args []any, input string) ([]string, []any) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return conditions, args
+	}
+	pos := len(args) + 1
+	if strings.HasPrefix(input, "=") {
+		id := strings.TrimSpace(input[1:])
+		base := service.NormalizeUsageRequestIDKey(id)
+		conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR upstream_request_id = $%d)", pos, pos+1, pos+2, pos+3))
+		return conditions, append(args, base, "client:"+base, "local:"+base, id)
+	}
+	pattern := "%" + escapeLikePattern(input) + "%"
+	if strings.HasPrefix(input, "^") {
+		id := strings.TrimSpace(input[1:])
+		base := service.NormalizeUsageRequestIDKey(id)
+		conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR request_id ILIKE $%d OR request_id ILIKE $%d OR upstream_request_id ILIKE $%d)", pos, pos+1, pos+2, pos+3))
+		return conditions, append(args, escapeLikePattern(base)+"%", escapeLikePattern("client:"+base)+"%", escapeLikePattern("local:"+base)+"%", escapeLikePattern(id)+"%")
+	}
+	conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR upstream_request_id ILIKE $%d)", pos, pos))
+	return conditions, append(args, pattern)
 }
 
 func upstreamModelMismatchCondition(column string, mismatch bool) string {

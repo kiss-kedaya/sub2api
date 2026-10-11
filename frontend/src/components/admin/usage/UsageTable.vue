@@ -278,9 +278,9 @@
 
         <template #cell-request_id="{ row }">
           <div v-if="row.request_id" class="flex max-w-[160px] items-center gap-1.5">
-            <span class="truncate font-mono text-xs text-gray-500 dark:text-gray-400" :title="row.request_id">
+            <button type="button" class="truncate font-mono text-xs text-gray-500 hover:underline dark:text-gray-400" :title="t('common.search') + ': ' + row.request_id" @click="emit('requestIdClick', row.request_id)">
               {{ row.request_id }}
-            </span>
+            </button>
             <button
               type="button"
               class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-300"
@@ -296,9 +296,9 @@
 
         <template #cell-upstream_request_id="{ row }">
           <div v-if="row.upstream_request_id" class="flex max-w-[160px] items-center gap-1.5">
-            <span class="truncate font-mono text-xs text-gray-500 dark:text-gray-400" :title="row.upstream_request_id">
+            <button type="button" class="truncate font-mono text-xs text-gray-500 hover:underline dark:text-gray-400" :title="t('common.search') + ': ' + row.upstream_request_id" @click="emit('requestIdClick', row.upstream_request_id)">
               {{ row.upstream_request_id }}
-            </span>
+            </button>
             <button
               type="button"
               class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-300"
@@ -630,6 +630,7 @@ const props = withDefaults(defineProps<Props>(), {
   flat: false
 })
 const emit = defineEmits<{
+  requestIdClick: [requestID: string]
   userClick: [userID: number, email?: string]
   sort: [key: string, order: 'asc' | 'desc']
   ipGeoBatchFailed: []

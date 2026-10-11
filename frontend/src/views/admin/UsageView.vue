@@ -127,6 +127,7 @@
           </template>
         </UsageFilters>
 
+        <p v-if="activeTab === 'usage'" class="mb-3 text-xs text-gray-500 dark:text-gray-400">请求 ID / 上游 ID：默认片段搜索；=完整ID 精确查找；^前缀 查找。点击表格 ID 可精确筛选。短片段请限定在 24 小时内。</p>
         <div v-show="activeTab === 'usage'" class="usage-detail-content">
           <button type="button" class="mb-3 flex w-full items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-gray-800 hover:bg-gray-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-100 dark:hover:bg-dark-700" @click="toggleInflight">
             <Icon name="chevronDown" size="sm" :class="['text-gray-400 transition-transform', inflightOpen ? '' : '-rotate-90']" />
@@ -140,6 +141,7 @@
             :data="inflightRows"
             :loading="inflightLoading"
             :columns="visibleColumns"
+            @requestIdClick="handleRequestIdClick"
             :show-account-billing="true"
             :show-upstream-endpoint="true"
           />
@@ -151,6 +153,7 @@
             :data="usageLogs"
             :loading="loading"
             :columns="visibleColumns"
+            @requestIdClick="handleRequestIdClick"
             :server-side-sort="true"
             :default-sort-key="'created_at'"
             :default-sort-order="'desc'"
@@ -408,6 +411,7 @@ const buildUsageListParams = (
     page_size: pageSize,
     exact_total: exactTotal,
     ...filters.value,
+    request_id: filters.value.request_id?.trim() || undefined,
     stream: legacyStream === null ? undefined : legacyStream,
     sort_by: sortState.sort_by,
     sort_order: sortState.sort_order,
@@ -468,7 +472,10 @@ const loadLogs = async (silent = false) => {
     pagination.total = res.total
     if (inflightOpen.value) void loadInflight(false)
   } catch (error: any) {
-    if (!silent && error?.name !== 'AbortError') console.error('Failed to load usage logs:', error)
+    if (!silent && !c.signal.aborted) {
+      console.error('Failed to load usage logs:', error)
+      appStore.showError(error?.message || t('common.error'))
+    }
   } finally {
     if (!silent && abortController === c) loading.value = false
   }
@@ -605,6 +612,11 @@ const applyFilters = () => {
   } else {
     errRows.value = []
   }
+}
+const handleRequestIdClick = (requestID: string) => {
+  filters.value.request_id = '=' + requestID
+  pagination.page = 1
+  loadLogs()
 }
 const refreshData = () => {
   invalidateModelStatsCache()
