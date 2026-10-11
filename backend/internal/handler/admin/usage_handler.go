@@ -2,10 +2,12 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -184,6 +186,11 @@ func (h *UsageHandler) List(c *gin.Context) {
 		return
 	}
 
+	if err := validateAdminUsageRequestIDSearch(requestID, startTime, endTime); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
 	params := pagination.PaginationParams{
 		Page:      page,
 		PageSize:  pageSize,
@@ -233,7 +240,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 			}
 		}
 		now := time.Now()
-		live := service.VisibleUsageInflight(c.Request.Context(), filters.UserID, filters, finished)
+		live := visibleAdminUsageInflight(c.Request.Context(), filters, finished)
 		if len(live) > 0 {
 			head := make([]dto.AdminUsageLog, 0, len(live))
 			for _, row := range live {
@@ -243,6 +250,64 @@ func (h *UsageHandler) List(c *gin.Context) {
 		}
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
+}
+
+func visibleAdminUsageInflight(ctx context.Context, filters usagestats.UsageLogFilters, finished map[string]struct{}) []service.UsageInflightSnapshot {
+	liveFilters := filters
+	liveID := strings.TrimSpace(filters.RequestID)
+	if strings.HasPrefix(liveID, "=") || strings.HasPrefix(liveID, "^") {
+		liveID = strings.TrimSpace(liveID[1:])
+	}
+	liveFilters.RequestID = service.NormalizeUsageRequestIDKey(liveID)
+	live := service.VisibleUsageInflight(ctx, filters.UserID, liveFilters, finished)
+	return filterAdminUsageInflightRequestID(live, filters.RequestID)
+}
+
+func filterAdminUsageInflightRequestID(rows []service.UsageInflightSnapshot, input string) []service.UsageInflightSnapshot {
+	if !strings.HasPrefix(input, "=") && !strings.HasPrefix(input, "^") {
+		return rows
+	}
+	target := service.NormalizeUsageRequestIDKey(strings.TrimSpace(input[1:]))
+	matched := rows[:0]
+	for _, row := range rows {
+		id := service.NormalizeUsageRequestIDKey(row.RequestID)
+		if (input[0] == '=' && id == target) || (input[0] == '^' && strings.HasPrefix(strings.ToLower(id), strings.ToLower(target))) {
+			matched = append(matched, row)
+		}
+	}
+	return matched
+}
+
+// Short LIKE patterns have no useful trigrams; require a bounded date range.
+func validateAdminUsageRequestIDSearch(input string, start, end *time.Time) error {
+	if input == "" {
+		return nil
+	}
+	exact := strings.HasPrefix(input, "=")
+	if exact || strings.HasPrefix(input, "^") {
+		input = strings.TrimSpace(input[1:])
+	}
+	if service.NormalizeUsageRequestIDKey(input) == "" {
+		return fmt.Errorf("请求 ID 不能为空")
+	}
+	if exact {
+		return nil
+	}
+	run := 0
+	for _, r := range service.NormalizeUsageRequestIDKey(input) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			run++
+		} else {
+			run = 0
+		}
+		if run >= 3 {
+			return nil
+		}
+	}
+	if start == nil || end == nil || end.Sub(*start) > 24*time.Hour+time.Second {
+		return fmt.Errorf("短 ID 或特殊字符搜索请限定在 24 小时内，或使用 =完整ID 精确查找")
+	}
+	return nil
 }
 
 // Stats handles getting usage statistics with filters
@@ -685,7 +750,7 @@ func adminInflightOnly(c *gin.Context) bool {
 func writeAdminInflightOnly(c *gin.Context, filters usagestats.UsageLogFilters) {
 	page, pageSize := response.ParsePagination(c)
 	now := time.Now()
-	live := service.VisibleUsageInflight(c.Request.Context(), filters.UserID, filters, nil)
+	live := visibleAdminUsageInflight(c.Request.Context(), filters, nil)
 	pageRows, total := service.PageUsageInflight(live, page, pageSize)
 	out := make([]dto.AdminUsageLog, 0, len(pageRows))
 	for _, row := range pageRows {
