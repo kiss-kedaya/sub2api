@@ -112,12 +112,14 @@ func (w *Worker) ScanOnce(ctx context.Context) error {
 func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 	pool := w.pools[chain.Chain]
 	if pool == nil {
+		slog.Debug("[cryptopay] scan skipped: no pool", "chain", chain.Chain)
 		return nil
 	}
 	head, err := pool.BlockNumber(ctx)
 	if err != nil {
 		return err
 	}
+	slog.Info("[cryptopay] scan tick", "chain", chain.Chain, "head", head, "confirmations", chain.Confirmations)
 	if head <= chain.Confirmations {
 		return nil
 	}
@@ -125,12 +127,21 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 
 	last, err := w.cursor.Load(ctx, chain.Chain)
 	if err != nil {
+		slog.Warn("[cryptopay] cursor load failed", "chain", chain.Chain, "error", err)
 		return err
 	}
 	if last == 0 {
-		// First run: start at the confirmed head (backfill is bounded by
-		// the sweep reconciliation, not a full-history scan).
-		last = confirmed
+		// First run: start from a small lookback window instead of the exact
+		// head. Starting AT the head leaves nothing to scan, so the cursor
+		// never advances and deposits landing right after boot are missed.
+		if confirmed > evmFirstRunLookback {
+			last = confirmed - evmFirstRunLookback
+		} else {
+			last = 0
+		}
+		if err := w.cursor.Save(ctx, chain.Chain, last); err != nil {
+			return err
+		}
 	}
 	if last >= confirmed {
 		return nil
