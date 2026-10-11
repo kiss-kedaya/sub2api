@@ -89,6 +89,31 @@ func (f *fakeStore) AssignFromPool(_ context.Context, userID int64, family strin
 	return &copied, nil
 }
 
+func (f *fakeStore) ListByUser(_ context.Context, userID int64) ([]Assignment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []Assignment
+	for _, a := range f.assignments {
+		if a.UserID == userID {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) SetStatus(_ context.Context, id int64, status string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for key, a := range f.assignments {
+		if a.ID == id {
+			a.Status = status
+			f.assignments[key] = a
+			return nil
+		}
+	}
+	return nil
+}
+
 // fakeSigner derives deterministic addresses without touching the real
 // signer process.
 type fakeSigner struct {
