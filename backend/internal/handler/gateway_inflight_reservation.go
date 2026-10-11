@@ -58,6 +58,7 @@ func reserveInflightBalance(
 		return inflightNoop, err
 	}
 	c.Request = c.Request.WithContext(ctx)
+	c.Set(service.UsageInflightRequestContextKey, ctx)
 	return done, nil
 }
 

@@ -49,7 +49,7 @@ func trackUsageInflight(c *gin.Context) func() {
 		APIKeyID:    apiKeyID,
 		GroupID:     groupID,
 		Email:       email,
-		Model:       usageInflightModel(c),
+		Model:       usageInflightModel(c.Request.Context()),
 		Stream:      usageInflightStream(c),
 		WebSocket:   strings.EqualFold(c.GetHeader("Upgrade"), "websocket") || strings.Contains(path, "/realtime/"),
 		StartedAt:   time.Now(),
@@ -61,7 +61,7 @@ func trackUsageInflight(c *gin.Context) func() {
 	snap.ReservedAmount = service.InflightReservationFromContext(c.Request.Context()).Amount()
 	fillUsageInflightDisplay(c, &snap)
 
-	state := &usageInflightWriteState{ginCtx: c, snap: snap, done: make(chan struct{})}
+	state := &usageInflightWriteState{ginCtx: c, requestCtx: c.Request.Context(), snap: snap, done: make(chan struct{})}
 	c.Writer = &usageInflightWriter{ResponseWriter: c.Writer, state: state}
 	// ponytail: 满 1 秒写一次。首字若在这次之后才到，再补写一次。页面自己刷新才变。
 	timer := time.AfterFunc(time.Second, func() {
@@ -95,11 +95,13 @@ func trackUsageInflight(c *gin.Context) func() {
 	go func() {
 		select {
 		case <-reqCtx.Done():
+			timer.Stop()
 			state.mu.Lock()
 			state.closed = true
 			persisted := state.persisted
 			state.gen.Add(1)
 			state.mu.Unlock()
+			state.doneOnce.Do(func() { close(state.done) })
 			if persisted {
 				service.DeleteUsageInflight(context.Background(), userID, requestID)
 			}
@@ -164,14 +166,14 @@ func usageInflightIdentity(c *gin.Context) (userID, apiKeyID, groupID int64, ema
 	return userID, apiKeyID, groupID, email
 }
 
-func usageInflightModel(c *gin.Context) string {
-	if c == nil || c.Request == nil {
+func usageInflightModel(ctx context.Context) string {
+	if ctx == nil {
 		return ""
 	}
-	if model, ok := service.RequestedPublicModelFromContext(c.Request.Context()); ok {
+	if model, ok := service.RequestedPublicModelFromContext(ctx); ok {
 		return strings.TrimSpace(model)
 	}
-	model, _ := c.Request.Context().Value(ctxkey.Model).(string)
+	model, _ := ctx.Value(ctxkey.Model).(string)
 	return strings.TrimSpace(model)
 }
 
@@ -190,20 +192,23 @@ func usageInflightInputTokens(c *gin.Context) int {
 }
 
 type usageInflightWriteState struct {
-	ginCtx    *gin.Context
-	snap      service.UsageInflightSnapshot
-	bytes     int
-	first     *int
-	done      chan struct{}
-	doneOnce  sync.Once
-	closed    bool
-	persisted bool
-	gen       atomic.Int64
-	pending   atomic.Bool
-	mu        sync.Mutex
+	ginCtx     *gin.Context
+	requestCtx context.Context
+	snap       service.UsageInflightSnapshot
+	bytes      int
+	first      *int
+	done       chan struct{}
+	doneOnce   sync.Once
+	closed     bool
+	persisted  bool
+	gen        atomic.Int64
+	pending    atomic.Bool
+	mu         sync.Mutex
 }
 
-func (s *usageInflightWriteState) note(n int) {
+// note 只在请求 goroutine 里调。header 也只能在这里读：定时器 goroutine 读它，
+// 会和 handler 的 Header().Set 撞成 fatal error: concurrent map read and map write，进程直接重启。
+func (s *usageInflightWriteState) note(n int, header http.Header) {
 	if s == nil || n <= 0 {
 		return
 	}
@@ -217,6 +222,9 @@ func (s *usageInflightWriteState) note(n int) {
 		}
 		s.first = &ms
 		flushFirst = s.persisted
+		if strings.Contains(strings.ToLower(header.Get("Content-Type")), "text/event-stream") {
+			s.snap.Stream = true
+		}
 	}
 	s.bytes += n
 	s.mu.Unlock()
@@ -229,9 +237,16 @@ func (s *usageInflightWriteState) snapshotLocked() service.UsageInflightSnapshot
 	snap := s.snap
 	snap.OutputTokens = s.bytes / 4
 	snap.FirstTokenMs = s.first
-	if s.ginCtx != nil && s.ginCtx.Request != nil {
-		ctx := s.ginCtx.Request.Context()
-		if model := usageInflightModel(s.ginCtx); model != "" {
+	ctx := s.requestCtx
+	if s.ginCtx != nil {
+		if value, ok := s.ginCtx.Get(service.UsageInflightRequestContextKey); ok {
+			if current, ok := value.(context.Context); ok {
+				ctx = current
+			}
+		}
+	}
+	if ctx != nil {
+		if model := usageInflightModel(ctx); model != "" {
 			snap.Model = model
 		}
 		if accountID, ok := ctx.Value(ctxkey.AccountID).(int64); ok && accountID > 0 {
@@ -240,11 +255,8 @@ func (s *usageInflightWriteState) snapshotLocked() service.UsageInflightSnapshot
 		if amount := service.InflightReservationFromContext(ctx).Amount(); amount > 0 {
 			snap.ReservedAmount = amount
 		}
-		if strings.Contains(strings.ToLower(s.ginCtx.Writer.Header().Get("Content-Type")), "text/event-stream") {
-			snap.Stream = true
-		}
 	}
-	fillUsageInflightDisplay(s.ginCtx, &snap)
+	refreshUsageInflightDisplay(s.ginCtx, &snap, ctx)
 	snap.UpdatedAt = time.Now()
 	s.snap = snap
 	return snap
@@ -293,16 +305,18 @@ func (w *usageInflightWriter) Unwrap() http.ResponseWriter { return w.ResponseWr
 
 func (w *usageInflightWriter) Write(data []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(data)
-	w.state.note(n)
+	w.state.note(n, w.Header())
 	return n, err
 }
 
 func (w *usageInflightWriter) WriteString(data string) (int, error) {
 	n, err := w.ResponseWriter.WriteString(data)
-	w.state.note(n)
+	w.state.note(n, w.Header())
 	return n, err
 }
 
+// fillUsageInflightDisplay 建快照时在请求 goroutine 里调一次。
+// 客户端 IP 要读 Request.Header，只能在这里算：gateway_bedrock 等路径会在请求中途改它。
 func fillUsageInflightDisplay(c *gin.Context, snap *service.UsageInflightSnapshot) {
 	if c == nil || snap == nil {
 		return
@@ -314,13 +328,25 @@ func fillUsageInflightDisplay(c *gin.Context, snap *service.UsageInflightSnapsho
 			}
 		}
 	}
+	refreshUsageInflightDisplay(c, snap, c.Request.Context())
+	if snap.InboundEndpoint == "" && c.Request != nil && c.Request.URL != nil {
+		snap.InboundEndpoint = strings.TrimSpace(c.Request.URL.Path)
+	}
+	if addr := strings.TrimSpace(ip.GetClientIP(c)); addr != "" {
+		snap.IPAddress = addr
+	}
+}
+
+// refreshUsageInflightDisplay 会在定时器 goroutine 里跑，handler 此时还在写 gin.Context。
+// 只读带锁的 c.Get 和已发布的 context，不能读取 handler 正在替换的 c.Request。
+func refreshUsageInflightDisplay(c *gin.Context, snap *service.UsageInflightSnapshot, ctx context.Context) {
+	if c == nil || snap == nil {
+		return
+	}
 	if v, ok := c.Get("_gateway_inbound_endpoint"); ok {
 		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
 			snap.InboundEndpoint = strings.TrimSpace(s)
 		}
-	}
-	if snap.InboundEndpoint == "" && c.Request != nil && c.Request.URL != nil {
-		snap.InboundEndpoint = strings.TrimSpace(c.Request.URL.Path)
 	}
 	if endpoint := strings.TrimSpace(service.GetActualOpenAIUpstreamEndpoint(c)); endpoint != "" {
 		snap.UpstreamEndpoint = endpoint
@@ -329,12 +355,9 @@ func fillUsageInflightDisplay(c *gin.Context, snap *service.UsageInflightSnapsho
 			snap.UpstreamEndpoint = strings.TrimSpace(s)
 		}
 	}
-	if c.Request != nil {
-		if effort := service.RequestedReasoningEffortFromContext(c.Request.Context()); effort != nil {
+	if ctx != nil {
+		if effort := service.RequestedReasoningEffortFromContext(ctx); effort != nil {
 			snap.ReasoningEffort = *effort
 		}
-	}
-	if addr := strings.TrimSpace(ip.GetClientIP(c)); addr != "" {
-		snap.IPAddress = addr
 	}
 }
