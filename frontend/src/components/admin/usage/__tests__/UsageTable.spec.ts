@@ -1046,3 +1046,14 @@ describe('admin UsageTable deleted-user badge', () => {
     expect(wrapper.text()).toContain('active@test.com')
   })
 })
+
+ it('emits exact-search IDs without changing copy buttons or empty values', async () => {
+  const wrapper = mount(UsageTable, {
+    props: { data: [{ ...baseImageRow, request_id: 'client:UUID', upstream_request_id: 'up%_stream' }], loading: false, columns: [] },
+    global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+  })
+  await wrapper.findAll('button').find(b => b.text() === 'client:UUID')!.trigger('click')
+  await wrapper.findAll('button').find(b => b.text() === 'up%_stream')!.trigger('click')
+  expect(wrapper.emitted('requestIdClick')).toEqual([['client:UUID'], ['up%_stream']])
+  wrapper.unmount()
+ })

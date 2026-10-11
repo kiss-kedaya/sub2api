@@ -42,15 +42,6 @@ const messages: Record<string, string> = {
 	'common.no': 'No',
 }
 
-const formatLocalDate = (date: Date): string => {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const time = [date.getHours(), date.getMinutes(), date.getSeconds()]
-    .map(value => String(value).padStart(2, '0')).join(':')
-  return `${year}-${month}-${day}T${time}`
-}
-
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     usage: {
@@ -200,6 +191,34 @@ describe('admin UsageView route filters', () => {
   afterEach(() => {
     Object.keys(routeQuery).forEach((key) => delete routeQuery[key])
     vi.useRealTimers()
+  })
+
+  it('searches clicked IDs exactly and keeps the filter across pages', async () => {
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+    ;(wrapper.vm as any).pagination.page = 4
+    wrapper.findAllComponents({ name: 'UsageTable' }).at(-1)!.vm.$emit('requestIdClick', 'up%_stream')
+    await flushPromises()
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, request_id: '=up%_stream' }), expect.anything())
+    ;(wrapper.vm as any).handlePageChange(2)
+    await flushPromises()
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, request_id: '=up%_stream' }), expect.anything())
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['  =550e8400-e29b-41d4-a716-446655440000  ', '=550e8400-e29b-41d4-a716-446655440000'],
+    ['  ^client:abc  ', '^client:abc'],
+    ['  fragment%_  ', 'fragment%_'],
+    ['   ', undefined],
+  ])('trims ID search %s without changing its mode', async (input, expected) => {
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+    ;(wrapper.vm as any).filters.request_id = input
+    ;(wrapper.vm as any).applyFilters()
+    await flushPromises()
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, request_id: expected }), expect.anything())
+    wrapper.unmount()
   })
 
   it('shows the routed user while applying user_id to usage requests', async () => {
