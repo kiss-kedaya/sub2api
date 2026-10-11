@@ -47,8 +47,6 @@ export default {
       autoRecoverHelp: 'Automatically recover account from error/rate-limited state on successful test',
       qualityCheck: 'Degradation Check',
       qualityCheckHelp: 'Chanshui audits the account, pauses it on one matching stop condition and recovers after a passing audit. When off, only the default connectivity test runs.',
-      provider: 'Detection method',
-      pelican: 'Pelican animation test',
       chanshui: 'Chanshui public API',
       auditServiceURL: 'Audit service URL (HTTPS)',
       auditKeyNotice: 'The account upstream URL, API key and model are sent to the selected audit service. This is not the tested upstream URL. Keys are not shown or stored in plans. Use a trusted service only.',
