@@ -616,6 +616,30 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/crypto',
+    name: 'AdminCrypto',
+    component: () => import('@/views/admin/CryptoView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Crypto Deposits',
+      titleKey: 'admin.crypto.title',
+      descriptionKey: 'admin.crypto.description'
+    }
+  },
+  {
+    path: '/admin/crypto',
+    name: 'AdminCrypto',
+    component: () => import('@/views/admin/CryptoView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Crypto Deposits',
+      titleKey: 'admin.crypto.title',
+      descriptionKey: 'admin.crypto.description'
+    }
+  },
+  {
     path: '/admin/settings',
     name: 'AdminSettings',
     component: () => import('@/views/admin/SettingsView.vue'),
