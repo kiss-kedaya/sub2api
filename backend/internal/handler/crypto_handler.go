@@ -21,11 +21,11 @@ import (
 // CryptoHandler serves the built-in crypto deposit channel.
 type CryptoHandler struct {
 	addresses *addresses.Service
-	settings  *service.SettingService
+	store     cryptopay.SettingStore
 }
 
 func NewCryptoHandler(addressService *addresses.Service, settings *service.SettingService) *CryptoHandler {
-	return &CryptoHandler{addresses: addressService, settings: settings}
+	return &CryptoHandler{addresses: addressService, store: cryptopay.NewServiceSettingStore(settings)}
 }
 
 // GetDepositAddresses returns (or lazily assigns) the caller's addresses.
@@ -36,7 +36,7 @@ func (h *CryptoHandler) GetDepositAddresses(c *gin.Context) {
 		response.Unauthorized(c, "User not authenticated")
 		return
 	}
-	cfg, err := cryptopay.LoadConfig(c.Request.Context(), h.settings)
+	cfg, err := cryptopay.LoadConfig(c.Request.Context(), h.store)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -71,7 +71,7 @@ func (h *CryptoHandler) GetDepositAddresses(c *gin.Context) {
 // AdminGetConfig returns the channel config (admin).
 // GET /api/v1/admin/crypto/config
 func (h *CryptoHandler) AdminGetConfig(c *gin.Context) {
-	cfg, err := cryptopay.LoadConfig(c.Request.Context(), h.settings)
+	cfg, err := cryptopay.LoadConfig(c.Request.Context(), h.store)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -87,7 +87,7 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 		response.BadRequest(c, "Invalid config payload")
 		return
 	}
-	if err := cryptopay.SaveConfig(c.Request.Context(), h.settings, cfg); err != nil {
+	if err := cryptopay.SaveConfig(c.Request.Context(), h.store, cfg); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
