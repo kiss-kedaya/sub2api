@@ -47,8 +47,6 @@ export default {
       autoRecoverHelp: '测试成功后自动恢复异常状态的账号',
       qualityCheck: '降智检测',
       qualityCheckHelp: '开启后由掺水检测按停止条件判断：一次命中即暂停账号，后续检测通过自动恢复。关闭时只做默认连通性测试',
-      provider: '检测方式',
-      pelican: '鹈鹕动画测试',
       chanshui: '掺水公共 API',
       auditServiceURL: '检测服务地址（HTTPS）',
       auditKeyNotice: '将此账号的上游地址、API 密钥和模型发送给所选检测服务。这里不是被测上游地址；密钥不显示、不写入计划。请仅使用可信服务。',
