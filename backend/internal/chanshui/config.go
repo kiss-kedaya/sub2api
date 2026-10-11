@@ -1,4 +1,8 @@
-package service
+// Package chanshui implements the Chanshui quality-audit client: config
+// validation, the audit HTTP contract, stop-condition policy and report
+// redaction. It is a standalone module with no service-layer dependency so
+// other subsystems can reuse it without pulling in the scheduled-test runner.
+package chanshui
 
 import (
 	"fmt"
@@ -8,30 +12,30 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
-const QualityProviderPelican = "pelican"
-const QualityProviderChanshui = "chanshui"
-const DefaultChanshuiBaseURL = "https://chanshui.dev"
+const (
+	ProviderPelican  = "pelican"
+	ProviderChanshui = "chanshui"
+	// DefaultBaseURL is the audit service, NOT the upstream URL sent in POST base_url.
+	DefaultBaseURL = "https://chanshui.dev"
+)
 
-// BaseURL is the audit service, NOT the upstream URL sent in POST base_url.
-// API keys are resolved from the pinned account only at request time.
-type ChanshuiConfig struct {
-	BaseURL       string                 `json:"base_url"`
-	Protocol      string                 `json:"protocol"`
-	Timeout       int                    `json:"timeout"`
-	Sections      []string               `json:"sections"`
-	StopCondition *ChanshuiStopCondition `json:"stop_condition,omitempty"`
+// Config is the per-plan audit configuration.
+type Config struct {
+	BaseURL       string         `json:"base_url"`
+	Protocol      string         `json:"protocol"`
+	Timeout       int            `json:"timeout"`
+	Sections      []string       `json:"sections"`
+	StopCondition *StopCondition `json:"stop_condition,omitempty"`
 }
 
-func normalizeScheduledQualityProvider(plan *ScheduledTestPlan) error {
-	if plan.QualityProvider == "" {
-		plan.QualityProvider = QualityProviderPelican
+// Normalize validates the config and fills defaults. modelID is required for
+// the audit target; the upstream credential is resolved at request time.
+func (c *Config) Normalize(modelID string) error {
+	if c == nil {
+		return fmt.Errorf("audit config is required")
 	}
-	if plan.QualityProvider != QualityProviderPelican && plan.QualityProvider != QualityProviderChanshui {
-		return fmt.Errorf("unsupported quality provider")
-	}
-	c := &plan.QualityConfig
 	if c.BaseURL == "" {
-		c.BaseURL = DefaultChanshuiBaseURL
+		c.BaseURL = DefaultBaseURL
 	}
 	if c.Protocol == "" {
 		c.Protocol = "auto"
@@ -42,10 +46,7 @@ func normalizeScheduledQualityProvider(plan *ScheduledTestPlan) error {
 	if c.Sections == nil {
 		c.Sections = []string{"fingerprint"}
 	}
-	if plan.QualityProvider != QualityProviderChanshui {
-		return nil
-	}
-	if strings.TrimSpace(plan.ModelID) == "" {
+	if strings.TrimSpace(modelID) == "" {
 		return fmt.Errorf("audit model is required")
 	}
 	u, err := url.Parse(strings.TrimSpace(c.BaseURL))
@@ -76,8 +77,8 @@ func normalizeScheduledQualityProvider(plan *ScheduledTestPlan) error {
 		}
 	}
 	c.Sections = sections // Empty selection means the API's documented "all" mode.
-	if len(sections) == 1 && sections[0] == "thinking" && !strings.HasPrefix(plan.ModelID, "claude-") {
+	if len(sections) == 1 && sections[0] == "thinking" && !strings.HasPrefix(modelID, "claude-") {
 		return fmt.Errorf("thinking-only audits require a claude- model")
 	}
-	return normalizeChanshuiStopCondition(c)
+	return normalizeStopCondition(c)
 }

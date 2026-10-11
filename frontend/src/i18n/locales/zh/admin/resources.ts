@@ -46,7 +46,7 @@ export default {
       autoRecover: '自动恢复',
       autoRecoverHelp: '测试成功后自动恢复异常状态的账号',
       qualityCheck: '降智检测',
-      qualityCheckHelp: '开启后可选择鹈鹕或掺水检测。鹈鹕连续退化会暂停账号；掺水按停止条件判断，一次命中即暂停，后续通过自动恢复。关闭时只做默认连通性测试',
+      qualityCheckHelp: '开启后由掺水检测按停止条件判断：一次命中即暂停账号，后续检测通过自动恢复。关闭时只做默认连通性测试',
       provider: '检测方式',
       pelican: '鹈鹕动画测试',
       chanshui: '掺水公共 API',

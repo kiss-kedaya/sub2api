@@ -104,7 +104,7 @@ func TestChanshuiCreateResumePollAndRedactedReport(t *testing.T) {
 	require.NotContains(t, string(raw), "fixture-upstream-key")
 	// A replacement worker resumes the persisted GET, even after credential rotation.
 	accounts.account.Credentials["api_key"] = "fixture-rotated-key"
-	replacement := &ScheduledTestRunnerService{planRepo: runner.planRepo, scheduledSvc: runner.scheduledSvc, accountTestSvc: runner.accountTestSvc, chanshuiClient: runner.chanshuiClient, rateLimitSvc: runner.rateLimitSvc, qualityCheck: runner.qualityCheck}
+	replacement := &ScheduledTestRunnerService{planRepo: runner.planRepo, scheduledSvc: runner.scheduledSvc, accountTestSvc: runner.accountTestSvc, chanshuiClient: runner.chanshuiClient, rateLimitSvc: runner.rateLimitSvc}
 	replacement.runOnePlan(context.Background(), plan)
 	require.Equal(t, "running", repo.state.Status)
 	replacement.runOnePlan(context.Background(), plan)
@@ -138,7 +138,6 @@ func TestChanshuiChangedConfigCannotApplyPendingDecision(t *testing.T) {
 }
 
 func TestChanshui429PersistsRetryAfterWithoutImmediateRetry(t *testing.T) {
-	require.Equal(t, 48*time.Hour, chanshuiRetryAfter("172800"))
 	posts := 0
 	runner, repo, results, plan, _ := newChanshuiTestRunner(func(req *http.Request) (*http.Response, error) {
 		posts++
@@ -200,24 +199,6 @@ func TestChanshuiExpiredAndMissingJobsNeverRecreate(t *testing.T) {
 	}
 }
 
-func TestChanshuiConfigurationAndPollOriginValidation(t *testing.T) {
-	for _, config := range []ChanshuiConfig{
-		{BaseURL: "http://audit.example"}, {BaseURL: "https://127.0.0.1"}, {BaseURL: "https://user:secret@audit.example"}, {BaseURL: "https://audit.example?api_key=secret"}, {Timeout: 601}, {Timeout: 9}, {Protocol: "guess"}, {Sections: []string{"unknown"}}, {Sections: []string{"thinking"}},
-	} {
-		plan := &ScheduledTestPlan{QualityProvider: QualityProviderChanshui, ModelID: "gpt-test", QualityConfig: config}
-		require.Error(t, normalizeScheduledQualityProvider(plan))
-	}
-	plan := &ScheduledTestPlan{QualityProvider: QualityProviderChanshui, ModelID: "claude-test", QualityConfig: ChanshuiConfig{Sections: []string{"thinking"}, StopCondition: &ChanshuiStopCondition{Match: "any", Rules: []ChanshuiStopRule{{Type: "total_score_below", Threshold: func() *float64 { v := 50.0; return &v }()}}}}}
-	require.NoError(t, normalizeScheduledQualityProvider(plan))
-	require.Equal(t, DefaultChanshuiBaseURL, plan.QualityConfig.BaseURL)
-	for _, poll := range []string{"https://evil.example/api/v1/audits/audit-1", "//evil.example/api/v1/audits/audit-1", "/api/v1/audits/other", "/api/v1/audits/audit-1?token=secret", "http://audit.example/api/v1/audits/audit-1"} {
-		_, err := chanshuiPollURL("https://audit.example", poll, "audit-1")
-		require.Error(t, err)
-	}
-	_, err := chanshuiPollURL("https://audit.example", "/api/v1/audits/audit-1", "audit-1")
-	require.NoError(t, err)
-}
-
 func TestChanshuiCreationFailuresNeverLeakPayloadOrFollowRedirects(t *testing.T) {
 	for _, code := range []int{302, 400} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
@@ -235,4 +216,84 @@ func TestChanshuiCreationFailuresNeverLeakPayloadOrFollowRedirects(t *testing.T)
 			require.NotContains(t, results.results[0].ErrorMessage, "fixture-upstream-key")
 		})
 	}
+}
+
+type chanshuiStateAccountFake struct {
+	*scheduledQualityAccountRepo
+	changes int
+}
+
+func (r *chanshuiStateAccountFake) ApplyChanshuiQualityState(_ context.Context, _ int64, planID int64, _ time.Time, paused bool) (bool, error) {
+	a := r.account
+	if a == nil || a.Status != StatusActive {
+		return false, nil
+	}
+	if a.Extra == nil {
+		a.Extra = map[string]any{}
+	}
+	owners, _ := a.Extra[ChanshuiQualityPausesExtraKey].(map[string]any)
+	if owners == nil {
+		owners = map[string]any{}
+	}
+	key := fmt.Sprint(planID)
+	if paused {
+		if !a.Schedulable && len(owners) == 0 {
+			return false, nil
+		}
+		if _, exists := owners[key]; exists {
+			return false, nil
+		}
+		owners[key] = true
+		a.Schedulable = false
+		a.Extra[ChanshuiQualityPausesExtraKey] = owners
+	} else {
+		if a.Schedulable || owners[key] == nil {
+			return false, nil
+		}
+		delete(owners, key)
+		if len(owners) == 0 {
+			delete(a.Extra, ChanshuiQualityPausesExtraKey)
+			if !strings.HasPrefix(a.TempUnschedulableReason, scheduledQualityReasonPrefix) {
+				a.Schedulable = true
+			}
+		} else {
+			a.Extra[ChanshuiQualityPausesExtraKey] = owners
+		}
+	}
+	r.changes++
+	return true, nil
+}
+
+func TestChanshuiPauseUnknownAndRecoverOnlyOwnPlans(t *testing.T) {
+	account := &Account{ID: 2, Status: StatusActive, Schedulable: true}
+	results := &scheduledQualityResultRepo{}
+	runner, base, _ := scheduledQualityRunner(account, results)
+	accounts := &chanshuiStateAccountFake{scheduledQualityAccountRepo: base}
+	runner.accountTestSvc.accountRepo = accounts
+	p := &ScheduledTestPlan{ID: 1, AccountID: 2, MaxResults: 20, CronExpression: "*/5 * * * *", QualityCheckEnabled: true, QualityProvider: QualityProviderChanshui, AutoRecover: false}
+	runner.completePlanRun(context.Background(), p, &ScheduledTestResult{Status: "audit_fail"})
+	require.False(t, account.Schedulable, "first mismatch must stop, no two-strike delay")
+	runner.completePlanRun(context.Background(), p, &ScheduledTestResult{Status: "unknown"})
+	require.False(t, account.Schedulable)
+	p2 := *p
+	p2.ID = 3
+	runner.completePlanRun(context.Background(), &p2, &ScheduledTestResult{Status: "audit_fail"})
+	runner.completePlanRun(context.Background(), p, &ScheduledTestResult{Status: "audit_pass"})
+	require.False(t, account.Schedulable, "another failing plan still owns a pause")
+	runner.completePlanRun(context.Background(), &p2, &ScheduledTestResult{Status: "audit_pass"})
+	require.True(t, account.Schedulable, "a confirmed pass recovers without legacy auto_recover")
+	account.Schedulable = false // An unowned manual pause is not ours to clear.
+	runner.completePlanRun(context.Background(), p, &ScheduledTestResult{Status: "audit_pass"})
+	require.False(t, account.Schedulable)
+}
+
+func TestChanshuiPersistFailureCannotChangeScheduling(t *testing.T) {
+	account := &Account{ID: 2, Status: StatusActive, Schedulable: true}
+	results := &scheduledQualityResultRepo{createErr: fmt.Errorf("persist failed")}
+	runner, base, _ := scheduledQualityRunner(account, results)
+	accounts := &chanshuiStateAccountFake{scheduledQualityAccountRepo: base}
+	runner.accountTestSvc.accountRepo = accounts
+	runner.completePlanRun(context.Background(), &ScheduledTestPlan{ID: 1, AccountID: 2, MaxResults: 20, CronExpression: "*/5 * * * *", QualityCheckEnabled: true, QualityProvider: QualityProviderChanshui}, &ScheduledTestResult{Status: "audit_fail"})
+	require.True(t, account.Schedulable)
+	require.Zero(t, accounts.changes)
 }

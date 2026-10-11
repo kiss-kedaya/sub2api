@@ -46,7 +46,7 @@ export default {
       autoRecover: 'Auto Recover',
       autoRecoverHelp: 'Automatically recover account from error/rate-limited state on successful test',
       qualityCheck: 'Degradation Check',
-      qualityCheckHelp: 'Choose Pelican or Chanshui. Consecutive Pelican degradation pauses accounts. Chanshui pauses on one matching stop condition and recovers after a passing audit. When off, only the default connectivity test runs.',
+      qualityCheckHelp: 'Chanshui audits the account, pauses it on one matching stop condition and recovers after a passing audit. When off, only the default connectivity test runs.',
       provider: 'Detection method',
       pelican: 'Pelican animation test',
       chanshui: 'Chanshui public API',

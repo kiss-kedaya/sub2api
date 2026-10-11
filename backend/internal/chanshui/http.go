@@ -1,4 +1,4 @@
-package service
+package chanshui
 
 import (
 	"bytes"
@@ -16,17 +16,27 @@ import (
 	"time"
 )
 
-const chanshuiMaxBody = 2 << 20
+// MaxBody bounds audit-service response parsing.
+const MaxBody = 2 << 20
 
-var chanshuiTokenPattern = regexp.MustCompile(`[A-Za-z0-9_./+=:-]{8,}`)
-var chanshuiKeyPattern = regexp.MustCompile(`(?i)(?:sk-|Bearer\s+)[A-Za-z0-9_./+=:-]+`)
+var tokenPattern = regexp.MustCompile(`[A-Za-z0-9_./+=:-]{8,}`)
+var keyPattern = regexp.MustCompile(`(?i)(?:sk-|Bearer\s+)[A-Za-z0-9_./+=:-]+`)
 
-func chanshuiFingerprint(secret string) string {
+// LooksLikeKey reports whether a string carries an API key or bearer token
+// shape; used to keep such values out of user-facing audit summaries.
+func LooksLikeKey(s string) bool {
+	return keyPattern.MatchString(s)
+}
+
+// Fingerprint is the hex SHA-256 of a secret; used to keep evidence searchable
+// across credential rotation without persisting the secret itself.
+func Fingerprint(secret string) string {
 	s := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(s[:])
 }
 
-func chanshuiRetryAfter(value string) time.Duration {
+// RetryAfter parses a bounded Retry-After header value in seconds.
+func RetryAfter(value string) time.Duration {
 	n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	if err != nil || n < 1 {
 		return time.Minute
@@ -37,7 +47,9 @@ func chanshuiRetryAfter(value string) time.Duration {
 	return time.Duration(n) * time.Second
 }
 
-func chanshuiPollURL(base, poll, id string) (string, error) {
+// PollURL validates that a poll target stays on the configured service origin
+// and matches the audit id; remote responses must not redirect polling.
+func PollURL(base, poll, id string) (string, error) {
 	origin, err := url.Parse(base)
 	if err != nil {
 		return "", fmt.Errorf("invalid audit service URL")
@@ -54,9 +66,9 @@ func chanshuiPollURL(base, poll, id string) (string, error) {
 	return u.String(), nil
 }
 
-// Keep unknown contract fields without persisting credentials that a remote
+// Redact keeps unknown contract fields while stripping credentials a remote
 // service might echo. The original secret fingerprint also survives rotation.
-func redactChanshui(value any, secret, fingerprint string) any {
+func Redact(value any, secret, fingerprint string) any {
 	switch v := value.(type) {
 	case map[string]any:
 		out := map[string]any{}
@@ -65,33 +77,35 @@ func redactChanshui(value any, secret, fingerprint string) any {
 			if strings.Contains(lower, "api_key") || strings.Contains(lower, "authorization") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || lower == "access_token" {
 				out[k] = "[REDACTED]"
 			} else {
-				out[k] = redactChanshui(x, secret, fingerprint)
+				out[k] = Redact(x, secret, fingerprint)
 			}
 		}
 		return out
 	case []any:
 		out := make([]any, len(v))
 		for i, x := range v {
-			out[i] = redactChanshui(x, secret, fingerprint)
+			out[i] = Redact(x, secret, fingerprint)
 		}
 		return out
 	case string:
 		if secret != "" {
 			v = strings.ReplaceAll(v, secret, "[REDACTED]")
 		}
-		v = chanshuiTokenPattern.ReplaceAllStringFunc(v, func(token string) string {
-			if fingerprint != "" && chanshuiFingerprint(token) == fingerprint {
+		v = tokenPattern.ReplaceAllStringFunc(v, func(token string) string {
+			if fingerprint != "" && Fingerprint(token) == fingerprint {
 				return "[REDACTED]"
 			}
 			return token
 		})
-		return chanshuiKeyPattern.ReplaceAllString(v, "[REDACTED]")
+		return keyPattern.ReplaceAllString(v, "[REDACTED]")
 	default:
 		return value
 	}
 }
 
-func chanshuiExchange(ctx context.Context, client *http.Client, method, target string, body []byte) (int, http.Header, map[string]any, error) {
+// Exchange performs one audit-service HTTP call. No Authorization header,
+// cookies, or operation token: the audit service authenticates by base_url.
+func Exchange(ctx context.Context, client *http.Client, method, target string, body []byte) (int, http.Header, map[string]any, error) {
 	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("cannot prepare audit request")
@@ -100,14 +114,13 @@ func chanshuiExchange(ctx context.Context, client *http.Client, method, target s
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	// No Authorization header, cookies, or operation token.
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("audit service connection failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, chanshuiMaxBody+1))
-	if err != nil || len(raw) > chanshuiMaxBody {
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, MaxBody+1))
+	if err != nil || len(raw) > MaxBody {
 		return resp.StatusCode, resp.Header, nil, fmt.Errorf("audit response unavailable or exceeds size limit")
 	}
 	var data map[string]any
@@ -117,38 +130,16 @@ func chanshuiExchange(ctx context.Context, client *http.Client, method, target s
 	return resp.StatusCode, resp.Header, data, nil
 }
 
-func chanshuiUpstream(account *Account, config ChanshuiConfig) (string, string, string, error) {
-	if account == nil || account.Type != AccountTypeAPIKey || account.IsCredentialShadow() {
-		return "", "", "", fmt.Errorf("chanshui requires a directly configured API-key account")
-	}
-	key := strings.TrimSpace(account.GetCredential("api_key"))
-	if key == "" {
-		return "", "", "", fmt.Errorf("account has no upstream API key")
-	}
-	protocol := config.Protocol
-	base := strings.TrimSpace(account.GetCredential("base_url"))
-	switch {
-	case account.IsAdaptiveAPIProtocol():
-		selected := APIProtocolChatCompletions
-		switch protocol {
-		case "anthropic":
-			selected = APIProtocolAnthropic
-		case "openai":
-			selected = APIProtocolResponses
-		}
-		base = account.GetCNProtocolBaseURL(selected)
-	case account.IsAnthropicProtocol():
-		base = account.GetAnthropicProtocolBaseURL()
-	case account.Platform == PlatformAnthropic:
-		base = account.GetBaseURL()
-	case account.Platform == PlatformGrok:
-		base = account.GetGrokBaseURL()
-	case base == "":
-		base = account.GetOpenAIBaseURL()
-	}
-	u, err := customUsageValidateURL(base)
-	if err != nil || u.RawQuery != "" {
-		return "", "", "", fmt.Errorf("account needs a public upstream base URL")
-	}
-	return base, key, protocol, nil
+// State is the persisted per-plan audit progress. It contains no upstream
+// credential or request body: a worker restart resumes GET polling.
+type State struct {
+	ID                 string    `json:"id"`
+	PollURL            string    `json:"poll_url"`
+	ServiceURL         string    `json:"service_url"`
+	StartedAt          time.Time `json:"started_at"`
+	ExpiresAt          int64     `json:"expires_at"`
+	KeyFingerprint     string    `json:"key_fingerprint"`
+	Status             string    `json:"status"`
+	Skipped            any       `json:"skipped,omitempty"`
+	DecisionConfigHash string    `json:"decision_config_hash,omitempty"`
 }

@@ -1,35 +1,37 @@
-package service
+package chanshui
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
-	"time"
 )
 
-const ChanshuiQualityPausesExtraKey = "chanshui_quality_pauses"
-
-type ChanshuiStopRule struct {
+// StopRule is one typed comparison over verified audit fields. Rules are
+// declarative data, never executable code.
+type StopRule struct {
 	Type      string   `json:"type"`
 	Threshold *float64 `json:"threshold,omitempty"`
 	Section   string   `json:"section,omitempty"`
 	Status    string   `json:"status,omitempty"`
 }
-type ChanshuiStopCondition struct {
-	Match         string             `json:"match"`
-	ExpectedModel string             `json:"expected_model,omitempty"`
-	Rules         []ChanshuiStopRule `json:"rules"`
+
+// StopCondition combines rules with any/all matching.
+type StopCondition struct {
+	Match         string     `json:"match"`
+	ExpectedModel string     `json:"expected_model,omitempty"`
+	Rules         []StopRule `json:"rules"`
 }
-type ChanshuiDecision struct {
+
+// Decision is the outcome of evaluating a completed audit against a policy.
+type Decision struct {
 	Status string `json:"status"`
 	Reason string `json:"reason"`
 }
 
-func normalizeChanshuiStopCondition(c *ChanshuiConfig) error {
+func normalizeStopCondition(c *Config) error {
 	if c.StopCondition == nil {
-		c.StopCondition = &ChanshuiStopCondition{Match: "any", Rules: []ChanshuiStopRule{{Type: "fingerprint_mismatch"}}}
+		c.StopCondition = &StopCondition{Match: "any", Rules: []StopRule{{Type: "fingerprint_mismatch"}}}
 	}
 	p := c.StopCondition
 	if p.Match == "" {
@@ -83,26 +85,25 @@ func normalizeChanshuiStopCondition(c *ChanshuiConfig) error {
 	return nil
 }
 
-func chanshuiDecisionConfigHash(plan *ScheduledTestPlan) string {
-	copyPlan := *plan
-	if err := normalizeScheduledQualityProvider(&copyPlan); err != nil {
-		return ""
-	}
+// DecisionConfigHash fingerprints the model+config pair so a pending audit
+// can only apply its decision while the policy that created it is unchanged.
+func DecisionConfigHash(modelID string, c Config) string {
 	raw, err := json.Marshal(struct {
 		Model  string
-		Config ChanshuiConfig
-	}{copyPlan.ModelID, copyPlan.QualityConfig})
+		Config Config
+	}{modelID, c})
 	if err != nil {
 		return ""
 	}
-	return chanshuiFingerprint(string(raw))
+	return Fingerprint(string(raw))
 }
 
-func chanshuiObject(v any) map[string]any { o, _ := v.(map[string]any); return o }
-func chanshuiProbeIncomplete(data map[string]any, section string) bool {
+func object(v any) map[string]any { o, _ := v.(map[string]any); return o }
+
+func probeIncomplete(data map[string]any, section string) bool {
 	probes, _ := data["probes"].([]any)
 	for _, p := range probes {
-		o := chanshuiObject(p)
+		o := object(p)
 		id, _ := o["id"].(string)
 		status, _ := o["status"].(string)
 		if section != "" && id != section {
@@ -115,27 +116,28 @@ func chanshuiProbeIncomplete(data map[string]any, section string) bool {
 	return false
 }
 
+// EvaluateStopCondition decides a completed audit against the plan's policy.
 // Rules are typed comparisons over verified API fields, never executable code.
 // A known stop condition can pause immediately; missing evidence cannot recover.
-func evaluateChanshuiStopCondition(plan *ScheduledTestPlan, data map[string]any) ChanshuiDecision {
-	copyPlan := *plan
-	if err := normalizeScheduledQualityProvider(&copyPlan); err != nil {
-		return ChanshuiDecision{"unknown", "停止条件配置无效"}
+func EvaluateStopCondition(modelID string, c Config, data map[string]any) Decision {
+	copy := c
+	if err := copy.Normalize(modelID); err != nil {
+		return Decision{Status: "unknown", Reason: "停止条件配置无效"}
 	}
-	p := copyPlan.QualityConfig.StopCondition
-	verdict := chanshuiObject(data["verdict"])
+	p := copy.StopCondition
+	verdict := object(data["verdict"])
 	matched, known := 0, 0
 	reasons := make([]string, 0, len(p.Rules))
 	for _, r := range p.Rules {
 		hit, available := false, false
 		switch r.Type {
 		case "fingerprint_mismatch":
-			candidate, _ := chanshuiObject(verdict["fingerprint"])["top_model"].(string)
+			candidate, _ := object(verdict["fingerprint"])["top_model"].(string)
 			expected := p.ExpectedModel
 			if expected == "" {
-				expected = plan.ModelID
+				expected = modelID
 			}
-			if strings.TrimSpace(candidate) != "" && !chanshuiProbeIncomplete(data, "fingerprint") {
+			if strings.TrimSpace(candidate) != "" && !probeIncomplete(data, "fingerprint") {
 				available = true
 				hit = !strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(expected))
 				if hit {
@@ -143,11 +145,11 @@ func evaluateChanshuiStopCondition(plan *ScheduledTestPlan, data map[string]any)
 				}
 			}
 		case "total_score_below":
-			total := chanshuiObject(verdict["total"])
+			total := object(verdict["total"])
 			score, ok := total["score"].(float64)
-			iqIncomplete, _ := chanshuiObject(verdict["iq"])["complete"].(bool)
-			_, hasIQ := chanshuiObject(verdict["iq"])["complete"]
-			if ok && score >= 0 && score <= 100 && !chanshuiProbeIncomplete(data, "") && (!hasIQ || iqIncomplete) {
+			iqIncomplete, _ := object(verdict["iq"])["complete"].(bool)
+			_, hasIQ := object(verdict["iq"])["complete"]
+			if ok && score >= 0 && score <= 100 && !probeIncomplete(data, "") && (!hasIQ || iqIncomplete) {
 				available = true
 				hit = score < *r.Threshold
 				if hit {
@@ -155,9 +157,9 @@ func evaluateChanshuiStopCondition(plan *ScheduledTestPlan, data map[string]any)
 				}
 			}
 		case "section_status":
-			status, _ := chanshuiObject(verdict[r.Section])["status"].(string)
+			status, _ := object(verdict[r.Section])["status"].(string)
 			status = strings.TrimSpace(status)
-			if status != "" && !chanshuiProbeIncomplete(data, r.Section) {
+			if status != "" && !probeIncomplete(data, r.Section) {
 				hit = strings.EqualFold(status, r.Status)
 				unknown := status == "unknown" || status == "queued" || status == "running" || status == "skipped" || status == "error"
 				available = hit || !unknown
@@ -174,22 +176,10 @@ func evaluateChanshuiStopCondition(plan *ScheduledTestPlan, data map[string]any)
 		}
 	}
 	if (p.Match == "any" && matched > 0) || (p.Match == "all" && matched == len(p.Rules)) {
-		return ChanshuiDecision{"audit_fail", strings.Join(reasons, "；")}
+		return Decision{Status: "audit_fail", Reason: strings.Join(reasons, "；")}
 	}
 	if known < len(p.Rules) {
-		return ChanshuiDecision{"unknown", "检测证据不足，保持当前调度状态"}
+		return Decision{Status: "unknown", Reason: "检测证据不足，保持当前调度状态"}
 	}
-	return ChanshuiDecision{"audit_pass", "停止条件未命中，可解除本计划造成的暂停"}
-}
-
-type ScheduledChanshuiAccountState interface {
-	ApplyChanshuiQualityState(context.Context, int64, int64, time.Time, bool) (bool, error)
-}
-
-func HasChanshuiQualityPause(account *Account) bool {
-	if account == nil {
-		return false
-	}
-	pauses, _ := account.Extra[ChanshuiQualityPausesExtraKey].(map[string]any)
-	return len(pauses) > 0
+	return Decision{Status: "audit_pass", Reason: "停止条件未命中，可解除本计划造成的暂停"}
 }

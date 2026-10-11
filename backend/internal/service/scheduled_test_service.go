@@ -181,37 +181,6 @@ func (s *ScheduledTestService) SaveResult(ctx context.Context, planID int64, max
 	return s.resultRepo.PruneOldResults(ctx, planID, max(maxResults, 2))
 }
 
-func (s *ScheduledTestService) hasConsecutiveDegradedResults(ctx context.Context, current *ScheduledTestResult) (bool, error) {
-	if current == nil || current.ID <= 0 || current.Status != "degraded" {
-		return false, nil
-	}
-	results, err := s.resultRepo.ListByPlanID(ctx, current.PlanID, 2)
-	if err != nil {
-		return false, err
-	}
-	if len(results) < 2 || results[0] == nil || results[1] == nil {
-		return false, nil
-	}
-	latest, previous := results[0], results[1]
-	return latest.ID == current.ID && previous.ID > 0 && previous.ID != latest.ID &&
-		latest.PlanID == current.PlanID && previous.PlanID == current.PlanID &&
-		latest.Status == "degraded" && previous.Status == "degraded", nil
-}
-
-// Legacy quality pauses share the temporary-ban fields with other subsystems.
-// Clearing them requires a compare-and-clear rather than an unconditional reset.
-type scheduledQualityPauseRepository interface {
-	ClearScheduledQualityPause(context.Context, int64, string) (bool, error)
-}
-
-func (s *ScheduledTestService) clearScheduledQualityPause(ctx context.Context, accountID int64, reason string) (bool, error) {
-	repo, ok := s.resultRepo.(scheduledQualityPauseRepository)
-	if !ok {
-		return false, fmt.Errorf("conditional scheduled quality recovery is unavailable")
-	}
-	return repo.ClearScheduledQualityPause(ctx, accountID, reason)
-}
-
 func computeNextRun(cronExpr string, from time.Time) (time.Time, error) {
 	sched, err := scheduledTestCronParser.Parse(cronExpr)
 	if err != nil {
