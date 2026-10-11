@@ -1052,7 +1052,7 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 		status, _, _, msg := WrapUpstreamErrorForClient(resp.StatusCode, body)
 		if isOpenAIResponsesCompactPath(c) {
 			msg = "Upstream request failed"
-		} else if upstreamMsg != "" {
+		} else if upstreamMsg != "" && resp.StatusCode != 524 {
 			msg = upstreamMsg
 		}
 		writeOpenAIPassthroughErrorEnvelope(c, status, resp.Header, msg)
@@ -1488,6 +1488,9 @@ func sanitizeOpenAICapacityShedErrorCodeForClient(payload []byte) ([]byte, bool)
 }
 
 func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
+	if openAIStreamHasUpstream524(payload) {
+		return 524
+	}
 	if isOpenAIContextWindowError(message, payload) {
 		return http.StatusBadRequest
 	}
@@ -1528,7 +1531,26 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 	}
 }
 
+// Only provider error fields identify a nested HTTP timeout; user input is not evidence.
+func openAIStreamHasUpstream524(payload []byte) bool {
+	for _, path := range []string{"response.error.status_code", "error.status_code", "status_code"} {
+		if gjson.GetBytes(payload, path).Int() == 524 {
+			return true
+		}
+	}
+	for _, path := range []string{"response.error.message", "error.message", "message"} {
+		message := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, path).String()))
+		if message == "upstream 524" || strings.HasPrefix(message, "upstream 524:") || strings.HasPrefix(message, "upstream 524 ") {
+			return true
+		}
+	}
+	return false
+}
+
 func openAIStreamFailureStatus(payload []byte, message string) int {
+	if openAIStreamHasUpstream524(payload) {
+		return 524
+	}
 	if len(bytes.TrimSpace(payload)) == 0 || !gjson.ValidBytes(payload) {
 		return http.StatusBadGateway
 	}
@@ -1829,6 +1851,10 @@ func (s *OpenAIGatewayService) recordOpenAIStreamUpstreamError(
 		message = "OpenAI upstream response failed"
 	}
 	statusCode := openAIStreamFailureStatus(payload, message)
+	if statusCode == 524 {
+		message = "Upstream request timed out (524)"
+		payload = nil // Cloudflare HTML can contain provider domains and origin details.
+	}
 	detail := ""
 	if len(payload) > 0 && s != nil && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 		maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
@@ -1860,6 +1886,20 @@ func (s *OpenAIGatewayService) recordOpenAIStreamUpstreamError(
 		appendOpsUpstreamError(c, event)
 	}
 	return message
+}
+
+func (s *OpenAIGatewayService) markOpenAIStreamFinalFailure(c *gin.Context, account *Account, passthrough bool, requestID string, recorded bool) {
+	if c == nil {
+		return
+	}
+	if !recorded {
+		s.recordOpenAIStreamUpstreamError(c, account, passthrough, requestID, "stream_disconnect", nil, "OpenAI stream disconnected before completion")
+	}
+	status := c.GetInt(OpsUpstreamStatusCodeKey)
+	if status == 0 {
+		status = http.StatusBadGateway
+	}
+	MarkOpsStreamFailure(c, "upstream_error", "stream_incomplete", "Upstream stream failed before completion", status)
 }
 
 func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
@@ -2518,12 +2558,19 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return resultWithUsage(), nil
 		}
 		if sawFailedEvent {
+			s.markOpenAIStreamFinalFailure(c, account, true, upstreamRequestID, true)
 			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if !clientDisconnected {
+				s.markOpenAIStreamFinalFailure(c, account, true, upstreamRequestID, false)
+			}
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
 		}
 		if errors.Is(err, bufio.ErrTooLong) {
+			if !clientDisconnected {
+				s.markOpenAIStreamFinalFailure(c, account, true, upstreamRequestID, false)
+			}
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, err)
 			return resultWithUsage(), err
 		}
@@ -2538,6 +2585,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return resultWithUsage(),
 				s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, nil, msg, mappedModel)
 		}
+		s.markOpenAIStreamFinalFailure(c, account, true, upstreamRequestID, false)
 		s.recordOpenAIProxyStreamDisconnect(account, err, upstreamRequestID)
 		logger.LegacyPrintf("service.openai_gateway",
 			"[OpenAI passthrough] 流读取异常中断: account=%d request_id=%s err=%v",
@@ -2548,6 +2596,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		return resultWithUsage(), fmt.Errorf("stream read error: %w", err)
 	}
 	if sawFailedEvent {
+		s.markOpenAIStreamFinalFailure(c, account, true, upstreamRequestID, true)
 		return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 	}
 	if !clientDisconnected && !sawDone && !sawTerminalEvent && ctx.Err() == nil {
@@ -2560,6 +2609,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return resultWithUsage(),
 				s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, nil, "OpenAI stream ended before a terminal event", mappedModel)
 		}
+		s.markOpenAIStreamFinalFailure(c, account, true, upstreamRequestID, false)
 		s.recordOpenAIProxyStreamDisconnect(account, errors.New("stream ended before terminal event"), upstreamRequestID)
 		return resultWithUsage(), errors.New("stream usage incomplete: missing terminal event")
 	}
