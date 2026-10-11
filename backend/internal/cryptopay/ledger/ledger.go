@@ -105,13 +105,19 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 
 	creditUSDT := amountDecimal * l.multiplier
 
-	inserted, err := l.insertPending(ctx, t, decimals)
+	status, err := l.insertPending(ctx, t, decimals)
 	if err != nil {
 		return false, err
 	}
-	if !inserted {
-		// Duplicate delivery: already handled.
+	switch status {
+	case "credited", "ignored", "reverted":
+		// Already resolved: nothing to do. "pending" falls through so a
+		// transaction that was observed before finality gets credited on a
+		// later pass instead of being dropped when the cursor advances.
 		return false, nil
+	case "pending":
+	default:
+		return false, fmt.Errorf("unexpected deposit status %q", status)
 	}
 
 	if err := l.creditor.CreditDeposit(ctx, CreditRequest{
@@ -137,9 +143,44 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 	return true, nil
 }
 
-// insertPending inserts the deposit row; returns false when it already
-// existed (idempotency gate).
-func (l *Ledger) insertPending(ctx context.Context, t scanner.Transfer, decimals int) (bool, error) {
+// ProcessPending records a transfer that is not yet final so a later pass
+// can credit it. The row stays "pending" until Process succeeds; re-running
+// this is a no-op thanks to the unique key.
+func (l *Ledger) ProcessPending(ctx context.Context, t scanner.Transfer) error {
+	if t.Amount == nil || t.Amount.Sign() <= 0 {
+		return nil
+	}
+	own, err := l.resolver.IsOwnAddress(ctx, t.Chain, t.From)
+	if err != nil {
+		return fmt.Errorf("own-address check: %w", err)
+	}
+	if own {
+		return nil
+	}
+	userID, isOurs, err := l.resolver.ResolveDeposit(ctx, t.Chain, t.To)
+	if err != nil {
+		return fmt.Errorf("resolve deposit: %w", err)
+	}
+	if !isOurs || userID == 0 {
+		return nil
+	}
+	_, err = l.db.ExecContext(ctx,
+		`INSERT INTO deposit_transactions
+		   (chain, tx_hash, log_index, from_address, to_address, token, amount, block_number, block_hash, status)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')
+		 ON CONFLICT (chain, tx_hash, log_index) DO NOTHING`,
+		t.Chain, t.TxHash, t.LogIndex, t.From, t.To, t.Token,
+		amountString(t.Amount, 6), t.BlockNumber, t.BlockHash)
+	if err != nil {
+		return fmt.Errorf("record pending: %w", err)
+	}
+	return nil
+}
+
+// insertPending inserts the deposit row; returns the row's status after the
+// insert ("pending" when new) so callers can tell a fresh observation from
+// a retry of one still waiting for confirmations.
+func (l *Ledger) insertPending(ctx context.Context, t scanner.Transfer, decimals int) (string, error) {
 	result, err := l.db.ExecContext(ctx,
 		`INSERT INTO deposit_transactions
 		   (chain, tx_hash, log_index, from_address, to_address, token, amount, block_number, block_hash, status)
@@ -148,13 +189,23 @@ func (l *Ledger) insertPending(ctx context.Context, t scanner.Transfer, decimals
 		t.Chain, t.TxHash, t.LogIndex, t.From, t.To, t.Token,
 		amountString(t.Amount, decimals), t.BlockNumber, t.BlockHash)
 	if err != nil {
-		return false, fmt.Errorf("insert deposit: %w", err)
+		return "", fmt.Errorf("insert deposit: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return affected > 0, nil
+	if affected > 0 {
+		return "pending", nil
+	}
+	var status string
+	err = l.db.QueryRowContext(ctx,
+		`SELECT status FROM deposit_transactions WHERE chain = $1 AND tx_hash = $2 AND log_index = $3`,
+		t.Chain, t.TxHash, t.LogIndex).Scan(&status)
+	if err != nil {
+		return "", fmt.Errorf("read existing deposit: %w", err)
+	}
+	return status, nil
 }
 
 // record writes an ignored/reverted deposit row for reconciliation. Returns
