@@ -115,6 +115,7 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	filter.Phase = strings.TrimSpace(c.Query("phase"))
 	filter.Owner = strings.TrimSpace(c.Query("error_owner"))
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
+	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
 	// Model 过滤：admin 走精确匹配（ModelFuzzy 默认 false，保持管理端语义）。
@@ -244,6 +245,7 @@ func (h *OpsHandler) ListRequestErrors(c *gin.Context) {
 	filter.Phase = strings.TrimSpace(c.Query("phase"))
 	filter.Owner = strings.TrimSpace(c.Query("error_owner"))
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
+	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
 	// Model 过滤：admin 走精确匹配（ModelFuzzy 默认 false，保持管理端语义）。
@@ -475,6 +477,7 @@ func (h *OpsHandler) ListUpstreamErrors(c *gin.Context) {
 	filter.IncludeRecoveredUpstream = true
 	filter.Owner = "provider"
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
+	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 
 	if platform := strings.TrimSpace(c.Query("platform")); platform != "" {

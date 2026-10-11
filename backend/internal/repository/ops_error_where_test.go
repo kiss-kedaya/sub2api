@@ -161,3 +161,21 @@ func TestBuildOpsErrorLogsWhere_UserOwnershipIsDirectOnly(t *testing.T) {
 		t.Fatalf("user ownership must not depend on deleted-key attribution: %s", where)
 	}
 }
+
+func TestBuildOpsErrorLogsWhere_RequestIDSearchModes(t *testing.T) {
+	for _, tc := range []struct{ input, operator, pattern string }{
+		{"=client:uuid", "=", "uuid"},
+		{"^local:abc%_", "ILIKE", "abc\\%\\_%"},
+		{"part%_", "ILIKE", "%part\\%\\_%"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			where, args := buildOpsErrorLogsWhere(&service.OpsErrorLogFilter{RequestID: tc.input})
+			if !strings.Contains(where, "e.request_id "+tc.operator+" $1") || !strings.Contains(where, "e.client_request_id "+tc.operator+" $1") {
+				t.Fatalf("unexpected filter: %s", where)
+			}
+			if len(args) != 1 || args[0] != tc.pattern {
+				t.Fatalf("unexpected arguments: %v", args)
+			}
+		})
+	}
+}
