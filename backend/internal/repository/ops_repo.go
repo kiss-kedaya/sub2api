@@ -1072,9 +1072,17 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 	}
 	// 使用记录搜索框只传 request_id。库里可能是 client: 前缀，错误表拆成 request_id / client_request_id。
 	if rid := strings.TrimSpace(filter.RequestID); rid != "" {
-		args = append(args, "%"+rid+"%")
+		operator := "ILIKE"
+		pattern := "%" + escapeLikePattern(rid) + "%"
+		if strings.HasPrefix(rid, "=") {
+			operator = "="
+			pattern = service.NormalizeUsageRequestIDKey(strings.TrimSpace(rid[1:]))
+		} else if strings.HasPrefix(rid, "^") {
+			pattern = escapeLikePattern(service.NormalizeUsageRequestIDKey(strings.TrimSpace(rid[1:]))) + "%"
+		}
+		args = append(args, pattern)
 		n := itoa(len(args))
-		clauses = append(clauses, "(COALESCE(e.request_id,'') ILIKE $"+n+" OR COALESCE(e.client_request_id,'') ILIKE $"+n+")")
+		clauses = append(clauses, "(e.request_id "+operator+" $"+n+" OR e.client_request_id "+operator+" $"+n+")")
 	}
 	if crid := strings.TrimSpace(filter.ClientRequestID); crid != "" {
 		args = append(args, crid)
