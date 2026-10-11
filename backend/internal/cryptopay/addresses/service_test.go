@@ -114,7 +114,30 @@ func (f *fakeStore) SetStatus(_ context.Context, id int64, status string) error 
 	return nil
 }
 
-// fakeSigner derives deterministic addresses without touching the real
+func (f *fakeStore) ActiveAddresses(_ context.Context, family string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, a := range f.assignments {
+		if a.Family == family && a.Status == "active" {
+			out = append(out, a.Address)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) LookupByFamily(_ context.Context, family, address string) (*Assignment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.assignments {
+		if a.Family == family && a.Address == address {
+			copied := a
+			return &copied, nil
+		}
+	}
+	return nil, nil
+}
+
 // signer process.
 type fakeSigner struct {
 	mu    sync.Mutex

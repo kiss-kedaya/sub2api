@@ -261,3 +261,38 @@ func (r *Repo) CountAssignments(ctx context.Context) (total, active int64, err e
 	}
 	return total, active, nil
 }
+
+// LookupByFamily resolves an address in any state: an assignment (active or
+// disabled) first, then the unassigned pool. Returns nil when the address
+// does not belong to us.
+func (r *Repo) LookupByFamily(ctx context.Context, family, address string) (*Assignment, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id, user_id, chain, address, derivation_index, status
+		   FROM deposit_addresses
+		  WHERE chain = $1 AND lower(address) = lower($2)`, family, address)
+	var a Assignment
+	err := row.Scan(&a.ID, &a.UserID, &a.Family, &a.Address, &a.DerivationIndex, &a.Status)
+	if err == nil {
+		return &a, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("lookup assignment: %w", err)
+	}
+	// Unassigned pool address: ours, no owner yet.
+	var poolID int64
+	var poolStatus string
+	err = r.db.QueryRowContext(ctx,
+		`SELECT id, status FROM crypto_address_pool
+		  WHERE chain_family = $1 AND lower(address) = lower($2)`, family, address).Scan(&poolID, &poolStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup pool address: %w", err)
+	}
+	return &Assignment{
+		ID: poolID, UserID: 0, Family: family,
+		Address: address, Status: "pool",
+	}, nil
+}
+

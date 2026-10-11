@@ -69,6 +69,8 @@ type PoolStore interface {
 	AssignFromPool(ctx context.Context, userID int64, family string) (*Assignment, error)
 	ListByUser(ctx context.Context, userID int64) ([]Assignment, error)
 	SetStatus(ctx context.Context, id int64, status string) error
+	ActiveAddresses(ctx context.Context, family string) ([]string, error)
+	LookupByFamily(ctx context.Context, family, address string) (*Assignment, error)
 }
 
 // Service coordinates pool top-up and lazy assignment.
@@ -174,4 +176,16 @@ func (s *Service) ListByUser(ctx context.Context, userID int64) ([]Assignment, e
 // SetStatus exposes assignment status changes to the admin layer.
 func (s *Service) SetStatus(ctx context.Context, id int64, status string) error {
 	return s.repo.SetStatus(ctx, id, status)
+}
+
+// ActiveAddresses returns every active address for a chain family (the
+// scanners' watch list).
+func (s *Service) ActiveAddresses(ctx context.Context, family string) ([]string, error) {
+	return s.repo.ActiveAddresses(ctx, family)
+}
+
+// LookupAny resolves an address regardless of status so incoming funds are
+// never dropped: unknown-to-us addresses return nil.
+func (s *Service) LookupAny(ctx context.Context, family, address string) (*Assignment, error) {
+	return s.repo.LookupByFamily(ctx, family, address)
 }
