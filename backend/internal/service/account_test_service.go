@@ -832,7 +832,6 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		upstreamTestModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
 	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth, prompt)
-	applyScheduledVisualReviewPayload(ctx, payload, true)
 	payloadBytes, _ := json.Marshal(payload)
 	ctx, payloadBytes, overdraftInjected := s.prepareCodexQuotaOverdraftTestRequest(ctx, account, payloadBytes)
 
@@ -900,7 +899,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if isOAuth && s.accountRepo != nil && !isScheduledVisualReview(ctx) {
+	if isOAuth && s.accountRepo != nil {
 		if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 			mergeAccountExtra(account, updates)
@@ -910,7 +909,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
-		if !isScheduledVisualReview(ctx) && !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
+		if !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
 			expectedTaskID := credentialAccount.GetCredential("task_id")
 			if err := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount, expectedTaskID); err != nil {
 				return s.sendErrorAndEnd(c, fmt.Sprintf("Agent Identity task recovery failed: %s", err.Error()))
@@ -918,7 +917,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			c.Request = c.Request.WithContext(markAgentIdentityTaskRecoveryTried(ctx))
 			return s.testOpenAIAccountConnection(c, account, modelID, prompt, mode)
 		}
-		if resp.StatusCode == http.StatusTooManyRequests && !isScheduledVisualReview(ctx) {
+		if resp.StatusCode == http.StatusTooManyRequests {
 			// The coordinator records quota evidence and probe state, but it does
 			// not own the durable account rate-limit timestamp. Persist the 429
 			// reset for every response (including quota 429s); the candidate query
@@ -928,7 +927,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
 		// 401 Unauthorized: 标记账号为永久错误
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil && !isScheduledVisualReview(ctx) {
+		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
@@ -936,7 +935,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	// Process SSE stream and then record native/business overdraft evidence.
-	if err := s.processOpenAIStream(c, scheduledVisualReviewReader(ctx, resp.Body)); err != nil {
+	if err := s.processOpenAIStream(c, resp.Body); err != nil {
 		return err
 	}
 	s.observeCodexQuotaOverdraftTestResult(ctx, account, upstreamTestModelID, overdraftInjected)
@@ -2124,7 +2123,6 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	c.Writer.Flush()
 
 	payload := createOpenAIChatCompletionsTestPayload(testModelID, prompt)
-	applyScheduledVisualReviewPayload(ctx, payload, false)
 	payloadBytes, _ := json.Marshal(payload)
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
@@ -2155,10 +2153,10 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusTooManyRequests && !isScheduledVisualReview(ctx) {
+		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
-		if !isScheduledVisualReview(ctx) && s.shouldDisableAccountAfterTestUpstream(resp.StatusCode, body) {
+		if s.shouldDisableAccountAfterTestUpstream(resp.StatusCode, body) {
 			errMsg := fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body))
 			if resp.StatusCode == http.StatusUnauthorized {
 				errMsg = fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
@@ -2168,7 +2166,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	return s.processOpenAIChatCompletionsStream(c, scheduledVisualReviewReader(ctx, resp.Body))
+	return s.processOpenAIChatCompletionsStream(c, resp.Body)
 }
 
 func (s *AccountTestService) shouldDisableAccountAfterTestUpstream(statusCode int, body []byte) bool {

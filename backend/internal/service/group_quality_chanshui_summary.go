@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"math"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/chanshui"
 )
 
 // The public channel page receives only these fields, never raw probes,
@@ -22,7 +24,7 @@ type ChanshuiPublicSummary struct {
 
 func publicAuditToken(value any) string {
 	s, ok := value.(string)
-	if !ok || len(s) > 128 || chanshuiKeyPattern.MatchString(s) {
+	if !ok || len(s) > 128 || chanshui.LooksLikeKey(s) {
 		return ""
 	}
 	for _, c := range s {
@@ -59,17 +61,17 @@ func PopulateGroupQualityAudit(event *GroupQualityEvent, raw string) {
 		event.Status = "degraded"
 	}
 	var data map[string]any
-	if len(raw) > chanshuiMaxBody || json.Unmarshal([]byte(raw), &data) != nil || data["provider"] != QualityProviderChanshui {
+	if len(raw) > chanshui.MaxBody || json.Unmarshal([]byte(raw), &data) != nil || data["provider"] != QualityProviderChanshui {
 		return
 	}
-	verdict := chanshuiObject(data["verdict"])
+	verdict := chanshui.Object(data["verdict"])
 	summary := &ChanshuiPublicSummary{
-		Score:          publicAuditScore(chanshuiObject(verdict["total"])["score"]),
-		CandidateModel: publicAuditToken(chanshuiObject(verdict["fingerprint"])["top_model"]),
+		Score:          publicAuditScore(chanshui.Object(verdict["total"])["score"]),
+		CandidateModel: publicAuditToken(chanshui.Object(verdict["fingerprint"])["top_model"]),
 		Sections:       []ChanshuiPublicSection{},
 	}
 	for _, name := range []string{"fingerprint", "injection", "hidden", "cache", "tools", "web", "knowledge", "thinking", "iq"} {
-		section := chanshuiObject(verdict[name])
+		section := chanshui.Object(verdict[name])
 		if len(section) == 0 {
 			continue
 		}
