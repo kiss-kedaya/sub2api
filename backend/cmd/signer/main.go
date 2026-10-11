@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -86,8 +87,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("listen: %v", err)
 	}
-	if err := os.Chmod(*socketPath, 0o600); err != nil {
-		log.Fatalf("chmod socket: %v", err)
+	// Windows AF_UNIX does not honor POSIX permissions; skip chmod there so
+	// the socket stays connectable. On Linux the 0600 mode restricts access
+	// to the service account.
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(*socketPath, 0o600); err != nil {
+			log.Fatalf("chmod socket: %v", err)
+		}
 	}
 
 	mux := http.NewServeMux()
