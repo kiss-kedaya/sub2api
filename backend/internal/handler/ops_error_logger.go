@@ -472,6 +472,7 @@ func setOpsRequestContext(c *gin.Context, model string, stream bool) {
 	if c.Request != nil && model != "" {
 		ctx := context.WithValue(c.Request.Context(), ctxkey.Model, model)
 		c.Request = c.Request.WithContext(ctx)
+		c.Set(service.UsageInflightRequestContextKey, ctx)
 	}
 }
 
@@ -502,6 +503,7 @@ func setOpsSelectedAccount(c *gin.Context, accountID int64, platform ...string) 
 			}
 		}
 		c.Request = c.Request.WithContext(ctx)
+		c.Set(service.UsageInflightRequestContextKey, ctx)
 	}
 }
 
