@@ -333,6 +333,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	cryptoAddressService := cryptopay.NewAddressService(db, settingService)
 	cryptoDepositCreditor := cryptopay.NewDepositCreditor(client, paymentService)
 	cryptoService := cryptopay.NewService(db, settingService, cryptoDepositCreditor, cryptoAddressService)
+	paymentService.SetDepositAddressResolver(cryptoService)
+	paymentService.SetDepositAddressResolver(cryptoService)
 	cryptoHandler := handler.NewCryptoHandler(cryptoAddressService, settingService, cryptoService)
 	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)
 	openAIQuotaAutoResetService := service.ProvideOpenAIQuotaAutoResetService(accountRepository, openAIQuotaService, rateLimitService, idempotencyCoordinator, auditLogService, settingService, leaderLockCache)

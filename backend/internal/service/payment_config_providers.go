@@ -134,6 +134,7 @@ var providerSensitiveConfigFields = map[string]map[string]struct{}{
 	payment.TypeStripe:    {"secretkey": {}, "webhooksecret": {}},
 	payment.TypeAirwallex: {"apikey": {}, "webhooksecret": {}},
 	payment.TypeEpusdt:    {"secretkey": {}},
+	payment.TypeCrypto:    {},
 }
 
 // providerPendingOrderProtectedConfigFields lists config keys that cannot be
@@ -142,6 +143,7 @@ var providerSensitiveConfigFields = map[string]map[string]struct{}{
 // webhook/refund verification.
 var providerPendingOrderProtectedConfigFields = map[string]map[string]struct{}{
 	payment.TypeEpusdt:    {"secretkey": {}, "pid": {}, "apibase": {}, "token": {}, "network": {}, "currency": {}, "notifyurl": {}, "returnurl": {}},
+	payment.TypeCrypto:    {"currency": {}},
 	payment.TypeEasyPay:   {"pkey": {}, "pid": {}},
 	payment.TypeAlipay:    {"privatekey": {}, "publickey": {}, "alipaypublickey": {}, "appid": {}},
 	payment.TypeWxpay:     {"privatekey": {}, "apiv3key": {}, "publickey": {}, "appid": {}, "mpappid": {}, "mchid": {}, "publickeyid": {}, "certserial": {}},
@@ -198,7 +200,7 @@ func (s *PaymentConfigService) countPendingOrdersByPlan(ctx context.Context, pla
 
 var validProviderKeys = map[string]bool{
 	payment.TypeEasyPay: true, payment.TypeAlipay: true, payment.TypeWxpay: true, payment.TypeStripe: true, payment.TypeAirwallex: true,
-	payment.TypeEpusdt: true,
+	payment.TypeEpusdt: true, payment.TypeCrypto: true,
 }
 
 func (s *PaymentConfigService) CreateProviderInstance(ctx context.Context, req CreateProviderInstanceRequest) (*dbent.PaymentProviderInstance, error) {

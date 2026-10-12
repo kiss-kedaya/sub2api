@@ -120,6 +120,9 @@ type CreatePaymentRequest struct {
 	// alipay.trade.precreate instead of alipay.trade.wap.pay.
 	AlipayMobilePrecreate bool
 	InstanceSubMethods    string // Comma-separated sub-methods from instance supported_types (for Stripe)
+	// DepositAddress carries the user's per-user on-chain deposit address
+	// for the built-in crypto channel; other providers ignore it.
+	DepositAddress string
 }
 
 // CreatePaymentResultType describes the shape of the create-payment result.
