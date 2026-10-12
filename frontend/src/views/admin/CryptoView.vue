@@ -94,6 +94,18 @@
                 <label class="crypto-view__label">{{ t('admin.crypto.hotWalletSolana') }}</label>
                 <input v-model="config.hot_wallet_solana" class="input" placeholder="…" />
               </div>
+              <div class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.hotIndex') }}</label>
+                <input v-model.number="config.hot_index" type="number" min="0" step="1" class="input" />
+                <p class="crypto-view__hint">{{ t('admin.crypto.hotIndexHint') }}</p>
+              </div>
+              <div class="crypto-view__switch-row">
+                <div class="space-y-0.5">
+                  <label class="crypto-view__label">{{ t('admin.crypto.sweepAuto') }}</label>
+                  <p class="crypto-view__hint">{{ t('admin.crypto.sweepAutoHint') }}</p>
+                </div>
+                <Toggle v-model="config.sweep_auto" />
+              </div>
             </div>
 
             <div class="crypto-view__divider"></div>

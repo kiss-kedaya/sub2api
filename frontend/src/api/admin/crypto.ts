@@ -12,6 +12,8 @@ export interface CryptoConfig {
   gas_topup: Record<string, number>
   hot_wallet_evm: string
   hot_wallet_solana: string
+  hot_index: number
+  sweep_auto: boolean
   confirmations: Record<string, number>
   credit_min_amount: number
   credit_multiplier: number
