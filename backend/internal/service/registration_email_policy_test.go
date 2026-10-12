@@ -4,10 +4,47 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestValidateRegistrationEmailFormat(t *testing.T) {
+	valid := []string{
+		"user@qq.com",
+		"User.Name+tag@Sub.Example.com",
+		"a@b.co",
+		"user_%1@example.com",
+	}
+	for _, email := range valid {
+		t.Run("valid/"+email, func(t *testing.T) {
+			require.NoError(t, ValidateRegistrationEmailFormat(email))
+		})
+	}
+
+	invalid := []string{
+		"",
+		"   ",
+		"user@localhost",
+		"user@",
+		"@qq.com",
+		"user@@qq.com",
+		"user name@qq.com",
+		`"user"@qq.com`,
+		"user<>@qq.com",
+		"用户@qq.com",
+		"user@qq",
+		"user@-qq.com",
+		strings.Repeat("a", 65) + "@qq.com",
+		strings.Repeat("a", 60) + "@" + strings.Repeat("b", 190) + ".com",
+	}
+	for _, email := range invalid {
+		t.Run("invalid/"+email, func(t *testing.T) {
+			require.ErrorIs(t, ValidateRegistrationEmailFormat(email), ErrEmailFormatInvalid)
+		})
+	}
+}
 
 func TestNormalizeRegistrationEmailSuffixWhitelist(t *testing.T) {
 	got, err := NormalizeRegistrationEmailSuffixWhitelist([]string{"example.com", "@EXAMPLE.COM", " @foo.bar ", "*.EDU.CN"})
@@ -55,7 +92,8 @@ func TestRegistrationEmailQuotaRejectsMalformedDomainWhenWhitelistConfigured(t *
 
 	_, _, err := svc.Register(context.Background(), "malformed-email", "password")
 
-	require.ErrorIs(t, err, ErrEmailSuffixNotAllowed)
+	// 结构校验先于域名额度校验拦下（同样是拒绝建号，错误码更准确）。
+	require.ErrorIs(t, err, ErrEmailFormatInvalid)
 	require.Empty(t, repo.created)
 }
 

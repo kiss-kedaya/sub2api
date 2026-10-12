@@ -6,6 +6,10 @@ const EMAIL_SUFFIX_WILDCARD_PREFIX = '*.'
 const EMAIL_SUFFIX_MESSAGE_VISIBLE_LIMIT = 5
 const EMAIL_SUFFIX_DOMAIN_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/
+// 与后端 ValidateRegistrationEmailFormat 同口径：本地段仅限常见字符。
+const EMAIL_LOCAL_PART_PATTERN = /^[a-z0-9](?:[a-z0-9._%+-]*[a-z0-9_%+-])?$/
+const EMAIL_MAX_LENGTH = 254
+const EMAIL_MAX_LOCAL_LENGTH = 64
 
 // normalizeRegistrationEmailSuffixDomain converts raw input into a canonical domain token.
 // Exact domains are returned without "@"; wildcard domains keep the "*." prefix.
@@ -103,6 +107,27 @@ export function isRegistrationEmailSuffixAllowed(
     }
     return false
   })
+}
+
+// 邮箱结构预检（长度 / 字符集 / 多级域名），与后端 ValidateRegistrationEmailFormat 一致。
+export function isRegistrationEmailFormatValid(email: string): boolean {
+  const raw = String(email || '').trim().toLowerCase()
+  if (!raw || raw.length > EMAIL_MAX_LENGTH) {
+    return false
+  }
+  // 后端会容忍域名根点（user@qq.com.），这里保持同口径。
+  const domain = extractRegistrationEmailDomain(raw).replace(/\.+$/, '')
+  if (!domain) {
+    return false
+  }
+  const localPart = raw.slice(0, raw.indexOf('@'))
+  if (!localPart || localPart.length > EMAIL_MAX_LOCAL_LENGTH) {
+    return false
+  }
+  if (!EMAIL_LOCAL_PART_PATTERN.test(localPart)) {
+    return false
+  }
+  return isRegistrationEmailSuffixDomainValid(domain)
 }
 
 export function formatRegistrationEmailSuffixWhitelistForMessage(

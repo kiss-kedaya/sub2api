@@ -23,7 +23,7 @@
       </div>
       <div>
         <label class="input-label">{{ t('admin.users.username') }}</label>
-        <input v-model="form.username" type="text" class="input" :placeholder="t('admin.users.enterUsername')" />
+        <input v-model="form.username" type="text" class="input" maxlength="50" :placeholder="t('admin.users.enterUsername')" />
       </div>
       <div>
         <label class="input-label">{{ t('admin.users.form.roleLabel') }}</label>
@@ -77,6 +77,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import { isUsernameValid } from '@/utils/usernamePolicy'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits(['close', 'success']); const { t } = useI18n()
@@ -89,6 +90,11 @@ const loading = ref(false)
 
 const submit = async () => {
   if (loading.value) return
+  // 与后端 ValidateUsername 同口径：标记字符/超长用户名会被 400 拒绝，这里先提示。
+  if (!isUsernameValid(form.username)) {
+    appStore.showError(t('admin.users.usernameInvalid'))
+    return
+  }
   loading.value = true
   try {
     const { balance: rawBalance, ...rest } = { ...form }
