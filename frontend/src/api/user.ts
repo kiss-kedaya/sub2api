@@ -192,6 +192,26 @@ export async function getMyPlatformQuotas(): Promise<PlatformQuotasResponse> {
   return data
 }
 
+export interface BarkSettings {
+  configured: boolean
+  enabled: boolean
+}
+
+/**
+ * Read the Bark push settings. The device key itself is never returned.
+ */
+export async function getBarkSettings(): Promise<BarkSettings> {
+  const { data } = await apiClient.get<{ data: BarkSettings }>('/user/bark')
+  return data.data
+}
+
+/**
+ * Store (or clear, with an empty key) the Bark device key.
+ */
+export async function updateBarkSettings(deviceKey: string, enabled: boolean): Promise<void> {
+  await apiClient.put('/user/bark', { device_key: deviceKey, enabled })
+}
+
 export const userAPI = {
   getProfile,
   updateProfile,
@@ -200,6 +220,8 @@ export const userAPI = {
   verifyNotifyEmail,
   removeNotifyEmail,
   toggleNotifyEmail,
+  getBarkSettings,
+  updateBarkSettings,
   sendEmailBindingCode,
   bindEmailIdentity,
   unbindAuthIdentity,
