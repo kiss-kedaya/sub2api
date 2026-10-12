@@ -311,7 +311,25 @@ type AdminRow struct {
 // AdminList returns a page of addresses with aggregated credited/swept
 // totals. Filters are optional; totals come from the ledger tables so the
 // list never touches the chain.
-func (r *Repo) AdminList(ctx context.Context, userID int64, family string, limit, offset int) ([]AdminRow, int64, error) {
+// adminSortColumns whitelists ORDER BY targets: sortBy reaches SQL, so it
+// must never be interpolated from raw user input.
+var adminSortColumns = map[string]string{
+	"id":             "a.id",
+	"user_id":        "a.user_id",
+	"credited_total": "COALESCE(d.credited, 0)",
+	"swept_total":    "COALESCE(s.swept, 0)",
+	"deposit_count":  "COALESCE(d.cnt, 0)",
+}
+
+// AdminSummary aggregates the whole filtered set, not just the current page.
+type AdminSummary struct {
+	AddressCount  int64   `json:"address_count"`
+	DepositCount  int64   `json:"deposit_count"`
+	CreditedTotal float64 `json:"credited_total"`
+	SweptTotal    float64 `json:"swept_total"`
+}
+
+func (r *Repo) AdminList(ctx context.Context, userID int64, family string, limit, offset int, sortBy, sortDir string) ([]AdminRow, int64, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -348,7 +366,8 @@ func (r *Repo) AdminList(ctx context.Context, userID int64, family string, limit
 		          FROM sweep_records WHERE status = 'swept'
 		         GROUP BY from_address
 		  ) s ON lower(s.from_address) = lower(a.address)` + where +
-		fmt.Sprintf(" ORDER BY a.id DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
+		orderByClause(sortBy, sortDir) +
+		fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
 	args = append(args, limit, offset)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -368,3 +387,53 @@ func (r *Repo) AdminList(ctx context.Context, userID int64, family string, limit
 	return out, total, rows.Err()
 }
 
+// orderByClause builds the ORDER BY from the whitelist. Unknown columns fall
+// back to the stable default so no caller can inject SQL through sortBy.
+func orderByClause(sortBy, sortDir string) string {
+	column, ok := adminSortColumns[sortBy]
+	if !ok {
+		column = "a.id"
+	}
+	direction := "DESC"
+	if sortDir == "asc" {
+		direction = "ASC"
+	}
+	return " ORDER BY " + column + " " + direction + ", a.id DESC"
+}
+
+// AdminSummary totals the filtered set. Kept as its own query so the header
+// shows whole-set figures regardless of the current page.
+func (r *Repo) AdminSummary(ctx context.Context, userID int64, family string) (*AdminSummary, error) {
+	where := " WHERE 1=1"
+	args := []any{}
+	if userID > 0 {
+		args = append(args, userID)
+		where += fmt.Sprintf(" AND a.user_id = $%d", len(args))
+	}
+	if family != "" {
+		args = append(args, family)
+		where += fmt.Sprintf(" AND a.chain = $%d", len(args))
+	}
+	var out AdminSummary
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+		       COALESCE(SUM(COALESCE(d.cnt, 0)), 0),
+		       COALESCE(SUM(COALESCE(d.credited, 0)), 0),
+		       COALESCE(SUM(COALESCE(s.swept, 0)), 0)
+		  FROM deposit_addresses a
+		  LEFT JOIN (
+		        SELECT to_address, SUM(amount) AS credited, COUNT(*) AS cnt
+		          FROM deposit_transactions WHERE status = 'credited'
+		         GROUP BY to_address
+		  ) d ON lower(d.to_address) = lower(a.address)
+		  LEFT JOIN (
+		        SELECT from_address, SUM(amount) AS swept
+		          FROM sweep_records WHERE status = 'swept'
+		         GROUP BY from_address
+		  ) s ON lower(s.from_address) = lower(a.address)`+where, args...).
+		Scan(&out.AddressCount, &out.DepositCount, &out.CreditedTotal, &out.SweptTotal)
+	if err != nil {
+		return nil, fmt.Errorf("address summary: %w", err)
+	}
+	return &out, nil
+}

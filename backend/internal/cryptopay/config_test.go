@@ -32,21 +32,37 @@ func TestNormalizeConfigRejectsUnknownChain(t *testing.T) {
 	}
 }
 
-func TestNormalizeConfigRequiresHotWalletsWhenEnabled(t *testing.T) {
-	_, err := NormalizeConfig(CryptoConfig{Enabled: true})
-	if err == nil {
-		t.Fatal("expected error when enabled without hot wallets")
-	}
-	cfg, err := NormalizeConfig(CryptoConfig{
-		Enabled:         true,
-		HotWalletEVM:    "0x1111111111111111111111111111111111111111",
-		HotWalletSolana: "So11111111111111111111111111111111111111112",
-	})
+// Enabling the channel without a hot wallet is a valid state: deposits,
+// scanning and crediting all work. Only a real sweep must refuse.
+func TestNormalizeConfigAllowsEmptyHotWallets(t *testing.T) {
+	cfg, err := NormalizeConfig(CryptoConfig{Enabled: true})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("empty hot wallets must normalize, got %v", err)
 	}
 	if !cfg.Enabled {
 		t.Fatal("expected enabled config to survive normalization")
+	}
+}
+
+// The sweep gate is what protects funds: no destination, no sweep.
+func TestValidateSweepReady(t *testing.T) {
+	tests := []struct {
+		name    string
+		hot     string
+		wantErr bool
+	}{
+		{"configured", "0x1111111111111111111111111111111111111111", false},
+		{"empty", "", true},
+		{"whitespace", "   ", true},
+		{"zero address", "0x0000000000000000000000000000000000000000", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CryptoConfig{HotWalletEVM: tt.hot}.ValidateSweepReady()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateSweepReady(%q) err = %v, wantErr %v", tt.hot, err, tt.wantErr)
+			}
+		})
 	}
 }
 

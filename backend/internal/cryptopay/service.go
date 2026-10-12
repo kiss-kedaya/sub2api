@@ -255,6 +255,11 @@ func (s *Service) BuildSweepPlan(ctx context.Context) (*sweeper.Plan, error) {
 	return planner.BuildPlan(ctx)
 }
 
+// SweepReadiness reports whether a real sweep has everything it needs.
+func (s *Service) SweepReadiness() error {
+	return s.Config().ValidateSweepReady()
+}
+
 // RunSweep executes the sweep (or a dry-run) and returns the summary.
 // Serialised by the caller via the admin route; sweeps are operator-driven.
 func (s *Service) RunSweep(ctx context.Context, dryRun bool) (*sweeper.Summary, error) {
@@ -273,17 +278,17 @@ func (s *Service) RunSweep(ctx context.Context, dryRun bool) (*sweeper.Summary, 
 
 // SweepRecord is one sweep_records row for the admin UI.
 type SweepRecord struct {
-	ID          int64   `json:"id"`
-	Chain       string  `json:"chain"`
-	FromAddress string  `json:"from_address"`
-	ToAddress   string  `json:"to_address"`
-	Token       string  `json:"token"`
-	Amount      string  `json:"amount"`
-	GasTxHash   string  `json:"gas_tx_hash"`
-	SweepTxHash string  `json:"sweep_tx_hash"`
-	Status      string  `json:"status"`
-	Error       string  `json:"error"`
-	CreatedAt   string  `json:"created_at"`
+	ID          int64  `json:"id"`
+	Chain       string `json:"chain"`
+	FromAddress string `json:"from_address"`
+	ToAddress   string `json:"to_address"`
+	Token       string `json:"token"`
+	Amount      string `json:"amount"`
+	GasTxHash   string `json:"gas_tx_hash"`
+	SweepTxHash string `json:"sweep_tx_hash"`
+	Status      string `json:"status"`
+	Error       string `json:"error"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // ListSweepRecords returns recent sweep records, optionally filtered.
