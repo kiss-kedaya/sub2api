@@ -296,3 +296,75 @@ func (r *Repo) LookupByFamily(ctx context.Context, family, address string) (*Ass
 	}, nil
 }
 
+// AdminRow is one address with its aggregated activity, for the admin list.
+type AdminRow struct {
+	ID            int64   `json:"id"`
+	UserID        int64   `json:"user_id"`
+	Family        string  `json:"family"`
+	Address       string  `json:"address"`
+	Status        string  `json:"status"`
+	CreditedTotal float64 `json:"credited_total"`
+	SweptTotal    float64 `json:"swept_total"`
+	DepositCount  int64   `json:"deposit_count"`
+}
+
+// AdminList returns a page of addresses with aggregated credited/swept
+// totals. Filters are optional; totals come from the ledger tables so the
+// list never touches the chain.
+func (r *Repo) AdminList(ctx context.Context, userID int64, family string, limit, offset int) ([]AdminRow, int64, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	where := " WHERE 1=1"
+	args := []any{}
+	if userID > 0 {
+		args = append(args, userID)
+		where += fmt.Sprintf(" AND a.user_id = $%d", len(args))
+	}
+	if family != "" {
+		args = append(args, family)
+		where += fmt.Sprintf(" AND a.chain = $%d", len(args))
+	}
+
+	var total int64
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deposit_addresses a`+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count addresses: %w", err)
+	}
+
+	// deposit_addresses.chain holds the FAMILY (evm/solana) while the ledger
+	// tables hold concrete chains, so the aggregation joins on address only.
+	query := `
+		SELECT a.id, a.user_id, a.chain, a.address, a.status,
+		       COALESCE(d.credited, 0), COALESCE(s.swept, 0), COALESCE(d.cnt, 0)
+		  FROM deposit_addresses a
+		  LEFT JOIN (
+		        SELECT to_address, SUM(amount) AS credited, COUNT(*) AS cnt
+		          FROM deposit_transactions WHERE status = 'credited'
+		         GROUP BY to_address
+		  ) d ON lower(d.to_address) = lower(a.address)
+		  LEFT JOIN (
+		        SELECT from_address, SUM(amount) AS swept
+		          FROM sweep_records WHERE status = 'swept'
+		         GROUP BY from_address
+		  ) s ON lower(s.from_address) = lower(a.address)` + where +
+		fmt.Sprintf(" ORDER BY a.id DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list addresses: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []AdminRow
+	for rows.Next() {
+		var row AdminRow
+		if err := rows.Scan(&row.ID, &row.UserID, &row.Family, &row.Address,
+			&row.Status, &row.CreditedTotal, &row.SweptTotal, &row.DepositCount); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, row)
+	}
+	return out, total, rows.Err()
+}
+

@@ -151,33 +151,31 @@ func (h *CryptoHandler) AdminListDeposits(c *gin.Context) {
 // AdminListAddresses lists assignments with optional family/status filters.
 // GET /api/v1/admin/crypto/addresses
 func (h *CryptoHandler) AdminListAddresses(c *gin.Context) {
-	status := c.Query("status")
-	idParam := c.Query("user_id")
-	if idParam == "" {
-		response.BadRequest(c, "user_id is required")
-		return
+	// user_id is optional now: without it the console shows every address
+	// with aggregated credited/swept totals (the operator's main view).
+	var userID int64
+	if raw := c.Query("user_id"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			response.BadRequest(c, "invalid user_id")
+			return
+		}
+		userID = parsed
 	}
-	userID, err := strconv.ParseInt(idParam, 10, 64)
-	if err != nil {
-		response.BadRequest(c, "invalid user_id")
-		return
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "50"))
+	if page < 1 {
+		page = 1
 	}
-	list, err := h.addresses.ListByUser(c.Request.Context(), userID)
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 50
+	}
+	list, total, err := h.addresses.AdminList(c.Request.Context(), userID, c.Query("family"), pageSize, (page-1)*pageSize)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	out := make([]gin.H, 0, len(list))
-	for _, a := range list {
-		if status != "" && a.Status != status {
-			continue
-		}
-		out = append(out, gin.H{
-			"id": a.ID, "user_id": a.UserID, "family": a.Family,
-			"address": a.Address, "status": a.Status,
-		})
-	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"items": list, "total": total}})
 }
 
 // AdminSetAddressStatus enables/disables an assignment.
