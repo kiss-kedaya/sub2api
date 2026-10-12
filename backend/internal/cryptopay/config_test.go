@@ -17,8 +17,8 @@ func TestNormalizeConfigDefaults(t *testing.T) {
 	if cfg.SweepGlobalThreshold != 1000 {
 		t.Fatalf("threshold = %v, want 1000", cfg.SweepGlobalThreshold)
 	}
-	if cfg.CreditMultiplier != 1.0 {
-		t.Fatalf("multiplier = %v, want 1.0", cfg.CreditMultiplier)
+	if cfg.CreditMultiplier != 6.7 {
+		t.Fatalf("multiplier = %v, want 6.7", cfg.CreditMultiplier)
 	}
 	if cfg.Confirmations[ChainBSC] != 5 {
 		t.Fatalf("bsc confirmations = %d, want 5", cfg.Confirmations[ChainBSC])
