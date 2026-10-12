@@ -82,9 +82,9 @@ type CryptoConfig struct {
 // DefaultCryptoConfig returns the disabled default with sane thresholds.
 func DefaultCryptoConfig() CryptoConfig {
 	return CryptoConfig{
-		Enabled: false,
-		Chains:  []string{ChainBSC},
-		RPC:     map[string]string{},
+		Enabled:              false,
+		Chains:               []string{ChainBSC},
+		RPC:                  map[string]string{},
 		SweepGlobalThreshold: 1000,
 		SweepMinPerAddress: map[string]float64{
 			ChainBSC: 3, ChainPolygon: 3, ChainPlasma: 3, ChainSolana: 1,
@@ -95,7 +95,7 @@ func DefaultCryptoConfig() CryptoConfig {
 		Confirmations: map[string]int{
 			ChainBSC: 5, ChainPolygon: 5, ChainPlasma: 5, ChainSolana: 1,
 		},
-		CreditMinAmount:  0.1,
+		CreditMinAmount: 0.1,
 		// 1 USDT credits 6.7 balance units (operator-confirmed 2026-10-12).
 		CreditMultiplier: 6.7,
 		SignerSocket:     "/run/sub2api/signer.sock",
@@ -134,15 +134,33 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	if strings.TrimSpace(cfg.SignerSocket) == "" {
 		cfg.SignerSocket = def.SignerSocket
 	}
-	if cfg.Enabled {
-		if strings.TrimSpace(cfg.HotWalletEVM) == "" {
-			return cfg, fmt.Errorf("crypto config: hot_wallet_evm is required when enabled")
-		}
-		if strings.TrimSpace(cfg.HotWalletSolana) == "" {
-			return cfg, fmt.Errorf("crypto config: hot_wallet_solana is required when enabled")
-		}
-	}
+	// Hot wallets may stay empty: deposits, scanning and crediting all work
+	// without them. Only the sweep path needs a destination, and it refuses
+	// to run until one is configured (see ValidateSweepReady).
 	return cfg, nil
+}
+
+// ValidateSweepReady reports why a real sweep cannot run yet. Empty is the
+// expected first-run state; the message tells the operator what to set.
+func (cfg CryptoConfig) ValidateSweepReady() error {
+	hot := strings.TrimSpace(cfg.HotWalletEVM)
+	if hot == "" {
+		return fmt.Errorf("sweep disabled: set the EVM hot wallet (receiving address) first")
+	}
+	if isZeroAddress(hot) {
+		return fmt.Errorf("sweep disabled: the EVM hot wallet is the zero address")
+	}
+	return nil
+}
+
+// isZeroAddress catches the all-zero placeholder: sending funds there burns
+// them, and an unset field often round-trips as 0x000…0 rather than "".
+func isZeroAddress(address string) bool {
+	trimmed := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(address)), "0x")
+	if trimmed == "" {
+		return false
+	}
+	return strings.Trim(trimmed, "0") == ""
 }
 
 // SettingStore is the narrow persistence surface the config needs: read and

@@ -138,7 +138,7 @@ func (f *fakeStore) LookupByFamily(_ context.Context, family, address string) (*
 	return nil, nil
 }
 
-func (f *fakeStore) AdminList(_ context.Context, userID int64, family string, limit, offset int) ([]AdminRow, int64, error) {
+func (f *fakeStore) AdminList(_ context.Context, userID int64, family string, limit, offset int, _, _ string) ([]AdminRow, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []AdminRow
@@ -152,6 +152,22 @@ func (f *fakeStore) AdminList(_ context.Context, userID int64, family string, li
 		out = append(out, AdminRow{ID: a.ID, UserID: a.UserID, Family: a.Family, Address: a.Address, Status: a.Status})
 	}
 	return out, int64(len(out)), nil
+}
+
+func (f *fakeStore) AdminSummary(_ context.Context, userID int64, family string) (*AdminSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out AdminSummary
+	for _, a := range f.assignments {
+		if userID > 0 && a.UserID != userID {
+			continue
+		}
+		if family != "" && a.Family != family {
+			continue
+		}
+		out.AddressCount++
+	}
+	return &out, nil
 }
 
 // signer process.

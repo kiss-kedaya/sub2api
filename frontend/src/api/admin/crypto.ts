@@ -88,25 +88,6 @@ export interface SweepSummary {
   entries: SweepEntry[]
 }
 
-export interface SweepEntry {
-  chain: string
-  address: string
-  amount: string
-  gas_tx_hash: string
-  sweep_tx_hash: string
-  status: string
-  error?: string
-}
-
-export interface SweepSummary {
-  dry_run: boolean
-  planned: number
-  swept: number
-  failed: number
-  gas_topups: number
-  entries: SweepEntry[]
-}
-
 export async function getCryptoConfig(): Promise<CryptoConfig> {
   const { data } = await apiClient.get('/admin/crypto/config')
   return data.data
@@ -121,13 +102,50 @@ export async function listDepositAddresses(userId: number): Promise<DepositAddre
   return data.data ?? []
 }
 
+// AdminAddressSummary totals the filtered set, not just the current page.
+export interface AdminAddressSummary {
+  address_count: number
+  deposit_count: number
+  credited_total: number
+  swept_total: number
+}
+
+export type AddressSortKey = 'id' | 'user_id' | 'credited_total' | 'swept_total' | 'deposit_count'
+
+export interface AddressQuery {
+  userId?: number | null
+  page?: number
+  pageSize?: number
+  sortBy?: AddressSortKey
+  sortDir?: 'asc' | 'desc'
+}
+
 // listAllAddresses returns every address with aggregated credited/swept
-// totals — the operator's main view.
-export async function listAllAddresses(page = 1, pageSize = 50): Promise<{ items: DepositAddress[]; total: number }> {
+// totals — the operator's main view. Sorting is server-side so it covers the
+// whole set rather than the loaded page.
+export async function listAllAddresses(
+  query: AddressQuery = {}
+): Promise<{ items: DepositAddress[]; total: number; summary: AdminAddressSummary }> {
+  const { userId, page = 1, pageSize = 50, sortBy = 'id', sortDir = 'desc' } = query
   const { data } = await apiClient.get('/admin/crypto/addresses', {
-    params: { page, page_size: pageSize }
+    params: {
+      page,
+      page_size: pageSize,
+      sort_by: sortBy,
+      sort_dir: sortDir,
+      ...(userId ? { user_id: userId } : {})
+    }
   })
-  return { items: data.data?.items ?? [], total: data.data?.total ?? 0 }
+  return {
+    items: data.data?.items ?? [],
+    total: data.data?.total ?? 0,
+    summary: data.data?.summary ?? {
+      address_count: 0,
+      deposit_count: 0,
+      credited_total: 0,
+      swept_total: 0
+    }
+  }
 }
 
 

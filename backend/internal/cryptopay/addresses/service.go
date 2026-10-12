@@ -71,7 +71,8 @@ type PoolStore interface {
 	SetStatus(ctx context.Context, id int64, status string) error
 	ActiveAddresses(ctx context.Context, family string) ([]string, error)
 	LookupByFamily(ctx context.Context, family, address string) (*Assignment, error)
-	AdminList(ctx context.Context, userID int64, family string, limit, offset int) ([]AdminRow, int64, error)
+	AdminList(ctx context.Context, userID int64, family string, limit, offset int, sortBy, sortDir string) ([]AdminRow, int64, error)
+	AdminSummary(ctx context.Context, userID int64, family string) (*AdminSummary, error)
 }
 
 // Service coordinates pool top-up and lazy assignment.
@@ -202,6 +203,11 @@ func (s *Service) LookupAny(ctx context.Context, family, address string) (*Assig
 }
 
 // AdminList exposes the aggregated address list to the admin console.
-func (s *Service) AdminList(ctx context.Context, userID int64, family string, limit, offset int) ([]AdminRow, int64, error) {
-	return s.repo.AdminList(ctx, userID, family, limit, offset)
+func (s *Service) AdminList(ctx context.Context, userID int64, family string, limit, offset int, sortBy, sortDir string) ([]AdminRow, int64, error) {
+	return s.repo.AdminList(ctx, userID, family, limit, offset, sortBy, sortDir)
+}
+
+// AdminSummary exposes the whole-set totals for the console header.
+func (s *Service) AdminSummary(ctx context.Context, userID int64, family string) (*AdminSummary, error) {
+	return s.repo.AdminSummary(ctx, userID, family)
 }

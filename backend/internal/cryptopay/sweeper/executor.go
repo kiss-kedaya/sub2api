@@ -20,6 +20,16 @@ var ChainIDs = map[string]int64{
 	"plasma":  9745,
 }
 
+// isZeroAddress catches the all-zero placeholder: sweeping into it burns the
+// funds, and an unset field often round-trips as 0x000…0 rather than "".
+func isZeroAddress(address string) bool {
+	trimmed := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(address)), "0x")
+	if trimmed == "" {
+		return false
+	}
+	return strings.Trim(trimmed, "0") == ""
+}
+
 // TokenSpec identifies the asset to move and its decimals.
 type TokenSpec struct {
 	Contract string
@@ -38,13 +48,13 @@ const transferGasLimit = 65000
 // transfer to the hot wallet. Works on every EVM chain out of the box:
 // no contract deployment, no third-party API.
 type Executor struct {
-	db         *sql.DB
-	pools      map[string]*rpc.Pool
-	signer     *SignerClient
-	config     Config
-	tokens     map[string]TokenSpec
-	reader     BalanceReader
-	hotIndex   uint32
+	db       *sql.DB
+	pools    map[string]*rpc.Pool
+	signer   *SignerClient
+	config   Config
+	tokens   map[string]TokenSpec
+	reader   BalanceReader
+	hotIndex uint32
 }
 
 // NewExecutor wires the sweep executor. tokens maps chain -> watched asset.
@@ -87,6 +97,16 @@ type SweepEntry struct {
 // Run executes (or dry-runs) the sweep plan. Entries are processed serially
 // to keep the nonce chain per address simple and to avoid hammering RPC.
 func (e *Executor) Run(ctx context.Context, dryRun bool) (*Summary, error) {
+	// Hard gate: a real sweep with no destination would top up gas for
+	// nothing and then fail every transfer. Refuse before any spend.
+	if !dryRun {
+		if strings.TrimSpace(e.config.HotWalletEVM) == "" {
+			return nil, fmt.Errorf("sweep refused: hot wallet (receiving address) is not configured")
+		}
+		if isZeroAddress(e.config.HotWalletEVM) {
+			return nil, fmt.Errorf("sweep refused: hot wallet is the zero address")
+		}
+	}
 	planner := NewPlanner(e.db, e.reader, e.config, e.pools)
 	plan, err := planner.BuildPlan(ctx)
 	if err != nil {
@@ -345,4 +365,3 @@ func amountString(raw *big.Int, decimals int) string {
 	}
 	return whole + "." + frac
 }
-

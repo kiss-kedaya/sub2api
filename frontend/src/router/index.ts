@@ -357,18 +357,6 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/deposit',
-    name: 'CryptoDeposit',
-    component: () => import('@/views/user/DepositView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: false,
-      title: 'Crypto Deposit',
-      titleKey: 'nav.cryptoDeposit',
-      descriptionKey: 'deposit.description'
-    }
-  },
-  {
     path: '/orders',
     name: 'OrderList',
     component: () => import('@/views/user/UserOrdersView.vue'),
@@ -637,18 +625,6 @@ const routes: RouteRecordRaw[] = [
       title: 'Promo Code Management',
       titleKey: 'admin.promo.title',
       descriptionKey: 'admin.promo.description'
-    }
-  },
-  {
-    path: '/admin/crypto',
-    name: 'AdminCrypto',
-    component: () => import('@/views/admin/CryptoView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Crypto Deposits',
-      titleKey: 'admin.crypto.title',
-      descriptionKey: 'admin.crypto.description'
     }
   },
   {
