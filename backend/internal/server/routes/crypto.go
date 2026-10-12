@@ -16,6 +16,7 @@ import (
 func RegisterCryptoRoutes(
 	v1 *gin.RouterGroup,
 	cryptoHandler *handler.CryptoHandler,
+	depositHandler *handler.CryptoDepositHandler,
 	jwtAuth middleware.JWTAuthMiddleware,
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
@@ -29,6 +30,10 @@ func RegisterCryptoRoutes(
 	authenticated.Use(panelRateLimiter.Global())
 	{
 		authenticated.GET("/deposit-addresses", cryptoHandler.GetDepositAddresses)
+		if depositHandler != nil {
+			authenticated.GET("/deposit-info", depositHandler.GetDepositInfo)
+			authenticated.GET("/deposit-history", depositHandler.GetDepositHistory)
+		}
 	}
 }
 

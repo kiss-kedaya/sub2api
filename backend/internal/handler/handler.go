@@ -71,6 +71,7 @@ type Handlers struct {
 	AsyncImage       *AsyncImageHandler
 	BatchImage       *BatchImageHandler
 	Crypto           *CryptoHandler
+	CryptoDeposit    *CryptoDepositHandler
 	Bark             *UserBarkHandler
 }
 

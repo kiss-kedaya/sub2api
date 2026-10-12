@@ -172,6 +172,7 @@ func (s *Service) ResolveDepositAddress(ctx context.Context, userID int64) (stri
 
 // BuildSweepPlan returns the current plan (dry-run: never executes).
 func (s *Service) BuildSweepPlan(ctx context.Context) (*sweeper.Plan, error) {
+	s.mu.RLock()
 	planner := s.planner
 	s.mu.RUnlock()
 	if planner == nil {
@@ -274,6 +275,90 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 			return nil, err
 		}
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DepositInfo is everything the standalone deposit page needs.
+type DepositInfo struct {
+	Enabled   bool           `json:"enabled"`
+	Chains    []DepositChain `json:"chains"`
+	Rate      float64        `json:"rate"`       // balance units per USDT
+	MinAmount float64        `json:"min_amount"` // smallest credit
+}
+
+// DepositChain is one chain's deposit address.
+type DepositChain struct {
+	Chain   string `json:"chain"`
+	Address string `json:"address"`
+	Token   string `json:"token"`
+}
+
+// DepositInfo resolves (assigning on first use) the user's addresses.
+func (s *Service) DepositInfo(ctx context.Context, userID int64) (*DepositInfo, error) {
+	cfg := s.Config()
+	if !cfg.Enabled {
+		return &DepositInfo{Enabled: false}, nil
+	}
+	assigned, err := s.addresses.GetOrAssign(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	info := &DepositInfo{Enabled: true, Rate: cfg.CreditMultiplier, MinAmount: cfg.CreditMinAmount}
+	for _, chain := range cfg.Chains {
+		family := addresses.FamilyEVM
+		if chain == ChainSolana {
+			family = addresses.FamilySolana
+		}
+		address := assigned[family]
+		if address == "" {
+			continue
+		}
+		info.Chains = append(info.Chains, DepositChain{Chain: chain, Address: address, Token: "USDT"})
+	}
+	return info, nil
+}
+
+// UserDepositRecord is one deposit row for the user's own history.
+type UserDepositRecord struct {
+	Chain     string  `json:"chain"`
+	TxHash    string  `json:"tx_hash"`
+	Amount    string  `json:"amount"`
+	Status    string  `json:"status"`
+	CreatedAt string  `json:"created_at"`
+	Credited  float64 `json:"credited"`
+}
+
+// UserDepositHistory lists the caller's deposits against their addresses.
+func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit int) ([]UserDepositRecord, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT d.chain, d.tx_hash, d.amount::text, d.status, d.created_at
+		  FROM deposit_transactions d
+		  JOIN deposit_addresses a ON lower(a.address) = lower(d.to_address)
+		 WHERE a.user_id = $1
+		 ORDER BY d.id DESC LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("user deposit history: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	rate := s.Config().CreditMultiplier
+	var out []UserDepositRecord
+	for rows.Next() {
+		var r UserDepositRecord
+		var created time.Time
+		if err := rows.Scan(&r.Chain, &r.TxHash, &r.Amount, &r.Status, &created); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		if r.Status == "credited" {
+			var amount float64
+			_, _ = fmt.Sscanf(r.Amount, "%f", &amount)
+			r.Credited = amount * rate
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
