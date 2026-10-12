@@ -2204,6 +2204,11 @@ func (h *GatewayHandler) ensureForwardErrorResponse(c *gin.Context, streamStarte
 	if service.IsResponseCommitted(c) {
 		return false
 	}
+	// 客户端已断开时按 499 归因并跳过补写（与 OpenAI 网关一致），避免把链路取消
+	// 误记成上游 502「Upstream request failed」。
+	if failoverClientGone(c) {
+		return false
+	}
 	if c.Writer.Written() {
 		streamStarted = true
 	}
