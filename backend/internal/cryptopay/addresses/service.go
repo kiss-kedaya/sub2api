@@ -136,6 +136,12 @@ func (s *Service) topUp(ctx context.Context) error {
 		return err
 	}
 	start := uint32(maxIndex + 1)
+	// Index 0 is the hot/gas wallet and must never be handed to a user:
+	// sweeping an address to itself is a no-op and its balance would mix
+	// platform funds with a user's deposit.
+	if maxIndex < 0 {
+		start = hotWalletIndex + 1
+	}
 	derived, err := s.signer.Derive(ctx, start, uint32(s.topUpBatch))
 	if err != nil {
 		return err
@@ -151,6 +157,10 @@ func (s *Service) topUp(ctx context.Context) error {
 	}
 	return s.repo.InsertPoolBatch(ctx, FamilySolana, int64(start), solana)
 }
+
+// hotWalletIndex is the HD index reserved for the hot/gas wallet. It must
+// match signer policy hot_index and the cryptopay config hot_index default.
+const hotWalletIndex = 0
 
 // EnsurePool tops the pool up when below the low watermark. Called by the
 // background worker; safe to call repeatedly.

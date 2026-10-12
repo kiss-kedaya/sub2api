@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"sync"
@@ -133,4 +134,74 @@ func (p *Pool) BlockNumber(ctx context.Context) (uint64, error) {
 		return 0, fmt.Errorf("block number parse %q: %w", hex, err)
 	}
 	return number, nil
+}
+
+// Balance returns an address's native balance in wei.
+func (p *Pool) Balance(ctx context.Context, address string) (*big.Int, error) {
+	result, err := p.Call(ctx, "eth_getBalance", []any{address, "latest"})
+	if err != nil {
+		return nil, err
+	}
+	var hex string
+	if err := json.Unmarshal(result, &hex); err != nil {
+		return nil, fmt.Errorf("balance decode: %w", err)
+	}
+	value, ok := new(big.Int).SetString(strings.TrimPrefix(hex, "0x"), 16)
+	if !ok {
+		return nil, fmt.Errorf("balance parse %q", hex)
+	}
+	return value, nil
+}
+
+// Nonce returns the account's next nonce including pending transactions;
+// gas top-up and sweep for one address are serial, so pending is correct.
+func (p *Pool) Nonce(ctx context.Context, address string) (uint64, error) {
+	result, err := p.Call(ctx, "eth_getTransactionCount", []any{address, "pending"})
+	if err != nil {
+		return 0, err
+	}
+	var hex string
+	if err := json.Unmarshal(result, &hex); err != nil {
+		return 0, fmt.Errorf("nonce decode: %w", err)
+	}
+	var nonce uint64
+	if _, err := fmt.Sscanf(strings.TrimPrefix(hex, "0x"), "%x", &nonce); err != nil {
+		return 0, fmt.Errorf("nonce parse %q: %w", hex, err)
+	}
+	return nonce, nil
+}
+
+// GasPrice returns the current gas price in wei.
+func (p *Pool) GasPrice(ctx context.Context) (*big.Int, error) {
+	result, err := p.Call(ctx, "eth_gasPrice", nil)
+	if err != nil {
+		return nil, err
+	}
+	var hex string
+	if err := json.Unmarshal(result, &hex); err != nil {
+		return nil, fmt.Errorf("gas price decode: %w", err)
+	}
+	value, ok := new(big.Int).SetString(strings.TrimPrefix(hex, "0x"), 16)
+	if !ok || value.Sign() <= 0 {
+		return nil, fmt.Errorf("gas price parse %q", hex)
+	}
+	return value, nil
+}
+
+// SendRawTransaction broadcasts a signed transaction and returns its hash.
+// A node that already has the transaction returns the same hash, so retrying
+// a broadcast is safe.
+func (p *Pool) SendRawTransaction(ctx context.Context, rawTx string) (string, error) {
+	result, err := p.Call(ctx, "eth_sendRawTransaction", []any{rawTx})
+	if err != nil {
+		return "", err
+	}
+	var hash string
+	if err := json.Unmarshal(result, &hash); err != nil {
+		return "", fmt.Errorf("send raw decode: %w", err)
+	}
+	if hash == "" {
+		return "", fmt.Errorf("empty transaction hash")
+	}
+	return hash, nil
 }

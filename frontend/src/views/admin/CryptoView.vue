@@ -134,8 +134,11 @@
             <thead>
               <tr>
                 <th>ID</th>
+                <th>{{ t('admin.crypto.userId') }}</th>
                 <th>{{ t('admin.crypto.family') }}</th>
                 <th>{{ t('admin.crypto.address') }}</th>
+                <th>{{ t('admin.crypto.credited') }}</th>
+                <th>{{ t('admin.crypto.swept') }}</th>
                 <th>{{ t('common.status') }}</th>
                 <th></th>
               </tr>
@@ -143,8 +146,11 @@
             <tbody>
               <tr v-for="row in addresses" :key="row.id">
                 <td>{{ row.id }}</td>
+                <td>{{ row.user_id }}</td>
                 <td>{{ row.family }}</td>
                 <td class="crypto-view__mono">{{ row.address }}</td>
+                <td>{{ row.credited_total?.toFixed(2) ?? '0.00' }}</td>
+                <td>{{ row.swept_total?.toFixed(2) ?? '0.00' }}</td>
                 <td>
                   <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
                     {{ row.status }}
@@ -167,9 +173,48 @@
             <button class="btn btn-secondary" @click="loadSweepPlan">
               {{ t('admin.crypto.loadPlan') }}
             </button>
+            <button class="btn btn-secondary" :disabled="sweeping" @click="doSweep(true)">
+              {{ t('admin.crypto.sweepDryRun') }}
+            </button>
+            <button class="btn btn-primary" :disabled="sweeping" @click="doSweep(false)">
+              {{ t('admin.crypto.sweepRun') }}
+            </button>
             <button class="btn btn-secondary" @click="loadSweepRecords">
               {{ t('common.refresh') }}
             </button>
+          </div>
+
+          <div v-if="sweepSummary" class="crypto-view__plan">
+            <p class="crypto-view__plan-total">
+              {{ t('admin.crypto.planned') }}: <strong>{{ sweepSummary.planned }}</strong> ·
+              {{ t('admin.crypto.swept') }}: <strong>{{ sweepSummary.swept }}</strong> ·
+              {{ t('admin.crypto.failed') }}: <strong>{{ sweepSummary.failed }}</strong> ·
+              gas: <strong>{{ sweepSummary.gas_topups }}</strong>
+              <span v-if="sweepSummary.dry_run" class="crypto-view__badge">dry-run</span>
+            </p>
+            <table v-if="sweepSummary.entries?.length" class="crypto-view__table">
+              <thead>
+                <tr>
+                  <th>{{ t('admin.crypto.chain') }}</th>
+                  <th>{{ t('admin.crypto.address') }}</th>
+                  <th>{{ t('common.status') }}</th>
+                  <th>TX</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(e, i) in sweepSummary.entries" :key="i">
+                  <td>{{ e.chain }}</td>
+                  <td class="crypto-view__mono">{{ short(e.address) }}</td>
+                  <td>
+                    <span class="crypto-view__badge" :class="`crypto-view__badge--${e.status}`">
+                      {{ e.status }}
+                    </span>
+                    <span v-if="e.error" class="crypto-view__hint">{{ e.error }}</span>
+                  </td>
+                  <td class="crypto-view__mono">{{ short(e.sweep_tx_hash || e.gas_tx_hash) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
           <div v-if="sweepPlan" class="crypto-view__plan">
@@ -236,14 +281,16 @@ import Toggle from '@/components/common/Toggle.vue'
 import {
   getCryptoConfig,
   getSweepPlan,
-  listDepositAddresses,
+  listAllAddresses,
   listSweepRecords,
+  runSweep,
   setAddressStatus,
   updateCryptoConfig,
   type CryptoConfig,
   type DepositAddress,
   type SweepPlan,
-  type SweepRecord
+  type SweepRecord,
+  type SweepSummary
 } from '@/api/admin/crypto'
 
 const { t } = useI18n()
@@ -265,6 +312,8 @@ const addresses = ref<DepositAddress[]>([])
 
 const sweepPlan = ref<SweepPlan | null>(null)
 const sweepRecords = ref<SweepRecord[]>([])
+const sweepSummary = ref<SweepSummary | null>(null)
+const sweeping = ref(false)
 
 function splitList(value: string): string[] {
   return value
@@ -311,8 +360,14 @@ async function saveConfig() {
 }
 
 async function loadAddresses() {
-  if (!addressUserId.value) return
-  addresses.value = await listDepositAddresses(addressUserId.value)
+  // Without a user id the console shows every address with totals.
+  if (addressUserId.value) {
+    const { items } = await listAllAddresses(1, 200)
+    addresses.value = items.filter((a) => a.user_id === addressUserId.value)
+    return
+  }
+  const { items } = await listAllAddresses(1, 200)
+  addresses.value = items
 }
 
 async function toggleAddress(row: DepositAddress) {
@@ -323,6 +378,16 @@ async function toggleAddress(row: DepositAddress) {
 
 async function loadSweepPlan() {
   sweepPlan.value = await getSweepPlan()
+}
+
+async function doSweep(dryRun: boolean) {
+  sweeping.value = true
+  try {
+    sweepSummary.value = await runSweep(dryRun)
+    await loadSweepRecords()
+  } finally {
+    sweeping.value = false
+  }
 }
 
 async function loadSweepRecords() {

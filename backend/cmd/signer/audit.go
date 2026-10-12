@@ -12,6 +12,7 @@ import (
 type auditEntry struct {
 	Time    string `json:"time"`
 	Op      string `json:"op"`
+	Kind    string `json:"kind,omitempty"`
 	Index   uint32 `json:"index"`
 	ChainID int64  `json:"chain_id,omitempty"`
 	To      string `json:"to,omitempty"`

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"math/big"
 	"testing"
 	"time"
 )
+
+func bigI(v int64) *big.Int { return big.NewInt(v) }
 
 func testPolicy() *Policy {
 	return &Policy{
@@ -36,7 +39,7 @@ func TestLimiterPerTxLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := testPolicy()
-	reason, err := l.Allow(p, "native", 2000, time.Now())
+	reason, err := l.Allow(p, "native", bigI(2000), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +57,7 @@ func TestLimiterDailyLimit(t *testing.T) {
 	p.RatePerMinute = 0
 	now := time.Now()
 	for i := 0; i < 5; i++ {
-		reason, err := l.Allow(p, "native", 1000, now)
+		reason, err := l.Allow(p, "native", bigI(1000), now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +65,7 @@ func TestLimiterDailyLimit(t *testing.T) {
 			t.Fatalf("call %d denied: %s", i, reason)
 		}
 	}
-	reason, err := l.Allow(p, "native", 1, now)
+	reason, err := l.Allow(p, "native", bigI(1), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +84,7 @@ func TestLimiterRateLimit(t *testing.T) {
 	p.MaxDaily = nil
 	now := time.Now()
 	for i := 0; i < 2; i++ {
-		reason, err := l.Allow(p, "native", 1, now)
+		reason, err := l.Allow(p, "native", bigI(1), now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,7 +92,7 @@ func TestLimiterRateLimit(t *testing.T) {
 			t.Fatalf("call %d denied: %s", i, reason)
 		}
 	}
-	reason, err := l.Allow(p, "native", 1, now)
+	reason, err := l.Allow(p, "native", bigI(1), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +107,7 @@ func TestLimiterMissingPerTxDenies(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := testPolicy()
-	reason, err := l.Allow(p, "unknown_token", 1, time.Now())
+	reason, err := l.Allow(p, "unknown_token", bigI(1), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
