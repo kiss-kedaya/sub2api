@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"strings"
 	"sync"
@@ -25,6 +26,10 @@ type Policy struct {
 
 	// RatePerMinute bounds signature requests per minute (0 = unlimited).
 	RatePerMinute int `json:"rate_per_minute"`
+
+	// HotIndex is the derivation index of the hot/gas wallet used for gas
+	// top-ups (kind=gas). Defaults to 0 when unset.
+	HotIndex uint32 `json:"hot_index"`
 }
 
 func loadPolicy(path string) (*Policy, error) {
@@ -107,7 +112,7 @@ func utcDay(now time.Time) string {
 
 // Allow checks and records one signature against per-tx, daily and rate
 // limits. It returns a denial reason (empty when allowed).
-func (l *limiter) Allow(p *Policy, tokenKey string, amount int64, now time.Time) (string, error) {
+func (l *limiter) Allow(p *Policy, tokenKey string, amount *big.Int, now time.Time) (string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -129,7 +134,7 @@ func (l *limiter) Allow(p *Policy, tokenKey string, amount int64, now time.Time)
 	if err != nil {
 		return "", fmt.Errorf("policy max_per_tx[%s]: %w", tokenKey, err)
 	}
-	if amount > maxTx {
+	if amount.Cmp(maxTx) > 0 {
 		return "per_tx_limit", nil
 	}
 
@@ -145,12 +150,13 @@ func (l *limiter) Allow(p *Policy, tokenKey string, amount int64, now time.Time)
 		}
 		current, err := parseBigInt(l.state.Totals[tokenKey])
 		if err != nil {
-			current = 0
+			current = big.NewInt(0)
 		}
-		if current+amount > maxDaily {
+		total := new(big.Int).Add(current, amount)
+		if total.Cmp(maxDaily) > 0 {
 			return "daily_limit", nil
 		}
-		l.state.Totals[tokenKey] = fmt.Sprintf("%d", current+amount)
+		l.state.Totals[tokenKey] = total.String()
 		if err := l.persistLocked(); err != nil {
 			return "", fmt.Errorf("persist daily state: %w", err)
 		}

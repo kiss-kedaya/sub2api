@@ -10,24 +10,26 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 )
 
-// parseBigInt parses a non-negative decimal integer ("" = 0).
-func parseBigInt(raw string) (int64, error) {
+// parseBigInt parses a non-negative decimal integer ("" = 0). Raw token
+// amounts overflow int64 once decimals are 18 (1 USDT on BSC = 1e18), so
+// the limiter works in big.Int throughout.
+func parseBigInt(raw string) (*big.Int, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return 0, nil
+		return big.NewInt(0), nil
 	}
-	v, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || v < 0 {
-		return 0, fmt.Errorf("invalid integer %q", raw)
+	v, ok := new(big.Int).SetString(raw, 10)
+	if !ok || v.Sign() < 0 {
+		return nil, fmt.Errorf("invalid integer %q", raw)
 	}
 	return v, nil
 }
@@ -181,9 +183,26 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.policy.AllowsTarget(req.To) {
-		s.audit.write(auditEntry{Op: "sign_evm", Index: req.Index, To: req.To, Result: "denied", Reason: "target_not_allowed"})
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "target not allowed"})
-		return
+		// Gas top-ups pay native coin TO a derived child address, which is
+		// never a whitelisted payout target. Accept them only when the
+		// target provably equals the address derived at gas_index: the
+		// signer then needs no address book and every fork works out of
+		// the box.
+		if req.Kind != "gas" {
+			s.audit.write(auditEntry{Op: "sign_evm", Index: req.Index, To: req.To, Result: "denied", Reason: "target_not_allowed"})
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "target not allowed"})
+			return
+		}
+		if !gasTargetAllowed(s.deriver, req) {
+			s.audit.write(auditEntry{Op: "sign_evm", Index: req.Index, To: req.To, Result: "denied", Reason: "gas_target_not_derived"})
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "gas target is not our derived address"})
+			return
+		}
+		if req.Token != "" && !strings.EqualFold(req.Token, "native") {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "gas top-up must be native"})
+			return
+		}
+		req.Index = s.policy.HotIndex
 	}
 	amount, err := parseBigInt(req.Amount)
 	if err != nil {
@@ -196,17 +215,17 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if reason != "" {
-		s.audit.write(auditEntry{Op: "sign_evm", Index: req.Index, To: req.To, Token: req.Token, Amount: req.Amount, Result: "denied", Reason: reason})
+		s.audit.write(auditEntry{Op: "sign_evm", Kind: req.Kind, Index: req.Index, To: req.To, Token: req.Token, Amount: req.Amount, Result: "denied", Reason: reason})
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": reason})
 		return
 	}
 	signed, err := signEVMTransfer(s.deriver, req)
 	if err != nil {
-		s.audit.write(auditEntry{Op: "sign_evm", Index: req.Index, To: req.To, Token: req.Token, Amount: req.Amount, Result: "error", Reason: err.Error()})
+		s.audit.write(auditEntry{Op: "sign_evm", Kind: req.Kind, Index: req.Index, To: req.To, Token: req.Token, Amount: req.Amount, Result: "error", Reason: err.Error()})
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit.write(auditEntry{Op: "sign_evm", Index: req.Index, ChainID: req.ChainID, To: req.To, Token: req.Token, Amount: req.Amount, Result: "ok"})
+	s.audit.write(auditEntry{Op: "sign_evm", Kind: req.Kind, Index: req.Index, ChainID: req.ChainID, To: req.To, Token: req.Token, Amount: req.Amount, Result: "ok"})
 	writeJSON(w, http.StatusOK, map[string]string{"signed_tx": signed})
 }
 

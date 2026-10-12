@@ -70,6 +70,13 @@ type CryptoConfig struct {
 
 	// Signer socket path (unix).
 	SignerSocket string `json:"signer_socket"`
+
+	// HotIndex is the HD index of the hot/gas wallet. 0 = the first derived
+	// address, which is also the default hot wallet.
+	HotIndex uint32 `json:"hot_index"`
+
+	// SweepAuto enables the scheduled sweep run (still manual by default).
+	SweepAuto bool `json:"sweep_auto"`
 }
 
 // DefaultCryptoConfig returns the disabled default with sane thresholds.

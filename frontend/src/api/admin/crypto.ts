@@ -24,6 +24,9 @@ export interface DepositAddress {
   family: string
   address: string
   status: string
+  credited_total: number
+  swept_total: number
+  deposit_count: number
 }
 
 export interface SweepRecord {
@@ -64,6 +67,44 @@ export interface SweepPlan {
   DryRun: boolean
 }
 
+export interface SweepEntry {
+  chain: string
+  address: string
+  amount: string
+  gas_tx_hash: string
+  sweep_tx_hash: string
+  status: string
+  error?: string
+}
+
+export interface SweepSummary {
+  dry_run: boolean
+  planned: number
+  swept: number
+  failed: number
+  gas_topups: number
+  entries: SweepEntry[]
+}
+
+export interface SweepEntry {
+  chain: string
+  address: string
+  amount: string
+  gas_tx_hash: string
+  sweep_tx_hash: string
+  status: string
+  error?: string
+}
+
+export interface SweepSummary {
+  dry_run: boolean
+  planned: number
+  swept: number
+  failed: number
+  gas_topups: number
+  entries: SweepEntry[]
+}
+
 export async function getCryptoConfig(): Promise<CryptoConfig> {
   const { data } = await apiClient.get('/admin/crypto/config')
   return data.data
@@ -78,6 +119,17 @@ export async function listDepositAddresses(userId: number): Promise<DepositAddre
   return data.data ?? []
 }
 
+// listAllAddresses returns every address with aggregated credited/swept
+// totals — the operator's main view.
+export async function listAllAddresses(page = 1, pageSize = 50): Promise<{ items: DepositAddress[]; total: number }> {
+  const { data } = await apiClient.get('/admin/crypto/addresses', {
+    params: { page, page_size: pageSize }
+  })
+  return { items: data.data?.items ?? [], total: data.data?.total ?? 0 }
+}
+
+
+
 export async function setAddressStatus(id: number, status: string): Promise<void> {
   await apiClient.post(`/admin/crypto/addresses/${id}/status`, { status })
 }
@@ -86,6 +138,17 @@ export async function getSweepPlan(): Promise<SweepPlan> {
   const { data } = await apiClient.get('/admin/crypto/sweep/plan')
   return data.data
 }
+
+// runSweep executes the sweep. dryRun defaults to true server-side; the
+// caller must pass dryRun=false to move funds.
+export async function runSweep(dryRun: boolean): Promise<SweepSummary> {
+  const { data } = await apiClient.post('/admin/crypto/sweep/run', null, {
+    params: { dry_run: dryRun ? '1' : '0' }
+  })
+  return data.data
+}
+
+
 
 export async function listSweepRecords(chain?: string): Promise<SweepRecord[]> {
   const { data } = await apiClient.get('/admin/crypto/sweep/records', { params: { chain } })

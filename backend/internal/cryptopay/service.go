@@ -39,13 +39,20 @@ type Service struct {
 	settings *service.SettingService
 	creditor ledger.Creditor
 
-	mu       sync.RWMutex
-	config   CryptoConfig
-	pools    map[string]*rpc.Pool
-	worker   *scanner.Worker
-	planner  *sweeper.Planner
-	signer   *sweeper.SignerClient
+	mu        sync.RWMutex
+	config    CryptoConfig
+	pools     map[string]*rpc.Pool
+	worker    *scanner.Worker
+	planner   *sweeper.Planner
+	signer    *sweeper.SignerClient
+	executor  *sweeper.Executor
 	addresses *addresses.Service
+
+	// maintCancel stops the pool top-up / scheduled sweep loop.
+	maintCancel context.CancelFunc
+	// sweepMu serialises sweep runs: the manual admin trigger and the
+	// scheduler must never send the same funds twice.
+	sweepMu sync.Mutex
 }
 
 // NewService builds the facade and starts the scan worker when enabled.
@@ -86,6 +93,11 @@ func (s *Service) reload(ctx context.Context) {
 			s.worker.Stop()
 			s.worker = nil
 		}
+		if s.maintCancel != nil {
+			s.maintCancel()
+			s.maintCancel = nil
+		}
+		s.executor = nil
 		return
 	}
 
@@ -136,13 +148,75 @@ func (s *Service) reload(ctx context.Context) {
 	s.worker.Start()
 
 	s.signer = sweeper.NewSignerClient(cfg.SignerSocket)
-	s.planner = sweeper.NewPlanner(s.db, newBalanceReader(s.db), sweeper.Config{
+	// Token decimals per chain: the planner and executor rebuild raw amounts
+	// from NUMERIC columns, and a wrong exponent moves money by 1e12.
+	sweepDecimals := map[string]int{}
+	for chain, token := range watchedTokens {
+		sweepDecimals[chain] = token.Decimals
+	}
+	s.planner = sweeper.NewPlanner(s.db, newBalanceReader(s.db, sweepDecimals), sweeper.Config{
 		GlobalThreshold: cfg.SweepGlobalThreshold,
 		MinPerAddress:   cfg.SweepMinPerAddress,
 		HotWalletEVM:    cfg.HotWalletEVM,
 		HotWalletSolana: cfg.HotWalletSolana,
 	}, s.pools)
+	sweepTokens := map[string]sweeper.TokenSpec{}
+	for chain, token := range watchedTokens {
+		if token.Contract != "" {
+			sweepTokens[chain] = sweeper.TokenSpec{Contract: token.Contract, Decimals: token.Decimals}
+		}
+	}
+	s.executor = sweeper.NewExecutor(s.db, s.pools, s.signer, sweeper.Config{
+		GlobalThreshold: cfg.SweepGlobalThreshold,
+		MinPerAddress:   cfg.SweepMinPerAddress,
+		GasTopUp:        cfg.GasTopUp,
+		HotWalletEVM:    cfg.HotWalletEVM,
+	}, sweepTokens, newBalanceReader(s.db, sweepDecimals), cfg.HotIndex)
+
+	if s.maintCancel != nil {
+		s.maintCancel()
+	}
+	maintCtx, maintCancel := context.WithCancel(context.Background())
+	s.maintCancel = maintCancel
+	go s.maintenance(maintCtx, cfg)
 	slog.Info("[cryptopay] started", "chains", cfg.Chains)
+}
+
+// maintenance keeps the address pool topped up and, when sweep_auto is on,
+// runs the sweep on a timer. Both are no-ops for deployments that leave the
+// defaults alone.
+func (s *Service) maintenance(ctx context.Context, cfg CryptoConfig) {
+	poolTicker := time.NewTicker(10 * time.Minute)
+	defer poolTicker.Stop()
+	// Sweeps move money: check rarely and only on the hour, so a fork that
+	// enables it never sees more than one automatic run per sweep cycle.
+	sweepTicker := time.NewTicker(time.Hour)
+	defer sweepTicker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-poolTicker.C:
+			if err := s.addresses.EnsurePool(ctx); err != nil {
+				slog.Warn("[cryptopay] pool top-up failed", "error", err)
+			}
+		case <-sweepTicker.C:
+			if !s.Config().SweepAuto {
+				continue
+			}
+			maintCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+			summary, err := s.RunSweep(maintCtx, false)
+			cancel()
+			if err != nil {
+				slog.Warn("[cryptopay] scheduled sweep failed", "error", err)
+				continue
+			}
+			if summary.Swept > 0 || summary.Failed > 0 {
+				slog.Info("[cryptopay] scheduled sweep done",
+					"swept", summary.Swept, "failed", summary.Failed)
+			}
+		}
+	}
 }
 
 // Config returns the current config snapshot.
@@ -179,6 +253,22 @@ func (s *Service) BuildSweepPlan(ctx context.Context) (*sweeper.Plan, error) {
 		return nil, fmt.Errorf("cryptopay is disabled")
 	}
 	return planner.BuildPlan(ctx)
+}
+
+// RunSweep executes the sweep (or a dry-run) and returns the summary.
+// Serialised by the caller via the admin route; sweeps are operator-driven.
+func (s *Service) RunSweep(ctx context.Context, dryRun bool) (*sweeper.Summary, error) {
+	s.mu.RLock()
+	exec := s.executor
+	s.mu.RUnlock()
+	if exec == nil {
+		return nil, fmt.Errorf("cryptopay is disabled")
+	}
+	// One run at a time: the manual trigger and the scheduler would
+	// otherwise both read the same balances and double-send.
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
+	return exec.Run(ctx, dryRun)
 }
 
 // SweepRecord is one sweep_records row for the admin UI.

@@ -13,6 +13,21 @@ import (
 // erc20TransferSelector is keccak256("transfer(address,uint256)")[:4].
 var erc20TransferSelector = []byte{0xa9, 0x05, 0x9c, 0xbb}
 
+// gasTargetAllowed reports whether a native gas top-up may pay to req.To.
+// Authorisation is the derivation itself: the target must equal the address
+// derived at gas_index. A caller cannot name an arbitrary payee, so the hot
+// wallet stays safe even though the target is not whitelisted.
+func gasTargetAllowed(d *Deriver, req evmSignRequest) bool {
+	if req.Kind != "gas" || req.GasIndex == nil {
+		return false
+	}
+	_, derived, err := d.EVMKey(*req.GasIndex)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(derived.Hex(), req.To)
+}
+
 // signEVMTransfer builds and signs an EIP-1559 (or legacy, caller's choice)
 // ERC20 transfer or native value transfer. Nonce, gas price and gas limit
 // are supplied by the caller (the web process reads them from RPC).
@@ -76,13 +91,15 @@ func signEVMTransfer(d *Deriver, req evmSignRequest) (string, error) {
 
 // evmSignRequest mirrors the /sign/evm request body.
 type evmSignRequest struct {
-	Index    uint32 `json:"index"`
-	ChainID  int64  `json:"chain_id"`
-	Token    string `json:"token"` // empty/"native" = value transfer
-	To       string `json:"to"`
-	Amount   string `json:"amount"` // raw units, decimal string
-	Nonce    uint64 `json:"nonce"`
-	GasPrice string `json:"gas_price"`
-	GasLimit uint64 `json:"gas_limit"`
+	Index    uint32  `json:"index"`
+	Kind     string  `json:"kind,omitempty"`      // "sweep" (default) or "gas"
+	GasIndex *uint32 `json:"gas_index,omitempty"` // kind=gas: index the target derives from
+	ChainID  int64   `json:"chain_id"`
+	Token    string  `json:"token"` // empty/"native" = value transfer
+	To       string  `json:"to"`
+	Amount   string  `json:"amount"` // raw units, decimal string
+	Nonce    uint64  `json:"nonce"`
+	GasPrice string  `json:"gas_price"`
+	GasLimit uint64  `json:"gas_limit"`
 }
 
