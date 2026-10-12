@@ -335,6 +335,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	cryptoDepositCreditor := cryptopay.NewDepositCreditor(client, paymentService)
 	userBarkService := notify.NewUserBarkService(db, notify.AdaptEncryptor(secretEncryptor))
 	cryptoDepositCreditor.SetBarkNotifier(userBarkService)
+	// Balance and upstream alerts reuse the same per-profile Bark keys.
+	pushAdapter := notify.NewPushAdapter(userBarkService)
+	balanceNotifyService.SetPushNotifier(pushAdapter)
 	cryptoService := cryptopay.NewService(db, settingService, cryptoDepositCreditor, cryptoAddressService)
 	paymentService.SetDepositAddressResolver(cryptoService)
 	cryptoHandler := handler.NewCryptoHandler(cryptoAddressService, settingService, cryptoService)
@@ -359,6 +362,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	opsIngressRejectAggregator := service.ProvideOpsIngressRejectAggregator(opsRepository, opsService)
 	accountExpiryService := service.ProvideAccountExpiryService(accountRepository)
 	cnProviderBalanceCheckService := service.ProvideCNProviderBalanceCheckService(accountRepository, cnProviderBalanceService, cnProviderQuotaService, configConfig)
+	cnProviderBalanceCheckService.SetPushNotifier(pushAdapter)
+	cnProviderBalanceCheckService.SetPushNotifier(pushAdapter)
 	openAICodexVersionSyncService := service.ProvideOpenAICodexVersionSyncService(settingRepository, settingService, gitHubReleaseClient)
 	proxyExpiryService := service.ProvideProxyExpiryService(proxyRepository)
 	subscriptionExpiryService := service.ProvideSubscriptionExpiryService(userSubscriptionRepository, settingRepository, notificationEmailService, leaderLockCache, db)
