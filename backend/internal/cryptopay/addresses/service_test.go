@@ -194,6 +194,29 @@ func TestGetOrAssignIsIdempotent(t *testing.T) {
 	}
 }
 
+// The hot/gas wallet lives at index 0. It must never be assigned to a user:
+// sweeping an address to itself is a no-op and the child's credited balance
+// would mix with platform funds.
+func TestFirstTopUpSkipsHotWalletIndex(t *testing.T) {
+	store := newFakeStore()
+	svc := NewService(store, &fakeSigner{})
+	ctx := context.Background()
+
+	if _, err := svc.GetOrAssign(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range []string{FamilyEVM, FamilySolana} {
+		for id, row := range store.rows {
+			if row.family != family {
+				continue
+			}
+			if row.index == hotWalletIndex {
+				t.Fatalf("%s pool row %d reuses the hot wallet index %d", family, id, hotWalletIndex)
+			}
+		}
+	}
+}
+
 func TestGetOrAssignTopsUpEmptyPool(t *testing.T) {
 	store := newFakeStore()
 	signer := &fakeSigner{}

@@ -58,11 +58,12 @@ func (r *addressResolver) IsOwnAddress(ctx context.Context, chain, address strin
 // balanceReader feeds the sweep planner: credited-but-unswept totals per
 // address, derived from deposit_transactions minus sweep_records.
 type balanceReader struct {
-	db *sql.DB
+	db       *sql.DB
+	decimals map[string]int // chain -> watched token decimals
 }
 
-func newBalanceReader(db *sql.DB) *balanceReader {
-	return &balanceReader{db: db}
+func newBalanceReader(db *sql.DB, decimals map[string]int) *balanceReader {
+	return &balanceReader{db: db, decimals: decimals}
 }
 
 // UnsweptBalances returns (address, token, raw) for credited deposits with
@@ -70,11 +71,14 @@ func newBalanceReader(db *sql.DB) *balanceReader {
 // the token's decimals.
 func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sweeper.AddressBalance, error) {
 	rows, err := b.db.QueryContext(ctx, `
-		SELECT d.to_address, d.token, SUM(d.amount), COALESCE(t.decimals, 6)
+		SELECT d.to_address, d.token, SUM(d.amount),
+		       COALESCE(MAX(a.derivation_index), 0)
 		  FROM deposit_transactions d
-		  LEFT JOIN (
-		        SELECT token, 18 AS decimals FROM sweep_records WHERE chain = $1 GROUP BY token
-		  ) t ON t.token = d.token
+		  -- deposit_addresses.chain stores the FAMILY (evm/solana), not the
+		  -- chain id, so match on the address alone; one address belongs to
+		  -- exactly one assignment.
+		  LEFT JOIN deposit_addresses a
+		         ON lower(a.address) = lower(d.to_address)
 		 WHERE d.chain = $1
 		   AND d.status = 'credited'
 		   AND NOT EXISTS (
@@ -84,7 +88,7 @@ func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sw
 		           AND s.token = d.token
 		           AND s.status = 'swept'
 		   )
-		 GROUP BY d.to_address, d.token, t.decimals`, chain)
+		 GROUP BY d.to_address, d.token`, chain)
 	if err != nil {
 		return nil, err
 	}
@@ -93,9 +97,17 @@ func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sw
 	for rows.Next() {
 		var address, token string
 		var amount sql.NullString
-		var decimals int
-		if err := rows.Scan(&address, &token, &amount, &decimals); err != nil {
+		var derivationIndex int64
+		if err := rows.Scan(&address, &token, &amount, &derivationIndex); err != nil {
 			return nil, err
+		}
+		// Decimals come from the chain's token config: deriving them from
+		// the stored rows cannot work (the NUMERIC column loses precision
+		// information) and a wrong guess shifts the amount by orders of
+		// magnitude.
+		decimals := b.decimals[chain]
+		if decimals == 0 {
+			decimals = 6
 		}
 		raw, err := decimalToRaw(amount.String, decimals)
 		if err != nil {
@@ -103,7 +115,8 @@ func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sw
 		}
 		out = append(out, sweeper.AddressBalance{
 			Chain: chain, Address: address, Token: token,
-			Raw: raw, Decimals: decimals,
+			DerivationIndex: uint32(derivationIndex),
+			Raw:             raw, Decimals: decimals,
 		})
 	}
 	return out, rows.Err()

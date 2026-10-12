@@ -118,6 +118,23 @@ func (h *CryptoHandler) AdminSweepPlan(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": plan})
 }
 
+// AdminRunSweep executes the sweep. ?dry_run=0 moves funds; the default is
+// a dry run so a stray click can never move money.
+// POST /api/v1/admin/crypto/sweep/run
+func (h *CryptoHandler) AdminRunSweep(c *gin.Context) {
+	if h.service == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	dryRun := c.DefaultQuery("dry_run", "1") != "0"
+	summary, err := h.service.RunSweep(c.Request.Context(), dryRun)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": summary})
+}
+
 // AdminSweepRecords lists sweep history.
 // GET /api/v1/admin/crypto/sweep/records
 func (h *CryptoHandler) AdminSweepRecords(c *gin.Context) {

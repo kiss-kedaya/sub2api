@@ -17,6 +17,7 @@ import (
 type Config struct {
 	GlobalThreshold float64            // total USD-equivalent to trigger a run
 	MinPerAddress   map[string]float64 // chain -> min amount per address
+	GasTopUp        map[string]float64 // chain -> native gas amount per top-up
 	HotWalletEVM    string
 	HotWalletSolana string
 }
@@ -25,6 +26,7 @@ type Config struct {
 type PlanEntry struct {
 	Chain           string
 	Address         string
+	DerivationIndex uint32 // signer index that owns Address
 	Token           string
 	RawAmount       *big.Int
 	AmountDecimal   float64
@@ -42,11 +44,12 @@ type Plan struct {
 
 // AddressBalance is one (address, token) balance snapshot.
 type AddressBalance struct {
-	Chain    string
-	Address  string
-	Token    string
-	Raw      *big.Int
-	Decimals int
+	Chain           string
+	Address         string
+	DerivationIndex uint32
+	Token           string
+	Raw             *big.Int
+	Decimals        int
 }
 
 // BalanceReader returns un-swept balances per chain. Implemented over the
@@ -87,12 +90,13 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 				continue
 			}
 			plan.Entries = append(plan.Entries, PlanEntry{
-				Chain:         chain,
-				Address:       balance.Address,
-				Token:         balance.Token,
-				RawAmount:     balance.Raw,
-				AmountDecimal: amountDecimal,
-				Decimals:      balance.Decimals,
+				Chain:           chain,
+				Address:         balance.Address,
+				DerivationIndex: balance.DerivationIndex,
+				Token:           balance.Token,
+				RawAmount:       balance.Raw,
+				AmountDecimal:   amountDecimal,
+				Decimals:        balance.Decimals,
 			})
 			plan.TotalUSD += amountDecimal // stablecoin ~= USD
 		}
