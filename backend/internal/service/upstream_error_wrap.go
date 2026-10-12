@@ -61,6 +61,12 @@ func WrapUpstreamErrorForClient(statusCode int, body []byte) (status int, errTyp
 			errType = "api_error"
 		}
 	}
+	// Anthropic 官方语义：overloaded_error 用 529 表达。中转上游常把过载改写成
+	// 500/502 等普通 5xx，这里按 body 语义还原，避免客户端把它当网关故障处理。
+	// 503 保留：上游用 503 表达的是「暂时不可用」，不等同于过载语义。
+	if errType == "overloaded_error" && status >= 500 && status != http.StatusServiceUnavailable {
+		status = 529
+	}
 	errCode = extractUpstreamErrorCode(body)
 	return
 }

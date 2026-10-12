@@ -594,6 +594,16 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				}
 			}
 
+			// 上游把错误作为流内事件下发（SSE data 行或非标准裸 JSON 行）时，它就是
+			// 本次请求的语义终态：照常透传，但按官方语义记录状态（overloaded→529），
+			// 避免请求尾再补一帧通用 502「Upstream request failed」兜底。
+			if payload, ok := anthropicStreamErrorPayload(line); ok {
+				sawTerminalEvent = true
+				errStatus, errType, errMsg := anthropicStreamErrorSemantics(payload)
+				setOpsUpstreamError(c, errStatus, errMsg, "")
+				MarkOpsStreamError(c, errType, errMsg, errStatus)
+			}
+
 			if !clientDisconnected {
 				restored := string(reverseToolNamesIfPresent(c, []byte(line)))
 				if pendingErrorHeader != "" {
@@ -667,6 +677,41 @@ func extractAnthropicSSEDataLine(line string) (string, bool) {
 		start++
 	}
 	return line[start:], true
+}
+
+// anthropicStreamErrorPayload 判断一行上游流内容是否是错误事件（标准 SSE data 行
+// 或部分中转直接下发的裸 JSON 行），并返回其错误 payload。
+func anthropicStreamErrorPayload(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if data, ok := extractAnthropicSSEDataLine(trimmed); ok {
+		trimmed = strings.TrimSpace(data)
+	}
+	if !strings.HasPrefix(trimmed, "{") || gjson.Get(trimmed, "type").String() != "error" {
+		return "", false
+	}
+	return trimmed, true
+}
+
+// anthropicStreamErrorSemantics 按官方错误码语义映射流内错误：overloaded→529、
+// 限流→429，其余按网关错误（502）处理，供 ops 记录与客户端语义还原使用。
+func anthropicStreamErrorSemantics(payload string) (status int, errType, message string) {
+	errType = strings.TrimSpace(gjson.Get(payload, "error.type").String())
+	if errType == "" {
+		errType = "upstream_error"
+	}
+	message = strings.TrimSpace(gjson.Get(payload, "error.message").String())
+	if message == "" {
+		message = strings.TrimSpace(gjson.Get(payload, "message").String())
+	}
+	switch errType {
+	case "overloaded_error":
+		status = 529
+	case "rate_limit_error":
+		status = http.StatusTooManyRequests
+	default:
+		status = http.StatusBadGateway
+	}
+	return status, errType, message
 }
 
 // parseSSEUsagePassthrough 从 Anthropic SSE data 行提取 usage（包级函数：
