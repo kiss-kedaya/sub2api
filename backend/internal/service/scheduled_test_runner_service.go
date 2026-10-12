@@ -266,4 +266,3 @@ func (s *ScheduledTestRunnerService) completePlanRun(ctx context.Context, plan *
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d UpdateAfterRun error: %v", plan.ID, err)
 	}
 }
-
