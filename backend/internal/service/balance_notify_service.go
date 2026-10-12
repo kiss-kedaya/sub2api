@@ -37,12 +37,22 @@ type AccountQuotaReader interface {
 	GetByID(ctx context.Context, id int64) (*Account, error)
 }
 
+// PushNotifier delivers a short push notification. Implemented by the Bark
+// adapter; the narrow signature keeps this package free of a notify import.
+type PushNotifier interface {
+	// PushToUser notifies one user; users without push configured are skipped.
+	PushToUser(ctx context.Context, userID int64, title, body, group string) error
+	// PushToAdmins notifies every admin who configured push on their profile.
+	PushToAdmins(ctx context.Context, title, body, group string) error
+}
+
 // BalanceNotifyService handles balance and quota threshold notifications.
 type BalanceNotifyService struct {
 	emailService             *EmailService
 	settingRepo              SettingRepository
 	accountRepo              AccountQuotaReader
 	notificationEmailService *NotificationEmailService
+	pushNotifier             PushNotifier
 }
 
 // NewBalanceNotifyService creates a new BalanceNotifyService.
@@ -56,6 +66,11 @@ func NewBalanceNotifyService(emailService *EmailService, settingRepo SettingRepo
 
 func (s *BalanceNotifyService) SetNotificationEmailService(notificationEmailService *NotificationEmailService) {
 	s.notificationEmailService = notificationEmailService
+}
+
+// SetPushNotifier wires the optional push channel (Bark). Nil disables it.
+func (s *BalanceNotifyService) SetPushNotifier(n PushNotifier) {
+	s.pushNotifier = n
 }
 
 // resolveBalanceThreshold returns the effective balance threshold.
@@ -130,8 +145,25 @@ func (s *BalanceNotifyService) dispatchBalanceLowEmail(ctx context.Context, user
 				slog.Error("panic in balance notification", "recover", r)
 			}
 		}()
+		// Push first: it reaches a phone and needs no SMTP configuration.
+		s.pushUserBalanceLow(user, newBalance, threshold)
 		s.sendBalanceLowEmails(recipients, user.ID, user.Username, user.Email, newBalance, threshold, siteName, rechargeURL)
 	}()
+}
+
+// pushUserBalanceLow sends the phone push for a low balance. Push failures
+// are logged, never fatal: the email path still runs.
+func (s *BalanceNotifyService) pushUserBalanceLow(user *User, newBalance, threshold float64) {
+	if s.pushNotifier == nil {
+		return
+	}
+	err := s.pushNotifier.PushToUser(context.Background(), user.ID,
+		"余额不足",
+		fmt.Sprintf("当前余额 %.2f，已低于提醒阈值 %.2f，请及时充值", newBalance, threshold),
+		"balance")
+	if err != nil {
+		slog.Warn("balance push failed", "user_id", user.ID, "error", err)
+	}
 }
 
 // quotaDim describes one quota dimension for notification checking.

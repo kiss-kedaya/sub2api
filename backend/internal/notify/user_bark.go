@@ -106,3 +106,43 @@ func (s *UserBarkService) SendToUser(ctx context.Context, userID int64, n bark.N
 	}
 	return bark.New(key).Send(ctx, n)
 }
+
+// SendToAdmins delivers a push to every admin who configured Bark on their
+// own profile. Operational alerts (upstream balance, watchdog) reuse the
+// same per-user keys the profile card writes, so there is no second place
+// to configure notifications.
+func (s *UserBarkService) SendToAdmins(ctx context.Context, n bark.Notification) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT bark_device_key_encrypted FROM users
+		  WHERE role = $1 AND bark_notify_enabled = TRUE
+		    AND bark_device_key_encrypted <> ''`, "admin")
+	if err != nil {
+		return fmt.Errorf("list admin bark keys: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var encryptedKeys []string
+	for rows.Next() {
+		var encrypted string
+		if err := rows.Scan(&encrypted); err != nil {
+			return err
+		}
+		encryptedKeys = append(encryptedKeys, encrypted)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	var firstErr error
+	for _, encrypted := range encryptedKeys {
+		key, err := s.encryptor.DecryptString(encrypted)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("decrypt admin bark key: %w", err)
+			}
+			continue
+		}
+		if err := bark.New(key).Send(ctx, n); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
