@@ -495,6 +495,7 @@ export default {
       enterEmail: '请输入邮箱',
       enterPassword: '请输入密码',
       enterUsername: '请输入用户名（选填）',
+      usernameInvalid: '用户名仅支持中英文、数字、空格与 _ - . ，且不超过 50 个字符',
       enterNotes: '请输入备注（仅管理员可见）',
       notesHint: '此备注仅对管理员可见',
       enterNewPassword: '请输入新密码（选填）',
