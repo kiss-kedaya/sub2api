@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -151,9 +152,26 @@ func (s *Service) Config() CryptoConfig {
 	return s.config
 }
 
+// ResolveDepositAddress implements the payment service's resolver: it
+// returns the user's EVM deposit address (assigning one on first use) so
+// the crypto channel can hand it to the checkout flow.
+func (s *Service) ResolveDepositAddress(ctx context.Context, userID int64) (string, error) {
+	if !s.Config().Enabled {
+		return "", fmt.Errorf("crypto channel is disabled")
+	}
+	assigned, err := s.addresses.GetOrAssign(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	address := assigned[addresses.FamilyEVM]
+	if strings.TrimSpace(address) == "" {
+		return "", fmt.Errorf("no EVM deposit address available")
+	}
+	return address, nil
+}
+
 // BuildSweepPlan returns the current plan (dry-run: never executes).
 func (s *Service) BuildSweepPlan(ctx context.Context) (*sweeper.Plan, error) {
-	s.mu.RLock()
 	planner := s.planner
 	s.mu.RUnlock()
 	if planner == nil {
