@@ -1,0 +1,16 @@
+{
+  "_comment": "Amounts are RAW units (integer strings), not token counts. BSC USDT has 18 decimals, so 1 USDT = 1000000000000000000. Copy to signer-policy.json and edit; a too-small cap silently rejects every signature.",
+  "hot_index": 0,
+  "targets": [
+    "0x0000000000000000000000000000000000000000"
+  ],
+  "max_per_tx": {
+    "native": "50000000000000000",
+    "0x55d398326f99059ff775485246999027b3197955": "5000000000000000000000"
+  },
+  "max_daily": {
+    "native": "500000000000000000",
+    "0x55d398326f99059ff775485246999027b3197955": "200000000000000000000000"
+  },
+  "rate_per_minute": 60
+}
