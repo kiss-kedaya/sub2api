@@ -63,7 +63,7 @@
               <div v-for="chain in config.chains" :key="`rpc-${chain}`" class="crypto-view__field">
                 <label class="crypto-view__label">{{ chain }}</label>
                 <input
-                  :value="config.rpc[chain] ?? ''"
+                  :value="config.rpc?.[chain] ?? ''"
                   class="input"
                   :placeholder="t('admin.crypto.rpcPlaceholder')"
                   @change="(e) => setRPC(chain, (e.target as HTMLInputElement).value)"
@@ -403,7 +403,9 @@ const tabs = computed(() => [
   { id: 'addresses', label: t('admin.crypto.tabAddresses') },
   { id: 'sweep', label: t('admin.crypto.tabSweep') }
 ])
-const activeTab = ref('config')
+// Open on the address list: it is the operator's main view (the config tab
+// is a one-time setup step).
+const activeTab = ref('addresses')
 
 const config = ref<CryptoConfig | null>(null)
 const loadingConfig = ref(false)
@@ -472,7 +474,9 @@ function splitList(value: string): string[] {
 }
 
 function setRPC(chain: string, value: string) {
-  if (config.value) config.value.rpc[chain] = value.trim()
+  if (!config.value) return
+  config.value.rpc ??= {}
+  config.value.rpc[chain] = value.trim()
 }
 
 function short(value: string): string {
@@ -494,7 +498,21 @@ function switchTab(id: string) {
 async function loadConfig() {
   loadingConfig.value = true
   try {
-    config.value = await getCryptoConfig()
+    const loaded = await getCryptoConfig()
+    // Earlier saves may predate some keys (rpc, chains); normalise here so a
+    // legacy row cannot blank the whole page on a null index.
+    config.value = {
+      ...loaded,
+      chains: loaded.chains ?? [],
+      rpc: loaded.rpc ?? {},
+      sweep_min_per_address: loaded.sweep_min_per_address ?? {},
+      gas_topup: loaded.gas_topup ?? {},
+      confirmations: loaded.confirmations ?? {},
+      hot_wallet_evm: loaded.hot_wallet_evm ?? '',
+      hot_wallet_solana: loaded.hot_wallet_solana ?? '',
+      hot_index: loaded.hot_index ?? 0,
+      sweep_auto: loaded.sweep_auto ?? false
+    }
   } finally {
     loadingConfig.value = false
   }
@@ -615,7 +633,11 @@ async function loadSweepRecords() {
   sweepRecords.value = await listSweepRecords()
 }
 
-onMounted(loadConfig)
+onMounted(() => {
+  void loadConfig()
+  // The default tab is addresses, so load it without waiting for a click.
+  void loadAddresses()
+})
 </script>
 
 <style scoped>

@@ -108,6 +108,16 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	if cfg.Chains == nil {
 		cfg.Chains = def.Chains
 	}
+	// A config saved before RPC keys existed deserializes rpc as nil; the
+	// admin console indexes it directly, so backfill an empty map.
+	if cfg.RPC == nil {
+		cfg.RPC = map[string]string{}
+	}
+	// A config saved before RPC keys existed deserializes rpc as nil; the
+	// admin console indexes it directly, so backfill an empty map.
+	if cfg.RPC == nil {
+		cfg.RPC = map[string]string{}
+	}
 	for _, chain := range cfg.Chains {
 		if !KnownChain(chain) {
 			return cfg, fmt.Errorf("crypto config: unknown chain %q", chain)
@@ -200,4 +210,72 @@ func SaveConfig(ctx context.Context, store SettingStore, cfg CryptoConfig) error
 		return err
 	}
 	return store.SetCryptoSetting(ctx, SettingKeyCryptoConfig, string(data))
+}
+
+// CryptoConfigPatch is a partial update. Pointer fields distinguish "not
+// sent" (keep the stored value) from "sent as empty" (clear it), so a client
+// that omits keys can never zero the configuration by accident.
+type CryptoConfigPatch struct {
+	Enabled              *bool               `json:"enabled"`
+	Chains               *[]string           `json:"chains"`
+	RPC                  *map[string]string  `json:"rpc"`
+	SweepGlobalThreshold *float64            `json:"sweep_global_threshold"`
+	SweepMinPerAddress   *map[string]float64 `json:"sweep_min_per_address"`
+	GasTopUp             *map[string]float64 `json:"gas_topup"`
+	HotWalletEVM         *string             `json:"hot_wallet_evm"`
+	HotWalletSolana      *string             `json:"hot_wallet_solana"`
+	Confirmations        *map[string]int     `json:"confirmations"`
+	CreditMinAmount      *float64            `json:"credit_min_amount"`
+	CreditMultiplier     *float64            `json:"credit_multiplier"`
+	SignerSocket         *string             `json:"signer_socket"`
+	HotIndex             *uint32             `json:"hot_index"`
+	SweepAuto            *bool               `json:"sweep_auto"`
+}
+
+// Apply overlays the patch onto base, leaving omitted fields untouched.
+func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
+	out := base
+	if p.Enabled != nil {
+		out.Enabled = *p.Enabled
+	}
+	if p.Chains != nil {
+		out.Chains = *p.Chains
+	}
+	if p.RPC != nil {
+		out.RPC = *p.RPC
+	}
+	if p.SweepGlobalThreshold != nil {
+		out.SweepGlobalThreshold = *p.SweepGlobalThreshold
+	}
+	if p.SweepMinPerAddress != nil {
+		out.SweepMinPerAddress = *p.SweepMinPerAddress
+	}
+	if p.GasTopUp != nil {
+		out.GasTopUp = *p.GasTopUp
+	}
+	if p.HotWalletEVM != nil {
+		out.HotWalletEVM = *p.HotWalletEVM
+	}
+	if p.HotWalletSolana != nil {
+		out.HotWalletSolana = *p.HotWalletSolana
+	}
+	if p.Confirmations != nil {
+		out.Confirmations = *p.Confirmations
+	}
+	if p.CreditMinAmount != nil {
+		out.CreditMinAmount = *p.CreditMinAmount
+	}
+	if p.CreditMultiplier != nil {
+		out.CreditMultiplier = *p.CreditMultiplier
+	}
+	if p.SignerSocket != nil {
+		out.SignerSocket = *p.SignerSocket
+	}
+	if p.HotIndex != nil {
+		out.HotIndex = *p.HotIndex
+	}
+	if p.SweepAuto != nil {
+		out.SweepAuto = *p.SweepAuto
+	}
+	return out
 }

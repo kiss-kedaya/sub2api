@@ -87,12 +87,20 @@ func (h *CryptoHandler) AdminGetConfig(c *gin.Context) {
 // AdminUpdateConfig validates and persists the channel config (admin).
 // PUT /api/v1/admin/crypto/config
 func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
-	var cfg cryptopay.CryptoConfig
-	if err := c.ShouldBindJSON(&cfg); err != nil {
+	// Merge over the stored config: a payload that omits keys (an older
+	// console, a scripted PUT) must not silently wipe them to zero values.
+	existing, err := cryptopay.LoadConfig(c.Request.Context(), h.store)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	var patch cryptopay.CryptoConfigPatch
+	if err := c.ShouldBindJSON(&patch); err != nil {
 		response.BadRequest(c, "Invalid config payload")
 		return
 	}
-	if err := cryptopay.SaveConfig(c.Request.Context(), h.store, cfg); err != nil {
+	merged := patch.Apply(existing)
+	if err := cryptopay.SaveConfig(c.Request.Context(), h.store, merged); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
