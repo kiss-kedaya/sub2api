@@ -45,6 +45,21 @@ func TestNormalizeConfigAllowsEmptyHotWallets(t *testing.T) {
 }
 
 // The sweep gate is what protects funds: no destination, no sweep.
+// A config stored before the rpc key existed reads back as null; the admin
+// console indexes that map directly, so it must never stay nil.
+func TestNormalizeConfigBackfillsNilRPC(t *testing.T) {
+	cfg, err := NormalizeConfig(CryptoConfig{RPC: nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RPC == nil {
+		t.Fatal("rpc must be backfilled to an empty map, not left nil")
+	}
+	if len(cfg.RPC) != 0 {
+		t.Fatalf("rpc = %v, want empty", cfg.RPC)
+	}
+}
+
 func TestValidateSweepReady(t *testing.T) {
 	tests := []struct {
 		name    string
