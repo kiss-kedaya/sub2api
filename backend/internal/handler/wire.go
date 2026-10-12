@@ -207,6 +207,7 @@ func ProvideHandlers(
 	asyncImageHandler *AsyncImageHandler,
 	batchImageHandler *BatchImageHandler,
 	cryptoHandler *CryptoHandler,
+	cryptoDepositHandler *CryptoDepositHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 	_ *service.OpenAIQuotaAutoResetService,
@@ -235,6 +236,7 @@ func ProvideHandlers(
 		AsyncImage:       asyncImageHandler,
 		BatchImage:       batchImageHandler,
 		Crypto:           cryptoHandler,
+		CryptoDeposit:    cryptoDepositHandler,
 	}
 }
 

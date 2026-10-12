@@ -7,6 +7,7 @@ import batchImage from './batchImage'
 import tickets from './tickets'
 import admin from './admin'
 import misc from './misc'
+import deposit from './deposit'
 
 export default {
   ...landing,
@@ -18,4 +19,5 @@ export default {
   ...tickets,
   admin,
   ...misc,
+  ...deposit,
 }

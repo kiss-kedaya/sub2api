@@ -345,6 +345,30 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/deposit',
+    name: 'CryptoDeposit',
+    component: () => import('@/views/user/DepositView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Crypto Deposit',
+      titleKey: 'nav.cryptoDeposit',
+      descriptionKey: 'deposit.description'
+    }
+  },
+  {
+    path: '/deposit',
+    name: 'CryptoDeposit',
+    component: () => import('@/views/user/DepositView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Crypto Deposit',
+      titleKey: 'nav.cryptoDeposit',
+      descriptionKey: 'deposit.description'
+    }
+  },
+  {
     path: '/orders',
     name: 'OrderList',
     component: () => import('@/views/user/UserOrdersView.vue'),

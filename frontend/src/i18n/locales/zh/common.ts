@@ -188,6 +188,7 @@ export default {
     proxies: 'IP管理',
     redeemCodes: '兑换码',
     cryptoDeposits: '链上直充',
+    cryptoDeposit: 'USDT 充值',
     ops: '运维监控',
     promoCodes: '优惠码',
     settings: '系统设置',
