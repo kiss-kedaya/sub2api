@@ -188,6 +188,7 @@ export default {
     proxies: 'Proxies',
     redeemCodes: 'Redeem Codes',
     cryptoDeposits: 'Crypto Deposits',
+    cryptoDeposit: 'USDT Deposit',
     ops: 'Ops',
     promoCodes: 'Promo Codes',
     settings: 'Settings',

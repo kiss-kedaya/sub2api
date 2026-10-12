@@ -757,6 +757,8 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     { path: '/infinite-canvas', label: t('nav.infiniteCanvas'), icon: InfiniteCanvasIcon },
+    { path: '/deposit', label: t('nav.cryptoDeposit'), icon: WalletIcon },
+    { path: '/deposit', label: t('nav.cryptoDeposit'), icon: WalletIcon },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
