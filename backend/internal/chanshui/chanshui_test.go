@@ -87,12 +87,12 @@ func TestRetryAfterAndRedaction(t *testing.T) {
 	secret := "fixture-upstream-key"
 	fingerprint := Fingerprint(secret)
 	raw := map[string]any{
-		"api_key":  secret,
-		"echo":     "value is " + secret + " inline",
-		"nested":   map[string]any{"authorization": "Bearer " + secret},
-		"list":     []any{"sk-abcdefgh11223344"},
-		"model":    "gpt-6-astra",
-		"same_fp":  fingerprint,
+		"api_key": secret,
+		"echo":    "value is " + secret + " inline",
+		"nested":  map[string]any{"authorization": "Bearer " + secret},
+		"list":    []any{"sk-abcdefgh11223344"},
+		"model":   "gpt-6-astra",
+		"same_fp": fingerprint,
 	}
 	safe := Redact(raw, secret, fingerprint)
 	encoded, err := json.Marshal(safe)
