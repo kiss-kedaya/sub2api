@@ -89,7 +89,8 @@ func DefaultCryptoConfig() CryptoConfig {
 			ChainBSC: 5, ChainPolygon: 5, ChainPlasma: 5, ChainSolana: 1,
 		},
 		CreditMinAmount:  0.1,
-		CreditMultiplier: 1.0,
+		// 1 USDT credits 6.7 balance units (operator-confirmed 2026-10-12).
+		CreditMultiplier: 6.7,
 		SignerSocket:     "/run/sub2api/signer.sock",
 	}
 }
