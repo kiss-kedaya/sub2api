@@ -3498,8 +3498,9 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 
 	// 使用默认的错误映射
 	status, errType, errMsg := wrapUpstreamClientError(statusCode, responseBody)
-	// Exhausted OpenAI failover: mask leftover 401/403/5xx (not 503) as 502.
-	// Cooling-group 403 already returned 503 above. Do not invent 503 here.
+	// failover 耗尽：上游状态码原样透出，不再折叠成 502——500/502/504/520/529
+	// 都保持上游语义，只统一错误类型与文案。401/403 凭证掩码保留：不把上游
+	// 鉴权失败直接暴露给客户端。
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		status = http.StatusBadGateway
@@ -3507,12 +3508,10 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		if strings.TrimSpace(errMsg) == "" || strings.EqualFold(errMsg, "Forbidden") {
 			errMsg = "Upstream request failed"
 		}
-	case status == 520 || (status >= 500 && status != http.StatusServiceUnavailable):
-		status = http.StatusBadGateway
+	case status == 520 || (status >= 500 && status != http.StatusServiceUnavailable && status != 529):
 		errType = "upstream_error"
 		errMsg = "Upstream service temporarily unavailable"
 	case errType == "server_error" && status != http.StatusServiceUnavailable:
-		status = http.StatusBadGateway
 		errType = "upstream_error"
 		errMsg = "Upstream service temporarily unavailable"
 	}
