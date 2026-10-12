@@ -78,30 +78,36 @@
 **执行（EVM 两段式）**：
 ```
 1. 汇总候选地址（余额≥下限）
-2. 【主路径 EIP-7702】gas 账户发一笔 type-4 交易：
-   - authorization_list 含子地址对 SweepDelegator 的委托（仅首次）
-   - to = 子地址，data = execute(token, hotWallet, amount)
-   - gas 由 gas 账户支付，子地址无需原生币
-3. 【兜底路径】链不支持 7702 或委托被拒时，回退两段式：
-   先给子地址打 gas → 确认 → 子地址自己发归集
-4. 写 sweep_records（tx/gas 消耗/状态/失败原因）
+2. 读链上实时余额（计划来自入账台账，实际金额以链上为准）
+3. gas 不足 → 热钱包从 hot_index 打一笔原生币到子地址，等确认
+4. 子地址自己签一笔 ERC20 transfer 到热钱包，等确认
+5. 写 sweep_records（gas tx / 归集 tx / 状态 / 失败原因）
 ```
 
 **执行（Solana）**：费用极低，直接由热钱包给子地址打少量 SOL → 签名归集。
 
-**EIP-7702 无 Gas 归集（主路径）**：
+**为什么不用合约 / 第三方托管（2026-10-12 定案）**：
 
-2026-10-12 实测：BSC（60 块内 24 笔 type-4）、Polygon（30 块内 55 笔）、
-Plasma（800 块内 3 笔）均支持 7702。
+- 这是**开源项目**，部署方式必须对每个 fork 开箱即用。自部署
+  `SweepDelegator` 要求每个使用者先部署合约、再配地址，等于把门槛
+  转嫁给用户，因此否掉。
+- 第三方托管（Fireblocks / Vaultody / MPCVault / ChainUp）同样否掉：
+  API 托管会把用户充值资金放进第三方账户体系，平台被风控冻结即资金
+  卡死；且多为企业 KYC + 月费（实测 Vaultody 入口档 $249/月起），
+  对开源用户不成立。
+- Permit2 / EIP-3009 免首笔 gas 的路线在本场景不成立：BSC USDT、
+  Polygon USDT、BSC/Polygon USDC 的 runtime bytecode 里都没有
+  `transferWithAuthorization`(0xe3ee160e) 或 `permit`(0xd505accf)
+  选择器，子地址无 gas 时连 approve 都发不出去。
+- 成本实测：两段式每个地址 < 1 美分（BSC gasPrice 0.05 gwei 时约
+  $0.0015，Polygon 约 $0.006），可忽略。
+- **EIP-7702 留档备用**：BSC/Polygon 已在用 type-4，但省下的 gas 换
+  一个自部署合约不值当。若将来链上 gas 长期高企，再在此处切换。
 
-- 委托合约：自部署极简 `SweepDelegator`，只允许 gas 账户调用、只能转
-  ERC20 到白名单热钱包——委托后即使 auth 被复用也无法被第三方利用。
-- 首次归集：auth（子地址→SweepDelegator）+ execute 打包进同一笔 type-4
-  交易；之后委托已上链，后续归集不再需要 auth。
-- 对比两段式：省掉每地址预充交易与残留 gas 币，资金占用和交易数都减半；
-  归集一笔完成，无需等两笔确认。
-- 前提：signer 服务需支持 EIP-7702 auth 签名（secp256k1，签
-  keccak256(0x05 || rlp([chain_id, address, nonce]))）与 type-4 交易组装。
+**signer 限额单位**：`max_per_tx` / `max_daily` 用 **raw 单位**（整数
+字符串），不是代币个数。BSC USDT 是 18 位小数，1 USDT = 1e18 raw：
+配 `"5000000000"` 等于 5e-9 USDT，会把所有签名拒掉。示例见
+`deploy/signer-policy.example.json`。
 
 **安全**：
 - signer 白名单：只允许转出到归集热钱包地址；单笔上限（默认 5000 USDT）；日累计上限。
