@@ -127,6 +127,14 @@ func (h *CryptoHandler) AdminRunSweep(c *gin.Context) {
 		return
 	}
 	dryRun := c.DefaultQuery("dry_run", "1") != "0"
+	// A real sweep without a configured destination is operator error, not a
+	// server fault: say what is missing instead of surfacing a 500.
+	if !dryRun {
+		if err := h.service.SweepReadiness(); err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+	}
 	summary, err := h.service.RunSweep(c.Request.Context(), dryRun)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -187,12 +195,21 @@ func (h *CryptoHandler) AdminListAddresses(c *gin.Context) {
 	if pageSize < 1 || pageSize > 200 {
 		pageSize = 50
 	}
-	list, total, err := h.addresses.AdminList(c.Request.Context(), userID, c.Query("family"), pageSize, (page-1)*pageSize)
+	family := c.Query("family")
+	list, total, err := h.addresses.AdminList(c.Request.Context(), userID, family, pageSize, (page-1)*pageSize,
+		c.Query("sort_by"), c.Query("sort_dir"))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"items": list, "total": total}})
+	// Summary covers the whole filtered set; a page-only total would
+	// misreport once the operator pages past the first screen.
+	summary, err := h.addresses.AdminSummary(c.Request.Context(), userID, family)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"items": list, "total": total, "summary": summary}})
 }
 
 // AdminSetAddressStatus enables/disables an assignment.

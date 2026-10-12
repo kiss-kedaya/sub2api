@@ -88,7 +88,15 @@
               </div>
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.hotWalletEvm') }}</label>
-                <input v-model="config.hot_wallet_evm" class="input" placeholder="0x…" />
+                <input
+                  v-model="config.hot_wallet_evm"
+                  class="input"
+                  :class="{ 'input--warn': !config.hot_wallet_evm.trim() }"
+                  placeholder="0x…"
+                />
+                <p v-if="!config.hot_wallet_evm.trim()" class="crypto-view__warn">
+                  {{ t('admin.crypto.hotWalletMissing') }}
+                </p>
               </div>
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.hotWalletSolana') }}</label>
@@ -130,27 +138,71 @@
 
         <!-- Addresses -->
         <div v-if="activeTab === 'addresses'" class="crypto-view__panel">
+          <!-- Whole-set totals: they must not change when paging. -->
+          <div class="crypto-view__stats">
+            <div class="crypto-view__stat">
+              <span class="crypto-view__stat-label">{{ t('admin.crypto.statAddresses') }}</span>
+              <span class="crypto-view__stat-value">{{ addressSummary.address_count }}</span>
+            </div>
+            <div class="crypto-view__stat">
+              <span class="crypto-view__stat-label">{{ t('admin.crypto.statDeposits') }}</span>
+              <span class="crypto-view__stat-value">{{ addressSummary.deposit_count }}</span>
+            </div>
+            <div class="crypto-view__stat crypto-view__stat--accent">
+              <span class="crypto-view__stat-label">{{ t('admin.crypto.statCredited') }}</span>
+              <span class="crypto-view__stat-value">{{ fmtAmount(addressSummary.credited_total) }}</span>
+            </div>
+            <div class="crypto-view__stat">
+              <span class="crypto-view__stat-label">{{ t('admin.crypto.statSwept') }}</span>
+              <span class="crypto-view__stat-value">{{ fmtAmount(addressSummary.swept_total) }}</span>
+            </div>
+            <div class="crypto-view__stat">
+              <span class="crypto-view__stat-label">{{ t('admin.crypto.statUnswept') }}</span>
+              <span class="crypto-view__stat-value">
+                {{ fmtAmount(addressSummary.credited_total - addressSummary.swept_total) }}
+              </span>
+            </div>
+          </div>
+
           <div class="crypto-view__filters">
             <input
               v-model.number="addressUserId"
               type="number"
               class="input"
               :placeholder="t('admin.crypto.userId')"
-              @keyup.enter="loadAddresses"
+              @keyup.enter="applyAddressFilter"
             />
-            <button class="btn btn-secondary" @click="loadAddresses">
+            <select v-model="addressFamily" class="input" @change="applyAddressFilter">
+              <option value="">{{ t('admin.crypto.allFamilies') }}</option>
+              <option value="evm">EVM</option>
+              <option value="solana">Solana</option>
+            </select>
+            <button class="btn btn-secondary" @click="applyAddressFilter">
               {{ t('common.search') }}
             </button>
+            <button class="btn btn-secondary" :disabled="loadingAddresses" @click="loadAddresses">
+              {{ t('common.refresh') }}
+            </button>
           </div>
-          <table v-if="addresses.length" class="crypto-view__table">
+
+          <div v-if="loadingAddresses" class="crypto-view__empty">
+            <LoadingSpinner />
+          </div>
+          <table v-else-if="addresses.length" class="crypto-view__table">
             <thead>
               <tr>
-                <th>ID</th>
-                <th>{{ t('admin.crypto.userId') }}</th>
-                <th>{{ t('admin.crypto.family') }}</th>
-                <th>{{ t('admin.crypto.address') }}</th>
-                <th>{{ t('admin.crypto.credited') }}</th>
-                <th>{{ t('admin.crypto.swept') }}</th>
+                <th
+                  v-for="col in addressColumns"
+                  :key="col.key ?? col.label"
+                  :class="{
+                    'crypto-view__th--sortable': !!col.key,
+                    'crypto-view__th--active': col.key && addressSortBy === col.key
+                  }"
+                  @click="col.key && sortAddresses(col.key)"
+                >
+                  {{ t(col.label) }}
+                  <span v-if="col.key" class="crypto-view__sort">{{ sortIcon(col.key) }}</span>
+                </th>
                 <th>{{ t('common.status') }}</th>
                 <th></th>
               </tr>
@@ -160,9 +212,12 @@
                 <td>{{ row.id }}</td>
                 <td>{{ row.user_id }}</td>
                 <td>{{ row.family }}</td>
-                <td class="crypto-view__mono">{{ row.address }}</td>
-                <td>{{ row.credited_total?.toFixed(2) ?? '0.00' }}</td>
-                <td>{{ row.swept_total?.toFixed(2) ?? '0.00' }}</td>
+                <td class="crypto-view__mono" :title="row.address">
+                  <span class="crypto-view__copy" @click="copyAddress(row.address)">{{ short(row.address) }}</span>
+                </td>
+                <td>{{ fmtAmount(row.credited_total) }}</td>
+                <td>{{ fmtAmount(row.swept_total) }}</td>
+                <td>{{ row.deposit_count }}</td>
                 <td>
                   <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
                     {{ row.status }}
@@ -177,6 +232,22 @@
             </tbody>
           </table>
           <div v-else class="crypto-view__empty-text">{{ t('common.noData') }}</div>
+
+          <div v-if="addressTotalPages > 1" class="crypto-view__pager">
+            <button class="btn btn-secondary btn-sm" :disabled="addressPage <= 1" @click="gotoAddressPage(addressPage - 1)">
+              ‹
+            </button>
+            <span class="crypto-view__pager-info">
+              {{ addressPage }} / {{ addressTotalPages }} · {{ addressTotal }}
+            </span>
+            <button
+              class="btn btn-secondary btn-sm"
+              :disabled="addressPage >= addressTotalPages"
+              @click="gotoAddressPage(addressPage + 1)"
+            >
+              ›
+            </button>
+          </div>
         </div>
 
         <!-- Sweep -->
@@ -188,7 +259,12 @@
             <button class="btn btn-secondary" :disabled="sweeping" @click="doSweep(true)">
               {{ t('admin.crypto.sweepDryRun') }}
             </button>
-            <button class="btn btn-primary" :disabled="sweeping" @click="doSweep(false)">
+            <button
+              class="btn btn-primary"
+              :disabled="sweeping || !sweepReady"
+              :title="sweepReady ? '' : t('admin.crypto.sweepBlockedHint')"
+              @click="requestSweep"
+            >
               {{ t('admin.crypto.sweepRun') }}
             </button>
             <button class="btn btn-secondary" @click="loadSweepRecords">
@@ -281,6 +357,18 @@
         </div>
       </div>
     </div>
+
+    <!-- Sweeps move real funds, so a plain click must never start one. -->
+    <ConfirmDialog
+      :show="sweepConfirmOpen"
+      :title="t('admin.crypto.sweepConfirmTitle')"
+      :message="sweepConfirmMessage"
+      :confirm-text="t('admin.crypto.sweepConfirmAction')"
+      :cancel-text="t('common.cancel')"
+      danger
+      @confirm="confirmSweep"
+      @cancel="sweepConfirmOpen = false"
+    />
   </AppLayout>
 </template>
 
@@ -288,6 +376,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import {
@@ -298,6 +387,8 @@ import {
   runSweep,
   setAddressStatus,
   updateCryptoConfig,
+  type AddressSortKey,
+  type AdminAddressSummary,
   type CryptoConfig,
   type DepositAddress,
   type SweepPlan,
@@ -321,11 +412,57 @@ const configSaved = ref(false)
 
 const addressUserId = ref<number | null>(null)
 const addresses = ref<DepositAddress[]>([])
+const addressFamily = ref('')
+const addressPage = ref(1)
+const addressPageSize = 50
+const addressTotal = ref(0)
+const addressSortBy = ref<AddressSortKey>('id')
+const addressSortDir = ref<'asc' | 'desc'>('desc')
+const loadingAddresses = ref(false)
+const copiedAddress = ref('')
+const addressSummary = ref<AdminAddressSummary>({
+  address_count: 0,
+  deposit_count: 0,
+  credited_total: 0,
+  swept_total: 0
+})
+
+// Columns mirror the body cell order exactly; key-less entries are static.
+const addressColumns: Array<{ key: AddressSortKey | null; label: string }> = [
+  { key: 'id', label: 'admin.crypto.colId' },
+  { key: 'user_id', label: 'admin.crypto.userId' },
+  { key: null, label: 'admin.crypto.family' },
+  { key: null, label: 'admin.crypto.address' },
+  { key: 'credited_total', label: 'admin.crypto.credited' },
+  { key: 'swept_total', label: 'admin.crypto.swept' },
+  { key: 'deposit_count', label: 'admin.crypto.statDeposits' }
+]
+
+const addressTotalPages = computed(() =>
+  Math.max(1, Math.ceil(addressTotal.value / addressPageSize))
+)
 
 const sweepPlan = ref<SweepPlan | null>(null)
 const sweepRecords = ref<SweepRecord[]>([])
 const sweepSummary = ref<SweepSummary | null>(null)
 const sweeping = ref(false)
+const sweepConfirmOpen = ref(false)
+
+// A real sweep needs a destination. Without one the backend refuses anyway;
+// blocking here stops the operator before they wonder why nothing happened.
+const sweepReady = computed(() => {
+  const hot = config.value?.hot_wallet_evm?.trim() ?? ''
+  if (!hot) return false
+  return hot.replace(/^0x/i, '').replace(/0/g, '') !== ''
+})
+
+const sweepConfirmMessage = computed(() =>
+  t('admin.crypto.sweepConfirmMessage', {
+    count: sweepPlan.value?.Entries?.length ?? 0,
+    total: (sweepPlan.value?.TotalUSD ?? 0).toFixed(2),
+    hot: config.value?.hot_wallet_evm?.trim() || t('admin.crypto.hotWalletNone')
+  })
+)
 
 function splitList(value: string): string[] {
   return value
@@ -345,6 +482,10 @@ function short(value: string): string {
 
 function switchTab(id: string) {
   activeTab.value = id
+  // Load on entry: an empty table on first visit reads as "no data".
+  if (id === 'addresses') {
+    void loadAddresses()
+  }
   if (id === 'sweep') {
     void loadSweepRecords()
   }
@@ -371,15 +512,70 @@ async function saveConfig() {
   }
 }
 
-async function loadAddresses() {
-  // Without a user id the console shows every address with totals.
-  if (addressUserId.value) {
-    const { items } = await listAllAddresses(1, 200)
-    addresses.value = items.filter((a) => a.user_id === addressUserId.value)
-    return
+// fmtAmount keeps money columns readable and never renders NaN.
+function fmtAmount(value: number | null | undefined): string {
+  const n = Number(value ?? 0)
+  if (!Number.isFinite(n)) return '0.00'
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function sortIcon(key: AddressSortKey): string {
+  if (addressSortBy.value !== key) return '↕'
+  return addressSortDir.value === 'asc' ? '↑' : '↓'
+}
+
+function sortAddresses(key: AddressSortKey) {
+  if (addressSortBy.value === key) {
+    addressSortDir.value = addressSortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    addressSortBy.value = key
+    // Totals are most useful largest-first; identifiers keep their natural order.
+    addressSortDir.value = key === 'id' || key === 'user_id' ? 'desc' : 'desc'
   }
-  const { items } = await listAllAddresses(1, 200)
-  addresses.value = items
+  addressPage.value = 1
+  void loadAddresses()
+}
+
+function applyAddressFilter() {
+  addressPage.value = 1
+  void loadAddresses()
+}
+
+function gotoAddressPage(page: number) {
+  if (page < 1 || page > addressTotalPages.value) return
+  addressPage.value = page
+  void loadAddresses()
+}
+
+async function copyAddress(address: string) {
+  try {
+    await navigator.clipboard.writeText(address)
+    copiedAddress.value = address
+    window.setTimeout(() => {
+      if (copiedAddress.value === address) copiedAddress.value = ''
+    }, 1500)
+  } catch {
+    // Clipboard can be blocked (non-secure origin); the full value stays in
+    // the title attribute, so this is a convenience only.
+  }
+}
+
+async function loadAddresses() {
+  loadingAddresses.value = true
+  try {
+    const { items, total, summary } = await listAllAddresses({
+      userId: addressUserId.value,
+      page: addressPage.value,
+      pageSize: addressPageSize,
+      sortBy: addressSortBy.value,
+      sortDir: addressSortDir.value
+    })
+    addresses.value = items
+    addressTotal.value = total
+    addressSummary.value = summary
+  } finally {
+    loadingAddresses.value = false
+  }
 }
 
 async function toggleAddress(row: DepositAddress) {
@@ -401,6 +597,19 @@ async function doSweep(dryRun: boolean) {
     sweeping.value = false
   }
 }
+
+// The run button opens a confirmation that restates the destination and the
+// amount: two deliberate clicks before any funds move.
+function requestSweep() {
+  if (!sweepReady.value) return
+  sweepConfirmOpen.value = true
+}
+
+async function confirmSweep() {
+  sweepConfirmOpen.value = false
+  await doSweep(false)
+}
+
 
 async function loadSweepRecords() {
   sweepRecords.value = await listSweepRecords()
@@ -512,6 +721,79 @@ onMounted(loadConfig)
   display: flex;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
+}
+.crypto-view__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.crypto-view__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem 0.875rem;
+  border: 1px solid var(--signal-line, rgba(127, 127, 127, 0.18));
+  border-radius: 0.625rem;
+  background: var(--signal-surface, rgba(127, 127, 127, 0.04));
+}
+.crypto-view__stat--accent {
+  border-color: color-mix(in srgb, var(--signal-accent, #6366f1) 45%, transparent);
+  background: var(--signal-accent-soft, rgba(99, 102, 241, 0.08));
+}
+.crypto-view__stat-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--signal-muted, #6b7280);
+}
+.crypto-view__stat-value {
+  font-size: 1.125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.crypto-view__th--sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.crypto-view__th--sortable:hover {
+  color: var(--signal-accent, #6366f1);
+}
+.crypto-view__th--active {
+  color: var(--signal-accent, #6366f1);
+}
+.crypto-view__sort {
+  margin-left: 0.25rem;
+  font-size: 0.6875rem;
+  opacity: 0.7;
+}
+.crypto-view__copy {
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+}
+.crypto-view__copy:hover {
+  border-bottom-color: currentColor;
+}
+.crypto-view__pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.875rem;
+}
+.crypto-view__pager-info {
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--signal-muted, #6b7280);
+}
+.crypto-view__warn {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: #d97706;
+}
+.input--warn {
+  border-color: #d97706;
 }
 .crypto-view__table {
   width: 100%;
