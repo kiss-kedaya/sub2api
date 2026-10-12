@@ -462,6 +462,18 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 		ReturnURL:   providerReturnURL,
 	}, sel, outTradeNo, payAmountStr, subject)
 	providerReq.AlipayMobilePrecreate = shouldUseAlipayMobilePrecreate(req, cfg, sel)
+	// The built-in crypto channel needs the payer's per-user deposit
+	// address; every other provider ignores this field.
+	if sel != nil && sel.ProviderKey == payment.TypeCrypto && s.depositAddressResolver != nil {
+		address, resolveErr := s.depositAddressResolver.ResolveDepositAddress(ctx, req.UserID)
+		if resolveErr != nil {
+			return nil, infraerrors.ServiceUnavailable(
+				"CRYPTO_ADDRESS_UNAVAILABLE",
+				"deposit address unavailable, please retry",
+			)
+		}
+		providerReq.DepositAddress = address
+	}
 	finishProviderCall := servertiming.ObserveDependency(ctx, "payment")
 	pr, err := prov.CreatePayment(ctx, providerReq)
 	finishProviderCall()

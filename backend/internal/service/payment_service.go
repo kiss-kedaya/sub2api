@@ -200,6 +200,20 @@ type PaymentService struct {
 	resumeService            *PaymentResumeService
 	affiliateService         *AffiliateService
 	notificationEmailService *NotificationEmailService
+	// depositAddressResolver supplies the per-user on-chain address for the
+	// built-in crypto channel. Nil for deployments without that channel.
+	depositAddressResolver DepositAddressResolver
+}
+
+// DepositAddressResolver returns the user's EVM deposit address. Kept as a
+// narrow interface so the payment service does not depend on cryptopay.
+type DepositAddressResolver interface {
+	ResolveDepositAddress(ctx context.Context, userID int64) (string, error)
+}
+
+// SetDepositAddressResolver wires the crypto channel's address source.
+func (s *PaymentService) SetDepositAddressResolver(resolver DepositAddressResolver) {
+	s.depositAddressResolver = resolver
 }
 
 func NewPaymentService(entClient *dbent.Client, registry *payment.Registry, loadBalancer payment.LoadBalancer, redeemService *RedeemService, subscriptionSvc *SubscriptionService, configService *PaymentConfigService, userRepo UserRepository, groupRepo GroupRepository, affiliateService *AffiliateService) *PaymentService {
