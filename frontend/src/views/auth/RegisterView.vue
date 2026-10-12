@@ -41,6 +41,7 @@
               id="email"
               v-model="formData.email"
               type="email"
+              maxlength="254"
               required
               autofocus
               autocomplete="email"
@@ -358,6 +359,7 @@ import { buildAuthErrorMessage } from '@/utils/authError'
 import { extractApiErrorCode, extractI18nErrorMessage } from '@/utils/apiError'
 import {
   formatRegistrationEmailSuffixWhitelistForMessage,
+  isRegistrationEmailFormatValid,
   isRegistrationEmailSuffixAllowed,
   normalizeRegistrationEmailSuffixWhitelist
 } from '@/utils/registrationEmailPolicy'
@@ -910,6 +912,10 @@ function validateForm(): boolean {
   } else if (!validateEmail(formData.email)) {
     errors.email = t('auth.invalidEmail')
     isValid = false
+  } else if (!isRegistrationEmailFormatValid(formData.email)) {
+    // 与后端 EMAIL_FORMAT_INVALID 同口径：长度 / 特殊字符 / 多级域名。
+    errors.email = t('auth.emailFormatInvalid')
+    isValid = false
   } else if (
     !emailDomainQuotaEnabled.value &&
     !isRegistrationEmailSuffixAllowed(formData.email, registrationEmailSuffixWhitelist.value)
@@ -1063,6 +1069,9 @@ async function handleRegister(): Promise<void> {
 }
 
 function buildRegistrationErrorMessage(error: unknown, fallback: string): string {
+  if (extractApiErrorCode(error) === 'EMAIL_FORMAT_INVALID') {
+    return t('auth.emailFormatInvalid')
+  }
   if (extractApiErrorCode(error) === 'EMAIL_DOMAIN_REGISTRATION_LIMIT') {
     return t('auth.emailDomainRegistrationLimit')
   }

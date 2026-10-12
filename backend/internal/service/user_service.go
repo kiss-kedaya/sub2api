@@ -510,20 +510,33 @@ func (s *UserService) updateProfile(ctx context.Context, userID int64, req Updat
 
 	// 更新字段
 	if req.Email != nil {
+		email := strings.TrimSpace(*req.Email)
+		// 邮箱变更同样受注册邮箱结构约束，防止绕开注册校验写入超长/特殊字符地址。
+		if err := ValidateRegistrationEmailFormat(email); err != nil {
+			return nil, oldConcurrency, err
+		}
 		// 检查新邮箱是否已被使用
-		exists, err := s.userRepo.ExistsByEmail(ctx, *req.Email)
+		exists, err := s.userRepo.ExistsByEmail(ctx, email)
 		if err != nil {
 			return nil, oldConcurrency, fmt.Errorf("check email exists: %w", err)
 		}
-		if exists && *req.Email != user.Email {
+		if exists && email != user.Email {
 			return nil, oldConcurrency, ErrEmailExists
 		}
-		user.Email = *req.Email
+		user.Email = email
 		fields.Email = true
 	}
 
 	if req.Username != nil {
-		user.Username = *req.Username
+		// 用户名是首个存储型 XSS 的入口（PUT /api/v1/user）：非登录字段，收紧字符集并限长；
+		// 与当前值相同（存量脏数据回填）或清空时不校验，避免历史用户被卡住。
+		username := strings.TrimSpace(*req.Username)
+		if username != "" && username != user.Username {
+			if err := ValidateUsername(username); err != nil {
+				return nil, oldConcurrency, err
+			}
+		}
+		user.Username = username
 		fields.Username = true
 	}
 
