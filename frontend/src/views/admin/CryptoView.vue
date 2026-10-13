@@ -28,7 +28,7 @@
         </div>
 
         <!-- Configuration -->
-        <div v-if="activeTab === 'config'" class="crypto-view__panel">
+        <div v-if="activeTab === 'config'" class="crypto-view__panel crypto-view__panel--config">
           <div v-if="loadingConfig" class="crypto-view__empty">
             <LoadingSpinner />
           </div>
@@ -55,7 +55,6 @@
               </div>
             </div>
 
-            <div class="crypto-view__divider"></div>
 
             <div class="crypto-view__group">
               <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupRpc') }}</h4>
@@ -71,7 +70,6 @@
               </div>
             </div>
 
-            <div class="crypto-view__divider"></div>
 
             <div class="crypto-view__group">
               <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupSweep') }}</h4>
@@ -116,7 +114,6 @@
               </div>
             </div>
 
-            <div class="crypto-view__divider"></div>
 
             <div class="crypto-view__group">
               <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupSigner') }}</h4>
@@ -127,7 +124,6 @@
               </div>
             </div>
 
-            <div class="crypto-view__divider"></div>
 
             <!-- Signer lock: without the passphrase the process holds no
                  seeds and every signing request is refused. -->
@@ -179,7 +175,6 @@
               <span v-if="configSaved" class="crypto-view__saved">{{ t('common.saved') }}</span>
             </div>
 
-            <div class="crypto-view__divider"></div>
 
             <!-- Health: an empty pool blocks new deposits; a dry hot wallet
                  blocks sweeps. Both are silent failures without this. -->
@@ -273,7 +268,8 @@
           <div v-if="loadingAddresses" class="crypto-view__empty">
             <LoadingSpinner />
           </div>
-          <table v-else-if="addresses.length" class="crypto-view__table">
+          <div v-else-if="addresses.length" class="crypto-view__table-wrap">
+          <table class="crypto-view__table">
             <thead>
               <tr>
                 <th
@@ -316,6 +312,7 @@
               </tr>
             </tbody>
           </table>
+          </div>
           <div v-else class="crypto-view__empty-text">{{ t('common.noData') }}</div>
 
           <div v-if="addressTotalPages > 1" class="crypto-view__pager">
@@ -365,6 +362,7 @@
               gas: <strong>{{ sweepSummary.gas_topups }}</strong>
               <span v-if="sweepSummary.dry_run" class="crypto-view__badge">dry-run</span>
             </p>
+          <div class="crypto-view__table-wrap">
             <table v-if="sweepSummary.entries?.length" class="crypto-view__table">
               <thead>
                 <tr>
@@ -389,6 +387,7 @@
               </tbody>
             </table>
           </div>
+          </div>
 
           <div v-if="sweepPlan" class="crypto-view__plan">
             <p class="crypto-view__plan-total">
@@ -396,6 +395,7 @@
               <strong>{{ sweepPlan.TotalUSD.toFixed(2) }} USDT</strong>
               <span v-if="sweepPlan.DryRun" class="crypto-view__badge">dry-run</span>
             </p>
+          <div class="crypto-view__table-wrap">
             <table v-if="sweepPlan.Entries?.length" class="crypto-view__table">
               <thead>
                 <tr>
@@ -413,8 +413,10 @@
               </tbody>
             </table>
           </div>
+          </div>
 
-          <table v-if="sweepRecords.length" class="crypto-view__table">
+          <div v-if="sweepRecords.length" class="crypto-view__table-wrap">
+          <table class="crypto-view__table">
             <thead>
               <tr>
                 <th>{{ t('admin.crypto.chain') }}</th>
@@ -438,6 +440,7 @@
               </tr>
             </tbody>
           </table>
+          </div>
           <div v-else-if="!sweepPlan" class="crypto-view__empty-text">{{ t('common.noData') }}</div>
         </div>
 
@@ -486,7 +489,8 @@
           </div>
 
           <div v-if="loadingDeposits" class="crypto-view__empty"><LoadingSpinner /></div>
-          <table v-else-if="deposits.length" class="crypto-view__table">
+          <div v-else-if="deposits.length" class="crypto-view__table-wrap">
+          <table class="crypto-view__table">
             <thead>
               <tr>
                 <th>{{ t('admin.crypto.chain') }}</th>
@@ -523,6 +527,7 @@
               </tr>
             </tbody>
           </table>
+          </div>
           <div v-else class="crypto-view__empty-text">{{ t('common.noData') }}</div>
 
           <div v-if="depositTotalPages > 1" class="crypto-view__pager">
@@ -1009,7 +1014,9 @@ onMounted(() => {
 }
 .crypto-view__tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* Follow the tab count: a hard-coded 3 wrapped the 4th tab onto a new row. */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 0.25rem;
   margin: 0.75rem 1.25rem 0;
   padding: 0.25rem;
@@ -1035,6 +1042,24 @@ onMounted(() => {
 .crypto-view__group {
   display: grid;
   gap: 0.75rem;
+}
+.crypto-view__panel--config {
+  /* Groups become cards so the eye can separate them without dividers. */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: 0.875rem;
+  align-items: start;
+}
+.crypto-view__panel--config .crypto-view__group {
+  padding: 0.875rem 1rem 1rem;
+  border: 1px solid var(--signal-line, rgba(127, 127, 127, 0.18));
+  border-radius: 0.75rem;
+  background: var(--signal-surface, rgba(127, 127, 127, 0.03));
+}
+/* The save row spans the full width under the cards. */
+.crypto-view__panel--config > .crypto-view__actions {
+  grid-column: 1 / -1;
+  margin-top: 0.25rem;
 }
 .crypto-view__group-title {
   font-size: 0.875rem;
@@ -1073,8 +1098,22 @@ onMounted(() => {
 }
 .crypto-view__filters {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
+}
+/* Buttons keep their label on one line; without this the flex row squeezes
+   them until "搜索" stacks vertically. */
+.crypto-view__filters .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* Inputs take the leftover space instead of stretching edge to edge. */
+.crypto-view__filters .input {
+  flex: 1 1 10rem;
+  min-width: 8rem;
+  max-width: 22rem;
 }
 .crypto-view__stats {
   display: grid;
@@ -1176,6 +1215,16 @@ onMounted(() => {
   width: 100%;
   border-collapse: collapse;
 }
+.crypto-view__panel--config .crypto-view__stats {
+  /* Inside a card the row sits flush with the group's own gap. */
+  margin-bottom: 0.25rem;
+}
+/* Tables carry many columns (address, tx hash, amounts); on a narrow screen
+   they must scroll rather than stretch the page. */
+.crypto-view__table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
 .crypto-view__table th,
 .crypto-view__table td {
   padding: 0.5rem 0.75rem;
@@ -1186,6 +1235,16 @@ onMounted(() => {
 .crypto-view__table th {
   font-weight: 500;
   color: var(--signal-muted, #6b7280);
+  white-space: nowrap;
+}
+.crypto-view__table td {
+  white-space: nowrap;
+}
+/* The address column is the one that may need to truncate, not wrap the row. */
+.crypto-view__table td.crypto-view__mono {
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .crypto-view__mono {
   font-family: ui-monospace, SFMono-Regular, monospace;
