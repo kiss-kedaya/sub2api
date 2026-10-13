@@ -179,3 +179,28 @@ export async function listDeposits(chain?: string, status?: string): Promise<Dep
   const { data } = await apiClient.get('/admin/crypto/deposits', { params: { chain, status } })
   return data.data ?? []
 }
+
+export interface DepositSummary {
+  total: number
+  credited: number
+  pending: number
+  ignored: number
+  amount: number
+}
+
+// listDepositsPaged returns one page of the deposit ledger plus whole-set
+// counters, so the header stays correct while paging.
+export async function listDepositsPaged(
+  chain: string,
+  status: string,
+  page = 1,
+  pageSize = 50
+): Promise<{ items: DepositRecord[]; summary: DepositSummary }> {
+  const { data } = await apiClient.get('/admin/crypto/deposits', {
+    params: { chain, status, page, page_size: pageSize }
+  })
+  return {
+    items: data.data?.items ?? [],
+    summary: data.data?.summary ?? { total: 0, credited: 0, pending: 0, ignored: 0, amount: 0 }
+  }
+}

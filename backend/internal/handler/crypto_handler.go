@@ -173,12 +173,21 @@ func (h *CryptoHandler) AdminListDeposits(c *gin.Context) {
 		response.BadRequest(c, "crypto channel unavailable")
 		return
 	}
-	deposits, err := h.service.ListDeposits(c.Request.Context(), c.Query("chain"), c.Query("status"), 100)
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "50"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 50
+	}
+	deposits, summary, err := h.service.ListDepositsPaged(c.Request.Context(),
+		c.Query("chain"), c.Query("status"), pageSize, (page-1)*pageSize)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": deposits})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"items": deposits, "summary": summary}})
 }
 
 // AdminListAddresses lists assignments with optional family/status filters.

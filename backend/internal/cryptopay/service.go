@@ -375,6 +375,68 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 	return out, rows.Err()
 }
 
+// DepositSummary totals the deposit ledger for the console header.
+type DepositSummary struct {
+	Total    int64   `json:"total"`
+	Credited int64   `json:"credited"`
+	Pending  int64   `json:"pending"`
+	Ignored  int64   `json:"ignored"`
+	Amount   float64 `json:"amount"`
+}
+
+// ListDepositsPaged returns a page plus whole-set counters. The console needs
+// both: the rows to inspect and the totals that must not move when paging.
+func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, limit, offset int) ([]DepositRecord, *DepositSummary, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	where := " WHERE 1=1"
+	args := []any{}
+	if chain != "" {
+		args = append(args, chain)
+		where += fmt.Sprintf(" AND chain = $%d", len(args))
+	}
+	if status != "" {
+		args = append(args, status)
+		where += fmt.Sprintf(" AND status = $%d", len(args))
+	}
+
+	var summary DepositSummary
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+		       COUNT(*) FILTER (WHERE status = 'credited'),
+		       COUNT(*) FILTER (WHERE status = 'pending'),
+		       COUNT(*) FILTER (WHERE status = 'ignored'),
+		       COALESCE(SUM(amount) FILTER (WHERE status = 'credited'), 0)
+		  FROM deposit_transactions`+where, args...).
+		Scan(&summary.Total, &summary.Credited, &summary.Pending, &summary.Ignored, &summary.Amount)
+	if err != nil {
+		return nil, nil, fmt.Errorf("deposit summary: %w", err)
+	}
+
+	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
+	                 token, amount::text, status, created_at
+	            FROM deposit_transactions` + where +
+		fmt.Sprintf(" ORDER BY id DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
+	rows, err := s.db.QueryContext(ctx, query, append(args, limit, offset)...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list deposits: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []DepositRecord
+	for rows.Next() {
+		var r DepositRecord
+		var created time.Time
+		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
+			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &created); err != nil {
+			return nil, nil, err
+		}
+		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		out = append(out, r)
+	}
+	return out, &summary, rows.Err()
+}
+
 // DepositInfo is everything the standalone deposit page needs.
 type DepositInfo struct {
 	Enabled   bool           `json:"enabled"`
