@@ -8,6 +8,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
@@ -109,6 +110,48 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 		h.service.Reload(c.Request.Context())
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"saved": true}})
+}
+
+// AdminSignerStatus reports whether the signing service is unlocked.
+// GET /api/v1/admin/crypto/signer/status
+func (h *CryptoHandler) AdminSignerStatus(c *gin.Context) {
+	if h.service == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	st, err := h.service.SignerStatus(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": st})
+}
+
+// AdminUnlockSigner forwards the operator passphrase to the signer.
+// POST /api/v1/admin/crypto/signer/unlock
+func (h *CryptoHandler) AdminUnlockSigner(c *gin.Context) {
+	if h.service == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	var body struct {
+		Passphrase      string `json:"passphrase"`
+		DepositMnemonic string `json:"deposit_mnemonic"`
+		HotMnemonic     string `json:"hot_mnemonic"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.BadRequest(c, "Invalid request payload")
+		return
+	}
+	if strings.TrimSpace(body.Passphrase) == "" {
+		response.BadRequest(c, "passphrase is required")
+		return
+	}
+	if err := h.service.UnlockSigner(c.Request.Context(), body.Passphrase, body.DepositMnemonic, body.HotMnemonic); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"unlocked": true}})
 }
 
 // AdminSweepPlan returns the current dry-run sweep plan.

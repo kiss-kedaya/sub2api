@@ -204,3 +204,30 @@ export async function listDepositsPaged(
     summary: data.data?.summary ?? { total: 0, credited: 0, pending: 0, ignored: 0, amount: 0 }
   }
 }
+
+export interface SignerStatus {
+  ok: boolean
+  unlocked: boolean
+}
+
+// getSignerStatus reports whether the signing service holds the seeds. A
+// locked signer refuses every signing request.
+export async function getSignerStatus(): Promise<SignerStatus> {
+  const { data } = await apiClient.get('/admin/crypto/signer/status')
+  return data.data
+}
+
+// unlockSigner sends the operator passphrase. The seed fields are only used
+// on first run, when the vault does not exist yet.
+export async function unlockSigner(
+  passphrase: string,
+  depositMnemonic = '',
+  hotMnemonic = ''
+): Promise<void> {
+  await apiClient.post('/admin/crypto/signer/unlock', {
+    passphrase,
+    deposit_mnemonic: depositMnemonic,
+    hot_mnemonic: hotMnemonic
+  })
+}
+

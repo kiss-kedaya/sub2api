@@ -348,6 +348,30 @@ func (s *Service) SweepReadiness() error {
 	return s.Config().ValidateSweepReady()
 }
 
+// SignerStatus reports the signing service's lock state. A locked signer
+// holds no seeds, so the console must ask for the passphrase first.
+func (s *Service) SignerStatus(ctx context.Context) (*sweeper.SignerStatus, error) {
+	s.mu.RLock()
+	signer := s.signer
+	s.mu.RUnlock()
+	if signer == nil {
+		return nil, fmt.Errorf("cryptopay is disabled")
+	}
+	return signer.Status(ctx)
+}
+
+// UnlockSigner forwards the operator passphrase to the signer. The seeds are
+// only sent on first run, when the vault does not exist yet.
+func (s *Service) UnlockSigner(ctx context.Context, passphrase, depositMnemonic, hotMnemonic string) error {
+	s.mu.RLock()
+	signer := s.signer
+	s.mu.RUnlock()
+	if signer == nil {
+		return fmt.Errorf("cryptopay is disabled")
+	}
+	return signer.Unlock(ctx, passphrase, depositMnemonic, hotMnemonic)
+}
+
 // RunSweep executes the sweep (or a dry-run) and returns the summary.
 // Serialised by the caller via the admin route; sweeps are operator-driven.
 func (s *Service) RunSweep(ctx context.Context, dryRun bool) (*sweeper.Summary, error) {
