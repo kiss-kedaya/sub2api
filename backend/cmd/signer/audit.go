@@ -1,8 +1,8 @@
 package main
 
 import (
-	"encoding/json"
-	"os"
+	"context"
+	"log"
 	"sync"
 	"time"
 )
@@ -23,26 +23,25 @@ type auditEntry struct {
 }
 
 type auditLog struct {
-	mu   sync.Mutex
-	path string
+	mu    sync.Mutex
+	store *store
 }
 
-func newAuditLog(path string) *auditLog {
-	return &auditLog{path: path}
+func newAuditLog(st *store) *auditLog {
+	return &auditLog{store: st}
 }
 
 func (a *auditLog) write(entry auditEntry) {
 	entry.Time = time.Now().UTC().Format(time.RFC3339)
-	data, err := json.Marshal(entry)
-	if err != nil {
+	if a == nil || a.store == nil {
 		return
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	f, err := os.OpenFile(a.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := a.store.writeAudit(ctx, entry); err != nil {
+		// An unwritable audit trail must be visible, not silent.
+		log.Printf("signer audit: %v", err)
 	}
-	defer f.Close()
-	_, _ = f.Write(append(data, '\n'))
 }

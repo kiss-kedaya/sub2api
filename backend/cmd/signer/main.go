@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,17 +38,24 @@ func parseBigInt(raw string) (*big.Int, error) {
 
 type server struct {
 	deriver *Deriver
-	policy  *Policy
-	limiter *limiter
-	audit   *auditLog
+	// hotDeriver owns the gas-paying wallet: a separate seed so leaking the
+	// deposit mnemonic cannot reach the swept funds.
+	hotDeriver *Deriver
+	policy     *Policy
+	limiter    *limiter
+	audit      *auditLog
+
+	// vaultMu guards the unlock state. Until unlock the derivers are nil and
+	// every signing path answers ErrVaultLocked, so a stolen process image or
+	// a restarted host cannot sign without the operator's passphrase.
+	vaultMu sync.RWMutex
+	store   *store
 }
 
 func main() {
 	var (
 		socketPath = flag.String("socket", "/run/sub2api/signer.sock", "unix socket path")
-		policyPath = flag.String("policy", "/etc/sub2api/signer-policy.json", "policy JSON path")
-		statePath  = flag.String("state", "/var/lib/sub2api/signer-state.json", "daily limit state path")
-		auditPath  = flag.String("audit", "/var/lib/sub2api/signer-audit.log", "audit log path")
+		dbDSN      = flag.String("db", os.Getenv("SIGNER_DB_DSN"), "Postgres DSN; settings hold the vault, policy and daily state")
 		genSeed    = flag.Bool("gen-seed", false, "generate a new mnemonic and exit")
 	)
 	flag.Parse()
@@ -62,26 +71,45 @@ func main() {
 	}
 
 	mnemonic := strings.TrimSpace(os.Getenv("SIGNER_MNEMONIC"))
-	if mnemonic == "" {
-		log.Fatal("SIGNER_MNEMONIC is not set")
+	hotMnemonic := strings.TrimSpace(os.Getenv("SIGNER_HOT_MNEMONIC"))
+	// First run may bootstrap the vault from env vars; afterwards the vault is
+	// the only place the seeds live and the passphrase unlocks them.
+	var deriver, hotDeriver *Deriver
+	if mnemonic != "" && hotMnemonic != "" {
+		if hotMnemonic == mnemonic {
+			log.Fatal("SIGNER_HOT_MNEMONIC must differ from SIGNER_MNEMONIC")
+		}
+		var err error
+		if deriver, err = NewDeriver(mnemonic); err != nil {
+			log.Fatalf("init deriver: %v", err)
+		}
+		if hotDeriver, err = NewDeriver(hotMnemonic); err != nil {
+			log.Fatalf("init hot deriver: %v", err)
+		}
 	}
-	deriver, err := NewDeriver(mnemonic)
+	if *dbDSN == "" {
+		log.Fatal("SIGNER_DB_DSN (or -db) is required: the vault, policy and audit live in the database")
+	}
+	st, err := newStore(*dbDSN)
 	if err != nil {
-		log.Fatalf("init deriver: %v", err)
+		log.Fatalf("init store: %v", err)
 	}
-	policy, err := loadPolicy(*policyPath)
+	defer func() { _ = st.Close() }()
+	policy, err := st.loadPolicyFromDB(context.Background())
 	if err != nil {
 		log.Fatalf("load policy: %v", err)
 	}
-	limiter, err := newLimiter(*statePath)
+	limiter, err := newLimiter(st)
 	if err != nil {
 		log.Fatalf("init limiter: %v", err)
 	}
 	srv := &server{
-		deriver: deriver,
-		policy:  policy,
-		limiter: limiter,
-		audit:   newAuditLog(*auditPath),
+		deriver:    deriver,
+		hotDeriver: hotDeriver,
+		policy:     policy,
+		limiter:    limiter,
+		audit:      newAuditLog(st),
+		store:      st,
 	}
 
 	_ = os.Remove(*socketPath)
@@ -100,6 +128,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", srv.handleHealth)
+	mux.HandleFunc("/unlock", srv.handleUnlock)
 	mux.HandleFunc("/derive", srv.handleDerive)
 	mux.HandleFunc("/sign/evm", srv.handleSignEVM)
 	mux.HandleFunc("/sign/sol", srv.handleSignSol)
@@ -121,7 +150,99 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 }
 
 func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "seeded": true})
+	s.vaultMu.RLock()
+	unlocked := s.deriver != nil && s.hotDeriver != nil
+	s.vaultMu.RUnlock()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "unlocked": unlocked})
+}
+
+// handleUnlock takes the operator passphrase and loads both seeds into
+// memory. The passphrase is never stored: it exists only for the scrypt
+// derivation that opens the vault.
+func (s *server) handleUnlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Passphrase string `json:"passphrase"`
+		// Init carries the seeds on first run only, to create the vault.
+		DepositMnemonic string `json:"deposit_mnemonic,omitempty"`
+		HotMnemonic     string `json:"hot_mnemonic,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if strings.TrimSpace(req.Passphrase) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "passphrase required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	s.vaultMu.Lock()
+	defer s.vaultMu.Unlock()
+
+	if s.deriver != nil && s.hotDeriver != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"unlocked": true, "already": true})
+		return
+	}
+
+	raw, err := s.store.getSetting(ctx, settingVault)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// First run: seal the provided seeds into a new vault.
+	if raw == "" {
+		deposit := strings.TrimSpace(req.DepositMnemonic)
+		hot := strings.TrimSpace(req.HotMnemonic)
+		if deposit == "" || hot == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "no vault yet: send deposit_mnemonic and hot_mnemonic to create it",
+			})
+			return
+		}
+		if deposit == hot {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hot seed must differ from the deposit seed"})
+			return
+		}
+		sealed, err := sealContents(deposit, hot, req.Passphrase)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := s.store.setSetting(ctx, settingVault, sealed); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		raw = sealed
+		s.audit.write(auditEntry{Op: "vault_init", Result: "ok"})
+	}
+
+	contents, err := openVaultString(raw, req.Passphrase)
+	if err != nil {
+		s.audit.write(auditEntry{Op: "unlock", Result: "denied", Reason: "bad_passphrase"})
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
+	depositDeriver, err := NewDeriver(contents.Deposit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "deposit seed invalid: " + err.Error()})
+		return
+	}
+	hotDeriver, err := NewDeriver(contents.Hot)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "hot seed invalid: " + err.Error()})
+		return
+	}
+	s.deriver = depositDeriver
+	s.hotDeriver = hotDeriver
+	s.audit.write(auditEntry{Op: "unlock", Result: "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{"unlocked": true})
 }
 
 type deriveRequest struct {
@@ -135,9 +256,26 @@ type derivedAddress struct {
 	Solana string `json:"solana"`
 }
 
+// requireUnlocked returns the derivers, or writes a 423 and reports false.
+// Every path that touches key material goes through here: while locked the
+// process holds no seeds at all.
+func (s *server) requireUnlocked(w http.ResponseWriter) (*Deriver, *Deriver, bool) {
+	s.vaultMu.RLock()
+	defer s.vaultMu.RUnlock()
+	if s.deriver == nil || s.hotDeriver == nil {
+		writeJSON(w, http.StatusLocked, map[string]string{"error": ErrVaultLocked.Error()})
+		return nil, nil, false
+	}
+	return s.deriver, s.hotDeriver, true
+}
+
 func (s *server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	depositDeriver, _, ok := s.requireUnlocked(w)
+	if !ok {
 		return
 	}
 	var req deriveRequest
@@ -152,12 +290,12 @@ func (s *server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	out := make([]derivedAddress, 0, req.Count)
 	for i := uint32(0); i < req.Count; i++ {
 		index := req.Start + i
-		_, evmAddr, err := s.deriver.EVMKey(index)
+		_, evmAddr, err := depositDeriver.EVMKey(index)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		_, solAddr, err := s.deriver.SolanaKey(index)
+		_, solAddr, err := depositDeriver.SolanaKey(index)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -177,6 +315,10 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	depositDeriver, hotDeriver, ok := s.requireUnlocked(w)
+	if !ok {
+		return
+	}
 	var req evmSignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -193,7 +335,7 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "target not allowed"})
 			return
 		}
-		if !gasTargetAllowed(s.deriver, req) {
+		if !gasTargetAllowed(depositDeriver, req) {
 			s.audit.write(auditEntry{Op: "sign_evm", Index: req.Index, To: req.To, Result: "denied", Reason: "gas_target_not_derived"})
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "gas target is not our derived address"})
 			return
@@ -202,7 +344,9 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "gas top-up must be native"})
 			return
 		}
+		// Signed by the hot seed, not the deposit seed.
 		req.Index = s.policy.HotIndex
+		req.hotKey = true
 	}
 	amount, err := parseBigInt(req.Amount)
 	if err != nil {
@@ -219,7 +363,13 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": reason})
 		return
 	}
-	signed, err := signEVMTransfer(s.deriver, req)
+	// Gas top-ups sign with the hot seed; everything else with the deposit
+	// seed. Two seeds means one leaked mnemonic cannot drain both pools.
+	signingDeriver := depositDeriver
+	if req.hotKey {
+		signingDeriver = hotDeriver
+	}
+	signed, err := signEVMTransfer(signingDeriver, req)
 	if err != nil {
 		s.audit.write(auditEntry{Op: "sign_evm", Kind: req.Kind, Index: req.Index, To: req.To, Token: req.Token, Amount: req.Amount, Result: "error", Reason: err.Error()})
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -232,6 +382,10 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleSignSol(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	depositDeriver, _, ok := s.requireUnlocked(w)
+	if !ok {
 		return
 	}
 	var req solSignRequest
@@ -259,7 +413,7 @@ func (s *server) handleSignSol(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": reason})
 		return
 	}
-	signed, err := signSolTransfer(s.deriver, req)
+	signed, err := signSolTransfer(depositDeriver, req)
 	if err != nil {
 		s.audit.write(auditEntry{Op: "sign_sol", Index: req.Index, To: req.To, Token: req.Mint, Amount: req.Amount, Result: "error", Reason: err.Error()})
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

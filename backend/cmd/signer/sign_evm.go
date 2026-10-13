@@ -101,5 +101,8 @@ type evmSignRequest struct {
 	Nonce    uint64  `json:"nonce"`
 	GasPrice string  `json:"gas_price"`
 	GasLimit uint64  `json:"gas_limit"`
-}
 
+	// hotKey routes signing through the hot wallet's own seed. Set only by
+	// the gas path; never accepted from the request body (json:"-").
+	hotKey bool `json:"-"`
+}

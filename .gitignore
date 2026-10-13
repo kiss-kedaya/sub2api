@@ -268,3 +268,8 @@ gitleaks*.json
 /routes-runtime.json
 /inventory-overlay.json
 /inventory_test.go
+
+# Local runtime data (PG data dir, signer socket/logs, operator secrets)
+/data/
+backend/.data/
+*.sock
