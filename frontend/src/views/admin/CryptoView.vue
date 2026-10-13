@@ -355,6 +355,98 @@
           </table>
           <div v-else-if="!sweepPlan" class="crypto-view__empty-text">{{ t('common.noData') }}</div>
         </div>
+
+        <!-- Deposits: the reconciliation view -->
+        <div v-if="activeTab === 'deposits'" class="crypto-view__panel">
+          <div class="crypto-view__stats">
+            <div class="crypto-view__stat">
+              <span class="crypto-view__stat-label">{{ t('admin.crypto.depTotal') }}</span>
+              <span class="crypto-view__stat-value">{{ depositSummary.total }}</span>
+            </div>
+            <div class="crypto-view__stat crypto-view__stat--accent">
+              <span class="crypto-view__stat-label">{{ t('admin.crypto.depCredited') }}</span>
+              <span class="crypto-view__stat-value">{{ depositSummary.credited }}</span>
+            </div>
+            <div class="crypto-view__stat">
+              <span class="crypto-view__stat-label">{{ t('admin.crypto.depPending') }}</span>
+              <span class="crypto-view__stat-value">{{ depositSummary.pending }}</span>
+            </div>
+            <div class="crypto-view__stat">
+              <span class="crypto-view__stat-label">{{ t('admin.crypto.depIgnored') }}</span>
+              <span class="crypto-view__stat-value">{{ depositSummary.ignored }}</span>
+            </div>
+            <div class="crypto-view__stat">
+              <span class="crypto-view__stat-label">{{ t('admin.crypto.depAmount') }}</span>
+              <span class="crypto-view__stat-value">{{ fmtAmount(depositSummary.amount) }}</span>
+            </div>
+          </div>
+
+          <div class="crypto-view__filters">
+            <select v-model="depositChain" class="input" @change="applyDepositFilter">
+              <option value="">{{ t('admin.crypto.allChains') }}</option>
+              <option v-for="c in config?.chains ?? []" :key="c" :value="c">{{ c }}</option>
+            </select>
+            <select v-model="depositStatus" class="input" @change="applyDepositFilter">
+              <option value="">{{ t('common.status') }}</option>
+              <option value="credited">credited</option>
+              <option value="pending">pending</option>
+              <option value="ignored">ignored</option>
+            </select>
+            <button class="btn btn-secondary" :disabled="loadingDeposits" @click="loadDeposits">
+              {{ t('common.refresh') }}
+            </button>
+          </div>
+
+          <div v-if="loadingDeposits" class="crypto-view__empty"><LoadingSpinner /></div>
+          <table v-else-if="deposits.length" class="crypto-view__table">
+            <thead>
+              <tr>
+                <th>{{ t('admin.crypto.chain') }}</th>
+                <th>{{ t('admin.crypto.from') }}</th>
+                <th>{{ t('admin.crypto.address') }}</th>
+                <th>{{ t('admin.crypto.amount') }}</th>
+                <th>{{ t('common.status') }}</th>
+                <th>TX</th>
+                <th>{{ t('admin.crypto.colTime') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in deposits" :key="`${row.tx_hash}-${row.log_index}`">
+                <td>{{ row.chain }}</td>
+                <td class="crypto-view__mono" :title="row.from_address">{{ short(row.from_address) }}</td>
+                <td class="crypto-view__mono" :title="row.to_address">{{ short(row.to_address) }}</td>
+                <td>{{ row.amount }}</td>
+                <td>
+                  <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
+                    {{ row.status }}
+                  </span>
+                </td>
+                <td>
+                  <a
+                    v-if="explorerTxURL(row.chain, row.tx_hash)"
+                    class="crypto-view__link crypto-view__mono"
+                    :href="explorerTxURL(row.chain, row.tx_hash)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >{{ short(row.tx_hash) }}</a>
+                  <span v-else class="crypto-view__mono">{{ short(row.tx_hash) }}</span>
+                </td>
+                <td class="crypto-view__time">{{ fmtTime(row.created_at) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else class="crypto-view__empty-text">{{ t('common.noData') }}</div>
+
+          <div v-if="depositTotalPages > 1" class="crypto-view__pager">
+            <button class="btn btn-secondary btn-sm" :disabled="depositPage <= 1" @click="gotoDepositPage(depositPage - 1)">‹</button>
+            <span class="crypto-view__pager-info">{{ depositPage }} / {{ depositTotalPages }}</span>
+            <button
+              class="btn btn-secondary btn-sm"
+              :disabled="depositPage >= depositTotalPages"
+              @click="gotoDepositPage(depositPage + 1)"
+            >›</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -383,6 +475,7 @@ import {
   getCryptoConfig,
   getSweepPlan,
   listAllAddresses,
+  listDepositsPaged,
   listSweepRecords,
   runSweep,
   setAddressStatus,
@@ -390,6 +483,8 @@ import {
   type AddressSortKey,
   type AdminAddressSummary,
   type CryptoConfig,
+  type DepositRecord,
+  type DepositSummary,
   type DepositAddress,
   type SweepPlan,
   type SweepRecord,
@@ -401,7 +496,8 @@ const { t } = useI18n()
 const tabs = computed(() => [
   { id: 'config', label: t('admin.crypto.tabConfig') },
   { id: 'addresses', label: t('admin.crypto.tabAddresses') },
-  { id: 'sweep', label: t('admin.crypto.tabSweep') }
+  { id: 'sweep', label: t('admin.crypto.tabSweep') },
+  { id: 'deposits', label: t('admin.crypto.tabDeposits') }
 ])
 // Open on the address list: it is the operator's main view (the config tab
 // is a one-time setup step).
@@ -450,6 +546,18 @@ const sweepSummary = ref<SweepSummary | null>(null)
 const sweeping = ref(false)
 const sweepConfirmOpen = ref(false)
 
+const deposits = ref<DepositRecord[]>([])
+const depositSummary = ref<DepositSummary>({ total: 0, credited: 0, pending: 0, ignored: 0, amount: 0 })
+const depositChain = ref('')
+const depositStatus = ref('')
+const depositPage = ref(1)
+const depositPageSize = 50
+const loadingDeposits = ref(false)
+
+const depositTotalPages = computed(() =>
+  Math.max(1, Math.ceil(depositSummary.value.total / depositPageSize))
+)
+
 // A real sweep needs a destination. Without one the backend refuses anyway;
 // blocking here stops the operator before they wonder why nothing happened.
 const sweepReady = computed(() => {
@@ -492,6 +600,9 @@ function switchTab(id: string) {
   }
   if (id === 'sweep') {
     void loadSweepRecords()
+  }
+  if (id === 'deposits') {
+    void loadDeposits()
   }
 }
 
@@ -631,6 +742,52 @@ async function confirmSweep() {
 
 async function loadSweepRecords() {
   sweepRecords.value = await listSweepRecords()
+}
+
+// Block explorer links let the operator verify a deposit on-chain instead of
+// trusting our own ledger.
+const explorerBases: Record<string, string> = {
+  bsc: 'https://bscscan.com/tx/',
+  polygon: 'https://polygonscan.com/tx/',
+  plasma: 'https://plasmascan.to/tx/',
+  solana: 'https://solscan.io/tx/'
+}
+
+function explorerTxURL(chain: string, txHash: string): string {
+  const base = explorerBases[chain]
+  if (!base || !txHash) return ''
+  return base + txHash
+}
+
+function fmtTime(value: string): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString()
+}
+
+function applyDepositFilter() {
+  depositPage.value = 1
+  void loadDeposits()
+}
+
+function gotoDepositPage(page: number) {
+  if (page < 1 || page > depositTotalPages.value) return
+  depositPage.value = page
+  void loadDeposits()
+}
+
+async function loadDeposits() {
+  loadingDeposits.value = true
+  try {
+    const { items, summary } = await listDepositsPaged(
+      depositChain.value, depositStatus.value, depositPage.value, depositPageSize
+    )
+    deposits.value = items
+    depositSummary.value = summary
+  } finally {
+    loadingDeposits.value = false
+  }
 }
 
 onMounted(() => {
@@ -816,6 +973,19 @@ onMounted(() => {
 }
 .input--warn {
   border-color: #d97706;
+}
+.crypto-view__link {
+  color: var(--signal-accent, #6366f1);
+  text-decoration: none;
+  border-bottom: 1px dashed currentColor;
+}
+.crypto-view__link:hover {
+  opacity: 0.8;
+}
+.crypto-view__time {
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--signal-muted, #6b7280);
 }
 .crypto-view__table {
   width: 100%;
