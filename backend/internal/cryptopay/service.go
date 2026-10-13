@@ -360,6 +360,77 @@ func (s *Service) SignerStatus(ctx context.Context) (*sweeper.SignerStatus, erro
 	return signer.Status(ctx)
 }
 
+// HotWalletStatus is the gas readiness of the sweep hot wallet per chain.
+// A hot wallet without native coin cannot pay for sweeps, and the failure
+// would otherwise only show up as failed sweep records.
+type HotWalletStatus struct {
+	Address string `json:"address"`
+	Chain   string `json:"chain"`
+	Balance string `json:"balance"` // native coin, decimal
+	Symbol  string `json:"symbol"`
+	Enough  bool   `json:"enough"`
+	Error   string `json:"error,omitempty"`
+}
+
+// nativeSymbol is the gas coin of each supported chain.
+func nativeSymbol(chain string) string {
+	switch chain {
+	case ChainBSC:
+		return "BNB"
+	case ChainPolygon:
+		return "POL"
+	case ChainPlasma:
+		return "XPL"
+	case ChainSolana:
+		return "SOL"
+	}
+	return "native"
+}
+
+// HotWalletStatuses reads the hot wallet balance on each enabled EVM chain.
+// The threshold is the per-chain gas top-up setting: below it a sweep would
+// have to fund gas first, which is what the operator wants to know.
+func (s *Service) HotWalletStatuses(ctx context.Context) ([]HotWalletStatus, error) {
+	cfg := s.Config()
+	hot := strings.TrimSpace(cfg.HotWalletEVM)
+	if hot == "" {
+		return nil, fmt.Errorf("hot_wallet_evm is not configured")
+	}
+	s.mu.RLock()
+	pools := s.pools
+	s.mu.RUnlock()
+	var out []HotWalletStatus
+	for _, chain := range cfg.Chains {
+		if !IsEVMChain(chain) {
+			continue
+		}
+		pool := pools[chain]
+		st := HotWalletStatus{Address: hot, Chain: chain, Symbol: nativeSymbol(chain)}
+		if pool == nil {
+			st.Error = "no rpc endpoint configured"
+			out = append(out, st)
+			continue
+		}
+		raw, err := pool.Balance(ctx, hot)
+		if err != nil {
+			st.Error = err.Error()
+			out = append(out, st)
+			continue
+		}
+		// Native coins on these chains are 18-decimal.
+		st.Balance = toDisplayAmount(raw, 18)
+		need := cfg.GasTopUp[chain]
+		if need <= 0 {
+			need = 0.002
+		}
+		var have float64
+		_, _ = fmt.Sscanf(st.Balance, "%f", &have)
+		st.Enough = have >= need
+		out = append(out, st)
+	}
+	return out, nil
+}
+
 // UnlockSigner forwards the operator passphrase to the signer. The seeds are
 // only sent on first run, when the vault does not exist yet.
 func (s *Service) UnlockSigner(ctx context.Context, passphrase, depositMnemonic, hotMnemonic string) error {

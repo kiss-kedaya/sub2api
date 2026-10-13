@@ -6,6 +6,7 @@
 package handler
 
 import (
+	"encoding/csv"
 	"net/http"
 	"strconv"
 	"strings"
@@ -152,6 +153,62 @@ func (h *CryptoHandler) AdminUnlockSigner(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"unlocked": true}})
+}
+
+// AdminPoolStatus reports remaining unassigned addresses per family.
+// GET /api/v1/admin/crypto/pool
+func (h *CryptoHandler) AdminPoolStatus(c *gin.Context) {
+	if h.addresses == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	st, err := h.addresses.PoolStatus(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": st})
+}
+
+// AdminHotWalletStatus reports gas readiness per chain.
+// GET /api/v1/admin/crypto/hot-wallet
+func (h *CryptoHandler) AdminHotWalletStatus(c *gin.Context) {
+	if h.service == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	st, err := h.service.HotWalletStatuses(c.Request.Context())
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": st})
+}
+
+// AdminExportDeposits streams the deposit ledger as CSV for reconciliation.
+// GET /api/v1/admin/crypto/deposits.csv
+func (h *CryptoHandler) AdminExportDeposits(c *gin.Context) {
+	if h.service == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	records, _, err := h.service.ListDepositsPaged(c.Request.Context(),
+		c.Query("chain"), c.Query("status"), 5000, 0)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", `attachment; filename="crypto-deposits.csv"`)
+	w := csv.NewWriter(c.Writer)
+	_ = w.Write([]string{"id", "chain", "tx_hash", "log_index", "from", "to", "token", "amount", "status", "created_at"})
+	for _, r := range records {
+		_ = w.Write([]string{
+			strconv.FormatInt(r.ID, 10), r.Chain, r.TxHash, strconv.Itoa(r.LogIndex),
+			r.FromAddress, r.ToAddress, r.Token, r.Amount, r.Status, r.CreatedAt,
+		})
+	}
+	w.Flush()
 }
 
 // AdminSweepPlan returns the current dry-run sweep plan.
