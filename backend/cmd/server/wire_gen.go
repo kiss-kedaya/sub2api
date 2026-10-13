@@ -339,6 +339,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	pushAdapter := notify.NewPushAdapter(userBarkService)
 	balanceNotifyService.SetPushNotifier(pushAdapter)
 	cryptoService := cryptopay.NewService(db, settingService, cryptoDepositCreditor, cryptoAddressService)
+	// Unmatched deposits (mistyped amounts, probes) alert the operators.
+	cryptoService.SetPushNotifier(pushAdapter)
 	paymentService.SetDepositAddressResolver(cryptoService)
 	cryptoHandler := handler.NewCryptoHandler(cryptoAddressService, settingService, cryptoService)
 	cryptoDepositHandler := handler.NewCryptoDepositHandler(cryptoService)
@@ -362,7 +364,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	opsIngressRejectAggregator := service.ProvideOpsIngressRejectAggregator(opsRepository, opsService)
 	accountExpiryService := service.ProvideAccountExpiryService(accountRepository)
 	cnProviderBalanceCheckService := service.ProvideCNProviderBalanceCheckService(accountRepository, cnProviderBalanceService, cnProviderQuotaService, configConfig)
-	cnProviderBalanceCheckService.SetPushNotifier(pushAdapter)
 	cnProviderBalanceCheckService.SetPushNotifier(pushAdapter)
 	openAICodexVersionSyncService := service.ProvideOpenAICodexVersionSyncService(settingRepository, settingService, gitHubReleaseClient)
 	proxyExpiryService := service.ProvideProxyExpiryService(proxyRepository)

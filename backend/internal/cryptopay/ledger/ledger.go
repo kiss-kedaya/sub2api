@@ -63,10 +63,29 @@ type Ledger struct {
 	minAmount    float64
 	multiplier   float64
 	ownAddresses func(ctx context.Context, chain string) ([]string, error)
+	// onUnmatched reports a transfer that reached one of our addresses but
+	// could not be credited (too small, or the address is unassigned).
+	// Operators need this: it is usually a mistyped deposit or a probe.
+	onUnmatched func(ctx context.Context, t scanner.Transfer, reason string)
 }
 
 func New(db *sql.DB, creditor Creditor, resolver AddressResolver, minAmount, multiplier float64) *Ledger {
 	return &Ledger{db: db, creditor: creditor, resolver: resolver, minAmount: minAmount, multiplier: multiplier}
+}
+
+// SetUnmatchedNotifier wires the alert for funds that arrived but were not
+// credited. Optional: nil keeps the ledger silent.
+func (l *Ledger) SetUnmatchedNotifier(fn func(ctx context.Context, t scanner.Transfer, reason string)) {
+	l.onUnmatched = fn
+}
+
+// notifyUnmatched fires the alert without letting a notifier failure affect
+// the ledger: recording the deposit matters more than the push.
+func (l *Ledger) notifyUnmatched(ctx context.Context, t scanner.Transfer, reason string) {
+	if l.onUnmatched == nil {
+		return
+	}
+	l.onUnmatched(ctx, t, reason)
 }
 
 // Process handles one observed transfer. Returns credited=true when a
@@ -87,6 +106,7 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 
 	amountDecimal := toDecimal(t.Amount, decimals)
 	if amountDecimal < l.minAmount {
+		l.notifyUnmatched(ctx, t, "below the minimum credit amount")
 		return l.record(ctx, t, "ignored", 0), nil
 	}
 
@@ -100,6 +120,7 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 	}
 	if userID == 0 {
 		// Ours but unassigned (pool) or disabled: record for reconciliation.
+		l.notifyUnmatched(ctx, t, "address is not assigned to a user")
 		return l.record(ctx, t, "ignored", 0), nil
 	}
 
