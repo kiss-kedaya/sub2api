@@ -8,9 +8,22 @@ $data = "$dl\pgdata-sub2api"
 $bin  = "$dl\pgsql-portable\bin"
 $log  = "$data\server.log"
 
-$running = Get-NetTCPConnection -LocalPort 5433 -State Listen -ErrorAction SilentlyContinue
-if ($running) {
-    Write-Host 'postgres already listening on 5433'
+# Probe with an actual connection: Get-NetTCPConnection can report nothing
+# during the first moments of startup, which made this script try to launch a
+# second postmaster and fail on the port.
+function Test-PgReady {
+    try {
+        $c = New-Object System.Net.Sockets.TcpClient
+        $c.Connect('127.0.0.1', 5433)
+        $c.Close()
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+if (Test-PgReady) {
+    Write-Host 'postgres already accepting connections on 5433'
     exit 0
 }
 
@@ -33,7 +46,7 @@ Start-Process -FilePath "$bin\pg_ctl.exe" `
 
 for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Seconds 1
-    if (Get-NetTCPConnection -LocalPort 5433 -State Listen -ErrorAction SilentlyContinue) {
+    if (Test-PgReady) {
         Write-Host 'postgres ready on 5433'
         exit 0
     }

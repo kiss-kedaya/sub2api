@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,60 @@ import (
 type TokenConfig struct {
 	Contract string
 	Decimals int
+}
+
+// PushNotifier delivers operator alerts. Implemented by the notify adapter;
+// the narrow signature keeps this package free of a notify import.
+type PushNotifier interface {
+	PushToAdmins(ctx context.Context, title, body, group string) error
+}
+
+// SetPushNotifier wires operator alerts. Optional: nil stays silent.
+func (s *Service) SetPushNotifier(p PushNotifier) {
+	s.push = p
+}
+
+// chainDisplayName renders a chain for a human-readable alert.
+func chainDisplayName(chain string) string {
+	switch chain {
+	case ChainBSC:
+		return "BSC"
+	case ChainPolygon:
+		return "Polygon"
+	case ChainPlasma:
+		return "Plasma"
+	case ChainSolana:
+		return "Solana"
+	}
+	return chain
+}
+
+// shortAddr keeps alerts readable; the full value is in the ledger.
+func shortAddr(address string) string {
+	if len(address) <= 14 {
+		return address
+	}
+	return address[:8] + "…" + address[len(address)-6:]
+}
+
+// toDisplayAmount renders raw units for an alert.
+func toDisplayAmount(raw *big.Int, decimals int) string {
+	if raw == nil {
+		return "0"
+	}
+	if decimals <= 0 {
+		return raw.String()
+	}
+	digits := raw.String()
+	for len(digits) <= decimals {
+		digits = "0" + digits
+	}
+	whole := digits[:len(digits)-decimals]
+	frac := strings.TrimRight(digits[len(digits)-decimals:], "0")
+	if frac == "" {
+		return whole
+	}
+	return whole + "." + frac
 }
 
 // watchedTokens maps chain -> token contracts with decimals. Kept in code
@@ -50,6 +105,8 @@ type Service struct {
 
 	// maintCancel stops the pool top-up / scheduled sweep loop.
 	maintCancel context.CancelFunc
+	// push delivers operator alerts (unmatched deposits). Optional.
+	push PushNotifier
 	// sweepMu serialises sweep runs: the manual admin trigger and the
 	// scheduler must never send the same funds twice.
 	sweepMu sync.Mutex
@@ -131,6 +188,22 @@ func (s *Service) reload(ctx context.Context) {
 
 	cursor := scanner.NewCursorStore(s.db)
 	led := ledger.New(s.db, s.creditor, newAddressResolver(s.addresses), cfg.CreditMinAmount, cfg.CreditMultiplier)
+	// Funds that arrived but could not be credited are usually a mistyped
+	// deposit or a probe: tell the operator instead of leaving it in a table.
+	led.SetUnmatchedNotifier(func(ctx context.Context, t scanner.Transfer, reason string) {
+		slog.Warn("[cryptopay] unmatched deposit",
+			"chain", t.Chain, "tx", t.TxHash, "to", t.To, "reason", reason)
+		if s.push == nil {
+			return
+		}
+		amount := toDisplayAmount(t.Amount, watchedTokens[t.Chain].Decimals)
+		if err := s.push.PushToAdmins(ctx, "未匹配到账",
+			fmt.Sprintf("%s 收到 %s（%s），未入账：%s",
+				chainDisplayName(t.Chain), amount, shortAddr(t.To), reason),
+			"deposit"); err != nil {
+			slog.Warn("[cryptopay] unmatched deposit push failed", "error", err)
+		}
+	})
 	addressLister := func(ctx context.Context, chain string) ([]string, error) {
 		family, err := addresses.FamilyForChain(chain)
 		if err != nil {
@@ -145,6 +218,21 @@ func (s *Service) reload(ctx context.Context) {
 	// 5s poll: finality is decided by the chain's safe tag, so a tighter
 	// interval only shortens detection latency, not safety.
 	s.worker = scanner.NewWorker(s.db, s.pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
+	// A reorged credited deposit means we paid out on a block that no longer
+	// exists: the operator must reconcile it by hand.
+	s.worker.SetReorgNotifier(func(chain, txHash string) {
+		slog.Error("[cryptopay] credited deposit reorged, manual reconciliation needed",
+			"chain", chain, "tx", txHash)
+		if s.push == nil {
+			return
+		}
+		if err := s.push.PushToAdmins(context.Background(), "链上重组：已入账交易被回滚",
+			fmt.Sprintf("%s 的交易 %s 已被重组，此前已入账，请人工核对",
+				chainDisplayName(chain), shortAddr(txHash)),
+			"deposit"); err != nil {
+			slog.Warn("[cryptopay] reorg push failed", "error", err)
+		}
+	})
 	s.worker.Start()
 
 	s.signer = sweeper.NewSignerClient(cfg.SignerSocket)
