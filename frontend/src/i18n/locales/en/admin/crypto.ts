@@ -64,6 +64,15 @@ export default {
     groupSweepDesc: 'Thresholds and the hot wallet that receives swept funds',
     globalThresholdHint: 'Sweep only runs when the total reaches this value',
     groupSigner: 'Signing Service',
-    groupSignerDesc: 'Isolated process holding the seed; never exposed publicly'
+    groupSignerDesc: 'Isolated process holding the seed; never exposed publicly',
+    signerLockTitle: 'Signer unlock',
+    signerLockDesc: 'While locked the process holds no seeds and refuses every signing request. The passphrase is used in memory only and never stored.',
+    signerLocked: 'Locked',
+    signerUnlocked: 'Unlocked',
+    signerPassphrase: 'Admin passphrase',
+    signerPassphrasePlaceholder: 'Enter the unlock passphrase',
+    signerPassphraseHint: 'First run uses it to create the encrypted vault; every restart needs it again',
+    signerUnlockAction: 'Unlock',
+    signerUnlockDone: 'Signer unlocked'
   }
 }

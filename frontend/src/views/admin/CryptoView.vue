@@ -127,6 +127,51 @@
               </div>
             </div>
 
+            <div class="crypto-view__divider"></div>
+
+            <!-- Signer lock: without the passphrase the process holds no
+                 seeds and every signing request is refused. -->
+            <div class="crypto-view__group">
+              <h4 class="crypto-view__group-title">{{ t('admin.crypto.signerLockTitle') }}</h4>
+              <p class="crypto-view__group-desc">{{ t('admin.crypto.signerLockDesc') }}</p>
+
+              <div class="crypto-view__lockstate">
+                <span
+                  class="crypto-view__badge"
+                  :class="signerUnlocked ? 'crypto-view__badge--active' : 'crypto-view__badge--failed'"
+                >
+                  {{ signerUnlocked ? t('admin.crypto.signerUnlocked') : t('admin.crypto.signerLocked') }}
+                </span>
+                <button class="btn btn-secondary btn-sm" :disabled="loadingSigner" @click="loadSignerStatus">
+                  {{ t('common.refresh') }}
+                </button>
+              </div>
+
+              <div v-if="!signerUnlocked" class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.signerPassphrase') }}</label>
+                <input
+                  v-model="signerPassphrase"
+                  type="password"
+                  class="input"
+                  autocomplete="new-password"
+                  :placeholder="t('admin.crypto.signerPassphrasePlaceholder')"
+                  @keyup.enter="submitUnlock"
+                />
+                <p class="crypto-view__hint">{{ t('admin.crypto.signerPassphraseHint') }}</p>
+              </div>
+
+              <div v-if="!signerUnlocked" class="crypto-view__actions">
+                <button
+                  class="btn btn-primary"
+                  :disabled="unlocking || !signerPassphrase"
+                  @click="submitUnlock"
+                >
+                  {{ unlocking ? t('common.saving') : t('admin.crypto.signerUnlockAction') }}
+                </button>
+                <span v-if="signerError" class="crypto-view__warn">{{ signerError }}</span>
+              </div>
+            </div>
+
             <div class="crypto-view__actions">
               <button class="btn btn-primary" :disabled="savingConfig" @click="saveConfig">
                 {{ savingConfig ? t('common.saving') : t('common.save') }}
@@ -471,14 +516,18 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import { useAppStore } from '@/stores/app'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import {
   getCryptoConfig,
+  getSignerStatus,
   getSweepPlan,
   listAllAddresses,
   listDepositsPaged,
   listSweepRecords,
   runSweep,
   setAddressStatus,
+  unlockSigner,
   updateCryptoConfig,
   type AddressSortKey,
   type AdminAddressSummary,
@@ -492,6 +541,7 @@ import {
 } from '@/api/admin/crypto'
 
 const { t } = useI18n()
+const appStore = useAppStore()
 
 const tabs = computed(() => [
   { id: 'config', label: t('admin.crypto.tabConfig') },
@@ -557,6 +607,12 @@ const loadingDeposits = ref(false)
 const depositTotalPages = computed(() =>
   Math.max(1, Math.ceil(depositSummary.value.total / depositPageSize))
 )
+
+const signerUnlocked = ref(false)
+const loadingSigner = ref(false)
+const unlocking = ref(false)
+const signerPassphrase = ref('')
+const signerError = ref('')
 
 // A real sweep needs a destination. Without one the backend refuses anyway;
 // blocking here stops the operator before they wonder why nothing happened.
@@ -777,6 +833,36 @@ function gotoDepositPage(page: number) {
   void loadDeposits()
 }
 
+async function loadSignerStatus() {
+  loadingSigner.value = true
+  try {
+    const st = await getSignerStatus()
+    signerUnlocked.value = st.unlocked
+  } catch {
+    // A locked or unreachable signer is not an error the page must shout
+    // about: the lock badge already tells the operator what to do.
+    signerUnlocked.value = false
+  } finally {
+    loadingSigner.value = false
+  }
+}
+
+async function submitUnlock() {
+  if (!signerPassphrase.value) return
+  unlocking.value = true
+  signerError.value = ""
+  try {
+    await unlockSigner(signerPassphrase.value)
+    signerPassphrase.value = ""
+    await loadSignerStatus()
+    appStore.showSuccess(t("admin.crypto.signerUnlockDone"))
+  } catch (err: unknown) {
+    signerError.value = extractApiErrorMessage(err, t("common.error"))
+  } finally {
+    unlocking.value = false
+  }
+}
+
 async function loadDeposits() {
   loadingDeposits.value = true
   try {
@@ -794,6 +880,8 @@ onMounted(() => {
   void loadConfig()
   // The default tab is addresses, so load it without waiting for a click.
   void loadAddresses()
+  // The lock badge lives in the config tab but reflects live state.
+  void loadSignerStatus()
 })
 </script>
 
@@ -986,6 +1074,12 @@ onMounted(() => {
   white-space: nowrap;
   font-size: 0.75rem;
   color: var(--signal-muted, #6b7280);
+}
+.crypto-view__lockstate {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
 }
 .crypto-view__table {
   width: 100%;
