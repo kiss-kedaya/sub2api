@@ -17,13 +17,14 @@ if (-not $pgUp) {
 
 # 2. Signer
 if (-not (Get-Process -Name signer -ErrorAction SilentlyContinue)) {
-    $env:SIGNER_MNEMONIC = (Get-Content "$dl\signer-mnemonic.txt" -Raw).Trim()
+    # Seeds live encrypted in the settings table; the signer starts locked and
+    # is unlocked with the operator passphrase (POST /unlock on its socket).
+    $env:SIGNER_DB_DSN = 'postgres://postgres:postgres@127.0.0.1:5433/sub2api?sslmode=disable'
     Start-Process -FilePath "$root\bin\signer.exe" `
-        -ArgumentList '-socket', "$dl\signer2.sock", '-policy', "$dl\signer-policy.json", `
-                      '-state', "$dl\signer-state.json", '-audit', "$dl\signer-audit.log" `
+        -ArgumentList '-socket', "$root\.data\signer.sock" `
         -WorkingDirectory $root -WindowStyle Hidden
     Start-Sleep -Seconds 2
-    Write-Host 'signer started'
+    Write-Host 'signer started (locked; unlock via POST /unlock)'
 } else {
     Write-Host 'signer already running'
 }

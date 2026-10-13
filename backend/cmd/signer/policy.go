@@ -1,10 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/big"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -30,21 +30,6 @@ type Policy struct {
 	// HotIndex is the derivation index of the hot/gas wallet used for gas
 	// top-ups (kind=gas). Defaults to 0 when unset.
 	HotIndex uint32 `json:"hot_index"`
-}
-
-func loadPolicy(path string) (*Policy, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read policy: %w", err)
-	}
-	var p Policy
-	if err := json.Unmarshal(data, &p); err != nil {
-		return nil, fmt.Errorf("parse policy: %w", err)
-	}
-	if len(p.Targets) == 0 {
-		return nil, fmt.Errorf("policy: at least one target is required")
-	}
-	return &p, nil
 }
 
 // AllowsTarget reports whether to is an allowed payout destination.
@@ -74,23 +59,26 @@ func TokenKey(token string) string {
 // dailyState is the persisted rolling-day counter. The signer is a single
 // process; a file-backed counter survives restarts.
 type dailyState struct {
-	Day     string            `json:"day"` // UTC YYYY-MM-DD
-	Totals  map[string]string `json:"totals"`
+	Day    string            `json:"day"` // UTC YYYY-MM-DD
+	Totals map[string]string `json:"totals"`
 }
 
 type limiter struct {
 	mu          sync.Mutex
-	statePath   string
+	store       *store
 	state       dailyState
 	minuteStart time.Time
 	minuteCount int
 }
 
-func newLimiter(statePath string) (*limiter, error) {
-	l := &limiter{statePath: statePath}
-	data, err := os.ReadFile(statePath)
-	if err == nil {
-		_ = json.Unmarshal(data, &l.state)
+func newLimiter(st *store) (*limiter, error) {
+	l := &limiter{store: st}
+	if st != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if raw, err := st.getSetting(ctx, settingState); err == nil && raw != "" {
+			_ = json.Unmarshal([]byte(raw), &l.state)
+		}
 	}
 	if l.state.Totals == nil {
 		l.state.Totals = map[string]string{}
@@ -99,11 +87,18 @@ func newLimiter(statePath string) (*limiter, error) {
 }
 
 func (l *limiter) persistLocked() error {
+	// A nil store means the caller only wants in-memory counting (tests);
+	// production always has one, so limits survive a restart.
+	if l.store == nil {
+		return nil
+	}
 	data, err := json.Marshal(l.state)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(l.statePath, data, 0o600)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return l.store.setSetting(ctx, settingState, string(data))
 }
 
 func utcDay(now time.Time) string {
