@@ -73,6 +73,11 @@ export default {
     signerPassphrasePlaceholder: '输入解锁口令',
     signerPassphraseHint: '首次使用时会用它创建加密保险库；之后每次重启签名服务都需要重新输入',
     signerUnlockAction: '解锁',
-    signerUnlockDone: '签名服务已解锁'
+    signerUnlockDone: '签名服务已解锁',
+    healthTitle: '运行健康',
+    healthDesc: '地址池为空会让新用户无法获得充值地址；热钱包没 gas 会让归集失败。两者都不报错，只能在这里看到。',
+    poolFree: '地址池剩余',
+    hotWalletUnreachable: '读取失败',
+    exportCsv: '导出 CSV'
   }
 }
