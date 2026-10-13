@@ -185,11 +185,6 @@ func (s *server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	s.vaultMu.Lock()
 	defer s.vaultMu.Unlock()
 
-	if s.deriver != nil && s.hotDeriver != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"unlocked": true, "already": true})
-		return
-	}
-
 	raw, err := s.store.getSetting(ctx, settingVault)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

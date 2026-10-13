@@ -64,6 +64,15 @@ export default {
     groupSweepDesc: '归集阈值与收款热钱包',
     globalThresholdHint: '合计达到该值才触发归集',
     groupSigner: '签名服务',
-    groupSignerDesc: '持有种子的隔离进程，不对外暴露'
+    groupSignerDesc: '持有种子的隔离进程，不对外暴露',
+    signerLockTitle: '签名服务解锁',
+    signerLockDesc: '未解锁时进程不持有任何种子，所有签名请求都会被拒绝。口令只在内存中用于解密，不会保存。',
+    signerLocked: '已锁定',
+    signerUnlocked: '已解锁',
+    signerPassphrase: '管理员口令',
+    signerPassphrasePlaceholder: '输入解锁口令',
+    signerPassphraseHint: '首次使用时会用它创建加密保险库；之后每次重启签名服务都需要重新输入',
+    signerUnlockAction: '解锁',
+    signerUnlockDone: '签名服务已解锁'
   }
 }
