@@ -30,16 +30,26 @@ type DepositHandler interface {
 
 // Worker scans all configured EVM chains on an interval.
 type Worker struct {
-	db          *sql.DB
-	pools       map[string]*rpc.Pool
-	chains      []ChainConfig
-	cursor      *CursorStore
-	handler     DepositHandler
-	addresses   func(ctx context.Context, chain string) ([]string, error)
-	interval    time.Duration
-	maxRange    uint64
-	cancel      context.CancelFunc
-	done        chan struct{}
+	db        *sql.DB
+	pools     map[string]*rpc.Pool
+	chains    []ChainConfig
+	cursor    *CursorStore
+	handler   DepositHandler
+	addresses func(ctx context.Context, chain string) ([]string, error)
+	interval  time.Duration
+	maxRange  uint64
+	cancel    context.CancelFunc
+	done      chan struct{}
+	// onReorg reports a credited deposit whose block was reorged away. The
+	// money already moved in our ledger, so a human must reconcile it.
+	onReorg func(chain, txHash string)
+}
+
+// SetReorgNotifier wires the alert for reorged credited deposits.
+func (w *Worker) SetReorgNotifier(fn func(chain, txHash string)) {
+	if w != nil {
+		w.onReorg = fn
+	}
 }
 
 // NewWorker builds the scan loop. addresses returns the watched recipient
@@ -61,7 +71,7 @@ func NewWorker(
 		maxRange = 2000
 	}
 	return &Worker{
-		db: db,
+		db:    db,
 		pools: pools, chains: chains, cursor: cursor, handler: handler,
 		addresses: addresses, interval: interval, maxRange: maxRange,
 		done: make(chan struct{}),
@@ -129,11 +139,80 @@ func (w *Worker) scanAll(ctx context.Context) {
 	if err := w.retryPending(ctx); err != nil {
 		slog.Warn("[cryptopay] pending retry failed", "error", err)
 	}
+	// Re-verify recently credited deposits: a deep reorg can erase a block we
+	// already paid out on, and nothing else would notice.
+	if err := w.recheckCredited(ctx); err != nil {
+		slog.Warn("[cryptopay] credited recheck failed", "error", err)
+	}
 	for _, chain := range w.chains {
 		if err := w.scanChain(ctx, chain); err != nil {
 			slog.Warn("[cryptopay] scan failed", "chain", chain.Chain, "error", err)
 		}
 	}
+}
+
+// recheckCredited re-verifies deposits credited recently enough that a reorg
+// could still undo them. The window is bounded (one hour of blocks) so the
+// pass stays cheap; anything older is settled by the chain's finality.
+//
+// A credited deposit whose transaction no longer exists, or whose block hash
+// changed, is marked "reverted" so reconciliation can claw it back. It is
+// never deleted: the money already moved in our ledger.
+func (w *Worker) recheckCredited(ctx context.Context) error {
+	rows, err := w.db.QueryContext(ctx, `
+		SELECT chain, tx_hash, log_index, block_hash
+		  FROM deposit_transactions
+		 WHERE status = 'credited'
+		   AND created_at > NOW() - INTERVAL '1 hour'
+		 ORDER BY id DESC
+		 LIMIT 200`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	type creditedRow struct {
+		chain, txHash, blockHash string
+		logIndex                 int
+	}
+	var pending []creditedRow
+	for rows.Next() {
+		var r creditedRow
+		if err := rows.Scan(&r.chain, &r.txHash, &r.logIndex, &r.blockHash); err != nil {
+			return err
+		}
+		pending = append(pending, r)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, p := range pending {
+		pool := w.pools[p.chain]
+		if pool == nil || p.blockHash == "" {
+			continue
+		}
+		receipt, err := VerifyTransaction(ctx, pool, p.txHash)
+		if err != nil {
+			// No receipt can mean a reorg dropped the tx; confirm on the next
+			// pass before flagging, since RPC errors are also common here.
+			continue
+		}
+		if receipt.BlockHash == "" || receipt.BlockHash == p.blockHash {
+			continue
+		}
+		slog.Warn("[cryptopay] credited deposit was reorged",
+			"chain", p.chain, "tx", p.txHash, "was", p.blockHash, "now", receipt.BlockHash)
+		if _, err := w.db.ExecContext(ctx,
+			`UPDATE deposit_transactions SET status = 'reverted' WHERE chain = $1 AND tx_hash = $2 AND log_index = $3`,
+			p.chain, p.txHash, p.logIndex); err != nil {
+			slog.Warn("[cryptopay] mark reverted failed", "tx", p.txHash, "error", err)
+			continue
+		}
+		if w.onReorg != nil {
+			w.onReorg(p.chain, p.txHash)
+		}
+	}
+	return nil
 }
 
 // retryPending re-verifies deposits still in "pending" state and credits the
