@@ -185,6 +185,26 @@ func (s *Service) ListByUser(ctx context.Context, userID int64) ([]Assignment, e
 	return s.repo.ListByUser(ctx, userID)
 }
 
+// PoolStatus reports how many unassigned addresses remain per family. An
+// empty pool means new users cannot be given a deposit address at all, so the
+// console surfaces it before it runs dry.
+type PoolStatus struct {
+	Free         map[string]int64 `json:"free"`
+	LowWatermark int64            `json:"low_watermark"`
+}
+
+func (s *Service) PoolStatus(ctx context.Context) (*PoolStatus, error) {
+	out := &PoolStatus{Free: map[string]int64{}, LowWatermark: s.lowWatermark}
+	for _, family := range []string{FamilyEVM, FamilySolana} {
+		count, err := s.repo.FreePoolCount(ctx, family)
+		if err != nil {
+			return nil, err
+		}
+		out.Free[family] = count
+	}
+	return out, nil
+}
+
 // SetStatus exposes assignment status changes to the admin layer.
 func (s *Service) SetStatus(ctx context.Context, id int64, status string) error {
 	return s.repo.SetStatus(ctx, id, status)

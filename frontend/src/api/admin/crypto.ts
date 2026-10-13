@@ -231,3 +231,40 @@ export async function unlockSigner(
   })
 }
 
+
+export interface PoolStatus {
+  free: Record<string, number>
+  low_watermark: number
+}
+
+export interface HotWalletStatus {
+  address: string
+  chain: string
+  balance: string
+  symbol: string
+  enough: boolean
+  error?: string
+}
+
+// getPoolStatus reports remaining unassigned addresses. An empty pool means
+// new users cannot receive a deposit address.
+export async function getPoolStatus(): Promise<PoolStatus> {
+  const { data } = await apiClient.get('/admin/crypto/pool')
+  return data.data
+}
+
+// getHotWalletStatus reports gas readiness per chain.
+export async function getHotWalletStatus(): Promise<HotWalletStatus[]> {
+  const { data } = await apiClient.get('/admin/crypto/hot-wallet')
+  return data.data ?? []
+}
+
+// exportDepositsCSV downloads the deposit ledger for reconciliation.
+export async function exportDepositsCSV(chain = '', status = ''): Promise<Blob> {
+  const { data } = await apiClient.get('/admin/crypto/deposits.csv', {
+    params: { chain, status },
+    responseType: 'blob'
+  })
+  return data
+}
+

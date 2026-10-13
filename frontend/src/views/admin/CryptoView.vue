@@ -178,6 +178,46 @@
               </button>
               <span v-if="configSaved" class="crypto-view__saved">{{ t('common.saved') }}</span>
             </div>
+
+            <div class="crypto-view__divider"></div>
+
+            <!-- Health: an empty pool blocks new deposits; a dry hot wallet
+                 blocks sweeps. Both are silent failures without this. -->
+            <div class="crypto-view__group">
+              <h4 class="crypto-view__group-title">{{ t('admin.crypto.healthTitle') }}</h4>
+              <p class="crypto-view__group-desc">{{ t('admin.crypto.healthDesc') }}</p>
+
+              <div class="crypto-view__stats">
+                <div
+                  v-for="(count, family) in poolStatus?.free ?? {}"
+                  :key="`pool-${family}`"
+                  class="crypto-view__stat"
+                  :class="{ 'crypto-view__stat--warn': count <= (poolStatus?.low_watermark ?? 0) }"
+                >
+                  <span class="crypto-view__stat-label">{{ t('admin.crypto.poolFree') }} · {{ family }}</span>
+                  <span class="crypto-view__stat-value">{{ count }}</span>
+                </div>
+                <div
+                  v-for="hw in hotWallets"
+                  :key="`hw-${hw.chain}`"
+                  class="crypto-view__stat"
+                  :class="{ 'crypto-view__stat--warn': !hw.enough || hw.error }"
+                >
+                  <span class="crypto-view__stat-label">
+                    {{ hw.symbol }} · {{ hw.chain }}
+                  </span>
+                  <span class="crypto-view__stat-value">
+                    {{ hw.error ? t('admin.crypto.hotWalletUnreachable') : hw.balance }}
+                  </span>
+                </div>
+              </div>
+              <div class="crypto-view__actions">
+                <button class="btn btn-secondary btn-sm" :disabled="loadingHealth" @click="loadHealth">
+                  {{ t('common.refresh') }}
+                </button>
+                <span v-if="healthError" class="crypto-view__warn">{{ healthError }}</span>
+              </div>
+            </div>
           </template>
         </div>
 
@@ -440,6 +480,9 @@
             <button class="btn btn-secondary" :disabled="loadingDeposits" @click="loadDeposits">
               {{ t('common.refresh') }}
             </button>
+            <button class="btn btn-secondary" :disabled="exporting" @click="downloadCSV">
+              {{ t('admin.crypto.exportCsv') }}
+            </button>
           </div>
 
           <div v-if="loadingDeposits" class="crypto-view__empty"><LoadingSpinner /></div>
@@ -520,6 +563,8 @@ import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import {
   getCryptoConfig,
+  getHotWalletStatus,
+  getPoolStatus,
   getSignerStatus,
   getSweepPlan,
   listAllAddresses,
@@ -527,6 +572,7 @@ import {
   listSweepRecords,
   runSweep,
   setAddressStatus,
+  exportDepositsCSV,
   unlockSigner,
   updateCryptoConfig,
   type AddressSortKey,
@@ -535,6 +581,8 @@ import {
   type DepositRecord,
   type DepositSummary,
   type DepositAddress,
+  type HotWalletStatus,
+  type PoolStatus,
   type SweepPlan,
   type SweepRecord,
   type SweepSummary
@@ -607,6 +655,12 @@ const loadingDeposits = ref(false)
 const depositTotalPages = computed(() =>
   Math.max(1, Math.ceil(depositSummary.value.total / depositPageSize))
 )
+
+const poolStatus = ref<PoolStatus | null>(null)
+const hotWallets = ref<HotWalletStatus[]>([])
+const loadingHealth = ref(false)
+const healthError = ref('')
+const exporting = ref(false)
 
 const signerUnlocked = ref(false)
 const loadingSigner = ref(false)
@@ -833,6 +887,38 @@ function gotoDepositPage(page: number) {
   void loadDeposits()
 }
 
+async function loadHealth() {
+  loadingHealth.value = true
+  healthError.value = '' 
+  try {
+    const [pool, hot] = await Promise.all([getPoolStatus(), getHotWalletStatus()])
+    poolStatus.value = pool
+    hotWallets.value = hot
+  } catch (err: unknown) {
+    // The hot wallet may simply be unset: that is a configuration state,
+    // not a page-breaking error.
+    healthError.value = extractApiErrorMessage(err, '')
+    hotWallets.value = []
+  } finally {
+    loadingHealth.value = false
+  }
+}
+
+async function downloadCSV() {
+  exporting.value = true
+  try {
+    const blob = await exportDepositsCSV(depositChain.value, depositStatus.value)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'crypto-deposits.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  } finally {
+    exporting.value = false
+  }
+}
+
 async function loadSignerStatus() {
   loadingSigner.value = true
   try {
@@ -882,6 +968,7 @@ onMounted(() => {
   void loadAddresses()
   // The lock badge lives in the config tab but reflects live state.
   void loadSignerStatus()
+  void loadHealth()
 })
 </script>
 
@@ -1007,6 +1094,10 @@ onMounted(() => {
 .crypto-view__stat--accent {
   border-color: color-mix(in srgb, var(--signal-accent, #6366f1) 45%, transparent);
   background: var(--signal-accent-soft, rgba(99, 102, 241, 0.08));
+}
+.crypto-view__stat--warn {
+  border-color: color-mix(in srgb, #d97706 55%, transparent);
+  background: rgba(217, 119, 6, 0.08);
 }
 .crypto-view__stat-label {
   font-size: 0.6875rem;

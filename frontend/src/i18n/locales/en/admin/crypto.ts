@@ -73,6 +73,11 @@ export default {
     signerPassphrasePlaceholder: 'Enter the unlock passphrase',
     signerPassphraseHint: 'First run uses it to create the encrypted vault; every restart needs it again',
     signerUnlockAction: 'Unlock',
-    signerUnlockDone: 'Signer unlocked'
+    signerUnlockDone: 'Signer unlocked',
+    healthTitle: 'Health',
+    healthDesc: 'An empty pool stops new users from getting an address; a dry hot wallet fails sweeps. Neither raises an error anywhere else.',
+    poolFree: 'Address pool free',
+    hotWalletUnreachable: 'unreachable',
+    exportCsv: 'Export CSV'
   }
 }
