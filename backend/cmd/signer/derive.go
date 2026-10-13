@@ -23,6 +23,13 @@ type Deriver struct {
 	seed []byte
 }
 
+// NewDeriverFromSeed wraps an already-derived seed. Used for the hot wallet,
+// which must NOT share the deposit seed: one leaked mnemonic would otherwise
+// expose both the deposits and the accumulated hot balance.
+func NewDeriverFromSeed(seed []byte) *Deriver {
+	return &Deriver{seed: seed}
+}
+
 // NewDeriver validates the mnemonic and derives the master seed.
 func NewDeriver(mnemonic string) (*Deriver, error) {
 	if !bip39.IsMnemonicValid(mnemonic) {

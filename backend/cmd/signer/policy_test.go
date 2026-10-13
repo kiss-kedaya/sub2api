@@ -34,7 +34,7 @@ func TestPolicyAllowsTarget(t *testing.T) {
 }
 
 func TestLimiterPerTxLimit(t *testing.T) {
-	l, err := newLimiter(t.TempDir() + "/state.json")
+	l, err := newLimiter(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestLimiterPerTxLimit(t *testing.T) {
 }
 
 func TestLimiterDailyLimit(t *testing.T) {
-	l, err := newLimiter(t.TempDir() + "/state.json")
+	l, err := newLimiter(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestLimiterDailyLimit(t *testing.T) {
 }
 
 func TestLimiterRateLimit(t *testing.T) {
-	l, err := newLimiter(t.TempDir() + "/state.json")
+	l, err := newLimiter(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestLimiterRateLimit(t *testing.T) {
 }
 
 func TestLimiterMissingPerTxDenies(t *testing.T) {
-	l, err := newLimiter(t.TempDir() + "/state.json")
+	l, err := newLimiter(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
