@@ -2,16 +2,6 @@
   <AppLayout>
     <div class="crypto-view">
       <div class="card crypto-view__card">
-        <div class="crypto-view__header">
-          <div class="crypto-view__icon">
-            <Icon name="wallet" size="md" />
-          </div>
-          <div class="min-w-0">
-            <h1 class="crypto-view__title">{{ t('admin.crypto.title') }}</h1>
-            <p class="crypto-view__desc">{{ t('admin.crypto.description') }}</p>
-          </div>
-        </div>
-
         <div class="crypto-view__tabs" role="tablist">
           <button
             v-for="tab in tabs"
@@ -59,14 +49,96 @@
             <div class="crypto-view__group">
               <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupRpc') }}</h4>
               <p class="crypto-view__group-desc">{{ t('admin.crypto.groupRpcDesc') }}</p>
-              <div v-for="chain in config.chains" :key="`rpc-${chain}`" class="crypto-view__field">
-                <label class="crypto-view__label">{{ chain }}</label>
-                <input
-                  :value="config.rpc?.[chain] ?? ''"
-                  class="input"
-                  :placeholder="t('admin.crypto.rpcPlaceholder')"
-                  @change="(e) => setRPC(chain, (e.target as HTMLInputElement).value)"
-                />
+
+              <!-- Per-chain endpoint table: add / test / remove, and pull
+                   candidates from the public chainlist registry. -->
+              <div class="crypto-view__rpc-chain" v-for="chain in config.chains" :key="`rpc-${chain}`">
+                <div class="crypto-view__rpc-head">
+                  <span class="crypto-view__rpc-chain-name">{{ chain }}</span>
+                  <div class="crypto-view__rpc-head-actions">
+                    <button
+                      class="btn btn-secondary btn-sm"
+                      :disabled="fetchingCandidates === chain"
+                      @click="fetchCandidates(chain)"
+                    >
+                      {{ fetchingCandidates === chain ? t('common.loading') : t('admin.crypto.rpcFetch') }}
+                    </button>
+                    <button class="btn btn-secondary btn-sm" @click="addRPCRow(chain)">
+                      {{ t('admin.crypto.rpcAdd') }}
+                    </button>
+                    <button
+                      class="btn btn-secondary btn-sm"
+                      :disabled="testingChain === chain"
+                      @click="testAllEndpoints(chain)"
+                    >
+                      {{ testingChain === chain ? t('common.loading') : t('admin.crypto.rpcTestAll') }}
+                    </button>
+                  </div>
+                </div>
+
+                <div class="crypto-view__table-wrap">
+                  <table class="crypto-view__table">
+                    <thead>
+                      <tr>
+                        <th>{{ t('admin.crypto.rpcEndpoint') }}</th>
+                        <th>{{ t('common.status') }}</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, idx) in rpcRows[chain] ?? []" :key="`${chain}-${idx}`">
+                        <td>
+                          <input
+                            v-model="row.url"
+                            class="input crypto-view__rpc-input"
+                            :placeholder="t('admin.crypto.rpcPlaceholder')"
+                            @change="persistRPC(chain)"
+                          />
+                        </td>
+                        <td>
+                          <span
+                            v-if="row.status"
+                            class="crypto-view__badge"
+                            :class="row.ok ? 'crypto-view__badge--active' : 'crypto-view__badge--failed'"
+                            :title="row.error || ''"
+                          >
+                            {{ row.ok ? `${row.latency_ms}ms · #${row.block}` : t('admin.crypto.rpcFail') }}
+                          </span>
+                          <span v-else class="crypto-view__hint">—</span>
+                        </td>
+                        <td>
+                          <button class="btn btn-secondary btn-sm" :disabled="row.testing" @click="testEndpoint(chain, idx)">
+                            {{ t('admin.crypto.rpcTest') }}
+                          </button>
+                          <button class="btn btn-secondary btn-sm" @click="removeRPCRow(chain, idx)">
+                            {{ t('admin.crypto.rpcRemove') }}
+                          </button>
+                        </td>
+                      </tr>
+                      <tr v-if="!(rpcRows[chain] ?? []).length">
+                        <td colspan="3" class="crypto-view__empty-text">{{ t('common.noData') }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- chainlist candidates: one click adopts the endpoint -->
+                <div v-if="candidateLists[chain]?.length" class="crypto-view__candidates">
+                  <p class="crypto-view__hint">{{ t('admin.crypto.rpcCandidatesHint') }}</p>
+                  <div class="crypto-view__candidate-tags">
+                    <button
+                      v-for="candidate in candidateLists[chain]"
+                      :key="candidate.url"
+                      type="button"
+                      class="crypto-view__candidate"
+                      :class="{ 'crypto-view__candidate--used': endpointUsed(chain, candidate.url) }"
+                      :disabled="endpointUsed(chain, candidate.url)"
+                      @click="adoptCandidate(chain, candidate.url)"
+                    >
+                      {{ candidate.url }}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -628,8 +700,11 @@ import {
   exportDepositsCSV,
   unlockSigner,
   updateCryptoConfig,
+  testRPCEndpoint,
+  listRPCCandidates,
   type AddressSortKey,
   type AdminAddressSummary,
+  type ChainlistCandidate,
   type CryptoConfig,
   type DepositRecord,
   type DepositSummary,
@@ -744,10 +819,119 @@ function splitList(value: string): string[] {
     .filter(Boolean)
 }
 
-function setRPC(chain: string, value: string) {
+// --- RPC endpoint table -------------------------------------------------
+// config.rpc stores a comma-separated string per chain; the table edits it
+// as rows. Both directions go through the same helpers so the saved value
+// and the visible rows can never disagree.
+
+interface RPCRow {
+  url: string
+  testing: boolean
+  status: boolean | null
+  ok: boolean
+  latency_ms: number
+  block: number
+  error: string
+}
+
+const rpcRows = ref<Record<string, RPCRow[]>>({})
+const candidateLists = ref<Record<string, ChainlistCandidate[]>>({})
+const fetchingCandidates = ref('')
+const testingChain = ref('')
+
+function rowsFromConfig(chain: string): RPCRow[] {
+  const raw = config.value?.rpc?.[chain] ?? ''
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((url) => ({ url, testing: false, status: null, ok: false, latency_ms: 0, block: 0, error: '' }))
+}
+
+// Rebuild rows when the channels list changes (e.g. after loading config).
+function syncRPCRows() {
+  const next: Record<string, RPCRow[]> = {}
+  for (const chain of config.value?.chains ?? []) {
+    next[chain] = rowsFromConfig(chain)
+  }
+  rpcRows.value = next
+}
+
+// persistRPC writes the rows back into the comma-separated config value.
+function persistRPC(chain: string) {
   if (!config.value) return
   config.value.rpc ??= {}
-  config.value.rpc[chain] = value.trim()
+  config.value.rpc[chain] = (rpcRows.value[chain] ?? [])
+    .map((r) => r.url.trim())
+    .filter(Boolean)
+    .join(',')
+}
+
+function addRPCRow(chain: string) {
+  rpcRows.value[chain] ??= []
+  rpcRows.value[chain].push({ url: '', testing: false, status: null, ok: false, latency_ms: 0, block: 0, error: '' })
+}
+
+function removeRPCRow(chain: string, idx: number) {
+  rpcRows.value[chain]?.splice(idx, 1)
+  persistRPC(chain)
+}
+
+async function testEndpoint(chain: string, idx: number) {
+  const row = rpcRows.value[chain]?.[idx]
+  if (!row || !row.url.trim()) return
+  row.testing = true
+  try {
+    const result = await testRPCEndpoint(chain, row.url.trim())
+    row.status = true
+    row.ok = result.ok
+    row.latency_ms = result.latency_ms
+    row.block = result.block ?? 0
+    row.error = result.error ?? ''
+  } catch (e) {
+    row.status = true
+    row.ok = false
+    row.error = extractApiErrorMessage(e)
+  } finally {
+    row.testing = false
+  }
+}
+
+async function testAllEndpoints(chain: string) {
+  testingChain.value = chain
+  try {
+    const rows = rpcRows.value[chain] ?? []
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].url.trim()) await testEndpoint(chain, i)
+    }
+  } finally {
+    testingChain.value = ''
+  }
+}
+
+async function fetchCandidates(chain: string) {
+  fetchingCandidates.value = chain
+  try {
+    candidateLists.value[chain] = await listRPCCandidates(chain)
+  } catch (e) {
+    candidateLists.value[chain] = []
+    // Surface the failure without a modal; candidates are a convenience.
+    console.warn('fetch RPC candidates failed', e)
+  } finally {
+    fetchingCandidates.value = ''
+  }
+}
+
+function endpointUsed(chain: string, url: string): boolean {
+  return (rpcRows.value[chain] ?? []).some((r) => r.url.trim() === url)
+}
+
+function adoptCandidate(chain: string, url: string) {
+  if (endpointUsed(chain, url)) return
+  addRPCRow(chain)
+  const rows = rpcRows.value[chain] ?? []
+  rows[rows.length - 1].url = url
+  persistRPC(chain)
 }
 
 function short(value: string): string {
@@ -789,6 +973,7 @@ async function loadConfig() {
       credit_max_amount: loaded.credit_max_amount ?? 10000,
       sweep_auto: loaded.sweep_auto ?? false
     }
+    syncRPCRows()
   } finally {
     loadingConfig.value = false
   }
@@ -1253,6 +1438,66 @@ onMounted(() => {
 }
 .crypto-view__link:hover {
   opacity: 0.8;
+}
+/* --- RPC endpoint table --- */
+.crypto-view__rpc-chain {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--signal-line, rgba(127, 127, 127, 0.18));
+  border-radius: 0.5rem;
+}
+.crypto-view__rpc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+.crypto-view__rpc-chain-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: none;
+}
+.crypto-view__rpc-head-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.crypto-view__rpc-input {
+  width: 100%;
+  min-width: 16rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.75rem;
+}
+.crypto-view__candidates {
+  margin-top: 0.625rem;
+}
+.crypto-view__candidate-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.375rem;
+  max-height: 10rem;
+  overflow-y: auto;
+}
+.crypto-view__candidate {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--signal-line, rgba(127, 127, 127, 0.25));
+  border-radius: 0.375rem;
+  font-size: 0.6875rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  cursor: pointer;
+  background: transparent;
+  color: inherit;
+}
+.crypto-view__candidate:hover:not(:disabled) {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.08);
+}
+.crypto-view__candidate--used {
+  opacity: 0.45;
+  cursor: default;
 }
 .crypto-view__time {
   white-space: nowrap;
