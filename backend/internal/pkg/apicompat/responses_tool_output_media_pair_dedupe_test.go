@@ -49,7 +49,9 @@ func TestDedupeResponsesCallIDs_DropsCallAndOutputAsPair(t *testing.T) {
 
 		out, changed := DedupeResponsesCallIDs(input)
 		require.True(t, changed)
-		require.Len(t, out.([]any), 1)
+		items, ok := out.([]any)
+		require.True(t, ok)
+		require.Len(t, items, 1)
 	})
 
 	t.Run("孤立 output 重复时也只留第一个", func(t *testing.T) {
@@ -61,7 +63,8 @@ func TestDedupeResponsesCallIDs_DropsCallAndOutputAsPair(t *testing.T) {
 
 		out, changed := DedupeResponsesCallIDs(input)
 		require.True(t, changed)
-		items := out.([]any)
+		items, ok := out.([]any)
+		require.True(t, ok)
 		require.Len(t, items, 1)
 		require.Equal(t, "one", responseItemField(t, items, 0, "output"))
 	})
@@ -77,7 +80,9 @@ func TestDedupeResponsesCallIDs_DropsCallAndOutputAsPair(t *testing.T) {
 
 		out, changed := DedupeResponsesCallIDs(input)
 		require.False(t, changed)
-		require.Len(t, out.([]any), 4)
+		items, ok := out.([]any)
+		require.True(t, ok)
+		require.Len(t, items, 4)
 	})
 }
 
@@ -93,16 +98,27 @@ func TestDedupeChatToolCallIDs_DropsCallAndOutputAsPair(t *testing.T) {
 
 	out, changed := DedupeChatToolCallIDs(messages)
 	require.True(t, changed)
-	items := out.([]any)
+	items, ok := out.([]any)
+	require.True(t, ok)
 	// 第二条 assistant 的重复 call_b/id=call_a 及其 tool 消息被成对删除；
 	// call_b 的输出不重复，保留。
 	require.Len(t, items, 3)
-	first := items[0].(map[string]any)
-	calls := first["tool_calls"].([]any)
+	first, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	calls, ok := first["tool_calls"].([]any)
+	require.True(t, ok)
 	require.Len(t, calls, 2)
-	require.Equal(t, "call_a", calls[0].(map[string]any)["id"])
-	require.Equal(t, "call_b", calls[1].(map[string]any)["id"])
-	require.Equal(t, "call_a", items[1].(map[string]any)["tool_call_id"])
-	require.Equal(t, "a1", items[1].(map[string]any)["content"])
-	require.Equal(t, "call_b", items[2].(map[string]any)["tool_call_id"])
+	callA, ok := calls[0].(map[string]any)
+	require.True(t, ok)
+	callB, ok := calls[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "call_a", callA["id"])
+	require.Equal(t, "call_b", callB["id"])
+	toolA, ok := items[1].(map[string]any)
+	require.True(t, ok)
+	toolB, ok := items[2].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "call_a", toolA["tool_call_id"])
+	require.Equal(t, "a1", toolA["content"])
+	require.Equal(t, "call_b", toolB["tool_call_id"])
 }
