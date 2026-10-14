@@ -2126,14 +2126,16 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 	upstreamMsg := service.ExtractUpstreamErrorMessage(responseBody)
 	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
 
-	// 使用默认的错误映射
+	// 使用默认的错误映射；换号耗尽时服务端失败统一按 529（过载）回传。
 	status, errType, errMsg := wrapUpstreamClientError(statusCode, responseBody)
+	status, errType, errMsg = exhaustedFailoverResponse(status, errType, errMsg)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
 // handleFailoverExhaustedSimple 简化版本，用于没有响应体的情况
 func (h *GatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCode int, streamStarted bool) {
 	status, errType, errMsg := wrapUpstreamClientError(statusCode, nil)
+	status, errType, errMsg = exhaustedFailoverResponse(status, errType, errMsg)
 	service.SetOpsUpstreamError(c, statusCode, errMsg, "")
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
@@ -2142,6 +2144,26 @@ func wrapUpstreamClientError(statusCode int, body []byte) (int, string, string) 
 	status, errType, _, message := service.WrapUpstreamErrorForClient(statusCode, body)
 	return status, errType, message
 }
+
+// exhaustedFailoverResponse normalizes the terminal response of an exhausted
+// failover. The whole group is out of usable accounts, so server-side failures
+// (transport failures and 5xx) surface as 529 (overloaded) with a generic
+// message, so clients back off and retry instead of treating the gateway as
+// broken. Credential masking (401/403) stays a 502; deterministic 4xx keep
+// their own status and message.
+func exhaustedFailoverResponse(status int, errType, message string) (int, string, string) {
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		if strings.TrimSpace(message) == "" || strings.EqualFold(message, "Forbidden") {
+			message = "Upstream request failed"
+		}
+		return http.StatusBadGateway, "upstream_error", message
+	case status == 0 || status >= http.StatusInternalServerError:
+		return 529, "overloaded_error", "Upstream service temporarily unavailable"
+	}
+	return status, errType, message
+}
+
 
 // handleStreamingAwareError handles errors that may occur after streaming has started
 func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {

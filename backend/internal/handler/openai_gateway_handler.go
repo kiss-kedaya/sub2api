@@ -1821,6 +1821,7 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 		return
 	}
 	status, errType, errMsg := wrapUpstreamClientError(failoverErr.StatusCode, failoverErr.ResponseBody)
+	status, errType, errMsg = exhaustedFailoverResponse(status, errType, errMsg)
 	h.anthropicStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
@@ -3498,23 +3499,7 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 
 	// 使用默认的错误映射
 	status, errType, errMsg := wrapUpstreamClientError(statusCode, responseBody)
-	// failover 耗尽：上游状态码原样透出，不再折叠成 502——500/502/504/520/529
-	// 都保持上游语义，只统一错误类型与文案。401/403 凭证掩码保留：不把上游
-	// 鉴权失败直接暴露给客户端。
-	switch {
-	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		status = http.StatusBadGateway
-		errType = "upstream_error"
-		if strings.TrimSpace(errMsg) == "" || strings.EqualFold(errMsg, "Forbidden") {
-			errMsg = "Upstream request failed"
-		}
-	case status == 520 || (status >= 500 && status != http.StatusServiceUnavailable && status != 529):
-		errType = "upstream_error"
-		errMsg = "Upstream service temporarily unavailable"
-	case errType == "server_error" && status != http.StatusServiceUnavailable:
-		errType = "upstream_error"
-		errMsg = "Upstream service temporarily unavailable"
-	}
+	status, errType, errMsg = exhaustedFailoverResponse(status, errType, errMsg)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
@@ -3565,9 +3550,11 @@ func isSafeRetryAfter(value string) bool {
 // handleFailoverExhaustedSimple 简化版本，用于没有响应体的情况
 func (h *OpenAIGatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCode int, streamStarted bool) {
 	status, errType, errMsg := wrapUpstreamClientError(statusCode, nil)
+	status, errType, errMsg = exhaustedFailoverResponse(status, errType, errMsg)
 	service.SetOpsUpstreamError(c, statusCode, errMsg, "")
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
+
 
 // handleStreamingAwareError handles errors that may occur after streaming has started
 func (h *OpenAIGatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {

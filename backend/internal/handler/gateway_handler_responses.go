@@ -488,6 +488,7 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 	} else if lastErr != nil {
 		status, code, message = wrapUpstreamClientError(statusCode, lastErr.ResponseBody)
 	}
+	status, code, message = exhaustedFailoverResponse(status, code, message)
 	if streamStarted {
 		// A slot-wait heartbeat commits HTTP 200 before any upstream response.
 		// In that case a terminal frame is still required; once any semantic or

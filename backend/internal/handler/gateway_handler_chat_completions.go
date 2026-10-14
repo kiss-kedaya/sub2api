@@ -517,8 +517,10 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 	}
 	if lastErr != nil && len(lastErr.ResponseBody) > 0 {
 		status, errType, message := wrapUpstreamClientError(statusCode, lastErr.ResponseBody)
+		status, errType, message = exhaustedFailoverResponse(status, errType, message)
 		h.chatCompletionsErrorResponse(c, status, errType, message)
 		return
 	}
-	h.chatCompletionsErrorResponse(c, statusCode, "server_error", "All available accounts exhausted")
+	status, errType, message := exhaustedFailoverResponse(statusCode, "server_error", "All available accounts exhausted")
+	h.chatCompletionsErrorResponse(c, status, errType, message)
 }
