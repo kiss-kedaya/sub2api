@@ -6,10 +6,12 @@
 package handler
 
 import (
+	"context"
 	"encoding/csv"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
@@ -390,5 +392,36 @@ func (h *CryptoHandler) AdminChainlistCandidates(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// AdminAutoPickRPC fetches the chain's public endpoints, probes them in
+// parallel and returns the fastest healthy ones, skipping endpoints already
+// configured. The console writes the returned list straight into the form.
+// POST /api/v1/admin/crypto/rpc/auto-pick
+func (h *CryptoHandler) AdminAutoPickRPC(c *gin.Context) {
+	var body struct {
+		Chain   string   `json:"chain"`
+		Want    int      `json:"want"`
+		Exclude []string `json:"exclude"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.BadRequest(c, "Invalid auto-pick payload")
+		return
+	}
+	if strings.TrimSpace(body.Chain) == "" {
+		response.BadRequest(c, "chain is required")
+		return
+	}
+	// Probing dozens of public endpoints takes a while; give it room without
+	// letting a hung endpoint pin the request forever.
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
+	defer cancel()
+	candidates, err := cryptopay.FetchChainlistCandidates(ctx, body.Chain)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	picked := cryptopay.ProbeBestRPCEndpoints(ctx, body.Chain, candidates, body.Exclude, body.Want)
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"picked": picked, "probed": len(candidates)}})
 }
 
