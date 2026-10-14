@@ -275,6 +275,28 @@ export async function listRPCCandidates(chain: string): Promise<ChainlistCandida
   return data.data ?? []
 }
 
+export interface RPCAutoPickResult {
+  picked: RPCTestResult[]
+  probed: number
+}
+
+// autoPickRPC pulls the registry, probes every candidate in parallel and
+// returns the fastest healthy endpoints, skipping ones already configured.
+export async function autoPickRPC(
+  chain: string,
+  exclude: string[],
+  want = 3
+): Promise<RPCAutoPickResult> {
+  const { data } = await apiClient.post(
+    '/admin/crypto/rpc/auto-pick',
+    { chain, exclude, want },
+    { timeout: 60_000 }
+  )
+  return { picked: data.data?.picked ?? [], probed: data.data?.probed ?? 0 }
+}
+
+
+
 export interface RPCTestResult {
   endpoint: string
   ok: boolean
