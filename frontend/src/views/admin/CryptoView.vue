@@ -810,7 +810,8 @@ async function saveConfig() {
 function fmtAmount(value: number | null | undefined): string {
   const n = Number(value ?? 0)
   if (!Number.isFinite(n)) return '0.00'
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  // At least 2 digits, up to 8: a 0.067 credit must not display as 0.07.
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })
 }
 
 function sortIcon(key: AddressSortKey): string {

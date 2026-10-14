@@ -66,6 +66,16 @@ func shortAddr(address string) string {
 	return address[:8] + "…" + address[len(address)-6:]
 }
 
+// trimDecimalZeros renders a NUMERIC column value without the padding zeros
+// NUMERIC(38,18) emits: "0.010000000000000000" -> "0.01", "10.000…" -> "10".
+func trimDecimalZeros(value string) string {
+	if !strings.Contains(value, ".") {
+		return value
+	}
+	trimmed := strings.TrimRight(value, "0")
+	return strings.TrimSuffix(trimmed, ".")
+}
+
 // toDisplayAmount renders raw units for an alert.
 func toDisplayAmount(raw *big.Int, decimals int) string {
 	if raw == nil {
@@ -578,6 +588,7 @@ func (s *Service) ListSweepRecords(ctx context.Context, chain string, limit int)
 			&r.Amount, &r.GasTxHash, &r.SweepTxHash, &r.Status, &r.Error, &created); err != nil {
 			return nil, err
 		}
+		r.Amount = trimDecimalZeros(r.Amount)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
 		out = append(out, r)
 	}
@@ -632,6 +643,8 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 			return nil, err
 		}
 		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
+		r.Amount = trimDecimalZeros(r.Amount)
+		r.Amount = trimDecimalZeros(r.Amount)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
 		out = append(out, r)
 	}
@@ -695,6 +708,8 @@ func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, l
 			return nil, nil, err
 		}
 		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
+		r.Amount = trimDecimalZeros(r.Amount)
+		r.Amount = trimDecimalZeros(r.Amount)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
 		out = append(out, r)
 	}
@@ -791,6 +806,7 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		}
 		// The user sees the symbol; the raw contract stays internal.
 		r.Token = tokenSymbol(r.Chain, r.Token)
+		r.Amount = trimDecimalZeros(r.Amount)
 		// Rejected transfers must say why: a bare "ignored" badge reads as a
 		// random failure and invites support tickets. The machine code goes
 		// out as-is; the UI localizes it with the current thresholds.
