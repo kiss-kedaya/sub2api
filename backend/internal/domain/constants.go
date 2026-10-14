@@ -30,6 +30,7 @@ const (
 	PlatformMiniMax     = "minimax"      // MiniMax (M 系列)
 	PlatformCline       = "cline"        // Cline 多模型聚合，仅 Chat Completions
 	PlatformCommandCode = "command_code" // Command Code，按模型分流
+	PlatformTypeSafe    = "typesafe"     // TypeSafe AI System One (Jev)
 	PlatformComposite   = "composite"
 )
 

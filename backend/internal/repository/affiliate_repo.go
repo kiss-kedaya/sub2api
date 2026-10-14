@@ -762,6 +762,16 @@ func ensureUserAffiliateWithClient(ctx context.Context, client affiliateQueryExe
 		if codeErr != nil {
 			return nil, codeErr
 		}
+		if err := lockAffiliateCode(ctx, client, code); err != nil {
+			return nil, err
+		}
+		taken, takenErr := affiliateCodeTaken(ctx, client, code)
+		if takenErr != nil {
+			return nil, takenErr
+		}
+		if taken {
+			continue
+		}
 		_, insertErr := client.ExecContext(ctx, `
 INSERT INTO user_affiliates (user_id, aff_code, created_at, updated_at)
 VALUES ($1, $2, NOW(), NOW())
@@ -833,6 +843,10 @@ WHERE user_id = $1`, userID)
 }
 
 func queryAffiliateByCode(ctx context.Context, client affiliateQueryExecer, code string) (*service.AffiliateSummary, error) {
+	// 邀请码有两个来源：user_affiliates.aff_code（默认码）与
+	// user_affiliate_codes.code（用户/管理员额外创建的自定义码）。
+	// 两者共用一个命名空间，因此这里一次 UNION 查询，命中任意一个都算有效邀请。
+	// 自定义码归因到 user_affiliate_codes.user_id，返佣仍落在该用户的 inviter_id 上。
 	rows, err := client.QueryContext(ctx, `
 SELECT user_id,
        aff_code,
@@ -845,9 +859,22 @@ SELECT user_id,
        aff_history_quota::double precision,
        created_at,
        updated_at
-FROM user_affiliates
-WHERE aff_code = $1
-LIMIT 1`, strings.ToUpper(strings.TrimSpace(code)))
+FROM (
+    SELECT user_id, aff_code, aff_code_custom, aff_rebate_rate_percent, inviter_id,
+           aff_count, aff_quota, aff_frozen_quota, aff_history_quota, created_at, updated_at,
+           1 AS source_rank
+    FROM user_affiliates
+    WHERE aff_code = $1
+    UNION ALL
+    SELECT ua.user_id, $1 AS aff_code, TRUE AS aff_code_custom, ua.aff_rebate_rate_percent, ua.inviter_id,
+           ua.aff_count, ua.aff_quota, ua.aff_frozen_quota, ua.aff_history_quota, ua.created_at, ua.updated_at,
+           2 AS source_rank
+    FROM user_affiliate_codes uac
+    JOIN user_affiliates ua ON ua.user_id = uac.user_id
+    WHERE uac.code = $1
+) AS matched
+ORDER BY source_rank ASC
+LIMIT 1`, service.NormalizeAffiliateCode(code))
 	if err != nil {
 		return nil, err
 	}
@@ -992,6 +1019,19 @@ func (r *affiliateRepository) UpdateUserAffCode(ctx context.Context, userID int6
 		if _, err := ensureUserAffiliateWithClient(txCtx, txClient, userID); err != nil {
 			return err
 		}
+		if err := lockAffiliateUser(txCtx, txClient, userID); err != nil {
+			return err
+		}
+		if err := lockAffiliateCode(txCtx, txClient, code); err != nil {
+			return err
+		}
+		taken, err := affiliateCodeTakenByOther(txCtx, txClient, userID, code)
+		if err != nil {
+			return err
+		}
+		if taken {
+			return service.ErrAffiliateCodeTaken
+		}
 		res, err := txClient.ExecContext(txCtx, `
 UPDATE user_affiliates
 SET aff_code = $1,
@@ -1023,6 +1063,19 @@ func (r *affiliateRepository) UpdateUserSettings(ctx context.Context, userID int
 			return err
 		}
 		if affCode != nil {
+			if err := lockAffiliateUser(txCtx, txClient, userID); err != nil {
+				return err
+			}
+			if err := lockAffiliateCode(txCtx, txClient, *affCode); err != nil {
+				return err
+			}
+			taken, err := affiliateCodeTakenByOther(txCtx, txClient, userID, *affCode)
+			if err != nil {
+				return err
+			}
+			if taken {
+				return service.ErrAffiliateCodeTaken
+			}
 			res, err := txClient.ExecContext(txCtx, `
 UPDATE user_affiliates
 SET aff_code = $1,
@@ -1075,10 +1128,23 @@ SET aff_code = $1,
     updated_at = NOW()
 WHERE user_id = $2`
 	}
+	if err := lockAffiliateUser(ctx, txClient, userID); err != nil {
+		return "", err
+	}
 	for i := 0; i < affiliateCodeMaxAttempts; i++ {
 		candidate, err := generateAffiliateCode()
 		if err != nil {
 			return "", err
+		}
+		if err := lockAffiliateCode(ctx, txClient, candidate); err != nil {
+			return "", err
+		}
+		taken, err := affiliateCodeTaken(ctx, txClient, candidate)
+		if err != nil {
+			return "", err
+		}
+		if taken {
+			continue
 		}
 		res, err := txClient.ExecContext(ctx, query, candidate, userID)
 		if err != nil {
@@ -1310,4 +1376,228 @@ func scanInt64(ctx context.Context, client affiliateQueryExecer, query string, a
 		return 0, err
 	}
 	return v, nil
+}
+
+// ---------------------------------------------------------------------------
+// 用户自定义邀请码（user_affiliate_codes）
+//
+// 约定：
+//   * 每个用户最多 MaxUserAffiliateCodes 个自定义码（默认码在 user_affiliates 里，不占额度）；
+//   * code 在「user_affiliates.aff_code ∪ user_affiliate_codes.code」并集内全局唯一；
+//   * 所有 SQL 一律参数化（$1/$2...），不拼字符串，杜绝注入。
+// ---------------------------------------------------------------------------
+
+// lockAffiliateUser 锁住该用户的默认码行，串行化这个用户的写码。
+func lockAffiliateUser(ctx context.Context, client affiliateQueryExecer, userID int64) error {
+	rows, err := client.QueryContext(ctx, `SELECT user_id FROM user_affiliates WHERE user_id = $1 FOR UPDATE`, userID)
+	if err != nil {
+		return fmt.Errorf("lock affiliate user: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return service.ErrAffiliateProfileNotFound
+	}
+	return rows.Err()
+}
+
+// lockAffiliateCode 用事务级咨询锁挡住「同一个码同时写进两张表」。
+func lockAffiliateCode(ctx context.Context, client affiliateQueryExecer, code string) error {
+	rows, err := client.QueryContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, code)
+	if err != nil {
+		return fmt.Errorf("lock affiliate code: %w", err)
+	}
+	return rows.Close()
+}
+
+// affiliateCodeTaken 检查 code 是否已被占用（默认码表 + 自定义码表）。
+func affiliateCodeTaken(ctx context.Context, client affiliateQueryExecer, code string) (bool, error) {
+	rows, err := client.QueryContext(ctx, `
+SELECT 1 FROM user_affiliates WHERE aff_code = $1
+UNION ALL
+SELECT 1 FROM user_affiliate_codes WHERE code = $1
+LIMIT 1`, code)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	if rows.Next() {
+		return true, rows.Err()
+	}
+	return false, rows.Err()
+}
+
+// affiliateCodeTakenByOther 改默认码时用：自己当前的默认码不算占用，自定义码表里有就算占用。
+func affiliateCodeTakenByOther(ctx context.Context, client affiliateQueryExecer, userID int64, code string) (bool, error) {
+	rows, err := client.QueryContext(ctx, `
+SELECT 1 FROM user_affiliates WHERE aff_code = $1 AND user_id <> $2
+UNION ALL
+SELECT 1 FROM user_affiliate_codes WHERE code = $1
+LIMIT 1`, code, userID)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	if rows.Next() {
+		return true, rows.Err()
+	}
+	return false, rows.Err()
+}
+
+// queryCountInt 读取单列计数。
+func queryCountInt(ctx context.Context, client affiliateQueryExecer, query string, args ...any) (int, error) {
+	rows, err := client.QueryContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return 0, rows.Err()
+	}
+	var n int
+	if err := rows.Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, rows.Err()
+}
+
+// ListUserAffiliateCodes 列出某用户的自定义邀请码（按创建时间排序）。
+func (r *affiliateRepository) ListUserAffiliateCodes(ctx context.Context, userID int64) ([]service.UserAffiliateCode, error) {
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, `
+SELECT id, user_id, code, is_custom, created_by_admin, created_at, updated_at
+FROM user_affiliate_codes
+WHERE user_id = $1
+ORDER BY created_at ASC, id ASC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list user affiliate codes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]service.UserAffiliateCode, 0, 4)
+	for rows.Next() {
+		var item service.UserAffiliateCode
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Code, &item.IsCustom, &item.CreatedByAdmin, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan user affiliate code: %w", err)
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user affiliate codes: %w", err)
+	}
+	return out, nil
+}
+
+// CountUserAffiliateCodes 返回某用户已拥有的自定义邀请码数量。
+func (r *affiliateRepository) CountUserAffiliateCodes(ctx context.Context, userID int64) (int, error) {
+	client := clientFromContext(ctx, r.client)
+	return queryCountInt(ctx, client, `SELECT COUNT(*)::int FROM user_affiliate_codes WHERE user_id = $1`, userID)
+}
+
+// CreateUserAffiliateCode 新增一个自定义邀请码。
+// 冲突（并集内已存在）返回 service.ErrAffiliateCodeTaken。
+func (r *affiliateRepository) CreateUserAffiliateCode(ctx context.Context, userID int64, code string, isCustom, byAdmin bool) (*service.UserAffiliateCode, error) {
+	var created *service.UserAffiliateCode
+	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		if _, err := ensureUserAffiliateWithClient(txCtx, txClient, userID); err != nil {
+			return err
+		}
+		// 先锁用户行，再锁码。所有写码路径都按这个顺序，避免互相死锁，
+		// 也避免并发时同一个码写进两张表，或自定义码超过上限。
+		if err := lockAffiliateUser(txCtx, txClient, userID); err != nil {
+			return err
+		}
+		if err := lockAffiliateCode(txCtx, txClient, code); err != nil {
+			return err
+		}
+		taken, err := affiliateCodeTaken(txCtx, txClient, code)
+		if err != nil {
+			return fmt.Errorf("check affiliate code: %w", err)
+		}
+		if taken {
+			return service.ErrAffiliateCodeTaken
+		}
+		used, err := queryCountInt(txCtx, txClient, `SELECT COUNT(*)::int FROM user_affiliate_codes WHERE user_id = $1`, userID)
+		if err != nil {
+			return err
+		}
+		if used >= service.MaxUserAffiliateCodes {
+			return service.ErrAffiliateCodeLimit
+		}
+		item, err := insertUserAffiliateCode(txCtx, txClient, userID, code, isCustom, byAdmin)
+		if err != nil {
+			return err
+		}
+		created = item
+		return nil
+	})
+	return created, err
+}
+
+func insertUserAffiliateCode(ctx context.Context, client affiliateQueryExecer, userID int64, code string, isCustom, byAdmin bool) (*service.UserAffiliateCode, error) {
+	rows, err := client.QueryContext(ctx, `
+INSERT INTO user_affiliate_codes (user_id, code, is_custom, created_by_admin)
+VALUES ($1, $2, $3, $4)
+RETURNING id, user_id, code, is_custom, created_by_admin, created_at, updated_at`,
+		userID, code, isCustom, byAdmin)
+	if err != nil {
+		if isAffiliateCodeUniqueViolation(err) {
+			return nil, service.ErrAffiliateCodeTaken
+		}
+		return nil, fmt.Errorf("create user affiliate code: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("create user affiliate code: %w", err)
+		}
+		return nil, service.ErrAffiliateProfileNotFound
+	}
+	var out service.UserAffiliateCode
+	if err := rows.Scan(&out.ID, &out.UserID, &out.Code, &out.IsCustom, &out.CreatedByAdmin, &out.CreatedAt, &out.UpdatedAt); err != nil {
+		return nil, fmt.Errorf("scan created user affiliate code: %w", err)
+	}
+	return &out, nil
+}
+
+// DeleteUserAffiliateCode 删除某个自定义邀请码。仅允许删除属于该用户的记录。
+// 返回是否真的删掉了一行（false = 不存在或不属于该用户）。
+func (r *affiliateRepository) DeleteUserAffiliateCode(ctx context.Context, userID, codeID int64) (bool, error) {
+	client := clientFromContext(ctx, r.client)
+	res, err := client.ExecContext(ctx, `DELETE FROM user_affiliate_codes WHERE id = $1 AND user_id = $2`, codeID, userID)
+	if err != nil {
+		return false, fmt.Errorf("delete user affiliate code: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("delete user affiliate code rows: %w", err)
+	}
+	return affected > 0, nil
+}
+
+// DeleteUserAffiliateCodeByCode 管理端按 code 删除某个用户的自定义邀请码。
+func (r *affiliateRepository) DeleteUserAffiliateCodeByCode(ctx context.Context, userID int64, code string) (bool, error) {
+	client := clientFromContext(ctx, r.client)
+	res, err := client.ExecContext(ctx, `DELETE FROM user_affiliate_codes WHERE code = $1 AND user_id = $2`, code, userID)
+	if err != nil {
+		return false, fmt.Errorf("delete user affiliate code by code: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("delete user affiliate code by code rows: %w", err)
+	}
+	return affected > 0, nil
+}
+
+// isAffiliateCodeUniqueViolation 报告错误是否来自唯一约束冲突。
+func isAffiliateCodeUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
+		return string(pqErr.Code) == "23505"
+	}
+	return false
 }
