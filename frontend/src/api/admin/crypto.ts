@@ -248,6 +248,48 @@ export interface HotWalletStatus {
   error?: string
 }
 
+export interface RPCTestResult {
+  endpoint: string
+  ok: boolean
+  chain_id?: string
+  block?: number
+  latency_ms: number
+  error?: string
+}
+
+export interface ChainlistCandidate {
+  url: string
+  chain_id: number
+  chain_name: string
+}
+
+// testRPCEndpoint probes one endpoint (chain id + head + latency).
+export async function testRPCEndpoint(chain: string, endpoint: string): Promise<RPCTestResult> {
+  const { data } = await apiClient.post('/admin/crypto/rpc/test', { chain, endpoint })
+  return data.data
+}
+
+// listRPCCandidates fetches the chain's public endpoints from chainlist.org.
+export async function listRPCCandidates(chain: string): Promise<ChainlistCandidate[]> {
+  const { data } = await apiClient.get('/admin/crypto/rpc/candidates', { params: { chain } })
+  return data.data ?? []
+}
+
+export interface RPCTestResult {
+  endpoint: string
+  ok: boolean
+  chain_id?: string
+  block?: number
+  latency_ms: number
+  error?: string
+}
+
+export interface ChainlistCandidate {
+  url: string
+  chain_id: number
+  chain_name: string
+}
+
 // getPoolStatus reports remaining unassigned addresses. An empty pool means
 // new users cannot receive a deposit address.
 export async function getPoolStatus(): Promise<PoolStatus> {

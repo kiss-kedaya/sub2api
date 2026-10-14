@@ -144,6 +144,23 @@ func buildLoginAgreementRevision(updatedAt string, docs []LoginAgreementDocument
 	return hex.EncodeToString(sum[:])[:16]
 }
 
+// cryptoConfigEnabled reads the enabled flag out of the crypto channel's
+// stored JSON config. Anything unreadable counts as disabled: the channel is
+// opt-in, and a corrupt row must not expose the deposit page.
+func cryptoConfigEnabled(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	var cfg struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return false
+	}
+	return cfg.Enabled
+}
+
 // GetFrontendURL 获取前端基础URL（数据库优先，fallback 到配置文件）
 func (s *SettingService) GetFrontendURL(ctx context.Context) string {
 	val, err := s.settingRepo.GetValue(ctx, SettingKeyFrontendURL)
@@ -239,6 +256,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyAffiliateEnabled,
 		SettingKeyRiskControlEnabled,
 		SettingKeyAllowUserViewErrorRequests,
+		SettingKeyCryptoConfig,
 	}
 
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
@@ -345,6 +363,9 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		WeChatOAuthMobileEnabled:    weChatMobileEnabled,
 		BackendModeEnabled:          settings[SettingKeyBackendModeEnabled] == "true",
 		PaymentEnabled:              settings[SettingPaymentEnabled] == "true",
+		// The crypto channel ships disabled; the sidebar entry must follow
+		// the channel's own config, not the generic payment switch.
+		CryptoEnabled:               cryptoConfigEnabled(settings[SettingKeyCryptoConfig]),
 		OIDCOAuthEnabled:            oidcEnabled,
 		OIDCOAuthProviderName:       oidcProviderName,
 		GitHubOAuthEnabled:          gitHubEnabled,
@@ -605,6 +626,7 @@ type PublicSettingsInjectionPayload struct {
 	GoogleOAuthEnabled                  bool                     `json:"google_oauth_enabled"`
 	BackendModeEnabled                  bool                     `json:"backend_mode_enabled"`
 	PaymentEnabled                      bool                     `json:"payment_enabled"`
+	CryptoEnabled                       bool                     `json:"crypto_enabled"`
 	Version                             string                   `json:"version"`
 	// 服务器全局时区（IANA 名称与当前 UTC 偏移），高峰时段等服务端本地时间窗口的展示标注用
 	ServerTimezone              string  `json:"server_timezone"`
@@ -697,6 +719,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		GoogleOAuthEnabled:                  settings.GoogleOAuthEnabled,
 		BackendModeEnabled:                  settings.BackendModeEnabled,
 		PaymentEnabled:                      settings.PaymentEnabled,
+		CryptoEnabled:                       settings.CryptoEnabled,
 		Version:                             s.version,
 		ServerTimezone:                      timezone.Name(),
 		ServerUTCOffset:                     timezone.UTCOffset(),
