@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -187,3 +188,85 @@ func FetchChainlistCandidates(ctx context.Context, chain string) ([]ChainlistCan
 	}
 	return nil, fmt.Errorf("chain %d not present in the registry", chainID)
 }
+
+// ProbeBestRPCEndpoints probes candidates in parallel and returns the
+// fastest healthy ones (chain id must match, head must answer). It skips
+// endpoints already present in `exclude` so a re-run never re-adds a node
+// the operator already has. Bounded fan-out keeps the registry list
+// (40-60 entries) from opening that many sockets at once.
+func ProbeBestRPCEndpoints(
+	ctx context.Context,
+	chain string,
+	candidates []ChainlistCandidate,
+	exclude []string,
+	want int,
+) []RPCTestResult {
+	if want <= 0 {
+		want = 3
+	}
+	skip := make(map[string]struct{}, len(exclude))
+	for _, e := range exclude {
+		skip[strings.ToLower(strings.TrimSpace(e))] = struct{}{}
+	}
+
+	type result struct {
+		res *RPCTestResult
+	}
+	// Bound the work: the registry lists 40-60 endpoints for popular
+	// chains, but the first ones are the well-known public nodes anyway.
+	// Probing all of them serially hit 35s; 20 candidates at 10-way
+	// concurrency with a 6s per-probe deadline lands under ~12s worst case.
+	if len(candidates) > 20 {
+		candidates = candidates[:20]
+	}
+	sem := make(chan struct{}, 10)
+	out := make(chan result, len(candidates))
+	var wg sync.WaitGroup
+	for _, c := range candidates {
+		url := strings.TrimSpace(c.URL)
+		if url == "" {
+			continue
+		}
+		if _, dup := skip[strings.ToLower(url)]; dup {
+			continue
+		}
+		wg.Add(1)
+		go func(endpoint string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
+			probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+			defer cancel()
+			res := ProbeRPCEndpoint(probeCtx, chain, endpoint)
+			out <- result{res: res}
+		}(url)
+	}
+	wg.Wait()
+	close(out)
+
+	healthy := make([]*RPCTestResult, 0, len(candidates))
+	for r := range out {
+		if r.res != nil && r.res.OK {
+			healthy = append(healthy, r.res)
+		}
+	}
+	// Fastest first: latency is the only ranking signal we have.
+	for i := 1; i < len(healthy); i++ {
+		for j := i; j > 0 && healthy[j].LatencyMS < healthy[j-1].LatencyMS; j-- {
+			healthy[j], healthy[j-1] = healthy[j-1], healthy[j]
+		}
+	}
+	if len(healthy) > want {
+		healthy = healthy[:want]
+	}
+	final := make([]RPCTestResult, 0, len(healthy))
+	for _, r := range healthy {
+		final = append(final, *r)
+	}
+	return final
+}
+

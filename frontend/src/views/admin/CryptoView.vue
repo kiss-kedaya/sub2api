@@ -23,9 +23,12 @@
             <LoadingSpinner />
           </div>
           <template v-else-if="config">
-            <div class="crypto-view__group">
-              <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupChannel') }}</h4>
-              <p class="crypto-view__group-desc">{{ t('admin.crypto.groupChannelDesc') }}</p>
+            <details class="crypto-view__group" open>
+              <summary class="crypto-view__group-summary">
+                <span class="crypto-view__group-title">{{ t('admin.crypto.groupChannel') }}</span>
+                <span class="crypto-view__group-desc">{{ t('admin.crypto.groupChannelDesc') }}</span>
+                <span class="crypto-view__group-chevron">›</span>
+              </summary>
               <div class="crypto-view__switch-row">
                 <div class="space-y-0.5">
                   <label class="crypto-view__label">{{ t('admin.crypto.enabled') }}</label>
@@ -43,12 +46,15 @@
                 />
                 <p class="crypto-view__hint">{{ t('admin.crypto.chainsHint') }}</p>
               </div>
-            </div>
+            </details>
 
 
-            <div class="crypto-view__group">
-              <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupRpc') }}</h4>
-              <p class="crypto-view__group-desc">{{ t('admin.crypto.groupRpcDesc') }}</p>
+            <details class="crypto-view__group crypto-view__group--wide">
+              <summary class="crypto-view__group-summary">
+                <span class="crypto-view__group-title">{{ t('admin.crypto.groupRpc') }}</span>
+                <span class="crypto-view__group-desc">{{ t('admin.crypto.groupRpcDesc') }}</span>
+                <span class="crypto-view__group-chevron">›</span>
+              </summary>
 
               <!-- Per-chain endpoint table: add / test / remove, and pull
                    candidates from the public chainlist registry. -->
@@ -59,9 +65,9 @@
                     <button
                       class="btn btn-secondary btn-sm"
                       :disabled="fetchingCandidates === chain"
-                      @click="fetchCandidates(chain)"
+                      @click="autoFillRPC(chain)"
                     >
-                      {{ fetchingCandidates === chain ? t('common.loading') : t('admin.crypto.rpcFetch') }}
+                      {{ fetchingCandidates === chain ? t('admin.crypto.rpcFetching') : t('admin.crypto.rpcFetch') }}
                     </button>
                     <button class="btn btn-secondary btn-sm" @click="addRPCRow(chain)">
                       {{ t('admin.crypto.rpcAdd') }}
@@ -122,30 +128,17 @@
                   </table>
                 </div>
 
-                <!-- chainlist candidates: one click adopts the endpoint -->
-                <div v-if="candidateLists[chain]?.length" class="crypto-view__candidates">
-                  <p class="crypto-view__hint">{{ t('admin.crypto.rpcCandidatesHint') }}</p>
-                  <div class="crypto-view__candidate-tags">
-                    <button
-                      v-for="candidate in candidateLists[chain]"
-                      :key="candidate.url"
-                      type="button"
-                      class="crypto-view__candidate"
-                      :class="{ 'crypto-view__candidate--used': endpointUsed(chain, candidate.url) }"
-                      :disabled="endpointUsed(chain, candidate.url)"
-                      @click="adoptCandidate(chain, candidate.url)"
-                    >
-                      {{ candidate.url }}
-                    </button>
-                  </div>
-                </div>
+                <p v-if="rpcFetchNotes[chain]" class="crypto-view__hint crypto-view__fetch-note">{{ rpcFetchNotes[chain] }}</p>
               </div>
-            </div>
+            </details>
 
 
-            <div class="crypto-view__group">
-              <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupSweep') }}</h4>
-              <p class="crypto-view__group-desc">{{ t('admin.crypto.groupSweepDesc') }}</p>
+            <details class="crypto-view__group">
+              <summary class="crypto-view__group-summary">
+                <span class="crypto-view__group-title">{{ t('admin.crypto.groupSweep') }}</span>
+                <span class="crypto-view__group-desc">{{ t('admin.crypto.groupSweepDesc') }}</span>
+                <span class="crypto-view__group-chevron">›</span>
+              </summary>
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.globalThreshold') }}</label>
                 <input
@@ -155,28 +148,6 @@
                   class="input"
                 />
                 <p class="crypto-view__hint">{{ t('admin.crypto.globalThresholdHint') }}</p>
-              </div>
-              <div class="crypto-view__field">
-                <label class="crypto-view__label">{{ t('admin.crypto.creditMin') }}</label>
-                <input
-                  v-model.number="config.credit_min_amount"
-                  type="number"
-                  step="0.001"
-                  min="0"
-                  class="input"
-                />
-                <p class="crypto-view__hint">{{ t('admin.crypto.creditMinHint') }}</p>
-              </div>
-              <div class="crypto-view__field">
-                <label class="crypto-view__label">{{ t('admin.crypto.creditMax') }}</label>
-                <input
-                  v-model.number="config.credit_max_amount"
-                  type="number"
-                  step="1"
-                  min="0"
-                  class="input"
-                />
-                <p class="crypto-view__hint">{{ t('admin.crypto.creditMaxHint') }}</p>
               </div>
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.creditMin') }}</label>
@@ -228,24 +199,30 @@
                 </div>
                 <Toggle v-model="config.sweep_auto" />
               </div>
-            </div>
+            </details>
 
 
-            <div class="crypto-view__group">
-              <h4 class="crypto-view__group-title">{{ t('admin.crypto.groupSigner') }}</h4>
-              <p class="crypto-view__group-desc">{{ t('admin.crypto.groupSignerDesc') }}</p>
+            <details class="crypto-view__group">
+              <summary class="crypto-view__group-summary">
+                <span class="crypto-view__group-title">{{ t('admin.crypto.groupSigner') }}</span>
+                <span class="crypto-view__group-desc">{{ t('admin.crypto.groupSignerDesc') }}</span>
+                <span class="crypto-view__group-chevron">›</span>
+              </summary>
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.signerSocket') }}</label>
                 <input v-model="config.signer_socket" class="input" />
               </div>
-            </div>
+            </details>
 
 
             <!-- Signer lock: without the passphrase the process holds no
                  seeds and every signing request is refused. -->
-            <div class="crypto-view__group">
-              <h4 class="crypto-view__group-title">{{ t('admin.crypto.signerLockTitle') }}</h4>
-              <p class="crypto-view__group-desc">{{ t('admin.crypto.signerLockDesc') }}</p>
+            <details class="crypto-view__group" open>
+              <summary class="crypto-view__group-summary">
+                <span class="crypto-view__group-title">{{ t('admin.crypto.signerLockTitle') }}</span>
+                <span class="crypto-view__group-desc">{{ t('admin.crypto.signerLockDesc') }}</span>
+                <span class="crypto-view__group-chevron">›</span>
+              </summary>
 
               <div class="crypto-view__lockstate">
                 <span
@@ -282,7 +259,7 @@
                 </button>
                 <span v-if="signerError" class="crypto-view__warn">{{ signerError }}</span>
               </div>
-            </div>
+            </details>
 
             <div class="crypto-view__actions">
               <button class="btn btn-primary" :disabled="savingConfig" @click="saveConfig">
@@ -294,9 +271,12 @@
 
             <!-- Health: an empty pool blocks new deposits; a dry hot wallet
                  blocks sweeps. Both are silent failures without this. -->
-            <div class="crypto-view__group">
-              <h4 class="crypto-view__group-title">{{ t('admin.crypto.healthTitle') }}</h4>
-              <p class="crypto-view__group-desc">{{ t('admin.crypto.healthDesc') }}</p>
+            <details class="crypto-view__group">
+              <summary class="crypto-view__group-summary">
+                <span class="crypto-view__group-title">{{ t('admin.crypto.healthTitle') }}</span>
+                <span class="crypto-view__group-desc">{{ t('admin.crypto.healthDesc') }}</span>
+                <span class="crypto-view__group-chevron">›</span>
+              </summary>
 
               <div class="crypto-view__stats">
                 <div
@@ -328,7 +308,7 @@
                 </button>
                 <span v-if="healthError" class="crypto-view__warn">{{ healthError }}</span>
               </div>
-            </div>
+            </details>
           </template>
         </div>
 
@@ -701,10 +681,9 @@ import {
   unlockSigner,
   updateCryptoConfig,
   testRPCEndpoint,
-  listRPCCandidates,
+  autoPickRPC,
   type AddressSortKey,
   type AdminAddressSummary,
-  type ChainlistCandidate,
   type CryptoConfig,
   type DepositRecord,
   type DepositSummary,
@@ -835,9 +814,12 @@ interface RPCRow {
 }
 
 const rpcRows = ref<Record<string, RPCRow[]>>({})
-const candidateLists = ref<Record<string, ChainlistCandidate[]>>({})
 const fetchingCandidates = ref('')
 const testingChain = ref('')
+// How many healthy endpoints one click of "fetch from chainlist" adds.
+const RPC_AUTO_FILL_COUNT = 3
+// Per-chain note under the RPC table (how many probed / added, or an error).
+const rpcFetchNotes = ref<Record<string, string>>({})
 
 function rowsFromConfig(chain: string): RPCRow[] {
   const raw = config.value?.rpc?.[chain] ?? ''
@@ -909,29 +891,38 @@ async function testAllEndpoints(chain: string) {
   }
 }
 
-async function fetchCandidates(chain: string) {
+// autoFillRPC pulls the public registry, probes every candidate in parallel
+// on the server and appends the fastest healthy endpoints it does not
+// already have — three by default. One click, ready-to-scan nodes.
+async function autoFillRPC(chain: string) {
   fetchingCandidates.value = chain
+  rpcFetchNotes.value[chain] = ''
   try {
-    candidateLists.value[chain] = await listRPCCandidates(chain)
+    const exclude = (rpcRows.value[chain] ?? []).map((r) => r.url.trim()).filter(Boolean)
+    const want = Math.max(1, RPC_AUTO_FILL_COUNT)
+    const { picked, probed } = await autoPickRPC(chain, exclude, want)
+    if (!picked.length) {
+      rpcFetchNotes.value[chain] = t('admin.crypto.rpcFetchEmpty', { probed })
+      return
+    }
+    for (const endpoint of picked) {
+      addRPCRow(chain)
+      const rows = rpcRows.value[chain] ?? []
+      const row = rows[rows.length - 1]
+      row.url = endpoint.endpoint
+      // Keep the probe numbers: the operator sees latency without re-testing.
+      row.status = true
+      row.ok = true
+      row.latency_ms = endpoint.latency_ms
+      row.block = endpoint.block ?? 0
+    }
+    persistRPC(chain)
+    rpcFetchNotes.value[chain] = t('admin.crypto.rpcFetchDone', { count: picked.length, probed })
   } catch (e) {
-    candidateLists.value[chain] = []
-    // Surface the failure without a modal; candidates are a convenience.
-    console.warn('fetch RPC candidates failed', e)
+    rpcFetchNotes.value[chain] = extractApiErrorMessage(e)
   } finally {
     fetchingCandidates.value = ''
   }
-}
-
-function endpointUsed(chain: string, url: string): boolean {
-  return (rpcRows.value[chain] ?? []).some((r) => r.url.trim() === url)
-}
-
-function adoptCandidate(chain: string, url: string) {
-  if (endpointUsed(chain, url)) return
-  addRPCRow(chain)
-  const rows = rpcRows.value[chain] ?? []
-  rows[rows.length - 1].url = url
-  persistRPC(chain)
 }
 
 function short(value: string): string {
@@ -1290,16 +1281,56 @@ onMounted(() => {
   align-items: start;
 }
 .crypto-view__panel--config .crypto-view__group {
-  padding: 0.875rem 1rem 1rem;
+  padding: 0;
   border: 1px solid var(--signal-line, rgba(127, 127, 127, 0.18));
   border-radius: 0.75rem;
   background: var(--signal-surface, rgba(127, 127, 127, 0.03));
+}
+/* Collapsible group header: title + one-line description + chevron. */
+.crypto-view__group-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.crypto-view__group-summary::-webkit-details-marker {
+  display: none;
+}
+.crypto-view__group-summary:hover {
+  background: rgba(127, 127, 127, 0.05);
+}
+.crypto-view__group-chevron {
+  margin-left: auto;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--signal-muted, #6b7280);
+  transition: transform 0.15s ease;
+}
+details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
+  transform: rotate(90deg);
+}
+/* Body content keeps its own padding; the summary owns the header area. */
+.crypto-view__group > :not(summary) {
+  margin-left: 1rem;
+  margin-right: 1rem;
+}
+.crypto-view__group > :last-child {
+  margin-bottom: 1rem;
 }
 /* The save row spans the full width under the cards. */
 .crypto-view__panel--config > .crypto-view__actions {
   grid-column: 1 / -1;
   margin-top: 0.25rem;
 }
+/* The RPC card holds wide tables; it spans the full grid width so endpoint
+   rows, status badges and action buttons never get clipped. */
+.crypto-view__panel--config > .crypto-view__group--wide {
+  grid-column: 1 / -1;
+}
+
 .crypto-view__group-title {
   font-size: 0.875rem;
   font-weight: 600;

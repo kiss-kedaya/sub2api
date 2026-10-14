@@ -60,5 +60,6 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.GET("/deposits.csv", cryptoHandler.AdminExportDeposits)
 		crypto.POST("/rpc/test", cryptoHandler.AdminTestRPC)
 		crypto.GET("/rpc/candidates", cryptoHandler.AdminChainlistCandidates)
+		crypto.POST("/rpc/auto-pick", cryptoHandler.AdminAutoPickRPC)
 	}
 }
