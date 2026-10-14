@@ -59,11 +59,18 @@ func (r *addressResolver) IsOwnAddress(ctx context.Context, chain, address strin
 // address, derived from deposit_transactions minus sweep_records.
 type balanceReader struct {
 	db       *sql.DB
-	decimals map[string]int // chain -> watched token decimals
+	decimals map[string]int // "chain|lower(contract)" -> token decimals
 }
 
 func newBalanceReader(db *sql.DB, decimals map[string]int) *balanceReader {
 	return &balanceReader{db: db, decimals: decimals}
+}
+
+// tokenDecimalsKey builds the balanceReader/executor lookup key for one
+// (chain, contract) pair. Contracts compare case-insensitively because the
+// scanner stores them lowercase while config may carry mixed case.
+func tokenDecimalsKey(chain, contract string) string {
+	return chain + "|" + strings.ToLower(contract)
 }
 
 // UnsweptBalances returns (address, token, raw) for credited deposits with
@@ -104,8 +111,9 @@ func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sw
 		// Decimals come from the chain's token config: deriving them from
 		// the stored rows cannot work (the NUMERIC column loses precision
 		// information) and a wrong guess shifts the amount by orders of
-		// magnitude.
-		decimals := b.decimals[chain]
+		// magnitude. Lookup is per token contract because one chain now
+		// watches several assets with different decimals.
+		decimals := b.decimals[tokenDecimalsKey(chain, token)]
 		if decimals == 0 {
 			decimals = 6
 		}

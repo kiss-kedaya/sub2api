@@ -22,7 +22,7 @@ const (
 // FamilyForChain maps a chain id to its family.
 func FamilyForChain(chain string) (string, error) {
 	switch chain {
-	case "bsc", "polygon", "plasma":
+	case "bsc", "polygon", "plasma", "arbitrum", "base", "xlayer":
 		return FamilyEVM, nil
 	case "solana":
 		return FamilySolana, nil

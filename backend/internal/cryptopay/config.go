@@ -23,13 +23,16 @@ const (
 
 // Chain identifiers supported for deposits. EVM chains share one address.
 const (
-	ChainBSC     = "bsc"
-	ChainPolygon = "polygon"
-	ChainPlasma  = "plasma"
-	ChainSolana  = "solana"
+	ChainBSC      = "bsc"
+	ChainPolygon  = "polygon"
+	ChainPlasma   = "plasma"
+	ChainArbitrum = "arbitrum"
+	ChainBase     = "base"
+	ChainXLayer   = "xlayer"
+	ChainSolana   = "solana"
 )
 
-var evmChains = []string{ChainBSC, ChainPolygon, ChainPlasma}
+var evmChains = []string{ChainBSC, ChainPolygon, ChainPlasma, ChainArbitrum, ChainBase, ChainXLayer}
 
 // IsEVMChain reports whether chain uses the shared EVM address.
 func IsEVMChain(chain string) bool {
@@ -64,6 +67,11 @@ type CryptoConfig struct {
 	// Confirmations required before crediting, per chain.
 	Confirmations map[string]int `json:"confirmations"`
 
+	// ScanRange caps the block span of one eth_getLogs call per chain.
+	// Providers enforce different limits (some public X Layer endpoints cap
+	// at 100 blocks); missing key = use the built-in default (2000).
+	ScanRange map[string]int `json:"scan_range"`
+
 	// Crediting.
 	CreditMinAmount  float64 `json:"credit_min_amount"`
 	CreditMultiplier float64 `json:"credit_multiplier"`
@@ -87,13 +95,24 @@ func DefaultCryptoConfig() CryptoConfig {
 		RPC:                  map[string]string{},
 		SweepGlobalThreshold: 1000,
 		SweepMinPerAddress: map[string]float64{
-			ChainBSC: 3, ChainPolygon: 3, ChainPlasma: 3, ChainSolana: 1,
+			ChainBSC: 3, ChainPolygon: 3, ChainPlasma: 3,
+			ChainArbitrum: 3, ChainBase: 3, ChainXLayer: 3,
+			ChainSolana: 1,
 		},
 		GasTopUp: map[string]float64{
 			ChainBSC: 0.002, ChainPolygon: 0.5, ChainPlasma: 0.002,
+			ChainArbitrum: 0.0002, ChainBase: 0.0002, ChainXLayer: 0.002,
 		},
 		Confirmations: map[string]int{
-			ChainBSC: 5, ChainPolygon: 5, ChainPlasma: 5, ChainSolana: 1,
+			ChainBSC: 5, ChainPolygon: 5, ChainPlasma: 5,
+			ChainArbitrum: 5, ChainBase: 5, ChainXLayer: 5,
+			ChainSolana: 1,
+		},
+		// Conservative spans that every known public endpoint accepts:
+		// X Layer's public RPC rejects anything over 100 blocks.
+		ScanRange: map[string]int{
+			ChainBSC: 2000, ChainPolygon: 2000, ChainPlasma: 2000,
+			ChainArbitrum: 2000, ChainBase: 2000, ChainXLayer: 100,
 		},
 		CreditMinAmount: 0.1,
 		// 1 USDT credits 6.7 balance units (operator-confirmed 2026-10-12).
@@ -134,6 +153,9 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	}
 	if cfg.Confirmations == nil {
 		cfg.Confirmations = def.Confirmations
+	}
+	if cfg.ScanRange == nil {
+		cfg.ScanRange = def.ScanRange
 	}
 	if cfg.CreditMinAmount <= 0 {
 		cfg.CreditMinAmount = def.CreditMinAmount
@@ -225,6 +247,7 @@ type CryptoConfigPatch struct {
 	HotWalletEVM         *string             `json:"hot_wallet_evm"`
 	HotWalletSolana      *string             `json:"hot_wallet_solana"`
 	Confirmations        *map[string]int     `json:"confirmations"`
+	ScanRange            *map[string]int     `json:"scan_range"`
 	CreditMinAmount      *float64            `json:"credit_min_amount"`
 	CreditMultiplier     *float64            `json:"credit_multiplier"`
 	SignerSocket         *string             `json:"signer_socket"`
@@ -261,6 +284,9 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	}
 	if p.Confirmations != nil {
 		out.Confirmations = *p.Confirmations
+	}
+	if p.ScanRange != nil {
+		out.ScanRange = *p.ScanRange
 	}
 	if p.CreditMinAmount != nil {
 		out.CreditMinAmount = *p.CreditMinAmount

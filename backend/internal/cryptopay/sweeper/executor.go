@@ -15,9 +15,12 @@ import (
 
 // ChainIDs maps the supported EVM chains to their chain id.
 var ChainIDs = map[string]int64{
-	"bsc":     56,
-	"polygon": 137,
-	"plasma":  9745,
+	"bsc":      56,
+	"polygon":  137,
+	"plasma":   9745,
+	"arbitrum": 42161,
+	"base":     8453,
+	"xlayer":   196,
 }
 
 // isZeroAddress catches the all-zero placeholder: sweeping into it burns the
@@ -134,9 +137,11 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (*Summary, error) {
 // address must not block the rest.
 func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) SweepEntry {
 	out := SweepEntry{Chain: entry.Chain, Address: entry.Address, Amount: entry.RawAmount.String()}
-	spec, ok := e.tokens[entry.Chain]
+	// Specs key on chain|contract: one address can hold both USDT and USDC,
+	// and each token needs its own transfer.
+	spec, ok := e.tokens[entry.Chain+"|"+strings.ToLower(entry.Token)]
 	if !ok {
-		out.Status, out.Error = "failed", "no token configured for chain"
+		out.Status, out.Error = "failed", "no token configured for chain/contract"
 		return out
 	}
 	if spec.Contract == "" {
