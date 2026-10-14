@@ -87,6 +87,8 @@ export interface AffiliateUserOverview {
   rebated_invitee_count: number
   available_quota: number
   history_quota: number
+  aff_code_invite_count?: number
+  aff_code_rebate_amount?: number
   custom_codes?: AdminUserAffiliateCode[]
   custom_code_quota?: AdminUserAffiliateCodeQuota
 }
@@ -99,6 +101,9 @@ export interface AdminUserAffiliateCode {
   created_by_admin: boolean
   created_at: string
   updated_at: string
+  invite_count?: number
+  rebate_amount?: number
+  retired?: boolean
 }
 
 export interface AdminUserAffiliateCodeQuota {

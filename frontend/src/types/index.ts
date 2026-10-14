@@ -164,6 +164,9 @@ export interface UserAffiliateDetail {
   /** 当前用户作为邀请人时实际生效的返利比例（专属覆盖全局）。0-100。 */
   effective_rebate_rate_percent: number
   invitees: AffiliateInvitee[]
+  /** 默认邀请码带来的人数和返利。 */
+  aff_code_invite_count?: number
+  aff_code_rebate_amount?: number
   /** 默认码之外的额外邀请码（用户自建或管理员代建）。 */
   custom_codes?: UserAffiliateCode[]
   custom_code_quota?: UserAffiliateCodeQuota
@@ -177,6 +180,9 @@ export interface UserAffiliateCode {
   created_by_admin: boolean
   created_at: string
   updated_at: string
+  invite_count?: number
+  rebate_amount?: number
+  retired?: boolean
 }
 
 export interface UserAffiliateCodeQuota {

@@ -65,6 +65,9 @@
 
             <div class="space-y-2">
               <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('affiliate.inviteLink') }}</p>
+              <p class="text-xs text-gray-500 dark:text-dark-400">
+                {{ t('affiliate.customCodes.stats', { count: detail.aff_code_invite_count ?? 0, amount: formatCurrency(detail.aff_code_rebate_amount ?? 0) }) }}
+              </p>
               <div class="flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900 sm:flex-row sm:items-center">
                 <code class="min-w-0 break-all text-sm text-gray-700 dark:text-gray-300 sm:flex-1 sm:truncate">{{ inviteLink }}</code>
                 <button class="btn btn-secondary btn-sm w-full sm:w-auto sm:shrink-0" @click="copyInviteLink">
@@ -103,6 +106,9 @@
           <div class="mt-4 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900">
             <span class="badge badge-gray shrink-0">{{ t('affiliate.customCodes.defaultBadge') }}</span>
             <code class="min-w-0 flex-1 break-all text-sm font-semibold text-gray-900 dark:text-white">{{ detail.aff_code }}</code>
+            <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
+              {{ t('affiliate.customCodes.stats', { count: detail.aff_code_invite_count ?? 0, amount: formatCurrency(detail.aff_code_rebate_amount ?? 0) }) }}
+            </span>
             <button class="btn btn-secondary btn-sm shrink-0" :disabled="copyingId === 'default'" @click="copyAny(detail.aff_code, 'default')">
               <Icon name="copy" size="sm" />
             </button>
@@ -114,15 +120,20 @@
           <ul v-else class="mt-3 space-y-2">
             <li
               v-for="item in customCodes"
-              :key="item.id"
+              :key="item.code"
               class="flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 dark:border-dark-700"
             >
               <span class="badge badge-gray shrink-0">{{ item.created_by_admin ? t('affiliate.customCodes.adminBadge') : t('affiliate.customCodes.customBadge') }}</span>
               <code class="min-w-0 flex-1 break-all text-sm font-semibold text-gray-900 dark:text-white">{{ item.code }}</code>
+              <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
+                {{ t('affiliate.customCodes.stats', { count: item.invite_count ?? 0, amount: formatCurrency(item.rebate_amount ?? 0) }) }}
+              </span>
+              <span v-if="item.retired" class="badge badge-gray shrink-0">{{ t('affiliate.customCodes.retiredBadge') }}</span>
               <button class="btn btn-secondary btn-sm shrink-0" :disabled="copyingId === item.code" @click="copyAny(item.code, item.code)">
                 <Icon name="copy" size="sm" />
               </button>
               <button
+                v-if="!item.retired"
                 class="btn btn-secondary btn-sm shrink-0 text-red-600 dark:text-red-400"
                 :disabled="deletingId === item.id"
                 @click="removeCode(item)"

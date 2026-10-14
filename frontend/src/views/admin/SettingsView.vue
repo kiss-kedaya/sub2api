@@ -7805,6 +7805,9 @@
               <div class="mt-3 flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900">
                 <span class="badge badge-gray shrink-0">{{ t('admin.settings.features.affiliate.codes.defaultBadge') }}</span>
                 <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-white">{{ affiliateModal.editingEntry.aff_code }}</code>
+                <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
+                  {{ t('admin.settings.features.affiliate.codes.stats', { count: affiliateModal.defaultInviteCount, amount: formatCurrency(affiliateModal.defaultRebateAmount) }) }}
+                </span>
               </div>
 
               <p v-if="affiliateModal.codesLoading" class="mt-3 text-xs text-gray-400">
@@ -7816,14 +7819,19 @@
               <ul v-else class="mt-3 space-y-2">
                 <li
                   v-for="c in affiliateModal.codes"
-                  :key="c.id"
+                  :key="c.code"
                   class="flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 dark:border-dark-700"
                 >
                   <span class="badge badge-gray shrink-0">
                     {{ c.created_by_admin ? t('admin.settings.features.affiliate.codes.adminBadge') : t('admin.settings.features.affiliate.codes.userBadge') }}
                   </span>
                   <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-white">{{ c.code }}</code>
+                  <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
+                    {{ t('admin.settings.features.affiliate.codes.stats', { count: c.invite_count ?? 0, amount: formatCurrency(c.rebate_amount ?? 0) }) }}
+                  </span>
+                  <span v-if="c.retired" class="badge badge-gray shrink-0">{{ t('admin.settings.features.affiliate.codes.retiredBadge') }}</span>
                   <button
+                    v-if="!c.retired"
                     type="button"
                     class="btn btn-secondary btn-sm shrink-0 text-red-600 dark:text-red-400"
                     :disabled="affiliateModal.codesSaving"
@@ -9053,6 +9061,7 @@ import type {
   AdminUserAffiliateCodeQuota,
 } from "@/api/admin/affiliates";
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
+import { formatCurrency } from "@/utils/format";
 import { parseTableDefaultPageSizeInput, parseTablePageSizeOptionsInput } from "@/utils/tablePreferences";
 import { useAppStore } from "@/stores";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
@@ -12895,6 +12904,8 @@ interface AffiliateModalState {
   // 额外邀请码（默认码之外的）
   codes: AdminUserAffiliateCode[];
   codesQuota: AdminUserAffiliateCodeQuota;
+  defaultInviteCount: number;
+  defaultRebateAmount: number;
   codesLoading: boolean;
   codesSaving: boolean;
   newCode: string;
@@ -12913,6 +12924,8 @@ const affiliateModal = reactive<AffiliateModalState>({
   searchTimer: null,
   codes: [],
   codesQuota: { max: 9, used: 0, limit: 9 },
+  defaultInviteCount: 0,
+  defaultRebateAmount: 0,
   codesLoading: false,
   codesSaving: false,
   newCode: "",
@@ -13064,6 +13077,8 @@ function openAffiliateModal(entry: AffiliateAdminEntry | null) {
     entry?.aff_rebate_rate_percent != null ? String(entry.aff_rebate_rate_percent) : "";
   affiliateModal.codes = [];
   affiliateModal.codesQuota = { max: 9, used: 0, limit: 9 };
+  affiliateModal.defaultInviteCount = 0;
+  affiliateModal.defaultRebateAmount = 0;
   affiliateModal.codesLoading = false;
   affiliateModal.codesSaving = false;
   affiliateModal.newCode = "";
@@ -13078,6 +13093,8 @@ async function loadAffiliateCodes(userId: number) {
     const overview = await affiliatesAPI.getUserOverview(userId);
     affiliateModal.codes = overview.custom_codes ?? [];
     affiliateModal.codesQuota = overview.custom_code_quota ?? { max: 9, used: 0, limit: 9 };
+    affiliateModal.defaultInviteCount = overview.aff_code_invite_count ?? 0;
+    affiliateModal.defaultRebateAmount = overview.aff_code_rebate_amount ?? 0;
   } catch (err) {
     appStore.showError(
       extractApiErrorMessage(err, t("admin.settings.features.affiliate.codes.loadFailed")),
