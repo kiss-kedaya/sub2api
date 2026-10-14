@@ -24,6 +24,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -255,6 +256,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 	if !compositeTargetPlatformResolved(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by composite groups")
+		return
+	}
+	if rejectSystemOneOnlyPlatform(c, apiKey, h.errorResponse) {
 		return
 	}
 
@@ -1314,6 +1318,10 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		writeGrokModelsList(c, xai.DefaultModelIDs())
 		return
 	}
+	if responsePlatform == service.PlatformTypeSafe {
+		writeModelsList(c, responsePlatform, []string{typesafe.JevLatestModel})
+		return
+	}
 
 	writeModelsListResponse(c, claude.DefaultModels)
 }
@@ -1367,7 +1375,7 @@ func (h *GatewayHandler) modelsForGroupID(ctx context.Context, groupID *int64, g
 		// List by the accounts actually in the group, not the group label.
 		// A Gemini-labeled group with OpenAI-type accounts must still expose
 		// those accounts' mapped models (e.g. gemini-3.8-flash).
-		models = h.compositeAvailableModels(ctx, groupID, platform == service.PlatformComposite)
+		models = h.compositeAvailableModels(ctx, groupID, platform == service.PlatformComposite, true)
 	} else if h != nil && h.gatewayService != nil {
 		models = h.gatewayService.GetAvailableModels(ctx, groupID, platform)
 	}
@@ -1393,7 +1401,7 @@ func (h *GatewayHandler) modelsForGroupID(ctx context.Context, groupID *int64, g
 		// Bound group with no hydrated policy: expose every mapped/default
 		// model the group's accounts can actually serve, without dumping the
 		// Claude catalog for a missing platform.
-		return h.compositeAvailableModels(ctx, groupID, false)
+		return h.compositeAvailableModels(ctx, groupID, false, true)
 	}
 	if injectDefaults && platform != "" {
 		return defaultModelIDsForPlatform(platform)
@@ -1448,7 +1456,7 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 		platform = group.Platform
 	}
 	if platform == service.PlatformComposite {
-		availableModels := h.compositeAvailableModels(ctx, groupID, true)
+		availableModels := h.compositeAvailableModels(ctx, groupID, true, false)
 		fallbackModels := defaultCodexModelIDsForPlatform(service.PlatformComposite)
 		if group.ModelAllowlistEnabled() {
 			source := availableModels
@@ -1474,7 +1482,10 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	return fallbackModels
 }
 
-func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *int64, injectUnmappedDefaults bool) []string {
+// compositeAvailableModels lists the models the composite group can serve.
+// includeSystemOne adds TypeSafe models, which only work through /v1/systemone;
+// LLM client catalogs (Codex) must exclude them.
+func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *int64, injectUnmappedDefaults bool, includeSystemOne bool) []string {
 	if h == nil || h.gatewayService == nil {
 		return nil
 	}
@@ -1482,6 +1493,9 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 	models := make([]string, 0)
 	schedulablePlatforms := h.gatewayService.GetSchedulablePlatforms(ctx, groupID)
 	for _, platform := range service.GroupCatalogPlatforms() {
+		if platform == service.PlatformTypeSafe && !includeSystemOne {
+			continue
+		}
 		platformModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
 		if len(platformModels) == 0 && injectUnmappedDefaults {
 			// CN 供应商没有静态默认模型列表（defaultModelIDsForPlatform 的
@@ -1667,10 +1681,18 @@ func defaultModelIDsForPlatform(platform string) []string {
 		return []string{service.DefaultClineTestModel}
 	case service.PlatformCommandCode:
 		return []string{service.DefaultCommandCodeTestModel}
+	case service.PlatformTypeSafe:
+		return []string{typesafe.JevLatestModel}
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
 		for _, concretePlatform := range service.GroupCatalogPlatforms() {
+			// TypeSafe is deliberately skipped: jev-latest only works through
+			// /v1/systemone, so the static fallback never advertises it to LLM
+			// clients. compositeAvailableModels lists it when the group can serve it.
+			if concretePlatform == service.PlatformTypeSafe {
+				continue
+			}
 			for _, id := range defaultModelIDsForPlatform(concretePlatform) {
 				if _, ok := seen[id]; ok {
 					continue
@@ -2158,12 +2180,15 @@ func exhaustedFailoverResponse(status int, errType, message string) (int, string
 			message = "Upstream request failed"
 		}
 		return http.StatusBadGateway, "upstream_error", message
+	// 显式 503 是上游/网关明确表达的「暂时不可用」：保留原状态与消息，不能被
+	// 后面的 5xx 归一覆盖（否则上游真 503 会被误报成过载）。
+	case status == http.StatusServiceUnavailable:
+		return status, errType, message
 	case status == 0 || status >= http.StatusInternalServerError:
 		return 529, "overloaded_error", "Upstream service temporarily unavailable"
 	}
 	return status, errType, message
 }
-
 
 // handleStreamingAwareError handles errors that may occur after streaming has started
 func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
@@ -2396,6 +2421,9 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	}
 	if !compositeTargetPlatformResolved(c, apiKey, parsedReq.Model) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by composite groups")
+		return
+	}
+	if rejectSystemOneOnlyPlatform(c, apiKey, h.errorResponse) {
 		return
 	}
 

@@ -152,7 +152,7 @@ func groupCatalogPlatforms() []string {
 	return []string{
 		PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity,
 		PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax,
-		PlatformCline, PlatformCommandCode,
+		PlatformCline, PlatformCommandCode, PlatformTypeSafe,
 	}
 }
 

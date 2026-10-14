@@ -186,8 +186,9 @@ func TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient(t *te
 	handler.Responses(c)
 
 	require.Equal(t, []int64{1, 2}, upstream.calls(), "在线客户端应正常切换账号")
-	require.Equal(t, 520, rec.Code, "上游状态码应原样透出")
-	require.Equal(t, "upstream_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+	// 换号耗尽：整组无可用账号，服务端失败统一归一成 529（过载）供客户端退避重试。
+	require.Equal(t, 529, rec.Code)
+	require.Equal(t, "overloaded_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
 
 	rawEvents, ok := c.Get(service.OpsUpstreamErrorsKey)
 	require.True(t, ok)

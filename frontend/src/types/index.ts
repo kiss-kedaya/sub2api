@@ -164,6 +164,25 @@ export interface UserAffiliateDetail {
   /** 当前用户作为邀请人时实际生效的返利比例（专属覆盖全局）。0-100。 */
   effective_rebate_rate_percent: number
   invitees: AffiliateInvitee[]
+  /** 默认码之外的额外邀请码（用户自建或管理员代建）。 */
+  custom_codes?: UserAffiliateCode[]
+  custom_code_quota?: UserAffiliateCodeQuota
+}
+
+export interface UserAffiliateCode {
+  id: number
+  user_id: number
+  code: string
+  is_custom: boolean
+  created_by_admin: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface UserAffiliateCodeQuota {
+  max: number
+  used: number
+  limit: number
 }
 
 export interface AffiliateTransferResponse {
@@ -539,7 +558,7 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'cline' | 'command_code' | 'composite'
+export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'cline' | 'command_code' | 'typesafe' | 'composite'
 
 export type VideoModelPrices = Record<string, Record<string, number>>
 
@@ -930,7 +949,7 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'cline' | 'command_code'
+export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'cline' | 'command_code' | 'typesafe'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'cloudflare' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'

@@ -190,6 +190,26 @@ func (r *paymentFulfillmentAffiliateRepoStub) GetAffiliateUserOverview(context.C
 	panic("unexpected GetAffiliateUserOverview call")
 }
 
+func (r *paymentFulfillmentAffiliateRepoStub) ListUserAffiliateCodes(context.Context, int64) ([]UserAffiliateCode, error) {
+	return nil, nil
+}
+
+func (r *paymentFulfillmentAffiliateRepoStub) CountUserAffiliateCodes(context.Context, int64) (int, error) {
+	return 0, nil
+}
+
+func (r *paymentFulfillmentAffiliateRepoStub) CreateUserAffiliateCode(context.Context, int64, string, bool, bool) (*UserAffiliateCode, error) {
+	panic("unexpected CreateUserAffiliateCode call")
+}
+
+func (r *paymentFulfillmentAffiliateRepoStub) DeleteUserAffiliateCode(context.Context, int64, int64) (bool, error) {
+	panic("unexpected DeleteUserAffiliateCode call")
+}
+
+func (r *paymentFulfillmentAffiliateRepoStub) DeleteUserAffiliateCodeByCode(context.Context, int64, string) (bool, error) {
+	panic("unexpected DeleteUserAffiliateCodeByCode call")
+}
+
 type paymentFulfillmentSettingRepoStub struct {
 	values map[string]string
 }
