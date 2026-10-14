@@ -356,3 +356,39 @@ var errCryptoDisabled = &cryptoDisabledError{}
 type cryptoDisabledError struct{}
 
 func (e *cryptoDisabledError) Error() string { return "crypto deposit channel is disabled" }
+
+// AdminTestRPC probes one RPC endpoint: it must answer eth_chainId (and the
+// chain's block number) within a short timeout. The console uses this to
+// validate endpoints before saving them into a chain's rotation list.
+// POST /api/v1/admin/crypto/rpc/test
+func (h *CryptoHandler) AdminTestRPC(c *gin.Context) {
+	var body struct {
+		Chain    string `json:"chain"`
+		Endpoint string `json:"endpoint"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.BadRequest(c, "Invalid test payload")
+		return
+	}
+	result := cryptopay.ProbeRPCEndpoint(c.Request.Context(), body.Chain, body.Endpoint)
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// AdminChainlistCandidates fetches candidate RPC endpoints for a chain from
+// the public chainlist.org registry. The console shows them for one-click
+// adoption; saving still goes through the normal config PUT.
+// GET /api/v1/admin/crypto/rpc/candidates?chain=bsc
+func (h *CryptoHandler) AdminChainlistCandidates(c *gin.Context) {
+	chain := c.Query("chain")
+	if strings.TrimSpace(chain) == "" {
+		response.BadRequest(c, "chain is required")
+		return
+	}
+	result, err := cryptopay.FetchChainlistCandidates(c.Request.Context(), chain)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+

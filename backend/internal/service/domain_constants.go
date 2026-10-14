@@ -525,6 +525,12 @@ const (
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
 
+	// SettingKeyCryptoConfig holds the built-in crypto deposit channel's JSON
+	// config. The service package reads only its enabled flag for public
+	// settings; the cryptopay package owns the full schema. Duplicated as a
+	// literal because cryptopay imports service, not the other way around.
+	SettingKeyCryptoConfig = "crypto.config"
+
 	// SettingKeyModelPlazaEnabled is a DB-backed soft switch for the Model Plaza page
 	// (public group/model pricing showcase). When false: the plaza endpoint returns 404
 	// and the header entry is hidden. Defaults to false (opt-in feature).

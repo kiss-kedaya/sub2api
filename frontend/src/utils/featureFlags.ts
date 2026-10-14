@@ -119,6 +119,11 @@ export const FeatureFlags = {
     mode: 'opt-out',
     label: 'Payment',
   }),
+  crypto: defineFlag({
+    key: 'crypto_enabled',
+    mode: 'opt-in',
+    label: 'Crypto Deposit',
+  }),
   riskControl: defineFlag({
     key: 'risk_control_enabled',
     mode: 'opt-in',

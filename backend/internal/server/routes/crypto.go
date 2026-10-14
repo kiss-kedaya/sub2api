@@ -58,5 +58,7 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.GET("/pool", cryptoHandler.AdminPoolStatus)
 		crypto.GET("/hot-wallet", cryptoHandler.AdminHotWalletStatus)
 		crypto.GET("/deposits.csv", cryptoHandler.AdminExportDeposits)
+		crypto.POST("/rpc/test", cryptoHandler.AdminTestRPC)
+		crypto.GET("/rpc/candidates", cryptoHandler.AdminChainlistCandidates)
 	}
 }
