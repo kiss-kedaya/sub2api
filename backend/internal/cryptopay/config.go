@@ -74,6 +74,7 @@ type CryptoConfig struct {
 
 	// Crediting.
 	CreditMinAmount  float64 `json:"credit_min_amount"`
+	CreditMaxAmount  float64 `json:"credit_max_amount"`
 	CreditMultiplier float64 `json:"credit_multiplier"`
 
 	// Signer socket path (unix).
@@ -114,7 +115,10 @@ func DefaultCryptoConfig() CryptoConfig {
 			ChainBSC: 2000, ChainPolygon: 2000, ChainPlasma: 2000,
 			ChainArbitrum: 2000, ChainBase: 2000, ChainXLayer: 100,
 		},
-		CreditMinAmount: 0.1,
+		// 0.001 keeps probe deposits creditable; 10000 caps one transfer so a
+		// fat-fingered amount cannot mint an absurd balance in one go.
+		CreditMinAmount: 0.001,
+		CreditMaxAmount: 10000,
 		// 1 USDT credits 6.7 balance units (operator-confirmed 2026-10-12).
 		CreditMultiplier: 6.7,
 		SignerSocket:     "/run/sub2api/signer.sock",
@@ -159,6 +163,9 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	}
 	if cfg.CreditMinAmount <= 0 {
 		cfg.CreditMinAmount = def.CreditMinAmount
+	}
+	if cfg.CreditMaxAmount <= 0 {
+		cfg.CreditMaxAmount = def.CreditMaxAmount
 	}
 	if cfg.CreditMultiplier <= 0 {
 		cfg.CreditMultiplier = def.CreditMultiplier
@@ -249,6 +256,7 @@ type CryptoConfigPatch struct {
 	Confirmations        *map[string]int     `json:"confirmations"`
 	ScanRange            *map[string]int     `json:"scan_range"`
 	CreditMinAmount      *float64            `json:"credit_min_amount"`
+	CreditMaxAmount      *float64            `json:"credit_max_amount"`
 	CreditMultiplier     *float64            `json:"credit_multiplier"`
 	SignerSocket         *string             `json:"signer_socket"`
 	HotIndex             *uint32             `json:"hot_index"`
@@ -290,6 +298,9 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	}
 	if p.CreditMinAmount != nil {
 		out.CreditMinAmount = *p.CreditMinAmount
+	}
+	if p.CreditMaxAmount != nil {
+		out.CreditMaxAmount = *p.CreditMaxAmount
 	}
 	if p.CreditMultiplier != nil {
 		out.CreditMultiplier = *p.CreditMultiplier

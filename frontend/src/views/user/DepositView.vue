@@ -87,6 +87,7 @@
                     <span class="deposit-view__badge" :class="`deposit-view__badge--${row.status}`">
                       {{ row.status }}
                     </span>
+                    <span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason) }}</span>
                   </td>
                   <td>{{ formatTime(row.created_at) }}</td>
                 </tr>
@@ -145,6 +146,23 @@ function chainLabel(chain: string): string {
 function formatTime(iso: string): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleString()
+}
+
+// Map the backend's machine reason codes to localized text. The thresholds
+// come from deposit-info so the text always matches the live config.
+function reasonText(code: string): string {
+  switch (code) {
+    case 'below_min':
+      return t('deposit.reasonBelowMin', { min: info.value?.min_amount ?? 0 })
+    case 'above_max':
+      return t('deposit.reasonAboveMax', { max: info.value?.max_amount ?? 0 })
+    case 'address_unassigned':
+      return t('deposit.reasonUnassigned')
+    case 'address_unknown':
+      return t('deposit.reasonUnknown')
+    default:
+      return code
+  }
 }
 
 async function copyAddress() {
@@ -361,5 +379,17 @@ onUnmounted(() => {
 .deposit-view__badge--reverted {
   background: rgba(239, 68, 68, 0.15);
   color: #dc2626;
+}
+.deposit-view__reason {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--signal-muted, #6b7280);
+}
+.deposit-view__reason {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--signal-muted, #6b7280);
 }
 </style>

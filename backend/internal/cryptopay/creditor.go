@@ -2,8 +2,11 @@ package cryptopay
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -42,21 +45,53 @@ func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRe
 	if req.CreditUSDT <= 0 {
 		return fmt.Errorf("cryptopay credit: non-positive amount")
 	}
-	rechargeCode := fmt.Sprintf("crypto-%s-%d", req.TxHash, req.LogIndex)
+	// recharge_code is reused as a redeem code, and redeem_codes.code caps at
+	// 32 characters — the raw 77-char "crypto-0x…-logIndex" form made every
+	// fulfillment fail. A deterministic 24-hex-char digest of the deposit
+	// identity keeps it stable across retries, unique with overwhelming
+	// probability, and comfortably inside the limit.
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d", req.Chain, req.TxHash, req.LogIndex)))
+	rechargeCode := "crypto-" + hex.EncodeToString(digest[:12])
+
+	// out_trade_no caps at 64 characters; a 0x-prefixed hash is 66. Store the
+	// bare hash (exactly 64) and keep the canonical 0x form in the snapshot.
+	outTradeNo := strings.TrimPrefix(req.TxHash, "0x")
+
+	// user_email/user_name are required columns (redundant copies so order
+	// history survives user deletion); without them every insert fails and
+	// the deposit loops in "pending" forever.
+	user, err := c.entClient.User.Get(ctx, req.UserID)
+	if err != nil {
+		return fmt.Errorf("cryptopay credit: load user: %w", err)
+	}
+	paidAt := time.Now()
 
 	order, err := c.entClient.PaymentOrder.Create().
 		SetUserID(req.UserID).
+		SetUserEmail(user.Email).
+		SetUserName(user.Username).
 		SetAmount(req.CreditUSDT).
 		SetPayAmount(req.CreditUSDT).
 		SetFeeRate(0).
 		SetRechargeCode(rechargeCode).
-		SetOutTradeNo(req.TxHash).
+		SetOutTradeNo(outTradeNo).
 		SetPaymentType(payment.TypeCrypto).
 		SetPaymentTradeNo(req.TxHash).
 		SetOrderType(payment.OrderTypeBalance).
 		SetProviderKey(payment.TypeCrypto).
 		SetStatus(payment.OrderStatusPaid).
-		SetPaidAt(time.Now()).
+		SetPaidAt(paidAt).
+		// expires_at is required; the deposit already happened, so the
+		// expiry is moot — anchor it at the paid time.
+		SetExpiresAt(paidAt).
+		// client_ip / src_host are required origin fields. A chain deposit
+		// has no HTTP client, so mark the source as the crypto watcher.
+		SetClientIP("crypto").
+		SetSrcHost("crypto").
+		// client_ip / src_host are required origin fields. A chain deposit
+		// has no HTTP client, so mark the source as the crypto watcher.
+		SetClientIP("crypto").
+		SetSrcHost("crypto").
 		SetProviderSnapshot(map[string]any{
 			"chain":  req.Chain,
 			"token":  req.Token,
@@ -91,7 +126,7 @@ func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRe
 // already credited (defense in depth on top of the ledger gate).
 func (c *DepositCreditor) orderExists(ctx context.Context, txHash string) (bool, error) {
 	count, err := c.entClient.PaymentOrder.Query().
-		Where(paymentorder.OutTradeNoEQ(txHash)).
+		Where(paymentorder.OutTradeNoEQ(strings.TrimPrefix(txHash, "0x"))).
 		Where(paymentorder.PaymentTypeEQ(payment.TypeCrypto)).
 		Count(ctx)
 	if err != nil {

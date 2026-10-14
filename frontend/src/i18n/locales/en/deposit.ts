@@ -14,6 +14,10 @@ export default {
     history: 'Your deposits',
     amount: 'Amount',
     credited: 'Credited',
-    time: 'Time'
+    time: 'Time',
+    reasonBelowMin: 'Below the minimum of {min} USDT — not credited',
+    reasonAboveMax: 'Above the maximum of {max} USDT for one deposit — not credited, contact the operator',
+    reasonUnassigned: 'This address is not bound to a user — not credited',
+    reasonUnknown: 'This address is not a deposit address'
   }
 }

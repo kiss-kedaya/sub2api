@@ -13,6 +13,7 @@ export interface DepositInfo {
   chains: DepositChain[]
   rate: number
   min_amount: number
+  max_amount: number
 }
 
 export interface DepositRecord {
@@ -21,6 +22,7 @@ export interface DepositRecord {
   token: string
   amount: string
   status: string
+  reason?: string
   created_at: string
   credited: number
 }

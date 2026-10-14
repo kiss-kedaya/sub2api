@@ -14,6 +14,10 @@ export default {
     history: '我的充值记录',
     amount: '金额',
     credited: '入账',
-    time: '时间'
+    time: '时间',
+    reasonBelowMin: '低于最小入账金额 {min} USDT，未入账',
+    reasonAboveMax: '超过单笔最大入账金额 {max} USDT，未入账，请联系管理员',
+    reasonUnassigned: '该地址未绑定用户，未入账',
+    reasonUnknown: '该地址不是充值地址'
   }
 }
