@@ -248,7 +248,8 @@ func (s *Service) reload(ctx context.Context) {
 	}
 
 	cursor := scanner.NewCursorStore(s.db)
-	led := ledger.New(s.db, s.creditor, newAddressResolver(s.addresses), cfg.CreditMinAmount, cfg.CreditMultiplier)
+	led := ledger.New(s.db, s.creditor, newAddressResolver(s.addresses),
+		cfg.CreditMinAmount, cfg.CreditMaxAmount, cfg.CreditMultiplier)
 	// Funds that arrived but could not be credited are usually a mistyped
 	// deposit or a probe: tell the operator instead of leaving it in a table.
 	led.SetUnmatchedNotifier(func(ctx context.Context, t scanner.Transfer, reason string) {
@@ -595,6 +596,7 @@ type DepositRecord struct {
 	TokenSymbol string `json:"token_symbol"`
 	Amount      string `json:"amount"`
 	Status      string `json:"status"`
+	Reason      string `json:"reason,omitempty"`
 	CreatedAt   string `json:"created_at"`
 }
 
@@ -604,7 +606,7 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 		limit = 100
 	}
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
-	                 token, amount::text, status, created_at
+	                 token, amount::text, status, reason, created_at
 	            FROM deposit_transactions WHERE 1=1`
 	args := []any{}
 	if chain != "" {
@@ -626,7 +628,7 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 		var r DepositRecord
 		var created time.Time
 		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
-			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &created); err != nil {
+			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created); err != nil {
 			return nil, err
 		}
 		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
@@ -676,7 +678,7 @@ func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, l
 	}
 
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
-	                 token, amount::text, status, created_at
+	                 token, amount::text, status, reason, created_at
 	            FROM deposit_transactions` + where +
 		fmt.Sprintf(" ORDER BY id DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
 	rows, err := s.db.QueryContext(ctx, query, append(args, limit, offset)...)
@@ -689,7 +691,7 @@ func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, l
 		var r DepositRecord
 		var created time.Time
 		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
-			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &created); err != nil {
+			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created); err != nil {
 			return nil, nil, err
 		}
 		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
@@ -705,6 +707,7 @@ type DepositInfo struct {
 	Chains    []DepositChain `json:"chains"`
 	Rate      float64        `json:"rate"`       // balance units per USDT
 	MinAmount float64        `json:"min_amount"` // smallest credit
+	MaxAmount float64        `json:"max_amount"` // largest single credit
 }
 
 // DepositChain is one chain's deposit address.
@@ -724,7 +727,10 @@ func (s *Service) DepositInfo(ctx context.Context, userID int64) (*DepositInfo, 
 	if err != nil {
 		return nil, err
 	}
-	info := &DepositInfo{Enabled: true, Rate: cfg.CreditMultiplier, MinAmount: cfg.CreditMinAmount}
+	info := &DepositInfo{
+		Enabled: true, Rate: cfg.CreditMultiplier,
+		MinAmount: cfg.CreditMinAmount, MaxAmount: cfg.CreditMaxAmount,
+	}
 	for _, chain := range cfg.Chains {
 		family := addresses.FamilyEVM
 		if chain == ChainSolana {
@@ -755,6 +761,7 @@ type UserDepositRecord struct {
 	Token     string  `json:"token"`
 	Amount    string  `json:"amount"`
 	Status    string  `json:"status"`
+	Reason    string  `json:"reason,omitempty"` // human text for non-credited rows
 	CreatedAt string  `json:"created_at"`
 	Credited  float64 `json:"credited"`
 }
@@ -765,7 +772,7 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT d.chain, d.tx_hash, d.token, d.amount::text, d.status, d.created_at
+		SELECT d.chain, d.tx_hash, d.token, d.amount::text, d.status, d.reason, d.created_at
 		  FROM deposit_transactions d
 		  JOIN deposit_addresses a ON lower(a.address) = lower(d.to_address)
 		 WHERE a.user_id = $1
@@ -779,11 +786,14 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 	for rows.Next() {
 		var r UserDepositRecord
 		var created time.Time
-		if err := rows.Scan(&r.Chain, &r.TxHash, &r.Token, &r.Amount, &r.Status, &created); err != nil {
+		if err := rows.Scan(&r.Chain, &r.TxHash, &r.Token, &r.Amount, &r.Status, &r.Reason, &created); err != nil {
 			return nil, err
 		}
 		// The user sees the symbol; the raw contract stays internal.
 		r.Token = tokenSymbol(r.Chain, r.Token)
+		// Rejected transfers must say why: a bare "ignored" badge reads as a
+		// random failure and invites support tickets. The machine code goes
+		// out as-is; the UI localizes it with the current thresholds.
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
 		if r.Status == "credited" {
 			var amount float64

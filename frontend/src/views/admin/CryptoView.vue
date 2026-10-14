@@ -85,6 +85,50 @@
                 <p class="crypto-view__hint">{{ t('admin.crypto.globalThresholdHint') }}</p>
               </div>
               <div class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.creditMin') }}</label>
+                <input
+                  v-model.number="config.credit_min_amount"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  class="input"
+                />
+                <p class="crypto-view__hint">{{ t('admin.crypto.creditMinHint') }}</p>
+              </div>
+              <div class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.creditMax') }}</label>
+                <input
+                  v-model.number="config.credit_max_amount"
+                  type="number"
+                  step="1"
+                  min="0"
+                  class="input"
+                />
+                <p class="crypto-view__hint">{{ t('admin.crypto.creditMaxHint') }}</p>
+              </div>
+              <div class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.creditMin') }}</label>
+                <input
+                  v-model.number="config.credit_min_amount"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  class="input"
+                />
+                <p class="crypto-view__hint">{{ t('admin.crypto.creditMinHint') }}</p>
+              </div>
+              <div class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.creditMax') }}</label>
+                <input
+                  v-model.number="config.credit_max_amount"
+                  type="number"
+                  step="1"
+                  min="0"
+                  class="input"
+                />
+                <p class="crypto-view__hint">{{ t('admin.crypto.creditMaxHint') }}</p>
+              </div>
+              <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.hotWalletEvm') }}</label>
                 <input
                   v-model="config.hot_wallet_evm"
@@ -741,6 +785,8 @@ async function loadConfig() {
       hot_wallet_evm: loaded.hot_wallet_evm ?? '',
       hot_wallet_solana: loaded.hot_wallet_solana ?? '',
       hot_index: loaded.hot_index ?? 0,
+      credit_min_amount: loaded.credit_min_amount ?? 0.001,
+      credit_max_amount: loaded.credit_max_amount ?? 10000,
       sweep_auto: loaded.sweep_auto ?? false
     }
   } finally {

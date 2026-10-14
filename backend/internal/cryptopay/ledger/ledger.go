@@ -61,6 +61,7 @@ type Ledger struct {
 	creditor     Creditor
 	resolver     AddressResolver
 	minAmount    float64
+	maxAmount    float64
 	multiplier   float64
 	ownAddresses func(ctx context.Context, chain string) ([]string, error)
 	// onUnmatched reports a transfer that reached one of our addresses but
@@ -69,8 +70,35 @@ type Ledger struct {
 	onUnmatched func(ctx context.Context, t scanner.Transfer, reason string)
 }
 
-func New(db *sql.DB, creditor Creditor, resolver AddressResolver, minAmount, multiplier float64) *Ledger {
-	return &Ledger{db: db, creditor: creditor, resolver: resolver, minAmount: minAmount, multiplier: multiplier}
+// Reason codes stored on ignored rows and echoed to the depositor, so a
+// rejected transfer never looks like a random failure.
+const (
+	ReasonBelowMin       = "below_min"
+	ReasonAboveMax       = "above_max"
+	ReasonUnassigned     = "address_unassigned"
+	ReasonUnknownAddress = "address_unknown"
+)
+
+// ReasonText renders a stored reason code for the user-facing history.
+func ReasonText(code string, minAmount, maxAmount float64) string {
+	switch code {
+	case ReasonBelowMin:
+		return fmt.Sprintf("below the minimum of %g USDT", minAmount)
+	case ReasonAboveMax:
+		return fmt.Sprintf("above the maximum of %g USDT for one deposit", maxAmount)
+	case ReasonUnassigned:
+		return "this address is not assigned to a user"
+	case ReasonUnknownAddress:
+		return "this address is not a deposit address"
+	}
+	return code
+}
+
+func New(db *sql.DB, creditor Creditor, resolver AddressResolver, minAmount, maxAmount, multiplier float64) *Ledger {
+	return &Ledger{
+		db: db, creditor: creditor, resolver: resolver,
+		minAmount: minAmount, maxAmount: maxAmount, multiplier: multiplier,
+	}
 }
 
 // SetUnmatchedNotifier wires the alert for funds that arrived but were not
@@ -106,8 +134,14 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 
 	amountDecimal := toDecimal(t.Amount, decimals)
 	if amountDecimal < l.minAmount {
-		l.notifyUnmatched(ctx, t, "below the minimum credit amount")
-		return l.record(ctx, t, "ignored", 0), nil
+		reason := fmt.Sprintf("below the minimum credit amount (%g)", l.minAmount)
+		l.notifyUnmatched(ctx, t, reason)
+		return l.record(ctx, t, "ignored", decimals, ReasonBelowMin), nil
+	}
+	if l.maxAmount > 0 && amountDecimal > l.maxAmount {
+		reason := fmt.Sprintf("above the per-deposit maximum (%g)", l.maxAmount)
+		l.notifyUnmatched(ctx, t, reason)
+		return l.record(ctx, t, "ignored", decimals, ReasonAboveMax), nil
 	}
 
 	userID, isOurs, err := l.resolver.ResolveDeposit(ctx, t.Chain, t.To)
@@ -121,7 +155,7 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 	if userID == 0 {
 		// Ours but unassigned (pool) or disabled: record for reconciliation.
 		l.notifyUnmatched(ctx, t, "address is not assigned to a user")
-		return l.record(ctx, t, "ignored", 0), nil
+		return l.record(ctx, t, "ignored", decimals, ReasonUnassigned), nil
 	}
 
 	creditUSDT := amountDecimal * l.multiplier
@@ -166,8 +200,10 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 
 // ProcessPending records a transfer that is not yet final so a later pass
 // can credit it. The row stays "pending" until Process succeeds; re-running
-// this is a no-op thanks to the unique key.
-func (l *Ledger) ProcessPending(ctx context.Context, t scanner.Transfer) error {
+// this is a no-op thanks to the unique key. decimals must be the token's
+// real exponent: the retry pass rebuilds the raw amount from the stored
+// decimal, and the old hardcoded 6 inflated 18-decimal deposits by 1e12.
+func (l *Ledger) ProcessPending(ctx context.Context, t scanner.Transfer, decimals int) error {
 	if t.Amount == nil || t.Amount.Sign() <= 0 {
 		return nil
 	}
@@ -191,7 +227,7 @@ func (l *Ledger) ProcessPending(ctx context.Context, t scanner.Transfer) error {
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')
 		 ON CONFLICT (chain, tx_hash, log_index) DO NOTHING`,
 		t.Chain, t.TxHash, t.LogIndex, t.From, t.To, t.Token,
-		amountString(t.Amount, 6), t.BlockNumber, t.BlockHash)
+		amountString(t.Amount, decimals), t.BlockNumber, t.BlockHash)
 	if err != nil {
 		return fmt.Errorf("record pending: %w", err)
 	}
@@ -229,16 +265,19 @@ func (l *Ledger) insertPending(ctx context.Context, t scanner.Transfer, decimals
 	return status, nil
 }
 
-// record writes an ignored/reverted deposit row for reconciliation. Returns
-// credited=false always.
-func (l *Ledger) record(ctx context.Context, t scanner.Transfer, status string, decimals int) bool {
+// record writes an ignored/reverted deposit row for reconciliation. The
+// amount is stored in display units (raw / 10^decimals): a raw value in a
+// NUMERIC(38,18) column reads as an astronomically large number, which once
+// made a 0.01 USDT probe show up as 1e16. reason carries the machine code
+// the user-facing history renders. Returns credited=false always.
+func (l *Ledger) record(ctx context.Context, t scanner.Transfer, status string, decimals int, reason string) bool {
 	_, err := l.db.ExecContext(ctx,
 		`INSERT INTO deposit_transactions
-		   (chain, tx_hash, log_index, from_address, to_address, token, amount, block_number, block_hash, status)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		   (chain, tx_hash, log_index, from_address, to_address, token, amount, block_number, block_hash, status, reason)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		 ON CONFLICT (chain, tx_hash, log_index) DO NOTHING`,
 		t.Chain, t.TxHash, t.LogIndex, t.From, t.To, t.Token,
-		amountString(t.Amount, decimals), t.BlockNumber, t.BlockHash, status)
+		amountString(t.Amount, decimals), t.BlockNumber, t.BlockHash, status, reason)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false
 	}

@@ -30,7 +30,7 @@ type DepositHandler interface {
 	Process(ctx context.Context, t Transfer, decimals int) (bool, error)
 	// ProcessPending records a not-yet-confirmed transfer so a later pass
 	// can credit it after finality. Must be idempotent.
-	ProcessPending(ctx context.Context, t Transfer) error
+	ProcessPending(ctx context.Context, t Transfer, decimals int) error
 }
 
 // Worker scans all configured EVM chains on an interval.
@@ -266,7 +266,10 @@ func (w *Worker) retryPending(ctx context.Context) error {
 		if final, err := BlockIsFinal(ctx, pool, receipt.BlockNumber); err == nil && !final {
 			continue
 		}
-		raw, err := decimalToRawUnits(p.amount, 6)
+		// Per-token decimals, not a fixed 6: rebuilding an 18-decimal amount
+		// at 6 decimals multiplies it by 1e12 before crediting.
+		decimals := w.chainDecimals(p.chain, p.token)
+		raw, err := decimalToRawUnits(p.amount, decimals)
 		if err != nil {
 			slog.Warn("[cryptopay] pending amount decode failed", "tx", p.txHash, "error", err)
 			continue
@@ -276,7 +279,7 @@ func (w *Worker) retryPending(ctx context.Context) error {
 			From: p.from, To: p.to, Token: p.token, Amount: raw,
 			BlockNumber: p.blockNumber, BlockHash: p.blockHash,
 		}
-		if _, err := w.handler.Process(ctx, transfer, 6); err != nil {
+		if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {
 			slog.Warn("[cryptopay] pending credit failed", "tx", p.txHash, "error", err)
 		}
 	}
@@ -291,6 +294,23 @@ func (w *Worker) ScanOnce(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// chainDecimals resolves a token's decimals from the chain config, falling
+// back to the stablecoin default. Lookup is case-insensitive because the
+// scanner stores contract addresses lowercase while config may not be.
+func (w *Worker) chainDecimals(chain, token string) int {
+	for _, c := range w.chains {
+		if c.Chain != chain {
+			continue
+		}
+		for contract, decimals := range c.Decimals {
+			if strings.EqualFold(contract, token) {
+				return decimals
+			}
+		}
+	}
+	return 6
 }
 
 func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
@@ -358,6 +378,14 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 			return err
 		}
 		for _, transfer := range transfers {
+			// Decimals must come from the chain config up front: the pending
+			// path stores and later rebuilds the raw amount from it, and a
+			// wrong exponent (the old hardcoded 6) inflated 18-decimal
+			// deposits by 1e12 on the retry pass.
+			decimals := chain.Decimals[transfer.Token]
+			if decimals == 0 {
+				decimals = 6 // stablecoin default
+			}
 			// Confirm before crediting: a broadcast-but-reverted or
 			// not-yet-final transaction must never move money. Reorgs are
 			// the reason this runs per transfer instead of trusting the
@@ -366,7 +394,7 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 			if err != nil {
 				// Not final yet: remember it so a later pass credits it.
 				// Without this the cursor advance would drop the deposit.
-				if pendingErr := w.handler.ProcessPending(ctx, transfer); pendingErr != nil {
+				if pendingErr := w.handler.ProcessPending(ctx, transfer, decimals); pendingErr != nil {
 					slog.Warn("[cryptopay] record pending failed",
 						"chain", transfer.Chain, "tx", transfer.TxHash, "error", pendingErr)
 				}
@@ -382,17 +410,13 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 			if final, err := BlockIsFinal(ctx, pool, receipt.BlockNumber); err == nil && !final {
 				// Chain exposes the safe tag and this block is above it:
 				// wait for the next pass rather than crediting early.
-				if pendingErr := w.handler.ProcessPending(ctx, transfer); pendingErr != nil {
+				if pendingErr := w.handler.ProcessPending(ctx, transfer, decimals); pendingErr != nil {
 					slog.Warn("[cryptopay] record pending failed",
 						"chain", transfer.Chain, "tx", transfer.TxHash, "error", pendingErr)
 				}
 				slog.Info("[cryptopay] waiting for finality",
 					"chain", transfer.Chain, "tx", transfer.TxHash, "block", receipt.BlockNumber)
 				continue
-			}
-			decimals := chain.Decimals[transfer.Token]
-			if decimals == 0 {
-				decimals = 6 // USDT default on the EVM chains we support
 			}
 			if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {
 				slog.Warn("[cryptopay] credit failed", "chain", transfer.Chain, "tx", transfer.TxHash, "error", err)
