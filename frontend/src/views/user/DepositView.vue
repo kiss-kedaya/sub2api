@@ -36,6 +36,14 @@
             </div>
           </div>
 
+          <!-- Supported tokens on the selected chain -->
+          <div v-if="current" class="deposit-view__field">
+            <label class="deposit-view__label">{{ t('deposit.tokens') }}</label>
+            <div class="deposit-view__tokens">
+              <span v-for="tk in current.tokens" :key="tk" class="deposit-view__token">{{ tk }}</span>
+            </div>
+          </div>
+
           <!-- Address + QR -->
           <div v-if="current" class="deposit-view__address-block">
             <div class="deposit-view__qr">
@@ -73,7 +81,7 @@
               <tbody>
                 <tr v-for="(row, i) in history" :key="i">
                   <td>{{ chainLabel(row.chain) }}</td>
-                  <td>{{ row.amount }} USDT</td>
+                  <td>{{ row.amount }} {{ row.token }}</td>
                   <td>{{ row.credited ? row.credited.toFixed(2) : '—' }}</td>
                   <td>
                     <span class="deposit-view__badge" :class="`deposit-view__badge--${row.status}`">
@@ -118,9 +126,15 @@ function chainLabel(chain: string): string {
     case 'bsc':
       return 'BSC (BEP20)'
     case 'polygon':
-      return 'Polygon'
+      return 'Polygon (PoS)'
     case 'plasma':
       return 'Plasma'
+    case 'arbitrum':
+      return 'Arbitrum One'
+    case 'base':
+      return 'Base'
+    case 'xlayer':
+      return 'X Layer'
     case 'solana':
       return 'Solana'
     default:
@@ -256,6 +270,22 @@ onUnmounted(() => {
   border-color: #6366f1;
   background: rgba(99, 102, 241, 0.08);
   font-weight: 600;
+}
+.deposit-view__tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.deposit-view__token {
+  display: inline-block;
+  padding: 0.25rem 0.625rem;
+  border-radius: 0.375rem;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: #16a34a;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 .deposit-view__address-block {
   display: grid;
