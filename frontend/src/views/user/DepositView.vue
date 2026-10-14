@@ -82,7 +82,7 @@
                 <tr v-for="(row, i) in history" :key="i">
                   <td>{{ chainLabel(row.chain) }}</td>
                   <td>{{ row.amount }} {{ row.token }}</td>
-                  <td>{{ row.credited ? row.credited.toFixed(2) : '—' }}</td>
+                  <td>{{ row.credited ? fmtCredited(row.credited) : '—' }}</td>
                   <td>
                     <span class="deposit-view__badge" :class="`deposit-view__badge--${row.status}`">
                       {{ row.status }}
@@ -146,6 +146,14 @@ function chainLabel(chain: string): string {
 function formatTime(iso: string): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleString()
+}
+
+// Credited amounts are exact balance units (0.01 USDT × 6.7 = 0.067). A
+// fixed 2-decimal rounding displayed 0.067 as 0.07 — visibly wrong next to
+// the deposit it came from. Show up to 8 decimals, trailing zeros trimmed.
+function fmtCredited(value: number): string {
+  if (!Number.isFinite(value)) return '—'
+  return Number(value.toFixed(8)).toString()
 }
 
 // Map the backend's machine reason codes to localized text. The thresholds
