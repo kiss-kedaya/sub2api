@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,6 +42,15 @@ type UserAffiliateCode struct {
 	CreatedByAdmin bool      `json:"created_by_admin"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	InviteCount    int       `json:"invite_count"`
+	RebateAmount   float64   `json:"rebate_amount"`
+	Retired        bool      `json:"retired,omitempty"`
+}
+
+// AffiliateCodeStat is the invite count and accrued rebate of one code.
+type AffiliateCodeStat struct {
+	InviteCount  int
+	RebateAmount float64
 }
 
 // UserAffiliateCodeQuota reports how many extra codes a user may still create.
@@ -115,6 +125,8 @@ type AffiliateDetail struct {
 	// 用于在用户的 /affiliate 页面直观展示「分享后能拿到多少」。
 	EffectiveRebateRatePercent float64            `json:"effective_rebate_rate_percent"`
 	Invitees                   []AffiliateInvitee `json:"invitees"`
+	AffCodeInviteCount         int                `json:"aff_code_invite_count"`
+	AffCodeRebateAmount        float64            `json:"aff_code_rebate_amount"`
 	// CustomCodes 是默认码之外、用户自建或管理员代建的邀请码。
 	CustomCodes     []UserAffiliateCode    `json:"custom_codes"`
 	CustomCodeQuota UserAffiliateCodeQuota `json:"custom_code_quota"`
@@ -123,7 +135,7 @@ type AffiliateDetail struct {
 type AffiliateRepository interface {
 	EnsureUserAffiliate(ctx context.Context, userID int64) (*AffiliateSummary, error)
 	GetAffiliateByCode(ctx context.Context, code string) (*AffiliateSummary, error)
-	BindInviter(ctx context.Context, userID, inviterID int64) (bool, error)
+	BindInviter(ctx context.Context, userID, inviterID int64, code string) (bool, error)
 	AccrueQuota(ctx context.Context, inviterID, inviteeUserID int64, amount float64, freezeHours int, sourceOrderID *int64) (bool, error)
 	GetAccruedRebateFromInvitee(ctx context.Context, inviterID, inviteeUserID int64) (float64, error)
 	ThawFrozenQuota(ctx context.Context, userID int64) (float64, error)
@@ -135,6 +147,7 @@ type AffiliateRepository interface {
 	ResetUserAffCode(ctx context.Context, userID int64) (string, error)
 	// 用户自定义邀请码（默认码之外的额外码）
 	ListUserAffiliateCodes(ctx context.Context, userID int64) ([]UserAffiliateCode, error)
+	ListAffiliateCodeStats(ctx context.Context, userID int64) (map[string]AffiliateCodeStat, error)
 	CountUserAffiliateCodes(ctx context.Context, userID int64) (int, error)
 	CreateUserAffiliateCode(ctx context.Context, userID int64, code string, isCustom, byAdmin bool) (*UserAffiliateCode, error)
 	DeleteUserAffiliateCode(ctx context.Context, userID, codeID int64) (bool, error)
@@ -234,6 +247,8 @@ type AffiliateUserOverview struct {
 	RebatedInviteeCount int     `json:"rebated_invitee_count"`
 	AvailableQuota      float64 `json:"available_quota"`
 	HistoryQuota        float64 `json:"history_quota"`
+	AffCodeInviteCount  int     `json:"aff_code_invite_count"`
+	AffCodeRebateAmount float64 `json:"aff_code_rebate_amount"`
 	// CustomCodes 是默认码之外、用户自建或管理员代建的邀请码。
 	CustomCodes     []UserAffiliateCode    `json:"custom_codes"`
 	CustomCodeQuota UserAffiliateCodeQuota `json:"custom_code_quota"`
@@ -304,6 +319,7 @@ func (s *AffiliateService) GetAffiliateDetail(ctx context.Context, userID int64)
 	if err != nil {
 		return nil, err
 	}
+	defCount, defRebate, customCodes := s.attachAffiliateCodeStats(ctx, userID, summary.AffCode, customCodes)
 	return &AffiliateDetail{
 		UserID:                     summary.UserID,
 		AffCode:                    summary.AffCode,
@@ -314,6 +330,8 @@ func (s *AffiliateService) GetAffiliateDetail(ctx context.Context, userID int64)
 		AffHistoryQuota:            summary.AffHistoryQuota,
 		EffectiveRebateRatePercent: s.resolveRebateRatePercent(ctx, summary),
 		Invitees:                   invitees,
+		AffCodeInviteCount:         defCount,
+		AffCodeRebateAmount:        defRebate,
 		CustomCodes:                customCodes,
 		CustomCodeQuota:            quota,
 	}, nil
@@ -354,12 +372,14 @@ func (s *AffiliateService) BindInviterByCode(ctx context.Context, userID int64, 
 		return ErrAffiliateCodeInvalid
 	}
 
-	bound, err := s.repo.BindInviter(ctx, userID, inviterSummary.UserID)
+	bound, err := s.repo.BindInviter(ctx, userID, inviterSummary.UserID, code)
 	if err != nil {
 		return err
 	}
+	// 同一个用户并发重复提交同一个码：库内 WHERE inviter_id IS NULL 只让一行成功。
+	// 失败的那次不再报冲突，也不再加邀请人数。
 	if !bound {
-		return ErrAffiliateAlreadyBound
+		return nil
 	}
 	return nil
 }
@@ -728,9 +748,18 @@ func (s *AffiliateService) AdminGetUserOverview(ctx context.Context, userID int6
 			overview.RebateRatePercent = s.globalRebateRatePercent(ctx)
 		}
 		overview.RebateRatePercent = clampAffiliateRebateRate(overview.RebateRatePercent)
-		if codes, quota, err := s.ListUserAffiliateCodes(ctx, userID); err == nil {
+		codes, quota, listErr := s.ListUserAffiliateCodes(ctx, userID)
+		if listErr == nil {
 			overview.CustomCodes = codes
 			overview.CustomCodeQuota = quota
+		} else {
+			codes = nil
+		}
+		defCount, defRebate, withStats := s.attachAffiliateCodeStats(ctx, userID, overview.AffCode, codes)
+		overview.AffCodeInviteCount = defCount
+		overview.AffCodeRebateAmount = defRebate
+		if listErr == nil {
+			overview.CustomCodes = withStats
 		}
 	}
 	return overview, nil
@@ -758,6 +787,61 @@ func normalizeAffiliateRecordFilter(filter AffiliateRecordFilter) AffiliateRecor
 // 唯一性（默认码表 ∪ 自定义码表）、数量上限（MaxUserAffiliateCodes）。
 // 差别只有 created_by_admin 标记与 HTTP 鉴权层。
 // ---------------------------------------------------------------------------
+
+func (s *AffiliateService) attachAffiliateCodeStats(ctx context.Context, userID int64, defaultCode string, codes []UserAffiliateCode) (int, float64, []UserAffiliateCode) {
+	if s == nil || s.repo == nil {
+		return 0, 0, codes
+	}
+	stats, err := s.repo.ListAffiliateCodeStats(ctx, userID)
+	if err != nil {
+		return 0, 0, codes
+	}
+	return applyAffiliateCodeStats(defaultCode, codes, stats)
+}
+
+// applyAffiliateCodeStats fills per-code invite counts. Codes that no longer
+// exist stay visible as retired rows so historical invites and rebates are not
+// dropped. Retired rows are not part of the create quota.
+func applyAffiliateCodeStats(defaultCode string, codes []UserAffiliateCode, stats map[string]AffiliateCodeStat) (int, float64, []UserAffiliateCode) {
+	if codes == nil {
+		codes = []UserAffiliateCode{}
+	}
+	if stats == nil {
+		stats = map[string]AffiliateCodeStat{}
+	}
+	defaultCode = strings.ToUpper(strings.TrimSpace(defaultCode))
+	known := map[string]struct{}{defaultCode: {}}
+	def := stats[defaultCode]
+	for i := range codes {
+		code := strings.ToUpper(strings.TrimSpace(codes[i].Code))
+		codes[i].Code = code
+		known[code] = struct{}{}
+		st := stats[code]
+		codes[i].InviteCount = st.InviteCount
+		codes[i].RebateAmount = st.RebateAmount
+	}
+	retired := make([]string, 0)
+	for code := range stats {
+		if code == "" {
+			continue
+		}
+		if _, ok := known[code]; ok {
+			continue
+		}
+		retired = append(retired, code)
+	}
+	sort.Strings(retired)
+	for _, code := range retired {
+		st := stats[code]
+		codes = append(codes, UserAffiliateCode{
+			Code:         code,
+			Retired:      true,
+			InviteCount:  st.InviteCount,
+			RebateAmount: st.RebateAmount,
+		})
+	}
+	return def.InviteCount, def.RebateAmount, codes
+}
 
 // ListUserAffiliateCodes 返回用户的额外邀请码与剩余额度。
 func (s *AffiliateService) ListUserAffiliateCodes(ctx context.Context, userID int64) ([]UserAffiliateCode, UserAffiliateCodeQuota, error) {

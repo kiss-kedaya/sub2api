@@ -125,6 +125,8 @@ export default {
             title: 'Extra Invite Codes',
             hint: 'The default code is immutable. Create or delete extra codes on behalf of this user (up to {max}). Deleting one disables its link immediately; existing rebates are unaffected.',
             quota: '{used} / {max} used',
+            stats: '{count} invited · rebate {amount}',
+            retiredBadge: 'Retired',
             defaultBadge: 'Default',
             adminBadge: 'Admin created',
             userBadge: 'User created',

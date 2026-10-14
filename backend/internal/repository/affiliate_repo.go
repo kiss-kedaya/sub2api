@@ -76,7 +76,7 @@ func (r *affiliateRepository) GetAffiliateByCode(ctx context.Context, code strin
 	return queryAffiliateByCode(ctx, client, code)
 }
 
-func (r *affiliateRepository) BindInviter(ctx context.Context, userID, inviterID int64) (bool, error) {
+func (r *affiliateRepository) BindInviter(ctx context.Context, userID, inviterID int64, code string) (bool, error) {
 	var bound bool
 	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
 		if _, err := ensureUserAffiliateWithClient(txCtx, txClient, userID); err != nil {
@@ -87,8 +87,8 @@ func (r *affiliateRepository) BindInviter(ctx context.Context, userID, inviterID
 		}
 
 		res, err := txClient.ExecContext(txCtx,
-			"UPDATE user_affiliates SET inviter_id = $1, updated_at = NOW() WHERE user_id = $2 AND inviter_id IS NULL",
-			inviterID, userID,
+			"UPDATE user_affiliates SET inviter_id = $1, invited_via_code = NULLIF($3, ''), updated_at = NOW() WHERE user_id = $2 AND inviter_id IS NULL",
+			inviterID, userID, code,
 		)
 		if err != nil {
 			return fmt.Errorf("bind inviter: %w", err)
@@ -387,7 +387,7 @@ func (r *affiliateRepository) ListAffiliateInviteRecords(ctx context.Context, fi
 	client := clientFromContext(ctx, r.client)
 	where, args := buildAffiliateRecordWhere(filter, "ua.created_at", []string{
 		"inviter.email", "inviter.username", "invitee.email", "invitee.username",
-		"ua.inviter_id::text", "ua.user_id::text", "inviter_aff.aff_code",
+		"ua.inviter_id::text", "ua.user_id::text", "inviter_aff.aff_code", "ua.invited_via_code",
 	})
 
 	total, err := queryAffiliateRecordCount(ctx, client, `
@@ -404,7 +404,7 @@ JOIN user_affiliates inviter_aff ON inviter_aff.user_id = ua.inviter_id
 	orderBy := buildAffiliateRecordOrderBy(filter, map[string]string{
 		"inviter":      "inviter.email",
 		"invitee":      "invitee.email",
-		"aff_code":     "inviter_aff.aff_code",
+		"aff_code":     "COALESCE(NULLIF(ua.invited_via_code, ''), inviter_aff.aff_code)",
 		"total_rebate": "total_rebate",
 		"created_at":   "ua.created_at",
 	}, "ua.created_at")
@@ -416,7 +416,7 @@ SELECT ua.inviter_id,
        ua.user_id,
        COALESCE(invitee.email, ''),
        COALESCE(invitee.username, ''),
-       COALESCE(inviter_aff.aff_code, ''),
+       COALESCE(NULLIF(ua.invited_via_code, ''), inviter_aff.aff_code, ''),
        COALESCE(SUM(ual.amount), 0)::double precision AS total_rebate,
        ua.created_at
 FROM user_affiliates ua
@@ -428,7 +428,7 @@ LEFT JOIN user_affiliate_ledger ual
       AND ual.source_user_id = ua.user_id
       AND ual.action = 'accrue'
 `+where+`
-GROUP BY ua.inviter_id, inviter.email, inviter.username, ua.user_id, invitee.email, invitee.username, inviter_aff.aff_code, ua.created_at
+GROUP BY ua.inviter_id, inviter.email, inviter.username, ua.user_id, invitee.email, invitee.username, ua.invited_via_code, inviter_aff.aff_code, ua.created_at
 `+orderBy+`
 LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
@@ -1464,6 +1464,54 @@ func queryCountInt(ctx context.Context, client affiliateQueryExecer, query strin
 }
 
 // ListUserAffiliateCodes 列出某用户的自定义邀请码（按创建时间排序）。
+func (r *affiliateRepository) ListAffiliateCodeStats(ctx context.Context, userID int64) (map[string]service.AffiliateCodeStat, error) {
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, `
+SELECT code,
+       COUNT(*)::int,
+       COALESCE(SUM(rebate), 0)::double precision
+FROM (
+    SELECT COALESCE(NULLIF(BTRIM(invitee.invited_via_code), ''), inviter.aff_code) AS code,
+           COALESCE(reb.amount, 0) AS rebate
+    FROM user_affiliates invitee
+    JOIN user_affiliates inviter ON inviter.user_id = invitee.inviter_id
+    LEFT JOIN (
+        SELECT source_user_id, SUM(amount) AS amount
+        FROM user_affiliate_ledger
+        WHERE user_id = $1
+          AND action = 'accrue'
+          AND source_user_id IS NOT NULL
+        GROUP BY source_user_id
+    ) reb ON reb.source_user_id = invitee.user_id
+    WHERE invitee.inviter_id = $1
+) grouped
+GROUP BY code`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list affiliate code stats: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]service.AffiliateCodeStat)
+	for rows.Next() {
+		var code sql.NullString
+		var stat service.AffiliateCodeStat
+		if err := rows.Scan(&code, &stat.InviteCount, &stat.RebateAmount); err != nil {
+			return nil, fmt.Errorf("scan affiliate code stats: %w", err)
+		}
+		normalized := strings.ToUpper(strings.TrimSpace(code.String))
+		if normalized == "" {
+			continue
+		}
+		prev := out[normalized]
+		prev.InviteCount += stat.InviteCount
+		prev.RebateAmount += stat.RebateAmount
+		out[normalized] = prev
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate affiliate code stats: %w", err)
+	}
+	return out, nil
+}
+
 func (r *affiliateRepository) ListUserAffiliateCodes(ctx context.Context, userID int64) ([]service.UserAffiliateCode, error) {
 	client := clientFromContext(ctx, r.client)
 	rows, err := client.QueryContext(ctx, `

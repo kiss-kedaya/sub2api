@@ -125,6 +125,8 @@ export default {
             title: '额外邀请码管理',
             hint: '默认码不可修改；这里可代用户创建或删除额外邀请码（上限 {max} 个）。删除后对应链接立即失效，已产生的返利不受影响。',
             quota: '已用 {used} / {max}',
+            stats: '邀请 {count} 人 · 返利 {amount}',
+            retiredBadge: '已停用',
             defaultBadge: '默认',
             adminBadge: '管理员创建',
             userBadge: '用户自建',

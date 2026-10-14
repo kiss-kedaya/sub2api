@@ -808,6 +808,8 @@ export default {
       copied: 'Affiliate code copied',
       copy: 'Copy',
       quota: '{used} / {max} used',
+      stats: '{count} invited · rebate {amount}',
+      retiredBadge: 'Retired',
       removeConfirm: 'Delete affiliate code {code}? Its invite link stops working immediately; existing rebates are unaffected.',
       createSuccess: 'Affiliate code created',
       deleteSuccess: 'Affiliate code deleted',

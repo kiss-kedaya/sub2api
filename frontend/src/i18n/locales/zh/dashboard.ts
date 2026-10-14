@@ -812,6 +812,8 @@ export default {
       copied: '已复制此邀请码',
       copy: '复制',
       quota: '已用 {used} / {max}',
+      stats: '邀请 {count} 人 · 返利 {amount}',
+      retiredBadge: '已停用',
       removeConfirm: '确认删除邀请码 {code}？删除后该邀请链接立即失效，已产生的返利不受影响。',
       createSuccess: '邀请码已创建',
       deleteSuccess: '邀请码已删除',

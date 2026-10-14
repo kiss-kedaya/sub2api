@@ -118,8 +118,12 @@ func (r *paymentFulfillmentAffiliateRepoStub) GetAffiliateByCode(context.Context
 	panic("unexpected GetAffiliateByCode call")
 }
 
-func (r *paymentFulfillmentAffiliateRepoStub) BindInviter(context.Context, int64, int64) (bool, error) {
+func (r *paymentFulfillmentAffiliateRepoStub) BindInviter(context.Context, int64, int64, string) (bool, error) {
 	panic("unexpected BindInviter call")
+}
+
+func (r *paymentFulfillmentAffiliateRepoStub) ListAffiliateCodeStats(context.Context, int64) (map[string]AffiliateCodeStat, error) {
+	return map[string]AffiliateCodeStat{}, nil
 }
 
 func (r *paymentFulfillmentAffiliateRepoStub) AccrueQuota(_ context.Context, inviterID, inviteeUserID int64, amount float64, freezeHours int, sourceOrderID *int64) (bool, error) {
