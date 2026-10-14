@@ -175,3 +175,24 @@ func TestAdminUpdateUserSettingsValidatesBeforeAtomicWrite(t *testing.T) {
 	require.NoError(t, svc.AdminUpdateUserSettings(context.Background(), 7, &code, &rate, false))
 	require.Equal(t, 1, repo.updateCalls)
 }
+
+func TestApplyAffiliateCodeStatsKeepsRetiredLinks(t *testing.T) {
+	codes := []UserAffiliateCode{{ID: 7, Code: "vip-1"}}
+	stats := map[string]AffiliateCodeStat{
+		"DEFAULT1": {InviteCount: 2, RebateAmount: 1.5},
+		"VIP-1":    {InviteCount: 3, RebateAmount: 4},
+		"OLDCODE":  {InviteCount: 1, RebateAmount: 0.25},
+	}
+	count, rebate, out := applyAffiliateCodeStats("default1", codes, stats)
+	require.Equal(t, 2, count)
+	require.InDelta(t, 1.5, rebate, 1e-9)
+	require.Len(t, out, 2)
+	require.Equal(t, "VIP-1", out[0].Code)
+	require.Equal(t, 3, out[0].InviteCount)
+	require.InDelta(t, 4, out[0].RebateAmount, 1e-9)
+	require.False(t, out[0].Retired)
+	require.Equal(t, int64(0), out[1].ID)
+	require.Equal(t, "OLDCODE", out[1].Code)
+	require.True(t, out[1].Retired)
+	require.Equal(t, 1, out[1].InviteCount)
+}
