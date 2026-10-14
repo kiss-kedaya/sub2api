@@ -1380,6 +1380,15 @@ func dedupeRepeatedJSONArgumentString(arguments string) (string, bool) {
 	if trimmed == "" || (!strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[")) {
 		return "", false
 	}
+	// Guard the heuristic against a legitimately self-repeating payload. The
+	// halves being byte-identical is only a duplication signal when the whole
+	// value was NOT already valid JSON — if the full string parses on its own,
+	// the two halves are the caller's real data (e.g. "[1,1]" style values are
+	// saved by the trim above, but longer symmetric documents are not) and must
+	// be left alone.
+	if json.Valid([]byte(strings.TrimSpace(arguments))) {
+		return "", false
+	}
 	if !json.Valid([]byte(first)) {
 		return "", false
 	}

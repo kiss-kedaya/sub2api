@@ -792,6 +792,29 @@ export default {
         joinedAt: 'Joined At'
       }
     },
+    customCodes: {
+      title: 'My Custom Affiliate Codes',
+      description: 'Your default code cannot be changed. You may create up to {max} extra codes; deleting one disables its link immediately.',
+      defaultBadge: 'Default',
+      customBadge: 'Custom',
+      adminBadge: 'Created by admin',
+      addLabel: 'New code',
+      addPlaceholder: '4-32 letters/digits/underscore/hyphen',
+      addButton: 'Add Code',
+      adding: 'Adding...',
+      remove: 'Delete',
+      removing: 'Deleting...',
+      empty: 'No custom affiliate codes yet',
+      copied: 'Affiliate code copied',
+      copy: 'Copy',
+      quota: '{used} / {max} used',
+      removeConfirm: 'Delete affiliate code {code}? Its invite link stops working immediately; existing rebates are unaffected.',
+      createSuccess: 'Affiliate code created',
+      deleteSuccess: 'Affiliate code deleted',
+      createFailed: 'Failed to create affiliate code',
+      deleteFailed: 'Failed to delete affiliate code',
+      invalidFormat: 'Codes must be 4-32 uppercase letters, digits, underscore or hyphen'
+    },
     tips: {
       title: 'How It Works',
       line1: 'Share your affiliate code or invite link with new users.',

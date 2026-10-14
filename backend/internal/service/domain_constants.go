@@ -54,6 +54,7 @@ const (
 	PlatformMiniMax     = domain.PlatformMiniMax
 	PlatformCline       = domain.PlatformCline
 	PlatformCommandCode = domain.PlatformCommandCode
+	PlatformTypeSafe    = domain.PlatformTypeSafe
 	PlatformComposite   = domain.PlatformComposite
 	// PlatformKiro is retained for unsupported-platform threshold tests and legacy
 	// account rows. Scheduling-threshold evaluation never pauses kiro accounts.
@@ -124,6 +125,7 @@ var AllowedQuotaPlatforms = []string{
 	PlatformMiniMax,
 	PlatformCline,
 	PlatformCommandCode,
+	PlatformTypeSafe,
 }
 
 // AllowedSchedulingThresholdPlatforms 是允许设置账号自动停调阈值的平台列表。

@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
@@ -299,6 +300,32 @@ func (a *Account) IsGemini() bool {
 
 func (a *Account) IsGrok() bool {
 	return a.Platform == PlatformGrok
+}
+
+func (a *Account) IsTypeSafe() bool {
+	return a != nil && a.Platform == PlatformTypeSafe
+}
+
+// GetTypeSafeBaseURL 返回 System One 的基址；末尾 /v1 会被剥掉（路径已自带 /v1）。
+func (a *Account) GetTypeSafeBaseURL() string {
+	if a == nil || !a.IsTypeSafe() || a.Type != AccountTypeAPIKey {
+		return ""
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(a.GetCredential("base_url")), "/")
+	if len(baseURL) >= 3 && strings.EqualFold(baseURL[len(baseURL)-3:], "/v1") {
+		baseURL = strings.TrimRight(baseURL[:len(baseURL)-3], "/")
+	}
+	if baseURL == "" {
+		return typesafe.DefaultBaseURL
+	}
+	return baseURL
+}
+
+func (a *Account) GetTypeSafeAPIKey() string {
+	if a == nil || !a.IsTypeSafe() || a.Type != AccountTypeAPIKey {
+		return ""
+	}
+	return strings.TrimSpace(a.GetCredential("api_key"))
 }
 
 func (a *Account) IsGrokOAuth() bool {
@@ -1085,6 +1112,10 @@ func (a *Account) GetBaseURL() string {
 	}
 	baseURL := a.GetCredential("base_url")
 	if baseURL == "" {
+		// TypeSafe keys must never fall back to the Anthropic host.
+		if a.Platform == PlatformTypeSafe {
+			return typesafe.DefaultBaseURL
+		}
 		return "https://api.anthropic.com"
 	}
 	if a.Platform == PlatformAntigravity {

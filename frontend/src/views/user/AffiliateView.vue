@@ -89,6 +89,71 @@
         <section class="signal-account-section">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
+              <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('affiliate.customCodes.title') }}</h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
+                {{ t('affiliate.customCodes.description', { max: customCodeQuota.max }) }}
+              </p>
+            </div>
+            <span class="badge badge-gray shrink-0">
+              {{ t('affiliate.customCodes.quota', { used: customCodeQuota.used, max: customCodeQuota.max }) }}
+            </span>
+          </div>
+
+          <!-- 默认码：只读，锁死不可改 -->
+          <div class="mt-4 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900">
+            <span class="badge badge-gray shrink-0">{{ t('affiliate.customCodes.defaultBadge') }}</span>
+            <code class="min-w-0 flex-1 break-all text-sm font-semibold text-gray-900 dark:text-white">{{ detail.aff_code }}</code>
+            <button class="btn btn-secondary btn-sm shrink-0" :disabled="copyingId === 'default'" @click="copyAny(detail.aff_code, 'default')">
+              <Icon name="copy" size="sm" />
+            </button>
+          </div>
+
+          <div v-if="customCodes.length === 0" class="mt-3 rounded-xl border border-dashed border-gray-300 p-5 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-dark-400">
+            {{ t('affiliate.customCodes.empty') }}
+          </div>
+          <ul v-else class="mt-3 space-y-2">
+            <li
+              v-for="item in customCodes"
+              :key="item.id"
+              class="flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 dark:border-dark-700"
+            >
+              <span class="badge badge-gray shrink-0">{{ item.created_by_admin ? t('affiliate.customCodes.adminBadge') : t('affiliate.customCodes.customBadge') }}</span>
+              <code class="min-w-0 flex-1 break-all text-sm font-semibold text-gray-900 dark:text-white">{{ item.code }}</code>
+              <button class="btn btn-secondary btn-sm shrink-0" :disabled="copyingId === item.code" @click="copyAny(item.code, item.code)">
+                <Icon name="copy" size="sm" />
+              </button>
+              <button
+                class="btn btn-secondary btn-sm shrink-0 text-red-600 dark:text-red-400"
+                :disabled="deletingId === item.id"
+                @click="removeCode(item)"
+              >
+                <Icon v-if="deletingId === item.id" name="refresh" size="sm" class="animate-spin" />
+                <Icon v-else name="trash" size="sm" />
+                <span class="sr-only">{{ t('affiliate.customCodes.remove') }}</span>
+              </button>
+            </li>
+          </ul>
+
+          <div v-if="customCodeQuota.limit > 0" class="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <input
+              v-model="newCode"
+              type="text"
+              maxlength="32"
+              class="input flex-1"
+              :placeholder="t('affiliate.customCodes.addPlaceholder')"
+              @keyup.enter="addCode"
+            />
+            <button class="btn btn-primary shrink-0" :disabled="adding || !newCode.trim()" @click="addCode">
+              <Icon v-if="adding" name="refresh" size="sm" class="animate-spin" />
+              <Icon v-else name="plus" size="sm" />
+              <span>{{ adding ? t('affiliate.customCodes.adding') : t('affiliate.customCodes.addButton') }}</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="signal-account-section">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
               <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('affiliate.transfer.title') }}</h2>
               <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('affiliate.transfer.description') }}</p>
             </div>
@@ -139,6 +204,14 @@
         </section>
       </template>
     </div>
+    <ConfirmDialog
+      :show="pendingDelete !== null"
+      :title="t('affiliate.customCodes.remove')"
+      :message="pendingDelete ? t('affiliate.customCodes.removeConfirm', { code: pendingDelete.code }) : ''"
+      danger
+      @confirm="confirmRemoveCode"
+      @cancel="pendingDelete = null"
+    />
   </AppLayout>
 </template>
 
@@ -147,8 +220,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import userAPI from '@/api/user'
-import type { UserAffiliateDetail } from '@/types'
+import type { UserAffiliateCode, UserAffiliateDetail } from '@/types'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useClipboard } from '@/composables/useClipboard'
@@ -163,6 +237,14 @@ const { copyToClipboard } = useClipboard()
 const loading = ref(true)
 const transferring = ref(false)
 const detail = ref<UserAffiliateDetail | null>(null)
+const newCode = ref('')
+const adding = ref(false)
+const deletingId = ref<number | null>(null)
+const copyingId = ref<string | null>(null)
+const pendingDelete = ref<UserAffiliateCode | null>(null)
+
+const customCodes = computed<UserAffiliateCode[]>(() => detail.value?.custom_codes ?? [])
+const customCodeQuota = computed(() => detail.value?.custom_code_quota ?? { max: 9, used: 0, limit: 9 })
 
 const inviteLink = computed(() => {
   if (!detail.value) return ''
@@ -205,6 +287,55 @@ async function copyCode(): Promise<void> {
 async function copyInviteLink(): Promise<void> {
   if (!inviteLink.value) return
   await copyToClipboard(inviteLink.value, t('affiliate.linkCopied'))
+}
+
+async function copyAny(code: string, key: string): Promise<void> {
+  copyingId.value = key
+  try {
+    await copyToClipboard(code, t('affiliate.customCodes.copied'))
+  } finally {
+    copyingId.value = null
+  }
+}
+
+async function addCode(): Promise<void> {
+  const code = newCode.value.trim().toUpperCase()
+  if (!code || adding.value) return
+  if (!/^[A-Z0-9_-]{4,32}$/.test(code)) {
+    appStore.showError(t('affiliate.customCodes.invalidFormat'))
+    return
+  }
+  adding.value = true
+  try {
+    await userAPI.createUserAffiliateCode(code)
+    newCode.value = ''
+    appStore.showSuccess(t('affiliate.customCodes.createSuccess'))
+    await loadAffiliateDetail(true)
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('affiliate.customCodes.createFailed')))
+  } finally {
+    adding.value = false
+  }
+}
+
+function removeCode(item: UserAffiliateCode): void {
+  pendingDelete.value = item
+}
+
+async function confirmRemoveCode(): Promise<void> {
+  const item = pendingDelete.value
+  if (!item || deletingId.value !== null) return
+  deletingId.value = item.id
+  try {
+    await userAPI.deleteUserAffiliateCode(item.id)
+    pendingDelete.value = null
+    appStore.showSuccess(t('affiliate.customCodes.deleteSuccess'))
+    await loadAffiliateDetail(true)
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('affiliate.customCodes.deleteFailed')))
+  } finally {
+    deletingId.value = null
+  }
 }
 
 async function transferQuota(): Promise<void> {

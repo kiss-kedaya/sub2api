@@ -447,6 +447,26 @@ func (r *oauthEmailAffiliateRepoStub) GetAffiliateUserOverview(context.Context, 
 	panic("unexpected GetAffiliateUserOverview call")
 }
 
+func (r *oauthEmailAffiliateRepoStub) ListUserAffiliateCodes(context.Context, int64) ([]service.UserAffiliateCode, error) {
+	return nil, nil
+}
+
+func (r *oauthEmailAffiliateRepoStub) CountUserAffiliateCodes(context.Context, int64) (int, error) {
+	return 0, nil
+}
+
+func (r *oauthEmailAffiliateRepoStub) CreateUserAffiliateCode(context.Context, int64, string, bool, bool) (*service.UserAffiliateCode, error) {
+	panic("unexpected CreateUserAffiliateCode call")
+}
+
+func (r *oauthEmailAffiliateRepoStub) DeleteUserAffiliateCode(context.Context, int64, int64) (bool, error) {
+	panic("unexpected DeleteUserAffiliateCode call")
+}
+
+func (r *oauthEmailAffiliateRepoStub) DeleteUserAffiliateCodeByCode(context.Context, int64, string) (bool, error) {
+	panic("unexpected DeleteUserAffiliateCodeByCode call")
+}
+
 func findSetCookieValue(cookies []*http.Cookie, name string) string {
 	for _, cookie := range cookies {
 		if cookie != nil && strings.EqualFold(cookie.Name, name) && cookie.MaxAge >= 0 {
