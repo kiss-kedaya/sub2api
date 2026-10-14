@@ -4,6 +4,7 @@ export default {
     description: 'Your exclusive on-chain deposit address',
     disabled: 'Deposit is currently unavailable',
     chain: 'Network',
+    tokens: 'Supported tokens',
     yourAddress: 'Your exclusive address',
     copy: 'Copy',
     copied: 'Copied',

@@ -18,6 +18,11 @@ type ChainConfig struct {
 	Tokens        []string // contract addresses to watch
 	Confirmations uint64
 	Decimals      map[string]int // token contract -> decimals
+	// MaxRange caps the block span of one eth_getLogs call. Providers differ
+	// wildly (public X Layer caps at 100 blocks, others allow thousands), so
+	// a chain that needs smaller chunks must be able to say so. 0 = use the
+	// worker default.
+	MaxRange uint64
 }
 
 // DepositHandler receives observed transfers (the ledger).
@@ -336,8 +341,15 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 	}
 
 	scanner := NewEVMScanner(pool)
+	// Per-chain cap: public providers enforce very different getLogs spans
+	// (X Layer rejects anything over 100 blocks), so the chunk size must be
+	// configurable per chain instead of one global constant.
+	maxRange := w.maxRange
+	if chain.MaxRange > 0 {
+		maxRange = chain.MaxRange
+	}
 	for from := last + 1; from <= confirmed; {
-		to := from + w.maxRange - 1
+		to := from + maxRange - 1
 		if to > confirmed {
 			to = confirmed
 		}

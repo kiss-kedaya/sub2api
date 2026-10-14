@@ -53,6 +53,7 @@ export interface DepositRecord {
   from_address: string
   to_address: string
   token: string
+  token_symbol?: string
   amount: string
   status: string
   created_at: string

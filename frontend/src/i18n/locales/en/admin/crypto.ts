@@ -29,6 +29,7 @@ export default {
     family: 'Family',
     address: 'Address',
     chain: 'Chain',
+    token: 'Token',
     amount: 'Amount',
     from: 'From',
     disable: 'Disable',

@@ -29,6 +29,7 @@ export default {
     family: '链族',
     address: '地址',
     chain: '链',
+    token: '代币',
     amount: '金额',
     from: '来源',
     disable: '停用',

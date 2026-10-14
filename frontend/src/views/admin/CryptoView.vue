@@ -48,7 +48,7 @@
                 <input
                   :value="config.chains.join(',')"
                   class="input"
-                  placeholder="bsc,polygon,plasma,solana"
+                  placeholder="bsc,polygon,plasma,arbitrum,base,xlayer"
                   @change="(e) => (config!.chains = splitList((e.target as HTMLInputElement).value))"
                 />
                 <p class="crypto-view__hint">{{ t('admin.crypto.chainsHint') }}</p>
@@ -496,6 +496,7 @@
                 <th>{{ t('admin.crypto.chain') }}</th>
                 <th>{{ t('admin.crypto.from') }}</th>
                 <th>{{ t('admin.crypto.address') }}</th>
+                <th>{{ t('admin.crypto.token') }}</th>
                 <th>{{ t('admin.crypto.amount') }}</th>
                 <th>{{ t('common.status') }}</th>
                 <th>TX</th>
@@ -507,6 +508,9 @@
                 <td>{{ row.chain }}</td>
                 <td class="crypto-view__mono" :title="row.from_address">{{ short(row.from_address) }}</td>
                 <td class="crypto-view__mono" :title="row.to_address">{{ short(row.to_address) }}</td>
+                <td>
+                  <span class="crypto-view__badge">{{ row.token_symbol || 'USDT' }}</span>
+                </td>
                 <td>{{ row.amount }}</td>
                 <td>
                   <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
@@ -865,6 +869,9 @@ const explorerBases: Record<string, string> = {
   bsc: 'https://bscscan.com/tx/',
   polygon: 'https://polygonscan.com/tx/',
   plasma: 'https://plasmascan.to/tx/',
+  arbitrum: 'https://arbiscan.io/tx/',
+  base: 'https://basescan.org/tx/',
+  xlayer: 'https://web3.okx.com/explorer/xlayer/tx/',
   solana: 'https://solscan.io/tx/'
 }
 

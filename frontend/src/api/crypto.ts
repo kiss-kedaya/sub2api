@@ -5,7 +5,7 @@ import { apiClient } from '@/api/client'
 export interface DepositChain {
   chain: string
   address: string
-  token: string
+  tokens: string[]
 }
 
 export interface DepositInfo {
@@ -18,6 +18,7 @@ export interface DepositInfo {
 export interface DepositRecord {
   chain: string
   tx_hash: string
+  token: string
   amount: string
   status: string
   created_at: string

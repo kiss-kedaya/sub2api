@@ -18,10 +18,12 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
-// TokenConfig is one watched token on a chain.
+// TokenConfig is one watched token on a chain. Symbol is display-only:
+// crediting and sweeping always key on the contract address.
 type TokenConfig struct {
 	Contract string
 	Decimals int
+	Symbol   string
 }
 
 // PushNotifier delivers operator alerts. Implemented by the notify adapter;
@@ -44,6 +46,12 @@ func chainDisplayName(chain string) string {
 		return "Polygon"
 	case ChainPlasma:
 		return "Plasma"
+	case ChainArbitrum:
+		return "Arbitrum"
+	case ChainBase:
+		return "Base"
+	case ChainXLayer:
+		return "X Layer"
 	case ChainSolana:
 		return "Solana"
 	}
@@ -80,11 +88,57 @@ func toDisplayAmount(raw *big.Int, decimals int) string {
 
 // watchedTokens maps chain -> token contracts with decimals. Kept in code
 // (not settings) because a wrong contract would credit the wrong asset;
-// changing it should require a code review.
-var watchedTokens = map[string]TokenConfig{
-	ChainBSC:     {Contract: "0x55d398326f99059ff775485246999027b3197955", Decimals: 18}, // USDT (BSC-USD)
-	ChainPolygon: {Contract: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f", Decimals: 6},  // USDT
-	ChainPlasma:  {Contract: "", Decimals: 6},                                            // native-stable chain; filled from config when known
+// changing it should require a code review. Every contract below was
+// verified on-chain (symbol + decimals) against the upstream bepusdt
+// constant table on 2026-10-14; all addresses are lowercase to match the
+// scanner's log decoding. Only canonical issuers are listed: Tether's
+// bridged variants and third-party look-alikes are deliberately excluded.
+var watchedTokens = map[string][]TokenConfig{
+	ChainBSC: {
+		{Contract: "0x55d398326f99059ff775485246999027b3197955", Decimals: 18, Symbol: "USDT"}, // BSC-USD (Tether)
+		{Contract: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", Decimals: 18, Symbol: "USDC"}, // USD Coin (Circle)
+	},
+	ChainPolygon: {
+		{Contract: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f", Decimals: 6, Symbol: "USDT"}, // Tether USD (PoS)
+		{Contract: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", Decimals: 6, Symbol: "USDC"}, // USD Coin (native)
+	},
+	ChainPlasma: {
+		{Contract: "0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb", Decimals: 6, Symbol: "USDT"}, // USDT0 on Plasma
+	},
+	ChainArbitrum: {
+		{Contract: "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", Decimals: 6, Symbol: "USDT"}, // Tether USD (Arbitrum One)
+		{Contract: "0xaf88d065e77c8cc2239327c5edb3a432268e5831", Decimals: 6, Symbol: "USDC"}, // USD Coin (native)
+	},
+	ChainBase: {
+		{Contract: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", Decimals: 6, Symbol: "USDC"}, // USD Coin (Base)
+	},
+	ChainXLayer: {
+		{Contract: "0x779ded0c9e1022225f8e0630b35a9b54be713736", Decimals: 6, Symbol: "USDT"}, // USDT0 on X Layer
+		{Contract: "0x74b7f16337b8972027f6196a17a631ac6de26d22", Decimals: 6, Symbol: "USDC"}, // USD Coin (X Layer)
+	},
+}
+
+// tokenDecimals resolves a token contract's decimals for a chain, falling
+// back to the stablecoin default (6) for unknown contracts.
+func tokenDecimals(chain, contract string) int {
+	for _, t := range watchedTokens[chain] {
+		if strings.EqualFold(t.Contract, contract) {
+			return t.Decimals
+		}
+	}
+	return 6
+}
+
+// tokenSymbol resolves a token contract's display symbol for a chain.
+func tokenSymbol(chain, contract string) string {
+	for _, t := range watchedTokens[chain] {
+		if strings.EqualFold(t.Contract, contract) {
+			if t.Symbol != "" {
+				return t.Symbol
+			}
+		}
+	}
+	return "USDT"
 }
 
 // Service is the cryptopay facade: owns config snapshots, the RPC pools,
@@ -174,15 +228,22 @@ func (s *Service) reload(ctx context.Context) {
 		if chain == ChainSolana {
 			continue
 		}
-		token, ok := watchedTokens[chain]
-		if !ok || token.Contract == "" {
+		tokens := watchedTokens[chain]
+		if len(tokens) == 0 {
 			continue
+		}
+		contracts := make([]string, 0, len(tokens))
+		decimals := make(map[string]int, len(tokens))
+		for _, token := range tokens {
+			contracts = append(contracts, token.Contract)
+			decimals[token.Contract] = token.Decimals
 		}
 		chainConfigs = append(chainConfigs, scanner.ChainConfig{
 			Chain:         chain,
-			Tokens:        []string{token.Contract},
+			Tokens:        contracts,
 			Confirmations: uint64(cfg.Confirmations[chain]),
-			Decimals:      map[string]int{token.Contract: token.Decimals},
+			Decimals:      decimals,
+			MaxRange:      uint64(cfg.ScanRange[chain]),
 		})
 	}
 
@@ -196,7 +257,7 @@ func (s *Service) reload(ctx context.Context) {
 		if s.push == nil {
 			return
 		}
-		amount := toDisplayAmount(t.Amount, watchedTokens[t.Chain].Decimals)
+		amount := toDisplayAmount(t.Amount, tokenDecimals(t.Chain, t.Token))
 		if err := s.push.PushToAdmins(ctx, "未匹配到账",
 			fmt.Sprintf("%s 收到 %s（%s），未入账：%s",
 				chainDisplayName(t.Chain), amount, shortAddr(t.To), reason),
@@ -237,10 +298,13 @@ func (s *Service) reload(ctx context.Context) {
 
 	s.signer = sweeper.NewSignerClient(cfg.SignerSocket)
 	// Token decimals per chain: the planner and executor rebuild raw amounts
-	// from NUMERIC columns, and a wrong exponent moves money by 1e12.
+	// from NUMERIC columns, and a wrong exponent moves money by 1e12. The
+	// key is chain|contract because one chain watches several tokens.
 	sweepDecimals := map[string]int{}
-	for chain, token := range watchedTokens {
-		sweepDecimals[chain] = token.Decimals
+	for chain, tokens := range watchedTokens {
+		for _, token := range tokens {
+			sweepDecimals[tokenDecimalsKey(chain, token.Contract)] = token.Decimals
+		}
 	}
 	s.planner = sweeper.NewPlanner(s.db, newBalanceReader(s.db, sweepDecimals), sweeper.Config{
 		GlobalThreshold: cfg.SweepGlobalThreshold,
@@ -248,10 +312,16 @@ func (s *Service) reload(ctx context.Context) {
 		HotWalletEVM:    cfg.HotWalletEVM,
 		HotWalletSolana: cfg.HotWalletSolana,
 	}, s.pools)
+	// The executor keys specs by chain|contract: one address may hold both
+	// USDT and USDC, and each needs its own transfer spec.
 	sweepTokens := map[string]sweeper.TokenSpec{}
-	for chain, token := range watchedTokens {
-		if token.Contract != "" {
-			sweepTokens[chain] = sweeper.TokenSpec{Contract: token.Contract, Decimals: token.Decimals}
+	for chain, tokens := range watchedTokens {
+		for _, token := range tokens {
+			if token.Contract != "" {
+				sweepTokens[tokenDecimalsKey(chain, token.Contract)] = sweeper.TokenSpec{
+					Contract: token.Contract, Decimals: token.Decimals,
+				}
+			}
 		}
 	}
 	s.executor = sweeper.NewExecutor(s.db, s.pools, s.signer, sweeper.Config{
@@ -381,6 +451,12 @@ func nativeSymbol(chain string) string {
 		return "POL"
 	case ChainPlasma:
 		return "XPL"
+	case ChainArbitrum:
+		return "ETH"
+	case ChainBase:
+		return "ETH"
+	case ChainXLayer:
+		return "OKB"
 	case ChainSolana:
 		return "SOL"
 	}
@@ -516,6 +592,7 @@ type DepositRecord struct {
 	FromAddress string `json:"from_address"`
 	ToAddress   string `json:"to_address"`
 	Token       string `json:"token"`
+	TokenSymbol string `json:"token_symbol"`
 	Amount      string `json:"amount"`
 	Status      string `json:"status"`
 	CreatedAt   string `json:"created_at"`
@@ -552,6 +629,7 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &created); err != nil {
 			return nil, err
 		}
+		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
 		out = append(out, r)
 	}
@@ -614,6 +692,7 @@ func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, l
 			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &created); err != nil {
 			return nil, nil, err
 		}
+		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
 		out = append(out, r)
 	}
@@ -630,9 +709,9 @@ type DepositInfo struct {
 
 // DepositChain is one chain's deposit address.
 type DepositChain struct {
-	Chain   string `json:"chain"`
-	Address string `json:"address"`
-	Token   string `json:"token"`
+	Chain   string   `json:"chain"`
+	Address string   `json:"address"`
+	Tokens  []string `json:"tokens"` // supported symbols on this chain, e.g. ["USDT","USDC"]
 }
 
 // DepositInfo resolves (assigning on first use) the user's addresses.
@@ -655,7 +734,16 @@ func (s *Service) DepositInfo(ctx context.Context, userID int64) (*DepositInfo, 
 		if address == "" {
 			continue
 		}
-		info.Chains = append(info.Chains, DepositChain{Chain: chain, Address: address, Token: "USDT"})
+		symbols := make([]string, 0, len(watchedTokens[chain]))
+		for _, token := range watchedTokens[chain] {
+			if token.Symbol != "" {
+				symbols = append(symbols, token.Symbol)
+			}
+		}
+		if len(symbols) == 0 {
+			continue
+		}
+		info.Chains = append(info.Chains, DepositChain{Chain: chain, Address: address, Tokens: symbols})
 	}
 	return info, nil
 }
@@ -664,6 +752,7 @@ func (s *Service) DepositInfo(ctx context.Context, userID int64) (*DepositInfo, 
 type UserDepositRecord struct {
 	Chain     string  `json:"chain"`
 	TxHash    string  `json:"tx_hash"`
+	Token     string  `json:"token"`
 	Amount    string  `json:"amount"`
 	Status    string  `json:"status"`
 	CreatedAt string  `json:"created_at"`
@@ -676,7 +765,7 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT d.chain, d.tx_hash, d.amount::text, d.status, d.created_at
+		SELECT d.chain, d.tx_hash, d.token, d.amount::text, d.status, d.created_at
 		  FROM deposit_transactions d
 		  JOIN deposit_addresses a ON lower(a.address) = lower(d.to_address)
 		 WHERE a.user_id = $1
@@ -690,9 +779,11 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 	for rows.Next() {
 		var r UserDepositRecord
 		var created time.Time
-		if err := rows.Scan(&r.Chain, &r.TxHash, &r.Amount, &r.Status, &created); err != nil {
+		if err := rows.Scan(&r.Chain, &r.TxHash, &r.Token, &r.Amount, &r.Status, &created); err != nil {
 			return nil, err
 		}
+		// The user sees the symbol; the raw contract stays internal.
+		r.Token = tokenSymbol(r.Chain, r.Token)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
 		if r.Status == "credited" {
 			var amount float64
