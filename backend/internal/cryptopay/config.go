@@ -241,6 +241,99 @@ func SaveConfig(ctx context.Context, store SettingStore, cfg CryptoConfig) error
 	return store.SetCryptoSetting(ctx, SettingKeyCryptoConfig, string(data))
 }
 
+// SettingKeySignerPolicy mirrors the signer's own policy key. The signer
+// reloads it before every signature, so keeping the sweep destinations in
+// sync here is what makes an operator-changed receiving address take effect
+// without restarting the signer.
+const SettingKeySignerPolicy = "crypto.signer.policy"
+
+// SyncSignerTargets merges the configured sweep destinations into the
+// signer policy's target list. It tracks which targets were added by this
+// automated sync in "managed_targets", so a later config save can remove
+// stale auto-added addresses without touching targets the operator added
+// manually (for example a cold wallet). Limits, rate and hot index are
+// preserved.
+func SyncSignerTargets(ctx context.Context, store SettingStore, cfg CryptoConfig) (bool, error) {
+	wanted := make([]string, 0, 2)
+	if v := strings.TrimSpace(cfg.HotWalletEVM); v != "" {
+		wanted = append(wanted, v)
+	}
+	if v := strings.TrimSpace(cfg.HotWalletSolana); v != "" {
+		wanted = append(wanted, v)
+	}
+
+	raw, err := store.GetCryptoSetting(ctx, SettingKeySignerPolicy)
+	if err != nil {
+		return false, fmt.Errorf("read signer policy: %w", err)
+	}
+	policy := map[string]any{}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+			return false, fmt.Errorf("parse signer policy: %w", err)
+		}
+	}
+
+	existing := make([]string, 0, 8)
+	if list, ok := policy["targets"].([]any); ok {
+		for _, item := range list {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				existing = append(existing, s)
+			}
+		}
+	}
+	managed := make([]string, 0, 4)
+	if list, ok := policy["managed_targets"].([]any); ok {
+		for _, item := range list {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				managed = append(managed, s)
+			}
+		}
+	}
+
+	// Drop stale addresses that came from an earlier automatic sync.
+	managedSet := make(map[string]struct{}, len(managed))
+	for _, m := range managed {
+		managedSet[strings.ToLower(m)] = struct{}{}
+	}
+	kept := make([]string, 0, len(existing))
+	for _, t := range existing {
+		if _, tracked := managedSet[strings.ToLower(t)]; tracked {
+			continue
+		}
+		kept = append(kept, t)
+	}
+	existing = kept
+
+	// Add the current destinations without duplicates.
+	seen := make(map[string]struct{}, len(existing)+len(wanted))
+	for _, t := range existing {
+		seen[strings.ToLower(t)] = struct{}{}
+	}
+	changed := false
+	for _, t := range wanted {
+		if _, dup := seen[strings.ToLower(t)]; dup {
+			continue
+		}
+		existing = append(existing, t)
+		seen[strings.ToLower(t)] = struct{}{}
+		changed = true
+	}
+	if !changed && len(managed) != len(wanted) {
+		changed = true
+	}
+	policy["targets"] = existing
+	policy["managed_targets"] = wanted
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return false, fmt.Errorf("encode signer policy: %w", err)
+	}
+	if err := store.SetCryptoSetting(ctx, SettingKeySignerPolicy, string(encoded)); err != nil {
+		return false, fmt.Errorf("write signer policy: %w", err)
+	}
+	return changed, nil
+}
+
+
 // CryptoConfigPatch is a partial update. Pointer fields distinguish "not
 // sent" (keep the stored value) from "sent as empty" (clear it), so a client
 // that omits keys can never zero the configuration by accident.

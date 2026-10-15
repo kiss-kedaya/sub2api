@@ -183,6 +183,32 @@
                   {{ t('admin.crypto.hotWalletMissing') }}
                 </p>
               </div>
+              <!-- The sweep destination must be the address the hot seed
+                   derives to; guessing sends swept funds into the void. -->
+              <div class="crypto-view__actions">
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="loadingHotAddress || !signerUnlocked"
+                  :title="signerUnlocked ? '' : t('admin.crypto.hotAddressLocked')"
+                  @click="fillHotWalletAddresses"
+                >
+                  {{ loadingHotAddress ? t('common.loading') : t('admin.crypto.hotAddressFill') }}
+                </button>
+                <span v-if="hotAddressNote" class="crypto-view__hint">{{ hotAddressNote }}</span>
+              </div>
+              <!-- The sweep destination must be the address the hot seed
+                   derives to; guessing sends swept funds into the void. -->
+              <div class="crypto-view__actions">
+                <button
+                  class="btn btn-secondary btn-sm"
+                  :disabled="loadingHotAddress || !signerUnlocked"
+                  :title="signerUnlocked ? '' : t('admin.crypto.hotAddressLocked')"
+                  @click="fillHotWalletAddresses"
+                >
+                  {{ loadingHotAddress ? t('common.loading') : t('admin.crypto.hotAddressFill') }}
+                </button>
+                <span v-if="hotAddressNote" class="crypto-view__hint">{{ hotAddressNote }}</span>
+              </div>
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.hotWalletSolana') }}</label>
                 <input v-model="config.hot_wallet_solana" class="input" placeholder="…" />
@@ -296,6 +322,9 @@
                 >
                   <span class="crypto-view__stat-label">
                     {{ hw.symbol }} · {{ hw.chain }}
+                  </span>
+                  <span class="crypto-view__stat-sub">
+                    {{ t('admin.crypto.hotGasWallet') }} · {{ short(hw.address) }}
                   </span>
                   <span class="crypto-view__stat-value">
                     {{ hw.error ? t('admin.crypto.hotWalletUnreachable') : hw.balance }}
@@ -668,6 +697,7 @@ import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import {
   getCryptoConfig,
+  getHotWalletAddress,
   getHotWalletStatus,
   getPoolStatus,
   getSignerStatus,
@@ -770,6 +800,8 @@ const healthError = ref('')
 const exporting = ref(false)
 
 const signerUnlocked = ref(false)
+const loadingHotAddress = ref(false)
+const hotAddressNote = ref('')
 const loadingSigner = ref(false)
 const unlocking = ref(false)
 const signerPassphrase = ref('')
@@ -1168,6 +1200,25 @@ async function loadSignerStatus() {
   }
 }
 
+// fillHotWalletAddresses asks the signer what the hot seed derives to and
+// writes both addresses into the form. The signer must be unlocked (the
+// addresses come from the seed); a locked signer surfaces the reason.
+async function fillHotWalletAddresses() {
+  loadingHotAddress.value = true
+  hotAddressNote.value = ''
+  try {
+    const addr = await getHotWalletAddress()
+    if (!config.value) return
+    config.value.hot_wallet_evm = addr.evm
+    config.value.hot_wallet_solana = addr.solana
+    hotAddressNote.value = t('admin.crypto.hotAddressFilled', { index: addr.index })
+  } catch (e) {
+    hotAddressNote.value = extractApiErrorMessage(e)
+  } finally {
+    loadingHotAddress.value = false
+  }
+}
+
 async function submitUnlock() {
   if (!signerPassphrase.value) return
   unlocking.value = true
@@ -1413,6 +1464,16 @@ details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
   letter-spacing: 0.02em;
   text-transform: uppercase;
   color: var(--signal-muted, #6b7280);
+}
+.crypto-view__stat-sub {
+  display: block;
+  font-size: 0.6875rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--signal-muted, #6b7280);
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .crypto-view__stat-value {
   font-size: 1.125rem;

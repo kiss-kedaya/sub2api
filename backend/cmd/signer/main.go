@@ -130,6 +130,7 @@ func main() {
 	mux.HandleFunc("/healthz", srv.handleHealth)
 	mux.HandleFunc("/unlock", srv.handleUnlock)
 	mux.HandleFunc("/derive", srv.handleDerive)
+	mux.HandleFunc("/hot-address", srv.handleHotAddress)
 	mux.HandleFunc("/sign/evm", srv.handleSignEVM)
 	mux.HandleFunc("/sign/sol", srv.handleSignSol)
 
@@ -305,11 +306,57 @@ func (s *server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"addresses": out})
 }
 
+// handleHotAddress returns the hot wallet's receive addresses (EVM + Solana)
+// so the operator knows exactly what to put in the sweep destination fields.
+// Addresses are public data; no key material is exposed.
+func (s *server) handleHotAddress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	_, hotDeriver, ok := s.requireUnlocked(w)
+	if !ok {
+		return
+	}
+	_, evmAddr, err := hotDeriver.EVMKey(s.policy.HotIndex)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	_, solAddr, err := hotDeriver.SolanaKey(s.policy.HotIndex)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit.write(auditEntry{Op: "hot_address", Index: s.policy.HotIndex, Result: "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"index":  s.policy.HotIndex,
+		"evm":    evmAddr.Hex(),
+		"solana": solAddr.String(),
+	})
+}
+
+// reloadPolicy re-reads the policy JSON from the database so an operator
+// changing the sweep destination in the console does not require a signer
+// restart. It is intentionally conservative: parse failure keeps the old
+// policy instead of rejecting every signature.
+func (s *server) reloadPolicy() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	p, err := s.store.loadPolicyFromDB(ctx)
+	if err != nil {
+		log.Printf("signer policy reload failed: %v", err)
+		return
+	}
+	s.policy = p
+}
+
 func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	s.reloadPolicy()
 	depositDeriver, hotDeriver, ok := s.requireUnlocked(w)
 	if !ok {
 		return
@@ -379,6 +426,7 @@ func (s *server) handleSignSol(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	s.reloadPolicy()
 	depositDeriver, _, ok := s.requireUnlocked(w)
 	if !ok {
 		return
