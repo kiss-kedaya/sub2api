@@ -56,3 +56,21 @@ func TestDeepSeekPassthrough_DSMLBecomesFunctionCallBeforeCompleted(t *testing.T
 	assert.Equal(t, "bash", gjson.GetBytes(next, "response.output.1.name").String())
 	assert.NotContains(t, string(next), "DSML")
 }
+
+func TestDeepSeekPassthrough_LeavesLiveToolEventsUntouched(t *testing.T) {
+	added := []byte(`{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"call_abc","call_id":"call_abc","name":"bash","arguments":""}}`)
+	var st deepSeekPassthrough
+	_, _, next, drop := st.rewrite(nil, "response.output_item.added", added)
+	require.False(t, drop)
+	assert.Nil(t, next)
+
+	delta := []byte(`{"type":"response.function_call_arguments.delta","output_index":1,"item_id":"call_abc","delta":"{}"}`)
+	_, _, next, drop = st.rewrite(nil, "response.function_call_arguments.delta", delta)
+	require.False(t, drop)
+	assert.Nil(t, next)
+
+	done := []byte(`{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"call_abc","call_id":"call_abc","name":"bash","arguments":"{}"}}`)
+	_, _, next, drop = st.rewrite(nil, "response.output_item.done", done)
+	require.False(t, drop)
+	assert.Nil(t, next)
+}
