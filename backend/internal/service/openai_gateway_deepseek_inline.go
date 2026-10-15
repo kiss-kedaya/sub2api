@@ -24,25 +24,21 @@ type deepSeekPassthrough struct {
 	reasoningIndex int
 	reasoningText  strings.Builder
 	calls          []apicompat.DeepSeekCall
-	callIndex      map[string]int
-	callItemID     map[string]string
-	droppedIndex   map[int]struct{}
 }
 
 func (st *deepSeekPassthrough) rewrite(c *gin.Context, eventType string, data []byte) (before, after []string, next []byte, drop bool) {
+	// Live SSE is forwarded as the upstream sent it. Official sub2api and
+	// new-api do not rewrite call ids or drop events on the wire. Changing
+	// item.id on output_item.added while argument deltas still carry the
+	// original item_id makes the client drop the rest of the turn.
+	// Duplicate call ids are removed on the request, before this stream starts.
 	st.note(data)
-	if st.droppedCallEvent(data) || st.noteCallEvent(eventType, data) {
-		return nil, nil, nil, true
-	}
-	separated := separateDeepSeekCallItemID(data)
-	changedID := !bytes.Equal(separated, data)
-	data = separated
 	switch eventType {
 	case "response.output_text.delta":
 		delta := gjson.GetBytes(data, "delta").String()
 		piece := st.filter.Push(delta)
 		before, after = st.events(c, piece)
-		if piece.Text == delta && len(before) == 0 && len(after) == 0 && !changedID {
+		if piece.Text == delta && len(before) == 0 && len(after) == 0 {
 			return nil, nil, nil, false
 		}
 		if piece.Text == "" {
@@ -58,7 +54,7 @@ func (st *deepSeekPassthrough) rewrite(c *gin.Context, eventType string, data []
 		updated, calls, changed := rewriteDeepSeekTextField(data, "text")
 		_, toolLines := st.events(c, apicompat.DeepSeekPiece{Calls: calls})
 		before = append(before, toolLines...)
-		if !changed && !changedID {
+		if !changed {
 			return before, after, nil, false
 		}
 		return before, after, updated, false
@@ -67,25 +63,17 @@ func (st *deepSeekPassthrough) rewrite(c *gin.Context, eventType string, data []
 		updated, calls, changed := rewriteDeepSeekTextField(data, "part.text")
 		_, toolLines := st.events(c, apicompat.DeepSeekPiece{Calls: calls})
 		before = append(before, toolLines...)
-		if !changed && !changedID {
+		if !changed {
 			return before, after, nil, false
 		}
 		return before, after, updated, false
-	case "response.output_item.added":
-		if !changedID {
-			return nil, nil, nil, false
-		}
-		return nil, nil, data, false
 	case "response.output_item.done":
 		before = st.flush(c)
 		updated, calls, changed := rewriteDeepSeekContentTexts(data, "item.content")
 		_, toolLines := st.events(c, apicompat.DeepSeekPiece{Calls: calls})
 		before = append(before, toolLines...)
-		if !changed && !changedID {
-			return before, after, nil, false
-		}
 		if !changed {
-			updated = data
+			return before, after, nil, false
 		}
 		return before, after, updated, false
 	case "response.completed", "response.done":
@@ -94,27 +82,22 @@ func (st *deepSeekPassthrough) rewrite(c *gin.Context, eventType string, data []
 		_, toolLines := st.events(c, apicompat.DeepSeekPiece{Calls: calls})
 		before = append(before, toolLines...)
 		updated = st.appendMissingCalls(c, updated, "response.output")
-		updated = sanitizeResponsesCallIDs(updated, "response.output")
-		if bytes.Equal(updated, data) && !changed && !changedID && len(before) == 0 && len(after) == 0 {
+		if bytes.Equal(updated, data) && !changed && len(before) == 0 && len(after) == 0 {
 			return nil, nil, nil, false
 		}
 		return before, after, updated, false
 	default:
-		if !changedID {
-			return nil, nil, nil, false
-		}
-		return nil, nil, data, false
+		return nil, nil, nil, false
 	}
 }
-
 func rewriteDeepSeekResponseBody(c *gin.Context, body []byte) []byte {
 	if len(body) == 0 {
 		return body
 	}
-	if gjson.GetBytes(body, "output").IsArray() {
-		body = sanitizeResponsesCallIDs(body, "output")
-	}
 	if !bytes.Contains(body, []byte("DSML")) && !bytes.Contains(body, []byte("<think")) {
+		if gjson.GetBytes(body, "output").IsArray() {
+			return sanitizeResponsesCallIDs(body, "output")
+		}
 		return body
 	}
 	if !gjson.GetBytes(body, "output").IsArray() {
@@ -430,75 +413,6 @@ func deepSeekRand() string {
 	buf := make([]byte, 8)
 	_, _ = rand.Read(buf)
 	return hex.EncodeToString(buf)
-}
-
-func (st *deepSeekPassthrough) noteCallEvent(eventType string, data []byte) bool {
-	if eventType != "response.output_item.added" && eventType != "response.output_item.done" {
-		return false
-	}
-	callID := strings.TrimSpace(gjson.GetBytes(data, "item.call_id").String())
-	if callID == "" {
-		return false
-	}
-	idxResult := gjson.GetBytes(data, "output_index")
-	idx := -1
-	if idxResult.Exists() {
-		idx = int(idxResult.Int())
-	}
-	itemID := strings.TrimSpace(gjson.GetBytes(data, "item.id").String())
-	if st.callIndex == nil {
-		st.callIndex = map[string]int{}
-		st.callItemID = map[string]string{}
-	}
-	prevIdx, seen := st.callIndex[callID]
-	if !seen {
-		st.callIndex[callID] = idx
-		st.callItemID[callID] = itemID
-		return false
-	}
-	if idx >= 0 && prevIdx == idx {
-		return false
-	}
-	if itemID != "" && st.callItemID[callID] == itemID {
-		return false
-	}
-	if st.droppedIndex == nil {
-		st.droppedIndex = map[int]struct{}{}
-	}
-	if idx >= 0 {
-		st.droppedIndex[idx] = struct{}{}
-	}
-	return true
-}
-
-func (st *deepSeekPassthrough) droppedCallEvent(data []byte) bool {
-	if len(st.droppedIndex) == 0 {
-		return false
-	}
-	idx := gjson.GetBytes(data, "output_index")
-	if !idx.Exists() {
-		return false
-	}
-	_, ok := st.droppedIndex[int(idx.Int())]
-	return ok
-}
-
-func separateDeepSeekCallItemID(data []byte) []byte {
-	itemID := gjson.GetBytes(data, "item.id").String()
-	callID := gjson.GetBytes(data, "item.call_id").String()
-	if callID != "" && itemID == callID {
-		if next, err := sjson.SetBytes(data, "item.id", "fc_"+strings.TrimPrefix(callID, "call_")); err == nil {
-			data = next
-		}
-	}
-	itemID = gjson.GetBytes(data, "item_id").String()
-	callID = gjson.GetBytes(data, "call_id").String()
-	if callID != "" && itemID == callID {
-		if next, err := sjson.SetBytes(data, "item_id", "fc_"+strings.TrimPrefix(callID, "call_")); err == nil {
-			data = next
-		}
-	}
-	return data
 }
 
 func sanitizeResponsesCallIDs(data []byte, path string) []byte {
