@@ -34,7 +34,7 @@
                   <label class="crypto-view__label">{{ t('admin.crypto.enabled') }}</label>
                   <p class="crypto-view__hint">{{ t('admin.crypto.enabledHint') }}</p>
                 </div>
-                <Toggle v-model="config.enabled" />
+                <Toggle :model-value="config.enabled" @update:model-value="confirmChannelToggle" />
               </div>
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.chains') }}</label>
@@ -223,7 +223,7 @@
                   <label class="crypto-view__label">{{ t('admin.crypto.sweepAuto') }}</label>
                   <p class="crypto-view__hint">{{ t('admin.crypto.sweepAutoHint') }}</p>
                 </div>
-                <Toggle v-model="config.sweep_auto" />
+                <Toggle :model-value="config.sweep_auto" @update:model-value="confirmSweepAutoToggle" />
               </div>
             </details>
 
@@ -288,7 +288,7 @@
             </details>
 
             <div class="crypto-view__actions">
-              <button class="btn btn-primary" :disabled="savingConfig" @click="saveConfig">
+              <button class="btn btn-primary" :disabled="savingConfig" @click="requestSaveConfig">
                 {{ savingConfig ? t('common.saving') : t('common.save') }}
               </button>
               <span v-if="configSaved" class="crypto-view__saved">{{ t('common.saved') }}</span>
@@ -683,6 +683,56 @@
       @confirm="confirmSweep"
       @cancel="sweepConfirmOpen = false"
     />
+
+    <ConfirmDialog
+      :show="channelConfirmOpen"
+      :title="t('admin.crypto.channelConfirmTitle')"
+      :message="channelConfirmMessage"
+      :confirm-text="t('admin.crypto.channelConfirmAction')"
+      :cancel-text="t('common.cancel')"
+      :danger="!config?.enabled"
+      @confirm="commitChannelToggle"
+      @cancel="channelConfirmOpen = false"
+    />
+
+    <ConfirmDialog
+      :show="sweepAutoConfirmOpen"
+      :title="t('admin.crypto.sweepAutoConfirmTitle')"
+      :message="sweepAutoConfirmMessage"
+      :confirm-text="t('admin.crypto.sweepAutoConfirmAction')"
+      :cancel-text="t('common.cancel')"
+      danger
+      @confirm="commitSweepAutoToggle"
+      @cancel="sweepAutoConfirmOpen = false"
+    />
+
+    <ConfirmDialog
+      :show="addressConfirmOpen"
+      :title="t('admin.crypto.addressConfirmTitle')"
+      :message="addressConfirmMessage"
+      :confirm-text="t('admin.crypto.addressConfirmAction')"
+      :cancel-text="t('common.cancel')"
+      danger
+      @confirm="commitToggleAddress"
+      @cancel="addressConfirmOpen = false"
+    />
+
+    <!-- Saving config can move sweep destinations / automatic sweeps. Name
+         the exact fields that changed before writing them. -->
+    <ConfirmDialog
+      :show="saveConfirmOpen"
+      :title="t('admin.crypto.saveConfirmTitle')"
+      :message="saveConfirmMessage"
+      :confirm-text="t('admin.crypto.saveConfirmAction')"
+      :cancel-text="t('common.cancel')"
+      danger
+      @confirm="saveConfig"
+      @cancel="saveConfirmOpen = false"
+    >
+      <ul class="crypto-view__risk-list">
+        <li v-for="change in riskyChanges" :key="change">{{ change }}</li>
+      </ul>
+    </ConfirmDialog>
   </AppLayout>
 </template>
 
@@ -739,6 +789,9 @@ const tabs = computed(() => [
 const activeTab = ref('addresses')
 
 const config = ref<CryptoConfig | null>(null)
+// Snapshot of the last loaded/saved config: the save confirmation diffs
+// against it to name exactly which dangerous fields are changing.
+const loadedSnapshot = ref<CryptoConfig | null>(null)
 const loadingConfig = ref(false)
 const savingConfig = ref(false)
 const configSaved = ref(false)
@@ -780,6 +833,12 @@ const sweepRecords = ref<SweepRecord[]>([])
 const sweepSummary = ref<SweepSummary | null>(null)
 const sweeping = ref(false)
 const sweepConfirmOpen = ref(false)
+const channelConfirmOpen = ref(false)
+const sweepAutoConfirmOpen = ref(false)
+const addressConfirmOpen = ref(false)
+const pendingChannelEnabled = ref(false)
+const pendingSweepAuto = ref(false)
+const pendingAddress = ref<DepositAddress | null>(null)
 
 const deposits = ref<DepositRecord[]>([])
 const depositSummary = ref<DepositSummary>({ total: 0, credited: 0, pending: 0, ignored: 0, amount: 0 })
@@ -821,6 +880,32 @@ const sweepConfirmMessage = computed(() =>
     total: (sweepPlan.value?.TotalUSD ?? 0).toFixed(2),
     hot: config.value?.hot_wallet_evm?.trim() || t('admin.crypto.hotWalletNone')
   })
+)
+
+const channelConfirmMessage = computed(() =>
+  t('admin.crypto.channelConfirmMessage', {
+    state: pendingChannelEnabled.value ? t('admin.crypto.enabled') : t('admin.crypto.disabled')
+  })
+)
+
+const sweepAutoConfirmMessage = computed(() =>
+  t('admin.crypto.sweepAutoConfirmMessage', {
+    state: pendingSweepAuto.value ? t('common.enabled') : t('common.disabled')
+  })
+)
+
+const addressConfirmMessage = computed(() => {
+  const row = pendingAddress.value
+  if (!row) return ''
+  const action = row.status === 'active' ? t('admin.crypto.disable') : t('admin.crypto.enable')
+  return t('admin.crypto.addressConfirmMessage', {
+    action,
+    address: row.address
+  })
+})
+
+const saveConfirmMessage = computed(() =>
+  t('admin.crypto.saveConfirmMessage', { count: riskyChanges.value.length })
 )
 
 function splitList(value: string): string[] {
@@ -996,22 +1081,76 @@ async function loadConfig() {
       credit_max_amount: loaded.credit_max_amount ?? 10000,
       sweep_auto: loaded.sweep_auto ?? false
     }
+    loadedSnapshot.value = JSON.parse(JSON.stringify(config.value))
     syncRPCRows()
   } finally {
     loadingConfig.value = false
   }
 }
 
+// Fields whose change moves real money or changes who receives it. Editing
+// any of these must pass a confirmation that names the exact field.
+const RISKY_FIELDS: Array<{ key: keyof CryptoConfig; label: string }> = [
+  { key: 'enabled', label: 'admin.crypto.enabled' },
+  { key: 'hot_wallet_evm', label: 'admin.crypto.hotWalletEvm' },
+  { key: 'hot_wallet_solana', label: 'admin.crypto.hotWalletSolana' },
+  { key: 'hot_index', label: 'admin.crypto.hotIndex' },
+  { key: 'sweep_auto', label: 'admin.crypto.sweepAuto' },
+  { key: 'sweep_global_threshold', label: 'admin.crypto.globalThreshold' },
+  { key: 'credit_min_amount', label: 'admin.crypto.creditMin' },
+  { key: 'credit_max_amount', label: 'admin.crypto.creditMax' },
+  { key: 'credit_multiplier', label: 'admin.crypto.creditMultiplier' }
+]
+
+const saveConfirmOpen = ref(false)
+
+// riskyChanges lists the dangerous edits between the loaded snapshot and the
+// current form, as human-readable "label: before → after" lines.
+const riskyChanges = computed<string[]>(() => {
+  const before = loadedSnapshot.value
+  const after = config.value
+  if (!before || !after) return []
+  const out: string[] = []
+  for (const field of RISKY_FIELDS) {
+    const a = before[field.key]
+    const b = after[field.key]
+    if (JSON.stringify(a) === JSON.stringify(b)) continue
+    out.push(`${t(field.label)}: ${formatChange(a)} → ${formatChange(b)}`)
+  }
+  return out
+})
+
+function formatChange(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—'
+  if (typeof value === 'boolean') return value ? t('common.enabled') : t('common.disabled')
+  return String(value)
+}
+
+// saveConfig is the raw write; it is only reachable after the confirmation
+// when risky fields changed.
 async function saveConfig() {
   if (!config.value) return
+  saveConfirmOpen.value = false
   savingConfig.value = true
   configSaved.value = false
   try {
     await updateCryptoConfig(config.value)
+    loadedSnapshot.value = JSON.parse(JSON.stringify(config.value))
     configSaved.value = true
   } finally {
     savingConfig.value = false
   }
+}
+
+// requestSaveConfig gates the write behind a confirmation whenever the diff
+// touches money-moving fields.
+function requestSaveConfig() {
+  if (!config.value) return
+  if (riskyChanges.value.length === 0) {
+    void saveConfig()
+    return
+  }
+  saveConfirmOpen.value = true
 }
 
 // fmtAmount keeps money columns readable and never renders NaN.
@@ -1082,9 +1221,40 @@ async function loadAddresses() {
 }
 
 async function toggleAddress(row: DepositAddress) {
+  pendingAddress.value = row
+  addressConfirmOpen.value = true
+}
+
+async function commitToggleAddress() {
+  const row = pendingAddress.value
+  addressConfirmOpen.value = false
+  pendingAddress.value = null
+  if (!row) return
   const next = row.status === 'active' ? 'disabled' : 'active'
   await setAddressStatus(row.id, next)
   await loadAddresses()
+}
+
+function confirmChannelToggle(value: boolean) {
+  pendingChannelEnabled.value = value
+  channelConfirmOpen.value = true
+}
+
+function commitChannelToggle() {
+  if (!config.value) return
+  config.value.enabled = pendingChannelEnabled.value
+  channelConfirmOpen.value = false
+}
+
+function confirmSweepAutoToggle(value: boolean) {
+  pendingSweepAuto.value = value
+  sweepAutoConfirmOpen.value = true
+}
+
+function commitSweepAutoToggle() {
+  if (!config.value) return
+  config.value.sweep_auto = pendingSweepAuto.value
+  sweepAutoConfirmOpen.value = false
 }
 
 async function loadSweepPlan() {
@@ -1519,6 +1689,17 @@ details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
   margin-top: 0.25rem;
   font-size: 0.75rem;
   color: #d97706;
+}
+/* Diff list inside the save confirmation: each line names one risky field. */
+.crypto-view__risk-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: #d97706;
+  list-style: disc;
 }
 .input--warn {
   border-color: #d97706;
