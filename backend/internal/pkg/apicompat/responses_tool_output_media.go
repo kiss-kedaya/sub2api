@@ -176,76 +176,101 @@ func isResponsesToolOutputItem(item map[string]any) bool {
 // (DeepSeek) then ask the client to resend the turn, which is what made a
 // single tool invocation run twice.
 //
-// Entries whose id is not duplicated are returned untouched, so a genuinely
-// missing output is not rewritten here.
+// The walk is the whole input tree, not only the top-level array. Codex stores
+// a second copy inside message content, and it also sets item id equal to
+// call_id. DeepSeek counts both, so a single item whose id and call_id are the
+// same string is still "Duplicate call_id". Entries whose id is not duplicated
+// are returned untouched, so a genuinely missing output is not rewritten here.
 func DedupeResponsesCallIDs(input any) (any, bool) {
 	items, ok := input.([]any)
-	if !ok || len(items) < 2 {
+	if !ok || len(items) == 0 {
 		return input, false
 	}
+	return dedupeResponseItemSlice(items, &callIDSeen{
+		calls:   map[string]int{},
+		outputs: map[string]int{},
+	})
+}
 
-	// Group the indices of each id on both sides. Most turns have no duplicate
-	// at all, so this map pair stays small in the common case.
-	calls := make(map[string][]int, 4)
-	outputs := make(map[string][]int, 4)
-	for i, raw := range items {
+type callIDSeen struct {
+	calls   map[string]int
+	outputs map[string]int
+}
+
+func (s *callIDSeen) keep(id, slot string) bool {
+	if slot == "output" {
+		s.outputs[id]++
+		return s.outputs[id] == 1
+	}
+	s.calls[id]++
+	return s.calls[id] == 1
+}
+
+func dedupeResponseItemSlice(items []any, seen *callIDSeen) ([]any, bool) {
+	changed := false
+	out := make([]any, 0, len(items))
+	for _, raw := range items {
 		item, ok := raw.(map[string]any)
 		if !ok {
+			if child, ok := raw.([]any); ok {
+				next, did := dedupeResponseItemSlice(child, seen)
+				if did {
+					changed = true
+					raw = next
+				}
+			}
+			out = append(out, raw)
 			continue
 		}
 		callID, slot, tracked := responsesCallIDSlot(item)
-		if !tracked {
-			continue
-		}
-		if slot == "output" {
-			outputs[callID] = append(outputs[callID], i)
-			continue
-		}
-		calls[callID] = append(calls[callID], i)
-	}
-
-	dropped := make(map[int]struct{})
-	for id, callIdx := range calls {
-		outIdx := outputs[id]
-		if len(callIdx) <= 1 && len(outIdx) <= 1 {
-			continue
-		}
-		// Keep the first pair; drop the extra copies on both sides together.
-		for _, i := range callIdx {
-			if i == callIdx[0] {
+		if tracked {
+			if !seen.keep(callID, slot) {
+				changed = true
 				continue
 			}
-			dropped[i] = struct{}{}
-		}
-		if len(outIdx) > 1 {
-			for _, i := range outIdx[1:] {
-				dropped[i] = struct{}{}
+			if separateCollidingCallItemID(item) {
+				changed = true
 			}
 		}
+		if dedupeNestedCallContent(item, seen) {
+			changed = true
+		}
+		out = append(out, item)
 	}
-	for id, outIdx := range outputs {
-		if _, hasCall := calls[id]; hasCall {
-			continue
-		}
-		if len(outIdx) <= 1 {
-			continue
-		}
-		for _, i := range outIdx[1:] {
-			dropped[i] = struct{}{}
-		}
-	}
-	if len(dropped) == 0 {
-		return input, false
-	}
-
-	out := make([]any, 0, len(items)-len(dropped))
-	for i, raw := range items {
-		if _, drop := dropped[i]; drop {
-			continue
-		}
-		out = append(out, raw)
+	if !changed {
+		return items, false
 	}
 	return out, true
+}
+
+func dedupeNestedCallContent(item map[string]any, seen *callIDSeen) bool {
+	content, ok := item["content"].([]any)
+	if !ok || len(content) == 0 {
+		return false
+	}
+	next, changed := dedupeResponseItemSlice(content, seen)
+	if !changed {
+		return false
+	}
+	item["content"] = next
+	return true
+}
+
+// separateCollidingCallItemID makes id and call_id different strings.
+// DeepSeek rejects one item when both fields carry the same call_ id.
+func separateCollidingCallItemID(item map[string]any) bool {
+	callID := strings.TrimSpace(stringValue(item["call_id"]))
+	itemID := strings.TrimSpace(stringValue(item["id"]))
+	if callID == "" && strings.HasPrefix(itemID, "call_") {
+		item["call_id"] = itemID
+		item["id"] = "fc_" + strings.TrimPrefix(itemID, "call_")
+		return true
+	}
+	if callID != "" && itemID == callID {
+		item["id"] = "fc_" + strings.TrimPrefix(callID, "call_")
+		return true
+	}
+	return false
 }
 
 // DedupeChatToolCallIDs drops repeated chat tool ids as complete pairs.
@@ -368,12 +393,19 @@ func chatMessageHasVisibleContent(msg map[string]any) bool {
 }
 
 func responsesCallIDSlot(item map[string]any) (callID, slot string, ok bool) {
-	callID = strings.TrimSpace(stringValue(item["call_id"]))
-	if callID == "" {
+	itemType := strings.TrimSpace(stringValue(item["type"]))
+	if itemType == "" || itemType == "message" || itemType == "reasoning" {
 		return "", "", false
 	}
-	itemType := strings.TrimSpace(stringValue(item["type"]))
-	if itemType == "" || itemType == "message" {
+	callID = strings.TrimSpace(stringValue(item["call_id"]))
+	if callID == "" {
+		// Codex sometimes stores the call id in id and omits call_id.
+		itemID := strings.TrimSpace(stringValue(item["id"]))
+		if strings.HasPrefix(itemID, "call_") {
+			callID = itemID
+		}
+	}
+	if callID == "" {
 		return "", "", false
 	}
 	if strings.Contains(itemType, "output") {

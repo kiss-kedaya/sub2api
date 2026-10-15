@@ -229,18 +229,22 @@ func deepSeekCallIDScope(platform, model string) bool {
 	if strings.EqualFold(strings.TrimSpace(platform), PlatformDeepseek) {
 		return true
 	}
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek")
+	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "deepseek")
 }
 
-// deepSeekDuplicateCallIDRewrite reports that this Responses body is going to
-// DeepSeek, either because the account/group platform is DeepSeek or the model
-// name starts with deepseek. Those upstreams reject a repeated call_id.
+// deepSeekDuplicateCallIDRewrite reports that this body is going to DeepSeek.
+// Platform, mapped model, or a deepseek base URL all count. A client alias that
+// does not start with "deepseek" still has to be cleaned before that upstream.
 func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
-	platform := ""
-	if account != nil {
-		platform = account.Platform
+	model := gjson.GetBytes(body, "model").String()
+	if account == nil {
+		return deepSeekCallIDScope("", model)
 	}
-	return deepSeekCallIDScope(platform, gjson.GetBytes(body, "model").String())
+	if deepSeekCallIDScope(account.Platform, model) || deepSeekCallIDScope("", account.GetMappedModel(model)) {
+		return true
+	}
+	base := strings.ToLower(account.GetOpenAIBaseURL() + " " + account.GetCNProtocolBaseURL(APIProtocolResponses) + " " + account.GetCNProtocolBaseURL(APIProtocolChatCompletions))
+	return strings.Contains(base, "deepseek")
 }
 
 func trimOpenAIEncryptedReasoningItems(reqBody map[string]any) bool {
