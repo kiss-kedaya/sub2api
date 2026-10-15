@@ -122,3 +122,49 @@ func TestDedupeChatToolCallIDs_DropsCallAndOutputAsPair(t *testing.T) {
 	require.Equal(t, "a1", toolA["content"])
 	require.Equal(t, "call_b", toolB["tool_call_id"])
 }
+
+func TestDedupeResponsesCallIDs_CollidingItemIDAndNestedCopy(t *testing.T) {
+	t.Parallel()
+	callID := "call_00_gEGoDdh7olwRXAaeGk7k6101"
+	var input any
+	require.NoError(t, json.Unmarshal([]byte(`[
+		{"type":"function_call","id":"`+callID+`","call_id":"`+callID+`","name":"shell","arguments":"{\"cmd\":\"pwd\"}"},
+		{"type":"function_call_output","call_id":"`+callID+`","output":"ok"},
+		{"type":"message","role":"assistant","content":[
+			{"type":"output_text","text":"ran"},
+			{"type":"function_call","id":"`+callID+`","call_id":"`+callID+`","name":"shell","arguments":"{\"cmd\":\"pwd\"}"}
+		]}
+	]`), &input))
+
+	out, changed := DedupeResponsesCallIDs(input)
+	require.True(t, changed)
+	items, ok := out.([]any)
+	require.True(t, ok)
+	require.Len(t, items, 3)
+	require.Equal(t, "fc_00_gEGoDdh7olwRXAaeGk7k6101", responseItemField(t, items, 0, "id"))
+	require.Equal(t, callID, responseItemField(t, items, 0, "call_id"))
+	require.Equal(t, callID, responseItemField(t, items, 1, "call_id"))
+	msg := items[2].(map[string]any)
+	content := msg["content"].([]any)
+	require.Len(t, content, 1)
+	require.Equal(t, "output_text", content[0].(map[string]any)["type"])
+
+	again, changedAgain := DedupeResponsesCallIDs(out)
+	require.False(t, changedAgain)
+	require.Equal(t, out, again)
+}
+
+func TestDedupeResponsesCallIDs_IDOnlyCallStillDedupes(t *testing.T) {
+	t.Parallel()
+	var input any
+	require.NoError(t, json.Unmarshal([]byte(`[
+		{"type":"function_call","id":"call_00_only","name":"shell","arguments":"{}"},
+		{"type":"function_call","call_id":"call_00_only","name":"shell","arguments":"{}"}
+	]`), &input))
+	out, changed := DedupeResponsesCallIDs(input)
+	require.True(t, changed)
+	items := out.([]any)
+	require.Len(t, items, 1)
+	require.Equal(t, "call_00_only", responseItemField(t, items, 0, "call_id"))
+	require.NotEqual(t, "call_00_only", responseItemField(t, items, 0, "id"))
+}
