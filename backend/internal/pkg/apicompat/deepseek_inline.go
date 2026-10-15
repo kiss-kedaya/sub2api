@@ -401,7 +401,7 @@ func parseDSMLBlock(block string) []DeepSeekCall {
 				cur.Arguments = dsmlArgs(params)
 				calls = append(calls, *cur)
 			}
-			cur = &DeepSeekCall{CallID: newDeepSeekCallID(), Name: attrs["name"]}
+			cur = &DeepSeekCall{CallID: deepSeekAttrCallID(attrs), Name: attrs["name"]}
 			params = nil
 		case !closing && name == "parameter" && cur != nil:
 			body, consumed := dsmlParameterBody(rest[end:])
@@ -482,6 +482,15 @@ func dsmlArgs(params []dsmlParam) string {
 	return string(raw)
 }
 
+func deepSeekAttrCallID(attrs map[string]string) string {
+	for _, key := range []string{"call_id", "id", "tool_call_id"} {
+		if id := strings.TrimSpace(attrs[key]); id != "" {
+			return id
+		}
+	}
+	return newDeepSeekCallID()
+}
+
 func newDeepSeekCallID() string {
 	buf := make([]byte, 8)
 	_, _ = rand.Read(buf)
@@ -544,6 +553,10 @@ func (state *ChatCompletionsToResponsesStreamState) deepSeekCallEvents(calls []D
 		if strings.TrimSpace(arguments) == "" {
 			arguments = "{}"
 		}
+		call.Arguments = arguments
+		if state.alreadyHasDeepSeekCall(call) {
+			continue
+		}
 		stored := &ChatToolCall{ID: call.CallID, Type: "function"}
 		if stored.ID == "" {
 			stored.ID = generateItemID()
@@ -556,4 +569,23 @@ func (state *ChatCompletionsToResponsesStreamState) deepSeekCallEvents(calls []D
 		events = append(events, announceChatToolItem(state, idx, stored, true)...)
 	}
 	return events
+}
+
+func (state *ChatCompletionsToResponsesStreamState) alreadyHasDeepSeekCall(call DeepSeekCall) bool {
+	if state == nil {
+		return false
+	}
+	for _, tc := range state.ToolCalls {
+		if tc == nil {
+			continue
+		}
+		if call.CallID != "" && tc.ID == call.CallID {
+			return true
+		}
+		args := strings.TrimSpace(call.Arguments)
+		if call.Name != "" && args != "" && args != "{}" && tc.Function.Name == call.Name && tc.Function.Arguments == call.Arguments {
+			return true
+		}
+	}
+	return false
 }
