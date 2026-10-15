@@ -441,16 +441,35 @@ func (s *Service) SignerStatus(ctx context.Context) (*sweeper.SignerStatus, erro
 	return signer.Status(ctx)
 }
 
+// HotAddresses returns the hot wallet's own receive addresses from the
+// signer. The operator cannot guess these (they derive from the hot seed),
+// so the console uses this to fill the sweep destination fields exactly.
+func (s *Service) HotAddresses(ctx context.Context) (*sweeper.HotAddress, error) {
+	s.mu.RLock()
+	signer := s.signer
+	s.mu.RUnlock()
+	if signer == nil {
+		return nil, fmt.Errorf("cryptopay is disabled")
+	}
+	return signer.HotAddresses(ctx)
+}
+
 // HotWalletStatus is the gas readiness of the sweep hot wallet per chain.
 // A hot wallet without native coin cannot pay for sweeps, and the failure
 // would otherwise only show up as failed sweep records.
 type HotWalletStatus struct {
+	// Address is the GAS PAYER: the signer's hot-seed address. This is the
+	// wallet the operator must fund with native coin, which is not
+	// necessarily the sweep receiving address.
 	Address string `json:"address"`
-	Chain   string `json:"chain"`
-	Balance string `json:"balance"` // native coin, decimal
-	Symbol  string `json:"symbol"`
-	Enough  bool   `json:"enough"`
-	Error   string `json:"error,omitempty"`
+	// Receiving is the configured sweep destination (where swept USDT
+	// lands). It needs no gas.
+	Receiving string `json:"receiving,omitempty"`
+	Chain     string `json:"chain"`
+	Balance   string `json:"balance"` // native coin, decimal
+	Symbol    string `json:"symbol"`
+	Enough    bool   `json:"enough"`
+	Error     string `json:"error,omitempty"`
 }
 
 // nativeSymbol is the gas coin of each supported chain.
@@ -479,9 +498,18 @@ func nativeSymbol(chain string) string {
 // have to fund gas first, which is what the operator wants to know.
 func (s *Service) HotWalletStatuses(ctx context.Context) ([]HotWalletStatus, error) {
 	cfg := s.Config()
-	hot := strings.TrimSpace(cfg.HotWalletEVM)
-	if hot == "" {
-		return nil, fmt.Errorf("hot_wallet_evm is not configured")
+	receiving := strings.TrimSpace(cfg.HotWalletEVM)
+	// Gas is paid by the signer's hot seed, not by the receiving address.
+	// Ask the signer for it; fall back to the configured address only when
+	// the signer is locked or unreachable (the page still needs to render).
+	gasWallet := receiving
+	if s.signer != nil {
+		if addr, err := s.signer.HotAddresses(ctx); err == nil && strings.TrimSpace(addr.EVM) != "" {
+			gasWallet = addr.EVM
+		}
+	}
+	if gasWallet == "" {
+		return nil, fmt.Errorf("hot wallet is not configured")
 	}
 	s.mu.RLock()
 	pools := s.pools
@@ -492,13 +520,16 @@ func (s *Service) HotWalletStatuses(ctx context.Context) ([]HotWalletStatus, err
 			continue
 		}
 		pool := pools[chain]
-		st := HotWalletStatus{Address: hot, Chain: chain, Symbol: nativeSymbol(chain)}
+		st := HotWalletStatus{
+			Address: gasWallet, Receiving: receiving,
+			Chain: chain, Symbol: nativeSymbol(chain),
+		}
 		if pool == nil {
 			st.Error = "no rpc endpoint configured"
 			out = append(out, st)
 			continue
 		}
-		raw, err := pool.Balance(ctx, hot)
+		raw, err := pool.Balance(ctx, gasWallet)
 		if err != nil {
 			st.Error = err.Error()
 			out = append(out, st)

@@ -61,6 +61,9 @@ export default {
     statSwept: '累计归集 (USDT)',
     statUnswept: '待归集 (USDT)',
     hotWalletMissing: '未设置接收地址：存款照常入账，但归集会被阻止，直到填好热钱包地址',
+    hotAddressFill: '自动填入热钱包地址',
+    hotAddressFilled: '已填入签名服务派生地址（索引 {index}），保存后生效',
+    hotAddressLocked: '请先解锁签名服务，地址由热种子派生',
     hotWalletNone: '未设置',
     sweepBlockedHint: '请先设置归集热钱包（接收地址）',
     sweepConfirmTitle: '确认执行归集',
@@ -94,6 +97,8 @@ export default {
     healthDesc: '地址池为空会让新用户无法获得充值地址；热钱包没 gas 会让归集失败。两者都不报错，只能在这里看到。',
     poolFree: '地址池剩余',
     hotWalletUnreachable: '读取失败',
+    hotGasWallet: 'Gas 钱包',
+    hotGasWalletHint: '这是支付 gas 的热种子地址，请给它充主网币；归集接收地址可以是指定的其他地址',
     exportCsv: '导出 CSV'
   }
 }

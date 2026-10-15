@@ -61,6 +61,9 @@ export default {
     statSwept: 'Swept (USDT)',
     statUnswept: 'Unswept (USDT)',
     hotWalletMissing: 'No receiving address set: deposits still credit, but sweeps are blocked until you fill in the hot wallet',
+    hotAddressFill: 'Fill hot wallet address',
+    hotAddressFilled: 'Filled the signer-derived address (index {index}); save to apply',
+    hotAddressLocked: 'Unlock the signing service first — the address derives from the hot seed',
     hotWalletNone: 'not set',
     sweepBlockedHint: 'Set the sweep hot wallet (receiving address) first',
     sweepConfirmTitle: 'Confirm sweep',
@@ -94,6 +97,8 @@ export default {
     healthDesc: 'An empty pool stops new users from getting an address; a dry hot wallet fails sweeps. Neither raises an error anywhere else.',
     poolFree: 'Address pool free',
     hotWalletUnreachable: 'unreachable',
+    hotGasWallet: 'Gas wallet',
+    hotGasWalletHint: 'Fund this hot-seed address with native coin; the sweep receiving address can be a different wallet',
     exportCsv: 'Export CSV'
   }
 }
