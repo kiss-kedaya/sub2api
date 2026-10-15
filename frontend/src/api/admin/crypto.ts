@@ -248,6 +248,18 @@ export interface HotWalletStatus {
   error?: string
 }
 
+export interface HotWalletAddress {
+  index: number
+  evm: string
+  solana: string
+}
+
+// getHotWalletAddress returns the address the hot seed actually derives to.
+export async function getHotWalletAddress(): Promise<HotWalletAddress> {
+  const { data } = await apiClient.get('/admin/crypto/hot-wallet/address')
+  return data.data
+}
+
 export interface RPCTestResult {
   endpoint: string
   ok: boolean

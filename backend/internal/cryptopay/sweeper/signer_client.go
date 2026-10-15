@@ -118,6 +118,40 @@ func (c *SignerClient) Status(ctx context.Context) (*SignerStatus, error) {
 
 // Unlock sends the operator passphrase. On first run it also carries the
 // seeds, creating the vault; afterwards it only opens the existing one.
+// HotAddress is the hot wallet's receive addresses, as derived by the
+// signer. Public data only — the operator copies these into the sweep
+// destination config fields.
+type HotAddress struct {
+	Index  uint32 `json:"index"`
+	EVM    string `json:"evm"`
+	Solana string `json:"solana"`
+}
+
+// HotAddresses asks the signer for the hot wallet addresses. Fails while the
+// vault is locked (no seeds in memory, nothing to derive).
+func (c *SignerClient) HotAddresses(ctx context.Context) (*HotAddress, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://signer/hot-address", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("signer hot-address: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("signer hot-address: status %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+	var out HotAddress
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return nil, fmt.Errorf("signer hot-address decode: %w", err)
+	}
+	return &out, nil
+}
+
+// Unlock sends the operator passphrase. On first run it also carries the
+// Unlock sends the operator passphrase. On first run it also carries the
 func (c *SignerClient) Unlock(ctx context.Context, passphrase, depositMnemonic, hotMnemonic string) error {
 	body, err := json.Marshal(map[string]string{
 		"passphrase":       passphrase,

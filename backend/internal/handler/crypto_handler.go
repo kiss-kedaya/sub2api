@@ -108,6 +108,12 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// The sweep destination is the signer's payout whitelist. Keep it in
+	// sync so changing the receiving address takes effect immediately.
+	if _, err := cryptopay.SyncSignerTargets(c.Request.Context(), h.store, merged); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	// Apply immediately: rebuild pools and restart the scan worker.
 	if h.service != nil {
 		h.service.Reload(c.Request.Context())
@@ -180,6 +186,23 @@ func (h *CryptoHandler) AdminHotWalletStatus(c *gin.Context) {
 		return
 	}
 	st, err := h.service.HotWalletStatuses(c.Request.Context())
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": st})
+}
+
+// AdminHotWalletAddress returns the address the hot wallet actually derives
+// to, so the operator can paste it into the sweep destination fields instead
+// of guessing (a wrong destination sends swept funds into the void).
+// GET /api/v1/admin/crypto/hot-wallet/address
+func (h *CryptoHandler) AdminHotWalletAddress(c *gin.Context) {
+	if h.service == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	st, err := h.service.HotAddresses(c.Request.Context())
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
