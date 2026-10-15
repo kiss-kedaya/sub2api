@@ -31,7 +31,9 @@ func (st *deepSeekPassthrough) rewrite(c *gin.Context, eventType string, data []
 	// new-api do not rewrite call ids or drop events on the wire. Changing
 	// item.id on output_item.added while argument deltas still carry the
 	// original item_id makes the client drop the rest of the turn.
-	// Duplicate call ids are removed on the request, before this stream starts.
+	// Duplicate call ids are removed on the request. The completed snapshot
+	// may drop a repeated output item, but this function never renames an id
+	// that argument deltas already referenced.
 	st.note(data)
 	switch eventType {
 	case "response.output_text.delta":
@@ -82,6 +84,9 @@ func (st *deepSeekPassthrough) rewrite(c *gin.Context, eventType string, data []
 		_, toolLines := st.events(c, apicompat.DeepSeekPiece{Calls: calls})
 		before = append(before, toolLines...)
 		updated = st.appendMissingCalls(c, updated, "response.output")
+		// Final snapshot only. Do not rename item.id: argument deltas already
+		// used the id from output_item.added.
+		updated = sanitizeResponsesCallIDsKeepingItemIDs(updated, "response.output")
 		if bytes.Equal(updated, data) && !changed && len(before) == 0 && len(after) == 0 {
 			return nil, nil, nil, false
 		}
@@ -107,6 +112,7 @@ func rewriteDeepSeekResponseBody(c *gin.Context, body []byte) []byte {
 	updated, calls, _ := rewriteDeepSeekContentTexts(body, "output")
 	_, _ = st.events(c, apicompat.DeepSeekPiece{Calls: calls})
 	updated = st.appendMissingCalls(c, updated, "output")
+	updated = sanitizeResponsesCallIDs(updated, "output")
 	restored, err := restoreOpenAIResponsesClientToolPayload(c, updated)
 	if err != nil {
 		return updated
@@ -416,6 +422,14 @@ func deepSeekRand() string {
 }
 
 func sanitizeResponsesCallIDs(data []byte, path string) []byte {
+	return sanitizeResponsesCallIDsMode(data, path, true)
+}
+
+func sanitizeResponsesCallIDsKeepingItemIDs(data []byte, path string) []byte {
+	return sanitizeResponsesCallIDsMode(data, path, false)
+}
+
+func sanitizeResponsesCallIDsMode(data []byte, path string, rewriteIDs bool) []byte {
 	node := gjson.GetBytes(data, path)
 	if !node.IsArray() {
 		return data
@@ -424,7 +438,13 @@ func sanitizeResponsesCallIDs(data []byte, path string) []byte {
 	if err := json.Unmarshal([]byte(node.Raw), &input); err != nil {
 		return data
 	}
-	next, changed := apicompat.DedupeResponsesCallIDs(input)
+	var next any
+	var changed bool
+	if rewriteIDs {
+		next, changed = apicompat.DedupeResponsesCallIDs(input)
+	} else {
+		next, changed = apicompat.DedupeResponsesCallIDsKeepItemIDs(input)
+	}
 	if !changed {
 		return data
 	}

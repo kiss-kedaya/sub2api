@@ -173,3 +173,140 @@ func TestDedupeResponsesCallIDs_IDOnlyCallStillDedupes(t *testing.T) {
 	require.Equal(t, "call_00_only", responseItemField(t, items, 0, "call_id"))
 	require.NotEqual(t, "call_00_only", responseItemField(t, items, 0, "id"))
 }
+
+func TestDedupeResponsesCallIDs_GraftsRealArgumentsOntoEmptyFirstCall(t *testing.T) {
+	t.Parallel()
+	var input any
+	require.NoError(t, json.Unmarshal([]byte(`[
+		{"type":"function_call","id":"call_a","call_id":"call_a","name":"bash","arguments":"{}"},
+		{"type":"function_call","id":"call_a","call_id":"call_a","name":"bash","arguments":"{\"cmd\":\"pwd\"}"},
+		{"type":"function_call_output","call_id":"call_a","output":"ok"}
+	]`), &input))
+
+	out, changed := DedupeResponsesCallIDs(input)
+	require.True(t, changed)
+	items, ok := out.([]any)
+	require.True(t, ok)
+	require.Len(t, items, 2)
+	require.Equal(t, "fc_a", responseItemField(t, items, 0, "id"))
+	require.Equal(t, "call_a", responseItemField(t, items, 0, "call_id"))
+	require.Contains(t, responseItemField(t, items, 0, "arguments"), "pwd")
+	require.Equal(t, "ok", responseItemField(t, items, 1, "output"))
+}
+
+func TestDedupeResponsesCallIDs_DoesNotReplaceRealArguments(t *testing.T) {
+	t.Parallel()
+	var input any
+	require.NoError(t, json.Unmarshal([]byte(`[
+		{"type":"function_call","call_id":"call_a","name":"bash","arguments":"{\"cmd\":\"pwd\"}"},
+		{"type":"function_call","call_id":"call_a","name":"bash","arguments":"{\"cmd\":\"ls\"}"}
+	]`), &input))
+	out, changed := DedupeResponsesCallIDs(input)
+	require.True(t, changed)
+	items, ok := out.([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
+	require.Contains(t, responseItemField(t, items, 0, "arguments"), "pwd")
+}
+
+func TestDedupeResponsesCallIDs_PrefersTopLevelAndGraftsNestedArguments(t *testing.T) {
+	t.Parallel()
+	var input any
+	require.NoError(t, json.Unmarshal([]byte(`[
+		{"type":"message","role":"assistant","content":[
+			{"type":"function_call","call_id":"call_a","name":"bash","arguments":"{\"cmd\":\"pwd\"}"}
+		]},
+		{"type":"function_call","call_id":"call_a","name":"bash","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_a","output":"ok"}
+	]`), &input))
+	out, changed := DedupeResponsesCallIDs(input)
+	require.True(t, changed)
+	items, ok := out.([]any)
+	require.True(t, ok)
+	require.Len(t, items, 3)
+	msg, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	content, ok := msg["content"].([]any)
+	require.True(t, ok)
+	require.Empty(t, content)
+	require.Equal(t, "function_call", responseItemField(t, items, 1, "type"))
+	require.Contains(t, responseItemField(t, items, 1, "arguments"), "pwd")
+	require.Equal(t, "ok", responseItemField(t, items, 2, "output"))
+}
+
+func TestDedupeResponsesCallIDsKeepItemIDs_DropsDuplicateWithoutRenaming(t *testing.T) {
+	t.Parallel()
+	var input any
+	require.NoError(t, json.Unmarshal([]byte(`[
+		{"type":"function_call","id":"call_abc","call_id":"call_abc","name":"bash","arguments":"{}"},
+		{"type":"function_call","id":"call_abc","call_id":"call_abc","name":"bash","arguments":"{\"cmd\":\"pwd\"}"}
+	]`), &input))
+	out, changed := DedupeResponsesCallIDsKeepItemIDs(input)
+	require.True(t, changed)
+	items, ok := out.([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
+	require.Equal(t, "call_abc", responseItemField(t, items, 0, "id"))
+	require.Equal(t, "call_abc", responseItemField(t, items, 0, "call_id"))
+	require.Contains(t, responseItemField(t, items, 0, "arguments"), "pwd")
+
+	var single any
+	require.NoError(t, json.Unmarshal([]byte(`[
+		{"type":"function_call","id":"call_abc","call_id":"call_abc","name":"bash","arguments":"{}"}
+	]`), &single))
+	same, changed := DedupeResponsesCallIDsKeepItemIDs(single)
+	require.False(t, changed)
+	require.Equal(t, single, same)
+}
+
+func TestDedupeChatToolCallIDs_SingleMessageKeepsArguments(t *testing.T) {
+	t.Parallel()
+	var messages any
+	require.NoError(t, json.Unmarshal([]byte(`[
+		{"role":"assistant","tool_calls":[
+			{"id":"call_a","type":"function","function":{"name":"bash","arguments":"{}"}},
+			{"id":"call_a","type":"function","function":{"name":"bash","arguments":"{\"cmd\":\"pwd\"}"}}
+		]}
+	]`), &messages))
+	out, changed := DedupeChatToolCallIDs(messages)
+	require.True(t, changed)
+	items, ok := out.([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
+	msg, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	calls, ok := msg["tool_calls"].([]any)
+	require.True(t, ok)
+	require.Len(t, calls, 1)
+	call, ok := calls[0].(map[string]any)
+	require.True(t, ok)
+	fn, ok := call["function"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, fn["arguments"], "pwd")
+}
+
+func TestDedupeChatToolCallIDs_EmptyFirstCallDoesNotDropOutput(t *testing.T) {
+	t.Parallel()
+	var messages any
+	require.NoError(t, json.Unmarshal([]byte(`[
+		{"role":"assistant","tool_calls":[{"id":"call_a","type":"function","function":{"name":"bash","arguments":"{}"}}]},
+		{"role":"assistant","tool_calls":[{"id":"call_a","type":"function","function":{"name":"bash","arguments":"{\"cmd\":\"pwd\"}"}}]},
+		{"role":"tool","tool_call_id":"call_a","content":"ok"}
+	]`), &messages))
+	out, changed := DedupeChatToolCallIDs(messages)
+	require.True(t, changed)
+	items, ok := out.([]any)
+	require.True(t, ok)
+	require.Len(t, items, 2)
+	msg, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	calls, ok := msg["tool_calls"].([]any)
+	require.True(t, ok)
+	require.Len(t, calls, 1)
+	call, ok := calls[0].(map[string]any)
+	require.True(t, ok)
+	fn, ok := call["function"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, fn["arguments"], "pwd")
+	require.Equal(t, "ok", responseItemField(t, items, 1, "content"))
+}
