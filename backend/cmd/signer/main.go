@@ -49,6 +49,9 @@ type server struct {
 	// every signing path answers ErrVaultLocked, so a stolen process image or
 	// a restarted host cannot sign without the operator's passphrase.
 	vaultMu sync.RWMutex
+	// policyMu guards the policy pointer: reloadPolicy swaps it before a
+	// signature while other requests read it, so the swap must be atomic.
+	policyMu sync.RWMutex
 	store   *store
 }
 
@@ -314,23 +317,27 @@ func (s *server) handleHotAddress(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// Reload first: the operator may have just changed hot_index in the
+	// console, and this endpoint is how they discover the new address.
+	s.reloadPolicy()
 	_, hotDeriver, ok := s.requireUnlocked(w)
 	if !ok {
 		return
 	}
-	_, evmAddr, err := hotDeriver.EVMKey(s.policy.HotIndex)
+	policy := s.currentPolicy()
+	_, evmAddr, err := hotDeriver.EVMKey(policy.HotIndex)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	_, solAddr, err := hotDeriver.SolanaKey(s.policy.HotIndex)
+	_, solAddr, err := hotDeriver.SolanaKey(policy.HotIndex)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit.write(auditEntry{Op: "hot_address", Index: s.policy.HotIndex, Result: "ok"})
+	s.audit.write(auditEntry{Op: "hot_address", Index: policy.HotIndex, Result: "ok"})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"index":  s.policy.HotIndex,
+		"index":  policy.HotIndex,
 		"evm":    evmAddr.Hex(),
 		"solana": solAddr.String(),
 	})
@@ -348,7 +355,17 @@ func (s *server) reloadPolicy() {
 		log.Printf("signer policy reload failed: %v", err)
 		return
 	}
+	s.policyMu.Lock()
 	s.policy = p
+	s.policyMu.Unlock()
+}
+
+// currentPolicy returns the active policy under the read lock. Every signing
+// path reads through here so a concurrent reload cannot race the pointer.
+func (s *server) currentPolicy() *Policy {
+	s.policyMu.RLock()
+	defer s.policyMu.RUnlock()
+	return s.policy
 }
 
 func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
@@ -357,6 +374,7 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.reloadPolicy()
+	policy := s.currentPolicy()
 	depositDeriver, hotDeriver, ok := s.requireUnlocked(w)
 	if !ok {
 		return
@@ -366,7 +384,7 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if !s.policy.AllowsTarget(req.To) {
+	if !policy.AllowsTarget(req.To) {
 		// Gas top-ups pay native coin TO a derived child address, which is
 		// never a whitelisted payout target. Accept them only when the
 		// target provably equals the address derived at gas_index: the
@@ -387,7 +405,7 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Signed by the hot seed, not the deposit seed.
-		req.Index = s.policy.HotIndex
+		req.Index = policy.HotIndex
 		req.hotKey = true
 	}
 	amount, err := parseBigInt(req.Amount)
@@ -395,7 +413,7 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid amount"})
 		return
 	}
-	reason, err := s.limiter.Allow(s.policy, TokenKey(req.Token), amount, time.Now())
+	reason, err := s.limiter.Allow(policy, TokenKey(req.Token), amount, time.Now())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -427,6 +445,7 @@ func (s *server) handleSignSol(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.reloadPolicy()
+	policy := s.currentPolicy()
 	depositDeriver, _, ok := s.requireUnlocked(w)
 	if !ok {
 		return
@@ -436,7 +455,7 @@ func (s *server) handleSignSol(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if !s.policy.AllowsTarget(req.To) {
+	if !policy.AllowsTarget(req.To) {
 		s.audit.write(auditEntry{Op: "sign_sol", Index: req.Index, To: req.To, Result: "denied", Reason: "target_not_allowed"})
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "target not allowed"})
 		return
@@ -446,7 +465,7 @@ func (s *server) handleSignSol(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid amount"})
 		return
 	}
-	reason, err := s.limiter.Allow(s.policy, TokenKey(req.Mint), amount, time.Now())
+	reason, err := s.limiter.Allow(policy, TokenKey(req.Mint), amount, time.Now())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
