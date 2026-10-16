@@ -27,6 +27,8 @@ type systemOnePolicyAccountRepo struct {
 	rateLimitedCalls int
 	overloadedCalls  int
 	errorCalls       int
+	tempCalls        int
+	lastTempUntil    time.Time
 }
 
 func (r *systemOnePolicyAccountRepo) GetByID(context.Context, int64) (*Account, error) {
@@ -45,6 +47,12 @@ func (r *systemOnePolicyAccountRepo) SetOverloaded(context.Context, int64, time.
 
 func (r *systemOnePolicyAccountRepo) SetError(context.Context, int64, string) error {
 	r.errorCalls++
+	return nil
+}
+
+func (r *systemOnePolicyAccountRepo) SetTempUnschedulable(_ context.Context, _ int64, until time.Time, _ string) error {
+	r.tempCalls++
+	r.lastTempUntil = until
 	return nil
 }
 
@@ -313,7 +321,9 @@ func TestForwardSystemOneHonorsCustomErrorCodes(t *testing.T) {
 	_, err := svc.ForwardSystemOne(context.Background(), newSystemOneTestContext(), account, []byte(`{}`))
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, 1, repo.errorCalls)
+	require.Zero(t, repo.errorCalls)
+	require.Equal(t, 1, repo.tempCalls)
+	require.WithinDuration(t, time.Now().Add(customErrorCodeStopDuration), repo.lastTempUntil, 2*time.Second)
 }
 
 func TestForwardSystemOneUnhandledStatusDoesNotFailOver(t *testing.T) {
