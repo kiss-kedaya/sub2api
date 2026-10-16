@@ -266,11 +266,16 @@ func SyncSignerTargets(ctx context.Context, store SettingStore, cfg CryptoConfig
 	if err != nil {
 		return false, fmt.Errorf("read signer policy: %w", err)
 	}
+	// Only merge into an already-configured policy. Writing a fresh one here
+	// would omit max_per_tx/max_daily, and the signer would then reject every
+	// signature with "no_per_tx_limit_configured" — a silent total outage of
+	// sweeps. A missing policy is the operator's setup step, not ours.
+	if strings.TrimSpace(raw) == "" {
+		return false, nil
+	}
 	policy := map[string]any{}
-	if strings.TrimSpace(raw) != "" {
-		if err := json.Unmarshal([]byte(raw), &policy); err != nil {
-			return false, fmt.Errorf("parse signer policy: %w", err)
-		}
+	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+		return false, fmt.Errorf("parse signer policy: %w", err)
 	}
 
 	existing := make([]string, 0, 8)
@@ -323,6 +328,14 @@ func SyncSignerTargets(ctx context.Context, store SettingStore, cfg CryptoConfig
 	}
 	policy["targets"] = existing
 	policy["managed_targets"] = wanted
+	// The signer signs gas top-ups with the hot seed at policy.hot_index and
+	// rejects any other. If the console's hot_index diverges from the
+	// policy's, gas would be paid from the wrong wallet (or the derived
+	// address the health panel reports would be wrong). Keep them equal.
+	if current, ok := policy["hot_index"].(float64); !ok || uint32(current) != cfg.HotIndex {
+		policy["hot_index"] = cfg.HotIndex
+		changed = true
+	}
 	encoded, err := json.Marshal(policy)
 	if err != nil {
 		return false, fmt.Errorf("encode signer policy: %w", err)
