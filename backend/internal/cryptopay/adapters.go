@@ -79,7 +79,7 @@ func tokenDecimalsKey(chain, contract string) string {
 func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sweeper.AddressBalance, error) {
 	rows, err := b.db.QueryContext(ctx, `
 		SELECT d.to_address, d.token, SUM(d.amount),
-		       COALESCE(MAX(a.derivation_index), 0)
+		       MAX(a.derivation_index)
 		  FROM deposit_transactions d
 		  -- deposit_addresses.chain stores the FAMILY (evm/solana), not the
 		  -- chain id, so match on the address alone; one address belongs to
@@ -104,9 +104,16 @@ func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sw
 	for rows.Next() {
 		var address, token string
 		var amount sql.NullString
-		var derivationIndex int64
+		var derivationIndex sql.NullInt64
 		if err := rows.Scan(&address, &token, &amount, &derivationIndex); err != nil {
 			return nil, err
+		}
+		// A credited deposit must always map to an assignment row; when it
+		// does not (assignment deleted, data drift), the derivation index is
+		// unknown. Skipping is the only safe move: defaulting to 0 would sign
+		// the sweep with the HOT wallet seed, not the child's.
+		if !derivationIndex.Valid || derivationIndex.Int64 <= 0 {
+			continue
 		}
 		// Decimals come from the chain's token config: deriving them from
 		// the stored rows cannot work (the NUMERIC column loses precision
@@ -123,7 +130,7 @@ func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sw
 		}
 		out = append(out, sweeper.AddressBalance{
 			Chain: chain, Address: address, Token: token,
-			DerivationIndex: uint32(derivationIndex),
+			DerivationIndex: uint32(derivationIndex.Int64),
 			Raw:             raw, Decimals: decimals,
 		})
 	}
