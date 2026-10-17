@@ -18,6 +18,12 @@ export default {
     reasonBelowMin: '低于最小入账金额 {min} USDT，未入账',
     reasonAboveMax: '超过单笔最大入账金额 {max} USDT，未入账，请联系管理员',
     reasonUnassigned: '该地址未绑定用户，未入账',
-    reasonUnknown: '该地址不是充值地址'
+    reasonUnknown: '该地址不是充值地址',
+    reasonOther: '未入账（原因码：{code}）',
+    statusCredited: '已入账',
+    statusPending: '待确认',
+    statusIgnored: '未入账',
+    statusReverted: '已回滚',
+    statusOther: '状态：{code}'
   }
 }
