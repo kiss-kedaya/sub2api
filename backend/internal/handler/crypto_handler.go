@@ -447,4 +447,3 @@ func (h *CryptoHandler) AdminAutoPickRPC(c *gin.Context) {
 	picked := cryptopay.ProbeBestRPCEndpoints(ctx, body.Chain, candidates, body.Exclude, body.Want)
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"picked": picked, "probed": len(candidates)}})
 }
-

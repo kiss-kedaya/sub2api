@@ -614,7 +614,6 @@ func (s *SettingService) SetRawSetting(ctx context.Context, key, value string) e
 	return nil
 }
 
-
 // SubscribeChannelMonitorRuntime registers a listener that is invoked after
 // settings are successfully persisted (and process caches refreshed).
 // Used by ChannelMonitorRunner / ChannelMonitorV2Aggregator for immediate

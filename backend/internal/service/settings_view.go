@@ -378,12 +378,12 @@ type PublicSettings struct {
 	// CryptoEnabled reflects the built-in crypto deposit channel's own
 	// enabled flag (crypto.config JSON). The user sidebar hides /deposit
 	// while it is off; the default config ships disabled.
-	CryptoEnabled            bool
-	OIDCOAuthEnabled         bool
-	OIDCOAuthProviderName    string
-	GitHubOAuthEnabled       bool
-	GoogleOAuthEnabled       bool
-	Version                  string
+	CryptoEnabled         bool
+	OIDCOAuthEnabled      bool
+	OIDCOAuthProviderName string
+	GitHubOAuthEnabled    bool
+	GoogleOAuthEnabled    bool
+	Version               string
 
 	BalanceLowNotifyEnabled     bool
 	AccountQuotaNotifyEnabled   bool

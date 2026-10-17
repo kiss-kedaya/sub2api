@@ -57,13 +57,12 @@ type AddressResolver interface {
 
 // Ledger persists deposit observations and drives fulfillment.
 type Ledger struct {
-	db           *sql.DB
-	creditor     Creditor
-	resolver     AddressResolver
-	minAmount    float64
-	maxAmount    float64
-	multiplier   float64
-	ownAddresses func(ctx context.Context, chain string) ([]string, error)
+	db         *sql.DB
+	creditor   Creditor
+	resolver   AddressResolver
+	minAmount  float64
+	maxAmount  float64
+	multiplier float64
 	// onUnmatched reports a transfer that reached one of our addresses but
 	// could not be credited (too small, or the address is unassigned).
 	// Operators need this: it is usually a mistyped deposit or a probe.

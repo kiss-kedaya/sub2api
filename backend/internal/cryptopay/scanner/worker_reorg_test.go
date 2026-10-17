@@ -13,7 +13,7 @@ func TestRecheckCreditedScopeIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(`FROM deposit_transactions`).
 		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "log_index", "block_hash"}))
@@ -34,7 +34,7 @@ func TestRecheckCreditedSkipsChainsWithoutPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(`FROM deposit_transactions`).
 		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "log_index", "block_hash"}).

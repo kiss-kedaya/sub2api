@@ -88,14 +88,17 @@ func (d *Deriver) SolanaKey(index uint32) (ed25519.PrivateKey, solana.PublicKey,
 		return nil, solana.PublicKey{}, err
 	}
 	priv := ed25519.NewKeyFromSeed(seed)
-	pub := priv.Public().(ed25519.PublicKey)
+	pub, ok := priv.Public().(ed25519.PublicKey)
+	if !ok {
+		return nil, solana.PublicKey{}, fmt.Errorf("ed25519: unexpected public key type")
+	}
 	return priv, solana.PublicKeyFromBytes(pub), nil
 }
 
 // slip10Ed25519 implements SLIP-0010 ed25519 derivation (hardened only).
 func slip10Ed25519(seed []byte, path []uint32) ([]byte, error) {
 	mac := hmac.New(sha512.New, []byte("ed25519 seed"))
-	mac.Write(seed)
+	_, _ = mac.Write(seed)
 	sum := mac.Sum(nil)
 	key, chainCode := sum[:32], sum[32:]
 	for _, index := range path {
@@ -109,7 +112,7 @@ func slip10Ed25519(seed []byte, path []uint32) ([]byte, error) {
 		binary.BigEndian.PutUint32(idx[:], index)
 		data = append(data, idx[:]...)
 		mac = hmac.New(sha512.New, chainCode)
-		mac.Write(data)
+		_, _ = mac.Write(data)
 		sum = mac.Sum(nil)
 		key, chainCode = sum[:32], sum[32:]
 	}

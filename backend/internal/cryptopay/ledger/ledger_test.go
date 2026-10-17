@@ -1,47 +1,9 @@
 package ledger
 
 import (
-	"context"
 	"math/big"
 	"testing"
 )
-
-type fakeCreditor struct {
-	calls []CreditRequest
-}
-
-func (f *fakeCreditor) CreditDeposit(_ context.Context, req CreditRequest) error {
-	f.calls = append(f.calls, req)
-	return nil
-}
-
-type fakeResolver struct {
-	owners  map[string]int64 // chain/address(lower) -> userID
-	allOwn  map[string]bool  // chain/address(lower) -> ours
-}
-
-func newFakeResolver() *fakeResolver {
-	return &fakeResolver{owners: map[string]int64{}, allOwn: map[string]bool{}}
-}
-
-func (f *fakeResolver) ResolveDeposit(_ context.Context, chain, address string) (int64, bool, error) {
-	key := chain + "/" + address
-	if userID, ok := f.owners[key]; ok {
-		return userID, true, nil
-	}
-	if f.allOwn[key] {
-		return 0, true, nil
-	}
-	return 0, false, nil
-}
-
-func (f *fakeResolver) IsOwnAddress(_ context.Context, chain, address string) (bool, error) {
-	key := chain + "/" + address
-	if _, ok := f.owners[key]; ok {
-		return true, nil
-	}
-	return f.allOwn[key], nil
-}
 
 func TestAmountStringRendering(t *testing.T) {
 	tests := []struct {

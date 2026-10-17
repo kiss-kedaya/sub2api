@@ -21,7 +21,7 @@ const (
 	TypeEpusdt       PaymentType = "epusdt"
 	// TypeCrypto is the built-in on-chain deposit channel (per-user HD
 	// addresses + scanning). Additive; disabled unless configured.
-	TypeCrypto       PaymentType = "crypto"
+	TypeCrypto PaymentType = "crypto"
 )
 
 // Order status constants shared across payment and service layers.
