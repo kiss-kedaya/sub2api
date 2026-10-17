@@ -85,7 +85,7 @@
                   <td>{{ row.credited ? fmtCredited(row.credited) : '—' }}</td>
                   <td>
                     <span class="deposit-view__badge" :class="`deposit-view__badge--${row.status}`">
-                      {{ row.status }}
+                      {{ statusText(row.status) }}
                     </span>
                     <span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason) }}</span>
                   </td>
@@ -169,7 +169,24 @@ function reasonText(code: string): string {
     case 'address_unknown':
       return t('deposit.reasonUnknown')
     default:
-      return code
+      // A new backend code must never surface as a bare machine string.
+      return t('deposit.reasonOther', { code })
+  }
+}
+
+// Status badges use the same vocabulary as the ledger, translated.
+function statusText(status: string): string {
+  switch (status) {
+    case 'credited':
+      return t('deposit.statusCredited')
+    case 'pending':
+      return t('deposit.statusPending')
+    case 'ignored':
+      return t('deposit.statusIgnored')
+    case 'reverted':
+      return t('deposit.statusReverted')
+    default:
+      return t('deposit.statusOther', { code: status })
   }
 }
 

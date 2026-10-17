@@ -1074,6 +1074,7 @@ async function loadConfig() {
       sweep_min_per_address: loaded.sweep_min_per_address ?? {},
       gas_topup: loaded.gas_topup ?? {},
       confirmations: loaded.confirmations ?? {},
+      scan_range: loaded.scan_range ?? {},
       hot_wallet_evm: loaded.hot_wallet_evm ?? '',
       hot_wallet_solana: loaded.hot_wallet_solana ?? '',
       hot_index: loaded.hot_index ?? 0,
@@ -1134,12 +1135,31 @@ async function saveConfig() {
   savingConfig.value = true
   configSaved.value = false
   try {
-    await updateCryptoConfig(config.value)
+    // Send only the fields that actually changed. The backend patch applies
+    // pointers onto the stored config, so posting the whole object used to
+    // rewrite maps the UI never renders (rpc, gas_topup, confirmations,
+    // scan_range, per-chain thresholds) — a null map could blank them.
+    await updateCryptoConfig(buildConfigPatch())
     loadedSnapshot.value = JSON.parse(JSON.stringify(config.value))
     configSaved.value = true
   } finally {
     savingConfig.value = false
   }
+}
+
+// buildConfigPatch diffs the form against the loaded snapshot. Map fields are
+// compared as a whole: if any chain entry changed, that map is sent in full.
+function buildConfigPatch(): Partial<CryptoConfig> {
+  const before = loadedSnapshot.value
+  const after = config.value
+  if (!before || !after) return {}
+  const patch: Record<string, unknown> = {}
+  for (const key of Object.keys(after) as Array<keyof CryptoConfig>) {
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      patch[key] = after[key]
+    }
+  }
+  return patch as Partial<CryptoConfig>
 }
 
 // requestSaveConfig gates the write behind a confirmation whenever the diff

@@ -15,6 +15,7 @@ export interface CryptoConfig {
   hot_index: number
   sweep_auto: boolean
   confirmations: Record<string, number>
+  scan_range: Record<string, number>
   credit_min_amount: number
   credit_max_amount: number
   credit_multiplier: number
@@ -95,7 +96,10 @@ export async function getCryptoConfig(): Promise<CryptoConfig> {
   return data.data
 }
 
-export async function updateCryptoConfig(cfg: CryptoConfig): Promise<void> {
+// The backend applies a pointer patch: omitted keys keep their stored value.
+// Sending only the changed fields is what prevents a full-object write from
+// silently rewriting maps the console never rendered.
+export async function updateCryptoConfig(cfg: Partial<CryptoConfig>): Promise<void> {
   await apiClient.put('/admin/crypto/config', cfg)
 }
 
