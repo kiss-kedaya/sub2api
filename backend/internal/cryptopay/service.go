@@ -222,15 +222,18 @@ func (s *Service) reload(ctx context.Context) {
 		return
 	}
 
+	// Immutable snapshot: workers and the executor keep the map they were
+	// built with, so a config save can never race a scan or a sweep.
+	pools := make(map[string]*rpc.Pool, len(cfg.Chains))
 	for _, chain := range cfg.Chains {
-		pool, ok := s.pools[chain]
-		if !ok {
-			pool = rpc.NewPool(cfg.RPC[chain])
-			s.pools[chain] = pool
-		} else {
-			pool.SetEndpoints(cfg.RPC[chain])
+		if existing, ok := s.pools[chain]; ok {
+			existing.SetEndpoints(cfg.RPC[chain])
+			pools[chain] = existing
+			continue
 		}
+		pools[chain] = rpc.NewPool(cfg.RPC[chain])
 	}
+	s.pools = pools
 
 	// EVM chains only in this build; Solana scanning lands separately.
 	var chainConfigs []scanner.ChainConfig
@@ -289,7 +292,7 @@ func (s *Service) reload(ctx context.Context) {
 	}
 	// 5s poll: finality is decided by the chain's safe tag, so a tighter
 	// interval only shortens detection latency, not safety.
-	s.worker = scanner.NewWorker(s.db, s.pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
+	s.worker = scanner.NewWorker(s.db, pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
 	// A reorged credited deposit means we paid out on a block that no longer
 	// exists: the operator must reconcile it by hand.
 	s.worker.SetReorgNotifier(func(chain, txHash string) {
@@ -322,7 +325,7 @@ func (s *Service) reload(ctx context.Context) {
 		MinPerAddress:   cfg.SweepMinPerAddress,
 		HotWalletEVM:    cfg.HotWalletEVM,
 		HotWalletSolana: cfg.HotWalletSolana,
-	}, s.pools)
+	}, pools)
 	// The executor keys specs by chain|contract: one address may hold both
 	// USDT and USDC, and each needs its own transfer spec.
 	sweepTokens := map[string]sweeper.TokenSpec{}
@@ -335,7 +338,7 @@ func (s *Service) reload(ctx context.Context) {
 			}
 		}
 	}
-	s.executor = sweeper.NewExecutor(s.db, s.pools, s.signer, sweeper.Config{
+	s.executor = sweeper.NewExecutor(s.db, pools, s.signer, sweeper.Config{
 		GlobalThreshold: cfg.SweepGlobalThreshold,
 		MinPerAddress:   cfg.SweepMinPerAddress,
 		GasTopUp:        cfg.GasTopUp,

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -52,9 +51,12 @@ func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRe
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d", req.Chain, req.TxHash, req.LogIndex)))
 	rechargeCode := "crypto-" + hex.EncodeToString(digest[:12])
 
-	// out_trade_no caps at 64 characters; a 0x-prefixed hash is 66. Store the
-	// bare hash (exactly 64) and keep the canonical 0x form in the snapshot.
-	outTradeNo := strings.TrimPrefix(req.TxHash, "0x")
+	// out_trade_no caps at 64 characters and is unique per order. A single
+	// transaction can carry several Transfer logs (batch payouts), so the
+	// bare tx hash would make every log after the first collide. Use the
+	// same deterministic identity as recharge_code (40 hex chars) and keep
+	// the canonical tx hash in payment_trade_no/snapshot for explorer links.
+	outTradeNo := "crypto-" + hex.EncodeToString(digest[:20])
 
 	// user_email/user_name are required columns (redundant copies so order
 	// history survives user deletion); without them every insert fails and

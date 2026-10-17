@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 // chainlistIDs maps an internal chain id to the EIP-155 chain id used by
@@ -58,6 +60,12 @@ func ProbeRPCEndpoint(ctx context.Context, chain, endpoint string) *RPCTestResul
 	}
 	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
 		out.Error = "endpoint must start with http:// or https://"
+		return out
+	}
+	// Admin-only is not a reason to allow probing the host's own network:
+	// a leaked admin token could otherwise read cloud metadata.
+	if _, err := urlvalidator.ValidateHTTPURL(endpoint, true, urlvalidator.ValidationOptions{}); err != nil {
+		out.Error = "endpoint is not an allowed public URL"
 		return out
 	}
 	start := time.Now()
