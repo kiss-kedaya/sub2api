@@ -75,11 +75,12 @@ func (f *DeepSeekInlineFilter) Flush() DeepSeekPiece {
 	case deepSeekDSML:
 		f.mode = deepSeekText
 		calls := parseDSMLBlock(rest)
-		if len(calls) == 0 {
-			piece.Text += rest
-		} else {
+		if len(calls) > 0 {
 			piece.Calls = append(piece.Calls, calls...)
 		}
+		// 未闭合的 DSML 绝不能回流成可见正文：走到这里说明模型已经开了一个工具
+		// 调用块，但流在这里结束（截断 / 上游断连）。丢掉这段残留，比把
+		// <｜｜DSML｜｜ ... ｜｜> 原样显示给用户安全得多。
 	default:
 		piece.Text += rest
 	}
@@ -118,7 +119,11 @@ func (f *DeepSeekInlineFilter) drain(flush bool) DeepSeekPiece {
 				continue
 			}
 			if len(f.buf) > dsmlMaxHold {
-				piece.Text += f.buf
+				// 超限时先把已经闭合的调用救出来，剩下的残缺块直接丢弃：
+				// 绝不能把原始 DSML 标记当成可见正文推给用户。
+				if calls := parseDSMLBlock(f.buf); len(calls) > 0 {
+					piece.Calls = append(piece.Calls, calls...)
+				}
 				f.buf = ""
 				f.mode = deepSeekText
 				continue
