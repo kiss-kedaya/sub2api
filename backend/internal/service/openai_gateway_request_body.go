@@ -151,13 +151,22 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 		}
 	}
 	// 部分 DeepSeek 兼容中转（如 OpenCSG）的 /responses 端点启用严格 JSON
-	// 解码：顶层 reasoning.summary（OpenAI 的推理摘要请求字段）会被 400
-	// 直接拒绝（json: unknown field "summary"）。DeepSeek 上游本来也不产出
-	// OpenAI 风格的摘要，转发前剥掉；reasoning 里只剩 summary 时连同整个
+	// 解码：顶层 reasoning.summary / reasoning.generate_summary（OpenAI 的
+	// 推理摘要开关）会被 400 直接拒绝（json: unknown field "summary"）。
+	// 摘要意图属于目标协议没有对应字段的选项，按 CLIProxyAPI / new-api 的
+	// 处理方式在转发前省略（省略即"由上游默认行为决定"，实测该上游默认仍然
+	// 流式返回 reasoning_summary_text，不丢摘要内容）；只剥这两个开关字段，
+	// input 里既有的 summary 历史原样保留。reasoning 里若无其它内容则整个
 	// 对象一起去掉，避免空对象再触发别的校验。
 	if dedupe {
-		if stripped, err := sjson.DeleteBytes(normalized, "reasoning.summary"); err == nil {
-			normalized = stripped
+		strippedSwitches := false
+		for _, path := range []string{"reasoning.summary", "reasoning.generate_summary"} {
+			if stripped, err := sjson.DeleteBytes(normalized, path); err == nil {
+				normalized = stripped
+				strippedSwitches = true
+			}
+		}
+		if strippedSwitches {
 			if reasoning := gjson.GetBytes(normalized, "reasoning"); reasoning.IsObject() && len(reasoning.Map()) == 0 {
 				if next, err := sjson.DeleteBytes(normalized, "reasoning"); err == nil {
 					normalized = next
