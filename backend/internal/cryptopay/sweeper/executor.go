@@ -176,10 +176,7 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) S
 		out.Status, out.Error = "failed", err.Error()
 		return out
 	}
-	gasBudget := new(big.Int).Mul(gasPrice, big.NewInt(transferGasLimit))
-	// 50% headroom so a price bump between quote and broadcast still fits.
-	gasBudget.Mul(gasBudget, big.NewInt(3))
-	gasBudget.Div(gasBudget, big.NewInt(2))
+	gasBudget := transferGasBudget(gasPrice)
 
 	native, err := pool.Balance(ctx, entry.Address)
 	if err != nil {
@@ -221,17 +218,7 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) S
 // gasTopUpAmount picks how much native coin to send: the configured value,
 // but at least enough to cover the transfer that follows.
 func (e *Executor) gasTopUpAmount(chain string, gasBudget, native *big.Int) *big.Int {
-	need := new(big.Int).Sub(gasBudget, native)
-	configured := big.NewInt(0)
-	if dec, ok := e.config.GasTopUp[chain]; ok && dec > 0 {
-		configured = decimalToRawUnits(dec, 18)
-	}
-	if configured.Cmp(need) > 0 {
-		return configured
-	}
-	// Round the shortfall up to a whole gas unit so it is never just short.
-	need.Mul(need, big.NewInt(2))
-	return need
+	return gasTopUpAmount(e.config, chain, gasBudget, native)
 }
 
 // sendNativeFromHot signs a native transfer from the hot wallet to a child
@@ -336,6 +323,32 @@ func (e *Executor) record(ctx context.Context, entry PlanEntry, status, gasTx, s
 		amountString(entry.RawAmount, entry.Decimals), gasTx, sweepTx, status, errMsg); err != nil {
 		slog.Warn("[cryptopay] sweep record failed", "error", err)
 	}
+}
+
+// transferGasBudget is the native amount a child address needs for one
+// token transfer, with 50% headroom so a price bump between quote and
+// broadcast still fits. Shared by the planner estimate and the executor.
+func transferGasBudget(gasPrice *big.Int) *big.Int {
+	budget := new(big.Int).Mul(gasPrice, big.NewInt(transferGasLimit))
+	budget.Mul(budget, big.NewInt(3))
+	budget.Div(budget, big.NewInt(2))
+	return budget
+}
+
+// gasTopUpAmount picks how much native coin to send: the configured value,
+// but at least enough to cover the transfer that follows.
+func gasTopUpAmount(config Config, chain string, gasBudget, native *big.Int) *big.Int {
+	need := new(big.Int).Sub(gasBudget, native)
+	configured := big.NewInt(0)
+	if dec, ok := config.GasTopUp[chain]; ok && dec > 0 {
+		configured = decimalToRawUnits(dec, 18)
+	}
+	if configured.Cmp(need) > 0 {
+		return configured
+	}
+	// Round the shortfall up to a whole gas unit so it is never just short.
+	need.Mul(need, big.NewInt(2))
+	return need
 }
 
 // decimalToRawUnits converts a coin amount (e.g. 0.002) to raw units at the
