@@ -75,21 +75,6 @@ func main() {
 
 	mnemonic := strings.TrimSpace(os.Getenv("SIGNER_MNEMONIC"))
 	hotMnemonic := strings.TrimSpace(os.Getenv("SIGNER_HOT_MNEMONIC"))
-	// First run may bootstrap the vault from env vars; afterwards the vault is
-	// the only place the seeds live and the passphrase unlocks them.
-	var deriver, hotDeriver *Deriver
-	if mnemonic != "" && hotMnemonic != "" {
-		if hotMnemonic == mnemonic {
-			log.Fatal("SIGNER_HOT_MNEMONIC must differ from SIGNER_MNEMONIC")
-		}
-		var err error
-		if deriver, err = NewDeriver(mnemonic); err != nil {
-			log.Fatalf("init deriver: %v", err)
-		}
-		if hotDeriver, err = NewDeriver(hotMnemonic); err != nil {
-			log.Fatalf("init hot deriver: %v", err)
-		}
-	}
 	if *dbDSN == "" {
 		log.Fatal("SIGNER_DB_DSN (or -db) is required: the vault, policy and audit live in the database")
 	}
@@ -98,6 +83,32 @@ func main() {
 		log.Fatalf("init store: %v", err)
 	}
 	defer func() { _ = st.Close() }()
+	// Env seeds are a one-time bootstrap for an installation that has no
+	// vault yet; they must never make a vault-backed signer permanently
+	// unlocked. Once a vault exists the seeds live only there and /unlock
+	// requires the operator passphrase.
+	var deriver, hotDeriver *Deriver
+	existingVault, err := st.getSetting(context.Background(), settingVault)
+	if err != nil {
+		log.Fatalf("read vault: %v", err)
+	}
+	if existingVault == "" && mnemonic != "" && hotMnemonic != "" {
+		if hotMnemonic == mnemonic {
+			log.Fatal("SIGNER_HOT_MNEMONIC must differ from SIGNER_MNEMONIC")
+		}
+		if deriver, err = NewDeriver(mnemonic); err != nil {
+			log.Fatalf("init deriver: %v", err)
+		}
+		if hotDeriver, err = NewDeriver(hotMnemonic); err != nil {
+			log.Fatalf("init hot deriver: %v", err)
+		}
+		// Keep the seeds in memory only when the operator explicitly asked to
+		// seal them during this bootstrap; otherwise drop them and wait for
+		// /unlock like any other run.
+		if strings.TrimSpace(os.Getenv("SIGNER_VAULT_BOOTSTRAP_PASSPHRASE")) == "" {
+			deriver, hotDeriver = nil, nil
+		}
+	}
 	policy, err := st.loadPolicyFromDB(context.Background())
 	if err != nil {
 		log.Fatalf("load policy: %v", err)
@@ -207,6 +218,17 @@ func (s *server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 		}
 		if deposit == hot {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hot seed must differ from the deposit seed"})
+			return
+		}
+		// Validate before sealing: a typo used to be encrypted and persisted,
+		// after which every derivation failed and the vault could only be
+		// rebuilt with manual SQL.
+		if _, err := NewDeriver(deposit); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deposit seed invalid: " + err.Error()})
+			return
+		}
+		if _, err := NewDeriver(hot); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hot seed invalid: " + err.Error()})
 			return
 		}
 		sealed, err := sealContents(deposit, hot, req.Passphrase)

@@ -70,6 +70,9 @@ func TestValidateSweepReady(t *testing.T) {
 		{"empty", "", true},
 		{"whitespace", "   ", true},
 		{"zero address", "0x0000000000000000000000000000000000000000", true},
+		{"bare prefix", "0x", true},
+		{"truncated", "0x1234", true},
+		{"non hex", "0xzz11111111111111111111111111111111111111", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -78,6 +81,38 @@ func TestValidateSweepReady(t *testing.T) {
 				t.Fatalf("ValidateSweepReady(%q) err = %v, wantErr %v", tt.hot, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// A negative confirmation/scan range used to wrap when cast to uint64 and
+// stopped the chain from ever scanning; NormalizeConfig must clamp them.
+func TestNormalizeConfigClampsRanges(t *testing.T) {
+	cfg, err := NormalizeConfig(CryptoConfig{
+		Chains:        []string{ChainBSC},
+		Confirmations: map[string]int{ChainBSC: -5},
+		ScanRange:     map[string]int{ChainBSC: -1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Confirmations[ChainBSC] != 0 {
+		t.Fatalf("confirmations = %d, want 0", cfg.Confirmations[ChainBSC])
+	}
+	if cfg.ScanRange[ChainBSC] != 1 {
+		t.Fatalf("scan range = %d, want 1", cfg.ScanRange[ChainBSC])
+	}
+}
+
+// The console saves the whole config object; a malformed hot wallet must be
+// rejected instead of being silently padded by common.HexToAddress.
+func TestNormalizeConfigRejectsMalformedHotWallet(t *testing.T) {
+	for _, hot := range []string{"0x", "0x1234", "not-an-address"} {
+		if _, err := NormalizeConfig(CryptoConfig{
+			Chains:       []string{ChainBSC},
+			HotWalletEVM: hot,
+		}); err == nil {
+			t.Fatalf("hot wallet %q should be rejected", hot)
+		}
 	}
 }
 

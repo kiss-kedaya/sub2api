@@ -7,6 +7,7 @@ package cryptopay
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -175,7 +176,31 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	}
 	// Hot wallets may stay empty: deposits, scanning and crediting all work
 	// without them. Only the sweep path needs a destination, and it refuses
-	// to run until one is configured (see ValidateSweepReady).
+	// to run until one is configured (see ValidateSweepReady). When set,
+	// they must be well-formed: common.HexToAddress silently pads or
+	// truncates, so "0x" would otherwise become the zero address.
+	if v := strings.TrimSpace(cfg.HotWalletEVM); v != "" && !validEVMAddress(v) {
+		return cfg, fmt.Errorf("crypto config: hot_wallet_evm is not a valid EVM address")
+	}
+	if v := strings.TrimSpace(cfg.HotWalletSolana); v != "" && !validSolanaAddress(v) {
+		return cfg, fmt.Errorf("crypto config: hot_wallet_solana is not a valid Solana address")
+	}
+	for chain, value := range cfg.Confirmations {
+		cfg.Confirmations[chain] = clampInt(value, 0, 1000)
+	}
+	for chain, value := range cfg.ScanRange {
+		cfg.ScanRange[chain] = clampInt(value, 1, 100000)
+	}
+	for chain, value := range cfg.SweepMinPerAddress {
+		if value < 0 {
+			cfg.SweepMinPerAddress[chain] = 0
+		}
+	}
+	for chain, value := range cfg.GasTopUp {
+		if value < 0 {
+			cfg.GasTopUp[chain] = 0
+		}
+	}
 	return cfg, nil
 }
 
@@ -186,8 +211,8 @@ func (cfg CryptoConfig) ValidateSweepReady() error {
 	if hot == "" {
 		return fmt.Errorf("sweep disabled: set the EVM hot wallet (receiving address) first")
 	}
-	if isZeroAddress(hot) {
-		return fmt.Errorf("sweep disabled: the EVM hot wallet is the zero address")
+	if !validEVMAddress(hot) {
+		return fmt.Errorf("sweep disabled: the EVM hot wallet is not a valid 0x-prefixed 20-byte address")
 	}
 	return nil
 }
@@ -200,6 +225,53 @@ func isZeroAddress(address string) bool {
 		return false
 	}
 	return strings.Trim(trimmed, "0") == ""
+}
+
+// validEVMAddress accepts only the canonical 0x-prefixed 20-byte hex form.
+// common.HexToAddress pads or truncates anything else without an error, so
+// "0x" or a short string would silently become a different destination.
+func validEVMAddress(address string) bool {
+	trimmed := strings.TrimSpace(address)
+	if len(trimmed) != 42 || !strings.HasPrefix(trimmed, "0x") {
+		return false
+	}
+	if _, err := hex.DecodeString(trimmed[2:]); err != nil {
+		return false
+	}
+	return !isZeroAddress(trimmed)
+}
+
+// validSolanaAddress is a length/charset sanity check for a base58 pubkey.
+func validSolanaAddress(address string) bool {
+	trimmed := strings.TrimSpace(address)
+	if len(trimmed) < 32 || len(trimmed) > 44 {
+		return false
+	}
+	for _, r := range trimmed {
+		switch {
+		case r >= '1' && r <= '9':
+		case r >= 'A' && r <= 'H':
+		case r >= 'J' && r <= 'N':
+		case r >= 'P' && r <= 'Z':
+		case r >= 'a' && r <= 'k':
+		case r >= 'm' && r <= 'z':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// clampInt bounds a configured integer so a negative or absurd value cannot
+// wrap when cast to uint64 by the scanner.
+func clampInt(value, low, high int) int {
+	if value < low {
+		return low
+	}
+	if value > high {
+		return high
+	}
+	return value
 }
 
 // SettingStore is the narrow persistence surface the config needs: read and
@@ -255,10 +327,10 @@ const SettingKeySignerPolicy = "crypto.signer.policy"
 // preserved.
 func SyncSignerTargets(ctx context.Context, store SettingStore, cfg CryptoConfig) (bool, error) {
 	wanted := make([]string, 0, 2)
-	if v := strings.TrimSpace(cfg.HotWalletEVM); v != "" {
+	if v := strings.TrimSpace(cfg.HotWalletEVM); v != "" && validEVMAddress(v) {
 		wanted = append(wanted, v)
 	}
-	if v := strings.TrimSpace(cfg.HotWalletSolana); v != "" {
+	if v := strings.TrimSpace(cfg.HotWalletSolana); v != "" && validSolanaAddress(v) {
 		wanted = append(wanted, v)
 	}
 

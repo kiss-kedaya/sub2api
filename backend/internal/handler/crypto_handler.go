@@ -210,6 +210,19 @@ func (h *CryptoHandler) AdminHotWalletAddress(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": st})
 }
 
+// csvCell neutralises spreadsheet formula injection: a wallet-controlled
+// address starting with = + - @ would otherwise execute on open.
+func csvCell(value string) string {
+	if value == "" {
+		return value
+	}
+	switch value[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + value
+	}
+	return value
+}
+
 // AdminExportDeposits streams the deposit ledger as CSV for reconciliation.
 // GET /api/v1/admin/crypto/deposits.csv
 func (h *CryptoHandler) AdminExportDeposits(c *gin.Context) {
@@ -217,21 +230,32 @@ func (h *CryptoHandler) AdminExportDeposits(c *gin.Context) {
 		response.BadRequest(c, "crypto channel unavailable")
 		return
 	}
-	records, _, err := h.service.ListDepositsPaged(c.Request.Context(),
-		c.Query("chain"), c.Query("status"), 5000, 0)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
+	// Page through the whole ledger: the reader caps one page at 200, and
+	// an export that silently stops at 50 rows cannot be reconciled.
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Content-Disposition", `attachment; filename="crypto-deposits.csv"`)
+	// Excel decides charset by BOM; without it Chinese and quotes mojibake.
+	_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
 	w := csv.NewWriter(c.Writer)
 	_ = w.Write([]string{"id", "chain", "tx_hash", "log_index", "from", "to", "token", "amount", "status", "created_at"})
-	for _, r := range records {
-		_ = w.Write([]string{
-			strconv.FormatInt(r.ID, 10), r.Chain, r.TxHash, strconv.Itoa(r.LogIndex),
-			r.FromAddress, r.ToAddress, r.Token, r.Amount, r.Status, r.CreatedAt,
-		})
+	const pageSize = 200
+	for offset := 0; ; offset += pageSize {
+		records, summary, err := h.service.ListDepositsPaged(c.Request.Context(),
+			c.Query("chain"), c.Query("status"), pageSize, offset)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		for _, r := range records {
+			_ = w.Write([]string{
+				csvCell(strconv.FormatInt(r.ID, 10)), csvCell(r.Chain), csvCell(r.TxHash),
+				strconv.Itoa(r.LogIndex), csvCell(r.FromAddress), csvCell(r.ToAddress),
+				csvCell(r.Token), csvCell(r.Amount), csvCell(r.Status), csvCell(r.CreatedAt),
+			})
+		}
+		if len(records) == 0 || summary == nil || int64(offset+len(records)) >= summary.Total {
+			break
+		}
 	}
 	w.Flush()
 }
