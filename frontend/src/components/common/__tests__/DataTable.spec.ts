@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import DataTable from '../DataTable.vue'
+import Select from '../Select.vue'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
@@ -356,5 +357,82 @@ describe('DataTable', () => {
     await wrapper.get('[data-test="select-all-mobile"]').setValue(true)
 
     expect(wrapper.emitted('update:selectedKeys')?.at(-1)?.[0]).toEqual([99, 1, 2])
+  })
+
+  it('sorts from the mobile card toolbar with server-side sort enabled', async () => {
+    stubMobileMatchMedia()
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [
+          { key: 'name', label: 'Name', sortable: true },
+          { key: 'notes', label: 'Notes' },
+          { key: 'balance', label: 'Balance', sortable: true }
+        ],
+        data: [
+          { id: 1, name: 'One', balance: 5 },
+          { id: 2, name: 'Two', balance: 90 }
+        ],
+        rowKey: 'id',
+        serverSideSort: true
+      }
+    })
+
+    const bar = wrapper.find('[data-test="mobile-sort-bar"]')
+    expect(bar.exists()).toBe(true)
+
+    const select = wrapper.findComponent(Select)
+    expect(select.props('options')).toEqual([
+      { value: 'name', label: 'Name' },
+      { value: 'balance', label: 'Balance' }
+    ])
+
+    select.vm.$emit('change', 'balance')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('sort')?.at(-1)).toEqual(['balance', 'asc'])
+
+    await wrapper.get('[data-test="mobile-sort-direction"]').trigger('click')
+    expect(wrapper.emitted('sort')?.at(-1)).toEqual(['balance', 'desc'])
+  })
+
+  it('sorts the mobile cards locally when the table is not server-side sorted', async () => {
+    stubMobileMatchMedia()
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [
+          { key: 'name', label: 'Name', sortable: true },
+          { key: 'balance', label: 'Balance', sortable: true }
+        ],
+        data: [
+          { id: 1, name: 'One', balance: 5 },
+          { id: 2, name: 'Two', balance: 90 }
+        ],
+        rowKey: 'id'
+      }
+    })
+
+    wrapper.findComponent(Select).vm.$emit('change', 'balance')
+    await wrapper.vm.$nextTick()
+
+    const names = wrapper.findAll('[data-field="name"]').map((cell) => cell.text())
+    expect(names[0]).toContain('One')
+    expect(names[1]).toContain('Two')
+
+    await wrapper.get('[data-test="mobile-sort-direction"]').trigger('click')
+    const namesDesc = wrapper.findAll('[data-field="name"]').map((cell) => cell.text())
+    expect(namesDesc[0]).toContain('Two')
+    expect(namesDesc[1]).toContain('One')
+  })
+
+  it('hides the mobile sort bar when no column is sortable', () => {
+    stubMobileMatchMedia()
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [{ key: 'name', label: 'Name' }],
+        data: [{ id: 1, name: 'One' }],
+        rowKey: 'id'
+      }
+    })
+
+    expect(wrapper.find('[data-test="mobile-sort-bar"]').exists()).toBe(false)
   })
 })

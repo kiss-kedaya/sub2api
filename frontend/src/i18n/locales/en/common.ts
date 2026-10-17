@@ -78,6 +78,9 @@ export default {
     saving: 'Saving...',
     selectedCount: '({count} selected)',
     refresh: 'Refresh',
+    sortBy: 'Sort by',
+    sortAscending: 'Ascending',
+    sortDescending: 'Descending',
     autoRefresh: {
       title: 'Auto Refresh',
       enable: 'Enable auto refresh',
