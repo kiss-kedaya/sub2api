@@ -78,24 +78,32 @@ func tokenDecimalsKey(chain, contract string) string {
 // the token's decimals.
 func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sweeper.AddressBalance, error) {
 	rows, err := b.db.QueryContext(ctx, `
-		SELECT d.to_address, d.token, SUM(d.amount),
+		SELECT c.to_address, c.token, c.credited - COALESCE(s.swept, 0),
 		       MAX(a.derivation_index)
-		  FROM deposit_transactions d
+		  FROM (
+		        -- Addresses are reused, so "already swept once" cannot mean
+		        -- "nothing left": a later deposit to the same address must be
+		        -- swept again. Only the unswept remainder is eligible.
+		        SELECT d.to_address, d.token, SUM(d.amount) AS credited
+		          FROM deposit_transactions d
+		         WHERE d.chain = $1 AND d.status = 'credited'
+		         GROUP BY d.to_address, d.token
+		       ) c
+		  LEFT JOIN (
+		        SELECT s.from_address, s.token, SUM(s.amount) AS swept
+		          FROM sweep_records s
+		         WHERE s.chain = $1
+		           AND s.status = 'swept'
+		           AND s.amount > 0
+		         GROUP BY s.from_address, s.token
+		       ) s ON lower(s.from_address) = lower(c.to_address) AND s.token = c.token
 		  -- deposit_addresses.chain stores the FAMILY (evm/solana), not the
 		  -- chain id, so match on the address alone; one address belongs to
 		  -- exactly one assignment.
 		  LEFT JOIN deposit_addresses a
-		         ON lower(a.address) = lower(d.to_address)
-		 WHERE d.chain = $1
-		   AND d.status = 'credited'
-		   AND NOT EXISTS (
-		        SELECT 1 FROM sweep_records s
-		         WHERE s.chain = d.chain
-		           AND s.from_address = d.to_address
-		           AND s.token = d.token
-		           AND s.status = 'swept'
-		   )
-		 GROUP BY d.to_address, d.token`, chain)
+		         ON lower(a.address) = lower(c.to_address)
+		 WHERE c.credited - COALESCE(s.swept, 0) > 0
+		 GROUP BY c.to_address, c.token, c.credited, s.swept`, chain)
 	if err != nil {
 		return nil, err
 	}

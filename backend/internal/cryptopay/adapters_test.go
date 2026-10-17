@@ -43,3 +43,34 @@ func TestUnsweptBalancesKeepsIndexZero(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A successful sweep must not exclude an address forever: deposit addresses
+// are reused, so only the credited-minus-swept remainder is eligible.
+func TestUnsweptBalancesSubtractsSweptRemainder(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+
+	const token = "0x55d398326f99059ff775485246999027b3197955"
+	mock.ExpectQuery(`FROM deposit_transactions`).
+		WithArgs("bsc").
+		WillReturnRows(sqlmock.NewRows([]string{"to_address", "token", "remainder", "idx"}).
+			AddRow("0x339ffddcc5a3cac856e41ed3793bcf375b7551f5", token, "2.000000000000000000", 0))
+
+	reader := newBalanceReader(db, map[string]int{tokenDecimalsKey("bsc", token): 18})
+	out, err := reader.UnsweptBalances(context.Background(), "bsc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("want 1 remainder row, got %d", len(out))
+	}
+	if got := out[0].Raw.String(); got != "2000000000000000000" {
+		t.Fatalf("raw = %s, want 2e18", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
