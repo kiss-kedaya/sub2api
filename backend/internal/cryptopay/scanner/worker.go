@@ -229,7 +229,10 @@ func (w *Worker) retryPending(ctx context.Context) error {
 		       amount::text, block_number, block_hash
 		  FROM deposit_transactions
 		 WHERE status = 'pending'
-		 ORDER BY id
+		   -- A permanently failing row must not starve newer deposits: retry
+		   -- the least-recently-attempted rows first and let old ones age out.
+		   AND (last_attempt_at IS NULL OR last_attempt_at < NOW() - INTERVAL '1 minute')
+		 ORDER BY COALESCE(last_attempt_at, created_at), id
 		 LIMIT 50`)
 	if err != nil {
 		return err
@@ -255,6 +258,13 @@ func (w *Worker) retryPending(ctx context.Context) error {
 		return err
 	}
 	for _, p := range pending {
+		// Count the attempt before the work: a row that keeps failing must
+		// eventually stop consuming the queue.
+		if _, err := w.db.ExecContext(ctx,
+			`UPDATE deposit_transactions SET last_attempt_at = NOW() WHERE chain = $1 AND tx_hash = $2 AND log_index = $3`,
+			p.chain, p.txHash, p.logIndex); err != nil {
+			slog.Warn("[cryptopay] pending attempt stamp failed", "tx", p.txHash, "error", err)
+		}
 		pool := w.pools[p.chain]
 		if pool == nil {
 			continue
@@ -386,6 +396,13 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 			if decimals == 0 {
 				decimals = 6 // stablecoin default
 			}
+			// A token outside the watched set must never be credited: a
+			// misconfigured or hostile RPC can return any log it likes.
+			if _, ok := chain.Decimals[transfer.Token]; !ok {
+				slog.Warn("[cryptopay] ignored transfer for unwatched token",
+					"chain", transfer.Chain, "tx", transfer.TxHash, "token", transfer.Token)
+				continue
+			}
 			// Confirm before crediting: a broadcast-but-reverted or
 			// not-yet-final transaction must never move money. Reorgs are
 			// the reason this runs per transfer instead of trusting the
@@ -420,6 +437,10 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 			}
 			if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {
 				slog.Warn("[cryptopay] credit failed", "chain", transfer.Chain, "tx", transfer.TxHash, "error", err)
+				// Do not advance the cursor past a transfer we failed to
+				// persist: the next pass would never see it again and the
+				// deposit would be lost silently.
+				return err
 			}
 		}
 		if err := w.cursor.Save(ctx, chain.Chain, to); err != nil {

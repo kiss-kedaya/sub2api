@@ -274,7 +274,15 @@ func (l *Ledger) record(ctx context.Context, t scanner.Transfer, status string, 
 		`INSERT INTO deposit_transactions
 		   (chain, tx_hash, log_index, from_address, to_address, token, amount, block_number, block_hash, status, reason)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		 ON CONFLICT (chain, tx_hash, log_index) DO NOTHING`,
+		-- A pending row must be allowed to become ignored (thresholds or
+		-- address status changed after it was seen); a resolved row must
+		-- never be overwritten, since the money already moved.
+		ON CONFLICT (chain, tx_hash, log_index) DO UPDATE
+		  SET status = EXCLUDED.status,
+		      reason = EXCLUDED.reason,
+		      last_attempt_at = NOW()
+		  WHERE deposit_transactions.status = 'pending'
+		    AND EXCLUDED.status IN ('ignored', 'reverted')`,
 		t.Chain, t.TxHash, t.LogIndex, t.From, t.To, t.Token,
 		amountString(t.Amount, decimals), t.BlockNumber, t.BlockHash, status, reason)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
