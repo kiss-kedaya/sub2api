@@ -22,7 +22,7 @@ func TestSendToAdminsSelectsOnlyEnabledAdminKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(`SELECT bark_device_key_encrypted FROM users`).
 		WithArgs("admin").
@@ -44,7 +44,7 @@ func TestSendToAdminsContinuesAfterDecryptFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(`SELECT bark_device_key_encrypted FROM users`).
 		WithArgs("admin").

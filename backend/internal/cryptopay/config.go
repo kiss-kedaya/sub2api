@@ -346,7 +346,6 @@ func SyncSignerTargets(ctx context.Context, store SettingStore, cfg CryptoConfig
 	return changed, nil
 }
 
-
 // CryptoConfigPatch is a partial update. Pointer fields distinguish "not
 // sent" (keep the stored value) from "sent as empty" (clear it), so a client
 // that omits keys can never zero the configuration by accident.

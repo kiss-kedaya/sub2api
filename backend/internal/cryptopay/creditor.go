@@ -10,7 +10,6 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/ledger"
 	"github.com/Wei-Shaw/sub2api/internal/notify"
 	"github.com/Wei-Shaw/sub2api/internal/notify/bark"
@@ -88,17 +87,13 @@ func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRe
 		// has no HTTP client, so mark the source as the crypto watcher.
 		SetClientIP("crypto").
 		SetSrcHost("crypto").
-		// client_ip / src_host are required origin fields. A chain deposit
-		// has no HTTP client, so mark the source as the crypto watcher.
-		SetClientIP("crypto").
-		SetSrcHost("crypto").
 		SetProviderSnapshot(map[string]any{
-			"chain":  req.Chain,
-			"token":  req.Token,
-			"from":   req.FromAddr,
-			"to":     req.ToAddr,
-			"tx":     req.TxHash,
-			"block":  req.BlockNum,
+			"chain": req.Chain,
+			"token": req.Token,
+			"from":  req.FromAddr,
+			"to":    req.ToAddr,
+			"tx":    req.TxHash,
+			"block": req.BlockNum,
 		}).
 		Save(ctx)
 	if err != nil {
@@ -120,17 +115,4 @@ func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRe
 		}
 	}
 	return nil
-}
-
-// orderExists guards against re-creating an order for a deposit that was
-// already credited (defense in depth on top of the ledger gate).
-func (c *DepositCreditor) orderExists(ctx context.Context, txHash string) (bool, error) {
-	count, err := c.entClient.PaymentOrder.Query().
-		Where(paymentorder.OutTradeNoEQ(strings.TrimPrefix(txHash, "0x"))).
-		Where(paymentorder.PaymentTypeEQ(payment.TypeCrypto)).
-		Count(ctx)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
 }

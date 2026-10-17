@@ -17,8 +17,8 @@ func (f *fakeReader) UnsweptBalances(_ context.Context, chain string) ([]Address
 func TestPlannerThresholds(t *testing.T) {
 	reader := &fakeReader{balances: map[string][]AddressBalance{
 		"bsc": {
-			{Chain: "bsc", Address: "0xaaa", Token: "0xusdt", Raw: big.NewInt(5_000_000), Decimals: 6},  // 5 USDT >= 3
-			{Chain: "bsc", Address: "0xbbb", Token: "0xusdt", Raw: big.NewInt(1_000_000), Decimals: 6},  // 1 USDT < 3
+			{Chain: "bsc", Address: "0xaaa", Token: "0xusdt", Raw: big.NewInt(5_000_000), Decimals: 6}, // 5 USDT >= 3
+			{Chain: "bsc", Address: "0xbbb", Token: "0xusdt", Raw: big.NewInt(1_000_000), Decimals: 6}, // 1 USDT < 3
 		},
 	}}
 	planner := NewPlanner(nil, reader, Config{
