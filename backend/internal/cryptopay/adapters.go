@@ -110,9 +110,11 @@ func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sw
 		}
 		// A credited deposit must always map to an assignment row; when it
 		// does not (assignment deleted, data drift), the derivation index is
-		// unknown. Skipping is the only safe move: defaulting to 0 would sign
-		// the sweep with the HOT wallet seed, not the child's.
-		if !derivationIndex.Valid || derivationIndex.Int64 <= 0 {
+		// unknown (NULL after the LEFT JOIN). Skipping is the only safe move:
+		// defaulting to 0 would sign the sweep with the HOT wallet seed, not
+		// the child's. Index 0 itself is a legitimate assignment (legacy
+		// pools started there) and must not be dropped.
+		if !derivationIndex.Valid || derivationIndex.Int64 < 0 {
 			continue
 		}
 		// Decimals come from the chain's token config: deriving them from
