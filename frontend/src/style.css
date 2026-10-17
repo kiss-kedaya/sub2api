@@ -403,43 +403,110 @@
   }
 
   /* ============ 模态框 ============ */
+  /* 与站点整体风格对齐：玻璃拟态面板 + 分层柔和阴影 + 渐变发丝分隔线 */
   .modal-overlay {
     @apply fixed inset-0 z-50;
-    @apply bg-black/50 backdrop-blur-sm;
+    @apply bg-slate-900/45 backdrop-blur-md dark:bg-black/65;
     @apply flex items-center justify-center p-2 sm:p-4;
   }
 
   .modal-content {
     @apply w-full;
     @apply max-h-[95vh] sm:max-h-[90vh];
-    @apply bg-white dark:bg-dark-800;
-    @apply rounded-2xl shadow-2xl;
-    @apply border border-gray-200 dark:border-dark-700;
-    @apply flex flex-col;
+    @apply bg-white/95 backdrop-blur-xl dark:bg-dark-800/95;
+    @apply rounded-3xl;
+    @apply border border-white/70 dark:border-dark-700/70;
+    @apply flex flex-col overflow-hidden;
+    box-shadow:
+      0 24px 64px -12px rgba(30, 64, 175, 0.22),
+      0 8px 24px -8px rgba(15, 23, 42, 0.12),
+      0 1px 0 rgba(255, 255, 255, 0.6) inset;
+  }
+
+  .dark .modal-content {
+    box-shadow:
+      0 24px 64px -12px rgba(0, 0, 0, 0.65),
+      0 8px 24px -8px rgba(0, 0, 0, 0.5),
+      0 1px 0 rgba(255, 255, 255, 0.06) inset;
   }
 
   .modal-header {
-    @apply border-b border-gray-200 px-4 py-3 dark:border-dark-700;
-    @apply sm:px-6 sm:py-4;
-    @apply flex items-center justify-between;
+    @apply px-5 pb-4 pt-5;
+    @apply sm:px-6;
+    @apply flex items-center justify-between gap-3;
     @apply flex-shrink-0;
+    position: relative;
+  }
+
+  /* 渐变发丝分隔线，呼应站点按钮的渐变语言（替代生硬的 border-b） */
+  .modal-header::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(148, 163, 184, 0.35) 12%,
+      rgba(148, 163, 184, 0.35) 88%,
+      transparent
+    );
+  }
+
+  .dark .modal-header::after {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(71, 85, 105, 0.55) 12%,
+      rgba(71, 85, 105, 0.55) 88%,
+      transparent
+    );
   }
 
   .modal-title {
-    @apply text-lg font-semibold text-gray-900 dark:text-white;
+    @apply text-lg font-semibold tracking-tight text-gray-900 dark:text-white;
   }
 
   .modal-body {
-    @apply px-4 py-3;
-    @apply sm:px-6 sm:py-4;
+    @apply px-5 py-4;
+    @apply sm:px-6 sm:py-5;
     @apply flex-1 overflow-y-auto;
   }
 
   .modal-footer {
-    @apply border-t border-gray-200 px-4 py-3 dark:border-dark-700;
-    @apply sm:px-6 sm:py-4;
+    @apply px-5 pb-5 pt-4;
+    @apply sm:px-6;
     @apply flex items-center justify-end gap-3;
     @apply flex-shrink-0;
+    position: relative;
+  }
+
+  .modal-footer::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(148, 163, 184, 0.35) 12%,
+      rgba(148, 163, 184, 0.35) 88%,
+      transparent
+    );
+  }
+
+  .dark .modal-footer::before {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(71, 85, 105, 0.55) 12%,
+      rgba(71, 85, 105, 0.55) 88%,
+      transparent
+    );
   }
 
   /* 防止body滚动的工具类 */
@@ -448,11 +515,11 @@
   }
 
   .modal-enter-active {
-    transition: opacity 240ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
+    transition: opacity 280ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
   }
 
   .modal-leave-active {
-    transition: opacity 180ms ease-in;
+    transition: opacity 200ms cubic-bezier(0.4, 0, 1, 1);
   }
 
   .modal-enter-from,
@@ -461,17 +528,18 @@
   }
 
   .modal-enter-active .modal-content {
-    transition: transform 320ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)),
-      opacity 240ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
+    transition: transform 420ms cubic-bezier(0.22, 1.06, 0.36, 1),
+      opacity 300ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
   }
 
   .modal-leave-active .modal-content {
-    transition: transform 180ms ease-in, opacity 180ms ease-in;
+    transition: transform 200ms cubic-bezier(0.4, 0, 1, 1),
+      opacity 200ms cubic-bezier(0.4, 0, 1, 1);
   }
 
   .modal-enter-from .modal-content,
   .modal-leave-to .modal-content {
-    transform: scale(0.96) translateY(10px);
+    transform: scale(0.965) translateY(14px);
     opacity: 0;
   }
 

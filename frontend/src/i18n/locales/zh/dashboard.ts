@@ -796,6 +796,31 @@ export default {
         joinedAt: '注册时间'
       }
     },
+    customCodes: {
+      title: '我的专属邀请码',
+      description: '默认邀请码不可修改；你最多可额外创建 {max} 个自定义邀请码，删除后对应链接立即失效。',
+      defaultBadge: '默认',
+      customBadge: '自定义',
+      adminBadge: '管理员创建',
+      addLabel: '新邀请码',
+      addPlaceholder: '4~32 位字母/数字/下划线/连字符',
+      addButton: '新增邀请码',
+      adding: '新增中...',
+      remove: '删除',
+      removing: '删除中...',
+      empty: '还没有自定义邀请码',
+      copied: '已复制此邀请码',
+      copy: '复制',
+      quota: '已用 {used} / {max}',
+      stats: '邀请 {count} 人 · 返利 {amount}',
+      retiredBadge: '已停用',
+      removeConfirm: '确认删除邀请码 {code}？删除后该邀请链接立即失效，已产生的返利不受影响。',
+      createSuccess: '邀请码已创建',
+      deleteSuccess: '邀请码已删除',
+      createFailed: '创建邀请码失败',
+      deleteFailed: '删除邀请码失败',
+      invalidFormat: '邀请码只能包含 4~32 位大写字母、数字、下划线或连字符'
+    },
     tips: {
       title: '使用说明',
       line1: '将邀请码或邀请链接分享给新用户。',

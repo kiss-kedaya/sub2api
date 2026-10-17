@@ -67,7 +67,7 @@
             />
           </div>
           <ScheduledQualityConfig v-if="newPlan.quality_check_enabled" v-model:provider="newPlan.quality_provider" v-model:config="newPlan.quality_config" :model="newPlan.model_id" />
-          <div v-if="newPlan.quality_provider !== 'chanshui' || !newPlan.quality_check_enabled" class="sm:col-span-2">
+          <div v-if="!newPlan.quality_check_enabled" class="sm:col-span-2">
             <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
               {{ t('admin.scheduledTests.prompt') }}
             </label>
@@ -312,7 +312,7 @@
                 />
               </div>
               <ScheduledQualityConfig v-if="editForm.quality_check_enabled" v-model:provider="editForm.quality_provider" v-model:config="editForm.quality_config" :model="editForm.model_id" />
-              <div v-if="editForm.quality_provider !== 'chanshui' || !editForm.quality_check_enabled" class="sm:col-span-2">
+              <div v-if="!editForm.quality_check_enabled" class="sm:col-span-2">
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
                   {{ t('admin.scheduledTests.prompt') }}
                 </label>
@@ -620,7 +620,7 @@ const editForm = reactive({
   enabled: true,
   auto_recover: false,
   quality_check_enabled: false,
-  quality_provider: 'pelican' as 'pelican' | 'chanshui',
+  quality_provider: 'chanshui' as 'pelican' | 'chanshui',
   quality_config: defaultChanshuiConfig()
 })
 
@@ -632,7 +632,7 @@ const newPlan = reactive({
   enabled: true,
   auto_recover: false,
   quality_check_enabled: false,
-  quality_provider: 'pelican' as 'pelican' | 'chanshui',
+  quality_provider: 'chanshui' as 'pelican' | 'chanshui',
   quality_config: defaultChanshuiConfig()
 })
 
@@ -644,7 +644,7 @@ const resetNewPlan = () => {
   newPlan.enabled = true
   newPlan.auto_recover = false
   newPlan.quality_check_enabled = false
-  newPlan.quality_provider = 'pelican'
+  newPlan.quality_provider = 'chanshui'
   newPlan.quality_config = defaultChanshuiConfig()
 }
 
@@ -768,7 +768,9 @@ const startEdit = (plan: ScheduledTestPlan) => {
   editForm.enabled = plan.enabled
   editForm.auto_recover = plan.auto_recover
   editForm.quality_check_enabled = plan.quality_check_enabled
-  editForm.quality_provider = plan.quality_provider || 'pelican'
+  // Legacy pelican plans are normalized server-side to chanshui-with-check-off;
+  // treat any non-chanshui provider the same way in the form.
+  editForm.quality_provider = plan.quality_provider === 'chanshui' ? 'chanshui' : 'pelican'
   editForm.quality_config = completeChanshuiConfig(plan.quality_config)
 }
 

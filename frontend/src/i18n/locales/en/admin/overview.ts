@@ -495,6 +495,7 @@ export default {
       enterEmail: 'Enter email',
       enterPassword: 'Enter password',
       enterUsername: 'Enter username (optional)',
+      usernameInvalid: 'Username supports letters, numbers, spaces and _-. only, max 50 characters',
       enterNotes: 'Enter notes (admin only)',
       notesHint: 'This note is only visible to administrators',
       enterNewPassword: 'Enter new password (optional)',

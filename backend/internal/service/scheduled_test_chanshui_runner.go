@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/chanshui"
 )
 
-// Chanshui decisions use their own statuses and per-plan scheduling ownership,
-// separate from the Pelican two-consecutive-failures policy.
+// runChanshuiPlan owns the per-plan audit lifecycle: create, poll, decide and
+// persist. Decisions use their own statuses and per-plan scheduling ownership.
 func (s *ScheduledTestRunnerService) runChanshuiPlan(ctx context.Context, plan *ScheduledTestPlan) (*ScheduledTestResult, time.Duration, error) {
 	repo, ok := s.planRepo.(ScheduledChanshuiRepository)
 	if !ok {
@@ -40,9 +42,9 @@ func (s *ScheduledTestRunnerService) runChanshuiPlan(ctx context.Context, plan *
 			report["probes"] = data["probes"]
 			report["audit_status"] = data["status"]
 			if data["status"] == "done" {
-				decision := ChanshuiDecision{"unknown", "检测期间配置发生变化，下一轮按当前停止条件重新判断"}
+				decision := ChanshuiDecision{Status: "unknown", Reason: "检测期间配置发生变化，下一轮按当前停止条件重新判断"}
 				if state != nil && state.DecisionConfigHash != "" && state.DecisionConfigHash == chanshuiDecisionConfigHash(plan) {
-					decision = evaluateChanshuiStopCondition(plan, data)
+					decision = chanshui.EvaluateStopCondition(plan.ModelID, plan.QualityConfig, data)
 				}
 				report["decision"] = decision
 				status = decision.Status
@@ -53,7 +55,7 @@ func (s *ScheduledTestRunnerService) runChanshuiPlan(ctx context.Context, plan *
 		if state != nil {
 			fingerprint = state.KeyFingerprint
 		}
-		safe := redactChanshui(report, secret, fingerprint)
+		safe := chanshui.Redact(report, secret, fingerprint)
 		raw, marshalErr := json.Marshal(safe)
 		if marshalErr != nil {
 			return nil, 0, fmt.Errorf("cannot encode audit report")
@@ -69,13 +71,13 @@ func (s *ScheduledTestRunnerService) runChanshuiPlan(ctx context.Context, plan *
 		if now.Unix() >= state.ExpiresAt {
 			return finish("unknown", "掺水检测已超过结果有效期，未重新创建检测。", nil, "")
 		}
-		pollURL, urlErr := chanshuiPollURL(state.ServiceURL, state.PollURL, state.ID)
+		pollURL, urlErr := chanshui.PollURL(state.ServiceURL, state.PollURL, state.ID)
 		if urlErr != nil {
 			return finish("unknown", "掺水轮询地址未通过同源校验。", nil, "")
 		}
-		code, headers, data, pollErr := chanshuiExchange(ctx, client, http.MethodGet, pollURL, nil)
+		code, headers, data, pollErr := chanshui.Exchange(ctx, client, http.MethodGet, pollURL, nil)
 		if code == http.StatusTooManyRequests || code == http.StatusServiceUnavailable {
-			return nil, chanshuiRetryAfter(headers.Get("Retry-After")), nil
+			return nil, chanshui.RetryAfter(headers.Get("Retry-After")), nil
 		}
 		if code == http.StatusNotFound || code == http.StatusGone {
 			return finish("unknown", "掺水检测不存在或已过期（结果保留24小时，服务重启后可能丢失）；未重试失败项。", nil, "")
@@ -140,13 +142,13 @@ func (s *ScheduledTestRunnerService) runChanshuiPlan(ctx context.Context, plan *
 	endpoint := strings.TrimRight(copyPlan.QualityConfig.BaseURL, "/") + "/api/v1/audits"
 	// Persist the non-secret intent before the non-idempotent POST. A crash after
 	// remote acceptance but before storing its ID must not resubmit the same run.
-	state = &ChanshuiAuditState{Status: "submitting", ServiceURL: copyPlan.QualityConfig.BaseURL, StartedAt: now, ExpiresAt: now.Add(24 * time.Hour).Unix(), KeyFingerprint: chanshuiFingerprint(key), DecisionConfigHash: chanshuiDecisionConfigHash(&copyPlan)}
+	state = &ChanshuiAuditState{Status: "submitting", ServiceURL: copyPlan.QualityConfig.BaseURL, StartedAt: now, ExpiresAt: now.Add(24 * time.Hour).Unix(), KeyFingerprint: chanshui.Fingerprint(key), DecisionConfigHash: chanshuiDecisionConfigHash(&copyPlan)}
 	if err := repo.SetChanshuiAudit(ctx, plan.ID, state); err != nil {
 		return nil, 0, fmt.Errorf("cannot persist audit submission intent")
 	}
-	code, headers, data, createErr := chanshuiExchange(ctx, client, http.MethodPost, endpoint, body)
+	code, headers, data, createErr := chanshui.Exchange(ctx, client, http.MethodPost, endpoint, body)
 	if code == http.StatusTooManyRequests || code == http.StatusServiceUnavailable {
-		wait := chanshuiRetryAfter(headers.Get("Retry-After"))
+		wait := chanshui.RetryAfter(headers.Get("Retry-After"))
 		if err := repo.DelayChanshuiCreate(ctx, wait); err != nil {
 			return nil, 0, fmt.Errorf("cannot persist audit Retry-After")
 		}
@@ -165,11 +167,11 @@ func (s *ScheduledTestRunnerService) runChanshuiPlan(ctx context.Context, plan *
 	poll, _ := data["poll_url"].(string)
 	expires, _ := data["expires_at"].(float64)
 	status, _ := data["status"].(string)
-	pollURL, err := chanshuiPollURL(copyPlan.QualityConfig.BaseURL, poll, id)
+	pollURL, err := chanshui.PollURL(copyPlan.QualityConfig.BaseURL, poll, id)
 	if err != nil || expires <= float64(now.Unix()) || (status != "queued" && status != "running" && status != "done") {
 		return finish("unknown", "掺水创建响应缺少有效的检测编号、轮询地址、状态或有效期；本轮不重复提交。", nil, key)
 	}
-	state = &ChanshuiAuditState{ID: id, PollURL: pollURL, ServiceURL: copyPlan.QualityConfig.BaseURL, StartedAt: now, ExpiresAt: int64(expires), KeyFingerprint: chanshuiFingerprint(key), Status: status, Skipped: redactChanshui(data["skipped"], key, ""), DecisionConfigHash: chanshuiDecisionConfigHash(&copyPlan)}
+	state = &ChanshuiAuditState{ID: id, PollURL: pollURL, ServiceURL: copyPlan.QualityConfig.BaseURL, StartedAt: now, ExpiresAt: int64(expires), KeyFingerprint: chanshui.Fingerprint(key), Status: status, Skipped: chanshui.Redact(data["skipped"], key, ""), DecisionConfigHash: chanshuiDecisionConfigHash(&copyPlan)}
 	if err := repo.SetChanshuiAudit(ctx, plan.ID, state); err != nil {
 		return finish("unknown", "掺水已接受任务，但本地保存轮询状态失败；本轮不重复提交。", nil, key)
 	}

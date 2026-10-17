@@ -548,6 +548,13 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			shouldDisable = true
 		}
 	case 402:
+		// 自定义错误码开启时，选中的 402 按该功能停调度 30 天，
+		// 不走国产余额检测的 20 分钟冷却（周期任务也不会提前清掉）。
+		if account.IsCustomErrorCodesEnabled() {
+			s.handleCustomErrorCode(ctx, account, statusCode, upstreamMsg)
+			shouldDisable = true
+			break
+		}
 		// 国产供应商：余额不足是可恢复状态（充值/检测恢复后由周期任务自动解除），
 		// 不能走 handleAuthError 永久置 status=error。改为可恢复的临时停调。
 		if account.IsCNProvider() {
@@ -1155,15 +1162,23 @@ func (s *RateLimitService) handleAntigravity403(ctx context.Context, account *Ac
 	}
 }
 
-// handleCustomErrorCode 处理自定义错误码，停止账号调度
+// customErrorCodeStopDuration 是「自定义错误码 / 仅对选中的错误码停止调度」的停调度时长。
+// 不用 status=error 永久停，也不走国产余额冷却的默认 20 分钟。
+const customErrorCodeStopDuration = 30 * 24 * time.Hour
+
+const customErrorCodeReasonPrefix = "custom_error_code"
+
+// handleCustomErrorCode 处理自定义错误码，停止账号调度 30 天。
+// reason 不用 cn_balance_low 前缀，余额检测周期任务不会提前清除。
 func (s *RateLimitService) handleCustomErrorCode(ctx context.Context, account *Account, statusCode int, errorMsg string) {
 	msg := "Custom error code " + strconv.Itoa(statusCode) + ": " + errorMsg
-	s.notifyAccountSchedulingBlocked(account, time.Time{}, "custom_error_code")
-	if err := s.accountRepo.SetError(ctx, account.ID, msg); err != nil {
-		slog.Warn("account_set_error_failed", "account_id", account.ID, "status_code", statusCode, "error", err)
+	until := time.Now().Add(customErrorCodeStopDuration)
+	s.notifyAccountSchedulingBlocked(account, until, customErrorCodeReasonPrefix)
+	if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, customErrorCodeReasonPrefix+": "+msg); err != nil {
+		slog.Warn("account_custom_error_unsched_failed", "account_id", account.ID, "status_code", statusCode, "error", err)
 		return
 	}
-	slog.Warn("account_disabled_custom_error", "account_id", account.ID, "status_code", statusCode, "error", errorMsg)
+	slog.Warn("account_custom_error_unschedulable", "account_id", account.ID, "status_code", statusCode, "until", until.UTC(), "error", errorMsg)
 }
 
 // handle429 处理429限流错误

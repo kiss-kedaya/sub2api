@@ -291,7 +291,7 @@ func TestCompleteEmailOAuthRegistrationUsesAffiliateCodeFromPendingSession(t *te
 	tamperedCount, err := client.User.Query().Where(dbuser.EmailEQ("tampered@example.com")).Count(ctx)
 	require.NoError(t, err)
 	require.Zero(t, tamperedCount)
-	require.Equal(t, []oauthEmailAffiliateBindCall{{userID: user.ID, inviterID: 2002}}, affiliateRepo.bindCalls)
+	require.Equal(t, []oauthEmailAffiliateBindCall{{userID: user.ID, inviterID: 2002, code: "AFF456"}}, affiliateRepo.bindCalls)
 	storedInvitation, err := client.RedeemCode.Query().Where(redeemcode.IDEQ(invitation.ID)).Only(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, storedInvitation.UsedBy)
@@ -361,6 +361,7 @@ func TestParseGitHubOAuthProfileRejectsPublicEmailWhenEmailsEndpointFails(t *tes
 type oauthEmailAffiliateBindCall struct {
 	userID    int64
 	inviterID int64
+	code      string
 }
 
 type oauthEmailAffiliateRepoStub struct {
@@ -386,9 +387,13 @@ func (r *oauthEmailAffiliateRepoStub) GetAffiliateByCode(_ context.Context, code
 	return &service.AffiliateSummary{UserID: userID, AffCode: strings.ToUpper(strings.TrimSpace(code))}, nil
 }
 
-func (r *oauthEmailAffiliateRepoStub) BindInviter(_ context.Context, userID, inviterID int64) (bool, error) {
-	r.bindCalls = append(r.bindCalls, oauthEmailAffiliateBindCall{userID: userID, inviterID: inviterID})
+func (r *oauthEmailAffiliateRepoStub) BindInviter(_ context.Context, userID, inviterID int64, code string) (bool, error) {
+	r.bindCalls = append(r.bindCalls, oauthEmailAffiliateBindCall{userID: userID, inviterID: inviterID, code: code})
 	return true, nil
+}
+
+func (r *oauthEmailAffiliateRepoStub) ListAffiliateCodeStats(context.Context, int64) (map[string]service.AffiliateCodeStat, error) {
+	return map[string]service.AffiliateCodeStat{}, nil
 }
 
 func (r *oauthEmailAffiliateRepoStub) AccrueQuota(context.Context, int64, int64, float64, int, *int64) (bool, error) {
@@ -445,6 +450,26 @@ func (r *oauthEmailAffiliateRepoStub) ListAffiliateTransferRecords(context.Conte
 
 func (r *oauthEmailAffiliateRepoStub) GetAffiliateUserOverview(context.Context, int64) (*service.AffiliateUserOverview, error) {
 	panic("unexpected GetAffiliateUserOverview call")
+}
+
+func (r *oauthEmailAffiliateRepoStub) ListUserAffiliateCodes(context.Context, int64) ([]service.UserAffiliateCode, error) {
+	return nil, nil
+}
+
+func (r *oauthEmailAffiliateRepoStub) CountUserAffiliateCodes(context.Context, int64) (int, error) {
+	return 0, nil
+}
+
+func (r *oauthEmailAffiliateRepoStub) CreateUserAffiliateCode(context.Context, int64, string, bool, bool) (*service.UserAffiliateCode, error) {
+	panic("unexpected CreateUserAffiliateCode call")
+}
+
+func (r *oauthEmailAffiliateRepoStub) DeleteUserAffiliateCode(context.Context, int64, int64) (bool, error) {
+	panic("unexpected DeleteUserAffiliateCode call")
+}
+
+func (r *oauthEmailAffiliateRepoStub) DeleteUserAffiliateCodeByCode(context.Context, int64, string) (bool, error) {
+	panic("unexpected DeleteUserAffiliateCodeByCode call")
 }
 
 func findSetCookieValue(cookies []*http.Cookie, name string) string {

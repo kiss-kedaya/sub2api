@@ -11,6 +11,7 @@
             <div class="usage-control-cluster">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
               <DateRangePicker
+                ref="rangeToolbarRef"
                 include-time
                 v-model:start-date="startDate"
                 v-model:end-date="endDate"
@@ -619,6 +620,19 @@ const handleRequestIdClick = (requestID: string) => {
   loadLogs()
 }
 const refreshData = () => {
+  // 刷新时先把还在使用中的快捷时间窗（近24小时等）滑到当前时刻。
+  // 页面默认窗口是加载那一刻算出来的，不滑的话新记录一直落在 end_date 之外，
+  // 看起来就是"点了刷新没反应"。自定义范围原样保留。
+  const presetRange =
+    usageFiltersRef.value?.refreshActivePreset?.() ??
+    rangeToolbarRef.value?.refreshActivePreset?.() ??
+    null
+  if (presetRange) {
+    startDate.value = presetRange.startDate
+    endDate.value = presetRange.endDate
+    filters.value = { ...filters.value, start_date: presetRange.startDate, end_date: presetRange.endDate }
+    pagination.page = 1
+  }
   invalidateModelStatsCache()
   loadLogs()
   if (inflightOpen.value) void loadInflight(false)
@@ -884,6 +898,7 @@ const detailTabs = computed(() => [
   { key: 'ranking' as const, label: t('usage.tabs.ranking'), icon: 'chart' as const },
 ])
 const usageFiltersRef = ref<InstanceType<typeof UsageFilters> | null>(null)
+const rangeToolbarRef = ref<InstanceType<typeof DateRangePicker> | null>(null)
 const rankingMounted = ref(false)
 const rankingRef = ref<InstanceType<typeof UserTokenRanking> | null>(null)
 

@@ -208,6 +208,8 @@ func RegisterGatewayRoutes(
 			}
 			h.Gateway.Messages(c)
 		})
+		// System One carries only JSON text, so it uses the text body limit.
+		gateway.POST("/systemone", textBodyLimit, h.Gateway.SystemOne)
 		// /v1/messages/count_tokens: OpenAI bridges upstream, Grok estimates
 		// locally, and Anthropic-compatible platforms retain their existing path.
 		gateway.POST("/messages/count_tokens", countTokensHandler)
@@ -236,6 +238,9 @@ func RegisterGatewayRoutes(
 			h.Gateway.Responses(c)
 		}))
 		gateway.POST("/alpha/search", textBodyLimit, h.OpenAIGateway.AlphaSearch)
+		// DeepSeek standalone tools (Search / Fetch)：原始 JSON，透传到 deepseek 账号。
+		gateway.POST("/tools/search", textBodyLimit, h.OpenAIGateway.DeepSeekToolsSearch)
+		gateway.POST("/tools/fetch", textBodyLimit, h.OpenAIGateway.DeepSeekToolsFetch)
 		gateway.GET("/responses", func(c *gin.Context) {
 			h.OpenAIGateway.ResponsesWebSocket(c)
 		})

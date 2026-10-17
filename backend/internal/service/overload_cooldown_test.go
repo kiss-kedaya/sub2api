@@ -37,8 +37,10 @@ type overloadAccountRepoStub struct {
 	mockAccountRepoForGemini
 	overloadCalls   int
 	errorCalls      int
+	tempCalls       int
 	lastOverloadID  int64
 	lastOverloadEnd time.Time
+	lastTempUntil   time.Time
 }
 
 func (r *overloadAccountRepoStub) SetError(_ context.Context, _ int64, _ string) error {
@@ -50,6 +52,12 @@ func (r *overloadAccountRepoStub) SetOverloaded(_ context.Context, id int64, unt
 	r.overloadCalls++
 	r.lastOverloadID = id
 	r.lastOverloadEnd = until
+	return nil
+}
+
+func (r *overloadAccountRepoStub) SetTempUnschedulable(_ context.Context, _ int64, until time.Time, _ string) error {
+	r.tempCalls++
+	r.lastTempUntil = until
 	return nil
 }
 
@@ -326,11 +334,14 @@ func TestHandleUpstreamError_529CustomCodeDisablesInsteadOfOverloadCooldown(t *t
 		},
 	}
 
+	before := time.Now()
 	shouldDisable := svc.HandleUpstreamError(context.Background(), account, 529, nil, []byte(`{"error":{"message":"overloaded"}}`))
 
 	require.True(t, shouldDisable)
-	require.Equal(t, 1, repo.errorCalls)
+	require.Zero(t, repo.errorCalls)
 	require.Zero(t, repo.overloadCalls)
+	require.Equal(t, 1, repo.tempCalls)
+	require.WithinDuration(t, before.Add(customErrorCodeStopDuration), repo.lastTempUntil, 2*time.Second)
 }
 
 // ===========================================================================

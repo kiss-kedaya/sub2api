@@ -87,6 +87,29 @@ export interface AffiliateUserOverview {
   rebated_invitee_count: number
   available_quota: number
   history_quota: number
+  aff_code_invite_count?: number
+  aff_code_rebate_amount?: number
+  custom_codes?: AdminUserAffiliateCode[]
+  custom_code_quota?: AdminUserAffiliateCodeQuota
+}
+
+export interface AdminUserAffiliateCode {
+  id: number
+  user_id: number
+  code: string
+  is_custom: boolean
+  created_by_admin: boolean
+  created_at: string
+  updated_at: string
+  invite_count?: number
+  rebate_amount?: number
+  retired?: boolean
+}
+
+export interface AdminUserAffiliateCodeQuota {
+  max: number
+  used: number
+  limit: number
 }
 
 export interface UpdateAffiliateUserRequest {
@@ -215,6 +238,29 @@ export async function getUserOverview(
   return data
 }
 
+export async function createUserAffiliateCode(
+  userId: number,
+  code: string,
+): Promise<{ user_id: number; code: AdminUserAffiliateCode; quota: AdminUserAffiliateCodeQuota }> {
+  const { data } = await apiClient.post<{
+    user_id: number
+    code: AdminUserAffiliateCode
+    quota: AdminUserAffiliateCodeQuota
+  }>(`/admin/affiliates/users/${userId}/codes`, { code })
+  return data
+}
+
+export async function deleteUserAffiliateCode(
+  userId: number,
+  code: string,
+): Promise<{ user_id: number; quota: AdminUserAffiliateCodeQuota }> {
+  const { data } = await apiClient.delete<{
+    user_id: number
+    quota: AdminUserAffiliateCodeQuota
+  }>(`/admin/affiliates/users/${userId}/codes`, { data: { code } })
+  return data
+}
+
 export const affiliatesAPI = {
   listUsers,
   lookupUsers,
@@ -225,6 +271,8 @@ export const affiliatesAPI = {
   listRebateRecords,
   listTransferRecords,
   getUserOverview,
+  createUserAffiliateCode,
+  deleteUserAffiliateCode,
 }
 
 export default affiliatesAPI

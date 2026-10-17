@@ -129,6 +129,25 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 			}
 		}
 	}
+	// Gemini 分组里混挂 OpenAI 兼容账号（Platform=openai / 国产供应商）时，
+	// 这些账号经 Gemini→OpenAI 兼容桥服务 generateContent，它们的 model_mapping
+	// 就是该分组真正能跑的模型集。此前只统计 Antigravity / 原生 Gemini 账号，
+	// 于是「Gemini 分组只放 OpenAI 类型账号」会返回空目录，客户端 sync 到 0 个模型。
+	if h.gatewayService != nil && forcePlatform != service.PlatformAntigravity {
+		for _, groupID := range geminiStudioGroupIDs(apiKey) {
+			gid := groupID
+			for _, platform := range []string{service.PlatformOpenAI, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax} {
+				for _, id := range h.gatewayService.GetAvailableModels(c.Request.Context(), &gid, platform) {
+					id = strings.TrimSpace(id)
+					if id == "" || seenAGModels[id] {
+						continue
+					}
+					agModels = append(agModels, gemini.FallbackModel(id))
+					seenAGModels[id] = true
+				}
+			}
+		}
+	}
 	// 本地目录只来自账号的真实映射（agModels）。禁止再用 gemini.DefaultModels()
 	// 之类的内置全量目录合成 200：分组里混着 OpenAI 兼容账号或 Antigravity 账号时，
 	// 内置目录会列出这个分组根本跑不了的模型，客户端拿到的列表和实际能力对不上。
@@ -899,8 +918,9 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 	upstreamMsg := service.ExtractUpstreamErrorMessage(responseBody)
 	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
 
-	// 使用默认的错误映射
+	// 使用默认的错误映射；换号耗尽时服务端失败统一按 529（过载）回传。
 	status, _, message := wrapUpstreamClientError(statusCode, responseBody)
+	status, _, message = exhaustedFailoverResponse(status, "", message)
 	googleError(c, status, message)
 }
 

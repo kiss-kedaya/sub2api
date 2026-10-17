@@ -888,10 +888,11 @@ func (h *AuthHandler) syncDingTalkIdentity(ctx context.Context, cfg config.DingT
 	// 仅首次注册时覆盖 users.username（避免每次登录覆盖用户后续手动改过的名字）。
 	// dingtalk_name 属性下面单独每次写入企业 name，不受此条件影响。
 	if syncUsername && cfg.SyncDisplayName {
-		username := strings.TrimSpace(staff.Nickname)
+		// 过滤不允许的字符（与用户侧改名同口径），避免企业昵称里的标记字符写进用户名。
+		username := service.SanitizeUsername(staff.Nickname)
 		source := "nickname"
 		if username == "" {
-			username = strings.TrimSpace(staff.Name)
+			username = service.SanitizeUsername(staff.Name)
 			source = "name(fallback)"
 		}
 		if username != "" && h.userService != nil {
