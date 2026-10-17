@@ -105,6 +105,11 @@ func (s *Service) GetOrAssign(ctx context.Context, userID int64) (map[string]str
 			return nil, err
 		}
 		if existing != nil {
+			// A disabled address must not be handed out again: the scanner
+			// stops watching it, so a deposit would vanish without a record.
+			if existing.Status != "active" {
+				return nil, fmt.Errorf("your %s deposit address is disabled; contact the operator", family)
+			}
 			out[family] = existing.Address
 			continue
 		}
