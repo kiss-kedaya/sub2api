@@ -75,11 +75,12 @@ func (f *DeepSeekInlineFilter) Flush() DeepSeekPiece {
 	case deepSeekDSML:
 		f.mode = deepSeekText
 		calls := parseDSMLBlock(rest)
-		if len(calls) == 0 {
-			piece.Text += rest
-		} else {
+		if len(calls) > 0 {
 			piece.Calls = append(piece.Calls, calls...)
 		}
+		// 未闭合的 DSML 绝不能回流成可见正文：走到这里说明模型已经开了一个工具
+		// 调用块，但流在这里结束（截断 / 上游断连）。丢掉这段残留，比把
+		// <｜｜DSML｜｜ ... ｜｜> 原样显示给用户安全得多。
 	default:
 		piece.Text += rest
 	}
@@ -118,7 +119,11 @@ func (f *DeepSeekInlineFilter) drain(flush bool) DeepSeekPiece {
 				continue
 			}
 			if len(f.buf) > dsmlMaxHold {
-				piece.Text += f.buf
+				// 超限时先把已经闭合的调用救出来，剩下的残缺块直接丢弃：
+				// 绝不能把原始 DSML 标记当成可见正文推给用户。
+				if calls := parseDSMLBlock(f.buf); len(calls) > 0 {
+					piece.Calls = append(piece.Calls, calls...)
+				}
 				f.buf = ""
 				f.mode = deepSeekText
 				continue
@@ -401,7 +406,7 @@ func parseDSMLBlock(block string) []DeepSeekCall {
 				cur.Arguments = dsmlArgs(params)
 				calls = append(calls, *cur)
 			}
-			cur = &DeepSeekCall{CallID: newDeepSeekCallID(), Name: attrs["name"]}
+			cur = &DeepSeekCall{CallID: deepSeekAttrCallID(attrs), Name: attrs["name"]}
 			params = nil
 		case !closing && name == "parameter" && cur != nil:
 			body, consumed := dsmlParameterBody(rest[end:])
@@ -482,6 +487,15 @@ func dsmlArgs(params []dsmlParam) string {
 	return string(raw)
 }
 
+func deepSeekAttrCallID(attrs map[string]string) string {
+	for _, key := range []string{"call_id", "id", "tool_call_id"} {
+		if id := strings.TrimSpace(attrs[key]); id != "" {
+			return id
+		}
+	}
+	return newDeepSeekCallID()
+}
+
 func newDeepSeekCallID() string {
 	buf := make([]byte, 8)
 	_, _ = rand.Read(buf)
@@ -544,6 +558,10 @@ func (state *ChatCompletionsToResponsesStreamState) deepSeekCallEvents(calls []D
 		if strings.TrimSpace(arguments) == "" {
 			arguments = "{}"
 		}
+		call.Arguments = arguments
+		if state.alreadyHasDeepSeekCall(call) {
+			continue
+		}
 		stored := &ChatToolCall{ID: call.CallID, Type: "function"}
 		if stored.ID == "" {
 			stored.ID = generateItemID()
@@ -556,4 +574,23 @@ func (state *ChatCompletionsToResponsesStreamState) deepSeekCallEvents(calls []D
 		events = append(events, announceChatToolItem(state, idx, stored, true)...)
 	}
 	return events
+}
+
+func (state *ChatCompletionsToResponsesStreamState) alreadyHasDeepSeekCall(call DeepSeekCall) bool {
+	if state == nil {
+		return false
+	}
+	for _, tc := range state.ToolCalls {
+		if tc == nil {
+			continue
+		}
+		if call.CallID != "" && tc.ID == call.CallID {
+			return true
+		}
+		args := strings.TrimSpace(call.Arguments)
+		if call.Name != "" && args != "" && args != "{}" && tc.Function.Name == call.Name && tc.Function.Arguments == call.Arguments {
+			return true
+		}
+	}
+	return false
 }

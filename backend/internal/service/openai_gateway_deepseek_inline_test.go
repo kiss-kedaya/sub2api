@@ -56,3 +56,45 @@ func TestDeepSeekPassthrough_DSMLBecomesFunctionCallBeforeCompleted(t *testing.T
 	assert.Equal(t, "bash", gjson.GetBytes(next, "response.output.1.name").String())
 	assert.NotContains(t, string(next), "DSML")
 }
+
+func TestDeepSeekPassthrough_LeavesLiveToolEventsUntouched(t *testing.T) {
+	added := []byte(`{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"call_abc","call_id":"call_abc","name":"bash","arguments":""}}`)
+	var st deepSeekPassthrough
+	_, _, next, drop := st.rewrite(nil, "response.output_item.added", added)
+	require.False(t, drop)
+	assert.Nil(t, next)
+
+	delta := []byte(`{"type":"response.function_call_arguments.delta","output_index":1,"item_id":"call_abc","delta":"{}"}`)
+	_, _, next, drop = st.rewrite(nil, "response.function_call_arguments.delta", delta)
+	require.False(t, drop)
+	assert.Nil(t, next)
+
+	done := []byte(`{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"call_abc","call_id":"call_abc","name":"bash","arguments":"{}"}}`)
+	_, _, next, drop = st.rewrite(nil, "response.output_item.done", done)
+	require.False(t, drop)
+	assert.Nil(t, next)
+}
+
+func TestDeepSeekPassthrough_CompletedDropsDuplicateWithoutRewritingID(t *testing.T) {
+	completed := []byte(`{"type":"response.completed","response":{"output":[{"type":"function_call","id":"call_abc","call_id":"call_abc","name":"bash","arguments":"{}"},{"type":"function_call","id":"call_abc","call_id":"call_abc","name":"bash","arguments":"{\"cmd\":\"pwd\"}"}]}}`)
+	var st deepSeekPassthrough
+	_, _, next, drop := st.rewrite(nil, "response.completed", completed)
+	require.False(t, drop)
+	require.NotNil(t, next)
+	require.Equal(t, 1, len(gjson.GetBytes(next, "response.output").Array()))
+	assert.Equal(t, "call_abc", gjson.GetBytes(next, "response.output.0.id").String())
+	assert.Equal(t, "call_abc", gjson.GetBytes(next, "response.output.0.call_id").String())
+	assert.Contains(t, gjson.GetBytes(next, "response.output.0.arguments").String(), "pwd")
+}
+
+func TestRewriteDeepSeekResponseBody_DedupesWhenThinkingPresent(t *testing.T) {
+	body := []byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"<think>secret</think>done"}]},{"type":"function_call","id":"call_a","call_id":"call_a","name":"bash","arguments":"{}"},{"type":"function_call","id":"call_b","call_id":"call_a","name":"bash","arguments":"{\"cmd\":\"pwd\"}"}]}`)
+	out := rewriteDeepSeekResponseBody(nil, body)
+	require.Equal(t, 2, len(gjson.GetBytes(out, "output").Array()))
+	assert.Equal(t, "done", gjson.GetBytes(out, "output.0.content.0.text").String())
+	assert.Equal(t, "function_call", gjson.GetBytes(out, "output.1.type").String())
+	assert.Equal(t, "fc_a", gjson.GetBytes(out, "output.1.id").String())
+	assert.Equal(t, "call_a", gjson.GetBytes(out, "output.1.call_id").String())
+	assert.Contains(t, gjson.GetBytes(out, "output.1.arguments").String(), "pwd")
+	assert.NotContains(t, string(out), "call_b")
+}

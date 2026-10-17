@@ -150,6 +150,30 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 			normalized = stripped
 		}
 	}
+	// 部分 DeepSeek 兼容中转（如 OpenCSG）的 /responses 端点启用严格 JSON
+	// 解码：顶层 reasoning.summary / reasoning.generate_summary（OpenAI 的
+	// 推理摘要开关）会被 400 直接拒绝（json: unknown field "summary"）。
+	// 摘要意图属于目标协议没有对应字段的选项，按 CLIProxyAPI / new-api 的
+	// 处理方式在转发前省略（省略即"由上游默认行为决定"，实测该上游默认仍然
+	// 流式返回 reasoning_summary_text，不丢摘要内容）；只剥这两个开关字段，
+	// input 里既有的 summary 历史原样保留。reasoning 里若无其它内容则整个
+	// 对象一起去掉，避免空对象再触发别的校验。
+	if dedupe {
+		strippedSwitches := false
+		for _, path := range []string{"reasoning.summary", "reasoning.generate_summary"} {
+			if stripped, err := sjson.DeleteBytes(normalized, path); err == nil {
+				normalized = stripped
+				strippedSwitches = true
+			}
+		}
+		if strippedSwitches {
+			if reasoning := gjson.GetBytes(normalized, "reasoning"); reasoning.IsObject() && len(reasoning.Map()) == 0 {
+				if next, err := sjson.DeleteBytes(normalized, "reasoning"); err == nil {
+					normalized = next
+				}
+			}
+		}
+	}
 
 	var requestBody map[string]any
 	if err := decodeOpenAIJSONUseNumber(normalized, &requestBody); err != nil {
@@ -229,18 +253,22 @@ func deepSeekCallIDScope(platform, model string) bool {
 	if strings.EqualFold(strings.TrimSpace(platform), PlatformDeepseek) {
 		return true
 	}
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek")
+	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "deepseek")
 }
 
-// deepSeekDuplicateCallIDRewrite reports that this Responses body is going to
-// DeepSeek, either because the account/group platform is DeepSeek or the model
-// name starts with deepseek. Those upstreams reject a repeated call_id.
+// deepSeekDuplicateCallIDRewrite reports that this body is going to DeepSeek.
+// Platform, mapped model, or a deepseek base URL all count. A client alias that
+// does not start with "deepseek" still has to be cleaned before that upstream.
 func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
-	platform := ""
-	if account != nil {
-		platform = account.Platform
+	model := gjson.GetBytes(body, "model").String()
+	if account == nil {
+		return deepSeekCallIDScope("", model)
 	}
-	return deepSeekCallIDScope(platform, gjson.GetBytes(body, "model").String())
+	if deepSeekCallIDScope(account.Platform, model) || deepSeekCallIDScope("", account.GetMappedModel(model)) {
+		return true
+	}
+	base := strings.ToLower(account.GetOpenAIBaseURL() + " " + account.GetCNProtocolBaseURL(APIProtocolResponses) + " " + account.GetCNProtocolBaseURL(APIProtocolChatCompletions))
+	return strings.Contains(base, "deepseek")
 }
 
 func trimOpenAIEncryptedReasoningItems(reqBody map[string]any) bool {

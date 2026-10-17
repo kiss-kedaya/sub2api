@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatRegistrationEmailSuffixWhitelistForMessage,
+  isRegistrationEmailFormatValid,
   isRegistrationEmailSuffixAllowed,
   isRegistrationEmailSuffixDomainValid,
   normalizeRegistrationEmailSuffixDomain,
@@ -10,6 +11,20 @@ import {
 } from '@/utils/registrationEmailPolicy'
 
 describe('registrationEmailPolicy utils', () => {
+  it('isRegistrationEmailFormatValid mirrors the backend format rules', () => {
+    expect(isRegistrationEmailFormatValid('user@qq.com')).toBe(true)
+    expect(isRegistrationEmailFormatValid('User.Name+tag@Sub.Example.com')).toBe(true)
+    expect(isRegistrationEmailFormatValid('user@qq.com.')).toBe(true)
+    // 长度 / 特殊字符 / 多级域名
+    expect(isRegistrationEmailFormatValid('user@localhost')).toBe(false)
+    expect(isRegistrationEmailFormatValid('user name@qq.com')).toBe(false)
+    expect(isRegistrationEmailFormatValid('a&b@qq.com')).toBe(false)
+    expect(isRegistrationEmailFormatValid(`"user"@qq.com`)).toBe(false)
+    expect(isRegistrationEmailFormatValid(`${'a'.repeat(65)}@qq.com`)).toBe(false)
+    expect(isRegistrationEmailFormatValid(`${'a'.repeat(250)}@qq.com`)).toBe(false)
+    expect(isRegistrationEmailFormatValid('')).toBe(false)
+  })
+
   it('normalizeRegistrationEmailSuffixDomain lowercases, strips @, and ignores invalid chars', () => {
     expect(normalizeRegistrationEmailSuffixDomain(' @Exa!mple.COM ')).toBe('example.com')
     expect(normalizeRegistrationEmailSuffixDomain(' *.EDU!.CN ')).toBe('*.edu.cn')

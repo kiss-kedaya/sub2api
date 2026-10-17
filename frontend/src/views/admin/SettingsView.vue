@@ -7784,6 +7784,84 @@
               </div>
             </div>
 
+            <!-- 额外邀请码：仅编辑已有用户时可管理（新增用户走 save 建默认码） -->
+            <div
+              v-if="affiliateModal.mode === 'edit' && affiliateModal.editingEntry"
+              class="mt-5 border-t border-gray-200 pt-4 dark:border-dark-700"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <h4 class="text-sm font-semibold text-gray-900 dark:text-white">
+                  {{ t('admin.settings.features.affiliate.codes.title') }}
+                </h4>
+                <span class="badge badge-gray">
+                  {{ t('admin.settings.features.affiliate.codes.quota', { used: affiliateModal.codesQuota.used, max: affiliateModal.codesQuota.max }) }}
+                </span>
+              </div>
+              <p class="mt-1 text-xs text-gray-400">
+                {{ t('admin.settings.features.affiliate.codes.hint', { max: affiliateModal.codesQuota.max }) }}
+              </p>
+
+              <!-- 默认码只读 -->
+              <div class="mt-3 flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900">
+                <span class="badge badge-gray shrink-0">{{ t('admin.settings.features.affiliate.codes.defaultBadge') }}</span>
+                <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-white">{{ affiliateModal.editingEntry.aff_code }}</code>
+                <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
+                  {{ t('admin.settings.features.affiliate.codes.stats', { count: affiliateModal.defaultInviteCount, amount: formatCurrency(affiliateModal.defaultRebateAmount) }) }}
+                </span>
+              </div>
+
+              <p v-if="affiliateModal.codesLoading" class="mt-3 text-xs text-gray-400">
+                {{ t('admin.settings.features.affiliate.codes.loading') }}
+              </p>
+              <p v-else-if="affiliateModal.codes.length === 0" class="mt-3 text-xs text-gray-400">
+                {{ t('admin.settings.features.affiliate.codes.empty') }}
+              </p>
+              <ul v-else class="mt-3 space-y-2">
+                <li
+                  v-for="c in affiliateModal.codes"
+                  :key="c.code"
+                  class="flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 dark:border-dark-700"
+                >
+                  <span class="badge badge-gray shrink-0">
+                    {{ c.created_by_admin ? t('admin.settings.features.affiliate.codes.adminBadge') : t('admin.settings.features.affiliate.codes.userBadge') }}
+                  </span>
+                  <code class="min-w-0 flex-1 truncate font-mono text-sm text-gray-900 dark:text-white">{{ c.code }}</code>
+                  <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
+                    {{ t('admin.settings.features.affiliate.codes.stats', { count: c.invite_count ?? 0, amount: formatCurrency(c.rebate_amount ?? 0) }) }}
+                  </span>
+                  <span v-if="c.retired" class="badge badge-gray shrink-0">{{ t('admin.settings.features.affiliate.codes.retiredBadge') }}</span>
+                  <button
+                    v-if="!c.retired"
+                    type="button"
+                    class="btn btn-secondary btn-sm shrink-0 text-red-600 dark:text-red-400"
+                    :disabled="affiliateModal.codesSaving"
+                    @click="removeAffiliateCode(c.code)"
+                  >
+                    {{ affiliateModal.codesSaving ? t('admin.settings.features.affiliate.codes.removing') : t('admin.settings.features.affiliate.codes.remove') }}
+                  </button>
+                </li>
+              </ul>
+
+              <div class="mt-3 flex items-center gap-2">
+                <input
+                  v-model="affiliateModal.newCode"
+                  type="text"
+                  maxlength="32"
+                  class="input flex-1 font-mono"
+                  :placeholder="t('admin.settings.features.affiliate.codes.placeholder')"
+                  @keyup.enter="addAffiliateCode"
+                />
+                <button
+                  type="button"
+                  class="btn btn-secondary shrink-0"
+                  :disabled="affiliateModal.codesSaving || !affiliateModal.newCode.trim() || affiliateModal.codesQuota.limit <= 0"
+                  @click="addAffiliateCode"
+                >
+                  {{ affiliateModal.codesSaving ? t('admin.settings.features.affiliate.codes.adding') : t('admin.settings.features.affiliate.codes.addButton') }}
+                </button>
+              </div>
+            </div>
+
             <div class="mt-6 flex items-center justify-between gap-3">
               <p
                 v-if="!affiliateModalCanSubmit"
@@ -8978,7 +9056,12 @@ import {
 } from "@/composables/useStepUp";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSimpleUser } from "@/api/admin/affiliates";
+import type {
+  AdminUserAffiliateCode,
+  AdminUserAffiliateCodeQuota,
+} from "@/api/admin/affiliates";
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
+import { formatCurrency } from "@/utils/format";
 import { parseTableDefaultPageSizeInput, parseTablePageSizeOptionsInput } from "@/utils/tablePreferences";
 import { useAppStore } from "@/stores";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
@@ -12818,6 +12901,14 @@ interface AffiliateModalState {
   code: string;
   rate: string | number;
   searchTimer: number | null;
+  // 额外邀请码（默认码之外的）
+  codes: AdminUserAffiliateCode[];
+  codesQuota: AdminUserAffiliateCodeQuota;
+  defaultInviteCount: number;
+  defaultRebateAmount: number;
+  codesLoading: boolean;
+  codesSaving: boolean;
+  newCode: string;
 }
 
 const affiliateModal = reactive<AffiliateModalState>({
@@ -12831,6 +12922,13 @@ const affiliateModal = reactive<AffiliateModalState>({
   code: "",
   rate: "",
   searchTimer: null,
+  codes: [],
+  codesQuota: { max: 9, used: 0, limit: 9 },
+  defaultInviteCount: 0,
+  defaultRebateAmount: 0,
+  codesLoading: false,
+  codesSaving: false,
+  newCode: "",
 });
 
 const affiliateBatchModal = reactive<{
@@ -12977,6 +13075,80 @@ function openAffiliateModal(entry: AffiliateAdminEntry | null) {
   affiliateModal.code = entry?.aff_code_custom ? entry.aff_code : "";
   affiliateModal.rate =
     entry?.aff_rebate_rate_percent != null ? String(entry.aff_rebate_rate_percent) : "";
+  affiliateModal.codes = [];
+  affiliateModal.codesQuota = { max: 9, used: 0, limit: 9 };
+  affiliateModal.defaultInviteCount = 0;
+  affiliateModal.defaultRebateAmount = 0;
+  affiliateModal.codesLoading = false;
+  affiliateModal.codesSaving = false;
+  affiliateModal.newCode = "";
+  if (entry) {
+    void loadAffiliateCodes(entry.user_id);
+  }
+}
+
+async function loadAffiliateCodes(userId: number) {
+  affiliateModal.codesLoading = true;
+  try {
+    const overview = await affiliatesAPI.getUserOverview(userId);
+    affiliateModal.codes = overview.custom_codes ?? [];
+    affiliateModal.codesQuota = overview.custom_code_quota ?? { max: 9, used: 0, limit: 9 };
+    affiliateModal.defaultInviteCount = overview.aff_code_invite_count ?? 0;
+    affiliateModal.defaultRebateAmount = overview.aff_code_rebate_amount ?? 0;
+  } catch (err) {
+    appStore.showError(
+      extractApiErrorMessage(err, t("admin.settings.features.affiliate.codes.loadFailed")),
+    );
+  } finally {
+    affiliateModal.codesLoading = false;
+  }
+}
+
+async function addAffiliateCode() {
+  const entry = affiliateModal.editingEntry;
+  const code = affiliateModal.newCode.trim().toUpperCase();
+  if (!entry || !code || affiliateModal.codesSaving) return;
+  if (!/^[A-Z0-9_-]{4,32}$/.test(code)) {
+    appStore.showError(t("admin.settings.features.affiliate.codes.invalidFormat"));
+    return;
+  }
+  affiliateModal.codesSaving = true;
+  try {
+    await affiliatesAPI.createUserAffiliateCode(entry.user_id, code);
+    affiliateModal.newCode = "";
+    appStore.showSuccess(t("admin.settings.features.affiliate.codes.createSuccess"));
+    await loadAffiliateCodes(entry.user_id);
+  } catch (err) {
+    appStore.showError(
+      extractApiErrorMessage(err, t("admin.settings.features.affiliate.codes.createFailed")),
+    );
+  } finally {
+    affiliateModal.codesSaving = false;
+  }
+}
+
+function removeAffiliateCode(code: string) {
+  const entry = affiliateModal.editingEntry;
+  if (!entry || affiliateModal.codesSaving) return;
+  openAffiliateConfirm(
+    t("admin.settings.features.affiliate.codes.remove"),
+    t("admin.settings.features.affiliate.codes.removeConfirm", { code }),
+    t("admin.settings.features.affiliate.codes.remove"),
+    async () => {
+      affiliateModal.codesSaving = true;
+      try {
+        await affiliatesAPI.deleteUserAffiliateCode(entry.user_id, code);
+        appStore.showSuccess(t("admin.settings.features.affiliate.codes.deleteSuccess"));
+        await loadAffiliateCodes(entry.user_id);
+      } catch (err) {
+        appStore.showError(
+          extractApiErrorMessage(err, t("admin.settings.features.affiliate.codes.deleteFailed")),
+        );
+      } finally {
+        affiliateModal.codesSaving = false;
+      }
+    },
+  );
 }
 
 function closeAffiliateModal() {

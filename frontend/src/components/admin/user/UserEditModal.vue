@@ -27,7 +27,7 @@
       </div>
       <div>
         <label class="input-label">{{ t('admin.users.username') }}</label>
-        <input v-model="form.username" type="text" class="input" />
+        <input v-model="form.username" type="text" class="input" maxlength="50" />
       </div>
       <div>
         <label class="input-label">{{ t('admin.users.form.roleLabel') }}</label>
@@ -95,6 +95,7 @@ import UserAttributeForm from '@/components/user/UserAttributeForm.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import { isUsernameValid } from '@/utils/usernamePolicy'
 
 const props = defineProps<{ show: boolean, user: AdminUser | null }>()
 const emit = defineEmits(['close', 'success'])
@@ -139,6 +140,11 @@ const handleUpdateUser = async () => {
   if (!props.user) return
   if (!form.email.trim()) {
     appStore.showError(t('admin.users.emailRequired'))
+    return
+  }
+  // 与后端 ValidateUsername 同口径：标记字符/超长用户名会被 400 拒绝，这里先提示。
+  if (!isUsernameValid(form.username)) {
+    appStore.showError(t('admin.users.usernameInvalid'))
     return
   }
   // 0 = 不限制，与网关 (AcquireUserSlot: maxConcurrency <= 0) 和批量改限额一致

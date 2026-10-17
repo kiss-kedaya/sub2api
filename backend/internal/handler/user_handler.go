@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -231,6 +232,65 @@ func (h *UserHandler) TransferAffiliateQuota(c *gin.Context) {
 		"transferred_quota": transferred,
 		"balance":           balance,
 	})
+}
+
+// CreateAffiliateCode creates an extra custom affiliate code for the current user.
+// POST /api/v1/user/aff/codes
+func (h *UserHandler) CreateAffiliateCode(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	var req struct {
+		Code string `json:"code" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request payload")
+		return
+	}
+
+	code, err := h.affiliateService.CreateUserAffiliateCode(c.Request.Context(), subject.UserID, req.Code, false)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	_, quota, err := h.affiliateService.ListUserAffiliateCodes(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"code":  code,
+		"quota": quota,
+	})
+}
+
+// DeleteAffiliateCode removes one of the current user's custom affiliate codes.
+// DELETE /api/v1/user/aff/codes/:id
+func (h *UserHandler) DeleteAffiliateCode(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	codeID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || codeID <= 0 {
+		response.BadRequest(c, "Invalid code id")
+		return
+	}
+	if err := h.affiliateService.DeleteUserAffiliateCode(c.Request.Context(), subject.UserID, codeID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	_, quota, err := h.affiliateService.ListUserAffiliateCodes(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"quota": quota})
 }
 
 type StartIdentityBindingRequest struct {

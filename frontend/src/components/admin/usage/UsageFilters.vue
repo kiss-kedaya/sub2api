@@ -7,6 +7,7 @@
         <div class="w-full sm:w-auto" data-testid="usage-date-range-filter">
           <label class="input-label">{{ t('admin.dashboard.timeRange') }}</label>
           <DateRangePicker
+            ref="dateRangeRef"
             include-time
             :start-date="startDate"
             :end-date="endDate"
@@ -274,6 +275,7 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
 const userSearchRef = ref<HTMLElement | null>(null)
 const apiKeySearchRef = ref<HTMLElement | null>(null)
 const accountSearchRef = ref<HTMLElement | null>(null)
+const dateRangeRef = ref<InstanceType<typeof DateRangePicker> | null>(null)
 
 const userKeyword = ref('')
 const userResults = ref<SimpleUser[]>([])
@@ -579,5 +581,11 @@ const setUserKeyword = (email: string) => {
 
 const getUserSearchRevision = () => userSearchSequence
 
-defineExpose({ getUserSearchRevision, setUserKeyword })
+// refreshActivePreset re-applies the active quick time-range preset (近24小时
+// etc.) so the refresh button slides a relative window to "now". Returns null
+// for a custom range — custom windows stay put.
+const refreshActivePreset = (): { startDate: string; endDate: string } | null =>
+  dateRangeRef.value?.refreshActivePreset?.() ?? null
+
+defineExpose({ getUserSearchRevision, setUserKeyword, refreshActivePreset })
 </script>

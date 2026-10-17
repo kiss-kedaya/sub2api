@@ -13,6 +13,30 @@ var registrationEmailDomainPattern = regexp.MustCompile(
 	`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`,
 )
 
+// 注册邮箱结构约束：总长 ≤254、本地段 ≤64 且仅限常见字符、域名必须为多级域名。
+// 校验口径与前端 isRegistrationEmailFormatValid 保持一致（前后端同时限制）。
+var registrationEmailLocalPartPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._%+-]*[a-z0-9_%+-])?$`)
+
+const (
+	registrationEmailMaxLength       = 254
+	registrationEmailMaxLocalLength  = 64
+	registrationEmailMaxDomainLength = 253
+)
+
+// ValidateRegistrationEmailFormat 拒绝超长、含空白/引号等特殊字符或非多级域名的邮箱。
+func ValidateRegistrationEmailFormat(raw string) error {
+	local, domain, ok := splitEmailForPolicy(raw)
+	if !ok ||
+		len(strings.TrimSpace(raw)) > registrationEmailMaxLength ||
+		len(local) > registrationEmailMaxLocalLength ||
+		len(domain) > registrationEmailMaxDomainLength ||
+		!registrationEmailLocalPartPattern.MatchString(local) ||
+		!registrationEmailDomainPattern.MatchString(domain) {
+		return ErrEmailFormatInvalid
+	}
+	return nil
+}
+
 // RegistrationEmailSuffix extracts normalized suffix in "@domain" form.
 func RegistrationEmailSuffix(email string) string {
 	_, domain, ok := splitEmailForPolicy(email)

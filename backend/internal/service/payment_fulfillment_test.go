@@ -118,8 +118,12 @@ func (r *paymentFulfillmentAffiliateRepoStub) GetAffiliateByCode(context.Context
 	panic("unexpected GetAffiliateByCode call")
 }
 
-func (r *paymentFulfillmentAffiliateRepoStub) BindInviter(context.Context, int64, int64) (bool, error) {
+func (r *paymentFulfillmentAffiliateRepoStub) BindInviter(context.Context, int64, int64, string) (bool, error) {
 	panic("unexpected BindInviter call")
+}
+
+func (r *paymentFulfillmentAffiliateRepoStub) ListAffiliateCodeStats(context.Context, int64) (map[string]AffiliateCodeStat, error) {
+	return map[string]AffiliateCodeStat{}, nil
 }
 
 func (r *paymentFulfillmentAffiliateRepoStub) AccrueQuota(_ context.Context, inviterID, inviteeUserID int64, amount float64, freezeHours int, sourceOrderID *int64) (bool, error) {
@@ -188,6 +192,26 @@ func (r *paymentFulfillmentAffiliateRepoStub) ListAffiliateTransferRecords(conte
 
 func (r *paymentFulfillmentAffiliateRepoStub) GetAffiliateUserOverview(context.Context, int64) (*AffiliateUserOverview, error) {
 	panic("unexpected GetAffiliateUserOverview call")
+}
+
+func (r *paymentFulfillmentAffiliateRepoStub) ListUserAffiliateCodes(context.Context, int64) ([]UserAffiliateCode, error) {
+	return nil, nil
+}
+
+func (r *paymentFulfillmentAffiliateRepoStub) CountUserAffiliateCodes(context.Context, int64) (int, error) {
+	return 0, nil
+}
+
+func (r *paymentFulfillmentAffiliateRepoStub) CreateUserAffiliateCode(context.Context, int64, string, bool, bool) (*UserAffiliateCode, error) {
+	panic("unexpected CreateUserAffiliateCode call")
+}
+
+func (r *paymentFulfillmentAffiliateRepoStub) DeleteUserAffiliateCode(context.Context, int64, int64) (bool, error) {
+	panic("unexpected DeleteUserAffiliateCode call")
+}
+
+func (r *paymentFulfillmentAffiliateRepoStub) DeleteUserAffiliateCodeByCode(context.Context, int64, string) (bool, error) {
+	panic("unexpected DeleteUserAffiliateCodeByCode call")
 }
 
 type paymentFulfillmentSettingRepoStub struct {

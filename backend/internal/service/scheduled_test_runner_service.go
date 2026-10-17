@@ -3,10 +3,8 @@ package service
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -24,7 +22,6 @@ const (
 	// leadership before its plans have finished.
 	scheduledTestRunnerLeaderLockKey = "scheduled-test-runner"
 	scheduledTestRunnerLeaderLockTTL = 10 * time.Minute
-	scheduledQualityReasonPrefix     = "scheduled_quality_check:"
 )
 
 // ScheduledTestRunnerService periodically scans due test plans and executes them.
@@ -34,7 +31,6 @@ type ScheduledTestRunnerService struct {
 	accountTestSvc *AccountTestService
 	rateLimitSvc   *RateLimitService
 	cfg            *config.Config
-	qualityCheck   func(string, string) (string, string)
 	chanshuiClient *http.Client
 
 	// lockCache/db elect one process to execute each cron tick across all
@@ -194,7 +190,7 @@ func (s *ScheduledTestRunnerService) tryAcquireLeaderLock(ctx context.Context) (
 }
 
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {
-	if plan.QualityCheckEnabled && plan.QualityProvider == QualityProviderChanshui {
+	if plan.QualityCheckEnabled {
 		result, wait, err := s.runChanshuiPlan(ctx, plan)
 		if err != nil {
 			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d audit step failed: %v", plan.ID, err)
@@ -215,13 +211,9 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 		result *ScheduledTestResult
 		err    error
 	)
-	if plan.QualityCheckEnabled {
-		result, err = s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, plan.ModelID, plan.PromptText)
-	} else {
-		// Plain plans keep the upstream behavior: the platform default test
-		// prompt, no artwork generation.
-		result, err = s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, plan.ModelID)
-	}
+	// Plain plans keep the upstream behavior: the platform default test
+	// prompt, no artwork generation.
+	result, err = s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, plan.ModelID)
 	if err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d RunTestBackground error: %v", plan.ID, err)
 		return
@@ -231,22 +223,10 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 }
 
 func (s *ScheduledTestRunnerService) completePlanRun(ctx context.Context, plan *ScheduledTestPlan, result *ScheduledTestResult) {
-	if plan.QualityCheckEnabled && plan.QualityProvider != QualityProviderChanshui && result != nil && result.Status == "success" {
-		var status, reason string
-		if s.qualityCheck != nil {
-			status, reason = s.qualityCheck(result.ResponseText, plan.PromptText)
-		} else {
-			status, reason = s.accountTestSvc.assessScheduledVisualQuality(ctx, plan, result.ResponseText)
-		}
-		if status != "success" {
-			result.Status = status
-			result.ErrorMessage = reason
-		}
-	}
 	if err := s.scheduledSvc.SaveResult(ctx, plan.ID, plan.MaxResults, result); err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d SaveResult error: %v", plan.ID, err)
 	} else if result != nil {
-		if plan.QualityCheckEnabled && plan.QualityProvider == QualityProviderChanshui {
+		if plan.QualityCheckEnabled {
 			if result.Status == "audit_pass" || result.Status == "audit_fail" {
 				if s.accountTestSvc == nil {
 					return
@@ -267,9 +247,6 @@ func (s *ScheduledTestRunnerService) completePlanRun(ctx context.Context, plan *
 					return
 				}
 			}
-		} else if plan.QualityCheckEnabled {
-			// Never make a scheduling decision from old history after a failed write.
-			s.updateScheduledQualityState(ctx, plan, result)
 		} else if result.Status == "success" && plan.AutoRecover && s.rateLimitSvc != nil {
 			// Upstream parity for plain plans: a passing test clears recoverable
 			// runtime state only when the plan opted into auto recovery.
@@ -287,123 +264,5 @@ func (s *ScheduledTestRunnerService) completePlanRun(ctx context.Context, plan *
 	}
 	if err := s.planRepo.UpdateAfterRun(ctx, plan.ID, now, nextRun); err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d UpdateAfterRun error: %v", plan.ID, err)
-	}
-}
-
-func (s *ScheduledTestRunnerService) updateScheduledQualityState(ctx context.Context, plan *ScheduledTestPlan, result *ScheduledTestResult) {
-	if s == nil || s.accountTestSvc == nil || s.accountTestSvc.accountRepo == nil || plan == nil || result == nil || result.ID <= 0 || result.PlanID != plan.ID {
-		return
-	}
-	if result.Status != "success" && result.Status != "degraded" {
-		return
-	}
-	if result.Status == "degraded" {
-		if s.scheduledSvc == nil {
-			return
-		}
-		consecutive, err := s.scheduledSvc.hasConsecutiveDegradedResults(ctx, result)
-		if err != nil {
-			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d quality history read failed: %v", plan.ID, err)
-			return
-		}
-		if !consecutive {
-			return
-		}
-	}
-
-	account, err := s.accountTestSvc.accountRepo.GetByID(ctx, plan.AccountID)
-	if err != nil || account == nil {
-		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d quality state read failed: %v", plan.ID, plan.AccountID, err)
-		return
-	}
-	if result.Status == "degraded" {
-		// A persistent switch cannot expire while the next test is still running.
-		// Keep every unrelated error, cooldown and temporary-ban reason intact.
-		if account.Schedulable {
-			if err := s.accountTestSvc.accountRepo.SetSchedulable(ctx, plan.AccountID, false); err != nil {
-				logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d quality pause failed: %v", plan.ID, plan.AccountID, err)
-				return
-			}
-			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d paused after consecutive degraded results", plan.ID, plan.AccountID)
-		}
-		// Stamp the pause reason so the group-disable cleanup and the recovery
-		// path can recognise this account as paused by the quality checker.
-		// Best effort: an unstamped pause still recovers via a passing check.
-		s.markScheduledQualityPause(ctx, plan, scheduledQualityReasonPrefix+fmt.Sprintf(" plan=%d", plan.ID))
-		return
-	}
-
-	// Explicit success enables this account even when the legacy auto_recover
-	// flag is off. It does not prove other runtime cooldowns are safe to clear.
-	s.tryRecoverAccount(ctx, plan, account)
-}
-
-func (s *ScheduledTestRunnerService) tryRecoverAccount(ctx context.Context, plan *ScheduledTestPlan, account *Account) {
-	// A Pelican pass cannot release another detector's outstanding pause.
-	if HasChanshuiQualityPause(account) {
-		return
-	}
-	repo := s.accountTestSvc.accountRepo
-	if strings.HasPrefix(account.TempUnschedulableReason, scheduledQualityReasonPrefix) {
-		observedReason := account.TempUnschedulableReason
-		if s.scheduledSvc == nil {
-			return
-		}
-		cleared, err := s.scheduledSvc.clearScheduledQualityPause(ctx, plan.AccountID, observedReason)
-		if err != nil {
-			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d quality recovery failed: %v", plan.ID, err)
-			return
-		}
-		if !cleared {
-			// The observed reason changed. Do not clear a newer runtime block.
-			return
-		}
-		if s.rateLimitSvc != nil && s.rateLimitSvc.tempUnschedCache != nil {
-			cache, ok := s.rateLimitSvc.tempUnschedCache.(interface {
-				DeleteTempUnschedIfReason(context.Context, int64, string) (bool, error)
-			})
-			if !ok {
-				logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d conditional quality cache recovery unavailable", plan.ID)
-				return
-			}
-			if _, err := cache.DeleteTempUnschedIfReason(ctx, plan.AccountID, observedReason); err != nil {
-				logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d quality cache recovery failed: %v", plan.ID, err)
-				return
-			}
-		}
-	}
-
-	if account.Status == StatusError {
-		// ClearError is a targeted, conditional update and refreshes snapshots.
-		if err := repo.ClearError(ctx, plan.AccountID); err != nil {
-			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d error recovery failed: %v", plan.ID, err)
-			return
-		}
-		if s.rateLimitSvc != nil && s.rateLimitSvc.tokenCacheInvalidator != nil && account.IsOAuth() {
-			if err := s.rateLimitSvc.tokenCacheInvalidator.InvalidateToken(ctx, account); err != nil {
-				logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d token invalidation failed: %v", plan.ID, err)
-			}
-		}
-	} else if account.Status != StatusActive || !account.Schedulable {
-		active, schedulable := StatusActive, true
-		// The existing partial-update API is restricted to this one tested ID.
-		if _, err := repo.BulkUpdate(ctx, []int64{plan.AccountID}, AccountBulkUpdate{Status: &active, Schedulable: &schedulable}); err != nil {
-			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d scheduling recovery failed: %v", plan.ID, err)
-			return
-		}
-	}
-}
-
-// markScheduledQualityPause records why the account was paused. The concrete
-// repository implements it; test doubles without it simply skip the stamp.
-func (s *ScheduledTestRunnerService) markScheduledQualityPause(ctx context.Context, plan *ScheduledTestPlan, reason string) {
-	marker, ok := s.accountTestSvc.accountRepo.(interface {
-		MarkScheduledQualityPause(context.Context, int64, string) error
-	})
-	if !ok {
-		return
-	}
-	if err := marker.MarkScheduledQualityPause(ctx, plan.AccountID, reason); err != nil {
-		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d quality pause reason stamp failed: %v", plan.ID, plan.AccountID, err)
 	}
 }

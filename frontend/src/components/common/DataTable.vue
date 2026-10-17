@@ -32,8 +32,49 @@
     </template>
 
     <template v-else>
-      <div v-if="selectable" class="flex items-center justify-end gap-2 px-1">
-        <label class="flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-300">
+      <div
+        v-if="sortableColumns.length > 0 || selectable"
+        class="flex flex-wrap items-center justify-between gap-3 px-1"
+        data-test="mobile-list-toolbar"
+      >
+        <!-- 手机端卡片没有表头，补一个排序条：选字段 + 切升降序，和服务端/本地排序共用同一套状态 -->
+        <div v-if="sortableColumns.length > 0" class="flex min-w-0 items-center gap-2" data-test="mobile-sort-bar">
+          <span class="shrink-0 text-xs font-medium text-gray-500 dark:text-dark-400">{{ t('common.sortBy') }}</span>
+          <Select
+            class="w-40"
+            :model-value="sortKey || ''"
+            :options="mobileSortOptions"
+            :placeholder="t('common.sortBy')"
+            @change="onMobileSortSelect"
+          />
+          <button
+            type="button"
+            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700"
+            :disabled="!sortKey"
+            :title="sortOrder === 'asc' ? t('common.sortAscending') : t('common.sortDescending')"
+            :aria-label="sortOrder === 'asc' ? t('common.sortAscending') : t('common.sortDescending')"
+            data-test="mobile-sort-direction"
+            @click="toggleMobileSortDirection"
+          >
+            <svg
+              class="h-4 w-4"
+              :class="{ 'rotate-180': sortOrder === 'desc' }"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+              aria-hidden="true"
+            >
+              <path
+                fill-rule="evenodd"
+                d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
+                clip-rule="evenodd"
+              />
+            </svg>
+          </button>
+        </div>
+        <label
+          v-if="selectable"
+          class="ml-auto flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-300"
+        >
           <input
             type="checkbox"
             class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
@@ -267,6 +308,7 @@ import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useVirtualizer, observeElementRect as observeElementRectDefault } from '@tanstack/vue-virtual'
 import { useI18n } from 'vue-i18n'
 import type { Column } from './types'
+import Select, { type SelectOption } from './Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
@@ -684,6 +726,23 @@ const handleSort = (key: string) => {
     sortKey.value = key
     sortOrder.value = newOrder
   }
+}
+
+// 手机端卡片布局没有表头，这里提供等价排序入口：
+// 字段下拉 + 升降序切换，与服务端/本地排序共用 handleSort 同一套状态与事件。
+const sortableColumns = computed(() => props.columns.filter((column) => column.sortable))
+const mobileSortOptions = computed<SelectOption[]>(() =>
+  sortableColumns.value.map((column) => ({ value: column.key, label: column.label }))
+)
+
+const onMobileSortSelect = (value: string | number | boolean | null) => {
+  const key = typeof value === 'string' ? value : ''
+  if (!key || key === sortKey.value) return
+  handleSort(key)
+}
+
+const toggleMobileSortDirection = () => {
+  if (sortKey.value) handleSort(sortKey.value)
 }
 
 const sortedData = computed(() => {

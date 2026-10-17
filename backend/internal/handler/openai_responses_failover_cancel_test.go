@@ -174,8 +174,8 @@ func TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected(t *t
 }
 
 // TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient 回归
-// 守卫：客户端在线时 failover 行为不变——切换到账号 2，两个账号都 520 后按
-// 耗尽返回 502。
+// 守卫：客户端在线时 failover 行为不变——切换到账号 2；两个账号都 520 后
+// failover 耗尽，上游状态码 520 原样透出（不再折叠成 502）。
 func TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -186,8 +186,9 @@ func TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient(t *te
 	handler.Responses(c)
 
 	require.Equal(t, []int64{1, 2}, upstream.calls(), "在线客户端应正常切换账号")
-	require.Equal(t, http.StatusBadGateway, rec.Code)
-	require.Equal(t, "upstream_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+	// 换号耗尽：整组无可用账号，服务端失败统一归一成 529（过载）供客户端退避重试。
+	require.Equal(t, 529, rec.Code)
+	require.Equal(t, "overloaded_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
 
 	rawEvents, ok := c.Get(service.OpsUpstreamErrorsKey)
 	require.True(t, ok)
