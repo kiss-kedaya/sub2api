@@ -16,6 +16,7 @@
             <div class="flex items-center gap-2">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
               <DateRangePicker
+                ref="dateRangeRef"
                 v-model:start-date="startDate"
                 v-model:end-date="endDate"
                 @change="onDateRangeChange"
@@ -393,6 +394,7 @@ const defaultRange = getLast24HoursRangeDates()
 const startDate = ref(defaultRange.start)
 const endDate = ref(defaultRange.end)
 const granularity = ref<'day' | 'hour'>(getGranularityForRange(startDate.value, endDate.value))
+const dateRangeRef = ref<InstanceType<typeof DateRangePicker> | null>(null)
 
 const modelDistributionMetric = ref<DistributionMetric>('tokens')
 const groupDistributionMetric = ref<DistributionMetric>('tokens')
@@ -633,6 +635,15 @@ const applyFilters = () => {
 }
 
 const refreshData = () => {
+  // 刷新时先把还在使用中的快捷时间窗（近24小时等）滑到当前时刻，
+  // 不然加载时算出来的窗口把刷新后产生的记录挡在外面，看起来像没刷新。
+  const presetRange = dateRangeRef.value?.refreshActivePreset?.() ?? null
+  if (presetRange) {
+    startDate.value = presetRange.startDate
+    endDate.value = presetRange.endDate
+    filters.value = { ...filters.value, start_date: presetRange.startDate, end_date: presetRange.endDate }
+    pagination.page = 1
+  }
   void loadLogs()
   if (inflightOpen.value) void loadInflight(false)
   void loadStats()
