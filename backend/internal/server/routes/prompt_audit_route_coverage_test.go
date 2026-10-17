@@ -50,6 +50,8 @@ func TestEveryGatewayPOSTRouteIsClassifiedForPromptAuditCoverage(t *testing.T) {
 		"/web_search":               {"gateway_web_search.go"},
 		"/x_search":                 {"gateway_web_search.go"},
 		"/systemone":                {"gateway_systemone.go"},
+		"/tools/search":             {"openai_deepseek_tools.go"},
+		"/tools/fetch":              {"openai_deepseek_tools.go"},
 	}
 	excluded := map[string]string{
 		"/messages/count_tokens":     "tokenization only; it does not execute a model request",

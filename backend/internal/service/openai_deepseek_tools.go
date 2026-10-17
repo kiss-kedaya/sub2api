@@ -16,8 +16,8 @@ import (
 // with the same Bearer key as the model API — not chat/completions shapes — so
 // they must not be routed through any protocol conversion.
 const (
-	DeepSeekToolsPathSearch = "/v1/tools/search"
-	DeepSeekToolsPathFetch  = "/v1/tools/fetch"
+	DeepSeekToolsPathSearch  = "/v1/tools/search"
+	DeepSeekToolsPathFetch   = "/v1/tools/fetch"
 	DeepSeekToolsLabelSearch = "deepseek-tools-search"
 	DeepSeekToolsLabelFetch  = "deepseek-tools-fetch"
 )
@@ -85,8 +85,8 @@ func (s *OpenAIGatewayService) ForwardDeepSeekTools(
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			retryableOnSameAccount := PoolModeSameAccountRetry(account, resp.StatusCode, resp.Header, respBody)
 			return nil, &UpstreamFailoverError{
-				StatusCode:            resp.StatusCode,
-				ResponseBody:          respBody,
+				StatusCode:             resp.StatusCode,
+				ResponseBody:           respBody,
 				RetryableOnSameAccount: retryableOnSameAccount,
 			}
 		}
