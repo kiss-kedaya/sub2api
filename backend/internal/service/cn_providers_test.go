@@ -894,6 +894,44 @@ func TestNormalizeDeepSeekResponsesRequestBodyDropsDuplicateCallID(t *testing.T)
 	require.Equal(t, 2, len(gjson.GetBytes(kimiNormalized, "input").Array()))
 }
 
+// TestNormalizeDeepSeekResponsesRequestBodyStripsReasoningSummary
+// DeepSeek 兼容中转（OpenCSG）的 /responses 端点启用严格 JSON 解码，顶层
+// reasoning.summary 会被 400 拒绝（json: unknown field "summary"）；
+// deepseek scope 的请求转发前剥掉该字段，其他平台保持原样。
+func TestNormalizeDeepSeekResponsesRequestBodyStripsReasoningSummary(t *testing.T) {
+	t.Parallel()
+	deepseekResponses := &Account{
+		Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
+	}
+	body := []byte(`{"model":"deepseek-v4.1-flash","store":true,"reasoning":{"effort":"medium","summary":"auto"},"input":"hi"}`)
+	normalized := normalizeDeepSeekResponsesRequestBody(deepseekResponses, body)
+	require.False(t, gjson.GetBytes(normalized, "reasoning.summary").Exists())
+	require.Equal(t, "medium", gjson.GetBytes(normalized, "reasoning.effort").String())
+
+	// reasoning 里只剩 summary 时，连同空对象一起剥掉。
+	onlySummary := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"summary":"auto"},"input":"hi"}`)
+	normalized = normalizeDeepSeekResponsesRequestBody(deepseekResponses, onlySummary)
+	require.False(t, gjson.GetBytes(normalized, "reasoning").Exists())
+
+	// 按模型名命中的 deepseek scope（openai 平台账号 + deepseek 模型）同样剥掉。
+	byModel := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	modelBody := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"effort":"low","summary":"auto"},"input":"hi"}`)
+	normalized = normalizeDeepSeekResponsesRequestBody(byModel, modelBody)
+	require.False(t, gjson.GetBytes(normalized, "reasoning.summary").Exists())
+	require.Equal(t, "low", gjson.GetBytes(normalized, "reasoning.effort").String())
+
+	// Kimi（native 但不在 deepseek scope）保持原样，不动 reasoning.summary。
+	kimi := &Account{
+		Platform: PlatformKimi, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
+	}
+	kimiBody := []byte(`{"model":"kimi-k2","store":true,"reasoning":{"effort":"medium","summary":"auto"},"input":"hi"}`)
+	kimiNormalized := normalizeDeepSeekResponsesRequestBody(kimi, kimiBody)
+	require.Equal(t, "auto", gjson.GetBytes(kimiNormalized, "reasoning.summary").String())
+	require.False(t, gjson.GetBytes(kimiNormalized, "store").Bool())
+}
+
 // TestGetAnthropicAPIKeyAuthScheme_CNProvider CN 账号可经 extra 覆写鉴权方案，
 // 默认保持 x-api-key。
 func TestGetAnthropicAPIKeyAuthScheme_CNProvider(t *testing.T) {
