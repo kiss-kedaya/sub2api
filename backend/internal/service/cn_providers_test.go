@@ -914,6 +914,17 @@ func TestNormalizeDeepSeekResponsesRequestBodyStripsReasoningSummary(t *testing.
 	normalized = normalizeDeepSeekResponsesRequestBody(deepseekResponses, onlySummary)
 	require.False(t, gjson.GetBytes(normalized, "reasoning").Exists())
 
+	// 已废弃的 generate_summary 同样被上游严格解码拒绝，一并剥掉。
+	deprecated := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"effort":"high","generate_summary":"auto"},"input":"hi"}`)
+	normalized = normalizeDeepSeekResponsesRequestBody(deepseekResponses, deprecated)
+	require.False(t, gjson.GetBytes(normalized, "reasoning.generate_summary").Exists())
+	require.Equal(t, "high", gjson.GetBytes(normalized, "reasoning.effort").String())
+
+	// 两个开关都在且没有其它内容时，整个 reasoning 对象去掉。
+	bothOnly := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"summary":"auto","generate_summary":"auto"},"input":"hi"}`)
+	normalized = normalizeDeepSeekResponsesRequestBody(deepseekResponses, bothOnly)
+	require.False(t, gjson.GetBytes(normalized, "reasoning").Exists())
+
 	// 按模型名命中的 deepseek scope（openai 平台账号 + deepseek 模型）同样剥掉。
 	byModel := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	modelBody := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"effort":"low","summary":"auto"},"input":"hi"}`)
