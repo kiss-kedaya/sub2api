@@ -150,6 +150,21 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 			normalized = stripped
 		}
 	}
+	// 部分 DeepSeek 兼容中转（如 OpenCSG）的 /responses 端点启用严格 JSON
+	// 解码：顶层 reasoning.summary（OpenAI 的推理摘要请求字段）会被 400
+	// 直接拒绝（json: unknown field "summary"）。DeepSeek 上游本来也不产出
+	// OpenAI 风格的摘要，转发前剥掉；reasoning 里只剩 summary 时连同整个
+	// 对象一起去掉，避免空对象再触发别的校验。
+	if dedupe {
+		if stripped, err := sjson.DeleteBytes(normalized, "reasoning.summary"); err == nil {
+			normalized = stripped
+			if reasoning := gjson.GetBytes(normalized, "reasoning"); reasoning.IsObject() && len(reasoning.Map()) == 0 {
+				if next, err := sjson.DeleteBytes(normalized, "reasoning"); err == nil {
+					normalized = next
+				}
+			}
+		}
+	}
 
 	var requestBody map[string]any
 	if err := decodeOpenAIJSONUseNumber(normalized, &requestBody); err != nil {
