@@ -309,6 +309,22 @@ const apply = () => {
   isOpen.value = false
 }
 
+// refreshActivePreset re-applies the currently active quick preset so an
+// external refresh button can slide a relative window (e.g. 近24小时) to
+// "now". Returns the recomputed range, or null when the user set a custom
+// range — a custom range must stay exactly where the user put it.
+const refreshActivePreset = (): { startDate: string; endDate: string } | null => {
+  if (!activePreset.value) return null
+  const preset = presets.find((p) => p.value === activePreset.value)
+  if (!preset) return null
+  const range = preset.getRange()
+  localStartDate.value = normalizeInput(range.start)
+  localEndDate.value = normalizeInput(range.end, true)
+  return { startDate: localStartDate.value, endDate: localEndDate.value }
+}
+
+defineExpose({ refreshActivePreset })
+
 const handleClickOutside = (event: MouseEvent) => {
   if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
     isOpen.value = false
