@@ -114,7 +114,7 @@
 - 单实例：PG advisory lock，多实例部署只有一个在跑。
 - 失败：重试 3 次（指数退避）→ 标记失败 → 后台可见 → 手动重试。
 
-## 7. 数据库（迁移 `257_crypto_deposit.sql`）
+## 7. 数据库（迁移 `261_crypto_deposit.sql`）
 
 ```sql
 -- 地址池
