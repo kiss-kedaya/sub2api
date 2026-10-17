@@ -2297,8 +2297,9 @@ func TestOpenAIResponses_APIKeyPassthroughPool5xxTriesAlternativesBeforeSingleFa
 	h.Responses(c)
 
 	require.Equal(t, []int64{9910, 9911, 9910}, upstream.calls())
-	require.Equal(t, http.StatusBadGateway, rec.Code)
-	require.Equal(t, "upstream_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+	// 换号耗尽：整组无可用账号，服务端失败统一按 529（过载）回传。
+	require.Equal(t, 529, rec.Code)
+	require.Equal(t, "overloaded_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
 	require.Equal(t, "Upstream service temporarily unavailable", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 

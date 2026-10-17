@@ -198,6 +198,7 @@ import { buildAuthErrorMessage } from '@/utils/authError'
 import { extractApiErrorCode } from '@/utils/apiError'
 import {
   formatRegistrationEmailSuffixWhitelistForMessage,
+  isRegistrationEmailFormatValid,
   isRegistrationEmailSuffixAllowed,
   normalizeRegistrationEmailSuffixWhitelist
 } from '@/utils/registrationEmailPolicy'
@@ -533,6 +534,12 @@ async function sendCode(): Promise<void> {
   let captchaProofUsed = false
 
   try {
+    if (!shouldBypassRegistrationEmailPolicy() && !isRegistrationEmailFormatValid(email.value)) {
+      errorMessage.value = t('auth.emailFormatInvalid')
+      appStore.showError(errorMessage.value)
+      return
+    }
+
     if (!shouldBypassRegistrationEmailPolicy() && !isRegistrationEmailSuffixAllowed(email.value, registrationEmailSuffixWhitelist.value)) {
       errorMessage.value = buildEmailSuffixNotAllowedMessage()
       appStore.showError(errorMessage.value)
@@ -660,6 +667,12 @@ async function handleVerify(): Promise<void> {
     return
   }
 
+  if (!shouldBypassRegistrationEmailPolicy() && !isRegistrationEmailFormatValid(email.value)) {
+    errorMessage.value = t('auth.emailFormatInvalid')
+    appStore.showError(errorMessage.value)
+    return
+  }
+
   if (!shouldBypassRegistrationEmailPolicy() && !isRegistrationEmailSuffixAllowed(email.value, registrationEmailSuffixWhitelist.value)) {
     errorMessage.value = buildEmailSuffixNotAllowedMessage()
     appStore.showError(errorMessage.value)
@@ -783,6 +796,9 @@ function buildEmailSuffixNotAllowedMessage(): string {
 }
 
 function buildRegistrationErrorMessage(error: unknown, fallback: string): string {
+  if (extractApiErrorCode(error) === 'EMAIL_FORMAT_INVALID') {
+    return t('auth.emailFormatInvalid')
+  }
   if (extractApiErrorCode(error) === 'EMAIL_DOMAIN_REGISTRATION_LIMIT') {
     return t('auth.emailDomainRegistrationLimit')
   }

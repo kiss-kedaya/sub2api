@@ -86,9 +86,21 @@ func TestGetWebSearchEmulationMode_MissingField(t *testing.T) {
 	require.Equal(t, WebSearchModeDefault, a.GetWebSearchEmulationMode())
 }
 
-func TestGetWebSearchEmulationMode_NonAnthropicPlatform(t *testing.T) {
+// OpenAI API Key accounts are eligible since upstream #8080: their upstreams
+// (DeepSeek etc. over Chat Completions) have no native web_search tool.
+func TestGetWebSearchEmulationMode_OpenAIAPIKeyPlatform(t *testing.T) {
 	a := &Account{
 		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra:    map[string]any{featureKeyWebSearchEmulation: "enabled"},
+	}
+	require.Equal(t, WebSearchModeEnabled, a.GetWebSearchEmulationMode())
+}
+
+// Other non-Anthropic / non-OpenAI platforms stay ineligible.
+func TestGetWebSearchEmulationMode_OtherPlatformIgnoresFlag(t *testing.T) {
+	a := &Account{
+		Platform: PlatformDeepseek,
 		Type:     AccountTypeAPIKey,
 		Extra:    map[string]any{featureKeyWebSearchEmulation: "enabled"},
 	}

@@ -132,8 +132,8 @@ func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
 		return nil, nil, err
 	}
 
-	if user.Username == "" && strings.TrimSpace(input.Username) != "" {
-		user.Username = strings.TrimSpace(input.Username)
+	if sanitizedUsername := SanitizeUsername(input.Username); user.Username == "" && sanitizedUsername != "" {
+		user.Username = sanitizedUsername
 		if err := s.userRepo.Update(ctx, user, UserUpdateFields{Username: true}); err != nil {
 			logger.LegacyPrintf("service.auth", "[Auth] Failed to update username after %s oauth login: %v", providerType, err)
 		}
@@ -181,7 +181,7 @@ func (s *AuthService) createEmailOAuthUser(ctx context.Context, email, username,
 	}
 	user := &User{
 		Email:        email,
-		Username:     strings.TrimSpace(username),
+		Username:     SanitizeUsername(username),
 		PasswordHash: hashedPassword,
 		Role:         RoleUser,
 		Balance:      grantPlan.Balance,

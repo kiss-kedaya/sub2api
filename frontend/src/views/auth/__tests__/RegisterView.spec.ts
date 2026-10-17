@@ -249,4 +249,23 @@ describe('RegisterView invitation layout', () => {
     )
     expect(showErrorMock).not.toHaveBeenCalled()
   })
+
+  // 与后端 ValidateRegistrationEmailFormat 同口径：超长/特殊字符邮箱在本地就拦下。
+  it('rejects emails with special characters or invalid local parts locally', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      turnstile_enabled: false
+    })
+
+    const wrapper = mountRegister()
+    await flushPromises()
+    await wrapper.get('#email').setValue('a&b@example.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(registerMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalledWith('auth.emailFormatInvalid')
+    expect(wrapper.get('#email').classes()).toContain('input-error')
+  })
 })

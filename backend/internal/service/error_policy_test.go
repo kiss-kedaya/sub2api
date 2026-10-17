@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -624,11 +625,15 @@ type errorPolicyRepoStub struct {
 	tempCalls           int
 	setErrCalls         int
 	lastErrorMsg        string
+	lastTempUntil       time.Time
+	lastTempReason      string
 	modelRateLimitCalls []modelNotFoundRateLimitCall
 }
 
 func (r *errorPolicyRepoStub) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
 	r.tempCalls++
+	r.lastTempUntil = until
+	r.lastTempReason = reason
 	return nil
 }
 
@@ -645,4 +650,27 @@ func (r *errorPolicyRepoStub) SetModelRateLimit(_ context.Context, id int64, sco
 	}
 	r.modelRateLimitCalls = append(r.modelRateLimitCalls, call)
 	return nil
+}
+
+func TestCustomErrorCodeStopsSchedulingFor30Days(t *testing.T) {
+	repo := &errorPolicyRepoStub{}
+	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:       77,
+		Platform: PlatformDeepseek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"custom_error_codes_enabled": true,
+			"custom_error_codes":         []any{float64(402)},
+		},
+	}
+
+	before := time.Now()
+	shouldDisable := svc.HandleUpstreamError(context.Background(), account, http.StatusPaymentRequired, http.Header{}, []byte("insufficient balance"))
+
+	require.True(t, shouldDisable)
+	require.Zero(t, repo.setErrCalls)
+	require.Equal(t, 1, repo.tempCalls)
+	require.WithinDuration(t, before.Add(customErrorCodeStopDuration), repo.lastTempUntil, 2*time.Second)
+	require.True(t, strings.HasPrefix(repo.lastTempReason, customErrorCodeReasonPrefix))
 }

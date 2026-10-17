@@ -58,6 +58,49 @@ func TestDeepSeekInlineFilter_ChunkIndependent(t *testing.T) {
 	assert.JSONEq(t, `{"command":"pwd"}`, got.Calls[0].Arguments)
 }
 
+// 回归：流在工具调用块中途结束（上游截断 / 断连）时，未闭合的 DSML 不能回流
+// 成可见正文。以前 Flush 在 parseDSMLBlock 拿不到调用时会把整段残留塞进
+// Text，用户就会在回复里看到 <｜｜DSML｜｜ parameter> 这类原始标记。
+func TestExtractDeepSeekInline_UnterminatedDSMLNeverBecomesVisible(t *testing.T) {
+	raw := "Running.\n<\uFF5C\uFF5CDSML\uFF5C\uFF5C calls>\n<\uFF5C\uFF5CDSML\uFF5C\uFF5C invoke name=\"bash\">\n<\uFF5C\uFF5CDSML\uFF5C\uFF5C parameter name=\"command\" string=\"true\">ls -la"
+	visible, _, calls := ExtractDeepSeekInline(raw)
+	assert.Equal(t, "Running.", visible)
+	assert.NotContains(t, visible, "DSML")
+	// 已经闭合的 invoke 仍然要救回来，别把可用调用一起丢。
+	require.Len(t, calls, 1)
+	assert.JSONEq(t, `{"command":"ls -la"}`, calls[0].Arguments)
+}
+
+// 只有开标签、没有可解析调用的场景：以前 parseDSMLBlock 返回空会把整段
+// 原始标记塞进可见正文，这是用户实际看到的泄漏。
+func TestExtractDeepSeekInline_BareDSMLOpenerDropped(t *testing.T) {
+	visible, _, calls := ExtractDeepSeekInline("Hi.<\uFF5C\uFF5CDSML\uFF5C\uFF5C calls>")
+	assert.NotContains(t, visible, "DSML")
+	assert.Equal(t, "Hi.", visible)
+	assert.Empty(t, calls)
+}
+
+// 回归：DSML 块超过 dsmlMaxHold 时同样只能丢弃，不能转成可见正文。
+func TestDeepSeekInlineFilter_DSMLOverflowNeverBecomesVisible(t *testing.T) {
+	var filter DeepSeekInlineFilter
+	var got DeepSeekPiece
+
+	open := "<\uFF5C\uFF5CDSML\uFF5C\uFF5C calls><\uFF5C\uFF5CDSML\uFF5C\uFF5C invoke name=\"bash\"><\uFF5C\uFF5CDSML\uFF5C\uFF5C parameter name=\"command\" string=\"true\">"
+	piece := filter.Push("go\n" + open)
+	got.Text += piece.Text
+
+	piece = filter.Push(strings.Repeat("A", dsmlMaxHold+1024))
+	got.Text += piece.Text
+	got.Calls = append(got.Calls, piece.Calls...)
+
+	tail := filter.Flush()
+	got.Text += tail.Text
+	got.Calls = append(got.Calls, tail.Calls...)
+
+	assert.Equal(t, "go", got.Text)
+	assert.NotContains(t, got.Text, "DSML")
+}
+
 func TestStream_DeepSeekDSMLBecomesFunctionCall(t *testing.T) {
 	raw := "Look.<\uFF5C\uFF5CDSML\uFF5C\uFF5C calls><\uFF5C\uFF5CDSML\uFF5C\uFF5C invoke name=\"bash\"><\uFF5C\uFF5CDSML\uFF5C\uFF5C parameter name=\"command\" string=\"true\">pwd</\uFF5C\uFF5CDSML\uFF5C\uFF5C parameter></\uFF5C\uFF5CDSML\uFF5C\uFF5C invoke></\uFF5C\uFF5CDSML\uFF5C\uFF5C calls>"
 	events := collectStreamEvents(t, []string{

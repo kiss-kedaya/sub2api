@@ -14,6 +14,8 @@ import type {
   ChangePasswordRequest,
   UserAuthProvider,
   UserAffiliateDetail,
+  UserAffiliateCode,
+  UserAffiliateCodeQuota,
   AffiliateTransferResponse,
   PlatformQuotasResponse,
 } from '@/types'
@@ -184,6 +186,29 @@ export async function transferAffiliateQuota(): Promise<AffiliateTransferRespons
   return data
 }
 
+export interface CreateUserAffiliateCodeResponse {
+  code: UserAffiliateCode
+  quota: UserAffiliateCodeQuota
+}
+
+export interface DeleteUserAffiliateCodeResponse {
+  quota: UserAffiliateCodeQuota
+}
+
+export async function createUserAffiliateCode(
+  code: string,
+): Promise<CreateUserAffiliateCodeResponse> {
+  const { data } = await apiClient.post<CreateUserAffiliateCodeResponse>('/user/aff/codes', { code })
+  return data
+}
+
+export async function deleteUserAffiliateCode(
+  id: number,
+): Promise<DeleteUserAffiliateCodeResponse> {
+  const { data } = await apiClient.delete<DeleteUserAffiliateCodeResponse>(`/user/aff/codes/${id}`)
+  return data
+}
+
 /**
  * 获取当前用户的平台限额 + 用量。
  */
@@ -229,6 +254,8 @@ export const userAPI = {
   startOAuthBinding,
   getAffiliateDetail,
   transferAffiliateQuota,
+  createUserAffiliateCode,
+  deleteUserAffiliateCode,
   getMyPlatformQuotas,
 }
 

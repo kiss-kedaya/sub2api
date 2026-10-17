@@ -856,6 +856,8 @@ func registerAffiliateRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 			users.GET("/:user_id/overview", h.Admin.Affiliate.GetUserOverview)
 			users.PUT("/:user_id", h.Admin.Affiliate.UpdateUserSettings)
 			users.DELETE("/:user_id", h.Admin.Affiliate.ClearUserSettings)
+			users.POST("/:user_id/codes", h.Admin.Affiliate.CreateUserAffiliateCode)
+			users.DELETE("/:user_id/codes", h.Admin.Affiliate.DeleteUserAffiliateCode)
 		}
 	}
 }

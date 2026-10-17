@@ -186,6 +186,61 @@ func (h *AffiliateHandler) GetUserOverview(c *gin.Context) {
 	response.Success(c, overview)
 }
 
+// CreateUserAffiliateCode creates an extra custom affiliate code on behalf of a user.
+// POST /api/v1/admin/affiliates/users/:user_id/codes
+func (h *AffiliateHandler) CreateUserAffiliateCode(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
+	if err != nil || userID <= 0 {
+		response.BadRequest(c, "Invalid user_id")
+		return
+	}
+	var req struct {
+		Code string `json:"code" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	code, err := h.affiliateService.CreateUserAffiliateCode(c.Request.Context(), userID, req.Code, true)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	_, quota, err := h.affiliateService.ListUserAffiliateCodes(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"user_id": userID, "code": code, "quota": quota})
+}
+
+// DeleteUserAffiliateCode removes one custom affiliate code from a user.
+// DELETE /api/v1/admin/affiliates/users/:user_id/codes
+func (h *AffiliateHandler) DeleteUserAffiliateCode(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
+	if err != nil || userID <= 0 {
+		response.BadRequest(c, "Invalid user_id")
+		return
+	}
+	var req struct {
+		Code string `json:"code" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := h.affiliateService.AdminDeleteUserAffiliateCode(c.Request.Context(), userID, req.Code); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	_, quota, err := h.affiliateService.ListUserAffiliateCodes(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"user_id": userID, "quota": quota})
+}
+
 // ListInviteRecords returns all inviter-invitee relationships.
 // GET /api/v1/admin/affiliates/invites
 func (h *AffiliateHandler) ListInviteRecords(c *gin.Context) {

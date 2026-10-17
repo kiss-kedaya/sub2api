@@ -21,7 +21,8 @@ export const CONCRETE_PLATFORM_OPTIONS = [
   { value: 'deepseek', label: 'DeepSeek' },
   { value: 'minimax', label: 'MiniMax' },
   { value: 'cline', label: 'Cline' },
-  { value: 'command_code', label: 'Command Code' }
+  { value: 'command_code', label: 'Command Code' },
+  { value: 'typesafe', label: 'TypeSafe' }
 ] as const satisfies readonly PlatformOption<AccountPlatform>[]
 
 /** Platforms that can own a group. */

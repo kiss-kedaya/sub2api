@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -171,30 +170,6 @@ func (r *scheduledTestResultRepository) PruneOldResults(ctx context.Context, pla
 		)
 	`, planID, keepCount)
 	return err
-}
-
-// ClearScheduledQualityPause only clears the exact legacy quality reason read by
-// the runner. The outbox event and state change commit together.
-func (r *scheduledTestResultRepository) ClearScheduledQualityPause(ctx context.Context, accountID int64, reason string) (bool, error) {
-	if !strings.HasPrefix(reason, "scheduled_quality_check:") {
-		return false, nil
-	}
-	result, err := r.db.ExecContext(ctx, `WITH updated AS (
-		UPDATE accounts
-		SET temp_unschedulable_until = NULL,
-			temp_unschedulable_reason = NULL,
-			updated_at = NOW()
-		WHERE id = $1 AND deleted_at IS NULL AND temp_unschedulable_reason = $2
-		RETURNING id
-	)
-	INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
-	SELECT $3, id, NULL, NULL FROM updated
-	`, accountID, reason, service.SchedulerOutboxEventAccountChanged)
-	if err != nil {
-		return false, err
-	}
-	rows, err := result.RowsAffected()
-	return rows > 0, err
 }
 
 // --- scan helpers ---

@@ -27,6 +27,13 @@ type deepSeekPassthrough struct {
 }
 
 func (st *deepSeekPassthrough) rewrite(c *gin.Context, eventType string, data []byte) (before, after []string, next []byte, drop bool) {
+	// Live SSE is forwarded as the upstream sent it. Official sub2api and
+	// new-api do not rewrite call ids or drop events on the wire. Changing
+	// item.id on output_item.added while argument deltas still carry the
+	// original item_id makes the client drop the rest of the turn.
+	// Duplicate call ids are removed on the request. The completed snapshot
+	// may drop a repeated output item, but this function never renames an id
+	// that argument deltas already referenced.
 	st.note(data)
 	switch eventType {
 	case "response.output_text.delta":
@@ -77,6 +84,9 @@ func (st *deepSeekPassthrough) rewrite(c *gin.Context, eventType string, data []
 		_, toolLines := st.events(c, apicompat.DeepSeekPiece{Calls: calls})
 		before = append(before, toolLines...)
 		updated = st.appendMissingCalls(c, updated, "response.output")
+		// Final snapshot only. Do not rename item.id: argument deltas already
+		// used the id from output_item.added.
+		updated = sanitizeResponsesCallIDsKeepingItemIDs(updated, "response.output")
 		if bytes.Equal(updated, data) && !changed && len(before) == 0 && len(after) == 0 {
 			return nil, nil, nil, false
 		}
@@ -85,9 +95,14 @@ func (st *deepSeekPassthrough) rewrite(c *gin.Context, eventType string, data []
 		return nil, nil, nil, false
 	}
 }
-
 func rewriteDeepSeekResponseBody(c *gin.Context, body []byte) []byte {
-	if len(body) == 0 || (!bytes.Contains(body, []byte("DSML")) && !bytes.Contains(body, []byte("<think"))) {
+	if len(body) == 0 {
+		return body
+	}
+	if !bytes.Contains(body, []byte("DSML")) && !bytes.Contains(body, []byte("<think")) {
+		if gjson.GetBytes(body, "output").IsArray() {
+			return sanitizeResponsesCallIDs(body, "output")
+		}
 		return body
 	}
 	if !gjson.GetBytes(body, "output").IsArray() {
@@ -97,6 +112,7 @@ func rewriteDeepSeekResponseBody(c *gin.Context, body []byte) []byte {
 	updated, calls, _ := rewriteDeepSeekContentTexts(body, "output")
 	_, _ = st.events(c, apicompat.DeepSeekPiece{Calls: calls})
 	updated = st.appendMissingCalls(c, updated, "output")
+	updated = sanitizeResponsesCallIDs(updated, "output")
 	restored, err := restoreOpenAIResponsesClientToolPayload(c, updated)
 	if err != nil {
 		return updated
@@ -222,6 +238,9 @@ func (st *deepSeekPassthrough) remember(calls []apicompat.DeepSeekCall) []apicom
 
 func (st *deepSeekPassthrough) seen(call apicompat.DeepSeekCall) bool {
 	for _, have := range st.calls {
+		if call.CallID != "" && have.CallID == call.CallID {
+			return true
+		}
 		if have.Name == call.Name && have.Arguments == call.Arguments {
 			return true
 		}
@@ -309,6 +328,10 @@ func (st *deepSeekPassthrough) appendMissingCalls(c *gin.Context, data []byte, p
 func deepSeekOutputHasCall(data []byte, path string, call apicompat.DeepSeekCall) bool {
 	found := false
 	gjson.GetBytes(data, path).ForEach(func(_, item gjson.Result) bool {
+		if call.CallID != "" && item.Get("call_id").String() == call.CallID {
+			found = true
+			return false
+		}
 		if item.Get("name").String() == call.Name && item.Get("arguments").String() == call.Arguments {
 			found = true
 			return false
@@ -396,4 +419,42 @@ func deepSeekRand() string {
 	buf := make([]byte, 8)
 	_, _ = rand.Read(buf)
 	return hex.EncodeToString(buf)
+}
+
+func sanitizeResponsesCallIDs(data []byte, path string) []byte {
+	return sanitizeResponsesCallIDsMode(data, path, true)
+}
+
+func sanitizeResponsesCallIDsKeepingItemIDs(data []byte, path string) []byte {
+	return sanitizeResponsesCallIDsMode(data, path, false)
+}
+
+func sanitizeResponsesCallIDsMode(data []byte, path string, rewriteIDs bool) []byte {
+	node := gjson.GetBytes(data, path)
+	if !node.IsArray() {
+		return data
+	}
+	var input any
+	if err := json.Unmarshal([]byte(node.Raw), &input); err != nil {
+		return data
+	}
+	var next any
+	var changed bool
+	if rewriteIDs {
+		next, changed = apicompat.DedupeResponsesCallIDs(input)
+	} else {
+		next, changed = apicompat.DedupeResponsesCallIDsKeepItemIDs(input)
+	}
+	if !changed {
+		return data
+	}
+	raw, err := json.Marshal(next)
+	if err != nil {
+		return data
+	}
+	updated, err := sjson.SetRawBytes(data, path, raw)
+	if err != nil {
+		return data
+	}
+	return updated
 }

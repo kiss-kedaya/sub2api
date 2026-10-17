@@ -392,6 +392,7 @@ func responsesInputToChatMessagesWithOptions(instructions string, inputRaw json.
 	if err != nil {
 		return nil, err
 	}
+	built = foldDeepSeekInlineIntoAssistantMessages(built)
 	return normalizeChatMessagesWithToolOutputMedia(built, mediaByCallID), nil
 }
 
@@ -901,11 +902,16 @@ func normalizeChatMessagesWithToolOutputMedia(messages []ChatMessage, mediaByCal
 			continue
 		case len(m.ToolCalls) > 0:
 			kept := make([]ChatToolCall, 0, len(m.ToolCalls))
+			seenCall := make(map[string]struct{}, len(m.ToolCalls))
 			for _, tc := range m.ToolCalls {
 				if tc.ID == "" {
 					continue
 				}
+				if _, dup := seenCall[tc.ID]; dup {
+					continue
+				}
 				if _, ok := replies[tc.ID]; ok {
+					seenCall[tc.ID] = struct{}{}
 					kept = append(kept, tc)
 				}
 			}
@@ -1451,6 +1457,9 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 		if strings.TrimSpace(call.Arguments) == "" {
 			call.Arguments = "{}"
 		}
+		if callDuplicatesTool(message.ToolCalls, call) {
+			continue
+		}
 		if call.CallID == "" {
 			call.CallID = generateItemID()
 		}
@@ -1489,7 +1498,22 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 		})
 	}
 
+	seenCallID := map[string]struct{}{}
+	seenCallBody := map[string]struct{}{}
 	for _, toolCall := range message.ToolCalls {
+		if toolCall.ID != "" {
+			if _, ok := seenCallID[toolCall.ID]; ok {
+				continue
+			}
+			seenCallID[toolCall.ID] = struct{}{}
+		}
+		bodyKey := toolCall.Function.Name + "\n" + toolCall.Function.Arguments
+		if toolCall.Function.Name != "" && strings.TrimSpace(toolCall.Function.Arguments) != "" && toolCall.Function.Arguments != "{}" {
+			if _, ok := seenCallBody[bodyKey]; ok {
+				continue
+			}
+			seenCallBody[bodyKey] = struct{}{}
+		}
 		arguments := toolCall.Function.Arguments
 		if strings.TrimSpace(arguments) == "" {
 			arguments = "{}"
@@ -1882,6 +1906,12 @@ func ChatCompletionsChunkToResponsesEvents(
 					stored.Function.Name = toolCall.Function.Name
 				}
 			}
+			if state.duplicateToolIndex(idx) {
+				if toolCall.Function.Arguments != "" {
+					stored.Function.Arguments += toolCall.Function.Arguments
+				}
+				continue
+			}
 			events = append(events, announceChatToolItem(state, idx, stored, false)...)
 			if toolCall.Function.Arguments != "" {
 				stored.Function.Arguments += toolCall.Function.Arguments
@@ -2235,7 +2265,7 @@ func closeChatToolItems(state *ChatCompletionsToResponsesStreamState) []Response
 	var events []ResponsesStreamEvent
 	for i := 0; i < len(state.ToolCalls); i++ {
 		toolCall, ok := state.ToolCalls[i]
-		if !ok || toolCall == nil {
+		if !ok || toolCall == nil || state.duplicateToolIndex(i) {
 			continue
 		}
 		itemID, opened := state.ToolItemIDs[i]
@@ -2371,7 +2401,7 @@ func (state *ChatCompletionsToResponsesStreamState) chatOutput() []ResponsesOutp
 	}
 	for i := 0; i < len(state.ToolCalls); i++ {
 		toolCall, ok := state.ToolCalls[i]
-		if !ok || toolCall == nil {
+		if !ok || toolCall == nil || state.duplicateToolIndex(i) {
 			continue
 		}
 		arguments := toolCall.Function.Arguments
@@ -2473,4 +2503,85 @@ func nonEmpty(value, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func callDuplicatesTool(calls []ChatToolCall, call DeepSeekCall) bool {
+	for _, tc := range calls {
+		if call.CallID != "" && tc.ID == call.CallID {
+			return true
+		}
+		args := strings.TrimSpace(call.Arguments)
+		if call.Name != "" && args != "" && args != "{}" && tc.Function.Name == call.Name && tc.Function.Arguments == call.Arguments {
+			return true
+		}
+	}
+	return false
+}
+
+func (state *ChatCompletionsToResponsesStreamState) duplicateToolIndex(idx int) bool {
+	if state == nil || state.ToolCalls == nil {
+		return false
+	}
+	tc := state.ToolCalls[idx]
+	if tc == nil {
+		return false
+	}
+	for i := 0; i < idx; i++ {
+		prev := state.ToolCalls[i]
+		if prev == nil {
+			continue
+		}
+		if tc.ID != "" && prev.ID == tc.ID {
+			return true
+		}
+		args := strings.TrimSpace(tc.Function.Arguments)
+		if tc.Function.Name != "" && args != "" && args != "{}" && prev.Function.Name == tc.Function.Name && prev.Function.Arguments == tc.Function.Arguments {
+			return true
+		}
+	}
+	return false
+}
+
+func foldDeepSeekInlineIntoAssistantMessages(messages []ChatMessage) []ChatMessage {
+	for i := range messages {
+		if messages[i].Role != "assistant" {
+			continue
+		}
+		text := chatMessageContentText(messages[i].Content)
+		if text == "" || !strings.Contains(text, "DSML") {
+			continue
+		}
+		visible, _, calls := ExtractDeepSeekInline(text)
+		if len(calls) == 0 || visible == text {
+			continue
+		}
+		// Only strip the inline copy when a structured tool call already
+		// carries it. Stripping the only copy would drop the invocation.
+		allKnown := true
+		for _, call := range calls {
+			if strings.TrimSpace(call.Arguments) == "" {
+				call.Arguments = "{}"
+			}
+			if !messagesHaveDeepSeekCall(messages, call) {
+				allKnown = false
+				break
+			}
+		}
+		if !allKnown {
+			continue
+		}
+		if content, err := json.Marshal(visible); err == nil {
+			messages[i].Content = content
+		}
+	}
+	return messages
+}
+
+func messagesHaveDeepSeekCall(messages []ChatMessage, call DeepSeekCall) bool {
+	for i := range messages {
+		if callDuplicatesTool(messages[i].ToolCalls, call) {
+			return true
+		}
+	}
+	return false
 }

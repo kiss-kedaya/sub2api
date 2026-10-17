@@ -862,3 +862,80 @@ describe('admin UsageView model audit export', () => {
 		wrapper.unmount()
 	})
 })
+
+const sliderDateRangeStub = (range: { startDate: string; endDate: string } | null) =>
+  defineComponent({
+    name: 'DateRangePicker',
+    props: ['startDate', 'endDate', 'includeTime'],
+    emits: ['update:startDate', 'update:endDate', 'change'],
+    setup(_, { expose }) {
+      expose({ refreshActivePreset: () => range })
+      return () => null
+    },
+  })
+
+describe('admin UsageView refresh window', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    Object.keys(routeQuery).forEach((key) => delete routeQuery[key])
+    list.mockReset().mockResolvedValue({ items: [], total: 0, pages: 0 })
+    getStats.mockReset().mockResolvedValue({
+      total_requests: 0,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cache_tokens: 0,
+      total_tokens: 0,
+      total_cost: 0,
+      total_actual_cost: 0,
+      average_duration_ms: 0,
+    })
+    getSnapshotV2.mockReset().mockResolvedValue({ trend: [], models: [], groups: [] })
+    getModelStats.mockReset().mockResolvedValue({ models: [] })
+    getById.mockReset()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const mountWithSlider = (stub: unknown) => mount(UsageView, {
+    global: { stubs: {
+      AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
+      UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
+      UserBalanceHistoryModal: true, Pagination: true, Select: true,
+      DateRangePicker: stub, Icon: true, TokenUsageTrend: true,
+      ModelDistributionChart: true, GroupDistributionChart: true,
+      EndpointDistributionChart: true, UserTokenRanking: true,
+    } },
+  })
+
+  it('slides an active preset window to now and reloads from page 1', async () => {
+    const wrapper = mountWithSlider(sliderDateRangeStub({ startDate: '2026-10-17T10:44:00', endDate: '2026-10-17T10:44:00' }))
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+    list.mockClear()
+    ;(wrapper.vm as any).pagination.page = 3
+    ;(wrapper.vm as any).refreshData()
+    await flushPromises()
+    expect(list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, start_date: '2026-10-17T10:44:00', end_date: '2026-10-17T10:44:00' }),
+      expect.anything(),
+    )
+    wrapper.unmount()
+  })
+
+  it('keeps a custom window untouched when refreshing', async () => {
+    const wrapper = mountWithSlider(sliderDateRangeStub(null))
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+    const initial = { ...(list.mock.calls.at(-1)?.[0] ?? {}) }
+    list.mockClear()
+    ;(wrapper.vm as any).refreshData()
+    await flushPromises()
+    const after = list.mock.calls.at(-1)?.[0] ?? {}
+    expect(after.start_date).toBe(initial.start_date)
+    expect(after.end_date).toBe(initial.end_date)
+    expect(list).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+})
