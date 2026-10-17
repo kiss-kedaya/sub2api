@@ -8,7 +8,7 @@
 - [ ] 0.1 新建分支 `feat/crypto-deposit`，提交本 openspec 文档
 - [ ] 0.2 `backend/go.mod` 增依赖：`go-ethereum`、`solana-go`、`go-bip39`、`btcd/btcutil/hdkeychain`（对齐 epusdt 版本）
 - [ ] 0.3 `internal/cryptopay` 包骨架 + 配置结构（全部默认关闭）
-- [ ] 0.4 迁移文件 `257_crypto_deposit.sql`：5 张新表 + 索引（见 design.md §7）
+- [ ] 0.4 迁移文件 `261_crypto_deposit.sql`：5 张新表 + 索引（见 design.md §7）
 
 ## Phase 1 · 签名服务（独立进程）
 

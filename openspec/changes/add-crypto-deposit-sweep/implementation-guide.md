@@ -36,7 +36,7 @@ backend/
 ├─ internal/handler/crypto/
 │  ├─ user_handler.go               # 用户直充 API
 │  └─ admin_handler.go              # 后台 API
-└─ migrations/257_crypto_deposit.sql
+└─ migrations/261_crypto_deposit.sql
 
 frontend/src/
 ├─ views/user/CryptoDepositView.vue         # 直充页（或并入 PaymentView Tab）
