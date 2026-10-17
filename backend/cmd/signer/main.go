@@ -52,7 +52,7 @@ type server struct {
 	// policyMu guards the policy pointer: reloadPolicy swaps it before a
 	// signature while other requests read it, so the swap must be atomic.
 	policyMu sync.RWMutex
-	store   *store
+	store    *store
 }
 
 func main() {

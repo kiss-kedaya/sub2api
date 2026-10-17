@@ -62,10 +62,10 @@ type BalanceReader interface {
 
 // Planner builds sweep plans from balances and thresholds.
 type Planner struct {
-	db      *sql.DB
-	reader  BalanceReader
-	config  Config
-	pools   map[string]*rpc.Pool
+	db     *sql.DB
+	reader BalanceReader
+	config Config
+	pools  map[string]*rpc.Pool
 }
 
 func NewPlanner(db *sql.DB, reader BalanceReader, config Config, pools map[string]*rpc.Pool) *Planner {

@@ -7,12 +7,12 @@ import "testing"
 // crashed the admin page on the next load.
 func TestCryptoConfigPatchKeepsOmittedFields(t *testing.T) {
 	base := CryptoConfig{
-		Enabled: true,
-		Chains:  []string{ChainBSC, ChainPolygon},
-		RPC:     map[string]string{ChainBSC: "https://rpc.example"},
+		Enabled:      true,
+		Chains:       []string{ChainBSC, ChainPolygon},
+		RPC:          map[string]string{ChainBSC: "https://rpc.example"},
 		HotWalletEVM: "0x1111111111111111111111111111111111111111",
-		SweepAuto: true,
-		HotIndex:  3,
+		SweepAuto:    true,
+		HotIndex:     3,
 	}
 	// Patch only the EVM hot wallet, as the console does when clearing it.
 	empty := ""

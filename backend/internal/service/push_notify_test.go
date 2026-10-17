@@ -9,10 +9,9 @@ import (
 
 // fakePush records what the services tried to push.
 type fakePush struct {
-	users   []int64
-	admins  int
-	titles  []string
-	failAll bool
+	users  []int64
+	admins int
+	titles []string
 }
 
 func (f *fakePush) PushToUser(_ context.Context, userID int64, title, _, _ string) error {
