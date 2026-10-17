@@ -65,11 +65,15 @@ type Planner struct {
 	db     *sql.DB
 	reader BalanceReader
 	config Config
-	pools  map[string]*rpc.Pool
+	pools  map[string]nodeReader
 }
 
 func NewPlanner(db *sql.DB, reader BalanceReader, config Config, pools map[string]*rpc.Pool) *Planner {
-	return &Planner{db: db, reader: reader, config: config, pools: pools}
+	readers := make(map[string]nodeReader, len(pools))
+	for chain, pool := range pools {
+		readers[chain] = pool
+	}
+	return &Planner{db: db, reader: reader, config: config, pools: readers}
 }
 
 // BuildPlan evaluates thresholds and returns the sweep plan for one run.
@@ -89,7 +93,7 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 			if amountDecimal < minAmount {
 				continue
 			}
-			plan.Entries = append(plan.Entries, PlanEntry{
+			entry := PlanEntry{
 				Chain:           chain,
 				Address:         balance.Address,
 				DerivationIndex: balance.DerivationIndex,
@@ -97,7 +101,9 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 				RawAmount:       balance.Raw,
 				AmountDecimal:   amountDecimal,
 				Decimals:        balance.Decimals,
-			})
+			}
+			p.estimateGas(ctx, chain, &entry)
+			plan.Entries = append(plan.Entries, entry)
 			plan.TotalUSD += amountDecimal // stablecoin ~= USD
 		}
 	}
@@ -107,6 +113,32 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 		plan.Entries = nil
 	}
 	return plan, nil
+}
+
+// estimateGas fills NeedsGasTopUp/GasTopUpAmount without moving funds: it
+// asks the chain for the child's native balance and the current gas price,
+// then uses the same budget rule as the executor. A chain that cannot be
+// read leaves the fields at their zero values; the executor re-checks at
+// execution time (the live balance may have changed).
+func (p *Planner) estimateGas(ctx context.Context, chain string, entry *PlanEntry) {
+	pool := p.pools[chain]
+	if pool == nil {
+		return
+	}
+	gasPrice, err := pool.GasPrice(ctx)
+	if err != nil {
+		return
+	}
+	budget := transferGasBudget(gasPrice)
+	native, err := pool.Balance(ctx, entry.Address)
+	if err != nil {
+		return
+	}
+	if native.Cmp(budget) >= 0 {
+		return
+	}
+	entry.NeedsGasTopUp = true
+	entry.GasTopUpAmount = gasTopUpAmount(p.config, chain, budget, native)
 }
 
 // toDecimal converts raw units to a float with the token's decimals.
