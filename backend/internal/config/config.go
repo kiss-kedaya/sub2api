@@ -2765,6 +2765,9 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_enabled", true)
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_error_rate", 0.0)
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_ttft_ms", 0)
+	// DeepSeek response compat is opt-in; registering the default keeps
+	// GATEWAY_DEEPSEEK_RESPONSE_COMPAT_ENABLED reachable from the environment.
+	viper.SetDefault("gateway.deepseek_response_compat_enabled", false)
 
 	// server.trusted_proxies and security.forwarded_client_ip_headers are the
 	// other exception: load() distinguishes explicit configuration from absence
@@ -2777,6 +2780,10 @@ func setEnvReachableDefaults() {
 	// called without arguments.
 	_ = viper.BindEnv("server.trusted_proxies", "SERVER_TRUSTED_PROXIES")
 	_ = viper.BindEnv("security.forwarded_client_ip_headers", "SECURITY_FORWARDED_CLIENT_IP_HEADERS")
+	// honeypot_exempt_nets is bound the same way: load() reads it by hand via
+	// os.LookupEnv, and the bind exists so AllKeys() (and the env-reachability
+	// guard) can see the key.
+	_ = viper.BindEnv("security.honeypot_exempt_nets", "SECURITY_HONEYPOT_EXEMPT_NETS")
 
 	// Third-party login providers. These carry client secrets and are exactly
 	// the settings an operator expects to inject via the environment, but every
