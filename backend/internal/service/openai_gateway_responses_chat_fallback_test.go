@@ -445,6 +445,14 @@ func (c *reasoningRecordingCache) SetReasoningContent(_ context.Context, itemID 
 	return nil
 }
 
+func (c *reasoningRecordingCache) BlockSession(_ context.Context, _ int64, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *reasoningRecordingCache) IsSessionBlocked(_ context.Context, _ int64, _ string) (bool, error) {
+	return false, nil
+}
+
 func (c *reasoningRecordingCache) GetReasoningContent(_ context.Context, itemID string) (string, error) {
 	if v, ok := c.getResp[itemID]; ok {
 		return v, nil

@@ -212,6 +212,15 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	}
 	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
 
+	// A conversation the provider already refused on safety grounds is rejected
+	// here: no account is selected, no upstream is called, and the client sees
+	// the same refusal it got the first time.
+	if h.gatewayService.ModerationRefusedSessionBlocked(c.Request.Context(), apiKey.GroupID, sessionHash) {
+		h.responsesErrorResponse(c, http.StatusForbidden, "invalid_request_error",
+			service.GrokModerationRefusalMessage())
+		return
+	}
+
 	// 3. Account selection + failover loop
 	fs := NewFillFailoverState(h.maxAccountSwitches, false)
 
@@ -397,6 +406,13 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				if service.IsGrokModerationRefusal(account.Platform, failoverErr.ResponseBody) {
 					result = service.PrepareGrokModerationRefusalResult(result, reqModel)
 					submitForwardUsage(result)
+					// The upstream refused on safety grounds. Charge once, stop
+					// retrying, and block this conversation so the same prompt cannot
+					// burn quota again.
+					h.gatewayService.BlockModerationRefusedSession(
+						c.Request.Context(), apiKey.GroupID, sessionHash,
+						service.GrokModerationRefusalSessionBlockTTL(),
+					)
 					h.handleResponsesFailoverExhausted(c, failoverErr, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward)
 					return
 				}
