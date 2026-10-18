@@ -1378,7 +1378,10 @@ func (h *AccountHandler) SyncFromCRS(c *gin.Context) {
 	})
 	if err != nil {
 		// Provide detailed error message for CRS sync failures
-		response.InternalError(c, "CRS sync failed: "+err.Error())
+		// 详情只进服务端日志：base_url 由管理员填写，错误串若带上游
+		// status/body 就变成了内网探测的读数通道。
+		slog.Warn("crs_sync_failed", "error", err)
+		response.InternalError(c, "CRS sync failed")
 		return
 	}
 
@@ -1400,7 +1403,8 @@ func (h *AccountHandler) PreviewFromCRS(c *gin.Context) {
 		Password: req.Password,
 	})
 	if err != nil {
-		response.InternalError(c, "CRS preview failed: "+err.Error())
+		slog.Warn("crs_preview_failed", "error", err)
+		response.InternalError(c, "CRS preview failed")
 		return
 	}
 
