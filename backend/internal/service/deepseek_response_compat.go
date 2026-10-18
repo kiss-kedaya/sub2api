@@ -14,14 +14,3 @@ func (s *OpenAIGatewayService) deepSeekResponseCompatEnabled() bool {
 	}
 	return s.cfg.Gateway.DeepSeekResponseCompatEnabled
 }
-
-// deepSeekRequestRewriteEnabled reports whether the request-side rewrites
-// (store=false, previous_response_id stripping, reasoning.summary removal,
-// duplicate call_id dedupe) should run.
-//
-// These are far less invasive than the response rewrites and are still needed
-// for DeepSeek-compatible relays that reject those fields, so they stay on
-// regardless of DeepSeekResponseCompatEnabled. They never invent content.
-func (s *OpenAIGatewayService) deepSeekRequestRewriteEnabled() bool {
-	return true
-}

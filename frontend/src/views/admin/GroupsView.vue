@@ -3257,6 +3257,13 @@
                 :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
                 data-testid="edit-search-provider-key"
               />
+              <p
+                v-if="editForm.searchProviderKeyConfigured && !editForm.clearSearchProviderKey"
+                class="mt-1 text-xs text-emerald-600 dark:text-emerald-400"
+                data-testid="edit-search-provider-key-configured"
+              >
+                {{ t("admin.groups.explicitPricing.searchProviderApiKeyConfigured") }}
+              </p>
               <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
                 <input v-model="editForm.clearSearchProviderKey" type="checkbox" class="h-3.5 w-3.5" />
                 <span>{{ t("admin.groups.explicitPricing.searchProviderApiKeyClear") }}</span>
@@ -5092,6 +5099,7 @@ const createForm = reactive({
   search_provider_base_url: '' as string,
   search_provider_api_key: '' as string,
   clearSearchProviderKey: false,
+  searchProviderKeyConfigured: false,
   audio_realtime_price_per_min: null as number | null,
   audio_tts_price_per_million_chars: null as number | null,
   audio_stt_price_per_hour: null as number | null,
@@ -5463,6 +5471,7 @@ const editForm = reactive({
   search_provider_base_url: '' as string,
   search_provider_api_key: '' as string,
   clearSearchProviderKey: false,
+  searchProviderKeyConfigured: false,
   audio_tts_price_per_million_chars: null as number | null,
   audio_stt_price_per_hour: null as number | null,
   // 高峰时段倍率配置
@@ -6208,6 +6217,10 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.search_provider_base_url = group.search_provider_base_url ?? '';
   editForm.search_provider_api_key = '';
   editForm.clearSearchProviderKey = false;
+  // Server never returns the key itself, only whether one is stored.
+  editForm.searchProviderKeyConfigured = group.search_provider_api_key_set === true;
+  // Server never returns the key itself, only whether one is stored.
+  editForm.searchProviderKeyConfigured = group.search_provider_api_key_set === true;
   editForm.audio_realtime_price_per_min = group.audio_realtime_price_per_min ?? null;
   editForm.audio_tts_price_per_million_chars = group.audio_tts_price_per_million_chars ?? null;
   editForm.audio_stt_price_per_hour = group.audio_stt_price_per_hour ?? null;
@@ -6329,6 +6342,8 @@ const closeEditModal = () => {
   editForm.search_provider_base_url = '';
   editForm.search_provider_api_key = '';
   editForm.clearSearchProviderKey = false;
+  editForm.searchProviderKeyConfigured = false;
+  editForm.searchProviderKeyConfigured = false;
   editForm.audio_realtime_price_per_min = null;
   editForm.audio_tts_price_per_million_chars = null;
   editForm.audio_stt_price_per_hour = null;

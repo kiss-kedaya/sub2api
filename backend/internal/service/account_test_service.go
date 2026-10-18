@@ -58,7 +58,6 @@ func SetAccountTestAllowPrivateTargetsForTest(allow bool) {
 	accountTestAllowPrivateTargets.Store(allow)
 }
 
-
 const (
 	testClaudeAPIURL            = "https://api.anthropic.com/v1/messages?beta=true"
 	chatgptCodexAPIURL          = "https://chatgpt.com/backend-api/codex/responses"

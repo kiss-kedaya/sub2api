@@ -24,7 +24,10 @@ func TestDedupeResponsesCallIDs_ArtexShape(t *testing.T) {
 	}
 	calls := 0
 	for _, raw := range items {
-		m := raw.(map[string]any)
+		m, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("item is not an object: %T", raw)
+		}
 		if m["type"] == "function_call" {
 			calls++
 			if m["arguments"] != "{\"cmd\":\"pwd\"}" {
