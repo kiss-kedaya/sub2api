@@ -651,6 +651,18 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	// DeepSeek 搜索：与 forward 路径保持一致的注入规则。
+	if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled {
+		if injected, changed := injectDeepSeekSearchTool(body); changed {
+			body = injected
+		}
+	}
+	// DeepSeek 搜索：与 forward 路径保持一致的注入规则。
+	if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled {
+		if injected, changed := injectDeepSeekSearchTool(body); changed {
+			body = injected
+		}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -2687,6 +2699,13 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	}
 	if account != nil && account.Platform == PlatformDeepseek {
 		body = rewriteDeepSeekResponseBody(c, body)
+		// 模型的 web_search tool_call 由网关执行一次，把结果直接交给客户端。
+		// 不回填上游，所以这一轮不会再有第二次上游请求。
+		if group, enabled := deepSeekSearchGroupEnabled(c, account); enabled {
+			if executed, ok := s.applyDeepSeekSearchResults(c, account, group, body); ok {
+				body = executed
+			}
+		}
 	}
 	if normalized, changed := normalizeFractionalCreatedAtForClient(body); changed {
 		body = normalized
@@ -2764,6 +2783,13 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 	logOpenAISuccessMissingUsage(c.Request.Context(), c, account, resp, usage, terminalType, false)
 	if account != nil && account.Platform == PlatformDeepseek {
 		body = rewriteDeepSeekResponseBody(c, body)
+		// 模型的 web_search tool_call 由网关执行一次，把结果直接交给客户端。
+		// 不回填上游，所以这一轮不会再有第二次上游请求。
+		if group, enabled := deepSeekSearchGroupEnabled(c, account); enabled {
+			if executed, ok := s.applyDeepSeekSearchResults(c, account, group, body); ok {
+				body = executed
+			}
+		}
 	}
 	if normalized, changed := normalizeFractionalCreatedAtForClient(body); changed {
 		body = normalized

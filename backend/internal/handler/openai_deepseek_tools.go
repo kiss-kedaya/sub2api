@@ -226,7 +226,7 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 			if accountRelease != nil {
 				defer accountRelease()
 			}
-			return h.gatewayService.ForwardDeepSeekTools(c.Request.Context(), c, account, toolPath, modelLabel, body)
+			return h.gatewayService.ForwardDeepSeekTools(c.Request.Context(), c, account, apiKey.Group, toolPath, modelLabel, body)
 		}()
 		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, time.Since(forwardStart).Milliseconds())
 
