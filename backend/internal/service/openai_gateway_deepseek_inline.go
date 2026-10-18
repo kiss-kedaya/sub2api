@@ -100,9 +100,10 @@ func rewriteDeepSeekResponseBody(c *gin.Context, body []byte) []byte {
 		return body
 	}
 	if !bytes.Contains(body, []byte("DSML")) && !bytes.Contains(body, []byte("<think")) {
-		if gjson.GetBytes(body, "output").IsArray() {
-			return sanitizeResponsesCallIDs(body, "output")
-		}
+		// No DSML and no inline thinking: the upstream response is already
+		// well-formed. Returning it untouched keeps reasoning items,
+		// encrypted_content and the upstream function_call id/call_id split
+		// intact. Rewriting call ids here used to mangle valid responses.
 		return body
 	}
 	if !gjson.GetBytes(body, "output").IsArray() {
