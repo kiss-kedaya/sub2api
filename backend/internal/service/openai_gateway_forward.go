@@ -1582,6 +1582,13 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	// DeepSeek 搜索：分组配了搜索单价时，给模型注入一个 web_search 工具。
+	// 模型只会「提出要搜什么」，真正执行由网关完成后直接交给客户端。
+	if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled {
+		if injected, changed := injectDeepSeekSearchTool(body); changed {
+			body = injected
+		}
+	}
 	if c != nil && account.IsOpenAI() && (isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)) {
 		normalized, changed, normalizeErr := normalizeOpenAIResponsesLiteParallelToolCallsPayload(body)
 		if normalizeErr != nil {

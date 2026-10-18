@@ -266,9 +266,14 @@ func runMainServer() {
 }
 
 const (
-	defaultShutdownTimeout = 30 * time.Second
+	// 默认按 60 分钟排空：网关有大量流式（SSE）请求，一次对话可能持续
+	// 几十分钟。Shutdown 会先停止接受新连接，再等在途请求自然结束，
+	// 等待窗口太短会在流还没写完时直接杀掉进程，表现为用户侧断连。
+	defaultShutdownTimeout = 60 * time.Minute
 	minShutdownTimeout     = 5 * time.Second
-	maxShutdownTimeout     = 10 * time.Minute
+	// 上限覆盖默认值，允许运维按需再调大。仍保留上限，
+	// 避免一个错误的环境变量让进程永不退出。
+	maxShutdownTimeout = 6 * time.Hour
 )
 
 func shutdownTimeoutFromEnv(raw string) time.Duration {
