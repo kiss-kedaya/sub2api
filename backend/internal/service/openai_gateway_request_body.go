@@ -1654,14 +1654,32 @@ func extractOpenAIReasoningEffortFromBody(body []byte, modelCandidates ...string
 }
 
 func explicitRequestedReasoningEffortFromBody(body []byte) string {
-	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
-	if raw == "" {
-		raw = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
+	// Each gjson.GetBytes call is a full body rescan, and the misses below are
+	// the common case. Skip a probe when its key text cannot appear in the body;
+	// escaped keys ("\u0072easoning") must still work, so a body containing any
+	// backslash keeps the original unconditional behaviour.
+	hasEscape := bytes.IndexByte(body, '\\') >= 0
+	for _, probe := range reasoningEffortProbes {
+		if !hasEscape && !bytes.Contains(body, probe.key) {
+			continue
+		}
+		if raw := strings.TrimSpace(gjson.GetBytes(body, probe.path).String()); raw != "" {
+			return raw
+		}
 	}
-	if raw == "" {
-		raw = strings.TrimSpace(gjson.GetBytes(body, "output_config.effort").String())
-	}
-	return raw
+	return ""
+}
+
+type reasoningEffortProbe struct {
+	path string
+	key  []byte
+}
+
+// reasoningEffortProbes 按优先级排列，与原先的短路顺序一致。
+var reasoningEffortProbes = []reasoningEffortProbe{
+	{"reasoning.effort", []byte(`"reasoning"`)},
+	{"reasoning_effort", []byte(`"reasoning_effort"`)},
+	{"output_config.effort", []byte(`"output_config"`)},
 }
 
 // CanonicalRequestedReasoningEffort extracts the client-requested effort before
