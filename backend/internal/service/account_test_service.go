@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -42,6 +43,21 @@ import (
 // sseDataPrefix matches SSE data lines with optional whitespace after colon.
 // Some upstream APIs return non-standard "data:" without space (should be "data: ").
 var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
+
+// errTestTargetNotAllowed 表示账号测试/计费探测的目标落在私网/回环段。
+// 这类目标一律拒绝，不随 security.url_allowlist 开关放松。
+var errTestTargetNotAllowed = errors.New("account test target is not allowed")
+
+// accountTestAllowPrivateTargets 只由测试打开。
+// 生产恒为 false：账号测试/计费探测会回显对端响应体并落库，
+// 目标若是私网就成了反射型 SSRF + 端口预言机。
+var accountTestAllowPrivateTargets atomic.Bool
+
+// SetAccountTestAllowPrivateTargetsForTest 仅供单元测试放行本地假服务。
+func SetAccountTestAllowPrivateTargetsForTest(allow bool) {
+	accountTestAllowPrivateTargets.Store(allow)
+}
+
 
 const (
 	testClaudeAPIURL            = "https://api.anthropic.com/v1/messages?beta=true"
@@ -260,7 +276,20 @@ func (s *AccountTestService) validateUpstreamBaseURL(raw string) (string, error)
 		return "", errors.New("config is not available")
 	}
 	if !s.cfg.Security.URLAllowlist.Enabled {
-		return urlvalidator.ValidateURLFormat(raw, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
+		normalized, err := urlvalidator.ValidateURLFormat(raw, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
+		if err != nil {
+			return "", err
+		}
+		// allowlist 关闭时这里原本只剩格式校验，等于「管理员可以把 base_url
+		// 指到 127.0.0.1 / 172.17.0.1 然后点测试」——测试端点会把对方响应体
+		// 回显到 SSE 并落库到 error_message，构成反射型 SSRF + 端口预言机。
+		// 账号测试/计费探测的目标由账号凭证决定，必须无条件拒绝私网。
+		if !accountTestAllowPrivateTargets.Load() {
+			if blocked, err := isPrivateOrLoopbackHost(context.Background(), hostOfURL(normalized)); err == nil && blocked {
+				return "", errTestTargetNotAllowed
+			}
+		}
+		return normalized, nil
 	}
 	normalized, err := urlvalidator.ValidateHTTPSURL(raw, urlvalidator.ValidationOptions{
 		AllowedHosts:     s.cfg.Security.URLAllowlist.UpstreamHosts,
