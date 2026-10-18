@@ -223,26 +223,15 @@ type AccountListItemWithConcurrency struct {
 	CurrentRPM         *int                         `json:"current_rpm,omitempty"`
 }
 
-type simpleModeGroupReference struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Platform string `json:"platform"`
-	Status   string `json:"status"`
-}
-
+// simpleModeAccountGroupReference trims the nested account object in simple
+// mode, but keeps the full dto.Group: the account editor renders the group
+// through GroupSelector, which reads rate_multiplier and subscription_type.
 type simpleModeAccountGroupReference struct {
-	AccountID int64                     `json:"account_id"`
-	GroupID   int64                     `json:"group_id"`
-	Priority  int                       `json:"priority"`
-	CreatedAt time.Time                 `json:"created_at"`
-	Group     *simpleModeGroupReference `json:"group,omitempty"`
-}
-
-func simpleModeGroupReferenceFromDTO(group *dto.Group) *simpleModeGroupReference {
-	if group == nil {
-		return nil
-	}
-	return &simpleModeGroupReference{ID: group.ID, Name: group.Name, Platform: group.Platform, Status: group.Status}
+	AccountID int64      `json:"account_id"`
+	GroupID   int64      `json:"group_id"`
+	Priority  int        `json:"priority"`
+	CreatedAt time.Time  `json:"created_at"`
+	Group     *dto.Group `json:"group,omitempty"`
 }
 
 func simpleModeCompositeGroupIDs(account *dto.Account) map[int64]struct{} {
@@ -296,15 +285,18 @@ func (a AccountWithConcurrency) MarshalJSON() ([]byte, error) {
 	if !a.simpleMode || a.Account == nil {
 		return json.Marshal(alias(a))
 	}
-	groups := make([]simpleModeGroupReference, 0, len(a.Groups))
+	// Simple mode hides composite groups, but the remaining groups stay in the
+	// full dto.Group shape. The account editor renders them through
+	// GroupSelector, which reads rate_multiplier, subscription_type and
+	// account_count; a trimmed {id,name,platform,status} object makes the picker
+	// render blank rows and breaks the edit form.
 	compositeIDs := simpleModeCompositeGroupIDs(a.Account)
+	groups := make([]*dto.Group, 0, len(a.Groups))
 	for _, group := range a.Groups {
-		if group != nil && group.Platform == service.PlatformComposite {
+		if group == nil || group.Platform == service.PlatformComposite {
 			continue
 		}
-		if ref := simpleModeGroupReferenceFromDTO(group); ref != nil {
-			groups = append(groups, *ref)
-		}
+		groups = append(groups, group)
 	}
 	accountGroups := make([]simpleModeAccountGroupReference, 0, len(a.AccountGroups))
 	for _, accountGroup := range a.AccountGroups {
@@ -315,14 +307,17 @@ func (a AccountWithConcurrency) MarshalJSON() ([]byte, error) {
 			continue
 		}
 		accountGroups = append(accountGroups, simpleModeAccountGroupReference{
-			AccountID: accountGroup.AccountID, GroupID: accountGroup.GroupID, Priority: accountGroup.Priority,
-			CreatedAt: accountGroup.CreatedAt, Group: simpleModeGroupReferenceFromDTO(accountGroup.Group),
+			AccountID: accountGroup.AccountID,
+			GroupID:   accountGroup.GroupID,
+			Priority:  accountGroup.Priority,
+			CreatedAt: accountGroup.CreatedAt,
+			Group:     accountGroup.Group,
 		})
 	}
 	return json.Marshal(struct {
 		alias
 		GroupIDs      []int64                           `json:"group_ids,omitempty"`
-		Groups        []simpleModeGroupReference        `json:"groups"`
+		Groups        []*dto.Group                      `json:"groups"`
 		AccountGroups []simpleModeAccountGroupReference `json:"account_groups"`
 	}{alias: alias(a), GroupIDs: filterSimpleModeGroupIDs(a.GroupIDs, compositeIDs), Groups: groups, AccountGroups: accountGroups})
 }
