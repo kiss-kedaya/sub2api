@@ -91,6 +91,10 @@ type Group struct {
 	WebSearchPricePerCall *float64 `json:"web_search_price_per_call,omitempty"`
 	// 搜索工具价格 per 1000 calls（web_search 等）
 	SearchPricePer1k *float64 `json:"search_price_per_1k,omitempty"`
+	// 搜索专用服务地址；空表示使用账号自带的 base_url
+	SearchProviderBaseURL *string `json:"search_provider_base_url,omitempty"`
+	// 搜索专用 API key；空表示使用账号自带的 api_key
+	SearchProviderAPIKey *string `json:"-"`
 	// Voice realtime 每分钟价格（USD）
 	AudioRealtimePricePerMin *float64 `json:"audio_realtime_price_per_min,omitempty"`
 	// TTS 每百万字符价格（USD）
@@ -267,7 +271,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case group.FieldID, group.FieldDefaultValidityDays, group.FieldFallbackGroupID, group.FieldFallbackGroupIDOnInvalidRequest, group.FieldSortOrder, group.FieldRpmLimit:
 			values[i] = new(sql.NullInt64)
-		case group.FieldName, group.FieldDescription, group.FieldPeakStart, group.FieldPeakEnd, group.FieldStatus, group.FieldDuplicateOperationID, group.FieldPlatform, group.FieldSubscriptionType, group.FieldDefaultMappedModel, group.FieldMaxReasoningEffort, group.FieldMaxReasoningEffortOverLimit:
+		case group.FieldName, group.FieldDescription, group.FieldPeakStart, group.FieldPeakEnd, group.FieldStatus, group.FieldDuplicateOperationID, group.FieldPlatform, group.FieldSubscriptionType, group.FieldSearchProviderBaseURL, group.FieldSearchProviderAPIKey, group.FieldDefaultMappedModel, group.FieldMaxReasoningEffort, group.FieldMaxReasoningEffortOverLimit:
 			values[i] = new(sql.NullString)
 		case group.FieldCreatedAt, group.FieldUpdatedAt, group.FieldDeletedAt:
 			values[i] = new(sql.NullTime)
@@ -523,6 +527,20 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.SearchPricePer1k = new(float64)
 				*_m.SearchPricePer1k = value.Float64
+			}
+		case group.FieldSearchProviderBaseURL:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field search_provider_base_url", values[i])
+			} else if value.Valid {
+				_m.SearchProviderBaseURL = new(string)
+				*_m.SearchProviderBaseURL = value.String
+			}
+		case group.FieldSearchProviderAPIKey:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field search_provider_api_key", values[i])
+			} else if value.Valid {
+				_m.SearchProviderAPIKey = new(string)
+				*_m.SearchProviderAPIKey = value.String
 			}
 		case group.FieldAudioRealtimePricePerMin:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
@@ -940,6 +958,13 @@ func (_m *Group) String() string {
 		builder.WriteString("search_price_per_1k=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	if v := _m.SearchProviderBaseURL; v != nil {
+		builder.WriteString("search_provider_base_url=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	builder.WriteString("search_provider_api_key=<sensitive>")
 	builder.WriteString(", ")
 	if v := _m.AudioRealtimePricePerMin; v != nil {
 		builder.WriteString("audio_realtime_price_per_min=")
