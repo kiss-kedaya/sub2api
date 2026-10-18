@@ -203,6 +203,10 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldVideoModelPrices,
 				group.FieldWebSearchPricePerCall,
 				group.FieldSearchPricePer1k,
+				// 搜索专用凭据随分组一起取回：执行搜索要用，
+				// 但只有配了搜索的分组才会走这条路径。
+				group.FieldSearchProviderBaseURL,
+				group.FieldSearchProviderAPIKey,
 				group.FieldAudioRealtimePricePerMin,
 				group.FieldAudioTtsPricePerMillionChars,
 				group.FieldAudioSttPricePerHour,
@@ -1090,6 +1094,10 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		VideoModelPrices:                service.NormalizeVideoModelPrices(g.VideoModelPrices),
 		WebSearchPricePerCall:           g.WebSearchPricePerCall,
 		SearchPricePer1k:                g.SearchPricePer1k,
+		// 搜索专用凭据必须一并映射：执行搜索时用的是这条投影出来的
+		// Group，缺了它就会静默回落到账号凭据，分组配置等于没生效。
+		SearchProviderBaseURL: g.SearchProviderBaseURL,
+		SearchProviderAPIKey:  g.SearchProviderAPIKey,
 		AudioRealtimePricePerMin:        g.AudioRealtimePricePerMin,
 		AudioTTSPricePerMillionChars:    g.AudioTtsPricePerMillionChars,
 		AudioSTTPricePerHour:            g.AudioSttPricePerHour,

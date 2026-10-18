@@ -1041,7 +1041,8 @@ export default {
         searchProviderBaseUrl: 'Dedicated search base URL',
         searchProviderBaseUrlPlaceholder: 'Empty uses the model account base URL',
         searchProviderApiKey: 'Dedicated search API key',
-        searchProviderApiKeyPlaceholder: 'Empty leaves it unchanged; never echoed back'
+        searchProviderApiKeyPlaceholder: 'Empty leaves it unchanged; never echoed back',
+        searchProviderApiKeyClear: 'Clear the saved search key'
       },
       modelPricing: {
         title: 'Per-model group pricing',
