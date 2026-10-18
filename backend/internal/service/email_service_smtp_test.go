@@ -3,6 +3,7 @@
 package service
 
 import (
+	"os"
 	"bufio"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -18,6 +19,15 @@ import (
 	"testing"
 	"time"
 )
+
+// TestMain 放行本机回环目标：这些用例全部连 127.0.0.1 上的假 SMTP 服务器，
+// 而生产默认拒绝私网/回环（见 smtpCheckDialAddr）。
+func TestMain(m *testing.M) {
+	SetSMTPAllowPrivateTargetsForTest(true)
+	code := m.Run()
+	SetSMTPAllowPrivateTargetsForTest(false)
+	os.Exit(code)
+}
 
 // newSMTPTestCert 生成 127.0.0.1/localhost 的自签证书及其信任池。
 func newSMTPTestCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
