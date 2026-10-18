@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -28,6 +29,12 @@ func MarkOpenAINativeCompactionV2(c *gin.Context) {
 // the final Responses input item, as required by the upstream v2 wire format.
 func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
+		return body, false, nil
+	}
+	// Fast path: requests without a compaction trigger never change anything.
+	// Previously every Responses request paid a full encoding/json.Valid scan
+	// even when this pass was a no-op.
+	if !bytes.Contains(body, []byte("compaction_trigger")) {
 		return body, false, nil
 	}
 	if !json.Valid(body) {

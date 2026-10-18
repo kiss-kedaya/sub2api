@@ -186,11 +186,14 @@ func trySanitizeOpenAIResponsesToolSchemas(
 	if p.pos != len(body) {
 		return nil, false, fmt.Errorf("sanitize OpenAI Responses tool schemas: trailing data at byte %d", p.pos)
 	}
-	if !json.Valid(body) {
-		return nil, false, fmt.Errorf("sanitize OpenAI Responses tool schemas: invalid JSON")
-	}
+	// No edits means the body is returned untouched, so the extra full-body
+	// json.Valid sweep buys nothing. Only pay for it when we are about to
+	// rewrite the document.
 	if len(p.edits) == 0 {
 		return body, false, nil
+	}
+	if !json.Valid(body) {
+		return nil, false, fmt.Errorf("sanitize OpenAI Responses tool schemas: invalid JSON")
 	}
 	return applyOpenAIResponsesToolSchemaEdits(body, p.edits)
 }
