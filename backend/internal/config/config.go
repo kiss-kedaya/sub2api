@@ -943,11 +943,23 @@ type InflightReservationConfig struct {
 	MaxOutputTokens int `mapstructure:"max_output_tokens"`
 	// MaxInputTokens 输入 token 估算（请求体字节数 / 4）的上限。
 	MaxInputTokens int `mapstructure:"max_input_tokens"`
+	// MinInputTokens 输入 token 估算的**下限**。
+	//
+	// 上游（Codex / Responses 类渠道）会在客户端请求体之外注入大量上下文，
+	// 实测一个 99B 的最小请求最终 prompt_tokens≈4387（其中约 3.2k 命中缓存）。
+	// 只按 bodyBytes/4 估算会把预留算成实际的 1/50，并发时准入形同虚设。
+	// 因此输入估算至少取这个值：宁可多留一点，也不能让并发集体透支。
+	// 0 表示不设下限（保持旧行为，仅用于回滚）。
+	MinInputTokens int `mapstructure:"min_input_tokens"`
 	// MaxReservationUSD 单请求预留金额上限；0 表示不设上限。
 	MaxReservationUSD float64 `mapstructure:"max_reservation_usd"`
 	// FailClosedOnUnpriced 无法为请求估算费用（模型/分组/渠道均无定价）时是否拒绝请求。
 	// 默认 false：放行且不预留（fail-open，节流告警日志）。
 	FailClosedOnUnpriced bool `mapstructure:"fail_closed_on_unpriced"`
+	// FailClosedOnReserveError 预留过程本身出错（余额读取失败 / Redis 不可用）时
+	// 是否拒绝请求。默认 false 保持旧行为；生产建议 true——否则上述故障期间
+	// 准入闸门整体失效，小额余额并发照样透支。
+	FailClosedOnReserveError bool `mapstructure:"fail_closed_on_reserve_error"`
 }
 
 type CircuitBreakerConfig struct {
@@ -2186,8 +2198,11 @@ func setDefaults() {
 	viper.SetDefault("billing.inflight_reservation.default_max_tokens", 8192)
 	viper.SetDefault("billing.inflight_reservation.max_output_tokens", 128000)
 	viper.SetDefault("billing.inflight_reservation.max_input_tokens", 200000)
+	viper.SetDefault("billing.inflight_reservation.min_input_tokens", 4096)
 	viper.SetDefault("billing.inflight_reservation.max_reservation_usd", 0)
 	viper.SetDefault("billing.inflight_reservation.fail_closed_on_unpriced", false)
+	viper.SetDefault("billing.inflight_reservation.fail_closed_on_reserve_error", false)
+	viper.SetDefault("billing.inflight_reservation.fail_closed_on_reserve_error", false)
 
 	// Turnstile
 	viper.SetDefault("turnstile.required", false)
