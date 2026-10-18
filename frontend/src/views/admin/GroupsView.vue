@@ -3267,6 +3267,10 @@
                 :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
                 data-testid="edit-search-provider-key"
               />
+              <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <input v-model="editForm.clearSearchProviderKey" type="checkbox" class="h-3.5 w-3.5" />
+                <span>{{ t("admin.groups.explicitPricing.searchProviderApiKeyClear") }}</span>
+              </label>
             </div>
             <div v-if="editForm.platform === 'deepseek'">
               <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
@@ -3288,6 +3292,10 @@
                 :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
                 data-testid="edit-search-provider-key"
               />
+              <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <input v-model="editForm.clearSearchProviderKey" type="checkbox" class="h-3.5 w-3.5" />
+                <span>{{ t("admin.groups.explicitPricing.searchProviderApiKeyClear") }}</span>
+              </label>
             </div>
             <div v-if="editForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioRealtimePerMin") }}</label>
@@ -5107,6 +5115,7 @@ const createForm = reactive({
   search_price_per_1k: null as number | null,
   search_provider_base_url: '' as string,
   search_provider_api_key: '' as string,
+  clearSearchProviderKey: false,
   audio_realtime_price_per_min: null as number | null,
   audio_tts_price_per_million_chars: null as number | null,
   audio_stt_price_per_hour: null as number | null,
@@ -5477,6 +5486,7 @@ const editForm = reactive({
   audio_realtime_price_per_min: null as number | null,
   search_provider_base_url: '' as string,
   search_provider_api_key: '' as string,
+  clearSearchProviderKey: false,
   audio_tts_price_per_million_chars: null as number | null,
   audio_stt_price_per_hour: null as number | null,
   // 高峰时段倍率配置
@@ -6146,9 +6156,8 @@ const handleCreateGroup = async () => {
     requestData.web_search_price_per_call = emptyToNull(
       requestData.web_search_price_per_call,
     );
-    // 搜索专用凭据：base_url 留空表示不配置（回落到账号自带值）。
+    // 搜索专用凭据：新建时留空即「不配置」。
     requestData.search_provider_base_url = (createForm.search_provider_base_url ?? "").trim();
-    // api_key 留空表示「不修改」，避免编辑其它字段时把已存的 key 清掉。
     requestData.search_provider_api_key = (createForm.search_provider_api_key ?? "").trim();
     requestData.peak_rate_enabled = createForm.peak_rate_enabled;
     requestData.peak_start = createForm.peak_start;
@@ -6222,6 +6231,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.search_price_per_1k = group.search_price_per_1k ?? null;
   editForm.search_provider_base_url = group.search_provider_base_url ?? '';
   editForm.search_provider_api_key = '';
+  editForm.clearSearchProviderKey = false;
   editForm.audio_realtime_price_per_min = group.audio_realtime_price_per_min ?? null;
   editForm.audio_tts_price_per_million_chars = group.audio_tts_price_per_million_chars ?? null;
   editForm.audio_stt_price_per_hour = group.audio_stt_price_per_hour ?? null;
@@ -6342,6 +6352,7 @@ const closeEditModal = () => {
   editForm.search_price_per_1k = null;
   editForm.search_provider_base_url = '';
   editForm.search_provider_api_key = '';
+  editForm.clearSearchProviderKey = false;
   editForm.audio_realtime_price_per_min = null;
   editForm.audio_tts_price_per_million_chars = null;
   editForm.audio_stt_price_per_hour = null;
@@ -6498,8 +6509,18 @@ const handleUpdateGroup = async () => {
     payload.search_price_per_1k = emptyPriceToClear(
       payload.search_price_per_1k,
     );
+    // base_url 每次都提交（空串 = 清除）。
     payload.search_provider_base_url = (editForm.search_provider_base_url ?? "").trim();
-    payload.search_provider_api_key = (editForm.search_provider_api_key ?? "").trim();
+    // api_key 留空表示「不修改」，避免编辑其它字段时把已存的 key 清掉；
+    // 要清除必须显式勾选 clearSearchProviderKey。
+    if ((editForm.search_provider_api_key ?? "").trim()) {
+      payload.search_provider_api_key = editForm.search_provider_api_key.trim();
+    } else if (editForm.clearSearchProviderKey) {
+      payload.search_provider_api_key = "";
+    } else {
+      // 不修改：整条字段从请求里去掉，后端按 nil 处理（不触碰该列）。
+      delete (payload as Record<string, unknown>).search_provider_api_key;
+    }
     payload.audio_realtime_price_per_min = emptyPriceToClear(
       payload.audio_realtime_price_per_min,
     );

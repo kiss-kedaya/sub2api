@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http/httptest"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
@@ -33,6 +34,10 @@ const (
 	deepSeekSearchToolDescription = "Search the web for current information. " +
 		"Call this when the answer needs up-to-date facts, news, prices, or anything " +
 		"outside the model's knowledge cutoff."
+
+	// deepSeekSearchToolTimeout 单次搜索的执行上限。搜索挂在主响应路径上，
+	// 上游慢的话不能无限等（官方 QPS 5，正常几秒内返回）。
+	deepSeekSearchToolTimeout = 15 * time.Second
 )
 
 // deepSeekSearchToolSchema 是注入给模型的 function 定义。
@@ -171,10 +176,20 @@ func (s *OpenAIGatewayService) executeDeepSeekSearchCalls(
 		if err != nil {
 			continue
 		}
+		// 搜索是主请求路径上的附加动作，必须设上限，避免拖住整个响应。
+		searchCtx, cancel := context.WithTimeout(ctx, deepSeekSearchToolTimeout)
 		recorder := httptest.NewRecorder()
 		shadow, _ := gin.CreateTestContext(recorder)
-		shadow.Request = c.Request.Clone(ctx)
-		if _, err := s.ForwardDeepSeekTools(ctx, shadow, account, group, DeepSeekToolsPathSearch, "", payload); err != nil {
+		// c.Request 在某些内部路径下可能为空；用一个最小请求占位，
+		// ForwardDeepSeekTools 只用到 Host/Header，不依赖入站 body。
+		if c != nil && c.Request != nil {
+			shadow.Request = c.Request.Clone(searchCtx)
+		} else {
+			shadow.Request = httptest.NewRequest("POST", "/v1/tools/search", nil).WithContext(searchCtx)
+		}
+		_, err = s.ForwardDeepSeekTools(searchCtx, shadow, account, group, DeepSeekToolsPathSearch, "", payload)
+		cancel()
+		if err != nil {
 			slog.Warn("deepseek search tool call failed", "account_id", account.ID, "error", err)
 			continue
 		}

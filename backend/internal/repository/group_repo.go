@@ -397,25 +397,21 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	} else {
 		builder = builder.ClearSearchPricePer1k()
 	}
+	// nil 表示「本次不修改」（与其它字段的 nil 语义一致）；只有传了空字符串
+	// 才是显式清除。若把 nil 当成清除，编辑分组的其它字段会顺手把搜索 key 抹掉。
 	if groupIn.SearchProviderBaseURL != nil {
-		builder = builder.SetSearchProviderBaseURL(*groupIn.SearchProviderBaseURL)
-	} else {
-		builder = builder.ClearSearchProviderBaseURL()
+		if *groupIn.SearchProviderBaseURL == "" {
+			builder = builder.ClearSearchProviderBaseURL()
+		} else {
+			builder = builder.SetSearchProviderBaseURL(*groupIn.SearchProviderBaseURL)
+		}
 	}
 	if groupIn.SearchProviderAPIKey != nil {
-		builder = builder.SetSearchProviderAPIKey(*groupIn.SearchProviderAPIKey)
-	} else {
-		builder = builder.ClearSearchProviderAPIKey()
-	}
-	if groupIn.SearchProviderBaseURL != nil {
-		builder = builder.SetSearchProviderBaseURL(*groupIn.SearchProviderBaseURL)
-	} else {
-		builder = builder.ClearSearchProviderBaseURL()
-	}
-	if groupIn.SearchProviderAPIKey != nil {
-		builder = builder.SetSearchProviderAPIKey(*groupIn.SearchProviderAPIKey)
-	} else {
-		builder = builder.ClearSearchProviderAPIKey()
+		if *groupIn.SearchProviderAPIKey == "" {
+			builder = builder.ClearSearchProviderAPIKey()
+		} else {
+			builder = builder.SetSearchProviderAPIKey(*groupIn.SearchProviderAPIKey)
+		}
 	}
 	if groupIn.AudioRealtimePricePerMin != nil {
 		builder = builder.SetAudioRealtimePricePerMin(*groupIn.AudioRealtimePricePerMin)
