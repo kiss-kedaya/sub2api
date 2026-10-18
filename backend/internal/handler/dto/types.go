@@ -131,8 +131,11 @@ type Group struct {
 	// VideoModelPrices 可选按模型族×分辨率覆盖视频每秒单价 (USD/s)。
 	VideoModelPrices map[string]map[string]float64 `json:"video_model_prices,omitempty"`
 	// Codex alpha/search 网页搜索单次价格（USD/次）；null 表示使用默认价 0.01
-	WebSearchPricePerCall        *float64 `json:"web_search_price_per_call"`
-	SearchPricePer1k             *float64 `json:"search_price_per_1k"`
+	WebSearchPricePerCall *float64 `json:"web_search_price_per_call"`
+	SearchPricePer1k      *float64 `json:"search_price_per_1k"`
+	// DeepSeek 搜索专用端点。只回显 URL 与"是否已配置 key"，key 本身永不返回。
+	SearchProviderBaseURL        *string  `json:"search_provider_base_url"`
+	SearchProviderAPIKeySet      bool     `json:"search_provider_api_key_set"`
 	AudioRealtimePricePerMin     *float64 `json:"audio_realtime_price_per_min"`
 	AudioTtsPricePerMillionChars *float64 `json:"audio_tts_price_per_million_chars"`
 	AudioSttPricePerHour         *float64 `json:"audio_stt_price_per_hour"`

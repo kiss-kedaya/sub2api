@@ -626,6 +626,9 @@ export interface Group {
   search_price_per_1k: number | null
   search_provider_base_url?: string | null
   search_provider_api_key?: string | null
+  // Read-only: true when a key is stored server-side. The key value itself is
+  // never returned, mirroring the global Web Search emulation config.
+  search_provider_api_key_set?: boolean
   audio_realtime_price_per_min: number | null
   audio_tts_price_per_million_chars: number | null
   audio_stt_price_per_hour: number | null
@@ -856,6 +859,7 @@ export interface CreateGroupRequest {
   search_price_per_1k?: number | null
   search_provider_base_url?: string | null
   search_provider_api_key?: string | null
+  search_provider_api_key_set?: boolean
   audio_realtime_price_per_min?: number | null
   audio_tts_price_per_million_chars?: number | null
   audio_stt_price_per_hour?: number | null
@@ -925,6 +929,7 @@ export interface UpdateGroupRequest {
   search_price_per_1k?: number | null
   search_provider_base_url?: string | null
   search_provider_api_key?: string | null
+  search_provider_api_key_set?: boolean
   audio_realtime_price_per_min?: number | null
   audio_tts_price_per_million_chars?: number | null
   audio_stt_price_per_hour?: number | null
