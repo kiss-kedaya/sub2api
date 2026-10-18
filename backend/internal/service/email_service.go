@@ -17,6 +17,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -186,6 +188,23 @@ func (s *EmailService) SendEmail(ctx context.Context, to, subject, body string) 
 const smtpDialTimeout = 10 * time.Second
 const smtpIOTimeout = 20 * time.Second
 
+// ErrSMTPTargetBlocked 表示目标命中了 SMTP 出站的 SSRF 策略。
+// 对外只回一句固定文案，绝不透出源端口 / 目标地址 / 失败细节。
+var ErrSMTPTargetBlocked = errors.New("smtp target blocked by outbound policy")
+
+// errSMTPSecurityBlocked 保留包内短名，内部判定用。
+var errSMTPSecurityBlocked = ErrSMTPTargetBlocked
+
+// smtpAllowPrivateTargets 只由测试打开（见 SetSMTPAllowPrivateTargetsForTest）。
+// 生产恒为 false：SMTP 测试/发信必须走公网主机，否则等于给了一个
+// 任意 host:port 的 TCP 探测原语。
+var smtpAllowPrivateTargets atomic.Bool
+
+// SetSMTPAllowPrivateTargetsForTest 仅供单元测试放行 127.0.0.1 上的假 SMTP 服务器。
+func SetSMTPAllowPrivateTargetsForTest(allow bool) {
+	smtpAllowPrivateTargets.Store(allow)
+}
+
 // SendEmailWithConfig 使用指定配置发送邮件
 func (s *EmailService) SendEmailWithConfig(config *SMTPConfig, to, subject, body string) error {
 	message, err := buildSMTPMessage(config, to, subject, body)
@@ -246,30 +265,99 @@ func smtpTLSConfig(host string) *tls.Config {
 //     与 smtp.SendMail 的默认行为一致。
 func (s *EmailService) connectSMTP(config *SMTPConfig) (*smtp.Client, error) {
 	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
-	dialer := &net.Dialer{Timeout: smtpDialTimeout}
 	tlsConfig := smtpTLSConfig(config.Host)
 
 	if config.UseTLS {
-		conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
+		conn, err := smtpDialTLS(addr, config.Host, tlsConfig)
 		if err == nil {
 			return newSMTPClient(conn, config.Host)
 		}
+		// 拨号层拒绝（私网/黑名单）直接返回，不要回落明文重连，
+		// 否则一次探测会向被拒目标发出两次连接。
+		if isSMTPSecurityRejection(err) {
+			return nil, err
+		}
+		// 非 TLS 拒绝（如 SMTP 先发问候语导致的 RecordHeaderError）才回落 STARTTLS。
 		var recordErr tls.RecordHeaderError
 		if !errors.As(err, &recordErr) {
 			return nil, fmt.Errorf("tls dial: %w", err)
 		}
-		// SMTP 服务器先发问候语：明文问候会让 TLS 握手立刻返回
-		// RecordHeaderError，据此可靠判定对端期望 STARTTLS。
-		return s.connectSMTPStartTLS(dialer, addr, config.Host, tlsConfig, true)
+		return s.connectSMTPStartTLS(addr, config.Host, tlsConfig, true)
 	}
 
-	return s.connectSMTPStartTLS(dialer, addr, config.Host, tlsConfig, false)
+	return s.connectSMTPStartTLS(addr, config.Host, tlsConfig, false)
+}
+
+// smtpDialer 是所有 SMTP 出站连接的唯一入口。
+//
+// Control 回调在真正 connect 之前执行，拿到的是**即将连接的那个 IP**，
+// 所以既拦住字面量私网地址，也拦住 DNS rebinding（解析一次换成内网）。
+func smtpDialer() *net.Dialer {
+	return &net.Dialer{
+		Timeout: smtpDialTimeout,
+		Control: func(_, address string, _ syscall.RawConn) error {
+			return smtpCheckDialAddr(address)
+		},
+	}
+}
+
+// smtpCheckDialAddr 校验即将连接的 host:port。
+func smtpCheckDialAddr(address string) error {
+	if smtpAllowPrivateTargets.Load() {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateIP(ip) {
+			return errSMTPSecurityBlocked
+		}
+		return nil
+	}
+	if isBlockedHostname(host) {
+		return errSMTPSecurityBlocked
+	}
+	addrs, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
+	if err != nil {
+		return err
+	}
+	if len(addrs) == 0 {
+		return errSMTPSecurityBlocked
+	}
+	for _, a := range addrs {
+		if isPrivateIP(a.IP) {
+			return errSMTPSecurityBlocked
+		}
+	}
+	return nil
+}
+
+// smtpDialTLS 做隐式 TLS（465 语义）。tls.DialWithDialer 不接受 Control，
+// 所以先用受控 dialer 建底层连接，再手工握手。
+func smtpDialTLS(addr, host string, tlsConfig *tls.Config) (net.Conn, error) {
+	conn, err := smtpDialer().Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	tlsConn := tls.Client(conn, tlsConfig)
+	if err := tlsConn.Handshake(); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return tlsConn, nil
+}
+
+// isSMTPSecurityRejection 判断错误是否来自 SSRF 策略拒绝。
+func isSMTPSecurityRejection(err error) bool {
+	return errors.Is(err, errSMTPSecurityBlocked)
 }
 
 // connectSMTPStartTLS 建立明文连接并按需升级 STARTTLS。
 // mandatory 为 true 时服务器必须支持 STARTTLS，否则报错。
-func (s *EmailService) connectSMTPStartTLS(dialer *net.Dialer, addr, host string, tlsConfig *tls.Config, mandatory bool) (*smtp.Client, error) {
-	conn, err := dialer.Dial("tcp", addr)
+func (s *EmailService) connectSMTPStartTLS(addr, host string, tlsConfig *tls.Config, mandatory bool) (*smtp.Client, error) {
+	conn, err := smtpDialer().Dial("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("smtp dial: %w", err)
 	}

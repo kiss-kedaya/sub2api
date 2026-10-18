@@ -65,6 +65,10 @@ type Group struct {
 
 	// 搜索工具显式定价（per 1k calls）。
 	SearchPricePer1k *float64
+	// 搜索专用凭据：分组可以单独指定一套搜索服务地址与 key，
+	// 不必与模型账号共用额度。为空时回落到账号自带值。
+	SearchProviderBaseURL *string
+	SearchProviderAPIKey  *string
 	// Grok Voice 显式定价（分组级，不按文本 RateMultiplier）。
 	AudioRealtimePricePerMin     *float64
 	AudioTTSPricePerMillionChars *float64

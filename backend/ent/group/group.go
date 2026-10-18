@@ -88,6 +88,10 @@ const (
 	FieldWebSearchPricePerCall = "web_search_price_per_call"
 	// FieldSearchPricePer1k holds the string denoting the search_price_per_1k field in the database.
 	FieldSearchPricePer1k = "search_price_per_1k"
+	// FieldSearchProviderBaseURL holds the string denoting the search_provider_base_url field in the database.
+	FieldSearchProviderBaseURL = "search_provider_base_url"
+	// FieldSearchProviderAPIKey holds the string denoting the search_provider_api_key field in the database.
+	FieldSearchProviderAPIKey = "search_provider_api_key"
 	// FieldAudioRealtimePricePerMin holds the string denoting the audio_realtime_price_per_min field in the database.
 	FieldAudioRealtimePricePerMin = "audio_realtime_price_per_min"
 	// FieldAudioTtsPricePerMillionChars holds the string denoting the audio_tts_price_per_million_chars field in the database.
@@ -261,6 +265,8 @@ var Columns = []string{
 	FieldVideoModelPrices,
 	FieldWebSearchPricePerCall,
 	FieldSearchPricePer1k,
+	FieldSearchProviderBaseURL,
+	FieldSearchProviderAPIKey,
 	FieldAudioRealtimePricePerMin,
 	FieldAudioTtsPricePerMillionChars,
 	FieldAudioSttPricePerHour,
@@ -622,6 +628,16 @@ func ByWebSearchPricePerCall(opts ...sql.OrderTermOption) OrderOption {
 // BySearchPricePer1k orders the results by the search_price_per_1k field.
 func BySearchPricePer1k(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSearchPricePer1k, opts...).ToFunc()
+}
+
+// BySearchProviderBaseURL orders the results by the search_provider_base_url field.
+func BySearchProviderBaseURL(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSearchProviderBaseURL, opts...).ToFunc()
+}
+
+// BySearchProviderAPIKey orders the results by the search_provider_api_key field.
+func BySearchProviderAPIKey(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSearchProviderAPIKey, opts...).ToFunc()
 }
 
 // ByAudioRealtimePricePerMin orders the results by the audio_realtime_price_per_min field.

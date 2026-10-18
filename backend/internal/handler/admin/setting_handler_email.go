@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"errors"
 	"html"
+	"log/slog"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -76,11 +78,25 @@ func (h *SettingHandler) TestSMTPConnection(c *gin.Context) {
 
 	err := h.emailService.TestSMTPConnectionWithConfig(config)
 	if err != nil {
-		response.BadRequest(c, "SMTP connection test failed: "+err.Error())
+		// 不回显原始错误：net/smtp 的错误串含 "<临时源端口>-><目标 host:port>"
+		// 与 refused/timeout 细节，等于把服务端变成一个任意 host:port 的
+		// 端口状态预言机。对外只给分类信息，细节只进服务端日志。
+		slog.Warn("admin_smtp_test_failed",
+			"host", config.Host, "port", config.Port, "error", err)
+		response.BadRequest(c, smtpTestPublicMessage(err))
 		return
 	}
 
 	response.Success(c, gin.H{"message": "SMTP connection successful"})
+}
+
+// smtpTestPublicMessage 把内部错误压成对外可说的分类。
+// 刻意不含主机名、端口、源端口、拒绝/超时的区分。
+func smtpTestPublicMessage(err error) string {
+	if errors.Is(err, service.ErrSMTPTargetBlocked) {
+		return "SMTP connection test failed: target not allowed"
+	}
+	return "SMTP connection test failed: unable to connect or authenticate"
 }
 
 // SendTestEmailRequest 发送测试邮件请求

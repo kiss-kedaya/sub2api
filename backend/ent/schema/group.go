@@ -168,6 +168,19 @@ func (Group) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
 			Comment("搜索工具价格 per 1000 calls（web_search 等）"),
 
+		// 搜索专用凭据：为空时回落到账号自带的 base_url / api_key。
+		// 用于 DeepSeek /v1/tools/search 这类按次计费的独立搜索接口，
+		// 让分组可以单独指定一个搜索服务，而不必与模型账号共用额度。
+		field.String("search_provider_base_url").
+			Optional().
+			Nillable().
+			Comment("搜索专用服务地址；空表示使用账号自带的 base_url"),
+		field.String("search_provider_api_key").
+			Optional().
+			Nillable().
+			Sensitive().
+			Comment("搜索专用 API key；空表示使用账号自带的 api_key"),
+
 		// Grok Voice 显式定价（realtime / TTS / STT），不按文本 RateMultiplier。
 		field.Float("audio_realtime_price_per_min").
 			Optional().

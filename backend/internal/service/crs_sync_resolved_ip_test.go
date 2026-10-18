@@ -54,7 +54,10 @@ func TestCRSSyncResolvedIPValidationIsNotTiedToAllowlist(t *testing.T) {
 			"the loopback destination must be rejected by the resolved-IP check")
 	})
 
-	t.Run("private hosts allowed reaches the server", func(t *testing.T) {
+	// 行为变更（SSRF 加固）：CRS 的 base_url 由管理员手填，AllowPrivateHosts
+	// 不再能放开它——否则 preview/sync 就是任意 host:port 的 POST+GET 探测原语。
+	// 只有把主机显式写进 crs_hosts 白名单才允许指向私网。
+	t.Run("AllowPrivateHosts alone no longer opens CRS to loopback", func(t *testing.T) {
 		t.Parallel()
 
 		cfg := &config.Config{}
@@ -69,10 +72,30 @@ func TestCRSSyncResolvedIPValidationIsNotTiedToAllowlist(t *testing.T) {
 			Password: "password",
 		})
 
-		// 这里仍会失败（测试服务器返回的不是合法登录响应），但**不能**是 IP 被拦。
+		require.Error(t, err, "CRS must not reach loopback just because AllowPrivateHosts is true")
+		require.Contains(t, err.Error(), "is not allowed")
+	})
+
+	t.Run("explicit crs_hosts allowlist still permits a private CRS", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &config.Config{}
+		cfg.Security.URLAllowlist.Enabled = false
+		cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+		cfg.Security.URLAllowlist.AllowPrivateHosts = true
+		cfg.Security.URLAllowlist.CRSHosts = []string{"127.0.0.1"}
+
+		svc := NewCRSSyncService(newCRSLongContextAccountRepo(), nil, nil, nil, nil, cfg)
+		_, err := svc.SyncFromCRS(context.Background(), SyncFromCRSInput{
+			BaseURL:  server.URL,
+			Username: "admin",
+			Password: "password",
+		})
+
+		// 仍会失败（测试服务器返回的不是合法登录响应），但不能是被策略拦掉。
 		if err != nil {
 			require.NotContains(t, err.Error(), "is not allowed",
-				"AllowPrivateHosts=true must let the resolved-IP check pass")
+				"an explicitly allowlisted private CRS host must pass the policy gate")
 		}
 	})
 }

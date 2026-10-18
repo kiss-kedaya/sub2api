@@ -230,6 +230,16 @@ func SearchPricePer1k(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldSearchPricePer1k, v))
 }
 
+// SearchProviderBaseURL applies equality check predicate on the "search_provider_base_url" field. It's identical to SearchProviderBaseURLEQ.
+func SearchProviderBaseURL(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderAPIKey applies equality check predicate on the "search_provider_api_key" field. It's identical to SearchProviderAPIKeyEQ.
+func SearchProviderAPIKey(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSearchProviderAPIKey, v))
+}
+
 // AudioRealtimePricePerMin applies equality check predicate on the "audio_realtime_price_per_min" field. It's identical to AudioRealtimePricePerMinEQ.
 func AudioRealtimePricePerMin(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAudioRealtimePricePerMin, v))
@@ -1918,6 +1928,156 @@ func SearchPricePer1kIsNil() predicate.Group {
 // SearchPricePer1kNotNil applies the NotNil predicate on the "search_price_per_1k" field.
 func SearchPricePer1kNotNil() predicate.Group {
 	return predicate.Group(sql.FieldNotNull(FieldSearchPricePer1k))
+}
+
+// SearchProviderBaseURLEQ applies the EQ predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderBaseURLNEQ applies the NEQ predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderBaseURLIn applies the In predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldSearchProviderBaseURL, vs...))
+}
+
+// SearchProviderBaseURLNotIn applies the NotIn predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldSearchProviderBaseURL, vs...))
+}
+
+// SearchProviderBaseURLGT applies the GT predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderBaseURLGTE applies the GTE predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderBaseURLLT applies the LT predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderBaseURLLTE applies the LTE predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderBaseURLContains applies the Contains predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderBaseURLHasPrefix applies the HasPrefix predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderBaseURLHasSuffix applies the HasSuffix predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderBaseURLIsNil applies the IsNil predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldSearchProviderBaseURL))
+}
+
+// SearchProviderBaseURLNotNil applies the NotNil predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldSearchProviderBaseURL))
+}
+
+// SearchProviderBaseURLEqualFold applies the EqualFold predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderBaseURLContainsFold applies the ContainsFold predicate on the "search_provider_base_url" field.
+func SearchProviderBaseURLContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldSearchProviderBaseURL, v))
+}
+
+// SearchProviderAPIKeyEQ applies the EQ predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSearchProviderAPIKey, v))
+}
+
+// SearchProviderAPIKeyNEQ applies the NEQ predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldSearchProviderAPIKey, v))
+}
+
+// SearchProviderAPIKeyIn applies the In predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldSearchProviderAPIKey, vs...))
+}
+
+// SearchProviderAPIKeyNotIn applies the NotIn predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldSearchProviderAPIKey, vs...))
+}
+
+// SearchProviderAPIKeyGT applies the GT predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldSearchProviderAPIKey, v))
+}
+
+// SearchProviderAPIKeyGTE applies the GTE predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldSearchProviderAPIKey, v))
+}
+
+// SearchProviderAPIKeyLT applies the LT predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldSearchProviderAPIKey, v))
+}
+
+// SearchProviderAPIKeyLTE applies the LTE predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldSearchProviderAPIKey, v))
+}
+
+// SearchProviderAPIKeyContains applies the Contains predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldSearchProviderAPIKey, v))
+}
+
+// SearchProviderAPIKeyHasPrefix applies the HasPrefix predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldSearchProviderAPIKey, v))
+}
+
+// SearchProviderAPIKeyHasSuffix applies the HasSuffix predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldSearchProviderAPIKey, v))
+}
+
+// SearchProviderAPIKeyIsNil applies the IsNil predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldSearchProviderAPIKey))
+}
+
+// SearchProviderAPIKeyNotNil applies the NotNil predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldSearchProviderAPIKey))
+}
+
+// SearchProviderAPIKeyEqualFold applies the EqualFold predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldSearchProviderAPIKey, v))
+}
+
+// SearchProviderAPIKeyContainsFold applies the ContainsFold predicate on the "search_provider_api_key" field.
+func SearchProviderAPIKeyContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldSearchProviderAPIKey, v))
 }
 
 // AudioRealtimePricePerMinEQ applies the EQ predicate on the "audio_realtime_price_per_min" field.

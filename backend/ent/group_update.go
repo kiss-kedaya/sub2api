@@ -707,6 +707,46 @@ func (_u *GroupUpdate) ClearSearchPricePer1k() *GroupUpdate {
 	return _u
 }
 
+// SetSearchProviderBaseURL sets the "search_provider_base_url" field.
+func (_u *GroupUpdate) SetSearchProviderBaseURL(v string) *GroupUpdate {
+	_u.mutation.SetSearchProviderBaseURL(v)
+	return _u
+}
+
+// SetNillableSearchProviderBaseURL sets the "search_provider_base_url" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableSearchProviderBaseURL(v *string) *GroupUpdate {
+	if v != nil {
+		_u.SetSearchProviderBaseURL(*v)
+	}
+	return _u
+}
+
+// ClearSearchProviderBaseURL clears the value of the "search_provider_base_url" field.
+func (_u *GroupUpdate) ClearSearchProviderBaseURL() *GroupUpdate {
+	_u.mutation.ClearSearchProviderBaseURL()
+	return _u
+}
+
+// SetSearchProviderAPIKey sets the "search_provider_api_key" field.
+func (_u *GroupUpdate) SetSearchProviderAPIKey(v string) *GroupUpdate {
+	_u.mutation.SetSearchProviderAPIKey(v)
+	return _u
+}
+
+// SetNillableSearchProviderAPIKey sets the "search_provider_api_key" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableSearchProviderAPIKey(v *string) *GroupUpdate {
+	if v != nil {
+		_u.SetSearchProviderAPIKey(*v)
+	}
+	return _u
+}
+
+// ClearSearchProviderAPIKey clears the value of the "search_provider_api_key" field.
+func (_u *GroupUpdate) ClearSearchProviderAPIKey() *GroupUpdate {
+	_u.mutation.ClearSearchProviderAPIKey()
+	return _u
+}
+
 // SetAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field.
 func (_u *GroupUpdate) SetAudioRealtimePricePerMin(v float64) *GroupUpdate {
 	_u.mutation.ResetAudioRealtimePricePerMin()
@@ -1777,6 +1817,18 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.SearchPricePer1kCleared() {
 		_spec.ClearField(group.FieldSearchPricePer1k, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.SearchProviderBaseURL(); ok {
+		_spec.SetField(group.FieldSearchProviderBaseURL, field.TypeString, value)
+	}
+	if _u.mutation.SearchProviderBaseURLCleared() {
+		_spec.ClearField(group.FieldSearchProviderBaseURL, field.TypeString)
+	}
+	if value, ok := _u.mutation.SearchProviderAPIKey(); ok {
+		_spec.SetField(group.FieldSearchProviderAPIKey, field.TypeString, value)
+	}
+	if _u.mutation.SearchProviderAPIKeyCleared() {
+		_spec.ClearField(group.FieldSearchProviderAPIKey, field.TypeString)
 	}
 	if value, ok := _u.mutation.AudioRealtimePricePerMin(); ok {
 		_spec.SetField(group.FieldAudioRealtimePricePerMin, field.TypeFloat64, value)
@@ -2918,6 +2970,46 @@ func (_u *GroupUpdateOne) ClearSearchPricePer1k() *GroupUpdateOne {
 	return _u
 }
 
+// SetSearchProviderBaseURL sets the "search_provider_base_url" field.
+func (_u *GroupUpdateOne) SetSearchProviderBaseURL(v string) *GroupUpdateOne {
+	_u.mutation.SetSearchProviderBaseURL(v)
+	return _u
+}
+
+// SetNillableSearchProviderBaseURL sets the "search_provider_base_url" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableSearchProviderBaseURL(v *string) *GroupUpdateOne {
+	if v != nil {
+		_u.SetSearchProviderBaseURL(*v)
+	}
+	return _u
+}
+
+// ClearSearchProviderBaseURL clears the value of the "search_provider_base_url" field.
+func (_u *GroupUpdateOne) ClearSearchProviderBaseURL() *GroupUpdateOne {
+	_u.mutation.ClearSearchProviderBaseURL()
+	return _u
+}
+
+// SetSearchProviderAPIKey sets the "search_provider_api_key" field.
+func (_u *GroupUpdateOne) SetSearchProviderAPIKey(v string) *GroupUpdateOne {
+	_u.mutation.SetSearchProviderAPIKey(v)
+	return _u
+}
+
+// SetNillableSearchProviderAPIKey sets the "search_provider_api_key" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableSearchProviderAPIKey(v *string) *GroupUpdateOne {
+	if v != nil {
+		_u.SetSearchProviderAPIKey(*v)
+	}
+	return _u
+}
+
+// ClearSearchProviderAPIKey clears the value of the "search_provider_api_key" field.
+func (_u *GroupUpdateOne) ClearSearchProviderAPIKey() *GroupUpdateOne {
+	_u.mutation.ClearSearchProviderAPIKey()
+	return _u
+}
+
 // SetAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field.
 func (_u *GroupUpdateOne) SetAudioRealtimePricePerMin(v float64) *GroupUpdateOne {
 	_u.mutation.ResetAudioRealtimePricePerMin()
@@ -4018,6 +4110,18 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if _u.mutation.SearchPricePer1kCleared() {
 		_spec.ClearField(group.FieldSearchPricePer1k, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.SearchProviderBaseURL(); ok {
+		_spec.SetField(group.FieldSearchProviderBaseURL, field.TypeString, value)
+	}
+	if _u.mutation.SearchProviderBaseURLCleared() {
+		_spec.ClearField(group.FieldSearchProviderBaseURL, field.TypeString)
+	}
+	if value, ok := _u.mutation.SearchProviderAPIKey(); ok {
+		_spec.SetField(group.FieldSearchProviderAPIKey, field.TypeString, value)
+	}
+	if _u.mutation.SearchProviderAPIKeyCleared() {
+		_spec.ClearField(group.FieldSearchProviderAPIKey, field.TypeString)
 	}
 	if value, ok := _u.mutation.AudioRealtimePricePerMin(); ok {
 		_spec.SetField(group.FieldAudioRealtimePricePerMin, field.TypeFloat64, value)
