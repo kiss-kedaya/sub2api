@@ -123,6 +123,8 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetVideoModelPrices(service.NormalizeVideoModelPrices(groupIn.VideoModelPrices)).
 		SetNillableWebSearchPricePerCall(groupIn.WebSearchPricePerCall).
 		SetNillableSearchPricePer1k(groupIn.SearchPricePer1k).
+		SetNillableSearchProviderBaseURL(groupIn.SearchProviderBaseURL).
+		SetNillableSearchProviderAPIKey(groupIn.SearchProviderAPIKey).
 		SetNillableAudioRealtimePricePerMin(groupIn.AudioRealtimePricePerMin).
 		SetNillableAudioTtsPricePerMillionChars(groupIn.AudioTTSPricePerMillionChars).
 		SetNillableAudioSttPricePerHour(groupIn.AudioSTTPricePerHour).
@@ -394,6 +396,26 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		builder = builder.SetSearchPricePer1k(*groupIn.SearchPricePer1k)
 	} else {
 		builder = builder.ClearSearchPricePer1k()
+	}
+	if groupIn.SearchProviderBaseURL != nil {
+		builder = builder.SetSearchProviderBaseURL(*groupIn.SearchProviderBaseURL)
+	} else {
+		builder = builder.ClearSearchProviderBaseURL()
+	}
+	if groupIn.SearchProviderAPIKey != nil {
+		builder = builder.SetSearchProviderAPIKey(*groupIn.SearchProviderAPIKey)
+	} else {
+		builder = builder.ClearSearchProviderAPIKey()
+	}
+	if groupIn.SearchProviderBaseURL != nil {
+		builder = builder.SetSearchProviderBaseURL(*groupIn.SearchProviderBaseURL)
+	} else {
+		builder = builder.ClearSearchProviderBaseURL()
+	}
+	if groupIn.SearchProviderAPIKey != nil {
+		builder = builder.SetSearchProviderAPIKey(*groupIn.SearchProviderAPIKey)
+	} else {
+		builder = builder.ClearSearchProviderAPIKey()
 	}
 	if groupIn.AudioRealtimePricePerMin != nil {
 		builder = builder.SetAudioRealtimePricePerMin(*groupIn.AudioRealtimePricePerMin)

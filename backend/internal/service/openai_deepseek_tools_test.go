@@ -41,7 +41,7 @@ func TestForwardDeepSeekToolsSearchPassesThrough(t *testing.T) {
 		},
 	}
 
-	result, err := svc.ForwardDeepSeekTools(context.Background(), c, account, DeepSeekToolsPathSearch, "", body)
+	result, err := svc.ForwardDeepSeekTools(context.Background(), c, account, nil, DeepSeekToolsPathSearch, "", body)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -57,6 +57,42 @@ func TestForwardDeepSeekToolsSearchPassesThrough(t *testing.T) {
 }
 
 // Fetch uses the same pass-through path with its own label.
+
+// 分组可以单独指定一套搜索服务：模型账号是别家、或不想让搜索吃掉模型账号
+// 额度时，用 group 上的 base_url + api_key 发搜索请求。
+func TestForwardDeepSeekToolsPrefersGroupSearchProvider(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"query":"probe"}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/tools/search", bytes.NewReader(body))
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"results":[]}`)),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID:       8,
+		Platform: PlatformDeepseek,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "model-account-key",
+			"base_url": "https://api.deepseek.com",
+		},
+	}
+	groupBase := "https://search.internal"
+	groupKey := "search-only-key"
+	group := &Group{ID: 36, SearchProviderBaseURL: &groupBase, SearchProviderAPIKey: &groupKey}
+
+	_, err := svc.ForwardDeepSeekTools(context.Background(), c, account, group, DeepSeekToolsPathSearch, "", body)
+	require.NoError(t, err)
+
+	require.Equal(t, "https://search.internal/v1/tools/search", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer search-only-key", upstream.lastReq.Header.Get("Authorization"))
+}
+
 func TestForwardDeepSeekToolsFetchLabelsRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"url":"https://example.com/article"}`)
@@ -75,7 +111,7 @@ func TestForwardDeepSeekToolsFetchLabelsRequest(t *testing.T) {
 		Credentials: map[string]any{"api_key": "ds-key", "base_url": "https://api.deepseek.com"},
 	}
 
-	result, err := svc.ForwardDeepSeekTools(context.Background(), c, account, DeepSeekToolsPathFetch, "", body)
+	result, err := svc.ForwardDeepSeekTools(context.Background(), c, account, nil, DeepSeekToolsPathFetch, "", body)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -102,7 +138,7 @@ func TestForwardDeepSeekToolsUpstreamErrorIsNotBilled(t *testing.T) {
 		Credentials: map[string]any{"api_key": "ds-key", "base_url": "https://api.deepseek.com"},
 	}
 
-	result, err := svc.ForwardDeepSeekTools(context.Background(), c, account, DeepSeekToolsPathSearch, "", []byte(`{"query":"x"}`))
+	result, err := svc.ForwardDeepSeekTools(context.Background(), c, account, nil, DeepSeekToolsPathSearch, "", []byte(`{"query":"x"}`))
 
 	require.NoError(t, err)
 	require.Nil(t, result, "a failed upstream call must not bill")

@@ -22189,6 +22189,8 @@ type GroupMutation struct {
 	addweb_search_price_per_call            *float64
 	search_price_per_1k                     *float64
 	addsearch_price_per_1k                  *float64
+	search_provider_base_url                *string
+	search_provider_api_key                 *string
 	audio_realtime_price_per_min            *float64
 	addaudio_realtime_price_per_min         *float64
 	audio_tts_price_per_million_chars       *float64
@@ -24216,6 +24218,104 @@ func (m *GroupMutation) ResetSearchPricePer1k() {
 	delete(m.clearedFields, group.FieldSearchPricePer1k)
 }
 
+// SetSearchProviderBaseURL sets the "search_provider_base_url" field.
+func (m *GroupMutation) SetSearchProviderBaseURL(s string) {
+	m.search_provider_base_url = &s
+}
+
+// SearchProviderBaseURL returns the value of the "search_provider_base_url" field in the mutation.
+func (m *GroupMutation) SearchProviderBaseURL() (r string, exists bool) {
+	v := m.search_provider_base_url
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSearchProviderBaseURL returns the old "search_provider_base_url" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldSearchProviderBaseURL(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSearchProviderBaseURL is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSearchProviderBaseURL requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSearchProviderBaseURL: %w", err)
+	}
+	return oldValue.SearchProviderBaseURL, nil
+}
+
+// ClearSearchProviderBaseURL clears the value of the "search_provider_base_url" field.
+func (m *GroupMutation) ClearSearchProviderBaseURL() {
+	m.search_provider_base_url = nil
+	m.clearedFields[group.FieldSearchProviderBaseURL] = struct{}{}
+}
+
+// SearchProviderBaseURLCleared returns if the "search_provider_base_url" field was cleared in this mutation.
+func (m *GroupMutation) SearchProviderBaseURLCleared() bool {
+	_, ok := m.clearedFields[group.FieldSearchProviderBaseURL]
+	return ok
+}
+
+// ResetSearchProviderBaseURL resets all changes to the "search_provider_base_url" field.
+func (m *GroupMutation) ResetSearchProviderBaseURL() {
+	m.search_provider_base_url = nil
+	delete(m.clearedFields, group.FieldSearchProviderBaseURL)
+}
+
+// SetSearchProviderAPIKey sets the "search_provider_api_key" field.
+func (m *GroupMutation) SetSearchProviderAPIKey(s string) {
+	m.search_provider_api_key = &s
+}
+
+// SearchProviderAPIKey returns the value of the "search_provider_api_key" field in the mutation.
+func (m *GroupMutation) SearchProviderAPIKey() (r string, exists bool) {
+	v := m.search_provider_api_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSearchProviderAPIKey returns the old "search_provider_api_key" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldSearchProviderAPIKey(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSearchProviderAPIKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSearchProviderAPIKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSearchProviderAPIKey: %w", err)
+	}
+	return oldValue.SearchProviderAPIKey, nil
+}
+
+// ClearSearchProviderAPIKey clears the value of the "search_provider_api_key" field.
+func (m *GroupMutation) ClearSearchProviderAPIKey() {
+	m.search_provider_api_key = nil
+	m.clearedFields[group.FieldSearchProviderAPIKey] = struct{}{}
+}
+
+// SearchProviderAPIKeyCleared returns if the "search_provider_api_key" field was cleared in this mutation.
+func (m *GroupMutation) SearchProviderAPIKeyCleared() bool {
+	_, ok := m.clearedFields[group.FieldSearchProviderAPIKey]
+	return ok
+}
+
+// ResetSearchProviderAPIKey resets all changes to the "search_provider_api_key" field.
+func (m *GroupMutation) ResetSearchProviderAPIKey() {
+	m.search_provider_api_key = nil
+	delete(m.clearedFields, group.FieldSearchProviderAPIKey)
+}
+
 // SetAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field.
 func (m *GroupMutation) SetAudioRealtimePricePerMin(f float64) {
 	m.audio_realtime_price_per_min = &f
@@ -26012,7 +26112,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 67)
+	fields := make([]string, 0, 69)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26120,6 +26220,12 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.search_price_per_1k != nil {
 		fields = append(fields, group.FieldSearchPricePer1k)
+	}
+	if m.search_provider_base_url != nil {
+		fields = append(fields, group.FieldSearchProviderBaseURL)
+	}
+	if m.search_provider_api_key != nil {
+		fields = append(fields, group.FieldSearchProviderAPIKey)
 	}
 	if m.audio_realtime_price_per_min != nil {
 		fields = append(fields, group.FieldAudioRealtimePricePerMin)
@@ -26294,6 +26400,10 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.WebSearchPricePerCall()
 	case group.FieldSearchPricePer1k:
 		return m.SearchPricePer1k()
+	case group.FieldSearchProviderBaseURL:
+		return m.SearchProviderBaseURL()
+	case group.FieldSearchProviderAPIKey:
+		return m.SearchProviderAPIKey()
 	case group.FieldAudioRealtimePricePerMin:
 		return m.AudioRealtimePricePerMin()
 	case group.FieldAudioTtsPricePerMillionChars:
@@ -26437,6 +26547,10 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldWebSearchPricePerCall(ctx)
 	case group.FieldSearchPricePer1k:
 		return m.OldSearchPricePer1k(ctx)
+	case group.FieldSearchProviderBaseURL:
+		return m.OldSearchProviderBaseURL(ctx)
+	case group.FieldSearchProviderAPIKey:
+		return m.OldSearchProviderAPIKey(ctx)
 	case group.FieldAudioRealtimePricePerMin:
 		return m.OldAudioRealtimePricePerMin(ctx)
 	case group.FieldAudioTtsPricePerMillionChars:
@@ -26759,6 +26873,20 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSearchPricePer1k(v)
+		return nil
+	case group.FieldSearchProviderBaseURL:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSearchProviderBaseURL(v)
+		return nil
+	case group.FieldSearchProviderAPIKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSearchProviderAPIKey(v)
 		return nil
 	case group.FieldAudioRealtimePricePerMin:
 		v, ok := value.(float64)
@@ -27379,6 +27507,12 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldSearchPricePer1k) {
 		fields = append(fields, group.FieldSearchPricePer1k)
 	}
+	if m.FieldCleared(group.FieldSearchProviderBaseURL) {
+		fields = append(fields, group.FieldSearchProviderBaseURL)
+	}
+	if m.FieldCleared(group.FieldSearchProviderAPIKey) {
+		fields = append(fields, group.FieldSearchProviderAPIKey)
+	}
 	if m.FieldCleared(group.FieldAudioRealtimePricePerMin) {
 		fields = append(fields, group.FieldAudioRealtimePricePerMin)
 	}
@@ -27458,6 +27592,12 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldSearchPricePer1k:
 		m.ClearSearchPricePer1k()
+		return nil
+	case group.FieldSearchProviderBaseURL:
+		m.ClearSearchProviderBaseURL()
+		return nil
+	case group.FieldSearchProviderAPIKey:
+		m.ClearSearchProviderAPIKey()
 		return nil
 	case group.FieldAudioRealtimePricePerMin:
 		m.ClearAudioRealtimePricePerMin()
@@ -27595,6 +27735,12 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldSearchPricePer1k:
 		m.ResetSearchPricePer1k()
+		return nil
+	case group.FieldSearchProviderBaseURL:
+		m.ResetSearchProviderBaseURL()
+		return nil
+	case group.FieldSearchProviderAPIKey:
+		m.ResetSearchProviderAPIKey()
 		return nil
 	case group.FieldAudioRealtimePricePerMin:
 		m.ResetAudioRealtimePricePerMin()

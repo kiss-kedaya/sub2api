@@ -1034,10 +1034,14 @@ export default {
         notConfigured: 'Not configured'
       },
       explicitPricing: {
-        title: 'Grok Search & Voice Pricing',
-        description: 'Optional per-group prices for web_search (per 1k calls) and Voice realtime / TTS / STT (USD). Leave empty if unused.',
+        title: 'Search & Voice Pricing',
+        description: 'Optional per-group prices for web_search (per 1k calls) and Voice realtime / TTS / STT (USD). Leave empty if unused. DeepSeek groups can also point at a dedicated search provider.',
         searchPricePer1k: 'Search price per 1k calls (USD)',
-        pricePlaceholder: 'optional'
+        pricePlaceholder: 'optional',
+        searchProviderBaseUrl: 'Dedicated search base URL',
+        searchProviderBaseUrlPlaceholder: 'Empty uses the model account base URL',
+        searchProviderApiKey: 'Dedicated search API key',
+        searchProviderApiKeyPlaceholder: 'Empty leaves it unchanged; never echoed back'
       },
       modelPricing: {
         title: 'Per-model group pricing',
