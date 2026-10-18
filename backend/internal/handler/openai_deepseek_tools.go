@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,6 +17,12 @@ import (
 	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
+
+// deepSeekToolsDefaultModel is the model used to pick an account for the
+// standalone Search/Fetch endpoints. Those endpoints carry no model field, but
+// the scheduler still has to match the account's model_mapping; the flash tier
+// is the cheapest one that every DeepSeek account maps.
+const deepSeekToolsDefaultModel = "deepseek-v4-flash"
 
 // DeepSeekToolsSearch / DeepSeekToolsFetch proxy DeepSeek's standalone tool
 // endpoints (/v1/tools/search, /v1/tools/fetch). They are raw JSON endpoints
@@ -60,6 +67,7 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 		zap.String("tool_path", toolPath),
 	)
 	if !h.ensureResponsesDependencies(c, reqLog) {
+		slog.Warn("deepseek_tools.dependencies_missing", "tool_path", toolPath)
 		return
 	}
 
@@ -144,13 +152,26 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 	routingStart := time.Now()
 	channelMapping := service.ChannelMappingResult{}
 
+	// 选号必须按真实模型名匹配（分组白名单 / 账号 model_mapping 都是按模型名配的），
+	// 但计费标签用工具名，两者不能混用。
+	routingModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	if routingModel == "" {
+		// Search/Fetch 请求体通常不带 model，但调度器必须拿到一个真实模型名才能
+		// 匹配账号的 model_mapping（空模型会直接判 no available accounts）。
+		// 默认用分组里最便宜的 flash 档；可用 ?model= 覆盖。
+		routingModel = strings.TrimSpace(c.Query("model"))
+	}
+	if routingModel == "" {
+		routingModel = deepSeekToolsDefaultModel
+	}
+
 	for {
 		selection, _, routedKey, err := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(
 			c.Request.Context(),
 			apiKey,
 			"",
 			sessionHash,
-			modelLabel,
+			routingModel,
 			failedAccountIDs,
 			service.OpenAIUpstreamTransportHTTPSSE,
 			service.OpenAIEndpointCapabilityChatCompletions,
@@ -162,7 +183,7 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 		if err == nil && routedKey != nil {
 			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
 				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
-				Mapping: &channelMapping, Body: body, Model: modelLabel, PricingAt: asPricingAt,
+				Mapping: &channelMapping, Body: body, Model: routingModel, PricingAt: asPricingAt,
 			}); bindErr != nil {
 				releaseRejectedKeyRouteSelection(selection)
 				h.handlePreauthorizationError(c, bindErr, false)
@@ -175,6 +196,12 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 				reqLog.Info("deepseek_tools.account_select_aborted_client_disconnected", zap.Error(err))
 				return
 			}
+			reqLog.Warn("deepseek_tools.select_failed",
+				zap.String("tool_path", toolPath),
+				zap.String("routing_model", routingModel),
+				zap.Int("failed_accounts", len(failedAccountIDs)),
+				zap.Error(err),
+			)
 			if lastFailoverErr != nil {
 				h.handleFailoverExhausted(c, lastFailoverErr, false)
 			} else {

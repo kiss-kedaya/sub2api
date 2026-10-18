@@ -128,8 +128,14 @@ export default defineConfig(({ mode }) => {
               return 'vendor-vue'
             }
 
-            // UI 工具库（较大，单独分离）
-            if (id.includes('/@vueuse/') || id.includes('/xlsx/')) {
+            // xlsx 已改为业务里 await import() 懒加载，必须单独成块。
+            // 和 @vueuse 合在一起会把 390KB 的表格库拖进首屏（vueuse 是首屏依赖）。
+            if (id.includes('/xlsx/')) {
+              return 'vendor-xlsx'
+            }
+
+            // UI 工具库
+            if (id.includes('/@vueuse/')) {
               return 'vendor-ui'
             }
 
