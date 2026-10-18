@@ -3,7 +3,6 @@
 package service
 
 import (
-	"os"
 	"bufio"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -13,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
