@@ -657,12 +657,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 			body = injected
 		}
 	}
-	// DeepSeek 搜索：与 forward 路径保持一致的注入规则。
-	if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled {
-		if injected, changed := injectDeepSeekSearchTool(body); changed {
-			body = injected
-		}
-	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
