@@ -711,6 +711,17 @@ func trimOptionalString(value *string) *string {
 	return &trimmed
 }
 
+// normalizeSearchProviderValue 与 trimOptionalString 的区别：这里把空字符串
+// 保留为 ""，表示「显式清除」；nil 仍表示「本次不修改」。
+// update 路径需要这个区分——否则编辑分组其它字段时会顺手抹掉已存的搜索凭据。
+func normalizeSearchProviderValue(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	return &trimmed
+}
+
 // validateFallbackGroup 校验降级分组的有效性
 // currentGroupID: 当前分组 ID（新建时为 0）
 // fallbackGroupID: 降级分组 ID
@@ -956,16 +967,10 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		group.SearchPricePer1k = normalizePrice(input.SearchPricePer1k)
 	}
 	if input.SearchProviderBaseURL != nil {
-		group.SearchProviderBaseURL = trimOptionalString(input.SearchProviderBaseURL)
+		group.SearchProviderBaseURL = normalizeSearchProviderValue(input.SearchProviderBaseURL)
 	}
 	if input.SearchProviderAPIKey != nil {
-		group.SearchProviderAPIKey = trimOptionalString(input.SearchProviderAPIKey)
-	}
-	if input.SearchProviderBaseURL != nil {
-		group.SearchProviderBaseURL = trimOptionalString(input.SearchProviderBaseURL)
-	}
-	if input.SearchProviderAPIKey != nil {
-		group.SearchProviderAPIKey = trimOptionalString(input.SearchProviderAPIKey)
+		group.SearchProviderAPIKey = normalizeSearchProviderValue(input.SearchProviderAPIKey)
 	}
 	if input.AudioRealtimePricePerMin != nil {
 		group.AudioRealtimePricePerMin = normalizePrice(input.AudioRealtimePricePerMin)

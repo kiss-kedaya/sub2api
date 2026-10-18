@@ -65,6 +65,20 @@ func (s *OpenAIGatewayService) ForwardDeepSeekTools(
 	if credential == "" {
 		return nil, fmt.Errorf("deepseek tools: account %d has no api key", account.ID)
 	}
+	// 分组可以自填搜索服务地址，必须拒绝私网/回环目标：否则管理员（或被
+	// 篡改的分组配置）能把这条路径变成任意 host:port 的探测原语。
+	if group != nil && derefString(group.SearchProviderBaseURL) != "" && !accountTestAllowPrivateTargets.Load() {
+		if blocked, err := isPrivateOrLoopbackHost(ctx, hostOfURL(baseURL)); err == nil && blocked {
+			return nil, errTestTargetNotAllowed
+		}
+	}
+	// 分组可以自填搜索服务地址，必须拒绝私网/回环目标：否则管理员（或被
+	// 篡改的分组配置）能把这条路径变成任意 host:port 的探测原语。
+	if group != nil && derefString(group.SearchProviderBaseURL) != "" && !accountTestAllowPrivateTargets.Load() {
+		if blocked, err := isPrivateOrLoopbackHost(ctx, hostOfURL(baseURL)); err == nil && blocked {
+			return nil, errTestTargetNotAllowed
+		}
+	}
 	if modelLabel == "" {
 		modelLabel = DeepSeekToolsLabelSearch
 		if path == DeepSeekToolsPathFetch {
