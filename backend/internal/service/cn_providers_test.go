@@ -891,7 +891,12 @@ func TestNormalizeDeepSeekResponsesRequestBodyDropsDuplicateCallID(t *testing.T)
 	}
 	kimiBody := []byte(`{"model":"kimi-k2","store":true,"input":[{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call","call_id":"call_a","name":"do"}]}`)
 	kimiNormalized := normalizeDeepSeekResponsesRequestBody(kimi, kimiBody)
-	require.Equal(t, 2, len(gjson.GetBytes(kimiNormalized, "input").Array()))
+	// The rewrite now scopes on the shape of the body, not only on platform and
+	// model alias: a neutral alias can still be routed to a DeepSeek-backed
+	// upstream, and duplicate call ids are rejected by any strict upstream.
+	// Kimi keeps its single call left untouched (no output to half-delete).
+	require.Equal(t, 1, len(gjson.GetBytes(kimiNormalized, "input").Array()))
+	require.Equal(t, "call_a", gjson.GetBytes(kimiNormalized, "input.0.call_id").String())
 }
 
 // TestNormalizeDeepSeekResponsesRequestBodyStripsReasoningSummary
