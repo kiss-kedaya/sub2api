@@ -1541,6 +1541,38 @@
                 data-testid="create-search-price"
               />
             </div>
+            <div v-if="createForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
+              <input
+                v-model="createForm.search_provider_base_url"
+                type="text"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
+                data-testid="create-search-provider-url"
+              />
+            </div>
+            <div v-if="createForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
+              <input
+                v-model="createForm.search_provider_api_key"
+                type="password"
+                autocomplete="new-password"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
+                data-testid="create-search-provider-key"
+              />
+            </div>
+          </div>
+        </div>
+        <!-- Grok Voice 定价 -->
+        <div
+          v-if="createForm.platform === 'grok'"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            {{ t("admin.groups.voicePricing.title") }}
+          </h4>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div v-if="createForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioRealtimePerMin") }}</label>
               <input
@@ -3205,6 +3237,42 @@
                 data-testid="edit-search-price"
               />
             </div>
+            <div v-if="editForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
+              <input
+                v-model="editForm.search_provider_base_url"
+                type="text"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
+                data-testid="edit-search-provider-url"
+              />
+            </div>
+            <div v-if="editForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
+              <input
+                v-model="editForm.search_provider_api_key"
+                type="password"
+                autocomplete="new-password"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
+                data-testid="edit-search-provider-key"
+              />
+              <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <input v-model="editForm.clearSearchProviderKey" type="checkbox" class="h-3.5 w-3.5" />
+                <span>{{ t("admin.groups.explicitPricing.searchProviderApiKeyClear") }}</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <!-- Grok Voice 定价 -->
+        <div
+          v-if="editForm.platform === 'grok'"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            {{ t("admin.groups.voicePricing.title") }}
+          </h4>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div v-if="editForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioRealtimePerMin") }}</label>
               <input

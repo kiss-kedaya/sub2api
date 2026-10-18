@@ -1031,8 +1031,8 @@ export default {
         notConfigured: '未配置'
       },
       explicitPricing: {
-        title: '搜索与 Voice 定价',
-        description: '分组级 web_search（每千次）与 Voice realtime / TTS / STT 单价（USD）。留空表示未配置。DeepSeek 分组可另外指定搜索专用服务与 key。',
+        title: '搜索定价',
+        description: '分组级 web_search 每千次单价（USD）。留空表示未配置。DeepSeek 分组可另外指定搜索专用服务与 key。',
         searchPricePer1k: '搜索每千次价格（USD）',
         pricePlaceholder: '可选',
         searchProviderBaseUrl: '搜索专用服务地址',
