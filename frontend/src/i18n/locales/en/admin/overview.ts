@@ -1034,8 +1034,8 @@ export default {
         notConfigured: 'Not configured'
       },
       explicitPricing: {
-        title: 'Search & Voice Pricing',
-        description: 'Optional per-group prices for web_search (per 1k calls) and Voice realtime / TTS / STT (USD). Leave empty if unused. DeepSeek groups can also point at a dedicated search provider.',
+        title: 'Search Pricing',
+        description: 'Optional per-group price for web_search (USD per 1k calls). Leave empty if unused. DeepSeek groups can also point at a dedicated search provider.',
         searchPricePer1k: 'Search price per 1k calls (USD)',
         pricePlaceholder: 'optional',
         searchProviderBaseUrl: 'Dedicated search base URL',
