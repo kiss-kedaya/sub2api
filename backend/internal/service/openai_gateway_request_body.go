@@ -219,7 +219,13 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 // that just arrived. Outbound normalize still does this again for the account
 // that is actually selected.
 func RewriteInboundDeepSeekCallIDs(groupPlatform, model string, body []byte) []byte {
-	if !deepSeekCallIDScope(groupPlatform, model) || len(body) == 0 {
+	if len(body) == 0 {
+		return body
+	}
+	// Scope by platform/model, but also clean any body that actually carries
+	// tool calls: routing can still land on a DeepSeek-backed upstream even when
+	// the group platform and the requested model alias say nothing about it.
+	if !deepSeekCallIDScope(groupPlatform, model) && !bodyHasToolCallIDs(body) {
 		return body
 	}
 	var requestBody map[string]any
@@ -268,7 +274,25 @@ func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
 		return true
 	}
 	base := strings.ToLower(account.GetOpenAIBaseURL() + " " + account.GetCNProtocolBaseURL(APIProtocolResponses) + " " + account.GetCNProtocolBaseURL(APIProtocolChatCompletions))
-	return strings.Contains(base, "deepseek")
+	if strings.Contains(base, "deepseek") {
+		return true
+	}
+	// A CN/aggregator account can front DeepSeek behind a neutral base URL and a
+	// neutral model alias, in which case none of the checks above fire and the
+	// duplicate call_id reaches the upstream untouched. Whenever the body
+	// actually carries tool calls, deduping is the safe move: it is a no-op for
+	// bodies without duplicates and it never invents or reorders content.
+	return bodyHasToolCallIDs(body)
+}
+
+// bodyHasToolCallIDs reports whether the body carries any responses-style
+// call_id or chat-style tool_calls. Checked before the (comparatively
+// expensive) decode so clean bodies stay cheap.
+func bodyHasToolCallIDs(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	return bytes.Contains(body, []byte(`"call_id"`)) || bytes.Contains(body, []byte(`"tool_calls"`))
 }
 
 func trimOpenAIEncryptedReasoningItems(reqBody map[string]any) bool {
