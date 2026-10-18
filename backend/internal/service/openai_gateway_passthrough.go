@@ -2217,7 +2217,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	defer putSSEScannerBuf64K(scanBuf)
 	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
 	var deepSeekPass deepSeekPassthrough
-	rewriteDeepSeek := account != nil && account.Platform == PlatformDeepseek
+	// The DeepSeek response rewrite chain is opt-in: official DeepSeek now emits
+	// structured Responses natively, and rewriting it drops reasoning items.
+	rewriteDeepSeek := account != nil && account.Platform == PlatformDeepseek &&
+		s.deepSeekResponseCompatEnabled()
 
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
@@ -2524,6 +2527,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 				continue
 			}
+			// Repair an empty assistant role on the opening chat.completion.chunk
+			// delta before it reaches the client.
+			if rewritten, did := repairChatCompletionChunkSSELine(line); did {
+				line = rewritten
+			}
 			if _, err := fmt.Fprintln(w, line); err != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
@@ -2692,7 +2700,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if err != nil {
 		return nil, fmt.Errorf("restore OpenAI Responses client tools: %w", err)
 	}
-	if account != nil && account.Platform == PlatformDeepseek {
+	if account != nil && account.Platform == PlatformDeepseek && s.deepSeekResponseCompatEnabled() {
 		body = rewriteDeepSeekResponseBody(c, body)
 		// 模型的 web_search tool_call 由网关执行一次，把结果直接交给客户端。
 		// 不回填上游，所以这一轮不会再有第二次上游请求。
@@ -2705,6 +2713,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if normalized, changed := normalizeFractionalCreatedAtForClient(body); changed {
 		body = normalized
 	}
+	// Some relays (notably sub2api-based ones) return an empty assistant role on
+	// chat.completion. Restore it before the client sees it.
+	body = repairChatCompletionMessageRole(body)
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}
@@ -2776,7 +2787,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	logOpenAISuccessMissingUsage(c.Request.Context(), c, account, resp, usage, terminalType, false)
-	if account != nil && account.Platform == PlatformDeepseek {
+	if account != nil && account.Platform == PlatformDeepseek && s.deepSeekResponseCompatEnabled() {
 		body = rewriteDeepSeekResponseBody(c, body)
 		// 模型的 web_search tool_call 由网关执行一次，把结果直接交给客户端。
 		// 不回填上游，所以这一轮不会再有第二次上游请求。

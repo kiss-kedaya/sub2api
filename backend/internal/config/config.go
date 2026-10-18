@@ -1020,6 +1020,17 @@ type GatewayConfig struct {
 	ProxyProbeResponseReadMaxBytes int64 `mapstructure:"proxy_probe_response_read_max_bytes"`
 	// Gemini 上游响应头调试日志开关（默认关闭，避免高频日志开销）
 	GeminiDebugResponseHeaders bool `mapstructure:"gemini_debug_response_headers"`
+	// DeepSeekResponseCompatEnabled 控制我们二开时加的 DeepSeek 响应改写链路
+	// （DSML 内联工具调用解析、reasoning 重组、call_id 重建、工具注入与代执行）。
+	//
+	// 官方 DeepSeek 现在原生返回结构化 Responses（reasoning_text /
+	// encrypted_content / 正确的 function_call id+call_id 分离）。这套改写会把
+	// 原本正确的内容再加工一遍，实测导致 reasoning output item 丢失、chat 的
+	// message.role 变成空串、Responses 顶层字段被剥掉。
+	//
+	// 默认 false：不改写响应，直接透传上游。只有接入不支持原生工具调用的老式
+	// DeepSeek 兼容中转时才需要打开。
+	DeepSeekResponseCompatEnabled bool `mapstructure:"deepseek_response_compat_enabled"`
 	// ConnectionPoolIsolation: 上游连接池隔离策略（proxy/account/account_proxy）
 	ConnectionPoolIsolation string `mapstructure:"connection_pool_isolation"`
 	// ForceCodexCLI: 强制将 OpenAI `/v1/responses` 请求按 Codex CLI 处理。
