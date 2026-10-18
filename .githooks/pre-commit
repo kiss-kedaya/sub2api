@@ -1,0 +1,14 @@
+#!/bin/sh
+# Managed by tools/check_sensitive.py. Blocks publishing operator-private data.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# Bypass is possible (--no-verify) but must never be used for a real leak.
+
+python tools/check_sensitive.py || {
+    echo ""
+    echo "commit rejected: sensitive data detected."
+    echo "fix the lines above; do not use --no-verify to push a real secret."
+    exit 1
+}

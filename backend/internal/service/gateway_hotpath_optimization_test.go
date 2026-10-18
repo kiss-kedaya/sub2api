@@ -232,6 +232,14 @@ func (s *stickyGatewayCacheHotpathStub) ReleaseGrokVideoBilled(_ context.Context
 func (s *stickyGatewayCacheHotpathStub) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
 	return nil
 }
+func (s *stickyGatewayCacheHotpathStub) BlockSession(_ context.Context, _ int64, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (s *stickyGatewayCacheHotpathStub) IsSessionBlocked(_ context.Context, _ int64, _ string) (bool, error) {
+	return false, nil
+}
+
 func (s *stickyGatewayCacheHotpathStub) GetReasoningContent(_ context.Context, _ string) (string, error) {
 	return "", ErrReasoningContentNotFound
 }

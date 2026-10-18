@@ -53,6 +53,33 @@ func (c *gatewayCache) SetSessionAccountID(ctx context.Context, groupID int64, s
 	return setHealthySessionScript.Run(ctx, c.rdb, []string{key, fmt.Sprintf("%s:failed:%d", key, accountID)}, accountID, ttl.Milliseconds()).Err()
 }
 
+// buildBlockedSessionKey keeps blocked sessions in their own namespace so a
+// block can never be mistaken for a sticky-account binding (and vice versa).
+func buildBlockedSessionKey(groupID int64, sessionHash string) string {
+	return fmt.Sprintf("blocked:sess:%d:%s", groupID, sessionHash)
+}
+
+// BlockSession marks a conversation as blocked; later requests are rejected
+// without touching an upstream.
+func (c *gatewayCache) BlockSession(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
+	if sessionHash == "" {
+		return nil
+	}
+	return c.rdb.Set(ctx, buildBlockedSessionKey(groupID, sessionHash), "1", ttl).Err()
+}
+
+// IsSessionBlocked reports whether the conversation is still blocked.
+func (c *gatewayCache) IsSessionBlocked(ctx context.Context, groupID int64, sessionHash string) (bool, error) {
+	if sessionHash == "" {
+		return false, nil
+	}
+	n, err := c.rdb.Exists(ctx, buildBlockedSessionKey(groupID, sessionHash)).Result()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 var setHealthySessionScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])

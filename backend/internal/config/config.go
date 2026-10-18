@@ -740,7 +740,11 @@ type SecurityConfig struct {
 	ProxyProbe             ProxyProbeConfig     `mapstructure:"proxy_probe"`
 	// TrustForwardedIPForAPIKeyACL enables legacy raw forwarded-header takeover.
 	// When disabled, server.trusted_proxies is authoritative for all client-IP consumers.
-	TrustForwardedIPForAPIKeyACL  bool                                       `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
+	TrustForwardedIPForAPIKeyACL bool `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
+	// HoneypotExemptNets lists CIDRs/IPs belonging to the operator's own edge.
+	// They are never banned by the scanner trap. Kept in config so real
+	// addresses never land in this public repository.
+	HoneypotExemptNets            []string                                   `mapstructure:"honeypot_exempt_nets" json:"-" yaml:"-"`
 	ForwardedClientIPHeaders      []string                                   `mapstructure:"forwarded_client_ip_headers" json:"forwarded_client_ip_headers" yaml:"forwarded_client_ip_headers"`
 	forwardedClientIPSettingsLive *atomic.Pointer[ForwardedClientIPSettings] `mapstructure:"-" json:"-" yaml:"-"`
 }
@@ -1943,6 +1947,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 	if forwardedClientIPHeadersEnvConfigured {
 		cfg.Security.ForwardedClientIPHeaders = normalizeStringSlice(strings.Split(forwardedClientIPHeadersEnv, ","))
+	}
+	if honeypotExemptEnv, ok := os.LookupEnv("SECURITY_HONEYPOT_EXEMPT_NETS"); ok {
+		cfg.Security.HoneypotExemptNets = normalizeStringSlice(strings.Split(honeypotExemptEnv, ","))
 	}
 	cfg.Server.TrustedProxiesConfigured = trustedProxiesConfigured
 	if cfg.Gateway.OpenAIScheduler.StickyEscapeTTFTMs == 0 {

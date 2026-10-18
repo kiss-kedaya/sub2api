@@ -481,6 +481,15 @@ type GatewayCache interface {
 	// Delete sticky session binding, used to proactively clean up when account becomes unavailable
 	DeleteSessionAccountID(ctx context.Context, groupID int64, sessionHash string) error
 
+	// BlockSession 把一个会话哈希加入封禁名单。命中后该会话的所有后续请求
+	// 直接拒绝，不再选号、不再打上游。
+	// Block a session hash so every later request from that conversation is
+	// rejected without account selection or an upstream call.
+	BlockSession(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error
+	// IsSessionBlocked 报告该会话是否仍在封禁名单内。
+	// Report whether the session is still blocked.
+	IsSessionBlocked(ctx context.Context, groupID int64, sessionHash string) (bool, error)
+
 	// Grok async video billing snapshot (create → status success).
 	// SetGrokVideoPendingBilling stores create-time model/duration/resolution for status billing.
 	SetGrokVideoPendingBilling(ctx context.Context, key string, payload []byte, ttl time.Duration) error

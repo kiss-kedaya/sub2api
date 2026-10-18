@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -85,16 +86,43 @@ const (
 	honeypotBanKeyPrefix = "kedaya:security:v1:ban:"
 )
 
-// honeypotExemptNets are the edge's own exempt CIDRs. A callback that shows
-// up as one of these addresses must not be banned again.
-var honeypotExemptNets = []netip.Prefix{
-	netip.MustParsePrefix("192.0.2.3/32"),
-	netip.MustParsePrefix("192.0.2.2/32"),
-	netip.MustParsePrefix("2607:5300:203:7cda::/64"),
-	netip.MustParsePrefix("2607:5300:203:7153::/64"),
+// honeypotExemptNets holds the operator's own edge CIDRs. A request that
+// appears to come from one of these must not be banned, otherwise the gateway
+// bans its own reverse proxy on the first scanner hit.
+//
+// The list is deliberately configuration, not source: this repository is
+// public, so real addresses must never be compiled into it. Configure with
+// security.honeypot_exempt_nets (or SECURITY_HONEYPOT_EXEMPT_NETS).
+var honeypotExemptNets atomic.Pointer[[]netip.Prefix]
+
+// SetHoneypotExemptNets replaces the exempt CIDR set. Accepts CIDRs and bare
+// IPs; invalid entries are ignored so a typo cannot silently disable the ban
+// path.
+func SetHoneypotExemptNets(cidrs []string) {
+	prefixes := make([]netip.Prefix, 0, len(cidrs))
+	for _, raw := range cidrs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if strings.Contains(raw, "/") {
+			if prefix, err := netip.ParsePrefix(raw); err == nil {
+				prefixes = append(prefixes, prefix.Masked())
+			}
+			continue
+		}
+		if addr, err := netip.ParseAddr(raw); err == nil {
+			addr = addr.Unmap()
+			prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+		}
+	}
+	honeypotExemptNets.Store(&prefixes)
 }
 
-func Honeypot(rdb *redis.Client) gin.HandlerFunc {
+func Honeypot(rdb *redis.Client, exemptNets ...string) gin.HandlerFunc {
+	if len(exemptNets) > 0 {
+		SetHoneypotExemptNets(exemptNets)
+	}
 	return func(c *gin.Context) {
 		if c.Request == nil || c.Request.URL == nil {
 			c.Next()
@@ -165,7 +193,11 @@ func honeypotBanSpec(ip, class string) (key, value string, ok bool) {
 }
 
 func honeypotExempt(addr netip.Addr) bool {
-	for _, prefix := range honeypotExemptNets {
+	prefixes := honeypotExemptNets.Load()
+	if prefixes == nil {
+		return false
+	}
+	for _, prefix := range *prefixes {
 		if prefix.Contains(addr) {
 			return true
 		}
