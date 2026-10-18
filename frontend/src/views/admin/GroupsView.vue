@@ -1517,9 +1517,9 @@
           </div>
         </div>
 
-        <!-- Grok Voice 显式定价（仅 grok 平台） -->
+        <!-- 搜索单价：所有可能走搜索的平台（Grok / DeepSeek） -->
         <div
-          v-if="createForm.platform === 'grok'"
+          v-if="supportsSearchPricing(createForm.platform)"
           class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
         >
           <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -1541,7 +1541,49 @@
                 data-testid="create-search-price"
               />
             </div>
-            <div>
+            <div v-if="createForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
+              <input
+                v-model="createForm.search_provider_base_url"
+                type="text"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
+                data-testid="create-search-provider-url"
+              />
+            </div>
+            <div v-if="createForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
+              <input
+                v-model="createForm.search_provider_api_key"
+                type="password"
+                autocomplete="new-password"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
+                data-testid="create-search-provider-key"
+              />
+            </div>
+            <div v-if="createForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
+              <input
+                v-model="createForm.search_provider_base_url"
+                type="text"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
+                data-testid="create-search-provider-url"
+              />
+            </div>
+            <div v-if="createForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
+              <input
+                v-model="createForm.search_provider_api_key"
+                type="password"
+                autocomplete="new-password"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
+                data-testid="create-search-provider-key"
+              />
+            </div>
+            <div v-if="createForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioRealtimePerMin") }}</label>
               <input
                 v-model.number="createForm.audio_realtime_price_per_min"
@@ -1553,7 +1595,7 @@
                 data-testid="create-audio-realtime-price"
               />
             </div>
-            <div>
+            <div v-if="createForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioTtsPerMillionChars") }}</label>
               <input
                 v-model.number="createForm.audio_tts_price_per_million_chars"
@@ -1565,7 +1607,7 @@
                 data-testid="create-audio-tts-price"
               />
             </div>
-            <div>
+            <div v-if="createForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioSttPerHour") }}</label>
               <input
                 v-model.number="createForm.audio_stt_price_per_hour"
@@ -3181,9 +3223,9 @@
           </div>
         </div>
 
-        <!-- Grok Voice 显式定价（仅 grok 平台） -->
+        <!-- 搜索单价：所有可能走搜索的平台（Grok / DeepSeek） -->
         <div
-          v-if="editForm.platform === 'grok'"
+          v-if="supportsSearchPricing(editForm.platform)"
           class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
         >
           <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -3205,7 +3247,57 @@
                 data-testid="edit-search-price"
               />
             </div>
-            <div>
+            <div v-if="editForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
+              <input
+                v-model="editForm.search_provider_base_url"
+                type="text"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
+                data-testid="edit-search-provider-url"
+              />
+            </div>
+            <div v-if="editForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
+              <input
+                v-model="editForm.search_provider_api_key"
+                type="password"
+                autocomplete="new-password"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
+                data-testid="edit-search-provider-key"
+              />
+              <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <input v-model="editForm.clearSearchProviderKey" type="checkbox" class="h-3.5 w-3.5" />
+                <span>{{ t("admin.groups.explicitPricing.searchProviderApiKeyClear") }}</span>
+              </label>
+            </div>
+            <div v-if="editForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
+              <input
+                v-model="editForm.search_provider_base_url"
+                type="text"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
+                data-testid="edit-search-provider-url"
+              />
+            </div>
+            <div v-if="editForm.platform === 'deepseek'">
+              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
+              <input
+                v-model="editForm.search_provider_api_key"
+                type="password"
+                autocomplete="new-password"
+                class="input"
+                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
+                data-testid="edit-search-provider-key"
+              />
+              <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <input v-model="editForm.clearSearchProviderKey" type="checkbox" class="h-3.5 w-3.5" />
+                <span>{{ t("admin.groups.explicitPricing.searchProviderApiKeyClear") }}</span>
+              </label>
+            </div>
+            <div v-if="editForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioRealtimePerMin") }}</label>
               <input
                 v-model.number="editForm.audio_realtime_price_per_min"
@@ -3217,7 +3309,7 @@
                 data-testid="edit-audio-realtime-price"
               />
             </div>
-            <div>
+            <div v-if="editForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioTtsPerMillionChars") }}</label>
               <input
                 v-model.number="editForm.audio_tts_price_per_million_chars"
@@ -3229,7 +3321,7 @@
                 data-testid="edit-audio-tts-price"
               />
             </div>
-            <div>
+            <div v-if="editForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioSttPerHour") }}</label>
               <input
                 v-model.number="editForm.audio_stt_price_per_hour"
@@ -4390,6 +4482,13 @@ import {
 } from "./groupModelAllowlist";
 import { createModelAllowlistCandidatesTracker } from "./modelAllowlistCandidates";
 import { normalizeSupportedModelScopesForPlatform } from "./groupsSupportedModelScopes";
+
+// 分组级「搜索每千次单价」目前对 Grok（原生 x_search/web_search）和
+// DeepSeek（/v1/tools/search 代理 + 可注入的搜索工具）开放。
+function supportsSearchPricing(platform: string | undefined): boolean {
+  return platform === "grok" || platform === "deepseek";
+}
+
 import {
   isProfitControlPlatform,
   profitPercentToDecimal,
@@ -5014,6 +5113,9 @@ const createForm = reactive({
   // Codex 网页搜索按次计费（仅 openai 平台使用）；null = 使用默认价 0.01
   web_search_price_per_call: null as number | null,
   search_price_per_1k: null as number | null,
+  search_provider_base_url: '' as string,
+  search_provider_api_key: '' as string,
+  clearSearchProviderKey: false,
   audio_realtime_price_per_min: null as number | null,
   audio_tts_price_per_million_chars: null as number | null,
   audio_stt_price_per_hour: null as number | null,
@@ -5382,6 +5484,9 @@ const editForm = reactive({
   web_search_price_per_call: null as number | null,
   search_price_per_1k: null as number | null,
   audio_realtime_price_per_min: null as number | null,
+  search_provider_base_url: '' as string,
+  search_provider_api_key: '' as string,
+  clearSearchProviderKey: false,
   audio_tts_price_per_million_chars: null as number | null,
   audio_stt_price_per_hour: null as number | null,
   // 高峰时段倍率配置
@@ -5842,6 +5947,8 @@ const closeCreateModal = () => {
   createForm.model_pricing = [];
   createForm.web_search_price_per_call = null;
   createForm.search_price_per_1k = null;
+  createForm.search_provider_base_url = '';
+  createForm.search_provider_api_key = '';
   createForm.audio_realtime_price_per_min = null;
   createForm.audio_tts_price_per_million_chars = null;
   createForm.audio_stt_price_per_hour = null;
@@ -6049,6 +6156,9 @@ const handleCreateGroup = async () => {
     requestData.web_search_price_per_call = emptyToNull(
       requestData.web_search_price_per_call,
     );
+    // 搜索专用凭据：新建时留空即「不配置」。
+    requestData.search_provider_base_url = (createForm.search_provider_base_url ?? "").trim();
+    requestData.search_provider_api_key = (createForm.search_provider_api_key ?? "").trim();
     requestData.peak_rate_enabled = createForm.peak_rate_enabled;
     requestData.peak_start = createForm.peak_start;
     requestData.peak_end = createForm.peak_end;
@@ -6119,6 +6229,9 @@ const handleEdit = async (group: AdminGroup) => {
   );
   editForm.web_search_price_per_call = group.web_search_price_per_call ?? null;
   editForm.search_price_per_1k = group.search_price_per_1k ?? null;
+  editForm.search_provider_base_url = group.search_provider_base_url ?? '';
+  editForm.search_provider_api_key = '';
+  editForm.clearSearchProviderKey = false;
   editForm.audio_realtime_price_per_min = group.audio_realtime_price_per_min ?? null;
   editForm.audio_tts_price_per_million_chars = group.audio_tts_price_per_million_chars ?? null;
   editForm.audio_stt_price_per_hour = group.audio_stt_price_per_hour ?? null;
@@ -6237,6 +6350,9 @@ const closeEditModal = () => {
   editForm.model_pricing = [];
   editForm.web_search_price_per_call = null;
   editForm.search_price_per_1k = null;
+  editForm.search_provider_base_url = '';
+  editForm.search_provider_api_key = '';
+  editForm.clearSearchProviderKey = false;
   editForm.audio_realtime_price_per_min = null;
   editForm.audio_tts_price_per_million_chars = null;
   editForm.audio_stt_price_per_hour = null;
@@ -6393,6 +6509,18 @@ const handleUpdateGroup = async () => {
     payload.search_price_per_1k = emptyPriceToClear(
       payload.search_price_per_1k,
     );
+    // base_url 每次都提交（空串 = 清除）。
+    payload.search_provider_base_url = (editForm.search_provider_base_url ?? "").trim();
+    // api_key 留空表示「不修改」，避免编辑其它字段时把已存的 key 清掉；
+    // 要清除必须显式勾选 clearSearchProviderKey。
+    if ((editForm.search_provider_api_key ?? "").trim()) {
+      payload.search_provider_api_key = editForm.search_provider_api_key.trim();
+    } else if (editForm.clearSearchProviderKey) {
+      payload.search_provider_api_key = "";
+    } else {
+      // 不修改：整条字段从请求里去掉，后端按 nil 处理（不触碰该列）。
+      delete (payload as Record<string, unknown>).search_provider_api_key;
+    }
     payload.audio_realtime_price_per_min = emptyPriceToClear(
       payload.audio_realtime_price_per_min,
     );

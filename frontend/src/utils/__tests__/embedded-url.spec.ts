@@ -27,7 +27,8 @@ describe('embedded-url', () => {
 
   it('adds embedded query parameters including locale and source context', () => {
     const result = buildEmbeddedUrl(
-      'https://pay.example.com/checkout?plan=pro',
+      // 同源目标才允许携带凭据
+      'https://app.example.com/checkout?plan=pro',
       42,
       'token-123',
       'dark',
@@ -43,6 +44,25 @@ describe('embedded-url', () => {
     expect(url.searchParams.get('ui_mode')).toBe('embedded')
     expect(url.searchParams.get('src_host')).toBe('https://app.example.com')
     expect(url.searchParams.get('src_url')).toBe('https://app.example.com/user/purchase')
+  })
+
+  // 回归：第三方域不得收到 access token。
+  // 之前充值中心把 catfk.com 配成菜单 URL，前端就把当前用户的 JWT 拼进
+  // iframe src / 新窗口 href，凭据随 URL 进了对方日志与浏览器历史。
+  it('never sends the auth token to a third-party origin', () => {
+    const result = buildEmbeddedUrl(
+      'https://catfk.com/shop/kedaya',
+      10405,
+      'admin-session-jwt',
+      'light',
+      'zh-CN',
+    )
+
+    const url = new URL(result)
+    expect(url.searchParams.has('token')).toBe(false)
+    // 非凭据标识仍然保留，嵌入方仍能识别用户
+    expect(url.searchParams.get('user_id')).toBe('10405')
+    expect(url.searchParams.get('ui_mode')).toBe('embedded')
   })
 
   it('omits optional params when they are empty', () => {

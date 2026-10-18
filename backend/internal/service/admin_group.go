@@ -611,6 +611,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		VideoModelPrices:                NormalizeVideoModelPrices(input.VideoModelPrices),
 		WebSearchPricePerCall:           webSearchPricePerCall,
 		SearchPricePer1k:                searchPricePer1k,
+		SearchProviderBaseURL:           trimOptionalString(input.SearchProviderBaseURL),
+		SearchProviderAPIKey:            trimOptionalString(input.SearchProviderAPIKey),
 		AudioRealtimePricePerMin:        audioRealtimePricePerMin,
 		AudioTTSPricePerMillionChars:    audioTTSPricePerMillionChars,
 		AudioSTTPricePerHour:            audioSTTPricePerHour,
@@ -694,6 +696,30 @@ func normalizePrice(price *float64) *float64 {
 		return nil
 	}
 	return price
+}
+
+// trimOptionalString 去掉首尾空白；结果为空时返回 nil（DB 侧存 NULL，
+// 语义上等于「未配置」）。
+func trimOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+// normalizeSearchProviderValue 与 trimOptionalString 的区别：这里把空字符串
+// 保留为 ""，表示「显式清除」；nil 仍表示「本次不修改」。
+// update 路径需要这个区分——否则编辑分组其它字段时会顺手抹掉已存的搜索凭据。
+func normalizeSearchProviderValue(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	return &trimmed
 }
 
 // validateFallbackGroup 校验降级分组的有效性
@@ -939,6 +965,12 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.SearchPricePer1k != nil {
 		group.SearchPricePer1k = normalizePrice(input.SearchPricePer1k)
+	}
+	if input.SearchProviderBaseURL != nil {
+		group.SearchProviderBaseURL = normalizeSearchProviderValue(input.SearchProviderBaseURL)
+	}
+	if input.SearchProviderAPIKey != nil {
+		group.SearchProviderAPIKey = normalizeSearchProviderValue(input.SearchProviderAPIKey)
 	}
 	if input.AudioRealtimePricePerMin != nil {
 		group.AudioRealtimePricePerMin = normalizePrice(input.AudioRealtimePricePerMin)

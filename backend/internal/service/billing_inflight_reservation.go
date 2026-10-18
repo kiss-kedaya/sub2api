@@ -39,6 +39,12 @@ const (
 	inflightReservationRenewTimeout    = 2 * time.Second
 	inflightInputBytesPerTokenEstimate = 4
 	inflightUnpricedLogInterval        = time.Minute
+	// inflightDefaultMinInputTokens 输入估算下限的兜底值。
+	//
+	// 上游 Codex / Responses 渠道会在客户端 body 之外注入固定上下文，实测
+	// 99B 的最小请求最终 prompt_tokens≈4387。不设下限时预留只有实际的 1/50，
+	// 小额余额并发会被成倍透支。这里取 4096（略低于观测值，覆盖注入量）。
+	inflightDefaultMinInputTokens = 4096
 )
 
 // InflightReservation 一次请求的在途预留句柄。
@@ -261,6 +267,10 @@ func (s *BillingCacheService) reserveInflight(ctx context.Context, user *User, g
 
 	balance, err := s.GetUserBalance(ctx, user.ID)
 	if err != nil {
+		if cfg.FailClosedOnReserveError {
+			logger.LegacyPrintf("service.billing_cache", "Error: inflight reservation balance read failed for user %d (fail-closed): %v", user.ID, err)
+			return nil, ErrInsufficientBalance
+		}
 		logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation balance read failed for user %d (fail-open): %v", user.ID, err)
 		return nil, nil
 	}
@@ -274,6 +284,10 @@ func (s *BillingCacheService) reserveInflight(ctx context.Context, user *User, g
 	allowed, inflight, err := rc.ReserveInflightBalance(reserveCtx, user.ID, requestID, estimate, balance, ttl)
 	cancel()
 	if err != nil {
+		if cfg.FailClosedOnReserveError {
+			logger.LegacyPrintf("service.billing_cache", "Error: inflight reservation failed for user %d (fail-closed): %v", user.ID, err)
+			return nil, ErrInsufficientBalance
+		}
 		logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation failed for user %d (fail-open): %v", user.ID, err)
 		return nil, nil
 	}
@@ -449,6 +463,19 @@ func tokenCounts(cfg config.InflightReservationConfig, bodyBytes, maxTokens int)
 	inputTokens := 0
 	if bodyBytes > 0 {
 		inputTokens = bodyBytes / inflightInputBytesPerTokenEstimate
+	}
+	// 输入下限：把上游注入的上下文计入预留，否则估算会系统性偏低（见常量注释）。
+	// 负数表示显式关闭下限（仅测试/回滚用）；0 表示用默认下限。
+	minInput := cfg.MinInputTokens
+	if minInput <= 0 {
+		if minInput < 0 {
+			minInput = 0
+		} else {
+			minInput = inflightDefaultMinInputTokens
+		}
+	}
+	if inputTokens < minInput {
+		inputTokens = minInput
 	}
 	if cfg.MaxInputTokens > 0 && inputTokens > cfg.MaxInputTokens {
 		inputTokens = cfg.MaxInputTokens

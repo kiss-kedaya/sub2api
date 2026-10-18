@@ -518,6 +518,34 @@ func (_c *GroupCreate) SetNillableSearchPricePer1k(v *float64) *GroupCreate {
 	return _c
 }
 
+// SetSearchProviderBaseURL sets the "search_provider_base_url" field.
+func (_c *GroupCreate) SetSearchProviderBaseURL(v string) *GroupCreate {
+	_c.mutation.SetSearchProviderBaseURL(v)
+	return _c
+}
+
+// SetNillableSearchProviderBaseURL sets the "search_provider_base_url" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableSearchProviderBaseURL(v *string) *GroupCreate {
+	if v != nil {
+		_c.SetSearchProviderBaseURL(*v)
+	}
+	return _c
+}
+
+// SetSearchProviderAPIKey sets the "search_provider_api_key" field.
+func (_c *GroupCreate) SetSearchProviderAPIKey(v string) *GroupCreate {
+	_c.mutation.SetSearchProviderAPIKey(v)
+	return _c
+}
+
+// SetNillableSearchProviderAPIKey sets the "search_provider_api_key" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableSearchProviderAPIKey(v *string) *GroupCreate {
+	if v != nil {
+		_c.SetSearchProviderAPIKey(*v)
+	}
+	return _c
+}
+
 // SetAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field.
 func (_c *GroupCreate) SetAudioRealtimePricePerMin(v float64) *GroupCreate {
 	_c.mutation.SetAudioRealtimePricePerMin(v)
@@ -1610,6 +1638,14 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_spec.SetField(group.FieldSearchPricePer1k, field.TypeFloat64, value)
 		_node.SearchPricePer1k = &value
 	}
+	if value, ok := _c.mutation.SearchProviderBaseURL(); ok {
+		_spec.SetField(group.FieldSearchProviderBaseURL, field.TypeString, value)
+		_node.SearchProviderBaseURL = &value
+	}
+	if value, ok := _c.mutation.SearchProviderAPIKey(); ok {
+		_spec.SetField(group.FieldSearchProviderAPIKey, field.TypeString, value)
+		_node.SearchProviderAPIKey = &value
+	}
 	if value, ok := _c.mutation.AudioRealtimePricePerMin(); ok {
 		_spec.SetField(group.FieldAudioRealtimePricePerMin, field.TypeFloat64, value)
 		_node.AudioRealtimePricePerMin = &value
@@ -2487,6 +2523,42 @@ func (u *GroupUpsert) AddSearchPricePer1k(v float64) *GroupUpsert {
 // ClearSearchPricePer1k clears the value of the "search_price_per_1k" field.
 func (u *GroupUpsert) ClearSearchPricePer1k() *GroupUpsert {
 	u.SetNull(group.FieldSearchPricePer1k)
+	return u
+}
+
+// SetSearchProviderBaseURL sets the "search_provider_base_url" field.
+func (u *GroupUpsert) SetSearchProviderBaseURL(v string) *GroupUpsert {
+	u.Set(group.FieldSearchProviderBaseURL, v)
+	return u
+}
+
+// UpdateSearchProviderBaseURL sets the "search_provider_base_url" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateSearchProviderBaseURL() *GroupUpsert {
+	u.SetExcluded(group.FieldSearchProviderBaseURL)
+	return u
+}
+
+// ClearSearchProviderBaseURL clears the value of the "search_provider_base_url" field.
+func (u *GroupUpsert) ClearSearchProviderBaseURL() *GroupUpsert {
+	u.SetNull(group.FieldSearchProviderBaseURL)
+	return u
+}
+
+// SetSearchProviderAPIKey sets the "search_provider_api_key" field.
+func (u *GroupUpsert) SetSearchProviderAPIKey(v string) *GroupUpsert {
+	u.Set(group.FieldSearchProviderAPIKey, v)
+	return u
+}
+
+// UpdateSearchProviderAPIKey sets the "search_provider_api_key" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateSearchProviderAPIKey() *GroupUpsert {
+	u.SetExcluded(group.FieldSearchProviderAPIKey)
+	return u
+}
+
+// ClearSearchProviderAPIKey clears the value of the "search_provider_api_key" field.
+func (u *GroupUpsert) ClearSearchProviderAPIKey() *GroupUpsert {
+	u.SetNull(group.FieldSearchProviderAPIKey)
 	return u
 }
 
@@ -3703,6 +3775,48 @@ func (u *GroupUpsertOne) UpdateSearchPricePer1k() *GroupUpsertOne {
 func (u *GroupUpsertOne) ClearSearchPricePer1k() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearSearchPricePer1k()
+	})
+}
+
+// SetSearchProviderBaseURL sets the "search_provider_base_url" field.
+func (u *GroupUpsertOne) SetSearchProviderBaseURL(v string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSearchProviderBaseURL(v)
+	})
+}
+
+// UpdateSearchProviderBaseURL sets the "search_provider_base_url" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateSearchProviderBaseURL() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSearchProviderBaseURL()
+	})
+}
+
+// ClearSearchProviderBaseURL clears the value of the "search_provider_base_url" field.
+func (u *GroupUpsertOne) ClearSearchProviderBaseURL() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearSearchProviderBaseURL()
+	})
+}
+
+// SetSearchProviderAPIKey sets the "search_provider_api_key" field.
+func (u *GroupUpsertOne) SetSearchProviderAPIKey(v string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSearchProviderAPIKey(v)
+	})
+}
+
+// UpdateSearchProviderAPIKey sets the "search_provider_api_key" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateSearchProviderAPIKey() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSearchProviderAPIKey()
+	})
+}
+
+// ClearSearchProviderAPIKey clears the value of the "search_provider_api_key" field.
+func (u *GroupUpsertOne) ClearSearchProviderAPIKey() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearSearchProviderAPIKey()
 	})
 }
 
@@ -5163,6 +5277,48 @@ func (u *GroupUpsertBulk) UpdateSearchPricePer1k() *GroupUpsertBulk {
 func (u *GroupUpsertBulk) ClearSearchPricePer1k() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearSearchPricePer1k()
+	})
+}
+
+// SetSearchProviderBaseURL sets the "search_provider_base_url" field.
+func (u *GroupUpsertBulk) SetSearchProviderBaseURL(v string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSearchProviderBaseURL(v)
+	})
+}
+
+// UpdateSearchProviderBaseURL sets the "search_provider_base_url" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateSearchProviderBaseURL() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSearchProviderBaseURL()
+	})
+}
+
+// ClearSearchProviderBaseURL clears the value of the "search_provider_base_url" field.
+func (u *GroupUpsertBulk) ClearSearchProviderBaseURL() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearSearchProviderBaseURL()
+	})
+}
+
+// SetSearchProviderAPIKey sets the "search_provider_api_key" field.
+func (u *GroupUpsertBulk) SetSearchProviderAPIKey(v string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSearchProviderAPIKey(v)
+	})
+}
+
+// UpdateSearchProviderAPIKey sets the "search_provider_api_key" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateSearchProviderAPIKey() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSearchProviderAPIKey()
+	})
+}
+
+// ClearSearchProviderAPIKey clears the value of the "search_provider_api_key" field.
+func (u *GroupUpsertBulk) ClearSearchProviderAPIKey() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearSearchProviderAPIKey()
 	})
 }
 

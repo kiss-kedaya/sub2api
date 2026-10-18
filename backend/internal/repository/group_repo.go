@@ -123,6 +123,8 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetVideoModelPrices(service.NormalizeVideoModelPrices(groupIn.VideoModelPrices)).
 		SetNillableWebSearchPricePerCall(groupIn.WebSearchPricePerCall).
 		SetNillableSearchPricePer1k(groupIn.SearchPricePer1k).
+		SetNillableSearchProviderBaseURL(groupIn.SearchProviderBaseURL).
+		SetNillableSearchProviderAPIKey(groupIn.SearchProviderAPIKey).
 		SetNillableAudioRealtimePricePerMin(groupIn.AudioRealtimePricePerMin).
 		SetNillableAudioTtsPricePerMillionChars(groupIn.AudioTTSPricePerMillionChars).
 		SetNillableAudioSttPricePerHour(groupIn.AudioSTTPricePerHour).
@@ -394,6 +396,22 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		builder = builder.SetSearchPricePer1k(*groupIn.SearchPricePer1k)
 	} else {
 		builder = builder.ClearSearchPricePer1k()
+	}
+	// nil 表示「本次不修改」（与其它字段的 nil 语义一致）；只有传了空字符串
+	// 才是显式清除。若把 nil 当成清除，编辑分组的其它字段会顺手把搜索 key 抹掉。
+	if groupIn.SearchProviderBaseURL != nil {
+		if *groupIn.SearchProviderBaseURL == "" {
+			builder = builder.ClearSearchProviderBaseURL()
+		} else {
+			builder = builder.SetSearchProviderBaseURL(*groupIn.SearchProviderBaseURL)
+		}
+	}
+	if groupIn.SearchProviderAPIKey != nil {
+		if *groupIn.SearchProviderAPIKey == "" {
+			builder = builder.ClearSearchProviderAPIKey()
+		} else {
+			builder = builder.SetSearchProviderAPIKey(*groupIn.SearchProviderAPIKey)
+		}
 	}
 	if groupIn.AudioRealtimePricePerMin != nil {
 		builder = builder.SetAudioRealtimePricePerMin(*groupIn.AudioRealtimePricePerMin)

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -239,6 +240,15 @@ func (s *CRSSyncService) fetchCRSExport(ctx context.Context, baseURL, username, 
 		}
 		normalizedURL = normalized
 	}
+	// CRS 是管理员手填的外部地址，绝不能指向回环/私网/云元数据：
+	// 否则 preview/sync 就成了任意 host:port 的 POST+GET 探测原语（并把
+	// 上游 status/body 原文回显）。这里与 AllowPrivateHosts 解耦——管理员
+	// 如需连内网 CRS，必须显式把该主机加进 crs_hosts 白名单。
+	if !crsHostExplicitlyAllowed(normalizedURL, s.cfg.Security.URLAllowlist.CRSHosts) {
+		if blocked, derr := isPrivateOrLoopbackHost(ctx, hostOfURL(normalizedURL)); derr == nil && blocked {
+			return nil, fmt.Errorf("crs base_url host is not allowed: %s", hostOfURL(normalizedURL))
+		}
+	}
 	if strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
 		return nil, errors.New("username and password are required")
 	}
@@ -256,8 +266,10 @@ func (s *CRSSyncService) fetchCRSExport(ctx context.Context, baseURL, username, 
 		//
 		// AllowPrivateHosts 的语义就是「是否放行私网/环回地址」，它才是唯一
 		// 相关的开关。
-		ValidateResolvedIP: !s.cfg.Security.URLAllowlist.AllowPrivateHosts,
-		AllowPrivateHosts:  s.cfg.Security.URLAllowlist.AllowPrivateHosts,
+		// CRS 恒不允许私网：解析后 IP 校验始终开启，AllowPrivateHosts 只影响
+		// 其它上游（模型/价格源）。显式白名单中的主机已在上面放行过。
+		ValidateResolvedIP: true,
+		AllowPrivateHosts:  crsHostExplicitlyAllowed(normalizedURL, s.cfg.Security.URLAllowlist.CRSHosts),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create http client failed: %w", err)
@@ -1332,6 +1344,39 @@ func normalizeBaseURL(raw string, allowlist []string, allowPrivate bool) (string
 	return normalized, nil
 }
 
+// hostOfURL 取 URL 的 hostname（不含端口）。解析失败返回空串。
+func hostOfURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// crsHostExplicitlyAllowed 判断 host 是否被管理员显式列进 crs_hosts 白名单。
+// 只有这种情况才允许 CRS 指向私网/回环地址（例如自建在内网的 CRS）。
+func crsHostExplicitlyAllowed(raw string, allowlist []string) bool {
+	host := strings.ToLower(hostOfURL(raw))
+	if host == "" {
+		return false
+	}
+	for _, entry := range allowlist {
+		candidate := strings.ToLower(strings.TrimSpace(entry))
+		if candidate == "" {
+			continue
+		}
+		// 白名单项允许写成 host 或 host:port
+		candidate = strings.TrimSuffix(candidate, ":")
+		if h := hostOfURL("//" + candidate); h != "" {
+			candidate = h
+		}
+		if candidate == host {
+			return true
+		}
+	}
+	return false
+}
+
 // cleanBaseURL removes trailing suffix from base_url in credentials
 // Used for both Claude and OpenAI accounts to remove /v1
 func cleanBaseURL(credentials map[string]any, suffixToRemove string) {
@@ -1364,7 +1409,11 @@ func crsLogin(ctx context.Context, client *http.Client, baseURL, username, passw
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("crs login failed: status=%d body=%s", resp.StatusCode, string(raw))
+		// 不回显上游 body：preview/sync 的 base_url 由管理员填写，原样回显
+		// 等于把任意内网 HTTP 应用的响应变成可读的（对照 401/405 差分即可
+		// 判断目标服务类型）。细节只留在服务端日志。
+		slog.Warn("crs_login_upstream_error", "status", resp.StatusCode, "body_len", len(raw))
+		return "", fmt.Errorf("crs login failed: upstream returned %d", resp.StatusCode)
 	}
 
 	var parsed crsLoginResponse
@@ -1399,7 +1448,8 @@ func crsExportAccounts(ctx context.Context, client *http.Client, baseURL, adminT
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("crs export failed: status=%d body=%s", resp.StatusCode, string(raw))
+		slog.Warn("crs_export_upstream_error", "status", resp.StatusCode, "body_len", len(raw))
+		return nil, fmt.Errorf("crs export failed: upstream returned %d", resp.StatusCode)
 	}
 
 	var parsed crsExportResponse

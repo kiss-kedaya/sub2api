@@ -218,12 +218,44 @@ func newUpstreamBillingProbeTestService(
 	upstream HTTPUpstream,
 	settingRepo SettingRepository,
 ) *UpstreamBillingProbeService {
+	// 测试用桩/本地服务不受「公网目标」策略限制。
+	SetAccountTestAllowPrivateTargetsForTest(true)
 	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{
 		Enabled:           false,
 		AllowInsecureHTTP: true,
 	}}}
 	accountTestService := &AccountTestService{accountRepo: repo, httpUpstream: upstream, cfg: cfg}
 	return NewUpstreamBillingProbeService(repo, accountTestService, NewSettingService(settingRepo, cfg))
+}
+
+// 回归：账号测试 / 计费探测的目标来自账号凭证的 base_url，必须无条件拒绝
+// 回环/私网，不能因为 security.url_allowlist.enabled=false 就只剩格式校验。
+// 这两条路径会把对端响应体回显到 SSE 并落库到 error_message。
+func TestAccountTestValidateUpstreamBaseURLRejectsPrivateTargets(t *testing.T) {
+	SetAccountTestAllowPrivateTargetsForTest(false)
+	t.Cleanup(func() { SetAccountTestAllowPrivateTargetsForTest(true) })
+
+	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{
+		Enabled:           false, // 线上正是关着的
+		AllowInsecureHTTP: true,
+	}}}
+	svc := &AccountTestService{cfg: cfg}
+
+	for _, raw := range []string{
+		"http://127.0.0.1:17778",
+		"http://localhost:8080/v1",
+		"http://172.17.0.1:80",
+		"http://169.254.169.254/latest/meta-data",
+		"http://10.254.0.2:8318",
+	} {
+		_, err := svc.validateUpstreamBaseURL(raw)
+		require.ErrorIs(t, err, errTestTargetNotAllowed, "target %s must be rejected", raw)
+	}
+
+	// 公网地址仍可通过格式校验（这里不断言能出网，只断言没被策略拦）。
+	if _, err := svc.validateUpstreamBaseURL("https://api.example.com/v1"); err != nil {
+		require.NotErrorIs(t, err, errTestTargetNotAllowed, "public host must not be policy-blocked")
+	}
 }
 
 func TestUpstreamBillingProbeSettingsDefaultsAndValidation(t *testing.T) {

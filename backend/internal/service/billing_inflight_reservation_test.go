@@ -21,7 +21,10 @@ func TestEstimateInflightReservationCost(t *testing.T) {
 	pricing, err := billing.GetModelPricing("claude-sonnet-4-5")
 	require.NoError(t, err)
 
-	cfg := config.InflightReservationConfig{DefaultMaxTokens: 8192, MaxOutputTokens: 64000, MaxInputTokens: 1000}
+	// 这些用例锁的是「输入/输出 × 单价」的公式本身；上下文下限另有
+	// TestInflightEstimate_ContextFloorRaisesReservation 覆盖。
+	// MinInputTokens=-1 表示不应用下限。
+	cfg := config.InflightReservationConfig{DefaultMaxTokens: 8192, MaxOutputTokens: 64000, MaxInputTokens: 1000, MinInputTokens: -1}
 
 	// explicit max_tokens; body 400 bytes → 100 input tokens
 	cost, ok := EstimateInflightReservationCost(billing, cfg, "claude-sonnet-4-5", 400, 1000, 1)
@@ -72,7 +75,9 @@ func TestReserveInflightBalance_SimpleModeDisabled(t *testing.T) {
 func newInflightEstimateGateway(t *testing.T, channelService *ChannelService) *GatewayService {
 	t.Helper()
 	cfg := &config.Config{}
-	cfg.Billing.InflightReservation = config.InflightReservationConfig{Enabled: true, DefaultMaxTokens: 1000, MaxInputTokens: 200000, MaxOutputTokens: 128000}
+	// MinInputTokens=-1：这些用例断言的是纯 token × 单价公式，
+	// 不被上游上下文下限放大。下限本身有单独的回归用例。
+	cfg.Billing.InflightReservation = config.InflightReservationConfig{Enabled: true, DefaultMaxTokens: 1000, MaxInputTokens: 200000, MaxOutputTokens: 128000, MinInputTokens: -1}
 	billing := NewBillingService(cfg, nil)
 	return &GatewayService{
 		cfg:            cfg,
@@ -127,6 +132,35 @@ func TestInflightEstimate_GroupPerRequestPricing(t *testing.T) {
 	est, priced = svc.EstimateInflightReservation(context.Background(), apiKey, InflightEstimateRequest{Model: "wild-x", BodyBytes: 4000, MaxTokens: 500})
 	require.True(t, priced)
 	require.InDelta(t, (1000*in+500*out)*2, est, 1e-12)
+}
+
+// 回归：预留估算必须把上游注入的上下文计入。
+//
+// 线上实测一个 99B 的最小请求最终 prompt_tokens≈4387（Codex 渠道注入 +
+// 缓存上下文），而旧估算只按 bodyBytes/4 算，预留只有实际结算的 1/50。
+// 小额余额并发 8 条时准入全部放行，余额被打成 4.79 倍透支。
+func TestInflightEstimate_ContextFloorRaisesReservation(t *testing.T) {
+	groupID := int64(48)
+	in, out := 1e-6, 2e-6
+	group := &Group{ID: groupID, Platform: PlatformOpenAI, RateMultiplier: 1, ModelPricing: []ChannelModelPricing{
+		{Models: []string{"ctx-floor-*"}, BillingMode: BillingModeToken, InputPrice: &in, OutputPrice: &out},
+	}}
+	svc := newInflightEstimateGateway(t, nil)
+	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: group}
+
+	// 99B 的最小请求：旧口径只算 24 个输入 token。
+	thin, priced := svc.EstimateInflightReservation(context.Background(), apiKey,
+		InflightEstimateRequest{Model: "ctx-floor-x", BodyBytes: 99, MaxTokens: 1})
+	require.True(t, priced)
+	require.InDelta(t, 24*in+1*out, thin, 1e-12, "sanity: the raw bodyBytes/4 formula")
+
+	// 打开上下文下限后，预留必须显著抬高（默认下限 4096）。
+	svc.cfg.Billing.InflightReservation.MinInputTokens = 4096
+	thick, priced := svc.EstimateInflightReservation(context.Background(), apiKey,
+		InflightEstimateRequest{Model: "ctx-floor-x", BodyBytes: 99, MaxTokens: 1})
+	require.True(t, priced)
+	require.InDelta(t, 4096*in+1*out, thick, 1e-12, "context floor must dominate a tiny body")
+	require.Greater(t, thick, thin*100, "the floor must raise a minimal request by two orders of magnitude")
 }
 
 func TestInflightEstimate_UnpricedIsReportedAndNonMeteredIsNot(t *testing.T) {
