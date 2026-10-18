@@ -29,7 +29,7 @@ func TestShutdownTimeoutFromEnv(t *testing.T) {
 		{name: "default", raw: "", want: defaultShutdownTimeout},
 		{name: "configured seconds", raw: "45", want: 45 * time.Second},
 		{name: "too short", raw: "4", want: defaultShutdownTimeout},
-		{name: "too long", raw: "601", want: defaultShutdownTimeout},
+		{name: "too long", raw: "21601", want: defaultShutdownTimeout},
 		{name: "invalid", raw: "nope", want: defaultShutdownTimeout},
 	}
 	for _, tt := range tests {
