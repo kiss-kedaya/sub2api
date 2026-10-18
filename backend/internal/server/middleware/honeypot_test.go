@@ -146,12 +146,14 @@ func TestHoneypotTrapsAndPasses(t *testing.T) {
 }
 
 func TestHoneypotBanSpec(t *testing.T) {
+	SetHoneypotExemptNets([]string{"198.51.100.7", "2001:db8:1::/64"})
+	t.Cleanup(func() { SetHoneypotExemptNets(nil) })
 	key, value, ok := honeypotBanSpec("203.0.113.8", "trap")
 	if !ok || key != "kedaya:security:v1:ban:203.0.113.8" || value != "trap" {
 		t.Fatalf("public got %q %q %v", key, value, ok)
 	}
-	if _, _, ok := honeypotBanSpec("51.222.42.218", "trap"); ok {
-		t.Fatal("old host must not be banned")
+	if _, _, ok := honeypotBanSpec("198.51.100.7", "trap"); ok {
+		t.Fatal("configured exempt edge must not be banned")
 	}
 	if _, _, ok := honeypotBanSpec("10.1.2.3", "scanner"); ok {
 		t.Fatal("private must not be banned")
@@ -159,8 +161,8 @@ func TestHoneypotBanSpec(t *testing.T) {
 	if _, _, ok := honeypotBanSpec("127.0.0.1", "unknown_php"); ok {
 		t.Fatal("loopback must not be banned")
 	}
-	if _, _, ok := honeypotBanSpec("2607:5300:203:7cda::1", "trap"); ok {
-		t.Fatal("exempt v6 must not be banned")
+	if _, _, ok := honeypotBanSpec("2001:db8:1::1", "trap"); ok {
+		t.Fatal("configured exempt v6 must not be banned")
 	}
 	if _, _, ok := honeypotBanSpec("not-an-ip", "trap"); ok {
 		t.Fatal("bad ip")

@@ -25,7 +25,7 @@ func TestIsGrokModerationRefusal(t *testing.T) {
 
 func TestPrepareGrokModerationRefusalResult(t *testing.T) {
 	result := PrepareGrokModerationRefusalResult(nil, "grok-4")
-	if result.Model != "grok-4" || result.UpstreamModel != "grok-4" || result.NonBillableUpstreamError || result.ForcedBillingCost != 0.035 || !result.ForceBalanceBilling {
+	if result.Model != "grok-4" || result.UpstreamModel != "grok-4" || result.NonBillableUpstreamError || result.ForcedBillingCost != 0.1 || !result.ForceBalanceBilling {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
