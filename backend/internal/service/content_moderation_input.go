@@ -406,33 +406,41 @@ func normalizeContentModerationText(text string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
 }
 
-// ExtractContentModerationFullText keeps every client-controlled user text turn.
-// It is used for audit excerpts and must include all user content, unlike the
-// last-turn boundary used by semantic moderation.
-func ExtractContentModerationFullText(protocol string, body []byte) string {
+// ExtractContentModerationLastUserTurn returns the client's latest user turn,
+// parsed out of the request body, for display in the moderation log.
+//
+// It intentionally mirrors the last-turn boundary used by semantic moderation
+// instead of concatenating every historical user message: an operator reading a
+// block wants the text that actually triggered it, not a wall of earlier turns.
+func ExtractContentModerationLastUserTurn(protocol string, body []byte) string {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return ""
 	}
-	collector := moderationTextCollector{}
+	collector := moderationTextCollector{filterReminders: true}
 	var parts []string
 	var images []string
 	switch protocol {
 	case ContentModerationProtocolAnthropicMessages:
-		collector.collectAllRoleMessages(gjson.GetBytes(body, "messages"), "user", &parts, &images)
+		collector.collectLastAnthropicUserMessage(gjson.GetBytes(body, "messages"), &parts, &images)
 	case ContentModerationProtocolOpenAIChat:
-		collector.collectAllRoleMessages(gjson.GetBytes(body, "messages"), "user", &parts, &images)
+		collector.collectLastRoleMessage(gjson.GetBytes(body, "messages"), "user", &parts, &images)
 	case ContentModerationProtocolOpenAIResponses:
-		collector.collectAllResponsesUserInput(gjson.GetBytes(body, "input"), &parts, &images)
+		collector.collectLastResponsesInput(gjson.GetBytes(body, "input"), &parts, &images)
 	case ContentModerationProtocolGemini:
-		collector.collectAllGeminiUserContent(gjson.GetBytes(body, "contents"), &parts, &images)
+		collector.collectLastGeminiContent(gjson.GetBytes(body, "contents"), &parts, &images)
 	case ContentModerationProtocolOpenAIImages:
 		collector.addModerationText(&parts, gjson.GetBytes(body, "prompt").String())
 	default:
-		collector.collectAllResponsesUserInput(gjson.GetBytes(body, "input"), &parts, &images)
-		collector.collectAllRoleMessages(gjson.GetBytes(body, "messages"), "user", &parts, &images)
-		collector.collectAllGeminiUserContent(gjson.GetBytes(body, "contents"), &parts, &images)
+		collector.collectLastResponsesInput(gjson.GetBytes(body, "input"), &parts, &images)
+		collector.collectLastRoleMessage(gjson.GetBytes(body, "messages"), "user", &parts, &images)
+		collector.collectLastGeminiContent(gjson.GetBytes(body, "contents"), &parts, &images)
 	}
-	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+	text := strings.TrimSpace(strings.Join(parts, "\n\n"))
+	if text == "" && len(images) > 0 {
+		// A turn made only of images still has to show something useful.
+		return "[" + strings.Join(images, ", ") + "]"
+	}
+	return text
 }
 
 func (collector moderationTextCollector) collectAllRoleMessages(messages gjson.Result, role string, parts *[]string, images *[]string) {

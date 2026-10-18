@@ -64,6 +64,11 @@ const (
 	maxContentModerationTimeoutMS     = 30000
 	maxModerationInputRunes           = 12000
 	maxModerationExcerptRunes         = 240
+	// The audit log stores the client's last user turn so an operator can read
+	// exactly what triggered a block. That is a display field, not a moderation
+	// input, so it gets a separate and much larger ceiling than
+	// maxModerationInputRunes (which bounds what is sent to the classifier).
+	maxModerationLogExcerptRunes = 200000
 
 	defaultContentModerationWorkerCount          = 4
 	maxContentModerationWorkerCount              = 32
@@ -1893,7 +1898,7 @@ func (s *ContentModerationService) buildLog(input ContentModerationCheckInput, c
 		HighestScore:      highestScore,
 		CategoryScores:    cloneFloatMap(scores),
 		ThresholdSnapshot: cloneFloatMap(cfg.Thresholds),
-		InputExcerpt:      trimRunes(redactContentModerationSecrets(moderationLogFullText(input, text)), maxModerationInputRunes),
+		InputExcerpt:      trimRunes(redactContentModerationSecrets(moderationLogFullText(input, text)), maxModerationLogExcerptRunes),
 		UpstreamLatencyMS: latency,
 		QueueDelayMS:      queueDelay,
 		Error:             errText,
@@ -2968,7 +2973,7 @@ func cloneInt64Ptr(in *int64) *int64 {
 }
 
 func moderationLogFullText(input ContentModerationCheckInput, fallback string) string {
-	full := ExtractContentModerationFullText(input.Protocol, input.Body)
+	full := ExtractContentModerationLastUserTurn(input.Protocol, input.Body)
 	if strings.TrimSpace(full) == "" {
 		return fallback
 	}
