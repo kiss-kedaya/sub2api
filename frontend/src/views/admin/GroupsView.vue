@@ -1541,48 +1541,6 @@
                 data-testid="create-search-price"
               />
             </div>
-            <div v-if="createForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
-              <input
-                v-model="createForm.search_provider_base_url"
-                type="text"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
-                data-testid="create-search-provider-url"
-              />
-            </div>
-            <div v-if="createForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
-              <input
-                v-model="createForm.search_provider_api_key"
-                type="password"
-                autocomplete="new-password"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
-                data-testid="create-search-provider-key"
-              />
-            </div>
-            <div v-if="createForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
-              <input
-                v-model="createForm.search_provider_base_url"
-                type="text"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
-                data-testid="create-search-provider-url"
-              />
-            </div>
-            <div v-if="createForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
-              <input
-                v-model="createForm.search_provider_api_key"
-                type="password"
-                autocomplete="new-password"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
-                data-testid="create-search-provider-key"
-              />
-            </div>
             <div v-if="createForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioRealtimePerMin") }}</label>
               <input
@@ -3246,56 +3204,6 @@
                 :placeholder="t('admin.groups.explicitPricing.pricePlaceholder')"
                 data-testid="edit-search-price"
               />
-            </div>
-            <div v-if="editForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
-              <input
-                v-model="editForm.search_provider_base_url"
-                type="text"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
-                data-testid="edit-search-provider-url"
-              />
-            </div>
-            <div v-if="editForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
-              <input
-                v-model="editForm.search_provider_api_key"
-                type="password"
-                autocomplete="new-password"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
-                data-testid="edit-search-provider-key"
-              />
-              <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                <input v-model="editForm.clearSearchProviderKey" type="checkbox" class="h-3.5 w-3.5" />
-                <span>{{ t("admin.groups.explicitPricing.searchProviderApiKeyClear") }}</span>
-              </label>
-            </div>
-            <div v-if="editForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
-              <input
-                v-model="editForm.search_provider_base_url"
-                type="text"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
-                data-testid="edit-search-provider-url"
-              />
-            </div>
-            <div v-if="editForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
-              <input
-                v-model="editForm.search_provider_api_key"
-                type="password"
-                autocomplete="new-password"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
-                data-testid="edit-search-provider-key"
-              />
-              <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                <input v-model="editForm.clearSearchProviderKey" type="checkbox" class="h-3.5 w-3.5" />
-                <span>{{ t("admin.groups.explicitPricing.searchProviderApiKeyClear") }}</span>
-              </label>
             </div>
             <div v-if="editForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioRealtimePerMin") }}</label>
