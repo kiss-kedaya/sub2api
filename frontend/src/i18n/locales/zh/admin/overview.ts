@@ -1039,6 +1039,7 @@ export default {
         searchProviderBaseUrlPlaceholder: '留空则使用模型账号的 base_url',
         searchProviderApiKey: '搜索专用 API Key',
         searchProviderApiKeyPlaceholder: '留空则不修改；已配置时不会回显',
+        searchProviderApiKeyConfigured: '已配置密钥；留空表示保持不变',
         searchProviderApiKeyClear: '清除已保存的搜索 Key'
       },
       modelPricing: {

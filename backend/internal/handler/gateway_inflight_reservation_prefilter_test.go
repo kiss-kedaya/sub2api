@@ -3,8 +3,8 @@ package handler
 import (
 	"testing"
 
-	"github.com/tidwall/gjson"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // legacyRequestMaxOutputTokens is the pre-optimization implementation.

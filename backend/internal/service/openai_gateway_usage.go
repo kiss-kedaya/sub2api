@@ -605,6 +605,12 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 		// 分组覆盖价（nil 时默认 0.01 = 官方 $10/1000 次），不参与渠道级模型定价。
 		// 倍率与 image/video 按次口径一致：使用不含高峰因子的基础倍率
 		//（用户专属 > 分组 rate_multiplier > 系统默认），与分组表单的价格预览承诺一致。
+		//
+		// 分组填写了「每千次搜索价格」时，按 callCount/1000 * 每千次价 计费，
+		// 这样每一次搜索都会真实扣费；未填写时回落到按次单价。
+		if per1k := groupSearchPricePer1kFromAPIKey(apiKey); per1k != nil {
+			return s.billingService.CalculateSearchCost(result.WebSearchCalls, per1k, webSearchMultiplier), nil
+		}
 		return s.billingService.CalculateWebSearchCost(result.WebSearchCalls, webSearchPricePerCallFromAPIKey(apiKey), webSearchMultiplier), nil
 	}
 	if isGrokVideoUsageResult(result, billingModels) {

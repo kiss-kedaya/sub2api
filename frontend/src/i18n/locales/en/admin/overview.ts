@@ -1042,6 +1042,7 @@ export default {
         searchProviderBaseUrlPlaceholder: 'Empty uses the model account base URL',
         searchProviderApiKey: 'Dedicated search API key',
         searchProviderApiKeyPlaceholder: 'Empty leaves it unchanged; never echoed back',
+        searchProviderApiKeyConfigured: 'A key is configured. Leave empty to keep it.',
         searchProviderApiKeyClear: 'Clear the saved search key'
       },
       modelPricing: {
