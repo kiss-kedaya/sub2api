@@ -101,6 +101,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	} else if toolSchemaSanitized {
 		body = sanitizedToolBody
 	}
+	// 旧版 OpenAI 工具名 web_search_preview 多数第三方 Responses 上游不认
+	// （官方会内部折算成 web_search）。出站前统一折算，避免按账号池反复 400。
+	if aliasBody, aliasChanged, aliasErr := normalizeOpenAIResponsesLegacyWebSearchToolType(body); aliasErr != nil {
+		return nil, aliasErr
+	} else if aliasChanged {
+		body = aliasBody
+	}
 	if account.IsOpenAIOAuthLike() {
 		reasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningMode(body, account.GetMappedModel(gjson.GetBytes(body, "model").String()))
 		if reasoningErr != nil {
