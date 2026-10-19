@@ -415,11 +415,12 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 						c.Request.Context(), apiKey.GroupID, sessionHash,
 						service.GrokModerationRefusalSessionBlockTTL(),
 					)
-					h.handleResponsesFailoverExhausted(c, failoverErr, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward)
+					h.handleResponsesFailoverExhausted(c, failoverErr, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward || service.IsOpenAIStreamSSEKeepaliveArmed(c))
 					return
 				}
 				// Can't failover if streaming content already sent
-				if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
+				if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward ||
+					service.IsOpenAIStreamSSEKeepaliveArmed(c) {
 					submitForwardUsage(result)
 					h.handleResponsesFailoverExhausted(c, failoverErr, true)
 					return

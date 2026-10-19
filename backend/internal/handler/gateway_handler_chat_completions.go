@@ -430,10 +430,11 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 						c.Request.Context(), apiKey.GroupID, selectionSessionHash,
 						service.GrokModerationRefusalSessionBlockTTL(),
 					)
-					h.handleCCFailoverExhausted(c, failoverErr, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward)
+					h.handleCCFailoverExhausted(c, failoverErr, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward || service.IsOpenAIStreamSSEKeepaliveArmed(c))
 					return
 				}
-				if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
+				if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward ||
+					service.IsOpenAIStreamSSEKeepaliveArmed(c) {
 					submitForwardUsage(result)
 					h.handleCCFailoverExhausted(c, failoverErr, true)
 					return
