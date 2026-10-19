@@ -624,6 +624,8 @@ export interface Group {
   web_search_price_per_call: number | null
   // Grok Voice 显式定价（分组级）
   search_price_per_1k: number | null
+  // Grok 安全拒绝单次扣费（USD/次）；null = 默认 0.1，0 = 不扣费
+  grok_moderation_refusal_price: number | null
   search_provider_base_url?: string | null
   search_provider_api_key?: string | null
   // Read-only: true when a key is stored server-side. The key value itself is
@@ -857,6 +859,8 @@ export interface CreateGroupRequest {
   video_model_prices?: VideoModelPrices
   web_search_price_per_call?: number | null
   search_price_per_1k?: number | null
+  // Grok 安全拒绝单次扣费（USD/次）；null = 默认 0.1，0 = 不扣费
+  grok_moderation_refusal_price?: number | null
   search_provider_base_url?: string | null
   search_provider_api_key?: string | null
   search_provider_api_key_set?: boolean
@@ -927,6 +931,8 @@ export interface UpdateGroupRequest {
   video_model_prices?: VideoModelPrices
   web_search_price_per_call?: number | null
   search_price_per_1k?: number | null
+  // Grok 安全拒绝单次扣费（USD/次）；null = 默认 0.1，0 = 不扣费
+  grok_moderation_refusal_price?: number | null
   search_provider_base_url?: string | null
   search_provider_api_key?: string | null
   search_provider_api_key_set?: boolean

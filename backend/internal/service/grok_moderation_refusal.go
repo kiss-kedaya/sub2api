@@ -32,14 +32,20 @@ func IsGrokModerationRefusal(platform string, body []byte) bool {
 
 func GrokModerationRefusalBillingCost() float64 { return grokModerationRefusalBillingCost }
 
-// GrokModerationRefusalBilledCost applies the resolved group/user rate
-// multiplier to the nominal refusal fee, mirroring token billing (0.07x pays
-// 0.007, 1.0x pays the full 0.1).
-func GrokModerationRefusalBilledCost(multiplier float64) float64 {
-	if multiplier < 0 {
-		multiplier = 0
+// GrokModerationRefusalBilledCost resolves the per-refusal fee for a group.
+//
+// The fee is deliberately NOT multiplied by the group rate multiplier: ops
+// prices this penalty per occurrence. A nil group / nil override falls back to
+// the built-in 0.1; an explicit 0 disables the charge.
+func GrokModerationRefusalBilledCost(group *Group) float64 {
+	if group != nil && group.GrokModerationRefusalPrice != nil {
+		price := *group.GrokModerationRefusalPrice
+		if price < 0 {
+			return 0
+		}
+		return price
 	}
-	return grokModerationRefusalBillingCost * multiplier
+	return grokModerationRefusalBillingCost
 }
 
 // grokContentPolicyRejectionPrefix is the error prefix emitted by
@@ -109,12 +115,10 @@ func PrepareGrokModerationRefusalResult(result *ForwardResult, requestedModel st
 		result.UpstreamModel = result.Model
 	}
 	result.NonBillableUpstreamError = false
-	if billedCost > 0 {
-		result.ForcedBillingCost = billedCost
-	} else {
-		result.ForcedBillingCost = GrokModerationRefusalBillingCost()
-	}
-	result.ForceBalanceBilling = true
+	// billedCost is the already-resolved per-refusal fee. 0 means the group
+	// explicitly disabled the charge, so leave the forced cost unset.
+	result.ForcedBillingCost = billedCost
+	result.ForceBalanceBilling = billedCost > 0
 	return result
 }
 
@@ -135,11 +139,7 @@ func PrepareGrokModerationRefusalOpenAIResult(
 		result.UpstreamModel = result.Model
 	}
 	result.NonBillableUpstreamError = false
-	if billedCost > 0 {
-		result.ForcedBillingCost = billedCost
-	} else {
-		result.ForcedBillingCost = GrokModerationRefusalBillingCost()
-	}
-	result.ForceBalanceBilling = true
+	result.ForcedBillingCost = billedCost
+	result.ForceBalanceBilling = billedCost > 0
 	return result
 }
