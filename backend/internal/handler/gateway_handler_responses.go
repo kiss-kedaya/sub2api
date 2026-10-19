@@ -404,7 +404,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				if service.IsGrokModerationRefusal(account.Platform, failoverErr.ResponseBody) {
-					result = service.PrepareGrokModerationRefusalResult(result, reqModel)
+					// 违规拒绝按「名义价 × 分组/用户倍率」结算，与 token 计费口径一致。
+					refusalRate, _ := h.resolveKeyBillingRate(c, apiKey)
+					result = service.PrepareGrokModerationRefusalResult(
+						result, reqModel, service.GrokModerationRefusalBilledCost(refusalRate))
 					submitForwardUsage(result)
 					// The upstream refused on safety grounds. Charge once, stop
 					// retrying, and block this conversation so the same prompt cannot
