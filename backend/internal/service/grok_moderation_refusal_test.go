@@ -42,9 +42,9 @@ func TestGrokModerationRefusalBilledCostUsesGroupOverride(t *testing.T) {
 	}{
 		{"nil group falls back to 0.1", nil, 0.1},
 		{"unset override falls back to 0.1", &Group{}, 0.1},
-		{"explicit 0 disables", &Group{GrokModerationRefusalPrice: ptrFloat(0)}, 0},
-		{"custom price", &Group{GrokModerationRefusalPrice: ptrFloat(0.5)}, 0.5},
-		{"negative clamps to 0", &Group{GrokModerationRefusalPrice: ptrFloat(-1)}, 0},
+		{"explicit 0 disables", &Group{GrokModerationRefusalPrice: ptrGrokPrice(0)}, 0},
+		{"custom price", &Group{GrokModerationRefusalPrice: ptrGrokPrice(0.5)}, 0.5},
+		{"negative clamps to 0", &Group{GrokModerationRefusalPrice: ptrGrokPrice(-1)}, 0},
 	}
 	for _, tc := range cases {
 		got := GrokModerationRefusalBilledCost(tc.group)
@@ -72,7 +72,7 @@ func TestPrepareGrokModerationRefusalOpenAIResult(t *testing.T) {
 	}
 }
 
-func ptrFloat(v float64) *float64 { return &v }
+func ptrGrokPrice(v float64) *float64 { return &v }
 
 func TestIsGrokPlatformContentPolicyRejection(t *testing.T) {
 	if !IsGrokPlatformContentPolicyRejection(PlatformGrok,
