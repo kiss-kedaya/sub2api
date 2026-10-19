@@ -18,6 +18,19 @@ import (
 	"go.uber.org/zap"
 )
 
+// resolveOpenAIRefusalBillingRate mirrors GatewayHandler.resolveKeyBillingRate
+// for the OpenAI gateway handler, which only exposes OpenAIGatewayService.
+func (h *OpenAIGatewayHandler) resolveOpenAIRefusalBillingRate(c *gin.Context, apiKey *service.APIKey) float64 {
+	if apiKey == nil || apiKey.Group == nil || apiKey.GroupID == nil {
+		return 1
+	}
+	if h.gatewayService == nil {
+		return apiKey.Group.RateMultiplier
+	}
+	return h.gatewayService.ResolveUserGroupRateMultiplier(
+		c.Request.Context(), apiKey.UserID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
+}
+
 // ChatCompletions handles OpenAI Chat Completions API requests.
 // POST /v1/chat/completions
 func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
@@ -418,6 +431,19 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 							case <-time.After(retryDelay):
 							}
 							continue
+						}
+						// Grok 内容策略 403：上游已在 handleCompatErrorResponse 里回写了
+						// 403，不会产生 UpstreamFailoverError。这里补上一次性扣费
+						// （名义价 × 分组/用户倍率），并让同一会话停止继续烧上游额度。
+						if service.IsGrokPlatformContentPolicyRejection(account.Platform, err) {
+							refusalRate := h.resolveOpenAIRefusalBillingRate(c, apiKey)
+							result = service.PrepareGrokModerationRefusalOpenAIResult(
+								result, reqModel, service.GrokModerationRefusalBilledCost(refusalRate))
+							submitChatUsage(result)
+							h.gatewayService.BlockModerationRefusedSessionForOpenAI(
+								c.Request.Context(), apiKey.GroupID, sessionHash,
+								service.GrokModerationRefusalSessionBlockTTL())
+							return
 						}
 					}
 					// A recoverable first attempt must not lower scheduler health before

@@ -328,6 +328,17 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			zap.String("request_id", result.RequestID),
 		).Info("openai_usage.non_billable_upstream_request_error")
 	}
+	// Forced billing (e.g. Grok safety refusals) replaces the computed usage
+	// cost with a deterministic per-request fee. The fee already carries the
+	// resolved group/user multiplier, so it is used for both TotalCost and
+	// ActualCost without a second multiplication.
+	if result.ForcedBillingCost > 0 {
+		cost = &CostBreakdown{
+			TotalCost:   result.ForcedBillingCost,
+			ActualCost:  result.ForcedBillingCost,
+			BillingMode: string(BillingModePerRequest),
+		}
+	}
 
 	// Free Fast changes only the customer charge. Keep priority TotalCost and
 	// service_tier for upstream accounting, but evaluate ActualCost once more at
@@ -356,7 +367,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}
 
 	// Determine billing type
-	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
+	isSubscriptionBilling := subscription != nil && apiKey.Group != nil &&
+		apiKey.Group.IsSubscriptionType() && !result.ForceBalanceBilling
 	billingType := BillingTypeBalance
 	if isSubscriptionBilling {
 		billingType = BillingTypeSubscription
