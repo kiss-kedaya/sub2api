@@ -249,6 +249,56 @@ func (collector moderationTextCollector) isResponsesUserTextItem(item gjson.Resu
 	return collector.responseItemHasModerationText(item)
 }
 
+// collectLastResponsesUserTurnForDisplay 只用于风控详情展示：从数组尾部向前
+// 回溯到最近一条真正的 user 文本。语义审核仍然只用严格末条判定，避免把旧
+// 轮次重新送入审核。
+func (collector moderationTextCollector) collectLastResponsesUserTurnForDisplay(input gjson.Result, parts *[]string, images *[]string) {
+	switch {
+	case !input.Exists():
+		return
+	case input.Type == gjson.String:
+		collector.addModerationText(parts, input.String())
+	case input.IsArray():
+		array := input.Array()
+		for i := len(array) - 1; i >= 0; i-- {
+			if !collector.isResponsesDisplayUserItem(array[i]) {
+				continue
+			}
+			collector.collectContentValue(array[i].Get("content"), parts, images)
+			if array[i].Get("type").String() == "input_text" || array[i].Get("text").Exists() {
+				collector.collectContentValue(array[i], parts, images)
+			}
+			if normalizeContentModerationText(strings.Join(*parts, "\n")) != "" || len(*images) > 0 {
+				return
+			}
+		}
+	case input.IsObject():
+		if collector.isResponsesDisplayUserItem(input) {
+			collector.collectContentValue(input.Get("content"), parts, images)
+			if input.Get("type").String() == "input_text" || input.Get("text").Exists() {
+				collector.collectContentValue(input, parts, images)
+			}
+		}
+	}
+}
+
+// isResponsesDisplayUserItem 判定条目是否可能是用户本轮输入。仅用于展示回溯：
+// 明确非 user 的 role 一律跳过；function_call_output / reasoning / summary
+// 等非 message 类型即使带 text 字段也不是用户输入。
+func (collector moderationTextCollector) isResponsesDisplayUserItem(item gjson.Result) bool {
+	role := strings.ToLower(strings.TrimSpace(item.Get("role").String()))
+	if role == "assistant" || role == "system" || role == "tool" || role == "developer" {
+		return false
+	}
+	typ := strings.ToLower(strings.TrimSpace(item.Get("type").String()))
+	switch typ {
+	case "", "message", "input_text":
+	default:
+		return false
+	}
+	return collector.responseItemHasModerationText(item)
+}
+
 func (collector moderationTextCollector) responseItemHasModerationText(item gjson.Result) bool {
 	var parts []string
 	var images []string
@@ -419,6 +469,25 @@ func ExtractContentModerationLastUserTurn(protocol string, body []byte) string {
 	collector := moderationTextCollector{filterReminders: true}
 	var parts []string
 	var images []string
+	// Responses 详情展示需要容忍尾部工具回包/reasoning/summary：运维要看的是
+	// 触发本轮的用户输入，而不是因为尾部不是 user 就只剩上游错误。
+	if protocol == ContentModerationProtocolOpenAIResponses {
+		collector.collectLastResponsesUserTurnForDisplay(gjson.GetBytes(body, "input"), &parts, &images)
+		if text := strings.TrimSpace(strings.Join(parts, "\n\n")); text != "" {
+			return text
+		}
+		if len(images) > 0 {
+			return "[" + strings.Join(images, ", ") + "]"
+		}
+		// 回溯不到 user 条目时，保留旧行为：只认严格末条，避免误取历史文本。
+		collector.collectLastResponsesInput(gjson.GetBytes(body, "input"), &parts, &images)
+		if text := strings.TrimSpace(strings.Join(parts, "\n\n")); text != "" {
+			return text
+		}
+		if len(images) > 0 {
+			return "[" + strings.Join(images, ", ") + "]"
+		}
+	}
 	switch protocol {
 	case ContentModerationProtocolAnthropicMessages:
 		collector.collectLastAnthropicUserMessage(gjson.GetBytes(body, "messages"), &parts, &images)

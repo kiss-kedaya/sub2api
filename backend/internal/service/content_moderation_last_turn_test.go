@@ -40,3 +40,23 @@ func TestExtractContentModerationLastUserTurn_Responses(t *testing.T) {
 	]}`)
 	require.Equal(t, "latest turn", ExtractContentModerationLastUserTurn(ContentModerationProtocolOpenAIResponses, body))
 }
+
+// Codex/GPT 的 Responses 请求尾部常跟 function_call / function_call_output。
+// 详情展示必须回溯到最近一条 user 文本，而不是因为末条不是 user 就只剩上游错误。
+func TestExtractContentModerationLastUserTurn_ResponsesTrailingToolCall(t *testing.T) {
+	body := []byte(`{"input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"帮我检查这段代码"}]},
+		{"type":"function_call","call_id":"call_1","name":"shell","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_1","output":"ok"}
+	]}`)
+	require.Equal(t, "帮我检查这段代码", ExtractContentModerationLastUserTurn(ContentModerationProtocolOpenAIResponses, body))
+}
+
+// 尾部 reasoning/summary 同样不能顶替用户输入。
+func TestExtractContentModerationLastUserTurn_ResponsesTrailingReasoningSummary(t *testing.T) {
+	body := []byte(`{"input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"真实用户输入"}]},
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"模型内部摘要"}]}
+	]}`)
+	require.Equal(t, "真实用户输入", ExtractContentModerationLastUserTurn(ContentModerationProtocolOpenAIResponses, body))
+}
