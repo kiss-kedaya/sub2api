@@ -22191,6 +22191,8 @@ type GroupMutation struct {
 	addsearch_price_per_1k                  *float64
 	search_provider_base_url                *string
 	search_provider_api_key                 *string
+	grok_moderation_refusal_price           *float64
+	addgrok_moderation_refusal_price        *float64
 	audio_realtime_price_per_min            *float64
 	addaudio_realtime_price_per_min         *float64
 	audio_tts_price_per_million_chars       *float64
@@ -24316,6 +24318,76 @@ func (m *GroupMutation) ResetSearchProviderAPIKey() {
 	delete(m.clearedFields, group.FieldSearchProviderAPIKey)
 }
 
+// SetGrokModerationRefusalPrice sets the "grok_moderation_refusal_price" field.
+func (m *GroupMutation) SetGrokModerationRefusalPrice(f float64) {
+	m.grok_moderation_refusal_price = &f
+	m.addgrok_moderation_refusal_price = nil
+}
+
+// GrokModerationRefusalPrice returns the value of the "grok_moderation_refusal_price" field in the mutation.
+func (m *GroupMutation) GrokModerationRefusalPrice() (r float64, exists bool) {
+	v := m.grok_moderation_refusal_price
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGrokModerationRefusalPrice returns the old "grok_moderation_refusal_price" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldGrokModerationRefusalPrice(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGrokModerationRefusalPrice is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGrokModerationRefusalPrice requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGrokModerationRefusalPrice: %w", err)
+	}
+	return oldValue.GrokModerationRefusalPrice, nil
+}
+
+// AddGrokModerationRefusalPrice adds f to the "grok_moderation_refusal_price" field.
+func (m *GroupMutation) AddGrokModerationRefusalPrice(f float64) {
+	if m.addgrok_moderation_refusal_price != nil {
+		*m.addgrok_moderation_refusal_price += f
+	} else {
+		m.addgrok_moderation_refusal_price = &f
+	}
+}
+
+// AddedGrokModerationRefusalPrice returns the value that was added to the "grok_moderation_refusal_price" field in this mutation.
+func (m *GroupMutation) AddedGrokModerationRefusalPrice() (r float64, exists bool) {
+	v := m.addgrok_moderation_refusal_price
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearGrokModerationRefusalPrice clears the value of the "grok_moderation_refusal_price" field.
+func (m *GroupMutation) ClearGrokModerationRefusalPrice() {
+	m.grok_moderation_refusal_price = nil
+	m.addgrok_moderation_refusal_price = nil
+	m.clearedFields[group.FieldGrokModerationRefusalPrice] = struct{}{}
+}
+
+// GrokModerationRefusalPriceCleared returns if the "grok_moderation_refusal_price" field was cleared in this mutation.
+func (m *GroupMutation) GrokModerationRefusalPriceCleared() bool {
+	_, ok := m.clearedFields[group.FieldGrokModerationRefusalPrice]
+	return ok
+}
+
+// ResetGrokModerationRefusalPrice resets all changes to the "grok_moderation_refusal_price" field.
+func (m *GroupMutation) ResetGrokModerationRefusalPrice() {
+	m.grok_moderation_refusal_price = nil
+	m.addgrok_moderation_refusal_price = nil
+	delete(m.clearedFields, group.FieldGrokModerationRefusalPrice)
+}
+
 // SetAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field.
 func (m *GroupMutation) SetAudioRealtimePricePerMin(f float64) {
 	m.audio_realtime_price_per_min = &f
@@ -26112,7 +26184,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 69)
+	fields := make([]string, 0, 70)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26226,6 +26298,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.search_provider_api_key != nil {
 		fields = append(fields, group.FieldSearchProviderAPIKey)
+	}
+	if m.grok_moderation_refusal_price != nil {
+		fields = append(fields, group.FieldGrokModerationRefusalPrice)
 	}
 	if m.audio_realtime_price_per_min != nil {
 		fields = append(fields, group.FieldAudioRealtimePricePerMin)
@@ -26404,6 +26479,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.SearchProviderBaseURL()
 	case group.FieldSearchProviderAPIKey:
 		return m.SearchProviderAPIKey()
+	case group.FieldGrokModerationRefusalPrice:
+		return m.GrokModerationRefusalPrice()
 	case group.FieldAudioRealtimePricePerMin:
 		return m.AudioRealtimePricePerMin()
 	case group.FieldAudioTtsPricePerMillionChars:
@@ -26551,6 +26628,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldSearchProviderBaseURL(ctx)
 	case group.FieldSearchProviderAPIKey:
 		return m.OldSearchProviderAPIKey(ctx)
+	case group.FieldGrokModerationRefusalPrice:
+		return m.OldGrokModerationRefusalPrice(ctx)
 	case group.FieldAudioRealtimePricePerMin:
 		return m.OldAudioRealtimePricePerMin(ctx)
 	case group.FieldAudioTtsPricePerMillionChars:
@@ -26888,6 +26967,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetSearchProviderAPIKey(v)
 		return nil
+	case group.FieldGrokModerationRefusalPrice:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGrokModerationRefusalPrice(v)
+		return nil
 	case group.FieldAudioRealtimePricePerMin:
 		v, ok := value.(float64)
 		if !ok {
@@ -27167,6 +27253,9 @@ func (m *GroupMutation) AddedFields() []string {
 	if m.addsearch_price_per_1k != nil {
 		fields = append(fields, group.FieldSearchPricePer1k)
 	}
+	if m.addgrok_moderation_refusal_price != nil {
+		fields = append(fields, group.FieldGrokModerationRefusalPrice)
+	}
 	if m.addaudio_realtime_price_per_min != nil {
 		fields = append(fields, group.FieldAudioRealtimePricePerMin)
 	}
@@ -27238,6 +27327,8 @@ func (m *GroupMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedWebSearchPricePerCall()
 	case group.FieldSearchPricePer1k:
 		return m.AddedSearchPricePer1k()
+	case group.FieldGrokModerationRefusalPrice:
+		return m.AddedGrokModerationRefusalPrice()
 	case group.FieldAudioRealtimePricePerMin:
 		return m.AddedAudioRealtimePricePerMin()
 	case group.FieldAudioTtsPricePerMillionChars:
@@ -27391,6 +27482,13 @@ func (m *GroupMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddSearchPricePer1k(v)
 		return nil
+	case group.FieldGrokModerationRefusalPrice:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddGrokModerationRefusalPrice(v)
+		return nil
 	case group.FieldAudioRealtimePricePerMin:
 		v, ok := value.(float64)
 		if !ok {
@@ -27513,6 +27611,9 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldSearchProviderAPIKey) {
 		fields = append(fields, group.FieldSearchProviderAPIKey)
 	}
+	if m.FieldCleared(group.FieldGrokModerationRefusalPrice) {
+		fields = append(fields, group.FieldGrokModerationRefusalPrice)
+	}
 	if m.FieldCleared(group.FieldAudioRealtimePricePerMin) {
 		fields = append(fields, group.FieldAudioRealtimePricePerMin)
 	}
@@ -27598,6 +27699,9 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldSearchProviderAPIKey:
 		m.ClearSearchProviderAPIKey()
+		return nil
+	case group.FieldGrokModerationRefusalPrice:
+		m.ClearGrokModerationRefusalPrice()
 		return nil
 	case group.FieldAudioRealtimePricePerMin:
 		m.ClearAudioRealtimePricePerMin()
@@ -27741,6 +27845,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldSearchProviderAPIKey:
 		m.ResetSearchProviderAPIKey()
+		return nil
+	case group.FieldGrokModerationRefusalPrice:
+		m.ResetGrokModerationRefusalPrice()
 		return nil
 	case group.FieldAudioRealtimePricePerMin:
 		m.ResetAudioRealtimePricePerMin()

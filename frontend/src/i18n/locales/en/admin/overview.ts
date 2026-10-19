@@ -1045,6 +1045,12 @@ export default {
         searchProviderApiKeyConfigured: 'A key is configured. Leave empty to keep it.',
         searchProviderApiKeyClear: 'Clear the saved search key'
       },
+      moderationRefusalPricing: {
+        title: 'Grok Safety-Refusal Billing',
+        hint: 'Charge per request rejected with SAFETY_CHECK_TYPE (USD). Leave empty for the default 0.1; set 0 to disable the charge.',
+        pricePerCall: 'Charge per refusal (USD)',
+        placeholder: 'default 0.1'
+      },
       modelPricing: {
         title: 'Per-model group pricing',
         description: 'Overrides channel and built-in prices for matching models. Long-context tiers come from official presets — do not enter custom intervals. Use per-request tiers such as realtime, tts, and stt for audio.',

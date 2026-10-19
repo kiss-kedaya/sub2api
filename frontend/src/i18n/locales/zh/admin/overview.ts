@@ -1042,6 +1042,12 @@ export default {
         searchProviderApiKeyConfigured: '已配置密钥；留空表示保持不变',
         searchProviderApiKeyClear: '清除已保存的搜索 Key'
       },
+      moderationRefusalPricing: {
+        title: 'Grok 安全拒绝扣费',
+        hint: '命中 SAFETY_CHECK_TYPE 安全拒绝时每次扣多少（USD）。留空使用默认 0.1；填 0 表示不扣费。',
+        pricePerCall: '每次扣费（USD）',
+        placeholder: '默认 0.1'
+      },
       modelPricing: {
         title: '分组逐模型定价',
         description: '匹配模型后覆盖渠道和内置价格。长上下文阶梯沿用官方/预设价卡，无需再手填区间。音频可用按次层级配置 realtime、tts、stt。',
