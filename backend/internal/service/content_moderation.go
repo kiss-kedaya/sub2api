@@ -3013,11 +3013,38 @@ type CyberPolicyRecordInput struct {
 	GroupName       string
 	Endpoint        string
 	Model           string
+	// RequestBody 是本次请求的原始入站请求体。风控中心详情要展示
+	// 「用户最后一轮输入」，而不是上游错误文本；因此必须在这里带上原始
+	// payload，由服务层按 endpoint 解析出最后一轮用户消息。
+	RequestBody     []byte
 	UpstreamMessage string
 	UpstreamBody    string
 	UpstreamStatus  int
 	UpstreamInTok   int
 	UpstreamOutTok  int
+}
+
+// extractCyberPolicyLastUserTurn 按入站端点选择解析协议，取出用户最后一轮输入。
+// 解析失败或请求体缺失时返回空串，调用方会回退到上游错误文本。
+func extractCyberPolicyLastUserTurn(endpoint string, body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	return ExtractContentModerationLastUserTurn(contentModerationProtocolForEndpoint(endpoint), body)
+}
+
+// contentModerationProtocolForEndpoint 把入站端点映射到内容审核协议。
+func contentModerationProtocolForEndpoint(endpoint string) string {
+	switch {
+	case strings.Contains(endpoint, "/messages"):
+		return ContentModerationProtocolAnthropicMessages
+	case strings.Contains(endpoint, "/chat/completions"):
+		return ContentModerationProtocolOpenAIChat
+	case strings.Contains(endpoint, "/v1beta/models"):
+		return ContentModerationProtocolGemini
+	default:
+		return ContentModerationProtocolOpenAIResponses
+	}
 }
 
 // RecordCyberPolicyEvent 把一次 cyber_policy 硬阻断写入风控中心日志、计入违规计数、
@@ -3056,6 +3083,9 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 	if in.UpstreamInTok > 0 || in.UpstreamOutTok > 0 {
 		errBody = fmt.Sprintf("%s\nupstream_usage=in:%d,out:%d", errBody, in.UpstreamInTok, in.UpstreamOutTok)
 	}
+	// 详情页要展示的是「用户最后一轮输入」，不能拿上游错误顶替。
+	// 只有请求体解析不出内容时，才回退到上游错误文本（由前端按 error 展示）。
+	lastUserTurn := extractCyberPolicyLastUserTurn(in.Endpoint, in.RequestBody)
 	log := &ContentModerationLog{
 		RequestID:       in.RequestID,
 		UserID:          userID,
@@ -3072,6 +3102,7 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 		Flagged:         true,
 		HighestCategory: "cyber_policy",
 		HighestScore:    1.0,
+		InputExcerpt:    trimRunes(redactContentModerationSecrets(lastUserTurn), maxModerationLogExcerptRunes),
 		Error:           trimRunes(redactContentModerationSecrets(errBody), maxModerationExcerptRunes*4),
 		CreatedAt:       time.Now(),
 	}
