@@ -2775,6 +2775,7 @@ func setEnvReachableDefaults() {
 	// DeepSeek response compat is opt-in; registering the default keeps
 	// GATEWAY_DEEPSEEK_RESPONSE_COMPAT_ENABLED reachable from the environment.
 	viper.SetDefault("gateway.deepseek_response_compat_enabled", false)
+	viper.SetDefault("gateway.thinking_budget_rectify_enabled", false)
 
 	// server.trusted_proxies and security.forwarded_client_ip_headers are the
 	// other exception: load() distinguishes explicit configuration from absence
