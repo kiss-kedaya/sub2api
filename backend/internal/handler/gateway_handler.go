@@ -330,6 +330,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	stopStreamHeaderKeepalive := func() {}
 	if reqStream {
 		stopStreamHeaderKeepalive = service.StartOpenAIStreamSSEKeepalive(c, h.streamKeepaliveInterval())
+		// Anthropic 直通：上游响应头到达前不写 200，保证上游 4xx/5xx 原样透传。
+		service.GateOpenAIStreamSSEKeepaliveUntilUpstream(c)
 	}
 	defer stopStreamHeaderKeepalive()
 
@@ -657,7 +659,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化
-					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
+					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward ||
+						service.IsOpenAIStreamSSEKeepaliveArmed(c) {
 						submitGeminiUsage(result)
 						h.handleFailoverExhausted(c, failoverErr, service.PlatformGemini, true)
 						return
@@ -1172,7 +1175,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化
-					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
+					// 另外，一旦下游 SSE 响应头已提交（上游已返回 200 + SSE），
+					// 状态码就固定为 200，换号也无法撤销，同样禁止 failover。
+					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward ||
+						service.IsOpenAIStreamSSEKeepaliveArmed(c) {
 						submitForwardUsage(result)
 						h.handleFailoverExhausted(c, failoverErr, account.Platform, true)
 						return
@@ -1248,6 +1254,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 
+			// Forward 成功 = 上游已返回 2xx。无论走的是原生直通、OAuth、
+			// Gemini compat 还是 Antigravity，此刻才允许心跳开始写下游。
+			service.ArmOpenAIStreamSSEKeepalive(c)
 			submitForwardUsage(result)
 			// 转发成功，会话槽保持既有空闲超时语义
 			upstreamServedSession = true
