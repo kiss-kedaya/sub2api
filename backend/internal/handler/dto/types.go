@@ -133,6 +133,8 @@ type Group struct {
 	// Codex alpha/search 网页搜索单次价格（USD/次）；null 表示使用默认价 0.01
 	WebSearchPricePerCall *float64 `json:"web_search_price_per_call"`
 	SearchPricePer1k      *float64 `json:"search_price_per_1k"`
+	// GrokModerationRefusalPrice Grok 安全拒绝单次扣费（USD/次）；nil 使用默认 0.1，0 表示不扣费。
+	GrokModerationRefusalPrice *float64 `json:"grok_moderation_refusal_price"`
 	// DeepSeek 搜索专用端点。只回显 URL 与"是否已配置 key"，key 本身永不返回。
 	SearchProviderBaseURL        *string  `json:"search_provider_base_url"`
 	SearchProviderAPIKeySet      bool     `json:"search_provider_api_key_set"`

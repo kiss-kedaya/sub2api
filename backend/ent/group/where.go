@@ -240,6 +240,11 @@ func SearchProviderAPIKey(v string) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldSearchProviderAPIKey, v))
 }
 
+// GrokModerationRefusalPrice applies equality check predicate on the "grok_moderation_refusal_price" field. It's identical to GrokModerationRefusalPriceEQ.
+func GrokModerationRefusalPrice(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldGrokModerationRefusalPrice, v))
+}
+
 // AudioRealtimePricePerMin applies equality check predicate on the "audio_realtime_price_per_min" field. It's identical to AudioRealtimePricePerMinEQ.
 func AudioRealtimePricePerMin(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAudioRealtimePricePerMin, v))
@@ -2078,6 +2083,56 @@ func SearchProviderAPIKeyEqualFold(v string) predicate.Group {
 // SearchProviderAPIKeyContainsFold applies the ContainsFold predicate on the "search_provider_api_key" field.
 func SearchProviderAPIKeyContainsFold(v string) predicate.Group {
 	return predicate.Group(sql.FieldContainsFold(FieldSearchProviderAPIKey, v))
+}
+
+// GrokModerationRefusalPriceEQ applies the EQ predicate on the "grok_moderation_refusal_price" field.
+func GrokModerationRefusalPriceEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldGrokModerationRefusalPrice, v))
+}
+
+// GrokModerationRefusalPriceNEQ applies the NEQ predicate on the "grok_moderation_refusal_price" field.
+func GrokModerationRefusalPriceNEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldGrokModerationRefusalPrice, v))
+}
+
+// GrokModerationRefusalPriceIn applies the In predicate on the "grok_moderation_refusal_price" field.
+func GrokModerationRefusalPriceIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldGrokModerationRefusalPrice, vs...))
+}
+
+// GrokModerationRefusalPriceNotIn applies the NotIn predicate on the "grok_moderation_refusal_price" field.
+func GrokModerationRefusalPriceNotIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldGrokModerationRefusalPrice, vs...))
+}
+
+// GrokModerationRefusalPriceGT applies the GT predicate on the "grok_moderation_refusal_price" field.
+func GrokModerationRefusalPriceGT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldGrokModerationRefusalPrice, v))
+}
+
+// GrokModerationRefusalPriceGTE applies the GTE predicate on the "grok_moderation_refusal_price" field.
+func GrokModerationRefusalPriceGTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldGrokModerationRefusalPrice, v))
+}
+
+// GrokModerationRefusalPriceLT applies the LT predicate on the "grok_moderation_refusal_price" field.
+func GrokModerationRefusalPriceLT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldGrokModerationRefusalPrice, v))
+}
+
+// GrokModerationRefusalPriceLTE applies the LTE predicate on the "grok_moderation_refusal_price" field.
+func GrokModerationRefusalPriceLTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldGrokModerationRefusalPrice, v))
+}
+
+// GrokModerationRefusalPriceIsNil applies the IsNil predicate on the "grok_moderation_refusal_price" field.
+func GrokModerationRefusalPriceIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldGrokModerationRefusalPrice))
+}
+
+// GrokModerationRefusalPriceNotNil applies the NotNil predicate on the "grok_moderation_refusal_price" field.
+func GrokModerationRefusalPriceNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldGrokModerationRefusalPrice))
 }
 
 // AudioRealtimePricePerMinEQ applies the EQ predicate on the "audio_realtime_price_per_min" field.

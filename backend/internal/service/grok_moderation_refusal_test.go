@@ -28,43 +28,51 @@ func TestIsGrokModerationRefusal(t *testing.T) {
 }
 
 func TestPrepareGrokModerationRefusalResult(t *testing.T) {
-	result := PrepareGrokModerationRefusalResult(nil, "grok-4", 0)
+	result := PrepareGrokModerationRefusalResult(nil, "grok-4", GrokModerationRefusalBilledCost(nil))
 	if result.Model != "grok-4" || result.UpstreamModel != "grok-4" || result.NonBillableUpstreamError || result.ForcedBillingCost != 0.1 || !result.ForceBalanceBilling {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
 
-func TestGrokModerationRefusalBilledCostAppliesMultiplier(t *testing.T) {
+func TestGrokModerationRefusalBilledCostUsesGroupOverride(t *testing.T) {
 	cases := []struct {
-		multiplier float64
-		want       float64
+		name  string
+		group *Group
+		want  float64
 	}{
-		{1, 0.1},
-		{0.07, 0.007},
-		{2, 0.2},
-		{0, 0},
-		{-1, 0},
+		{"nil group falls back to 0.1", nil, 0.1},
+		{"unset override falls back to 0.1", &Group{}, 0.1},
+		{"explicit 0 disables", &Group{GrokModerationRefusalPrice: ptrFloat(0)}, 0},
+		{"custom price", &Group{GrokModerationRefusalPrice: ptrFloat(0.5)}, 0.5},
+		{"negative clamps to 0", &Group{GrokModerationRefusalPrice: ptrFloat(-1)}, 0},
 	}
 	for _, tc := range cases {
-		got := GrokModerationRefusalBilledCost(tc.multiplier)
+		got := GrokModerationRefusalBilledCost(tc.group)
 		if math.Abs(got-tc.want) > 1e-12 {
-			t.Fatalf("multiplier=%v want=%v got=%v", tc.multiplier, tc.want, got)
+			t.Fatalf("%s: want=%v got=%v", tc.name, tc.want, got)
 		}
 	}
 
-	result := PrepareGrokModerationRefusalResult(nil, "grok-4", GrokModerationRefusalBilledCost(0.07))
-	if math.Abs(result.ForcedBillingCost-0.007) > 1e-12 || !result.ForceBalanceBilling {
-		t.Fatalf("unexpected multiplied result: %+v", result)
+	result := PrepareGrokModerationRefusalResult(nil, "grok-4", 0.5)
+	if math.Abs(result.ForcedBillingCost-0.5) > 1e-12 || !result.ForceBalanceBilling {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+
+	disabled := PrepareGrokModerationRefusalResult(nil, "grok-4", 0)
+	if disabled.ForcedBillingCost != 0 || disabled.ForceBalanceBilling {
+		t.Fatalf("explicit zero must not force billing: %+v", disabled)
 	}
 }
 
 func TestPrepareGrokModerationRefusalOpenAIResult(t *testing.T) {
-	result := PrepareGrokModerationRefusalOpenAIResult(nil, "grok-4.7", 0.007)
+	result := PrepareGrokModerationRefusalOpenAIResult(nil, "grok-4.7", 0.25)
 	if result.Model != "grok-4.7" || result.UpstreamModel != "grok-4.7" ||
-		result.NonBillableUpstreamError || math.Abs(result.ForcedBillingCost-0.007) > 1e-12 || !result.ForceBalanceBilling {
+		result.NonBillableUpstreamError || math.Abs(result.ForcedBillingCost-0.25) > 1e-12 || !result.ForceBalanceBilling {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
+
+func ptrFloat(v float64) *float64 { return &v }
 
 func TestIsGrokPlatformContentPolicyRejection(t *testing.T) {
 	if !IsGrokPlatformContentPolicyRejection(PlatformGrok,
