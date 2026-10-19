@@ -1631,7 +1631,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						)
 						return
 					}
-					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
+					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward ||
+						service.IsOpenAIStreamSSEKeepaliveArmed(c) {
 						h.gatewayService.ObserveOpenAIAccountHealthFailure(c.Request.Context(), account, err)
 						submitMessagesUsage(result)
 						h.handleAnthropicFailoverExhausted(c, failoverErr, true)
@@ -3724,6 +3725,12 @@ func openAIForwardErrorAlreadyCommunicated(c *gin.Context, writerSizeBeforeForwa
 
 func openAIForwardMayFailover(c *gin.Context, writerSizeBeforeForward int, failoverErr *service.UpstreamFailoverError) bool {
 	if c == nil || c.Writer == nil {
+		return false
+	}
+	// 下游 SSE 响应头一旦提交（上游已返回 200 + SSE），状态码就固定为 200，
+	// 换号也无法撤销。此时即便只写了心跳字节、即便 failoverErr 声明
+	// SafeToFailoverAfterWrite，也必须禁止换号。
+	if service.IsOpenAIStreamSSEKeepaliveArmed(c) {
 		return false
 	}
 	if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {

@@ -1035,6 +1035,13 @@ type GatewayConfig struct {
 	// 默认 false：不改写响应，直接透传上游。只有接入不支持原生工具调用的老式
 	// DeepSeek 兼容中转时才需要打开。
 	DeepSeekResponseCompatEnabled bool `mapstructure:"deepseek_response_compat_enabled"`
+	// ThinkingBudgetRectifyEnabled 控制「上游报 budget_tokens 约束错误后，自动把
+	// thinking.type 改成 enabled、budget_tokens 改成 32000、max_tokens 改成 64000
+	// 再重发一次」这条兼容链路。
+	//
+	// 这是替客户端改写请求参数（会显著放大客户端原本的预算），与官方语义不一致，
+	// 因此默认关闭。只有接入了确实要求固定 budget 区间的上游时才需要打开。
+	ThinkingBudgetRectifyEnabled bool `mapstructure:"thinking_budget_rectify_enabled"`
 	// ConnectionPoolIsolation: 上游连接池隔离策略（proxy/account/account_proxy）
 	ConnectionPoolIsolation string `mapstructure:"connection_pool_isolation"`
 	// ForceCodexCLI: 强制将 OpenAI `/v1/responses` 请求按 Codex CLI 处理。
