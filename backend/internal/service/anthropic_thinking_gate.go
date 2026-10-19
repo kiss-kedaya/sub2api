@@ -67,24 +67,75 @@ func sanitizeAnthropicThinkingForModel(body []byte, modelID string) []byte {
 	}
 
 	thinking := gjson.GetBytes(body, "thinking")
-	if !thinking.IsObject() || thinking.Get("type").String() != "enabled" {
+	if !thinking.IsObject() {
 		return body
 	}
 
-	out := body
-	changed := false
-	if next, err := sjson.SetBytes(out, "thinking.type", "adaptive"); err == nil {
-		out = next
-		changed = true
-	}
-	if thinking.Get("budget_tokens").Exists() {
-		if next, err := sjson.DeleteBytes(out, "thinking.budget_tokens"); err == nil {
+	// 已验证的上游 thinking 兼容矩阵：
+	//   opus-5-5  : enabled / disabled / between_tools 全部 400；adaptive（带不带
+	//               budget_tokens 都行）和省略 thinking 都是 200。
+	//   sonnet-5-5: adaptive 与 between_tools 200；enabled / disabled 400。
+	// 因此不能再只处理 "enabled"：客户端把 thinking 关掉时会发 disabled，
+	// 上游同样直接 400。disabled 的语义是「不要思考」，与省略 thinking 等价，
+	// 只能整段删除（改 adaptive 会把用户明确关掉的思考又打开）。
+	switch thinking.Get("type").String() {
+	case "enabled":
+		// 保持「开思考」语义，换成上游唯一接受的 adaptive。
+		out := body
+		changed := false
+		if next, err := sjson.SetBytes(out, "thinking.type", "adaptive"); err == nil {
 			out = next
 			changed = true
 		}
-	}
-	if !changed {
+		if thinking.Get("budget_tokens").Exists() {
+			if next, err := sjson.DeleteBytes(out, "thinking.budget_tokens"); err == nil {
+				out = next
+				changed = true
+			}
+		}
+		if !changed {
+			return body
+		}
+		return out
+
+	case "between_tools":
+		// 只有 sonnet 5.5 接受 between_tools；opus 会报
+		// "thinking.type=between_tools is unsupported"。
+		if anthropicModelAllowsBetweenToolsThinking(modelID) {
+			return body
+		}
+		out := body
+		changed := false
+		if next, err := sjson.SetBytes(out, "thinking.type", "adaptive"); err == nil {
+			out = next
+			changed = true
+		}
+		if thinking.Get("budget_tokens").Exists() {
+			if next, err := sjson.DeleteBytes(out, "thinking.budget_tokens"); err == nil {
+				out = next
+				changed = true
+			}
+		}
+		if !changed {
+			return body
+		}
+		return out
+
+	case "disabled":
+		// 上游不接受 disabled，唯一合法且保留原意的表达是省略 thinking。
+		out, err := sjson.DeleteBytes(body, "thinking")
+		if err != nil {
+			return body
+		}
+		return removeThinkingDependentContextStrategies(out)
+
+	default:
 		return body
 	}
-	return out
+}
+
+// anthropicModelAllowsBetweenToolsThinking 判断模型是否接受
+// thinking.type="between_tools"。目前只有 sonnet 5.5 明确支持；opus 5.5 实测 400。
+func anthropicModelAllowsBetweenToolsThinking(modelID string) bool {
+	return strings.Contains(strings.ToLower(modelID), "sonnet")
 }
