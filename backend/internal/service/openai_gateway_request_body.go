@@ -1508,6 +1508,12 @@ func normalizeOpenAIResponsesCompatibilityBody(body []byte, account *Account, re
 			changed = true
 		}
 	}
+	if aliasBody, aliasChanged, aliasErr := normalizeOpenAIResponsesLegacyWebSearchToolType(normalized); aliasErr != nil {
+		return body, false, fmt.Errorf("normalize websocket legacy web search tool: %w", aliasErr)
+	} else if aliasChanged {
+		normalized = aliasBody
+		changed = true
+	}
 	if account.IsOpenAIOAuthLike() && !compact {
 		webSearchBody, webSearchChanged, webSearchErr := ensureOpenAIOAuthWebSearchToolForHistoryBody(normalized, responsesLite)
 		if webSearchErr != nil {
