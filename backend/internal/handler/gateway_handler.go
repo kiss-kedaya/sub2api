@@ -1811,12 +1811,26 @@ func (h *GatewayHandler) Usage(c *gin.Context) {
 	// 判断模式: key 有总额度或速率限制 → quota_limited，否则 → unrestricted
 	isQuotaLimited := apiKey.Quota > 0 || apiKey.HasRateLimits()
 
+	// 余额模式的用户查询必须排在统计查询之前，且不受客户端断连影响。
+	// 该 key 的 usage_logs 可达几十万行，下面的统计要跑数百毫秒以上；监控探针
+	// (sub2api-balance-alert / LinkAI-UpstreamMonitor) 常在这之前就断开，ctx 被
+	// 取消后 GetByID 直接返回 context canceled，接口恒 500。
+	var latestUser *service.User
+	if !isQuotaLimited && (apiKey.Group == nil || !apiKey.Group.IsSubscriptionType()) {
+		user, loadErr := h.userService.GetByID(context.WithoutCancel(ctx), subject.UserID)
+		if loadErr != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get user info")
+			return
+		}
+		latestUser = user
+	}
+
 	if isQuotaLimited {
 		h.usageQuotaLimited(c, ctx, apiKey, usageData, dailyUsage, modelStats)
 		return
 	}
 
-	h.usageUnrestricted(c, ctx, apiKey, subject, usageData, dailyUsage, modelStats)
+	h.usageUnrestricted(c, ctx, apiKey, subject, latestUser, usageData, dailyUsage, modelStats)
 }
 
 // parseUsageDateRange 解析 start_date / end_date query params，默认返回近 30 天范围
@@ -1980,7 +1994,7 @@ func (h *GatewayHandler) usageQuotaLimited(c *gin.Context, ctx context.Context, 
 }
 
 // usageUnrestricted 处理 unrestricted 模式的响应（向后兼容）
-func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, usageData gin.H, dailyUsage any, modelStats any) {
+func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, latestUser *service.User, usageData gin.H, dailyUsage any, modelStats any) {
 	// 订阅模式
 	if apiKey.Group != nil && apiKey.Group.IsSubscriptionType() {
 		resp := gin.H{
@@ -2020,9 +2034,9 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 		return
 	}
 
-	// 余额模式
-	latestUser, err := h.userService.GetByID(ctx, subject.UserID)
-	if err != nil {
+	// 余额模式：latestUser 已由调用方在统计查询之前取好（见 Usage），
+	// 这里不再重复查询，避免 ctx 被客户端断连取消后恒返回 500。
+	if latestUser == nil {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get user info")
 		return
 	}
