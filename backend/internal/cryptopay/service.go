@@ -131,6 +131,10 @@ var watchedTokens = map[string][]TokenConfig{
 	},
 }
 
+func cryptoWorkersAllowed() bool {
+	return !service.BackgroundJobsDisabled() && !service.CryptoAdminTestMode()
+}
+
 // tokenDecimals resolves a token contract's decimals for a chain, falling
 // back to the stablecoin default (6) for unknown contracts.
 func tokenDecimals(chain, contract string) int {
@@ -237,6 +241,8 @@ func (s *Service) reload(ctx context.Context) {
 		slog.Warn("[cryptopay] config load failed", "error", err)
 		return
 	}
+	// A shared config must never start scans on an explicitly excluded host.
+	cfg.Enabled = cfg.Enabled && service.CryptoInstanceEnabled()
 
 	// A queued run must not retain an executor built from obsolete config.
 	s.sweepMu.Lock()
@@ -244,6 +250,9 @@ func (s *Service) reload(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.config = cfg
+	// Vault administration must remain available while deposits are paused.
+	// Initializing the client does not unlock a vault, sign, scan or move funds.
+	s.signer = sweeper.NewSignerClient(cfg.SignerSocket)
 	if s.addresses != nil {
 		s.addresses.SetSigner(addresses.NewSignerClient(cfg.SignerSocket))
 	}
@@ -359,9 +368,10 @@ func (s *Service) reload(ctx context.Context) {
 			slog.Warn("[cryptopay] reorg push failed", "error", err)
 		}
 	})
-	s.worker.Start()
+	if cryptoWorkersAllowed() {
+		s.worker.Start()
+	}
 
-	s.signer = sweeper.NewSignerClient(cfg.SignerSocket)
 	// Token decimals per chain: the planner and executor rebuild raw amounts
 	// from NUMERIC columns, and a wrong exponent moves money by 1e12. The
 	// key is chain|contract because one chain watches several tokens.
@@ -413,9 +423,11 @@ func (s *Service) reload(ctx context.Context) {
 	if s.maintCancel != nil {
 		s.maintCancel()
 	}
-	maintCtx, maintCancel := context.WithCancel(context.Background())
-	s.maintCancel = maintCancel
-	go s.maintenance(maintCtx, cfg)
+	if cryptoWorkersAllowed() {
+		maintCtx, maintCancel := context.WithCancel(context.Background())
+		s.maintCancel = maintCancel
+		go s.maintenance(maintCtx, cfg)
+	}
 	slog.Info("[cryptopay] started", "chains", cfg.Chains)
 }
 

@@ -227,6 +227,9 @@ func (s *BackupService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
 
 // Start 启动定时备份调度器并清理孤立记录
 func (s *BackupService) Start() {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	s.cronSched = cron.New()
 	s.cronSched.Start()
 
@@ -465,6 +468,9 @@ func (s *BackupService) UpdateSchedule(ctx context.Context, cfg BackupScheduleCo
 }
 
 func (s *BackupService) applyCronSchedule(cfg *BackupScheduleConfig) error {
+	if BackgroundJobsDisabled() {
+		return nil
+	}
 	s.cronMu.Lock()
 	defer s.cronMu.Unlock()
 

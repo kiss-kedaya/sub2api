@@ -131,11 +131,13 @@ func (h *TotpHandler) Enable(c *gin.Context) {
 type TotpDisableRequest struct {
 	EmailCode string `json:"email_code"`
 	Password  string `json:"password"`
+	TotpCode  string `json:"totp_code"`
 }
 
 // Disable disables TOTP for the current user
 // POST /api/v1/user/totp/disable
 func (h *TotpHandler) Disable(c *gin.Context) {
+	cryptoNoStore(c)
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
@@ -148,7 +150,7 @@ func (h *TotpHandler) Disable(c *gin.Context) {
 		return
 	}
 
-	if err := h.totpService.Disable(c.Request.Context(), subject.UserID, req.EmailCode, req.Password); err != nil {
+	if err := h.totpService.Disable(c.Request.Context(), subject.UserID, req.EmailCode, req.Password, req.TotpCode); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}

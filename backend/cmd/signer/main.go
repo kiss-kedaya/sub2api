@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // parseBigInt parses a non-negative decimal integer ("" = 0). Raw token
@@ -55,6 +56,7 @@ type server struct {
 	// never replace it; changing an approval requires an operator restart.
 	policyMu sync.RWMutex
 	store    *store
+	backup   vaultBackupGuard // shared by every backup/import client, never keyed by caller
 }
 
 // parseSocketMode deliberately accepts only these two octal spellings. Never
@@ -79,8 +81,24 @@ func main() {
 		statePath     = flag.String("state", "", "absolute path to signer-private persistent budget SQLite ledger")
 		initState     = flag.Bool("init-state", false, "offline initialization of a NEW budget ledger, then exit; never resets an existing ledger")
 		genSeed       = flag.Bool("gen-seed", false, "generate a new mnemonic and exit")
+		recoverBackup = flag.String("recover-backup", "", "offline recovery of an encrypted signer backup; passphrase is read from tty or stdin")
+		recoverOutput = flag.String("output", "", "NEW private file for recovered deposit/hot mnemonics; never overwritten")
 	)
 	flag.Parse()
+	// Recovery must exit before opening the database, budget ledger or socket,
+	// or considering any environment-provided seeds/bootstrap passphrase.
+	if *recoverBackup != "" {
+		if flag.NArg() != 0 || *initState || *genSeed {
+			log.Fatal("recovery does not accept positional arguments or other offline operations")
+		}
+		if err := recoverVaultBackup(*recoverBackup, *recoverOutput, os.Stdin, os.Stderr); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *recoverOutput != "" {
+		log.Fatal("--output requires --recover-backup")
+	}
 	socketMode, err := parseSocketMode(*socketModeRaw)
 	if err != nil {
 		log.Fatal(err)
@@ -185,6 +203,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", srv.handleHealth)
 	mux.HandleFunc("/unlock", srv.handleUnlock)
+	srv.registerVaultBackupRoutes(mux)
 	mux.HandleFunc("/derive", srv.handleDerive)
 	mux.HandleFunc("/hot-address", srv.handleHotAddress)
 	mux.HandleFunc("/sign/evm", srv.handleSignEVM)
@@ -218,6 +237,7 @@ func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // memory. The passphrase is never stored: it exists only for the scrypt
 // derivation that opens the vault.
 func (s *server) handleUnlock(w http.ResponseWriter, r *http.Request) {
+	vaultResponseHeaders(w)
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -228,12 +248,12 @@ func (s *server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 		DepositMnemonic string `json:"deposit_mnemonic,omitempty"`
 		HotMnemonic     string `json:"hot_mnemonic,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeVaultRequest(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if strings.TrimSpace(req.Passphrase) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "passphrase required"})
+	if !validVaultPassphrase(req.Passphrase) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "passphrase required (at most 1024 bytes)"})
 		return
 	}
 
@@ -248,9 +268,17 @@ func (s *server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	if raw != "" && (req.DepositMnemonic != "" || req.HotMnemonic != "") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vault already exists; seed replacement is not allowed; existing seeds unchanged"})
+		return
+	}
 
 	// First run: seal the provided seeds into a new vault.
 	if raw == "" {
+		if utf8.RuneCountInString(req.Passphrase) < 12 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "a new vault requires a passphrase of at least 12 characters"})
+			return
+		}
 		deposit := strings.TrimSpace(req.DepositMnemonic)
 		hot := strings.TrimSpace(req.HotMnemonic)
 		if deposit == "" || hot == "" {
@@ -259,7 +287,7 @@ func (s *server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if deposit == hot {
+		if strings.Join(strings.Fields(deposit), " ") == strings.Join(strings.Fields(hot), " ") {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hot seed must differ from the deposit seed"})
 			return
 		}

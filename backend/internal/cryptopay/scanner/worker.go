@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
+
+// Shared by every scanner instance; distinct from the sweeper's CRYPTOSW key.
+const scanLockKey int64 = 0x43525950544f5343
 
 // ChainConfig describes one chain's scan parameters.
 type ChainConfig struct {
@@ -145,6 +149,24 @@ func (w *Worker) run(ctx context.Context) {
 }
 
 func (w *Worker) scanAll(ctx context.Context) {
+	release, err := w.tryScanLock(ctx)
+	if err != nil {
+		slog.Warn("[cryptopay] scanner lock failed", "error", err)
+		return
+	}
+	if release == nil {
+		slog.Debug("[cryptopay] scan skipped: another instance holds the lock")
+		return
+	}
+	defer func() {
+		if err := release(); err != nil {
+			slog.Warn("[cryptopay] scanner unlock failed", "error", err)
+		}
+	}()
+	if ctx.Err() != nil {
+		return
+	}
+
 	// Retry deposits recorded before finality: their confirmations may have
 	// landed since the last pass.
 	if err := w.retryPending(ctx); err != nil {
@@ -160,6 +182,48 @@ func (w *Worker) scanAll(ctx context.Context) {
 			slog.Warn("[cryptopay] scan failed", "chain", chain.Chain, "error", err)
 		}
 	}
+}
+
+// tryScanLock pins a dedicated session for the entire pass. Business queries
+// still use w.db, so a bounded pool must leave at least one other connection.
+// A nil release with no error means contention: the caller must skip all work.
+func (w *Worker) tryScanLock(ctx context.Context) (func() error, error) {
+	if w == nil || w.db == nil {
+		return nil, fmt.Errorf("scanner database is not configured")
+	}
+	if w.db.Stats().MaxOpenConnections == 1 {
+		return nil, fmt.Errorf("scanner requires at least two database connections (lock and scan queries)")
+	}
+	conn, err := w.db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("scanner lock connection: %w", err)
+	}
+	// Raw with ErrBadConn closes the physical session rather than pooling it.
+	// This also releases a lock acquired before a response was lost or invalid.
+	discard := func() { _ = conn.Raw(func(any) error { return driver.ErrBadConn }) }
+	var locked bool
+	if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, scanLockKey).Scan(&locked); err != nil {
+		discard()
+		return nil, fmt.Errorf("acquire scanner lock: %w", err)
+	}
+	if !locked {
+		return nil, conn.Close()
+	}
+	return func() error {
+		// Stop cancels the scan context; unlocking must still reach PostgreSQL.
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var unlocked bool
+		err := conn.QueryRowContext(cleanup, `SELECT pg_advisory_unlock($1)`, scanLockKey).Scan(&unlocked)
+		if err != nil || !unlocked {
+			discard() // Never pool a session whose lock state is uncertain.
+			if err == nil {
+				err = fmt.Errorf("scanner advisory lock was not held")
+			}
+			return fmt.Errorf("release scanner lock: %w", err)
+		}
+		return conn.Close()
+	}, nil
 }
 
 // ScanOnce runs one full pass; exposed for tests and manual triggering.

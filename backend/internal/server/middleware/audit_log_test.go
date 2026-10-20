@@ -152,6 +152,39 @@ func TestPasskeyLoginAuditUsesCanonicalLoginActionAndOmitsCredentialBody(t *test
 	require.Contains(t, auditBodyOmittedRoutes, route)
 }
 
+func TestCryptoMnemonicExportAuditOmitsBodyAndTotpValue(t *testing.T) {
+	route := "POST /api/v1/admin/crypto/signer/export-mnemonics"
+	require.Equal(t, "admin.crypto.signer.mnemonics.export", auditActionOverrides[route])
+	require.Contains(t, auditBodyOmittedRoutes, route)
+	require.Equal(t, "admin.crypto.deposits.export", auditSensitiveReads["GET /api/v1/admin/crypto/deposits.csv"])
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	capture := &auditCaptureRepository{}
+	audit := service.NewAuditLogService(capture, nil)
+	audit.Start()
+	router.Use(func(c *gin.Context) {
+		c.Set("auth_method", service.AuditAuthMethodJWT)
+		c.Set(string(ContextKeyUser), AuthSubject{UserID: 88})
+		c.Set(string(ContextKeyUserRole), service.RoleAdmin)
+		c.Next()
+	})
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
+	router.POST("/api/v1/admin/crypto/signer/export-mnemonics", func(c *gin.Context) {
+		c.Status(http.StatusServiceUnavailable)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/crypto/signer/export-mnemonics", bytes.NewBufferString(`{"passphrase":"audit-secret-passphrase"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Crypto-TOTP", "654321")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	audit.Stop()
+	require.Len(t, capture.logs, 1)
+	require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
+	require.NotContains(t, capture.logs[0].CredentialMasked, "654321")
+	require.NotContains(t, capture.logs[0].RequestBody, "audit-secret-passphrase")
+}
+
 // Ollama 会话保存的请求体整体就是浏览器 Cookie 明文，键级脱敏清单曾漏掉裸键
 // "session"，必须走整体不入库路径，防止会话凭证长期留存在 audit_logs。
 func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {

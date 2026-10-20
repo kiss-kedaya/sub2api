@@ -78,23 +78,27 @@ func TestGetVerificationMethodRegularUserFollowsEmailVerifySetting(t *testing.T)
 	require.Equal(t, "password", method.Method)
 }
 
-func TestTotpDisableAdminUsesPasswordEvenWithEmailVerifyEnabled(t *testing.T) {
+func TestTotpDisableAdminRequiresCurrentCodeAndNotPassword(t *testing.T) {
 	admin := &User{ID: 1, Email: "admin@example.com", Role: RoleAdmin, TotpEnabled: true}
 	require.NoError(t, admin.SetPassword("correct-password"))
 	svc, userRepo := newTotpVMService(t, admin, true)
 
-	// 缺密码 → 要求密码（而非邮箱验证码）。
-	err := svc.Disable(context.Background(), admin.ID, "", "")
-	require.ErrorIs(t, err, ErrPasswordRequired)
+	// A password alone cannot remove the administrator's second factor.
+	err := svc.Disable(context.Background(), admin.ID, "", "correct-password")
+	require.ErrorIs(t, err, ErrCryptoTotpRequired)
+	require.False(t, userRepo.disableCalled)
 
-	// 密码错误 → 拒绝。
-	err = svc.Disable(context.Background(), admin.ID, "", "wrong-password")
-	require.ErrorIs(t, err, ErrPasswordIncorrect)
+	// The OTP is mandatory; once supplied, the admin path does not request a password.
+	err = svc.Disable(context.Background(), admin.ID, "", "", "123456")
+	require.ErrorIs(t, err, ErrCryptoTotpUnavailable)
+	require.False(t, userRepo.disableCalled)
+}
 
-	// 密码正确 → 成功停用；全程不需要邮箱验证码（emailService 为 nil，走到邮箱分支会 panic）。
-	err = svc.Disable(context.Background(), admin.ID, "", "correct-password")
-	require.NoError(t, err)
-	require.True(t, userRepo.disableCalled)
+func TestTotpDisableAdminCannotRemoveUnboundTwoFactor(t *testing.T) {
+	admin := &User{ID: 1, Email: "admin@example.com", Role: RoleAdmin}
+	svc, userRepo := newTotpVMService(t, admin, false)
+	require.ErrorIs(t, svc.Disable(context.Background(), admin.ID, "", "password", "123456"), ErrCryptoTotpNotSetup)
+	require.False(t, userRepo.disableCalled)
 }
 
 func TestTotpDisableRegularUserStillRequiresEmailCode(t *testing.T) {

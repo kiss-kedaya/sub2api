@@ -301,11 +301,14 @@ func ProvideUpstreamBillingProbeService(
 ) *UpstreamBillingProbeService {
 	svc := NewUpstreamBillingProbeService(accountRepo, accountTestService, settingService)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
 func (s *UpstreamBillingProbeService) Start() {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	if s == nil {
 		return
 	}

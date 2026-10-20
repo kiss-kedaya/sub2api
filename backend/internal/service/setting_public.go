@@ -365,7 +365,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		PaymentEnabled:           settings[SettingPaymentEnabled] == "true",
 		// The crypto channel ships disabled; the sidebar entry must follow
 		// the channel's own config, not the generic payment switch.
-		CryptoEnabled:               cryptoConfigEnabled(settings[SettingKeyCryptoConfig]),
+		CryptoEnabled:               CryptoInstanceEnabled() && cryptoConfigEnabled(settings[SettingKeyCryptoConfig]),
 		OIDCOAuthEnabled:            oidcEnabled,
 		OIDCOAuthProviderName:       oidcProviderName,
 		GitHubOAuthEnabled:          gitHubEnabled,

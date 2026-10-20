@@ -2441,6 +2441,7 @@ export interface TotpEnableResponse {
 export interface TotpDisableRequest {
   email_code?: string
   password?: string
+  totp_code?: string
 }
 
 export interface TotpVerificationMethod {

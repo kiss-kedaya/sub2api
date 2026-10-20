@@ -104,7 +104,7 @@ func ProvideBatchImageModelPricingResolver(resolver *ModelPricingResolver) *Batc
 
 func ProvideBatchImageCleanupService(repo BatchImageRepository, accountRepo AccountRepository, cfg *config.Config) *BatchImageCleanupService {
 	svc := NewBatchImageCleanupService(repo, accountRepo, cfg)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -144,7 +144,7 @@ func ProvideTokenRefreshService(
 	// 调用侧显式注入后台刷新策略，避免策略漂移
 	svc.SetRefreshPolicy(DefaultBackgroundRefreshPolicy())
 	svc.SetAccountRuntimeBlocker(runtimeBlocker)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -210,7 +210,7 @@ func ProvideOpenAIQuotaAutoResetService(
 		settingService,
 		leaderLock,
 	)
-	service.Start()
+	startBackgroundJob(service.Start)
 	return service
 }
 
@@ -330,7 +330,7 @@ func ProvideCNProviderBalanceCheckService(
 		minutes = cfg.Gateway.CNProviders.BalanceCheckIntervalMinutes
 	}
 	svc := NewCNProviderBalanceCheckService(accountRepo, balanceService, quotaService, cfg, time.Duration(minutes)*time.Minute)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -384,21 +384,21 @@ func ProvideGrokTokenProvider(
 func ProvideDashboardAggregationService(repo DashboardAggregationRepository, timingWheel *TimingWheelService, lockCache LeaderLockCache, db *sql.DB, cfg *config.Config) *DashboardAggregationService {
 	svc := NewDashboardAggregationService(repo, timingWheel, cfg)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
 // ProvideUsageCleanupService 创建并启动使用记录清理任务服务
 func ProvideUsageCleanupService(repo UsageCleanupRepository, timingWheel *TimingWheelService, dashboardAgg *DashboardAggregationService, cfg *config.Config) *UsageCleanupService {
 	svc := NewUsageCleanupService(repo, timingWheel, dashboardAgg, cfg)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
 // ProvideAccountExpiryService creates and starts AccountExpiryService.
 func ProvideAccountExpiryService(accountRepo AccountRepository) *AccountExpiryService {
 	svc := NewAccountExpiryService(accountRepo, time.Minute)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -410,14 +410,14 @@ func ProvideOpenAICodexVersionSyncService(
 	githubClient GitHubReleaseClient,
 ) *OpenAICodexVersionSyncService {
 	svc := NewOpenAICodexVersionSyncService(settingRepo, settingService, githubClient, openAICodexVersionSyncInterval)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
 // ProvideProxyExpiryService creates and starts ProxyExpiryService.
 func ProvideProxyExpiryService(proxyRepo ProxyRepository) *ProxyExpiryService {
 	svc := NewProxyExpiryService(proxyRepo, time.Minute)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -427,17 +427,18 @@ func ProvideSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, se
 	svc.SetSettingRepository(settingRepo)
 	svc.SetNotificationEmailService(notificationEmailService)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
 // ProvideTimingWheelService creates and starts TimingWheelService
+// The timing wheel is process-local infrastructure for request-triggered work.
 func ProvideTimingWheelService() (*TimingWheelService, error) {
 	svc, err := NewTimingWheelService()
 	if err != nil {
 		return nil, err
 	}
-	svc.Start()
+	svc.Start() // Process-local infrastructure for request-triggered work.
 	return svc, nil
 }
 
@@ -445,20 +446,24 @@ func ProvideTimingWheelService() (*TimingWheelService, error) {
 func ProvideDeferredService(accountRepo AccountRepository, apiKeyRepo APIKeyRepository, timingWheel *TimingWheelService) *DeferredService {
 	svc := NewDeferredService(accountRepo, timingWheel, 10*time.Second)
 	svc.SetAPIKeyRepository(apiKeyRepo)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
 // ProvideConcurrencyService creates ConcurrencyService and starts slot cleanup worker.
 func ProvideConcurrencyService(cache ConcurrencyCache, accountRepo AccountRepository, cfg *config.Config) *ConcurrencyService {
 	svc := NewConcurrencyService(cache)
-	if err := svc.CleanupStaleProcessSlots(context.Background()); err != nil {
-		logger.LegacyPrintf("service.concurrency", "Warning: startup cleanup stale process slots failed: %v", err)
-	}
 	if cfg != nil {
 		svc.SetAccountLoadBatchCacheTTL(time.Duration(cfg.Gateway.Scheduling.LoadBatchCacheTTLMS) * time.Millisecond)
-		svc.StartSlotCleanupWorker(accountRepo, cfg.Gateway.Scheduling.SlotCleanupInterval)
 	}
+	startBackgroundJob(func() {
+		if err := svc.CleanupStaleProcessSlots(context.Background()); err != nil {
+			logger.LegacyPrintf("service.concurrency", "Warning: startup cleanup stale process slots failed: %v", err)
+		}
+		if cfg != nil {
+			svc.StartSlotCleanupWorker(accountRepo, cfg.Gateway.Scheduling.SlotCleanupInterval)
+		}
+	})
 	return svc
 }
 
@@ -466,7 +471,9 @@ func ProvideConcurrencyService(cache ConcurrencyCache, accountRepo AccountReposi
 func ProvideUserMessageQueueService(cache UserMsgQueueCache, rpmCache RPMCache, cfg *config.Config) *UserMessageQueueService {
 	svc := NewUserMessageQueueService(cache, rpmCache, &cfg.Gateway.UserMessageQueue)
 	if cfg.Gateway.UserMessageQueue.CleanupIntervalSeconds > 0 {
-		svc.StartCleanupWorker(time.Duration(cfg.Gateway.UserMessageQueue.CleanupIntervalSeconds) * time.Second)
+		startBackgroundJob(func() {
+			svc.StartCleanupWorker(time.Duration(cfg.Gateway.UserMessageQueue.CleanupIntervalSeconds) * time.Second)
+		})
 	}
 	return svc
 }
@@ -480,7 +487,7 @@ func ProvideSchedulerSnapshotService(
 	cfg *config.Config,
 ) *SchedulerSnapshotService {
 	svc := NewSchedulerSnapshotService(cache, outboxRepo, accountRepo, groupRepo, cfg)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -518,7 +525,7 @@ func ProvideOpsMetricsCollector(
 	cfg *config.Config,
 ) *OpsMetricsCollector {
 	collector := NewOpsMetricsCollector(opsRepo, settingRepo, accountRepo, concurrencyService, db, redisClient, cfg)
-	collector.Start()
+	startBackgroundJob(collector.Start)
 	return collector
 }
 
@@ -531,7 +538,7 @@ func ProvideOpsAggregationService(
 	cfg *config.Config,
 ) *OpsAggregationService {
 	svc := NewOpsAggregationService(opsRepo, settingRepo, db, redisClient, cfg)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -545,7 +552,7 @@ func ProvideOpsAlertEvaluatorService(
 	proxyRepo ProxyRepository,
 ) *OpsAlertEvaluatorService {
 	svc := NewOpsAlertEvaluatorService(opsService, opsRepo, emailService, redisClient, cfg, proxyRepo)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -564,7 +571,7 @@ func ProvideOpsCleanupService(
 	opsService *OpsService,
 ) *OpsCleanupService {
 	svc := NewOpsCleanupService(opsRepo, db, redisClient, cfg, channelMonitorSvc, settingRepo)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	if opsService != nil {
 		opsService.SetCleanupReloader(svc)
 	}
@@ -582,7 +589,7 @@ func ProvideOpsSystemLogSink(opsRepo OpsRepository) *OpsSystemLogSink {
 // 停止逻辑挂在 cmd/server 的 provideCleanup。
 func ProvideAuditLogService(repo AuditLogRepository, settingService *SettingService) *AuditLogService {
 	svc := NewAuditLogService(repo, settingService)
-	svc.Start()
+	svc.Start() // Keep request audit delivery; Start separately gates retention.
 	return svc
 }
 
@@ -621,7 +628,7 @@ func ProvideSystemOperationLockService(repo IdempotencyRepository, cfg *config.C
 
 func ProvideIdempotencyCleanupService(repo IdempotencyRepository, cfg *config.Config) *IdempotencyCleanupService {
 	svc := NewIdempotencyCleanupService(repo, cfg)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -645,7 +652,7 @@ func ProvideScheduledTestRunnerService(
 ) *ScheduledTestRunnerService {
 	svc := NewScheduledTestRunnerService(planRepo, scheduledSvc, accountTestSvc, rateLimitSvc, cfg)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -658,7 +665,7 @@ func ProvideOpsScheduledReportService(
 	cfg *config.Config,
 ) *OpsScheduledReportService {
 	svc := NewOpsScheduledReportService(opsService, userService, emailService, redisClient, cfg)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -710,7 +717,7 @@ func ProvideBackupService(
 ) *BackupService {
 	svc := NewBackupService(settingRepo, cfg, encryptor, storeFactory, dumper)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -757,7 +764,7 @@ func ProvideOpsService(
 	svc.authCacheInvalidationWorker = authCacheInvalidationWorker
 	svc.liveBalanceOutboxWorker = liveBalanceOutboxWorker
 	svc.apiKeyService = apiKeyService
-	svc.StartRuntimeSettingsRefresh(context.Background())
+	startBackgroundJob(func() { svc.StartRuntimeSettingsRefresh(context.Background()) })
 	return svc
 }
 
@@ -769,7 +776,7 @@ func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsSer
 		return nil
 	}
 	aggregator := NewOpsIngressRejectAggregator(repo)
-	aggregator.Start()
+	startBackgroundJob(aggregator.Start)
 	opsService.SetIngressRejectAggregator(aggregator)
 	return aggregator
 }
@@ -982,7 +989,7 @@ var ProviderSet = wire.NewSet(
 // ProvideUserPlatformQuotaUsageFlusher 创建并启动 UserPlatformQuotaUsageFlusher。
 func ProvideUserPlatformQuotaUsageFlusher(cfg *config.Config, cache BillingCache, quotaRepo UserPlatformQuotaRepository, tw *TimingWheelService) *UserPlatformQuotaUsageFlusher {
 	svc := NewUserPlatformQuotaUsageFlusher(cfg, cache, quotaRepo, tw)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -1010,7 +1017,7 @@ func ProvidePaymentService(entClient *dbent.Client, registry *payment.Registry, 
 func ProvidePaymentOrderExpiryService(paymentSvc *PaymentService, lockCache LeaderLockCache, db *sql.DB) *PaymentOrderExpiryService {
 	svc := NewPaymentOrderExpiryService(paymentSvc, 60*time.Second)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	startBackgroundJob(svc.Start)
 	return svc
 }
 
@@ -1046,7 +1053,7 @@ func ProvideChannelMonitorRunner(
 		svc.SetScheduler(r)
 		svc.SetQuotaFetcher(quotaFetcher)
 	}
-	r.Start()
+	startBackgroundJob(r.Start)
 	return r
 }
 
@@ -1061,14 +1068,15 @@ func ProvideChannelMonitorV2Service(repo ChannelMonitorV2Repository, settingServ
 
 // ProvideChannelMonitorV2Aggregator starts the passive minute-rollup worker.
 // Aggregation only runs when channel_monitor_enabled=true and mode=v2 (and V2 config enabled).
-// Set CHANNEL_MONITOR_V2_DISABLE_AGGREGATOR=1 to skip Start (local demo with seeded facts).
+// Set CHANNEL_MONITOR_V2_DISABLE_AGGREGATOR=1 to skip this worker independently
+// of SUB2API_DISABLE_BACKGROUND_JOBS.
 func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, settingService *SettingService, lockCache LeaderLockCache) *ChannelMonitorV2Aggregator {
 	aggregator := NewChannelMonitorV2Aggregator(repo, db, settingService)
 	aggregator.SetLeaderLock(lockCache, db)
 	if os.Getenv("CHANNEL_MONITOR_V2_DISABLE_AGGREGATOR") == "1" {
 		return aggregator
 	}
-	aggregator.Start()
+	startBackgroundJob(aggregator.Start)
 	return aggregator
 }
 

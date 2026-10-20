@@ -143,6 +143,9 @@ func (s *OpsCleanupService) stopCronLocked() {
 // applyScheduleLocked 重新计算 effective 配置并按其 schedule 重建 cron。调用方持锁。
 // 若 effective.Enabled=false（用户在 UI 关闭清理），停旧 cron 后直接返回，不创建新 cron。
 func (s *OpsCleanupService) applyScheduleLocked(ctx context.Context) error {
+	if BackgroundJobsDisabled() {
+		return nil
+	}
 	s.computeEffectiveLocked(ctx)
 	s.stopCronLocked()
 

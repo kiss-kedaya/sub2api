@@ -342,7 +342,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	// Unmatched deposits (mistyped amounts, probes) alert the operators.
 	cryptoService.SetPushNotifier(pushAdapter)
 	paymentService.SetDepositAddressResolver(cryptoService)
-	cryptoHandler := handler.NewCryptoHandler(cryptoAddressService, settingService, cryptoService)
+	cryptoHandler := handler.NewCryptoHandler(cryptoAddressService, settingService, cryptoService, totpService, configConfig)
 	cryptoDepositHandler := handler.NewCryptoDepositHandler(cryptoService)
 	barkHandler := handler.NewUserBarkHandler(userBarkService)
 	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)

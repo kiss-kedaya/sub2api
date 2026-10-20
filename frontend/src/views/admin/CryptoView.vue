@@ -88,8 +88,9 @@
               </p>
 
               <div v-if="!signerUnlocked" class="crypto-view__field">
-                <label class="crypto-view__label">{{ t('admin.crypto.signerPassphrase') }}</label>
+                <label for="crypto-signer-passphrase" class="crypto-view__label">{{ t('admin.crypto.signerPassphrase') }}</label>
                 <input
+                  id="crypto-signer-passphrase"
                   v-model="signerPassphrase"
                   type="password"
                   class="input"
@@ -98,6 +99,14 @@
                   @keyup.enter="submitUnlock"
                 />
                 <p class="crypto-view__hint">{{ t('admin.crypto.signerPassphraseHint') }}</p>
+                <details>
+                  <summary>{{ t('admin.crypto.signerInitTitle') }}</summary>
+                  <p class="crypto-view__approval-notice">{{ t('admin.crypto.signerInitWarning') }}</p>
+                  <label for="crypto-deposit-mnemonic" class="crypto-view__label">{{ t('admin.crypto.depositMnemonic') }}</label>
+                  <input id="crypto-deposit-mnemonic" v-model="depositMnemonic" type="password" class="input" autocomplete="off" spellcheck="false" />
+                  <label for="crypto-initial-hot-mnemonic" class="crypto-view__label">{{ t('admin.crypto.hotMnemonic') }}</label>
+                  <input id="crypto-initial-hot-mnemonic" v-model="initialHotMnemonic" type="password" class="input" autocomplete="off" spellcheck="false" />
+                </details>
               </div>
 
               <div v-if="!signerUnlocked" class="crypto-view__actions">
@@ -109,6 +118,11 @@
                   {{ unlocking ? t('common.saving') : t('admin.crypto.signerUnlockAction') }}
                 </button>
                 <span v-if="signerError" class="crypto-view__warn">{{ signerError }}</span>
+              </div>
+              <div class="crypto-view__wallet-actions">
+                <p class="crypto-view__hint">{{ t('admin.crypto.walletToolsHint') }}</p>
+                <button type="button" class="btn btn-secondary" @click="mnemonicsDialogOpen = true">{{ t('admin.crypto.mnemonicsExportAction') }}</button>
+                <button type="button" class="btn btn-secondary" @click="openWalletDialog('import')">{{ t('admin.crypto.hotImportAction') }}</button>
               </div>
             </details>
 
@@ -675,18 +689,6 @@
       </div>
     </div>
 
-    <!-- Sweeps move real funds, so a plain click must never start one. -->
-    <ConfirmDialog
-      :show="sweepConfirmOpen"
-      :title="t('admin.crypto.sweepConfirmTitle')"
-      :message="sweepConfirmMessage"
-      :confirm-text="t('admin.crypto.sweepConfirmAction')"
-      :cancel-text="t('common.cancel')"
-      danger
-      @confirm="confirmSweep"
-      @cancel="sweepConfirmOpen = false"
-    />
-
     <ConfirmDialog
       :show="channelConfirmOpen"
       :title="t('admin.crypto.channelConfirmTitle')"
@@ -709,41 +711,35 @@
       @cancel="sweepAutoConfirmOpen = false"
     />
 
-    <ConfirmDialog
-      :show="addressConfirmOpen"
-      :title="t('admin.crypto.addressConfirmTitle')"
-      :message="addressConfirmMessage"
-      :confirm-text="t('admin.crypto.addressConfirmAction')"
-      :cancel-text="t('common.cancel')"
-      danger
-      @confirm="commitToggleAddress"
-      @cancel="addressConfirmOpen = false"
-    />
-
-    <!-- Saving config can move sweep destinations / automatic sweeps. Name
-         the exact fields that changed before writing them. -->
-    <ConfirmDialog
-      :show="saveConfirmOpen"
-      :title="t('admin.crypto.saveConfirmTitle')"
-      :message="saveConfirmMessage"
-      :confirm-text="t('admin.crypto.saveConfirmAction')"
-      :cancel-text="t('common.cancel')"
-      danger
-      @confirm="saveConfig"
-      @cancel="saveConfirmOpen = false"
-    >
-      <ul class="crypto-view__risk-list">
-        <li v-for="change in riskyChanges" :key="change">{{ change }}</li>
-      </ul>
-    </ConfirmDialog>
+    <CryptoMnemonicsDialog :show="mnemonicsDialogOpen" @close="mnemonicsDialogOpen = false" />
+    <BaseDialog :show="walletDialog === 'import'" :title="t('admin.crypto.hotImportAction')" @close="closeWalletDialog">
+      <form id="crypto-wallet-form" class="crypto-view__wallet-form" autocomplete="off" @submit.prevent="submitWallet">
+        <p class="crypto-view__approval-notice">{{ t('admin.crypto.hotImportWarning') }}</p>
+        <label for="crypto-wallet-passphrase">{{ t('admin.crypto.vaultPassphrase') }}</label>
+        <input id="crypto-wallet-passphrase" v-model="walletPassphrase" type="password" class="input" autocomplete="off" required />
+        <p class="crypto-view__hint">{{ t('admin.crypto.vaultPassphraseHint') }}</p>
+        <label for="crypto-hot-mnemonic">{{ t('admin.crypto.hotMnemonic') }}</label>
+        <input id="crypto-hot-mnemonic" v-model="hotMnemonic" type="password" class="input" autocomplete="off" spellcheck="false" required />
+      </form>
+      <template #footer>
+        <div class="crypto-view__actions">
+          <button type="button" class="btn btn-secondary" @click="closeWalletDialog">{{ t('common.cancel') }}</button>
+          <button type="submit" form="crypto-wallet-form" class="btn btn-danger" :disabled="!walletPassphrase || !hotMnemonic.trim()">{{ t('admin.crypto.walletContinue') }}</button>
+        </div>
+      </template>
+    </BaseDialog>
+    <CryptoSecurityDialog ref="securityDialog" />
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
+import CryptoSecurityDialog from '@/components/crypto/CryptoSecurityDialog.vue'
+import CryptoMnemonicsDialog from '@/components/crypto/CryptoMnemonicsDialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import { useAppStore } from '@/stores/app'
@@ -765,6 +761,7 @@ import {
   updateCryptoConfig,
   testRPCEndpoint,
   autoPickRPC,
+  importHotMnemonic,
   type AddressSortKey,
   type AdminAddressSummary,
   type CryptoConfig,
@@ -780,6 +777,11 @@ import {
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const securityDialog = ref<InstanceType<typeof CryptoSecurityDialog> | null>(null)
+
+async function withCryptoVerification(label: string, callback: (code: string) => Promise<unknown>): Promise<boolean> {
+  return await securityDialog.value?.verify(label, callback) ?? false
+}
 
 const tabs = computed(() => [
   { id: 'config', label: t('admin.crypto.tabConfig') },
@@ -835,13 +837,10 @@ const sweepPlan = ref<SweepPlan | null>(null)
 const sweepRecords = ref<SweepRecord[]>([])
 const sweepSummary = ref<SweepSummary | null>(null)
 const sweeping = ref(false)
-const sweepConfirmOpen = ref(false)
 const channelConfirmOpen = ref(false)
 const sweepAutoConfirmOpen = ref(false)
-const addressConfirmOpen = ref(false)
 const pendingChannelEnabled = ref(false)
 const pendingSweepAuto = ref(false)
-const pendingAddress = ref<DepositAddress | null>(null)
 
 const deposits = ref<DepositRecord[]>([])
 const depositSummary = ref<DepositSummary>({ total: 0, credited: 0, pending: 0, ignored: 0, amount: 0 })
@@ -869,6 +868,12 @@ const loadingSigner = ref(false)
 const unlocking = ref(false)
 const signerPassphrase = ref('')
 const signerError = ref('')
+const depositMnemonic = ref('')
+const initialHotMnemonic = ref('')
+const walletDialog = ref<'import' | null>(null)
+const mnemonicsDialogOpen = ref(false)
+const walletPassphrase = ref('')
+const hotMnemonic = ref('')
 
 // A real sweep needs a destination. Without one the backend refuses anyway;
 // blocking here stops the operator before they wonder why nothing happened.
@@ -896,20 +901,6 @@ const sweepAutoConfirmMessage = computed(() =>
   t('admin.crypto.sweepAutoConfirmMessage', {
     state: pendingSweepAuto.value ? t('common.enabled') : t('common.disabled')
   })
-)
-
-const addressConfirmMessage = computed(() => {
-  const row = pendingAddress.value
-  if (!row) return ''
-  const action = row.status === 'active' ? t('admin.crypto.disable') : t('admin.crypto.enable')
-  return t('admin.crypto.addressConfirmMessage', {
-    action,
-    address: row.address
-  })
-})
-
-const saveConfirmMessage = computed(() =>
-  t('admin.crypto.saveConfirmMessage', { count: riskyChanges.value.length })
 )
 
 function statusLabel(status: string): string {
@@ -994,19 +985,18 @@ function removeRPCRow(chain: string, idx: number) {
 
 async function testEndpoint(chain: string, idx: number) {
   const row = rpcRows.value[chain]?.[idx]
-  if (!row || !row.url.trim()) return
+  if (!row || !row.url.trim()) return false
+  const endpoint = row.url.trim()
   row.testing = true
   try {
-    const result = await testRPCEndpoint(chain, row.url.trim())
-    row.status = true
-    row.ok = result.ok
-    row.latency_ms = result.latency_ms
-    row.block = result.block ?? 0
-    row.error = result.error ?? ''
-  } catch (e) {
-    row.status = true
-    row.ok = false
-    row.error = extractApiErrorMessage(e)
+    return await withCryptoVerification(t('admin.crypto.rpcVerify', { chain, endpoint }), async (code) => {
+      const result = await testRPCEndpoint(chain, endpoint, { totpCode: code })
+      row.status = true
+      row.ok = result.ok
+      row.latency_ms = result.latency_ms
+      row.block = result.block ?? 0
+      row.error = result.error ?? ''
+    })
   } finally {
     row.testing = false
   }
@@ -1017,7 +1007,7 @@ async function testAllEndpoints(chain: string) {
   try {
     const rows = rpcRows.value[chain] ?? []
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i].url.trim()) await testEndpoint(chain, i)
+      if (rows[i].url.trim() && !await testEndpoint(chain, i)) break
     }
   } finally {
     testingChain.value = ''
@@ -1033,7 +1023,8 @@ async function autoFillRPC(chain: string) {
   try {
     const exclude = (rpcRows.value[chain] ?? []).map((r) => r.url.trim()).filter(Boolean)
     const want = Math.max(1, RPC_AUTO_FILL_COUNT)
-    const { picked, probed } = await autoPickRPC(chain, exclude, want)
+    await withCryptoVerification(t('admin.crypto.rpcAutoVerify', { chain }), async (code) => {
+    const { picked, probed } = await autoPickRPC(chain, exclude, want, { totpCode: code })
     if (!picked.length) {
       rpcFetchNotes.value[chain] = t('admin.crypto.rpcFetchEmpty', { probed })
       return
@@ -1051,8 +1042,7 @@ async function autoFillRPC(chain: string) {
     }
     persistRPC(chain)
     rpcFetchNotes.value[chain] = t('admin.crypto.rpcFetchDone', { count: picked.length, probed })
-  } catch (e) {
-    rpcFetchNotes.value[chain] = extractApiErrorMessage(e)
+    })
   } finally {
     fetchingCandidates.value = ''
   }
@@ -1131,9 +1121,14 @@ const RISKY_FIELDS: Array<{ key: keyof CryptoConfig; label: string }> = [
   { key: 'credit_min_amount', label: 'admin.crypto.creditMin' },
   { key: 'credit_max_amount', label: 'admin.crypto.creditMax' },
   { key: 'credit_multiplier', label: 'admin.crypto.creditMultiplier' }
+  ,{ key: 'chains', label: 'admin.crypto.chains' }
+  ,{ key: 'rpc', label: 'admin.crypto.rpc' }
+  ,{ key: 'sweep_min_per_address', label: 'admin.crypto.sweepMinPerAddress' }
+  ,{ key: 'gas_topup', label: 'admin.crypto.gasTopup' }
+  ,{ key: 'confirmations', label: 'admin.crypto.confirmations' }
+  ,{ key: 'scan_range', label: 'admin.crypto.scanRange' }
+  ,{ key: 'signer_socket', label: 'admin.crypto.signerSocket' }
 ]
-
-const saveConfirmOpen = ref(false)
 
 // riskyChanges lists the dangerous edits between the loaded snapshot and the
 // current form, as human-readable "label: before → after" lines.
@@ -1154,14 +1149,18 @@ const riskyChanges = computed<string[]>(() => {
 function formatChange(value: unknown): string {
   if (value === null || value === undefined || value === '') return '—'
   if (typeof value === 'boolean') return value ? t('common.enabled') : t('common.disabled')
+  if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
 }
 
 // saveConfig is the raw write; it is only reachable after the confirmation
 // when risky fields changed.
 async function saveConfig() {
-  if (!config.value) return
-  saveConfirmOpen.value = false
+  if (!config.value || savingConfig.value) return
+  const patch = JSON.parse(JSON.stringify(buildConfigPatch())) as Partial<CryptoConfig>
+  if (!Object.keys(patch).length) return
+  const snapshot = JSON.parse(JSON.stringify(config.value)) as CryptoConfig
+  const label = `${t('admin.crypto.saveConfirmMessage', { count: riskyChanges.value.length })}\n${riskyChanges.value.join('\n')}`
   savingConfig.value = true
   configSaved.value = false
   try {
@@ -1169,9 +1168,11 @@ async function saveConfig() {
     // pointers onto the stored config, so posting the whole object used to
     // rewrite maps the UI never renders (rpc, gas_topup, confirmations,
     // scan_range, per-chain thresholds) — a null map could blank them.
-    await updateCryptoConfig(buildConfigPatch())
-    loadedSnapshot.value = JSON.parse(JSON.stringify(config.value))
-    configSaved.value = true
+    await withCryptoVerification(label, async (code) => {
+      await updateCryptoConfig(patch, { totpCode: code })
+      loadedSnapshot.value = snapshot
+      configSaved.value = true
+    })
   } finally {
     savingConfig.value = false
   }
@@ -1195,12 +1196,7 @@ function buildConfigPatch(): Partial<CryptoConfig> {
 // requestSaveConfig gates the write behind a confirmation whenever the diff
 // touches money-moving fields.
 function requestSaveConfig() {
-  if (!config.value) return
-  if (riskyChanges.value.length === 0) {
-    void saveConfig()
-    return
-  }
-  saveConfirmOpen.value = true
+  void saveConfig()
 }
 
 // fmtAmount keeps money columns readable and never renders NaN.
@@ -1271,18 +1267,14 @@ async function loadAddresses() {
 }
 
 async function toggleAddress(row: DepositAddress) {
-  pendingAddress.value = row
-  addressConfirmOpen.value = true
-}
-
-async function commitToggleAddress() {
-  const row = pendingAddress.value
-  addressConfirmOpen.value = false
-  pendingAddress.value = null
-  if (!row) return
   const next = row.status === 'active' ? 'disabled' : 'active'
-  await setAddressStatus(row.id, next)
-  await loadAddresses()
+  const label = t('admin.crypto.addressConfirmMessage', {
+    address: row.address,
+    action: t(next === 'disabled' ? 'admin.crypto.disable' : 'admin.crypto.enable')
+  })
+  await withCryptoVerification(label, async (code) => {
+    await setAddressStatus(row.id, next, { totpCode: code })
+  }) && await loadAddresses()
 }
 
 function confirmChannelToggle(value: boolean) {
@@ -1312,10 +1304,14 @@ async function loadSweepPlan() {
 }
 
 async function doSweep(dryRun: boolean) {
+  if (sweeping.value) return
   sweeping.value = true
   try {
-    sweepSummary.value = await runSweep(dryRun)
-    await loadSweepRecords()
+    const label = dryRun ? t('admin.crypto.sweepDryRun') : sweepConfirmMessage.value
+    const completed = await withCryptoVerification(label, async (code) => {
+      sweepSummary.value = await runSweep(dryRun, { totpCode: code })
+    })
+    if (completed) await loadSweepRecords()
   } finally {
     sweeping.value = false
   }
@@ -1325,12 +1321,7 @@ async function doSweep(dryRun: boolean) {
 // amount: two deliberate clicks before any funds move.
 function requestSweep() {
   if (!sweepReady.value) return
-  sweepConfirmOpen.value = true
-}
-
-async function confirmSweep() {
-  sweepConfirmOpen.value = false
-  await doSweep(false)
+  void doSweep(false)
 }
 
 
@@ -1392,15 +1383,15 @@ async function loadHealth() {
 }
 
 async function downloadCSV() {
+  if (exporting.value) return
   exporting.value = true
   try {
-    const blob = await exportDepositsCSV(depositChain.value, depositStatus.value)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'crypto-deposits.csv'
-    a.click()
-    URL.revokeObjectURL(url)
+    const chain = depositChain.value
+    const status = depositStatus.value
+    await withCryptoVerification(t('admin.crypto.csvVerify'), async (code) => {
+      const blob = await exportDepositsCSV(chain, status, { totpCode: code })
+      downloadBlob(blob, 'crypto-deposits.csv')
+    })
   } finally {
     exporting.value = false
   }
@@ -1442,20 +1433,77 @@ async function fillHotWalletAddresses() {
 }
 
 async function submitUnlock() {
-  if (!signerPassphrase.value) return
+  if (!signerPassphrase.value || unlocking.value) return
   unlocking.value = true
-  signerError.value = ""
+  signerError.value = ''
   try {
-    await unlockSigner(signerPassphrase.value)
-    signerPassphrase.value = ""
-    await loadSignerStatus()
-    appStore.showSuccess(t("admin.crypto.signerUnlockDone"))
-  } catch (err: unknown) {
-    signerError.value = extractApiErrorMessage(err, t("common.error"))
+    const label = t('admin.crypto.unlockVerify') + (depositMnemonic.value || initialHotMnemonic.value ? `\n${t('admin.crypto.signerInitWarning')}` : '')
+    const completed = await withCryptoVerification(label, async (code) => {
+      await unlockSigner(signerPassphrase.value, depositMnemonic.value.trim(), initialHotMnemonic.value.trim(), { totpCode: code })
+    })
+    if (completed) {
+      await loadSignerStatus()
+      appStore.showSuccess(t('admin.crypto.signerUnlockDone'))
+    }
   } finally {
+    signerPassphrase.value = ''
+    depositMnemonic.value = ''
+    initialHotMnemonic.value = ''
     unlocking.value = false
   }
 }
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  try { anchor.click() } finally { anchor.remove(); URL.revokeObjectURL(url) }
+}
+
+function closeWalletDialog() {
+  walletDialog.value = null
+  walletPassphrase.value = ''
+  hotMnemonic.value = ''
+}
+
+function openWalletDialog(mode: 'backup' | 'import') {
+  closeWalletDialog()
+  if (mode === 'import') walletDialog.value = mode
+}
+
+async function submitWallet() {
+  const mode = walletDialog.value
+  if (mode !== 'import' || !walletPassphrase.value || !hotMnemonic.value.trim()) return
+  walletDialog.value = null
+  try {
+    const completed = await withCryptoVerification(t('admin.crypto.hotImportWarning'), async (code) => {
+      const result = await importHotMnemonic(walletPassphrase.value, hotMnemonic.value.trim(), { totpCode: code })
+      if (!result.saved) throw new Error(t('common.error'))
+    })
+    if (completed) {
+      if (mode === 'import') {
+        signerUnlocked.value = false
+        signerSigningEnabled.value = false
+        hotWallets.value = []
+        hotAddressNote.value = ''
+      }
+      appStore.showSuccess(t('admin.crypto.hotImportDone'))
+    }
+  } finally { closeWalletDialog() }
+}
+
+function clearWalletInputs() {
+  closeWalletDialog()
+  signerPassphrase.value = ''
+  depositMnemonic.value = ''
+  initialHotMnemonic.value = ''
+}
+
+watch(activeTab, clearWalletInputs)
+watch(activeTab, () => { mnemonicsDialogOpen.value = false })
+onUnmounted(clearWalletInputs)
 
 async function loadDeposits() {
   loadingDeposits.value = true
@@ -1481,6 +1529,9 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.crypto-view__wallet-form { display: grid; gap: .75rem; font-size: .875rem; line-height: 1.7; }
+.crypto-view__wallet-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1rem; }
+.crypto-view__wallet-actions p { flex-basis: 100%; }
 .crypto-view {
   width: 100%;
   max-width: 90rem;

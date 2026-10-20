@@ -26,6 +26,7 @@ func RegisterCryptoRoutes(
 	}
 	authenticated := v1.Group("/crypto")
 	authenticated.Use(gin.HandlerFunc(jwtAuth))
+	authenticated.Use(cryptoHandler.CryptoUserAccess)
 	authenticated.Use(middleware.BackendModeUserGuard(settingService))
 	authenticated.Use(panelRateLimiter.Global())
 	{
@@ -44,7 +45,11 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		return
 	}
 	crypto := admin.Group("/crypto")
+	crypto.Use(cryptoHandler.CryptoAdminSecurity)
 	{
+		crypto.GET("/security/status", cryptoHandler.AdminCryptoSecurityStatus)
+		crypto.POST("/security/setup", cryptoHandler.AdminCryptoSecuritySetup)
+		crypto.POST("/security/enable", cryptoHandler.AdminCryptoSecurityEnable)
 		crypto.GET("/config", cryptoHandler.AdminGetConfig)
 		crypto.PUT("/config", cryptoHandler.AdminUpdateConfig)
 		crypto.GET("/addresses", cryptoHandler.AdminListAddresses)
@@ -55,6 +60,8 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.GET("/deposits", cryptoHandler.AdminListDeposits)
 		crypto.GET("/signer/status", cryptoHandler.AdminSignerStatus)
 		crypto.POST("/signer/unlock", cryptoHandler.AdminUnlockSigner)
+		crypto.POST("/signer/export-mnemonics", cryptoHandler.AdminExportMnemonics)
+		crypto.POST("/signer/hot-mnemonic", cryptoHandler.AdminImportHotMnemonic)
 		crypto.GET("/pool", cryptoHandler.AdminPoolStatus)
 		crypto.GET("/hot-wallet", cryptoHandler.AdminHotWalletStatus)
 		crypto.GET("/hot-wallet/address", cryptoHandler.AdminHotWalletAddress)

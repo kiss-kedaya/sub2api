@@ -128,6 +128,9 @@ func NewUsageRecordWorkerPool(cfg *config.Config) *UsageRecordWorkerPool {
 // NewUsageRecordWorkerPoolWithOptions 根据给定参数构建使用量记录池。
 func NewUsageRecordWorkerPoolWithOptions(opts UsageRecordWorkerPoolOptions) *UsageRecordWorkerPool {
 	opts = normalizeUsageRecordPoolOptions(opts)
+	if BackgroundJobsDisabled() {
+		opts.AutoScaleEnabled = false
+	}
 
 	p := &UsageRecordWorkerPool{
 		taskTimeout:           opts.TaskTimeout,

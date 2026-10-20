@@ -615,7 +615,7 @@ func NewContentModerationService(
 		for i := 0; i < svc.workerCount; i++ {
 			go svc.worker(i)
 		}
-		go svc.cleanupWorker()
+		startBackgroundJob(func() { go svc.cleanupWorker() })
 	}
 	return svc
 }
