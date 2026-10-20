@@ -127,7 +127,9 @@ func (h *UserMsgQueueHelper) waitForLockWithPing(
 					*streamStarted = true
 				}
 				written, err = fmt.Fprint(c.Writer, string(h.pingFormat))
-			} else if !*streamStarted {
+			} else if written > 0 && !*streamStarted {
+				// 被 keepalive 门控吞掉（0 字节）时不能标记 streamStarted，
+				// 否则上游 4xx/5xx 会被错误地降级成流内错误帧。
 				*streamStarted = true
 			}
 			if err != nil {
@@ -241,7 +243,9 @@ func (h *UserMsgQueueHelper) ThrottleWithPing(
 					*streamStarted = true
 				}
 				written, err = fmt.Fprint(c.Writer, string(h.pingFormat))
-			} else if !*streamStarted {
+			} else if written > 0 && !*streamStarted {
+				// 被 keepalive 门控吞掉（0 字节）时不能标记 streamStarted，
+				// 否则上游 4xx/5xx 会被错误地降级成流内错误帧。
 				*streamStarted = true
 			}
 			if err != nil {

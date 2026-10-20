@@ -3004,15 +3004,15 @@ func maskSecretTail(secret string) string {
 
 // CyberPolicyRecordInput 是一次 cyber_policy 硬阻断的风控记录入参。
 type CyberPolicyRecordInput struct {
-	RequestID       string
-	UserID          int64
-	UserEmail       string
-	APIKeyID        int64
-	APIKeyName      string
-	GroupID         *int64
-	GroupName       string
-	Endpoint        string
-	Model           string
+	RequestID  string
+	UserID     int64
+	UserEmail  string
+	APIKeyID   int64
+	APIKeyName string
+	GroupID    *int64
+	GroupName  string
+	Endpoint   string
+	Model      string
 	// RequestBody 是本次请求的原始入站请求体。风控中心详情要展示
 	// 「用户最后一轮输入」，而不是上游错误文本；因此必须在这里带上原始
 	// payload，由服务层按 endpoint 解析出最后一轮用户消息。

@@ -323,6 +323,8 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	}
 
 	writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	// 上游已确认 2xx + SSE，允许 handler 的 pre-header keepalive 写下游。
+	ArmOpenAIStreamSSEKeepalive(c)
 
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if contentType == "" {
