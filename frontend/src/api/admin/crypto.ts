@@ -215,6 +215,7 @@ export async function listDepositsPaged(
 export interface SignerStatus {
   ok: boolean
   unlocked: boolean
+  signing_enabled: boolean
 }
 
 // getSignerStatus reports whether the signing service holds the seeds. A

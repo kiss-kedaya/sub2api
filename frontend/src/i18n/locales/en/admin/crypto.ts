@@ -104,6 +104,7 @@ export default {
     signerLockDesc: 'While locked the process holds no seeds and refuses every signing request. The passphrase is used in memory only and never stored.',
     signerLocked: 'Locked',
     signerUnlocked: 'Unlocked',
+    signerApprovalMissing: 'Seeds are unlocked, but independent signing approval is not ready. Sweeping is disabled until the signer policy and budget are configured and the signer is restarted.',
     signerPassphrase: 'Admin passphrase',
     signerPassphrasePlaceholder: 'Enter the unlock passphrase',
     signerPassphraseHint: 'First run uses it to create the encrypted vault; every restart needs it again',
