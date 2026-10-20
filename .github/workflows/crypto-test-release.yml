@@ -137,8 +137,8 @@ jobs:
       TEST_VERSION: ${{ needs.validate.outputs.version }}
       BUILD_DATE: ${{ needs.validate.outputs.build_date }}
       ARCHIVE: ${{ needs.validate.outputs.archive }}
-      PACKAGE_DIR: ${{ runner.temp }}/crypto-test-package
-      RELEASE_DIR: ${{ runner.temp }}/crypto-test-release
+      PACKAGE_DIR: ${{ github.workspace }}/.crypto-test-package
+      RELEASE_DIR: ${{ github.workspace }}/.crypto-test-release
     steps:
       - name: Checkout the validated commit
         uses: actions/checkout@v6
