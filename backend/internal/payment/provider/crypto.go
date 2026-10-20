@@ -8,14 +8,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 )
 
-// Crypto is the built-in on-chain deposit channel. Unlike external
-// providers it has no upstream API: creating a "payment" means handing the
-// user their per-user deposit address, and settlement arrives through the
-// scanner + ledger pipeline (internal/cryptopay) rather than a webhook.
-//
-// The provider exists so the channel appears in the standard payment
-// method list and checkout flow; the actual deposit machinery lives in
-// cryptopay and is reached through CreatePayment's DepositAddress field.
+// Crypto identifies existing balance orders created by the standalone
+// deposit scanner/ledger pipeline. It cannot create checkout payments:
+// address deposits have no association with checkout or subscription orders.
 type Crypto struct {
 	instanceID string
 	config     map[string]string
@@ -48,22 +43,9 @@ func (c *Crypto) MerchantIdentityMetadata() map[string]string {
 	return map[string]string{"currency": c.config["currency"]}
 }
 
-// CreatePayment returns the user's deposit address as the payment target.
-// The cryptopay HTTP layer resolves the address and passes it through
-// CreatePaymentRequest.DepositAddress; when absent the channel reports a
-// configuration error instead of fabricating an address.
-func (c *Crypto) CreatePayment(_ context.Context, req payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
-	address := strings.TrimSpace(req.DepositAddress)
-	if address == "" {
-		return nil, fmt.Errorf("crypto create payment: deposit address unavailable")
-	}
-	return &payment.CreatePaymentResponse{
-		TradeNo:    strings.TrimSpace(req.OrderID),
-		PayURL:     "",
-		Currency:   c.config["currency"],
-		ResultType: payment.CreatePaymentResultOrderCreated,
-		QRCode:     address,
-	}, nil
+// CreatePayment refuses orders that the deposit scanner cannot settle.
+func (c *Crypto) CreatePayment(_ context.Context, _ payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
+	return nil, fmt.Errorf("crypto deposits use the standalone deposit page; checkout orders are unsupported")
 }
 
 // QueryOrder reports pending: crypto orders settle through the scanner,

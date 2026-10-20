@@ -81,7 +81,8 @@ func TestLimiterRateLimit(t *testing.T) {
 	}
 	p := testPolicy()
 	p.MaxPerTx = map[string]string{"native": "1000"}
-	p.MaxDaily = nil
+	// Daily authorization is now mandatory even when testing rate limiting.
+	p.MaxDaily = map[string]string{"native": "5000"}
 	now := time.Now()
 	for i := 0; i < 2; i++ {
 		reason, err := l.Allow(p, "native", bigI(1), now)

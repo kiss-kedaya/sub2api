@@ -84,6 +84,9 @@ func (s *PaymentConfigService) GetMethodLimits(ctx context.Context, types []stri
 	}
 	result := make([]MethodLimits, 0, len(types))
 	for _, pt := range types {
+		if strings.EqualFold(strings.TrimSpace(pt), payment.TypeCrypto) {
+			continue // standalone deposits cannot settle a checkout order
+		}
 		var matching []*dbent.PaymentProviderInstance
 		for _, inst := range instances {
 			if payment.InstanceSupportsType(inst.SupportedTypes, pt) {
@@ -221,6 +224,9 @@ func pcGroupByPaymentType(instances []*dbent.PaymentProviderInstance) map[string
 	typeInstances := make(map[string][]*dbent.PaymentProviderInstance)
 	seen := make(map[string]map[int64]bool)
 	add := func(key string, inst *dbent.PaymentProviderInstance) {
+		if strings.EqualFold(strings.TrimSpace(key), payment.TypeCrypto) {
+			return
+		}
 		if seen[key] == nil {
 			seen[key] = make(map[int64]bool)
 		}
@@ -230,6 +236,9 @@ func pcGroupByPaymentType(instances []*dbent.PaymentProviderInstance) map[string
 		}
 	}
 	for _, inst := range instances {
+		if inst == nil || strings.EqualFold(strings.TrimSpace(inst.ProviderKey), payment.TypeCrypto) {
+			continue
+		}
 		// Stripe provider: all sub-types → single "stripe" group
 		if inst.ProviderKey == payment.TypeStripe {
 			add(payment.TypeStripe, inst)

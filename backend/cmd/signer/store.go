@@ -10,9 +10,8 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// Settings keys owned by the signer. They live in the shared settings table
-// so the seeds and limits are stored with the rest of the data (backed up,
-// access-controlled) instead of as loose files.
+// Only the vault and audit use the shared database. Legacy policy/state keys
+// remain readable for diagnostics and migration, never for authorization.
 const (
 	settingVault  = "crypto.signer.vault"
 	settingPolicy = "crypto.signer.policy"
@@ -88,7 +87,7 @@ func (s *store) writeAudit(ctx context.Context, e auditEntry) error {
 	return nil
 }
 
-// loadPolicyFromDB reads the policy JSON from settings.
+// loadPolicyFromDB is LEGACY/DIAGNOSTIC ONLY. Its result cannot enable signing.
 func (s *store) loadPolicyFromDB(ctx context.Context) (*Policy, error) {
 	raw, err := s.getSetting(ctx, settingPolicy)
 	if err != nil {

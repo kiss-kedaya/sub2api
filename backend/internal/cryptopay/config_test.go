@@ -129,3 +129,25 @@ func TestIsEVMChain(t *testing.T) {
 		t.Fatal("tron/ethereum must not be supported")
 	}
 }
+
+func TestNormalizeConfigRejectsUnimplementedSolanaDeposits(t *testing.T) {
+	_, err := NormalizeConfig(CryptoConfig{Enabled: true, Chains: []string{ChainSolana}})
+	if err == nil {
+		t.Fatal("an unimplemented deposit scanner must not be enabled")
+	}
+}
+
+func TestConfigSnapshotsDoNotShareMutableMaps(t *testing.T) {
+	base := DefaultCryptoConfig()
+	s := &Service{config: base}
+	snapshot := s.Config()
+	snapshot.Confirmations[ChainBSC] = 100
+	snapshot.Chains[0] = ChainBase
+	if s.Config().Confirmations[ChainBSC] != 5 || s.Config().Chains[0] != ChainBSC {
+		t.Fatal("a config reader changed the live config")
+	}
+	_, err := NormalizeConfig(CryptoConfig{Chains: []string{ChainBSC}, Confirmations: base.Confirmations})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

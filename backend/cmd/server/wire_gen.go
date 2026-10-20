@@ -332,7 +332,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	batchImageCleanupService := service.ProvideBatchImageCleanupService(batchImageRepository, accountRepository, configConfig)
 	batchImageHandler := handler.ProvideBatchImageHandler(batchImagePublicService, batchImageDownloadService, batchImageCleanupService, openAIGatewayHandler)
 	cryptoAddressService := cryptopay.NewAddressService(db, settingService)
-	cryptoDepositCreditor := cryptopay.NewDepositCreditor(client, paymentService)
+	cryptoDepositCreditor := cryptopay.NewDepositCreditor(client, paymentService, db)
 	userBarkService := notify.NewUserBarkService(db, notify.AdaptEncryptor(secretEncryptor))
 	cryptoDepositCreditor.SetBarkNotifier(userBarkService)
 	// Balance and upstream alerts reuse the same per-profile Bark keys.

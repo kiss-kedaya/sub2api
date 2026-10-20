@@ -182,19 +182,7 @@
                 <p v-if="!config.hot_wallet_evm.trim()" class="crypto-view__warn">
                   {{ t('admin.crypto.hotWalletMissing') }}
                 </p>
-              </div>
-              <!-- The sweep destination must be the address the hot seed
-                   derives to; guessing sends swept funds into the void. -->
-              <div class="crypto-view__actions">
-                <button
-                  class="btn btn-secondary btn-sm"
-                  :disabled="loadingHotAddress || !signerUnlocked"
-                  :title="signerUnlocked ? '' : t('admin.crypto.hotAddressLocked')"
-                  @click="fillHotWalletAddresses"
-                >
-                  {{ loadingHotAddress ? t('common.loading') : t('admin.crypto.hotAddressFill') }}
-                </button>
-                <span v-if="hotAddressNote" class="crypto-view__hint">{{ hotAddressNote }}</span>
+                <p class="crypto-view__hint">{{ t('admin.crypto.signerPolicyHint') }}</p>
               </div>
               <!-- The sweep destination must be the address the hot seed
                    derives to; guessing sends swept funds into the void. -->
@@ -210,12 +198,6 @@
                 <span v-if="hotAddressNote" class="crypto-view__hint">{{ hotAddressNote }}</span>
               </div>
               <div class="crypto-view__field">
-                <label class="crypto-view__label">{{ t('admin.crypto.hotWalletSolana') }}</label>
-                <input v-model="config.hot_wallet_solana" class="input" placeholder="…" />
-              </div>
-              <div class="crypto-view__field">
-                <label class="crypto-view__label">{{ t('admin.crypto.hotIndex') }}</label>
-                <input v-model.number="config.hot_index" type="number" min="0" step="1" class="input" />
                 <p class="crypto-view__hint">{{ t('admin.crypto.hotIndexHint') }}</p>
               </div>
               <div class="crypto-view__switch-row">
@@ -484,6 +466,7 @@
               {{ t('admin.crypto.planned') }}: <strong>{{ sweepSummary.planned }}</strong> ·
               {{ t('admin.crypto.swept') }}: <strong>{{ sweepSummary.swept }}</strong> ·
               {{ t('admin.crypto.failed') }}: <strong>{{ sweepSummary.failed }}</strong> ·
+              {{ t('admin.crypto.pending') }}: <strong>{{ sweepSummary.pending ?? 0 }}</strong> ·
               gas: <strong>{{ sweepSummary.gas_topups }}</strong>
               <span v-if="sweepSummary.dry_run" class="crypto-view__badge">dry-run</span>
             </p>

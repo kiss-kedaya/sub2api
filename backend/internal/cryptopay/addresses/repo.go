@@ -218,11 +218,12 @@ func (r *Repo) LookupByAddress(ctx context.Context, chain, address string) (*Ass
 	return &a, nil
 }
 
-// ActiveAddresses returns every active address for a family, used by the
-// scanners' batch filter.
+// ActiveAddresses is the historical scanner API. Keep watching disabled
+// assignments too: users may have saved an address before it was disabled.
+// The ledger decides whether to credit or record for manual reconciliation.
 func (r *Repo) ActiveAddresses(ctx context.Context, family string) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT address FROM deposit_addresses WHERE chain = $1 AND status = 'active'`, family)
+		`SELECT address FROM deposit_addresses WHERE chain = $1 AND status IN ('active', 'disabled')`, family)
 	if err != nil {
 		return nil, fmt.Errorf("list active addresses: %w", err)
 	}

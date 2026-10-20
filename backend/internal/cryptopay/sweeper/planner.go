@@ -20,6 +20,10 @@ type Config struct {
 	GasTopUp        map[string]float64 // chain -> native gas amount per top-up
 	HotWalletEVM    string
 	HotWalletSolana string
+	// Confirmations is the required block depth (head - receipt block), per chain.
+	// Execution fails closed when a chain is missing or zero. Wire from the
+	// same confirmation configuration used by the deposit scanner.
+	Confirmations map[string]uint64
 }
 
 // PlanEntry is one address to sweep.
@@ -98,7 +102,7 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 				Address:         balance.Address,
 				DerivationIndex: balance.DerivationIndex,
 				Token:           balance.Token,
-				RawAmount:       balance.Raw,
+				RawAmount:       new(big.Int).Set(balance.Raw),
 				AmountDecimal:   amountDecimal,
 				Decimals:        balance.Decimals,
 			}

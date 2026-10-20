@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -42,6 +43,7 @@ type server struct {
 	// deposit mnemonic cannot reach the swept funds.
 	hotDeriver *Deriver
 	policy     *Policy
+	policyPath string // nonempty only for an independently loaded local policy
 	limiter    *limiter
 	audit      *auditLog
 
@@ -49,19 +51,47 @@ type server struct {
 	// every signing path answers ErrVaultLocked, so a stolen process image or
 	// a restarted host cannot sign without the operator's passphrase.
 	vaultMu sync.RWMutex
-	// policyMu guards the policy pointer: reloadPolicy swaps it before a
-	// signature while other requests read it, so the swap must be atomic.
+	// policyMu guards access to the startup-approved snapshot. HTTP handlers
+	// never replace it; changing an approval requires an operator restart.
 	policyMu sync.RWMutex
 	store    *store
 }
 
+// parseSocketMode deliberately accepts only these two octal spellings. Never
+// grant access to other users or confuse decimal and octal permission values.
+func parseSocketMode(raw string) (os.FileMode, error) {
+	switch raw {
+	case "0600":
+		return 0o600, nil
+	case "0660":
+		return 0o660, nil
+	default:
+		return 0, fmt.Errorf("-socket-mode must be 0600 or 0660")
+	}
+}
+
 func main() {
 	var (
-		socketPath = flag.String("socket", "/run/sub2api/signer.sock", "unix socket path")
-		dbDSN      = flag.String("db", os.Getenv("SIGNER_DB_DSN"), "Postgres DSN; settings hold the vault, policy and daily state")
-		genSeed    = flag.Bool("gen-seed", false, "generate a new mnemonic and exit")
+		socketPath    = flag.String("socket", "/run/sub2api/signer.sock", "unix socket path")
+		socketModeRaw = flag.String("socket-mode", "0600", "unix socket permissions: 0600 (owner only) or 0660 (shared IPC group)")
+		dbDSN         = flag.String("db", os.Getenv("SIGNER_DB_DSN"), "Postgres DSN for vault and audit; DB policy is diagnostic only")
+		policyPath    = flag.String("policy", "", "absolute path to independently approved read-only policy; required for signing")
+		statePath     = flag.String("state", "", "absolute path to signer-private persistent budget SQLite ledger")
+		initState     = flag.Bool("init-state", false, "offline initialization of a NEW budget ledger, then exit; never resets an existing ledger")
+		genSeed       = flag.Bool("gen-seed", false, "generate a new mnemonic and exit")
 	)
 	flag.Parse()
+	socketMode, err := parseSocketMode(*socketModeRaw)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *initState {
+		if err := initializeBudget(*statePath, time.Now()); err != nil {
+			log.Fatalf("initialize budget: %v", err)
+		}
+		log.Print("new budget initialized; existing installations must migrate today's usage or remain stopped until the next UTC day")
+		return
+	}
 
 	if *genSeed {
 		mnemonic, err := NewMnemonic()
@@ -76,7 +106,7 @@ func main() {
 	mnemonic := strings.TrimSpace(os.Getenv("SIGNER_MNEMONIC"))
 	hotMnemonic := strings.TrimSpace(os.Getenv("SIGNER_HOT_MNEMONIC"))
 	if *dbDSN == "" {
-		log.Fatal("SIGNER_DB_DSN (or -db) is required: the vault, policy and audit live in the database")
+		log.Fatal("SIGNER_DB_DSN (or -db) is required for the vault and audit")
 	}
 	st, err := newStore(*dbDSN)
 	if err != nil {
@@ -109,18 +139,30 @@ func main() {
 			deriver, hotDeriver = nil, nil
 		}
 	}
-	policy, err := st.loadPolicyFromDB(context.Background())
-	if err != nil {
-		log.Fatalf("load policy: %v", err)
-	}
-	limiter, err := newLimiter(st)
-	if err != nil {
-		log.Fatalf("init limiter: %v", err)
+	var policy *Policy
+	var limiter *limiter
+	if *policyPath != "" {
+		policy, err = loadPolicyFile(*policyPath)
+		if err != nil {
+			log.Fatalf("load independent policy: %v", err)
+		}
+		limiter, err = newPersistentLimiter(*statePath)
+		if err != nil {
+			log.Fatalf("init independent budget: %v", err)
+		}
+		defer limiter.db.Close()
+	} else {
+		// Compatibility diagnostic only: never authorize using this data.
+		if _, err := st.loadPolicyFromDB(context.Background()); err != nil {
+			log.Printf("legacy policy diagnostic: %v", err)
+		}
+		log.Print("signing disabled: -policy and -state are required; DB policy cannot authorize withdrawals")
 	}
 	srv := &server{
 		deriver:    deriver,
 		hotDeriver: hotDeriver,
 		policy:     policy,
+		policyPath: *policyPath,
 		limiter:    limiter,
 		audit:      newAuditLog(st),
 		store:      st,
@@ -133,9 +175,9 @@ func main() {
 	}
 	// Windows AF_UNIX does not honor POSIX permissions; skip chmod there so
 	// the socket stays connectable. On Linux the 0600 mode restricts access
-	// to the service account.
+	// to the service account; 0660 additionally permits the configured IPC group.
 	if runtime.GOOS != "windows" {
-		if err := os.Chmod(*socketPath, 0o600); err != nil {
+		if err := os.Chmod(*socketPath, socketMode); err != nil {
 			log.Fatalf("chmod socket: %v", err)
 		}
 	}
@@ -168,7 +210,8 @@ func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	s.vaultMu.RLock()
 	unlocked := s.deriver != nil && s.hotDeriver != nil
 	s.vaultMu.RUnlock()
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "unlocked": unlocked})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "unlocked": unlocked,
+		"signing_enabled": s.policyPath != "" && s.currentPolicy() != nil && s.limiter != nil && s.limiter.db != nil})
 }
 
 // handleUnlock takes the operator passphrase and loads both seeds into
@@ -304,7 +347,7 @@ func (s *server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if req.Count == 0 || req.Count > 500 {
+	if req.Count == 0 || req.Count > 500 || req.Start >= 1<<31 || uint64(req.Start)+uint64(req.Count) > 1<<31 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "count must be 1-500"})
 		return
 	}
@@ -331,22 +374,22 @@ func (s *server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"addresses": out})
 }
 
-// handleHotAddress returns the hot wallet's receive addresses (EVM + Solana)
-// so the operator knows exactly what to put in the sweep destination fields.
+// handleHotAddress returns the actual gas funding addresses (EVM + Solana).
+// Sweep destinations are separate policy targets and need not equal these.
 // Addresses are public data; no key material is exposed.
 func (s *server) handleHotAddress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	// Reload first: the operator may have just changed hot_index in the
-	// console, and this endpoint is how they discover the new address.
-	s.reloadPolicy()
 	_, hotDeriver, ok := s.requireUnlocked(w)
 	if !ok {
 		return
 	}
-	policy := s.currentPolicy()
+	policy, ok := s.independentPolicy(w)
+	if !ok {
+		return
+	}
 	_, evmAddr, err := hotDeriver.EVMKey(policy.HotIndex)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -365,25 +408,18 @@ func (s *server) handleHotAddress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// reloadPolicy re-reads the policy JSON from the database so an operator
-// changing the sweep destination in the console does not require a signer
-// restart. It is intentionally conservative: parse failure keeps the old
-// policy instead of rejecting every signature.
-func (s *server) reloadPolicy() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	p, err := s.store.loadPolicyFromDB(ctx)
-	if err != nil {
-		log.Printf("signer policy reload failed: %v", err)
-		return
+// A shared DB policy can be read at startup for migration diagnostics, never
+// used for authorization. No request reloads DB policy or changes hot_index.
+func (s *server) independentPolicy(w http.ResponseWriter) (*Policy, bool) {
+	p := s.currentPolicy()
+	if s.policyPath == "" || p == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "signing disabled: independent -policy required"})
+		return nil, false
 	}
-	s.policyMu.Lock()
-	s.policy = p
-	s.policyMu.Unlock()
+	return p, true
 }
 
-// currentPolicy returns the active policy under the read lock. Every signing
-// path reads through here so a concurrent reload cannot race the pointer.
+// currentPolicy returns the independently approved startup snapshot.
 func (s *server) currentPolicy() *Policy {
 	s.policyMu.RLock()
 	defer s.policyMu.RUnlock()
@@ -395,70 +431,49 @@ func (s *server) handleSignEVM(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	s.reloadPolicy()
-	policy := s.currentPolicy()
 	depositDeriver, hotDeriver, ok := s.requireUnlocked(w)
 	if !ok {
 		return
 	}
+	policy, ok := s.independentPolicy(w)
+	if !ok {
+		return
+	}
+	if s.limiter == nil || s.limiter.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "persistent signer budget required"})
+		return
+	}
 	var req evmSignRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if !policy.AllowsTarget(req.To) {
-		// Gas top-ups pay native coin TO a derived child address, which is
-		// never a whitelisted payout target. Accept them only when the
-		// target provably equals the address derived at gas_index: the
-		// signer then needs no address book and every fork works out of
-		// the box.
-		if req.Kind != "gas" {
-			s.audit.write(auditEntry{Op: "sign_evm", Index: req.Index, To: req.To, Result: "denied", Reason: "target_not_allowed"})
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "target not allowed"})
-			return
-		}
-		if !gasTargetAllowed(depositDeriver, req) {
-			s.audit.write(auditEntry{Op: "sign_evm", Index: req.Index, To: req.To, Result: "denied", Reason: "gas_target_not_derived"})
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "gas target is not our derived address"})
-			return
-		}
-		if req.Token != "" && !strings.EqualFold(req.Token, "native") {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "gas top-up must be native"})
-			return
-		}
-		// Signed by the hot seed, not the deposit seed.
-		req.Index = policy.HotIndex
-		req.hotKey = true
-	}
-	amount, err := parseBigInt(req.Amount)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid amount"})
-		return
-	}
-	reason, err := s.limiter.Allow(policy, TokenKey(req.Token), amount, time.Now())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if reason != "" {
-		s.audit.write(auditEntry{Op: "sign_evm", Kind: req.Kind, Index: req.Index, To: req.To, Token: req.Token, Amount: req.Amount, Result: "denied", Reason: reason})
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": reason})
-		return
-	}
-	// Gas top-ups sign with the hot seed; everything else with the deposit
-	// seed. Two seeds means one leaked mnemonic cannot drain both pools.
 	signingDeriver := depositDeriver
-	if req.hotKey {
+	if req.Kind == "gas" {
+		// ALWAYS enforce the derivation, native-token restriction and hot seed,
+		// even if To also happens to be a whitelisted sweep target.
+		if !isEVMNative(req.Token) || !gasTargetAllowed(depositDeriver, req) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "gas requires native payment to our derived gas_index"})
+			return
+		}
+		req.Index, req.hotKey = policy.HotIndex, true
 		signingDeriver = hotDeriver
+	} else if !policy.allowsEVMTarget(req.To) {
+		s.audit.write(auditEntry{Op: "sign_evm", Index: req.Index, To: req.To, Result: "denied", Reason: "target_not_allowed"})
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "target not allowed"})
+		return
 	}
-	signed, err := signEVMTransfer(signingDeriver, req)
+	charges, err := evmBudgetCharges(policy, req)
 	if err != nil {
-		s.audit.write(auditEntry{Op: "sign_evm", Kind: req.Kind, Index: req.Index, To: req.To, Token: req.Token, Amount: req.Amount, Result: "error", Reason: err.Error()})
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit.write(auditEntry{Op: "sign_evm", Kind: req.Kind, Index: req.Index, ChainID: req.ChainID, To: req.To, Token: req.Token, Amount: req.Amount, Result: "ok"})
-	writeJSON(w, http.StatusOK, map[string]string{"signed_tx": signed})
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	signed, reason, err := s.limiter.authorizeAndSign(ctx, policy, charges, time.Now(), func() (string, error) {
+		return signEVMTransfer(signingDeriver, req)
+	})
+	s.signResponse(w, signed, reason, err, auditEntry{Op: "sign_evm", Kind: req.Kind, Index: req.Index, ChainID: req.ChainID, To: req.To, Token: req.Token, Amount: req.Amount})
 }
 
 func (s *server) handleSignSol(w http.ResponseWriter, r *http.Request) {
@@ -466,43 +481,60 @@ func (s *server) handleSignSol(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	s.reloadPolicy()
-	policy := s.currentPolicy()
 	depositDeriver, _, ok := s.requireUnlocked(w)
 	if !ok {
 		return
 	}
+	policy, ok := s.independentPolicy(w)
+	if !ok {
+		return
+	}
+	if s.limiter == nil || s.limiter.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "persistent signer budget required"})
+		return
+	}
 	var req solSignRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if !policy.AllowsTarget(req.To) {
+	if !policy.allowsSolanaTarget(req.To) {
 		s.audit.write(auditEntry{Op: "sign_sol", Index: req.Index, To: req.To, Result: "denied", Reason: "target_not_allowed"})
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "target not allowed"})
 		return
 	}
-	amount, err := parseBigInt(req.Amount)
+	charges, err := solBudgetCharges(policy, req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid amount"})
-		return
-	}
-	reason, err := s.limiter.Allow(policy, TokenKey(req.Mint), amount, time.Now())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if reason != "" {
-		s.audit.write(auditEntry{Op: "sign_sol", Index: req.Index, To: req.To, Token: req.Mint, Amount: req.Amount, Result: "denied", Reason: reason})
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": reason})
-		return
-	}
-	signed, err := signSolTransfer(depositDeriver, req)
-	if err != nil {
-		s.audit.write(auditEntry{Op: "sign_sol", Index: req.Index, To: req.To, Token: req.Mint, Amount: req.Amount, Result: "error", Reason: err.Error()})
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit.write(auditEntry{Op: "sign_sol", Index: req.Index, To: req.To, Token: req.Mint, Amount: req.Amount, Result: "ok"})
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	signed, reason, err := s.limiter.authorizeAndSign(ctx, policy, charges, time.Now(), func() (string, error) {
+		return signSolTransfer(depositDeriver, req)
+	})
+	s.signResponse(w, signed, reason, err, auditEntry{Op: "sign_sol", Index: req.Index, To: req.To, Token: req.Mint, Amount: req.Amount})
+}
+
+func (s *server) signResponse(w http.ResponseWriter, signed, reason string, err error, entry auditEntry) {
+	if err != nil {
+		entry.Result, entry.Reason = "error", err.Error()
+		s.audit.write(entry)
+		status := http.StatusInternalServerError
+		var buildErr *signBuildError
+		if errors.As(err, &buildErr) {
+			status = http.StatusBadRequest
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+	if reason != "" {
+		entry.Result, entry.Reason = "denied", reason
+		s.audit.write(entry)
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": reason})
+		return
+	}
+	entry.Result = "ok"
+	s.audit.write(entry)
 	writeJSON(w, http.StatusOK, map[string]string{"signed_tx": signed})
 }

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -77,6 +78,7 @@ type PoolStore interface {
 
 // Service coordinates pool top-up and lazy assignment.
 type Service struct {
+	poolMu       sync.Mutex // serialize top-up and signer replacement
 	repo         PoolStore
 	signer       Deriver
 	topUpBatch   int
@@ -137,6 +139,8 @@ func (s *Service) GetOrAssign(ctx context.Context, userID int64) (map[string]str
 // topUp derives one batch starting after the current maximum index and
 // stores it for both families.
 func (s *Service) topUp(ctx context.Context) error {
+	s.poolMu.Lock()
+	defer s.poolMu.Unlock()
 	maxIndex, err := s.repo.MaxDerivationIndex(ctx)
 	if err != nil {
 		return err
@@ -152,9 +156,15 @@ func (s *Service) topUp(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(derived) != s.topUpBatch {
+		return fmt.Errorf("signer returned %d addresses, expected %d", len(derived), s.topUpBatch)
+	}
 	evm := make([]string, 0, len(derived))
 	solana := make([]string, 0, len(derived))
-	for _, d := range derived {
+	for i, d := range derived {
+		if d.Index != int64(start)+int64(i) || strings.TrimSpace(d.EVM) == "" || strings.TrimSpace(d.Solana) == "" {
+			return fmt.Errorf("signer returned an invalid address/index at offset %d", i)
+		}
 		evm = append(evm, d.EVM)
 		solana = append(solana, d.Solana)
 	}
@@ -162,6 +172,15 @@ func (s *Service) topUp(ctx context.Context) error {
 		return err
 	}
 	return s.repo.InsertPoolBatch(ctx, FamilySolana, int64(start), solana)
+}
+
+// SetSigner replaces the derivation client only after the caller has checked
+// that the replacement derives the existing pool's seed. No old top-up can
+// publish a batch after this switch.
+func (s *Service) SetSigner(signer Deriver) {
+	s.poolMu.Lock()
+	defer s.poolMu.Unlock()
+	s.signer = signer
 }
 
 // hotWalletIndex is the HD index reserved for the hot/gas wallet. It must

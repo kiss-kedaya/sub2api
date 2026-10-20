@@ -1,6 +1,13 @@
 {
-  "_comment": "Amounts are RAW units (integer strings), not token counts. BSC USDT has 18 decimals, so 1 USDT = 1000000000000000000. Copy to signer-policy.json and edit; a too-small cap silently rejects every signature.",
+  "_comment": "EXAMPLE ONLY: independently approve targets and limits offline. Use -policy with an absolute read-only path, isolated from the web UID, and -state with a signer-private ledger. EVM chain keys are decimal chain IDs; missing chains/fee caps/daily limits DENY. max_gas_price is wei/gas; max_fee and native limits are wei. Native budgets include value plus gas_limit*fee_cap, including ERC20 fees. Existing unscoped EVM token keys share daily totals across chains; optional evm:56:native style keys scope both limits to a chain. Solana is disabled unless explicitly configured; its keys must use solana:native or solana:<case-sensitive mint>.",
   "hot_index": 0,
+  "evm_chains": {
+    "56": {
+      "max_gas_limit": 200000,
+      "max_gas_price": "5000000000",
+      "max_fee": "1000000000000000"
+    }
+  },
   "targets": [
     "0x0000000000000000000000000000000000000000"
   ],
