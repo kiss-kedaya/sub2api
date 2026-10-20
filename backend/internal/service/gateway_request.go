@@ -202,24 +202,31 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	}
 
 	bodyBytes := parsed.Body.Bytes()
+	// Keep the hard JSON validity gate: callers rely on rejecting malformed
+	// bodies before any downstream rewrite runs.
 	if !gjson.ValidBytes(bodyBytes) {
 		return DescribeInvalidJSON(bodyBytes)
-	}
-
-	// 只在当前函数内零拷贝读取 JSON 字段；ReplaceBody 后必须重新进入本函数刷新派生状态。
-	jsonStr := *(*string)(unsafe.Pointer(&bodyBytes))
-	if hasDuplicateTopLevelKey(jsonStr, "model") {
-		return ErrDuplicateModelField
 	}
 	clearGatewayRequestDerivedState(parsed)
 	parsed.protocol = protocol
 
-	modelResult := gjson.Get(jsonStr, "model")
-	if modelResult.Exists() {
-		if modelResult.Type != gjson.String {
+	// Single pass: one walk over the byte stream collects every hot-path field.
+	// The previous code ran nine gjson.Get calls plus three range lookups over
+	// the same body, each rescanning from the start (gjson.parseSquash measured
+	// at 27% of CPU in an online profile).
+	scan, err := scanGatewayRequestTopLevel(bodyBytes)
+	if err != nil {
+		return DescribeInvalidJSON(bodyBytes)
+	}
+	if scan.modelKeyCount > 1 {
+		return ErrDuplicateModelField
+	}
+
+	if scan.modelSet {
+		if scan.modelType != '"' {
 			return fmt.Errorf("invalid model field type")
 		}
-		parsed.Model = modelResult.String()
+		parsed.Model = rawJSONString(scan.modelRaw)
 		if protocol == domain.PlatformAnthropic {
 			normalizedModel := normalizeClaudeCodeLongContextModel(parsed.Model)
 			if normalizedModel != parsed.Model {
@@ -229,41 +236,59 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 				}
 				parsed.Body.Replace(normalizedBody)
 				bodyBytes = normalizedBody
-				jsonStr = *(*string)(unsafe.Pointer(&bodyBytes))
 				parsed.Model = normalizedModel
+				// 模型名改写会改变字节偏移，range 必须基于新 body 重算。
+				if scan, err = scanGatewayRequestTopLevel(bodyBytes); err != nil {
+					return DescribeInvalidJSON(bodyBytes)
+				}
 			}
 		}
 	}
 
-	streamResult := gjson.Get(jsonStr, "stream")
-	if streamResult.Exists() {
-		if streamResult.Type != gjson.True && streamResult.Type != gjson.False {
+	if scan.streamSet {
+		if !rawJSONBool(scan.streamRaw) && !rawJSONFalse(scan.streamRaw) {
 			return fmt.Errorf("invalid stream field type")
 		}
-		parsed.Stream = streamResult.Bool()
+		parsed.Stream = rawJSONBool(scan.streamRaw)
 	}
 
-	parsed.MetadataUserID = gjson.Get(jsonStr, "metadata.user_id").String()
+	parsed.MetadataUserID = rawJSONSubString(scan.metadataRaw, "user_id")
 
-	thinkingType := gjson.Get(jsonStr, "thinking.type").String()
+	thinkingType := rawJSONSubString(scan.thinkingRaw, "type")
 	parsed.ThinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive"
 
-	parsed.OutputEffort = strings.TrimSpace(gjson.Get(jsonStr, "output_config.effort").String())
+	parsed.OutputEffort = strings.TrimSpace(rawJSONSubString(scan.outputConfigRaw, "effort"))
 	if protocol == domain.PlatformAnthropic {
-		parsed.Speed = strings.ToLower(strings.TrimSpace(gjson.Get(jsonStr, "speed").String()))
+		parsed.Speed = strings.ToLower(strings.TrimSpace(rawJSONScalarString(scan.speedRaw)))
 	}
 
-	maxTokensResult := gjson.Get(jsonStr, "max_tokens")
-	if maxTokensResult.Exists() && maxTokensResult.Type == gjson.Number {
-		f := maxTokensResult.Float()
+	if f, ok := rawJSONNumber(scan.maxTokensRaw); ok {
 		if !math.IsNaN(f) && !math.IsInf(f, 0) && f == math.Trunc(f) &&
 			f <= float64(math.MaxInt) && f >= float64(math.MinInt) {
 			parsed.MaxTokens = int(f)
 		}
 	}
 
-	setGatewayRequestRanges(parsed, protocol, jsonStr)
+	applyGatewayRequestRanges(parsed, protocol, scan)
 	return nil
+}
+
+// applyGatewayRequestRanges 把扫描结果里的 raw range 落到 ParsedRequest。
+func applyGatewayRequestRanges(parsed *ParsedRequest, protocol string, scan gatewayTopLevelScan) {
+	if parsed == nil {
+		return
+	}
+	if protocol == domain.PlatformGemini {
+		parsed.systemRange = scan.geminiPartsRaw
+		parsed.messagesRange = scan.contentsRaw
+		return
+	}
+	parsed.HasSystem = scan.hasSystem
+	parsed.systemRange = scan.systemRaw
+	parsed.messagesRange = scan.messagesRaw
+	if protocol == "responses" {
+		parsed.inputRange = scan.inputRaw
+	}
 }
 
 func refreshGatewayRequestRanges(parsed *ParsedRequest, protocol string) error {

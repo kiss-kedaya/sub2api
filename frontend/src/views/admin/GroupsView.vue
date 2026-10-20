@@ -790,6 +790,34 @@
           </div>
         </div>
 
+        <!-- Grok 安全拒绝单次扣费（放在模型白名单上方） -->
+        <div
+          v-if="createForm.platform === 'grok'"
+          class="border-t pt-4"
+        >
+          <h4 class="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.moderationRefusalPricing.title") }}
+          </h4>
+          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.moderationRefusalPricing.hint") }}
+          </p>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <label class="input-label">{{ t("admin.groups.moderationRefusalPricing.pricePerCall") }}</label>
+              <input
+                v-model.number="createForm.grok_moderation_refusal_price"
+                type="number"
+                step="0.00000001"
+                min="0"
+                class="input"
+                :placeholder="t('admin.groups.moderationRefusalPricing.placeholder')"
+                data-testid="create-grok-moderation-refusal-price"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- Grok 安全拒绝单次扣费（放在模型白名单上方） -->
         <div class="border-t pt-4">
           <div class="mb-3 flex items-center justify-between gap-3">
             <div>
@@ -1562,27 +1590,17 @@
                 data-testid="create-search-provider-key"
               />
             </div>
-            <div v-if="createForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
-              <input
-                v-model="createForm.search_provider_base_url"
-                type="text"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
-                data-testid="create-search-provider-url"
-              />
-            </div>
-            <div v-if="createForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
-              <input
-                v-model="createForm.search_provider_api_key"
-                type="password"
-                autocomplete="new-password"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
-                data-testid="create-search-provider-key"
-              />
-            </div>
+          </div>
+        </div>
+        <!-- Grok Voice 定价 -->
+        <div
+          v-if="createForm.platform === 'grok'"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            {{ t("admin.groups.voicePricing.title") }}
+          </h4>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div v-if="createForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioRealtimePerMin") }}</label>
               <input
@@ -2486,6 +2504,33 @@
           </div>
         </div>
 
+        <!-- Grok 安全拒绝单次扣费（放在模型白名单上方） -->
+        <div
+          v-if="editForm.platform === 'grok'"
+          class="border-t pt-4"
+        >
+          <h4 class="mb-1 text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.moderationRefusalPricing.title") }}
+          </h4>
+          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.moderationRefusalPricing.hint") }}
+          </p>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <label class="input-label">{{ t("admin.groups.moderationRefusalPricing.pricePerCall") }}</label>
+              <input
+                v-model.number="editForm.grok_moderation_refusal_price"
+                type="number"
+                step="0.00000001"
+                min="0"
+                class="input"
+                :placeholder="t('admin.groups.moderationRefusalPricing.placeholder')"
+                data-testid="edit-grok-moderation-refusal-price"
+              />
+            </div>
+          </div>
+        </div>
+
         <div class="border-t pt-4">
           <div class="mb-3 flex items-center justify-between gap-3">
             <div>
@@ -3267,36 +3312,29 @@
                 :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
                 data-testid="edit-search-provider-key"
               />
+              <p
+                v-if="editForm.searchProviderKeyConfigured && !editForm.clearSearchProviderKey"
+                class="mt-1 text-xs text-emerald-600 dark:text-emerald-400"
+                data-testid="edit-search-provider-key-configured"
+              >
+                {{ t("admin.groups.explicitPricing.searchProviderApiKeyConfigured") }}
+              </p>
               <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
                 <input v-model="editForm.clearSearchProviderKey" type="checkbox" class="h-3.5 w-3.5" />
                 <span>{{ t("admin.groups.explicitPricing.searchProviderApiKeyClear") }}</span>
               </label>
             </div>
-            <div v-if="editForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderBaseUrl") }}</label>
-              <input
-                v-model="editForm.search_provider_base_url"
-                type="text"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
-                data-testid="edit-search-provider-url"
-              />
-            </div>
-            <div v-if="editForm.platform === 'deepseek'">
-              <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
-              <input
-                v-model="editForm.search_provider_api_key"
-                type="password"
-                autocomplete="new-password"
-                class="input"
-                :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
-                data-testid="edit-search-provider-key"
-              />
-              <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                <input v-model="editForm.clearSearchProviderKey" type="checkbox" class="h-3.5 w-3.5" />
-                <span>{{ t("admin.groups.explicitPricing.searchProviderApiKeyClear") }}</span>
-              </label>
-            </div>
+          </div>
+        </div>
+        <!-- Grok Voice 定价 -->
+        <div
+          v-if="editForm.platform === 'grok'"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            {{ t("admin.groups.voicePricing.title") }}
+          </h4>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div v-if="editForm.platform === 'grok'">
               <label class="input-label">{{ t("admin.groups.voicePricing.audioRealtimePerMin") }}</label>
               <input
@@ -5111,11 +5149,14 @@ const createForm = reactive({
   video_price_1080p: null as number | null,
   video_model_prices: createVideoModelPricesForm(),
   // Codex 网页搜索按次计费（仅 openai 平台使用）；null = 使用默认价 0.01
+  // Grok 安全拒绝单次扣费；null = 默认 0.1 USD，0 = 不扣费
+  grok_moderation_refusal_price: null as number | null,
   web_search_price_per_call: null as number | null,
   search_price_per_1k: null as number | null,
   search_provider_base_url: '' as string,
   search_provider_api_key: '' as string,
   clearSearchProviderKey: false,
+  searchProviderKeyConfigured: false,
   audio_realtime_price_per_min: null as number | null,
   audio_tts_price_per_million_chars: null as number | null,
   audio_stt_price_per_hour: null as number | null,
@@ -5481,12 +5522,15 @@ const editForm = reactive({
   video_price_1080p: null as number | null,
   video_model_prices: createVideoModelPricesForm(),
   // Codex 网页搜索按次计费（仅 openai 平台使用）；null = 使用默认价 0.01
+  // Grok 安全拒绝单次扣费；null = 默认 0.1 USD，0 = 不扣费
+  grok_moderation_refusal_price: null as number | null,
   web_search_price_per_call: null as number | null,
   search_price_per_1k: null as number | null,
   audio_realtime_price_per_min: null as number | null,
   search_provider_base_url: '' as string,
   search_provider_api_key: '' as string,
   clearSearchProviderKey: false,
+  searchProviderKeyConfigured: false,
   audio_tts_price_per_million_chars: null as number | null,
   audio_stt_price_per_hour: null as number | null,
   // 高峰时段倍率配置
@@ -5947,6 +5991,7 @@ const closeCreateModal = () => {
   createForm.model_pricing = [];
   createForm.web_search_price_per_call = null;
   createForm.search_price_per_1k = null;
+  createForm.grok_moderation_refusal_price = null;
   createForm.search_provider_base_url = '';
   createForm.search_provider_api_key = '';
   createForm.audio_realtime_price_per_min = null;
@@ -6141,6 +6186,9 @@ const handleCreateGroup = async () => {
     requestData.video_price_480p = emptyToNull(requestData.video_price_480p);
     requestData.video_price_720p = emptyToNull(requestData.video_price_720p);
     requestData.video_price_1080p = emptyToNull(requestData.video_price_1080p);
+    requestData.grok_moderation_refusal_price = emptyToNull(
+      requestData.grok_moderation_refusal_price,
+    );
     requestData.search_price_per_1k = emptyToNull(
       requestData.search_price_per_1k,
     );
@@ -6229,9 +6277,14 @@ const handleEdit = async (group: AdminGroup) => {
   );
   editForm.web_search_price_per_call = group.web_search_price_per_call ?? null;
   editForm.search_price_per_1k = group.search_price_per_1k ?? null;
+  editForm.grok_moderation_refusal_price = group.grok_moderation_refusal_price ?? null;
   editForm.search_provider_base_url = group.search_provider_base_url ?? '';
   editForm.search_provider_api_key = '';
   editForm.clearSearchProviderKey = false;
+  // Server never returns the key itself, only whether one is stored.
+  editForm.searchProviderKeyConfigured = group.search_provider_api_key_set === true;
+  // Server never returns the key itself, only whether one is stored.
+  editForm.searchProviderKeyConfigured = group.search_provider_api_key_set === true;
   editForm.audio_realtime_price_per_min = group.audio_realtime_price_per_min ?? null;
   editForm.audio_tts_price_per_million_chars = group.audio_tts_price_per_million_chars ?? null;
   editForm.audio_stt_price_per_hour = group.audio_stt_price_per_hour ?? null;
@@ -6350,9 +6403,12 @@ const closeEditModal = () => {
   editForm.model_pricing = [];
   editForm.web_search_price_per_call = null;
   editForm.search_price_per_1k = null;
+  editForm.grok_moderation_refusal_price = null;
   editForm.search_provider_base_url = '';
   editForm.search_provider_api_key = '';
   editForm.clearSearchProviderKey = false;
+  editForm.searchProviderKeyConfigured = false;
+  editForm.searchProviderKeyConfigured = false;
   editForm.audio_realtime_price_per_min = null;
   editForm.audio_tts_price_per_million_chars = null;
   editForm.audio_stt_price_per_hour = null;
@@ -6506,6 +6562,9 @@ const handleUpdateGroup = async () => {
     payload.video_price_480p = emptyPriceToClear(payload.video_price_480p);
     payload.video_price_720p = emptyPriceToClear(payload.video_price_720p);
     payload.video_price_1080p = emptyPriceToClear(payload.video_price_1080p);
+    payload.grok_moderation_refusal_price = emptyPriceToClear(
+      payload.grok_moderation_refusal_price,
+    );
     payload.search_price_per_1k = emptyPriceToClear(
       payload.search_price_per_1k,
     );

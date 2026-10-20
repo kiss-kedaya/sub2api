@@ -29,6 +29,13 @@ type openAICompactSSEKeepalive struct {
 	writer  gin.ResponseWriter
 	started bool
 	stopped bool
+	// upstreamReady 表示上游已经返回 200 + text/event-stream。只有此时才允许
+	// 向下游写心跳：在拿到上游响应头之前就写 200，会把「上游 400」永久固化成
+	// 200，下游只能看到「流正常结束」，这是与官方语义不符的。
+	upstreamReady bool
+	// gateUntilUpstream 为真时，心跳必须等上游返回 200 + SSE 之后才允许写下游。
+	// 仅用于 Anthropic 直通路径；compact 路径仍需「先提交 200」的旧行为。
+	gateUntilUpstream bool
 	// bytes 是心跳已写出的注释字节数。心跳不构成语义响应，handler 的
 	// "Forward 期间是否已写响应"判定（failover 放弃换号的依据）必须扣除
 	// 这部分字节，见 OpenAICompactKeepaliveAdjustedWrittenSize。
@@ -54,6 +61,68 @@ func StartOpenAICompactSSEKeepalive(c *gin.Context, interval time.Duration) func
 // writer-size and failover accounting apply consistently to both paths.
 func StartOpenAIStreamSSEKeepalive(c *gin.Context, interval time.Duration) func() {
 	return startOpenAISSEKeepalive(c, interval, true)
+}
+
+// GateOpenAIStreamSSEKeepaliveUntilUpstream 让心跳在上游响应头到达前保持静默。
+// Anthropic 直通路径用它保证上游的 400/500 能按真实状态码返回。
+func GateOpenAIStreamSSEKeepaliveUntilUpstream(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	v, ok := c.Get(openAICompactSSEKeepaliveKey)
+	if !ok {
+		return
+	}
+	k, ok := v.(*openAICompactSSEKeepalive)
+	if !ok || k == nil {
+		return
+	}
+	k.mu.Lock()
+	k.gateUntilUpstream = true
+	k.mu.Unlock()
+}
+
+// ArmOpenAIStreamSSEKeepalive 在上游已经返回 200 + text/event-stream 之后调用，
+// 允许心跳真正开始写下游。在此之前心跳保持静默，保证上游的 4xx/5xx 能按真实
+// 状态码返回给客户端（与官方上游一致）。
+func ArmOpenAIStreamSSEKeepalive(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	v, ok := c.Get(openAICompactSSEKeepaliveKey)
+	if !ok {
+		return
+	}
+	k, ok := v.(*openAICompactSSEKeepalive)
+	if !ok || k == nil {
+		return
+	}
+	k.mu.Lock()
+	k.upstreamReady = true
+	k.mu.Unlock()
+}
+
+// IsOpenAIStreamSSEKeepaliveArmed 报告下游 SSE 响应头是否已经提交（即上游
+// 已返回 200 + SSE 且心跳已获准开始）。一旦提交，状态码就固定为 200，此时
+// 不能再换号重试——换号也无法撤销已发出的 200。
+func IsOpenAIStreamSSEKeepaliveArmed(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	v, ok := c.Get(openAICompactSSEKeepaliveKey)
+	if !ok {
+		return false
+	}
+	k, ok := v.(*openAICompactSSEKeepalive)
+	if !ok || k == nil {
+		return false
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	// 只有被 gate 的入口（/v1/messages）在解锁后确实向客户端写下了 200，才代表
+	// 状态码已固化、不能再换号。未 gate 的入口（chat-completions / responses /
+	// compact）仍靠心跳字节扣除来判定能否重放，不在此一刀切禁掉。
+	return k.gateUntilUpstream && k.started
 }
 
 func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration, enabled bool) func() {
@@ -111,6 +180,13 @@ func (k *openAICompactSSEKeepalive) beat() bool {
 	if k.stopped {
 		return false
 	}
+	// gateUntilUpstream 为真时（Anthropic 直通路径），上游还没给出 200 + SSE
+	// 之前绝不向下游写响应头。否则上游随后返回 400（例如 prompt is too long）
+	// 时状态码已被固化成 200，下游只能看到「流正常结束」，与官方语义不符。
+	// compact 路径依赖「先发 200 再在流内报失败」，保持原有行为。
+	if k.gateUntilUpstream && !k.upstreamReady {
+		return true
+	}
 	if !k.started {
 		header := k.writer.Header()
 		header.Set("Content-Type", "text/event-stream")
@@ -156,6 +232,13 @@ func WriteOpenAIStreamSSEHeartbeat(c *gin.Context, payload []byte) (written int,
 	defer k.mu.Unlock()
 	if k.stopped {
 		return 0, nil, false
+	}
+	// 与定时心跳保持同一门控：上游响应头到达前不提交 200，
+	// 否则上游随后返回 400/529 时状态码无法回传。这里必须返回
+	// handled=true（写出 0 字节），否则调用方会退回直接写 ResponseWriter，
+	// 绕过门控把状态码固化成 200。
+	if k.gateUntilUpstream && !k.upstreamReady {
+		return 0, nil, true
 	}
 	if !k.started {
 		header := k.writer.Header()

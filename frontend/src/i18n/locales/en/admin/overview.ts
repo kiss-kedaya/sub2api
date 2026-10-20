@@ -1034,15 +1034,22 @@ export default {
         notConfigured: 'Not configured'
       },
       explicitPricing: {
-        title: 'Search & Voice Pricing',
-        description: 'Optional per-group prices for web_search (per 1k calls) and Voice realtime / TTS / STT (USD). Leave empty if unused. DeepSeek groups can also point at a dedicated search provider.',
+        title: 'Search Pricing',
+        description: 'Optional per-group price for web_search (USD per 1k calls). Leave empty if unused. DeepSeek groups can also point at a dedicated search provider.',
         searchPricePer1k: 'Search price per 1k calls (USD)',
         pricePlaceholder: 'optional',
         searchProviderBaseUrl: 'Dedicated search base URL',
         searchProviderBaseUrlPlaceholder: 'Empty uses the model account base URL',
         searchProviderApiKey: 'Dedicated search API key',
         searchProviderApiKeyPlaceholder: 'Empty leaves it unchanged; never echoed back',
+        searchProviderApiKeyConfigured: 'A key is configured. Leave empty to keep it.',
         searchProviderApiKeyClear: 'Clear the saved search key'
+      },
+      moderationRefusalPricing: {
+        title: 'Grok Safety-Refusal Billing',
+        hint: 'Charge per request rejected with SAFETY_CHECK_TYPE (USD). Leave empty for the default 0.1; set 0 to disable the charge.',
+        pricePerCall: 'Charge per refusal (USD)',
+        placeholder: 'default 0.1'
       },
       modelPricing: {
         title: 'Per-model group pricing',

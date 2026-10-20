@@ -69,6 +69,10 @@ type Group struct {
 	// 不必与模型账号共用额度。为空时回落到账号自带值。
 	SearchProviderBaseURL *string
 	SearchProviderAPIKey  *string
+	// GrokModerationRefusalPrice 是 Grok 内容策略拒绝（SAFETY_CHECK_TYPE）
+	// 的单次扣费（USD/次）。nil 表示使用默认 0.1；0 表示不扣费。
+	// 该费用不乘 RateMultiplier：运营按「每次多少钱」直接定价。
+	GrokModerationRefusalPrice *float64
 	// Grok Voice 显式定价（分组级，不按文本 RateMultiplier）。
 	AudioRealtimePricePerMin     *float64
 	AudioTTSPricePerMillionChars *float64

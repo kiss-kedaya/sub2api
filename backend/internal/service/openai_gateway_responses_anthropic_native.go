@@ -100,6 +100,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	anthropicBody = StripEmptyTextBlocks(anthropicBody)
 	anthropicBody = FilterWebSearchHistoryBlocks(anthropicBody, upstreamModel)
 	anthropicBody = enforceCacheControlLimit(anthropicBody)
+	// Claude 5.x 只认 adaptive thinking；Responses→Anthropic 的合成会把
+	// reasoning.effort 落成 enabled+budget_tokens，出站前按模型名修正。
+	anthropicBody = sanitizeAnthropicThinkingForModel(anthropicBody, upstreamModel)
 
 	apiKey := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
 	if apiKey == "" {

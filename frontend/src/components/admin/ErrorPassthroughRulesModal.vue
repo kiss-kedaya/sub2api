@@ -488,24 +488,31 @@ const matchModeOptions = computed(() => [
 
 const platformOptions = CONCRETE_PLATFORM_OPTIONS
 
-// Load rules when dialog opens
-watch(() => props.show, (newVal) => {
-  if (newVal) {
-    loadRules()
-  }
-})
-
+// Invalidate pending loads when visibility changes or the component unmounts.
+let loadRevision = 0
 const loadRules = async () => {
+  const revision = ++loadRevision
+  const isCurrent = () => props.show && revision === loadRevision
   loading.value = true
   try {
-    rules.value = await adminAPI.errorPassthrough.list()
+    const data = await adminAPI.errorPassthrough.list()
+    if (isCurrent()) rules.value = data
   } catch (error) {
-    appStore.showError(t('admin.errorPassthrough.failedToLoad'))
-    console.error('Error loading rules:', error)
+    if (isCurrent()) {
+      appStore.showError(t('admin.errorPassthrough.failedToLoad'))
+      console.error('Error loading rules:', error)
+    }
   } finally {
-    loading.value = false
+    if (isCurrent()) loading.value = false
   }
 }
+
+watch(() => props.show, (visible, _previous, onCleanup) => {
+  onCleanup(() => { loadRevision++ })
+  rules.value = []
+  loading.value = false
+  if (visible) void loadRules()
+}, { immediate: true })
 
 const resetForm = () => {
   form.name = ''

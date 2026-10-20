@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -15,12 +16,39 @@ type inflightReservationEstimator interface {
 
 // requestMaxOutputTokens 从请求体中提取输出 token 上限（兼容 Anthropic / OpenAI Chat / Responses / Gemini）。
 func requestMaxOutputTokens(body []byte) int {
-	for _, path := range []string{"max_tokens", "max_completion_tokens", "max_output_tokens", "generationConfig.maxOutputTokens", "generation_config.max_output_tokens"} {
-		if v := gjson.GetBytes(body, path); v.Exists() && v.Type == gjson.Number && v.Int() > 0 {
+	// Cheap prefilter: a path can only match when its key text appears in the
+	// body. Probe fields are scanned one at a time, and each miss used to cost
+	// a full body rescan; on Responses traffic only one of these five keys is
+	// usually present, so this turns 5 scans into 1.
+	//
+	// JSON allows the key to be written with escapes ("\u006dax_tokens"), and
+	// gjson decodes them before matching. Escaped keys are vanishingly rare in
+	// practice but must keep working, so the prefilter only skips the probe
+	// when the body contains no backslash at all.
+	hasEscape := bytes.IndexByte(body, '\\') >= 0
+	for _, path := range maxOutputTokenPaths {
+		if !hasEscape && !bytes.Contains(body, path.keyBytes) {
+			continue
+		}
+		if v := gjson.GetBytes(body, path.path); v.Exists() && v.Type == gjson.Number && v.Int() > 0 {
 			return int(v.Int())
 		}
 	}
 	return 0
+}
+
+type maxOutputTokenPath struct {
+	path     string
+	keyBytes []byte
+}
+
+// maxOutputTokenPaths 按优先级排列的输出上限字段；(path, key) 一一对应。
+var maxOutputTokenPaths = []maxOutputTokenPath{
+	{"max_tokens", []byte(`"max_tokens"`)},
+	{"max_completion_tokens", []byte(`"max_completion_tokens"`)},
+	{"max_output_tokens", []byte(`"max_output_tokens"`)},
+	{"generationConfig.maxOutputTokens", []byte(`"maxOutputTokens"`)},
+	{"generation_config.max_output_tokens", []byte(`"max_output_tokens"`)},
 }
 
 // tokenInflightEstimate 文本类请求的估算输入。

@@ -43,6 +43,8 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 	if v := resp.Header.Get("x-amzn-requestid"); v != "" {
 		c.Header("x-request-id", v)
 	}
+	// 上游已确认 200，解锁 handler 层的 pre-header keepalive 门控。
+	ArmOpenAIStreamSSEKeepalive(c)
 
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int

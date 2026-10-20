@@ -330,6 +330,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	stopStreamHeaderKeepalive := func() {}
 	if reqStream {
 		stopStreamHeaderKeepalive = service.StartOpenAIStreamSSEKeepalive(c, h.streamKeepaliveInterval())
+		// Anthropic 直通：上游响应头到达前不写 200，保证上游 4xx/5xx 原样透传。
+		service.GateOpenAIStreamSSEKeepaliveUntilUpstream(c)
 	}
 	defer stopStreamHeaderKeepalive()
 
@@ -657,7 +659,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化
-					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
+					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward ||
+						service.IsOpenAIStreamSSEKeepaliveArmed(c) {
 						submitGeminiUsage(result)
 						h.handleFailoverExhausted(c, failoverErr, service.PlatformGemini, true)
 						return
@@ -1172,7 +1175,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化
-					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
+					// 另外，一旦下游 SSE 响应头已提交（上游已返回 200 + SSE），
+					// 状态码就固定为 200，换号也无法撤销，同样禁止 failover。
+					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward ||
+						service.IsOpenAIStreamSSEKeepaliveArmed(c) {
 						submitForwardUsage(result)
 						h.handleFailoverExhausted(c, failoverErr, account.Platform, true)
 						return
@@ -1354,7 +1360,11 @@ func (h *GatewayHandler) availableModelsForAPIKey(ctx context.Context, apiKey *s
 	if len(groupIDs) == 0 {
 		return h.modelsForGroupID(ctx, nil, nil, forcedPlatform, false)
 	}
-	injectDefaults := len(groupIDs) > 1
+	// 单分组也要回落到平台默认清单：账号侧若配了封闭 model_mapping，
+	// GetAvailableModels 只返回映射里的模型；映射为空时更可能直接返回空数组，
+	// 客户端 /v1/models 就什么都拿不到。注入默认值只在"没拿到任何模型"时生效，
+	// 不会覆盖真实映射结果。
+	injectDefaults := true
 	var models []string
 	for _, id := range groupIDs {
 		gid := id
@@ -1790,6 +1800,23 @@ func (h *GatewayHandler) Usage(c *gin.Context) {
 		return
 	}
 
+	// 判断模式: key 有总额度或速率限制 → quota_limited，否则 → unrestricted
+	isQuotaLimited := apiKey.Quota > 0 || apiKey.HasRateLimits()
+
+	// Load wallet data before best-effort statistics. Keep the detached lookup
+	// bounded so a disconnected client cannot leave an unlimited database wait.
+	var latestUser *service.User
+	if !isQuotaLimited && (apiKey.Group == nil || !apiKey.Group.IsSubscriptionType()) {
+		userCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		user, loadErr := h.userService.GetByID(userCtx, subject.UserID)
+		cancel()
+		if loadErr != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get user info")
+			return
+		}
+		latestUser = user
+	}
+
 	// Best-effort: 获取用量统计（按当前 API Key 过滤），失败不影响基础响应
 	usageData := h.buildUsageData(ctx, apiKey.ID)
 	dailyUsage := h.buildAPIKeyDailyUsage(c, subject.UserID, apiKey.ID, days)
@@ -1802,15 +1829,12 @@ func (h *GatewayHandler) Usage(c *gin.Context) {
 		}
 	}
 
-	// 判断模式: key 有总额度或速率限制 → quota_limited，否则 → unrestricted
-	isQuotaLimited := apiKey.Quota > 0 || apiKey.HasRateLimits()
-
 	if isQuotaLimited {
 		h.usageQuotaLimited(c, ctx, apiKey, usageData, dailyUsage, modelStats)
 		return
 	}
 
-	h.usageUnrestricted(c, ctx, apiKey, subject, usageData, dailyUsage, modelStats)
+	h.usageUnrestricted(c, ctx, apiKey, subject, latestUser, usageData, dailyUsage, modelStats)
 }
 
 // parseUsageDateRange 解析 start_date / end_date query params，默认返回近 30 天范围
@@ -1974,7 +1998,7 @@ func (h *GatewayHandler) usageQuotaLimited(c *gin.Context, ctx context.Context, 
 }
 
 // usageUnrestricted 处理 unrestricted 模式的响应（向后兼容）
-func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, usageData gin.H, dailyUsage any, modelStats any) {
+func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, latestUser *service.User, usageData gin.H, dailyUsage any, modelStats any) {
 	// 订阅模式
 	if apiKey.Group != nil && apiKey.Group.IsSubscriptionType() {
 		resp := gin.H{
@@ -2014,9 +2038,9 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 		return
 	}
 
-	// 余额模式
-	latestUser, err := h.userService.GetByID(ctx, subject.UserID)
-	if err != nil {
+	// 余额模式：latestUser 已由调用方在统计查询之前取好（见 Usage），
+	// 这里不再重复查询，避免 ctx 被客户端断连取消后恒返回 500。
+	if latestUser == nil {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get user info")
 		return
 	}

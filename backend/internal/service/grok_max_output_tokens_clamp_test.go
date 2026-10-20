@@ -13,7 +13,7 @@ import (
 //
 //	Field 'max_output_tokens' must be at most 128000
 //
-// 线上实测该错误 12 小时 48 次（账号 30767 / platform grok / /v1/responses）。
+// 线上实测：12 小时内 48 次（platform grok / /v1/responses），全部由客户端带入的超限值触发。
 // 客户端带超限值不是我们的错，但请求被拒是我们要承担的，所以在补丁链上夹住。
 func TestPatchGrokResponsesBodyClampsOversizedMaxOutputTokens(t *testing.T) {
 	t.Parallel()

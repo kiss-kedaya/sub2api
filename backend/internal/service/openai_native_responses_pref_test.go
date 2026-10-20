@@ -37,7 +37,7 @@ func TestPrioritizeNativeResponsesAccountsKeepsConvertersBehind(t *testing.T) {
 }
 
 func TestStickyYieldsWhenInboundResponsesWouldConvert(t *testing.T) {
-	chat := &Account{ID: 29159, Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_protocol": APIProtocolChatCompletions}}
+	chat := &Account{ID: 12001, Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_protocol": APIProtocolChatCompletions}}
 	native := &Account{ID: 29161, Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_protocol": APIProtocolResponses}}
 	ctx := WithOpenAIPreferNativeResponses(context.Background())
 	require.True(t, openAIStickyYieldsToNativeResponses(ctx, chat))

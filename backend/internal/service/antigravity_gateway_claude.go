@@ -297,7 +297,10 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				})
 
 				// 修正 claudeReq 的 thinking 参数（adaptive 模式不修正）
-				if claudeReq.Thinking == nil || claudeReq.Thinking.Type != "adaptive" {
+				// 默认关闭：这条链路会替客户端改写 thinking/max_tokens 参数。
+				rectifyEnabled := s.settingService != nil && s.settingService.cfg != nil &&
+					s.settingService.cfg.Gateway.ThinkingBudgetRectifyEnabled
+				if rectifyEnabled && (claudeReq.Thinking == nil || claudeReq.Thinking.Type != "adaptive") {
 					retryClaudeReq := claudeReq
 					retryClaudeReq.Messages = append([]antigravity.ClaudeMessage(nil), claudeReq.Messages...)
 					// 创建新的 ThinkingConfig 避免修改原始 claudeReq.Thinking 指针

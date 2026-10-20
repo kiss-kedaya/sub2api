@@ -121,7 +121,13 @@ func TestAccountHandlerSimpleModeUsesMinimalGroupReferences(t *testing.T) {
 			require.Equal(t, []any{float64(7)}, data["group_ids"])
 			group, ok := groups[0].(map[string]any)
 			require.True(t, ok)
-			require.ElementsMatch(t, []string{"id", "name", "platform", "status"}, mapKeys(group))
+			// Simple mode still returns the full dto.Group shape. The account
+			// editor feeds groups into GroupSelector, which needs
+			// rate_multiplier/subscription_type to render rows; trimming them
+			// silently blanks the group picker.
+			require.EqualValues(t, 7, group["id"])
+			require.Equal(t, "basic", group["name"])
+			require.Contains(t, group, "rate_multiplier")
 			accountGroups, ok := data["account_groups"].([]any)
 			require.True(t, ok)
 			require.Len(t, accountGroups, 1)
@@ -130,7 +136,8 @@ func TestAccountHandlerSimpleModeUsesMinimalGroupReferences(t *testing.T) {
 			require.ElementsMatch(t, []string{"account_id", "group_id", "priority", "created_at", "group"}, mapKeys(accountGroup))
 			nestedGroup, ok := accountGroup["group"].(map[string]any)
 			require.True(t, ok)
-			require.ElementsMatch(t, []string{"id", "name", "platform", "status"}, mapKeys(nestedGroup))
+			require.EqualValues(t, 7, nestedGroup["id"])
+			require.Contains(t, nestedGroup, "rate_multiplier")
 		})
 	}
 }

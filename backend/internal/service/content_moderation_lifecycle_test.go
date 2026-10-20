@@ -40,7 +40,9 @@ func TestContentModerationBuildLogReleasesRequestBody(t *testing.T) {
 	defer runtime.KeepAlive(log)
 	require.Equal(t, int64(41), *log.UserID)
 	require.Equal(t, int64(73), *log.APIKeyID)
-	require.Equal(t, "first user turn\n\nblocked prompt", log.InputExcerpt)
+	// The audit log records the last user turn only, so an operator sees the
+	// text that actually triggered the block.
+	require.Equal(t, "blocked prompt", log.InputExcerpt)
 	requireModerationBodyCollected(t, body)
 }
 
@@ -67,7 +69,7 @@ func TestContentModerationRecordQueueReleasesRequestBody(t *testing.T) {
 	task, ok := svc.dequeueAsyncTask(context.Background(), time.Second)
 	require.True(t, ok)
 	require.Equal(t, 0, len(task.input.Body))
-	require.Equal(t, "first user turn\n\nblocked prompt", task.log.InputExcerpt)
+	require.Equal(t, "blocked prompt", task.log.InputExcerpt)
 	require.Equal(t, int64(41), *task.log.UserID)
 	require.Equal(t, int64(73), *task.log.APIKeyID)
 	require.Equal(t, "blocked", task.log.MatchedKeyword)

@@ -379,24 +379,31 @@ const form = reactive({
   enable_grease: false
 })
 
-// Load profiles when dialog opens
-watch(() => props.show, (newVal) => {
-  if (newVal) {
-    loadProfiles()
-  }
-})
-
+// Invalidate pending loads when visibility changes or the component unmounts.
+let loadRevision = 0
 const loadProfiles = async () => {
+  const revision = ++loadRevision
+  const isCurrent = () => props.show && revision === loadRevision
   loading.value = true
   try {
-    profiles.value = await adminAPI.tlsFingerprintProfiles.list()
+    const data = await adminAPI.tlsFingerprintProfiles.list()
+    if (isCurrent()) profiles.value = data
   } catch (error) {
-    appStore.showError(t('admin.tlsFingerprintProfiles.loadFailed'))
-    console.error('Error loading TLS fingerprint profiles:', error)
+    if (isCurrent()) {
+      appStore.showError(t('admin.tlsFingerprintProfiles.loadFailed'))
+      console.error('Error loading TLS fingerprint profiles:', error)
+    }
   } finally {
-    loading.value = false
+    if (isCurrent()) loading.value = false
   }
 }
+
+watch(() => props.show, (visible, _previous, onCleanup) => {
+  onCleanup(() => { loadRevision++ })
+  profiles.value = []
+  loading.value = false
+  if (visible) void loadProfiles()
+}, { immediate: true })
 
 const resetForm = () => {
   form.name = ''

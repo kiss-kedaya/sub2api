@@ -546,6 +546,20 @@ func (_c *GroupCreate) SetNillableSearchProviderAPIKey(v *string) *GroupCreate {
 	return _c
 }
 
+// SetGrokModerationRefusalPrice sets the "grok_moderation_refusal_price" field.
+func (_c *GroupCreate) SetGrokModerationRefusalPrice(v float64) *GroupCreate {
+	_c.mutation.SetGrokModerationRefusalPrice(v)
+	return _c
+}
+
+// SetNillableGrokModerationRefusalPrice sets the "grok_moderation_refusal_price" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableGrokModerationRefusalPrice(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetGrokModerationRefusalPrice(*v)
+	}
+	return _c
+}
+
 // SetAudioRealtimePricePerMin sets the "audio_realtime_price_per_min" field.
 func (_c *GroupCreate) SetAudioRealtimePricePerMin(v float64) *GroupCreate {
 	_c.mutation.SetAudioRealtimePricePerMin(v)
@@ -1365,6 +1379,11 @@ func (_c *GroupCreate) check() error {
 			return &ValidationError{Name: "search_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.search_price_per_1k": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.GrokModerationRefusalPrice(); ok {
+		if err := group.GrokModerationRefusalPriceValidator(v); err != nil {
+			return &ValidationError{Name: "grok_moderation_refusal_price", err: fmt.Errorf(`ent: validator failed for field "Group.grok_moderation_refusal_price": %w`, err)}
+		}
+	}
 	if v, ok := _c.mutation.AudioRealtimePricePerMin(); ok {
 		if err := group.AudioRealtimePricePerMinValidator(v); err != nil {
 			return &ValidationError{Name: "audio_realtime_price_per_min", err: fmt.Errorf(`ent: validator failed for field "Group.audio_realtime_price_per_min": %w`, err)}
@@ -1645,6 +1664,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.SearchProviderAPIKey(); ok {
 		_spec.SetField(group.FieldSearchProviderAPIKey, field.TypeString, value)
 		_node.SearchProviderAPIKey = &value
+	}
+	if value, ok := _c.mutation.GrokModerationRefusalPrice(); ok {
+		_spec.SetField(group.FieldGrokModerationRefusalPrice, field.TypeFloat64, value)
+		_node.GrokModerationRefusalPrice = &value
 	}
 	if value, ok := _c.mutation.AudioRealtimePricePerMin(); ok {
 		_spec.SetField(group.FieldAudioRealtimePricePerMin, field.TypeFloat64, value)
@@ -2559,6 +2582,30 @@ func (u *GroupUpsert) UpdateSearchProviderAPIKey() *GroupUpsert {
 // ClearSearchProviderAPIKey clears the value of the "search_provider_api_key" field.
 func (u *GroupUpsert) ClearSearchProviderAPIKey() *GroupUpsert {
 	u.SetNull(group.FieldSearchProviderAPIKey)
+	return u
+}
+
+// SetGrokModerationRefusalPrice sets the "grok_moderation_refusal_price" field.
+func (u *GroupUpsert) SetGrokModerationRefusalPrice(v float64) *GroupUpsert {
+	u.Set(group.FieldGrokModerationRefusalPrice, v)
+	return u
+}
+
+// UpdateGrokModerationRefusalPrice sets the "grok_moderation_refusal_price" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateGrokModerationRefusalPrice() *GroupUpsert {
+	u.SetExcluded(group.FieldGrokModerationRefusalPrice)
+	return u
+}
+
+// AddGrokModerationRefusalPrice adds v to the "grok_moderation_refusal_price" field.
+func (u *GroupUpsert) AddGrokModerationRefusalPrice(v float64) *GroupUpsert {
+	u.Add(group.FieldGrokModerationRefusalPrice, v)
+	return u
+}
+
+// ClearGrokModerationRefusalPrice clears the value of the "grok_moderation_refusal_price" field.
+func (u *GroupUpsert) ClearGrokModerationRefusalPrice() *GroupUpsert {
+	u.SetNull(group.FieldGrokModerationRefusalPrice)
 	return u
 }
 
@@ -3817,6 +3864,34 @@ func (u *GroupUpsertOne) UpdateSearchProviderAPIKey() *GroupUpsertOne {
 func (u *GroupUpsertOne) ClearSearchProviderAPIKey() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearSearchProviderAPIKey()
+	})
+}
+
+// SetGrokModerationRefusalPrice sets the "grok_moderation_refusal_price" field.
+func (u *GroupUpsertOne) SetGrokModerationRefusalPrice(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetGrokModerationRefusalPrice(v)
+	})
+}
+
+// AddGrokModerationRefusalPrice adds v to the "grok_moderation_refusal_price" field.
+func (u *GroupUpsertOne) AddGrokModerationRefusalPrice(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddGrokModerationRefusalPrice(v)
+	})
+}
+
+// UpdateGrokModerationRefusalPrice sets the "grok_moderation_refusal_price" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateGrokModerationRefusalPrice() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateGrokModerationRefusalPrice()
+	})
+}
+
+// ClearGrokModerationRefusalPrice clears the value of the "grok_moderation_refusal_price" field.
+func (u *GroupUpsertOne) ClearGrokModerationRefusalPrice() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearGrokModerationRefusalPrice()
 	})
 }
 
@@ -5319,6 +5394,34 @@ func (u *GroupUpsertBulk) UpdateSearchProviderAPIKey() *GroupUpsertBulk {
 func (u *GroupUpsertBulk) ClearSearchProviderAPIKey() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearSearchProviderAPIKey()
+	})
+}
+
+// SetGrokModerationRefusalPrice sets the "grok_moderation_refusal_price" field.
+func (u *GroupUpsertBulk) SetGrokModerationRefusalPrice(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetGrokModerationRefusalPrice(v)
+	})
+}
+
+// AddGrokModerationRefusalPrice adds v to the "grok_moderation_refusal_price" field.
+func (u *GroupUpsertBulk) AddGrokModerationRefusalPrice(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddGrokModerationRefusalPrice(v)
+	})
+}
+
+// UpdateGrokModerationRefusalPrice sets the "grok_moderation_refusal_price" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateGrokModerationRefusalPrice() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateGrokModerationRefusalPrice()
+	})
+}
+
+// ClearGrokModerationRefusalPrice clears the value of the "grok_moderation_refusal_price" field.
+func (u *GroupUpsertBulk) ClearGrokModerationRefusalPrice() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearGrokModerationRefusalPrice()
 	})
 }
 

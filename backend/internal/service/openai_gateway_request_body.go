@@ -219,7 +219,13 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 // that just arrived. Outbound normalize still does this again for the account
 // that is actually selected.
 func RewriteInboundDeepSeekCallIDs(groupPlatform, model string, body []byte) []byte {
-	if !deepSeekCallIDScope(groupPlatform, model) || len(body) == 0 {
+	if len(body) == 0 {
+		return body
+	}
+	// Scope by platform/model, but also clean any body that actually carries
+	// tool calls: routing can still land on a DeepSeek-backed upstream even when
+	// the group platform and the requested model alias say nothing about it.
+	if !deepSeekCallIDScope(groupPlatform, model) && !bodyHasToolCallIDs(body) {
 		return body
 	}
 	var requestBody map[string]any
@@ -268,7 +274,25 @@ func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
 		return true
 	}
 	base := strings.ToLower(account.GetOpenAIBaseURL() + " " + account.GetCNProtocolBaseURL(APIProtocolResponses) + " " + account.GetCNProtocolBaseURL(APIProtocolChatCompletions))
-	return strings.Contains(base, "deepseek")
+	if strings.Contains(base, "deepseek") {
+		return true
+	}
+	// A CN/aggregator account can front DeepSeek behind a neutral base URL and a
+	// neutral model alias, in which case none of the checks above fire and the
+	// duplicate call_id reaches the upstream untouched. Whenever the body
+	// actually carries tool calls, deduping is the safe move: it is a no-op for
+	// bodies without duplicates and it never invents or reorders content.
+	return bodyHasToolCallIDs(body)
+}
+
+// bodyHasToolCallIDs reports whether the body carries any responses-style
+// call_id or chat-style tool_calls. Checked before the (comparatively
+// expensive) decode so clean bodies stay cheap.
+func bodyHasToolCallIDs(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	return bytes.Contains(body, []byte(`"call_id"`)) || bytes.Contains(body, []byte(`"tool_calls"`))
 }
 
 func trimOpenAIEncryptedReasoningItems(reqBody map[string]any) bool {
@@ -1484,6 +1508,12 @@ func normalizeOpenAIResponsesCompatibilityBody(body []byte, account *Account, re
 			changed = true
 		}
 	}
+	if aliasBody, aliasChanged, aliasErr := normalizeOpenAIResponsesLegacyWebSearchToolType(normalized); aliasErr != nil {
+		return body, false, fmt.Errorf("normalize websocket legacy web search tool: %w", aliasErr)
+	} else if aliasChanged {
+		normalized = aliasBody
+		changed = true
+	}
 	if account.IsOpenAIOAuthLike() && !compact {
 		webSearchBody, webSearchChanged, webSearchErr := ensureOpenAIOAuthWebSearchToolForHistoryBody(normalized, responsesLite)
 		if webSearchErr != nil {
@@ -1654,14 +1684,32 @@ func extractOpenAIReasoningEffortFromBody(body []byte, modelCandidates ...string
 }
 
 func explicitRequestedReasoningEffortFromBody(body []byte) string {
-	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
-	if raw == "" {
-		raw = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
+	// Each gjson.GetBytes call is a full body rescan, and the misses below are
+	// the common case. Skip a probe when its key text cannot appear in the body;
+	// escaped keys ("\u0072easoning") must still work, so a body containing any
+	// backslash keeps the original unconditional behaviour.
+	hasEscape := bytes.IndexByte(body, '\\') >= 0
+	for _, probe := range reasoningEffortProbes {
+		if !hasEscape && !bytes.Contains(body, probe.key) {
+			continue
+		}
+		if raw := strings.TrimSpace(gjson.GetBytes(body, probe.path).String()); raw != "" {
+			return raw
+		}
 	}
-	if raw == "" {
-		raw = strings.TrimSpace(gjson.GetBytes(body, "output_config.effort").String())
-	}
-	return raw
+	return ""
+}
+
+type reasoningEffortProbe struct {
+	path string
+	key  []byte
+}
+
+// reasoningEffortProbes 按优先级排列，与原先的短路顺序一致。
+var reasoningEffortProbes = []reasoningEffortProbe{
+	{"reasoning.effort", []byte(`"reasoning"`)},
+	{"reasoning_effort", []byte(`"reasoning_effort"`)},
+	{"output_config.effort", []byte(`"output_config"`)},
 }
 
 // CanonicalRequestedReasoningEffort extracts the client-requested effort before
