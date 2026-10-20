@@ -119,7 +119,10 @@ func IsOpenAIStreamSSEKeepaliveArmed(c *gin.Context) bool {
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	return k.upstreamReady || k.started
+	// 只有被 gate 的入口（/v1/messages）在解锁后确实向客户端写下了 200，才代表
+	// 状态码已固化、不能再换号。未 gate 的入口（chat-completions / responses /
+	// compact）仍靠心跳字节扣除来判定能否重放，不在此一刀切禁掉。
+	return k.gateUntilUpstream && k.started
 }
 
 func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration, enabled bool) func() {
@@ -231,9 +234,11 @@ func WriteOpenAIStreamSSEHeartbeat(c *gin.Context, payload []byte) (written int,
 		return 0, nil, false
 	}
 	// 与定时心跳保持同一门控：上游响应头到达前不提交 200，
-	// 否则上游随后返回 400/529 时状态码无法回传。
+	// 否则上游随后返回 400/529 时状态码无法回传。这里必须返回
+	// handled=true（写出 0 字节），否则调用方会退回直接写 ResponseWriter，
+	// 绕过门控把状态码固化成 200。
 	if k.gateUntilUpstream && !k.upstreamReady {
-		return 0, nil, false
+		return 0, nil, true
 	}
 	if !k.started {
 		header := k.writer.Header()

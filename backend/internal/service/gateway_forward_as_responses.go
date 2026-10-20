@@ -515,6 +515,8 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	}
+	// 上游已确认 2xx 才开始允许 pre-header 心跳写下游（Messages 入口有 gate）。
+	ArmOpenAIStreamSSEKeepalive(c)
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")

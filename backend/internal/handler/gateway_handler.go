@@ -1254,9 +1254,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 
-			// Forward 成功 = 上游已返回 2xx。无论走的是原生直通、OAuth、
-			// Gemini compat 还是 Antigravity，此刻才允许心跳开始写下游。
-			service.ArmOpenAIStreamSSEKeepalive(c)
 			submitForwardUsage(result)
 			// 转发成功，会话槽保持既有空闲超时语义
 			upstreamServedSession = true
