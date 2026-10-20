@@ -68,7 +68,7 @@ func TestSweepEntrySkipsChainWithoutToken(t *testing.T) {
 		tokens: map[string]TokenSpec{"plasma": {Contract: "", Decimals: 6}},
 		pools:  map[string]*rpc.Pool{},
 	}
-	out := exec.sweepOne(t.Context(), PlanEntry{Chain: "plasma", Address: "0x1", RawAmount: big.NewInt(1)}, false)
+	out, _ := exec.sweepOne(t.Context(), PlanEntry{Chain: "plasma", Address: "0x1", RawAmount: big.NewInt(1)}, false)
 	if out.Status != "failed" {
 		t.Fatalf("expected failed for tokenless chain, got %q", out.Status)
 	}

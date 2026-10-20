@@ -103,6 +103,16 @@ func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sw
 		  LEFT JOIN deposit_addresses a
 		         ON lower(a.address) = lower(c.to_address)
 		 WHERE c.credited - COALESCE(s.swept, 0) > 0
+		   AND NOT EXISTS (
+		       SELECT 1 FROM sweep_records pending
+		        WHERE pending.chain = $1
+		          AND lower(pending.from_address) = lower(c.to_address)
+		          AND lower(pending.token) = lower(c.token)
+		          AND ((pending.job_version = 1 AND pending.status NOT IN ('swept', 'failed'))
+		               OR (pending.job_version = 0 AND pending.status <> 'swept'
+		                   AND (pending.status IN ('manual_review', 'gas_sent')
+		                        OR pending.gas_tx_hash <> '' OR pending.sweep_tx_hash <> '')))
+		   )
 		 GROUP BY c.to_address, c.token, c.credited, s.swept`, chain)
 	if err != nil {
 		return nil, err

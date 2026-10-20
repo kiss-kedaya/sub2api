@@ -87,6 +87,7 @@ export interface SweepSummary {
   planned: number
   swept: number
   failed: number
+  pending: number
   gas_topups: number
   entries: SweepEntry[]
 }

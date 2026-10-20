@@ -23,6 +23,9 @@ type solSignRequest struct {
 // signSolTransfer builds a transfer of SPL tokens (or native SOL) from the
 // derived address to the policy target.
 func signSolTransfer(d *Deriver, req solSignRequest) (string, error) {
+	if req.Index >= 1<<31 {
+		return "", fmt.Errorf("invalid derivation index")
+	}
 	priv, from, err := d.SolanaKey(req.Index)
 	if err != nil {
 		return "", err
@@ -31,9 +34,9 @@ func signSolTransfer(d *Deriver, req solSignRequest) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid to address: %w", err)
 	}
-	amount, ok := new(big.Int).SetString(req.Amount, 10)
-	if !ok || amount.Sign() <= 0 {
-		return "", fmt.Errorf("invalid amount")
+	amount, err := positiveUint(req.Amount, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid uint64 amount")
 	}
 	blockhash, err := solana.HashFromBase58(req.RecentBlockhash)
 	if err != nil {
@@ -64,7 +67,7 @@ func signSolTransfer(d *Deriver, req solSignRequest) (string, error) {
 			from, to, mint,
 		).Build())
 		builder = builder.AddInstruction(token.NewTransferCheckedInstruction(
-			amount.Uint64(), 6, mint, sourceATA, destATA, from, nil,
+			amount.Uint64(), 6, sourceATA, mint, destATA, from, nil,
 		).Build())
 	}
 
@@ -86,4 +89,33 @@ func signSolTransfer(d *Deriver, req solSignRequest) (string, error) {
 		return "", fmt.Errorf("marshal: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(raw), nil
+}
+
+func solBudgetCharges(p *Policy, req solSignRequest) (map[string]*big.Int, error) {
+	if p.Solana == nil || p.Solana.MaxFeeLamports == 0 {
+		return nil, fmt.Errorf("solana_not_allowed")
+	}
+	amount, err := positiveUint(req.Amount, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid uint64 amount")
+	}
+	fee := new(big.Int).SetUint64(p.Solana.MaxFeeLamports)
+	charges := map[string]*big.Int{}
+	if req.Mint == "" || req.Mint == "native" {
+		fee.Add(fee, amount)
+	} else {
+		if _, err := solana.PublicKeyFromBase58(req.Mint); err != nil {
+			return nil, fmt.Errorf("invalid mint")
+		}
+		if p.Solana.ATARentLamports == 0 {
+			return nil, fmt.Errorf("solana ATA rent cap required")
+		}
+		fee.Add(fee, new(big.Int).SetUint64(p.Solana.ATARentLamports))
+		charges[p.limitKey("solana", req.Mint)] = amount
+	}
+	if !fee.IsUint64() {
+		return nil, fmt.Errorf("uint64 total cost overflow")
+	}
+	charges[p.limitKey("solana", "native")] = fee
+	return charges, nil
 }

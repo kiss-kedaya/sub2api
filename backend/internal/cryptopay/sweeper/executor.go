@@ -4,52 +4,36 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
 	"math/big"
 	"strings"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
+	"github.com/ethereum/go-ethereum/common"
 )
 
-// ChainIDs maps the supported EVM chains to their chain id.
 var ChainIDs = map[string]int64{
-	"bsc":      56,
-	"polygon":  137,
-	"plasma":   9745,
-	"arbitrum": 42161,
-	"base":     8453,
-	"xlayer":   196,
+	"bsc": 56, "polygon": 137, "plasma": 9745,
+	"arbitrum": 42161, "base": 8453, "xlayer": 196,
 }
 
-// isZeroAddress catches the all-zero placeholder: sweeping into it burns the
-// funds, and an unset field often round-trips as 0x000…0 rather than "".
 func isZeroAddress(address string) bool {
 	trimmed := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(address)), "0x")
-	if trimmed == "" {
-		return false
-	}
-	return strings.Trim(trimmed, "0") == ""
+	return trimmed != "" && strings.Trim(trimmed, "0") == ""
 }
 
-// TokenSpec identifies the asset to move and its decimals.
 type TokenSpec struct {
 	Contract string
 	Decimals int
 }
 
-// erc20 selector: balanceOf(address)
 const selBalanceOf = "0x70a08231"
-
-// transferGasLimit is the gas budget for one ERC20 transfer. 65k clears the
-// common non-standard tokens (e.g. tokens with hooks) without over-charging.
 const transferGasLimit = 65000
 
-// Executor performs the two-stage sweep: top the child address up with
-// native gas from the hot wallet, then have the child sign its own ERC20
-// transfer to the hot wallet. Works on every EVM chain out of the box:
-// no contract deployment, no third-party API.
+// Executor owns the database lock and the durable transaction state machine.
+// Signed bytes are committed before broadcast. Unknown outcomes never cause
+// a replacement signature or a fresh gas payment.
 type Executor struct {
 	db       *sql.DB
 	pools    map[string]*rpc.Pool
@@ -57,36 +41,26 @@ type Executor struct {
 	config   Config
 	tokens   map[string]TokenSpec
 	reader   BalanceReader
-	hotIndex uint32
+	hotIndex uint32 // constructor compatibility; signer owns the gas index
+	store    jobDB  // Run's exclusive autocommit connection
 }
 
-// NewExecutor wires the sweep executor. tokens maps chain -> watched asset.
-func NewExecutor(
-	db *sql.DB,
-	pools map[string]*rpc.Pool,
-	signer *SignerClient,
-	config Config,
-	tokens map[string]TokenSpec,
-	reader BalanceReader,
-	hotIndex uint32,
-) *Executor {
-	return &Executor{
-		db: db, pools: pools, signer: signer, config: config,
-		tokens: tokens, reader: reader, hotIndex: hotIndex,
-	}
+func NewExecutor(db *sql.DB, pools map[string]*rpc.Pool, signer *SignerClient,
+	config Config, tokens map[string]TokenSpec, reader BalanceReader, hotIndex uint32) *Executor {
+	return &Executor{db: db, pools: pools, signer: signer, config: config,
+		tokens: tokens, reader: reader, hotIndex: hotIndex}
 }
 
-// Summary reports what one run did.
 type Summary struct {
 	DryRun   bool         `json:"dry_run"`
 	Planned  int          `json:"planned"`
 	Swept    int          `json:"swept"`
 	Failed   int          `json:"failed"`
+	Pending  int          `json:"pending"`
 	GasTopUp int          `json:"gas_topups"`
 	Entries  []SweepEntry `json:"entries"`
 }
 
-// SweepEntry is one address's outcome for the admin view.
 type SweepEntry struct {
 	Chain       string `json:"chain"`
 	Address     string `json:"address"`
@@ -97,209 +71,275 @@ type SweepEntry struct {
 	Error       string `json:"error,omitempty"`
 }
 
-// Run executes (or dry-runs) the sweep plan. Entries are processed serially
-// to keep the nonce chain per address simple and to avoid hammering RPC.
-func (e *Executor) Run(ctx context.Context, dryRun bool) (*Summary, error) {
-	// Hard gate: a real sweep with no destination would top up gas for
-	// nothing and then fail every transfer. Refuse before any spend.
-	if !dryRun {
-		if strings.TrimSpace(e.config.HotWalletEVM) == "" {
-			return nil, fmt.Errorf("sweep refused: hot wallet (receiving address) is not configured")
-		}
-		if isZeroAddress(e.config.HotWalletEVM) {
-			return nil, fmt.Errorf("sweep refused: hot wallet is the zero address")
-		}
+func (s *Summary) add(out SweepEntry) {
+	s.Entries = append(s.Entries, out)
+	switch out.Status {
+	case "swept":
+		s.Swept++
+	case "failed", "manual_review":
+		s.Failed++
+	case "pending":
+		s.Pending++
 	}
-	planner := NewPlanner(e.db, e.reader, e.config, e.pools)
-	plan, err := planner.BuildPlan(ctx)
-	if err != nil {
-		return nil, err
+	if out.GasTxHash != "" {
+		s.GasTopUp++
 	}
-	summary := &Summary{DryRun: dryRun, Planned: len(plan.Entries)}
-	for _, entry := range plan.Entries {
-		outcome := e.sweepOne(ctx, entry, dryRun)
-		summary.Entries = append(summary.Entries, outcome)
-		switch outcome.Status {
-		case "swept":
-			summary.Swept++
-		case "failed":
-			summary.Failed++
-		}
-		if outcome.GasTxHash != "" {
-			summary.GasTopUp++
-		}
-	}
-	return summary, nil
 }
 
-// sweepOne handles one (address, token) pair. Any failure is recorded in
-// sweep_records and returned instead of aborting the whole run: one bad
-// address must not block the rest.
-func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) SweepEntry {
-	out := SweepEntry{Chain: entry.Chain, Address: entry.Address, Amount: entry.RawAmount.String()}
-	// Specs key on chain|contract: one address can hold both USDT and USDC,
-	// and each token needs its own transfer.
-	spec, ok := e.tokens[entry.Chain+"|"+strings.ToLower(entry.Token)]
-	if !ok {
-		out.Status, out.Error = "failed", "no token configured for chain/contract"
-		return out
+// Run reconciles unfinished jobs before planning, even below threshold or
+// when the balance reader excludes pending addresses. One global lock also
+// serializes gas-wallet nonces across instances.
+func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err error) {
+	summary = &Summary{DryRun: dryRun}
+	if !dryRun {
+		conn, release, lockErr := e.lock(ctx)
+		if lockErr != nil {
+			return summary, lockErr
+		}
+		defer func() { err = joinErrors(err, release()) }()
+		run := *e // concurrent runs must not replace each other's connection
+		run.store = conn
+		e = &run
 	}
-	if spec.Contract == "" {
-		out.Status, out.Error = "failed", "chain has no sweepable token contract"
-		return out
+	// A stale balance reader must not re-plan the same address/token just
+	// reconciled. An unresolved nonce also blocks new work for other tokens
+	// at that address, while all previously signed jobs are still observed.
+	seen := make(map[string]bool)
+	blocked := make(map[string]bool)
+	var runErrors error
+	if !dryRun {
+		jobs, loadErr := e.loadUnfinished(ctx)
+		if loadErr != nil {
+			return summary, loadErr
+		}
+		for _, job := range jobs {
+			key := addressKey(job.Chain, job.Address)
+			seen[key+"|"+strings.ToLower(job.Token)] = true
+			out, resumeErr := e.resume(ctx, job)
+			if out.Status != "swept" {
+				blocked[key] = true
+			}
+			summary.add(out)
+			if resumeErr != nil {
+				runErrors = joinErrors(runErrors, resumeErr)
+				var storage *persistenceError
+				if errors.As(resumeErr, &storage) || ctx.Err() != nil {
+					return summary, runErrors
+				}
+			}
+		}
+	}
+	plan, err := NewPlanner(e.db, e.reader, e.config, e.pools).BuildPlan(ctx)
+	if err != nil {
+		return summary, joinErrors(runErrors, err)
+	}
+	summary.Planned = len(plan.Entries)
+	for _, entry := range plan.Entries {
+		key := addressKey(entry.Chain, entry.Address)
+		pair := key + "|" + strings.ToLower(entry.Token)
+		if seen[pair] || blocked[key] {
+			continue
+		}
+		seen[pair] = true
+		out, sweepErr := e.sweepOne(ctx, entry, dryRun)
+		if !dryRun && out.Status != "swept" {
+			blocked[key] = true
+		}
+		summary.add(out)
+		if sweepErr != nil {
+			runErrors = joinErrors(runErrors, sweepErr)
+			var storage *persistenceError
+			if errors.As(sweepErr, &storage) || ctx.Err() != nil {
+				return summary, runErrors
+			}
+		}
+	}
+	return summary, runErrors
+}
+
+func addressKey(chain, address string) string { return chain + "|" + strings.ToLower(address) }
+
+func (e *Executor) validateEntry(entry PlanEntry) (TokenSpec, *rpc.Pool, error) {
+	spec, ok := e.tokens[entry.Chain+"|"+strings.ToLower(entry.Token)]
+	if !ok || !common.IsHexAddress(spec.Contract) || isZeroAddress(spec.Contract) ||
+		!strings.EqualFold(spec.Contract, entry.Token) || spec.Decimals != entry.Decimals {
+		return spec, nil, fmt.Errorf("no matching token/decimals configured for chain/contract")
+	}
+	if !common.IsHexAddress(entry.Address) || isZeroAddress(entry.Address) ||
+		entry.RawAmount == nil || entry.RawAmount.Sign() <= 0 || entry.RawAmount.BitLen() > 256 ||
+		entry.Decimals < 0 || entry.Decimals > 18 || ChainIDs[entry.Chain] <= 0 {
+		return spec, nil, fmt.Errorf("invalid sweep plan")
 	}
 	pool := e.pools[entry.Chain]
 	if pool == nil {
-		out.Status, out.Error = "failed", "no rpc pool for chain"
-		return out
+		return spec, nil, fmt.Errorf("no rpc pool for chain")
+	}
+	return spec, pool, nil
+}
+
+func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (SweepEntry, error) {
+	out := SweepEntry{Chain: entry.Chain, Address: entry.Address, Status: "failed"}
+	if entry.RawAmount != nil {
+		entry.RawAmount = new(big.Int).Set(entry.RawAmount)
+		out.Amount = entry.RawAmount.String()
+	}
+	_, _, err := e.validateEntry(entry)
+	if err != nil {
+		out.Error = err.Error()
+		return out, err
 	}
 	if dryRun {
 		out.Status = "planned"
-		return out
+		return out, nil
 	}
-
-	// Read the live token balance: the plan is derived from credited
-	// deposits, but the address may hold more or less by now.
-	balance, err := e.tokenBalance(ctx, pool, spec.Contract, entry.Address)
+	if !common.IsHexAddress(e.config.HotWalletEVM) || isZeroAddress(e.config.HotWalletEVM) ||
+		strings.EqualFold(e.config.HotWalletEVM, entry.Address) {
+		err = fmt.Errorf("sweep refused: invalid receiving address")
+		out.Error = err.Error()
+		return out, err
+	}
+	if e.config.Confirmations[entry.Chain] == 0 {
+		err = fmt.Errorf("sweep refused: confirmation depth is not configured for %s", entry.Chain)
+		out.Error = err.Error()
+		return out, err
+	}
+	job, err := e.createJob(ctx, entry)
 	if err != nil {
-		out.Status, out.Error = "failed", err.Error()
-		return out
+		out.Error = err.Error()
+		return out, err
 	}
-	if balance.Sign() <= 0 {
-		out.Status = "swept" // nothing left to move
-		return out
-	}
-	out.Amount = balance.String()
+	return e.resume(ctx, job)
+}
 
-	gasPrice, err := pool.GasPrice(ctx)
-	if err != nil {
-		out.Status, out.Error = "failed", err.Error()
-		return out
+func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error) {
+	out := job.outcome()
+	if job.Version == 0 || job.Status == "manual_review" {
+		out.Status = "manual_review"
+		if out.Error == "" {
+			out.Error = "legacy or ambiguous transaction; reconcile hashes manually before releasing address"
+		}
+		return out, nil
 	}
-	gasBudget := transferGasBudget(gasPrice)
-
-	native, err := pool.Balance(ctx, entry.Address)
-	if err != nil {
-		out.Status, out.Error = "failed", err.Error()
-		return out
+	if (job.SweepHash != "" && job.SweepRaw == "") ||
+		(job.GasHash != "" && job.GasRaw == "") ||
+		(job.Status == "sweep_pending" && job.SweepRaw == "") ||
+		(job.Status == "gas_pending" && job.GasRaw == "") {
+		job.Status = "manual_review"
+		return e.jobError(ctx, job, fmt.Errorf("reserved transaction bytes are missing; automatic signing refused"))
 	}
-	if native.Cmp(gasBudget) < 0 {
-		topUp := e.gasTopUpAmount(entry.Chain, gasBudget, native)
-		hash, err := e.sendNativeFromHot(ctx, pool, entry.Chain, entry.Address, entry.DerivationIndex, topUp, gasPrice)
+	// Existing hashes are observed using persisted metadata, even when the
+	// current token/chain/destination configuration no longer permits new work.
+	pool := e.pools[job.Chain]
+	if pool == nil {
+		return e.jobError(ctx, job, fmt.Errorf("unfinished job %d needs an RPC pool for %s", job.ID, job.Chain))
+	}
+	required := e.config.Confirmations[job.Chain]
+	if required == 0 {
+		var observeErr error
+		if job.SweepHash != "" {
+			_, observeErr = checkReceipt(ctx, pool, job.SweepHash, 0)
+		} else if job.GasHash != "" {
+			_, observeErr = checkReceipt(ctx, pool, job.GasHash, 0)
+		}
+		return e.jobError(ctx, job, joinErrors(fmt.Errorf("confirmation depth is not configured for %s", job.Chain), observeErr))
+	}
+	if required < job.Confirmations {
+		required = job.Confirmations
+	} else if required > job.Confirmations {
+		job.Confirmations = required
+		if err := e.saveJob(ctx, job); err != nil {
+			return pendingError(job, err)
+		}
+	}
+	if job.SweepRaw != "" {
+		return e.finishSweep(ctx, pool, job, required)
+	}
+	if job.GasRaw != "" && !job.GasConfirmed {
+		confirmed, err := e.settle(ctx, pool, job, true, required)
 		if err != nil {
-			out.Status, out.Error = "failed", fmt.Sprintf("gas top-up: %v", err)
-			return out
+			return pendingError(job, err)
 		}
-		out.GasTxHash = hash
-		e.record(ctx, entry, "gas_sent", out.GasTxHash, "", "")
-		if err := e.waitForReceipt(ctx, pool, hash); err != nil {
-			out.Status, out.Error = "failed", fmt.Sprintf("gas top-up not mined: %v", err)
-			return out
+		if !confirmed {
+			return job.outcome(), nil
 		}
 	}
-
-	txHash, err := e.sendTokenSweep(ctx, pool, entry, spec, balance, gasPrice)
+	if _, _, err := e.validateEntry(job.PlanEntry); err != nil {
+		return e.jobError(ctx, job, err)
+	}
+	// Extra uncredited balance never changes the immutable amount.
+	balance, err := e.tokenBalance(ctx, pool, job.Token, job.Address)
 	if err != nil {
-		out.Status, out.Error = "failed", err.Error()
-		e.record(ctx, entry, "failed", out.GasTxHash, "", err.Error())
-		return out
+		return e.jobError(ctx, job, err)
 	}
-	out.SweepTxHash = txHash
-	if err := e.waitForReceipt(ctx, pool, txHash); err != nil {
-		out.Status, out.Error = "failed", fmt.Sprintf("sweep not mined: %v", err)
-		e.record(ctx, entry, "failed", out.GasTxHash, txHash, out.Error)
-		return out
+	if balance.Cmp(job.RawAmount) < 0 {
+		return e.jobError(ctx, job, fmt.Errorf("live balance %s is below planned amount %s", balance, job.RawAmount))
 	}
-	out.Status = "swept"
-	e.record(ctx, entry, "swept", out.GasTxHash, txHash, "")
-	return out
-}
-
-// gasTopUpAmount picks how much native coin to send: the configured value,
-// but at least enough to cover the transfer that follows.
-func (e *Executor) gasTopUpAmount(chain string, gasBudget, native *big.Int) *big.Int {
-	return gasTopUpAmount(e.config, chain, gasBudget, native)
-}
-
-// sendNativeFromHot signs a native transfer from the hot wallet to a child
-// address. The signer authorises it by re-deriving the target.
-func (e *Executor) sendNativeFromHot(ctx context.Context, pool *rpc.Pool, chain, to string, toIndex uint32, amount, gasPrice *big.Int) (string, error) {
-	hot := strings.TrimSpace(e.config.HotWalletEVM)
-	if hot == "" {
-		return "", fmt.Errorf("hot_wallet_evm is not configured")
-	}
-	nonce, err := pool.Nonce(ctx, hot)
+	busy, err := e.addressBusy(ctx, job)
 	if err != nil {
-		return "", err
+		return pendingError(job, &persistenceError{err})
 	}
-	idx := toIndex
-	signed, err := e.signer.SignEVM(ctx, EVMSignRequest{
-		Index: e.hotIndex, Kind: "gas", GasIndex: &idx,
-		ChainID: ChainIDs[chain], Token: "native", To: to,
-		Amount: amount.String(), Nonce: nonce,
-		GasPrice: gasPrice.String(), GasLimit: 21000,
-	})
+	if busy {
+		return e.jobError(ctx, job, fmt.Errorf("address has another unresolved transaction"))
+	}
+	price, err := pool.GasPrice(ctx)
 	if err != nil {
-		return "", err
+		return e.jobError(ctx, job, err)
 	}
-	return pool.SendRawTransaction(ctx, signed)
-}
-
-// sendTokenSweep signs the ERC20 transfer from the child address itself.
-func (e *Executor) sendTokenSweep(ctx context.Context, pool *rpc.Pool, entry PlanEntry, spec TokenSpec, amount, gasPrice *big.Int) (string, error) {
-	hot := strings.TrimSpace(e.config.HotWalletEVM)
-	if hot == "" {
-		return "", fmt.Errorf("hot_wallet_evm is not configured")
-	}
-	nonce, err := pool.Nonce(ctx, entry.Address)
+	native, err := pool.Balance(ctx, job.Address)
 	if err != nil {
-		return "", err
+		return e.jobError(ctx, job, err)
 	}
-	signed, err := e.signer.SignEVM(ctx, EVMSignRequest{
-		Index: entry.DerivationIndex, ChainID: ChainIDs[entry.Chain],
-		Token: spec.Contract, To: hot,
-		Amount: amount.String(), Nonce: nonce,
-		GasPrice: gasPrice.String(), GasLimit: transferGasLimit,
-	})
-	if err != nil {
-		return "", err
-	}
-	return pool.SendRawTransaction(ctx, signed)
-}
-
-// waitForReceipt polls until the transaction is mined, then checks status.
-func (e *Executor) waitForReceipt(ctx context.Context, pool *rpc.Pool, txHash string) error {
-	deadline := time.Now().Add(3 * time.Minute)
-	for time.Now().Before(deadline) {
-		result, err := pool.Call(ctx, "eth_getTransactionReceipt", []any{txHash})
-		if err == nil && len(result) > 0 && string(result) != "null" {
-			var receipt struct {
-				Status string `json:"status"`
-			}
-			if err := json.Unmarshal(result, &receipt); err != nil {
-				return err
-			}
-			if strings.TrimPrefix(receipt.Status, "0x") == "1" {
-				return nil
-			}
-			return fmt.Errorf("transaction reverted")
+	if native.Cmp(transferGasBudget(price)) < 0 {
+		if job.GasConfirmed {
+			return e.jobError(ctx, job, fmt.Errorf("confirmed gas top-up is insufficient; automatic repeat funding refused"))
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(3 * time.Second):
+		if err := e.prepareGas(ctx, pool, job, e.gasTopUpAmount(job.Chain, transferGasBudget(price), native), price); err != nil {
+			return e.jobError(ctx, job, err)
+		}
+		confirmed, err := e.settle(ctx, pool, job, true, required)
+		if err != nil {
+			return pendingError(job, err)
+		}
+		if !confirmed {
+			return job.outcome(), nil
 		}
 	}
-	return fmt.Errorf("timeout waiting for receipt")
+	if err := e.prepareSweep(ctx, pool, job, price); err != nil {
+		return e.jobError(ctx, job, err)
+	}
+	return e.finishSweep(ctx, pool, job, required)
 }
 
-// tokenBalance reads an ERC20 balanceOf via eth_call.
+func (e *Executor) finishSweep(ctx context.Context, pool *rpc.Pool, job *sweepJob, required uint64) (SweepEntry, error) {
+	_, err := e.settle(ctx, pool, job, false, required)
+	if err != nil {
+		return pendingError(job, err)
+	}
+	return job.outcome(), nil
+}
+
+func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (SweepEntry, error) {
+	var storage *persistenceError
+	if errors.As(cause, &storage) {
+		return pendingError(job, cause)
+	}
+	job.Error = cause.Error()
+	err := e.saveJob(ctx, job)
+	return pendingError(job, joinErrors(cause, err))
+}
+
+func pendingError(job *sweepJob, err error) (SweepEntry, error) {
+	out := job.outcome()
+	if out.Status == "swept" { // final persistence may have failed
+		out.Status = "pending"
+	}
+	out.Error = err.Error()
+	return out, err
+}
+
 func (e *Executor) tokenBalance(ctx context.Context, pool *rpc.Pool, contract, address string) (*big.Int, error) {
-	addr := strings.TrimPrefix(strings.ToLower(address), "0x")
-	data := selBalanceOf + strings.Repeat("0", 64-len(addr)) + addr
-	result, err := pool.Call(ctx, "eth_call", []any{
-		map[string]string{"to": contract, "data": data}, "latest",
-	})
+	data := selBalanceOf + strings.Repeat("0", 24) + strings.TrimPrefix(strings.ToLower(address), "0x")
+	result, err := pool.Call(ctx, "eth_call", []any{map[string]string{"to": contract, "data": data}, "latest"})
 	if err != nil {
 		return nil, err
 	}
@@ -308,35 +348,21 @@ func (e *Executor) tokenBalance(ctx context.Context, pool *rpc.Pool, contract, a
 		return nil, err
 	}
 	value, ok := new(big.Int).SetString(strings.TrimPrefix(hexStr, "0x"), 16)
-	if !ok {
-		return nil, fmt.Errorf("balanceOf decode %q", hexStr)
+	if !ok || value.Sign() < 0 || value.BitLen() > 256 {
+		return nil, fmt.Errorf("invalid balanceOf result")
 	}
 	return value, nil
 }
 
-// record upserts the sweep_records row for this address/token.
-func (e *Executor) record(ctx context.Context, entry PlanEntry, status, gasTx, sweepTx, errMsg string) {
-	if _, err := e.db.ExecContext(ctx, `
-		INSERT INTO sweep_records (chain, from_address, to_address, token, amount, gas_tx_hash, sweep_tx_hash, status, error, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
-		entry.Chain, entry.Address, e.config.HotWalletEVM, entry.Token,
-		amountString(entry.RawAmount, entry.Decimals), gasTx, sweepTx, status, errMsg); err != nil {
-		slog.Warn("[cryptopay] sweep record failed", "error", err)
-	}
+func (e *Executor) gasTopUpAmount(chain string, gasBudget, native *big.Int) *big.Int {
+	return gasTopUpAmount(e.config, chain, gasBudget, native)
 }
 
-// transferGasBudget is the native amount a child address needs for one
-// token transfer, with 50% headroom so a price bump between quote and
-// broadcast still fits. Shared by the planner estimate and the executor.
 func transferGasBudget(gasPrice *big.Int) *big.Int {
 	budget := new(big.Int).Mul(gasPrice, big.NewInt(transferGasLimit))
-	budget.Mul(budget, big.NewInt(3))
-	budget.Div(budget, big.NewInt(2))
-	return budget
+	return budget.Div(budget.Mul(budget, big.NewInt(3)), big.NewInt(2))
 }
 
-// gasTopUpAmount picks how much native coin to send: the configured value,
-// but at least enough to cover the transfer that follows.
 func gasTopUpAmount(config Config, chain string, gasBudget, native *big.Int) *big.Int {
 	need := new(big.Int).Sub(gasBudget, native)
 	configured := big.NewInt(0)
@@ -346,13 +372,9 @@ func gasTopUpAmount(config Config, chain string, gasBudget, native *big.Int) *bi
 	if configured.Cmp(need) > 0 {
 		return configured
 	}
-	// Round the shortfall up to a whole gas unit so it is never just short.
-	need.Mul(need, big.NewInt(2))
-	return need
+	return need.Mul(need, big.NewInt(2))
 }
 
-// decimalToRawUnits converts a coin amount (e.g. 0.002) to raw units at the
-// given decimals.
 func decimalToRawUnits(value float64, decimals int) *big.Int {
 	scaled := new(big.Float).SetFloat64(value)
 	scaled.Mul(scaled, new(big.Float).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)))
@@ -363,16 +385,14 @@ func decimalToRawUnits(value float64, decimals int) *big.Int {
 	return raw
 }
 
-// amountString renders raw units as a decimal string for NUMERIC storage.
 func amountString(raw *big.Int, decimals int) string {
 	if raw == nil {
 		return "0"
 	}
-	value := new(big.Int).Set(raw)
 	if decimals <= 0 {
-		return value.String()
+		return raw.String()
 	}
-	digits := value.String()
+	digits := raw.String()
 	for len(digits) <= decimals {
 		digits = "0" + digits
 	}

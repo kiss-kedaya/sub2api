@@ -3,9 +3,12 @@ package cryptopay
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/big"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -198,6 +201,36 @@ func NewService(
 // startup and after every admin config save.
 func (s *Service) Reload(ctx context.Context) { s.reload(ctx) }
 
+// ValidateSignerChange proves that a different socket still belongs to the
+// deposit seed that owns existing addresses. A reachable but wrong signer
+// must not mix two wallet families in the same address pool.
+func (s *Service) ValidateSignerChange(ctx context.Context, socket string) error {
+	if strings.TrimSpace(socket) == "" {
+		return fmt.Errorf("signer socket must not be empty")
+	}
+	var index int64
+	var address string
+	err := s.db.QueryRowContext(ctx, `SELECT derivation_index, address FROM crypto_address_pool
+		WHERE chain_family = 'evm' ORDER BY derivation_index LIMIT 1`).Scan(&index, &address)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check existing deposit seed: %w", err)
+	}
+	if index < 0 || index > int64(^uint32(0)) {
+		return fmt.Errorf("existing deposit index is invalid")
+	}
+	derived, err := addresses.NewSignerClient(socket).Derive(ctx, uint32(index), 1)
+	if err != nil {
+		return fmt.Errorf("replacement signer must be unlocked to verify the existing deposit seed: %w", err)
+	}
+	if len(derived) != 1 || derived[0].Index != index || !strings.EqualFold(derived[0].EVM, address) {
+		return fmt.Errorf("replacement signer uses a different deposit seed")
+	}
+	return nil
+}
+
 func (s *Service) reload(ctx context.Context) {
 	cfg, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
 	if err != nil {
@@ -205,9 +238,15 @@ func (s *Service) reload(ctx context.Context) {
 		return
 	}
 
+	// A queued run must not retain an executor built from obsolete config.
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.config = cfg
+	if s.addresses != nil {
+		s.addresses.SetSigner(addresses.NewSignerClient(cfg.SignerSocket))
+	}
 
 	if !cfg.Enabled {
 		if s.worker != nil {
@@ -219,13 +258,25 @@ func (s *Service) reload(ctx context.Context) {
 			s.maintCancel = nil
 		}
 		s.executor = nil
+		s.planner = nil
 		return
 	}
 
 	// Immutable snapshot: workers and the executor keep the map they were
 	// built with, so a config save can never race a scan or a sweep.
-	pools := make(map[string]*rpc.Pool, len(cfg.Chains))
+	poolChains := make(map[string]struct{}, len(cfg.Chains)+len(cfg.RPC))
 	for _, chain := range cfg.Chains {
+		poolChains[chain] = struct{}{}
+	}
+	// Removing a chain from new deposits must not discard the RPC needed
+	// to reconcile an already-signed sweep. Only new work uses cfg.Chains.
+	for chain, endpoints := range cfg.RPC {
+		if IsEVMChain(chain) && strings.TrimSpace(endpoints) != "" {
+			poolChains[chain] = struct{}{}
+		}
+	}
+	pools := make(map[string]*rpc.Pool, len(poolChains))
+	for chain := range poolChains {
 		if existing, ok := s.pools[chain]; ok {
 			existing.SetEndpoints(cfg.RPC[chain])
 			pools[chain] = existing
@@ -320,9 +371,22 @@ func (s *Service) reload(ctx context.Context) {
 			sweepDecimals[tokenDecimalsKey(chain, token.Contract)] = token.Decimals
 		}
 	}
+	sweepMin := make(map[string]float64, len(cfg.Chains))
+	sweepConfirmations := make(map[string]uint64, len(pools))
+	for _, chain := range cfg.Chains {
+		sweepMin[chain] = cfg.SweepMinPerAddress[chain]
+	}
+	for chain := range pools {
+		depth, exists := cfg.Confirmations[chain]
+		if !exists {
+			depth = DefaultCryptoConfig().Confirmations[chain]
+		}
+		sweepConfirmations[chain] = uint64(depth)
+	}
 	s.planner = sweeper.NewPlanner(s.db, newBalanceReader(s.db, sweepDecimals), sweeper.Config{
 		GlobalThreshold: cfg.SweepGlobalThreshold,
-		MinPerAddress:   cfg.SweepMinPerAddress,
+		MinPerAddress:   sweepMin,
+		GasTopUp:        cfg.GasTopUp,
 		HotWalletEVM:    cfg.HotWalletEVM,
 		HotWalletSolana: cfg.HotWalletSolana,
 	}, pools)
@@ -339,8 +403,9 @@ func (s *Service) reload(ctx context.Context) {
 		}
 	}
 	s.executor = sweeper.NewExecutor(s.db, pools, s.signer, sweeper.Config{
+		Confirmations:   sweepConfirmations,
 		GlobalThreshold: cfg.SweepGlobalThreshold,
-		MinPerAddress:   cfg.SweepMinPerAddress,
+		MinPerAddress:   sweepMin,
 		GasTopUp:        cfg.GasTopUp,
 		HotWalletEVM:    cfg.HotWalletEVM,
 	}, sweepTokens, newBalanceReader(s.db, sweepDecimals), cfg.HotIndex)
@@ -395,7 +460,14 @@ func (s *Service) maintenance(ctx context.Context, cfg CryptoConfig) {
 func (s *Service) Config() CryptoConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.config
+	cfg := s.config
+	cfg.Chains = slices.Clone(cfg.Chains)
+	cfg.RPC = maps.Clone(cfg.RPC)
+	cfg.Confirmations = maps.Clone(cfg.Confirmations)
+	cfg.ScanRange = maps.Clone(cfg.ScanRange)
+	cfg.SweepMinPerAddress = maps.Clone(cfg.SweepMinPerAddress)
+	cfg.GasTopUp = maps.Clone(cfg.GasTopUp)
+	return cfg
 }
 
 // ResolveDepositAddress implements the payment service's resolver: it
@@ -502,17 +574,13 @@ func nativeSymbol(chain string) string {
 func (s *Service) HotWalletStatuses(ctx context.Context) ([]HotWalletStatus, error) {
 	cfg := s.Config()
 	receiving := strings.TrimSpace(cfg.HotWalletEVM)
-	// Gas is paid by the signer's hot seed, not by the receiving address.
-	// Ask the signer for it; fall back to the configured address only when
-	// the signer is locked or unreachable (the page still needs to render).
-	gasWallet := receiving
-	if s.signer != nil {
-		if addr, err := s.signer.HotAddresses(ctx); err == nil && strings.TrimSpace(addr.EVM) != "" {
-			gasWallet = addr.EVM
-		}
+	addr, err := s.HotAddresses(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cannot determine gas wallet: %w", err)
 	}
-	if gasWallet == "" {
-		return nil, fmt.Errorf("hot wallet is not configured")
+	gasWallet := strings.TrimSpace(addr.EVM)
+	if !validEVMAddress(gasWallet) {
+		return nil, fmt.Errorf("signer returned an invalid gas wallet")
 	}
 	s.mu.RLock()
 	pools := s.pools
@@ -567,6 +635,8 @@ func (s *Service) UnlockSigner(ctx context.Context, passphrase, depositMnemonic,
 // RunSweep executes the sweep (or a dry-run) and returns the summary.
 // Serialised by the caller via the admin route; sweeps are operator-driven.
 func (s *Service) RunSweep(ctx context.Context, dryRun bool) (*sweeper.Summary, error) {
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
 	s.mu.RLock()
 	exec := s.executor
 	s.mu.RUnlock()
@@ -575,8 +645,6 @@ func (s *Service) RunSweep(ctx context.Context, dryRun bool) (*sweeper.Summary, 
 	}
 	// One run at a time: the manual trigger and the scheduler would
 	// otherwise both read the same balances and double-send.
-	s.sweepMu.Lock()
-	defer s.sweepMu.Unlock()
 	return exec.Run(ctx, dryRun)
 }
 
@@ -651,7 +719,7 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 		limit = 100
 	}
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
-	                 token, amount::text, status, reason, created_at
+		       token, amount::text, status, reason, created_at
 	            FROM deposit_transactions WHERE 1=1`
 	args := []any{}
 	if chain != "" {
@@ -821,21 +889,27 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT d.chain, d.tx_hash, d.token, d.amount::text, d.status, d.reason, d.created_at
+		SELECT d.chain, d.tx_hash, d.token, d.amount::text, d.status, d.reason, d.created_at,
+		       COALESCE(o.amount, 0), d.log_index, d.order_id
 		  FROM deposit_transactions d
-		  JOIN deposit_addresses a ON lower(a.address) = lower(d.to_address)
+		  JOIN deposit_addresses a ON
+		       (a.chain = 'evm' AND d.chain <> 'solana' AND lower(a.address) = lower(d.to_address))
+		       OR (a.chain = 'solana' AND d.chain = 'solana' AND a.address = d.to_address)
+		  LEFT JOIN payment_orders o ON o.id = d.order_id AND o.user_id = a.user_id
 		 WHERE a.user_id = $1
 		 ORDER BY d.id DESC LIMIT $2`, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("user deposit history: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	rate := s.Config().CreditMultiplier
 	var out []UserDepositRecord
+	legacy := map[string][]int{}
 	for rows.Next() {
 		var r UserDepositRecord
 		var created time.Time
-		if err := rows.Scan(&r.Chain, &r.TxHash, &r.Token, &r.Amount, &r.Status, &r.Reason, &created); err != nil {
+		var logIndex int
+		var orderID sql.NullInt64
+		if err := rows.Scan(&r.Chain, &r.TxHash, &r.Token, &r.Amount, &r.Status, &r.Reason, &created, &r.Credited, &logIndex, &orderID); err != nil {
 			return nil, err
 		}
 		// The user sees the symbol; the raw contract stays internal.
@@ -845,12 +919,49 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		// random failure and invites support tickets. The machine code goes
 		// out as-is; the UI localizes it with the current thresholds.
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
-		if r.Status == "credited" {
-			var amount float64
-			_, _ = fmt.Sscanf(r.Amount, "%f", &amount)
-			r.Credited = amount * rate
+		if r.Status != "credited" {
+			r.Credited = 0
+		} else if !orderID.Valid {
+			_, identity := depositOrderIdentity(r.Chain, r.TxHash, logIndex)
+			legacy[identity] = append(legacy[identity], len(out))
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	// Old credited rows predate order_id linking. Resolve all deterministic
+	// identities in one indexed batch, without repricing or per-row queries.
+	if len(legacy) > 0 {
+		args := []any{userID}
+		params := make([]string, 0, len(legacy))
+		for identity := range legacy {
+			args = append(args, identity)
+			params = append(params, fmt.Sprintf("$%d", len(args)))
+		}
+		orders, err := s.db.QueryContext(ctx, `SELECT out_trade_no, amount FROM payment_orders
+			WHERE user_id = $1 AND payment_type = 'crypto' AND status = 'COMPLETED'
+			AND out_trade_no IN (`+strings.Join(params, ",")+`)`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("load historical credit amounts: %w", err)
+		}
+		defer func() { _ = orders.Close() }()
+		for orders.Next() {
+			var identity string
+			var amount float64
+			if err := orders.Scan(&identity, &amount); err != nil {
+				return nil, err
+			}
+			for _, index := range legacy[identity] {
+				out[index].Credited = amount
+			}
+		}
+		if err := orders.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
