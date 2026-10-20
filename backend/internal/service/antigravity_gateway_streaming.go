@@ -118,6 +118,8 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 	if upstreamResponseModelObserverFromContext(c) == nil {
 		beginUpstreamResponseModelObservation(c)
 	}
+	// 上游已确认 2xx 才开始允许 pre-header 心跳写下游（Messages 入口有 gate）。
+	ArmOpenAIStreamSSEKeepalive(c)
 	c.Status(resp.StatusCode)
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -1023,6 +1025,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Cont
 
 // handleClaudeStreamingResponse 处理 Claude 流式响应（Gemini SSE → Claude SSE 转换）
 func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string) (*antigravityStreamResult, error) {
+	ArmOpenAIStreamSSEKeepalive(c)
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")

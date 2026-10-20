@@ -958,6 +958,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
+	// 上游已返回 200 + SSE，允许 handler 的 pre-header keepalive 写下游。
+	ArmOpenAIStreamSSEKeepalive(c)
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 
 	state := apicompat.NewResponsesEventToAnthropicState()
