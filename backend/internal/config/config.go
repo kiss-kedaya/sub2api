@@ -740,7 +740,11 @@ type SecurityConfig struct {
 	ProxyProbe             ProxyProbeConfig     `mapstructure:"proxy_probe"`
 	// TrustForwardedIPForAPIKeyACL enables legacy raw forwarded-header takeover.
 	// When disabled, server.trusted_proxies is authoritative for all client-IP consumers.
-	TrustForwardedIPForAPIKeyACL  bool                                       `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
+	TrustForwardedIPForAPIKeyACL bool `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
+	// HoneypotExemptNets lists CIDRs/IPs belonging to the operator's own edge.
+	// They are never banned by the scanner trap. Kept in config so real
+	// addresses never land in this public repository.
+	HoneypotExemptNets            []string                                   `mapstructure:"honeypot_exempt_nets" json:"-" yaml:"-"`
 	ForwardedClientIPHeaders      []string                                   `mapstructure:"forwarded_client_ip_headers" json:"forwarded_client_ip_headers" yaml:"forwarded_client_ip_headers"`
 	forwardedClientIPSettingsLive *atomic.Pointer[ForwardedClientIPSettings] `mapstructure:"-" json:"-" yaml:"-"`
 }
@@ -1020,6 +1024,24 @@ type GatewayConfig struct {
 	ProxyProbeResponseReadMaxBytes int64 `mapstructure:"proxy_probe_response_read_max_bytes"`
 	// Gemini 上游响应头调试日志开关（默认关闭，避免高频日志开销）
 	GeminiDebugResponseHeaders bool `mapstructure:"gemini_debug_response_headers"`
+	// DeepSeekResponseCompatEnabled 控制我们二开时加的 DeepSeek 响应改写链路
+	// （DSML 内联工具调用解析、reasoning 重组、call_id 重建、工具注入与代执行）。
+	//
+	// 官方 DeepSeek 现在原生返回结构化 Responses（reasoning_text /
+	// encrypted_content / 正确的 function_call id+call_id 分离）。这套改写会把
+	// 原本正确的内容再加工一遍，实测导致 reasoning output item 丢失、chat 的
+	// message.role 变成空串、Responses 顶层字段被剥掉。
+	//
+	// 默认 false：不改写响应，直接透传上游。只有接入不支持原生工具调用的老式
+	// DeepSeek 兼容中转时才需要打开。
+	DeepSeekResponseCompatEnabled bool `mapstructure:"deepseek_response_compat_enabled"`
+	// ThinkingBudgetRectifyEnabled 控制「上游报 budget_tokens 约束错误后，自动把
+	// thinking.type 改成 enabled、budget_tokens 改成 32000、max_tokens 改成 64000
+	// 再重发一次」这条兼容链路。
+	//
+	// 这是替客户端改写请求参数（会显著放大客户端原本的预算），与官方语义不一致，
+	// 因此默认关闭。只有接入了确实要求固定 budget 区间的上游时才需要打开。
+	ThinkingBudgetRectifyEnabled bool `mapstructure:"thinking_budget_rectify_enabled"`
 	// ConnectionPoolIsolation: 上游连接池隔离策略（proxy/account/account_proxy）
 	ConnectionPoolIsolation string `mapstructure:"connection_pool_isolation"`
 	// ForceCodexCLI: 强制将 OpenAI `/v1/responses` 请求按 Codex CLI 处理。
@@ -1933,6 +1955,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if forwardedClientIPHeadersEnvConfigured {
 		cfg.Security.ForwardedClientIPHeaders = normalizeStringSlice(strings.Split(forwardedClientIPHeadersEnv, ","))
 	}
+	if honeypotExemptEnv, ok := os.LookupEnv("SECURITY_HONEYPOT_EXEMPT_NETS"); ok {
+		cfg.Security.HoneypotExemptNets = normalizeStringSlice(strings.Split(honeypotExemptEnv, ","))
+	}
 	cfg.Server.TrustedProxiesConfigured = trustedProxiesConfigured
 	if cfg.Gateway.OpenAIScheduler.StickyEscapeTTFTMs == 0 {
 		cfg.Gateway.OpenAIScheduler.StickyEscapeTTFTMs = 15000
@@ -2747,6 +2772,10 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_enabled", true)
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_error_rate", 0.0)
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_ttft_ms", 0)
+	// DeepSeek response compat is opt-in; registering the default keeps
+	// GATEWAY_DEEPSEEK_RESPONSE_COMPAT_ENABLED reachable from the environment.
+	viper.SetDefault("gateway.deepseek_response_compat_enabled", false)
+	viper.SetDefault("gateway.thinking_budget_rectify_enabled", false)
 
 	// server.trusted_proxies and security.forwarded_client_ip_headers are the
 	// other exception: load() distinguishes explicit configuration from absence
@@ -2759,6 +2788,10 @@ func setEnvReachableDefaults() {
 	// called without arguments.
 	_ = viper.BindEnv("server.trusted_proxies", "SERVER_TRUSTED_PROXIES")
 	_ = viper.BindEnv("security.forwarded_client_ip_headers", "SECURITY_FORWARDED_CLIENT_IP_HEADERS")
+	// honeypot_exempt_nets is bound the same way: load() reads it by hand via
+	// os.LookupEnv, and the bind exists so AllKeys() (and the env-reachability
+	// guard) can see the key.
+	_ = viper.BindEnv("security.honeypot_exempt_nets", "SECURITY_HONEYPOT_EXEMPT_NETS")
 
 	// Third-party login providers. These carry client secrets and are exactly
 	// the settings an operator expects to inject via the environment, but every

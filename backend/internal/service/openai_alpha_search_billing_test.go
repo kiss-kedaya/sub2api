@@ -71,6 +71,46 @@ func TestCalculateOpenAIRecordUsageCostWebSearchPerCall(t *testing.T) {
 	require.Error(t, err)
 }
 
+// A group that configures "price per 1k searches" must bill every single
+// search, not wait for a full thousand. The per-1k price wins over the
+// per-call price when both are set.
+func TestCalculateOpenAIRecordUsageCostWebSearchPrefersPer1kPrice(t *testing.T) {
+	t.Parallel()
+	svc := &OpenAIGatewayService{billingService: &BillingService{}}
+	groupID := int64(36)
+
+	apiKey := &APIKey{
+		ID:      1,
+		GroupID: &groupID,
+		Group: &Group{
+			ID:               groupID,
+			Platform:         PlatformDeepseek,
+			SearchPricePer1k: float64Ptr(5.0), // 5 USD / 1000 = 0.005 per call
+		},
+	}
+	result := &OpenAIForwardResult{Model: "deepseek-v4-flash", WebSearchCalls: 1}
+
+	cost, err := svc.calculateOpenAIRecordUsageCost(context.Background(), result, apiKey, []string{"deepseek-v4-flash"}, 1.0, 1.0, 1.0, 1.0, UsageTokens{}, "", boolPtr(false), time.Time{})
+	require.NoError(t, err)
+	require.InDelta(t, 0.005, cost.TotalCost, 1e-12, "one search must be billed immediately at price/1000")
+	require.InDelta(t, 0.005, cost.ActualCost, 1e-12)
+
+	// Two searches double linearly instead of rounding up to a thousand.
+	result.WebSearchCalls = 2
+	cost, err = svc.calculateOpenAIRecordUsageCost(context.Background(), result, apiKey, []string{"deepseek-v4-flash"}, 1.0, 1.0, 1.0, 1.0, UsageTokens{}, "", boolPtr(false), time.Time{})
+	require.NoError(t, err)
+	require.InDelta(t, 0.010, cost.TotalCost, 1e-12)
+
+	// Explicit zero stays free even though a per-call price would apply.
+	apiKey.Group.WebSearchPricePerCall = float64Ptr(0.01)
+	apiKey.Group.SearchPricePer1k = float64Ptr(0)
+	result.WebSearchCalls = 1
+	cost, err = svc.calculateOpenAIRecordUsageCost(context.Background(), result, apiKey, []string{"deepseek-v4-flash"}, 1.0, 1.0, 1.0, 1.0, UsageTokens{}, "", boolPtr(false), time.Time{})
+	require.NoError(t, err)
+	require.Zero(t, cost.TotalCost)
+	require.Zero(t, cost.ActualCost)
+}
+
 func TestAPIKeyService_SnapshotRoundTrip_PreservesWebSearchPricePerCall(t *testing.T) {
 	svc := NewAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{})
 	groupID := int64(9)

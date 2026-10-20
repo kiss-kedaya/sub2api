@@ -685,15 +685,39 @@ const refreshOpenPanel = async () => {
   finally { refreshInFlight = false }
 }
 
-// Load plans when dialog opens
+// Load before registering the immediate watcher below.
+const loadPlans = async (isActive: () => boolean = () => true) => {
+  const accountId = props.accountId
+  if (!accountId) return
+  const isCurrent = () => isActive() && props.show && props.accountId === accountId
+  loading.value = true
+  try {
+    const data = await adminAPI.scheduledTests.listByAccount(accountId)
+    if (isCurrent()) plans.value = data
+  } catch (error: any) {
+    if (isCurrent()) appStore.showError(error?.message || 'Failed to load plans')
+  } finally {
+    if (isCurrent()) loading.value = false
+  }
+}
+
 watch(
-  () => props.show,
-  async (visible) => {
-    if (visible && props.accountId) {
-      await loadPlans()
+  [() => props.show, () => props.accountId],
+  async ([visible, accountId], [wasVisible, previousAccountId], onCleanup) => {
+    let active = true
+    onCleanup(() => { active = false; stopRefresh() })
+    plans.value = []
+    results.value = []
+    expandedPlanId.value = null
+    selectedResultId.value = null
+    resultsRevision = null
+    if (visible && accountId && (!wasVisible || accountId !== previousAccountId)) {
+      await loadPlans(() => active)
+      if (!active) return
       stopRefresh()
       if (props.show) refreshTimer = setInterval(() => { void refreshOpenPanel() }, 15000)
-    } else {
+    } else if (!visible || !accountId) {
+      loading.value = false
       stopRefresh()
       plans.value = []
       results.value = []
@@ -703,20 +727,9 @@ watch(
       showAddForm.value = false
       showDeleteConfirm.value = false
     }
-  }
+  },
+  { immediate: true }
 )
-
-const loadPlans = async () => {
-  if (!props.accountId) return
-  loading.value = true
-  try {
-    plans.value = await adminAPI.scheduledTests.listByAccount(props.accountId)
-  } catch (error: any) {
-    appStore.showError(error?.message || 'Failed to load plans')
-  } finally {
-    loading.value = false
-  }
-}
 
 const handleCreate = async () => {
   if (!props.accountId || !newPlan.model_id || !newPlan.cron_expression) return

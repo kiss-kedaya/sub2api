@@ -115,6 +115,12 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	// 7b. Normalize cache_control ttl ordering (an 1h block must not follow a 5m one).
 	anthropicBody = normalizeCacheControlTTLOrder(anthropicBody)
 
+	// 7c. Claude 5.x（opus/sonnet 5.5+、fable-5）只认 adaptive thinking。
+	// CC→Responses→Anthropic 转换会把客户端 reasoning.effort 合成为
+	// thinking.type="enabled"+budget_tokens，直接转发必被上游 400
+	// （"requires adaptive thinking"）。这里按映射后的出站模型名统一修正。
+	anthropicBody = sanitizeAnthropicThinkingForModel(anthropicBody, mappedModel)
+
 	// 8. Get access token
 	token, tokenType, err := s.GetAccessToken(ctx, account)
 	if err != nil {
@@ -380,6 +386,8 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	}
+	// 上游已确认 2xx 才开始允许 pre-header 心跳写下游（Messages 入口有 gate）。
+	ArmOpenAIStreamSSEKeepalive(c)
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")

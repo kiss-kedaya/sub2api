@@ -1031,15 +1031,22 @@ export default {
         notConfigured: '未配置'
       },
       explicitPricing: {
-        title: '搜索与 Voice 定价',
-        description: '分组级 web_search（每千次）与 Voice realtime / TTS / STT 单价（USD）。留空表示未配置。DeepSeek 分组可另外指定搜索专用服务与 key。',
+        title: '搜索定价',
+        description: '分组级 web_search 每千次单价（USD）。留空表示未配置。DeepSeek 分组可另外指定搜索专用服务与 key。',
         searchPricePer1k: '搜索每千次价格（USD）',
         pricePlaceholder: '可选',
         searchProviderBaseUrl: '搜索专用服务地址',
         searchProviderBaseUrlPlaceholder: '留空则使用模型账号的 base_url',
         searchProviderApiKey: '搜索专用 API Key',
         searchProviderApiKeyPlaceholder: '留空则不修改；已配置时不会回显',
+        searchProviderApiKeyConfigured: '已配置密钥；留空表示保持不变',
         searchProviderApiKeyClear: '清除已保存的搜索 Key'
+      },
+      moderationRefusalPricing: {
+        title: 'Grok 安全拒绝扣费',
+        hint: '命中 SAFETY_CHECK_TYPE 安全拒绝时每次扣多少（USD）。留空使用默认 0.1；填 0 表示不扣费。',
+        pricePerCall: '每次扣费（USD）',
+        placeholder: '默认 0.1'
       },
       modelPricing: {
         title: '分组逐模型定价',

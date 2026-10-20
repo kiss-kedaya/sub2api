@@ -111,7 +111,19 @@ export const addCustomModelAllowlistItem = (
   state: ModelAllowlistState,
   raw: string,
 ): ModelAllowlistAddError | null => {
-  const entry = raw.trim()
+  // 支持一次粘贴多行：换行/逗号/分号/制表符/空白都当分隔符，
+  // 逐条追加，重复项跳过。单条输入行为不变。
+  const entries = raw
+    .split(/[\r\n,;\t ]+/)
+    .map(item => item.trim())
+    .filter(item => item.length > 0)
+  if (entries.length > 1) {
+    for (const entry of entries) {
+      appendModelAllowlistEntry(state, entry)
+    }
+    return null
+  }
+  const entry = entries[0] ?? ''
   if (!entry) {
     return 'empty'
   }
@@ -126,6 +138,23 @@ export const addCustomModelAllowlistItem = (
   }
   state.items.push({ id: entry, selected: true })
   return null
+}
+
+// appendModelAllowlistEntry 是批量粘贴用的追加逻辑：静默跳过空项、
+// 含非法通配符的项和重复项，不因为个别条目失败就整批丢弃。
+const appendModelAllowlistEntry = (state: ModelAllowlistState, entry: string) => {
+  const value = entry.trim()
+  if (!value || value.slice(0, -1).includes('*')) {
+    return
+  }
+  const lower = value.toLowerCase()
+  if (
+    state.items.some(item => item.id.toLowerCase() === lower) ||
+    state.savedModels.some(model => model.toLowerCase() === lower)
+  ) {
+    return
+  }
+  state.items.push({ id: value, selected: true })
 }
 
 export const buildModelAllowlistConfig = (

@@ -231,6 +231,14 @@ func (c *openAIWSStateStoreTimeoutProbeCache) ReleaseGrokVideoBilled(_ context.C
 func (c *openAIWSStateStoreTimeoutProbeCache) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
 	return nil
 }
+func (c *openAIWSStateStoreTimeoutProbeCache) BlockSession(_ context.Context, _ int64, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *openAIWSStateStoreTimeoutProbeCache) IsSessionBlocked(_ context.Context, _ int64, _ string) (bool, error) {
+	return false, nil
+}
+
 func (c *openAIWSStateStoreTimeoutProbeCache) GetReasoningContent(_ context.Context, _ string) (string, error) {
 	return "", ErrReasoningContentNotFound
 }

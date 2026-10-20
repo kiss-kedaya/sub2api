@@ -129,6 +129,11 @@ func (s *GatewayService) ForwardAsResponses(
 	// 7b. Normalize cache_control ttl ordering (an 1h block must not follow a 5m one).
 	anthropicBody = normalizeCacheControlTTLOrder(anthropicBody)
 
+	// 7c. 同 CC 入站路径：Responses→Anthropic 转换合成的
+	// thinking.type="enabled"+budget_tokens 对 Claude 5.x 必 400，按映射后的
+	// 出站模型名统一修正（enabled/disabled/between_tools 三种取值）。
+	anthropicBody = sanitizeAnthropicThinkingForModel(anthropicBody, mappedModel)
+
 	// 8. Get access token
 	token, tokenType, err := s.GetAccessToken(ctx, account)
 	if err != nil {
@@ -510,6 +515,8 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	}
+	// 上游已确认 2xx 才开始允许 pre-header 心跳写下游（Messages 入口有 gate）。
+	ArmOpenAIStreamSSEKeepalive(c)
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")

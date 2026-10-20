@@ -18,6 +18,31 @@ vi.mock('vue-i18n', async (importOriginal) => ({
 }))
 
 describe('ScheduledTestsPanel quality results', () => {
+  it('loads existing plans on its first mount already visible', async () => {
+    listByAccount.mockReset().mockResolvedValue([{ id: 1, account_id: 2, model_id: 'first-open-model', enabled: true, max_results: 20 }])
+    const wrapper = mount(ScheduledTestsPanel, { props: { show: true, accountId: 2, modelOptions: [] },
+      global: { stubs: { BaseDialog: { template: '<div><slot /></div>' }, ConfirmDialog: true } } })
+    await flushPromises()
+    expect(listByAccount).toHaveBeenCalledTimes(1)
+    expect(listByAccount).toHaveBeenCalledWith(2)
+    expect(wrapper.text()).toContain('first-open-model')
+    await wrapper.setProps({ accountId: 3 }); await flushPromises()
+    expect(listByAccount).toHaveBeenLastCalledWith(3)
+  })
+  it('does not start polling when unmounted before the initial request finishes', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: never[]) => void
+    listByAccount.mockReset().mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const wrapper = mount(ScheduledTestsPanel, { props: { show: true, accountId: 2, modelOptions: [] },
+      global: { stubs: { BaseDialog: { template: '<div><slot /></div>' }, ConfirmDialog: true } } })
+    try {
+      wrapper.unmount()
+      finish([]); await flushPromises()
+      expect(vi.getTimerCount()).toBe(0)
+      await vi.advanceTimersByTimeAsync(30000)
+      expect(listByAccount).toHaveBeenCalledTimes(1)
+    } finally { vi.useRealTimers() }
+  })
   it('does not reload unchanged reports or poll while the page is hidden', async () => {
     vi.useFakeTimers()
     const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')

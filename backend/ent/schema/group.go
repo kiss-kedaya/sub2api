@@ -181,6 +181,16 @@ func (Group) Fields() []ent.Field {
 			Sensitive().
 			Comment("搜索专用 API key；空表示使用账号自带的 api_key"),
 
+		// Grok 内容策略拒绝（SAFETY_CHECK_TYPE）单次扣费。
+		// nil 表示使用默认值 0.1 USD；0 表示不扣费。
+		// 该费用不乘分组 RateMultiplier，以便运营按次自助定价。
+		field.Float("grok_moderation_refusal_price").
+			Optional().
+			Nillable().
+			Min(0).
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
+			Comment("Grok 安全拒绝单次扣费（USD/次）；nil 使用默认 0.1，0 表示不扣费"),
+
 		// Grok Voice 显式定价（realtime / TTS / STT），不按文本 RateMultiplier。
 		field.Float("audio_realtime_price_per_min").
 			Optional().

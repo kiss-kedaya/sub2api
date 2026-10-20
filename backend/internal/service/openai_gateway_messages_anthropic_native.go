@@ -72,6 +72,9 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 	if normalized, changed := NormalizeGLM53AnthropicThinking(body, upstreamModel); changed {
 		body = normalized
 	}
+	// 供应商原生 Anthropic 端点也可能代理 Claude 5.x 模型：套用同一条
+	// thinking 协议门（非 Claude 5.x 模型名直接 no-op，不解析 body）。
+	body = sanitizeAnthropicThinkingForModel(body, upstreamModel)
 
 	// 记录客户端请求的推理强度：优先 Claude 协议的 output_config.effort；
 	// 缺失且 thinking 已启用时，按国产 passback-required 模型兜底为 high
@@ -320,6 +323,8 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	}
 
 	writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	// 上游已确认 2xx + SSE，允许 handler 的 pre-header keepalive 写下游。
+	ArmOpenAIStreamSSEKeepalive(c)
 
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if contentType == "" {

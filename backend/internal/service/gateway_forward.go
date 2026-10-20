@@ -588,7 +588,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						}(),
 					})
 
-					rectifiedBody, applied := RectifyThinkingBudget(body)
+					// 默认关闭：这条链路会替客户端改写 thinking/max_tokens 参数。
+					var rectifiedBody []byte
+					applied := false
+					if s.cfg != nil && s.cfg.Gateway.ThinkingBudgetRectifyEnabled {
+						rectifiedBody, applied = RectifyThinkingBudget(body)
+					}
 					if applied && time.Since(retryStart) < maxRetryElapsed {
 						logger.LegacyPrintf("service.gateway", "Account %d: detected budget_tokens constraint error, retrying with rectified budget (budget_tokens=%d, max_tokens=%d)", account.ID, BudgetRectifyBudgetTokens, BudgetRectifyMaxTokens)
 						budgetRetryCtx, releaseBudgetRetryCtx := detachStreamUpstreamContext(ctx, reqStream)

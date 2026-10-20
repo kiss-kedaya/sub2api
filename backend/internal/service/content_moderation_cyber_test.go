@@ -85,6 +85,7 @@ func TestRecordCyberPolicyEvent_DisabledWhenRiskControlOff(t *testing.T) {
 		UserEmail:       "u@x.com",
 		Model:           "gpt-5",
 		Endpoint:        "/v1/responses",
+		RequestBody:     []byte(`{"model":"gpt-5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"first turn"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"last user prompt"}]}]}`),
 		UpstreamMessage: "flagged",
 		UpstreamBody:    `{"error":{"code":"cyber_policy"}}`,
 		UpstreamStatus:  400,
@@ -113,6 +114,7 @@ func TestRecordCyberPolicyEvent_WritesLogWhenEnabled(t *testing.T) {
 		UserEmail:       "u@x.com",
 		Model:           "gpt-5",
 		Endpoint:        "/v1/responses",
+		RequestBody:     []byte(`{"model":"gpt-5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"first turn"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"last user prompt"}]}]}`),
 		UpstreamMessage: "flagged",
 		UpstreamBody:    `{"error":{"code":"cyber_policy"}}`,
 		UpstreamStatus:  400,
@@ -126,6 +128,10 @@ func TestRecordCyberPolicyEvent_WritesLogWhenEnabled(t *testing.T) {
 	require.True(t, log.Flagged)
 	require.Equal(t, "cyber_policy", log.HighestCategory)
 	require.Contains(t, log.Error, "flagged")
+	// 详情页展示的必须是用户最后一轮输入，而不是上游错误文本。
+	require.Equal(t, "last user prompt", log.InputExcerpt)
+	// 详情页展示的必须是用户最后一轮输入，而不是上游错误文本。
+	require.Equal(t, "last user prompt", log.InputExcerpt)
 	require.False(t, log.AutoBanned)
 	// emailService is nil, so EmailSent must be false
 	require.False(t, log.EmailSent)
