@@ -163,11 +163,12 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, fmt.Errorf("convert anthropic to responses: %w", err)
 	}
 
-	// 跟随客户端的 stream 偏好，不再无条件强制上游流式。
-	// 只有确实只支持流式的账号（Codex OAuth transform）才会在下面被重新置为 true。
-	// 旧逻辑把同步请求也改成流式，导致上游 4xx 只能在流内报出、状态码已经固化。
-	responsesReq.Stream = clientStream
-	isStream := clientStream
+	// 上游一律用流式：Anthropic→Responses 这条转换链只有一个上游读取实现，
+	// 它按 SSE 解析（见 handleAnthropicBufferedStreamingResponse：客户端要同步时
+	// 把流缓冲成 JSON 返回）。若这里跟随客户端发 stream=false，上游回的是普通
+	// JSON，该解析器会报 "stream ended without a terminal response event"。
+	responsesReq.Stream = true
+	isStream := true
 
 	// 3b. Handle BetaFastMode → service_tier: "priority"
 	if containsBetaToken(c.GetHeader("anthropic-beta"), claude.BetaFastMode) {
