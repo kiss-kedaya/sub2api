@@ -123,7 +123,7 @@ export const addCustomModelAllowlistItem = (
     }
     return null
   }
-  const entry = raw.trim()
+  const entry = entries[0] ?? ''
   if (!entry) {
     return 'empty'
   }

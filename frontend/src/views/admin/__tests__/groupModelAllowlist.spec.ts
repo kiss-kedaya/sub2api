@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   addCustomModelAllowlistItem,
-  createModelAllowlistState,
   type ModelAllowlistAddError,
 } from "../groupModelAllowlist";
 
@@ -157,5 +156,35 @@ describe("addCustomModelAllowlistItem", () => {
   it("rejects duplicates case-insensitively", () => {
     const s = state();
     expect(addCustomModelAllowlistItem(s, "GPT-5.4")).toBe<ModelAllowlistAddError>("duplicate");
+  });
+});
+
+describe("single model allowlist separators", () => {
+  it.each(["gpt-fixture,", "gpt-fixture;", ",gpt-fixture,;\t\n", "gpt-fixture\n"])(
+    "normalizes a single pasted model: %j", (raw) => {
+      const state = createModelAllowlistState();
+      expect(addCustomModelAllowlistItem(state, raw)).toBeNull();
+      expect(buildModelAllowlistConfig(state).models).toEqual(["gpt-fixture"]);
+    },
+  );
+
+  it.each([",;\t\n", " , ; "])("rejects delimiter-only input: %j", (raw) => {
+    const state = createModelAllowlistState();
+    expect(addCustomModelAllowlistItem(state, raw)).toBe("empty");
+    expect(state.items).toEqual([]);
+  });
+
+  it("checks duplicates and wildcard placement after normalizing separators", () => {
+    const state = createModelAllowlistState({ models: ["gpt-fixture"] });
+    expect(addCustomModelAllowlistItem(state, "GPT-fixture,")).toBe("duplicate");
+    expect(addCustomModelAllowlistItem(state, "gpt-*-fixture;")).toBe("invalid_wildcard");
+    expect(addCustomModelAllowlistItem(state, "gpt-fixture-*;")).toBeNull();
+    expect(state.items).toEqual([{ id: "gpt-fixture-*", selected: true }]);
+  });
+
+  it("preserves bulk order while skipping duplicates and invalid entries", () => {
+    const state = createModelAllowlistState({ models: ["saved-model"] });
+    expect(addCustomModelAllowlistItem(state, "saved-model,first-model;second-model\nFIRST-MODEL bad*entry")).toBeNull();
+    expect(buildModelAllowlistConfig(state).models).toEqual(["first-model", "second-model"]);
   });
 });
