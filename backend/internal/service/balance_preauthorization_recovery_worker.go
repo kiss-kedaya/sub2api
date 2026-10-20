@@ -42,11 +42,14 @@ func NewBalancePreauthorizationRecoveryWorker(
 	recoverer *BalancePreauthorizationService,
 ) *BalancePreauthorizationRecoveryWorker {
 	worker := &BalancePreauthorizationRecoveryWorker{source: source, recoverer: recoverer}
-	worker.Start()
+	startBackgroundJob(worker.Start)
 	return worker
 }
 
 func (w *BalancePreauthorizationRecoveryWorker) Start() {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	if w == nil || w.source == nil || w.recoverer == nil || w.cancel != nil {
 		return
 	}

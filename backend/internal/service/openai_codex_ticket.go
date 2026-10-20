@@ -426,6 +426,9 @@ func needsOpenAICodexAstraVersion(model string) bool {
 }
 
 func (s *OpenAIGatewayService) StartOpenAICodexTicketHarvester() {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	if s == nil {
 		return
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
 	"github.com/Wei-Shaw/sub2api/internal/web"
 
@@ -51,6 +52,23 @@ func fmtStartup(v any) string {
 		return t.Error()
 	default:
 		return "non-string panic"
+	}
+}
+
+func startOptionalBackgroundServices(startPluginManager, startPromptAudit func(context.Context) error) {
+	if service.BackgroundJobsDisabled() {
+		return
+	}
+	if startPluginManager != nil {
+		if err := startPluginManager(context.Background()); err != nil {
+			log.Printf("Plugin manager started in degraded state: %v", err)
+		}
+	}
+	if startPromptAudit != nil {
+		if err := startPromptAudit(context.Background()); err != nil {
+			// Keep request serving available; persisted blocking intent still fails closed.
+			log.Printf("Prompt Audit started in degraded state: %v", err)
+		}
 	}
 }
 
@@ -222,20 +240,15 @@ func runMainServer() {
 			}
 		}()
 	}
+	var startPluginManager func(context.Context) error
 	if app.PluginManager != nil {
-		if err := app.PluginManager.Start(context.Background()); err != nil {
-			log.Printf("Plugin manager started in degraded state: %v", err)
-		}
+		startPluginManager = app.PluginManager.Start
 	}
+	var startPromptAudit func(context.Context) error
 	if app.PromptAudit != nil {
-		if err := app.PromptAudit.Start(context.Background()); err != nil {
-			// Startup continues so unrelated APIs stay up. Fail-closed (unavailable)
-			// applies only when a persisted blocking policy was observed; without
-			// blocking intent, Prompt Audit stays ModeOff so the gateway remains
-			// usable and administrators can still disable the feature (#4560).
-			log.Printf("Prompt Audit started in degraded state: %v", err)
-		}
+		startPromptAudit = app.PromptAudit.Start
 	}
+	startOptionalBackgroundServices(startPluginManager, startPromptAudit)
 
 	// 启动服务器
 	go func() {

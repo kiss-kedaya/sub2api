@@ -109,6 +109,7 @@ func truncateAuditExtraString(value string, limit int) string {
 
 // auditSensitiveReads 需要审计的敏感 GET 读取（method+FullPath → 动作名）。
 var auditSensitiveReads = map[string]string{
+	"GET /api/v1/admin/crypto/deposits.csv":       "admin.crypto.deposits.export",
 	"GET /api/v1/admin/accounts/data":             "admin.accounts.export",
 	"GET /api/v1/admin/proxies/data":              "admin.proxies.export",
 	"GET /api/v1/admin/redeem-codes/export":       "admin.redeem_codes.export",
@@ -122,6 +123,17 @@ var auditSensitiveReads = map[string]string{
 
 // auditActionOverrides 变更类请求的动作名精确映射（未命中时自动推导）。
 var auditActionOverrides = map[string]string{
+	"PUT /api/v1/admin/crypto/config":                         "admin.crypto.config.update",
+	"POST /api/v1/admin/crypto/addresses/:id/status":          "admin.crypto.address.status.update",
+	"POST /api/v1/admin/crypto/sweep/run":                     "admin.crypto.sweep.run",
+	"POST /api/v1/admin/crypto/signer/unlock":                 "admin.crypto.signer.unlock",
+	"POST /api/v1/admin/crypto/signer/backup":                 "admin.crypto.signer.backup",
+	"POST /api/v1/admin/crypto/signer/hot-mnemonic":           "admin.crypto.signer.hot_mnemonic.import",
+	"POST /api/v1/admin/crypto/signer/export-mnemonics":       "admin.crypto.signer.mnemonics.export",
+	"POST /api/v1/admin/crypto/security/setup":                "admin.crypto.security.setup",
+	"POST /api/v1/admin/crypto/security/enable":               "admin.crypto.security.enable",
+	"POST /api/v1/admin/crypto/rpc/test":                      "admin.crypto.rpc.test",
+	"POST /api/v1/admin/crypto/rpc/auto-pick":                 "admin.crypto.rpc.auto_pick",
 	"POST /api/v1/auth/login":                                 service.AuditActionLogin,
 	"POST /api/v1/auth/login/2fa":                             service.AuditActionLogin2FA,
 	"POST /api/v1/auth/passkey/login/finish":                  service.AuditActionLogin,
@@ -147,6 +159,13 @@ var auditActionOverrides = map[string]string{
 // auditBodyOmittedRoutes 请求体几乎整体由凭证构成的路由（如整块粘贴 auth JSON 的导入接口）。
 // 这类 body 的凭证内嵌在普通字符串值里，键级脱敏无法覆盖，整体不入库。
 var auditBodyOmittedRoutes = map[string]struct{}{
+	"POST /api/v1/admin/crypto/signer/unlock":                   {},
+	"POST /api/v1/admin/crypto/signer/backup":                   {},
+	"POST /api/v1/admin/crypto/signer/export-mnemonics":         {},
+	"POST /api/v1/admin/crypto/signer/hot-mnemonic":             {},
+	"POST /api/v1/admin/crypto/security/setup":                  {},
+	"POST /api/v1/admin/crypto/security/enable":                 {},
+	"POST /api/v1/user/totp/disable":                            {},
 	"POST /api/v1/tickets":                                      {},
 	"POST /api/v1/tickets/:id/replies":                          {},
 	"POST /api/v1/admin/tickets/:id/replies":                    {},
@@ -310,6 +329,9 @@ func (b *restoredBody) Close() error { return b.closer.Close() }
 
 // MaskedRequestCredential 提取请求头中的凭证并做首尾掩码。
 func MaskedRequestCredential(c *gin.Context) string {
+	if len(c.Request.Header.Values("X-Crypto-TOTP")) > 0 {
+		return "x-crypto-totp <redacted>"
+	}
 	if apiKey := strings.TrimSpace(c.GetHeader("x-api-key")); apiKey != "" {
 		return "x-api-key " + service.MaskAuditCredential(apiKey)
 	}

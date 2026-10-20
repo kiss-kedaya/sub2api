@@ -5,6 +5,7 @@ import TotpDisableDialog from '../TotpDisableDialog.vue'
 
 const mocks = vi.hoisted(() => ({
   showError: vi.fn(), showSuccess: vi.fn(),
+  role: 'admin',
   totpAPI: {
     getVerificationMethod: vi.fn(), sendVerifyCode: vi.fn(),
     initiateSetup: vi.fn(), enable: vi.fn(), disable: vi.fn()
@@ -12,12 +13,14 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@/api', () => ({ totpAPI: mocks.totpAPI }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => mocks }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { role: mocks.role } }) }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('qrcode', () => ({ default: { toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,qr') } }))
 enableAutoUnmount(afterEach)
 
 beforeEach(() => {
   vi.resetAllMocks()
+  mocks.role = 'admin'
   mocks.totpAPI.getVerificationMethod.mockResolvedValue({ method: 'password' })
 })
 
@@ -34,6 +37,7 @@ describe.each([
   })
 
   it('shows why the email verification code cannot be sent', async () => {
+    if (name === 'disable') mocks.role = 'user'
     mocks.totpAPI.getVerificationMethod.mockResolvedValue({ method: 'email' })
     mocks.totpAPI.sendVerifyCode.mockRejectedValue({ status: 429, message: 'Please wait before requesting another code' })
     const wrapper = mount(component)
@@ -51,9 +55,13 @@ describe.each([
     action.mockRejectedValue(error)
     const wrapper = mount(component)
     await flushPromises()
-    await wrapper.get('input[type="password"]').setValue('incorrect-password')
-    if (name === 'setup') await wrapper.get('.btn-primary').trigger('click')
-    else await wrapper.get('form').trigger('submit')
+    if (name === 'setup') {
+      await wrapper.get('input[type="password"]').setValue('incorrect-password')
+      await wrapper.get('.btn-primary').trigger('click')
+    } else {
+      await wrapper.get('#disable-totp-code').setValue('123456')
+      await wrapper.get('form').trigger('submit')
+    }
     await flushPromises()
     expect(mocks.showError).toHaveBeenCalledWith(expected)
     expect(wrapper.emitted('success')).toBeUndefined()

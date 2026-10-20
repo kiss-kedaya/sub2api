@@ -100,8 +100,8 @@ export async function getCryptoConfig(): Promise<CryptoConfig> {
 // The backend applies a pointer patch: omitted keys keep their stored value.
 // Sending only the changed fields is what prevents a full-object write from
 // silently rewriting maps the console never rendered.
-export async function updateCryptoConfig(cfg: Partial<CryptoConfig>): Promise<void> {
-  await apiClient.put('/admin/crypto/config', cfg)
+export async function updateCryptoConfig(cfg: Partial<CryptoConfig>, verification?: CryptoVerification): Promise<void> {
+  await apiClient.put('/admin/crypto/config', cfg, cryptoRequestOptions(verification))
 }
 
 export async function listDepositAddresses(userId: number): Promise<DepositAddress[]> {
@@ -157,8 +157,8 @@ export async function listAllAddresses(
 
 
 
-export async function setAddressStatus(id: number, status: string): Promise<void> {
-  await apiClient.post(`/admin/crypto/addresses/${id}/status`, { status })
+export async function setAddressStatus(id: number, status: string, verification?: CryptoVerification): Promise<void> {
+  await apiClient.post(`/admin/crypto/addresses/${id}/status`, { status }, cryptoRequestOptions(verification))
 }
 
 export async function getSweepPlan(): Promise<SweepPlan> {
@@ -168,8 +168,9 @@ export async function getSweepPlan(): Promise<SweepPlan> {
 
 // runSweep executes the sweep. dryRun defaults to true server-side; the
 // caller must pass dryRun=false to move funds.
-export async function runSweep(dryRun: boolean): Promise<SweepSummary> {
+export async function runSweep(dryRun: boolean, verification?: CryptoVerification): Promise<SweepSummary> {
   const { data } = await apiClient.post('/admin/crypto/sweep/run', null, {
+    ...cryptoRequestOptions(verification),
     params: { dry_run: dryRun ? '1' : '0' }
   })
   return data.data
@@ -230,13 +231,14 @@ export async function getSignerStatus(): Promise<SignerStatus> {
 export async function unlockSigner(
   passphrase: string,
   depositMnemonic = '',
-  hotMnemonic = ''
+  hotMnemonic = '',
+  verification?: CryptoVerification
 ): Promise<void> {
   await apiClient.post('/admin/crypto/signer/unlock', {
     passphrase,
     deposit_mnemonic: depositMnemonic,
     hot_mnemonic: hotMnemonic
-  })
+  }, cryptoRequestOptions(verification))
 }
 
 
@@ -282,8 +284,8 @@ export interface ChainlistCandidate {
 }
 
 // testRPCEndpoint probes one endpoint (chain id + head + latency).
-export async function testRPCEndpoint(chain: string, endpoint: string): Promise<RPCTestResult> {
-  const { data } = await apiClient.post('/admin/crypto/rpc/test', { chain, endpoint })
+export async function testRPCEndpoint(chain: string, endpoint: string, verification?: CryptoVerification): Promise<RPCTestResult> {
+  const { data } = await apiClient.post('/admin/crypto/rpc/test', { chain, endpoint }, cryptoRequestOptions(verification))
   return data.data
 }
 
@@ -303,12 +305,13 @@ export interface RPCAutoPickResult {
 export async function autoPickRPC(
   chain: string,
   exclude: string[],
-  want = 3
+  want = 3,
+  verification?: CryptoVerification
 ): Promise<RPCAutoPickResult> {
   const { data } = await apiClient.post(
     '/admin/crypto/rpc/auto-pick',
     { chain, exclude, want },
-    { timeout: 60_000 }
+    { ...cryptoRequestOptions(verification), timeout: 60_000 }
   )
   return { picked: data.data?.picked ?? [], probed: data.data?.probed ?? 0 }
 }
@@ -344,11 +347,110 @@ export async function getHotWalletStatus(): Promise<HotWalletStatus[]> {
 }
 
 // exportDepositsCSV downloads the deposit ledger for reconciliation.
-export async function exportDepositsCSV(chain = '', status = ''): Promise<Blob> {
-  const { data } = await apiClient.get('/admin/crypto/deposits.csv', {
+export async function exportDepositsCSV(chain = '', status = '', verification?: CryptoVerification): Promise<Blob> {
+  const response = await apiClient.get<Blob>('/admin/crypto/deposits.csv', {
+    ...cryptoRequestOptions(verification),
     params: { chain, status },
-    responseType: 'blob'
+    responseType: 'blob',
+    validateStatus: () => true
+  })
+  return checkedDownload(response)
+}
+
+export interface CryptoVerification {
+  totpCode: string
+}
+
+// Per-request only. Never put a code in client defaults, interceptors or storage.
+// _retry also prevents the shared client's 401 refresh path replaying this code.
+function cryptoRequestOptions(verification?: CryptoVerification) {
+  return { headers: verification ? { 'X-Crypto-TOTP': verification.totpCode } : {}, _retry: true }
+}
+
+export interface CryptoSecurityStatus {
+  enabled: boolean
+  feature_enabled: boolean
+  can_setup: boolean
+}
+
+export interface CryptoSecuritySetup {
+  secret: string
+  qr_code_url: string
+  setup_token: string
+  countdown: number
+}
+
+// Security uses the standard response envelope, already unwrapped by apiClient.
+// Existing crypto endpoints above use the legacy {data: ...} envelope instead.
+export async function getCryptoSecurityStatus(): Promise<CryptoSecurityStatus> {
+  const { data } = await apiClient.get<CryptoSecurityStatus>('/admin/crypto/security/status')
+  return data
+}
+
+export async function setupCryptoSecurity(password: string): Promise<CryptoSecuritySetup> {
+  const { data } = await apiClient.post<CryptoSecuritySetup>('/admin/crypto/security/setup', { password }, cryptoRequestOptions())
+  return data
+}
+
+export async function enableCryptoSecurity(totpCode: string, setupToken: string): Promise<{ success: true }> {
+  const { data } = await apiClient.post<{ success: true }>('/admin/crypto/security/enable', {
+    totp_code: totpCode,
+    setup_token: setupToken
+  }, cryptoRequestOptions({ totpCode }))
+  return data
+}
+
+async function checkedDownload(response: { data: Blob; status: number }): Promise<Blob> {
+  if (response.status >= 200 && response.status < 300) return response.data
+  // Keep JSON rejection reasons for blob requests; the shared interceptor cannot
+  // read a Blob and would otherwise discard expired/replayed/rate-limit errors.
+  let detail: Record<string, unknown> = {}
+  try { detail = JSON.parse(await response.data.text()) } catch { /* Non-JSON error. */ }
+  throw { ...detail, status: response.status }
+}
+
+export async function backupSigner(passphrase: string, verification?: CryptoVerification): Promise<Blob> {
+  const response = await apiClient.post<Blob>('/admin/crypto/signer/backup', { passphrase }, {
+    ...cryptoRequestOptions(verification),
+    responseType: 'blob',
+    validateStatus: () => true
+  })
+  return checkedDownload(response)
+}
+
+export interface CryptoMnemonicExport {
+  deposit_mnemonic: string
+  hot_mnemonic: string
+}
+
+// This endpoint is being added by the backend owner. It returns both seeds
+// exactly once and opts out of browser and intermediary caching.
+export async function exportSignerMnemonics(passphrase: string, verification: CryptoVerification): Promise<CryptoMnemonicExport> {
+  const request = cryptoRequestOptions(verification)
+  const { data } = await apiClient.post<CryptoMnemonicExport>('/admin/crypto/signer/export-mnemonics', { passphrase }, {
+    ...request,
+    headers: { ...request.headers, 'Cache-Control': 'no-store', Pragma: 'no-cache' }
   })
   return data
+}
+
+export async function importHotMnemonic(passphrase: string, hotMnemonic: string, verification?: CryptoVerification): Promise<{ saved: true }> {
+  const { data } = await apiClient.post<{ saved: true }>('/admin/crypto/signer/hot-mnemonic', {
+    passphrase,
+    hot_mnemonic: hotMnemonic
+  }, cryptoRequestOptions(verification))
+  return data
+}
+
+export function cryptoSecurityErrorKey(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  const e = error as { reason?: string; code?: string | number; status?: number; message?: string }
+  const reason = `${e.reason ?? ''} ${e.code ?? ''} ${e.message ?? ''}`.toLowerCase()
+  if (e.status === 429 || /rate.limit|too.many/.test(reason)) return 'securityRateLimit'
+  if (/replay|already.used|code.used/.test(reason)) return 'securityReplay'
+  if (/expir/.test(reason)) return 'securityExpired'
+  if (/not.configur|not.enabled|not.bound|setup.required|2fa.required|totp.required/.test(reason)) return 'securityNotConfigured'
+  if (/totp|2fa|verification.code/.test(reason)) return 'securityInvalid'
+  return undefined
 }
 

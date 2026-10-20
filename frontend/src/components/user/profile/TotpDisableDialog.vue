@@ -26,7 +26,7 @@
 
         <form v-else @submit.prevent="handleDisable" class="space-y-4">
           <!-- Email verification -->
-          <div v-if="verificationMethod === 'email'">
+          <div v-if="!isAdmin && verificationMethod === 'email'">
             <label class="input-label">{{ t('profile.totp.emailCode') }}</label>
             <div class="flex gap-2">
               <input
@@ -49,7 +49,7 @@
           </div>
 
           <!-- Password verification -->
-          <div v-else>
+          <div v-else-if="!isAdmin">
             <label for="password" class="input-label">
               {{ t('profile.currentPassword') }}
             </label>
@@ -61,6 +61,23 @@
               class="input"
               :placeholder="t('profile.totp.enterPassword')"
             />
+          </div>
+
+          <div>
+            <label for="disable-totp-code" class="input-label">{{ t('admin.crypto.securityCode') }}</label>
+            <input
+              id="disable-totp-code"
+              v-model="form.totpCode"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]{6}"
+              maxlength="6"
+              autocomplete="off"
+              class="input"
+              :required="isAdmin"
+              :disabled="loading"
+            />
+            <p v-if="isAdmin" class="mt-2 text-sm text-gray-500">{{ t('admin.crypto.securityFreshCode') }}</p>
           </div>
 
           <!-- Actions -->
@@ -83,10 +100,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { totpAPI } from '@/api'
+import type { TotpDisableRequest } from '@/types'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
 const emit = defineEmits<{
@@ -96,6 +115,14 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const authStore = useAuthStore()
+const isAdmin = computed(() => authStore.user?.role === 'admin')
+watch(isAdmin, (admin) => {
+  if (admin) {
+    form.value.password = ''
+    form.value.emailCode = ''
+  }
+})
 
 const methodLoading = ref(true)
 const verificationMethod = ref<'email' | 'password'>('password')
@@ -105,10 +132,13 @@ const codeCooldown = ref(0)
 const cooldownTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const form = ref({
   emailCode: '',
-  password: ''
+  password: '',
+  totpCode: ''
 })
 
 const canSubmit = computed(() => {
+  if (isAdmin.value) return /^[0-9]{6}$/.test(form.value.totpCode)
+  if (form.value.totpCode && !/^[0-9]{6}$/.test(form.value.totpCode)) return false
   if (verificationMethod.value === 'email') {
     return form.value.emailCode.length === 6
   }
@@ -156,14 +186,17 @@ const handleSendCode = async () => {
 }
 
 const handleDisable = async () => {
-  if (!canSubmit.value) return
+  if (loading.value || !canSubmit.value) return
 
   loading.value = true
 
   try {
-    const request = verificationMethod.value === 'email'
-      ? { email_code: form.value.emailCode }
-      : { password: form.value.password }
+    const request: TotpDisableRequest = isAdmin.value
+      ? { totp_code: form.value.totpCode }
+      : verificationMethod.value === 'email'
+        ? { email_code: form.value.emailCode }
+        : { password: form.value.password }
+    if (!isAdmin.value && form.value.totpCode) request.totp_code = form.value.totpCode
 
     await totpAPI.disable(request)
     appStore.showSuccess(t('profile.totp.disableSuccess'))
@@ -171,6 +204,9 @@ const handleDisable = async () => {
   } catch (err: any) {
     appStore.showError(extractApiErrorMessage(err, t('profile.totp.disableFailed')))
   } finally {
+    form.value.totpCode = ''
+    form.value.password = ''
+    form.value.emailCode = ''
     loading.value = false
   }
 }
@@ -180,6 +216,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  form.value = { emailCode: '', password: '', totpCode: '' }
   if (cooldownTimer.value) {
     clearInterval(cooldownTimer.value)
     cooldownTimer.value = null
