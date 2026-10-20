@@ -1800,6 +1800,23 @@ func (h *GatewayHandler) Usage(c *gin.Context) {
 		return
 	}
 
+	// 判断模式: key 有总额度或速率限制 → quota_limited，否则 → unrestricted
+	isQuotaLimited := apiKey.Quota > 0 || apiKey.HasRateLimits()
+
+	// Load wallet data before best-effort statistics. Keep the detached lookup
+	// bounded so a disconnected client cannot leave an unlimited database wait.
+	var latestUser *service.User
+	if !isQuotaLimited && (apiKey.Group == nil || !apiKey.Group.IsSubscriptionType()) {
+		userCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		user, loadErr := h.userService.GetByID(userCtx, subject.UserID)
+		cancel()
+		if loadErr != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get user info")
+			return
+		}
+		latestUser = user
+	}
+
 	// Best-effort: 获取用量统计（按当前 API Key 过滤），失败不影响基础响应
 	usageData := h.buildUsageData(ctx, apiKey.ID)
 	dailyUsage := h.buildAPIKeyDailyUsage(c, subject.UserID, apiKey.ID, days)
@@ -1810,23 +1827,6 @@ func (h *GatewayHandler) Usage(c *gin.Context) {
 		if stats, err := h.usageService.GetAPIKeyModelStats(ctx, apiKey.ID, startTime, endTime); err == nil && len(stats) > 0 {
 			modelStats = stats
 		}
-	}
-
-	// 判断模式: key 有总额度或速率限制 → quota_limited，否则 → unrestricted
-	isQuotaLimited := apiKey.Quota > 0 || apiKey.HasRateLimits()
-
-	// 余额模式的用户查询必须排在统计查询之前，且不受客户端断连影响。
-	// 该 key 的 usage_logs 可达几十万行，下面的统计要跑数百毫秒以上；监控探针
-	// (sub2api-balance-alert / LinkAI-UpstreamMonitor) 常在这之前就断开，ctx 被
-	// 取消后 GetByID 直接返回 context canceled，接口恒 500。
-	var latestUser *service.User
-	if !isQuotaLimited && (apiKey.Group == nil || !apiKey.Group.IsSubscriptionType()) {
-		user, loadErr := h.userService.GetByID(context.WithoutCancel(ctx), subject.UserID)
-		if loadErr != nil {
-			h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to get user info")
-			return
-		}
-		latestUser = user
 	}
 
 	if isQuotaLimited {

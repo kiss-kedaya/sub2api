@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -79,4 +80,61 @@ func TestUsageUnrestrictedRequiresPreloadedUser(t *testing.T) {
 
 	require.Equal(t, http.StatusInternalServerError, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "Failed to get user info")
+}
+
+// Exercise the public handler, including request cancellation during statistics.
+type usageWalletUserRepo struct {
+	service.UserRepository
+	events      *[]string
+	deadline    time.Time
+	hasDeadline bool
+}
+
+func (r *usageWalletUserRepo) GetByID(ctx context.Context, id int64) (*service.User, error) {
+	*r.events = append(*r.events, "user")
+	r.deadline, r.hasDeadline = ctx.Deadline()
+	return &service.User{ID: id, Balance: 12.5, TokenVersionResolved: true}, nil
+}
+func (r *usageWalletUserRepo) GetUserAvatar(context.Context, int64) (*service.UserAvatar, error) {
+	return nil, nil
+}
+
+type usageWalletStatsRepo struct {
+	service.UsageLogRepository
+	events *[]string
+	cancel context.CancelFunc
+}
+
+func (r *usageWalletStatsRepo) GetAPIKeyDashboardStats(ctx context.Context, _ int64) (*usagestats.UserDashboardStats, error) {
+	*r.events = append(*r.events, "stats")
+	r.cancel()
+	return nil, ctx.Err()
+}
+func (r *usageWalletStatsRepo) GetUsageTrendWithFilters(ctx context.Context, _, _ time.Time, _ string, _, _, _, _ int64, _ string, _ *int16, _ *bool, _ *int8) ([]usagestats.TrendDataPoint, error) {
+	return nil, ctx.Err()
+}
+func (r *usageWalletStatsRepo) GetModelStatsWithFilters(ctx context.Context, _, _ time.Time, _, _, _, _ int64, _ *int16, _ *bool, _ *int8) ([]usagestats.ModelStat, error) {
+	return nil, ctx.Err()
+}
+func TestUsageLoadsWalletBeforeStatsWithBoundedContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	events := []string{}
+	repo := &usageWalletUserRepo{events: &events}
+	requestCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	statsRepo := &usageWalletStatsRepo{events: &events, cancel: cancel}
+	h := &GatewayHandler{userService: service.NewUserService(repo, nil, nil, nil), usageService: service.NewUsageService(statsRepo, nil, nil, nil)}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/usage", nil).WithContext(requestCtx)
+	c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{ID: 7})
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 11})
+	started := time.Now()
+	h.Usage(c)
+	require.Equal(t, []string{"user", "stats"}, events)
+	require.True(t, repo.hasDeadline)
+	require.WithinDuration(t, started.Add(5*time.Second), repo.deadline, time.Second)
+	require.ErrorIs(t, requestCtx.Err(), context.Canceled)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.JSONEq(t, `{"mode":"unrestricted","isValid":true,"planName":"钱包余额","remaining":12.5,"unit":"USD","balance":12.5}`, recorder.Body.String())
 }
