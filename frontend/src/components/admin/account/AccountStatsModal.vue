@@ -642,31 +642,38 @@ const lineChartOptions = computed(() => ({
   }
 }))
 
-// Load stats when modal opens
-watch(
-  () => props.show,
-  async (newVal) => {
-    if (newVal && props.account) {
-      await loadStats()
-    } else {
-      stats.value = null
-    }
-  }
-)
-
-const loadStats = async () => {
-  if (!props.account) return
+// Load before registering the immediate watcher below.
+const loadStats = async (accountId: number, isCurrent: () => boolean) => {
 
   loading.value = true
   try {
-    stats.value = await adminAPI.accounts.getStats(props.account.id, 30)
+    const data = await adminAPI.accounts.getStats(accountId, 30)
+    if (isCurrent()) stats.value = data
   } catch (error) {
-    console.error('Failed to load account stats:', error)
-    stats.value = null
+    if (isCurrent()) {
+      console.error('Failed to load account stats:', error)
+      stats.value = null
+    }
   } finally {
-    loading.value = false
+    if (isCurrent()) loading.value = false
   }
 }
+
+watch(
+  [() => props.show, () => props.account?.id],
+  async ([visible, accountId], [wasVisible, previousAccountId], onCleanup) => {
+    let active = true
+    onCleanup(() => { active = false })
+    if (visible && accountId && (!wasVisible || accountId !== previousAccountId)) {
+      stats.value = null
+      await loadStats(accountId, () => active)
+    } else if (!visible || !accountId) {
+      stats.value = null
+      loading.value = false
+    }
+  },
+  { immediate: true }
+)
 
 const handleClose = () => {
   emit('close')
