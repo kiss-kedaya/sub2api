@@ -1,8 +1,18 @@
 <template>
   <AppLayout>
     <div class="crypto-view">
+      <header class="crypto-view__header">
+        <div>
+          <h1 class="crypto-view__title">{{ t('admin.crypto.title') }}</h1>
+          <p class="crypto-view__desc">{{ t('admin.crypto.description') }}</p>
+        </div>
+        <div v-if="loadedSnapshot" class="crypto-view__header-status">
+          <span class="crypto-view__badge" :class="loadedSnapshot.enabled ? 'crypto-view__badge--active' : 'crypto-view__badge--disabled'">{{ t(loadedSnapshot.enabled ? 'admin.crypto.channelActive' : 'admin.crypto.channelPaused') }}</span>
+          <span class="crypto-view__badge" :class="signerUnlocked && signerSigningEnabled ? 'crypto-view__badge--active' : 'crypto-view__badge--pending'">{{ t(!signerUnlocked ? 'admin.crypto.signerLocked' : signerSigningEnabled ? 'admin.crypto.signerReady' : 'admin.crypto.signerApprovalPending') }}</span>
+        </div>
+      </header>
       <div class="card crypto-view__card">
-        <div class="crypto-view__tabs" role="tablist">
+        <div class="crypto-view__tabs" role="tablist" :aria-label="t('admin.crypto.title')">
           <button
             v-for="tab in tabs"
             :key="tab.id"
@@ -10,7 +20,11 @@
             role="tab"
             class="crypto-view__tab"
             :class="{ 'crypto-view__tab--active': activeTab === tab.id }"
+            :id="'crypto-tab-' + tab.id"
+            :aria-controls="'crypto-panel-' + tab.id"
             :aria-selected="activeTab === tab.id"
+            :tabindex="activeTab === tab.id ? 0 : -1"
+            @keydown="onTabKeydown"
             @click="switchTab(tab.id)"
           >
             {{ tab.label }}
@@ -18,7 +32,7 @@
         </div>
 
         <!-- Configuration -->
-        <div v-if="activeTab === 'config'" class="crypto-view__panel crypto-view__panel--config">
+        <div v-if="activeTab === 'config'" id="crypto-panel-config" role="tabpanel" aria-labelledby="crypto-tab-config" class="crypto-view__panel crypto-view__panel--config">
           <div v-if="loadingConfig" class="crypto-view__empty">
             <LoadingSpinner />
           </div>
@@ -45,6 +59,56 @@
                   @change="(e) => (config!.chains = splitList((e.target as HTMLInputElement).value))"
                 />
                 <p class="crypto-view__hint">{{ t('admin.crypto.chainsHint') }}</p>
+              </div>
+            </details>
+
+            <!-- Signer lock: without the passphrase the process holds no
+                 seeds and every signing request is refused. -->
+            <details class="crypto-view__group" open>
+              <summary class="crypto-view__group-summary">
+                <span class="crypto-view__group-title">{{ t('admin.crypto.signerLockTitle') }}</span>
+                <span class="crypto-view__group-desc">{{ t('admin.crypto.signerLockDesc') }}</span>
+                <span class="crypto-view__group-chevron">›</span>
+              </summary>
+
+              <div class="crypto-view__lockstate">
+                <span
+                  class="crypto-view__badge"
+                  :class="signerUnlocked ? 'crypto-view__badge--active' : 'crypto-view__badge--failed'"
+                >
+                  {{ signerUnlocked ? t('admin.crypto.signerUnlocked') : t('admin.crypto.signerLocked') }}
+                </span>
+                <button class="btn btn-secondary btn-sm" :disabled="loadingSigner" @click="loadSignerStatus">
+                  {{ t('common.refresh') }}
+                </button>
+              </div>
+
+              <p v-if="signerUnlocked && !signerSigningEnabled" class="crypto-view__approval-notice" role="status">
+                {{ t('admin.crypto.signerApprovalMissing') }}
+              </p>
+
+              <div v-if="!signerUnlocked" class="crypto-view__field">
+                <label class="crypto-view__label">{{ t('admin.crypto.signerPassphrase') }}</label>
+                <input
+                  v-model="signerPassphrase"
+                  type="password"
+                  class="input"
+                  autocomplete="new-password"
+                  :placeholder="t('admin.crypto.signerPassphrasePlaceholder')"
+                  @keyup.enter="submitUnlock"
+                />
+                <p class="crypto-view__hint">{{ t('admin.crypto.signerPassphraseHint') }}</p>
+              </div>
+
+              <div v-if="!signerUnlocked" class="crypto-view__actions">
+                <button
+                  class="btn btn-primary"
+                  :disabled="unlocking || !signerPassphrase"
+                  @click="submitUnlock"
+                >
+                  {{ unlocking ? t('common.saving') : t('admin.crypto.signerUnlockAction') }}
+                </button>
+                <span v-if="signerError" class="crypto-view__warn">{{ signerError }}</span>
               </div>
             </details>
 
@@ -133,12 +197,13 @@
             </details>
 
 
-            <details class="crypto-view__group">
+            <details class="crypto-view__group crypto-view__group--wide" open>
               <summary class="crypto-view__group-summary">
                 <span class="crypto-view__group-title">{{ t('admin.crypto.groupSweep') }}</span>
                 <span class="crypto-view__group-desc">{{ t('admin.crypto.groupSweepDesc') }}</span>
                 <span class="crypto-view__group-chevron">›</span>
               </summary>
+              <div class="crypto-view__amount-fields">
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.globalThreshold') }}</label>
                 <input
@@ -171,6 +236,7 @@
                 />
                 <p class="crypto-view__hint">{{ t('admin.crypto.creditMaxHint') }}</p>
               </div>
+              </div>
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.hotWalletEvm') }}</label>
                 <input
@@ -184,13 +250,11 @@
                 </p>
                 <p class="crypto-view__hint">{{ t('admin.crypto.signerPolicyHint') }}</p>
               </div>
-              <!-- The sweep destination must be the address the hot seed
-                   derives to; guessing sends swept funds into the void. -->
               <div class="crypto-view__actions">
                 <button
                   class="btn btn-secondary btn-sm"
                   :disabled="loadingHotAddress || !signerUnlocked || !signerSigningEnabled"
-                  :title="signerUnlocked ? '' : t('admin.crypto.hotAddressLocked')"
+                  :title="!signerUnlocked ? t('admin.crypto.hotAddressLocked') : !signerSigningEnabled ? t('admin.crypto.signerApprovalMissing') : ''"
                   @click="fillHotWalletAddresses"
                 >
                   {{ loadingHotAddress ? t('common.loading') : t('admin.crypto.hotAddressFill') }}
@@ -210,7 +274,7 @@
             </details>
 
 
-            <details class="crypto-view__group">
+            <details class="crypto-view__group crypto-view__group--wide">
               <summary class="crypto-view__group-summary">
                 <span class="crypto-view__group-title">{{ t('admin.crypto.groupSigner') }}</span>
                 <span class="crypto-view__group-desc">{{ t('admin.crypto.groupSignerDesc') }}</span>
@@ -223,67 +287,14 @@
             </details>
 
 
-            <!-- Signer lock: without the passphrase the process holds no
-                 seeds and every signing request is refused. -->
-            <details class="crypto-view__group" open>
-              <summary class="crypto-view__group-summary">
-                <span class="crypto-view__group-title">{{ t('admin.crypto.signerLockTitle') }}</span>
-                <span class="crypto-view__group-desc">{{ t('admin.crypto.signerLockDesc') }}</span>
-                <span class="crypto-view__group-chevron">›</span>
-              </summary>
 
-              <div class="crypto-view__lockstate">
-                <span
-                  class="crypto-view__badge"
-                  :class="signerUnlocked ? 'crypto-view__badge--active' : 'crypto-view__badge--failed'"
-                >
-                  {{ signerUnlocked ? t('admin.crypto.signerUnlocked') : t('admin.crypto.signerLocked') }}
-                </span>
-                <button class="btn btn-secondary btn-sm" :disabled="loadingSigner" @click="loadSignerStatus">
-                  {{ t('common.refresh') }}
-                </button>
-              </div>
 
-              <p v-if="signerUnlocked && !signerSigningEnabled" class="crypto-view__hint">
-                {{ t('admin.crypto.signerApprovalMissing') }}
-              </p>
 
-              <div v-if="!signerUnlocked" class="crypto-view__field">
-                <label class="crypto-view__label">{{ t('admin.crypto.signerPassphrase') }}</label>
-                <input
-                  v-model="signerPassphrase"
-                  type="password"
-                  class="input"
-                  autocomplete="new-password"
-                  :placeholder="t('admin.crypto.signerPassphrasePlaceholder')"
-                  @keyup.enter="submitUnlock"
-                />
-                <p class="crypto-view__hint">{{ t('admin.crypto.signerPassphraseHint') }}</p>
-              </div>
-
-              <div v-if="!signerUnlocked" class="crypto-view__actions">
-                <button
-                  class="btn btn-primary"
-                  :disabled="unlocking || !signerPassphrase"
-                  @click="submitUnlock"
-                >
-                  {{ unlocking ? t('common.saving') : t('admin.crypto.signerUnlockAction') }}
-                </button>
-                <span v-if="signerError" class="crypto-view__warn">{{ signerError }}</span>
-              </div>
-            </details>
-
-            <div class="crypto-view__actions">
-              <button class="btn btn-primary" :disabled="savingConfig" @click="requestSaveConfig">
-                {{ savingConfig ? t('common.saving') : t('common.save') }}
-              </button>
-              <span v-if="configSaved" class="crypto-view__saved">{{ t('common.saved') }}</span>
-            </div>
 
 
             <!-- Health: an empty pool blocks new deposits; a dry hot wallet
                  blocks sweeps. Both are silent failures without this. -->
-            <details class="crypto-view__group">
+            <details class="crypto-view__group crypto-view__group--wide" open>
               <summary class="crypto-view__group-summary">
                 <span class="crypto-view__group-title">{{ t('admin.crypto.healthTitle') }}</span>
                 <span class="crypto-view__group-desc">{{ t('admin.crypto.healthDesc') }}</span>
@@ -324,11 +335,16 @@
                 <span v-if="healthError" class="crypto-view__warn">{{ healthError }}</span>
               </div>
             </details>
+            <div class="crypto-view__save-bar">
+              <p>{{ t('admin.crypto.saveHint') }}</p>
+              <span v-if="configSaved" class="crypto-view__saved" role="status">{{ t('common.saved') }}</span>
+              <button class="btn btn-primary" :disabled="savingConfig" @click="requestSaveConfig">{{ savingConfig ? t('common.saving') : t('common.save') }}</button>
+            </div>
           </template>
         </div>
 
         <!-- Addresses -->
-        <div v-if="activeTab === 'addresses'" class="crypto-view__panel">
+        <div v-if="activeTab === 'addresses'" id="crypto-panel-addresses" role="tabpanel" aria-labelledby="crypto-tab-addresses" class="crypto-view__panel">
           <!-- Whole-set totals: they must not change when paging. -->
           <div class="crypto-view__stats">
             <div class="crypto-view__stat">
@@ -412,7 +428,7 @@
                 <td>{{ row.deposit_count }}</td>
                 <td>
                   <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
-                    {{ row.status }}
+                    {{ statusLabel(row.status) }}
                   </span>
                 </td>
                 <td>
@@ -444,7 +460,7 @@
         </div>
 
         <!-- Sweep -->
-        <div v-if="activeTab === 'sweep'" class="crypto-view__panel">
+        <div v-if="activeTab === 'sweep'" id="crypto-panel-sweep" role="tabpanel" aria-labelledby="crypto-tab-sweep" class="crypto-view__panel">
           <div class="crypto-view__filters">
             <button class="btn btn-secondary" @click="loadSweepPlan">
               {{ t('admin.crypto.loadPlan') }}
@@ -490,7 +506,7 @@
                   <td class="crypto-view__mono">{{ short(e.address) }}</td>
                   <td>
                     <span class="crypto-view__badge" :class="`crypto-view__badge--${e.status}`">
-                      {{ e.status }}
+                      {{ statusLabel(e.status) }}
                     </span>
                     <span v-if="e.error" class="crypto-view__hint">{{ e.error }}</span>
                   </td>
@@ -545,7 +561,7 @@
                 <td>{{ row.amount }}</td>
                 <td>
                   <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
-                    {{ row.status }}
+                    {{ statusLabel(row.status) }}
                   </span>
                 </td>
                 <td class="crypto-view__mono">{{ short(row.sweep_tx_hash) }}</td>
@@ -557,7 +573,7 @@
         </div>
 
         <!-- Deposits: the reconciliation view -->
-        <div v-if="activeTab === 'deposits'" class="crypto-view__panel">
+        <div v-if="activeTab === 'deposits'" id="crypto-panel-deposits" role="tabpanel" aria-labelledby="crypto-tab-deposits" class="crypto-view__panel">
           <div class="crypto-view__stats">
             <div class="crypto-view__stat">
               <span class="crypto-view__stat-label">{{ t('admin.crypto.depTotal') }}</span>
@@ -588,9 +604,9 @@
             </select>
             <select v-model="depositStatus" class="input" @change="applyDepositFilter">
               <option value="">{{ t('common.status') }}</option>
-              <option value="credited">credited</option>
-              <option value="pending">pending</option>
-              <option value="ignored">ignored</option>
+              <option value="credited">{{ t('deposit.statusCredited') }}</option>
+              <option value="pending">{{ t('deposit.statusPending') }}</option>
+              <option value="ignored">{{ t('deposit.statusIgnored') }}</option>
             </select>
             <button class="btn btn-secondary" :disabled="loadingDeposits" @click="loadDeposits">
               {{ t('common.refresh') }}
@@ -626,7 +642,7 @@
                 <td>{{ row.amount }}</td>
                 <td>
                   <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
-                    {{ row.status }}
+                    {{ statusLabel(row.status) }}
                   </span>
                 </td>
                 <td>
@@ -896,6 +912,18 @@ const saveConfirmMessage = computed(() =>
   t('admin.crypto.saveConfirmMessage', { count: riskyChanges.value.length })
 )
 
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    active: 'admin.crypto.statusActive', disabled: 'admin.crypto.statusDisabled',
+    credited: 'deposit.statusCredited', pending: 'deposit.statusPending',
+    ignored: 'deposit.statusIgnored', reverted: 'deposit.statusReverted',
+    swept: 'admin.crypto.statusSwept', failed: 'admin.crypto.failed',
+    planned: 'admin.crypto.planned', gas_pending: 'admin.crypto.statusGasPending',
+    token_pending: 'admin.crypto.statusTokenPending', manual_review: 'admin.crypto.statusManualReview'
+  }
+  return labels[status] ? t(labels[status]) : status
+}
+
 function splitList(value: string): string[] {
   return value
     .split(',')
@@ -1033,6 +1061,20 @@ async function autoFillRPC(chain: string) {
 function short(value: string): string {
   if (!value) return '—'
   return value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value
+}
+
+function onTabKeydown(event: KeyboardEvent) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  const currentIndex = tabs.value.findIndex(tab => tab.id === activeTab.value)
+  const offset = event.key === 'ArrowLeft' ? -1 : 1
+  const index = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.value.length - 1
+    : (currentIndex + offset + tabs.value.length) % tabs.value.length
+  const nextTab = tabs.value[index]
+  if (!nextTab) return
+  event.preventDefault()
+  switchTab(nextTab.id)
+  const list = (event.currentTarget as HTMLElement).parentElement
+  list?.querySelector<HTMLButtonElement>('#crypto-tab-' + nextTab.id)?.focus()
 }
 
 function switchTab(id: string) {
@@ -1440,18 +1482,24 @@ onMounted(() => {
 
 <style scoped>
 .crypto-view {
-  padding: 1rem;
+  width: 100%;
+  max-width: 90rem;
+  margin: 0 auto;
+  padding: clamp(1rem, 2.4vw, 2rem);
 }
 .crypto-view__card {
   overflow: hidden;
+  min-width: 0;
   padding: 0;
+  border-radius: 1rem;
 }
 .crypto-view__header {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--signal-line, rgba(127, 127, 127, 0.18));
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
 }
 .crypto-view__icon {
   display: flex;
@@ -1465,50 +1513,51 @@ onMounted(() => {
   font-size: 1.125rem;
 }
 .crypto-view__title {
-  font-size: 1.125rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 1.5rem;
+  font-weight: 650;
+  letter-spacing: -0.025em;
 }
 .crypto-view__desc {
   font-size: 0.8125rem;
-  color: var(--signal-muted, #6b7280);
+  line-height: 1.6;
+  margin-top: 0.375rem;
+  color: var(--signal-muted, #8c99a6);
 }
 .crypto-view__tabs {
-  display: grid;
-  /* Follow the tab count: a hard-coded 3 wrapped the 4th tab onto a new row. */
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 0.25rem;
-  margin: 0.75rem 1.25rem 0;
-  padding: 0.25rem;
-  border-radius: 0.75rem;
-  background: rgba(127, 127, 127, 0.08);
+  display: flex;
+  gap: 1.5rem;
+  overflow-x: auto;
+  padding: 0 1.5rem;
+  border-bottom: 1px solid var(--signal-line, #64748b30);
 }
 .crypto-view__tab {
-  padding: 0.5rem;
-  border-radius: 0.5rem;
+  position: relative;
+  flex-shrink: 0;
+  min-height: 3.5rem;
+  padding: 1rem 0.25rem;
+  border-bottom: 2px solid transparent;
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--signal-muted, #6b7280);
-  transition: all 0.15s;
+  color: var(--signal-muted, #8c99a6);
+  transition: color 0.15s, border-color 0.15s;
 }
 .crypto-view__tab--active {
-  background: var(--signal-surface, #fff);
-  color: var(--signal-text, #111827);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  border-color: var(--signal-accent, #0891b2);
+  color: var(--signal-text, inherit);
+  font-weight: 650;
 }
 .crypto-view__panel {
-  padding: 1.25rem;
+  min-width: 0;
+  padding: 1.5rem;
 }
 .crypto-view__group {
-  display: grid;
-  gap: 0.75rem;
+  display: block;
+  min-width: 0;
 }
 .crypto-view__panel--config {
-  /* Groups become cards so the eye can separate them without dividers. */
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
-  gap: 0.875rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
   align-items: start;
 }
 .crypto-view__panel--config .crypto-view__group {
@@ -1519,10 +1568,10 @@ onMounted(() => {
 }
 /* Collapsible group header: title + one-line description + chevron. */
 .crypto-view__group-summary {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.375rem 0.75rem;
+  padding: 1rem 1.25rem;
   cursor: pointer;
   user-select: none;
   list-style: none;
@@ -1534,10 +1583,11 @@ onMounted(() => {
   background: rgba(127, 127, 127, 0.05);
 }
 .crypto-view__group-chevron {
-  margin-left: auto;
-  font-size: 1rem;
-  line-height: 1;
-  color: var(--signal-muted, #6b7280);
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  font-size: 1.25rem;
+  color: var(--signal-muted, #8c99a6);
   transition: transform 0.15s ease;
 }
 details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
@@ -1567,21 +1617,25 @@ details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
   font-weight: 600;
 }
 .crypto-view__group-desc {
+  grid-column: 1;
   font-size: 0.75rem;
-  color: var(--signal-muted, #6b7280);
-  margin-top: -0.5rem;
+  line-height: 1.6;
+  color: var(--signal-muted, #8c99a6);
 }
 .crypto-view__field {
   display: grid;
-  gap: 0.375rem;
+  min-width: 0;
+  gap: 0.5rem;
+  margin-top: 1rem;
 }
 .crypto-view__label {
   font-size: 0.8125rem;
   font-weight: 500;
 }
 .crypto-view__hint {
-  font-size: 0.6875rem;
-  color: var(--signal-muted, #6b7280);
+  font-size: 0.75rem;
+  line-height: 1.7;
+  color: var(--signal-muted, #8c99a6);
 }
 .crypto-view__switch-row {
   display: flex;
@@ -1640,10 +1694,8 @@ details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
   background: rgba(217, 119, 6, 0.08);
 }
 .crypto-view__stat-label {
-  font-size: 0.6875rem;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--signal-muted, #6b7280);
+  font-size: 0.75rem;
+  color: var(--signal-muted, #8c99a6);
 }
 .crypto-view__stat-sub {
   display: block;
@@ -1656,9 +1708,10 @@ details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
   white-space: nowrap;
 }
 .crypto-view__stat-value {
-  font-size: 1.125rem;
-  font-weight: 600;
+  font-size: 1.375rem;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
 }
 .crypto-view__th--sortable {
   cursor: pointer;
@@ -1806,11 +1859,13 @@ details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
 .crypto-view__table-wrap {
   overflow-x: auto;
   max-width: 100%;
+  border: 1px solid var(--signal-line, #64748b25);
+  border-radius: 0.75rem;
 }
 .crypto-view__table th,
 .crypto-view__table td {
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--signal-line, rgba(127, 127, 127, 0.12));
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid var(--signal-line, #64748b25);
   text-align: left;
   font-size: 0.8125rem;
 }
@@ -1877,4 +1932,37 @@ details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
   margin-bottom: 0.5rem;
   font-size: 0.875rem;
 }
+.crypto-view__header-status { display: flex; flex-wrap: wrap; gap: .5rem; }
+.crypto-view__header-status .crypto-view__badge { padding: .375rem .625rem; border-radius: 99px; }
+.crypto-view__group[open] > .crypto-view__group-summary { margin-bottom: 1rem; border-bottom: 1px solid var(--signal-line, #64748b25); }
+.crypto-view__amount-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.25rem; }
+.crypto-view__amount-fields .crypto-view__field { margin-top: 0; }
+.crypto-view__save-bar { grid-column: 1 / -1; display: flex; align-items: center; gap: .75rem; padding: 1rem 0 0; border-top: 1px solid var(--signal-line, #64748b30); }
+.crypto-view__save-bar p { margin-right: auto; font-size: .75rem; line-height: 1.6; color: var(--signal-muted, #8c99a6); }
+.crypto-view__save-bar button { flex-shrink: 0; min-width: 6rem; min-height: 2.75rem; }
+.crypto-view__approval-notice { padding: .75rem 1rem; margin-top: .75rem; border: 1px solid #d9770635; border-radius: .5rem; background: #d977060a; font-size: .75rem; line-height: 1.7; }
+.crypto-view__badge--pending, .crypto-view__badge--gas_pending, .crypto-view__badge--token_pending, .crypto-view__badge--manual_review { background: #d9770615; color: #d97706; }
+.crypto-view__badge--credited { background: #10b98115; color: #10b981; }
+.crypto-view__badge--ignored, .crypto-view__badge--reverted { background: #ef444415; color: #ef4444; }
+.crypto-view__table th { background: #64748b08; }
+.crypto-view__table tbody tr:last-child td { border-bottom: 0; }
+.crypto-view button:focus-visible, .crypto-view summary:focus-visible { outline: 2px solid var(--signal-accent, #0891b2); outline-offset: 3px; }
+@media (max-width: 900px) {
+  .crypto-view__panel--config { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .crypto-view { padding: 1rem .75rem; }
+  .crypto-view__title { font-size: 1.25rem; }
+  .crypto-view__panel { padding: 1rem; }
+  .crypto-view__tabs { gap: 1.25rem; padding: 0 1rem; }
+  .crypto-view__tab { min-height: 3rem; font-size: .8125rem; }
+  .crypto-view__amount-fields { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+  .crypto-view__group-summary { padding: 1rem; }
+  .crypto-view__rpc-head { align-items: flex-start; flex-direction: column; }
+  .crypto-view__rpc-head-actions { flex-wrap: wrap; }
+  .crypto-view__filters .input { max-width: none; min-width: 0; }
+  .crypto-view__save-bar { flex-wrap: wrap; }
+  .crypto-view__save-bar p { flex-basis: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .crypto-view__tab, .crypto-view__group-chevron { transition: none; } }
 </style>
