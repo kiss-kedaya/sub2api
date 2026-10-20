@@ -1,0 +1,29 @@
+name: Sensitive Data Check
+
+# This repository is public. Every push and pull request is scanned for
+# operator-private data (account ids, upstream relay hosts, credentials,
+# production IPs). The same script runs locally as a pre-commit hook.
+#
+# Scope: prose, config and release notes. Test fixtures are skipped on purpose;
+# a noisy gate gets bypassed with --no-verify and then protects nothing.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Scan tracked files
+        run: python tools/check_sensitive.py --all

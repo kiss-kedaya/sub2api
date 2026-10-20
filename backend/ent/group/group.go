@@ -92,6 +92,8 @@ const (
 	FieldSearchProviderBaseURL = "search_provider_base_url"
 	// FieldSearchProviderAPIKey holds the string denoting the search_provider_api_key field in the database.
 	FieldSearchProviderAPIKey = "search_provider_api_key"
+	// FieldGrokModerationRefusalPrice holds the string denoting the grok_moderation_refusal_price field in the database.
+	FieldGrokModerationRefusalPrice = "grok_moderation_refusal_price"
 	// FieldAudioRealtimePricePerMin holds the string denoting the audio_realtime_price_per_min field in the database.
 	FieldAudioRealtimePricePerMin = "audio_realtime_price_per_min"
 	// FieldAudioTtsPricePerMillionChars holds the string denoting the audio_tts_price_per_million_chars field in the database.
@@ -267,6 +269,7 @@ var Columns = []string{
 	FieldSearchPricePer1k,
 	FieldSearchProviderBaseURL,
 	FieldSearchProviderAPIKey,
+	FieldGrokModerationRefusalPrice,
 	FieldAudioRealtimePricePerMin,
 	FieldAudioTtsPricePerMillionChars,
 	FieldAudioSttPricePerHour,
@@ -385,6 +388,8 @@ var (
 	DefaultVideoRateMultiplier float64
 	// SearchPricePer1kValidator is a validator for the "search_price_per_1k" field. It is called by the builders before save.
 	SearchPricePer1kValidator func(float64) error
+	// GrokModerationRefusalPriceValidator is a validator for the "grok_moderation_refusal_price" field. It is called by the builders before save.
+	GrokModerationRefusalPriceValidator func(float64) error
 	// AudioRealtimePricePerMinValidator is a validator for the "audio_realtime_price_per_min" field. It is called by the builders before save.
 	AudioRealtimePricePerMinValidator func(float64) error
 	// AudioTtsPricePerMillionCharsValidator is a validator for the "audio_tts_price_per_million_chars" field. It is called by the builders before save.
@@ -638,6 +643,11 @@ func BySearchProviderBaseURL(opts ...sql.OrderTermOption) OrderOption {
 // BySearchProviderAPIKey orders the results by the search_provider_api_key field.
 func BySearchProviderAPIKey(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSearchProviderAPIKey, opts...).ToFunc()
+}
+
+// ByGrokModerationRefusalPrice orders the results by the grok_moderation_refusal_price field.
+func ByGrokModerationRefusalPrice(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldGrokModerationRefusalPrice, opts...).ToFunc()
 }
 
 // ByAudioRealtimePricePerMin orders the results by the audio_realtime_price_per_min field.

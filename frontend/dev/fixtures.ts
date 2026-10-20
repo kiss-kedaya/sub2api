@@ -64,7 +64,7 @@ export function createFixtures(now = new Date()) {
     image_price_1k: null, image_price_2k: null, image_price_4k: null,
     video_rate_independent: false, video_rate_multiplier: 1,
     video_price_480p: null, video_price_720p: null, video_price_1080p: null,
-    web_search_price_per_call: null, search_price_per_1k: null,
+    web_search_price_per_call: null, search_price_per_1k: null, grok_moderation_refusal_price: null,
     audio_realtime_price_per_min: null, audio_tts_price_per_million_chars: null,
     audio_stt_price_per_hour: null, peak_rate_enabled: false, peak_start: '', peak_end: '',
     peak_rate_multiplier: 1, claude_code_only: false, fallback_group_id: null,

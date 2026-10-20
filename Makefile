@@ -78,6 +78,10 @@ build-frontend:
 	@pnpm --dir frontend run build
 
 # 运行测试（后端 + 前端）
+# Public repository guard. Run before every commit; CI runs the same script.
+sensitive:
+	@python tools/check_sensitive.py --all
+
 test: test-backend test-frontend
 
 test-backend:

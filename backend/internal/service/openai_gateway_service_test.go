@@ -806,6 +806,14 @@ func (c *stubGatewayCache) ReleaseGrokVideoBilled(_ context.Context, _ string) e
 func (c *stubGatewayCache) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
 	return nil
 }
+func (c *stubGatewayCache) BlockSession(_ context.Context, _ int64, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (c *stubGatewayCache) IsSessionBlocked(_ context.Context, _ int64, _ string) (bool, error) {
+	return false, nil
+}
+
 func (c *stubGatewayCache) GetReasoningContent(_ context.Context, _ string) (string, error) {
 	return "", ErrReasoningContentNotFound
 }

@@ -249,6 +249,56 @@ func (collector moderationTextCollector) isResponsesUserTextItem(item gjson.Resu
 	return collector.responseItemHasModerationText(item)
 }
 
+// collectLastResponsesUserTurnForDisplay 只用于风控详情展示：从数组尾部向前
+// 回溯到最近一条真正的 user 文本。语义审核仍然只用严格末条判定，避免把旧
+// 轮次重新送入审核。
+func (collector moderationTextCollector) collectLastResponsesUserTurnForDisplay(input gjson.Result, parts *[]string, images *[]string) {
+	switch {
+	case !input.Exists():
+		return
+	case input.Type == gjson.String:
+		collector.addModerationText(parts, input.String())
+	case input.IsArray():
+		array := input.Array()
+		for i := len(array) - 1; i >= 0; i-- {
+			if !collector.isResponsesDisplayUserItem(array[i]) {
+				continue
+			}
+			collector.collectContentValue(array[i].Get("content"), parts, images)
+			if array[i].Get("type").String() == "input_text" || array[i].Get("text").Exists() {
+				collector.collectContentValue(array[i], parts, images)
+			}
+			if normalizeContentModerationText(strings.Join(*parts, "\n")) != "" || len(*images) > 0 {
+				return
+			}
+		}
+	case input.IsObject():
+		if collector.isResponsesDisplayUserItem(input) {
+			collector.collectContentValue(input.Get("content"), parts, images)
+			if input.Get("type").String() == "input_text" || input.Get("text").Exists() {
+				collector.collectContentValue(input, parts, images)
+			}
+		}
+	}
+}
+
+// isResponsesDisplayUserItem 判定条目是否可能是用户本轮输入。仅用于展示回溯：
+// 明确非 user 的 role 一律跳过；function_call_output / reasoning / summary
+// 等非 message 类型即使带 text 字段也不是用户输入。
+func (collector moderationTextCollector) isResponsesDisplayUserItem(item gjson.Result) bool {
+	role := strings.ToLower(strings.TrimSpace(item.Get("role").String()))
+	if role == "assistant" || role == "system" || role == "tool" || role == "developer" {
+		return false
+	}
+	typ := strings.ToLower(strings.TrimSpace(item.Get("type").String()))
+	switch typ {
+	case "", "message", "input_text":
+	default:
+		return false
+	}
+	return collector.responseItemHasModerationText(item)
+}
+
 func (collector moderationTextCollector) responseItemHasModerationText(item gjson.Result) bool {
 	var parts []string
 	var images []string
@@ -406,88 +456,58 @@ func normalizeContentModerationText(text string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
 }
 
-// ExtractContentModerationFullText keeps every client-controlled user text turn.
-// It is used for audit excerpts and must include all user content, unlike the
-// last-turn boundary used by semantic moderation.
-func ExtractContentModerationFullText(protocol string, body []byte) string {
+// ExtractContentModerationLastUserTurn returns the client's latest user turn,
+// parsed out of the request body, for display in the moderation log.
+//
+// It intentionally mirrors the last-turn boundary used by semantic moderation
+// instead of concatenating every historical user message: an operator reading a
+// block wants the text that actually triggered it, not a wall of earlier turns.
+func ExtractContentModerationLastUserTurn(protocol string, body []byte) string {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return ""
 	}
-	collector := moderationTextCollector{}
+	collector := moderationTextCollector{filterReminders: true}
 	var parts []string
 	var images []string
+	// Responses 详情展示需要容忍尾部工具回包/reasoning/summary：运维要看的是
+	// 触发本轮的用户输入，而不是因为尾部不是 user 就只剩上游错误。
+	if protocol == ContentModerationProtocolOpenAIResponses {
+		collector.collectLastResponsesUserTurnForDisplay(gjson.GetBytes(body, "input"), &parts, &images)
+		if text := strings.TrimSpace(strings.Join(parts, "\n\n")); text != "" {
+			return text
+		}
+		if len(images) > 0 {
+			return "[" + strings.Join(images, ", ") + "]"
+		}
+		// 回溯不到 user 条目时，保留旧行为：只认严格末条，避免误取历史文本。
+		collector.collectLastResponsesInput(gjson.GetBytes(body, "input"), &parts, &images)
+		if text := strings.TrimSpace(strings.Join(parts, "\n\n")); text != "" {
+			return text
+		}
+		if len(images) > 0 {
+			return "[" + strings.Join(images, ", ") + "]"
+		}
+	}
 	switch protocol {
 	case ContentModerationProtocolAnthropicMessages:
-		collector.collectAllRoleMessages(gjson.GetBytes(body, "messages"), "user", &parts, &images)
+		collector.collectLastAnthropicUserMessage(gjson.GetBytes(body, "messages"), &parts, &images)
 	case ContentModerationProtocolOpenAIChat:
-		collector.collectAllRoleMessages(gjson.GetBytes(body, "messages"), "user", &parts, &images)
+		collector.collectLastRoleMessage(gjson.GetBytes(body, "messages"), "user", &parts, &images)
 	case ContentModerationProtocolOpenAIResponses:
-		collector.collectAllResponsesUserInput(gjson.GetBytes(body, "input"), &parts, &images)
+		collector.collectLastResponsesInput(gjson.GetBytes(body, "input"), &parts, &images)
 	case ContentModerationProtocolGemini:
-		collector.collectAllGeminiUserContent(gjson.GetBytes(body, "contents"), &parts, &images)
+		collector.collectLastGeminiContent(gjson.GetBytes(body, "contents"), &parts, &images)
 	case ContentModerationProtocolOpenAIImages:
 		collector.addModerationText(&parts, gjson.GetBytes(body, "prompt").String())
 	default:
-		collector.collectAllResponsesUserInput(gjson.GetBytes(body, "input"), &parts, &images)
-		collector.collectAllRoleMessages(gjson.GetBytes(body, "messages"), "user", &parts, &images)
-		collector.collectAllGeminiUserContent(gjson.GetBytes(body, "contents"), &parts, &images)
+		collector.collectLastResponsesInput(gjson.GetBytes(body, "input"), &parts, &images)
+		collector.collectLastRoleMessage(gjson.GetBytes(body, "messages"), "user", &parts, &images)
+		collector.collectLastGeminiContent(gjson.GetBytes(body, "contents"), &parts, &images)
 	}
-	return strings.TrimSpace(strings.Join(parts, "\n\n"))
-}
-
-func (collector moderationTextCollector) collectAllRoleMessages(messages gjson.Result, role string, parts *[]string, images *[]string) {
-	if !messages.IsArray() {
-		return
+	text := strings.TrimSpace(strings.Join(parts, "\n\n"))
+	if text == "" && len(images) > 0 {
+		// A turn made only of images still has to show something useful.
+		return "[" + strings.Join(images, ", ") + "]"
 	}
-	want := strings.ToLower(strings.TrimSpace(role))
-	for _, item := range messages.Array() {
-		if strings.ToLower(strings.TrimSpace(item.Get("role").String())) != want {
-			continue
-		}
-		collector.collectContentValue(item.Get("content"), parts, images)
-	}
-}
-
-func (collector moderationTextCollector) collectAllResponsesUserInput(input gjson.Result, parts *[]string, images *[]string) {
-	switch {
-	case !input.Exists():
-		return
-	case input.Type == gjson.String:
-		collector.addModerationText(parts, input.String())
-	case input.IsArray():
-		for _, item := range input.Array() {
-			if !collector.isResponsesUserTextItem(item) {
-				continue
-			}
-			collector.collectContentValue(item.Get("content"), parts, images)
-			if item.Get("type").String() == "input_text" || item.Get("text").Exists() {
-				collector.collectContentValue(item, parts, images)
-			}
-		}
-	case input.IsObject():
-		if collector.isResponsesUserTextItem(input) {
-			collector.collectContentValue(input.Get("content"), parts, images)
-			if input.Get("type").String() == "input_text" || input.Get("text").Exists() {
-				collector.collectContentValue(input, parts, images)
-			}
-		}
-	}
-}
-
-func (collector moderationTextCollector) collectAllGeminiUserContent(contents gjson.Result, parts *[]string, images *[]string) {
-	if !contents.IsArray() {
-		return
-	}
-	for _, item := range contents.Array() {
-		role := strings.ToLower(strings.TrimSpace(item.Get("role").String()))
-		if role != "" && role != "user" {
-			continue
-		}
-		if arr := item.Get("parts"); arr.IsArray() {
-			arr.ForEach(func(_, part gjson.Result) bool {
-				collector.addModerationText(parts, part.Get("text").String())
-				return true
-			})
-		}
-	}
+	return text
 }

@@ -160,6 +160,7 @@ func (c schedulerTestConcurrencyCache) GetAccountWaitingCount(ctx context.Contex
 type schedulerTestGatewayCache struct {
 	sessionBindings map[string]int64
 	deletedSessions map[string]int
+	blockedSessions map[string]struct{}
 }
 
 func (c *schedulerTestGatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
@@ -205,6 +206,22 @@ func (c *schedulerTestGatewayCache) ClaimGrokVideoBilled(_ context.Context, _ st
 
 func (c *schedulerTestGatewayCache) ReleaseGrokVideoBilled(_ context.Context, _ string) error {
 	return nil
+}
+
+func (c *schedulerTestGatewayCache) BlockSession(_ context.Context, groupID int64, sessionHash string, _ time.Duration) error {
+	if c.blockedSessions == nil {
+		c.blockedSessions = make(map[string]struct{})
+	}
+	c.blockedSessions[fmt.Sprintf("%d:%s", groupID, sessionHash)] = struct{}{}
+	return nil
+}
+
+func (c *schedulerTestGatewayCache) IsSessionBlocked(_ context.Context, groupID int64, sessionHash string) (bool, error) {
+	if c.blockedSessions == nil {
+		return false, nil
+	}
+	_, ok := c.blockedSessions[fmt.Sprintf("%d:%s", groupID, sessionHash)]
+	return ok, nil
 }
 
 func (c *schedulerTestGatewayCache) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {

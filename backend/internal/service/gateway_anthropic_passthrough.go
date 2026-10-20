@@ -264,6 +264,9 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	var firstTokenMs *int
 	var clientDisconnect bool
 	if input.RequestStream {
+		// 上游已经确认 200 + SSE，现在才允许向下游写心跳（之前保持静默，
+		// 保证上游 4xx/5xx 能按真实状态码返回）。
+		ArmOpenAIStreamSSEKeepalive(c)
 		streamResult, err := s.handleStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account, input.StartTime, input.RequestModel)
 		if err != nil {
 			// 流中断时保留已观测到的 usage 与错误一起返回，避免上游已计量的请求
@@ -532,6 +535,15 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 		select {
 		case ev, ok := <-events:
 			if !ok {
+				// 兜底：上游发了 event: error 但没有跟随 data 行就收尾，这一帧会
+				// 一直停在 pendingErrorHeader 里。原样补写出去，保持透传语义。
+				if pendingErrorHeader != "" && !clientDisconnected {
+					if _, werr := io.WriteString(w, pendingErrorHeader+"\n\n"); werr == nil {
+						flusher.Flush()
+					} else {
+						clientDisconnected = true
+					}
+				}
 				if !clientDisconnected {
 					// 兜底补刷，确保最后一个未以空行结尾的事件也能及时送达客户端。
 					flusher.Flush()
@@ -708,6 +720,16 @@ func anthropicStreamErrorSemantics(payload string) (status int, errType, message
 		status = 529
 	case "rate_limit_error":
 		status = http.StatusTooManyRequests
+	case "invalid_request_error":
+		// 官方语义：请求本身非法（如 prompt 过长），原样按 400 透传，
+		// 不能折成 502 网关错误，否则下游无法区分「我的请求有问题」。
+		status = http.StatusBadRequest
+	case "not_found_error":
+		status = http.StatusNotFound
+	case "authentication_error":
+		status = http.StatusUnauthorized
+	case "permission_error":
+		status = http.StatusForbidden
 	default:
 		status = http.StatusBadGateway
 	}

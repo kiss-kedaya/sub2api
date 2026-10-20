@@ -118,6 +118,13 @@ func (c StubGatewayCache) ReleaseGrokVideoBilled(_ context.Context, _ string) er
 	return nil
 }
 
+func (c StubGatewayCache) BlockSession(_ context.Context, _ int64, _ string, _ time.Duration) error {
+	return nil
+}
+func (c StubGatewayCache) IsSessionBlocked(_ context.Context, _ int64, _ string) (bool, error) {
+	return false, nil
+}
+
 func (c StubGatewayCache) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
 	return nil
 }

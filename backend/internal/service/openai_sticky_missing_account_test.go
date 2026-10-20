@@ -22,7 +22,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyMissingAcc
 	ctx := context.Background()
 	groupID := int64(36001)
 	live := Account{
-		ID:          29159,
+		ID:          12001,
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Status:      StatusActive,
@@ -31,7 +31,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyMissingAcc
 		Priority:    5,
 		GroupIDs:    []int64{groupID},
 		AccountGroups: []AccountGroup{
-			{AccountID: 29159, GroupID: groupID},
+			{AccountID: 12001, GroupID: groupID},
 		},
 	}
 	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_deleted_account": 29396}}
@@ -48,7 +48,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyMissingAcc
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
-	require.Equal(t, int64(29159), selection.Account.ID)
+	require.Equal(t, int64(12001), selection.Account.ID)
 	require.False(t, decision.StickySessionHit)
 	require.Equal(t, 1, cache.deletedSessions["openai:session_hash_deleted_account"])
 	if selection.ReleaseFunc != nil {

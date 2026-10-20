@@ -163,8 +163,10 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, fmt.Errorf("convert anthropic to responses: %w", err)
 	}
 
-	// Upstream always uses streaming (upstream may not support sync mode).
-	// The client's original preference determines the response format.
+	// 上游一律用流式：Anthropic→Responses 这条转换链只有一个上游读取实现，
+	// 它按 SSE 解析（见 handleAnthropicBufferedStreamingResponse：客户端要同步时
+	// 把流缓冲成 JSON 返回）。若这里跟随客户端发 stream=false，上游回的是普通
+	// JSON，该解析器会报 "stream ended without a terminal response event"。
 	responsesReq.Stream = true
 	isStream := true
 
@@ -956,6 +958,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
+	// 上游已返回 200 + SSE，允许 handler 的 pre-header keepalive 写下游。
+	ArmOpenAIStreamSSEKeepalive(c)
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 
 	state := apicompat.NewResponsesEventToAnthropicState()

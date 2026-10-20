@@ -2165,6 +2165,8 @@ func (s *GeminiMessagesCompatService) handleNonStreamingResponse(c *gin.Context,
 }
 
 func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string) (*geminiStreamResult, error) {
+	// 上游已确认 2xx 才开始允许 pre-header 心跳写下游（Messages 入口有 gate）。
+	ArmOpenAIStreamSSEKeepalive(c)
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -2830,6 +2832,8 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	}
 
+	// 上游已确认 2xx 才开始允许 pre-header 心跳写下游（Messages 入口有 gate）。
+	ArmOpenAIStreamSSEKeepalive(c)
 	c.Status(resp.StatusCode)
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")

@@ -322,6 +322,14 @@ func (m *mockGatewayCacheForGemini) ReleaseGrokVideoBilled(_ context.Context, _ 
 func (m *mockGatewayCacheForGemini) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
 	return nil
 }
+func (m *mockGatewayCacheForGemini) BlockSession(_ context.Context, _ int64, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (m *mockGatewayCacheForGemini) IsSessionBlocked(_ context.Context, _ int64, _ string) (bool, error) {
+	return false, nil
+}
+
 func (m *mockGatewayCacheForGemini) GetReasoningContent(_ context.Context, _ string) (string, error) {
 	return "", ErrReasoningContentNotFound
 }

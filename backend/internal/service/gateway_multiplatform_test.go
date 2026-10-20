@@ -294,6 +294,14 @@ func (m *mockGatewayCacheForPlatform) ReleaseGrokVideoBilled(_ context.Context, 
 func (m *mockGatewayCacheForPlatform) SetReasoningContent(_ context.Context, _ string, _ string, _ time.Duration) error {
 	return nil
 }
+func (m *mockGatewayCacheForPlatform) BlockSession(_ context.Context, _ int64, _ string, _ time.Duration) error {
+	return nil
+}
+
+func (m *mockGatewayCacheForPlatform) IsSessionBlocked(_ context.Context, _ int64, _ string) (bool, error) {
+	return false, nil
+}
+
 func (m *mockGatewayCacheForPlatform) GetReasoningContent(_ context.Context, _ string) (string, error) {
 	return "", ErrReasoningContentNotFound
 }

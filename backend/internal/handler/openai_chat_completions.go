@@ -318,7 +318,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyChat = body
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, shouldRecordStandaloneCyberUsage(err, result != nil), cyberBlockBodyChat, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, shouldRecordStandaloneCyberUsage(err, result != nil), cyberBlockBodyChat, body, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
@@ -392,7 +392,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						)
 						return
 					}
-					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
+					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward ||
+						service.IsOpenAIStreamSSEKeepaliveArmed(c) {
 						h.gatewayService.ObserveOpenAIAccountHealthFailure(c.Request.Context(), account, err)
 						submitChatUsage(result)
 						h.handleFailoverExhausted(c, failoverErr, true)
@@ -418,6 +419,18 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 							case <-time.After(retryDelay):
 							}
 							continue
+						}
+						// Grok 内容策略 403：上游已在 handleCompatErrorResponse 里回写了
+						// 403，不会产生 UpstreamFailoverError。这里补上一次性扣费
+						// （名义价 × 分组/用户倍率），并让同一会话停止继续烧上游额度。
+						if service.IsGrokPlatformContentPolicyRejection(account.Platform, err) {
+							result = service.PrepareGrokModerationRefusalOpenAIResult(
+								result, reqModel, service.GrokModerationRefusalBilledCost(apiKey.Group))
+							submitChatUsage(result)
+							h.gatewayService.BlockModerationRefusedSessionForOpenAI(
+								c.Request.Context(), apiKey.GroupID, sessionHash,
+								service.GrokModerationRefusalSessionBlockTTL())
+							return
 						}
 					}
 					// A recoverable first attempt must not lower scheduler health before

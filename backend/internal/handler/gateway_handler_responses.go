@@ -212,6 +212,15 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	}
 	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
 
+	// A conversation the provider already refused on safety grounds is rejected
+	// here: no account is selected, no upstream is called, and the client sees
+	// the same refusal it got the first time.
+	if h.gatewayService.ModerationRefusedSessionBlocked(c.Request.Context(), apiKey.GroupID, sessionHash) {
+		h.responsesErrorResponse(c, http.StatusForbidden, "invalid_request_error",
+			service.GrokModerationRefusalMessage())
+		return
+	}
+
 	// 3. Account selection + failover loop
 	fs := NewFillFailoverState(h.maxAccountSwitches, false)
 
@@ -395,13 +404,23 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				if service.IsGrokModerationRefusal(account.Platform, failoverErr.ResponseBody) {
-					result = service.PrepareGrokModerationRefusalResult(result, reqModel)
+					// 违规拒绝按分组配置的「每次多少钱」结算，不乘倍率。
+					result = service.PrepareGrokModerationRefusalResult(
+						result, reqModel, service.GrokModerationRefusalBilledCost(apiKey.Group))
 					submitForwardUsage(result)
-					h.handleResponsesFailoverExhausted(c, failoverErr, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward)
+					// The upstream refused on safety grounds. Charge once, stop
+					// retrying, and block this conversation so the same prompt cannot
+					// burn quota again.
+					h.gatewayService.BlockModerationRefusedSession(
+						c.Request.Context(), apiKey.GroupID, sessionHash,
+						service.GrokModerationRefusalSessionBlockTTL(),
+					)
+					h.handleResponsesFailoverExhausted(c, failoverErr, service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward || service.IsOpenAIStreamSSEKeepaliveArmed(c))
 					return
 				}
 				// Can't failover if streaming content already sent
-				if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward {
+				if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward ||
+					service.IsOpenAIStreamSSEKeepaliveArmed(c) {
 					submitForwardUsage(result)
 					h.handleResponsesFailoverExhausted(c, failoverErr, true)
 					return
