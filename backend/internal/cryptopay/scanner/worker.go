@@ -86,6 +86,9 @@ func NewWorker(
 // decimalToRawUnits converts a NUMERIC string into raw token units.
 func decimalToRawUnits(value string, decimals int) (*big.Int, error) {
 	value = strings.TrimSpace(value)
+	if decimals < 0 || decimals > 255 {
+		return nil, fmt.Errorf("invalid token decimals %d", decimals)
+	}
 	parts := strings.SplitN(value, ".", 2)
 	whole := parts[0]
 	frac := ""
@@ -93,13 +96,16 @@ func decimalToRawUnits(value string, decimals int) (*big.Int, error) {
 		frac = parts[1]
 	}
 	if len(frac) > decimals {
+		if strings.Trim(frac[decimals:], "0") != "" {
+			return nil, fmt.Errorf("amount %q exceeds token precision", value)
+		}
 		frac = frac[:decimals]
 	}
 	for len(frac) < decimals {
 		frac += "0"
 	}
 	raw, ok := new(big.Int).SetString(whole+frac, 10)
-	if !ok {
+	if !ok || raw.Sign() < 0 {
 		return nil, fmt.Errorf("invalid decimal %q", value)
 	}
 	return raw, nil
@@ -156,146 +162,6 @@ func (w *Worker) scanAll(ctx context.Context) {
 	}
 }
 
-// recheckCredited re-verifies deposits credited recently enough that a reorg
-// could still undo them. The window is bounded (one hour of blocks) so the
-// pass stays cheap; anything older is settled by the chain's finality.
-//
-// A credited deposit whose transaction no longer exists, or whose block hash
-// changed, is marked "reverted" so reconciliation can claw it back. It is
-// never deleted: the money already moved in our ledger.
-func (w *Worker) recheckCredited(ctx context.Context) error {
-	rows, err := w.db.QueryContext(ctx, `
-		SELECT chain, tx_hash, log_index, block_hash
-		  FROM deposit_transactions
-		 WHERE status = 'credited'
-		   AND created_at > NOW() - INTERVAL '1 hour'
-		 ORDER BY id DESC
-		 LIMIT 200`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	type creditedRow struct {
-		chain, txHash, blockHash string
-		logIndex                 int
-	}
-	var pending []creditedRow
-	for rows.Next() {
-		var r creditedRow
-		if err := rows.Scan(&r.chain, &r.txHash, &r.logIndex, &r.blockHash); err != nil {
-			return err
-		}
-		pending = append(pending, r)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	for _, p := range pending {
-		pool := w.pools[p.chain]
-		if pool == nil || p.blockHash == "" {
-			continue
-		}
-		receipt, err := VerifyTransaction(ctx, pool, p.txHash)
-		if err != nil {
-			// No receipt can mean a reorg dropped the tx; confirm on the next
-			// pass before flagging, since RPC errors are also common here.
-			continue
-		}
-		if receipt.BlockHash == "" || receipt.BlockHash == p.blockHash {
-			continue
-		}
-		slog.Warn("[cryptopay] credited deposit was reorged",
-			"chain", p.chain, "tx", p.txHash, "was", p.blockHash, "now", receipt.BlockHash)
-		if _, err := w.db.ExecContext(ctx,
-			`UPDATE deposit_transactions SET status = 'reverted' WHERE chain = $1 AND tx_hash = $2 AND log_index = $3`,
-			p.chain, p.txHash, p.logIndex); err != nil {
-			slog.Warn("[cryptopay] mark reverted failed", "tx", p.txHash, "error", err)
-			continue
-		}
-		if w.onReorg != nil {
-			w.onReorg(p.chain, p.txHash)
-		}
-	}
-	return nil
-}
-
-// retryPending re-verifies deposits still in "pending" state and credits the
-// ones that are now final. Bounded per pass so one chain cannot monopolise
-// the loop.
-func (w *Worker) retryPending(ctx context.Context) error {
-	rows, err := w.db.QueryContext(ctx, `
-		SELECT chain, tx_hash, log_index, from_address, to_address, token,
-		       amount::text, block_number, block_hash
-		  FROM deposit_transactions
-		 WHERE status = 'pending'
-		   -- A permanently failing row must not starve newer deposits: retry
-		   -- the least-recently-attempted rows first and let old ones age out.
-		   AND (last_attempt_at IS NULL OR last_attempt_at < NOW() - INTERVAL '1 minute')
-		 ORDER BY COALESCE(last_attempt_at, created_at), id
-		 LIMIT 50`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	type pendingRow struct {
-		chain, txHash, from, to, token, amount, blockHash string
-		logIndex                                          int
-		blockNumber                                       uint64
-	}
-	var pending []pendingRow
-	for rows.Next() {
-		var p pendingRow
-		var amount string
-		if err := rows.Scan(&p.chain, &p.txHash, &p.logIndex, &p.from, &p.to,
-			&p.token, &amount, &p.blockNumber, &p.blockHash); err != nil {
-			return err
-		}
-		p.amount = amount
-		pending = append(pending, p)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, p := range pending {
-		// Count the attempt before the work: a row that keeps failing must
-		// eventually stop consuming the queue.
-		if _, err := w.db.ExecContext(ctx,
-			`UPDATE deposit_transactions SET last_attempt_at = NOW() WHERE chain = $1 AND tx_hash = $2 AND log_index = $3`,
-			p.chain, p.txHash, p.logIndex); err != nil {
-			slog.Warn("[cryptopay] pending attempt stamp failed", "tx", p.txHash, "error", err)
-		}
-		pool := w.pools[p.chain]
-		if pool == nil {
-			continue
-		}
-		receipt, err := VerifyTransaction(ctx, pool, p.txHash)
-		if err != nil {
-			continue // still not final; next pass
-		}
-		if final, err := BlockIsFinal(ctx, pool, receipt.BlockNumber); err == nil && !final {
-			continue
-		}
-		// Per-token decimals, not a fixed 6: rebuilding an 18-decimal amount
-		// at 6 decimals multiplies it by 1e12 before crediting.
-		decimals := w.chainDecimals(p.chain, p.token)
-		raw, err := decimalToRawUnits(p.amount, decimals)
-		if err != nil {
-			slog.Warn("[cryptopay] pending amount decode failed", "tx", p.txHash, "error", err)
-			continue
-		}
-		transfer := Transfer{
-			Chain: p.chain, TxHash: p.txHash, LogIndex: p.logIndex,
-			From: p.from, To: p.to, Token: p.token, Amount: raw,
-			BlockNumber: p.blockNumber, BlockHash: p.blockHash,
-		}
-		if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {
-			slog.Warn("[cryptopay] pending credit failed", "tx", p.txHash, "error", err)
-		}
-	}
-	return nil
-}
-
 // ScanOnce runs one full pass; exposed for tests and manual triggering.
 func (w *Worker) ScanOnce(ctx context.Context) error {
 	for _, chain := range w.chains {
@@ -328,6 +194,10 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 	if pool == nil {
 		slog.Debug("[cryptopay] scan skipped: no pool", "chain", chain.Chain)
 		return nil
+	}
+	pool, err := verifiedChainPool(ctx, pool, chain.Chain)
+	if err != nil {
+		return err
 	}
 	head, err := pool.BlockNumber(ctx)
 	if err != nil {
@@ -392,47 +262,32 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 			// path stores and later rebuilds the raw amount from it, and a
 			// wrong exponent (the old hardcoded 6) inflated 18-decimal
 			// deposits by 1e12 on the retry pass.
-			decimals := chain.Decimals[transfer.Token]
-			if decimals == 0 {
-				decimals = 6 // stablecoin default
-			}
+			decimals, watched := watchedDecimals(chain, transfer.Token)
 			// A token outside the watched set must never be credited: a
 			// misconfigured or hostile RPC can return any log it likes.
-			if _, ok := chain.Decimals[transfer.Token]; !ok {
+			if !watched {
 				slog.Warn("[cryptopay] ignored transfer for unwatched token",
 					"chain", transfer.Chain, "tx", transfer.TxHash, "token", transfer.Token)
 				continue
 			}
-			// Confirm before crediting: a broadcast-but-reverted or
-			// not-yet-final transaction must never move money. Reorgs are
-			// the reason this runs per transfer instead of trusting the
-			// confirmation counter alone.
-			receipt, err := VerifyTransaction(ctx, pool, transfer.TxHash)
-			if err != nil {
-				// Not final yet: remember it so a later pass credits it.
-				// Without this the cursor advance would drop the deposit.
-				if pendingErr := w.handler.ProcessPending(ctx, transfer, decimals); pendingErr != nil {
-					slog.Warn("[cryptopay] record pending failed",
-						"chain", transfer.Chain, "tx", transfer.TxHash, "error", pendingErr)
-				}
-				slog.Info("[cryptopay] deferred until confirmed",
-					"chain", transfer.Chain, "tx", transfer.TxHash, "reason", err)
-				continue
+			// Every observation is either fully verified and processed, or
+			// durably pending before the batch cursor may advance.
+			receipt, verifyErr := VerifyTransaction(ctx, pool, transfer.TxHash)
+			if verifyErr == nil {
+				verifyErr = verifyCanonicalBlock(ctx, pool, receipt)
 			}
-			if receipt.BlockHash != "" && transfer.BlockHash != "" && receipt.BlockHash != transfer.BlockHash {
-				slog.Warn("[cryptopay] block hash mismatch, skipping",
-					"chain", transfer.Chain, "tx", transfer.TxHash)
-				continue
+			if verifyErr == nil {
+				verifyErr = verifyReceiptTransfer(transfer, receipt)
 			}
-			if final, err := BlockIsFinal(ctx, pool, receipt.BlockNumber); err == nil && !final {
-				// Chain exposes the safe tag and this block is above it:
-				// wait for the next pass rather than crediting early.
-				if pendingErr := w.handler.ProcessPending(ctx, transfer, decimals); pendingErr != nil {
-					slog.Warn("[cryptopay] record pending failed",
-						"chain", transfer.Chain, "tx", transfer.TxHash, "error", pendingErr)
+			final := false
+			if verifyErr == nil {
+				final, verifyErr = transactionIsFinal(ctx, pool, receipt.BlockNumber, chain.Confirmations)
+			}
+			if verifyErr != nil || !final {
+				if err := w.handler.ProcessPending(ctx, transfer, decimals); err != nil {
+					return fmt.Errorf("persist pending %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, err)
 				}
-				slog.Info("[cryptopay] waiting for finality",
-					"chain", transfer.Chain, "tx", transfer.TxHash, "block", receipt.BlockNumber)
+				slog.Info("[cryptopay] deferred transfer", "chain", transfer.Chain, "tx", transfer.TxHash, "reason", verifyErr)
 				continue
 			}
 			if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {

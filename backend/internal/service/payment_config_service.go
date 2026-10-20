@@ -611,7 +611,7 @@ func applyVisibleMethodRoutingToEnabledTypes(base []string, vals map[string]stri
 	out := make([]string, 0, len(base)+2)
 	appendType := func(paymentType string) {
 		paymentType = NormalizeVisibleMethod(paymentType)
-		if paymentType == "" {
+		if paymentType == "" || strings.EqualFold(paymentType, payment.TypeCrypto) {
 			return
 		}
 		if _, ok := seen[paymentType]; ok {

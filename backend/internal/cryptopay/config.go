@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -128,6 +130,12 @@ func DefaultCryptoConfig() CryptoConfig {
 
 // NormalizeConfig fills defaults for zero values and validates.
 func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
+	cfg.Chains = slices.Clone(cfg.Chains)
+	cfg.RPC = maps.Clone(cfg.RPC)
+	cfg.Confirmations = maps.Clone(cfg.Confirmations)
+	cfg.ScanRange = maps.Clone(cfg.ScanRange)
+	cfg.SweepMinPerAddress = maps.Clone(cfg.SweepMinPerAddress)
+	cfg.GasTopUp = maps.Clone(cfg.GasTopUp)
 	def := DefaultCryptoConfig()
 	if cfg.Chains == nil {
 		cfg.Chains = def.Chains
@@ -137,14 +145,9 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	if cfg.RPC == nil {
 		cfg.RPC = map[string]string{}
 	}
-	// A config saved before RPC keys existed deserializes rpc as nil; the
-	// admin console indexes it directly, so backfill an empty map.
-	if cfg.RPC == nil {
-		cfg.RPC = map[string]string{}
-	}
 	for _, chain := range cfg.Chains {
-		if !KnownChain(chain) {
-			return cfg, fmt.Errorf("crypto config: unknown chain %q", chain)
+		if !IsEVMChain(chain) {
+			return cfg, fmt.Errorf("crypto config: deposits are not implemented for chain %q", chain)
 		}
 	}
 	if cfg.SweepGlobalThreshold <= 0 {
@@ -161,6 +164,14 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	}
 	if cfg.ScanRange == nil {
 		cfg.ScanRange = def.ScanRange
+	}
+	for _, chain := range cfg.Chains {
+		if _, ok := cfg.Confirmations[chain]; !ok {
+			cfg.Confirmations[chain] = def.Confirmations[chain]
+		}
+		if _, ok := cfg.ScanRange[chain]; !ok {
+			cfg.ScanRange[chain] = def.ScanRange[chain]
+		}
 	}
 	if cfg.CreditMinAmount <= 0 {
 		cfg.CreditMinAmount = def.CreditMinAmount
@@ -311,111 +322,6 @@ func SaveConfig(ctx context.Context, store SettingStore, cfg CryptoConfig) error
 		return err
 	}
 	return store.SetCryptoSetting(ctx, SettingKeyCryptoConfig, string(data))
-}
-
-// SettingKeySignerPolicy mirrors the signer's own policy key. The signer
-// reloads it before every signature, so keeping the sweep destinations in
-// sync here is what makes an operator-changed receiving address take effect
-// without restarting the signer.
-const SettingKeySignerPolicy = "crypto.signer.policy"
-
-// SyncSignerTargets merges the configured sweep destinations into the
-// signer policy's target list. It tracks which targets were added by this
-// automated sync in "managed_targets", so a later config save can remove
-// stale auto-added addresses without touching targets the operator added
-// manually (for example a cold wallet). Limits, rate and hot index are
-// preserved.
-func SyncSignerTargets(ctx context.Context, store SettingStore, cfg CryptoConfig) (bool, error) {
-	wanted := make([]string, 0, 2)
-	if v := strings.TrimSpace(cfg.HotWalletEVM); v != "" && validEVMAddress(v) {
-		wanted = append(wanted, v)
-	}
-	if v := strings.TrimSpace(cfg.HotWalletSolana); v != "" && validSolanaAddress(v) {
-		wanted = append(wanted, v)
-	}
-
-	raw, err := store.GetCryptoSetting(ctx, SettingKeySignerPolicy)
-	if err != nil {
-		return false, fmt.Errorf("read signer policy: %w", err)
-	}
-	// Only merge into an already-configured policy. Writing a fresh one here
-	// would omit max_per_tx/max_daily, and the signer would then reject every
-	// signature with "no_per_tx_limit_configured" — a silent total outage of
-	// sweeps. A missing policy is the operator's setup step, not ours.
-	if strings.TrimSpace(raw) == "" {
-		return false, nil
-	}
-	policy := map[string]any{}
-	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
-		return false, fmt.Errorf("parse signer policy: %w", err)
-	}
-
-	existing := make([]string, 0, 8)
-	if list, ok := policy["targets"].([]any); ok {
-		for _, item := range list {
-			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
-				existing = append(existing, s)
-			}
-		}
-	}
-	managed := make([]string, 0, 4)
-	if list, ok := policy["managed_targets"].([]any); ok {
-		for _, item := range list {
-			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
-				managed = append(managed, s)
-			}
-		}
-	}
-
-	// Drop stale addresses that came from an earlier automatic sync.
-	managedSet := make(map[string]struct{}, len(managed))
-	for _, m := range managed {
-		managedSet[strings.ToLower(m)] = struct{}{}
-	}
-	kept := make([]string, 0, len(existing))
-	for _, t := range existing {
-		if _, tracked := managedSet[strings.ToLower(t)]; tracked {
-			continue
-		}
-		kept = append(kept, t)
-	}
-	existing = kept
-
-	// Add the current destinations without duplicates.
-	seen := make(map[string]struct{}, len(existing)+len(wanted))
-	for _, t := range existing {
-		seen[strings.ToLower(t)] = struct{}{}
-	}
-	changed := false
-	for _, t := range wanted {
-		if _, dup := seen[strings.ToLower(t)]; dup {
-			continue
-		}
-		existing = append(existing, t)
-		seen[strings.ToLower(t)] = struct{}{}
-		changed = true
-	}
-	if !changed && len(managed) != len(wanted) {
-		changed = true
-	}
-	policy["targets"] = existing
-	policy["managed_targets"] = wanted
-	// The signer signs gas top-ups with the hot seed at policy.hot_index and
-	// rejects any other. If the console's hot_index diverges from the
-	// policy's, gas would be paid from the wrong wallet (or the derived
-	// address the health panel reports would be wrong). Keep them equal.
-	if current, ok := policy["hot_index"].(float64); !ok || uint32(current) != cfg.HotIndex {
-		policy["hot_index"] = cfg.HotIndex
-		changed = true
-	}
-	encoded, err := json.Marshal(policy)
-	if err != nil {
-		return false, fmt.Errorf("encode signer policy: %w", err)
-	}
-	if err := store.SetCryptoSetting(ctx, SettingKeySignerPolicy, string(encoded)); err != nil {
-		return false, fmt.Errorf("write signer policy: %w", err)
-	}
-	return changed, nil
 }
 
 // CryptoConfigPatch is a partial update. Pointer fields distinguish "not

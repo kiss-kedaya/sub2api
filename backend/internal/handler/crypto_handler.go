@@ -104,16 +104,22 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 		return
 	}
 	merged := patch.Apply(existing)
+	if merged.HotIndex != existing.HotIndex {
+		response.BadRequest(c, "gas 钱包索引由签名服务独立策略管理，请在签名策略中修改")
+		return
+	}
+	if h.service != nil && merged.SignerSocket != existing.SignerSocket {
+		if err := h.service.ValidateSignerChange(c.Request.Context(), merged.SignerSocket); err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+	}
 	if err := cryptopay.SaveConfig(c.Request.Context(), h.store, merged); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	// The sweep destination is the signer's payout whitelist. Keep it in
-	// sync so changing the receiving address takes effect immediately.
-	if _, err := cryptopay.SyncSignerTargets(c.Request.Context(), h.store, merged); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
+	// A receiving-address change must never grant signer approval. Its
+	// independently configured policy decides which targets may receive funds.
 	// Apply immediately: rebuild pools and restart the scan worker.
 	if h.service != nil {
 		h.service.Reload(c.Request.Context())

@@ -15,8 +15,8 @@ func TestRecheckCreditedScopeIsBounded(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	mock.ExpectQuery(`FROM deposit_transactions`).
-		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "log_index", "block_hash"}))
+	mock.ExpectQuery(`(?s)LEFT JOIN payment_orders o ON o.id = d.order_id.*WHERE d.status = 'credited'.*COALESCE\(o.completed_at, d.created_at\) > NOW\(\) - INTERVAL '1 hour'.*OR d.reason LIKE 'reorg_missing_receipt:%'.*ORDER BY COALESCE\(d.last_attempt_at, d.created_at\), d.id.*LIMIT 200`).
+		WillReturnRows(observationRows())
 
 	w := &Worker{db: db}
 	if err := w.recheckCredited(t.Context()); err != nil {
@@ -37,8 +37,11 @@ func TestRecheckCreditedSkipsChainsWithoutPool(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(`FROM deposit_transactions`).
-		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "log_index", "block_hash"}).
-			AddRow("bsc", "0xdead", 0, "0xblock"))
+		WillReturnRows(observationRows().
+			AddRow("bsc", "0xdead", 0, "from", "to", "token", "1", 100, "0xblock", ""))
+	mock.ExpectExec(`UPDATE deposit_transactions`).
+		WithArgs("credited", "", "bsc", "0xdead", 0, "credited", "").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	w := &Worker{db: db}
 	if err := w.recheckCredited(t.Context()); err != nil {

@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 
@@ -36,7 +37,7 @@ type CreditRequest struct {
 	Amount   *big.Int
 	Decimals int
 	// CreditUSDT is the decimal amount credited to the balance (after
-	// multiplier/fee). Computed by the ledger from config.
+	// multiplier/fee). Existing linked orders use their frozen amount.
 	CreditUSDT float64
 	FromAddr   string
 	ToAddr     string
@@ -121,6 +122,27 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 	if t.Amount == nil || t.Amount.Sign() <= 0 {
 		return false, nil
 	}
+	// Resume an existing order before consulting mutable address status or
+	// thresholds. A completed fulfillment can still have a pending deposit
+	// row after a failed status write; reclassifying it would hide real funds.
+	state, err := l.existingDeposit(ctx, t)
+	if err != nil {
+		return false, err
+	}
+	switch state.status {
+	case "credited", "ignored", "reverted":
+		return false, nil
+	case "pending":
+		if state.orderID.Valid {
+			if !state.userID.Valid || !state.credit.Valid || state.credit.Float64 <= 0 || math.IsNaN(state.credit.Float64) || math.IsInf(state.credit.Float64, 0) {
+				return false, fmt.Errorf("linked deposit order is missing or invalid")
+			}
+			return l.credit(ctx, t, decimals, state.userID.Int64, state.credit.Float64)
+		}
+	case "": // New observation.
+	default:
+		return false, fmt.Errorf("unexpected deposit status %q", state.status)
+	}
 	// Exclude our own sends (sweeps / gas top-ups): a sweep from a child
 	// address must never credit anyone.
 	own, err := l.resolver.IsOwnAddress(ctx, t.Chain, t.From)
@@ -134,13 +156,11 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 	amountDecimal := toDecimal(t.Amount, decimals)
 	if amountDecimal < l.minAmount {
 		reason := fmt.Sprintf("below the minimum credit amount (%g)", l.minAmount)
-		l.notifyUnmatched(ctx, t, reason)
-		return l.record(ctx, t, "ignored", decimals, ReasonBelowMin), nil
+		return false, l.ignore(ctx, t, decimals, ReasonBelowMin, reason)
 	}
 	if l.maxAmount > 0 && amountDecimal > l.maxAmount {
 		reason := fmt.Sprintf("above the per-deposit maximum (%g)", l.maxAmount)
-		l.notifyUnmatched(ctx, t, reason)
-		return l.record(ctx, t, "ignored", decimals, ReasonAboveMax), nil
+		return false, l.ignore(ctx, t, decimals, ReasonAboveMax, reason)
 	}
 
 	userID, isOurs, err := l.resolver.ResolveDeposit(ctx, t.Chain, t.To)
@@ -153,8 +173,7 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 	}
 	if userID == 0 {
 		// Ours but unassigned (pool) or disabled: record for reconciliation.
-		l.notifyUnmatched(ctx, t, "address is not assigned to a user")
-		return l.record(ctx, t, "ignored", decimals, ReasonUnassigned), nil
+		return false, l.ignore(ctx, t, decimals, ReasonUnassigned, "address is not assigned to a user")
 	}
 
 	creditUSDT := amountDecimal * l.multiplier
@@ -174,6 +193,33 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 		return false, fmt.Errorf("unexpected deposit status %q", status)
 	}
 
+	return l.credit(ctx, t, decimals, userID, creditUSDT)
+}
+
+type depositState struct {
+	status          string
+	orderID, userID sql.NullInt64
+	credit          sql.NullFloat64
+}
+
+func (l *Ledger) existingDeposit(ctx context.Context, t scanner.Transfer) (depositState, error) {
+	var state depositState
+	_, outTradeNo := OrderIdentity(t.Chain, t.TxHash, t.LogIndex)
+	err := l.db.QueryRowContext(ctx, `SELECT d.status, COALESCE(d.order_id, o.id), o.user_id, o.amount
+		FROM deposit_transactions d LEFT JOIN payment_orders o
+		  ON o.id = d.order_id OR (d.order_id IS NULL AND o.out_trade_no = $4)
+		WHERE d.chain = $1 AND d.tx_hash = $2 AND d.log_index = $3`,
+		t.Chain, t.TxHash, t.LogIndex, outTradeNo).Scan(&state.status, &state.orderID, &state.userID, &state.credit)
+	if errors.Is(err, sql.ErrNoRows) {
+		return depositState{}, nil
+	}
+	if err != nil {
+		return state, fmt.Errorf("read deposit state: %w", err)
+	}
+	return state, nil
+}
+
+func (l *Ledger) credit(ctx context.Context, t scanner.Transfer, decimals int, userID int64, creditUSDT float64) (bool, error) {
 	if err := l.creditor.CreditDeposit(ctx, CreditRequest{
 		UserID:     userID,
 		Chain:      t.Chain,
@@ -189,10 +235,29 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 	}); err != nil {
 		return false, fmt.Errorf("credit deposit: %w", err)
 	}
-	if _, err := l.db.ExecContext(ctx,
-		`UPDATE deposit_transactions SET status = 'credited' WHERE chain = $1 AND tx_hash = $2 AND log_index = $3`,
-		t.Chain, t.TxHash, t.LogIndex); err != nil {
+	result, err := l.db.ExecContext(ctx,
+		`UPDATE deposit_transactions SET status = 'credited'
+		 WHERE chain = $1 AND tx_hash = $2 AND log_index = $3 AND status = 'pending'`,
+		t.Chain, t.TxHash, t.LogIndex)
+	if err != nil {
 		return false, fmt.Errorf("mark credited: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark credited result: %w", err)
+	}
+	if affected == 0 {
+		var status string
+		if err := l.db.QueryRowContext(ctx, `SELECT status FROM deposit_transactions WHERE chain = $1 AND tx_hash = $2 AND log_index = $3`,
+			t.Chain, t.TxHash, t.LogIndex).Scan(&status); err != nil {
+			return false, fmt.Errorf("read fulfilled deposit: %w", err)
+		}
+		if status == "credited" {
+			return false, nil
+		}
+		// Fulfillment may already have moved the balance. Keep the reorg or
+		// reconciliation state; never overwrite it or automatically reverse.
+		return false, fmt.Errorf("fulfilled deposit is %q; manual reconciliation required", status)
 	}
 	return true, nil
 }
@@ -213,11 +278,11 @@ func (l *Ledger) ProcessPending(ctx context.Context, t scanner.Transfer, decimal
 	if own {
 		return nil
 	}
-	userID, isOurs, err := l.resolver.ResolveDeposit(ctx, t.Chain, t.To)
+	_, isOurs, err := l.resolver.ResolveDeposit(ctx, t.Chain, t.To)
 	if err != nil {
 		return fmt.Errorf("resolve deposit: %w", err)
 	}
-	if !isOurs || userID == 0 {
+	if !isOurs {
 		return nil
 	}
 	_, err = l.db.ExecContext(ctx,
@@ -268,9 +333,9 @@ func (l *Ledger) insertPending(ctx context.Context, t scanner.Transfer, decimals
 // amount is stored in display units (raw / 10^decimals): a raw value in a
 // NUMERIC(38,18) column reads as an astronomically large number, which once
 // made a 0.01 USDT probe show up as 1e16. reason carries the machine code
-// the user-facing history renders. Returns credited=false always.
-func (l *Ledger) record(ctx context.Context, t scanner.Transfer, status string, decimals int, reason string) bool {
-	_, err := l.db.ExecContext(ctx,
+// the user-facing history renders. Persistence failures must stop the scan.
+func (l *Ledger) record(ctx context.Context, t scanner.Transfer, status string, decimals int, reason string) error {
+	result, err := l.db.ExecContext(ctx,
 		`INSERT INTO deposit_transactions
 		   (chain, tx_hash, log_index, from_address, to_address, token, amount, block_number, block_hash, status, reason)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -282,13 +347,29 @@ func (l *Ledger) record(ctx context.Context, t scanner.Transfer, status string, 
 		      reason = EXCLUDED.reason,
 		      last_attempt_at = NOW()
 		  WHERE deposit_transactions.status = 'pending'
+		    AND deposit_transactions.order_id IS NULL
 		    AND EXCLUDED.status IN ('ignored', 'reverted')`,
 		t.Chain, t.TxHash, t.LogIndex, t.From, t.To, t.Token,
 		amountString(t.Amount, decimals), t.BlockNumber, t.BlockHash, status, reason)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return false
+	if err != nil {
+		return fmt.Errorf("record %s deposit: %w", status, err)
 	}
-	return false
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("record %s deposit result: %w", status, err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("deposit state or linked order changed while recording %s; retry required", status)
+	}
+	return nil
+}
+
+func (l *Ledger) ignore(ctx context.Context, t scanner.Transfer, decimals int, code, message string) error {
+	if err := l.record(ctx, t, "ignored", decimals, code); err != nil {
+		return err
+	}
+	l.notifyUnmatched(ctx, t, message)
+	return nil
 }
 
 // toDecimal converts raw units to a float with the token's decimals.
