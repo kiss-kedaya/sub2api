@@ -1360,7 +1360,11 @@ func (h *GatewayHandler) availableModelsForAPIKey(ctx context.Context, apiKey *s
 	if len(groupIDs) == 0 {
 		return h.modelsForGroupID(ctx, nil, nil, forcedPlatform, false)
 	}
-	injectDefaults := len(groupIDs) > 1
+	// 单分组也要回落到平台默认清单：账号侧若配了封闭 model_mapping，
+	// GetAvailableModels 只返回映射里的模型；映射为空时更可能直接返回空数组，
+	// 客户端 /v1/models 就什么都拿不到。注入默认值只在"没拿到任何模型"时生效，
+	// 不会覆盖真实映射结果。
+	injectDefaults := true
 	var models []string
 	for _, id := range groupIDs {
 		gid := id
