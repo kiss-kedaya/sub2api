@@ -234,16 +234,18 @@ const remainingText = computed(() => {
   return t('admin.accounts.tempUnschedulable.remainingHoursMinutes', { hours, minutes: rest })
 })
 
-const loadStatus = async () => {
-  if (!props.account) return
+const loadStatus = async (accountId: number, isCurrent: () => boolean) => {
   loading.value = true
   try {
-    status.value = await adminAPI.accounts.getTempUnschedulableStatus(props.account.id)
+    const data = await adminAPI.accounts.getTempUnschedulableStatus(accountId)
+    if (isCurrent()) status.value = data
   } catch (error: any) {
-    appStore.showError(error?.message || t('admin.accounts.tempUnschedulable.failedToLoad'))
-    status.value = null
+    if (isCurrent()) {
+      appStore.showError(error?.message || t('admin.accounts.tempUnschedulable.failedToLoad'))
+      status.value = null
+    }
   } finally {
-    loading.value = false
+    if (isCurrent()) loading.value = false
   }
 }
 
@@ -267,13 +269,14 @@ const handleReset = async () => {
 }
 
 watch(
-  () => [props.show, props.account?.id],
-  ([visible]) => {
-    if (visible && props.account) {
-      loadStatus()
-      return
-    }
+  [() => props.show, () => props.account?.id],
+  ([visible, accountId], _previous, onCleanup) => {
+    let active = true
+    onCleanup(() => { active = false })
     status.value = null
-  }
+    loading.value = false
+    if (visible && accountId) void loadStatus(accountId, () => active)
+  },
+  { immediate: true }
 )
 </script>
