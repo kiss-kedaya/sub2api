@@ -47,8 +47,6 @@ func TestEveryGatewayPOSTRouteIsClassifiedForPromptAuditCoverage(t *testing.T) {
 		"/videos/extensions":        {"grok_media.go"},
 		"/models/*modelAction":      {"gemini_v1beta_handler.go"},
 		"/tts":                      {"grok_audio.go"},
-		"/tools/search":             {"openai_deepseek_tools.go"},
-		"/tools/fetch":              {"openai_deepseek_tools.go"},
 		"/web_search":               {"gateway_web_search.go"},
 		"/x_search":                 {"gateway_web_search.go"},
 		"/systemone":                {"gateway_systemone.go"},

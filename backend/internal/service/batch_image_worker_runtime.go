@@ -57,11 +57,14 @@ func ProvideBatchImageWorkerRuntime(
 		StaleAfter: NewBatchImageWorkerOptionsFromConfig(cfg).StaleActiveAfter,
 		Limit:      NewBatchImageWorkerOptionsFromConfig(cfg).RecoverLimit,
 	}
-	runtime.Start()
+	startBackgroundJob(runtime.Start)
 	return runtime
 }
 
 func (r *BatchImageWorkerRuntime) Start() {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	if r == nil || r.worker == nil || r.cfg == nil || !r.cfg.BatchImage.QueueEnabled {
 		return
 	}

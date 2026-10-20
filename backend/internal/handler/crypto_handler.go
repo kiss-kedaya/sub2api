@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -24,16 +25,26 @@ import (
 
 // CryptoHandler serves the built-in crypto deposit channel.
 type CryptoHandler struct {
-	addresses *addresses.Service
-	store     cryptopay.SettingStore
-	service   *cryptopay.Service
+	addresses        *addresses.Service
+	store            cryptopay.SettingStore
+	service          *cryptopay.Service
+	security         *service.CryptoSecurityService
+	securityConfig   *config.Config
+	mnemonicExporter cryptoMnemonicExporter
 }
 
-func NewCryptoHandler(addressService *addresses.Service, settings *service.SettingService, cryptoSvc *cryptopay.Service) *CryptoHandler {
+func NewCryptoHandler(addressService *addresses.Service, settings *service.SettingService, cryptoSvc *cryptopay.Service, totpService *service.TotpService, cfg *config.Config) *CryptoHandler {
+	var mnemonicExporter cryptoMnemonicExporter
+	if cryptoSvc != nil {
+		mnemonicExporter = cryptoSvc
+	}
 	return &CryptoHandler{
-		addresses: addressService,
-		store:     cryptopay.NewServiceSettingStore(settings),
-		service:   cryptoSvc,
+		addresses:        addressService,
+		store:            cryptopay.NewServiceSettingStore(settings),
+		service:          cryptoSvc,
+		security:         service.NewCryptoSecurityService(totpService, cfg),
+		securityConfig:   cfg,
+		mnemonicExporter: mnemonicExporter,
 	}
 }
 
