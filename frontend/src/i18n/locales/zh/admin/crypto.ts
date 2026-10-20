@@ -104,6 +104,7 @@ export default {
     signerLockDesc: '未解锁时进程不持有任何种子，所有签名请求都会被拒绝。口令只在内存中用于解密，不会保存。',
     signerLocked: '已锁定',
     signerUnlocked: '已解锁',
+    signerApprovalMissing: '种子已解锁，但独立签名策略尚未就绪，当前不能归集。请完成签名服务策略和预算配置后重启签名服务。',
     signerPassphrase: '管理员口令',
     signerPassphrasePlaceholder: '输入解锁口令',
     signerPassphraseHint: '首次使用时会用它创建加密保险库；之后每次重启签名服务都需要重新输入',

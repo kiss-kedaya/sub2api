@@ -189,7 +189,7 @@
               <div class="crypto-view__actions">
                 <button
                   class="btn btn-secondary btn-sm"
-                  :disabled="loadingHotAddress || !signerUnlocked"
+                  :disabled="loadingHotAddress || !signerUnlocked || !signerSigningEnabled"
                   :title="signerUnlocked ? '' : t('admin.crypto.hotAddressLocked')"
                   @click="fillHotWalletAddresses"
                 >
@@ -243,6 +243,10 @@
                   {{ t('common.refresh') }}
                 </button>
               </div>
+
+              <p v-if="signerUnlocked && !signerSigningEnabled" class="crypto-view__hint">
+                {{ t('admin.crypto.signerApprovalMissing') }}
+              </p>
 
               <div v-if="!signerUnlocked" class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.signerPassphrase') }}</label>
@@ -842,6 +846,7 @@ const healthError = ref('')
 const exporting = ref(false)
 
 const signerUnlocked = ref(false)
+const signerSigningEnabled = ref(false)
 const loadingHotAddress = ref(false)
 const hotAddressNote = ref('')
 const loadingSigner = ref(false)
@@ -1364,10 +1369,12 @@ async function loadSignerStatus() {
   try {
     const st = await getSignerStatus()
     signerUnlocked.value = st.unlocked
+    signerSigningEnabled.value = st.signing_enabled === true
   } catch {
     // A locked or unreachable signer is not an error the page must shout
     // about: the lock badge already tells the operator what to do.
     signerUnlocked.value = false
+    signerSigningEnabled.value = false
   } finally {
     loadingSigner.value = false
   }

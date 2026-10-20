@@ -90,8 +90,9 @@ type Record struct {
 
 // SignerStatus is the signer's lock state, as reported by /healthz.
 type SignerStatus struct {
-	OK       bool `json:"ok"`
-	Unlocked bool `json:"unlocked"`
+	OK             bool `json:"ok"`
+	Unlocked       bool `json:"unlocked"`
+	SigningEnabled bool `json:"signing_enabled"`
 }
 
 // Status reports whether the signer holds the seeds. A locked signer refuses
