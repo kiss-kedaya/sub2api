@@ -664,6 +664,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// Generate session hash (header first; fallback to prompt_cache_key)
 	sessionHash := h.gatewayService.GenerateSessionHash(c, sessionHashBody)
+	if h.rejectIfGrokModerationSessionBlocked(c, apiKey, sessionHashBody) {
+		return
+	}
 	if h.rejectIfCyberSessionBlocked(c, apiKey, sessionHashBody, reqModel, cyberBlockFormatResponses) {
 		return
 	}
@@ -949,6 +952,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if h.handleGrokModerationRefusal(c, apiKey, account, sessionHashBody, reqModel, reqStream, result, err, submitResponsesUsage) {
+				return
+			}
 			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionHash, account, err)
 			if result != nil && result.ClientDisconnect {
 				reqLog.Info("openai.client_disconnected",
@@ -1388,6 +1394,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
 	sessionHash, promptCacheKey = resolveOpenAIMessagesMetadataSession(c, sessionHash, promptCacheKey, reqModel, body)
+	if h.rejectIfGrokModerationSessionBlocked(c, apiKey, body) {
+		return
+	}
 	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatAnthropic) {
 		return
 	}
@@ -1613,6 +1622,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if h.handleGrokModerationRefusal(c, apiKey, account, body, reqModel, reqStream, result, err, submitMessagesUsage) {
+				return
+			}
 			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionHash, account, err)
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_messages.forward_partial_error_with_image_result",
@@ -2403,6 +2415,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 	// The first response.create frame is available here, so explicit IDs are
 	// checked directly and body-derived sessions use the coarse scope gate.
+	if h.grokModerationSessionBlocked(c, apiKey, firstMessage) {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.GrokModerationRefusalMessage())
+		return
+	}
 	if cyberBlockKey := findBlockedCyberSessionKey(c.Request.Context(), h.gatewayService, apiKey.ID, c, firstMessage); cyberBlockKey != "" {
 		writeCyberSessionBlockedWSError(c.Request.Context(), wsConn)
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "session blocked by cyber-security policy")
@@ -2803,6 +2819,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				c.Set(securityAuditWSTurnContextKey, turn)
 				service.BeginOpsStreamTurn(c, turn)
 				setCyberTurnBody(turn, payload)
+				if h.grokModerationSessionBlocked(c, apiKey, firstMessage) || h.grokModerationSessionBlocked(c, apiKey, payload) {
+					return nil, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, service.GrokModerationRefusalMessage(), nil)
+				}
 				// 连接级 cyber session gate 也在 BeforeRequest 先执行，使 native 与
 				// passthrough ingress 都能在 BeforeTurn 及上游写入前无副作用地拒绝。
 				// BeforeTurn 中保留同一检查作为防御式兜底。
