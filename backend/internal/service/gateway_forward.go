@@ -14,7 +14,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
-	"github.com/tidwall/gjson"
 
 	"github.com/gin-gonic/gin"
 )
@@ -794,27 +793,8 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			if errors.As(err, &sseErr) {
 				// 上游 HTTP 200 + SSE 流体内出现 event:error 帧。
 				body := []byte(sseErr.RawData)
-				errorType := strings.TrimSpace(gjson.GetBytes(body, "error.type").String())
-				semanticStatus := http.StatusForbidden
-				if c.Writer.Size() == writerSizeBeforeStream {
-					semanticStatus = http.StatusBadGateway
-					switch errorType {
-					case "overloaded_error":
-						semanticStatus = 529
-					case "rate_limit_error":
-						semanticStatus = http.StatusTooManyRequests
-					case "invalid_request_error":
-						semanticStatus = http.StatusBadRequest
-					case "authentication_error":
-						semanticStatus = http.StatusUnauthorized
-					case "permission_error":
-						semanticStatus = http.StatusForbidden
-					case "not_found_error":
-						semanticStatus = http.StatusNotFound
-					case "api_error", "server_error":
-						semanticStatus = http.StatusInternalServerError
-					}
-				}
+				// 流内错误的语义由 payload 决定，与是否已经出字无关。
+				semanticStatus, errorType, _ := anthropicStreamErrorSemantics(sseErr.RawData)
 				if c.Writer.Size() == writerSizeBeforeStream && errorType == "overloaded_error" {
 					syntheticResp := &http.Response{
 						StatusCode: semanticStatus,
@@ -857,8 +837,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				)
 
 				return nil, &UpstreamFailoverError{
-					StatusCode:   semanticStatus,
-					ResponseBody: body,
+					StatusCode:       semanticStatus,
+					ClientStatusCode: semanticStatus,
+					ResponseBody:     body,
 				}
 			}
 			// 流中断（缺失 terminal 事件、读错误、数据间隔超时等）时保留已观测到的
