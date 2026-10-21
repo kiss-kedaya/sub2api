@@ -68,6 +68,14 @@ type openAIWSFirstRefusalHTTPUpstream struct {
 	client *http.Client
 }
 
+type openAIWSFirstRefusalAccountRepo struct {
+	openAIWSUsageHandlerAccountRepoStub
+}
+
+func (*openAIWSFirstRefusalAccountRepo) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
+	return nil
+}
+
 func (u *openAIWSFirstRefusalHTTPUpstream) Do(request *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	return u.client.Do(request)
 }
@@ -123,7 +131,7 @@ func newOpenAIWSFirstRefusalHarness(t *testing.T, platform, upstreamURL string, 
 	billing := &openAIWSFirstRefusalBillingRepo{}
 	upstream := &openAIWSFirstRefusalHTTPUpstream{client: &http.Client{Timeout: 3 * time.Second}}
 	gateway := service.NewOpenAIGatewayService(
-		&openAIWSUsageHandlerAccountRepoStub{account: account}, usage, billing,
+		&openAIWSFirstRefusalAccountRepo{openAIWSUsageHandlerAccountRepoStub{account: account}}, usage, billing,
 		nil, nil, nil, repository.NewGatewayCache(redisClient), cfg, nil, nil,
 		service.NewBillingService(cfg, nil), nil, billingCache, upstream, &service.DeferredService{},
 		nil, nil, nil, nil, nil, nil, nil,
@@ -209,6 +217,16 @@ func TestOpenAIResponsesWebSocketFirstUpstreamRefusal(t *testing.T) {
 			name: "grok_http_bridge_short_refusal_custom_price", platform: service.PlatformGrok, model: "grok-4.7",
 			refusal:     `{"error":{"message":"I'm sorry. Failed check: SAFETY_CHECK_TYPE"}}`,
 			closeReason: service.GrokModerationRefusalMessage(), price: 0.25, wantBills: 1,
+		},
+		{
+			name: "grok_http_bridge_global_ip_blacklist_custom_price", platform: service.PlatformGrok, model: "grok-4.7",
+			refusal:     `{"error":{"message":"blocked by global ip blacklist"}}`,
+			closeReason: service.GlobalIPBlacklistSessionBlockedMessage(), price: 0.25, wantBills: 1,
+		},
+		{
+			name: "grok_http_bridge_global_ip_blacklist_zero_price", platform: service.PlatformGrok, model: "grok-4.7",
+			refusal:     `{"error":{"message":"blocked by global ip blacklist"}}`,
+			closeReason: service.GlobalIPBlacklistSessionBlockedMessage(), price: 0, wantBills: 1,
 		},
 		{
 			name: "openai_passthrough_blacklist_error", platform: service.PlatformOpenAI, model: "gpt-5.1",
@@ -297,16 +315,18 @@ func TestOpenAIResponsesWebSocketFirstUpstreamRefusal(t *testing.T) {
 			assertBilling := func() {
 				t.Helper()
 				logs, commands := harness.usage.snapshot(), harness.billing.snapshot()
-				require.Len(t, logs, fixture.wantBills, "only a Grok content refusal may create a usage record")
-				require.Len(t, commands, fixture.wantBills, "blacklist and blocked reconnects must never debit the balance")
+				require.Len(t, logs, fixture.wantBills, "only a Grok actual 403 refusal may create a usage record")
+				require.Len(t, commands, fixture.wantBills, "other platforms and blocked reconnects must never debit the balance")
 				if fixture.wantBills == 0 {
 					return
 				}
 				require.InDelta(t, fixture.price, commands[0].BalanceCost, 1e-8, "refusal price must not use the 0.07 group multiplier")
 				require.InDelta(t, fixture.price, logs[0].ActualCost, 1e-8)
 				require.InDelta(t, fixture.price, logs[0].TotalCost, 1e-8)
-				require.NotNil(t, logs[0].BillingMode)
-				require.Equal(t, "per_request", *logs[0].BillingMode)
+				if fixture.price > 0 {
+					require.NotNil(t, logs[0].BillingMode)
+					require.Equal(t, "per_request", *logs[0].BillingMode)
+				}
 				require.True(t, logs[0].OpenAIWSMode)
 				require.True(t, logs[0].Stream)
 			}
@@ -329,41 +349,112 @@ func TestOpenAIResponsesWebSocketFirstUpstreamRefusal(t *testing.T) {
 
 func TestOpenAIResponsesWebSocketServerErrorWithRefusalTextDoesNotBillOrBlock(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	for _, refusal := range []string{
+		`{"error":{"message":"I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}`,
+		`{"error":{"message":"blocked by global ip blacklist"}}`,
+	} {
+		for _, status := range []int{http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, 529} {
+			t.Run(http.StatusText(status)+"/"+refusal, func(t *testing.T) {
+				var upstreamCalls atomic.Int32
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					upstreamCalls.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(status)
+					_, _ = io.WriteString(w, refusal)
+				}))
+				defer upstream.Close()
+				harness := newOpenAIWSFirstRefusalHarness(t, service.PlatformGrok, upstream.URL, 0.1)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				conn, _, err := coderws.Dial(ctx, harness.url, &coderws.DialOptions{HTTPHeader: harness.headers})
+				require.NoError(t, err)
+				defer func() { _ = conn.CloseNow() }()
+				payload := []byte(`{"type":"response.create","model":"grok-4.7","input":"hello"}`)
+				require.NoError(t, conn.Write(ctx, coderws.MessageText, payload))
+				for {
+					_, _, err = conn.Read(ctx)
+					if err != nil {
+						break
+					}
+				}
+				require.NotEqual(t, coderws.StatusPolicyViolation, coderws.CloseStatus(err), "a 500 must not become a content refusal")
+				select {
+				case <-harness.handlerDone:
+				case <-ctx.Done():
+					t.Fatal("500 websocket handler did not finish")
+				}
+				require.EqualValues(t, 1, upstreamCalls.Load())
+				require.Empty(t, harness.usage.snapshot())
+				require.Empty(t, harness.billing.snapshot())
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodGet, "/openai/v1/responses", nil)
+				c.Request.Header = harness.headers.Clone()
+				hash := service.GrokModerationSessionHash(c, harness.apiKey, payload)
+				require.NotEmpty(t, hash)
+				require.False(t, harness.redisServer.Exists("blocked:sess:0:"+hash))
+			})
+		}
+	}
+}
+
+func TestOpenAIResponsesWebSocketSSE403RefusalBillsAndBlocks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const refusalMessage = "I'm sorry, I can't help with that request."
+	refusalFrame := `{"type":"response.failed","response":{"id":"resp_sse_refusal","status":"failed","error":{"status_code":403,"type":"upstream_error","message":"` + refusalMessage + `"},"usage":{"input_tokens":8,"output_tokens":1}}}`
 	var upstreamCalls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		upstreamCalls.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = io.WriteString(w, `{"error":{"message":"I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}`)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, err := io.WriteString(w, "event: response.failed\ndata: "+refusalFrame+"\n\n")
+		if err != nil {
+			t.Errorf("write refusal SSE frame: %v", err)
+		}
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
 	}))
 	defer upstream.Close()
+
 	harness := newOpenAIWSFirstRefusalHarness(t, service.PlatformGrok, upstream.URL, 0.1)
+	payload := []byte(`{"type":"response.create","model":"grok-4.7","input":"hello"}`)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	conn, _, err := coderws.Dial(ctx, harness.url, &coderws.DialOptions{HTTPHeader: harness.headers})
 	require.NoError(t, err)
 	defer func() { _ = conn.CloseNow() }()
-	payload := []byte(`{"type":"response.create","model":"grok-4.7","input":"hello"}`)
 	require.NoError(t, conn.Write(ctx, coderws.MessageText, payload))
-	for {
-		_, _, err = conn.Read(ctx)
-		if err != nil {
-			break
-		}
-	}
-	require.NotEqual(t, coderws.StatusPolicyViolation, coderws.CloseStatus(err), "a 500 must not become a content refusal")
+	_, frame, err := conn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, refusalFrame, string(frame), "relay the upstream response.failed payload unchanged")
+	_, _, err = conn.Read(ctx)
+	require.Error(t, err)
+	var closeErr coderws.CloseError
+	require.ErrorAs(t, err, &closeErr)
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	require.Equal(t, service.GrokModerationRefusalMessage(), closeErr.Reason)
 	select {
 	case <-harness.handlerDone:
 	case <-ctx.Done():
-		t.Fatal("500 websocket handler did not finish")
+		t.Fatal("SSE refusal websocket handler did not finish")
 	}
-	require.EqualValues(t, 1, upstreamCalls.Load())
-	require.Empty(t, harness.usage.snapshot())
-	require.Empty(t, harness.billing.snapshot())
+
+	require.EqualValues(t, 1, upstreamCalls.Load(), "a protocol-level 403 refusal must not retry")
+	require.Len(t, harness.usage.snapshot(), 1)
+	commands := harness.billing.snapshot()
+	require.Len(t, commands, 1)
+	require.InDelta(t, 0.1, commands[0].BalanceCost, 1e-8)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodGet, "/openai/v1/responses", nil)
 	c.Request.Header = harness.headers.Clone()
 	hash := service.GrokModerationSessionHash(c, harness.apiKey, payload)
 	require.NotEmpty(t, hash)
-	require.False(t, harness.redisServer.Exists("blocked:sess:0:"+hash))
+	blockKey := "blocked:sess:0:" + hash
+	require.True(t, harness.redisServer.Exists(blockKey), "protocol-level refusal must persist the conversation block")
+
+	blockedClose := harness.request(t, payload, "")
+	require.Equal(t, service.GrokModerationRefusalMessage(), blockedClose.Reason)
+	require.EqualValues(t, 1, upstreamCalls.Load(), "reconnect to a blocked conversation must stay local")
+	require.Len(t, harness.usage.snapshot(), 1)
+	require.Len(t, harness.billing.snapshot(), 1)
 }

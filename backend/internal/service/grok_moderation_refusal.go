@@ -66,8 +66,8 @@ func newGlobalIPBlacklistFailoverError(status int, headers http.Header, body []b
 	}
 }
 
-// Both refusal classes block the same authenticated conversation. IP failures
-// do not receive a moderation fee; only their persistent admission gate is shared.
+// Both refusal classes block the same authenticated conversation. Grok's actual
+// 403 IP blacklist responses share its fixed fee; other platforms do not bill.
 func (s *OpenAIGatewayService) BlockGlobalIPBlacklistSession(ctx context.Context, c *gin.Context, key *APIKey, body []byte) {
 	s.BlockGrokModerationRefusedRequest(ctx, c, key, body)
 }
@@ -84,7 +84,7 @@ func IsGrokModerationRefusal(platform string, body []byte) bool {
 		return false
 	}
 	text := strings.ToLower(string(body))
-	return strings.Contains(text, grokModerationRefusalText) || isGrokContentPolicyRejection(403, body)
+	return strings.Contains(text, grokModerationRefusalText) || isGrokContentPolicyRejection(403, body) || IsGlobalIPBlacklistResponse(body)
 }
 
 func IsGrokModerationRefusalResponse(platform string, statusCode int, body []byte) bool {
@@ -104,12 +104,16 @@ func IsGrokModerationRefusalFailure(platform string, body []byte, err error) boo
 	if err != nil {
 		return false
 	}
+	return IsGrokModerationRefusalResponse(platform, grokModerationRefusalProtocolStatus(body), body)
+}
+
+func grokModerationRefusalProtocolStatus(body []byte) int {
 	for _, path := range []string{"status", "status_code", "error.status_code", "response.error.status_code"} {
 		if status := int(gjson.GetBytes(body, path).Int()); status != 0 {
-			return IsGrokModerationRefusalResponse(platform, status, body)
+			return status
 		}
 	}
-	return false
+	return 0
 }
 
 func GrokModerationRefusalBillingCost() float64 { return grokModerationRefusalBillingCost }

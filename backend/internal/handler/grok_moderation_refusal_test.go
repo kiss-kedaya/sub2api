@@ -93,6 +93,8 @@ func TestGrokModerationRefusalBillsOnceAndBlocksBeforeUpstream(t *testing.T) {
 		for _, refusal := range []string{
 			`{"error":{"message":"I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}`,
 			`{"error":{"message":"I'm sorry. Failed check: SAFETY_CHECK_TYPE"}}`,
+			`{"error":{"message":"I'm sorry, I can't help with that request.","type":"upstream_error"}}`,
+			`{"error":{"message":"blocked by global ip blacklist"}}`,
 		} {
 			for _, price := range []float64{0.1, 0.25, 0} {
 				t.Run(endpoint+"/"+refusal+"/"+strconv.FormatFloat(price, 'f', 2, 64), func(t *testing.T) {
@@ -140,6 +142,7 @@ func TestGrokModerationRefusalBillsOnceAndBlocksBeforeUpstream(t *testing.T) {
 					}
 					first := call(endpoint, "grok-4.7")
 					require.Equal(t, 403, first.Code, first.Body.String())
+					require.Equal(t, refusal, first.Body.String(), "return the exact upstream refusal body")
 					require.Equal(t, 1, upstream.calls, "refusal must not retry or switch accounts")
 					require.NotNil(t, logs.last, "ordinary error must still write a usage record")
 					require.NotNil(t, ledger.last)
@@ -163,13 +166,12 @@ func TestGrokModerationRefusalBillsOnceAndBlocksBeforeUpstream(t *testing.T) {
 	}
 }
 
-func TestGlobalIPBlacklistBlocksSessionWithoutBilling(t *testing.T) {
+func TestNonGrokGlobalIPBlacklistBlocksSessionWithoutBilling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, fixture := range []struct {
 		name, platform, model string
 		passthrough           bool
 	}{
-		{"grok", service.PlatformGrok, "grok-4.7", false},
 		{"openai", service.PlatformOpenAI, "gpt-5.1", false},
 		{"openai-passthrough", service.PlatformOpenAI, "gpt-5.1", true},
 		{"deepseek", service.PlatformDeepseek, "deepseek-chat", false},
@@ -200,7 +202,7 @@ func TestGlobalIPBlacklistBlocksSessionWithoutBilling(t *testing.T) {
 					refusalPrice := 0.25
 					key := &service.APIKey{ID: 55, UserID: 77, GroupID: &groupID, User: &service.User{ID: 77, Balance: 100, Status: service.StatusActive},
 						Group: &service.Group{ID: groupID, Platform: fixture.platform, Status: service.StatusActive, Hydrated: true,
-					CrossProtocolConversionEnabled: true, AllowMessagesDispatch: true, RateMultiplier: 0.07, GrokModerationRefusalPrice: &refusalPrice}}
+							CrossProtocolConversionEnabled: true, AllowMessagesDispatch: true, RateMultiplier: 0.07, GrokModerationRefusalPrice: &refusalPrice}}
 					call := func(nextEndpoint, model string) *httptest.ResponseRecorder {
 						body := `{"model":"` + model + `","stream":false,"input":"hello","messages":[{"role":"user","content":"hello"}],"max_tokens":128}`
 						rec := httptest.NewRecorder()
@@ -237,6 +239,37 @@ func TestGlobalIPBlacklistBlocksSessionWithoutBilling(t *testing.T) {
 						require.Nil(t, ledger.last, "local block must not create another ledger entry")
 					}
 				})
+			}
+		})
+	}
+}
+
+func TestGrokGlobalIPBlacklistFeeRequiresReal403(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	price := 0.25
+	key := &service.APIKey{UserID: 77, Group: &service.Group{GrokModerationRefusalPrice: &price}}
+	account := &service.Account{Platform: service.PlatformGrok}
+	for _, status := range []int{403, 429, 500, 502, 529} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			cache := &grokRefusalCache{blocked: map[string]bool{}}
+			svc := service.NewOpenAIGatewayService(nil, nil, nil, nil, nil, nil, cache, nil, nil, nil,
+				nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			h := &OpenAIGatewayHandler{gatewayService: svc}
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			c.Request.Header.Set("Session_id", "actual-status-fixture")
+			var billed *service.OpenAIForwardResult
+			err := &service.UpstreamFailoverError{StatusCode: status, ResponseBody: []byte(`{"error":{"message":"blocked by global ip blacklist"}}`)}
+			handled := h.handleGrokModerationRefusal(c, key, account, nil, "grok-4.7", false, nil, err, func(result *service.OpenAIForwardResult) { billed = result })
+			require.Equal(t, status == http.StatusForbidden, handled)
+			require.Equal(t, status == http.StatusForbidden, h.grokModerationSessionBlocked(c, key, nil), "only an actual Grok 403 may persist the conversation block")
+			if status == http.StatusForbidden {
+				require.NotNil(t, billed)
+				require.Equal(t, price, billed.ForcedBillingCost)
+				require.True(t, billed.ForceBalanceBilling)
+			} else {
+				require.Nil(t, billed, "IP refusal text in 429/5xx is never a fixed fee")
 			}
 		})
 	}
