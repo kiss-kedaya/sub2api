@@ -183,7 +183,33 @@ func (s *TotpService) InitiateSetup(ctx context.Context, userID int64, emailCode
 		return nil, err
 	}
 	defer unlock()
-	return s.initiateSetup(ctx, userID, emailCode, password, "")
+	return s.initiateSetup(ctx, userID, emailCode, password, "", false)
+}
+
+// InitiateSetupForSession binds administrator enrollment to the validated JWT
+// session when payment verification is configured, while retaining the normal
+// email/password identity check for the general TOTP flow.
+func (s *TotpService) InitiateSetupForSession(ctx context.Context, userID int64, emailCode, password, sessionID string) (*TotpSetupResponse, error) {
+	if !s.settingService.IsTotpEnabled(ctx) {
+		return nil, ErrTotpNotEnabled
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, ErrTotpUnavailable
+	}
+	binding := ""
+	if user.IsAdmin() && s.cryptoSecurity != nil && s.cryptoSecurity.ready() {
+		if sessionID == "" {
+			return nil, ErrCryptoAdminRequired
+		}
+		binding = s.cryptoSecurity.digest("session", userID, sessionID)
+	}
+	unlock, err := s.lockEnrollment(ctx, userID, "setup", 5)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return s.initiateSetup(ctx, userID, emailCode, password, binding, false)
 }
 
 // General and payment endpoints mutate the same user secret. Use the same
@@ -209,7 +235,7 @@ func (s *TotpService) lockEnrollment(ctx context.Context, userID int64, action s
 	return s.cryptoSecurity.lockSetup(ctx, userID)
 }
 
-func (s *TotpService) initiateSetup(ctx context.Context, userID int64, emailCode, password, cryptoSession string) (*TotpSetupResponse, error) {
+func (s *TotpService) initiateSetup(ctx context.Context, userID int64, emailCode, password, cryptoSession string, skipIdentity bool) (*TotpSetupResponse, error) {
 	// Get user and check if TOTP is already enabled
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -223,8 +249,10 @@ func (s *TotpService) initiateSetup(ctx context.Context, userID int64, emailCode
 		return nil, ErrCryptoAdminRequired
 	}
 
-	if err := s.verifyIdentity(ctx, user, emailCode, password); err != nil {
-		return nil, err
+	if !skipIdentity {
+		if err := s.verifyIdentity(ctx, user, emailCode, password); err != nil {
+			return nil, err
+		}
 	}
 
 	// Generate a new TOTP key
@@ -285,6 +313,33 @@ func (s *TotpService) CompleteSetup(ctx context.Context, userID int64, totpCode,
 	}
 	defer unlock()
 	return s.completeSetup(ctx, userID, totpCode, setupToken, "", nil)
+}
+
+// CompleteSetupForSession rejects attempts to finish an administrator's setup
+// from a different JWT session than the one that generated its QR code.
+func (s *TotpService) CompleteSetupForSession(ctx context.Context, userID int64, totpCode, setupToken, sessionID string) error {
+	if !s.settingService.IsTotpEnabled(ctx) {
+		return ErrTotpNotEnabled
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		return ErrTotpUnavailable
+	}
+	binding := ""
+	var consume func(int64) error
+	if user.IsAdmin() && s.cryptoSecurity != nil && s.cryptoSecurity.ready() {
+		if sessionID == "" {
+			return ErrCryptoAdminRequired
+		}
+		binding = s.cryptoSecurity.digest("session", userID, sessionID)
+		consume = func(counter int64) error { return s.cryptoSecurity.consume(ctx, userID, counter, totpCode) }
+	}
+	unlock, err := s.lockEnrollment(ctx, userID, "enable", 10)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.completeSetup(ctx, userID, totpCode, setupToken, binding, consume)
 }
 
 func (s *TotpService) completeSetup(ctx context.Context, userID int64, code, token, binding string, consume func(int64) error) error {

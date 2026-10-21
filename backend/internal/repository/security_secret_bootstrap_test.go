@@ -75,6 +75,25 @@ func TestEnsureBootstrapSecretsLoadExistingJWTSecret(t *testing.T) {
 	require.Equal(t, "existing-jwt-secret-32bytes-long!!!!", cfg.JWT.Secret)
 }
 
+func TestEnsureBootstrapSecretsReadOnlyTestModeNeverCreatesJWTSecret(t *testing.T) {
+	for _, mode := range []string{"1", "t", "malformed"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("CRYPTO_ADMIN_TEST_MODE", mode)
+			client := newSecuritySecretTestClient(t)
+			cfg := &config.Config{JWT: config.JWTConfig{Secret: "crypto-test-jwt-secret-never-reused-0001"}}
+			err := ensureBootstrapSecrets(context.Background(), client, cfg)
+			require.NoError(t, err)
+			require.Equal(t, "crypto-test-jwt-secret-never-reused-0001", cfg.JWT.Secret)
+			count, countErr := client.SecuritySecret.Query().Count(context.Background())
+			require.NoError(t, countErr)
+			require.Zero(t, count)
+
+			missing := &config.Config{}
+			require.ErrorContains(t, ensureBootstrapSecrets(context.Background(), client, missing), "separate JWT_SECRET")
+		})
+	}
+}
+
 func TestEnsureBootstrapSecretsRejectInvalidStoredSecret(t *testing.T) {
 	client := newSecuritySecretTestClient(t)
 	_, err := client.SecuritySecret.Create().SetKey(securitySecretKeyJWT).SetValue("too-short").Save(context.Background())

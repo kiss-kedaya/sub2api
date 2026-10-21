@@ -43,6 +43,7 @@ type CryptoSecurityStatus struct {
 	Enabled        bool `json:"enabled"`
 	FeatureEnabled bool `json:"feature_enabled"`
 	CanSetup       bool `json:"can_setup"`
+	ReadOnly       bool `json:"read_only"`
 }
 
 // CryptoSecurityService reuses TotpService's user secret, encryption, enrollment
@@ -129,7 +130,11 @@ func (s *CryptoSecurityService) Status(ctx context.Context, userID int64) (*Cryp
 		return nil, err
 	}
 	enabled := u.TotpEnabled && u.TotpSecretEncrypted != nil && *u.TotpSecretEncrypted != ""
-	return &CryptoSecurityStatus{Enabled: enabled, FeatureEnabled: s.ready(), CanSetup: !u.TotpEnabled && s.ready()}, nil
+	return &CryptoSecurityStatus{
+		Enabled: enabled, FeatureEnabled: s.ready(),
+		CanSetup: !u.TotpEnabled && s.ready() && !CryptoAdminTestMode(),
+		ReadOnly: CryptoAdminTestMode(),
+	}, nil
 }
 
 func (s *CryptoSecurityService) limit(ctx context.Context, userID int64, action string, max int, ttl time.Duration) error {
@@ -241,9 +246,9 @@ func (s *CryptoSecurityService) lockSetup(ctx context.Context, userID int64) (fu
 	}, nil
 }
 
-// InitiateSetup confirms the password once and binds existing TOTP enrollment
-// to this user and JWT session. The global login feature switch is irrelevant.
-func (s *CryptoSecurityService) InitiateSetup(ctx context.Context, userID int64, sessionID, password string) (*TotpSetupResponse, error) {
+// InitiateSetup binds payment TOTP enrollment to the authenticated JWT session.
+// The setup token and first TOTP code prove possession of the new authenticator.
+func (s *CryptoSecurityService) InitiateSetup(ctx context.Context, userID int64, sessionID string) (*TotpSetupResponse, error) {
 	if _, err := s.CurrentOperator(ctx, userID); err != nil {
 		return nil, err
 	}
@@ -258,7 +263,7 @@ func (s *CryptoSecurityService) InitiateSetup(ctx context.Context, userID int64,
 		return nil, err
 	}
 	defer unlock()
-	return s.totp.initiateSetup(ctx, userID, "", password, s.digest("session", userID, sessionID))
+	return s.totp.initiateSetup(ctx, userID, "", "", s.digest("session", userID, sessionID), true)
 }
 
 // Enable completes the shared enrollment with a six-digit code, never a
