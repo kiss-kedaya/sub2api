@@ -8,6 +8,7 @@ package handler
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -291,7 +292,12 @@ func writeCryptoDepositCSV(ctx context.Context, output io.Writer, fetch func(con
 		if err != nil {
 			return err
 		}
+		previousID := beforeID
 		for _, r := range records {
+			if r.ID <= 0 || (previousID > 0 && r.ID >= previousID) {
+				return errors.New("deposit export cursor did not advance")
+			}
+			previousID = r.ID
 			if err := w.Write([]string{
 				csvCell(strconv.FormatInt(r.ID, 10)), csvCell(r.Chain), csvCell(r.TxHash),
 				strconv.Itoa(r.LogIndex), csvCell(r.FromAddress), csvCell(r.ToAddress),
