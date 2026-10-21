@@ -36,7 +36,7 @@ describe('Crypto request contract (not backend authorization)', () => {
     expect(client.post.mock.lastCall?.[2].headers).toEqual({ 'X-Crypto-TOTP': '345678' })
   })
 
-  it('adds the code to each mutation and CSV request, never to ordinary GETs', async () => {
+  it('adds the code to mutations, sensitive config reads and CSV requests, never to ordinary GETs', async () => {
     const verification = { totpCode: '123456' }
     await api.updateCryptoConfig({ rpc: { bsc: 'https://rpc.example' } }, verification)
     await api.setAddressStatus(8, 'disabled', verification)
@@ -54,6 +54,11 @@ describe('Crypto request contract (not backend authorization)', () => {
     }
     expect(client.get.mock.calls[0][1].headers).toEqual({ 'X-Crypto-TOTP': '123456' })
     client.get.mockClear()
+    await api.getCryptoConfig('234567')
+    expect(client.get).toHaveBeenLastCalledWith('/admin/crypto/config', {
+      headers: { 'X-Crypto-TOTP': '234567' }, _retry: true
+    })
+    client.get.mockClear()
     await api.getHotWalletAddress()
     await api.getWalletStatus()
     await api.getCryptoSecurityStatus()
@@ -68,7 +73,8 @@ describe('Crypto request contract (not backend authorization)', () => {
     expect(await api.getCryptoSecurityStatus()).toEqual(status)
     const setup = { secret: 'KEY', qr_code_url: 'otpauth://totp/test', setup_token: 'TOKEN', countdown: 90 }
     client.post.mockResolvedValueOnce({ data: setup })
-    expect(await api.setupCryptoSecurity('password')).toEqual(setup)
+    expect(await api.setupCryptoSecurity()).toEqual(setup)
+    expect(client.post).toHaveBeenLastCalledWith('/admin/crypto/security/setup', {}, { headers: {}, _retry: true })
     client.post.mockResolvedValueOnce({ data: { saved: true } })
     expect(await api.importHotMnemonic('vault', 'gas words', { totpCode: '234567' })).toEqual({ saved: true })
     expect(client.post.mock.lastCall?.[0]).toBe('/admin/crypto/wallet/hot-mnemonic')

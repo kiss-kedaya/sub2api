@@ -104,7 +104,7 @@ func jwtAuth(
 		c.Set(string(ContextKeyUserRole), user.Role)
 		c.Set(ContextKeyAuthEmail, user.Email)
 		c.Set(ContextKeySessionID, claims.SessionID)
-		if activityToucher != nil {
+		if activityToucher != nil && !service.CryptoAdminTestMode() {
 			activityToucher.TouchLastActiveForUser(c.Request.Context(), user)
 		}
 

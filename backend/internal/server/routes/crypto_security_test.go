@@ -462,6 +462,7 @@ func TestCryptoAdminEveryRiskRouteRejectsInvalidTotp(t *testing.T) {
 		{http.MethodPost, "/api/v1/admin/crypto/wallet/hot-mnemonic"},
 		{http.MethodPost, "/api/v1/admin/crypto/rpc/test"},
 		{http.MethodPost, "/api/v1/admin/crypto/rpc/auto-pick"},
+		{http.MethodGet, "/api/v1/admin/crypto/config"},
 		{http.MethodGet, "/api/v1/admin/crypto/deposits.csv"},
 	}
 	for _, tc := range cases {
@@ -505,7 +506,11 @@ func TestCryptoAdminConfigResponseIsNotCacheable(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
 	h := newCryptoRouteHarness(t, activeCryptoAdmin())
-	response := cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config", "", nil, "127.0.0.1:1234", "localhost")
+	noCode := cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config", "", nil, "127.0.0.1:1234", "localhost")
+	requireCryptoReason(t, noCode, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
+	code, err := totp.GenerateCode(cryptoRouteTotpSecret, time.Now())
+	require.NoError(t, err)
+	response := cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config", code, nil, "127.0.0.1:1234", "localhost")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
 	require.Equal(t, "no-cache", response.Header().Get("Pragma"))
@@ -533,7 +538,7 @@ func TestCryptoSensitiveAdminReadsRequireSecureTransport(t *testing.T) {
 	}
 }
 
-func TestCryptoAdminTestModeIsReadOnlyExceptTwoFactorSetup(t *testing.T) {
+func TestCryptoAdminTestModeIsReadOnlyAndRequiresProductionTwoFactorEnrollment(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
 	user := &service.User{ID: 94, Email: "admin@example.test", Role: service.RoleAdmin, Status: service.StatusActive}
@@ -565,8 +570,8 @@ func TestCryptoAdminTestModeIsReadOnlyExceptTwoFactorSetup(t *testing.T) {
 	status := cryptoRouteRequestBody(h.router, http.MethodGet, "/api/v1/admin/crypto/security/status", "", "", nil, "127.0.0.1:1234", "localhost")
 	require.Equal(t, http.StatusOK, status.Code, status.Body.String())
 	setup := cryptoRouteRequestBody(h.router, http.MethodPost, "/api/v1/admin/crypto/security/setup",
-		`{"password":"initial-binding-password"}`, "", nil, "127.0.0.1:1234", "localhost")
-	require.Equal(t, http.StatusOK, setup.Code, setup.Body.String())
+		`{}`, "", nil, "127.0.0.1:1234", "localhost")
+	requireCryptoReason(t, setup, http.StatusForbidden, "CRYPTO_TEST_MODE_READ_ONLY")
 }
 
 func TestCryptoSecuritySetupAndEnableHTTPFlowIgnoresGlobalTotpSwitch(t *testing.T) {
@@ -576,7 +581,7 @@ func TestCryptoSecuritySetupAndEnableHTTPFlowIgnoresGlobalTotpSwitch(t *testing.
 	require.NoError(t, user.SetPassword("first-binding-password"))
 	h := newCryptoRouteHarness(t, user)
 	setup := cryptoRouteRequestBody(h.router, http.MethodPost, "/api/v1/admin/crypto/security/setup",
-		`{"password":"first-binding-password"}`, "", nil, "127.0.0.1:1234", "localhost")
+		`{}`, "", nil, "127.0.0.1:1234", "localhost")
 	require.Equal(t, http.StatusOK, setup.Code, setup.Body.String())
 	require.Contains(t, setup.Header().Get("Cache-Control"), "no-store")
 	var setupEnvelope struct {
@@ -620,7 +625,7 @@ func TestCryptoSecuritySetupAndEnableHTTPFlowIgnoresGlobalTotpSwitch(t *testing.
 	require.Contains(t, status.Body.String(), `"can_setup":false`)
 
 	repeated := cryptoRouteRequestBody(h.router, http.MethodPost, "/api/v1/admin/crypto/security/setup",
-		`{"password":"first-binding-password"}`, "", nil, "127.0.0.1:1234", "localhost")
+		`{}`, "", nil, "127.0.0.1:1234", "localhost")
 	require.Equal(t, http.StatusBadRequest, repeated.Code)
 	require.Equal(t, "enc:"+base64.StdEncoding.EncodeToString([]byte(setupEnvelope.Data.Secret)), *user.TotpSecretEncrypted)
 

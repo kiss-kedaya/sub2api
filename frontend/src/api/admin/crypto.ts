@@ -93,8 +93,8 @@ export interface SweepSummary {
   entries: SweepEntry[]
 }
 
-export async function getCryptoConfig(): Promise<CryptoConfig> {
-  const { data } = await apiClient.get('/admin/crypto/config')
+export async function getCryptoConfig(totpCode?: string): Promise<CryptoConfig> {
+  const { data } = await apiClient.get('/admin/crypto/config', cryptoRequestOptions(totpCode ? { totpCode } : undefined))
   return data.data
 }
 
@@ -371,6 +371,7 @@ export interface CryptoSecurityStatus {
   enabled: boolean
   feature_enabled: boolean
   can_setup: boolean
+  read_only: boolean
 }
 
 export interface CryptoSecuritySetup {
@@ -387,8 +388,8 @@ export async function getCryptoSecurityStatus(): Promise<CryptoSecurityStatus> {
   return data
 }
 
-export async function setupCryptoSecurity(password: string): Promise<CryptoSecuritySetup> {
-  const { data } = await apiClient.post<CryptoSecuritySetup>('/admin/crypto/security/setup', { password }, cryptoRequestOptions())
+export async function setupCryptoSecurity(): Promise<CryptoSecuritySetup> {
+  const { data } = await apiClient.post<CryptoSecuritySetup>('/admin/crypto/security/setup', {}, cryptoRequestOptions())
   return data
 }
 

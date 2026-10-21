@@ -31,8 +31,8 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 	}
 	path := c.FullPath()
 	setup := c.Request.Method == http.MethodPost && (strings.HasSuffix(path, "/security/setup") || strings.HasSuffix(path, "/security/enable"))
-	risky := c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv")
-	if service.CryptoAdminTestMode() && risky && !setup {
+	risky := c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv") || strings.HasSuffix(path, "/config")
+	if service.CryptoAdminTestMode() && (c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv")) {
 		response.ErrorWithDetails(c, http.StatusForbidden, "crypto test instance is read-only", "CRYPTO_TEST_MODE_READ_ONLY", nil)
 		c.Abort()
 		return
@@ -171,12 +171,10 @@ func (h *CryptoHandler) AdminCryptoSecurityStatus(c *gin.Context) {
 	response.Success(c, status)
 }
 
-// AdminCryptoSecuritySetup confirms identity once and returns the shared seed.
+// AdminCryptoSecuritySetup returns a short-lived seed bound to the current JWT session.
 func (h *CryptoHandler) AdminCryptoSecuritySetup(c *gin.Context) {
 	cryptoNoStore(c)
-	var req struct {
-		Password string `json:"password"`
-	}
+	var req struct{}
 	if !decodeCryptoRequest(c, &req, 4<<10, "invalid setup request") {
 		return
 	}
@@ -185,7 +183,7 @@ func (h *CryptoHandler) AdminCryptoSecuritySetup(c *gin.Context) {
 		response.Unauthorized(c, "authentication required")
 		return
 	}
-	result, err := h.security.InitiateSetup(c.Request.Context(), subject.UserID, cryptoSessionID(c), req.Password)
+	result, err := h.security.InitiateSetup(c.Request.Context(), subject.UserID, cryptoSessionID(c))
 	if response.ErrorFrom(c, err) {
 		return
 	}

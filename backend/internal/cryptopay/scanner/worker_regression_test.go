@@ -409,6 +409,26 @@ func TestPendingDoesNotCreditIfAttemptPersistenceFailsOrRowChanged(t *testing.T)
 	}
 }
 
+func TestPendingReceiptNullNeverBecomesTerminalReorg(t *testing.T) {
+	tr := testTransfer()
+	fixture := newRPCFixture(tr)
+	fixture.receipt = nil
+	w, mock, handler := workerFixture(t, fixture)
+	for range missingReceiptThreshold {
+		expectObservation(mock, tr, "1", "")
+		expectObservationUpdate(mock, tr, "pending", "", "pending", "").WillReturnResult(sqlmock.NewResult(0, 1))
+		if err := w.retryPending(t.Context()); err != nil {
+			t.Fatalf("null receipt must remain retryable: %v", err)
+		}
+	}
+	if len(handler.processed) != 0 {
+		t.Fatal("pending transfer must not be credited while RPC has no receipt")
+	}
+	if got := fixture.callCount("eth_getTransactionReceipt"); got != missingReceiptThreshold {
+		t.Fatalf("receipt retries=%d, want %d", got, missingReceiptThreshold)
+	}
+}
+
 func TestCreditedMissingReceiptPersistsAcrossWorkerRestarts(t *testing.T) {
 	tr := testTransfer()
 	fixture := newRPCFixture(tr)

@@ -192,7 +192,7 @@ func TestCryptoSecurityRequiresDeploymentPinnedPaymentAdministrator(t *testing.T
 			_, err := security.Status(t.Context(), 7)
 			require.ErrorIs(t, err, ErrCryptoOperatorRequired)
 			require.ErrorIs(t, security.VerifyRisk(t.Context(), 7, cryptoSecurityTestCode(t, cryptoSecurityTestSecret)), ErrCryptoOperatorRequired)
-			_, err = security.InitiateSetup(t.Context(), 7, "session", "setup-password")
+			_, err = security.InitiateSetup(t.Context(), 7, "session")
 			require.ErrorIs(t, err, ErrCryptoOperatorRequired)
 			require.Zero(t, repo.writes)
 			require.Empty(t, cache.values)
@@ -254,26 +254,28 @@ func TestCryptoSecurityOrdinaryLoginTotpWithoutPaymentKey(t *testing.T) {
 	require.ErrorIs(t, security.VerifyRisk(ctx, 7, code), ErrCryptoTotpUnavailable)
 }
 
-func TestCryptoSecurityEnrollmentRequiresPasswordAndCannotReplaceBoundSeed(t *testing.T) {
+func TestCryptoSecurityEnrollmentNeedsNoPasswordAndCannotReplaceBoundSeed(t *testing.T) {
 	security, svc, repo, cache := newCryptoSecurityTestServices(t, false)
 	ctx := context.Background()
-	_, err := security.InitiateSetup(ctx, 7, "session", "")
-	require.ErrorIs(t, err, ErrPasswordRequired)
-	_, err = security.InitiateSetup(ctx, 7, "session", "wrong-password")
-	require.ErrorIs(t, err, ErrPasswordIncorrect)
-	require.Nil(t, cache.setup)
+	repo.user.PasswordHash = "not-used-for-payment-enrollment"
+	setup, err := security.InitiateSetup(ctx, 7, "session")
+	require.NoError(t, err)
+	require.NotNil(t, cache.setup)
+	code := cryptoSecurityTestCode(t, setup.Secret)
+	require.ErrorIs(t, security.Enable(ctx, 7, "other-session", code, setup.SetupToken), ErrCryptoTotpRequired)
+	require.NoError(t, security.Enable(ctx, 7, "session", code, setup.SetupToken))
 	repo.user.TotpEnabled = true
-	_, err = security.InitiateSetup(ctx, 7, "session", "setup-password")
+	_, err = security.InitiateSetup(ctx, 7, "session")
 	require.ErrorIs(t, err, ErrTotpAlreadyEnabled)
 	_, err = svc.InitiateSetup(ctx, 7, "", "setup-password")
 	require.ErrorIs(t, err, ErrTotpAlreadyEnabled)
-	require.Zero(t, repo.writes)
+	require.Equal(t, 2, repo.writes)
 }
 
 func TestCryptoSecurityPaymentEnrollmentBoundToSessionAndEndpoint(t *testing.T) {
 	security, svc, repo, _ := newCryptoSecurityTestServices(t, false)
 	ctx := context.Background()
-	setup, err := security.InitiateSetup(ctx, 7, "session-a", "setup-password")
+	setup, err := security.InitiateSetup(ctx, 7, "session-a")
 	require.NoError(t, err)
 	code := cryptoSecurityTestCode(t, setup.Secret)
 	require.ErrorIs(t, security.Enable(ctx, 7, "session-b", code, setup.SetupToken), ErrCryptoTotpRequired)
@@ -282,6 +284,18 @@ func TestCryptoSecurityPaymentEnrollmentBoundToSessionAndEndpoint(t *testing.T) 
 	require.NoError(t, security.Enable(ctx, 7, "session-a", code, setup.SetupToken))
 	require.ErrorIs(t, security.Enable(ctx, 7, "session-a", code, setup.SetupToken), ErrCryptoTotpReplayed)
 	require.ErrorIs(t, security.VerifyRisk(ctx, 7, code), ErrCryptoTotpReplayed)
+}
+
+func TestCryptoSecurityGeneralAdminEnrollmentCannotCrossJwtSessions(t *testing.T) {
+	_, svc, repo, _ := newCryptoSecurityTestServices(t, false)
+	ctx := context.Background()
+	setup, err := svc.InitiateSetupForSession(ctx, 7, "", "setup-password", "session-a")
+	require.NoError(t, err)
+	code := cryptoSecurityTestCode(t, setup.Secret)
+	require.ErrorIs(t, svc.CompleteSetupForSession(ctx, 7, code, setup.SetupToken, "session-b"), ErrTotpSetupExpired)
+	require.Zero(t, repo.writes)
+	require.NoError(t, svc.CompleteSetupForSession(ctx, 7, code, setup.SetupToken, "session-a"))
+	require.True(t, repo.user.TotpEnabled)
 }
 
 func TestCryptoSecurityGeneralEnrollmentSharesPaymentLock(t *testing.T) {
