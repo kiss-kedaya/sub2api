@@ -143,6 +143,7 @@ export default {
     securityVerifyAction: 'Verify and execute this operation',
     securityBound: 'Authenticator bound. The binding code has been consumed. Wait for the next new code, then start your operation again. The original operation will not run automatically.',
     securityUnavailable: 'Crypto two-factor verification cannot be configured or used right now. Check server feature settings and account eligibility. The operation has not run.',
+    securityOperatorRequired: 'This account is not authorized to manage payment wallets. Contact the deployment administrator. The operation has not run.',
     securitySetupExpired: 'Setup expired. Close this dialog and generate a new key. The original operation has not run.',
     securityNotConfigured: 'The server requires two-factor setup. Close this dialog and start the operation again to bind your authenticator.',
     securityExpired: 'The code or setup expired. Wait for a new code; if setup expired, close and start setup again.',

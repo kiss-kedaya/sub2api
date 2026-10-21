@@ -192,6 +192,7 @@ type cryptoRouteIdentity struct {
 
 func newCryptoRouteHarness(t *testing.T, user *service.User) *cryptoRouteHarness {
 	t.Helper()
+	t.Setenv("CRYPTO_ADMIN_USER_IDS", "41,75,94")
 	gin.SetMode(gin.TestMode)
 	mini := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mini.Addr()})
@@ -224,6 +225,22 @@ func newCryptoRouteHarness(t *testing.T, user *service.User) *cryptoRouteHarness
 	RegisterCryptoAdminRoutes(admin, cryptoHandler)
 	harness := &cryptoRouteHarness{router: router, redis: rdb, mini: mini, user: user, settings: settings, cache: cache, identity: identity}
 	return harness
+}
+
+func TestCryptoNewAdministratorCannotEnrollOrUsePaymentAuthority(t *testing.T) {
+	user := activeCryptoAdmin()
+	user.ID = 42 // An admin created or promoted through ordinary admin APIs.
+	h := newCryptoRouteHarness(t, user)
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/security/status"},
+		{http.MethodPost, "/security/setup"},
+		{http.MethodPost, "/security/enable"},
+		{http.MethodPost, "/wallet/export-mnemonics"},
+		{http.MethodPut, "/config"},
+	} {
+		r := cryptoRouteRequest(h.router, route.method, "/api/v1/admin/crypto"+route.path, "123456", nil, "127.0.0.1:1000", "localhost")
+		requireCryptoReason(t, r, http.StatusForbidden, "CRYPTO_OPERATOR_REQUIRED")
+	}
 }
 
 func activeCryptoAdmin() *service.User {

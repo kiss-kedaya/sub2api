@@ -37,6 +37,7 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 - 钱包密文保存在主 PostgreSQL 的 `settings` 表，键名 `crypto.signer.vault` 仅为兼容已有数据。钱包审计继续写入历史表 `crypto_signer_audit`；263 迁移原文及其 schema 保持不变，不能为改名重写迁移或破坏 checksum。
 - 钱包仍须使用独立于后台登录密码的 Vault 口令解密；首次初始化必须提供两份有效且不同的 BIP39 助记词（充值钱包与 Gas 钱包），新口令至少 12 个字符。已有 Vault 不允许通过初始化覆盖种子。
 - 在主服务后台完成支付 2FA 绑定，通过钱包管理执行解锁、加密备份、助记词导出和 Gas 助记词导入。风险操作仍要求新的 2FA 验证码及相应的 Vault 口令；重启后重新解锁，不把口令写入启动脚本或环境文件。
+- 部署时必须设置 `CRYPTO_ADMIN_USER_IDS`（逗号分隔的现有管理员用户 ID）和持久化 `TOTP_ENCRYPTION_KEY`。名单为空或包含非法 ID 时，支付管理接口全部拒绝；新增/提权的普通后台管理员不自动获得钱包权限。名单仅在进程启动时读取，网页设置及机器管理密钥不能改写；变更后须重启该实例。
 - `crypto-test-release.yml` 只打包一个 Linux amd64、`CGO_ENABLED=0`、带 `embed` 前端的 `sub2api` 二进制，以及版本和构建元数据；保留 `checksums.txt` 校验及隔离 prerelease 流程，不执行部署。
 
 备份文件中的 `sub2api-signer-vault` format 也仅为兼容标识，不表示需要独立 signer。完整的钱包管理、恢复边界和派生路径见 [支付文档：内置充值钱包](../docs/PAYMENT_CN.md#内置充值钱包部署与恢复)。

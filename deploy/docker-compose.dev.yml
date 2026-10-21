@@ -53,6 +53,7 @@ services:
       - JWT_SECRET=${JWT_SECRET:-}
       - SETUP_MIGRATION_TIMEOUT_SECONDS=${SETUP_MIGRATION_TIMEOUT_SECONDS:-0}
       - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:-}
+      - CRYPTO_ADMIN_USER_IDS=${CRYPTO_ADMIN_USER_IDS:-}
       - TZ=${TZ:-Asia/Shanghai}
       # Local mainland-China development proxy. Containers cannot use
       # 127.0.0.1 for the host proxy, so default to Docker Desktop's host name.
