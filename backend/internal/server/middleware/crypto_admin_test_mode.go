@@ -55,7 +55,7 @@ func cryptoTestModeRouteAllowed(method, path string) bool {
 		return false
 	}
 	return path == "/" || path == "/login" || path == "/admin/login" || path == "/admin/crypto" ||
-		strings.HasPrefix(path, "/assets/") || path == "/favicon.ico" || path == "/robots.txt"
+		strings.HasPrefix(path, "/assets/") || path == "/site-logo" || path == "/favicon.ico" || path == "/robots.txt"
 }
 
 func cryptoTestModeGatewayPath(path string) bool {
