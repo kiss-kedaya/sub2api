@@ -515,6 +515,9 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	observer.Observe(finalResponse.Model, true)
 	observer.ObserveServiceTier(finalResponse.ServiceTier, true)
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
+		if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, openAICompatBufferedTerminalPayload(c, finalResponse)); refusalErr != nil {
+			return nil, refusalErr
+		}
 		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
 		// cyber_policy 致命不可重试：不 failover，以 Chat Completions 错误格式回写（F4），
 		// 标记供 handler 事后写风控/邮件/tokens=0 用量行。
@@ -728,6 +731,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 
 	processDataLine := func(payload string) bool {
+		rawPayload := []byte(payload)
 		payload = string(restoreCodexToolNamesFromContext(c, []byte(payload)))
 		if firstChunk && (!measureResponsesTTFT || (gjson.Valid(payload) && openAIStreamDataStartsTTFT(payload, "", false, ttftMode))) {
 			firstChunk = false
@@ -762,6 +766,13 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 		if strings.TrimSpace(event.Type) == "response.failed" || strings.TrimSpace(event.Type) == "error" {
 			payloadBytes := []byte(payload)
+			if refusalErr := grokModerationRefusalProtocolError(account, rawPayload); refusalErr != nil {
+				if !clientDisconnected {
+					_ = s.writeGrokModerationRefusalProtocolError(resp, c, account, rawPayload)
+				}
+				streamNonFailoverErr = refusalErr
+				return true
+			}
 			message := extractOpenAISSEErrorMessage(payloadBytes)
 			if !clientOutputStarted && isOpenAINonBillableRequestError(message, payloadBytes) {
 				nonBillableUpstreamError = true

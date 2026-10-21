@@ -566,6 +566,17 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, openAIWSHTTPBridgeErrorBodyLimitBytes))
 		_ = resp.Body.Close()
+		if account.Platform == PlatformGrok && resp.StatusCode == http.StatusForbidden && IsGlobalIPBlacklistResponse(respBody) {
+			// This is a request-scoped Grok refusal. Preserve the real 403 for
+			// the hook's fixed-price settlement without retrying or cooling the account.
+			MarkGlobalIPBlacklistRejection(c)
+			setOpsUpstreamError(c, resp.StatusCode, GlobalIPBlacklistSessionBlockedMessage(), "")
+			clientError := buildOpenAIWSHTTPBridgeErrorEvent(resp.StatusCode, extractUpstreamErrorMessage(respBody))
+			if writeErr := writeClientMessage(clientError); writeErr == nil {
+				markOpenAIWSClientVisibleFailure(c, "error", clientError)
+			}
+			return nil, fmt.Errorf("%s %s", grokContentPolicyRejectionPrefix, extractUpstreamErrorMessage(respBody))
+		}
 		markOpenAICyberPolicyEvent(c, respBody, resp.StatusCode, nil)
 		if resp.StatusCode == http.StatusBadRequest &&
 			extractUpstreamErrorCode(respBody) == openAIWSFallbackReasonInvalidEncryptedContent {
@@ -821,7 +832,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 				errCodeRaw, errTypeRaw, _ := parseOpenAIWSErrorEventFields(upstreamMessage)
 				shouldFailover = openAIStreamErrorEventShouldFailover(upstreamMessage, errMessage)
 				if account.Platform == PlatformGrok {
-					statusCode = openAIWSErrorHTTPStatusFromFields(errCodeRaw, errTypeRaw, errMessage)
+					if statusCode == http.StatusBadGateway {
+						statusCode = openAIWSErrorHTTPStatusFromFields(errCodeRaw, errTypeRaw, errMessage)
+					}
 				}
 				if reason, _ := classifyOpenAIWSErrorEventFromRaw(errCodeRaw, errTypeRaw, errMessage); reason == openAIWSFallbackReasonInvalidEncryptedContent {
 					s.markOpenAIWSInvalidEncryptedContentLineageFromPayload(
@@ -830,12 +843,15 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 				}
 			}
 			requestScopedCapacity := isOpenAIUpstreamCapacityShedEvent(upstreamMessage)
-			if account.Platform == PlatformGrok && eventType == "error" {
-				// SSE error events do not carry an HTTP status. The local status
-				// mapper therefore defaults unknown xAI codes (for example
-				// new_sensitive) to 502; classify the body as a request-scoped
-				// 403 before applying status-based failover or account state.
-				if isGrokContentPolicyRejection(http.StatusForbidden, upstreamMessage) {
+			grokModerationRefusal := IsGrokModerationRefusalFailure(account.Platform, upstreamMessage, nil)
+			if grokModerationRefusal {
+				shouldFailover = false
+			}
+			if account.Platform == PlatformGrok && eventType == "error" && !grokModerationRefusal {
+				// A recognized safety event without a protocol HTTP status stays
+				// terminal, but cannot trigger a fee or permanent conversation block.
+				if grokModerationRefusalProtocolStatus(upstreamMessage) == 0 &&
+					isGrokContentPolicyRejection(http.StatusForbidden, upstreamMessage) {
 					shouldFailover = false
 				} else {
 					shouldFailover = s.shouldFailoverGrokUpstreamError(statusCode, upstreamMessage)
@@ -857,7 +873,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 				logOpenAICapacityFailoverSuppressed(ctx, account, "ws_http_bridge", resp.Header.Get("x-request-id"), eventType)
 				capacityFailoverSuppressedLogged = true
 			}
-			if eventType == "error" && !officialOpenAIResponses {
+			if grokModerationRefusal {
+				upstreamEventErr = fmt.Errorf("%s %s", grokContentPolicyRejectionPrefix, errMessage)
+			} else if eventType == "error" && !officialOpenAIResponses {
 				upstreamEventErr = errors.New(errMessage)
 			} else if eventType == "error" {
 				bareErrorPending = true
