@@ -69,6 +69,14 @@ func newRPCFixture(tr Transfer) *rpcFixture {
 	}
 }
 
+func setFixtureMapValue(target any, key string, value any) {
+	fields, ok := target.(map[string]any)
+	if !ok {
+		panic("invalid RPC fixture map")
+	}
+	fields[key] = value
+}
+
 func (f *rpcFixture) pool(t *testing.T) *rpc.Pool {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +135,7 @@ func (f *rpcFixture) pool(t *testing.T) *rpc.Pool {
 		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": result})
 	}))
 	t.Cleanup(server.Close)
-	return rpc.NewPool(server.URL)
+	return rpc.NewPoolWithHTTPClient(server.URL, server.Client())
 }
 
 func (f *rpcFixture) callCount(method string) int {
@@ -291,13 +299,13 @@ func TestPendingRejectsChangedOrNoncanonicalTransfer(t *testing.T) {
 	}{
 		{"block changed", func(f *rpcFixture) {
 			hash := "0x" + strings.Repeat("66", 32)
-			f.receipt.(map[string]any)["blockHash"] = hash
-			f.canonical.(map[string]any)["hash"] = hash
+			setFixtureMapValue(f.receipt, "blockHash", hash)
+			setFixtureMapValue(f.canonical, "hash", hash)
 		}, "reorg_transfer_changed", false},
-		{"receipt block orphaned", func(f *rpcFixture) { f.canonical.(map[string]any)["hash"] = "0x" + strings.Repeat("66", 32) }, "reorg_noncanonical_block", false},
-		{"log absent", func(f *rpcFixture) { f.receipt.(map[string]any)["logs"] = []evmLog{} }, "reorg_transfer_changed", false},
+		{"receipt block orphaned", func(f *rpcFixture) { setFixtureMapValue(f.canonical, "hash", "0x"+strings.Repeat("66", 32)) }, "reorg_noncanonical_block", false},
+		{"log absent", func(f *rpcFixture) { setFixtureMapValue(f.receipt, "logs", []evmLog{}) }, "reorg_transfer_changed", false},
 		{"wrong chain", func(f *rpcFixture) { f.chainID = "0x89" }, "", true},
-		{"wrong tx", func(f *rpcFixture) { f.receipt.(map[string]any)["transactionHash"] = "0x" + strings.Repeat("99", 32) }, "", true},
+		{"wrong tx", func(f *rpcFixture) { setFixtureMapValue(f.receipt, "transactionHash", "0x"+strings.Repeat("99", 32)) }, "", true},
 		{"canonical RPC down", func(f *rpcFixture) { f.fail = "canonical" }, "", true},
 	}
 	for _, field := range []string{"token", "from", "to", "amount", "index", "topic", "removed", "log block", "log tx"} {
@@ -309,7 +317,14 @@ func TestPendingRejectsChangedOrNoncanonicalTransfer(t *testing.T) {
 			wantErr bool
 		}{
 			field, func(f *rpcFixture) {
-				logs := f.receipt.(map[string]any)["logs"].([]evmLog)
+				receipt, ok := f.receipt.(map[string]any)
+				if !ok {
+					panic("invalid RPC receipt fixture")
+				}
+				logs, ok := receipt["logs"].([]evmLog)
+				if !ok {
+					panic("invalid RPC logs fixture")
+				}
 				switch field {
 				case "token":
 					logs[0].Address = "0x" + strings.Repeat("99", 20)
@@ -476,7 +491,7 @@ func TestPendingExcludesWrongChainEndpointFromRotatingPool(t *testing.T) {
 	right, wrong := newRPCFixture(tr), newRPCFixture(tr)
 	wrong.chainID = "0x89"
 	w, mock, handler := workerFixture(t, right)
-	w.pools["bsc"] = rpc.NewPool(strings.Join([]string{w.pools["bsc"].Endpoints()[0], wrong.pool(t).Endpoints()[0]}, ","))
+	w.pools["bsc"] = rpc.NewPoolWithHTTPClient(strings.Join([]string{w.pools["bsc"].Endpoints()[0], wrong.pool(t).Endpoints()[0]}, ","), &http.Client{})
 	expectObservation(mock, tr, "1", "")
 	expectObservationUpdate(mock, tr, "pending", "", "pending", "").WillReturnResult(sqlmock.NewResult(0, 1))
 	if err := w.retryPending(t.Context()); err != nil {
@@ -498,15 +513,15 @@ func TestCreditedExplicitCanonicalReorgIsPersistedAndNotified(t *testing.T) {
 			reason := ""
 			switch mode {
 			case "failed receipt":
-				fixture.receipt.(map[string]any)["status"] = "0x0"
+				setFixtureMapValue(fixture.receipt, "status", "0x0")
 				reason = "reorg_receipt_reverted"
 			case "orphaned receipt":
-				fixture.canonical.(map[string]any)["hash"] = "0x" + strings.Repeat("66", 32)
+				setFixtureMapValue(fixture.canonical, "hash", "0x"+strings.Repeat("66", 32))
 				reason = "reorg_noncanonical_block"
 			case "changed block":
 				hash := "0x" + strings.Repeat("66", 32)
-				fixture.receipt.(map[string]any)["blockHash"] = hash
-				fixture.canonical.(map[string]any)["hash"] = hash
+				setFixtureMapValue(fixture.receipt, "blockHash", hash)
+				setFixtureMapValue(fixture.canonical, "hash", hash)
 				reason = "reorg_transfer_changed"
 			}
 			w, mock, handler := workerFixture(t, fixture)
@@ -619,7 +634,7 @@ func TestReceiptAbsenceIsDistinctFromMalformedResponse(t *testing.T) {
 			case "malformed":
 				fixture.receipt = map[string]any{}
 			case "reverted":
-				fixture.receipt.(map[string]any)["status"] = "0x0"
+				setFixtureMapValue(fixture.receipt, "status", "0x0")
 			}
 			checked, err := VerifyTransaction(t.Context(), fixture.pool(t), tr.TxHash)
 			if err == nil {

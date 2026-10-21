@@ -8,7 +8,9 @@ package handler
 import (
 	"context"
 	"encoding/csv"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -110,27 +112,18 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 		return
 	}
 	var patch cryptopay.CryptoConfigPatch
-	if err := c.ShouldBindJSON(&patch); err != nil {
-		response.BadRequest(c, "Invalid config payload")
+	if !decodeCryptoRequest(c, &patch, 256<<10, "Invalid config payload") {
 		return
 	}
 	merged := patch.Apply(existing)
-	if merged.HotIndex != existing.HotIndex {
-		response.BadRequest(c, "gas 钱包索引由签名服务独立策略管理，请在签名策略中修改")
+	if merged.HotIndex != 0 {
+		response.BadRequest(c, "Gas 钱包固定使用索引 0，不能通过配置改动钱包地址")
 		return
-	}
-	if h.service != nil && merged.SignerSocket != existing.SignerSocket {
-		if err := h.service.ValidateSignerChange(c.Request.Context(), merged.SignerSocket); err != nil {
-			response.BadRequest(c, err.Error())
-			return
-		}
 	}
 	if err := cryptopay.SaveConfig(c.Request.Context(), h.store, merged); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	// A receiving-address change must never grant signer approval. Its
-	// independently configured policy decides which targets may receive funds.
 	// Apply immediately: rebuild pools and restart the scan worker.
 	if h.service != nil {
 		h.service.Reload(c.Request.Context())
@@ -138,14 +131,14 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"saved": true}})
 }
 
-// AdminSignerStatus reports whether the signing service is unlocked.
-// GET /api/v1/admin/crypto/signer/status
-func (h *CryptoHandler) AdminSignerStatus(c *gin.Context) {
+// AdminWalletStatus reports whether the local wallet is unlocked.
+// GET /api/v1/admin/crypto/wallet/status
+func (h *CryptoHandler) AdminWalletStatus(c *gin.Context) {
 	if h.service == nil {
 		response.BadRequest(c, "crypto channel unavailable")
 		return
 	}
-	st, err := h.service.SignerStatus(c.Request.Context())
+	st, err := h.service.WalletStatus(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -153,28 +146,33 @@ func (h *CryptoHandler) AdminSignerStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": st})
 }
 
-// AdminUnlockSigner forwards the operator passphrase to the signer.
-// POST /api/v1/admin/crypto/signer/unlock
-func (h *CryptoHandler) AdminUnlockSigner(c *gin.Context) {
-	if h.service == nil {
-		response.BadRequest(c, "crypto channel unavailable")
-		return
-	}
+// AdminUnlockWallet unlocks the local encrypted wallet.
+// POST /api/v1/admin/crypto/wallet/unlock
+func (h *CryptoHandler) AdminUnlockWallet(c *gin.Context) {
+	cryptoVaultHeaders(c)
 	var body struct {
 		Passphrase      string `json:"passphrase"`
 		DepositMnemonic string `json:"deposit_mnemonic"`
 		HotMnemonic     string `json:"hot_mnemonic"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		response.BadRequest(c, "Invalid request payload")
+	if !decodeCryptoVaultRequest(c, &body) {
 		return
 	}
-	if strings.TrimSpace(body.Passphrase) == "" {
-		response.BadRequest(c, "passphrase is required")
+	defer func() { body.Passphrase, body.DepositMnemonic, body.HotMnemonic = "", "", "" }()
+	if strings.TrimSpace(body.Passphrase) == "" || len(body.Passphrase) > 1024 ||
+		len(body.DepositMnemonic) > 1024 || len(body.HotMnemonic) > 1024 ||
+		(strings.TrimSpace(body.DepositMnemonic) == "") != (strings.TrimSpace(body.HotMnemonic) == "") {
+		response.BadRequest(c, "Passphrase and either both initial wallet seeds or neither are required; each field is limited to 1024 bytes")
 		return
 	}
-	if err := h.service.UnlockSigner(c.Request.Context(), body.Passphrase, body.DepositMnemonic, body.HotMnemonic); err != nil {
-		response.BadRequest(c, err.Error())
+	if h.service == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Wallet unavailable")
+		return
+	}
+	if err := h.service.UnlockWallet(c.Request.Context(), body.Passphrase, body.DepositMnemonic, body.HotMnemonic); err != nil {
+		// Wallet errors can contain local database or driver details. Keep the
+		// client response useful without reflecting those internals.
+		response.BadRequest(c, "Wallet unlock failed; verify the vault passphrase and seed data")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"unlocked": true}})
@@ -240,41 +238,78 @@ func csvCell(value string) string {
 	return value
 }
 
-// AdminExportDeposits streams the deposit ledger as CSV for reconciliation.
+// AdminExportDeposits prepares the ledger before sending the attachment. A
+// failed database page must not produce a successful, truncated CSV download.
 // GET /api/v1/admin/crypto/deposits.csv
 func (h *CryptoHandler) AdminExportDeposits(c *gin.Context) {
 	if h.service == nil {
 		response.BadRequest(c, "crypto channel unavailable")
 		return
 	}
-	// Page through the whole ledger: the reader caps one page at 200, and
-	// an export that silently stops at 50 rows cannot be reconciled.
+	file, err := os.CreateTemp("", "sub2api-crypto-export-*.csv")
+	if err != nil {
+		response.Error(c, http.StatusServiceUnavailable, "Deposit export unavailable")
+		return
+	}
+	defer func() {
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+	}()
+	err = writeCryptoDepositCSV(c.Request.Context(), file, func(ctx context.Context, beforeID int64, limit int) ([]cryptopay.DepositRecord, error) {
+		return h.service.ListDepositsExportPage(ctx, c.Query("chain"), c.Query("status"), beforeID, limit)
+	})
+	if err != nil {
+		response.Error(c, http.StatusServiceUnavailable, "Deposit export failed; retry the download")
+		return
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		response.Error(c, http.StatusServiceUnavailable, "Deposit export unavailable")
+		return
+	}
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Content-Disposition", `attachment; filename="crypto-deposits.csv"`)
+	c.Header("X-Content-Type-Options", "nosniff")
+	http.ServeContent(c.Writer, c.Request, "crypto-deposits.csv", time.Time{}, file)
+}
+
+func writeCryptoDepositCSV(ctx context.Context, output io.Writer, fetch func(context.Context, int64, int) ([]cryptopay.DepositRecord, error)) error {
 	// Excel decides charset by BOM; without it Chinese and quotes mojibake.
-	_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
-	w := csv.NewWriter(c.Writer)
-	_ = w.Write([]string{"id", "chain", "tx_hash", "log_index", "from", "to", "token", "amount", "status", "created_at"})
+	if _, err := output.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
+		return err
+	}
+	w := csv.NewWriter(output)
+	if err := w.Write([]string{"id", "chain", "tx_hash", "log_index", "from", "to", "token", "amount", "status", "created_at"}); err != nil {
+		return err
+	}
 	const pageSize = 200
-	for offset := 0; ; offset += pageSize {
-		records, summary, err := h.service.ListDepositsPaged(c.Request.Context(),
-			c.Query("chain"), c.Query("status"), pageSize, offset)
+	var beforeID int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		records, err := fetch(ctx, beforeID, pageSize)
 		if err != nil {
-			response.ErrorFrom(c, err)
-			return
+			return err
 		}
 		for _, r := range records {
-			_ = w.Write([]string{
+			if err := w.Write([]string{
 				csvCell(strconv.FormatInt(r.ID, 10)), csvCell(r.Chain), csvCell(r.TxHash),
 				strconv.Itoa(r.LogIndex), csvCell(r.FromAddress), csvCell(r.ToAddress),
 				csvCell(r.Token), csvCell(r.Amount), csvCell(r.Status), csvCell(r.CreatedAt),
-			})
+			}); err != nil {
+				return err
+			}
 		}
-		if len(records) == 0 || summary == nil || int64(offset+len(records)) >= summary.Total {
+		if len(records) == 0 {
+			break
+		}
+		beforeID = records[len(records)-1].ID
+		if len(records) < pageSize {
 			break
 		}
 	}
 	w.Flush()
+	return w.Error()
 }
 
 // AdminSweepPlan returns the current dry-run sweep plan.
@@ -406,8 +441,7 @@ func (h *CryptoHandler) AdminSetAddressStatus(c *gin.Context) {
 	var body struct {
 		Status string `json:"status"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		response.BadRequest(c, "Invalid status payload")
+	if !decodeCryptoRequest(c, &body, 4<<10, "Invalid status payload") {
 		return
 	}
 	if err := h.addresses.SetStatus(c.Request.Context(), id, body.Status); err != nil {
@@ -432,8 +466,7 @@ func (h *CryptoHandler) AdminTestRPC(c *gin.Context) {
 		Chain    string `json:"chain"`
 		Endpoint string `json:"endpoint"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		response.BadRequest(c, "Invalid test payload")
+	if !decodeCryptoRequest(c, &body, 16<<10, "Invalid test payload") {
 		return
 	}
 	result := cryptopay.ProbeRPCEndpoint(c.Request.Context(), body.Chain, body.Endpoint)
@@ -468,8 +501,7 @@ func (h *CryptoHandler) AdminAutoPickRPC(c *gin.Context) {
 		Want    int      `json:"want"`
 		Exclude []string `json:"exclude"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		response.BadRequest(c, "Invalid auto-pick payload")
+	if !decodeCryptoRequest(c, &body, 64<<10, "Invalid auto-pick payload") {
 		return
 	}
 	if strings.TrimSpace(body.Chain) == "" {

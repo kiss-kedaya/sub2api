@@ -16,15 +16,15 @@ import (
 )
 
 func (e *Executor) prepareGas(ctx context.Context, pool *rpc.Pool, j *sweepJob, amount, price *big.Int) error {
-	if e.signer == nil {
-		return fmt.Errorf("signer is not configured")
+	if e.wallet == nil {
+		return fmt.Errorf("wallet is not initialized")
 	}
-	hot, err := e.signer.HotAddresses(ctx)
+	hot, err := e.wallet.HotAddresses(ctx)
 	if err != nil {
 		return err
 	}
 	if !common.IsHexAddress(hot.EVM) || isZeroAddress(hot.EVM) {
-		return fmt.Errorf("signer returned invalid gas payer")
+		return fmt.Errorf("wallet returned invalid gas payer")
 	}
 	busy, err := e.gasPayerBusy(ctx, j, hot.EVM)
 	if err != nil {
@@ -39,7 +39,7 @@ func (e *Executor) prepareGas(ctx context.Context, pool *rpc.Pool, j *sweepJob, 
 		return err
 	}
 	idx := j.DerivationIndex
-	raw, err := e.signer.SignEVM(ctx, EVMSignRequest{Index: hot.Index, Kind: "gas", GasIndex: &idx,
+	raw, err := e.wallet.SignEVM(ctx, EVMSignRequest{Index: hot.Index, Kind: "gas", GasIndex: &idx,
 		ChainID: ChainIDs[j.Chain], Token: "native", To: j.Address, Amount: amount.String(),
 		Nonce: nonce, GasPrice: price.String(), GasLimit: 21000})
 	if err != nil {
@@ -55,14 +55,14 @@ func (e *Executor) prepareGas(ctx context.Context, pool *rpc.Pool, j *sweepJob, 
 }
 
 func (e *Executor) prepareSweep(ctx context.Context, pool *rpc.Pool, j *sweepJob, price *big.Int) error {
-	if e.signer == nil {
-		return fmt.Errorf("signer is not configured")
+	if e.wallet == nil {
+		return fmt.Errorf("wallet is not initialized")
 	}
 	nonce, err := pool.Nonce(ctx, j.Address)
 	if err != nil {
 		return err
 	}
-	raw, err := e.signer.SignEVM(ctx, EVMSignRequest{Index: j.DerivationIndex, Kind: "sweep",
+	raw, err := e.wallet.SignEVM(ctx, EVMSignRequest{Index: j.DerivationIndex, Kind: "sweep",
 		ChainID: ChainIDs[j.Chain], Token: j.Token, To: j.Destination, Amount: j.RawAmount.String(),
 		Nonce: nonce, GasPrice: price.String(), GasLimit: transferGasLimit})
 	if err != nil {
@@ -78,7 +78,7 @@ func (e *Executor) prepareSweep(ctx context.Context, pool *rpc.Pool, j *sweepJob
 	return e.saveJob(ctx, j)
 }
 
-// Decode and verify the signed bytes, rather than trusting a signer/RPC hash.
+// Decode and verify the signed bytes, rather than trusting a wallet/RPC hash.
 // This also detects seed/index changes before any funds can be spent.
 func validateSigned(raw, chain, from, to, token string, amount *big.Int, nonce, gas uint64, price *big.Int) (string, error) {
 	encoded, err := hex.DecodeString(strings.TrimPrefix(raw, "0x"))

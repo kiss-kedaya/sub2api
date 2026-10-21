@@ -11,7 +11,6 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,12 +28,20 @@ const testToken = "0x1111111111111111111111111111111111111111"
 const testDestination = "0x2222222222222222222222222222222222222222"
 const testBlockHash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-type localSignerTransport struct{ target *url.URL }
+type fixtureWallet struct{ chain *localChain }
 
-func (t localSignerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	clone := r.Clone(r.Context())
-	clone.URL.Scheme, clone.URL.Host = t.target.Scheme, t.target.Host
-	return http.DefaultTransport.RoundTrip(clone)
+func (w *fixtureWallet) HotAddresses(ctx context.Context) (*HotAddress, error) {
+	return &HotAddress{Index: 9, EVM: w.chain.payer}, nil
+}
+func (w *fixtureWallet) SignEVM(ctx context.Context, req EVMSignRequest) (string, error) {
+	c := w.chain
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.beforeSign != nil {
+		c.beforeSign()
+	}
+	c.signs = append(c.signs, req)
+	return c.signed(req), nil
 }
 
 // Every RPC and signing request goes through this local HTTP server. Keys
@@ -59,6 +66,8 @@ type localChain struct {
 	signs        []EVMSignRequest
 	nonceReads   []string
 	receiptReads int
+	chainID      string
+	gasPrice     string
 	beforeSign   func()
 	beforeSend   func()
 }
@@ -120,10 +129,18 @@ func (c *localChain) serve(w http.ResponseWriter, r *http.Request) {
 	var result any
 	param := func(i int) string { var v string; _ = json.Unmarshal(req.Params[i], &v); return v }
 	switch req.Method {
+	case "eth_chainId":
+		result = "0x1"
+		if c.chainID != "" {
+			result = c.chainID
+		}
 	case "eth_call":
 		result = fmt.Sprintf("0x%x", c.live)
 	case "eth_gasPrice":
 		result = "0x1"
+		if c.gasPrice != "" {
+			result = c.gasPrice
+		}
 	case "eth_getBalance":
 		result = fmt.Sprintf("0x%x", c.native)
 	case "eth_getTransactionCount":
@@ -167,7 +184,7 @@ func (c *localChain) serve(w http.ResponseWriter, r *http.Request) {
 				"blockNumber": fmt.Sprintf("0x%x", block), "blockHash": testBlockHash}
 		}
 	case "eth_getBlockByNumber":
-		result = map[string]string{"hash": c.canonical}
+		result = map[string]string{"hash": c.canonical, "number": param(0)}
 	case "eth_blockNumber":
 		result = fmt.Sprintf("0x%x", c.head)
 	default:
@@ -193,18 +210,18 @@ func setupExecutor(t *testing.T) (*Executor, sqlmock.Sqlmock, *localChain, PlanE
 	hot, _ := crypto.HexToECDSA(strings.Repeat("0", 63) + "2")
 	c := &localChain{child: child, hot: hot, address: crypto.PubkeyToAddress(child.PublicKey).Hex(),
 		payer: crypto.PubkeyToAddress(hot.PublicKey).Hex(), live: 15_000_000, native: 1_000_000_000,
-		mined: true, head: 103, status: "0x1", canonical: testBlockHash, txs: map[string]bool{}}
+		mined: true, head: 103, status: "0x1", canonical: testBlockHash, txs: map[string]bool{}, chainID: "0x38"}
 	server := httptest.NewServer(http.HandlerFunc(c.serve))
 	t.Cleanup(server.Close)
-	u, _ := url.Parse(server.URL)
-	signer := &SignerClient{http: &http.Client{Transport: localSignerTransport{target: u}}}
-	pool := rpc.NewPool(server.URL + "/rpc")
-	config := Config{HotWalletEVM: testDestination, Confirmations: map[string]uint64{"bsc": 2}}
+	wallet := &fixtureWallet{chain: c}
+	pool := rpc.NewPoolWithHTTPClient(server.URL+"/rpc", server.Client())
+	config := Config{HotWalletEVM: testDestination, Confirmations: map[string]uint64{"bsc": 2},
+		GasTopUp: map[string]float64{"bsc": 0.002}}
 	entry := PlanEntry{Chain: "bsc", Address: c.address, DerivationIndex: 42,
 		Token: testToken, RawAmount: big.NewInt(10_000_000), Decimals: 6}
-	e := NewExecutor(db, map[string]*rpc.Pool{"bsc": pool}, signer, config,
+	e := NewExecutor(db, map[string]*rpc.Pool{"bsc": pool}, wallet, config,
 		map[string]TokenSpec{"bsc|" + testToken: {Contract: testToken, Decimals: 6}},
-		&fakeReader{}, 123) // deliberately different from signer's real hot index
+		&fakeReader{}, 123) // deliberately different from wallet's real hot index
 	return e, mock, c, entry
 }
 
@@ -475,7 +492,7 @@ func TestSweepMissingConfirmationPolicyObservesButCannotSendOrFinalize(t *testin
 	}
 }
 
-func TestSweepGasNonceUsesSignerHotSeedAddress(t *testing.T) {
+func TestSweepGasNonceUsesWalletHotSeedAddress(t *testing.T) {
 	e, m, c, entry := setupExecutor(t)
 	c.native = 0
 	var durable atomic.Bool
@@ -532,7 +549,7 @@ func TestSweepLegacyHashBlocksReplanning(t *testing.T) {
 	}
 }
 
-func TestSweepRejectsSignerAmountMismatchBeforeBroadcast(t *testing.T) {
+func TestSweepRejectsWalletAmountMismatchBeforeBroadcast(t *testing.T) {
 	e, m, c, entry := setupExecutor(t)
 	c.wrongAmount = true
 	expectCreate(m, entry, nil, nil)

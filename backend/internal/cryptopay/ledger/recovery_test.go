@@ -27,7 +27,7 @@ func TestPendingOrderWithFailedLinkRestoresOriginalTerms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(1)
 	for _, schema := range []string{
 		`CREATE TABLE payment_orders(id INTEGER PRIMARY KEY,user_id INTEGER,amount REAL,out_trade_no TEXT UNIQUE)`,
@@ -62,7 +62,7 @@ func TestLinkedPendingRestoresFrozenOrderBeforeMutablePolicies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			creditor := &countingCreditor{}
 			tr := depositTransfer(10_000_000)
 			min, max, multiplier := 1.0, 100.0, 6.7
@@ -106,7 +106,7 @@ func TestResolvedDepositDoesNotConsultPolicyOrOverwriteState(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			creditor := &countingCreditor{}
 			tr := depositTransfer(10_000_000)
 			l := New(db, creditor, nil, 100, 1, 0) // nil resolver must not be called.
@@ -127,7 +127,7 @@ func TestLinkedPendingWithMissingOrderFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	creditor := &countingCreditor{}
 	tr := depositTransfer(10_000_000)
 	l := New(db, creditor, nil, 100, 1, 0)
@@ -148,7 +148,7 @@ func TestCreditedCASPreservesReorgAndConcurrentCompletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			creditor := &countingCreditor{}
 			tr := depositTransfer(10_000_000)
 			l := New(db, creditor, nil, 100, 1, 0)
@@ -180,7 +180,7 @@ func TestIgnoredCASDoesNotEraseConcurrentlyLinkedOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	creditor := &countingCreditor{}
 	tr := depositTransfer(10_000_000)
 	l := New(db, creditor, fixedResolver{userID: 42, ours: true}, 100, 1000, 1)
@@ -201,7 +201,7 @@ func TestFailedCreditedWriteCanResumeLinkedOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	creditor := &countingCreditor{}
 	tr := depositTransfer(10_000_000)
 	l := New(db, creditor, nil, 100, 1, 0)

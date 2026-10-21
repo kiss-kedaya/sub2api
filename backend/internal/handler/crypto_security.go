@@ -17,6 +17,9 @@ import (
 // CryptoAdminSecurity protects the entire group, including future endpoints.
 // Enrollment is exempt only from the already-bound-code requirement.
 func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
+	// Admin responses may contain RPC credentials, wallet addresses, or payment
+	// history. Never let browsers or intermediary caches persist them.
+	cryptoNoStore(c)
 	if !service.CryptoInstanceEnabled() {
 		response.ErrorWithDetails(c, 503, "crypto is disabled on this instance", "CRYPTO_DISABLED", nil)
 		c.Abort()
@@ -27,7 +30,6 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 		return
 	}
 	path := c.FullPath()
-	securityRead := c.Request.Method == http.MethodGet && strings.HasSuffix(path, "/security/status")
 	setup := c.Request.Method == http.MethodPost && (strings.HasSuffix(path, "/security/setup") || strings.HasSuffix(path, "/security/enable"))
 	risky := c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv")
 	if service.CryptoAdminTestMode() && risky && !setup {
@@ -35,15 +37,10 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	if securityRead || risky {
-		cryptoNoStore(c)
-	}
-	if securityRead || risky {
-		if !cryptoSecureTransport(c.Request, h.securityConfig) {
-			response.ErrorWithDetails(c, 403, "HTTPS or a loopback tunnel is required", "CRYPTO_HTTPS_REQUIRED", nil)
-			c.Abort()
-			return
-		}
+	if !cryptoSecureTransport(c.Request, h.securityConfig) {
+		response.ErrorWithDetails(c, 403, "HTTPS or a loopback tunnel is required", "CRYPTO_HTTPS_REQUIRED", nil)
+		c.Abort()
+		return
 	}
 	if risky && !setup {
 		codes := c.Request.Header.Values("X-Crypto-TOTP")
@@ -180,8 +177,7 @@ func (h *CryptoHandler) AdminCryptoSecuritySetup(c *gin.Context) {
 	var req struct {
 		Password string `json:"password"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "invalid setup request")
+	if !decodeCryptoRequest(c, &req, 4<<10, "invalid setup request") {
 		return
 	}
 	subject, ok := middleware.GetAuthSubjectFromContext(c)
@@ -203,8 +199,7 @@ func (h *CryptoHandler) AdminCryptoSecurityEnable(c *gin.Context) {
 		TotpCode   string `json:"totp_code"`
 		SetupToken string `json:"setup_token"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "invalid enable request")
+	if !decodeCryptoRequest(c, &req, 4<<10, "invalid enable request") {
 		return
 	}
 	subject, ok := middleware.GetAuthSubjectFromContext(c)

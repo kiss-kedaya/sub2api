@@ -29,7 +29,7 @@ type CryptoMnemonicExportResponse struct {
 	HotMnemonic     string `json:"hot_mnemonic"`
 }
 
-// AdminExportMnemonics returns plaintext only after the signer has durably
+// AdminExportMnemonics returns plaintext only after the wallet has durably
 // audited the successful, passphrase-authenticated vault decryption.
 func (h *CryptoHandler) AdminExportMnemonics(c *gin.Context) {
 	cryptoVaultHeaders(c)

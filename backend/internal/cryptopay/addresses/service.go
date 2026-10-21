@@ -2,62 +2,15 @@ package addresses
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net"
-	"net/http"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"strings"
 	"sync"
-	"time"
 )
 
-// Deriver is the signer surface the service needs; *SignerClient implements
-// it and tests substitute a fake.
+// Deriver supplies public deposit addresses from the unlocked local wallet.
 type Deriver interface {
 	Derive(ctx context.Context, start, count uint32) ([]Derived, error)
-}
-
-// SignerClient talks to the isolated signing service over its unix socket.
-type SignerClient struct {
-	http *http.Client
-}
-
-// NewSignerClient builds a client bound to the signer socket path.
-func NewSignerClient(socketPath string) *SignerClient {
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", socketPath)
-		},
-	}
-	return &SignerClient{http: &http.Client{Transport: transport, Timeout: 30 * time.Second}}
-}
-
-// Derive asks the signer for a batch of derived address pairs.
-func (c *SignerClient) Derive(ctx context.Context, start, count uint32) ([]Derived, error) {
-	body, err := json.Marshal(map[string]uint32{"start": start, "count": count})
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://signer/derive", strings.NewReader(string(body)))
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("signer derive: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("signer derive: status %d", resp.StatusCode)
-	}
-	var out struct {
-		Addresses []Derived `json:"addresses"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("signer derive decode: %w", err)
-	}
-	return out.Addresses, nil
 }
 
 // PoolStore is the persistence surface the service needs; *Repo implements
@@ -78,9 +31,9 @@ type PoolStore interface {
 
 // Service coordinates pool top-up and lazy assignment.
 type Service struct {
-	poolMu       sync.Mutex // serialize top-up and signer replacement
+	poolMu       sync.Mutex // serialize top-up and deriver replacement
 	repo         PoolStore
-	signer       Deriver
+	deriver      Deriver
 	topUpBatch   int
 	lowWatermark int64
 }
@@ -88,10 +41,10 @@ type Service struct {
 // NewService wires the address service. topUpBatch is derived per request;
 // lowWatermark triggers background top-up (Phase 2 keeps it simple: top up
 // synchronously when a request finds the pool empty).
-func NewService(repo PoolStore, signer Deriver) *Service {
+func NewService(repo PoolStore, deriver Deriver) *Service {
 	return &Service{
 		repo:         repo,
-		signer:       signer,
+		deriver:      deriver,
 		topUpBatch:   50,
 		lowWatermark: 10,
 	}
@@ -100,6 +53,9 @@ func NewService(repo PoolStore, signer Deriver) *Service {
 // GetOrAssign returns the user's addresses, assigning from the pool (with a
 // synchronous top-up when empty) on first request. Idempotent.
 func (s *Service) GetOrAssign(ctx context.Context, userID int64) (map[string]string, error) {
+	if err := mode.CheckWritable(); err != nil {
+		return nil, err
+	}
 	out := map[string]string{}
 	for _, family := range []string{FamilyEVM, FamilySolana} {
 		existing, err := s.repo.ExistingAssignment(ctx, userID, family)
@@ -139,8 +95,14 @@ func (s *Service) GetOrAssign(ctx context.Context, userID int64) (map[string]str
 // topUp derives one batch starting after the current maximum index and
 // stores it for both families.
 func (s *Service) topUp(ctx context.Context) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
 	s.poolMu.Lock()
 	defer s.poolMu.Unlock()
+	if s.deriver == nil {
+		return fmt.Errorf("wallet is not initialized")
+	}
 	maxIndex, err := s.repo.MaxDerivationIndex(ctx)
 	if err != nil {
 		return err
@@ -152,18 +114,18 @@ func (s *Service) topUp(ctx context.Context) error {
 	if maxIndex < 0 {
 		start = hotWalletIndex + 1
 	}
-	derived, err := s.signer.Derive(ctx, start, uint32(s.topUpBatch))
+	derived, err := s.deriver.Derive(ctx, start, uint32(s.topUpBatch))
 	if err != nil {
 		return err
 	}
 	if len(derived) != s.topUpBatch {
-		return fmt.Errorf("signer returned %d addresses, expected %d", len(derived), s.topUpBatch)
+		return fmt.Errorf("deriver returned %d addresses, expected %d", len(derived), s.topUpBatch)
 	}
 	evm := make([]string, 0, len(derived))
 	solana := make([]string, 0, len(derived))
 	for i, d := range derived {
 		if d.Index != int64(start)+int64(i) || strings.TrimSpace(d.EVM) == "" || strings.TrimSpace(d.Solana) == "" {
-			return fmt.Errorf("signer returned an invalid address/index at offset %d", i)
+			return fmt.Errorf("deriver returned an invalid address/index at offset %d", i)
 		}
 		evm = append(evm, d.EVM)
 		solana = append(solana, d.Solana)
@@ -174,22 +136,25 @@ func (s *Service) topUp(ctx context.Context) error {
 	return s.repo.InsertPoolBatch(ctx, FamilySolana, int64(start), solana)
 }
 
-// SetSigner replaces the derivation client only after the caller has checked
+// SetDeriver replaces the derivation client only after the caller has checked
 // that the replacement derives the existing pool's seed. No old top-up can
 // publish a batch after this switch.
-func (s *Service) SetSigner(signer Deriver) {
+func (s *Service) SetDeriver(deriver Deriver) {
 	s.poolMu.Lock()
 	defer s.poolMu.Unlock()
-	s.signer = signer
+	s.deriver = deriver
 }
 
 // hotWalletIndex is the HD index reserved for the hot/gas wallet. It must
-// match signer policy hot_index and the cryptopay config hot_index default.
+// match the built-in Gas wallet index (zero).
 const hotWalletIndex = 0
 
 // EnsurePool tops the pool up when below the low watermark. Called by the
 // background worker; safe to call repeatedly.
 func (s *Service) EnsurePool(ctx context.Context) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
 	for _, family := range []string{FamilyEVM, FamilySolana} {
 		count, err := s.repo.FreePoolCount(ctx, family)
 		if err != nil {
@@ -231,6 +196,9 @@ func (s *Service) PoolStatus(ctx context.Context) (*PoolStatus, error) {
 
 // SetStatus exposes assignment status changes to the admin layer.
 func (s *Service) SetStatus(ctx context.Context, id int64, status string) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
 	return s.repo.SetStatus(ctx, id, status)
 }
 

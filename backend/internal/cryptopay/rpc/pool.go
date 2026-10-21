@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
 // Pool rotates through a chain's endpoints, preferring the last healthy one.
@@ -27,9 +29,26 @@ type Pool struct {
 
 // NewPool builds a pool from a comma-separated endpoint list.
 func NewPool(endpoints string) *Pool {
-	p := &Pool{client: &http.Client{Timeout: 15 * time.Second}}
+	p := &Pool{client: NewPublicHTTPClient(15 * time.Second)}
 	p.SetEndpoints(endpoints)
 	return p
+}
+
+// NewPoolWithHTTPClient supplies an explicit transport for trusted in-process
+// fixtures. Configured endpoints always use NewPool and its public-IP checks;
+// no environment variable or stored config can select this constructor.
+func NewPoolWithHTTPClient(endpoints string, client *http.Client) *Pool {
+	p := NewPool(endpoints)
+	if client != nil {
+		p.client = client
+	}
+	return p
+}
+
+// WithEndpoints takes an independent endpoint snapshot while retaining the
+// original transport, including public-address validation and DNS pinning.
+func (p *Pool) WithEndpoints(endpoints string) *Pool {
+	return NewPoolWithHTTPClient(endpoints, p.client)
 }
 
 // SetEndpoints replaces the endpoint list (admin config change).
@@ -129,8 +148,8 @@ func (p *Pool) BlockNumber(ctx context.Context) (uint64, error) {
 	if err := json.Unmarshal(result, &hex); err != nil {
 		return 0, fmt.Errorf("block number decode: %w", err)
 	}
-	var number uint64
-	if _, err := fmt.Sscanf(strings.TrimPrefix(hex, "0x"), "%x", &number); err != nil {
+	number, err := hexutil.DecodeUint64(hex)
+	if err != nil {
 		return 0, fmt.Errorf("block number parse %q: %w", hex, err)
 	}
 	return number, nil
@@ -146,8 +165,8 @@ func (p *Pool) Balance(ctx context.Context, address string) (*big.Int, error) {
 	if err := json.Unmarshal(result, &hex); err != nil {
 		return nil, fmt.Errorf("balance decode: %w", err)
 	}
-	value, ok := new(big.Int).SetString(strings.TrimPrefix(hex, "0x"), 16)
-	if !ok {
+	value, err := hexutil.DecodeBig(hex)
+	if err != nil {
 		return nil, fmt.Errorf("balance parse %q", hex)
 	}
 	return value, nil
@@ -164,8 +183,8 @@ func (p *Pool) Nonce(ctx context.Context, address string) (uint64, error) {
 	if err := json.Unmarshal(result, &hex); err != nil {
 		return 0, fmt.Errorf("nonce decode: %w", err)
 	}
-	var nonce uint64
-	if _, err := fmt.Sscanf(strings.TrimPrefix(hex, "0x"), "%x", &nonce); err != nil {
+	nonce, err := hexutil.DecodeUint64(hex)
+	if err != nil {
 		return 0, fmt.Errorf("nonce parse %q: %w", hex, err)
 	}
 	return nonce, nil
@@ -181,8 +200,8 @@ func (p *Pool) GasPrice(ctx context.Context) (*big.Int, error) {
 	if err := json.Unmarshal(result, &hex); err != nil {
 		return nil, fmt.Errorf("gas price decode: %w", err)
 	}
-	value, ok := new(big.Int).SetString(strings.TrimPrefix(hex, "0x"), 16)
-	if !ok || value.Sign() <= 0 {
+	value, err := hexutil.DecodeBig(hex)
+	if err != nil || value.Sign() <= 0 {
 		return nil, fmt.Errorf("gas price parse %q", hex)
 	}
 	return value, nil

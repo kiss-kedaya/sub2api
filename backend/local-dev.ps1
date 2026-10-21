@@ -1,5 +1,5 @@
-# Starts the local crypto-deposit test stack: portable Postgres, the
-# signing service and the sub2api server. Idempotent: safe to re-run.
+# Starts the local crypto-deposit test stack: portable Postgres and the
+# sub2api server with its built-in wallet. Idempotent: safe to re-run.
 $ErrorActionPreference = 'Stop'
 $root = 'F:\GO\sub2-wt-crypto-deposit\backend'
 $dl = 'E:\Users\34438\Downloads'
@@ -15,21 +15,8 @@ if (-not $pgUp) {
     Write-Host 'postgres already running'
 }
 
-# 2. Signer
-if (-not (Get-Process -Name signer -ErrorAction SilentlyContinue)) {
-    # Seeds live encrypted in the settings table; the signer starts locked and
-    # is unlocked with the operator passphrase (POST /unlock on its socket).
-    $env:SIGNER_DB_DSN = 'postgres://postgres:postgres@127.0.0.1:5433/sub2api?sslmode=disable'
-    Start-Process -FilePath "$root\bin\signer.exe" `
-        -ArgumentList '-socket', "$root\.data\signer.sock" `
-        -WorkingDirectory $root -WindowStyle Hidden
-    Start-Sleep -Seconds 2
-    Write-Host 'signer started (locked; unlock via POST /unlock)'
-} else {
-    Write-Host 'signer already running'
-}
-
-# 3. sub2api
+# 2. sub2api (wallet starts locked; unlock in the crypto admin page with
+# a fresh 2FA code and the vault password, separate from the login password).
 if (-not (Get-Process -Name sub2api-local -ErrorAction SilentlyContinue)) {
     $env:DATA_DIR = $root
     Start-Process -FilePath "$root\bin\sub2api-local.exe" -WorkingDirectory $root `

@@ -12,15 +12,16 @@ export interface CryptoConfig {
   gas_topup: Record<string, number>
   hot_wallet_evm: string
   hot_wallet_solana: string
-  hot_index: number
+  hot_index: 0
   sweep_auto: boolean
   confirmations: Record<string, number>
   scan_range: Record<string, number>
   credit_min_amount: number
   credit_max_amount: number
   credit_multiplier: number
-  signer_socket: string
 }
+
+export type CryptoConfigPatch = Partial<Omit<CryptoConfig, 'hot_index'>>
 
 export interface DepositAddress {
   id: number
@@ -100,7 +101,7 @@ export async function getCryptoConfig(): Promise<CryptoConfig> {
 // The backend applies a pointer patch: omitted keys keep their stored value.
 // Sending only the changed fields is what prevents a full-object write from
 // silently rewriting maps the console never rendered.
-export async function updateCryptoConfig(cfg: Partial<CryptoConfig>, verification?: CryptoVerification): Promise<void> {
+export async function updateCryptoConfig(cfg: CryptoConfigPatch, verification?: CryptoVerification): Promise<void> {
   await apiClient.put('/admin/crypto/config', cfg, cryptoRequestOptions(verification))
 }
 
@@ -213,28 +214,27 @@ export async function listDepositsPaged(
   }
 }
 
-export interface SignerStatus {
+export interface WalletStatus {
   ok: boolean
   unlocked: boolean
   signing_enabled: boolean
 }
 
-// getSignerStatus reports whether the signing service holds the seeds. A
-// locked signer refuses every signing request.
-export async function getSignerStatus(): Promise<SignerStatus> {
-  const { data } = await apiClient.get('/admin/crypto/signer/status')
+// The main service keeps the encrypted wallet locked until it is unlocked.
+export async function getWalletStatus(): Promise<WalletStatus> {
+  const { data } = await apiClient.get('/admin/crypto/wallet/status')
   return data.data
 }
 
-// unlockSigner sends the operator passphrase. The seed fields are only used
+// unlockWallet sends the independent vault passphrase. The seed fields are only used
 // on first run, when the vault does not exist yet.
-export async function unlockSigner(
+export async function unlockWallet(
   passphrase: string,
   depositMnemonic = '',
   hotMnemonic = '',
   verification?: CryptoVerification
 ): Promise<void> {
-  await apiClient.post('/admin/crypto/signer/unlock', {
+  await apiClient.post('/admin/crypto/wallet/unlock', {
     passphrase,
     deposit_mnemonic: depositMnemonic,
     hot_mnemonic: hotMnemonic
@@ -409,8 +409,8 @@ async function checkedDownload(response: { data: Blob; status: number }): Promis
   throw { ...detail, status: response.status }
 }
 
-export async function backupSigner(passphrase: string, verification?: CryptoVerification): Promise<Blob> {
-  const response = await apiClient.post<Blob>('/admin/crypto/signer/backup', { passphrase }, {
+export async function backupWallet(passphrase: string, verification?: CryptoVerification): Promise<Blob> {
+  const response = await apiClient.post<Blob>('/admin/crypto/wallet/backup', { passphrase }, {
     ...cryptoRequestOptions(verification),
     responseType: 'blob',
     validateStatus: () => true
@@ -423,11 +423,10 @@ export interface CryptoMnemonicExport {
   hot_mnemonic: string
 }
 
-// This endpoint is being added by the backend owner. It returns both seeds
-// exactly once and opts out of browser and intermediary caching.
-export async function exportSignerMnemonics(passphrase: string, verification: CryptoVerification): Promise<CryptoMnemonicExport> {
+// Plaintext is returned only for this verified request, without browser caching.
+export async function exportWalletMnemonics(passphrase: string, verification: CryptoVerification): Promise<CryptoMnemonicExport> {
   const request = cryptoRequestOptions(verification)
-  const { data } = await apiClient.post<CryptoMnemonicExport>('/admin/crypto/signer/export-mnemonics', { passphrase }, {
+  const { data } = await apiClient.post<CryptoMnemonicExport>('/admin/crypto/wallet/export-mnemonics', { passphrase }, {
     ...request,
     headers: { ...request.headers, 'Cache-Control': 'no-store', Pragma: 'no-cache' }
   })
@@ -435,7 +434,7 @@ export async function exportSignerMnemonics(passphrase: string, verification: Cr
 }
 
 export async function importHotMnemonic(passphrase: string, hotMnemonic: string, verification?: CryptoVerification): Promise<{ saved: true }> {
-  const { data } = await apiClient.post<{ saved: true }>('/admin/crypto/signer/hot-mnemonic', {
+  const { data } = await apiClient.post<{ saved: true }>('/admin/crypto/wallet/hot-mnemonic', {
     passphrase,
     hot_mnemonic: hotMnemonic
   }, cryptoRequestOptions(verification))

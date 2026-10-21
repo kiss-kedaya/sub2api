@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
+	"math"
 	"math/big"
 	"strings"
 
@@ -37,17 +39,17 @@ const transferGasLimit = 65000
 type Executor struct {
 	db       *sql.DB
 	pools    map[string]*rpc.Pool
-	signer   *SignerClient
+	wallet   TransactionWallet
 	config   Config
 	tokens   map[string]TokenSpec
 	reader   BalanceReader
-	hotIndex uint32 // constructor compatibility; signer owns the gas index
+	hotIndex uint32 // constructor compatibility; the local wallet supplies its gas index
 	store    jobDB  // Run's exclusive autocommit connection
 }
 
-func NewExecutor(db *sql.DB, pools map[string]*rpc.Pool, signer *SignerClient,
+func NewExecutor(db *sql.DB, pools map[string]*rpc.Pool, wallet TransactionWallet,
 	config Config, tokens map[string]TokenSpec, reader BalanceReader, hotIndex uint32) *Executor {
-	return &Executor{db: db, pools: pools, signer: signer, config: config,
+	return &Executor{db: db, pools: pools, wallet: wallet, config: config,
 		tokens: tokens, reader: reader, hotIndex: hotIndex}
 }
 
@@ -90,6 +92,11 @@ func (s *Summary) add(out SweepEntry) {
 // when the balance reader excludes pending addresses. One global lock also
 // serializes gas-wallet nonces across instances.
 func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err error) {
+	if !dryRun {
+		if err := mode.CheckWritable(); err != nil {
+			return nil, err
+		}
+	}
 	summary = &Summary{DryRun: dryRun}
 	if !dryRun {
 		conn, release, lockErr := e.lock(ctx)
@@ -233,6 +240,10 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 	if pool == nil {
 		return e.jobError(ctx, job, fmt.Errorf("unfinished job %d needs an RPC pool for %s", job.ID, job.Chain))
 	}
+	pool, err := pool.ForChain(ctx, uint64(ChainIDs[job.Chain]))
+	if err != nil {
+		return e.jobError(ctx, job, err)
+	}
 	required := e.config.Confirmations[job.Chain]
 	if required == 0 {
 		var observeErr error
@@ -284,6 +295,13 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 	price, err := pool.GasPrice(ctx)
 	if err != nil {
 		return e.jobError(ctx, job, err)
+	}
+	// GasTopUp is the operator's native-coin budget, not a minimum that an
+	// untrusted RPC quote may increase. Bound fees even if the child already
+	// has native coin, so a forged gas quote cannot burn that balance either.
+	cap := configuredGasBudget(e.config, job.Chain)
+	if cap.Sign() <= 0 || transferGasBudget(price).Cmp(cap) > 0 {
+		return e.jobError(ctx, job, fmt.Errorf("RPC gas quote exceeds configured native funding budget"))
 	}
 	native, err := pool.Balance(ctx, job.Address)
 	if err != nil {
@@ -365,14 +383,19 @@ func transferGasBudget(gasPrice *big.Int) *big.Int {
 
 func gasTopUpAmount(config Config, chain string, gasBudget, native *big.Int) *big.Int {
 	need := new(big.Int).Sub(gasBudget, native)
-	configured := big.NewInt(0)
-	if dec, ok := config.GasTopUp[chain]; ok && dec > 0 {
-		configured = decimalToRawUnits(dec, 18)
+	configured := configuredGasBudget(config, chain)
+	if need.Sign() <= 0 || configured.Sign() <= 0 || need.Cmp(configured) > 0 {
+		return new(big.Int) // no automatic funding above the configured budget
 	}
-	if configured.Cmp(need) > 0 {
-		return configured
+	return configured
+}
+
+func configuredGasBudget(config Config, chain string) *big.Int {
+	amount := config.GasTopUp[chain]
+	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return new(big.Int)
 	}
-	return need.Mul(need, big.NewInt(2))
+	return decimalToRawUnits(amount, 18)
 }
 
 func decimalToRawUnits(value float64, decimals int) *big.Int {

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 )
 
 // CursorStore persists per-chain scan progress.
@@ -35,6 +37,9 @@ func (s *CursorStore) Load(ctx context.Context, chain string) (uint64, error) {
 
 // Save upserts the cursor after a committed batch.
 func (s *CursorStore) Save(ctx context.Context, chain string, lastBlock uint64) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO crypto_scan_cursors (chain, last_block, updated_at)
 		 VALUES ($1, $2, NOW())

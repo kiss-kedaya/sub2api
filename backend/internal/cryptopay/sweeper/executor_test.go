@@ -47,11 +47,11 @@ func TestGasTopUpAmountCoversShortfall(t *testing.T) {
 	if got.Cmp(want) != 0 {
 		t.Fatalf("expected configured top-up %s, got %s", want, got)
 	}
-	// Shortfall larger than the configured value: must cover the need.
+	// An RPC quote cannot authorize funding above the configured budget.
 	hugeBudget := new(big.Int).Exp(big.NewInt(10), big.NewInt(20), nil) // 100 BNB
 	got = exec.gasTopUpAmount("bsc", hugeBudget, big.NewInt(0))
-	if got.Cmp(hugeBudget) < 0 {
-		t.Fatalf("top-up %s must cover the %s shortfall", got, hugeBudget)
+	if got.Sign() != 0 {
+		t.Fatalf("top-up %s exceeded configured budget", got)
 	}
 }
 

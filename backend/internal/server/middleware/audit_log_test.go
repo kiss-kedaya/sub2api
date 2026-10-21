@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -153,8 +154,8 @@ func TestPasskeyLoginAuditUsesCanonicalLoginActionAndOmitsCredentialBody(t *test
 }
 
 func TestCryptoMnemonicExportAuditOmitsBodyAndTotpValue(t *testing.T) {
-	route := "POST /api/v1/admin/crypto/signer/export-mnemonics"
-	require.Equal(t, "admin.crypto.signer.mnemonics.export", auditActionOverrides[route])
+	route := "POST /api/v1/admin/crypto/wallet/export-mnemonics"
+	require.Equal(t, "admin.crypto.wallet.mnemonics.export", auditActionOverrides[route])
 	require.Contains(t, auditBodyOmittedRoutes, route)
 	require.Equal(t, "admin.crypto.deposits.export", auditSensitiveReads["GET /api/v1/admin/crypto/deposits.csv"])
 
@@ -170,10 +171,10 @@ func TestCryptoMnemonicExportAuditOmitsBodyAndTotpValue(t *testing.T) {
 		c.Next()
 	})
 	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
-	router.POST("/api/v1/admin/crypto/signer/export-mnemonics", func(c *gin.Context) {
+	router.POST("/api/v1/admin/crypto/wallet/export-mnemonics", func(c *gin.Context) {
 		c.Status(http.StatusServiceUnavailable)
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/crypto/signer/export-mnemonics", bytes.NewBufferString(`{"passphrase":"audit-secret-passphrase"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics", bytes.NewBufferString(`{"passphrase":"audit-secret-passphrase"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Crypto-TOTP", "654321")
 	w := httptest.NewRecorder()
@@ -183,6 +184,33 @@ func TestCryptoMnemonicExportAuditOmitsBodyAndTotpValue(t *testing.T) {
 	require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
 	require.NotContains(t, capture.logs[0].CredentialMasked, "654321")
 	require.NotContains(t, capture.logs[0].RequestBody, "audit-secret-passphrase")
+}
+
+func TestCryptoRPCSecretsNeverEnterAuditBodies(t *testing.T) {
+	for _, endpoint := range []struct{ method, path string }{
+		{http.MethodPut, "/api/v1/admin/crypto/config"},
+		{http.MethodPost, "/api/v1/admin/crypto/rpc/test"},
+		{http.MethodPost, "/api/v1/admin/crypto/rpc/auto-pick"},
+	} {
+		t.Run(endpoint.path, func(t *testing.T) {
+			capture := &auditCaptureRepository{}
+			audit := service.NewAuditLogService(capture, nil)
+			audit.Start()
+			router := gin.New()
+			router.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
+			router.Handle(endpoint.method, endpoint.path, func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+			body := `{"rpc":{"bsc":"https://provider.example/secret-canary?apiKey=audit-canary"}}`
+			req := httptest.NewRequest(endpoint.method, endpoint.path, strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(httptest.NewRecorder(), req)
+			audit.Stop()
+			require.Len(t, capture.logs, 1)
+			require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
+			require.NotContains(t, capture.logs[0].RequestBody, "canary")
+		})
+	}
 }
 
 // Ollama 会话保存的请求体整体就是浏览器 Cookie 明文，键级脱敏清单曾漏掉裸键

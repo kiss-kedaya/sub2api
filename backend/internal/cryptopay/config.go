@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"maps"
 	"slices"
 	"strings"
@@ -80,9 +81,6 @@ type CryptoConfig struct {
 	CreditMaxAmount  float64 `json:"credit_max_amount"`
 	CreditMultiplier float64 `json:"credit_multiplier"`
 
-	// Signer socket path (unix).
-	SignerSocket string `json:"signer_socket"`
-
 	// HotIndex is the HD index of the hot/gas wallet. 0 = the first derived
 	// address, which is also the default hot wallet.
 	HotIndex uint32 `json:"hot_index"`
@@ -124,12 +122,14 @@ func DefaultCryptoConfig() CryptoConfig {
 		CreditMaxAmount: 10000,
 		// 1 USDT credits 6.7 balance units (operator-confirmed 2026-10-12).
 		CreditMultiplier: 6.7,
-		SignerSocket:     "/run/sub2api/signer.sock",
 	}
 }
 
 // NormalizeConfig fills defaults for zero values and validates.
 func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
+	if cfg.HotIndex != 0 {
+		return cfg, fmt.Errorf("crypto config: Gas wallet index must be zero")
+	}
 	cfg.Chains = slices.Clone(cfg.Chains)
 	cfg.RPC = maps.Clone(cfg.RPC)
 	cfg.Confirmations = maps.Clone(cfg.Confirmations)
@@ -181,9 +181,6 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	}
 	if cfg.CreditMultiplier <= 0 {
 		cfg.CreditMultiplier = def.CreditMultiplier
-	}
-	if strings.TrimSpace(cfg.SignerSocket) == "" {
-		cfg.SignerSocket = def.SignerSocket
 	}
 	// Hot wallets may stay empty: deposits, scanning and crediting all work
 	// without them. Only the sweep path needs a destination, and it refuses
@@ -313,6 +310,9 @@ func LoadConfig(ctx context.Context, store SettingStore) (CryptoConfig, error) {
 
 // SaveConfig validates and persists the config.
 func SaveConfig(ctx context.Context, store SettingStore, cfg CryptoConfig) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
 	normalized, err := NormalizeConfig(cfg)
 	if err != nil {
 		return err
@@ -341,7 +341,6 @@ type CryptoConfigPatch struct {
 	CreditMinAmount      *float64            `json:"credit_min_amount"`
 	CreditMaxAmount      *float64            `json:"credit_max_amount"`
 	CreditMultiplier     *float64            `json:"credit_multiplier"`
-	SignerSocket         *string             `json:"signer_socket"`
 	HotIndex             *uint32             `json:"hot_index"`
 	SweepAuto            *bool               `json:"sweep_auto"`
 }
@@ -387,9 +386,6 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	}
 	if p.CreditMultiplier != nil {
 		out.CreditMultiplier = *p.CreditMultiplier
-	}
-	if p.SignerSocket != nil {
-		out.SignerSocket = *p.SignerSocket
 	}
 	if p.HotIndex != nil {
 		out.HotIndex = *p.HotIndex

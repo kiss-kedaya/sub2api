@@ -53,19 +53,19 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
     const sessionWrite = vi.spyOn(sessionStorage, 'setItem')
     const wrapper = render()
     await submitAndAuthorize(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/signer/export-mnemonics', { passphrase: 'vault-secret' }, expect.objectContaining({
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/export-mnemonics', { passphrase: 'vault-secret' }, expect.objectContaining({
       headers: { 'X-Crypto-TOTP': '234567', 'Cache-Control': 'no-store', Pragma: 'no-cache' }
     }))
     expect(wrapper.findAll('.crypto-mnemonics__seed')).toHaveLength(2)
     expect(wrapper.text()).not.toContain(deposit)
     expect(wrapper.text()).not.toContain(hot)
-    expect(wrapper.findAll('.crypto-mnemonics__words--masked')).toHaveLength(2)
+    expect(wrapper.findAll('.crypto-mnemonics__words--masked')).toHaveLength(4)
     expect(wrapper.find('#crypto-mnemonics-passphrase').exists()).toBe(false)
     expect(localWrite).not.toHaveBeenCalled()
     expect(sessionWrite).not.toHaveBeenCalled()
   })
 
-  it('reveals and copies each seed independently only after an explicit button click', async () => {
+  it('reveals each seed independently and copies only the selected half of each mnemonic', async () => {
     const wrapper = render()
     await submitAndAuthorize(wrapper)
     const sections = wrapper.findAll('.crypto-mnemonics__seed')
@@ -76,13 +76,43 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
     expect(sections[1].text()).not.toContain(hot)
     expect((sections[1].get('button[aria-pressed]').element as HTMLButtonElement).getAttribute('aria-pressed')).toBe('false')
     expect(copy).not.toHaveBeenCalled()
-    const copyButtons = wrapper.findAll('.crypto-mnemonics__actions button:not([aria-pressed])')
-    await copyButtons[0].trigger('click')
-    expect(copy).toHaveBeenCalledTimes(1)
-    expect(copy).toHaveBeenLastCalledWith(deposit)
-    await copyButtons[1].trigger('click')
-    expect(copy).toHaveBeenCalledTimes(2)
-    expect(copy).toHaveBeenLastCalledWith(hot)
+    const copyButtons = wrapper.findAll('[data-copy-part]')
+    expect(copyButtons.map((button) => button.attributes('data-copy-part'))).toEqual([
+      'deposit-1', 'deposit-2', 'hot-1', 'hot-2'
+    ])
+    const depositParts = deposit.split(' ').reduce<string[][]>((parts, word, index, all) => {
+      const midpoint = Math.ceil(all.length / 2)
+      const partIndex = index < midpoint ? 0 : 1
+      parts[partIndex].push(word)
+      return parts
+    }, [[], []])
+    const hotParts = hot.split(' ').reduce<string[][]>((parts, word, index, all) => {
+      const partIndex = index < Math.ceil(all.length / 2) ? 0 : 1
+      parts[partIndex].push(word)
+      return parts
+    }, [[], []])
+    for (const [index, button] of copyButtons.entries()) {
+      await button.trigger('click')
+      await flushPromises()
+      expect(copy).toHaveBeenNthCalledWith(index + 1, [...depositParts, ...hotParts][index].join(' '))
+      expect(copy.mock.calls[index][0]).not.toBe(index < 2 ? deposit : hot)
+    }
+    expect(wrapper.findAll('.crypto-mnemonics__part--copied')).toHaveLength(4)
+  })
+
+  it('splits 24-word seeds into ordered 12-word copy segments', async () => {
+    const words24 = Array.from({ length: 24 }, (_, index) => `seed${index + 1}`)
+    mocks.post.mockResolvedValueOnce({ data: { deposit_mnemonic: words24.join(' '), hot_mnemonic: hot } })
+    const wrapper = render()
+    await submitAndAuthorize(wrapper)
+    const depositButtons = wrapper.findAll('[data-copy-part]').filter((button) => button.attributes('data-copy-part')?.startsWith('deposit-'))
+    const copy = vi.mocked(navigator.clipboard.writeText)
+    await depositButtons[0].trigger('click')
+    await flushPromises()
+    await depositButtons[1].trigger('click')
+    await flushPromises()
+    expect(copy).toHaveBeenNthCalledWith(1, words24.slice(0, 12).join(' '))
+    expect(copy).toHaveBeenNthCalledWith(2, words24.slice(12).join(' '))
   })
 
   it('removes both plaintext seeds from the page after the short reveal window', async () => {
@@ -99,6 +129,30 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
     expect(wrapper.text()).not.toContain(hot)
     expect(wrapper.findAll('.crypto-mnemonics__seed')).toHaveLength(0)
     vi.useRealTimers()
+  })
+
+  it('wipes late plaintext export data when the dialog closes during the request', async () => {
+    let resolveExport!: (value: { data: { deposit_mnemonic: string; hot_mnemonic: string } }) => void
+    mocks.post.mockImplementationOnce(() => new Promise((resolve) => { resolveExport = resolve }))
+    const wrapper = render()
+    await wrapper.get('#crypto-mnemonics-passphrase').setValue('vault-secret')
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await wrapper.get('#crypto-mnemonics-form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('#crypto-security-code').setValue('234567')
+    await wrapper.get('#crypto-security-form').trigger('submit')
+    await Promise.resolve()
+
+    const lateResponse = { deposit_mnemonic: deposit, hot_mnemonic: hot }
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    await wrapper.setProps({ show: false })
+    resolveExport({ data: lateResponse })
+    await flushPromises()
+
+    expect(lateResponse).toEqual({ deposit_mnemonic: '', hot_mnemonic: '' })
+    expect(wrapper.text()).not.toContain(deposit)
+    expect(wrapper.text()).not.toContain(hot)
+    expect(wrapper.findAll('.crypto-mnemonics__seed')).toHaveLength(0)
   })
 
   it('cancels without a request, clears secrets on close/reopen, and never writes to clipboard', async () => {

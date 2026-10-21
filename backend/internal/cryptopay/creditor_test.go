@@ -30,14 +30,17 @@ func newCreditTest(t *testing.T) (*DepositCreditor, ledger.CreditRequest) {
 	t.Cleanup(func() { _ = client.Close() })
 	_, err = db.Exec(`CREATE TABLE deposit_transactions (
 		chain TEXT, tx_hash TEXT, log_index INTEGER, order_id INTEGER,
-		status TEXT, UNIQUE(chain, tx_hash, log_index))`)
+		from_address TEXT, to_address TEXT, token TEXT, amount NUMERIC,
+		status TEXT, block_hash TEXT DEFAULT 'original-block', UNIQUE(chain, tx_hash, log_index))`)
 	require.NoError(t, err)
 	u, err := client.User.Create().SetEmail("credit@example.invalid").SetPasswordHash("test-only").Save(t.Context())
 	require.NoError(t, err)
 	req := ledger.CreditRequest{UserID: u.ID, Chain: "bsc", TxHash: "0xfixture", LogIndex: 2,
-		Token: "0xtoken", Amount: big.NewInt(10_000_000), Decimals: 6, CreditUSDT: 67,
+		BlockHash: "original-block", Token: "0xtoken", Amount: big.NewInt(10_000_000), Decimals: 6, CreditUSDT: 67,
 		FromAddr: "0xfrom", ToAddr: "0xto"}
-	_, err = db.Exec(`INSERT INTO deposit_transactions(chain,tx_hash,log_index,status) VALUES($1,$2,$3,'pending')`, req.Chain, req.TxHash, req.LogIndex)
+	_, err = db.Exec(`INSERT INTO deposit_transactions(chain,tx_hash,log_index,from_address,to_address,token,amount,status,block_hash)
+		VALUES($1,$2,$3,$4,$5,$6,$7,'pending',$8)`, req.Chain, req.TxHash, req.LogIndex,
+		req.FromAddr, req.ToAddr, req.Token, "10", req.BlockHash)
 	require.NoError(t, err)
 	c := &DepositCreditor{entClient: client, db: db}
 	c.fulfill = func(ctx context.Context, id int64) error {
@@ -51,6 +54,62 @@ func newCreditTest(t *testing.T) (*DepositCreditor, ledger.CreditRequest) {
 		return client.PaymentOrder.UpdateOneID(id).SetStatus(payment.OrderStatusCompleted).Exec(ctx)
 	}
 	return c, req
+}
+
+// logIndex is block-global. The same transaction can acquire a different
+// logIndex when mined again after a reorg; that must not mint a second balance.
+func TestReminedTransactionWithDifferentLogIndexCannotCreditAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		status    string
+		clearLink bool
+	}{
+		{name: "reverted linked", status: "reverted"},
+		{name: "reverted link lost", status: "reverted", clearLink: true},
+		{name: "pending order link lost", status: "pending", clearLink: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, req := newCreditTest(t)
+			require.NoError(t, c.CreditDeposit(t.Context(), req))
+			_, err := c.db.ExecContext(t.Context(), `UPDATE deposit_transactions SET status=$1 WHERE log_index=$2`, tc.status, req.LogIndex)
+			require.NoError(t, err) // retain the linked completed order across a reorg / failed status write
+			if tc.clearLink {
+				_, err = c.db.ExecContext(t.Context(), `UPDATE deposit_transactions SET order_id=NULL WHERE log_index=$1`, req.LogIndex)
+				require.NoError(t, err) // order committed but order-link persistence was interrupted
+			}
+			before, err := c.entClient.User.Get(t.Context(), req.UserID)
+			require.NoError(t, err)
+			req.LogIndex++
+			_, err = c.db.ExecContext(t.Context(), `INSERT INTO deposit_transactions
+				(chain,tx_hash,log_index,from_address,to_address,token,amount,status,block_hash)
+				VALUES($1,$2,$3,$4,$5,$6,$7,'pending','remined-block')`, req.Chain, req.TxHash, req.LogIndex,
+				req.FromAddr, req.ToAddr, req.Token, "12")
+			require.NoError(t, err)
+			req.BlockHash = "remined-block"
+			req.Amount = big.NewInt(12_000_000) // same tx hash, changed execution output after reorg
+			require.ErrorIs(t, c.CreditDeposit(t.Context(), req), ledger.ErrReorgedDuplicateTransfer)
+			after, err := c.entClient.User.Get(t.Context(), req.UserID)
+			require.NoError(t, err)
+			require.Equal(t, before.Balance, after.Balance, "one reminted transaction must not fulfill twice")
+		})
+	}
+}
+
+func TestMultipleTransferLogsInSameBlockCanEachCredit(t *testing.T) {
+	c, req := newCreditTest(t)
+	require.NoError(t, c.CreditDeposit(t.Context(), req))
+	_, err := c.db.ExecContext(t.Context(), `UPDATE deposit_transactions SET status='credited' WHERE log_index=$1`, req.LogIndex)
+	require.NoError(t, err)
+	req.LogIndex++
+	req.Amount = big.NewInt(20_000_000)
+	req.CreditUSDT = 134
+	_, err = c.db.ExecContext(t.Context(), `INSERT INTO deposit_transactions
+		(chain,tx_hash,log_index,from_address,to_address,token,amount,status,block_hash)
+		VALUES($1,$2,$3,$4,$5,$6,$7,'pending',$8)`, req.Chain, req.TxHash, req.LogIndex,
+		req.FromAddr, req.ToAddr, req.Token, "20", req.BlockHash)
+	require.NoError(t, err)
+	require.NoError(t, c.CreditDeposit(t.Context(), req))
+	require.Equal(t, 201.0, c.entClient.User.GetX(t.Context(), req.UserID).Balance)
 }
 
 func TestCreditResumesFailedOrderAndFreezesOriginalTerms(t *testing.T) {

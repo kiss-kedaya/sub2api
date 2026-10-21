@@ -163,11 +163,18 @@ async function setup() {
   busy.value = true
   errorMessage.value = ''
   const current = generation
+  let result: Awaited<ReturnType<typeof setupCryptoSecurity>> | undefined
+  let qrCodeUrl = ''
+  let image = ''
   try {
-    const result = await setupCryptoSecurity(password.value)
+    result = await setupCryptoSecurity(password.value)
     if (current !== generation) return
     secret.value = result.secret
     setupToken.value = result.setup_token
+    qrCodeUrl = result.qr_code_url
+    result.secret = ''
+    result.setup_token = ''
+    result.qr_code_url = ''
     const expiresAt = Date.now() + Math.max(0, result.countdown) * 1000
     const tick = () => {
       countdown.value = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000))
@@ -179,13 +186,20 @@ async function setup() {
     timer = setInterval(tick, 1000)
     // qr_code_url is an otpauth URI, never a remote image or QR service URL.
     try {
-      if (!result.qr_code_url.startsWith('otpauth://totp/')) throw new Error('Invalid otpauth URI')
-      const image = await QRCode.toDataURL(result.qr_code_url, { width: 224, margin: 2 })
+      if (!qrCodeUrl.startsWith('otpauth://totp/')) throw new Error('Invalid otpauth URI')
+      image = await QRCode.toDataURL(qrCodeUrl, { width: 224, margin: 2 })
       if (current === generation && stage.value === 'setup') qrImage.value = image
     } catch { if (current === generation) qrFailed.value = true }
   } catch (error) {
     if (current === generation) reportError(error)
   } finally {
+    if (result) {
+      result.secret = ''
+      result.setup_token = ''
+      result.qr_code_url = ''
+    }
+    qrCodeUrl = ''
+    image = ''
     password.value = ''
     if (current === generation) busy.value = false
   }

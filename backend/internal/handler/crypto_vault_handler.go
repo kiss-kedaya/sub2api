@@ -18,7 +18,7 @@ func cryptoVaultHeaders(c *gin.Context) {
 }
 
 // Both handlers are behind the mandatory per-request Crypto 2FA middleware.
-// They never receive a plaintext seed from the isolated signer on export.
+// They never receive a plaintext seed from the local wallet on export.
 func (h *CryptoHandler) AdminExportVaultBackup(c *gin.Context) {
 	cryptoVaultHeaders(c)
 	var req struct {
@@ -32,14 +32,14 @@ func (h *CryptoHandler) AdminExportVaultBackup(c *gin.Context) {
 		return
 	}
 	if h.service == nil {
-		response.Error(c, http.StatusServiceUnavailable, "Signer unavailable")
+		response.Error(c, http.StatusServiceUnavailable, "Wallet unavailable")
 		return
 	}
 	backup, err := h.service.ExportVaultBackup(c.Request.Context(), req.Passphrase)
 	req.Passphrase = ""
 	if err != nil {
-		// Do not propagate signer/driver bodies or a secret-bearing request.
-		response.Error(c, http.StatusForbidden, "Vault backup refused; verify the vault passphrase and signer status")
+		// Do not propagate wallet/driver bodies or a secret-bearing request.
+		response.Error(c, http.StatusForbidden, "Vault backup refused; verify the vault passphrase and wallet status")
 		return
 	}
 	c.Header("Content-Disposition", `attachment; filename="sub2api-wallet-backup.json"`)
@@ -61,7 +61,7 @@ func (h *CryptoHandler) AdminImportHotMnemonic(c *gin.Context) {
 		return
 	}
 	if h.service == nil {
-		response.Error(c, http.StatusServiceUnavailable, "Signer unavailable")
+		response.Error(c, http.StatusServiceUnavailable, "Wallet unavailable")
 		return
 	}
 	err := h.service.ImportHotMnemonic(c.Request.Context(), req.Passphrase, req.HotMnemonic)
@@ -74,11 +74,18 @@ func (h *CryptoHandler) AdminImportHotMnemonic(c *gin.Context) {
 }
 
 func decodeCryptoVaultRequest(c *gin.Context, target any) bool {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<10)
+	return decodeCryptoRequest(c, target, 4<<10, "Invalid vault request")
+}
+
+// Reject trailing JSON and unknown fields before invoking any payment action.
+// Keep body limits local to these endpoints so unrelated gateway traffic is
+// unaffected. The larger config limit accommodates multiple RPC endpoints.
+func decodeCryptoRequest(c *gin.Context, target any, limit int64, message string) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(target) != nil || decoder.Decode(new(any)) != io.EOF {
-		response.BadRequest(c, "Invalid vault request")
+		response.BadRequest(c, message)
 		return false
 	}
 	return true
