@@ -326,3 +326,44 @@ func TestOpenAIResponsesWebSocketFirstUpstreamRefusal(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAIResponsesWebSocketServerErrorWithRefusalTextDoesNotBillOrBlock(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":{"message":"I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}`)
+	}))
+	defer upstream.Close()
+	harness := newOpenAIWSFirstRefusalHarness(t, service.PlatformGrok, upstream.URL, 0.1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := coderws.Dial(ctx, harness.url, &coderws.DialOptions{HTTPHeader: harness.headers})
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+	payload := []byte(`{"type":"response.create","model":"grok-4.7","input":"hello"}`)
+	require.NoError(t, conn.Write(ctx, coderws.MessageText, payload))
+	for {
+		_, _, err = conn.Read(ctx)
+		if err != nil {
+			break
+		}
+	}
+	require.NotEqual(t, coderws.StatusPolicyViolation, coderws.CloseStatus(err), "a 500 must not become a content refusal")
+	select {
+	case <-harness.handlerDone:
+	case <-ctx.Done():
+		t.Fatal("500 websocket handler did not finish")
+	}
+	require.EqualValues(t, 1, upstreamCalls.Load())
+	require.Empty(t, harness.usage.snapshot())
+	require.Empty(t, harness.billing.snapshot())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/openai/v1/responses", nil)
+	c.Request.Header = harness.headers.Clone()
+	hash := service.GrokModerationSessionHash(c, harness.apiKey, payload)
+	require.NotEmpty(t, hash)
+	require.False(t, harness.redisServer.Exists("blocked:sess:0:"+hash))
+}

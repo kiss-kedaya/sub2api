@@ -91,6 +91,27 @@ func IsGrokModerationRefusalResponse(platform string, statusCode int, body []byt
 	return statusCode == http.StatusForbidden && IsGrokModerationRefusal(platform, body)
 }
 
+// Transport failures must carry an actual 403 before they can trigger a fee.
+// A refusal sentence alone can also occur in a provider's 429/5xx response.
+func IsGrokModerationRefusalFailure(platform string, body []byte, err error) bool {
+	if IsGrokPlatformContentPolicyRejection(platform, err) {
+		return true
+	}
+	var upstreamErr *UpstreamFailoverError
+	if errors.As(err, &upstreamErr) {
+		return IsGrokModerationRefusalResponse(platform, upstreamErr.StatusCode, upstreamErr.ResponseBody)
+	}
+	if err != nil {
+		return false
+	}
+	for _, path := range []string{"status", "status_code", "error.status_code", "response.error.status_code"} {
+		if status := int(gjson.GetBytes(body, path).Int()); status != 0 {
+			return IsGrokModerationRefusalResponse(platform, status, body)
+		}
+	}
+	return false
+}
+
 func GrokModerationRefusalBillingCost() float64 { return grokModerationRefusalBillingCost }
 
 // GrokModerationRefusalBilledCost resolves the per-refusal fee for a group.
