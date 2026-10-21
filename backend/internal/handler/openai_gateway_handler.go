@@ -2901,14 +2901,20 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if len(turnBody) == 0 {
 					turnBody = firstMessage
 				}
-				if service.IsGlobalIPBlacklistResponse(payload) || service.IsGlobalIPBlacklistRejection(forwardErr) {
+				globalIPBlacklist := service.IsGlobalIPBlacklistResponse(payload) || service.IsGlobalIPBlacklistRejection(forwardErr)
+				grokRefusal := service.IsGrokModerationRefusalFailure(account.Platform, payload, forwardErr)
+				if globalIPBlacklist && (account.Platform != service.PlatformGrok || grokRefusal) {
 					blockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 					defer cancel()
 					h.gatewayService.BlockGlobalIPBlacklistSession(blockCtx, c, apiKey, turnBody)
-					markGrokIPBlacklistTurn(turn)
+					if grokRefusal {
+						markGrokRefusedTurn(turn)
+					} else {
+						markGrokIPBlacklistTurn(turn)
+					}
 					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, service.GlobalIPBlacklistSessionBlockedMessage(), forwardErr)
 				}
-				if service.IsGrokModerationRefusalFailure(account.Platform, payload, forwardErr) {
+				if grokRefusal {
 					blockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 					defer cancel()
 					h.gatewayService.BlockGrokModerationRefusedRequest(blockCtx, c, apiKey, turnBody)

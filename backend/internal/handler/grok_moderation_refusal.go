@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -20,16 +21,33 @@ func (h *OpenAIGatewayHandler) handleGrokModerationRefusal(c *gin.Context, key *
 		return false
 	}
 	if service.IsGlobalIPBlacklistRejectionMarked(c) || service.IsGlobalIPBlacklistRejection(forwardErr) {
+		billable := service.IsGrokModerationRefusalFailure(account.Platform, nil, forwardErr)
+		if account.Platform == service.PlatformGrok && !billable {
+			return false
+		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 3*time.Second)
 		defer cancel()
 		h.gatewayService.BlockGlobalIPBlacklistSession(ctx, c, key, body)
-		if result != nil {
+		if billable {
+			result = service.PrepareGrokModerationRefusalOpenAIResult(result, model, service.GrokModerationRefusalBilledCost(key.Group))
+			result.Stream = stream
+			submit(result)
+		} else if result != nil {
 			result.NonBillableUpstreamError = true
 			result.ForcedBillingCost = 0
 			result.ForceBalanceBilling = false
 			submit(result)
 		}
 		if !c.Writer.Written() {
+			var upstreamErr *service.UpstreamFailoverError
+			if billable && errors.As(forwardErr, &upstreamErr) && len(upstreamErr.ResponseBody) > 0 {
+				contentType := strings.TrimSpace(upstreamErr.ResponseHeaders.Get("Content-Type"))
+				if contentType == "" {
+					contentType = "application/json"
+				}
+				c.Data(http.StatusForbidden, contentType, upstreamErr.ResponseBody)
+				return true
+			}
 			h.errorResponse(c, http.StatusForbidden, "permission_error", service.GlobalIPBlacklistSessionBlockedMessage())
 		}
 		return true

@@ -1174,7 +1174,7 @@ func openAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
 
 func openAIStreamEventIsPreamble(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "response.created", "response.in_progress":
+	case "response.created", "response.queued", "response.in_progress", "response.metadata":
 		return true
 	default:
 		return false
@@ -2271,6 +2271,22 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			frame := parseOpenAISSEDataFrame(dataBytes, pendingSSEEventType)
 			rawEventType := frame.eventType
 			observer.ObserveOpenAIFrame(frame)
+			if refusalErr := grokModerationRefusalProtocolError(account, dataBytes); refusalErr != nil &&
+				(rawEventType == "response.failed" || rawEventType == "error") {
+				s.parseSSEUsageBytesWithType(dataBytes, rawEventType, usage)
+				responseID = firstNonEmpty(responseID, extractOpenAIResponseIDFromSSEFrame(frame))
+				s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "stream_failed", dataBytes, extractOpenAISSEErrorMessage(dataBytes))
+				s.markOpenAIStreamFinalFailure(c, account, true, upstreamRequestID, true)
+				stopKeepalive()
+				if !clientDisconnected && writePendingLines() {
+					if _, err := fmt.Fprint(w, line+"\n\n"); err != nil {
+						clientDisconnected = true
+					} else {
+						flushPending = true
+					}
+				}
+				return resultWithUsage(), refusalErr
+			}
 			if needModelReplace && strings.Contains(data, mappedModel) {
 				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
 				if replacedData, replaced := extractOpenAISSEDataLine(line); replaced {
@@ -2683,6 +2699,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if isEventStreamResponse(resp.Header) {
 		return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
+	if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, body); refusalErr != nil {
+		return nil, refusalErr
+	}
 
 	usage := &OpenAIUsage{}
 	usageParsed := false
@@ -2752,6 +2771,9 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 	bodyText := string(body)
 	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
+		if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, terminalPayload); refusalErr != nil {
+			return nil, refusalErr
+		}
 		msg := extractOpenAISSEErrorMessage(terminalPayload)
 		if msg == "" {
 			msg = "Upstream compact response failed"
