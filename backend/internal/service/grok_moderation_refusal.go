@@ -2,9 +2,13 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -13,11 +17,9 @@ import (
 const grokModerationRefusalBillingCost = 0.1
 const grokModerationRefusalText = "i'm sorry, i can't help with that request."
 
-// grokModerationRefusalSessionBlockTTL is how long a conversation stays blocked
-// after the provider refused it on safety grounds. The block exists so a client
-// hammering the same prompt stops burning upstream quota; it is not a permanent
-// ban, so it expires.
-const grokModerationRefusalSessionBlockTTL = 24 * time.Hour
+// A refused conversation stays blocked. Redis TTL 0 persists the block so
+// resuming the same conversation later cannot create another provider charge.
+const grokModerationRefusalSessionBlockTTL time.Duration = 0
 
 // IsGrokModerationRefusal reports the provider-specific refusal signature that
 // must be surfaced unchanged and settled as a billable request. Keep this
@@ -27,7 +29,7 @@ func IsGrokModerationRefusal(platform string, body []byte) bool {
 		return false
 	}
 	text := strings.ToLower(string(body))
-	return strings.Contains(text, grokModerationRefusalText)
+	return strings.Contains(text, grokModerationRefusalText) || isGrokContentPolicyRejection(403, body)
 }
 
 func GrokModerationRefusalBillingCost() float64 { return grokModerationRefusalBillingCost }
@@ -87,7 +89,7 @@ func (s *OpenAIGatewayService) BlockModerationRefusedSessionForOpenAI(
 	sessionHash string,
 	ttl time.Duration,
 ) {
-	if s == nil || s.cache == nil || sessionHash == "" || ttl <= 0 {
+	if s == nil || s.cache == nil || sessionHash == "" || ttl < 0 {
 		return
 	}
 	gid := int64(0)
@@ -100,6 +102,54 @@ func (s *OpenAIGatewayService) BlockModerationRefusedSessionForOpenAI(
 			zap.Error(err),
 		)
 	}
+}
+
+// Use the conversation identity, not the model-scoped routing affinity. A
+// refused conversation stays blocked if the client changes model or protocol.
+// Scope explicit client identifiers to the authenticated user.
+func GrokModerationSessionHash(c *gin.Context, apiKey *APIKey, body []byte) string {
+	userID := balancePreauthorizationAPIKeyUserID(apiKey)
+	if userID <= 0 {
+		return ""
+	}
+	seed := explicitOpenAIRequestSessionID(c, body)
+	if seed == "" {
+		seed = ClaudeCodeSessionIDFromHeader(c)
+	}
+	if seed == "" {
+		if parsed := ParseMetadataUserID(gjson.GetBytes(body, "metadata.user_id").String()); parsed != nil {
+			seed = parsed.SessionID
+		}
+	}
+	if seed == "" {
+		// Routing includes the model; moderation identity must not. Require a
+		// real user anchor to avoid blocking every model-only request.
+		view := openAIRequestPayloadView(body)
+		withoutModel, err := sjson.DeleteBytes([]byte(view.Raw), "model")
+		if err == nil {
+			seed = deriveOpenAIAnchoredContentSessionSeed(withoutModel)
+		}
+	}
+	if seed == "" {
+		return ""
+	}
+	return DeriveSessionHashFromSeed(fmt.Sprintf("grok-moderation:%d:%s", userID, seed))
+}
+
+func (s *OpenAIGatewayService) ModerationRefusedSessionBlocked(ctx context.Context, groupID *int64, sessionHash string) bool {
+	if s == nil || s.cache == nil || sessionHash == "" {
+		return false
+	}
+	gid := int64(0)
+	if groupID != nil {
+		gid = *groupID
+	}
+	blocked, err := s.cache.IsSessionBlocked(ctx, gid, sessionHash)
+	if err != nil {
+		logger.L().Warn("openai_gateway.session_block_check_failed", zap.Int64("group_id", gid), zap.Error(err))
+		return false
+	}
+	return blocked
 }
 
 // PrepareGrokModerationRefusalResult creates the minimal usage record needed

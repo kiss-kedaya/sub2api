@@ -3,7 +3,11 @@ package service
 import (
 	"errors"
 	"math"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIsGrokModerationRefusal(t *testing.T) {
@@ -89,4 +93,19 @@ func TestIsGrokPlatformContentPolicyRejection(t *testing.T) {
 	if IsGrokPlatformContentPolicyRejection(PlatformGrok, nil) {
 		t.Fatal("nil error must not match")
 	}
+}
+
+func TestGrokModerationSessionHashIsolation(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	key := &APIKey{User: &User{ID: 77}}
+	a := GrokModerationSessionHash(c, key, []byte(`{"model":"grok-4.7","messages":[{"role":"user","content":"hello"}]}`))
+	b := GrokModerationSessionHash(c, key, []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"},{"role":"user","content":"continue"}]}`))
+	require.NotEmpty(t, a)
+	require.Equal(t, a, b, "model changes and appended turns must preserve identity")
+	require.Empty(t, GrokModerationSessionHash(c, key, []byte(`{"model":"grok-4.7"}`)))
+	c.Request.Header.Set("Session_id", "conversation")
+	require.Equal(t, GrokModerationSessionHash(c, key, nil), GrokModerationSessionHash(c, &APIKey{UserID: 77}, nil))
+	require.NotEqual(t, GrokModerationSessionHash(c, key, nil), GrokModerationSessionHash(c, &APIKey{UserID: 78}, nil))
+	require.Empty(t, GrokModerationSessionHash(c, &APIKey{}, nil))
 }

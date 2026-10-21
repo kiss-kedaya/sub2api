@@ -165,6 +165,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	defer inflightRelease()
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
+	if h.rejectIfGrokModerationSessionBlocked(c, apiKey, body) {
+		return
+	}
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
 
 	maxAccountSwitches := h.maxAccountSwitches
@@ -374,6 +377,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if h.handleGrokModerationRefusal(c, apiKey, account, body, reqModel, reqStream, result, err, submitChatUsage) {
+				return
+			}
 			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionHash, account, err)
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_chat_completions.forward_partial_error_with_image_result",
@@ -419,18 +425,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 							case <-time.After(retryDelay):
 							}
 							continue
-						}
-						// Grok 内容策略 403：上游已在 handleCompatErrorResponse 里回写了
-						// 403，不会产生 UpstreamFailoverError。这里补上一次性扣费
-						// （名义价 × 分组/用户倍率），并让同一会话停止继续烧上游额度。
-						if service.IsGrokPlatformContentPolicyRejection(account.Platform, err) {
-							result = service.PrepareGrokModerationRefusalOpenAIResult(
-								result, reqModel, service.GrokModerationRefusalBilledCost(apiKey.Group))
-							submitChatUsage(result)
-							h.gatewayService.BlockModerationRefusedSessionForOpenAI(
-								c.Request.Context(), apiKey.GroupID, sessionHash,
-								service.GrokModerationRefusalSessionBlockTTL())
-							return
 						}
 					}
 					// A recoverable first attempt must not lower scheduler health before
