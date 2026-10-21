@@ -16,7 +16,7 @@ import (
 // Failures are logged and swallowed: a cache problem must never turn a billable
 // refusal into a 5xx for the client.
 func (s *GatewayService) BlockModerationRefusedSession(ctx context.Context, groupID *int64, sessionHash string, ttl time.Duration) {
-	if s == nil || s.cache == nil || sessionHash == "" || ttl <= 0 {
+	if s == nil || s.cache == nil || sessionHash == "" || ttl < 0 {
 		return
 	}
 	gid := int64(0)

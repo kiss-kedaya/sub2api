@@ -154,6 +154,7 @@ func grokContentPolicyMessage(value string) bool {
 	// xAI's media safety responses use these exact phrases. They are specific
 	// enough not to classify a generic account-policy or entitlement message.
 	for _, phrase := range []string{
+		"failed check: safety_check_type",
 		"the moderation feature is not available",
 		"image is sensitive",
 		"text is sensitive",
