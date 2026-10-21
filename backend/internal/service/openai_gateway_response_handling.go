@@ -612,6 +612,25 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if responseID == "" {
 				responseID = extractOpenAIResponseIDFromSSEFrame(frame)
 			}
+			if refusalErr := grokModerationRefusalProtocolError(account, dataBytes); refusalErr != nil &&
+				(eventType == "response.failed" || eventType == "error") {
+				// An HTTP 200 stream can carry an authoritative 403. Preserve its
+				// refusal frame and the handler's fixed-price settlement signal;
+				// generic terminal sanitization/failover must not replace either.
+				s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
+				s.recordOpenAIStreamUpstreamError(c, account, false, upstreamRequestID, "stream_failed", dataBytes, extractOpenAISSEErrorMessage(dataBytes))
+				s.markOpenAIStreamFinalFailure(c, account, false, upstreamRequestID, true)
+				if !clientDisconnected {
+					applyAttemptResponseHeaders()
+					if _, err := writePendingString(line + "\n\n"); err != nil {
+						handlePendingWriteError(err)
+					} else if err := flushBuffered(); err != nil {
+						handlePendingWriteError(err)
+					}
+				}
+				streamEarlyErr = refusalErr
+				return
+			}
 			forceFlushFailedEvent := false
 			if !capacityFailoverSuppressedLogged && account != nil && account.Platform == PlatformOpenAI &&
 				(eventType == "error" || eventType == "response.failed") &&
@@ -1826,6 +1845,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	if account.Type == AccountTypeOAuth && bodyLooksLikeSSE {
 		return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
+	if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, body); refusalErr != nil {
+		return nil, refusalErr
+	}
 	if account != nil && account.IsGrok() && isOpenAIResponsesCompactPath(c) {
 		body, err = convertGrokResponseToOpenAICompact(body)
 		if err != nil {
@@ -1938,6 +1960,9 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 	bodyText := string(body)
 	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
+		if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, terminalPayload); refusalErr != nil {
+			return nil, refusalErr
+		}
 		msg := extractOpenAISSEErrorMessage(terminalPayload)
 		if msg == "" {
 			msg = "Upstream compact response failed"
@@ -2020,6 +2045,44 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
 		searchCount:      countGrokNativeSearchCallsFromSSEBody(bodyText),
 	}, nil
+}
+
+// A provider's actual protocol status is required before a safety sentence can
+// trigger the fixed refusal fee. Keep this error recognizable by the existing
+// HTTP handler, which also persists the conversation block before settlement.
+func grokModerationRefusalProtocolError(account *Account, payload []byte) error {
+	if account == nil || !strings.EqualFold(strings.TrimSpace(account.Platform), PlatformGrok) {
+		return nil
+	}
+	if !IsGrokModerationRefusalFailure(account.Platform, payload, nil) &&
+		!(grokModerationRefusalProtocolStatus(payload) == http.StatusForbidden && IsGlobalIPBlacklistResponse(payload)) {
+		return nil
+	}
+	return fmt.Errorf("%s %s", grokContentPolicyRejectionPrefix, extractOpenAISSEErrorMessage(payload))
+}
+
+func (s *OpenAIGatewayService) writeGrokModerationRefusalProtocolError(resp *http.Response, c *gin.Context, account *Account, payload []byte) error {
+	refusalErr := grokModerationRefusalProtocolError(account, payload)
+	if refusalErr == nil {
+		return nil
+	}
+	setOpsUpstreamError(c, http.StatusForbidden, extractOpenAISSEErrorMessage(payload), truncateString(string(payload), 2048))
+	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	MarkResponseCommitted(c)
+	streamCommitted := c.Writer.Written() && isEventStreamResponse(c.Writer.Header())
+	if streamCommitted || (openAICompactClientWantsStream(c) && StopOpenAICompactSSEKeepaliveCommitted(c)) {
+		// A compact keepalive may already have committed HTTP 200. The original
+		// provider terminal still communicates the refusal without a second body.
+		eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+		if eventType != "error" {
+			eventType = "response.failed"
+		}
+		_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, payload)
+		c.Writer.Flush()
+	} else {
+		c.Data(http.StatusForbidden, "application/json", payload)
+	}
+	return refusalErr
 }
 
 func extractOpenAISSETerminalEvent(body string) (string, []byte, bool) {

@@ -63,6 +63,24 @@ func TestIsGrokContentPolicyRejection(t *testing.T) {
 			want:   false,
 		},
 		{
+			name:   "plain moderation refusal signature is request scoped",
+			status: http.StatusForbidden,
+			body:   `{"error":{"message":"I'm sorry, I can't help with that request.","type":"upstream_error"}}`,
+			want:   true,
+		},
+		{
+			name:   "plain moderation refusal signature does not override rate limit",
+			status: http.StatusTooManyRequests,
+			body:   `{"error":{"message":"I'm sorry, I can't help with that request.","type":"upstream_error"}}`,
+			want:   false,
+		},
+		{
+			name:   "plain moderation refusal signature does not override server error",
+			status: http.StatusInternalServerError,
+			body:   `{"error":{"message":"I'm sorry, I can't help with that request.","type":"upstream_error"}}`,
+			want:   false,
+		},
+		{
 			name:   "account policy suspension is not request policy",
 			status: http.StatusForbidden,
 			body:   `{"error":{"message":"account suspended due to policy violation"}}`,
@@ -211,7 +229,7 @@ func TestGrokContentPolicy403SharedErrorFallbackDoesNotMutate(t *testing.T) {
 	_, err := svc.handleErrorResponse(context.Background(), resp, c, account, nil, "grok-4.5")
 	require.Error(t, err)
 	require.Equal(t, http.StatusForbidden, recorder.Code)
-	require.Contains(t, recorder.Body.String(), "invalid_request_error")
+	require.Equal(t, string(body), recorder.Body.String())
 
 	c, recorder = newContext()
 	resp = &http.Response{
@@ -222,7 +240,7 @@ func TestGrokContentPolicy403SharedErrorFallbackDoesNotMutate(t *testing.T) {
 	_, err = svc.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError, "grok-4.5")
 	require.Error(t, err)
 	require.Equal(t, http.StatusForbidden, recorder.Code)
-	require.Contains(t, recorder.Body.String(), "invalid_request_error")
+	require.Equal(t, string(body), recorder.Body.String())
 
 	require.Zero(t, repo.tempUnschedCalls)
 	require.Zero(t, repo.rateLimitedCalls)
