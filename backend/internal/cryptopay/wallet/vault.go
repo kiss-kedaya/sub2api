@@ -1,4 +1,4 @@
-package main
+package wallet
 
 import (
 	"crypto/aes"
@@ -9,13 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"golang.org/x/crypto/scrypt"
 )
 
-// Vault seals the mnemonic at rest with a passphrase the operator holds.
-// Nothing in the file is usable without that passphrase, so a stolen disk or
+// The vault seals the mnemonic at rest with a passphrase the operator holds.
+// Nothing in the ciphertext is usable without that passphrase, so a stolen disk or
 // database dump is worthless on its own.
 //
 // Layout: base64(salt ‖ nonce ‖ ciphertext+tag)
@@ -35,31 +34,12 @@ const (
 )
 
 // ErrVaultLocked is returned when signing is attempted before an unlock.
-var ErrVaultLocked = errors.New("signer is locked: unlock with the admin passphrase first")
+var ErrVaultLocked = errors.New("wallet is locked: unlock with the admin passphrase first")
 
-// vaultContents is the plaintext inside the vault: both seeds live in one
-// file so the operator unlocks once.
+// vaultContents is the plaintext inside the vault: both seeds share one blob.
 type vaultContents struct {
 	Deposit string `json:"deposit"`
 	Hot     string `json:"hot"`
-}
-
-// sealVault encrypts both seeds under passphrase and writes them to path
-// atomically (temp file + rename) so a crash cannot leave a truncated vault.
-func sealVault(path, depositMnemonic, hotMnemonic, passphrase string) error {
-	encoded, err := sealContents(depositMnemonic, hotMnemonic, passphrase)
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(encoded), 0o600); err != nil {
-		return fmt.Errorf("write vault: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("replace vault: %w", err)
-	}
-	return nil
 }
 
 // sealContents returns the base64 vault blob for both seeds.
@@ -71,6 +51,7 @@ func sealContents(depositMnemonic, hotMnemonic, passphrase string) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("encode vault contents: %w", err)
 	}
+	defer clear(plaintext)
 	salt := make([]byte, vaultSaltLen)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 		return "", fmt.Errorf("generate salt: %w", err)
@@ -79,6 +60,7 @@ func sealContents(depositMnemonic, hotMnemonic, passphrase string) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("derive key: %w", err)
 	}
+	defer clear(key)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", fmt.Errorf("create cipher: %w", err)
@@ -100,16 +82,6 @@ func sealContents(depositMnemonic, hotMnemonic, passphrase string) (string, erro
 	return base64.StdEncoding.EncodeToString(blob), nil
 }
 
-// openVault decrypts the vault. A wrong passphrase fails the GCM tag check,
-// so it is reported as such rather than as a corrupt file.
-func openVault(path, passphrase string) (*vaultContents, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read vault: %w", err)
-	}
-	return openVaultString(string(raw), passphrase)
-}
-
 // openVaultString decrypts a vault blob held in memory (settings row).
 func openVaultString(encoded, passphrase string) (*vaultContents, error) {
 	blob, err := base64.StdEncoding.DecodeString(encoded)
@@ -125,6 +97,7 @@ func openVaultString(encoded, passphrase string) (*vaultContents, error) {
 	if err != nil {
 		return nil, fmt.Errorf("derive key: %w", err)
 	}
+	defer clear(key)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("create cipher: %w", err)
@@ -142,6 +115,7 @@ func openVaultString(encoded, passphrase string) (*vaultContents, error) {
 	if err != nil {
 		return nil, fmt.Errorf("wrong passphrase")
 	}
+	defer clear(plaintext)
 	var contents vaultContents
 	if err := json.Unmarshal(plaintext, &contents); err != nil {
 		return nil, fmt.Errorf("vault contents are corrupt: %w", err)

@@ -3,8 +3,8 @@ package cryptopay
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"log/slog"
 	"maps"
 	"math/big"
@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/scanner"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/sweeper"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/wallet"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -132,7 +133,7 @@ var watchedTokens = map[string][]TokenConfig{
 }
 
 func cryptoWorkersAllowed() bool {
-	return !service.BackgroundJobsDisabled() && !service.CryptoAdminTestMode()
+	return !service.BackgroundJobsDisabled() && !mode.ReadOnly()
 }
 
 // tokenDecimals resolves a token contract's decimals for a chain, falling
@@ -170,7 +171,7 @@ type Service struct {
 	pools     map[string]*rpc.Pool
 	worker    *scanner.Worker
 	planner   *sweeper.Planner
-	signer    *sweeper.SignerClient
+	wallet    *wallet.Manager
 	executor  *sweeper.Executor
 	addresses *addresses.Service
 
@@ -195,6 +196,7 @@ func NewService(
 		settings:  settings,
 		creditor:  creditor,
 		pools:     map[string]*rpc.Pool{},
+		wallet:    wallet.New(db),
 		addresses: addressSvc,
 	}
 	s.reload(context.Background())
@@ -204,36 +206,6 @@ func NewService(
 // Reload re-reads config and (re)builds pools and the worker. Called at
 // startup and after every admin config save.
 func (s *Service) Reload(ctx context.Context) { s.reload(ctx) }
-
-// ValidateSignerChange proves that a different socket still belongs to the
-// deposit seed that owns existing addresses. A reachable but wrong signer
-// must not mix two wallet families in the same address pool.
-func (s *Service) ValidateSignerChange(ctx context.Context, socket string) error {
-	if strings.TrimSpace(socket) == "" {
-		return fmt.Errorf("signer socket must not be empty")
-	}
-	var index int64
-	var address string
-	err := s.db.QueryRowContext(ctx, `SELECT derivation_index, address FROM crypto_address_pool
-		WHERE chain_family = 'evm' ORDER BY derivation_index LIMIT 1`).Scan(&index, &address)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("check existing deposit seed: %w", err)
-	}
-	if index < 0 || index > int64(^uint32(0)) {
-		return fmt.Errorf("existing deposit index is invalid")
-	}
-	derived, err := addresses.NewSignerClient(socket).Derive(ctx, uint32(index), 1)
-	if err != nil {
-		return fmt.Errorf("replacement signer must be unlocked to verify the existing deposit seed: %w", err)
-	}
-	if len(derived) != 1 || derived[0].Index != index || !strings.EqualFold(derived[0].EVM, address) {
-		return fmt.Errorf("replacement signer uses a different deposit seed")
-	}
-	return nil
-}
 
 func (s *Service) reload(ctx context.Context) {
 	cfg, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
@@ -251,10 +223,13 @@ func (s *Service) reload(ctx context.Context) {
 	defer s.mu.Unlock()
 	s.config = cfg
 	// Vault administration must remain available while deposits are paused.
-	// Initializing the client does not unlock a vault, sign, scan or move funds.
-	s.signer = sweeper.NewSignerClient(cfg.SignerSocket)
+	// The same in-process wallet survives configuration reloads. It starts locked.
+	if err := s.wallet.SetDestination(cfg.HotWalletEVM); err != nil {
+		slog.Error("[cryptopay] invalid wallet destination", "error", err)
+	}
+	s.wallet.SetEnabled(cfg.Enabled && cryptoWorkersAllowed())
 	if s.addresses != nil {
-		s.addresses.SetSigner(addresses.NewSignerClient(cfg.SignerSocket))
+		s.addresses.SetDeriver(s.wallet)
 	}
 
 	if !cfg.Enabled {
@@ -412,7 +387,7 @@ func (s *Service) reload(ctx context.Context) {
 			}
 		}
 	}
-	s.executor = sweeper.NewExecutor(s.db, pools, s.signer, sweeper.Config{
+	s.executor = sweeper.NewExecutor(s.db, pools, s.wallet, sweeper.Config{
 		Confirmations:   sweepConfirmations,
 		GlobalThreshold: cfg.SweepGlobalThreshold,
 		MinPerAddress:   sweepMin,
@@ -516,36 +491,34 @@ func (s *Service) SweepReadiness() error {
 	return s.Config().ValidateSweepReady()
 }
 
-// SignerStatus reports the signing service's lock state. A locked signer
-// holds no seeds, so the console must ask for the passphrase first.
-func (s *Service) SignerStatus(ctx context.Context) (*sweeper.SignerStatus, error) {
+// WalletStatus reports whether the encrypted wallet has been unlocked in this process.
+func (s *Service) WalletStatus(ctx context.Context) (*wallet.Status, error) {
 	s.mu.RLock()
-	signer := s.signer
+	wallet := s.wallet
 	s.mu.RUnlock()
-	if signer == nil {
+	if wallet == nil {
 		return nil, fmt.Errorf("cryptopay is disabled")
 	}
-	return signer.Status(ctx)
+	return wallet.Status(ctx)
 }
 
-// HotAddresses returns the hot wallet's own receive addresses from the
-// signer. The operator cannot guess these (they derive from the hot seed),
-// so the console uses this to fill the sweep destination fields exactly.
+// HotAddresses returns the Gas wallet's public addresses. The console uses
+// them for Gas funding and can explicitly choose one as a sweep destination.
 func (s *Service) HotAddresses(ctx context.Context) (*sweeper.HotAddress, error) {
 	s.mu.RLock()
-	signer := s.signer
+	wallet := s.wallet
 	s.mu.RUnlock()
-	if signer == nil {
+	if wallet == nil {
 		return nil, fmt.Errorf("cryptopay is disabled")
 	}
-	return signer.HotAddresses(ctx)
+	return wallet.HotAddresses(ctx)
 }
 
 // HotWalletStatus is the gas readiness of the sweep hot wallet per chain.
 // A hot wallet without native coin cannot pay for sweeps, and the failure
 // would otherwise only show up as failed sweep records.
 type HotWalletStatus struct {
-	// Address is the GAS PAYER: the signer's hot-seed address. This is the
+	// Address is the GAS PAYER: the wallet's Gas-seed address. This is the
 	// wallet the operator must fund with native coin, which is not
 	// necessarily the sweep receiving address.
 	Address string `json:"address"`
@@ -592,7 +565,7 @@ func (s *Service) HotWalletStatuses(ctx context.Context) ([]HotWalletStatus, err
 	}
 	gasWallet := strings.TrimSpace(addr.EVM)
 	if !validEVMAddress(gasWallet) {
-		return nil, fmt.Errorf("signer returned an invalid gas wallet")
+		return nil, fmt.Errorf("wallet returned an invalid gas wallet")
 	}
 	s.mu.RLock()
 	pools := s.pools
@@ -632,21 +605,28 @@ func (s *Service) HotWalletStatuses(ctx context.Context) ([]HotWalletStatus, err
 	return out, nil
 }
 
-// UnlockSigner forwards the operator passphrase to the signer. The seeds are
-// only sent on first run, when the vault does not exist yet.
-func (s *Service) UnlockSigner(ctx context.Context, passphrase, depositMnemonic, hotMnemonic string) error {
+// UnlockWallet opens the existing encrypted wallet, or initializes it once.
+func (s *Service) UnlockWallet(ctx context.Context, passphrase, depositMnemonic, hotMnemonic string) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
 	s.mu.RLock()
-	signer := s.signer
+	wallet := s.wallet
 	s.mu.RUnlock()
-	if signer == nil {
+	if wallet == nil {
 		return fmt.Errorf("cryptopay is disabled")
 	}
-	return signer.Unlock(ctx, passphrase, depositMnemonic, hotMnemonic)
+	return wallet.Unlock(ctx, passphrase, depositMnemonic, hotMnemonic)
 }
 
 // RunSweep executes the sweep (or a dry-run) and returns the summary.
 // Serialised by the caller via the admin route; sweeps are operator-driven.
 func (s *Service) RunSweep(ctx context.Context, dryRun bool) (*sweeper.Summary, error) {
+	if !dryRun {
+		if err := mode.CheckWritable(); err != nil {
+			return nil, err
+		}
+	}
 	s.sweepMu.Lock()
 	defer s.sweepMu.Unlock()
 	s.mu.RLock()
@@ -828,6 +808,49 @@ func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, l
 		out = append(out, r)
 	}
 	return out, &summary, rows.Err()
+}
+
+// ListDepositsExportPage uses a descending primary-key cursor and deliberately
+// skips the whole-ledger summary query. CSV export only needs rows; recomputing
+// COUNT/SUM for every page repeats an increasingly expensive full table scan.
+func (s *Service) ListDepositsExportPage(ctx context.Context, chain, status string, beforeID int64, limit int) ([]DepositRecord, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	where := " WHERE id < $1"
+	args := []any{beforeID}
+	if chain != "" {
+		args = append(args, chain)
+		where += fmt.Sprintf(" AND chain = $%d", len(args))
+	}
+	if status != "" {
+		args = append(args, status)
+		where += fmt.Sprintf(" AND status = $%d", len(args))
+	}
+	args = append(args, limit)
+	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
+	                 token, amount::text, status, reason, created_at
+	            FROM deposit_transactions` + where +
+		fmt.Sprintf(" ORDER BY id DESC LIMIT $%d", len(args))
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("export deposits: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []DepositRecord
+	for rows.Next() {
+		var r DepositRecord
+		var created time.Time
+		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
+			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created); err != nil {
+			return nil, err
+		}
+		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
+		r.Amount = trimDecimalZeros(r.Amount)
+		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // DepositInfo is everything the standalone deposit page needs.

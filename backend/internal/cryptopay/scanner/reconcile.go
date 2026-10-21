@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
 
@@ -24,17 +25,24 @@ type depositObservation struct {
 // Close the result set before RPC/UPDATE work, including with a one-connection
 // pool. Rotation uses the persisted check clock and survives restarts.
 func readObservations(rows *sql.Rows, status string) ([]depositObservation, error) {
-	defer rows.Close()
 	var out []depositObservation
 	for rows.Next() {
 		p := depositObservation{status: status}
 		if err := rows.Scan(&p.chain, &p.txHash, &p.logIndex, &p.from, &p.to, &p.token,
 			&p.amount, &p.blockNumber, &p.blockHash, &p.reason); err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // recheckCredited rotates through the risk window instead of selecting the
@@ -44,6 +52,9 @@ func readObservations(rows *sql.Rows, status string) ([]depositObservation, erro
 // last_attempt_at only rotates the queue and never renews the window.
 // These updates never change balances or fulfillment orders.
 func (w *Worker) recheckCredited(ctx context.Context) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
 	rows, err := w.db.QueryContext(ctx, `
 		SELECT d.chain, d.tx_hash, d.log_index, d.from_address, d.to_address, d.token,
 		       d.amount::text, d.block_number, d.block_hash, d.reason
@@ -67,6 +78,9 @@ func (w *Worker) recheckCredited(ctx context.Context) error {
 // retryPending uses the same receipt, canonical-log and finality checks as
 // live scanning. Each attempted row rotates even if its RPC remains broken.
 func (w *Worker) retryPending(ctx context.Context) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
 	rows, err := w.db.QueryContext(ctx, `
 		SELECT chain, tx_hash, log_index, from_address, to_address, token,
 		       amount::text, block_number, block_hash, reason

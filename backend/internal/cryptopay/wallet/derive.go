@@ -1,4 +1,4 @@
-package main
+package wallet
 
 import (
 	"crypto/ecdsa"
@@ -27,7 +27,7 @@ type Deriver struct {
 // which must NOT share the deposit seed: one leaked mnemonic would otherwise
 // expose both the deposits and the accumulated hot balance.
 func NewDeriverFromSeed(seed []byte) *Deriver {
-	return &Deriver{seed: seed}
+	return &Deriver{seed: append([]byte(nil), seed...)}
 }
 
 // NewDeriver validates the mnemonic and derives the master seed.
@@ -49,6 +49,9 @@ func NewMnemonic() (string, error) {
 
 // EVMKey derives the secp256k1 key and address at m/44'/60'/0'/0/{index}.
 func (d *Deriver) EVMKey(index uint32) (*ecdsa.PrivateKey, common.Address, error) {
+	if index >= hdkeychain.HardenedKeyStart {
+		return nil, common.Address{}, fmt.Errorf("invalid derivation index")
+	}
 	master, err := hdkeychain.NewMaster(d.seed, &chaincfg.MainNetParams)
 	if err != nil {
 		return nil, common.Address{}, fmt.Errorf("master key: %w", err)
@@ -71,12 +74,23 @@ func (d *Deriver) EVMKey(index uint32) (*ecdsa.PrivateKey, common.Address, error
 	if err != nil {
 		return nil, common.Address{}, fmt.Errorf("ec key: %w", err)
 	}
-	ecdsaKey := priv.ToECDSA()
+	// The pure-Go geth signer requires its exact S256 curve instance. A
+	// btcec ToECDSA key has the same scalar/point but a different curve wrapper.
+	serialized := priv.Serialize()
+	defer clear(serialized)
+	defer priv.Zero()
+	ecdsaKey, err := crypto.ToECDSA(serialized)
+	if err != nil {
+		return nil, common.Address{}, fmt.Errorf("EVM key conversion failed")
+	}
 	return ecdsaKey, crypto.PubkeyToAddress(ecdsaKey.PublicKey), nil
 }
 
 // SolanaKey derives the ed25519 key and address at m/44'/501'/{index}'/0'.
 func (d *Deriver) SolanaKey(index uint32) (ed25519.PrivateKey, solana.PublicKey, error) {
+	if index >= hdkeychain.HardenedKeyStart {
+		return nil, solana.PublicKey{}, fmt.Errorf("invalid derivation index")
+	}
 	path := []uint32{
 		hdkeychain.HardenedKeyStart + 44,
 		hdkeychain.HardenedKeyStart + 501,
@@ -87,6 +101,7 @@ func (d *Deriver) SolanaKey(index uint32) (ed25519.PrivateKey, solana.PublicKey,
 	if err != nil {
 		return nil, solana.PublicKey{}, err
 	}
+	defer clear(seed)
 	priv := ed25519.NewKeyFromSeed(seed)
 	pub, ok := priv.Public().(ed25519.PublicKey)
 	if !ok {

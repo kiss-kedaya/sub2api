@@ -29,6 +29,18 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 | `config.example.yaml` | Example configuration file |
 | `EDGE_SECURITY.md` | Reverse proxy, CDN/WAF, trusted proxy, and ingress hardening guide |
 
+## 内置充值钱包部署
+
+加密货币充值的钱包管理、地址派生和交易签名均在主 `sub2api` 进程内运行。标准 Docker 环境只需一个 `sub2api` 应用服务及其 PostgreSQL、Redis 依赖；使用外部数据库和缓存时，`docker-compose.standalone.yml` 只启动 `sub2api`。
+
+- 不再构建、打包或启动独立 signer；无需额外签名容器、socket、policy 文件或 SQLite state，也不再配置 `signer_socket`。保留 `hot_index` 字段，但配置校验只接受 `0`。
+- 钱包密文保存在主 PostgreSQL 的 `settings` 表，键名 `crypto.signer.vault` 仅为兼容已有数据。钱包审计继续写入历史表 `crypto_signer_audit`；263 迁移原文及其 schema 保持不变，不能为改名重写迁移或破坏 checksum。
+- 钱包仍须使用独立于后台登录密码的 Vault 口令解密；首次初始化必须提供两份有效且不同的 BIP39 助记词（充值钱包与 Gas 钱包），新口令至少 12 个字符。已有 Vault 不允许通过初始化覆盖种子。
+- 在主服务后台完成支付 2FA 绑定，通过钱包管理执行解锁、加密备份、助记词导出和 Gas 助记词导入。风险操作仍要求新的 2FA 验证码及相应的 Vault 口令；重启后重新解锁，不把口令写入启动脚本或环境文件。
+- `crypto-test-release.yml` 只打包一个 Linux amd64、`CGO_ENABLED=0`、带 `embed` 前端的 `sub2api` 二进制，以及版本和构建元数据；保留 `checksums.txt` 校验及隔离 prerelease 流程，不执行部署。
+
+备份文件中的 `sub2api-signer-vault` format 也仅为兼容标识，不表示需要独立 signer。完整的钱包管理、恢复边界和派生路径见 [支付文档：内置充值钱包](../docs/PAYMENT_CN.md#内置充值钱包部署与恢复)。
+
 ---
 
 ## Apple container Deployment

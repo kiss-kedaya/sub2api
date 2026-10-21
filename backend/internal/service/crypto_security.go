@@ -173,6 +173,9 @@ func (s *CryptoSecurityService) VerifyRisk(ctx context.Context, userID int64, co
 // Serialize enrollment across processes so two setup/enable requests cannot
 // replace one another's seed or enable two different seeds concurrently.
 func (s *CryptoSecurityService) lockSetup(ctx context.Context, userID int64) (func(), error) {
+	if !s.ready() {
+		return nil, ErrCryptoTotpUnavailable
+	}
 	token, err := generateRandomToken(32)
 	if err != nil {
 		return nil, ErrCryptoTotpUnavailable

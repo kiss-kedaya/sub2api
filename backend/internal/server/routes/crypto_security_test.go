@@ -316,7 +316,7 @@ func TestCryptoAdminRegisteredRoutesEnforceLiveJWTAndTotp(t *testing.T) {
 			if method == "" {
 				method = http.MethodPost
 			}
-			path := "/api/v1/admin/crypto/signer/export-mnemonics"
+			path := "/api/v1/admin/crypto/wallet/export-mnemonics"
 			response := cryptoRouteRequest(h.router, method, path, tc.code, nil, "127.0.0.1:1234", "localhost")
 			requireCryptoReason(t, response, tc.want, tc.reason)
 		})
@@ -324,21 +324,49 @@ func TestCryptoAdminRegisteredRoutesEnforceLiveJWTAndTotp(t *testing.T) {
 }
 
 func TestCryptoAdminRejectsUnauthenticatedAndAdminAPIKeyEvenWithCode(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		method string
-	}{
-		{"unauthenticated", ""},
-		{"admin api key", service.AuditAuthMethodAdminAPIKey},
+	for _, endpoint := range []string{
+		"/api/v1/admin/crypto/wallet/export-mnemonics",
+		"/api/v1/admin/crypto/wallet/backup",
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
-			h := newCryptoRouteHarness(t, activeCryptoAdmin())
-			h.identity.authenticated = tc.method != ""
-			h.identity.method = tc.method
-			response := cryptoRouteRequest(h.router, http.MethodPost, "/api/v1/admin/crypto/signer/export-mnemonics", "123456", map[string]string{"X-API-Key": "machine"}, "127.0.0.1:1", "localhost")
-			requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_ADMIN_REQUIRED")
-		})
+		for _, tc := range []struct {
+			name   string
+			method string
+		}{
+			{"unauthenticated", ""},
+			{"admin api key", service.AuditAuthMethodAdminAPIKey},
+		} {
+			t.Run(endpoint+"/"+tc.name, func(t *testing.T) {
+				t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+				h := newCryptoRouteHarness(t, activeCryptoAdmin())
+				h.identity.authenticated = tc.method != ""
+				h.identity.method = tc.method
+				response := cryptoRouteRequest(h.router, http.MethodPost, endpoint, "123456", map[string]string{"X-API-Key": "machine"}, "127.0.0.1:1", "localhost")
+				requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_ADMIN_REQUIRED")
+			})
+		}
+	}
+}
+
+func TestCryptoAdminEncryptedVaultBackupRouteRequiresFreshTotp(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
+	h := newCryptoRouteHarness(t, activeCryptoAdmin())
+	path := "/api/v1/admin/crypto/wallet/backup"
+	body := `{"passphrase":"fixture-only"}`
+
+	bad := cryptoRouteRequestBody(h.router, http.MethodPost, path, body, wrongCryptoRouteCode(t, 0), nil, "127.0.0.1:1234", "localhost")
+	requireCryptoReason(t, bad, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
+	require.NotContains(t, bad.Body.String(), "fixture-only")
+
+	code, err := totp.GenerateCode(cryptoRouteTotpSecret, time.Now())
+	require.NoError(t, err)
+	valid := cryptoRouteRequestBody(h.router, http.MethodPost, path, body, code, nil, "127.0.0.1:1234", "localhost")
+	// The harness deliberately has no wallet; 503 proves the authorized request
+	// reached the sensitive backup handler instead of returning a route 404.
+	require.Equal(t, http.StatusServiceUnavailable, valid.Code, valid.Body.String())
+	require.NotContains(t, valid.Body.String(), "fixture-only")
+	if cacheControl := valid.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
+		t.Fatalf("expected no-store response, got %q", cacheControl)
 	}
 }
 
@@ -349,9 +377,9 @@ func TestCryptoAdminRiskRoutesConsumeOtpAndFailClosed(t *testing.T) {
 	h := newCryptoRouteHarness(t, user)
 	code, err := totp.GenerateCode(cryptoRouteTotpSecret, time.Now())
 	require.NoError(t, err)
-	path := "/api/v1/admin/crypto/signer/export-mnemonics"
+	path := "/api/v1/admin/crypto/wallet/export-mnemonics"
 	first := cryptoRouteRequest(h.router, http.MethodPost, path, code, nil, "127.0.0.1:1234", "localhost")
-	// The test handler has no signer; reaching it proves the route guard accepted one valid code.
+	// The test handler has no wallet; reaching it proves the route guard accepted one valid code.
 	require.Equal(t, http.StatusServiceUnavailable, first.Code, first.Body.String())
 	second := cryptoRouteRequest(h.router, http.MethodPost, path, code, nil, "127.0.0.1:1234", "localhost")
 	requireCryptoReason(t, second, http.StatusConflict, "CRYPTO_TOTP_REPLAYED")
@@ -391,7 +419,7 @@ func TestCryptoAdminRiskVerificationRateLimitsInvalidCodes(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
 	h := newCryptoRouteHarness(t, activeCryptoAdmin())
-	path := "/api/v1/admin/crypto/signer/export-mnemonics"
+	path := "/api/v1/admin/crypto/wallet/export-mnemonics"
 
 	for range 5 {
 		response := cryptoRouteRequest(h.router, http.MethodPost, path, wrongCryptoRouteCode(t, 0), nil, "127.0.0.1:1234", "localhost")
@@ -399,6 +427,33 @@ func TestCryptoAdminRiskVerificationRateLimitsInvalidCodes(t *testing.T) {
 	}
 	limited := cryptoRouteRequest(h.router, http.MethodPost, path, wrongCryptoRouteCode(t, 0), nil, "127.0.0.1:1234", "localhost")
 	requireCryptoReason(t, limited, http.StatusTooManyRequests, "CRYPTO_TOTP_RATE_LIMITED")
+}
+
+func TestCryptoAdminEveryRiskRouteRejectsInvalidTotp(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPut, "/api/v1/admin/crypto/config"},
+		{http.MethodPost, "/api/v1/admin/crypto/addresses/1/status"},
+		{http.MethodPost, "/api/v1/admin/crypto/sweep/run"},
+		{http.MethodPost, "/api/v1/admin/crypto/wallet/unlock"},
+		{http.MethodPost, "/api/v1/admin/crypto/wallet/backup"},
+		{http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics"},
+		{http.MethodPost, "/api/v1/admin/crypto/wallet/hot-mnemonic"},
+		{http.MethodPost, "/api/v1/admin/crypto/rpc/test"},
+		{http.MethodPost, "/api/v1/admin/crypto/rpc/auto-pick"},
+		{http.MethodGet, "/api/v1/admin/crypto/deposits.csv"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			h := newCryptoRouteHarness(t, activeCryptoAdmin())
+			response := cryptoRouteRequestBody(h.router, tc.method, tc.path, `{}`, wrongCryptoRouteCode(t, 0), nil, "127.0.0.1:1234", "localhost")
+			requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
+		})
+	}
 }
 
 func TestCryptoAdminRejectsForwardedSchemeAndClientIpSpoofing(t *testing.T) {
@@ -409,7 +464,7 @@ func TestCryptoAdminRejectsForwardedSchemeAndClientIpSpoofing(t *testing.T) {
 		{"Forwarded": "for=127.0.0.1;proto=https;host=localhost"},
 	} {
 		h := newCryptoRouteHarness(t, activeCryptoAdmin())
-		response := cryptoRouteRequest(h.router, http.MethodPost, "/api/v1/admin/crypto/signer/export-mnemonics", "123456", headers, "203.0.113.9:443", "kedaya.ai")
+		response := cryptoRouteRequest(h.router, http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics", "123456", headers, "203.0.113.9:443", "kedaya.ai")
 		requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_HTTPS_REQUIRED")
 	}
 }
@@ -417,7 +472,7 @@ func TestCryptoAdminRejectsForwardedSchemeAndClientIpSpoofing(t *testing.T) {
 func TestCryptoAdminInstanceGateAndSensitiveCsvRead(t *testing.T) {
 	h := newCryptoRouteHarness(t, activeCryptoAdmin())
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "false")
-	response := cryptoRouteRequest(h.router, http.MethodPost, "/api/v1/admin/crypto/signer/export-mnemonics", "123456", nil, "127.0.0.1:1234", "localhost")
+	response := cryptoRouteRequest(h.router, http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics", "123456", nil, "127.0.0.1:1234", "localhost")
 	requireCryptoReason(t, response, http.StatusServiceUnavailable, "CRYPTO_DISABLED")
 
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
@@ -427,6 +482,38 @@ func TestCryptoAdminInstanceGateAndSensitiveCsvRead(t *testing.T) {
 	require.Equal(t, http.StatusOK, status.Code, status.Body.String())
 	require.Contains(t, status.Header().Get("Cache-Control"), "no-store")
 	require.Contains(t, status.Body.String(), `"feature_enabled":true`)
+}
+
+func TestCryptoAdminConfigResponseIsNotCacheable(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
+	h := newCryptoRouteHarness(t, activeCryptoAdmin())
+	response := cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config", "", nil, "127.0.0.1:1234", "localhost")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	require.Equal(t, "no-cache", response.Header().Get("Pragma"))
+}
+
+func TestCryptoStandaloneSignerSurfaceHasBeenRemoved(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	h := newCryptoRouteHarness(t, activeCryptoAdmin())
+	for _, route := range h.router.Routes() {
+		require.NotContains(t, route.Path, "/crypto/signer/")
+		require.NotContains(t, route.Path, "/crypto/sign/")
+	}
+	for _, path := range []string{"/api/v1/admin/crypto/signer/unlock", "/api/v1/admin/crypto/signer/backup", "/api/v1/admin/crypto/sign/evm"} {
+		response := cryptoRouteRequest(h.router, http.MethodPost, path, "", nil, "127.0.0.1:1234", "localhost")
+		require.Equal(t, http.StatusNotFound, response.Code, path)
+	}
+}
+
+func TestCryptoSensitiveAdminReadsRequireSecureTransport(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	for _, path := range []string{"/api/v1/admin/crypto/config", "/api/v1/admin/crypto/wallet/status", "/api/v1/admin/crypto/hot-wallet/address"} {
+		h := newCryptoRouteHarness(t, activeCryptoAdmin())
+		response := cryptoRouteRequest(h.router, http.MethodGet, path, "", map[string]string{"X-Forwarded-Proto": "https"}, "203.0.113.9:443", "kedaya.ai")
+		requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_HTTPS_REQUIRED")
+	}
 }
 
 func TestCryptoAdminTestModeIsReadOnlyExceptTwoFactorSetup(t *testing.T) {
@@ -442,9 +529,14 @@ func TestCryptoAdminTestModeIsReadOnlyExceptTwoFactorSetup(t *testing.T) {
 		path   string
 	}{
 		{"config write", http.MethodPut, "/api/v1/admin/crypto/config"},
+		{"address status", http.MethodPost, "/api/v1/admin/crypto/addresses/1/status"},
 		{"manual sweep", http.MethodPost, "/api/v1/admin/crypto/sweep/run"},
-		{"signer unlock", http.MethodPost, "/api/v1/admin/crypto/signer/unlock"},
-		{"mnemonic export", http.MethodPost, "/api/v1/admin/crypto/signer/export-mnemonics"},
+		{"wallet unlock", http.MethodPost, "/api/v1/admin/crypto/wallet/unlock"},
+		{"encrypted vault backup", http.MethodPost, "/api/v1/admin/crypto/wallet/backup"},
+		{"mnemonic export", http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics"},
+		{"hot mnemonic import", http.MethodPost, "/api/v1/admin/crypto/wallet/hot-mnemonic"},
+		{"rpc test", http.MethodPost, "/api/v1/admin/crypto/rpc/test"},
+		{"rpc auto-pick", http.MethodPost, "/api/v1/admin/crypto/rpc/auto-pick"},
 		{"sensitive csv", http.MethodGet, "/api/v1/admin/crypto/deposits.csv"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -487,7 +579,7 @@ func TestCryptoSecuritySetupAndEnableHTTPFlowIgnoresGlobalTotpSwitch(t *testing.
 
 	code, err := totp.GenerateCode(setupEnvelope.Data.Secret, time.Now())
 	require.NoError(t, err)
-	body := fmt.Sprintf(`{"totp_code":%q,"setup_token":%q,"enabled":false}`, code, setupEnvelope.Data.SetupToken)
+	body := fmt.Sprintf(`{"totp_code":%q,"setup_token":%q}`, code, setupEnvelope.Data.SetupToken)
 	h.identity.sessionID = "different-session"
 	wrongSession := cryptoRouteRequestBody(h.router, http.MethodPost, "/api/v1/admin/crypto/security/enable", body, "", nil, "127.0.0.1:1234", "localhost")
 	requireCryptoReason(t, wrongSession, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")

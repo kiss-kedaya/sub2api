@@ -118,7 +118,7 @@ func (s *EVMScanner) ScanRange(ctx context.Context, chain string, fromBlock, toB
 			logIndex := int(parseHexUint(log.LogIndex))
 			out = append(out, Transfer{
 				Chain:       chain,
-				TxHash:      log.TxHash,
+				TxHash:      strings.ToLower(log.TxHash),
 				LogIndex:    logIndex,
 				From:        from,
 				To:          to,

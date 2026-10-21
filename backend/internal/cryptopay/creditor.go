@@ -12,6 +12,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/ledger"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/notify"
 	"github.com/Wei-Shaw/sub2api/internal/notify/bark"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
@@ -44,8 +45,20 @@ func (c *DepositCreditor) SetBarkNotifier(svc *notify.UserBarkService) {
 
 // CreditDeposit creates the order and runs fulfillment.
 func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRequest) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
+	req.TxHash = strings.ToLower(req.TxHash)
 	if req.CreditUSDT <= 0 || math.IsNaN(req.CreditUSDT) || math.IsInf(req.CreditUSDT, 0) || req.Amount == nil || req.Amount.Sign() <= 0 || req.Decimals < 0 || req.Decimals > 18 {
 		return fmt.Errorf("cryptopay credit: non-positive amount")
+	}
+	reminted, err := ledger.ReorgedTransferAlreadyCredited(ctx, c.db, req.Chain, req.TxHash,
+		req.LogIndex, req.BlockHash)
+	if err != nil {
+		return err
+	}
+	if reminted {
+		return ledger.ErrReorgedDuplicateTransfer
 	}
 	// recharge_code is reused as a redeem code, and redeem_codes.code caps at
 	// 32 characters — the raw 77-char "crypto-0x…-logIndex" form made every

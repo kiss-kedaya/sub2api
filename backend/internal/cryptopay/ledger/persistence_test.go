@@ -53,7 +53,12 @@ func TestRejectedDepositPersistenceErrorsReachCaller(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer func() {
+				mock.ExpectClose()
+				if err := db.Close(); err != nil {
+					t.Errorf("close persistence db: %v", err)
+				}
+			}()
 			creditor := &countingCreditor{}
 			l := New(db, creditor, fixedResolver{userID: tt.userID, ours: true}, 1, 10, 1)
 			tr := depositTransfer(tt.raw)
@@ -82,7 +87,12 @@ func TestIgnoredNotificationFollowsSuccessfulPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		mock.ExpectClose()
+		if err := db.Close(); err != nil {
+			t.Errorf("close notification db: %v", err)
+		}
+	}()
 	l := New(db, &countingCreditor{}, fixedResolver{userID: 42, ours: true}, 1, 10, 1)
 	expectDepositState(mock, depositTransfer(100_000), stateRows())
 	mock.ExpectExec(`INSERT INTO deposit_transactions`).WillReturnResult(sqlmock.NewResult(1, 1))
@@ -106,7 +116,12 @@ func TestPendingUnassignedAddressRemainsDurableForLaterReconciliation(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer func() {
+				mock.ExpectClose()
+				if err := db.Close(); err != nil {
+					t.Errorf("close pending db: %v", err)
+				}
+			}()
 			creditor := &countingCreditor{}
 			l := New(db, creditor, fixedResolver{ours: true}, 1, 10, 1)
 			expectation := mock.ExpectExec(`INSERT INTO deposit_transactions`)

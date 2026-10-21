@@ -30,7 +30,7 @@ func TestCryptoVaultRejectsAmbiguousOrOversizedJSON(t *testing.T) {
 	}
 }
 
-func TestCryptoVaultDoesNotEchoSensitiveRequestOnUnavailableSigner(t *testing.T) {
+func TestCryptoVaultDoesNotEchoSensitiveRequestOnUnavailableWallet(t *testing.T) {
 	for _, endpoint := range []string{"backup", "import"} {
 		t.Run(endpoint, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -52,4 +52,33 @@ func TestCryptoVaultDoesNotEchoSensitiveRequestOnUnavailableSigner(t *testing.T)
 			require.Contains(t, w.Header().Get("Cache-Control"), "no-store")
 		})
 	}
+}
+
+func TestAdminUnlockWalletRejectsAmbiguousOrOversizedSecrets(t *testing.T) {
+	for name, body := range map[string]string{
+		"unknown property": `{"passphrase":"example","unexpected":"value"}`,
+		"concatenated":     `{"passphrase":"example"}{"passphrase":"other"}`,
+		"oversized":        `{"passphrase":"` + strings.Repeat("x", 5<<10) + `"}`,
+		"partial seeds":    `{"passphrase":"example","deposit_mnemonic":"seed words"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+			(&CryptoHandler{}).AdminUnlockWallet(c)
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			require.Contains(t, w.Header().Get("Cache-Control"), "no-store")
+			require.NotContains(t, w.Body.String(), "example")
+		})
+	}
+}
+
+func TestAdminUnlockWalletDoesNotEchoSecretsWhenUnavailable(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"passphrase":"private vault password"}`))
+	(&CryptoHandler{}).AdminUnlockWallet(c)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.NotContains(t, w.Body.String(), "private vault password")
+	require.Contains(t, w.Header().Get("Cache-Control"), "no-store")
 }

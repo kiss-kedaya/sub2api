@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
 
@@ -117,7 +118,7 @@ func decimalToRawUnits(value string, decimals int) (*big.Int, error) {
 
 // Start begins the loop in the background.
 func (w *Worker) Start() {
-	if w == nil || w.cancel != nil {
+	if w == nil || w.cancel != nil || mode.ReadOnly() {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -149,6 +150,9 @@ func (w *Worker) run(ctx context.Context) {
 }
 
 func (w *Worker) scanAll(ctx context.Context) {
+	if mode.ReadOnly() {
+		return
+	}
 	release, err := w.tryScanLock(ctx)
 	if err != nil {
 		slog.Warn("[cryptopay] scanner lock failed", "error", err)
@@ -236,24 +240,10 @@ func (w *Worker) ScanOnce(ctx context.Context) error {
 	return nil
 }
 
-// chainDecimals resolves a token's decimals from the chain config, falling
-// back to the stablecoin default. Lookup is case-insensitive because the
-// scanner stores contract addresses lowercase while config may not be.
-func (w *Worker) chainDecimals(chain, token string) int {
-	for _, c := range w.chains {
-		if c.Chain != chain {
-			continue
-		}
-		for contract, decimals := range c.Decimals {
-			if strings.EqualFold(contract, token) {
-				return decimals
-			}
-		}
-	}
-	return 6
-}
-
 func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
 	pool := w.pools[chain.Chain]
 	if pool == nil {
 		slog.Debug("[cryptopay] scan skipped: no pool", "chain", chain.Chain)

@@ -10,6 +10,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 )
 
 // Family constants stored in crypto_address_pool.chain_family and
@@ -41,7 +43,7 @@ type Assignment struct {
 	Status          string
 }
 
-// Derived is one derived address pair returned by the signer.
+// Derived is one derived address pair derived by the local wallet.
 type Derived struct {
 	Index  int64  `json:"index"`
 	EVM    string `json:"evm"`
@@ -75,6 +77,9 @@ func (r *Repo) MaxDerivationIndex(ctx context.Context) (int64, error) {
 // InsertPoolBatch inserts derived addresses for one family; existing
 // (family, index) rows are skipped so re-running a batch is safe.
 func (r *Repo) InsertPoolBatch(ctx context.Context, family string, start int64, addresses []string) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
 	for i, address := range addresses {
 		index := start + int64(i)
 		_, err := r.db.ExecContext(ctx,
@@ -124,6 +129,9 @@ func (r *Repo) ExistingAssignment(ctx context.Context, userID int64, family stri
 // retries). Safe under concurrent first-requests: a lost race returns the
 // winner's row via the unique (user_id, chain) index.
 func (r *Repo) AssignFromPool(ctx context.Context, userID int64, family string) (*Assignment, error) {
+	if err := mode.CheckWritable(); err != nil {
+		return nil, err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin assign tx: %w", err)
@@ -241,6 +249,9 @@ func (r *Repo) ActiveAddresses(ctx context.Context, family string) ([]string, er
 
 // SetStatus updates an assignment's status (active/disabled).
 func (r *Repo) SetStatus(ctx context.Context, id int64, status string) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
 	if status != "active" && status != "disabled" {
 		return fmt.Errorf("invalid status %q", status)
 	}

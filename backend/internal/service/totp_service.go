@@ -178,7 +178,35 @@ func (s *TotpService) InitiateSetup(ctx context.Context, userID int64, emailCode
 	if !s.settingService.IsTotpEnabled(ctx) {
 		return nil, ErrTotpNotEnabled
 	}
+	unlock, err := s.lockEnrollment(ctx, userID, "setup", 5)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	return s.initiateSetup(ctx, userID, emailCode, password, "")
+}
+
+// General and payment endpoints mutate the same user secret. Use the same
+// distributed lock and administrator attempt budgets on both entry points.
+func (s *TotpService) lockEnrollment(ctx context.Context, userID int64, action string, max int) (func(), error) {
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, ErrTotpUnavailable
+	}
+	if s.cryptoSecurity == nil || !s.cryptoSecurity.ready() {
+		// A site without payment verification must retain ordinary login TOTP.
+		// Payment operations themselves still fail closed in VerifyRisk.
+		return func() {}, nil
+	}
+	if user.IsAdmin() {
+		if _, err := s.cryptoSecurity.CurrentAdmin(ctx, userID); err != nil {
+			return nil, err
+		}
+		if err := s.cryptoSecurity.limit(ctx, userID, action, max, totpAttemptsTTL); err != nil {
+			return nil, err
+		}
+	}
+	return s.cryptoSecurity.lockSetup(ctx, userID)
 }
 
 func (s *TotpService) initiateSetup(ctx context.Context, userID int64, emailCode, password, cryptoSession string) (*TotpSetupResponse, error) {
@@ -221,8 +249,11 @@ func (s *TotpService) initiateSetup(ctx context.Context, userID int64, emailCode
 		CreatedAt:     time.Now(),
 		CryptoSession: cryptoSession,
 	}
-	if cryptoSession != "" {
-		// Crypto enrollment never leaves a plaintext seed in Redis.
+	if cryptoSession != "" || user.IsAdmin() {
+		// Both enrollment endpoints establish the payment factor for admins.
+		if s.encryptor == nil {
+			return nil, ErrTotpUnavailable
+		}
 		session.Secret, err = s.encryptor.Encrypt(session.Secret)
 		if err != nil {
 			return nil, ErrTotpUnavailable
@@ -248,6 +279,11 @@ func (s *TotpService) CompleteSetup(ctx context.Context, userID int64, totpCode,
 	if !s.settingService.IsTotpEnabled(ctx) {
 		return ErrTotpNotEnabled
 	}
+	unlock, err := s.lockEnrollment(ctx, userID, "enable", 10)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return s.completeSetup(ctx, userID, totpCode, setupToken, "", nil)
 }
 
@@ -270,8 +306,11 @@ func (s *TotpService) completeSetup(ctx context.Context, userID int64, code, tok
 	if user.TotpEnabled {
 		return ErrTotpAlreadyEnabled
 	}
-	if binding != "" && (!user.IsAdmin() || !user.IsActive() || user.DeletedAt != nil) {
+	if (binding != "" || user.IsAdmin()) && (!user.IsAdmin() || !user.IsActive() || user.DeletedAt != nil) {
 		return ErrCryptoAdminRequired
+	}
+	if user.IsAdmin() && consume == nil && s.cryptoSecurity != nil && s.cryptoSecurity.ready() {
+		consume = func(counter int64) error { return s.cryptoSecurity.consume(ctx, userID, counter, code) }
 	}
 	secret := session.Secret
 	if session.SecretEncrypted {
@@ -331,6 +370,11 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 		if s.cryptoSecurity == nil {
 			return ErrCryptoTotpUnavailable
 		}
+		unlock, err := s.cryptoSecurity.lockSetup(ctx, userID)
+		if err != nil {
+			return err
+		}
+		defer unlock()
 		if err := s.cryptoSecurity.VerifyRisk(ctx, userID, totpCodes[0]); err != nil {
 			return err
 		}
@@ -348,7 +392,7 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 
 // VerifyCode verifies a code using the existing encrypted user secret.
 func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string) error {
-	_, err := s.verifyCode(ctx, userID, code)
+	_, err := s.verifyCode(ctx, userID, code, nil)
 	return err
 }
 
@@ -356,14 +400,11 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 // The consumer receives the matched TOTP counter, rather than the request clock
 // bucket, so crossing a 30-second boundary cannot allow the same code twice.
 func (s *TotpService) VerifyCodeOnce(ctx context.Context, userID int64, code string, consume func(int64) error) error {
-	counter, err := s.verifyCode(ctx, userID, code)
-	if err != nil {
-		return err
-	}
 	if consume == nil {
 		return ErrTotpUnavailable
 	}
-	return consume(counter)
+	_, err := s.verifyCode(ctx, userID, code, consume)
+	return err
 }
 
 func (s *TotpService) reserveVerifyAttempt(ctx context.Context, userID int64) error {
@@ -388,7 +429,7 @@ func (s *TotpService) reserveVerifyAttempt(ctx context.Context, userID int64) er
 	return nil
 }
 
-func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string) (int64, error) {
+func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string, consume func(int64) error) (int64, error) {
 	if err := s.reserveVerifyAttempt(ctx, userID); err != nil {
 		return 0, err
 	}
@@ -409,6 +450,16 @@ func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string)
 	counter, valid := validateTotpCode(code, secret, time.Now())
 	if !valid {
 		return 0, ErrTotpInvalidCode
+	}
+	// Login and step-up must not provide reusable codes for payment operations,
+	// or reset the failure budget by replaying an already-consumed code.
+	if consume == nil && user.IsAdmin() && s.cryptoSecurity != nil && s.cryptoSecurity.ready() {
+		consume = func(counter int64) error { return s.cryptoSecurity.consume(ctx, userID, counter, code) }
+	}
+	if consume != nil {
+		if err := consume(counter); err != nil {
+			return 0, err
+		}
 	}
 	if err := s.cache.ClearVerifyAttempts(ctx, userID); err != nil {
 		return 0, ErrTotpUnavailable

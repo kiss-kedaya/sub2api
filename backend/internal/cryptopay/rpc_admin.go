@@ -11,10 +11,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
@@ -47,7 +49,7 @@ type ChainlistCandidate struct {
 
 // rpcHTTPClient is shared by the probe and the registry fetch. The registry
 // payload is ~2.3 MB, so the timeout must cover a slow international link.
-var rpcHTTPClient = &http.Client{Timeout: 20 * time.Second}
+var rpcHTTPClient = rpc.NewPublicHTTPClient(20 * time.Second)
 
 // ProbeRPCEndpoint calls eth_chainId + eth_blockNumber on one endpoint and
 // reports latency. It never mutates state.
@@ -64,10 +66,17 @@ func ProbeRPCEndpoint(ctx context.Context, chain, endpoint string) *RPCTestResul
 	}
 	// Admin-only is not a reason to allow probing the host's own network:
 	// a leaked admin token could otherwise read cloud metadata.
-	if _, err := urlvalidator.ValidateHTTPURL(endpoint, true, urlvalidator.ValidationOptions{}); err != nil {
+	validated, err := urlvalidator.ValidateHTTPURL(endpoint, true, urlvalidator.ValidationOptions{})
+	if err != nil {
 		out.Error = "endpoint is not an allowed public URL"
 		return out
 	}
+	parsed, err := url.Parse(validated)
+	if err != nil || parsed.User != nil || parsed.Fragment != "" || parsed.Opaque != "" || strings.ContainsAny(endpoint, "\\\r\n\x00") || strings.Contains(parsed.Hostname(), "%") {
+		out.Error = "endpoint is not an allowed public URL"
+		return out
+	}
+	endpoint = validated
 	start := time.Now()
 	chainID, err := rpcCallString(ctx, endpoint, "eth_chainId")
 	if err != nil {
@@ -97,6 +106,10 @@ func ProbeRPCEndpoint(ctx context.Context, chain, endpoint string) *RPCTestResul
 
 // rpcCallString runs one JSON-RPC method against a raw endpoint.
 func rpcCallString(ctx context.Context, endpoint, method string) (string, error) {
+	return rpcCallStringWithClient(ctx, rpcHTTPClient, endpoint, method)
+}
+
+func rpcCallStringWithClient(ctx context.Context, client *http.Client, endpoint, method string) (string, error) {
 	body, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": method, "params": []any{},
 	})
@@ -105,7 +118,7 @@ func rpcCallString(ctx context.Context, endpoint, method string) (string, error)
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := rpcHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}

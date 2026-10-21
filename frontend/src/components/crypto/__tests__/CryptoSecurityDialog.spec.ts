@@ -128,6 +128,32 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     expect(action).not.toHaveBeenCalled()
   })
 
+  it('wipes late 2FA setup secrets and QR data if the dialog unmounts during setup', async () => {
+    mocks.get.mockResolvedValueOnce({ data: { enabled: false, feature_enabled: true, can_setup: true } })
+    let resolveSetup!: (value: { data: { secret: string; qr_code_url: string; setup_token: string; countdown: number } }) => void
+    mocks.post.mockImplementationOnce(() => new Promise((resolve) => { resolveSetup = resolve }))
+    const wrapper = render()
+    const result = wrapper.vm.verify('Export wallet', vi.fn())
+    await flushPromises()
+    await wrapper.get('#crypto-security-password').setValue('login-password')
+    await wrapper.get('form').trigger('submit')
+    await Promise.resolve()
+
+    const lateSetup = {
+      secret: 'LATESETUPKEY',
+      qr_code_url: 'otpauth://totp/test?secret=LATESETUPKEY',
+      setup_token: 'late-setup-token',
+      countdown: 120
+    }
+    wrapper.unmount()
+    resolveSetup({ data: lateSetup })
+    await flushPromises()
+
+    expect(lateSetup).toEqual({ secret: '', qr_code_url: '', setup_token: '', countdown: 120 })
+    expect(await result).toBe(false)
+    expect(mocks.toDataURL).not.toHaveBeenCalled()
+  })
+
   it('expires setup and removes the secret, QR and timer', async () => {
     vi.useFakeTimers()
     mocks.get.mockResolvedValueOnce({ data: { enabled: false, feature_enabled: true, can_setup: true } })

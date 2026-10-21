@@ -67,8 +67,8 @@ func TestAdminExportMnemonicsReturnsTwoFieldsAndAuditsNoSecrets(t *testing.T) {
 		require.Equal(t, "private vault passphrase", passphrase)
 		return &sweeper.MnemonicExport{DepositMnemonic: cryptoTestDepositSeed, HotMnemonic: cryptoTestHotSeed}, nil
 	})}
-	router.POST("/api/v1/admin/crypto/signer/export-mnemonics", h.AdminExportMnemonics)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/crypto/signer/export-mnemonics", strings.NewReader(`{"passphrase":"private vault passphrase"}`))
+	router.POST("/api/v1/admin/crypto/wallet/export-mnemonics", h.AdminExportMnemonics)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics", strings.NewReader(`{"passphrase":"private vault passphrase"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Crypto-TOTP", "987654")
 	recorder := httptest.NewRecorder()
@@ -95,7 +95,7 @@ func TestAdminExportMnemonicsNeverEchoesSensitiveErrorsOrOversizedBodies(t *test
 		body string
 		fail bool
 	}{
-		"signer error": {body: `{"passphrase":"sensitive-passphrase"}`, fail: true},
+		"wallet error": {body: `{"passphrase":"sensitive-passphrase"}`, fail: true},
 		"over 4KB":     {body: `{"passphrase":"` + strings.Repeat("x", 5<<10) + `"}`},
 	} {
 		t.Run(name, func(t *testing.T) {
