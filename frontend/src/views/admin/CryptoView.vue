@@ -737,6 +737,7 @@ import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import {
   getCryptoConfig,
+  getCryptoSecurityStatus,
   getHotWalletAddress,
   getHotWalletStatus,
   getPoolStatus,
@@ -1091,7 +1092,30 @@ function switchTab(id: string) {
 async function loadConfig() {
   loadingConfig.value = true
   try {
-    const loaded = await getCryptoConfig()
+    let loaded: CryptoConfig | undefined
+    let enabledBefore: boolean | undefined
+    try {
+      enabledBefore = (await getCryptoSecurityStatus()).enabled
+    } catch {
+      // The verification dialog reports the status failure to the operator.
+    }
+    let verified = await withCryptoVerification(t('admin.crypto.securityConfigRead'), async (code) => {
+      loaded = await getCryptoConfig(code)
+    })
+    if (!verified) {
+      if (enabledBefore !== false) return
+      let enabledAfter = false
+      try {
+        enabledAfter = (await getCryptoSecurityStatus()).enabled
+      } catch {
+        return
+      }
+      if (!enabledAfter) return
+      verified = await withCryptoVerification(t('admin.crypto.securityConfigRead'), async (code) => {
+        loaded = await getCryptoConfig(code)
+      })
+    }
+    if (!verified || !loaded) return
     // Earlier saves may predate some keys (rpc, chains); normalise here so a
     // legacy row cannot blank the whole page on a null index.
     config.value = {
@@ -1126,13 +1150,13 @@ const RISKY_FIELDS: Array<{ key: keyof CryptoConfig; label: string }> = [
   { key: 'sweep_global_threshold', label: 'admin.crypto.globalThreshold' },
   { key: 'credit_min_amount', label: 'admin.crypto.creditMin' },
   { key: 'credit_max_amount', label: 'admin.crypto.creditMax' },
-  { key: 'credit_multiplier', label: 'admin.crypto.creditMultiplier' }
-  ,{ key: 'chains', label: 'admin.crypto.chains' }
-  ,{ key: 'rpc', label: 'admin.crypto.rpc' }
-  ,{ key: 'sweep_min_per_address', label: 'admin.crypto.sweepMinPerAddress' }
-  ,{ key: 'gas_topup', label: 'admin.crypto.gasTopup' }
-  ,{ key: 'confirmations', label: 'admin.crypto.confirmations' }
-  ,{ key: 'scan_range', label: 'admin.crypto.scanRange' }
+  { key: 'credit_multiplier', label: 'admin.crypto.creditMultiplier' },
+  { key: 'chains', label: 'admin.crypto.chains' },
+  { key: 'rpc', label: 'admin.crypto.rpc' },
+  { key: 'sweep_min_per_address', label: 'admin.crypto.sweepMinPerAddress' },
+  { key: 'gas_topup', label: 'admin.crypto.gasTopup' },
+  { key: 'confirmations', label: 'admin.crypto.confirmations' },
+  { key: 'scan_range', label: 'admin.crypto.scanRange' }
 ]
 
 // riskyChanges lists the dangerous edits between the loaded snapshot and the

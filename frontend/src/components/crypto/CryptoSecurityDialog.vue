@@ -10,10 +10,8 @@
       <p class="crypto-security__operation">{{ label }}</p>
       <p class="crypto-security__hint">{{ t('admin.crypto.securityPerRequest') }}</p>
       <p v-if="stage === 'loading'" role="status">{{ t('common.loading') }}</p>
-      <form v-else-if="stage === 'password'" id="crypto-security-form" autocomplete="off" @submit.prevent="setup">
+      <form v-else-if="stage === 'enroll'" id="crypto-security-form" autocomplete="off" @submit.prevent="setup">
         <p>{{ t('admin.crypto.securitySetupIntro') }}</p>
-        <label for="crypto-security-password">{{ t('admin.crypto.securityLoginPassword') }}</label>
-        <input id="crypto-security-password" v-model="password" class="input" type="password" autocomplete="off" :disabled="busy" required />
       </form>
       <form v-else-if="stage === 'setup' || stage === 'verify'" id="crypto-security-form" autocomplete="off" @submit.prevent="submitCode">
         <template v-if="stage === 'setup'">
@@ -43,6 +41,7 @@
         <p class="crypto-security__hint">{{ t('admin.crypto.securityFreshCode') }}</p>
       </form>
       <p v-else-if="stage === 'done'" role="status">{{ t('admin.crypto.securityBound') }}</p>
+      <p v-else-if="stage === 'read-only'" role="alert">{{ t('admin.crypto.securityReadOnly') }}</p>
       <p v-else-if="stage === 'expired'" role="alert">{{ t('admin.crypto.securitySetupExpired') }}</p>
       <p v-else-if="stage === 'unavailable'" role="alert">{{ t('admin.crypto.securityUnavailable') }}</p>
       <p v-if="errorMessage" role="alert" class="crypto-security__error">{{ errorMessage }}</p>
@@ -50,7 +49,7 @@
     <template #footer>
       <div class="crypto-security__actions">
         <button type="button" class="btn btn-secondary" :disabled="busy" @click="cancel">{{ t('common.cancel') }}</button>
-        <button v-if="stage === 'password'" form="crypto-security-form" type="submit" class="btn btn-primary" :disabled="busy || !password">
+        <button v-if="stage === 'enroll'" form="crypto-security-form" type="submit" class="btn btn-primary" :disabled="busy">
           {{ t('admin.crypto.securitySetupAction') }}
         </button>
         <button v-if="stage === 'setup' || stage === 'verify'" form="crypto-security-form" type="submit" class="btn btn-danger" :disabled="busy || !validCode">
@@ -73,8 +72,7 @@ const { t } = useI18n()
 const show = ref(false)
 const busy = ref(false)
 const label = ref('')
-const stage = ref<'loading' | 'password' | 'setup' | 'verify' | 'done' | 'expired' | 'unavailable'>('loading')
-const password = ref('')
+const stage = ref<'loading' | 'enroll' | 'setup' | 'verify' | 'done' | 'expired' | 'read-only' | 'unavailable'>('loading')
 const secret = ref('')
 const setupToken = ref('')
 const qrImage = ref('')
@@ -90,7 +88,6 @@ let timer: ReturnType<typeof setInterval> | undefined
 let generation = 0
 
 function clearSecrets() {
-  password.value = ''
   code.value = ''
   secret.value = ''
   setupToken.value = ''
@@ -147,7 +144,7 @@ async function verify(operation: string, action: (code: string) => Promise<unkno
     if (current !== generation) return completed
     // Fail closed if the feature or setup is unavailable. This is a UI gate;
     // authorization and replay prevention remain the server's responsibility.
-    stage.value = !status.feature_enabled ? 'unavailable' : status.enabled ? 'verify' : status.can_setup ? 'password' : 'unavailable'
+    stage.value = !status.feature_enabled ? 'unavailable' : status.enabled ? 'verify' : status.read_only ? 'read-only' : status.can_setup ? 'enroll' : 'unavailable'
     if (stage.value === 'verify') {
       await nextTick()
       codeInput.value?.focus()
@@ -159,7 +156,7 @@ async function verify(operation: string, action: (code: string) => Promise<unkno
 }
 
 async function setup() {
-  if (busy.value || !password.value || stage.value !== 'password') return
+  if (busy.value || stage.value !== 'enroll') return
   busy.value = true
   errorMessage.value = ''
   const current = generation
@@ -167,7 +164,7 @@ async function setup() {
   let qrCodeUrl = ''
   let image = ''
   try {
-    result = await setupCryptoSecurity(password.value)
+    result = await setupCryptoSecurity()
     if (current !== generation) return
     secret.value = result.secret
     setupToken.value = result.setup_token
@@ -200,7 +197,6 @@ async function setup() {
     }
     qrCodeUrl = ''
     image = ''
-    password.value = ''
     if (current === generation) busy.value = false
   }
 }

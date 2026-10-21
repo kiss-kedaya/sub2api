@@ -175,6 +175,12 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 			receipt, receiptErr := VerifyTransaction(ctx, pool, p.txHash)
 			switch {
 			case errors.Is(receiptErr, ErrReceiptNotFound):
+				if p.status == "pending" {
+					// A pending transfer is not evidence of a reorg. RPC nodes may
+					// lag receipt indexing after exposing a log; keep it retryable.
+					status, reason = "pending", ""
+					break
+				}
 				count := 0
 				if strings.HasPrefix(p.reason, missingReceiptPrefix) {
 					count, _ = strconv.Atoi(strings.TrimPrefix(p.reason, missingReceiptPrefix))

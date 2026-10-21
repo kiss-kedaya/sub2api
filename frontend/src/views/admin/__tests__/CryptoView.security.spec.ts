@@ -58,9 +58,10 @@ function button(wrapper: VueWrapper, key: string) {
   if (!found) throw new Error(`Missing button: ${key}`)
   return found
 }
-async function render() {
+async function render(verifyConfig = true) {
   const wrapper = mount(CryptoView, { global: { stubs: { teleport: true } } })
   await flushPromises()
+  if (verifyConfig) await verify(wrapper, '111111')
   return wrapper
 }
 async function configTab(wrapper: VueWrapper) {
@@ -75,6 +76,25 @@ async function verify(wrapper: VueWrapper, code = '123456') {
 }
 
 describe('Crypto page operation wiring (mocked UI contract only)', () => {
+  it('requires a fresh code before loading RPC credentials into the page', async () => {
+    const wrapper = await render(false)
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
+    expect(mocks.get.mock.calls.some(([path]) => path.endsWith('/config'))).toBe(false)
+    await verify(wrapper, '111111')
+    expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/config', expect.objectContaining({
+      headers: { 'X-Crypto-TOTP': '111111' }, _retry: true
+    }))
+  })
+
+  it('does not reopen an enabled 2FA prompt after config verification is cancelled', async () => {
+    const wrapper = await render(false)
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
+    await wrapper.get('.crypto-security__actions .btn-secondary').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.get.mock.calls.filter(([path]) => path.endsWith('/security/status'))).toHaveLength(2)
+  })
+
   it('explains the new vault passphrase minimum while preserving existing vault and seed scopes', () => {
     expect(zh.crypto.unlockPassphraseHint).toContain('至少 12 个字符')
     expect(zh.crypto.unlockPassphraseHint).toContain('旧口令仍兼容')
@@ -94,11 +114,12 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
   it('leaves polling and normal GET queries free of security prompts', async () => {
     const wrapper = await render()
     expect(wrapper.find('#crypto-security-form').exists()).toBe(false)
+    const statusChecks = mocks.get.mock.calls.filter(([path]) => path.endsWith('/security/status')).length
     await configTab(wrapper)
     await wrapper.get('.crypto-view__lockstate button').trigger('click')
     await flushPromises()
     expect(mocks.get.mock.calls.some(([path]) => path === '/admin/crypto/wallet/status')).toBe(true)
-    expect(mocks.get.mock.calls.some(([path]) => path.endsWith('/security/status'))).toBe(false)
+    expect(mocks.get.mock.calls.filter(([path]) => path.endsWith('/security/status'))).toHaveLength(statusChecks)
     expect(mocks.post).not.toHaveBeenCalled()
   })
 

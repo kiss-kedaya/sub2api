@@ -22,7 +22,7 @@ function render() {
 }
 
 describe('Crypto verification UI (server authorization is tested separately)', () => {
-  it('binds with the login password and local QR, discards the action, then asks for a fresh code', async () => {
+  it('binds without a backend password using a local QR, then asks for a fresh code', async () => {
     mocks.get.mockResolvedValueOnce({ data: { enabled: false, feature_enabled: true, can_setup: true } })
     mocks.post.mockImplementation(async (path: string) => ({ data: path.endsWith('/setup') ? {
       secret: 'LOCALSETUPKEY', qr_code_url: 'otpauth://totp/test?secret=LOCALSETUPKEY', setup_token: 'one-setup-token', countdown: 120
@@ -33,10 +33,9 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     const action = vi.fn().mockResolvedValue(undefined)
     const result = wrapper.vm.verify('Export wallet', action)
     await flushPromises()
-    await wrapper.get('#crypto-security-password').setValue('login-password')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/security/setup', { password: 'login-password' }, expect.anything())
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/security/setup', {}, expect.anything())
     expect(mocks.toDataURL).toHaveBeenCalledWith('otpauth://totp/test?secret=LOCALSETUPKEY', { width: 224, margin: 2 })
     expect(wrapper.get('img').attributes('src')).toBe('data:image/png;base64,local-qr')
     await wrapper.get('#crypto-security-code').setValue('123456')
@@ -113,6 +112,18 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     expect(action).not.toHaveBeenCalled()
   })
 
+  it('does not offer enrollment on a read-only shared-database test instance', async () => {
+    mocks.get.mockResolvedValue({ data: { enabled: false, feature_enabled: true, can_setup: false, read_only: true } })
+    const wrapper = render()
+    const result = wrapper.vm.verify('Read config', vi.fn())
+    await flushPromises()
+    expect(wrapper.text()).toContain('admin.crypto.securityReadOnly')
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.post).not.toHaveBeenCalled()
+    await wrapper.get('.btn-secondary').trigger('click')
+    expect(await result).toBe(false)
+  })
+
   it('closing while status loads discards the late response', async () => {
     let resolve!: (value: unknown) => void
     mocks.get.mockImplementationOnce(() => new Promise(r => { resolve = r }))
@@ -135,7 +146,6 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     const wrapper = render()
     const result = wrapper.vm.verify('Export wallet', vi.fn())
     await flushPromises()
-    await wrapper.get('#crypto-security-password').setValue('login-password')
     await wrapper.get('form').trigger('submit')
     await Promise.resolve()
 
@@ -161,7 +171,6 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     const wrapper = render()
     const result = wrapper.vm.verify('Save', vi.fn())
     await flushPromises()
-    await wrapper.get('#crypto-security-password').setValue('password')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     await vi.advanceTimersByTimeAsync(1000)
