@@ -3,12 +3,27 @@ package service
 import (
 	"errors"
 	"math"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIsGrokModerationRefusalFailureRequiresReal403(t *testing.T) {
+	body := []byte(`{"error":{"message":"I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}`)
+	for _, status := range []int{400, 401, 403, 429, 500, 502, 529} {
+		err := &UpstreamFailoverError{StatusCode: status, ResponseBody: body}
+		require.Equal(t, status == 403, IsGrokModerationRefusalFailure(PlatformGrok, body, err))
+	}
+	require.False(t, IsGrokModerationRefusalFailure(PlatformGrok, body, nil))
+	require.False(t, IsGrokModerationRefusalFailure(PlatformGrok, body, errors.New(string(body))))
+	require.True(t, IsGrokModerationRefusalFailure(PlatformGrok, body, errors.New(grokContentPolicyRejectionPrefix+string(body))))
+	require.True(t, IsGrokModerationRefusalFailure(PlatformGrok, []byte(`{"status":403,"error":{"message":"I'm sorry, I can't help with that request."}}`), nil))
+	require.False(t, IsGrokModerationRefusalFailure(PlatformGrok, []byte(`{"status":500,"error":{"message":"I'm sorry, I can't help with that request."}}`), nil))
+	require.False(t, IsGrokModerationRefusalFailure(PlatformOpenAI, body, &UpstreamFailoverError{StatusCode: 403, ResponseBody: body}))
+}
 
 func TestIsGrokModerationRefusal(t *testing.T) {
 	if !IsGrokModerationRefusal(PlatformGrok, []byte(`status_code=403, I'm sorry, I can't help with that request.`)) {
@@ -29,6 +44,14 @@ func TestIsGrokModerationRefusal(t *testing.T) {
 	if IsGrokModerationRefusal(PlatformGrok, []byte(`upstream error`)) {
 		t.Fatal("ordinary upstream error must not match")
 	}
+}
+
+func TestIsGrokModerationRefusalResponseRequiresHTTP403(t *testing.T) {
+	body := []byte(`{"error":{"message":"text is sensitive"}}`)
+	require.True(t, IsGrokModerationRefusalResponse(PlatformGrok, http.StatusForbidden, body))
+	require.False(t, IsGrokModerationRefusalResponse(PlatformGrok, http.StatusTooManyRequests, body))
+	require.False(t, IsGrokModerationRefusalResponse(PlatformGrok, http.StatusInternalServerError, body))
+	require.False(t, IsGrokModerationRefusalResponse(PlatformOpenAI, http.StatusForbidden, body))
 }
 
 func TestPrepareGrokModerationRefusalResult(t *testing.T) {
@@ -95,6 +118,17 @@ func TestIsGrokPlatformContentPolicyRejection(t *testing.T) {
 	}
 }
 
+func TestIsGlobalIPBlacklistRejection(t *testing.T) {
+	require.True(t, IsGlobalIPBlacklistResponse([]byte(`{"message":"blocked by global ip blacklist"}`)))
+	require.True(t, IsGlobalIPBlacklistRejection(&UpstreamFailoverError{
+		StatusCode:   403,
+		ResponseBody: []byte(`{"message":"Blocked by Global IP Blacklist"}`),
+	}))
+	require.True(t, IsGlobalIPBlacklistRejection(errors.New("upstream rejected: blocked by global ip blacklist")))
+	require.False(t, IsGlobalIPBlacklistResponse([]byte(`{"message":"forbidden"}`)))
+	require.False(t, IsGlobalIPBlacklistRejection(nil))
+}
+
 func TestGrokModerationSessionHashIsolation(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
@@ -106,11 +140,34 @@ func TestGrokModerationSessionHashIsolation(t *testing.T) {
 	require.Empty(t, GrokModerationSessionHash(c, &APIKey{}, nil))
 }
 
+func TestGrokModerationSessionHashUsesConversationIdentityNotCacheKey(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	key := &APIKey{UserID: 77}
+	first := []byte(`{"model":"grok-4.7","prompt_cache_key":"shared-cache","input":"conversation A"}`)
+	second := []byte(`{"model":"grok-4.7","prompt_cache_key":"shared-cache","input":"conversation B"}`)
+	require.Empty(t, GrokModerationSessionHash(c, key, first))
+	require.Empty(t, GrokModerationSessionHash(c, key, second))
+	require.NotEqual(t, grokModerationTranscriptKeys(key, first, true), grokModerationTranscriptKeys(key, second, true),
+		"reused prompt_cache_key must not merge unrelated conversation transcripts")
+
+	c.Request.Header.Set(grokConversationIDHeader, "native-conversation")
+	grokHash := GrokModerationSessionHash(c, key, []byte(`{"model":"grok-4.7","input":"turn 1"}`))
+	nonGrokHash := GrokModerationSessionHash(c, key, []byte(`{"model":"gpt-5.6-sol","input":"turn 2"}`))
+	require.NotEmpty(t, grokHash)
+	require.Equal(t, grokHash, nonGrokHash, "Grok conversation identity must persist after switching model family")
+
+	c.Request.Header.Del(grokConversationIDHeader)
+	previousResponseID := []byte(`{"model":"gpt-5.6-sol","previous_response_id":"resp_0123456789abcdef","input":"continue"}`)
+	require.NotEmpty(t, GrokModerationSessionHash(c, key, previousResponseID),
+		"response IDs are stable conversation identifiers even after a model switch")
+}
+
 func TestGrokModerationTranscriptMatchesContinuationWithoutBlockingSharedGreeting(t *testing.T) {
 	key := &APIKey{UserID: 77}
-	refused := []byte(`{"model":"grok-4.7","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history A"},{"role":"user","content":"refused turn"}]}`)
-	continuation := []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history A"},{"role":"user","content":"refused turn"},{"role":"user","content":"continue"}]}`)
-	otherConversation := []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history B"},{"role":"user","content":"ordinary request"}]}`)
+	refused := []byte(`{"model":"grok-4.7","prompt_cache_key":"shared-cache","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history A"},{"role":"user","content":"refused turn"}]}`)
+	continuation := []byte(`{"model":"grok-4.6","prompt_cache_key":"shared-cache","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history A"},{"role":"user","content":"refused turn"},{"role":"user","content":"continue"}]}`)
+	otherConversation := []byte(`{"model":"grok-4.6","prompt_cache_key":"shared-cache","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history B"},{"role":"user","content":"ordinary request"}]}`)
 	written := grokModerationTranscriptKeys(key, refused, true)
 	require.NotEmpty(t, written)
 	for _, stored := range written {
