@@ -141,3 +141,17 @@ func TestCryptoDepositCSVPropagatesDatabaseFailureAndCancellation(t *testing.T) 
 	})
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestCryptoDepositCSVRejectsInvalidOrRepeatingCursor(t *testing.T) {
+	for _, ids := range [][]int64{{0}, {2, 2}, {1, 2}} {
+		var output bytes.Buffer
+		err := writeCryptoDepositCSV(context.Background(), &output, func(context.Context, int64, int) ([]cryptopay.DepositRecord, error) {
+			rows := make([]cryptopay.DepositRecord, len(ids))
+			for i, id := range ids {
+				rows[i].ID = id
+			}
+			return rows, nil
+		})
+		require.ErrorContains(t, err, "cursor did not advance")
+	}
+}

@@ -817,8 +817,13 @@ func (s *Service) ListDepositsExportPage(ctx context.Context, chain, status stri
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	where := " WHERE id < $1"
-	args := []any{beforeID}
+	// Zero marks the first page; applying id < 0 would silently export no rows.
+	where := " WHERE TRUE"
+	var args []any
+	if beforeID > 0 {
+		where = " WHERE id < $1"
+		args = append(args, beforeID)
+	}
 	if chain != "" {
 		args = append(args, chain)
 		where += fmt.Sprintf(" AND chain = $%d", len(args))
