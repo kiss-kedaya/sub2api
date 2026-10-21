@@ -2908,8 +2908,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					markGrokIPBlacklistTurn(turn)
 					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, service.GlobalIPBlacklistSessionBlockedMessage(), forwardErr)
 				}
-				if service.IsGrokModerationRefusal(account.Platform, payload) ||
-					service.IsGrokPlatformContentPolicyRejection(account.Platform, forwardErr) {
+				if service.IsGrokModerationRefusalFailure(account.Platform, payload, forwardErr) {
 					blockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 					defer cancel()
 					h.gatewayService.BlockGrokModerationRefusedRequest(blockCtx, c, apiKey, turnBody)
