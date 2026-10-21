@@ -114,7 +114,7 @@ func TestUpdateSettingsStepUpNoTransitionSkipsGate(t *testing.T) {
 	rec := doUpdateSettings(t, h, map[string]any{"step_up_enabled": false}, nil)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "false", repo.values[service.SettingKeyStepUpEnabled])
+	require.Empty(t, repo.values[service.SettingKeyStepUpEnabled], "same-value saves must not write the security switch")
 	// 会话 IP/UA 绑定默认关闭：未显式提交时持久化 false。
 	require.Equal(t, "false", repo.values[service.SettingKeySessionBindingEnabled])
 }
@@ -153,7 +153,7 @@ func TestUpdateSettingsOmittedSecuritySwitchesKeepDisabled(t *testing.T) {
 	rec := doUpdateSettings(t, h, map[string]any{"registration_enabled": true}, nil)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "false", repo.values[service.SettingKeyStepUpEnabled])
+	require.Empty(t, repo.values[service.SettingKeyStepUpEnabled])
 	require.Equal(t, "false", repo.values[service.SettingKeySessionBindingEnabled])
 }
 

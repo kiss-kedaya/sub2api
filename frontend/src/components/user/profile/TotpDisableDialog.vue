@@ -48,8 +48,25 @@
             </div>
           </div>
 
+          <div v-else-if="verificationMethod === 'totp'">
+            <label for="totp-disable-code" class="input-label">{{ t('profile.totp.authenticatorCode') }}</label>
+            <input
+              id="totp-disable-code"
+              v-model="form.totpCode"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="6"
+              pattern="[0-9]{6}"
+              class="input"
+              data-testid="totp-disable-code"
+              :placeholder="t('profile.totp.enterCode')"
+            />
+            <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ t('profile.totp.disableTotpHint') }}</p>
+          </div>
+
           <!-- Password verification -->
-          <div v-else>
+          <div v-else-if="verificationMethod === 'password'">
             <label for="password" class="input-label">
               {{ t('profile.currentPassword') }}
             </label>
@@ -88,6 +105,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { totpAPI } from '@/api'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import type { TotpVerificationMethod } from '@/types'
 
 const emit = defineEmits<{
   close: []
@@ -98,27 +116,33 @@ const { t } = useI18n()
 const appStore = useAppStore()
 
 const methodLoading = ref(true)
-const verificationMethod = ref<'email' | 'password'>('password')
+const verificationMethod = ref<TotpVerificationMethod['method'] | null>(null)
 const loading = ref(false)
 const sendingCode = ref(false)
 const codeCooldown = ref(0)
 const cooldownTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const form = ref({
   emailCode: '',
-  password: ''
+  password: '',
+  totpCode: ''
 })
 
 const canSubmit = computed(() => {
+  if (methodLoading.value) return false
+  if (verificationMethod.value === 'totp') {
+    return /^\d{6}$/.test(form.value.totpCode.trim())
+  }
   if (verificationMethod.value === 'email') {
     return form.value.emailCode.length === 6
   }
-  return form.value.password.length > 0
+  return verificationMethod.value === 'password' && form.value.password.length > 0
 })
 
 const loadVerificationMethod = async () => {
   methodLoading.value = true
   try {
-    const method = await totpAPI.getVerificationMethod()
+    const method = await totpAPI.getVerificationMethod('disable')
+    if (!['email', 'password', 'totp'].includes(method.method)) throw new Error(t('profile.totp.disableFailed'))
     verificationMethod.value = method.method
   } catch (err: any) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
@@ -129,6 +153,7 @@ const loadVerificationMethod = async () => {
 }
 
 const handleSendCode = async () => {
+  if (verificationMethod.value !== 'email') return
   sendingCode.value = true
   try {
     await totpAPI.sendVerifyCode()
@@ -156,14 +181,16 @@ const handleSendCode = async () => {
 }
 
 const handleDisable = async () => {
-  if (!canSubmit.value) return
+  if (!canSubmit.value || loading.value) return
 
   loading.value = true
 
   try {
-    const request = verificationMethod.value === 'email'
-      ? { email_code: form.value.emailCode }
-      : { password: form.value.password }
+    const request = verificationMethod.value === 'totp'
+      ? { totp_code: form.value.totpCode.trim() }
+      : verificationMethod.value === 'email'
+        ? { email_code: form.value.emailCode }
+        : { password: form.value.password }
 
     await totpAPI.disable(request)
     appStore.showSuccess(t('profile.totp.disableSuccess'))
@@ -171,6 +198,7 @@ const handleDisable = async () => {
   } catch (err: any) {
     appStore.showError(extractApiErrorMessage(err, t('profile.totp.disableFailed')))
   } finally {
+    form.value.totpCode = ''
     loading.value = false
   }
 }

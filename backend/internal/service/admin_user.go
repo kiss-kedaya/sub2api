@@ -281,12 +281,16 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		// 防锁死保护：不允许降级系统中最后一个管理员（自我降级已在 handler 层拦截，
 		// 此处兜底覆盖跨管理员互降导致零 admin 的场景）。
 		if user.Role == RoleAdmin && role == RoleUser {
+			if !input.TotpDemotionApproved {
+				return nil, infraerrors.Forbidden("STEP_UP_REQUIRED", "This operation requires recent two-factor verification")
+			}
 			if err := s.ensureNotLastAdmin(ctx); err != nil {
 				return nil, err
 			}
 		}
 		user.Role = role
 		fields.Role = true
+		fields.ExpectedRole = oldRole
 	}
 
 	if input.Concurrency != nil {

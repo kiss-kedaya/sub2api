@@ -78,7 +78,16 @@ func main() {
 	showVersion := flag.Bool("version", false, "Show version information")
 	migrateOnly := flag.Bool("migrate-only", false, "Apply database migrations and exit")
 	checkMigrations := flag.Bool("check-migrations", false, "Validate database migrations without changing schema and exit")
+	resetAdmin2FA := flag.Bool("reset-admin-2fa", false, "Recover a forgotten administrator TOTP configuration and exit")
+	resetAdminUserID := flag.Int64("user-id", 0, "Administrator user ID for -reset-admin-2fa")
+	confirmAdmin2FAReset := flag.Bool("confirm", false, "Confirm administrator TOTP recovery")
 	flag.Parse()
+	if handled, err := dispatchAdmin2FAReset(flag.CommandLine, *resetAdmin2FA, *resetAdminUserID, *confirmAdmin2FAReset, runAdmin2FAResetCommand); handled {
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if *migrateOnly && *checkMigrations {
 		log.Fatal("-migrate-only and -check-migrations are mutually exclusive")
 	}
