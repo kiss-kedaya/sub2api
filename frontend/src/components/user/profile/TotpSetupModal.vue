@@ -48,7 +48,7 @@
             </div>
 
             <!-- Password verification -->
-            <div v-else class="space-y-4">
+            <div v-else-if="verificationMethod === 'password'" class="space-y-4">
               <div>
                 <label class="input-label">{{ t('profile.currentPassword') }}</label>
                 <input
@@ -187,7 +187,7 @@ const appStore = useAppStore()
 // Step: 0 = verify identity, 1 = QR code, 2 = verify TOTP code
 const step = ref(0)
 const methodLoading = ref(true)
-const verificationMethod = ref<'email' | 'password'>('password')
+const verificationMethod = ref<'email' | 'password' | null>(null)
 const verifyForm = ref({ emailCode: '', password: '' })
 const sendingCode = ref(false)
 const codeCooldown = ref(0)
@@ -216,10 +216,11 @@ const stepDescription = computed(() => {
 })
 
 const canProceedFromVerify = computed(() => {
+  if (methodLoading.value) return false
   if (verificationMethod.value === 'email') {
     return verifyForm.value.emailCode.length === 6
   }
-  return verifyForm.value.password.length > 0
+  return verificationMethod.value === 'password' && verifyForm.value.password.length > 0
 })
 
 // Generate QR code as base64 when setupData changes
@@ -314,7 +315,8 @@ const copySecret = async () => {
 const loadVerificationMethod = async () => {
   methodLoading.value = true
   try {
-    const method = await totpAPI.getVerificationMethod()
+    const method = await totpAPI.getVerificationMethod('enable')
+    if (method.method !== 'email' && method.method !== 'password') throw new Error(t('profile.totp.setupFailed'))
     verificationMethod.value = method.method
   } catch (err: any) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
@@ -325,6 +327,7 @@ const loadVerificationMethod = async () => {
 }
 
 const handleSendCode = async () => {
+  if (verificationMethod.value !== 'email') return
   sendingCode.value = true
   try {
     await totpAPI.sendVerifyCode()
@@ -352,6 +355,7 @@ const handleSendCode = async () => {
 }
 
 const handleVerifyAndSetup = async () => {
+  if (!canProceedFromVerify.value || setupLoading.value) return
   setupLoading.value = true
 
   try {

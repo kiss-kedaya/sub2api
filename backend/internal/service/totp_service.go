@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/pquerna/otp/totp"
@@ -249,51 +250,19 @@ func (s *TotpService) CompleteSetup(ctx context.Context, userID int64, totpCode,
 		return ErrTotpInvalidCode
 	}
 
-	setupSecretPrefix := "N/A"
-	if len(session.Secret) >= 4 {
-		setupSecretPrefix = session.Secret[:4]
-	}
-	slog.Debug("totp_complete_setup_before_encrypt",
-		"user_id", userID,
-		"secret_len", len(session.Secret),
-		"secret_prefix", setupSecretPrefix)
-
 	// Encrypt the secret
 	encryptedSecret, err := s.encryptor.Encrypt(session.Secret)
 	if err != nil {
 		return fmt.Errorf("encrypt totp secret: %w", err)
 	}
 
-	slog.Debug("totp_complete_setup_encrypted",
-		"user_id", userID,
-		"encrypted_len", len(encryptedSecret))
-
-	// Verify encryption by decrypting
-	decrypted, decErr := s.encryptor.Decrypt(encryptedSecret)
-	if decErr != nil {
-		slog.Debug("totp_complete_setup_verify_failed",
-			"user_id", userID,
-			"error", decErr)
-	} else {
-		decryptedPrefix := "N/A"
-		if len(decrypted) >= 4 {
-			decryptedPrefix = decrypted[:4]
-		}
-		slog.Debug("totp_complete_setup_verified",
-			"user_id", userID,
-			"original_len", len(session.Secret),
-			"decrypted_len", len(decrypted),
-			"match", session.Secret == decrypted,
-			"decrypted_prefix", decryptedPrefix)
+	// Persist the secret and enabled state atomically. A setup session validated
+	// before another request enabled TOTP must never overwrite that binding.
+	binder, ok := s.userRepo.(TotpAtomicBinder)
+	if !ok {
+		return ErrUserSecurityStateChanged
 	}
-
-	// Update user with encrypted TOTP secret
-	if err := s.userRepo.UpdateTotpSecret(ctx, userID, &encryptedSecret); err != nil {
-		return fmt.Errorf("update totp secret: %w", err)
-	}
-
-	// Enable TOTP for the user
-	if err := s.userRepo.EnableTotp(ctx, userID); err != nil {
+	if err := binder.BindTotpIfDisabled(ctx, userID, encryptedSecret); err != nil {
 		return fmt.Errorf("enable totp: %w", err)
 	}
 
@@ -303,9 +272,10 @@ func (s *TotpService) CompleteSetup(ctx context.Context, userID int64, totpCode,
 	return nil
 }
 
-// Disable disables TOTP for a user
-// If email verification is enabled, emailCode is required; otherwise password is required
-func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, password string) error {
+// Disable requires the administrator's current authenticator code. Passwords,
+// email codes and a previous step-up grant cannot replace this verification.
+// Regular users retain the existing email/password verification.
+func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, password string, totpCode ...string) error {
 	// Get user
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -316,12 +286,29 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 		return ErrTotpNotSetup
 	}
 
-	if err := s.verifyIdentity(ctx, user, emailCode, password); err != nil {
+	if user.Role == RoleAdmin {
+		if len(totpCode) == 0 || strings.TrimSpace(totpCode[0]) == "" {
+			return ErrTotpInvalidCode
+		}
+		verifiedUser, err := s.verifyCode(ctx, userID, strings.TrimSpace(totpCode[0]))
+		if err != nil {
+			return err
+		}
+		if verifiedUser.Role != user.Role {
+			return ErrUserSecurityStateChanged
+		}
+		user = verifiedUser
+	} else if err := s.verifyIdentity(ctx, user, emailCode, password); err != nil {
 		return err
 	}
 
-	// Disable TOTP
-	if err := s.userRepo.DisableTotp(ctx, userID); err != nil {
+	// Bind the write to the role used for verification; a concurrent promotion
+	// must not turn a regular user's password into administrator authorization.
+	disabler, ok := s.userRepo.(TotpRoleConditionalDisabler)
+	if !ok {
+		return ErrUserSecurityStateChanged
+	}
+	if err := disabler.DisableTotpWithExpectedRole(ctx, userID, user.Role, user.TotpSecretEncrypted); err != nil {
 		return fmt.Errorf("disable totp: %w", err)
 	}
 
@@ -330,6 +317,13 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 
 // VerifyCode verifies a TOTP code for a user
 func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string) error {
+	_, err := s.verifyCode(ctx, userID, code)
+	return err
+}
+
+// verifyCode returns the exact account snapshot whose secret was verified.
+// Callers that mutate TOTP must use that snapshot as a write precondition.
+func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string) (*User, error) {
 	slog.Debug("totp_verify_code_called",
 		"user_id", userID,
 		"code_len", len(code))
@@ -337,7 +331,7 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 	// Check rate limiting
 	attempts, err := s.cache.GetVerifyAttempts(ctx, userID)
 	if err == nil && attempts >= maxTotpAttempts {
-		return ErrTotpTooManyAttempts
+		return nil, ErrTotpTooManyAttempts
 	}
 
 	// Get user
@@ -346,7 +340,7 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 		slog.Debug("totp_verify_get_user_failed",
 			"user_id", userID,
 			"error", err)
-		return infraerrors.InternalServer("TOTP_VERIFY_ERROR", "failed to verify totp code")
+		return nil, infraerrors.InternalServer("TOTP_VERIFY_ERROR", "failed to verify totp code")
 	}
 
 	if !user.TotpEnabled || user.TotpSecretEncrypted == nil {
@@ -354,7 +348,7 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 			"user_id", userID,
 			"enabled", user.TotpEnabled,
 			"has_secret", user.TotpSecretEncrypted != nil)
-		return ErrTotpNotSetup
+		return nil, ErrTotpNotSetup
 	}
 
 	slog.Debug("totp_verify_encrypted_secret",
@@ -367,17 +361,12 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 		slog.Debug("totp_verify_decrypt_failed",
 			"user_id", userID,
 			"error", err)
-		return infraerrors.InternalServer("TOTP_VERIFY_ERROR", "failed to verify totp code")
+		return nil, infraerrors.InternalServer("TOTP_VERIFY_ERROR", "failed to verify totp code")
 	}
 
-	secretPrefix := "N/A"
-	if len(secret) >= 4 {
-		secretPrefix = secret[:4]
-	}
 	slog.Debug("totp_verify_decrypted",
 		"user_id", userID,
-		"secret_len", len(secret),
-		"secret_prefix", secretPrefix)
+		"secret_len", len(secret))
 
 	// Verify the code
 	valid := totp.Validate(code, secret)
@@ -385,19 +374,18 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 		"user_id", userID,
 		"valid", valid,
 		"secret_len", len(secret),
-		"secret_prefix", secretPrefix,
 		"server_time", time.Now().UTC().Format(time.RFC3339))
 
 	if !valid {
 		// Increment failed attempts
 		_, _ = s.cache.IncrementVerifyAttempts(ctx, userID)
-		return ErrTotpInvalidCode
+		return nil, ErrTotpInvalidCode
 	}
 
 	// Clear attempt counter on success
 	_ = s.cache.ClearVerifyAttempts(ctx, userID)
 
-	return nil
+	return user, nil
 }
 
 // StepUpGrantTTL 敏感操作 step-up 验证的有效窗口（sudo 模式）。
@@ -524,15 +512,18 @@ func generateRandomToken(byteLength int) (string, error) {
 
 // VerificationMethod represents the method required for TOTP operations
 type VerificationMethod struct {
-	Method string `json:"method"` // "email" or "password"
+	Method string `json:"method"` // "email", "password", or "totp" for administrator disable.
 }
 
 // GetVerificationMethod returns the verification method for TOTP operations.
-// 与 verifyIdentity 保持同一判定：管理员一律返回 password。
-func (s *TotpService) GetVerificationMethod(ctx context.Context, userID int64) (*VerificationMethod, error) {
+// 管理员启用用密码，关闭用当前 TOTP；普通用户维持邮箱或密码校验。
+func (s *TotpService) GetVerificationMethod(ctx context.Context, userID int64, operation ...string) (*VerificationMethod, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
+	}
+	if user.Role == RoleAdmin && len(operation) > 0 && operation[0] == "disable" {
+		return &VerificationMethod{Method: "totp"}, nil
 	}
 	if s.usesEmailVerification(ctx, user) {
 		return &VerificationMethod{Method: "email"}, nil

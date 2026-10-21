@@ -33,6 +33,8 @@ type userRepository struct {
 }
 
 var _ service.RedeemUserAdjustmentRepository = (*userRepository)(nil)
+var _ service.TotpRoleConditionalDisabler = (*userRepository)(nil)
+var _ service.TotpAtomicBinder = (*userRepository)(nil)
 
 func NewUserRepository(client *dbent.Client, sqlDB *sql.DB) service.UserRepository {
 	return newUserRepositoryWithSQL(client, sqlDB)
@@ -293,6 +295,9 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User, field
 	oldEmail := existing.Email
 
 	updateOp := txClient.User.UpdateOneID(userIn.ID)
+	if fields.ExpectedRole != "" {
+		updateOp = updateOp.Where(dbuser.RoleEQ(fields.ExpectedRole))
+	}
 	if fields.Email {
 		updateOp = updateOp.SetEmail(userIn.Email)
 	}
@@ -346,6 +351,9 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User, field
 	}
 	updated, err := updateOp.Save(txCtx)
 	if err != nil {
+		if fields.ExpectedRole != "" && dbent.IsNotFound(err) {
+			return service.ErrUserSecurityStateChanged
+		}
 		return translatePersistenceError(err, service.ErrUserNotFound, service.ErrEmailExists)
 	}
 
@@ -1587,6 +1595,28 @@ func (r *userRepository) EnableTotp(ctx context.Context, userID int64) error {
 	return nil
 }
 
+// BindTotpIfDisabled prevents a delayed setup completion from replacing an
+// authenticator that another request has already enabled.
+func (r *userRepository) BindTotpIfDisabled(ctx context.Context, userID int64, encryptedSecret string) error {
+	if encryptedSecret == "" {
+		return service.ErrUserSecurityStateChanged
+	}
+	client := clientFromContext(ctx, r.client)
+	_, err := client.User.UpdateOneID(userID).
+		Where(dbuser.TotpEnabledEQ(false), dbuser.StatusEQ(service.StatusActive), dbuser.DeletedAtIsNil()).
+		SetTotpSecretEncrypted(encryptedSecret).
+		SetTotpEnabled(true).
+		SetTotpEnabledAt(time.Now()).
+		Save(ctx)
+	if dbent.IsNotFound(err) {
+		return service.ErrUserSecurityStateChanged
+	}
+	if err != nil {
+		return translatePersistenceError(err, service.ErrUserNotFound, nil)
+	}
+	return nil
+}
+
 // DisableTotp 禁用用户的 TOTP 双因素认证
 func (r *userRepository) DisableTotp(ctx context.Context, userID int64) error {
 	client := clientFromContext(ctx, r.client)
@@ -1595,6 +1625,34 @@ func (r *userRepository) DisableTotp(ctx context.Context, userID int64) error {
 		ClearTotpEnabledAt().
 		ClearTotpSecretEncrypted().
 		Save(ctx)
+	if err != nil {
+		return translatePersistenceError(err, service.ErrUserNotFound, nil)
+	}
+	return nil
+}
+
+// DisableTotpWithExpectedRole binds the write to the identity state used for
+// verification. Role, active status and the verified secret share one UPDATE.
+func (r *userRepository) DisableTotpWithExpectedRole(ctx context.Context, userID int64, expectedRole string, expectedSecret *string) error {
+	if expectedRole != service.RoleAdmin && expectedRole != service.RoleUser {
+		return service.ErrUserSecurityStateChanged
+	}
+	client := clientFromContext(ctx, r.client)
+	update := client.User.UpdateOneID(userID).
+		Where(dbuser.RoleEQ(expectedRole), dbuser.StatusEQ(service.StatusActive), dbuser.DeletedAtIsNil(), dbuser.TotpEnabledEQ(true))
+	if expectedSecret == nil {
+		update = update.Where(dbuser.TotpSecretEncryptedIsNil())
+	} else {
+		update = update.Where(dbuser.TotpSecretEncryptedEQ(*expectedSecret))
+	}
+	_, err := update.
+		SetTotpEnabled(false).
+		ClearTotpEnabledAt().
+		ClearTotpSecretEncrypted().
+		Save(ctx)
+	if dbent.IsNotFound(err) {
+		return service.ErrUserSecurityStateChanged
+	}
 	if err != nil {
 		return translatePersistenceError(err, service.ErrUserNotFound, nil)
 	}
