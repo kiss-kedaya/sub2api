@@ -92,7 +92,15 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await wrapper.get('.crypto-security__actions .btn-secondary').trigger('click')
     await flushPromises()
     expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
-    expect(mocks.get.mock.calls.filter(([path]) => path.endsWith('/security/status'))).toHaveLength(2)
+    expect(mocks.get.mock.calls.filter(([path]) => path.endsWith('/security/status'))).toHaveLength(1)
+    await configTab(wrapper)
+    await button(wrapper, 'admin.crypto.securityConfigReadAction').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
+    await verify(wrapper, '222222')
+    expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/config', expect.objectContaining({
+      headers: { 'X-Crypto-TOTP': '222222' }, _retry: true
+    }))
   })
 
   it('explains the new vault passphrase minimum while preserving existing vault and seed scopes', () => {
