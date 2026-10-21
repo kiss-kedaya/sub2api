@@ -212,6 +212,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	// 7. Handle error response with failover
 	if resp.StatusCode >= 400 {
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		if IsGlobalIPBlacklistResponse(respBody) {
+			MarkGlobalIPBlacklistRejection(c)
+			setOpsUpstreamError(c, resp.StatusCode, GlobalIPBlacklistSessionBlockedMessage(), "")
+			return nil, newGlobalIPBlacklistFailoverError(resp.StatusCode, resp.Header, respBody)
+		}
 		if account.Platform == PlatformGrok {
 			kind := "http_error"
 			if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {

@@ -31,7 +31,7 @@ type grokRefusalUpstream struct {
 func TestGrokModerationBlockedSessionRejectsWebSocketBeforeUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	harness := newOpenAIWSPassthroughHandlerHarness(t, "http://127.0.0.1:1")
-	payload := []byte(`{"type":"response.create","model":"gpt-5.1","prompt_cache_key":"refused-conversation","input":"hello"}`)
+	payload := []byte(`{"type":"response.create","model":"gpt-5.1","previous_response_id":"resp_refused_conversation","input":"hello"}`)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	hash := service.GrokModerationSessionHash(c, harness.apiKey, payload)
@@ -160,5 +160,84 @@ func TestGrokModerationRefusalBillsOnceAndBlocksBeforeUpstream(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestGlobalIPBlacklistBlocksSessionWithoutBilling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, fixture := range []struct {
+		name, platform, model string
+		passthrough           bool
+	}{
+		{"grok", service.PlatformGrok, "grok-4.7", false},
+		{"openai", service.PlatformOpenAI, "gpt-5.1", false},
+		{"openai-passthrough", service.PlatformOpenAI, "gpt-5.1", true},
+		{"deepseek", service.PlatformDeepseek, "deepseek-chat", false},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			for _, endpoint := range []string{"/v1/chat/completions", "/v1/responses", "/v1/messages"} {
+				t.Run(endpoint, func(t *testing.T) {
+					groupID := int64(1234)
+					cfg := &config.Config{RunMode: config.RunModeStandard}
+					cfg.Default.RateMultiplier = 1
+					cfg.Gateway.MaxAccountSwitches = 1
+					account := service.Account{ID: 9910, Name: "fixture", Platform: fixture.platform, Type: service.AccountTypeAPIKey,
+						Status: service.StatusActive, Schedulable: true, GroupIDs: []int64{groupID},
+						Extra:       map[string]any{"openai_passthrough": fixture.passthrough},
+						Credentials: map[string]any{"api_key": "fixture", "base_url": "https://api.example.test"}}
+					accounts := &openAIWSFailoverHandlerAccountRepoStub{accounts: []service.Account{account}}
+					logs, ledger := &geminiBridgeUsageRepo{}, &geminiBridgeBillingRepo{}
+					upstream := &grokRefusalUpstream{body: `{"error":{"message":"blocked by global ip blacklist"}}`}
+					cache := &grokRefusalCache{blocked: map[string]bool{}}
+					admissionCfg := *cfg
+					admissionCfg.RunMode = config.RunModeSimple
+					billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, &admissionCfg, nil)
+					t.Cleanup(billing.Stop)
+					svc := service.NewOpenAIGatewayService(accounts, logs, ledger, nil, nil, nil, cache, cfg, nil, nil,
+						service.NewBillingService(cfg, nil), nil, billing, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
+					h := NewOpenAIGatewayHandler(svc, service.NewConcurrencyService(nil), billing,
+						service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
+					refusalPrice := 0.25
+					key := &service.APIKey{ID: 55, UserID: 77, GroupID: &groupID, User: &service.User{ID: 77, Balance: 100, Status: service.StatusActive},
+						Group: &service.Group{ID: groupID, Platform: fixture.platform, Status: service.StatusActive, Hydrated: true,
+					CrossProtocolConversionEnabled: true, AllowMessagesDispatch: true, RateMultiplier: 0.07, GrokModerationRefusalPrice: &refusalPrice}}
+					call := func(nextEndpoint, model string) *httptest.ResponseRecorder {
+						body := `{"model":"` + model + `","stream":false,"input":"hello","messages":[{"role":"user","content":"hello"}],"max_tokens":128}`
+						rec := httptest.NewRecorder()
+						c, _ := gin.CreateTestContext(rec)
+						c.Request = httptest.NewRequest(http.MethodPost, nextEndpoint, strings.NewReader(body))
+						c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, "ip-blacklist-fixture"))
+						c.Request.Header.Set("Content-Type", "application/json")
+						c.Request.Header.Set("Session_id", "blacklisted-conversation")
+						c.Set(string(middleware.ContextKeyAPIKey), key)
+						c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 77})
+						switch nextEndpoint {
+						case "/v1/chat/completions":
+							h.ChatCompletions(c)
+						case "/v1/responses":
+							h.Responses(c)
+						case "/v1/messages":
+							h.Messages(c)
+						}
+						return rec
+					}
+
+					first := call(endpoint, fixture.model)
+					require.Equal(t, http.StatusForbidden, first.Code, first.Body.String())
+					require.Contains(t, first.Body.String(), service.GlobalIPBlacklistSessionBlockedMessage())
+					require.Equal(t, 1, upstream.calls, "first blacklist rejection should make one upstream call")
+					require.Nil(t, logs.last, "global IP blacklist must not write a billable usage record")
+					require.Nil(t, ledger.last, "global IP blacklist must not apply the fixed Grok refusal fee")
+
+					for _, nextEndpoint := range []string{"/v1/chat/completions", "/v1/responses", "/v1/messages"} {
+						next := call(nextEndpoint, "grok-4.6")
+						require.Equal(t, http.StatusForbidden, next.Code, next.Body.String())
+						require.Equal(t, 1, upstream.calls, "a blocked conversation must be rejected before another upstream call")
+						require.Nil(t, logs.last, "local block must not create another usage record")
+						require.Nil(t, ledger.last, "local block must not create another ledger entry")
+					}
+				})
+			}
+		})
 	}
 }
