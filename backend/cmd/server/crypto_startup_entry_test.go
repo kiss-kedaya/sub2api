@@ -18,9 +18,13 @@ func TestCryptoReviewStartupEntry(t *testing.T) {
 		main()
 		os.Exit(0)
 	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, mode := range []string{"setup", "migrate-only", "missing-install"} {
 		t.Run(mode, func(t *testing.T) {
-			cmd := exec.Command(os.Args[0], "-test.run=^TestCryptoReviewStartupEntry$")
+			cmd := exec.Command(executable, "-test.run=^TestCryptoReviewStartupEntry$")
 			cmd.Env = append(os.Environ(), "CRYPTO_STARTUP_TEST_CHILD="+mode,
 				"CRYPTO_ADMIN_TEST_MODE=true", "SKIP_SETUP=false", "AUTO_SETUP=true", "DATA_DIR="+t.TempDir())
 			output, err := cmd.CombinedOutput()

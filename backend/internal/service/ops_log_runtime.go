@@ -105,8 +105,10 @@ func (s *OpsService) GetRuntimeLogConfig(ctx context.Context) (*OpsRuntimeLogCon
 	raw, err := s.settingRepo.GetValue(ctx, SettingKeyOpsRuntimeLogConfig)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
-			b, _ := json.Marshal(defaultCfg)
-			_ = s.settingRepo.Set(ctx, SettingKeyOpsRuntimeLogConfig, string(b))
+			if !CryptoAdminTestMode() {
+				b, _ := json.Marshal(defaultCfg)
+				_ = s.settingRepo.Set(ctx, SettingKeyOpsRuntimeLogConfig, string(b))
+			}
 			return defaultCfg, nil
 		}
 		return nil, err

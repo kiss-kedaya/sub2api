@@ -1,9 +1,51 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 )
+
+type cryptoReviewSettingsObserver struct {
+	SettingRepository
+	read chan struct{}
+}
+
+func (s *cryptoReviewSettingsObserver) GetValue(context.Context, string) (string, error) {
+	select {
+	case s.read <- struct{}{}:
+	default:
+	}
+	return "", ErrSettingNotFound
+}
+
+type cryptoReviewModerationRepository struct {
+	ContentModerationRepository
+}
+
+func TestCryptoReviewDoesNotStartModerationPolling(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
+	observer := &cryptoReviewSettingsObserver{read: make(chan struct{}, 1)}
+	NewContentModerationService(observer, &cryptoReviewModerationRepository{}, nil, nil, nil, nil, nil, nil)
+	select {
+	case <-observer.read:
+		t.Fatal("moderation constructor started polling production settings")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestCryptoReviewMissingRuntimeLogConfigDoesNotPersistDefaults(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
+	repo := newRuntimeSettingRepoStub()
+	svc := &OpsService{settingRepo: repo}
+	cfg, err := svc.GetRuntimeLogConfig(context.Background())
+	if err != nil || cfg == nil {
+		t.Fatalf("read-only startup must retain usable log defaults: %v", err)
+	}
+	if repo.setCalls != 0 {
+		t.Fatal("read-only startup tried to persist missing log settings")
+	}
+}
 
 func TestCryptoReviewDoesNotInitializeGatewayCaches(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
