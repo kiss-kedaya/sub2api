@@ -41,6 +41,8 @@ on:
       - 'backend/internal/service/ticket_email.go'
       - 'backend/internal/service/tls_fingerprint_profile_service.go'
       - 'backend/internal/service/error_passthrough_service.go'
+      - 'backend/internal/service/ops_log_runtime.go'
+      - 'backend/internal/service/content_moderation.go'
       - 'backend/internal/repository/crypto_totp_store_test.go'
       - 'backend/internal/payment/crypto*.go'
       - 'backend/internal/payment/types.go'
