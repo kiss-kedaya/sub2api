@@ -2054,8 +2054,7 @@ func grokModerationRefusalProtocolError(account *Account, payload []byte) error 
 	if account == nil || !strings.EqualFold(strings.TrimSpace(account.Platform), PlatformGrok) {
 		return nil
 	}
-	if !IsGrokModerationRefusalFailure(account.Platform, payload, nil) &&
-		!(grokModerationRefusalProtocolStatus(payload) == http.StatusForbidden && IsGlobalIPBlacklistResponse(payload)) {
+	if !IsGrokModerationRefusalFailure(account.Platform, payload, nil) {
 		return nil
 	}
 	return fmt.Errorf("%s %s", grokContentPolicyRejectionPrefix, extractOpenAISSEErrorMessage(payload))
