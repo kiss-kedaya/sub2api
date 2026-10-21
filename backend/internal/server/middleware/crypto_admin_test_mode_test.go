@@ -23,7 +23,7 @@ func TestCryptoAdminTestModeGuardAllowsOnlyReviewRoutes(t *testing.T) {
 		"/api/v1/admin/crypto/security/status", "/api/v1/admin/crypto/config", "/api/v1/admin/crypto/addresses",
 		"/api/v1/admin/crypto/deposits.csv", "/api/v1/admin/users", "/api/v1/admin/crypto/security/setup",
 		"/api/v1/admin/crypto/wallet/export-mnemonics", "/v1/models", "/admin/crypto", "/assets/index.js",
-		"/metrics", "/api/v1/admin/crypto/future-risk-read",
+		"/metrics", "/api/v1/admin/crypto/future-risk-read", "/site-logo",
 	} {
 		router.Any(path, func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	}
@@ -38,6 +38,9 @@ func TestCryptoAdminTestModeGuardAllowsOnlyReviewRoutes(t *testing.T) {
 		{http.MethodGet, "/api/v1/admin/crypto/config", http.StatusNoContent},
 		{http.MethodGet, "/admin/crypto", http.StatusNoContent},
 		{http.MethodGet, "/assets/index.js", http.StatusNoContent},
+		{http.MethodGet, "/site-logo", http.StatusNoContent},
+		{http.MethodHead, "/site-logo", http.StatusNoContent},
+		{http.MethodPost, "/site-logo", http.StatusForbidden},
 		{http.MethodPost, "/api/v1/admin/users", http.StatusForbidden},
 		{http.MethodGet, "/metrics", http.StatusForbidden},
 		{http.MethodGet, "/api/v1/admin/crypto/future-risk-read", http.StatusForbidden},
