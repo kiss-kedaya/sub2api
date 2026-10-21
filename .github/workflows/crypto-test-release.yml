@@ -27,6 +27,7 @@ on:
       - 'backend/internal/server/routes/admin.go'
       - 'backend/internal/server/routes/user.go'
       - 'backend/internal/server/middleware/audit_log.go'
+      - 'backend/internal/server/middleware/crypto*.go'
       - 'backend/internal/server/middleware/audit_log_test.go'
       - 'backend/internal/service/crypto*.go'
       - 'backend/internal/service/totp*.go'
