@@ -131,6 +131,7 @@ func (h *TotpHandler) Enable(c *gin.Context) {
 type TotpDisableRequest struct {
 	EmailCode string `json:"email_code"`
 	Password  string `json:"password"`
+	TotpCode  string `json:"totp_code"`
 }
 
 // Disable disables TOTP for the current user
@@ -148,7 +149,7 @@ func (h *TotpHandler) Disable(c *gin.Context) {
 		return
 	}
 
-	if err := h.totpService.Disable(c.Request.Context(), subject.UserID, req.EmailCode, req.Password); err != nil {
+	if err := h.totpService.Disable(c.Request.Context(), subject.UserID, req.EmailCode, req.Password, req.TotpCode); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -165,7 +166,12 @@ func (h *TotpHandler) GetVerificationMethod(c *gin.Context) {
 		return
 	}
 
-	method, err := h.totpService.GetVerificationMethod(c.Request.Context(), subject.UserID)
+	operation := c.DefaultQuery("operation", "enable")
+	if operation != "enable" && operation != "disable" {
+		response.BadRequest(c, "Invalid TOTP operation")
+		return
+	}
+	method, err := h.totpService.GetVerificationMethod(c.Request.Context(), subject.UserID, operation)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

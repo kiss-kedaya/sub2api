@@ -527,6 +527,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	if req.StepUpEnabled != nil {
 		stepUpEnabled = *req.StepUpEnabled
 	}
+	_, totpSent := sentFields["totp_enabled"]
+	if !totpSent {
+		req.TotpEnabled = previousSettings.TotpEnabled
+	}
+	// Omitted or same-value fields must not overwrite a concurrent authenticated
+	// security change after the snapshot above was loaded.
+	if req.TotpEnabled == previousSettings.TotpEnabled {
+		omitted[service.SettingKeyTotpEnabled] = struct{}{}
+	}
+	if stepUpEnabled == previousSettings.StepUpEnabled {
+		omitted[service.SettingKeyStepUpEnabled] = struct{}{}
+	}
 	passkeyEnabled := previousSettings.PasskeyEnabled
 	if req.PasskeyEnabled != nil {
 		passkeyEnabled = *req.PasskeyEnabled
@@ -555,10 +567,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			return
 		}
 	}
-	// 关闭 step-up 门控本身就是敏感操作：防止拿到管理员会话的攻击者先关闸再执行导出/备份。
+	// 关闭 TOTP 或 step-up 门控都是敏感操作：必须先完成当前会话的动态码验证。
 	// previousSettings 已证实开关处于开启状态，使用无条件门控变体，
 	// 避免门控内部二次读取开关时因存储故障 fail-open（前端捕获 STEP_UP_REQUIRED 弹码重试）。
-	if !stepUpEnabled && previousSettings.StepUpEnabled {
+	if (!stepUpEnabled && previousSettings.StepUpEnabled) || (!req.TotpEnabled && previousSettings.TotpEnabled) {
 		if !middleware.EnforceStepUpAlways(c, h.totpService, h.userService) {
 			return
 		}
