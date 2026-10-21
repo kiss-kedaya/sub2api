@@ -375,7 +375,7 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 			return err
 		}
 		defer unlock()
-		if err := s.cryptoSecurity.VerifyRisk(ctx, userID, totpCodes[0]); err != nil {
+		if err := s.cryptoSecurity.verifyAdminRisk(ctx, userID, totpCodes[0]); err != nil {
 			return err
 		}
 	} else if err := s.verifyIdentity(ctx, user, emailCode, password); err != nil {

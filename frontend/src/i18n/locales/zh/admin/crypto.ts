@@ -143,6 +143,7 @@ export default {
     securityVerifyAction: '验证并执行本次操作',
     securityBound: '绑定成功。绑定码已使用，请等待验证器生成下一枚新码，再重新发起刚才的操作；本窗口不会自动执行原操作。',
     securityUnavailable: '当前无法配置或使用链上操作两步验证，请检查服务端功能开关及账号绑定条件；本次操作未执行。',
+    securityOperatorRequired: '此账号尚未获准管理支付钱包，请联系部署管理员授权；本次操作未执行。',
     securitySetupExpired: '本次绑定已过期，请关闭窗口后重新生成密钥。原操作未执行。',
     securityNotConfigured: '服务器要求先配置两步验证。请关闭窗口，重新发起操作并完成绑定。',
     securityExpired: '验证码或绑定已过期，请等待新码；若绑定已过期，请关闭后重新绑定。',

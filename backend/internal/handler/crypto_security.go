@@ -84,7 +84,7 @@ func (h *CryptoHandler) cryptoJWTAdmin(c *gin.Context) (int64, bool) {
 		c.Abort()
 		return 0, false
 	}
-	_, err := h.security.CurrentAdmin(c.Request.Context(), subject.UserID)
+	_, err := h.security.CurrentOperator(c.Request.Context(), subject.UserID)
 	if response.ErrorFrom(c, err) {
 		c.Abort()
 		return 0, false

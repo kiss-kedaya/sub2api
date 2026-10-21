@@ -164,7 +164,12 @@ func (cryptoSecurityTestEncryptor) Decrypt(v string) (string, error) {
 }
 
 func newCryptoSecurityTestServices(t *testing.T, enabled bool) (*CryptoSecurityService, *TotpService, *cryptoSecurityTestRepo, *cryptoSecurityTestCache) {
+	return newCryptoSecurityTestServicesWithOperators(t, enabled, "7")
+}
+
+func newCryptoSecurityTestServicesWithOperators(t *testing.T, enabled bool, operators string) (*CryptoSecurityService, *TotpService, *cryptoSecurityTestRepo, *cryptoSecurityTestCache) {
 	t.Helper()
+	t.Setenv("CRYPTO_ADMIN_USER_IDS", operators)
 	secret := "encrypted:" + cryptoSecurityTestSecret
 	repo := &cryptoSecurityTestRepo{user: User{
 		ID: 7, Email: "admin@example.test", Role: RoleAdmin, Status: StatusActive,
@@ -178,6 +183,45 @@ func newCryptoSecurityTestServices(t *testing.T, enabled bool) (*CryptoSecurityS
 	cfg.Totp.EncryptionKeyConfigured = true
 	cfg.Totp.EncryptionKey = strings.Repeat("ab", 32)
 	return NewCryptoSecurityService(totpService, cfg), totpService, repo, cache
+}
+
+func TestCryptoSecurityRequiresDeploymentPinnedPaymentAdministrator(t *testing.T) {
+	for _, configured := range []string{"", "8", "7,invalid", "0,7", "7,", "+7", "07", "9223372036854775808", strings.Repeat("7,", 65) + "7"} {
+		t.Run(configured, func(t *testing.T) {
+			security, _, repo, cache := newCryptoSecurityTestServicesWithOperators(t, true, configured)
+			_, err := security.Status(t.Context(), 7)
+			require.ErrorIs(t, err, ErrCryptoOperatorRequired)
+			require.ErrorIs(t, security.VerifyRisk(t.Context(), 7, cryptoSecurityTestCode(t, cryptoSecurityTestSecret)), ErrCryptoOperatorRequired)
+			_, err = security.InitiateSetup(t.Context(), 7, "session", "setup-password")
+			require.ErrorIs(t, err, ErrCryptoOperatorRequired)
+			require.Zero(t, repo.writes)
+			require.Empty(t, cache.values)
+		})
+	}
+	security, _, repo, _ := newCryptoSecurityTestServicesWithOperators(t, true, " 7, 8,7 ")
+	_, err := security.Status(t.Context(), 7)
+	require.NoError(t, err)
+	// Runtime changes and newly-created admin accounts cannot expand authority.
+	t.Setenv("CRYPTO_ADMIN_USER_IDS", "9")
+	_, err = security.Status(t.Context(), 7)
+	require.NoError(t, err)
+	repo.user.ID = 9
+	_, err = security.CurrentOperator(t.Context(), 9)
+	require.ErrorIs(t, err, ErrCryptoOperatorRequired)
+}
+
+func TestCryptoSecurityUnlistedAdminRetainsOrdinaryTotpEnrollmentAndDisable(t *testing.T) {
+	security, svc, repo, _ := newCryptoSecurityTestServicesWithOperators(t, false, "8")
+	setup, err := svc.InitiateSetup(t.Context(), 7, "", "setup-password")
+	require.NoError(t, err)
+	code := cryptoSecurityTestCode(t, setup.Secret)
+	require.NoError(t, svc.CompleteSetup(t.Context(), 7, code, setup.SetupToken))
+	require.True(t, repo.user.TotpEnabled)
+	require.ErrorIs(t, security.VerifyRisk(t.Context(), 7, code), ErrCryptoOperatorRequired)
+
+	_, svc, repo, _ = newCryptoSecurityTestServicesWithOperators(t, true, "8")
+	require.NoError(t, svc.Disable(t.Context(), 7, "", "", cryptoSecurityTestCode(t, cryptoSecurityTestSecret)))
+	require.False(t, repo.user.TotpEnabled)
 }
 
 func cryptoSecurityTestCode(t *testing.T, secret string) string {

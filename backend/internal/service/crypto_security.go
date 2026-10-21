@@ -7,6 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -14,12 +17,13 @@ import (
 )
 
 var (
-	ErrCryptoTotpRequired    = infraerrors.Forbidden("CRYPTO_TOTP_REQUIRED", "a fresh six-digit payment TOTP code is required")
-	ErrCryptoTotpNotSetup    = infraerrors.Forbidden("CRYPTO_TOTP_NOT_SETUP", "bind TOTP before performing payment operations")
-	ErrCryptoTotpReplayed    = infraerrors.Conflict("CRYPTO_TOTP_REPLAYED", "this verification code or setup token has already been used")
-	ErrCryptoTotpRateLimited = infraerrors.TooManyRequests("CRYPTO_TOTP_RATE_LIMITED", "too many payment verification attempts")
-	ErrCryptoTotpUnavailable = infraerrors.ServiceUnavailable("CRYPTO_TOTP_REQUIRED", "payment verification unavailable")
-	ErrCryptoAdminRequired   = infraerrors.Forbidden("CRYPTO_ADMIN_REQUIRED", "an active administrator JWT session is required")
+	ErrCryptoTotpRequired     = infraerrors.Forbidden("CRYPTO_TOTP_REQUIRED", "a fresh six-digit payment TOTP code is required")
+	ErrCryptoTotpNotSetup     = infraerrors.Forbidden("CRYPTO_TOTP_NOT_SETUP", "bind TOTP before performing payment operations")
+	ErrCryptoTotpReplayed     = infraerrors.Conflict("CRYPTO_TOTP_REPLAYED", "this verification code or setup token has already been used")
+	ErrCryptoTotpRateLimited  = infraerrors.TooManyRequests("CRYPTO_TOTP_RATE_LIMITED", "too many payment verification attempts")
+	ErrCryptoTotpUnavailable  = infraerrors.ServiceUnavailable("CRYPTO_TOTP_REQUIRED", "payment verification unavailable")
+	ErrCryptoAdminRequired    = infraerrors.Forbidden("CRYPTO_ADMIN_REQUIRED", "an active administrator JWT session is required")
+	ErrCryptoOperatorRequired = infraerrors.Forbidden("CRYPTO_OPERATOR_REQUIRED", "this account is not a configured payment administrator")
 )
 
 const cryptoReplayTTL = 90 * time.Second
@@ -44,15 +48,16 @@ type CryptoSecurityStatus struct {
 // CryptoSecurityService reuses TotpService's user secret, encryption, enrollment
 // and verification. Redis is mandatory; there is no local fallback or sudo grant.
 type CryptoSecurityService struct {
-	totp  *TotpService
-	store CryptoTotpStore
-	key   []byte
+	totp      *TotpService
+	store     CryptoTotpStore
+	key       []byte
+	operators map[int64]struct{}
 }
 
 // NewCryptoSecurityService never generates or changes an encryption key. Only an
 // explicitly configured, persistent TOTP key may enable payment verification.
 func NewCryptoSecurityService(totp *TotpService, cfg *config.Config) *CryptoSecurityService {
-	s := &CryptoSecurityService{totp: totp}
+	s := &CryptoSecurityService{totp: totp, operators: cryptoOperatorIDs(os.Getenv("CRYPTO_ADMIN_USER_IDS"))}
 	if totp != nil {
 		totp.cryptoSecurity = s
 		s.store, _ = totp.cache.(CryptoTotpStore)
@@ -64,6 +69,27 @@ func NewCryptoSecurityService(totp *TotpService, cfg *config.Config) *CryptoSecu
 		}
 	}
 	return s
+}
+
+// Payment authority is pinned by the operator at process startup, independently
+// of mutable admin roles. Otherwise a stolen admin JWT or machine key could
+// create another administrator, enroll a fresh authenticator and bypass 2FA.
+// Missing or malformed deployment configuration authorizes nobody.
+func cryptoOperatorIDs(raw string) map[int64]struct{} {
+	entries := strings.Split(raw, ",")
+	if len(entries) > 64 {
+		return nil
+	}
+	ids := make(map[int64]struct{}, len(entries))
+	for _, entry := range entries {
+		value := strings.TrimSpace(entry)
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || id <= 0 || strconv.FormatInt(id, 10) != value {
+			return nil
+		}
+		ids[id] = struct{}{}
+	}
+	return ids
 }
 
 func (s *CryptoSecurityService) ready() bool {
@@ -80,15 +106,25 @@ func (s *CryptoSecurityService) CurrentAdmin(ctx context.Context, userID int64) 
 	if err != nil {
 		return nil, ErrCryptoTotpUnavailable
 	}
-	if user == nil || user.DeletedAt != nil || !user.IsAdmin() || !user.IsActive() {
+	if user == nil || user.ID != userID || user.DeletedAt != nil || !user.IsAdmin() || !user.IsActive() {
 		return nil, ErrCryptoAdminRequired
 	}
 	return user, nil
 }
 
+func (s *CryptoSecurityService) CurrentOperator(ctx context.Context, userID int64) (*User, error) {
+	if s == nil {
+		return nil, ErrCryptoAdminRequired
+	}
+	if _, allowed := s.operators[userID]; !allowed {
+		return nil, ErrCryptoOperatorRequired
+	}
+	return s.CurrentAdmin(ctx, userID)
+}
+
 // Status does not consult the global TOTP feature switch.
 func (s *CryptoSecurityService) Status(ctx context.Context, userID int64) (*CryptoSecurityStatus, error) {
-	u, err := s.CurrentAdmin(ctx, userID)
+	u, err := s.CurrentOperator(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +191,15 @@ func cryptoTotpError(err error) error {
 // VerifyRisk requires a new code for each operation, even when login TOTP or
 // step-up is disabled or a valid step-up grant already exists.
 func (s *CryptoSecurityService) VerifyRisk(ctx context.Context, userID int64, code string) error {
+	if _, err := s.CurrentOperator(ctx, userID); err != nil {
+		return err
+	}
+	return s.verifyAdminRisk(ctx, userID, code)
+}
+
+// Ordinary admins still manage their own authenticator without acquiring
+// wallet authority. They use the same atomic code-consumption controls.
+func (s *CryptoSecurityService) verifyAdminRisk(ctx context.Context, userID int64, code string) error {
 	u, err := s.CurrentAdmin(ctx, userID)
 	if err != nil {
 		return err
@@ -199,7 +244,7 @@ func (s *CryptoSecurityService) lockSetup(ctx context.Context, userID int64) (fu
 // InitiateSetup confirms the password once and binds existing TOTP enrollment
 // to this user and JWT session. The global login feature switch is irrelevant.
 func (s *CryptoSecurityService) InitiateSetup(ctx context.Context, userID int64, sessionID, password string) (*TotpSetupResponse, error) {
-	if _, err := s.CurrentAdmin(ctx, userID); err != nil {
+	if _, err := s.CurrentOperator(ctx, userID); err != nil {
 		return nil, err
 	}
 	if err := s.limit(ctx, userID, "setup", 5, totpAttemptsTTL); err != nil {
@@ -219,7 +264,7 @@ func (s *CryptoSecurityService) InitiateSetup(ctx context.Context, userID int64,
 // Enable completes the shared enrollment with a six-digit code, never a
 // client-supplied enabled flag, and consumes both the code and setup capability.
 func (s *CryptoSecurityService) Enable(ctx context.Context, userID int64, sessionID, code, setupToken string) error {
-	if _, err := s.CurrentAdmin(ctx, userID); err != nil {
+	if _, err := s.CurrentOperator(ctx, userID); err != nil {
 		return err
 	}
 	if err := s.limit(ctx, userID, "enable", 10, totpAttemptsTTL); err != nil {
