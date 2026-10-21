@@ -29,8 +29,7 @@ func (h *OpenAIGatewayHandler) handleGrokModerationRefusal(c *gin.Context, key *
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 3*time.Second)
 	defer cancel()
-	h.gatewayService.BlockModerationRefusedSessionForOpenAI(ctx, nil,
-		service.GrokModerationSessionHash(c, key, body), service.GrokModerationRefusalSessionBlockTTL())
+	h.gatewayService.BlockGrokModerationRefusedRequest(ctx, c, key, body)
 	result = service.PrepareGrokModerationRefusalOpenAIResult(result, model, service.GrokModerationRefusalBilledCost(key.Group))
 	result.Stream = stream
 	submit(result)
@@ -53,6 +52,5 @@ func (h *OpenAIGatewayHandler) rejectIfGrokModerationSessionBlocked(c *gin.Conte
 func (h *OpenAIGatewayHandler) grokModerationSessionBlocked(c *gin.Context, key *service.APIKey, body []byte) bool {
 	// The hash already isolates users. Group 0 keeps a smart-route key's
 	// primary/selected group changes from bypassing the conversation block.
-	return key != nil && h.gatewayService.ModerationRefusedSessionBlocked(c.Request.Context(), nil,
-		service.GrokModerationSessionHash(c, key, body))
+	return key != nil && h.gatewayService.GrokModerationRefusedRequestBlocked(c.Request.Context(), c, key, body)
 }

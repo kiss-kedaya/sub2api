@@ -99,13 +99,23 @@ func TestGrokModerationSessionHashIsolation(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
 	key := &APIKey{User: &User{ID: 77}}
-	a := GrokModerationSessionHash(c, key, []byte(`{"model":"grok-4.7","messages":[{"role":"user","content":"hello"}]}`))
-	b := GrokModerationSessionHash(c, key, []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"},{"role":"user","content":"continue"}]}`))
-	require.NotEmpty(t, a)
-	require.Equal(t, a, b, "model changes and appended turns must preserve identity")
 	require.Empty(t, GrokModerationSessionHash(c, key, []byte(`{"model":"grok-4.7"}`)))
 	c.Request.Header.Set("Session_id", "conversation")
 	require.Equal(t, GrokModerationSessionHash(c, key, nil), GrokModerationSessionHash(c, &APIKey{UserID: 77}, nil))
 	require.NotEqual(t, GrokModerationSessionHash(c, key, nil), GrokModerationSessionHash(c, &APIKey{UserID: 78}, nil))
 	require.Empty(t, GrokModerationSessionHash(c, &APIKey{}, nil))
+}
+
+func TestGrokModerationTranscriptMatchesContinuationWithoutBlockingSharedGreeting(t *testing.T) {
+	key := &APIKey{UserID: 77}
+	refused := []byte(`{"model":"grok-4.7","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history A"},{"role":"user","content":"refused turn"}]}`)
+	continuation := []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history A"},{"role":"user","content":"refused turn"},{"role":"user","content":"continue"}]}`)
+	otherConversation := []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history B"},{"role":"user","content":"ordinary request"}]}`)
+	written := grokModerationTranscriptKeys(key, refused, true)
+	require.NotEmpty(t, written)
+	for _, stored := range written {
+		require.Contains(t, grokModerationTranscriptKeys(key, continuation, false), stored)
+		require.NotContains(t, grokModerationTranscriptKeys(key, otherConversation, false), stored)
+		require.NotContains(t, grokModerationTranscriptKeys(&APIKey{UserID: 78}, continuation, false), stored)
+	}
 }

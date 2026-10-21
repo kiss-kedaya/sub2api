@@ -49,6 +49,25 @@ func TestGrokModerationBlockedSessionRejectsWebSocketBeforeUpstream(t *testing.T
 	}
 }
 
+func TestGrokModerationTranscriptBlockPersistsInRedis(t *testing.T) {
+	cache := testutil.NewRedisGatewayCache(t)
+	svc := service.NewOpenAIGatewayService(nil, nil, nil, nil, nil, nil, cache, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	key := &service.APIKey{UserID: 77}
+	body := []byte(`{"model":"grok-4.7","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history A"},{"role":"user","content":"refused turn"}]}`)
+	next := []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history A"},{"role":"user","content":"refused turn"},{"role":"user","content":"continue"}]}`)
+	other := []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"history B"},{"role":"user","content":"ordinary request"}]}`)
+	ctx := context.Background()
+	require.False(t, svc.GrokModerationRefusedRequestBlocked(ctx, c, key, body))
+	svc.BlockGrokModerationRefusedRequest(ctx, c, key, body)
+	require.True(t, svc.GrokModerationRefusedRequestBlocked(ctx, c, key, body))
+	require.True(t, svc.GrokModerationRefusedRequestBlocked(ctx, c, key, next))
+	require.False(t, svc.GrokModerationRefusedRequestBlocked(ctx, c, key, other))
+	require.False(t, svc.GrokModerationRefusedRequestBlocked(ctx, c, &service.APIKey{UserID: 78}, next))
+}
+
 func (s *grokRefusalUpstream) Do(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	s.calls++
 	return &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(s.body))}, nil
