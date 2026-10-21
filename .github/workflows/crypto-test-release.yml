@@ -10,6 +10,7 @@ on:
     paths:
       - '.github/workflows/crypto-test-release.yml'
       - 'backend/cmd/server/main.go'
+      - 'backend/cmd/server/crypto*.go'
       - 'backend/cmd/server/wire_gen.go'
       - 'backend/cmd/server/VERSION'
       - 'backend/go.mod'
@@ -35,6 +36,11 @@ on:
       - 'backend/internal/service/setting*.go'
       - 'backend/internal/repository/crypto*.go'
       - 'backend/internal/repository/totp_cache.go'
+      - 'backend/internal/repository/ent.go'
+      - 'backend/internal/repository/migration_command.go'
+      - 'backend/internal/service/ticket_email.go'
+      - 'backend/internal/service/tls_fingerprint_profile_service.go'
+      - 'backend/internal/service/error_passthrough_service.go'
       - 'backend/internal/repository/crypto_totp_store_test.go'
       - 'backend/internal/payment/crypto*.go'
       - 'backend/internal/payment/types.go'
@@ -208,7 +214,7 @@ jobs:
         working-directory: backend
         run: |
           set -euo pipefail
-          go test -tags=unit -count=1 -timeout=10m ./internal/handler ./internal/service ./internal/repository -run '^Test(New)?Crypto'
+          go test -tags=unit -count=1 -timeout=10m ./cmd/server ./internal/handler ./internal/service ./internal/repository -run '^Test((New)?Crypto|DisabledTicketOutbox)'
           go test -count=1 -timeout=10m ./internal/server/routes ./internal/server/middleware
 
       - name: Verify encrypted backup compatibility and compile crypto routes

@@ -68,6 +68,9 @@ func NewErrorPassthroughService(
 		repo:  repo,
 		cache: cache,
 	}
+	if CryptoAdminTestMode() {
+		return svc
+	}
 
 	// 启动时加载规则到本地缓存
 	ctx := context.Background()

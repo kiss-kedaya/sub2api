@@ -49,6 +49,10 @@ func NewTLSFingerprintProfileService(
 		cache:      cache,
 		localCache: make(map[int64]*model.TLSFingerprintProfile),
 	}
+	// Review instances never serve gateway traffic or subscribe to its caches.
+	if CryptoAdminTestMode() {
+		return svc
+	}
 
 	ctx := context.Background()
 	if err := svc.reloadFromDB(ctx); err != nil {

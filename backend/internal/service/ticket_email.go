@@ -16,7 +16,7 @@ func ProvideTicketService(repo TicketRepository, users UserRepository, queue *Em
 	service := NewTicketService(repo, users)
 	service.notificationEmails = notifications
 	service.emailWake = make(chan struct{}, 1)
-	if queue != nil && notifications != nil {
+	if queue != nil && notifications != nil && !BackgroundJobsDisabled() {
 		queue.wg.Add(1)
 		go func() {
 			defer queue.wg.Done()
@@ -34,6 +34,9 @@ func (s *TicketService) notifyTicketReply() {
 }
 
 func (s *TicketService) runTicketEmailWorker(stop <-chan struct{}) {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
