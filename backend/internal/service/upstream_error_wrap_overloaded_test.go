@@ -7,12 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 中转上游把 Anthropic 的 529 overloaded 改写成 500/502 时，按 body 语义还原成
-// 官方 529，而不是让客户端拿到一个语义不明的 502。
-func TestWrapUpstreamErrorForClient_LiftsOverloadedBodyTo529(t *testing.T) {
+// 上游状态码优先于 body 里的 overloaded 语义，不能把 500/502 改成 529。
+func TestWrapUpstreamErrorForClient_PreservesStatusForOverloadedBody(t *testing.T) {
 	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway} {
 		got, errType, _, message := WrapUpstreamErrorForClient(status, []byte(`{"error":{"type":"overloaded_error","message":"Overloaded"}}`))
-		require.Equal(t, 529, got)
+		require.Equal(t, status, got)
 		require.Equal(t, "overloaded_error", errType)
 		require.Equal(t, "Overloaded", message)
 	}

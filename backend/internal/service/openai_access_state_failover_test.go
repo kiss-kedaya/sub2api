@@ -235,6 +235,8 @@ func TestOpenAIStreamSemanticStatusesPreservedAcrossTerminalShapes(t *testing.T)
 		{"forbidden", `{"type":"response.failed","response":{"error":{"type":"permission_error","message":"forbidden"}}}`, http.StatusForbidden, false},
 		{"rate_limit", `{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"slow down"}}`, http.StatusTooManyRequests, true},
 		{"overload_529", `{"type":"error","error":{"status_code":529,"code":"overloaded","message":"overloaded"}}`, 529, true},
+		{"server_error", `{"type":"error","error":{"type":"server_error","code":"server_error","message":"upstream failed"}}`, http.StatusInternalServerError, false},
+		{"explicit_520", `{"type":"error","error":{"status_code":520,"code":"server_error","message":"upstream failed"}}`, 520, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

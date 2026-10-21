@@ -2434,6 +2434,38 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		cyberTurnBodies[turn] = append([]byte(nil), payload...)
 		cyberTurnBodiesMu.Unlock()
 	}
+	readCyberTurnBody := func(turn int) []byte {
+		cyberTurnBodiesMu.Lock()
+		body := append([]byte(nil), cyberTurnBodies[turn]...)
+		cyberTurnBodiesMu.Unlock()
+		return body
+	}
+	grokRefusedTurns := make(map[int]bool)
+	grokIPBlacklistTurns := make(map[int]bool)
+	markGrokIPBlacklistTurn := func(turn int) {
+		cyberTurnBodiesMu.Lock()
+		grokIPBlacklistTurns[turn] = true
+		cyberTurnBodiesMu.Unlock()
+	}
+	takeGrokIPBlacklistTurn := func(turn int) bool {
+		cyberTurnBodiesMu.Lock()
+		blocked := grokIPBlacklistTurns[turn]
+		delete(grokIPBlacklistTurns, turn)
+		cyberTurnBodiesMu.Unlock()
+		return blocked
+	}
+	markGrokRefusedTurn := func(turn int) {
+		cyberTurnBodiesMu.Lock()
+		grokRefusedTurns[turn] = true
+		cyberTurnBodiesMu.Unlock()
+	}
+	takeGrokRefusedTurn := func(turn int) bool {
+		cyberTurnBodiesMu.Lock()
+		refused := grokRefusedTurns[turn]
+		delete(grokRefusedTurns, turn)
+		cyberTurnBodiesMu.Unlock()
+		return refused
+	}
 	takeCyberTurnBody := func(turn int) []byte {
 		cyberTurnBodiesMu.Lock()
 		body := cyberTurnBodies[turn]
@@ -2864,6 +2896,27 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				return payload, nil
 			},
+			BeforeUpstreamFailure: func(turn int, payload []byte, forwardErr error, _ bool) error {
+				turnBody := readCyberTurnBody(turn)
+				if len(turnBody) == 0 {
+					turnBody = firstMessage
+				}
+				if service.IsGlobalIPBlacklistResponse(payload) || service.IsGlobalIPBlacklistRejection(forwardErr) {
+					blockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+					defer cancel()
+					h.gatewayService.BlockGlobalIPBlacklistSession(blockCtx, c, apiKey, turnBody)
+					markGrokIPBlacklistTurn(turn)
+					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, service.GlobalIPBlacklistSessionBlockedMessage(), forwardErr)
+				}
+				if service.IsGrokModerationRefusalFailure(account.Platform, payload, forwardErr) {
+					blockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+					defer cancel()
+					h.gatewayService.BlockGrokModerationRefusedRequest(blockCtx, c, apiKey, turnBody)
+					markGrokRefusedTurn(turn)
+					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, service.GrokModerationRefusalMessage(), forwardErr)
+				}
+				return nil
+			},
 			MapRequestModel: func(turn int, originalModel string) (string, error) {
 				model := strings.TrimSpace(originalModel)
 				if model == "" {
@@ -2986,12 +3039,23 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					clearCyberPolicyAttemptState(c, !cyberBlockPendingAfterFailover)
 				}()
 				releaseTurnSlots()
+				if takeGrokIPBlacklistTurn(turn) {
+					return
+				}
 				turnRequestedModel := reqModel
 				turnUpstreamModel := ""
 				if result != nil && turn > 1 {
 					if model := strings.TrimSpace(result.Model); model != "" {
 						turnRequestedModel = model
 					}
+				}
+				grokRefused := takeGrokRefusedTurn(turn)
+				if grokRefused {
+					result = service.PrepareGrokModerationRefusalOpenAIResult(
+						result, turnRequestedModel, service.GrokModerationRefusalBilledCost(apiKey.Group))
+					result.Stream = true
+					result.OpenAIWSMode = true
+					turnErr = nil
 				}
 				if result != nil {
 					turnUpstreamModel = strings.TrimSpace(result.UpstreamModel)

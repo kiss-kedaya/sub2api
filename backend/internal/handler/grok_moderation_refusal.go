@@ -19,10 +19,25 @@ func (h *OpenAIGatewayHandler) handleGrokModerationRefusal(c *gin.Context, key *
 	if account == nil || forwardErr == nil {
 		return false
 	}
+	if service.IsGlobalIPBlacklistRejectionMarked(c) || service.IsGlobalIPBlacklistRejection(forwardErr) {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 3*time.Second)
+		defer cancel()
+		h.gatewayService.BlockGlobalIPBlacklistSession(ctx, c, key, body)
+		if result != nil {
+			result.NonBillableUpstreamError = true
+			result.ForcedBillingCost = 0
+			result.ForceBalanceBilling = false
+			submit(result)
+		}
+		if !c.Writer.Written() {
+			h.errorResponse(c, http.StatusForbidden, "permission_error", service.GlobalIPBlacklistSessionBlockedMessage())
+		}
+		return true
+	}
 	matched := service.IsGrokPlatformContentPolicyRejection(account.Platform, forwardErr)
 	var failover *service.UpstreamFailoverError
 	if !matched && errors.As(forwardErr, &failover) && failover.StatusCode == http.StatusForbidden {
-		matched = service.IsGrokModerationRefusal(account.Platform, failover.ResponseBody)
+		matched = service.IsGrokModerationRefusalResponse(account.Platform, failover.StatusCode, failover.ResponseBody)
 	}
 	if !matched {
 		return false
