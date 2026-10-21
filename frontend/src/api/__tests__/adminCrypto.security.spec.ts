@@ -11,6 +11,9 @@ beforeEach(() => {
 })
 
 describe('Crypto request contract (not backend authorization)', () => {
+  it('explains deployment-level payment authorization separately from a bad code', () => {
+    expect(api.cryptoSecurityErrorKey({ reason: 'CRYPTO_OPERATOR_REQUIRED', status: 403 })).toBe('securityOperatorRequired')
+  })
   it('reads wallet status and sends initialization seeds only to the built-in wallet unlock endpoint', async () => {
     const status = { ok: true, unlocked: true, signing_enabled: true }
     client.get.mockResolvedValueOnce({ data: { data: status } })

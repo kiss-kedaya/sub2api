@@ -445,6 +445,7 @@ export function cryptoSecurityErrorKey(error: unknown): string | undefined {
   if (!error || typeof error !== 'object') return undefined
   const e = error as { reason?: string; code?: string | number; status?: number; message?: string }
   const reason = `${e.reason ?? ''} ${e.code ?? ''} ${e.message ?? ''}`.toLowerCase()
+  if (/crypto_operator_required|configured payment administrator/.test(reason)) return 'securityOperatorRequired'
   if (e.status === 429 || /rate.limit|too.many/.test(reason)) return 'securityRateLimit'
   if (/replay|already.used|code.used/.test(reason)) return 'securityReplay'
   if (/expir/.test(reason)) return 'securityExpired'
