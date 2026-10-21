@@ -23,6 +23,9 @@ func TestIsGrokContentPolicyRejection(t *testing.T) {
 		body   string
 		want   bool
 	}{
+		{name: "complete safety refusal", status: http.StatusForbidden, body: `{"error":{"message":"I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}`, want: true},
+		{name: "short safety refusal", status: http.StatusForbidden, body: `{"error":{"message":"I'm sorry. Failed check: SAFETY_CHECK_TYPE"}}`, want: true},
+		{name: "IP blacklist is not a safety refusal", status: http.StatusForbidden, body: `{"error":{"message":"blocked by global ip blacklist"}}`, want: false},
 		{
 			name:   "new sensitive code",
 			status: http.StatusForbidden,
