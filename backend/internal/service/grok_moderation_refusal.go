@@ -8,7 +8,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -122,18 +121,66 @@ func GrokModerationSessionHash(c *gin.Context, apiKey *APIKey, body []byte) stri
 		}
 	}
 	if seed == "" {
-		// Routing includes the model; moderation identity must not. Require a
-		// real user anchor to avoid blocking every model-only request.
-		view := openAIRequestPayloadView(body)
-		withoutModel, err := sjson.DeleteBytes([]byte(view.Raw), "model")
-		if err == nil {
-			seed = deriveOpenAIAnchoredContentSessionSeed(withoutModel)
-		}
-	}
-	if seed == "" {
 		return ""
 	}
 	return DeriveSessionHashFromSeed(fmt.Sprintf("grok-moderation:%d:%s", userID, seed))
+}
+
+// Clients without an explicit conversation id are matched against the refused
+// history and its continuations. Reuse the bounded transcript matcher instead
+// of the first-user routing seed, which could permanently block unrelated
+// conversations starting with the same greeting.
+func grokModerationTranscriptKeys(apiKey *APIKey, body []byte, write bool) []string {
+	uid := balancePreauthorizationAPIKeyUserID(apiKey)
+	if uid <= 0 || !hasOpenAIContentSessionUserAnchor([]byte(openAIRequestPayloadView(body).Raw)) {
+		return nil
+	}
+	transcript := deriveOpenAICyberTranscriptBlockKeys(uid, body)
+	keys := transcript.lookupKeys
+	if write && len(keys) > 0 {
+		keys = []string{keys[len(keys)-1]}
+		if transcript.preLatestUserKey != "" {
+			keys = append(keys, transcript.preLatestUserKey)
+		}
+	}
+	for i, key := range keys {
+		keys[i] = "grok-moderation-transcript:" + key
+	}
+	return keys
+}
+
+func (s *OpenAIGatewayService) BlockGrokModerationRefusedRequest(ctx context.Context, c *gin.Context, apiKey *APIKey, body []byte) {
+	if hash := GrokModerationSessionHash(c, apiKey, body); hash != "" {
+		s.BlockModerationRefusedSessionForOpenAI(ctx, nil, hash, grokModerationRefusalSessionBlockTTL)
+		return
+	}
+	if store := s.cyberSessionBlockStore(); store != nil {
+		if err := store.SetCyberSessionBlocked(ctx, grokModerationTranscriptScope(apiKey), grokModerationTranscriptKeys(apiKey, body, true), 0); err != nil {
+			logger.L().Warn("openai_gateway.moderation_transcript_block_failed", zap.Error(err))
+		}
+	}
+}
+
+func (s *OpenAIGatewayService) GrokModerationRefusedRequestBlocked(ctx context.Context, c *gin.Context, apiKey *APIKey, body []byte) bool {
+	if hash := GrokModerationSessionHash(c, apiKey, body); hash != "" {
+		return s.ModerationRefusedSessionBlocked(ctx, nil, hash)
+	}
+	if store := s.cyberSessionBlockStore(); store != nil {
+		active, err := store.IsCyberSessionScopeActive(ctx, grokModerationTranscriptScope(apiKey))
+		if err != nil || !active {
+			return false
+		}
+		key, err := store.FindCyberSessionBlocked(ctx, grokModerationTranscriptKeys(apiKey, body, false))
+		if err != nil {
+			logger.L().Warn("openai_gateway.moderation_transcript_lookup_failed", zap.Error(err))
+		}
+		return err == nil && key != ""
+	}
+	return false
+}
+
+func grokModerationTranscriptScope(apiKey *APIKey) string {
+	return fmt.Sprintf("grok-moderation-user:%d", balancePreauthorizationAPIKeyUserID(apiKey))
 }
 
 func (s *OpenAIGatewayService) ModerationRefusedSessionBlocked(ctx context.Context, groupID *int64, sessionHash string) bool {
