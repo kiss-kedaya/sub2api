@@ -241,7 +241,7 @@ jobs:
           assert(!routes.includes('"/signer/'), 'standalone signer routes must be removed')
           console.log('Crypto user/admin routes and access middleware verified')
           NODE
-          go build ./internal/server/routes
+          (cd backend && go build ./internal/server/routes)
 
       - name: Verify embedded frontend responses
         working-directory: backend
