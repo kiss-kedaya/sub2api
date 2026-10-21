@@ -32,6 +32,9 @@ func isGrokContentPolicyRejection(statusCode int, responseBody []byte) bool {
 			return true
 		}
 	}
+	if strings.Contains(strings.ToLower(string(responseBody)), grokModerationRefusalText) {
+		return true
+	}
 
 	return grokContentPolicyMessage(string(responseBody))
 }

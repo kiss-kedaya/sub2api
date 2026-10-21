@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -212,7 +213,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	// 7. Handle error response with failover
 	if resp.StatusCode >= 400 {
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
-		if IsGlobalIPBlacklistResponse(respBody) {
+		if (account.Platform != PlatformGrok || resp.StatusCode == http.StatusForbidden) && IsGlobalIPBlacklistResponse(respBody) {
 			MarkGlobalIPBlacklistRejection(c)
 			setOpsUpstreamError(c, resp.StatusCode, GlobalIPBlacklistSessionBlockedMessage(), "")
 			return nil, newGlobalIPBlacklistFailoverError(resp.StatusCode, resp.Header, respBody)
@@ -319,6 +320,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
+	var protocolRefusalErr error
+	pendingSSEEventType := ""
 
 	writeLine := func(line string) {
 		if clientDisconnected {
@@ -354,9 +357,32 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		if eventType, ok := extractOpenAISSEEventLine(line); ok {
+			pendingSSEEventType = eventType
+		}
 		refusalDetector.ObserveSSELine(line)
 		if payload, ok := extractOpenAISSEDataLine(line); ok {
 			trimmedPayload := strings.TrimSpace(payload)
+			if refusalErr := grokModerationRefusalProtocolError(account, []byte(payload)); refusalErr != nil {
+				// Some relays carry a real 403 inside an HTTP 200 CC stream,
+				// including Responses failure envelopes on the raw endpoint.
+				// Stop before missing-usage/truncation handling can replace it.
+				s.parseSSEUsageBytesWithType([]byte(payload), pendingSSEEventType, &usage)
+				if !clientDisconnected {
+					if clientOutputStarted && pendingSSEEventType != "" {
+						// This line reader already relayed the event: header. Append
+						// only its original data and terminator, without a second event.
+						setOpsUpstreamError(c, http.StatusForbidden, extractOpenAISSEErrorMessage([]byte(payload)), truncateString(payload, 2048))
+						MarkResponseCommitted(c)
+						_, _ = fmt.Fprintf(c.Writer, "%s\n\n", line)
+						c.Writer.Flush()
+					} else {
+						_ = s.writeGrokModerationRefusalProtocolError(resp, c, account, []byte(payload))
+					}
+				}
+				protocolRefusalErr = refusalErr
+				break
+			}
 			terminal.ObserveDataLine(trimmedPayload)
 			if trimmedPayload != "[DONE]" {
 				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(gjson.Get(payload, "type").String()))
@@ -375,6 +401,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 		writeLine(line)
 		if line == "" {
+			pendingSSEEventType = ""
 			if !clientDisconnected && clientOutputStarted {
 				c.Writer.Flush()
 			}
@@ -405,6 +432,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
 		}
+	}
+	if protocolRefusalErr != nil {
+		return resultWithUsage(), protocolRefusalErr
 	}
 
 	scanErr := scanner.Err()
@@ -532,6 +562,19 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	observer.ObserveOpenAI(respBody, strings.TrimSpace(gjson.GetBytes(respBody, "type").String()))
+	if account != nil && account.IsGrok() {
+		trimmedBody := bytes.TrimSpace(respBody)
+		if len(trimmedBody) > 0 && trimmedBody[0] != '{' && trimmedBody[0] != '[' {
+			if _, payload, ok := extractOpenAISSETerminalEvent(string(respBody)); ok {
+				if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, payload); refusalErr != nil {
+					return nil, refusalErr
+				}
+			}
+		}
+		if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, respBody); refusalErr != nil {
+			return nil, refusalErr
+		}
+	}
 
 	var usage OpenAIUsage
 	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {
