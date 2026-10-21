@@ -23,7 +23,12 @@ func creditedWindowQuery(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		mock.ExpectClose()
+		if err := db.Close(); err != nil {
+			t.Errorf("close query capture db: %v", err)
+		}
+	}()
 	mock.ExpectQuery("capture credited window").WillReturnRows(observationRows())
 	if err := (&Worker{db: db}).recheckCredited(t.Context()); err != nil {
 		t.Fatal(err)
@@ -68,7 +73,11 @@ func TestCreditedRecheckWindowStartsAtOrderCompletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer func() {
+				if err := db.Close(); err != nil {
+					t.Errorf("close fixture db: %v", err)
+				}
+			}()
 			db.SetMaxOpenConns(1)
 			for _, schema := range []string{
 				`CREATE TABLE payment_orders (id INTEGER PRIMARY KEY, completed_at TEXT, created_at TEXT, status TEXT, amount TEXT)`,

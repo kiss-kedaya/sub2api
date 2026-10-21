@@ -1,7 +1,7 @@
 // Package sweeper plans and (later) executes address sweeps.
 //
 // Phase 4 scope: threshold evaluation and plan generation. Execution and
-// gas top-up follow once the signer wiring lands.
+// gas top-up are handled by the durable executor.
 package sweeper
 
 import (
@@ -30,7 +30,7 @@ type Config struct {
 type PlanEntry struct {
 	Chain           string
 	Address         string
-	DerivationIndex uint32 // signer index that owns Address
+	DerivationIndex uint32 // wallet derivation index that owns Address
 	Token           string
 	RawAmount       *big.Int
 	AmountDecimal   float64

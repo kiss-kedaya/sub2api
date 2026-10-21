@@ -49,6 +49,16 @@ volumes:
   redis_data:
 ```
 
+## 内置充值钱包
+
+钱包运行在主 `sub2api` 服务内，标准 Compose 无需新增 signer 容器。PostgreSQL、Redis 仍按所选 Compose 配置提供；使用外部依赖时只部署 `sub2api` 应用服务。
+
+钱包沿用主 PostgreSQL `settings` 表的 `crypto.signer.vault` 密文行和历史 `crypto_signer_audit` 审计表。旧行名及 `sub2api-signer-vault` 备份 format 仅用于兼容；无需 signer socket、policy 文件或 SQLite state，不能改写旧迁移 263 或其 schema。
+
+启动容器后，在主服务后台绑定支付 2FA，再用独立于登录密码的 Vault 口令初始化或解锁钱包。首次初始化必须提供两份有效且不同的助记词；`hot_index` 只接受 `0`，Gas 钱包 EVM 路径为 `m/44'/60'/0'/0/0`。仅有 Gas 助记词不能恢复用户充值私钥。
+
+钱包密码丢失后，只有密文或加密备份也不能解密；已备份的对应助记词可在支持相同路径的外部钱包恢复，能否转账还取决于目标链余额和 Gas。管理操作与完整恢复边界见 [支付文档](../docs/PAYMENT_CN.md#内置充值钱包部署与恢复)。
+
 ## Startup and Database Recovery
 
 Sub2API runs database migrations while starting. PostgreSQL may still be

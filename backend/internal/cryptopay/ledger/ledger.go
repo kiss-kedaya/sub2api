@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/scanner"
 )
 
@@ -29,13 +30,14 @@ type Creditor interface {
 
 // CreditRequest carries the resolved deposit for fulfillment.
 type CreditRequest struct {
-	UserID   int64
-	Chain    string
-	TxHash   string
-	LogIndex int
-	Token    string
-	Amount   *big.Int
-	Decimals int
+	UserID    int64
+	Chain     string
+	TxHash    string
+	LogIndex  int
+	BlockHash string
+	Token     string
+	Amount    *big.Int
+	Decimals  int
 	// CreditUSDT is the decimal amount credited to the balance (after
 	// multiplier/fee). Existing linked orders use their frozen amount.
 	CreditUSDT float64
@@ -119,6 +121,12 @@ func (l *Ledger) notifyUnmatched(ctx context.Context, t scanner.Transfer, reason
 // Process handles one observed transfer. Returns credited=true when a
 // balance was added.
 func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) (credited bool, err error) {
+	if err := mode.CheckWritable(); err != nil {
+		return false, err
+	}
+	// EVM hashes are bytes, not case-sensitive text. The DB unique key and
+	// fulfillment identity must use the same canonical representation.
+	t.TxHash = strings.ToLower(t.TxHash)
 	if t.Amount == nil || t.Amount.Sign() <= 0 {
 		return false, nil
 	}
@@ -193,7 +201,16 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 		return false, fmt.Errorf("unexpected deposit status %q", status)
 	}
 
-	return l.credit(ctx, t, decimals, userID, creditUSDT)
+	credited, err = l.credit(ctx, t, decimals, userID, creditUSDT)
+	if errors.Is(err, ErrReorgedDuplicateTransfer) {
+		const reason = "reorg_duplicate_credit_manual_review"
+		if recordErr := l.record(ctx, t, "reverted", decimals, reason); recordErr != nil {
+			return false, errors.Join(err, recordErr)
+		}
+		l.notifyUnmatched(ctx, t, reason)
+		return false, nil
+	}
+	return credited, err
 }
 
 type depositState struct {
@@ -225,6 +242,7 @@ func (l *Ledger) credit(ctx context.Context, t scanner.Transfer, decimals int, u
 		Chain:      t.Chain,
 		TxHash:     t.TxHash,
 		LogIndex:   t.LogIndex,
+		BlockHash:  t.BlockHash,
 		Token:      t.Token,
 		Amount:     t.Amount,
 		Decimals:   decimals,
@@ -268,6 +286,10 @@ func (l *Ledger) credit(ctx context.Context, t scanner.Transfer, decimals int, u
 // real exponent: the retry pass rebuilds the raw amount from the stored
 // decimal, and the old hardcoded 6 inflated 18-decimal deposits by 1e12.
 func (l *Ledger) ProcessPending(ctx context.Context, t scanner.Transfer, decimals int) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
+	t.TxHash = strings.ToLower(t.TxHash)
 	if t.Amount == nil || t.Amount.Sign() <= 0 {
 		return nil
 	}

@@ -160,7 +160,7 @@ func verifiedChainPool(ctx context.Context, pool *rpc.Pool, chain string) (*rpc.
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := verifyChain(ctx, rpc.NewPool(endpoint), chain); err != nil {
+		if err := verifyChain(ctx, pool.WithEndpoints(endpoint), chain); err != nil {
 			errs = append(errs, err)
 			continue
 		}
@@ -169,7 +169,7 @@ func verifiedChainPool(ctx context.Context, pool *rpc.Pool, chain string) (*rpc.
 	if len(endpoints) == 0 {
 		return nil, fmt.Errorf("no verified RPC endpoints for %s: %w", chain, errors.Join(append(errs, errors.New("chain verification failed"))...))
 	}
-	return rpc.NewPool(strings.Join(endpoints, ",")), nil
+	return pool.WithEndpoints(strings.Join(endpoints, ",")), nil
 }
 
 func verifyCanonicalBlock(ctx context.Context, pool *rpc.Pool, receipt *ReceiptCheck) error {

@@ -40,3 +40,23 @@ func TestLegacyHistoryResolvesOriginalOrderInOneBatch(t *testing.T) {
 	require.Equal(t, 67.0, rows[0].Credited)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestListDepositsExportPageUsesPrimaryKeyCursorWithoutSummaryScan(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	created := time.Date(2026, 10, 21, 8, 0, 0, 0, time.FixedZone("CST", 8*60*60))
+	mock.ExpectQuery(`(?s)SELECT id, chain, tx_hash, log_index.*WHERE id < \$1 AND chain = \$2 AND status = \$3 ORDER BY id DESC LIMIT \$4`).
+		WithArgs(int64(150), "bsc", "credited", 100).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "chain", "tx_hash", "log_index", "from_address", "to_address", "token", "amount", "status", "reason", "created_at"}).
+			AddRow(149, "bsc", "0xhash", 3, "from", "to", "token", "2.500000000000000000", "credited", "", created))
+
+	s := &Service{db: db}
+	rows, err := s.ListDepositsExportPage(t.Context(), "bsc", "credited", 150, 100)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, int64(149), rows[0].ID)
+	require.Equal(t, "2.5", rows[0].Amount)
+	require.Equal(t, "2026-10-21T00:00:00Z", rows[0].CreatedAt)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

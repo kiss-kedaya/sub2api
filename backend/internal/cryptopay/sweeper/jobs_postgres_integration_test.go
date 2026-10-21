@@ -137,7 +137,7 @@ func TestPostgresUnknownBroadcastResumesIdenticalTransaction(t *testing.T) {
 	chain.sendUnknown = false
 	chain.mu.Unlock()
 	restarted := *e
-	restarted.signer = nil // a persisted job must never need another signature
+	restarted.wallet = nil // a persisted job must never need another signature
 	summary, err := restarted.Run(t.Context(), false)
 	if err != nil || summary.Pending != 1 || summary.Swept != 0 {
 		t.Fatalf("pending recovery: %+v %v", summary, err)

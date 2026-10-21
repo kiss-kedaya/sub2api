@@ -170,13 +170,13 @@ func (f *fakeStore) AdminSummary(_ context.Context, userID int64, family string)
 	return &out, nil
 }
 
-// signer process.
-type fakeSigner struct {
+// wallet manager.
+type fakeDeriver struct {
 	mu    sync.Mutex
 	calls int
 }
 
-func (f *fakeSigner) Derive(_ context.Context, start, count uint32) ([]Derived, error) {
+func (f *fakeDeriver) Derive(_ context.Context, start, count uint32) ([]Derived, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -194,7 +194,7 @@ func (f *fakeSigner) Derive(_ context.Context, start, count uint32) ([]Derived, 
 
 func TestGetOrAssignIsIdempotent(t *testing.T) {
 	store := newFakeStore()
-	svc := NewService(store, &fakeSigner{})
+	svc := NewService(store, &fakeDeriver{})
 	ctx := context.Background()
 
 	first, err := svc.GetOrAssign(ctx, 42)
@@ -215,7 +215,7 @@ func TestGetOrAssignIsIdempotent(t *testing.T) {
 // would mix with platform funds.
 func TestFirstTopUpSkipsHotWalletIndex(t *testing.T) {
 	store := newFakeStore()
-	svc := NewService(store, &fakeSigner{})
+	svc := NewService(store, &fakeDeriver{})
 	ctx := context.Background()
 
 	if _, err := svc.GetOrAssign(ctx, 7); err != nil {
@@ -235,8 +235,8 @@ func TestFirstTopUpSkipsHotWalletIndex(t *testing.T) {
 
 func TestGetOrAssignTopsUpEmptyPool(t *testing.T) {
 	store := newFakeStore()
-	signer := &fakeSigner{}
-	svc := NewService(store, signer)
+	wallet := &fakeDeriver{}
+	svc := NewService(store, wallet)
 	ctx := context.Background()
 
 	out, err := svc.GetOrAssign(ctx, 7)
@@ -246,14 +246,14 @@ func TestGetOrAssignTopsUpEmptyPool(t *testing.T) {
 	if out[FamilyEVM] == "" || out[FamilySolana] == "" {
 		t.Fatalf("missing addresses: %v", out)
 	}
-	if signer.calls == 0 {
-		t.Fatal("expected signer top-up call")
+	if wallet.calls == 0 {
+		t.Fatal("expected wallet top-up call")
 	}
 }
 
 func TestGetOrAssignConcurrentSameUser(t *testing.T) {
 	store := newFakeStore()
-	svc := NewService(store, &fakeSigner{})
+	svc := NewService(store, &fakeDeriver{})
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
@@ -279,8 +279,8 @@ func TestGetOrAssignConcurrentSameUser(t *testing.T) {
 
 func TestEnsurePoolTopsUpBelowWatermark(t *testing.T) {
 	store := newFakeStore()
-	signer := &fakeSigner{}
-	svc := NewService(store, signer)
+	wallet := &fakeDeriver{}
+	svc := NewService(store, wallet)
 	ctx := context.Background()
 
 	if err := svc.EnsurePool(ctx); err != nil {
