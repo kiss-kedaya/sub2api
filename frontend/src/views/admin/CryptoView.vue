@@ -36,7 +36,13 @@
           <div v-if="loadingConfig" class="crypto-view__empty">
             <LoadingSpinner />
           </div>
-          <template v-else-if="config">
+          <div v-else-if="!config" class="crypto-view__empty" role="status">
+            <div class="space-y-3 text-center">
+              <p>{{ t('admin.crypto.securityConfigLocked') }}</p>
+              <button type="button" class="btn btn-primary" @click="loadConfig">{{ t('admin.crypto.securityConfigReadAction') }}</button>
+            </div>
+          </div>
+          <template v-else>
             <details class="crypto-view__group" open>
               <summary class="crypto-view__group-summary">
                 <span class="crypto-view__group-title">{{ t('admin.crypto.groupChannel') }}</span>
@@ -737,7 +743,6 @@ import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import {
   getCryptoConfig,
-  getCryptoSecurityStatus,
   getHotWalletAddress,
   getHotWalletStatus,
   getPoolStatus,
@@ -1093,28 +1098,9 @@ async function loadConfig() {
   loadingConfig.value = true
   try {
     let loaded: CryptoConfig | undefined
-    let enabledBefore: boolean | undefined
-    try {
-      enabledBefore = (await getCryptoSecurityStatus()).enabled
-    } catch {
-      // The verification dialog reports the status failure to the operator.
-    }
-    let verified = await withCryptoVerification(t('admin.crypto.securityConfigRead'), async (code) => {
+    const verified = await withCryptoVerification(t('admin.crypto.securityConfigRead'), async (code) => {
       loaded = await getCryptoConfig(code)
     })
-    if (!verified) {
-      if (enabledBefore !== false) return
-      let enabledAfter = false
-      try {
-        enabledAfter = (await getCryptoSecurityStatus()).enabled
-      } catch {
-        return
-      }
-      if (!enabledAfter) return
-      verified = await withCryptoVerification(t('admin.crypto.securityConfigRead'), async (code) => {
-        loaded = await getCryptoConfig(code)
-      })
-    }
     if (!verified || !loaded) return
     // Earlier saves may predate some keys (rpc, chains); normalise here so a
     // legacy row cannot blank the whole page on a null index.

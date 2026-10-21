@@ -130,6 +130,8 @@ export default {
     securityPerRequest: 'This code authorizes only the request above. The server verifies every request and prevents replay. Wait for a new code before the next operation.',
     securitySetupIntro: 'Two-factor authentication is not bound yet. Generate the QR code, scan it with an authenticator, and enter its current six-digit code to bind.',
     securityConfigRead: 'Read payment configuration containing RPC credentials',
+    securityConfigLocked: 'Payment configuration is locked until two-factor verification succeeds. Start again after cancelling or binding an authenticator.',
+    securityConfigReadAction: 'Verify and read configuration',
     securityReadOnly: 'This test instance shares production accounts and is read-only. Bind two-factor authentication in the production admin first, then return here. No action was performed.',
     securitySetupAction: 'Generate setup key',
     securityScan: 'Install Google Authenticator, Microsoft Authenticator or a compatible app and scan this locally generated QR code.',

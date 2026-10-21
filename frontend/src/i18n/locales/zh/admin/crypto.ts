@@ -130,6 +130,8 @@ export default {
     securityPerRequest: '验证码仅用于上面这一笔请求，由服务器逐次验证并防重放；完成后，下一次操作必须等验证器生成新码。',
     securitySetupIntro: '尚未绑定两步验证。生成二维码后用验证器扫描，并输入当前 6 位验证码完成绑定。',
     securityConfigRead: '读取含 RPC 凭据的支付配置',
+    securityConfigLocked: '支付配置尚未读取。完成两步验证后才能查看；取消或首次绑定后可重新发起。',
+    securityConfigReadAction: '验证并读取配置',
     securityReadOnly: '此测试实例共用生产账户且为只读；请先在正式管理端绑定两步验证，再回到此处查看。此操作未执行。',
     securitySetupAction: '生成绑定密钥',
     securityScan: '安装 Google Authenticator、Microsoft Authenticator 或兼容验证器，扫描下方二维码。二维码在本机生成。',
