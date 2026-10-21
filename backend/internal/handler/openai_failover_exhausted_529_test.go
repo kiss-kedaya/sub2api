@@ -11,8 +11,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// failover 耗尽时，overloaded 语义还原出的 529 不能被「5xx 一律折 502」再折回去。
-func TestOpenAIFailoverExhausted_Keeps529ForOverloadedBody(t *testing.T) {
+// 只有上游实际返回 529 时，客户端才收到 529。
+func TestOpenAIFailoverExhausted_KeepsUpstream529(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -20,7 +20,7 @@ func TestOpenAIFailoverExhausted_Keeps529ForOverloadedBody(t *testing.T) {
 
 	h := &OpenAIGatewayHandler{}
 	h.handleFailoverExhausted(c, &service.UpstreamFailoverError{
-		StatusCode:   http.StatusBadGateway,
+		StatusCode:   529,
 		ResponseBody: []byte(`{"error":{"type":"overloaded_error","message":"Overloaded"}}`),
 	}, false)
 
@@ -28,8 +28,8 @@ func TestOpenAIFailoverExhausted_Keeps529ForOverloadedBody(t *testing.T) {
 	require.Equal(t, "overloaded_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
 }
 
-// 换号耗尽（整组无可用账号）：服务端失败统一按 529（过载）回传，客户端可据此退避重试。
-func TestOpenAIFailoverExhausted_NormalizesServerFailuresTo529(t *testing.T) {
+// 换号耗尽不能把上游 5xx 改写成 529，也不能吞掉上游错误消息。
+func TestOpenAIFailoverExhausted_PreservesServerFailureStatusAndMessage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, code := range []int{
 		http.StatusBadGateway,
@@ -47,9 +47,26 @@ func TestOpenAIFailoverExhausted_NormalizesServerFailuresTo529(t *testing.T) {
 			ResponseBody: []byte(`{"error":{"message":"upstream says boom"}}`),
 		}, false)
 
-		require.Equal(t, 529, rec.Code, "换号耗尽的 5xx 必须归一成 529")
-		require.Equal(t, "overloaded_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+		require.Equal(t, code, rec.Code, "上游状态码必须原样返回")
+		require.Equal(t, "upstream says boom", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 	}
+}
+
+func TestOpenAIFailoverExhausted_DoesNotRewrite500WithOverloadedBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	h := &OpenAIGatewayHandler{}
+	h.handleFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode:   http.StatusInternalServerError,
+		ResponseBody: []byte(`{"error":{"type":"overloaded_error","message":"Overloaded"}}`),
+	}, false)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Equal(t, "overloaded_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+	require.Equal(t, "Overloaded", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 
 // 换号耗尽时，确定性 4xx 不被归一：状态码与错误类型原样保留。

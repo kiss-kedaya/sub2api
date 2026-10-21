@@ -688,6 +688,19 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if bridgeErr != nil && isOpenAIWSSessionPreempted(ctx) {
 				return errOpenAIWSSessionPreempted
 			}
+			if bridgeErr != nil && hooks != nil && hooks.BeforeUpstreamFailure != nil {
+				failurePayload := []byte(bridgeErr.Error())
+				var upstreamErr *UpstreamFailoverError
+				if errors.As(bridgeErr, &upstreamErr) && len(upstreamErr.ResponseBody) > 0 {
+					failurePayload = upstreamErr.ResponseBody
+				}
+				if rejected := hooks.BeforeUpstreamFailure(turn, failurePayload, bridgeErr, false); rejected != nil {
+					if hooks.AfterTurn != nil {
+						hooks.AfterTurn(turn, result, rejected)
+					}
+					return rejected
+				}
+			}
 			if hooks != nil && hooks.AfterTurn != nil {
 				hooks.AfterTurn(turn, result, bridgeErr)
 			}
@@ -1823,6 +1836,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		result, relayErr := sendAndRelay(turn, sessionLease, currentPayload, currentPayloadBytes, currentOriginalModel, currentImageBillingModel, currentImageSizeTier, currentImageInputSize)
 		if relayErr != nil {
 			lastTurnClean = false
+			if hooks != nil && hooks.BeforeUpstreamFailure != nil {
+				failurePayload := []byte(relayErr.Error())
+				var failoverErr *UpstreamFailoverError
+				if errors.As(relayErr, &failoverErr) && len(failoverErr.ResponseBody) > 0 {
+					failurePayload = failoverErr.ResponseBody
+				}
+				if rejected := hooks.BeforeUpstreamFailure(turn, failurePayload, relayErr, false); rejected != nil {
+					if hooks.AfterTurn != nil {
+						hooks.AfterTurn(turn, result, rejected)
+					}
+					sessionLease.MarkBroken()
+					return rejected
+				}
+			}
 			if isOpenAIWSSessionPreempted(ctx) {
 				sessionLease.MarkBroken()
 				return errOpenAIWSSessionPreempted

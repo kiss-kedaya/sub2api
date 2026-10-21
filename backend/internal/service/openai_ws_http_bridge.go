@@ -610,6 +610,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if writeErr := writeClientMessage(clientError); writeErr == nil {
 			markOpenAIWSClientVisibleFailure(c, "error", clientError)
 		}
+		if IsGrokModerationRefusalResponse(account.Platform, resp.StatusCode, respBody) {
+			return nil, fmt.Errorf("%s %s", grokContentPolicyRejectionPrefix, upstreamMsg)
+		}
 		return nil, fmt.Errorf("upstream http bridge error: status=%d message=%s", resp.StatusCode, upstreamMsg)
 	}
 	defer func() { _ = resp.Body.Close() }()

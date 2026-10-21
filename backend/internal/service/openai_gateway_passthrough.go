@@ -949,6 +949,11 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 	responseBody []byte,
 ) error {
 	body := s.redactAgentIdentitySensitiveBody(ctx, account, responseBody)
+	if IsGlobalIPBlacklistResponse(body) {
+		MarkGlobalIPBlacklistRejection(c)
+		setOpsUpstreamError(c, resp.StatusCode, GlobalIPBlacklistSessionBlockedMessage(), "")
+		return newGlobalIPBlacklistFailoverError(resp.StatusCode, resp.Header, body)
+	}
 
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -1000,6 +1005,11 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 ) error {
 
 	defer GuardUpstreamFinancialError(c, resp.StatusCode, responseBody)()
+	if IsGlobalIPBlacklistResponse(responseBody) {
+		MarkGlobalIPBlacklistRejection(c)
+		setOpsUpstreamError(c, resp.StatusCode, GlobalIPBlacklistSessionBlockedMessage(), "")
+		return newGlobalIPBlacklistFailoverError(resp.StatusCode, resp.Header, responseBody)
+	}
 	MarkResponseCommitted(c)
 	body := s.redactAgentIdentitySensitiveBody(ctx, account, responseBody)
 
@@ -1509,7 +1519,8 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 	combined := strings.TrimSpace(errType + " " + code + " " + strings.ToLower(strings.TrimSpace(message)))
 	for _, path := range []string{"response.error.status_code", "error.status_code", "status_code"} {
 		if status := int(gjson.GetBytes(payload, path).Int()); status == http.StatusUnauthorized ||
-			status == http.StatusForbidden || status == http.StatusTooManyRequests || status == 529 {
+			status == http.StatusForbidden || status == http.StatusTooManyRequests ||
+			status >= http.StatusInternalServerError && status <= 599 {
 			return status
 		}
 	}
@@ -1532,6 +1543,8 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 		return http.StatusForbidden
 	case isOpenAIUpstreamCapacityShedEvent(payload):
 		return http.StatusServiceUnavailable
+	case strings.Contains(errType, "server_error") || strings.Contains(errType, "api_error"):
+		return http.StatusInternalServerError
 	default:
 		return http.StatusBadGateway
 	}
@@ -1561,8 +1574,11 @@ func openAIStreamFailureStatus(payload []byte, message string) int {
 		return http.StatusBadGateway
 	}
 	semanticStatus := openAIStreamFailedEventSemanticStatus(payload, message)
+	if semanticStatus >= http.StatusInternalServerError {
+		return semanticStatus
+	}
 	switch semanticStatus {
-	case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests, 529:
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
 		return semanticStatus
 	case http.StatusServiceUnavailable:
 		if isOpenAIUpstreamCapacityShedEvent(payload) {
