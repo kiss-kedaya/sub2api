@@ -637,6 +637,9 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	observer.ObserveServiceTier(finalResponse.ServiceTier, true)
 
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
+		if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, openAICompatBufferedTerminalPayload(c, finalResponse)); refusalErr != nil {
+			return nil, refusalErr
+		}
 		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
 		if hit, code, msg := detectOpenAICyberPolicy(payload); hit {
 			MarkOpsCyberPolicy(c, CyberPolicyMark{
@@ -791,6 +794,9 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 ) (*apicompat.ResponsesResponse, OpenAIUsage, *apicompat.BufferedResponseAccumulator, error) {
 	acc := apicompat.NewBufferedResponseAccumulator()
 	var usage OpenAIUsage
+	if c != nil {
+		c.Set(openAICompatBufferedTerminalRawKey, []byte(nil))
+	}
 	if resp == nil || resp.Body == nil {
 		return nil, usage, acc, errors.New("upstream response body is nil")
 	}
@@ -871,6 +877,9 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 						s.parseSSEUsageBytesWithType([]byte(payload), event.Type, &usage)
 						acc.ProcessEvent(&event)
 						if response := openAICompatTerminalResponse(&event, []byte(payload)); isOpenAICompatResponsesTerminalEvent(event.Type) && response != nil {
+							if c != nil {
+								c.Set(openAICompatBufferedTerminalRawKey, []byte(frame.Data))
+							}
 							if event.Usage != nil {
 								usage = copyOpenAIUsageFromResponsesUsage(event.Usage)
 								if response.Usage == nil {
@@ -920,6 +929,9 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 			acc.ProcessEvent(&event)
 
 			if response := openAICompatTerminalResponse(&event, []byte(payload)); isOpenAICompatResponsesTerminalEvent(event.Type) && response != nil {
+				if c != nil {
+					c.Set(openAICompatBufferedTerminalRawKey, []byte(frame.Data))
+				}
 				if event.Usage != nil {
 					usage = copyOpenAIUsageFromResponsesUsage(event.Usage)
 					if response.Usage == nil {
@@ -941,6 +953,23 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 			return nil, usage, acc, fmt.Errorf("stream data interval timeout")
 		}
 	}
+}
+
+const openAICompatBufferedTerminalRawKey = "openai_compat_buffered_terminal_raw"
+
+// ResponsesError intentionally models only portable code/message fields. Keep
+// the provider terminal separately so adapters do not discard status_code or
+// other error details before deciding whether a Grok refusal must be settled.
+func openAICompatBufferedTerminalPayload(c *gin.Context, response *apicompat.ResponsesResponse) []byte {
+	if c != nil {
+		if raw, exists := c.Get(openAICompatBufferedTerminalRawKey); exists {
+			if payload, ok := raw.([]byte); ok && len(payload) > 0 {
+				return payload
+			}
+		}
+	}
+	payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": response})
+	return payload
 }
 
 // handleAnthropicStreamingResponse reads Responses SSE events from upstream,
@@ -1030,6 +1059,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 
 	// processDataLine handles a single "data: ..." SSE line from upstream.
 	processDataLine := func(payload string) bool {
+		rawPayload := []byte(payload)
 		payload = string(restoreCodexToolNamesFromContext(c, []byte(payload)))
 		if firstChunk && (!measureResponsesTTFT || (gjson.Valid(payload) && openAIStreamDataStartsTTFT(payload, "", false, ttftMode))) {
 			firstChunk = false
@@ -1071,6 +1101,13 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			// 回写让客户端感知并停止重试（F4），丢弃后续转换输出。
 			if eventType == "response.failed" || isBareErrorEvent {
 				payloadBytes := []byte(payload)
+				if refusalErr := grokModerationRefusalProtocolError(account, rawPayload); refusalErr != nil {
+					if !clientDisconnected {
+						_ = s.writeGrokModerationRefusalProtocolError(resp, c, account, rawPayload)
+					}
+					streamNonFailoverErr = refusalErr
+					return true
+				}
 				if hit, code, msg := detectOpenAICyberPolicy(payloadBytes); hit {
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
 						Code:           code,

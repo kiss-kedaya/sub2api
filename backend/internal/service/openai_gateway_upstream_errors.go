@@ -578,7 +578,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	body := s.readUpstreamErrorBody(resp)
 	defer GuardUpstreamFinancialError(c, resp.StatusCode, body)()
 	body = s.redactAgentIdentitySensitiveBody(ctx, account, body)
-	if IsGlobalIPBlacklistResponse(body) {
+	if IsGlobalIPBlacklistResponse(body) && (account == nil || account.Platform != PlatformGrok || resp.StatusCode == http.StatusForbidden) {
 		setOpsUpstreamError(c, resp.StatusCode, GlobalIPBlacklistSessionBlockedMessage(), "")
 		return nil, newGlobalIPBlacklistFailoverError(resp.StatusCode, resp.Header, body)
 	}
@@ -605,17 +605,16 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		}
 		return nil, fmt.Errorf("openai cyber_policy: %s", cyberMsg)
 	}
-	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(resp.StatusCode, body) {
+	if account != nil && IsGrokModerationRefusalResponse(account.Platform, resp.StatusCode, body) {
 		clientMsg := grokContentPolicyClientMessage(body)
 		setOpsUpstreamError(c, resp.StatusCode, clientMsg, truncateString(string(body), 2048))
 		writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 		MarkResponseCommitted(c)
-		c.JSON(http.StatusForbidden, gin.H{
-			"error": gin.H{
-				"type":    "invalid_request_error",
-				"message": clientMsg,
-			},
-		})
+		contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		c.Data(resp.StatusCode, contentType, body)
 		return nil, fmt.Errorf("grok content policy rejection: %s", clientMsg)
 	}
 
@@ -810,7 +809,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	body := s.readUpstreamErrorBody(resp)
 	defer GuardUpstreamFinancialError(c, resp.StatusCode, body)()
 	body = s.redactAgentIdentitySensitiveBody(context.Background(), account, body)
-	if IsGlobalIPBlacklistResponse(body) {
+	if IsGlobalIPBlacklistResponse(body) && (account == nil || account.Platform != PlatformGrok || resp.StatusCode == http.StatusForbidden) {
 		setOpsUpstreamError(c, resp.StatusCode, GlobalIPBlacklistSessionBlockedMessage(), "")
 		return nil, newGlobalIPBlacklistFailoverError(resp.StatusCode, resp.Header, body)
 	}
@@ -837,11 +836,15 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		}
 		return nil, fmt.Errorf("openai cyber_policy: %s", cyberMsg)
 	}
-	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(resp.StatusCode, body) {
+	if account != nil && IsGrokModerationRefusalResponse(account.Platform, resp.StatusCode, body) {
 		clientMsg := grokContentPolicyClientMessage(body)
 		setOpsUpstreamError(c, resp.StatusCode, clientMsg, truncateString(string(body), 2048))
 		MarkResponseCommitted(c)
-		writeError(c, http.StatusForbidden, "invalid_request_error", clientMsg)
+		contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		c.Data(resp.StatusCode, contentType, body)
 		return nil, fmt.Errorf("grok content policy rejection: %s", clientMsg)
 	}
 
