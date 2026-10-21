@@ -105,6 +105,9 @@ func main() {
 		log.Printf("Sub2API %s (commit: %s, built: %s)\n", Version, Commit, Date)
 		return
 	}
+	if service.CryptoAdminTestMode() && (*setupMode || *migrateOnly) {
+		log.Fatal("read-only crypto test mode forbids setup and migration writes")
+	}
 
 	// CLI setup mode
 	if *setupMode {
@@ -120,6 +123,9 @@ func main() {
 
 	// Check if setup is needed
 	if setup.NeedsSetup() {
+		if service.CryptoAdminTestMode() {
+			log.Fatal("read-only crypto test mode requires an installed configuration or SKIP_SETUP=true; setup is unavailable")
+		}
 		// Check if auto-setup is enabled (for Docker deployment)
 		if setup.AutoSetupEnabled() {
 			log.Println("Auto setup mode enabled...")

@@ -106,6 +106,14 @@ func InitEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
 	if service.CryptoAdminTestMode() && cfg.Database.MigrationMode != config.DatabaseMigrationModeValidate {
 		return nil, nil, fmt.Errorf("read-only crypto test mode requires DATABASE_MIGRATION_MODE=validate")
 	}
+	if service.CryptoAdminTestMode() {
+		if !cfg.Totp.EncryptionKeyConfigured {
+			return nil, nil, fmt.Errorf("read-only crypto test mode requires a persistent TOTP_ENCRYPTION_KEY")
+		}
+		if _, err := NewAESEncryptor(cfg); err != nil {
+			return nil, nil, fmt.Errorf("read-only crypto test mode TOTP key: %w", err)
+		}
+	}
 	// 优先初始化时区设置，确保所有时间操作使用统一的时区。
 	// 这对于跨时区部署和日志时间戳的一致性至关重要。
 	if err := timezone.Init(cfg.Timezone); err != nil {
