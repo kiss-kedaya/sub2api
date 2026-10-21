@@ -2172,7 +2172,7 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 	upstreamMsg := service.ExtractUpstreamErrorMessage(responseBody)
 	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
 
-	// 使用默认的错误映射；换号耗尽时服务端失败统一按 529（过载）回传。
+	// 使用默认错误映射，保留上游状态码与消息。
 	status, errType, errMsg := wrapUpstreamClientError(statusCode, responseBody)
 	status, errType, errMsg = exhaustedFailoverResponse(status, errType, errMsg)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
@@ -2191,25 +2191,14 @@ func wrapUpstreamClientError(statusCode int, body []byte) (int, string, string) 
 	return status, errType, message
 }
 
-// exhaustedFailoverResponse normalizes the terminal response of an exhausted
-// failover. The whole group is out of usable accounts, so server-side failures
-// (transport failures and 5xx) surface as 529 (overloaded) with a generic
-// message, so clients back off and retry instead of treating the gateway as
-// broken. Credential masking (401/403) stays a 502; deterministic 4xx keep
-// their own status and message.
+// exhaustedFailoverResponse preserves upstream status and message after all
+// account attempts fail. Credential masking (401/403) stays a 502.
 func exhaustedFailoverResponse(status int, errType, message string) (int, string, string) {
-	switch {
-	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		if strings.TrimSpace(message) == "" || strings.EqualFold(message, "Forbidden") {
 			message = "Upstream request failed"
 		}
 		return http.StatusBadGateway, "upstream_error", message
-	// 显式 503 是上游/网关明确表达的「暂时不可用」：保留原状态与消息，不能被
-	// 后面的 5xx 归一覆盖（否则上游真 503 会被误报成过载）。
-	case status == http.StatusServiceUnavailable:
-		return status, errType, message
-	case status == 0 || status >= http.StatusInternalServerError:
-		return 529, "overloaded_error", "Upstream service temporarily unavailable"
 	}
 	return status, errType, message
 }

@@ -1,5 +1,6 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { defineComponent, h, nextTick, ref } from 'vue'
 import ScheduledTestsPanel from '../ScheduledTestsPanel.vue'
 
 enableAutoUnmount(afterEach)
@@ -18,6 +19,62 @@ vi.mock('vue-i18n', async (importOriginal) => ({
 }))
 
 describe('ScheduledTestsPanel quality results', () => {
+  it('loads and polls on each v-if mount without a watcher error or an orphan timer', async () => {
+    vi.useFakeTimers()
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const visible = ref(false)
+    const accountId = ref(2)
+    const onError = vi.fn()
+    const plan = { id: 1, account_id: 2, model_id: 'first-mount-plan', enabled: true, max_results: 20 }
+    listByAccount.mockReset().mockResolvedValue([plan])
+    const parent = defineComponent({
+      setup: () => () => visible.value
+        ? h(ScheduledTestsPanel, { show: true, accountId: accountId.value, modelOptions: [] })
+        : null,
+    })
+    const wrapper = mount(parent, { global: {
+      stubs: { BaseDialog: { template: '<div><slot /></div>' }, ConfirmDialog: true },
+      config: { errorHandler: onError },
+    } })
+    try {
+      await flushPromises()
+      expect(listByAccount).not.toHaveBeenCalled()
+      visible.value = true
+      await flushPromises()
+      expect(listByAccount).toHaveBeenCalledTimes(1)
+      expect(listByAccount).toHaveBeenLastCalledWith(2)
+      expect(wrapper.text()).toContain('first-mount-plan')
+      await vi.advanceTimersByTimeAsync(15000)
+      expect(listByAccount).toHaveBeenCalledTimes(2)
+
+      visible.value = false
+      await nextTick()
+      expect(wrapper.findComponent(ScheduledTestsPanel).exists()).toBe(false)
+      await vi.advanceTimersByTimeAsync(30000)
+      expect(listByAccount).toHaveBeenCalledTimes(2)
+
+      accountId.value = 3
+      listByAccount.mockResolvedValue([{ ...plan, id: 2, account_id: 3, model_id: 'reopened-plan' }])
+      visible.value = true
+      await flushPromises()
+      expect(listByAccount).toHaveBeenCalledTimes(3)
+      expect(listByAccount).toHaveBeenLastCalledWith(3)
+      expect(wrapper.text()).toContain('reopened-plan')
+      expect(wrapper.text()).not.toContain('first-mount-plan')
+      await vi.advanceTimersByTimeAsync(15000)
+      expect(listByAccount).toHaveBeenCalledTimes(4)
+      expect(onError).not.toHaveBeenCalled()
+
+      wrapper.unmount()
+      expect(vi.getTimerCount()).toBe(0)
+      await vi.advanceTimersByTimeAsync(30000)
+      expect(listByAccount).toHaveBeenCalledTimes(4)
+    } finally {
+      wrapper.unmount()
+      visibility.mockRestore()
+      vi.useRealTimers()
+    }
+  })
   it('loads existing plans on its first mount already visible', async () => {
     listByAccount.mockReset().mockResolvedValue([{ id: 1, account_id: 2, model_id: 'first-open-model', enabled: true, max_results: 20 }])
     const wrapper = mount(ScheduledTestsPanel, { props: { show: true, accountId: 2, modelOptions: [] },

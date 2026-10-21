@@ -227,10 +227,10 @@ def main():
 
     print("{}check_sensitive: BLOCKED{}".format(RED, RESET))
     print("These lines carry operator-private data and must not be published:")
-    for path, lineno, label, value, ctx in problems:
-        print("  {}{}:{}:{} {} -> {}{}".format(
-            YELLOW, path, lineno, RESET, label, value, RESET))
-        print("      {}".format(ctx))
+    # CI logs can be public. Never echo matches or their source-line context.
+    for path, lineno, label, _value, _ctx in problems:
+        print("  {}{}:{}:{} {} -> [REDACTED]{}".format(
+            YELLOW, path, lineno, RESET, label, RESET))
     print()
     print("Replace real hosts, account ids, keys and private IPs with neutral"
           " placeholders before committing.")
