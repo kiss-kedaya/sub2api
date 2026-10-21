@@ -11,6 +11,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIsGrokModerationRefusalFailureRequiresReal403(t *testing.T) {
+	body := []byte(`{"error":{"message":"I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}`)
+	for _, status := range []int{400, 401, 403, 429, 500, 502, 529} {
+		err := &UpstreamFailoverError{StatusCode: status, ResponseBody: body}
+		require.Equal(t, status == 403, IsGrokModerationRefusalFailure(PlatformGrok, body, err))
+	}
+	require.False(t, IsGrokModerationRefusalFailure(PlatformGrok, body, nil))
+	require.False(t, IsGrokModerationRefusalFailure(PlatformGrok, body, errors.New(string(body))))
+	require.True(t, IsGrokModerationRefusalFailure(PlatformGrok, body, errors.New(grokContentPolicyRejectionPrefix+string(body))))
+	require.True(t, IsGrokModerationRefusalFailure(PlatformGrok, []byte(`{"status":403,"error":{"message":"I'm sorry, I can't help with that request."}}`), nil))
+	require.False(t, IsGrokModerationRefusalFailure(PlatformGrok, []byte(`{"status":500,"error":{"message":"I'm sorry, I can't help with that request."}}`), nil))
+	require.False(t, IsGrokModerationRefusalFailure(PlatformOpenAI, body, &UpstreamFailoverError{StatusCode: 403, ResponseBody: body}))
+}
+
 func TestIsGrokModerationRefusal(t *testing.T) {
 	if !IsGrokModerationRefusal(PlatformGrok, []byte(`status_code=403, I'm sorry, I can't help with that request.`)) {
 		t.Fatal("expected Grok refusal to match")
