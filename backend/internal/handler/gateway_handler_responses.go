@@ -403,7 +403,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionHash, account, err)
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				if service.IsGrokModerationRefusal(account.Platform, failoverErr.ResponseBody) {
+				if service.IsGrokModerationRefusalResponse(account.Platform, failoverErr.StatusCode, failoverErr.ResponseBody) {
 					// 违规拒绝按分组配置的「每次多少钱」结算，不乘倍率。
 					result = service.PrepareGrokModerationRefusalResult(
 						result, reqModel, service.GrokModerationRefusalBilledCost(apiKey.Group))

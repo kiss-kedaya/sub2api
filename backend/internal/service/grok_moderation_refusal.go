@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -15,6 +17,60 @@ import (
 
 const grokModerationRefusalBillingCost = 0.1
 const grokModerationRefusalText = "i'm sorry, i can't help with that request."
+const globalIPBlacklistContextKey = "grok_global_ip_blacklist_rejection"
+
+func MarkGlobalIPBlacklistRejection(c *gin.Context) {
+	if c != nil {
+		c.Set(globalIPBlacklistContextKey, true)
+	}
+}
+
+func IsGlobalIPBlacklistRejectionMarked(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	marked, _ := c.Get(globalIPBlacklistContextKey)
+	rejected, _ := marked.(bool)
+	return rejected
+}
+
+func IsGlobalIPBlacklistResponse(body []byte) bool {
+	return strings.Contains(strings.ToLower(string(body)), "blocked by global ip blacklist")
+}
+
+func IsGlobalIPBlacklistRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	var upstreamErr *UpstreamFailoverError
+	if errors.As(err, &upstreamErr) && IsGlobalIPBlacklistResponse(upstreamErr.ResponseBody) {
+		return true
+	}
+	return IsGlobalIPBlacklistResponse([]byte(err.Error()))
+}
+
+func GlobalIPBlacklistSessionBlockedMessage() string {
+	return "This conversation was blocked after an upstream refusal. Please start a new conversation."
+}
+
+func newGlobalIPBlacklistFailoverError(status int, headers http.Header, body []byte) *UpstreamFailoverError {
+	return &UpstreamFailoverError{
+		StatusCode:        status,
+		ResponseBody:      append([]byte(nil), body...),
+		ResponseHeaders:   headers.Clone(),
+		Scope:             GatewayFailureScopeRequest,
+		Stage:             GatewayFailureStageInference,
+		NextAccountAction: NextAccountStop,
+		ClientStatusCode:  http.StatusForbidden,
+		ClientMessage:     GlobalIPBlacklistSessionBlockedMessage(),
+	}
+}
+
+// Both refusal classes block the same authenticated conversation. IP failures
+// do not receive a moderation fee; only their persistent admission gate is shared.
+func (s *OpenAIGatewayService) BlockGlobalIPBlacklistSession(ctx context.Context, c *gin.Context, key *APIKey, body []byte) {
+	s.BlockGrokModerationRefusedRequest(ctx, c, key, body)
+}
 
 // A refused conversation stays blocked. Redis TTL 0 persists the block so
 // resuming the same conversation later cannot create another provider charge.
@@ -29,6 +85,10 @@ func IsGrokModerationRefusal(platform string, body []byte) bool {
 	}
 	text := strings.ToLower(string(body))
 	return strings.Contains(text, grokModerationRefusalText) || isGrokContentPolicyRejection(403, body)
+}
+
+func IsGrokModerationRefusalResponse(platform string, statusCode int, body []byte) bool {
+	return statusCode == http.StatusForbidden && IsGrokModerationRefusal(platform, body)
 }
 
 func GrokModerationRefusalBillingCost() float64 { return grokModerationRefusalBillingCost }
@@ -111,7 +171,13 @@ func GrokModerationSessionHash(c *gin.Context, apiKey *APIKey, body []byte) stri
 	if userID <= 0 {
 		return ""
 	}
-	seed := explicitOpenAIRequestSessionID(c, body)
+	seed := explicitOpenAIHeaderSessionID(c)
+	if seed == "" && c != nil {
+		seed = strings.TrimSpace(c.GetHeader(grokConversationIDHeader))
+	}
+	if seed == "" {
+		seed = grokPreviousResponseSessionSeed(body)
+	}
 	if seed == "" {
 		seed = ClaudeCodeSessionIDFromHeader(c)
 	}
@@ -211,9 +277,9 @@ func PrepareGrokModerationRefusalResult(result *ForwardResult, requestedModel st
 	if strings.TrimSpace(result.UpstreamModel) == "" {
 		result.UpstreamModel = result.Model
 	}
-	result.NonBillableUpstreamError = false
+	result.NonBillableUpstreamError = billedCost <= 0
 	// billedCost is the already-resolved per-refusal fee. 0 means the group
-	// explicitly disabled the charge, so leave the forced cost unset.
+	// explicitly disabled all billing, including any reported token usage.
 	result.ForcedBillingCost = billedCost
 	result.ForceBalanceBilling = billedCost > 0
 	return result
@@ -235,7 +301,7 @@ func PrepareGrokModerationRefusalOpenAIResult(
 	if strings.TrimSpace(result.UpstreamModel) == "" {
 		result.UpstreamModel = result.Model
 	}
-	result.NonBillableUpstreamError = false
+	result.NonBillableUpstreamError = billedCost <= 0
 	result.ForcedBillingCost = billedCost
 	result.ForceBalanceBilling = billedCost > 0
 	return result

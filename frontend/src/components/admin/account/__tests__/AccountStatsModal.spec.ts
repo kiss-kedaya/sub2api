@@ -1,5 +1,6 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { defineComponent, h, nextTick, ref, watch } from 'vue'
 import AccountStatsModal from '../AccountStatsModal.vue'
 
 const { getStats } = vi.hoisted(() => ({ getStats: vi.fn() }))
@@ -20,6 +21,63 @@ const global = { stubs: { BaseDialog: { template: '<div><slot /><slot name="foot
   ModelDistributionChart: true, EndpointDistributionChart: true } }
 beforeEach(() => { getStats.mockReset().mockResolvedValue(stats) })
 describe('AccountStatsModal conditional mounting', () => {
+  it('receives an empty old-value array on the first immediate multi-source callback', async () => {
+    const visible = ref(true)
+    const accountId = ref(101)
+    const singleCallback = vi.fn()
+    const multiCallback = vi.fn()
+    const stopSingle = watch(() => visible.value, singleCallback, { immediate: true })
+    const stopMulti = watch([() => visible.value, () => accountId.value], multiCallback, { immediate: true })
+    try {
+      // Single-source documentation does not describe the multi-source first call.
+      expect(singleCallback.mock.calls[0][1]).toBeUndefined()
+      expect(multiCallback.mock.calls[0][0]).toEqual([true, 101])
+      expect(multiCallback.mock.calls[0][1]).toEqual([])
+      const [wasVisible, previousAccountId] = multiCallback.mock.calls[0][1]
+      expect(wasVisible).toBeUndefined()
+      expect(previousAccountId).toBeUndefined()
+
+      accountId.value = 102
+      await nextTick()
+      expect(multiCallback).toHaveBeenCalledTimes(2)
+      expect(multiCallback.mock.calls[1][0]).toEqual([true, 102])
+      expect(multiCallback.mock.calls[1][1]).toEqual([true, 101])
+    } finally {
+      stopSingle()
+      stopMulti()
+    }
+  })
+  it('loads on each v-if mount without a watcher error', async () => {
+    const visible = ref(false)
+    const selected = ref(account)
+    const onError = vi.fn()
+    const parent = defineComponent({
+      setup: () => () => visible.value
+        ? h(AccountStatsModal, { show: true, account: selected.value })
+        : null,
+    })
+    const wrapper = mount(parent, { global: { ...global, config: { errorHandler: onError } } })
+    await flushPromises()
+    expect(getStats).not.toHaveBeenCalled()
+
+    visible.value = true
+    await flushPromises()
+    expect(getStats).toHaveBeenCalledTimes(1)
+    expect(getStats).toHaveBeenLastCalledWith(101, 30)
+    expect(wrapper.text()).toContain('17')
+
+    visible.value = false
+    await nextTick()
+    expect(wrapper.findComponent(AccountStatsModal).exists()).toBe(false)
+    selected.value = { ...account, id: 102 }
+    getStats.mockResolvedValueOnce({ ...stats, summary: { ...stats.summary, total_requests: 23 } })
+    visible.value = true
+    await flushPromises()
+    expect(getStats).toHaveBeenCalledTimes(2)
+    expect(getStats).toHaveBeenLastCalledWith(102, 30)
+    expect(wrapper.text()).toContain('23')
+    expect(onError).not.toHaveBeenCalled()
+  })
   it('loads usage on its first mount already visible', async () => {
     const wrapper = mount(AccountStatsModal, { props: { show: true, account }, global })
     await flushPromises()

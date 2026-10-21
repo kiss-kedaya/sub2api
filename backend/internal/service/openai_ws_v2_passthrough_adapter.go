@@ -1350,6 +1350,12 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					return nil
 				}
 				eventType, _, _ := parseOpenAIWSEventEnvelope(payload)
+				if (eventType == "error" || eventType == "response.failed") && hooks != nil && hooks.BeforeUpstreamFailure != nil {
+					turnNo := int(completedTurns.Load()) + 1
+					if err := hooks.BeforeUpstreamFailure(turnNo, payload, nil, wroteDownstream); err != nil {
+						return err
+					}
+				}
 				if eventType == "response.created" {
 					failureAccountSideEffectsApplied = false
 				}
