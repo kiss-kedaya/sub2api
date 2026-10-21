@@ -60,3 +60,33 @@ func TestListDepositsExportPageUsesPrimaryKeyCursorWithoutSummaryScan(t *testing
 	require.Equal(t, "2026-10-21T00:00:00Z", rows[0].CreatedAt)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestListDepositsExportPageStartsWithNewestRecord(t *testing.T) {
+	for _, filtered := range []bool{false, true} {
+		t.Run(map[bool]string{false: "all", true: "filtered"}[filtered], func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+			query := `(?s)SELECT id, chain, tx_hash, log_index.*WHERE TRUE ORDER BY id DESC LIMIT \$1`
+			if filtered {
+				query = `(?s)SELECT id, chain, tx_hash, log_index.*WHERE TRUE AND chain = \$1 AND status = \$2 ORDER BY id DESC LIMIT \$3`
+			}
+			expected := mock.ExpectQuery(query)
+			chain, status := "", ""
+			if filtered {
+				chain, status = "bsc", "credited"
+				expected.WithArgs(chain, status, 200)
+			} else {
+				expected.WithArgs(200)
+			}
+			expected.WillReturnRows(sqlmock.NewRows([]string{"id", "chain", "tx_hash", "log_index", "from_address", "to_address", "token", "amount", "status", "reason", "created_at"}).
+				AddRow(250, "bsc", "0xhash", 0, "from", "to", "token", "1.000", "credited", "", time.Now()))
+			s := &Service{db: db}
+			rows, err := s.ListDepositsExportPage(t.Context(), chain, status, 0, 200)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			require.Equal(t, int64(250), rows[0].ID)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
