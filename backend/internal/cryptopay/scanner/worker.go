@@ -162,6 +162,12 @@ func (w *Worker) scanAll(ctx context.Context) {
 // and reorg checks, under the same shared session lock. Manual callers receive
 // failures rather than a false completion response.
 func (w *Worker) RunOnce(ctx context.Context) (err error) {
+	return w.RunOnceFrom(ctx, 0)
+}
+
+// RunOnceFrom permits a bounded, explicitly authorized backfill for a single
+// configured chain. Rewinding reuses the ledger's unique transfer identity.
+func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64) (err error) {
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
@@ -175,6 +181,38 @@ func (w *Worker) RunOnce(ctx context.Context) (err error) {
 	defer func() { err = errors.Join(err, release()) }()
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if fromBlock != 0 {
+		if len(w.chains) != 1 {
+			return fmt.Errorf("historical scan requires exactly one configured chain")
+		}
+		chain := w.chains[0]
+		pool := w.pools[chain.Chain]
+		if pool == nil {
+			return fmt.Errorf("historical scan has no RPC pool")
+		}
+		pool, verifyErr := verifiedChainPool(ctx, pool, chain.Chain)
+		if verifyErr != nil {
+			return verifyErr
+		}
+		head, headErr := pool.BlockNumber(ctx)
+		if headErr != nil {
+			return headErr
+		}
+		if head <= chain.Confirmations || fromBlock > head-chain.Confirmations || head-fromBlock > 100000 {
+			return fmt.Errorf("historical scan must start within the last 100000 confirmed blocks")
+		}
+		last, loadErr := w.cursor.Load(ctx, chain.Chain)
+		if loadErr != nil {
+			return loadErr
+		}
+		// Never skip an earlier unfinished range, even when the caller supplies
+		// a more recent block. A zero cursor is the only uninitialized case.
+		if last == 0 || fromBlock-1 < last {
+			if saveErr := w.cursor.Save(ctx, chain.Chain, fromBlock-1); saveErr != nil {
+				return saveErr
+			}
+		}
 	}
 	if pendingErr := w.retryPending(ctx); pendingErr != nil {
 		err = errors.Join(err, fmt.Errorf("pending retry: %w", pendingErr))

@@ -2,6 +2,7 @@ name: Crypto Test Release
 
 # Isolated test packages only. No production deployment or VERSION branch sync.
 on:
+  workflow_dispatch:
   # The first matching feature-branch push also registers this new workflow;
   # it does not need to be merged into main to bootstrap a test build.
   push:
@@ -104,7 +105,7 @@ jobs:
       - name: Require the crypto feature branch
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/heads/feat/crypto-deposit || "$GITHUB_EVENT_NAME" != push ]]; then
+          if [[ "$GITHUB_REF" != refs/heads/feat/crypto-deposit || ( "$GITHUB_EVENT_NAME" != push && "$GITHUB_EVENT_NAME" != workflow_dispatch ) ]]; then
             echo '::error::Run this workflow only on pushes to feat/crypto-deposit'
             exit 1
           fi
@@ -217,7 +218,7 @@ jobs:
         working-directory: backend
         env:
           CGO_ENABLED: '1'
-        run: go test -race -count=1 -timeout=10m ./internal/cryptopay/wallet
+        run: go test -race -count=1 -timeout=10m ./internal/cryptopay/wallet ./internal/cryptopay/scanner
 
       - name: Test crypto handlers, security, routes, audit middleware and repositories
         working-directory: backend
@@ -318,7 +319,7 @@ jobs:
           retention-days: 14
 
   publish:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/feat/crypto-deposit' }}
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/feat/crypto-deposit' }}
     needs: [validate, build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
