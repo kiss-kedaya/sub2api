@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -16,6 +17,8 @@ import (
 
 // Shared by every scanner instance; distinct from the sweeper's CRYPTOSW key.
 const scanLockKey int64 = 0x43525950544f5343
+
+var ErrScanBusy = errors.New("another payment scan is running")
 
 // ChainConfig describes one chain's scan parameters.
 type ChainConfig struct {
@@ -150,42 +153,41 @@ func (w *Worker) run(ctx context.Context) {
 }
 
 func (w *Worker) scanAll(ctx context.Context) {
-	if mode.ReadOnly() {
-		return
+	if err := w.RunOnce(ctx); err != nil && !errors.Is(err, ErrScanBusy) && !errors.Is(err, mode.ErrReadOnly) {
+		slog.Warn("[cryptopay] scan pass failed", "error", err)
+	}
+}
+
+// RunOnce executes the complete background pass, including pending confirmations
+// and reorg checks, under the same shared session lock. Manual callers receive
+// failures rather than a false completion response.
+func (w *Worker) RunOnce(ctx context.Context) (err error) {
+	if err := mode.CheckWritable(); err != nil {
+		return err
 	}
 	release, err := w.tryScanLock(ctx)
 	if err != nil {
-		slog.Warn("[cryptopay] scanner lock failed", "error", err)
-		return
+		return err
 	}
 	if release == nil {
-		slog.Debug("[cryptopay] scan skipped: another instance holds the lock")
-		return
+		return ErrScanBusy
 	}
-	defer func() {
-		if err := release(); err != nil {
-			slog.Warn("[cryptopay] scanner unlock failed", "error", err)
-		}
-	}()
+	defer func() { err = errors.Join(err, release()) }()
 	if ctx.Err() != nil {
-		return
+		return ctx.Err()
 	}
-
-	// Retry deposits recorded before finality: their confirmations may have
-	// landed since the last pass.
-	if err := w.retryPending(ctx); err != nil {
-		slog.Warn("[cryptopay] pending retry failed", "error", err)
+	if pendingErr := w.retryPending(ctx); pendingErr != nil {
+		err = errors.Join(err, fmt.Errorf("pending retry: %w", pendingErr))
 	}
-	// Re-verify recently credited deposits: a deep reorg can erase a block we
-	// already paid out on, and nothing else would notice.
-	if err := w.recheckCredited(ctx); err != nil {
-		slog.Warn("[cryptopay] credited recheck failed", "error", err)
+	if recheckErr := w.recheckCredited(ctx); recheckErr != nil {
+		err = errors.Join(err, fmt.Errorf("credited recheck: %w", recheckErr))
 	}
 	for _, chain := range w.chains {
-		if err := w.scanChain(ctx, chain); err != nil {
-			slog.Warn("[cryptopay] scan failed", "chain", chain.Chain, "error", err)
+		if scanErr := w.scanChain(ctx, chain); scanErr != nil {
+			err = errors.Join(err, fmt.Errorf("scan %s: %w", chain.Chain, scanErr))
 		}
 	}
+	return err
 }
 
 // tryScanLock pins a dedicated session for the entire pass. Business queries

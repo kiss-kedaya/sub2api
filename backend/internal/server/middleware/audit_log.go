@@ -123,6 +123,7 @@ var auditSensitiveReads = map[string]string{
 
 // auditActionOverrides 变更类请求的动作名精确映射（未命中时自动推导）。
 var auditActionOverrides = map[string]string{
+	"POST /api/v1/admin/crypto/scan/run":                      "admin.crypto.scan.run",
 	"PUT /api/v1/admin/crypto/config":                         "admin.crypto.config.update",
 	"POST /api/v1/admin/crypto/addresses/:id/status":          "admin.crypto.address.status.update",
 	"POST /api/v1/admin/crypto/sweep/run":                     "admin.crypto.sweep.run",
