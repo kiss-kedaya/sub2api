@@ -450,6 +450,13 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 		}
 		return nil, ErrRedeemCodeUsed
 	}
+	// Crypto payment codes created by earlier builds had the ordinary balance
+	// type. Keep the public endpoint from exposing those legacy deterministic
+	// identities after the new dedicated payment type is introduced.
+	if rateLimitPolicy != paymentFulfillmentRedeem &&
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(redeemCode.Code)), "crypto-") {
+		return nil, ErrRedeemCodeUsed
+	}
 
 	// 验证兑换码类型的前置条件。邀请码属于注册流程，不能通过普通兑换接口使用。
 	switch redeemCode.Type {

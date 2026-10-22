@@ -42,9 +42,9 @@ func TestManualBackfillRewindsAndPreservesEarlierUnfinishedCursor(t *testing.T) 
 				saves++
 			}
 		}
-		want := 1
+		want := 2
 		if from == 90 {
-			want = 2 // rewind, then ordinary progress
+			want = 3 // rewind, explicit start cursor and ordinary progress
 		}
 		if saves != want {
 			t.Fatalf("from %d saved %d cursors, want %d", from, saves, want)

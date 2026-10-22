@@ -913,6 +913,31 @@ func TestPaymentFulfillmentRedeemCodeCannotBeClaimedDuringCreateWindow(t *testin
 	require.Equal(t, order.UserID, *redeemCode.UsedBy)
 }
 
+func TestLegacyCryptoPaymentRedeemCodeCannotBeClaimedPublicly(t *testing.T) {
+	ctx := context.Background()
+	userRepo := &mockUserRepo{getByIDUser: &User{ID: 77}}
+	var balanceCredits int
+	userRepo.updateBalanceFn = func(context.Context, int64, float64) error {
+		balanceCredits++
+		return nil
+	}
+	legacyCode := &RedeemCode{
+		ID: 1, Code: "crypto-legacy-deterministic-code", Type: RedeemTypeBalance,
+		Value: 67, Status: StatusUnused,
+	}
+	redeemRepo := &paymentFulfillmentRedeemRepo{
+		paymentOrderLifecycleRedeemRepo: paymentOrderLifecycleRedeemRepo{
+			codesByCode: map[string]*RedeemCode{legacyCode.Code: legacyCode},
+		},
+	}
+	redeemService := NewRedeemService(redeemRepo, userRepo, nil, nil, nil, nil, nil, nil)
+
+	_, err := redeemService.Redeem(ctx, 77, legacyCode.Code)
+	require.ErrorIs(t, err, ErrRedeemCodeUsed)
+	require.Equal(t, StatusUnused, legacyCode.Status)
+	require.Zero(t, balanceCredits)
+}
+
 func TestExecuteBalanceFulfillmentRecoversAfterRedeemWithoutCreditingAgain(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)
