@@ -38,13 +38,16 @@ type CNProviderBalanceCheckService struct {
 	wg             sync.WaitGroup
 	// push notifies admins on their phones when an upstream balance drops
 	// below the threshold. Optional; nil keeps the service silent.
-	push PushNotifier
+	pushMu sync.RWMutex
+	push   PushNotifier
 }
 
 // SetPushNotifier wires the optional admin push channel.
 func (s *CNProviderBalanceCheckService) SetPushNotifier(p PushNotifier) {
 	if s != nil {
+		s.pushMu.Lock()
 		s.push = p
+		s.pushMu.Unlock()
 	}
 }
 
@@ -273,10 +276,16 @@ func (s *CNProviderBalanceCheckService) platforms() []string {
 // paused. Fires once per pause, not once per probe: checkOne only reaches
 // here when the account was still schedulable.
 func (s *CNProviderBalanceCheckService) pushAdmins(account *Account, result *CNProviderBalanceResult, threshold float64) {
-	if s.push == nil || account == nil || result == nil {
+	if s == nil || account == nil || result == nil {
 		return
 	}
-	err := s.push.PushToAdmins(context.Background(),
+	s.pushMu.RLock()
+	push := s.push
+	s.pushMu.RUnlock()
+	if push == nil {
+		return
+	}
+	err := push.PushToAdmins(context.Background(),
 		"上游余额不足",
 		fmt.Sprintf("账号 #%d（%s）余额 %.4g %s 低于阈值 %.2f，已自动停调",
 			account.ID, account.Platform, result.Balance, result.Currency, threshold),
