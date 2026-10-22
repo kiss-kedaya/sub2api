@@ -25,6 +25,45 @@ func TestIsGrokModerationRefusalFailureRequiresReal403(t *testing.T) {
 	require.False(t, IsGrokModerationRefusalFailure(PlatformOpenAI, body, &UpstreamFailoverError{StatusCode: 403, ResponseBody: body}))
 }
 
+func TestGrokAccountSuspensionOverridesRefusalText(t *testing.T) {
+	for _, body := range []string{
+		`{"error":{"message":"Your account has been suspended. I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}`,
+		`{"error":{"code":"account_suspended","message":"I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}`,
+	} {
+		require.False(t, IsGrokModerationRefusalResponse(PlatformGrok, http.StatusForbidden, []byte(body)), body)
+		require.False(t, IsGrokModerationRefusalFailure(PlatformGrok, nil, &UpstreamFailoverError{
+			StatusCode: http.StatusForbidden, ResponseBody: []byte(body),
+		}), body)
+	}
+}
+
+func TestGrokModerationRefusalProtocolStatusRequiresIntegerJSONNumber(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want int
+	}{
+		{name: "integer status", body: `{"status":403}`, want: http.StatusForbidden},
+		{name: "nested integer status", body: `{"response":{"error":{"status_code":403}}}`, want: http.StatusForbidden},
+		{name: "string status", body: `{"status":"403"}`},
+		{name: "fractional status", body: `{"status":403.0}`},
+		{name: "exponent status", body: `{"status":4.03e2}`},
+		{name: "boolean status", body: `{"status":true}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, grokModerationRefusalProtocolStatus([]byte(tt.body)))
+		})
+	}
+	for _, body := range []string{
+		`{"status":"403","error":{"message":"text is sensitive"}}`,
+		`{"status":403.0,"error":{"message":"text is sensitive"}}`,
+		`{"status":4.03e2,"error":{"message":"text is sensitive"}}`,
+	} {
+		require.False(t, IsGrokModerationRefusalFailure(PlatformGrok, []byte(body), nil), body)
+	}
+}
+
 func TestIsGrokModerationRefusal(t *testing.T) {
 	if !IsGrokModerationRefusal(PlatformGrok, []byte(`status_code=403, I'm sorry, I can't help with that request.`)) {
 		t.Fatal("expected Grok refusal to match")

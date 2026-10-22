@@ -821,6 +821,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			bareErrorMessage = ""
 		}
 		suppressClientMessage := officialOpenAIResponses && bareErrorPending && eventType != "response.failed"
+		grokModerationRefusal := false
 		if eventType == "error" || eventType == "response.failed" {
 			errMessage := extractOpenAISSEErrorMessage(upstreamMessage)
 			if errMessage == "" {
@@ -843,7 +844,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 				}
 			}
 			requestScopedCapacity := isOpenAIUpstreamCapacityShedEvent(upstreamMessage)
-			grokModerationRefusal := IsGrokModerationRefusalFailure(account.Platform, upstreamMessage, nil)
+			grokModerationRefusal = IsGrokModerationRefusalFailure(account.Platform, upstreamMessage, nil)
 			if grokModerationRefusal {
 				shouldFailover = false
 			}
@@ -936,11 +937,17 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 							)
 							break
 						}
-						return nil, wrapOpenAIWSIngressTurnError(
+						writeErr := wrapOpenAIWSIngressTurnError(
 							"write_client",
 							fmt.Errorf("write client websocket event: %w", err),
 							wroteDownstream,
 						)
+						if grokModerationRefusal {
+							// A client write failure must not erase the upstream refusal
+							// consumed by the billing and session-blocking hooks.
+							return resultWithUsage(), errors.Join(upstreamEventErr, writeErr)
+						}
+						return nil, writeErr
 					}
 					wroteDownstream = true
 				}
