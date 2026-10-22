@@ -29,8 +29,8 @@ func TestAdminTestModeRejectsWritesBeforeAccessingSharedDatabase(t *testing.T) {
 			l := ledger.New(nil, nil, nil, 1, 100, 1)
 			c := &DepositCreditor{}
 			checks := map[string]func() error{
-				"unlock":              func() error { return s.UnlockWallet(t.Context(), "passphrase", "", "") },
-				"import":              func() error { return s.ImportHotMnemonic(t.Context(), "passphrase", "mnemonic") },
+				"unlock":              func() error { return s.InitializeWallet(t.Context(), "", "") },
+				"import":              func() error { return s.ImportHotMnemonic(t.Context(), "mnemonic") },
 				"manual sweep":        func() error { _, err := s.RunSweep(t.Context(), false); return err },
 				"direct sweep replay": func() error { _, err := e.Run(t.Context(), false); return err },
 				"deposit assignment":  func() error { _, err := s.DepositInfo(t.Context(), 42); return err },
@@ -80,13 +80,14 @@ func TestAdminTestModeStartupWithSharedEnabledConfigDoesNotStartWorkers(t *testi
 		t.Fatal(err)
 	}
 	settings := service.NewSettingService(readOnlyConfigRepository{raw: string(raw)}, nil)
-	s := NewService(db, settings, nil, NewAddressService(db, settings))
+	s := NewService(db, settings, nil, NewAddressService(db, settings), nil)
 	s.Reload(t.Context())
 	if s.maintCancel != nil || cryptoWorkersAllowed() {
 		t.Fatal("shared enabled config started maintenance")
 	}
+	mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}))
 	status, err := s.WalletStatus(t.Context())
-	if err != nil || status.Unlocked || status.SigningEnabled {
+	if err != nil || status.Ready || status.Enabled {
 		t.Fatalf("wallet enabled in test instance: %+v %v", status, err)
 	}
 	if _, err := s.RunSweep(t.Context(), false); !errors.Is(err, mode.ErrReadOnly) {
@@ -115,13 +116,14 @@ func TestWritableReviewKeepsWalletManualAndNeverStartsSharedWorkers(t *testing.T
 		t.Fatal(err)
 	}
 	settings := service.NewSettingService(readOnlyConfigRepository{raw: string(raw)}, nil)
-	s := NewService(db, settings, nil, NewAddressService(db, settings))
+	s := NewService(db, settings, nil, NewAddressService(db, settings), nil)
 	s.Reload(t.Context())
 	if s.maintCancel != nil || cryptoWorkersAllowed() || mode.ReadOnly() || s.executor == nil {
 		t.Fatal("writable review must allow manual work without automatic workers")
 	}
+	mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}))
 	status, err := s.WalletStatus(t.Context())
-	if err != nil || status.Unlocked || !status.SigningEnabled {
+	if err != nil || status.Ready || !status.Enabled {
 		t.Fatalf("manual signing unavailable or wallet initialized at startup: %+v %v", status, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

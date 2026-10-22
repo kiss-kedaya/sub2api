@@ -67,11 +67,50 @@ func TestOfflineSweepSignatureAndDynamicFees(t *testing.T) {
 	}
 }
 
+func TestGasSigningReloadsNewSeedAcrossInstancesWithoutUnlock(t *testing.T) {
+	m, mock, _ := residentManager(t)
+	updated, err := m.sealContents(testDeposit, testReplacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deposit, err := NewDeriver(testDeposit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(deposit.seed)
+	index := uint32(7)
+	_, destination, err := deposit.EVMKey(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := sweepRequest()
+	req.Kind, req.Token, req.To, req.GasLimit, req.GasIndex = "gas", "native", destination.Hex(), 21000, &index
+	signExpectation(mock, updated, req)
+	signed, err := m.SignEVM(t.Context(), req)
+	if err != nil {
+		t.Fatal("updated Gas seed should be available immediately", err)
+	}
+	replacement, err := NewDeriver(testReplacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(replacement.seed)
+	_, expected, err := replacement.EVMKey(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender, err := types.Sender(types.LatestSignerForChainID(big.NewInt(req.ChainID)), decodeTransaction(t, signed))
+	if err != nil || sender != expected {
+		t.Fatal("another instance used stale Gas keys", err)
+	}
+}
+
 func TestExportedDefaultGasMnemonicRecoversOfflineSigningKey(t *testing.T) {
 	m, mock, raw := residentManager(t)
-	expectRead(mock, raw, "")
+	expectExport(mock, raw)
 	auditOK(mock, "mnemonic_export", "success")
-	value, err := m.ExportMnemonics(t.Context(), testPassphrase)
+	mock.ExpectCommit()
+	value, err := m.ExportMnemonics(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,13 +173,16 @@ func TestExportedDefaultGasMnemonicRecoversOfflineSigningKey(t *testing.T) {
 }
 
 func TestSignRejectsLockedDisabledWrongDestinationsAndUnauthorizedGas(t *testing.T) {
-	for _, name := range []string{"locked", "disabled", "native sweep", "wrong destination", "gas missing index", "gas to arbitrary address", "gas token"} {
+	for _, name := range []string{"unconfigured", "disabled", "native sweep", "wrong destination", "gas missing index", "gas to arbitrary address", "gas token"} {
 		t.Run(name, func(t *testing.T) {
 			m, mock, raw := residentManager(t)
 			req := sweepRequest()
 			switch name {
-			case "locked":
-				m.Lock()
+			case "unconfigured":
+				m.Close()
+				mock.ExpectBegin()
+				expectRead(mock, "", " FOR SHARE")
+				mock.ExpectRollback()
 			case "disabled":
 				m.SetEnabled(false)
 			default:

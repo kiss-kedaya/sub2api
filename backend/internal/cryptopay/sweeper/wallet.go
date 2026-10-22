@@ -16,12 +16,6 @@ type TransactionWallet interface {
 type EVMSignRequest = wallet.EVMSignRequest
 type HotAddress = wallet.HotAddress
 type MnemonicExport = wallet.MnemonicExport
-type VaultBackup = wallet.VaultBackup
-
-var (
-	ErrMnemonicExportRejected = wallet.ErrMnemonicExportRejected
-	ErrMnemonicExportLimited  = wallet.ErrMnemonicExportLimited
-)
 
 // Record is one sweep_records row.
 type Record struct {

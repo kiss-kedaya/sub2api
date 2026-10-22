@@ -4,11 +4,12 @@ package wallet
 
 import "errors"
 
-// Status describes availability, seed residency and the signing switch.
+// Status describes managed seed configuration and channel readiness.
 type Status struct {
-	OK             bool `json:"ok"`
-	Unlocked       bool `json:"unlocked"`
-	SigningEnabled bool `json:"signing_enabled"`
+	OK         bool `json:"ok"`
+	Configured bool `json:"configured"`
+	Ready      bool `json:"ready"`
+	Enabled    bool `json:"enabled"`
 }
 
 // HotAddress contains the public gas wallet addresses at the fixed index zero.
@@ -39,23 +40,12 @@ type MnemonicExport struct {
 	HotMnemonic     string `json:"hot_mnemonic"`
 }
 
-// VaultBackup preserves the former signer's v1 encrypted export format.
-type VaultBackup struct {
-	Format  string `json:"format"`
-	Version int    `json:"version"`
-	Vault   string `json:"vault"`
-}
-
 var (
-	// ErrMnemonicExportRejected means the supplied vault credentials were refused.
-	ErrMnemonicExportRejected = errors.New("wallet refused mnemonic export")
-	// ErrMnemonicExportLimited means another vault operation or recent failures
-	// exhausted the shared authentication guard.
-	ErrMnemonicExportLimited = errors.New("wallet mnemonic export is rate limited")
+	ErrWalletNotConfigured = errors.New("wallet seeds are not configured")
 	// ErrSigningDisabled means the runtime signing switch is off.
 	ErrSigningDisabled = errors.New("wallet signing is disabled")
 	// ErrVaultUnavailable deliberately omits database driver details.
-	ErrVaultUnavailable = errors.New("encrypted wallet vault unavailable")
+	ErrVaultUnavailable = errors.New("encrypted wallet seeds unavailable")
 	// ErrAuditUnavailable prevents unaudited wallet results from being returned.
 	ErrAuditUnavailable = errors.New("wallet audit unavailable")
 	// ErrSeedReplacement rejects seed inputs for an existing encrypted vault.

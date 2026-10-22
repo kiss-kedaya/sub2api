@@ -27,7 +27,6 @@ function render(show = true) {
 }
 
 async function submitAndAuthorize(wrapper: ReturnType<typeof render>, waitForTransition = true) {
-  await wrapper.get('#crypto-mnemonics-passphrase').setValue('vault-secret')
   await wrapper.get('input[type="checkbox"]').setValue(true)
   await wrapper.get('#crypto-mnemonics-form').trigger('submit')
   await flushPromises()
@@ -39,21 +38,20 @@ async function submitAndAuthorize(wrapper: ReturnType<typeof render>, waitForTra
 }
 
 describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', () => {
-  it('requires the vault passphrase and production confirmation before asking for TOTP', async () => {
+  it('requires production confirmation before asking for TOTP', async () => {
     const wrapper = render()
-    await wrapper.get('#crypto-mnemonics-passphrase').setValue('vault-secret')
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
     expect(mocks.get).not.toHaveBeenCalled()
     expect(mocks.post).not.toHaveBeenCalled()
     expect(wrapper.get('button[form="crypto-mnemonics-form"]').attributes('disabled')).toBeDefined()
   })
 
-  it('sends only the vault passphrase and fresh TOTP with no-store, then shows two independently masked sections', async () => {
+  it('sends only fresh TOTP with no-store, then shows two independently masked sections', async () => {
     const localWrite = vi.spyOn(localStorage, 'setItem')
     const sessionWrite = vi.spyOn(sessionStorage, 'setItem')
     const wrapper = render()
     await submitAndAuthorize(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/export-mnemonics', { passphrase: 'vault-secret' }, expect.objectContaining({
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/export-mnemonics', {}, expect.objectContaining({
       headers: { 'X-Crypto-TOTP': '234567', 'Cache-Control': 'no-store', Pragma: 'no-cache' }
     }))
     expect(wrapper.findAll('.crypto-mnemonics__seed')).toHaveLength(2)
@@ -135,7 +133,6 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
     let resolveExport!: (value: { data: { deposit_mnemonic: string; hot_mnemonic: string } }) => void
     mocks.post.mockImplementationOnce(() => new Promise((resolve) => { resolveExport = resolve }))
     const wrapper = render()
-    await wrapper.get('#crypto-mnemonics-passphrase').setValue('vault-secret')
     await wrapper.get('input[type="checkbox"]').setValue(true)
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
     await flushPromises()
@@ -157,7 +154,6 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
 
   it('cancels without a request, clears secrets on close/reopen, and never writes to clipboard', async () => {
     const wrapper = render()
-    await wrapper.get('#crypto-mnemonics-passphrase').setValue('do-not-retain')
     await wrapper.get('input[type="checkbox"]').setValue(true)
     await wrapper.get('.crypto-mnemonics__footer .btn-secondary').trigger('click')
     expect(mocks.get).not.toHaveBeenCalled()

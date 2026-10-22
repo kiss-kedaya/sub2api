@@ -22,7 +22,7 @@ func TestCryptoVaultRejectsAmbiguousOrOversizedJSON(t *testing.T) {
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 			h := &CryptoHandler{}
-			h.AdminExportVaultBackup(c)
+			h.AdminImportHotMnemonic(c)
 			require.Equal(t, http.StatusBadRequest, w.Code)
 			require.Contains(t, w.Header().Get("Cache-Control"), "no-store")
 			require.NotContains(t, w.Body.String(), "must not rotate")
@@ -31,20 +31,20 @@ func TestCryptoVaultRejectsAmbiguousOrOversizedJSON(t *testing.T) {
 }
 
 func TestCryptoVaultDoesNotEchoSensitiveRequestOnUnavailableWallet(t *testing.T) {
-	for _, endpoint := range []string{"backup", "import"} {
+	for _, endpoint := range []string{"import"} {
 		t.Run(endpoint, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
-			body := `{"passphrase":"private vault password"}`
+			body := `{"deposit_mnemonic":"private deposit mnemonic","hot_mnemonic":"private mnemonic"}`
 			if endpoint == "import" {
-				body = `{"passphrase":"private vault password","hot_mnemonic":"private mnemonic"}`
+				body = `{"hot_mnemonic":"private mnemonic"}`
 			}
 			c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 			h := &CryptoHandler{}
 			if endpoint == "import" {
 				h.AdminImportHotMnemonic(c)
 			} else {
-				h.AdminExportVaultBackup(c)
+				h.AdminImportHotMnemonic(c)
 			}
 			require.Equal(t, http.StatusServiceUnavailable, w.Code)
 			require.NotContains(t, w.Body.String(), "private")
@@ -54,7 +54,7 @@ func TestCryptoVaultDoesNotEchoSensitiveRequestOnUnavailableWallet(t *testing.T)
 	}
 }
 
-func TestAdminUnlockWalletRejectsAmbiguousOrOversizedSecrets(t *testing.T) {
+func TestAdminInitializeWalletRejectsAmbiguousOrOversizedSecrets(t *testing.T) {
 	for name, body := range map[string]string{
 		"unknown property": `{"passphrase":"example","unexpected":"value"}`,
 		"concatenated":     `{"passphrase":"example"}{"passphrase":"other"}`,
@@ -65,7 +65,7 @@ func TestAdminUnlockWalletRejectsAmbiguousOrOversizedSecrets(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-			(&CryptoHandler{}).AdminUnlockWallet(c)
+			(&CryptoHandler{}).AdminInitializeWallet(c)
 			require.Equal(t, http.StatusBadRequest, w.Code)
 			require.Contains(t, w.Header().Get("Cache-Control"), "no-store")
 			require.NotContains(t, w.Body.String(), "example")
@@ -73,11 +73,11 @@ func TestAdminUnlockWalletRejectsAmbiguousOrOversizedSecrets(t *testing.T) {
 	}
 }
 
-func TestAdminUnlockWalletDoesNotEchoSecretsWhenUnavailable(t *testing.T) {
+func TestAdminInitializeWalletDoesNotEchoSecretsWhenUnavailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"passphrase":"private vault password"}`))
-	(&CryptoHandler{}).AdminUnlockWallet(c)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"deposit_mnemonic":"private deposit mnemonic","hot_mnemonic":"private mnemonic"}`))
+	(&CryptoHandler{}).AdminInitializeWallet(c)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 	require.NotContains(t, w.Body.String(), "private vault password")
 	require.Contains(t, w.Header().Get("Cache-Control"), "no-store")

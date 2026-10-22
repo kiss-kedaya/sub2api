@@ -28,9 +28,6 @@ func (m *Manager) SignEVM(ctx context.Context, req EVMSignRequest) (string, erro
 	if err := ctx.Err(); err != nil {
 		return deny(err)
 	}
-	if !m.unlocked() {
-		return deny(ErrVaultLocked)
-	}
 	if !m.enabled {
 		return deny(ErrSigningDisabled)
 	}
@@ -39,7 +36,7 @@ func (m *Manager) SignEVM(ctx context.Context, req EVMSignRequest) (string, erro
 		return deny(err)
 	}
 	// Query the durable version on EVERY signature. An import in another
-	// gateway instance invalidates the cached seed even if this one is unlocked.
+	// gateway instance invalidates the cached seed before any cached key is used.
 	// Keep a shared row lock through signing and the durable audit, closing
 	// the version-check/import race. No sweep advisory lock is taken here:
 	// the caller may already own that lock on a separate reserved connection.

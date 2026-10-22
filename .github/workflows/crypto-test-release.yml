@@ -213,6 +213,12 @@ jobs:
         working-directory: backend
         run: go test -count=1 -timeout=10m ./internal/cryptopay/...
 
+      - name: Check managed wallet concurrency with the race detector
+        working-directory: backend
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -count=1 -timeout=10m ./internal/cryptopay/wallet
+
       - name: Test crypto handlers, security, routes, audit middleware and repositories
         working-directory: backend
         run: |
@@ -220,7 +226,7 @@ jobs:
           go test -tags=unit -count=1 -timeout=10m ./cmd/server ./internal/handler ./internal/service ./internal/repository -run '^Test((New)?Crypto|DisabledTicketOutbox)'
           go test -count=1 -timeout=10m ./internal/server/routes ./internal/server/middleware
 
-      - name: Verify encrypted backup compatibility and compile crypto routes
+      - name: Verify managed wallet routes and compile crypto routes
         run: |
           set -euo pipefail
           node --input-type=commonjs <<'NODE'
@@ -242,12 +248,12 @@ jobs:
           ]) assert(routes.includes(route), `missing crypto route: ${route}`)
           for (const [method, path] of [
             ['GET', '/wallet/status'],
-            ['POST', '/wallet/unlock'],
-            ['POST', '/wallet/backup'],
+            ['POST', '/wallet/initialize'],
             ['POST', '/wallet/export-mnemonics'],
             ['POST', '/wallet/hot-mnemonic'],
           ]) assert(routes.includes(`crypto.${method}("${path}", cryptoHandler.`), `missing /admin/crypto${path}`)
           assert(!routes.includes('"/signer/'), 'standalone signer routes must be removed')
+          for (const path of ['/wallet/unlock', '/wallet/lock', '/wallet/backup']) assert(!routes.includes(`crypto.POST("${path}"`), `obsolete wallet endpoint ${path}`)
           console.log('Crypto user/admin routes and access middleware verified')
           NODE
           (cd backend && go build ./internal/server/routes)

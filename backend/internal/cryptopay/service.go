@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/ledger"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
@@ -190,13 +191,18 @@ func NewService(
 	settings *service.SettingService,
 	creditor ledger.Creditor,
 	addressSvc *addresses.Service,
+	appConfig *config.Config,
 ) *Service {
+	var masterKey string
+	if appConfig != nil && appConfig.Totp.EncryptionKeyConfigured {
+		masterKey = appConfig.Totp.EncryptionKey
+	}
 	s := &Service{
 		db:        db,
 		settings:  settings,
 		creditor:  creditor,
 		pools:     map[string]*rpc.Pool{},
-		wallet:    wallet.New(db),
+		wallet:    wallet.New(db, masterKey),
 		addresses: addressSvc,
 	}
 	s.reload(context.Background())
@@ -223,7 +229,7 @@ func (s *Service) reload(ctx context.Context) {
 	defer s.mu.Unlock()
 	s.config = cfg
 	// Vault administration must remain available while deposits are paused.
-	// The same in-process wallet survives configuration reloads. It starts locked.
+	// The same in-process wallet survives configuration reloads. Persisted seeds load automatically when used.
 	if err := s.wallet.SetDestination(cfg.HotWalletEVM); err != nil {
 		slog.Error("[cryptopay] invalid wallet destination", "error", err)
 	}
@@ -493,7 +499,7 @@ func (s *Service) SweepReadiness() error {
 	return s.Config().ValidateSweepReady()
 }
 
-// WalletStatus reports whether the encrypted wallet has been unlocked in this process.
+// WalletStatus reports managed wallet configuration and readiness.
 func (s *Service) WalletStatus(ctx context.Context) (*wallet.Status, error) {
 	s.mu.RLock()
 	wallet := s.wallet
@@ -607,8 +613,8 @@ func (s *Service) HotWalletStatuses(ctx context.Context) ([]HotWalletStatus, err
 	return out, nil
 }
 
-// UnlockWallet opens the existing encrypted wallet, or initializes it once.
-func (s *Service) UnlockWallet(ctx context.Context, passphrase, depositMnemonic, hotMnemonic string) error {
+// InitializeWallet imports two independent seeds exactly once.
+func (s *Service) InitializeWallet(ctx context.Context, depositMnemonic, hotMnemonic string) error {
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
@@ -618,7 +624,7 @@ func (s *Service) UnlockWallet(ctx context.Context, passphrase, depositMnemonic,
 	if wallet == nil {
 		return fmt.Errorf("cryptopay is disabled")
 	}
-	return wallet.Unlock(ctx, passphrase, depositMnemonic, hotMnemonic)
+	return wallet.Initialize(ctx, depositMnemonic, hotMnemonic)
 }
 
 // RunSweep executes the sweep (or a dry-run) and returns the summary.

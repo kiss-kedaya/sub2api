@@ -17,60 +17,30 @@ func cryptoVaultHeaders(c *gin.Context) {
 	c.Header("X-Content-Type-Options", "nosniff")
 }
 
-// Both handlers are behind the mandatory per-request Crypto 2FA middleware.
-// They never receive a plaintext seed from the local wallet on export.
-func (h *CryptoHandler) AdminExportVaultBackup(c *gin.Context) {
-	cryptoVaultHeaders(c)
-	var req struct {
-		Passphrase string `json:"passphrase"`
-	}
-	if !decodeCryptoVaultRequest(c, &req) {
-		return
-	}
-	if strings.TrimSpace(req.Passphrase) == "" || len(req.Passphrase) > 1024 {
-		response.BadRequest(c, "Vault passphrase is required (maximum 1024 bytes)")
-		return
-	}
-	if h.service == nil {
-		response.Error(c, http.StatusServiceUnavailable, "Wallet unavailable")
-		return
-	}
-	backup, err := h.service.ExportVaultBackup(c.Request.Context(), req.Passphrase)
-	req.Passphrase = ""
-	if err != nil {
-		// Do not propagate wallet/driver bodies or a secret-bearing request.
-		response.Error(c, http.StatusForbidden, "Vault backup refused; verify the vault passphrase and wallet status")
-		return
-	}
-	c.Header("Content-Disposition", `attachment; filename="sub2api-wallet-backup.json"`)
-	c.JSON(http.StatusOK, backup)
-}
-
+// Import is protected by the mandatory fresh Crypto 2FA middleware.
 func (h *CryptoHandler) AdminImportHotMnemonic(c *gin.Context) {
 	cryptoVaultHeaders(c)
 	var req struct {
-		Passphrase  string `json:"passphrase"`
 		HotMnemonic string `json:"hot_mnemonic"`
 	}
 	if !decodeCryptoVaultRequest(c, &req) {
 		return
 	}
-	if strings.TrimSpace(req.Passphrase) == "" || len(req.Passphrase) > 1024 ||
-		strings.TrimSpace(req.HotMnemonic) == "" || len(req.HotMnemonic) > 1024 {
-		response.BadRequest(c, "Vault passphrase and valid hot-wallet mnemonic are required")
+	if strings.TrimSpace(req.HotMnemonic) == "" || len(req.HotMnemonic) > 1024 {
+		response.BadRequest(c, "A valid hot-wallet mnemonic is required")
 		return
 	}
 	if h.service == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Wallet unavailable")
 		return
 	}
-	err := h.service.ImportHotMnemonic(c.Request.Context(), req.Passphrase, req.HotMnemonic)
-	req.Passphrase, req.HotMnemonic = "", ""
+	err := h.service.ImportHotMnemonic(c.Request.Context(), req.HotMnemonic)
+	req.HotMnemonic = ""
 	if err != nil {
-		response.Error(c, http.StatusConflict, "Hot-wallet import refused; check the vault passphrase and unresolved sweeps")
+		response.Error(c, http.StatusConflict, "Hot-wallet import refused; check the wallet configuration and unresolved sweeps")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"saved": true, "requires_unlock": true}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"saved": true}})
 }
 
 func decodeCryptoVaultRequest(c *gin.Context, target any) bool {
