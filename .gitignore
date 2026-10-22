@@ -62,6 +62,10 @@ vendor/
 # Go 编译缓存
 backend/.gocache/
 
+# Python bytecode and interpreter caches
+__pycache__/
+*.py[cod]
+
 # ===================
 # Node.js / Vue 前端
 # ===================

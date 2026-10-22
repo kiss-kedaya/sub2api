@@ -187,7 +187,7 @@ func TestCreateMediaBillingJob_SubscriptionIncludesOutstandingReservations(t *te
 			int64(42), int64(11), service.SubscriptionStatusActive, time.Now().Add(-time.Hour), time.Now().Add(time.Hour),
 			9.0, 0.0, 0.0, 10.0, nil, nil,
 		))
-	mock.ExpectQuery(`(?s)SELECT COALESCE\(SUM\(reserved_amount\), 0\).*subscription_id`).
+	mock.ExpectQuery(`(?s)SELECT COALESCE\(SUM\(reserved_amount\), 0\).*subscription_id.*status IN \('creating', 'submitted', 'reconciliation', 'ready'\)`).
 		WithArgs(subscriptionID).
 		WillReturnRows(sqlmock.NewRows([]string{"reserved"}).AddRow(2.0))
 	mock.ExpectRollback()
@@ -407,5 +407,112 @@ func TestListMediaBillingJobs_CapsBatchAndLeasesForSixtySeconds(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Equal(t, job.ID, jobs[0].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestReconcileMediaBillingJob_OnlyPausesUnsettledVideoWithoutTouchingWallet(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs\s+SET status = \$2, updated_at = NOW\(\)\s+WHERE id = \$1 AND kind = \$3 AND status = \$4 AND intent IS NULL`).
+		WithArgs("unresolved-video", service.MediaBillingReconciliation, service.MediaBillingKindGrokVideo, service.MediaBillingSubmitted).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// No transaction or user-balance update belongs to this state transition.
+	require.NoError(t, repo.ReconcileMediaBillingJob(context.Background(), " unresolved-video "))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestReconcileMediaBillingJob_ExistingResultIsAnIdempotentNoop(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs.*AND kind = \$3 AND status = \$4 AND intent IS NULL`).
+		WithArgs("already-advanced", service.MediaBillingReconciliation, service.MediaBillingKindGrokVideo, service.MediaBillingSubmitted).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM media_billing_jobs WHERE id = \$1\)`).
+		WithArgs("already-advanced").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	require.NoError(t, repo.ReconcileMediaBillingJob(context.Background(), "already-advanced"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestReconcileMediaBillingJob_MissingJobIsNotFound(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs.*AND intent IS NULL`).
+		WithArgs("missing-video", service.MediaBillingReconciliation, service.MediaBillingKindGrokVideo, service.MediaBillingSubmitted).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM media_billing_jobs WHERE id = \$1\)`).
+		WithArgs("missing-video").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	require.ErrorIs(t, repo.ReconcileMediaBillingJob(context.Background(), "missing-video"), service.ErrMediaBillingJobNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestReconcileMediaBillingJob_WriteFailureIsNotReportedAsSuccess(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	failure := errors.New("database unavailable")
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs.*AND intent IS NULL`).
+		WithArgs("unresolved-video", service.MediaBillingReconciliation, service.MediaBillingKindGrokVideo, service.MediaBillingSubmitted).
+		WillReturnError(failure)
+
+	require.ErrorIs(t, repo.ReconcileMediaBillingJob(context.Background(), "unresolved-video"), failure)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPrepareMediaBillingIntent_ReconciliationCanFreezeVerifiedCompletion(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	job := service.MediaBillingJob{
+		ID: "reconciled-completion", Kind: service.MediaBillingKindGrokVideo,
+		UserID: 42, APIKeyID: 7, AccountID: 9, GroupID: 11,
+		Status: service.MediaBillingReconciliation, ReservedAmount: 2,
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT.*FROM media_billing_jobs WHERE id = \$1 FOR UPDATE`).
+		WithArgs(job.ID).WillReturnRows(mediaBillingTestRow(job))
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs.*SET intent = \$2, status = \$3.*WHERE id = \$1 AND intent IS NULL`).
+		WithArgs(job.ID, sqlmock.AnyArg(), service.MediaBillingReady).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	got, err := repo.PrepareMediaBillingIntent(context.Background(), job.ID, testMediaIntent(1.25))
+	require.NoError(t, err)
+	require.Equal(t, 1.25, got.Command.BalanceCost)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestFailMediaBillingJob_ReconciliationReleasesOnlyItsReservedAmount(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	job := service.MediaBillingJob{
+		ID: "reconciled-failure", Kind: service.MediaBillingKindGrokVideo,
+		UserID: 42, APIKeyID: 7, AccountID: 9, GroupID: 11,
+		Status: service.MediaBillingReconciliation, ReservedAmount: 2,
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT.*FROM media_billing_jobs WHERE id = \$1 FOR UPDATE`).
+		WithArgs(job.ID).WillReturnRows(mediaBillingTestRow(job))
+	mock.ExpectQuery(captureBatchImageHoldSQL).
+		WithArgs(2.0, 0.0, int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"balance", "frozen_balance"}).AddRow(10.0, 0.0))
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs.*WHERE id = \$1 AND status IN \(\$3, \$4, \$5\) AND intent IS NULL`).
+		WithArgs(job.ID, service.MediaBillingFailed, service.MediaBillingCreating, service.MediaBillingSubmitted, service.MediaBillingReconciliation).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := repo.FailMediaBillingJob(context.Background(), job.ID)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.Equal(t, 10.0, *result.NewBalance)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRetryMediaBillingJob_DoesNotReopenReconciliation(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs\s+SET attempts = attempts \+ 1,.*WHERE id = \$1 AND status IN \('submitted', 'ready', 'billed'\)`).
+		WithArgs("reconciled-video", int64(time.Minute/time.Millisecond)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM media_billing_jobs WHERE id = \$1\)`).
+		WithArgs("reconciled-video").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	require.ErrorIs(t, repo.RetryMediaBillingJob(context.Background(), "reconciled-video", time.Minute), service.ErrUsageBillingRequestConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

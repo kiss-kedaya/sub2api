@@ -7,7 +7,7 @@
 源参考状态见 `source-baseline.md`。只读冻结包已在 detached worktree 中恢复，以下测试在恢复副本执行：
 
 ```text
-cd /Users/mt/code/mt-ai/aicodex/aicodex-api/ai-gateway
+cd <SOURCE_REPO>/ai-gateway
 go test ./internal/service/promptaudit -count=1
 ok github.com/mt21625457/aicodex/internal/service/promptaudit 2.081s
 
