@@ -39,7 +39,22 @@ type PushNotifier interface {
 
 // SetPushNotifier wires operator alerts. Optional: nil stays silent.
 func (s *Service) SetPushNotifier(p PushNotifier) {
+	if s == nil {
+		return
+	}
+	s.pushMu.Lock()
 	s.push = p
+	s.pushMu.Unlock()
+}
+
+func (s *Service) getPushNotifier() PushNotifier {
+	if s == nil {
+		return nil
+	}
+	s.pushMu.RLock()
+	p := s.push
+	s.pushMu.RUnlock()
+	return p
 }
 
 // chainDisplayName renders a chain for a human-readable alert.
@@ -179,7 +194,10 @@ type Service struct {
 	// maintCancel stops the pool top-up / scheduled sweep loop.
 	maintCancel context.CancelFunc
 	// push delivers operator alerts (unmatched deposits). Optional.
-	push PushNotifier
+	// Keep its lock separate: reload holds mu while waiting for worker.Stop,
+	// and the worker can still deliver an alert before it exits.
+	pushMu sync.RWMutex
+	push   PushNotifier
 	// sweepMu serialises sweep runs: the manual admin trigger and the
 	// scheduler must never send the same funds twice.
 	sweepMu sync.Mutex
@@ -311,11 +329,12 @@ func (s *Service) reload(ctx context.Context) {
 	led.SetUnmatchedNotifier(func(ctx context.Context, t scanner.Transfer, reason string) {
 		slog.Warn("[cryptopay] unmatched deposit",
 			"chain", t.Chain, "tx", t.TxHash, "to", t.To, "reason", reason)
-		if s.push == nil {
+		push := s.getPushNotifier()
+		if push == nil {
 			return
 		}
 		amount := toDisplayAmount(t.Amount, tokenDecimals(t.Chain, t.Token))
-		if err := s.push.PushToAdmins(ctx, "未匹配到账",
+		if err := push.PushToAdmins(ctx, "未匹配到账",
 			fmt.Sprintf("%s 收到 %s（%s），未入账：%s",
 				chainDisplayName(t.Chain), amount, shortAddr(t.To), reason),
 			"deposit"); err != nil {
@@ -341,10 +360,11 @@ func (s *Service) reload(ctx context.Context) {
 	s.worker.SetReorgNotifier(func(chain, txHash string) {
 		slog.Error("[cryptopay] credited deposit reorged, manual reconciliation needed",
 			"chain", chain, "tx", txHash)
-		if s.push == nil {
+		push := s.getPushNotifier()
+		if push == nil {
 			return
 		}
-		if err := s.push.PushToAdmins(context.Background(), "链上重组：已入账交易被回滚",
+		if err := push.PushToAdmins(context.Background(), "链上重组：已入账交易被回滚",
 			fmt.Sprintf("%s 的交易 %s 已被重组，此前已入账，请人工核对",
 				chainDisplayName(chain), shortAddr(txHash)),
 			"deposit"); err != nil {
@@ -595,7 +615,7 @@ func (s *Service) HotWalletStatuses(ctx context.Context) ([]HotWalletStatus, err
 		}
 		raw, err := pool.Balance(ctx, gasWallet)
 		if err != nil {
-			st.Error = err.Error()
+			st.Error = "RPC request failed; check endpoint configuration and server logs"
 			out = append(out, st)
 			continue
 		}

@@ -201,6 +201,8 @@ jobs:
             src/components/user/profile/__tests__/TotpSetupModal.inputs.spec.ts \
             src/components/user/profile/__tests__/Totp.errors.spec.ts \
             src/components/user/profile/__tests__/totp-timer-cleanup.spec.ts \
+            src/components/keys/__tests__/UseKeyModal.spec.ts \
+            src/views/admin/__tests__/AccountsView.lite.spec.ts \
             src/views/admin/__tests__/CryptoView.security.spec.ts
 
       - name: Setup Go
@@ -218,13 +220,15 @@ jobs:
         working-directory: backend
         env:
           CGO_ENABLED: '1'
-        run: go test -race -count=1 -timeout=10m ./internal/cryptopay/wallet ./internal/cryptopay/scanner
+        run: go test -race -p 1 -count=1 -timeout=10m ./internal/cryptopay ./internal/cryptopay/wallet ./internal/cryptopay/scanner ./internal/notify/...
 
       - name: Test crypto handlers, security, routes, audit middleware and repositories
         working-directory: backend
         run: |
           set -euo pipefail
           go test -tags=unit -count=1 -timeout=10m ./cmd/server ./internal/handler ./internal/service ./internal/repository -run '^Test((New)?Crypto|DisabledTicketOutbox)'
+          go test -tags=unit -count=1 -timeout=10m ./internal/service -run '^Test(RetryFulfillmentRejectsCryptoOrdersForEveryRetryableOrTerminalState|CryptoRetryGuardRecognizesLegacyAndCurrentOrderMarkers|RetryFulfillmentKeepsNonCryptoOrderBehavior|CryptoOrderStillUsesInternalBalanceFulfillmentForLedgerRecovery|PaymentBalanceRedeem.*|PaymentAndOrdinaryBalanceTypesShareBalanceInvalidation)$'
+          go test -count=1 -timeout=10m ./internal/repository -run '^TestRedeemCodeRepository(SumPositiveBalanceByUserIncludesPaymentBalance|ListByUserPaginatedPaymentBalanceFilter)$'
           go test -count=1 -timeout=10m ./internal/server/routes ./internal/server/middleware
 
       - name: Verify managed wallet routes and compile crypto routes

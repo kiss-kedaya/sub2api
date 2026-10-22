@@ -159,14 +159,16 @@ var auditActionOverrides = map[string]string{
 // auditBodyOmittedRoutes 请求体几乎整体由凭证构成的路由（如整块粘贴 auth JSON 的导入接口）。
 // 这类 body 的凭证内嵌在普通字符串值里，键级脱敏无法覆盖，整体不入库。
 var auditBodyOmittedRoutes = map[string]struct{}{
-	"PUT /api/v1/admin/crypto/config":                           {},
-	"POST /api/v1/admin/crypto/rpc/test":                        {},
-	"POST /api/v1/admin/crypto/rpc/auto-pick":                   {},
-	"POST /api/v1/admin/crypto/wallet/initialize":               {},
-	"POST /api/v1/admin/crypto/wallet/export-mnemonics":         {},
-	"POST /api/v1/admin/crypto/wallet/hot-mnemonic":             {},
-	"POST /api/v1/admin/crypto/security/setup":                  {},
-	"POST /api/v1/admin/crypto/security/enable":                 {},
+	"PUT /api/v1/admin/crypto/config":                   {},
+	"POST /api/v1/admin/crypto/rpc/test":                {},
+	"POST /api/v1/admin/crypto/rpc/auto-pick":           {},
+	"POST /api/v1/admin/crypto/wallet/initialize":       {},
+	"POST /api/v1/admin/crypto/wallet/export-mnemonics": {},
+	"POST /api/v1/admin/crypto/wallet/hot-mnemonic":     {},
+	"POST /api/v1/admin/crypto/security/setup":          {},
+	"POST /api/v1/admin/crypto/security/enable":         {},
+	// Device keys are push credentials; omit the entire update body.
+	"PUT /api/v1/user/bark":                                     {},
 	"POST /api/v1/user/totp/disable":                            {},
 	"POST /api/v1/tickets":                                      {},
 	"POST /api/v1/tickets/:id/replies":                          {},

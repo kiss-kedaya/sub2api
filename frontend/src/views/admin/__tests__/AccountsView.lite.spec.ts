@@ -289,12 +289,16 @@ describe('admin AccountsView lite account list', () => {
     const wrapper = mountView()
     await flushPromises()
 
+    expect(wrapper.find('[data-test="edit-account"]').exists()).toBe(false)
     const editButton = wrapper.findAll('button').find(button => button.text().includes('common.edit'))
+    expect(editButton).toBeTruthy()
     await editButton!.trigger('click')
     await flushPromises()
 
+    expect(getById).toHaveBeenCalledWith(42)
     expect(showError).toHaveBeenCalledWith('detail failed')
-    expect(wrapper.get('[data-test="edit-account"]').text()).toBe('')
+    expect(wrapper.find('[data-test="edit-account"]').exists()).toBe(false)
+    expect(wrapper.findComponent(EditAccountModalStub).exists()).toBe(false)
     consoleError.mockRestore()
     wrapper.unmount()
   })

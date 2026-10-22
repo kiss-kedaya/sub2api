@@ -1359,10 +1359,18 @@ function gotoDepositPage(page: number) {
 }
 
 async function loadHealth() {
+  if (loadingHealth.value) return
   loadingHealth.value = true
-  healthError.value = '' 
+  healthError.value = ''
   try {
-    const [pool, hot] = await Promise.all([getPoolStatus(), walletCanDerive.value ? getHotWalletStatus() : Promise.resolve([])])
+    const pool = await getPoolStatus()
+    let hot: HotWalletStatus[] = []
+    if (walletCanDerive.value) {
+      const completed = await withCryptoVerification(t('admin.crypto.healthTitle'), async (code) => {
+        hot = await getHotWalletStatus({ totpCode: code })
+      })
+      if (!completed) return
+    }
     poolStatus.value = pool
     hotWallets.value = hot
   } catch (err: unknown) {
@@ -1408,7 +1416,6 @@ async function loadWalletStatus() {
   } finally {
     loadingWallet.value = false
   }
-  await loadHealth()
 }
 
 // Derive the Gas wallet addresses in the main service and fill the destination.
@@ -1417,11 +1424,13 @@ async function fillHotWalletAddresses() {
   loadingHotAddress.value = true
   hotAddressNote.value = ''
   try {
-    const addr = await getHotWalletAddress()
-    if (!config.value) return
-    config.value.hot_wallet_evm = addr.evm
-    config.value.hot_wallet_solana = addr.solana
-    hotAddressNote.value = t('admin.crypto.hotAddressFilled', { index: addr.index })
+    await withCryptoVerification(t('admin.crypto.hotAddressFill'), async (code) => {
+      const addr = await getHotWalletAddress({ totpCode: code })
+      if (!config.value) return
+      config.value.hot_wallet_evm = addr.evm
+      config.value.hot_wallet_solana = addr.solana
+      hotAddressNote.value = t('admin.crypto.hotAddressFilled', { index: addr.index })
+    })
   } catch (e) {
     hotAddressNote.value = extractApiErrorMessage(e)
   } finally {

@@ -53,6 +53,9 @@ jobs:
       - name: Billing and media concurrency regression
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/handler ./internal/service ./internal/repository -run 'Test(CNBalancePushNotifierConcurrent|GrokVideoDurable|MediaBilling|AsyncImage|ImageTask|OpenAIResponsesWebSocket.*(Balance|Subscription|Settlement)|SmartBilling|.*Refund.*Pending)' -count=1
+      - name: Crypto notifier concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 ./internal/cryptopay -run '^TestPushNotifier' -count=1
 
   frontend:
     runs-on: ubuntu-latest
