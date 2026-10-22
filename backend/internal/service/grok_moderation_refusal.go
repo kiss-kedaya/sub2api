@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,6 +84,9 @@ func IsGrokModerationRefusal(platform string, body []byte) bool {
 	if !strings.EqualFold(strings.TrimSpace(platform), PlatformGrok) {
 		return false
 	}
+	if isGrokAccountAccessFailure(body) {
+		return false
+	}
 	text := strings.ToLower(string(body))
 	return strings.Contains(text, grokModerationRefusalText) || isGrokContentPolicyRejection(403, body) || IsGlobalIPBlacklistResponse(body)
 }
@@ -109,7 +113,12 @@ func IsGrokModerationRefusalFailure(platform string, body []byte, err error) boo
 
 func grokModerationRefusalProtocolStatus(body []byte) int {
 	for _, path := range []string{"status", "status_code", "error.status_code", "response.error.status_code"} {
-		if status := int(gjson.GetBytes(body, path).Int()); status != 0 {
+		result := gjson.GetBytes(body, path)
+		if result.Type != gjson.Number {
+			continue
+		}
+		status, err := strconv.Atoi(result.Raw)
+		if err == nil && status != 0 {
 			return status
 		}
 	}
