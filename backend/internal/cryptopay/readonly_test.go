@@ -96,3 +96,35 @@ func TestAdminTestModeStartupWithSharedEnabledConfigDoesNotStartWorkers(t *testi
 		t.Fatal(err)
 	}
 }
+
+func TestWritableReviewKeepsWalletManualAndNeverStartsSharedWorkers(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
+	t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "true")
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	t.Setenv("SUB2API_DISABLE_BACKGROUND_JOBS", "false")
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	cfg := DefaultCryptoConfig()
+	cfg.Enabled, cfg.SweepAuto = true, true
+	cfg.HotWalletEVM = "0x1111111111111111111111111111111111111111"
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := service.NewSettingService(readOnlyConfigRepository{raw: string(raw)}, nil)
+	s := NewService(db, settings, nil, NewAddressService(db, settings))
+	s.Reload(t.Context())
+	if s.maintCancel != nil || cryptoWorkersAllowed() || mode.ReadOnly() || s.executor == nil {
+		t.Fatal("writable review must allow manual work without automatic workers")
+	}
+	status, err := s.WalletStatus(t.Context())
+	if err != nil || status.Unlocked || !status.SigningEnabled {
+		t.Fatalf("manual signing unavailable or wallet initialized at startup: %+v %v", status, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

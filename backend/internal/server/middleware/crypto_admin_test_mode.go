@@ -10,11 +10,12 @@ import (
 )
 
 // CryptoAdminTestModeGuard limits a shared-production-database review instance
-// to authentication and crypto administration. It is intentionally a
-// process-local route allowlist; shared settings cannot disable it.
+// to authentication and crypto administration while it is read-only. Explicit
+// write opt-in restores normal routes and their existing authentication; startup
+// isolation remains enabled. Shared settings cannot disable either local gate.
 func CryptoAdminTestModeGuard() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !service.CryptoAdminTestMode() || cryptoTestModeRouteAllowed(c.Request.Method, c.Request.URL.Path) {
+		if !service.CryptoAdminTestReadOnly() || cryptoTestModeRouteAllowed(c.Request.Method, c.Request.URL.Path) {
 			c.Next()
 			return
 		}

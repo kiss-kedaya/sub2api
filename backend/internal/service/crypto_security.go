@@ -132,8 +132,8 @@ func (s *CryptoSecurityService) Status(ctx context.Context, userID int64) (*Cryp
 	enabled := u.TotpEnabled && u.TotpSecretEncrypted != nil && *u.TotpSecretEncrypted != ""
 	return &CryptoSecurityStatus{
 		Enabled: enabled, FeatureEnabled: s.ready(),
-		CanSetup: !u.TotpEnabled && s.ready() && !CryptoAdminTestMode(),
-		ReadOnly: CryptoAdminTestMode(),
+		CanSetup: !u.TotpEnabled && s.ready() && !CryptoAdminTestReadOnly(),
+		ReadOnly: CryptoAdminTestReadOnly(),
 	}, nil
 }
 

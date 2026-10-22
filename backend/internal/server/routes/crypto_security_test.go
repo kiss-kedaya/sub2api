@@ -467,8 +467,17 @@ func TestCryptoAdminRiskVerificationRateLimitsInvalidCodes(t *testing.T) {
 }
 
 func TestCryptoAdminEveryRiskRouteRejectsInvalidTotp(t *testing.T) {
+	for _, testMode := range []string{"false", "true"} {
+		t.Run("isolated="+testMode, func(t *testing.T) {
+			t.Setenv("CRYPTO_ADMIN_TEST_MODE", testMode)
+			t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "true")
+			testCryptoAdminEveryRiskRouteRejectsInvalidTotp(t)
+		})
+	}
+}
+
+func testCryptoAdminEveryRiskRouteRejectsInvalidTotp(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
-	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
 	cases := []struct {
 		method string
 		path   string
@@ -595,8 +604,17 @@ func TestCryptoAdminTestModeIsReadOnlyAndRequiresProductionTwoFactorEnrollment(t
 }
 
 func TestCryptoSecuritySetupAndEnableHTTPFlowIgnoresGlobalTotpSwitch(t *testing.T) {
+	for _, testMode := range []string{"false", "true"} {
+		t.Run("isolated="+testMode, func(t *testing.T) {
+			t.Setenv("CRYPTO_ADMIN_TEST_MODE", testMode)
+			t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "true")
+			testCryptoSecuritySetupAndEnableHTTPFlow(t)
+		})
+	}
+}
+
+func testCryptoSecuritySetupAndEnableHTTPFlow(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
-	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
 	user := &service.User{ID: 75, Email: "admin@example.test", Role: service.RoleAdmin, Status: service.StatusActive}
 	require.NoError(t, user.SetPassword("first-binding-password"))
 	h := newCryptoRouteHarness(t, user)
@@ -643,6 +661,7 @@ func TestCryptoSecuritySetupAndEnableHTTPFlowIgnoresGlobalTotpSwitch(t *testing.
 	require.Contains(t, status.Body.String(), `"enabled":true`)
 	require.Contains(t, status.Body.String(), `"feature_enabled":true`)
 	require.Contains(t, status.Body.String(), `"can_setup":false`)
+	require.Contains(t, status.Body.String(), `"read_only":false`)
 
 	repeated := cryptoRouteRequestBody(h.router, http.MethodPost, "/api/v1/admin/crypto/security/setup",
 		`{}`, "", nil, "127.0.0.1:1234", "localhost")

@@ -653,6 +653,27 @@ gateway:
         curves: [29, 23, 24, 25]
 ```
 
+### Shared-database test instance
+
+`CRYPTO_ADMIN_TEST_MODE=true` retains a separate instance JWT key, requires
+`DATABASE_MIGRATION_MODE=validate` and a persistent TOTP encryption key, suppresses
+startup data backfills, and disables proactive background jobs. By default it
+also restricts routes and wallet operations to read-only review.
+
+An operator may explicitly set `CRYPTO_ADMIN_TEST_WRITE_ENABLED=true` to restore
+normal application routes and payment administration writes. Existing login,
+administrator permissions, payment operator allowlist, HTTPS/loopback requirement
+and per-operation backend TOTP verification still apply. Wallets stay locked at
+startup; only a deliberate authenticated action can initialize or unlock one.
+Automatic scans, sweeps and other shared workers remain disabled. Malformed gate
+values never enable writes. This switch cannot grant database privileges: use a
+dedicated non-superuser login with the intended application DML privileges.
+
+These writes affect the shared production data. To restore read-only operation,
+remove the write opt-in, restore the read-only database login and restart only
+the independent test service. Keep the test listener on loopback behind an SSH
+tunnel, with independent Redis and JWT credentials.
+
 ### Profile Fields
 
 | Field | Type | Description |

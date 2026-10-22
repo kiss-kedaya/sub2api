@@ -4,6 +4,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 )
 
 // CryptoInstanceEnabled is a local deployment gate. A shared settings row may
@@ -21,10 +23,9 @@ func CryptoInstanceEnabled() bool {
 // CryptoAdminTestMode restricts the initial shared-database test to real admin
 // accounts. This is an instance setting, never a database-wide user policy.
 func CryptoAdminTestMode() bool {
-	raw := strings.TrimSpace(os.Getenv("CRYPTO_ADMIN_TEST_MODE"))
-	if raw == "" {
-		return false
-	}
-	enabled, err := strconv.ParseBool(raw)
-	return err != nil || enabled
+	return mode.TestInstance()
 }
+
+// CryptoAdminTestReadOnly reports the effective write gate without disabling
+// isolated JWT bootstrap, migration validation or background-job suppression.
+func CryptoAdminTestReadOnly() bool { return mode.ReadOnly() }
