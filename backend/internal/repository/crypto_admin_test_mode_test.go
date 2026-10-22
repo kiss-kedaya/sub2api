@@ -20,8 +20,25 @@ func TestCryptoAdminTestModeRejectsMigrationWritesBeforeConnecting(t *testing.T)
 
 func TestCryptoAdminTestModeSkipsSimpleModeStartupWrites(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
+	t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "true")
 	if shouldEnsureSimpleModeStartupState(config.RunModeSimple) {
 		t.Fatal("test mode must skip default-group and admin-concurrency writes")
+	}
+}
+
+func TestCryptoWritableReviewKeepsSeparateJWTSecretAndMigrationValidation(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
+	t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "true")
+	if !readOnlyBootstrapSecrets() {
+		t.Fatal("writable test instance must never reuse the production JWT signing key")
+	}
+	cfg := &config.Config{JWT: config.JWTConfig{Secret: strings.Repeat("x", 40)}}
+	if err := loadIsolatedTestJWTSecret(cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := InitEnt(&config.Config{Database: config.DatabaseConfig{MigrationMode: config.DatabaseMigrationModeApply}})
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_MIGRATION_MODE=validate") {
+		t.Fatalf("writable review permitted schema writes: %v", err)
 	}
 }
 

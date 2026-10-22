@@ -227,7 +227,9 @@ func (s *Service) reload(ctx context.Context) {
 	if err := s.wallet.SetDestination(cfg.HotWalletEVM); err != nil {
 		slog.Error("[cryptopay] invalid wallet destination", "error", err)
 	}
-	s.wallet.SetEnabled(cfg.Enabled && cryptoWorkersAllowed())
+	// Disabling proactive jobs must not disable an authenticated manual sweep.
+	// Read-only deployments still refuse both signing and wallet mutations.
+	s.wallet.SetEnabled(cfg.Enabled && !mode.ReadOnly())
 	if s.addresses != nil {
 		s.addresses.SetDeriver(s.wallet)
 	}

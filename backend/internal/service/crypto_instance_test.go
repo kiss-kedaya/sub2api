@@ -19,3 +19,12 @@ func TestCryptoInstanceGatesFailClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestCryptoWritableReviewRetainsBackgroundAndStartupIsolation(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
+	t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "true")
+	t.Setenv("SUB2API_DISABLE_BACKGROUND_JOBS", "false")
+	if !CryptoAdminTestMode() || CryptoAdminTestReadOnly() || !BackgroundJobsDisabled() {
+		t.Fatal("opening writes must not open proactive shared-database jobs")
+	}
+}

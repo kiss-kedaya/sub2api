@@ -592,7 +592,7 @@ func ProvideOpsSystemLogSink(opsRepo OpsRepository) *OpsSystemLogSink {
 // 停止逻辑挂在 cmd/server 的 provideCleanup。
 func ProvideAuditLogService(repo AuditLogRepository, settingService *SettingService) *AuditLogService {
 	svc := NewAuditLogService(repo, settingService)
-	if !CryptoAdminTestMode() {
+	if !CryptoAdminTestReadOnly() {
 		svc.Start() // Keep request audit delivery; Start separately gates retention.
 	}
 	return svc

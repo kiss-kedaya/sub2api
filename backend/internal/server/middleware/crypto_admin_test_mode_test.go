@@ -72,6 +72,28 @@ func TestCryptoAdminTestModeGuardIsDisabledOutsideTestMode(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, res.Code)
 }
 
+func TestCryptoWritableReviewOpensNormalRoutesOnlyAfterExplicitOptIn(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, flag := range []string{"", "false", "malformed", "true"} {
+		t.Run(flag, func(t *testing.T) {
+			t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
+			t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", flag)
+			router := gin.New()
+			router.Use(servermiddleware.CryptoAdminTestModeGuard())
+			for _, path := range []string{"/api/v1/admin/users", "/api/v1/admin/crypto/security/setup", "/api/v1/admin/crypto/wallet/export-mnemonics", "/api/v1/user/totp/setup", "/v1/responses"} {
+				router.POST(path, func(c *gin.Context) { c.Status(http.StatusUnauthorized) })
+				res := httptest.NewRecorder()
+				router.ServeHTTP(res, httptest.NewRequest(http.MethodPost, path, nil))
+				want := http.StatusForbidden
+				if flag == "true" {
+					want = http.StatusUnauthorized // Normal authentication still runs.
+				}
+				require.Equal(t, want, res.Code, path)
+			}
+		})
+	}
+}
+
 func TestCryptoAdminTestModeGuardRunsBeforeCanvasHandler(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
 	dir := t.TempDir()
