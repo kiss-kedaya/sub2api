@@ -167,7 +167,12 @@ func (h *TotpHandler) GetVerificationMethod(c *gin.Context) {
 		return
 	}
 
-	method, err := h.totpService.GetVerificationMethod(c.Request.Context(), subject.UserID)
+	operation := c.DefaultQuery("operation", "enable")
+	if operation != "enable" && operation != "disable" {
+		response.BadRequest(c, "Invalid TOTP operation")
+		return
+	}
+	method, err := h.totpService.GetVerificationMethod(c.Request.Context(), subject.UserID, operation)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

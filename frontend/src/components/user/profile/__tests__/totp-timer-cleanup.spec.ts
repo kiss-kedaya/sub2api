@@ -2,9 +2,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import TotpSetupModal from '@/components/user/profile/TotpSetupModal.vue'
 import TotpDisableDialog from '@/components/user/profile/TotpDisableDialog.vue'
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { role: 'user' } }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { role: mocks.role } }) }))
 
 const mocks = vi.hoisted(() => ({
+  role: 'user',
   showSuccess: vi.fn(),
   showError: vi.fn(),
   getVerificationMethod: vi.fn(),
@@ -49,6 +50,7 @@ describe('TOTP 弹窗定时器清理', () => {
 
   beforeEach(() => {
     intervalSeed = 1000
+    mocks.role = 'user'
     mocks.showSuccess.mockReset()
     mocks.showError.mockReset()
     mocks.getVerificationMethod.mockReset()
@@ -139,7 +141,8 @@ describe('TOTP 弹窗定时器清理', () => {
   })
 
   it('TotpDisableDialog 失败时改用 toast 并不渲染内联错误', async () => {
-    mocks.getVerificationMethod.mockResolvedValue({ method: 'password' })
+    mocks.role = 'admin'
+    mocks.getVerificationMethod.mockResolvedValue({ method: 'totp' })
     mocks.disable.mockRejectedValue({
       response: { data: { message: 'disable failed' } }
     })
@@ -147,7 +150,6 @@ describe('TOTP 弹窗定时器清理', () => {
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
 
-    await wrapper.get('input[type="password"]').setValue('correct horse battery staple')
     await wrapper.get('#disable-totp-code').setValue('123456')
     await wrapper.get('form').trigger('submit.prevent')
     await flushPromises()

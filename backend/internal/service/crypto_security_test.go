@@ -144,6 +144,31 @@ func (r *cryptoSecurityTestRepo) EnableTotp(context.Context, int64) error {
 	return nil
 }
 
+func (r *cryptoSecurityTestRepo) BindTotpIfDisabled(_ context.Context, _ int64, encrypted string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.user.TotpEnabled || !r.user.IsActive() || r.user.DeletedAt != nil {
+		return ErrUserSecurityStateChanged
+	}
+	r.user.TotpSecretEncrypted = &encrypted
+	r.user.TotpEnabled = true
+	r.writes++
+	return nil
+}
+
+func (r *cryptoSecurityTestRepo) DisableTotpWithExpectedRole(_ context.Context, _ int64, role string, secret *string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.user.Role != role || !r.user.IsActive() || r.user.DeletedAt != nil ||
+		(r.user.TotpSecretEncrypted == nil) != (secret == nil) || (secret != nil && *r.user.TotpSecretEncrypted != *secret) {
+		return ErrUserSecurityStateChanged
+	}
+	r.user.TotpEnabled = false
+	r.user.TotpSecretEncrypted = nil
+	r.writes++
+	return nil
+}
+
 func (r *cryptoSecurityTestRepo) DisableTotp(context.Context, int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -269,7 +294,7 @@ func TestCryptoSecurityEnrollmentNeedsNoPasswordAndCannotReplaceBoundSeed(t *tes
 	require.ErrorIs(t, err, ErrTotpAlreadyEnabled)
 	_, err = svc.InitiateSetup(ctx, 7, "", "setup-password")
 	require.ErrorIs(t, err, ErrTotpAlreadyEnabled)
-	require.Equal(t, 2, repo.writes)
+	require.Equal(t, 1, repo.writes, "seed and enabled state are committed atomically")
 }
 
 func TestCryptoSecurityPaymentEnrollmentBoundToSessionAndEndpoint(t *testing.T) {

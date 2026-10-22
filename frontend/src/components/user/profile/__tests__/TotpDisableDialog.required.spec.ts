@@ -50,11 +50,35 @@ describe('Administrator TOTP disable UI protection', () => {
     mocks.role = 'user'
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
-    expect(wrapper.get('#disable-totp-code').attributes('required')).toBeUndefined()
+    expect(wrapper.find('#disable-totp-code').exists()).toBe(false)
     await wrapper.get('#password').setValue('login-password')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(mocks.disable).toHaveBeenCalledWith({ password: 'login-password' })
+  })
+
+  it('requires an authenticator code for admins when the server returns a legacy method', async () => {
+    mocks.method = 'password'
+    const wrapper = mount(TotpDisableDialog)
+    await flushPromises()
+    expect(wrapper.find('#password').exists()).toBe(false)
+    const code = wrapper.get('[data-testid="totp-disable-code"]')
+    await code.setValue('123456')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.disable).toHaveBeenCalledWith({ totp_code: '123456' })
+  })
+
+  it('requires an authenticator code for administrators when the method response is legacy', async () => {
+    mocks.method = 'password'
+    const wrapper = mount(TotpDisableDialog)
+    await flushPromises()
+    expect(wrapper.find('#password').exists()).toBe(false)
+    const code = wrapper.get('[data-testid="totp-disable-code"]')
+    await code.setValue('123456')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.disable).toHaveBeenCalledWith({ totp_code: '123456' })
   })
 
   it('preserves the old email-code request for non-admin users', async () => {

@@ -328,6 +328,23 @@ func (h *UserHandler) Update(c *gin.Context) {
 		return
 	}
 
+	// 降级管理员会移除其管理员 TOTP 保护，必须校验操作者的动态码授权。
+	// 不受全局 step-up 开关影响；批准标记只由此处设置，不接受请求绑定。
+	totpDemotionApproved := false
+	if req.Role == service.RoleUser {
+		target, err := h.adminService.GetUser(c.Request.Context(), userID)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if target.Role == service.RoleAdmin {
+			if !middleware.EnforceStepUpAlways(c, h.totpService, h.userService) {
+				return
+			}
+			totpDemotionApproved = true
+		}
+	}
+
 	// 把普通用户提升为管理员属权限敏感操作：需最近完成 step-up 2FA 验证。
 	// 目标已是管理员时（前端编辑表单总是携带 role）不触发，避免日常编辑被打断。
 	if req.Role == service.RoleAdmin {
@@ -358,6 +375,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		RestrictPublicGroups: req.RestrictPublicGroups,
 		GroupRates:           req.GroupRates,
 		ActorAdminID:         getAdminIDFromContext(c),
+		TotpDemotionApproved: totpDemotionApproved,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

@@ -5,8 +5,11 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,6 +32,16 @@ func (s *totpVMUserRepoStub) DisableTotp(ctx context.Context, userID int64) erro
 	s.disableCalled = true
 	s.totpDisabled = true
 	return nil
+}
+
+func (s *totpVMUserRepoStub) DisableTotpWithExpectedRole(ctx context.Context, userID int64, expectedRole string, expectedSecret *string) error {
+	if s.user.Role != expectedRole || s.user.Status != StatusActive {
+		return ErrUserSecurityStateChanged
+	}
+	if (s.user.TotpSecretEncrypted == nil) != (expectedSecret == nil) || (expectedSecret != nil && *s.user.TotpSecretEncrypted != *expectedSecret) {
+		return ErrUserSecurityStateChanged
+	}
+	return s.DisableTotp(ctx, userID)
 }
 
 type totpVMSettingRepoStub struct {
@@ -62,6 +75,12 @@ func TestGetVerificationMethodAdminAlwaysPassword(t *testing.T) {
 	method, err := svc.GetVerificationMethod(context.Background(), admin.ID)
 	require.NoError(t, err)
 	require.Equal(t, "password", method.Method)
+	method, err = svc.GetVerificationMethod(context.Background(), admin.ID, "enable")
+	require.NoError(t, err)
+	require.Equal(t, "password", method.Method)
+	method, err = svc.GetVerificationMethod(context.Background(), admin.ID, "disable")
+	require.NoError(t, err)
+	require.Equal(t, "totp", method.Method)
 }
 
 func TestGetVerificationMethodRegularUserFollowsEmailVerifySetting(t *testing.T) {
@@ -99,6 +118,41 @@ func TestTotpDisableAdminCannotRemoveUnboundTwoFactor(t *testing.T) {
 	svc, userRepo := newTotpVMService(t, admin, false)
 	require.ErrorIs(t, svc.Disable(context.Background(), admin.ID, "", "password", "123456"), ErrCryptoTotpNotSetup)
 	require.False(t, userRepo.disableCalled)
+}
+
+func TestTotpDisableAdminAcceptsOnlyCurrentCode(t *testing.T) {
+	const secret = "JBSWY3DPEHPK3PXP"
+	encrypted := "encrypted:" + secret
+	admin := &User{ID: 1, Email: "admin@example.com", Role: RoleAdmin, Status: StatusActive, TotpEnabled: true, TotpSecretEncrypted: &encrypted}
+	repo := &totpVMUserRepoStub{user: admin}
+	cache := &totpDisableTestCache{}
+	settings := NewSettingService(&totpVMSettingRepoStub{values: map[string]string{SettingKeyTotpEnabled: "true"}}, nil)
+	svc := NewTotpService(repo, totpDisableTestEncryptor{}, cache, settings, nil, nil)
+
+	require.ErrorIs(t, svc.Disable(context.Background(), admin.ID, "", "correct-password", "000000"), ErrCryptoTotpRequired)
+	require.False(t, repo.disableCalled)
+
+	code, err := totp.GenerateCode(secret, time.Now())
+	require.NoError(t, err)
+	require.NoError(t, svc.Disable(context.Background(), admin.ID, "", "", code))
+	require.True(t, repo.disableCalled)
+}
+
+type totpDisableTestCache struct{ TotpCache }
+
+func (*totpDisableTestCache) GetVerifyAttempts(context.Context, int64) (int, error) { return 0, nil }
+func (*totpDisableTestCache) IncrementVerifyAttempts(context.Context, int64) (int, error) {
+	return 1, nil
+}
+func (*totpDisableTestCache) ClearVerifyAttempts(context.Context, int64) error { return nil }
+
+type totpDisableTestEncryptor struct{}
+
+func (totpDisableTestEncryptor) Encrypt(value string) (string, error) {
+	return "encrypted:" + value, nil
+}
+func (totpDisableTestEncryptor) Decrypt(value string) (string, error) {
+	return strings.TrimPrefix(value, "encrypted:"), nil
 }
 
 func TestTotpDisableRegularUserStillRequiresEmailCode(t *testing.T) {

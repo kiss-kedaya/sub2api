@@ -25,10 +25,12 @@ export async function getStatus(): Promise<TotpStatus> {
 
 /**
  * Get verification method for TOTP operations
- * @returns Method ('email' or 'password') required for setup/disable
+ * @param operation - Optional operation; administrator disable verifies the current TOTP
+ * @returns Email/password for setup, or administrator TOTP verification for disable
  */
-export async function getVerificationMethod(): Promise<TotpVerificationMethod> {
-  const { data } = await apiClient.get<TotpVerificationMethod>('/user/totp/verification-method')
+export async function getVerificationMethod(operation?: 'enable' | 'disable'): Promise<TotpVerificationMethod> {
+  const { data } = await apiClient.get<TotpVerificationMethod>('/user/totp/verification-method',
+    operation ? { params: { operation } } : undefined)
   return data
 }
 
@@ -43,7 +45,7 @@ export async function sendVerifyCode(): Promise<{ success: boolean }> {
 
 /**
  * Initiate TOTP setup - generates secret and QR code
- * @param request - Email code or password depending on verification method
+ * @param request - Email code or password
  * @returns Setup response with secret, QR code URL, and setup token
  */
 export async function initiateSetup(request?: TotpSetupRequest): Promise<TotpSetupResponse> {
@@ -63,7 +65,7 @@ export async function enable(request: TotpEnableRequest): Promise<TotpEnableResp
 
 /**
  * Disable TOTP for current user
- * @param request - Email code or password depending on verification method
+ * @param request - Email code, password, or the current six-digit TOTP code
  * @returns Success response
  */
 export async function disable(request: TotpDisableRequest): Promise<{ success: boolean }> {

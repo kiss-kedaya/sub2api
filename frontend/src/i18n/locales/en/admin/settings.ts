@@ -195,7 +195,7 @@ export default {
         passkeyValueNotConfigured: 'Not configured',
         passkeyDeploymentHint: 'Ask the server operator to set webauthn.enabled to true, configure webauthn.rp_id (domain only) and webauthn.rp_origins (full HTTPS origins), then restart the service.',
         stepUp: 'Step-up 2FA for Sensitive Operations',
-        stepUpHint: 'When enabled, sensitive operations (account/proxy export, backup creation and download, S3 config changes, promoting admins) require a recent TOTP verification (valid for 15 minutes). Your own account must have 2FA enabled before turning this on; turning it off also requires step-up verification.',
+        stepUpHint: 'When enabled, sensitive operations (account/proxy export, backup creation and download, S3 config changes, promoting admins) require a recent TOTP verification (valid for 15 minutes). Your own account must have 2FA enabled before turning this on. Disabling this switch or the global 2FA switch requires verification with your current authenticator code.',
         stepUpEnableRequiresTotp: 'Enable 2FA (TOTP) for your own account in Profile before turning on step-up verification.',
         sessionBinding: 'Session IP/UA Binding',
         sessionBindingHint: 'Bind login sessions to the client IP and User-Agent. Any change immediately invalidates the session and forces re-login, raising the bar for stolen-credential reuse.',

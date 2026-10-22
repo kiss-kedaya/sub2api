@@ -103,7 +103,7 @@ func TestAdminService_UpdateUser_DemoteLastAdminRejected(t *testing.T) {
 	repo := &roleGuardUserRepoStub{rpmUserRepoStub: &rpmUserRepoStub{userRepoStub: base}, adminTotal: 1}
 	svc := &adminServiceImpl{userRepo: repo, redeemCodeRepo: &redeemRepoStub{}}
 
-	_, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{Role: RoleUser})
+	_, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{Role: RoleUser, TotpDemotionApproved: true})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "last admin")
 	require.Nil(t, repo.lastUpdated, "最后一个管理员不应被降级持久化")
@@ -120,7 +120,7 @@ func TestAdminService_UpdateUser_DemoteAdminAllowedWhenOthersExist(t *testing.T)
 		authCacheInvalidator: invalidator,
 	}
 
-	updated, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{Role: RoleUser})
+	updated, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{Role: RoleUser, TotpDemotionApproved: true})
 	require.NoError(t, err)
 	require.Equal(t, RoleUser, updated.Role)
 	require.NotNil(t, repo.lastUpdated)
