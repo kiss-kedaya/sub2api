@@ -2108,9 +2108,28 @@ func inferResponsesFailedOpsErrorType(code string) string {
 	}
 }
 
-func inferStreamFailureStatus(_ *gin.Context, parsed parsedOpsError) int {
+func inferStreamFailureStatus(c *gin.Context, parsed parsedOpsError) int {
 	if parsed.StatusCode >= 400 && parsed.StatusCode <= 599 {
 		return parsed.StatusCode
+	}
+	// Synthetic SSE errors can carry only a protocol code (e.g. upstream_error),
+	// which cannot distinguish 500/502/503/504/529. Preserve the status already
+	// confirmed by the emitter, but only for the matching terminal error. Never
+	// infer the final result from a prior account attempt or WebSocket turn.
+	if marked, ok := service.GetOpsStreamError(c); ok && marked.Turn == 0 && !marked.NonStream &&
+		marked.IntendedStatus >= 400 && marked.IntendedStatus <= 599 &&
+		strings.TrimSpace(marked.Message) != "" && strings.TrimSpace(marked.Message) == strings.TrimSpace(parsed.Message) {
+		code := strings.TrimSpace(parsed.Code)
+		expectedType := inferResponsesFailedOpsErrorType(code)
+		if expectedType == "" {
+			expectedType = "upstream_error"
+		}
+		matchingResponses := inboundIsResponses(c) && code == mapResponsesErrorCode(marked.ErrType, marked.Code) &&
+			strings.TrimSpace(parsed.ErrorType) == expectedType
+		matchingSSE := strings.TrimSpace(parsed.ErrorType) == marked.ErrType && code == marked.Code
+		if matchingResponses || matchingSSE {
+			return marked.IntendedStatus
+		}
 	}
 	switch strings.TrimSpace(parsed.Code) {
 	case "rate_limit_exceeded":
