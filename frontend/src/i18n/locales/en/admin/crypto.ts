@@ -155,7 +155,7 @@ export default {
     csvVerify: 'Export the filtered deposit CSV, including deposit addresses and ledger information. Store it securely.',
     walletInitTitle: 'Initial wallet seed import',
     walletInitWarning: 'High risk: the deposit seed determines every user deposit address; changing it changes all addresses. Only the first import of two valid independent mnemonics is allowed here. Existing seeds cannot be overwritten. The Gas seed is separate. Fresh backend 2FA is required.',
-    depositMnemonic: 'Deposit mnemonic (first initialization only, optional)',
+    depositMnemonic: 'Deposit mnemonic (required for first initialization)',
     depositMnemonicImpact: 'Deposit address seed: derives every user deposit address. Replacing it changes all derived addresses; transfers may still arrive at existing addresses.',
     hotMnemonicScope: 'Gas seed: derives only the Gas wallet address for transaction fees. It does not replace user deposit addresses or the sweep destination.',
     hotMnemonic: 'Gas wallet hot mnemonic',
