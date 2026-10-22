@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -704,8 +705,8 @@ func anthropicStreamErrorPayload(line string) (string, bool) {
 	return trimmed, true
 }
 
-// anthropicStreamErrorSemantics 按官方错误码语义映射流内错误：overloaded→529、
-// 限流→429，其余按网关错误（502）处理，供 ops 记录与客户端语义还原使用。
+// anthropicStreamErrorSemantics 优先保留流内显式错误状态，再按错误类型映射。
+// 未知 relay 错误按 502 记录，不能因为流已经开始而伪造为权限错误 403。
 func anthropicStreamErrorSemantics(payload string) (status int, errType, message string) {
 	errType = strings.TrimSpace(gjson.Get(payload, "error.type").String())
 	if errType == "" {
@@ -714,6 +715,15 @@ func anthropicStreamErrorSemantics(payload string) (status int, errType, message
 	message = strings.TrimSpace(gjson.Get(payload, "error.message").String())
 	if message == "" {
 		message = strings.TrimSpace(gjson.Get(payload, "message").String())
+	}
+	for _, path := range []string{"error.status_code", "status_code", "error.status", "status"} {
+		value := gjson.Get(payload, path)
+		if value.Type != gjson.Number && value.Type != gjson.String {
+			continue
+		}
+		if explicit, err := strconv.Atoi(strings.TrimSpace(value.String())); err == nil && explicit >= 400 && explicit <= 599 {
+			return explicit, errType, message
+		}
 	}
 	switch errType {
 	case "overloaded_error":
@@ -730,6 +740,8 @@ func anthropicStreamErrorSemantics(payload string) (status int, errType, message
 		status = http.StatusUnauthorized
 	case "permission_error":
 		status = http.StatusForbidden
+	case "api_error", "server_error":
+		status = http.StatusInternalServerError
 	default:
 		status = http.StatusBadGateway
 	}

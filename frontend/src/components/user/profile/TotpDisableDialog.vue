@@ -26,7 +26,7 @@
 
         <form v-else @submit.prevent="handleDisable" class="space-y-4">
           <!-- Email verification -->
-          <div v-if="!isAdmin && verificationMethod === 'email'">
+          <div v-if="!requiresTotp && verificationMethod === 'email'">
             <label class="input-label">{{ t('profile.totp.emailCode') }}</label>
             <div class="flex gap-2">
               <input
@@ -49,7 +49,7 @@
           </div>
 
           <!-- Password verification -->
-          <div v-else-if="!isAdmin">
+          <div v-else-if="!requiresTotp && verificationMethod === 'password'">
             <label for="password" class="input-label">
               {{ t('profile.currentPassword') }}
             </label>
@@ -63,8 +63,8 @@
             />
           </div>
 
-          <div>
-            <label for="disable-totp-code" class="input-label">{{ t('admin.crypto.securityCode') }}</label>
+          <div v-if="requiresTotp">
+            <label for="disable-totp-code" class="input-label">{{ t('profile.totp.authenticatorCode') }}</label>
             <input
               id="disable-totp-code"
               v-model="form.totpCode"
@@ -72,12 +72,13 @@
               inputmode="numeric"
               pattern="[0-9]{6}"
               maxlength="6"
-              autocomplete="off"
+              autocomplete="one-time-code"
+              data-testid="totp-disable-code"
               class="input"
-              :required="isAdmin"
+              required
               :disabled="loading"
             />
-            <p v-if="isAdmin" class="mt-2 text-sm text-gray-500">{{ t('admin.crypto.securityFreshCode') }}</p>
+            <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ t('profile.totp.disableTotpHint') }}</p>
           </div>
 
           <!-- Actions -->
@@ -105,7 +106,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { totpAPI } from '@/api'
-import type { TotpDisableRequest } from '@/types'
+import type { TotpDisableRequest, TotpVerificationMethod } from '@/types'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
 const emit = defineEmits<{
@@ -125,7 +126,8 @@ watch(isAdmin, (admin) => {
 })
 
 const methodLoading = ref(true)
-const verificationMethod = ref<'email' | 'password'>('password')
+const verificationMethod = ref<TotpVerificationMethod['method'] | null>(null)
+const requiresTotp = computed(() => isAdmin.value || verificationMethod.value === 'totp')
 const loading = ref(false)
 const sendingCode = ref(false)
 const codeCooldown = ref(0)
@@ -137,18 +139,19 @@ const form = ref({
 })
 
 const canSubmit = computed(() => {
-  if (isAdmin.value) return /^[0-9]{6}$/.test(form.value.totpCode)
-  if (form.value.totpCode && !/^[0-9]{6}$/.test(form.value.totpCode)) return false
+  if (methodLoading.value) return false
+  if (requiresTotp.value) return /^[0-9]{6}$/.test(form.value.totpCode)
   if (verificationMethod.value === 'email') {
     return form.value.emailCode.length === 6
   }
-  return form.value.password.length > 0
+  return verificationMethod.value === 'password' && form.value.password.length > 0
 })
 
 const loadVerificationMethod = async () => {
   methodLoading.value = true
   try {
-    const method = await totpAPI.getVerificationMethod()
+    const method = await totpAPI.getVerificationMethod('disable')
+    if (!['email', 'password', 'totp'].includes(method.method)) throw new Error(t('profile.totp.disableFailed'))
     verificationMethod.value = method.method
   } catch (err: any) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
@@ -159,6 +162,7 @@ const loadVerificationMethod = async () => {
 }
 
 const handleSendCode = async () => {
+  if (requiresTotp.value || verificationMethod.value !== 'email') return
   sendingCode.value = true
   try {
     await totpAPI.sendVerifyCode()
@@ -191,12 +195,11 @@ const handleDisable = async () => {
   loading.value = true
 
   try {
-    const request: TotpDisableRequest = isAdmin.value
+    const request: TotpDisableRequest = requiresTotp.value
       ? { totp_code: form.value.totpCode }
       : verificationMethod.value === 'email'
         ? { email_code: form.value.emailCode }
         : { password: form.value.password }
-    if (!isAdmin.value && form.value.totpCode) request.totp_code = form.value.totpCode
 
     await totpAPI.disable(request)
     appStore.showSuccess(t('profile.totp.disableSuccess'))

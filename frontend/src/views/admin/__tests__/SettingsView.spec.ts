@@ -7,6 +7,7 @@ import enSettings from "@/i18n/locales/en/admin/settings";
 import zhCommon from "@/i18n/locales/zh/common";
 import zhSettings from "@/i18n/locales/zh/admin/settings";
 import SettingsView from "../SettingsView.vue";
+import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 
 const {
   getSettings,
@@ -36,6 +37,7 @@ const {
   adminSettingsFetch,
   showError,
   showSuccess,
+  verifyStepUp,
 } = vi.hoisted(() => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
@@ -77,11 +79,13 @@ const {
   adminSettingsFetch: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
+  verifyStepUp: vi.fn(),
 }));
 
 const localeRef = vi.hoisted(() => ({ value: "zh-CN" }));
 
 vi.mock("@/api", () => ({
+  totpAPI: { stepUp: verifyStepUp },
   adminAPI: {
     settings: {
       getSettings,
@@ -653,6 +657,8 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockReset();
     showError.mockReset();
     showSuccess.mockReset();
+    verifyStepUp.mockReset();
+    verifyStepUp.mockResolvedValue({ verified: true, expires_in: 900 });
     localeRef.value = "zh-CN";
 
     getSettings.mockResolvedValue({ ...baseSettingsResponse });
@@ -718,6 +724,80 @@ describe("admin SettingsView payment visible method controls", () => {
     });
     fetchPublicSettings.mockResolvedValue(undefined);
     adminSettingsFetch.mockResolvedValue(undefined);
+  });
+
+  it.each(["totp_enabled", "step_up_enabled"])("saves enabled %s without requesting a code", async (field) => {
+    const wrapper = mountView();
+    await flushPromises();
+    (wrapper.vm as unknown as { form: Record<string, unknown> }).form[field] = true;
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings.mock.calls[0]?.[0][field]).toBe(true);
+    expect(verifyStepUp).not.toHaveBeenCalled();
+    expect(wrapper.getComponent(TotpStepUpDialog).find('input[maxlength="1"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it.each(["totp_enabled", "step_up_enabled"])("retries disabling %s only after the current authenticator code is verified", async (field) => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, [field]: true });
+    updateSettings.mockRejectedValueOnce({ status: 403, reason: "STEP_UP_REQUIRED", message: "Current TOTP required" });
+    const wrapper = mountView();
+    await flushPromises();
+    (wrapper.vm as unknown as { form: Record<string, unknown> }).form[field] = false;
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    const original = updateSettings.mock.calls[0]?.[0];
+    const dialog = wrapper.getComponent(TotpStepUpDialog);
+    const digits = dialog.findAll('input[maxlength="1"]');
+    expect(digits).toHaveLength(6);
+    for (const [index, digit] of digits.entries()) await digit.setValue(String(index + 1));
+    await flushPromises();
+    expect(verifyStepUp).toHaveBeenCalledWith("123456");
+    expect(updateSettings).toHaveBeenCalledTimes(2);
+    expect(updateSettings).toHaveBeenNthCalledWith(2, original);
+    expect(original[field]).toBe(false);
+    expect(original).not.toHaveProperty("security_server_code");
+    expect(showSuccess).toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("does not save or retry when fresh TOTP verification is cancelled", async () => {
+    updateSettings.mockRejectedValueOnce({ status: 403, reason: "STEP_UP_REQUIRED" });
+    const wrapper = mountView();
+    await flushPromises();
+    showError.mockClear();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    await wrapper.getComponent(TotpStepUpDialog).get('button').trigger("click");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(verifyStepUp).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
+    expect(showSuccess).not.toHaveBeenCalled();
+    expect(updateWebSearchEmulationConfig).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("keeps the verification dialog open after an invalid authenticator code", async () => {
+    updateSettings.mockRejectedValueOnce({ status: 403, code: "STEP_UP_REQUIRED" });
+    verifyStepUp.mockRejectedValueOnce({ status: 400, message: "Authenticator code expired" });
+    const wrapper = mountView();
+    await flushPromises();
+    showError.mockClear();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    const dialog = wrapper.getComponent(TotpStepUpDialog);
+    for (const digit of dialog.findAll('input[maxlength="1"]')) await digit.setValue("1");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(showError).toHaveBeenCalledWith("Authenticator code expired");
+    expect(showSuccess).not.toHaveBeenCalled();
+    expect(dialog.findAll('input[maxlength="1"]')).toHaveLength(6);
+    await dialog.get('button').trigger("click");
+    await flushPromises();
+    wrapper.unmount();
   });
 
   it("submits the Codex ticket harvest toggle", async () => {
