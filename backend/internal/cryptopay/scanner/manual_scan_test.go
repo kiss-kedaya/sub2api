@@ -3,10 +3,55 @@ package scanner
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 )
+
+func TestManualBackfillRejectsUnconfirmedAndUnboundedRanges(t *testing.T) {
+	for _, from := range []uint64{106, 111, ^uint64(0)} {
+		pg := &scannerMockPG{}
+		w, _ := scannerLockFixture(t, pg)
+		if err := w.RunOnceFrom(t.Context(), from); err == nil {
+			t.Fatalf("accepted unconfirmed block %d", from)
+		}
+		scannerAssertSteps(t, pg, "acquire", "release")
+		scannerAssertIdle(t, w, pg, false)
+	}
+	pg := &scannerMockPG{}
+	w, fixture := scannerLockFixture(t, pg)
+	fixture.head = "0x30d40" // 200000
+	if err := w.RunOnceFrom(t.Context(), 1); err == nil {
+		t.Fatal("unbounded historical range accepted")
+	}
+	scannerAssertSteps(t, pg, "acquire", "release")
+}
+
+func TestManualBackfillRewindsAndPreservesEarlierUnfinishedCursor(t *testing.T) {
+	for _, from := range []uint64{90, 103} {
+		pg := &scannerMockPG{}
+		w, _ := scannerLockFixture(t, pg)
+		if err := w.RunOnceFrom(t.Context(), from); err != nil {
+			t.Fatal(err)
+		}
+		_, _, events, _ := pg.snapshot()
+		saves := 0
+		for _, event := range events {
+			if strings.Contains(event.query, "INSERT INTO crypto_scan_cursors") {
+				saves++
+			}
+		}
+		want := 1
+		if from == 90 {
+			want = 2 // rewind, then ordinary progress
+		}
+		if saves != want {
+			t.Fatalf("from %d saved %d cursors, want %d", from, saves, want)
+		}
+		scannerAssertIdle(t, w, pg, false)
+	}
+}
 
 func TestManualScanRunsFullPassUnderSharedLock(t *testing.T) {
 	pg := &scannerMockPG{}

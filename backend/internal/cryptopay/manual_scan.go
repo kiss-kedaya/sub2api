@@ -12,7 +12,7 @@ var ErrScanBusy = scanner.ErrScanBusy
 
 // RunScan leaves all background maintenance disabled. The local guard pins the
 // config against reload/sweep; the worker's session lock protects all instances.
-func (s *Service) RunScan(ctx context.Context) error {
+func (s *Service) RunScan(ctx context.Context, fromBlock uint64) error {
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
@@ -29,5 +29,5 @@ func (s *Service) RunScan(ctx context.Context) error {
 	if !enabled || worker == nil {
 		return errors.New("enable payment channel before scanning")
 	}
-	return worker.RunOnce(ctx)
+	return worker.RunOnceFrom(ctx, fromBlock)
 }

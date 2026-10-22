@@ -15,7 +15,9 @@ import (
 // AdminRunScan requires fresh payment 2FA through the entire admin route group.
 func (h *CryptoHandler) AdminRunScan(c *gin.Context) {
 	cryptoVaultHeaders(c)
-	var request struct{}
+	var request struct {
+		FromBlock uint64 `json:"from_block"`
+	}
 	if !decodeCryptoRequest(c, &request, 4<<10, "Invalid scan request") {
 		return
 	}
@@ -25,7 +27,7 @@ func (h *CryptoHandler) AdminRunScan(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
-	if err := h.service.RunScan(ctx); err != nil {
+	if err := h.service.RunScan(ctx, request.FromBlock); err != nil {
 		if errors.Is(err, cryptopay.ErrScanBusy) {
 			response.Error(c, http.StatusConflict, "Another payment operation is running; retry later")
 			return
