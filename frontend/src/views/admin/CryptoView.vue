@@ -68,7 +68,7 @@
               </div>
             </details>
 
-            <!-- The main service unlocks the encrypted wallet with its vault passphrase. -->
+            <!-- Seeds are managed and encrypted by the main service, with fresh 2FA for changes. -->
             <details class="crypto-view__group" open>
               <summary class="crypto-view__group-summary">
                 <span class="crypto-view__group-title">{{ t('admin.crypto.walletLockTitle') }}</span>
@@ -92,44 +92,25 @@
                 {{ t('admin.crypto.walletNotReady') }}
               </p>
 
-              <div v-if="!walletUnlocked" class="crypto-view__field">
-                <label for="crypto-wallet-unlock-passphrase" class="crypto-view__label">{{ t('admin.crypto.unlockPassphrase') }}</label>
-                <input
-                  id="crypto-wallet-unlock-passphrase"
-                  v-model="unlockPassphrase"
-                  type="password"
-                  class="input"
-                  autocomplete="new-password"
-                  :placeholder="t('admin.crypto.unlockPassphrasePlaceholder')"
-                  @keyup.enter="submitUnlock"
-                />
-                <p class="crypto-view__hint">{{ t('admin.crypto.unlockPassphraseHint') }}</p>
-                <details>
-                  <summary>{{ t('admin.crypto.walletInitTitle') }}</summary>
-                  <p class="crypto-view__approval-notice">{{ t('admin.crypto.walletInitWarning') }}</p>
-                  <label for="crypto-deposit-mnemonic" class="crypto-view__label">{{ t('admin.crypto.depositMnemonic') }}</label>
-                  <input id="crypto-deposit-mnemonic" v-model="depositMnemonic" type="password" class="input" autocomplete="off" spellcheck="false" />
-                  <p class="crypto-view__hint">{{ t('admin.crypto.depositMnemonicImpact') }}</p>
-                  <label for="crypto-initial-hot-mnemonic" class="crypto-view__label">{{ t('admin.crypto.hotMnemonic') }}</label>
-                  <input id="crypto-initial-hot-mnemonic" v-model="initialHotMnemonic" type="password" class="input" autocomplete="off" spellcheck="false" />
-                  <p class="crypto-view__hint">{{ t('admin.crypto.hotMnemonicScope') }}</p>
-                </details>
-              </div>
-
-              <div v-if="!walletUnlocked" class="crypto-view__actions">
-                <button
-                  class="btn btn-primary"
-                  :disabled="unlocking || !unlockPassphrase"
-                  @click="submitUnlock"
-                >
-                  {{ unlocking ? t('common.saving') : t('admin.crypto.walletUnlockAction') }}
-                </button>
+              <p class="crypto-view__hint">{{ t('admin.crypto.walletManagedHint') }}</p>
+              <div v-if="!walletConfigured" class="crypto-view__field">
+                <p class="crypto-view__approval-notice">{{ t('admin.crypto.walletInitWarning') }}</p>
+                <label for="crypto-deposit-mnemonic" class="crypto-view__label">{{ t('admin.crypto.depositMnemonic') }}</label>
+                <input id="crypto-deposit-mnemonic" v-model="depositMnemonic" type="password" class="input" autocomplete="off" spellcheck="false" />
+                <p class="crypto-view__hint">{{ t('admin.crypto.depositMnemonicImpact') }}</p>
+                <label for="crypto-initial-hot-mnemonic" class="crypto-view__label">{{ t('admin.crypto.hotMnemonic') }}</label>
+                <input id="crypto-initial-hot-mnemonic" v-model="initialHotMnemonic" type="password" class="input" autocomplete="off" spellcheck="false" />
+                <p class="crypto-view__hint">{{ t('admin.crypto.hotMnemonicScope') }}</p>
+                <div class="crypto-view__actions">
+                  <button class="btn btn-primary" :disabled="initializing || !depositMnemonic.trim() || !initialHotMnemonic.trim()" @click="submitInitialize">
+                    {{ initializing ? t('common.saving') : t('admin.crypto.walletInitializeAction') }}
+                  </button>
+                </div>
               </div>
               <div class="crypto-view__wallet-actions">
                 <p class="crypto-view__hint">{{ t('admin.crypto.walletToolsHint') }}</p>
-                <button type="button" class="btn btn-secondary" @click="openWalletDialog('backup')">{{ t('admin.crypto.backupAction') }}</button>
-                <button type="button" class="btn btn-secondary" @click="mnemonicsDialogOpen = true">{{ t('admin.crypto.mnemonicsExportAction') }}</button>
-                <button type="button" class="btn btn-secondary" @click="openWalletDialog('import')">{{ t('admin.crypto.hotImportAction') }}</button>
+                <button type="button" class="btn btn-secondary" :disabled="!walletCanDerive" @click="mnemonicsDialogOpen = true">{{ t('admin.crypto.mnemonicsExportAction') }}</button>
+                <button type="button" class="btn btn-secondary" :disabled="!walletCanDerive" @click="openWalletDialog()">{{ t('admin.crypto.hotImportAction') }}</button>
               </div>
             </details>
 
@@ -275,7 +256,7 @@
                 <button
                   class="btn btn-secondary btn-sm"
                   :disabled="loadingHotAddress || !walletCanDerive"
-                  :title="!walletOk ? t('admin.crypto.walletUnavailable') : !walletUnlocked ? t('admin.crypto.hotAddressLocked') : ''"
+                  :title="!walletOk ? t('admin.crypto.walletUnavailable') : !walletLoaded ? t('admin.crypto.hotAddressLocked') : ''"
                   @click="fillHotWalletAddresses"
                 >
                   {{ loadingHotAddress ? t('common.loading') : t('admin.crypto.hotAddressFill') }}
@@ -480,7 +461,7 @@
             <button
               class="btn btn-primary"
               :disabled="sweeping || !sweepReady"
-              :title="sweepReady ? '' : !walletOk ? t('admin.crypto.walletUnavailable') : !walletUnlocked ? t('admin.crypto.hotAddressLocked') : t('admin.crypto.walletNotReady')"
+              :title="sweepReady ? '' : !walletOk ? t('admin.crypto.walletUnavailable') : !walletLoaded ? t('admin.crypto.hotAddressLocked') : t('admin.crypto.walletNotReady')"
               @click="requestSweep"
             >
               {{ t('admin.crypto.sweepRun') }}
@@ -707,21 +688,16 @@
     />
 
     <CryptoMnemonicsDialog :show="mnemonicsDialogOpen" @close="mnemonicsDialogOpen = false" />
-    <BaseDialog :show="walletDialog !== null" :title="t(walletDialog === 'backup' ? 'admin.crypto.backupAction' : 'admin.crypto.hotImportAction')" @close="closeWalletDialog">
+    <BaseDialog :show="walletDialog !== null" :title="t('admin.crypto.hotImportAction')" @close="closeWalletDialog">
       <form id="crypto-wallet-form" class="crypto-view__wallet-form" autocomplete="off" @submit.prevent="submitWallet">
-        <p class="crypto-view__approval-notice">{{ t(walletDialog === 'backup' ? 'admin.crypto.backupWarning' : 'admin.crypto.hotImportWarning') }}</p>
-        <label for="crypto-wallet-passphrase">{{ t('admin.crypto.vaultPassphrase') }}</label>
-        <input id="crypto-wallet-passphrase" v-model="walletPassphrase" type="password" class="input" autocomplete="off" required />
-        <p class="crypto-view__hint">{{ t('admin.crypto.vaultPassphraseHint') }}</p>
-        <template v-if="walletDialog === 'import'">
+        <p class="crypto-view__approval-notice">{{ t('admin.crypto.hotImportWarning') }}</p>
           <label for="crypto-hot-mnemonic">{{ t('admin.crypto.hotMnemonic') }}</label>
           <input id="crypto-hot-mnemonic" v-model="hotMnemonic" type="password" class="input" autocomplete="off" spellcheck="false" required />
-        </template>
       </form>
       <template #footer>
         <div class="crypto-view__actions">
           <button type="button" class="btn btn-secondary" @click="closeWalletDialog">{{ t('common.cancel') }}</button>
-          <button type="submit" form="crypto-wallet-form" class="btn btn-danger" :disabled="!walletPassphrase || (walletDialog === 'import' && !hotMnemonic.trim())">{{ t('admin.crypto.walletContinue') }}</button>
+          <button type="submit" form="crypto-wallet-form" class="btn btn-danger" :disabled="!hotMnemonic.trim()">{{ t('admin.crypto.walletContinue') }}</button>
         </div>
       </template>
     </BaseDialog>
@@ -754,11 +730,10 @@ import {
   runSweep,
   setAddressStatus,
   exportDepositsCSV,
-  unlockWallet,
+  initializeWallet,
   updateCryptoConfig,
   testRPCEndpoint,
   autoPickRPC,
-  backupWallet,
   importHotMnemonic,
   type AddressSortKey,
   type AdminAddressSummary,
@@ -863,24 +838,24 @@ const loadingHealth = ref(false)
 const healthError = ref('')
 const exporting = ref(false)
 
-const walletUnlocked = ref(false)
-const walletSigningEnabled = ref(false)
+const walletConfigured = ref(false)
+const walletLoaded = ref(false)
+const walletChannelEnabled = ref(false)
 const walletOk = ref(false)
-const walletCanDerive = computed(() => walletOk.value && walletUnlocked.value)
-const walletReady = computed(() => walletCanDerive.value && walletSigningEnabled.value)
+const walletCanDerive = computed(() => walletOk.value && walletLoaded.value)
+const walletReady = computed(() => walletCanDerive.value && walletChannelEnabled.value)
 const walletStateLabel = computed(() => !walletOk.value ? 'admin.crypto.walletUnavailable'
-  : !walletUnlocked.value ? 'admin.crypto.walletLocked'
+  : !walletConfigured.value ? 'admin.crypto.walletNotConfigured'
+    : !walletLoaded.value ? 'admin.crypto.walletUnavailable'
     : walletReady.value ? 'admin.crypto.walletReady' : 'admin.crypto.walletNeedsConfig')
 const loadingHotAddress = ref(false)
 const hotAddressNote = ref('')
 const loadingWallet = ref(false)
-const unlocking = ref(false)
-const unlockPassphrase = ref('')
+const initializing = ref(false)
 const depositMnemonic = ref('')
 const initialHotMnemonic = ref('')
-const walletDialog = ref<'backup' | 'import' | null>(null)
+const walletDialog = ref<'import' | null>(null)
 const mnemonicsDialogOpen = ref(false)
-const walletPassphrase = ref('')
 const hotMnemonic = ref('')
 
 // A real sweep needs a destination. Without one the backend refuses anyway;
@@ -1422,13 +1397,14 @@ async function loadWalletStatus() {
   try {
     const st = await getWalletStatus()
     walletOk.value = st.ok === true
-    walletUnlocked.value = st.unlocked === true
-    walletSigningEnabled.value = st.signing_enabled === true
+    walletConfigured.value = st.configured === true
+    walletLoaded.value = st.ready === true
+    walletChannelEnabled.value = st.enabled === true
   } catch {
     // Reflect unavailable state in the wallet badge without breaking the page.
     walletOk.value = false
-    walletUnlocked.value = false
-    walletSigningEnabled.value = false
+    walletLoaded.value = false
+    walletChannelEnabled.value = false
   } finally {
     loadingWallet.value = false
   }
@@ -1453,23 +1429,23 @@ async function fillHotWalletAddresses() {
   }
 }
 
-async function submitUnlock() {
-  if (!unlockPassphrase.value || unlocking.value) return
-  unlocking.value = true
+async function submitInitialize() {
+  if (!depositMnemonic.value.trim() || !initialHotMnemonic.value.trim() || initializing.value) return
+  initializing.value = true
+  const operationTab = activeTab.value
   try {
-    const label = t('admin.crypto.unlockVerify') + (depositMnemonic.value || initialHotMnemonic.value ? `\n${t('admin.crypto.walletInitWarning')}` : '')
-    const completed = await withCryptoVerification(label, async (code) => {
-      await unlockWallet(unlockPassphrase.value, depositMnemonic.value.trim(), initialHotMnemonic.value.trim(), { totpCode: code })
+    const completed = await withCryptoVerification(t('admin.crypto.walletInitWarning'), async (code) => {
+      if (operationTab !== activeTab.value) return
+      await initializeWallet(depositMnemonic.value.trim(), initialHotMnemonic.value.trim(), { totpCode: code })
     })
-    if (completed) {
+    if (completed && operationTab === activeTab.value) {
       await loadWalletStatus()
-      appStore.showSuccess(t('admin.crypto.walletUnlockDone'))
+      appStore.showSuccess(t('admin.crypto.walletInitializeDone'))
     }
   } finally {
-    unlockPassphrase.value = ''
     depositMnemonic.value = ''
     initialHotMnemonic.value = ''
-    unlocking.value = false
+    initializing.value = false
   }
 }
 
@@ -1484,49 +1460,35 @@ function downloadBlob(blob: Blob, filename: string) {
 
 function closeWalletDialog() {
   walletDialog.value = null
-  walletPassphrase.value = ''
   hotMnemonic.value = ''
 }
 
-function openWalletDialog(mode: 'backup' | 'import') {
+function openWalletDialog() {
   closeWalletDialog()
-  walletDialog.value = mode
+  walletDialog.value = 'import'
 }
 
 async function submitWallet() {
-  const mode = walletDialog.value
-  if (!mode || !walletPassphrase.value || (mode === 'import' && !hotMnemonic.value.trim())) return
+  if (!walletDialog.value || !hotMnemonic.value.trim()) return
   const operationTab = activeTab.value
-  const passphrase = walletPassphrase.value
-  const mnemonic = hotMnemonic.value.trim()
+  let mnemonic = hotMnemonic.value.trim()
   walletDialog.value = null
   try {
-    const completed = await withCryptoVerification(t(mode === 'backup' ? 'admin.crypto.backupWarning' : 'admin.crypto.hotImportWarning'), async (code) => {
-      if (mode === 'backup') {
-        const blob = await backupWallet(passphrase, { totpCode: code })
-        if (operationTab !== activeTab.value) return
-        downloadBlob(blob, 'crypto-wallet-backup.json')
-      } else {
-        const result = await importHotMnemonic(passphrase, mnemonic, { totpCode: code })
-        if (operationTab !== activeTab.value) return
-        if (!result.saved) throw new Error(t('common.error'))
-      }
+    const completed = await withCryptoVerification(t('admin.crypto.hotImportWarning'), async (code) => {
+      if (operationTab !== activeTab.value) return
+      const result = await importHotMnemonic(mnemonic, { totpCode: code })
+      if (!result.saved) throw new Error(t('common.error'))
     })
     if (completed && operationTab === activeTab.value) {
-      if (mode === 'import') {
-        walletUnlocked.value = false
-        walletSigningEnabled.value = false
-        hotWallets.value = []
-        hotAddressNote.value = ''
-      }
-      appStore.showSuccess(t(mode === 'backup' ? 'admin.crypto.backupDone' : 'admin.crypto.hotImportDone'))
+      hotAddressNote.value = ''
+      await loadWalletStatus()
+      appStore.showSuccess(t('admin.crypto.hotImportDone'))
     }
-  } finally { closeWalletDialog() }
+  } finally { mnemonic = ''; closeWalletDialog() }
 }
 
 function clearWalletInputs() {
   closeWalletDialog()
-  unlockPassphrase.value = ''
   depositMnemonic.value = ''
   initialHotMnemonic.value = ''
 }

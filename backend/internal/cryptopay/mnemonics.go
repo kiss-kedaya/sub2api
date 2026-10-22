@@ -8,7 +8,7 @@ import (
 )
 
 // ExportMnemonics delegates one-time vault decryption to the local wallet.
-func (s *Service) ExportMnemonics(ctx context.Context, passphrase string) (*sweeper.MnemonicExport, error) {
+func (s *Service) ExportMnemonics(ctx context.Context) (*sweeper.MnemonicExport, error) {
 	if s == nil {
 		return nil, errors.New("wallet unavailable")
 	}
@@ -18,5 +18,5 @@ func (s *Service) ExportMnemonics(ctx context.Context, passphrase string) (*swee
 	if wallet == nil {
 		return nil, errors.New("wallet unavailable")
 	}
-	return wallet.ExportMnemonics(ctx, passphrase)
+	return wallet.ExportMnemonics(ctx)
 }

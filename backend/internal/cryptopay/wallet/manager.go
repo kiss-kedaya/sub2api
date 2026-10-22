@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"context"
+	"crypto/cipher"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
@@ -9,14 +10,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
 	"github.com/ethereum/go-ethereum/common"
 )
 
 // Manager owns seed residency and serializes every operation that uses seeds.
-// Callers must not hold the sweep advisory lock when calling Unlock or Import.
+// Callers must not hold the sweep advisory lock when initializing or importing seeds.
 // No method re-enters mu, and no DB connection is retained between operations.
 type Manager struct {
 	db               *sql.DB
@@ -25,12 +25,19 @@ type Manager struct {
 	destination      string
 	enabled          bool
 	vaultFingerprint [32]byte
-	guard            vaultGuard
+	cipher           cipher.AEAD
+	configured       bool
 }
 
-// New creates a locked wallet, with signing enabled once a destination is set.
-// It uses only the supplied database; it never reads environment credentials.
-func New(db *sql.DB) *Manager { return &Manager{db: db, enabled: true} }
+// New uses only the supplied persistent installation key. A missing or invalid
+// key fails closed; random process-local fallback keys are never generated.
+func New(db *sql.DB, masterKey ...string) *Manager {
+	m := &Manager{db: db, enabled: true}
+	if len(masterKey) == 1 {
+		m.cipher = newSeedCipher(masterKey[0])
+	}
+	return m
+}
 
 // SetDestination configures the only ERC20 recipient. Empty clears it; invalid
 // input clears it as well so a previous recipient cannot survive bad config.
@@ -56,14 +63,15 @@ func (m *Manager) SetEnabled(enabled bool) {
 	m.enabled = enabled
 }
 
-// Lock erases both resident seeds. A subsequent Unlock must authenticate again.
-func (m *Manager) Lock() {
+// Close erases resident key material during service teardown. It is not a
+// user-visible wallet lock; subsequent operations reload the persisted seeds.
+func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.lockSeeds()
+	m.clearSeeds()
 }
 
-func (m *Manager) lockSeeds() {
+func (m *Manager) clearSeeds() {
 	if m.deposit != nil {
 		clear(m.deposit.seed)
 	}
@@ -74,44 +82,54 @@ func (m *Manager) lockSeeds() {
 	m.vaultFingerprint = [32]byte{}
 }
 
-func (m *Manager) unlocked() bool { return m.deposit != nil && m.hot != nil }
+func (m *Manager) ready() bool { return m.deposit != nil && m.hot != nil }
 
-// Status reports current in-process state without writing on every poll.
+// Status reads current ciphertext and automatically refreshes resident seeds.
+// Polling never writes or performs blockchain operations.
 func (m *Manager) Status(ctx context.Context) (*Status, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return &Status{OK: m.db != nil, Unlocked: m.unlocked(), SigningEnabled: m.enabled && m.destination != ""}, nil
+	st := &Status{OK: m.db != nil && m.cipher != nil, Enabled: m.enabled && m.destination != ""}
+	if m.db == nil {
+		return st, nil
+	}
+	raw, err := readVault(ctx, m.db, false)
+	if err != nil {
+		m.clearSeeds()
+		return nil, err
+	}
+	m.configured = raw != ""
+	st.Configured = m.configured
+	if raw != "" {
+		st.Ready = m.refreshContents(raw) == nil
+	} else {
+		m.clearSeeds()
+	}
+	return st, nil
 }
 
-// Unlock opens the existing vault without accepting seed replacement. A new
-// vault requires two valid, different BIP39 mnemonics and a 12-character password.
-// Address consistency, ciphertext and success audits commit before seed residency.
-func (m *Manager) Unlock(ctx context.Context, passphrase, depositMnemonic, hotMnemonic string) error {
+// Initialize installs two independent seeds exactly once. Existing ciphertext,
+// including the legacy format, is never replaced through initialization.
+func (m *Manager) Initialize(ctx context.Context, depositMnemonic, hotMnemonic string) error {
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
-	const op = "unlock"
-	if !validPassphrase(passphrase) {
-		return m.denied(op, ErrMnemonicExportRejected)
-	}
-	if !m.guard.begin() {
-		return m.denied(op, ErrMnemonicExportLimited)
-	}
-	badPassphrase := false
-	defer func() { m.guard.finish(badPassphrase) }()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	err := m.unlock(ctx, passphrase, depositMnemonic, hotMnemonic, &badPassphrase)
+	err := m.initialize(ctx, depositMnemonic, hotMnemonic)
 	if err != nil {
-		return m.denied(op, err)
+		return m.denied("wallet_init", err)
 	}
 	return nil
 }
 
-func (m *Manager) unlock(ctx context.Context, passphrase, depositMnemonic, hotMnemonic string, badPassphrase *bool) error {
+func (m *Manager) initialize(ctx context.Context, depositMnemonic, hotMnemonic string) error {
+	if m.cipher == nil {
+		return ErrVaultUnavailable
+	}
 	tx, err := m.beginVaultTx(ctx)
 	if err != nil {
 		return err
@@ -121,63 +139,37 @@ func (m *Manager) unlock(ctx context.Context, passphrase, depositMnemonic, hotMn
 	if err != nil {
 		return err
 	}
-	initializing := raw == ""
-	var contents *vaultContents
-	if !initializing {
-		if depositMnemonic != "" || hotMnemonic != "" {
-			return ErrSeedReplacement
-		}
-		contents, err = openVaultString(raw, passphrase)
-		if err != nil {
-			*badPassphrase = true
-			return ErrMnemonicExportRejected
-		}
-	} else {
-		if utf8.RuneCountInString(passphrase) < 12 {
-			return errors.New("a new vault requires a passphrase of at least 12 characters")
-		}
-		contents = &vaultContents{Deposit: normalizeMnemonic(depositMnemonic), Hot: normalizeMnemonic(hotMnemonic)}
+	if raw != "" {
+		return ErrSeedReplacement
 	}
+	contents := &vaultContents{Deposit: normalizeMnemonic(depositMnemonic), Hot: normalizeMnemonic(hotMnemonic)}
 	defer func() { contents.Deposit, contents.Hot = "", "" }()
 	deposit, hot, err := contentsDerivers(contents)
 	if err != nil {
 		return err
 	}
-	resident := false
-	defer func() {
-		if !resident {
-			clear(deposit.seed)
-			clear(hot.seed)
-		}
-	}()
+	defer clear(deposit.seed)
+	defer clear(hot.seed)
 	if err := validateDepositAddresses(ctx, tx, deposit); err != nil {
 		return err
 	}
-	if initializing {
-		sealed, err := sealContents(contents.Deposit, contents.Hot, passphrase)
-		if err != nil {
-			return ErrVaultUnavailable
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, NOW())
-			ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, settingVault, sealed); err != nil {
-			return ErrVaultUnavailable
-		}
-		if err := writeAudit(ctx, tx, auditEntry{op: "vault_init", result: "ok"}); err != nil {
-			return err
-		}
-		raw = sealed
+	sealed, err := m.sealContents(contents.Deposit, contents.Hot)
+	if err != nil {
+		return err
 	}
-	if err := writeAudit(ctx, tx, auditEntry{op: "unlock", result: "ok"}); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, settingVault, sealed); err != nil {
+		return ErrVaultUnavailable
+	}
+	if err := writeAudit(ctx, tx, auditEntry{op: "wallet_init", result: "ok"}); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
+		m.clearSeeds()
 		return ErrVaultUnavailable
 	}
-	m.lockSeeds()
-	m.deposit, m.hot = deposit, hot
-	m.vaultFingerprint = sha256.Sum256([]byte(raw))
-	resident = true
-	return nil
+	m.configured = true
+	return m.refreshContents(sealed)
 }
 
 // Derive returns deposit addresses using the former signer's BIP44 paths.
@@ -187,9 +179,6 @@ func (m *Manager) Derive(ctx context.Context, start, count uint32) ([]addresses.
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.unlocked() {
-		return nil, m.denied("derive", ErrVaultLocked)
-	}
 	if count == 0 || count > 500 || start >= 1<<31 || uint64(start)+uint64(count) > 1<<31 {
 		return nil, m.denied("derive", errors.New("derivation count must be 1-500 within nonhardened index range"))
 	}
@@ -234,9 +223,6 @@ func (m *Manager) HotAddresses(ctx context.Context) (*HotAddress, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !m.unlocked() {
-		return nil, m.denied("hot_address", ErrVaultLocked)
-	}
 	storeTx, err := m.currentVaultTx(ctx)
 	if err != nil {
 		return nil, m.denied("hot_address", err)
@@ -274,12 +260,12 @@ func (m *Manager) currentVaultTx(ctx context.Context) (*sql.Tx, error) {
 	var raw string
 	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = $1 FOR SHARE`, settingVault).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		m.lockSeeds()
-		err = ErrVaultLocked
+		m.clearSeeds()
+		err = ErrWalletNotConfigured
 	} else if err != nil {
 		err = ErrVaultUnavailable
 	} else {
-		err = m.checkFingerprint(raw)
+		err = m.refreshContents(raw)
 	}
 	if err != nil {
 		_ = tx.Rollback()
@@ -288,11 +274,29 @@ func (m *Manager) currentVaultTx(ctx context.Context) (*sql.Tx, error) {
 	return tx, nil
 }
 
-func (m *Manager) checkFingerprint(raw string) error {
-	if raw == "" || sha256.Sum256([]byte(raw)) != m.vaultFingerprint {
-		m.lockSeeds()
-		return ErrVaultLocked
+// Called with mu held and (for signing/derivation) the ciphertext row locked.
+// A concurrent managed-seed update is loaded before any key is used.
+func (m *Manager) refreshContents(raw string) error {
+	if raw == "" {
+		m.clearSeeds()
+		return ErrWalletNotConfigured
 	}
+	if m.ready() && sha256.Sum256([]byte(raw)) == m.vaultFingerprint {
+		return nil
+	}
+	m.clearSeeds()
+	contents, err := m.openContents(raw)
+	if err != nil {
+		return err
+	}
+	defer func() { contents.Deposit, contents.Hot = "", "" }()
+	deposit, hot, err := contentsDerivers(contents)
+	if err != nil {
+		return err
+	}
+	m.deposit, m.hot = deposit, hot
+	m.vaultFingerprint = sha256.Sum256([]byte(raw))
+	m.configured = true
 	return nil
 }
 

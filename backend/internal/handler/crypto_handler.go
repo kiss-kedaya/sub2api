@@ -132,7 +132,7 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"saved": true}})
 }
 
-// AdminWalletStatus reports whether the local wallet is unlocked.
+// AdminWalletStatus reports managed seed configuration and readiness.
 // GET /api/v1/admin/crypto/wallet/status
 func (h *CryptoHandler) AdminWalletStatus(c *gin.Context) {
 	if h.service == nil {
@@ -147,36 +147,30 @@ func (h *CryptoHandler) AdminWalletStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": st})
 }
 
-// AdminUnlockWallet unlocks the local encrypted wallet.
-// POST /api/v1/admin/crypto/wallet/unlock
-func (h *CryptoHandler) AdminUnlockWallet(c *gin.Context) {
+// AdminInitializeWallet imports the initial independent seeds after fresh 2FA.
+func (h *CryptoHandler) AdminInitializeWallet(c *gin.Context) {
 	cryptoVaultHeaders(c)
 	var body struct {
-		Passphrase      string `json:"passphrase"`
 		DepositMnemonic string `json:"deposit_mnemonic"`
 		HotMnemonic     string `json:"hot_mnemonic"`
 	}
 	if !decodeCryptoVaultRequest(c, &body) {
 		return
 	}
-	defer func() { body.Passphrase, body.DepositMnemonic, body.HotMnemonic = "", "", "" }()
-	if strings.TrimSpace(body.Passphrase) == "" || len(body.Passphrase) > 1024 ||
-		len(body.DepositMnemonic) > 1024 || len(body.HotMnemonic) > 1024 ||
-		(strings.TrimSpace(body.DepositMnemonic) == "") != (strings.TrimSpace(body.HotMnemonic) == "") {
-		response.BadRequest(c, "Passphrase and either both initial wallet seeds or neither are required; each field is limited to 1024 bytes")
+	defer func() { body.DepositMnemonic, body.HotMnemonic = "", "" }()
+	if strings.TrimSpace(body.DepositMnemonic) == "" || strings.TrimSpace(body.HotMnemonic) == "" || len(body.DepositMnemonic) > 1024 || len(body.HotMnemonic) > 1024 {
+		response.BadRequest(c, "Two valid independent wallet mnemonics are required (maximum 1024 bytes each)")
 		return
 	}
 	if h.service == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Wallet unavailable")
 		return
 	}
-	if err := h.service.UnlockWallet(c.Request.Context(), body.Passphrase, body.DepositMnemonic, body.HotMnemonic); err != nil {
-		// Wallet errors can contain local database or driver details. Keep the
-		// client response useful without reflecting those internals.
-		response.BadRequest(c, "Wallet unlock failed; verify the vault passphrase and seed data")
+	if err := h.service.InitializeWallet(c.Request.Context(), body.DepositMnemonic, body.HotMnemonic); err != nil {
+		response.BadRequest(c, "Wallet initialization refused; check seed validity and whether a wallet already exists")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"unlocked": true}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"saved": true}})
 }
 
 // AdminPoolStatus reports remaining unassigned addresses per family.

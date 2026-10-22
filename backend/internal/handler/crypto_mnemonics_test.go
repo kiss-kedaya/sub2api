@@ -22,10 +22,10 @@ const (
 	cryptoTestHotSeed     = "legal winner thank year wave sausage worth useful legal winner thank yellow"
 )
 
-type cryptoMnemonicExporterFunc func(context.Context, string) (*sweeper.MnemonicExport, error)
+type cryptoMnemonicExporterFunc func(context.Context) (*sweeper.MnemonicExport, error)
 
-func (f cryptoMnemonicExporterFunc) ExportMnemonics(ctx context.Context, passphrase string) (*sweeper.MnemonicExport, error) {
-	return f(ctx, passphrase)
+func (f cryptoMnemonicExporterFunc) ExportMnemonics(ctx context.Context) (*sweeper.MnemonicExport, error) {
+	return f(ctx)
 }
 
 type cryptoAuditCapture struct{ records []*service.AuditLog }
@@ -63,12 +63,11 @@ func TestAdminExportMnemonicsReturnsTwoFieldsAndAuditsNoSecrets(t *testing.T) {
 		c.Next()
 	})
 	router.Use(gin.HandlerFunc(middleware.NewAuditLogMiddleware(audit)))
-	h := &CryptoHandler{mnemonicExporter: cryptoMnemonicExporterFunc(func(_ context.Context, passphrase string) (*sweeper.MnemonicExport, error) {
-		require.Equal(t, "private vault passphrase", passphrase)
+	h := &CryptoHandler{mnemonicExporter: cryptoMnemonicExporterFunc(func(_ context.Context) (*sweeper.MnemonicExport, error) {
 		return &sweeper.MnemonicExport{DepositMnemonic: cryptoTestDepositSeed, HotMnemonic: cryptoTestHotSeed}, nil
 	})}
 	router.POST("/api/v1/admin/crypto/wallet/export-mnemonics", h.AdminExportMnemonics)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics", strings.NewReader(`{"passphrase":"private vault passphrase"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics", strings.NewReader(`{}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Crypto-TOTP", "987654")
 	recorder := httptest.NewRecorder()
@@ -95,13 +94,13 @@ func TestAdminExportMnemonicsNeverEchoesSensitiveErrorsOrOversizedBodies(t *test
 		body string
 		fail bool
 	}{
-		"wallet error": {body: `{"passphrase":"sensitive-passphrase"}`, fail: true},
+		"wallet error": {body: `{}`, fail: true},
 		"over 4KB":     {body: `{"passphrase":"` + strings.Repeat("x", 5<<10) + `"}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			gin.SetMode(gin.TestMode)
 			called := false
-			h := &CryptoHandler{mnemonicExporter: cryptoMnemonicExporterFunc(func(context.Context, string) (*sweeper.MnemonicExport, error) {
+			h := &CryptoHandler{mnemonicExporter: cryptoMnemonicExporterFunc(func(context.Context) (*sweeper.MnemonicExport, error) {
 				called = true
 				return nil, errors.New("sensitive-passphrase " + cryptoTestDepositSeed + " upstream response body")
 			})}

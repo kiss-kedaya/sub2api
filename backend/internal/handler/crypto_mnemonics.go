@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -15,12 +14,11 @@ import (
 )
 
 type cryptoMnemonicExporter interface {
-	ExportMnemonics(ctx context.Context, passphrase string) (*sweeper.MnemonicExport, error)
+	ExportMnemonics(ctx context.Context) (*sweeper.MnemonicExport, error)
 }
 
 // CryptoMnemonicExportRequest is accepted once per explicit user action.
 type CryptoMnemonicExportRequest struct {
-	Passphrase string `json:"passphrase"`
 }
 
 // CryptoMnemonicExportResponse contains exactly the two independent seed fields.
@@ -30,34 +28,22 @@ type CryptoMnemonicExportResponse struct {
 }
 
 // AdminExportMnemonics returns plaintext only after the wallet has durably
-// audited the successful, passphrase-authenticated vault decryption.
+// audited the successful decryption after fresh backend 2FA.
 func (h *CryptoHandler) AdminExportMnemonics(c *gin.Context) {
 	cryptoVaultHeaders(c)
 	var req CryptoMnemonicExportRequest
 	if !decodeCryptoMnemonicRequest(c, &req) {
 		return
 	}
-	if strings.TrimSpace(req.Passphrase) == "" || len(req.Passphrase) > 1024 {
-		req.Passphrase = ""
-		response.BadRequest(c, "Vault passphrase is required (maximum 1024 bytes)")
-		return
-	}
 	if h.mnemonicExporter == nil {
-		req.Passphrase = ""
 		response.Error(c, http.StatusServiceUnavailable, "Mnemonic export unavailable")
 		return
 	}
-	result, err := h.mnemonicExporter.ExportMnemonics(c.Request.Context(), req.Passphrase)
-	req.Passphrase = ""
+	result, err := h.mnemonicExporter.ExportMnemonics(c.Request.Context())
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		message := "Mnemonic export unavailable"
-		switch {
-		case errors.Is(err, sweeper.ErrMnemonicExportRejected):
-			status, message = http.StatusForbidden, "Vault authentication failed"
-		case errors.Is(err, sweeper.ErrMnemonicExportLimited):
-			status, message = http.StatusTooManyRequests, "Mnemonic export is temporarily rate limited"
-		}
+
 		response.Error(c, status, message)
 		return
 	}

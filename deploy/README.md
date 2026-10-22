@@ -35,12 +35,12 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 
 - 不再构建、打包或启动独立 signer；无需额外签名容器、socket、policy 文件或 SQLite state，也不再配置 `signer_socket`。保留 `hot_index` 字段，但配置校验只接受 `0`。
 - 钱包密文保存在主 PostgreSQL 的 `settings` 表，键名 `crypto.signer.vault` 仅为兼容已有数据。钱包审计继续写入历史表 `crypto_signer_audit`；263 迁移原文及其 schema 保持不变，不能为改名重写迁移或破坏 checksum。
-- 钱包仍须使用独立于后台登录密码的 Vault 口令解密；首次初始化必须提供两份有效且不同的 BIP39 助记词（充值钱包与 Gas 钱包），新口令至少 12 个字符。已有 Vault 不允许通过初始化覆盖种子。
-- 在主服务后台完成支付 2FA 绑定，通过钱包管理执行解锁、加密备份、助记词导出和 Gas 助记词导入。风险操作仍要求新的 2FA 验证码及相应的 Vault 口令；重启后重新解锁，不把口令写入启动脚本或环境文件。
+- 钱包种子使用持久安装密钥派生的独立 AES-256-GCM 密钥加密。首次导入两份不同的 BIP39 助记词并通过新的 2FA 即可，无需钱包口令或手动解锁；重启后自动加载。已有密文禁止通过初始化覆盖。
+- 通过钱包管理导入、分段导出助记词或更换 Gas 种子，所有风险操作逐次校验后端 2FA。Gas 更换在无未完成归集时立即生效。手动解锁和旧加密文件备份入口已删除。
 - 部署时必须设置 `CRYPTO_ADMIN_USER_IDS`（逗号分隔的现有管理员用户 ID）和持久化 `TOTP_ENCRYPTION_KEY`。名单为空或包含非法 ID 时，支付管理接口全部拒绝；新增/提权的普通后台管理员不自动获得钱包权限。名单仅在进程启动时读取，网页设置及机器管理密钥不能改写；变更后须重启该实例。
 - `crypto-test-release.yml` 只打包一个 Linux amd64、`CGO_ENABLED=0`、带 `embed` 前端的 `sub2api` 二进制，以及版本和构建元数据；保留 `checksums.txt` 校验及隔离 prerelease 流程，不执行部署。
 
-备份文件中的 `sub2api-signer-vault` format 也仅为兼容标识，不表示需要独立 signer。完整的钱包管理、恢复边界和派生路径见 [支付文档：内置充值钱包](../docs/PAYMENT_CN.md#内置充值钱包部署与恢复)。
+数据库与固定安装密钥都需要备份，并分开保管；两份助记词可独立离线备份。旧口令加密钱包须先从旧版本导出后受控迁移，不会被自动覆盖。派生路径与恢复边界见 [支付文档](../docs/PAYMENT_CN.md#内置充值钱包部署与恢复)。
 
 ---
 
@@ -664,7 +664,7 @@ An operator may explicitly set `CRYPTO_ADMIN_TEST_WRITE_ENABLED=true` to restore
 normal application routes and payment administration writes. Existing login,
 administrator permissions, payment operator allowlist, HTTPS/loopback requirement
 and per-operation backend TOTP verification still apply. Wallets stay locked at
-startup; only a deliberate authenticated action can initialize or unlock one.
+startup; only an explicit authenticated, 2FA-verified action can initialize seeds. Persisted managed seeds load automatically.
 Automatic scans, sweeps and other shared workers remain disabled. Malformed gate
 values never enable writes. This switch cannot grant database privileges: use a
 dedicated non-superuser login with the intended application DML privileges.
