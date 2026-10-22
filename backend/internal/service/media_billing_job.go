@@ -12,10 +12,13 @@ const (
 	MediaBillingKindImage     = "image_usage"
 	MediaBillingCreating      = "creating"
 	MediaBillingSubmitted     = "submitted"
-	MediaBillingReady         = "ready"
-	MediaBillingBilled        = "billed"
-	MediaBillingDone          = "done"
-	MediaBillingFailed        = "failed"
+	// Reconciliation retains the task's reservation while automatic polling is
+	// paused. A later verified completion or failure can still settle the task.
+	MediaBillingReconciliation = "reconciliation"
+	MediaBillingReady          = "ready"
+	MediaBillingBilled         = "billed"
+	MediaBillingDone           = "done"
+	MediaBillingFailed         = "failed"
 )
 
 var ErrMediaBillingJobNotFound = errors.New("media billing job not found")
@@ -56,6 +59,7 @@ type MediaBillingJobRepository interface {
 	PrepareMediaBillingIntent(context.Context, string, *MediaBillingIntent) (*MediaBillingIntent, error)
 	ApplyMediaBillingJob(context.Context, string) (*UsageBillingApplyResult, error)
 	FailMediaBillingJob(context.Context, string) (*UsageBillingApplyResult, error)
+	ReconcileMediaBillingJob(context.Context, string) error
 	CompleteMediaBillingJob(context.Context, string) error
 	ListMediaBillingJobs(context.Context, int) ([]*MediaBillingJob, error)
 	RetryMediaBillingJob(context.Context, string, time.Duration) error

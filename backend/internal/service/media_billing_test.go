@@ -142,7 +142,24 @@ func (r *mediaJobMemoryRepo) ListMediaBillingJobs(_ context.Context, limit int) 
 func (r *mediaJobMemoryRepo) RetryMediaBillingJob(_ context.Context, id string, delay time.Duration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.jobs[id].AvailableAt = time.Now().Add(delay)
+	job := r.jobs[id]
+	if job.Status == MediaBillingSubmitted || job.Status == MediaBillingReady || job.Status == MediaBillingBilled {
+		job.AvailableAt = time.Now().Add(delay)
+		job.Attempts++
+	}
+	return nil
+}
+
+func (r *mediaJobMemoryRepo) ReconcileMediaBillingJob(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job := r.jobs[id]
+	if job == nil {
+		return ErrMediaBillingJobNotFound
+	}
+	if job.Kind == MediaBillingKindGrokVideo && job.Status == MediaBillingSubmitted && job.Intent == nil {
+		job.Status = MediaBillingReconciliation
+	}
 	return nil
 }
 
