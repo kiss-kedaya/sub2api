@@ -6,7 +6,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 源仓库 | `/Users/mt/code/mt-ai/aicodex/aicodex-api` |
+| 源仓库 | `<SOURCE_REPO>` |
 | 采集时间 | `2026-07-16 20:21:19 CST (+0800)` |
 | 分支 | `yjb` |
 | HEAD | `7a50378851a80650cb0c086260b23abeb3469e6b` |
@@ -119,12 +119,11 @@
 
 | 字段 | 待填写值 |
 | --- | --- |
-| 冻结方式 | 只读 tracked patch + untracked tar archive |
+| 公开参考 | 只读 tracked patch；本地快照不随仓库发布 |
 | 冻结 commit/tag | base commit `7a50378851a80650cb0c086260b23abeb3469e6b`（detached restore） |
-| patch/archive 绝对路径 | `/Users/mt/code/mt-ai/sub2api/sub2api-mt/openspec/changes/add-openai-compatible-prompt-audit/source-freeze/` |
+| patch 相对路径 | `source-freeze/aicodex-prompt-audit-tracked.patch` |
 | manifest SHA-256 | `badab312bf6af4d2c77857a9400381f4da4fbf45722d9f4a6df23bc7005273b6` |
 | tracked patch SHA-256 | `f751a13cce3f3a73cd60cae3aececcef6e1e76dcec8c551a7a4747f032234d2b` |
-| untracked archive SHA-256 | `1536e2781703b7620e26f2d08b249431fa5846ad9e32b2e8b0d547c3fa3b3632` |
 | 冻结人/复核人 | Codex；由恢复后的文件清单、`git diff --check` 和测试命令复核 |
 | 冻结时间 | `2026-07-16 20:21:19 CST (+0800)` |
 | 源测试结果 | 恢复副本中 Prompt Audit 核心、router、relay、gateway transport 目标测试全部通过，详见 `source-freeze/MANIFEST.md` |
@@ -132,7 +131,7 @@
 ## 7. 复核命令
 
 ```bash
-cd /Users/mt/code/mt-ai/aicodex/aicodex-api
+cd <SOURCE_REPO>
 git branch --show-current
 git rev-parse HEAD
 git status --short
