@@ -205,19 +205,32 @@ func (s *CryptoSecurityService) VerifyRisk(ctx context.Context, userID int64, co
 // Ordinary admins still manage their own authenticator without acquiring
 // wallet authority. They use the same atomic code-consumption controls.
 func (s *CryptoSecurityService) verifyAdminRisk(ctx context.Context, userID int64, code string) error {
+	_, err := s.verifyAdminRiskUser(ctx, userID, code)
+	return err
+}
+
+// Keep the verified snapshot for conditional authenticator mutations.
+func (s *CryptoSecurityService) verifyAdminRiskUser(ctx context.Context, userID int64, code string) (*User, error) {
 	u, err := s.CurrentAdmin(ctx, userID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !u.TotpEnabled || u.TotpSecretEncrypted == nil || *u.TotpSecretEncrypted == "" {
-		return ErrCryptoTotpNotSetup
+		return nil, ErrCryptoTotpNotSetup
 	}
 	if err := s.limit(ctx, userID, "verify", 30, time.Minute); err != nil {
-		return err
+		return nil, err
 	}
-	return cryptoTotpError(s.totp.VerifyCodeOnce(ctx, userID, code, func(counter int64) error {
+	verified, err := s.totp.verifyCode(ctx, userID, code, func(counter int64) error {
 		return s.consume(ctx, userID, counter, code)
-	}))
+	})
+	if err != nil {
+		return nil, cryptoTotpError(err)
+	}
+	if !verified.IsAdmin() || !verified.IsActive() || verified.DeletedAt != nil {
+		return nil, ErrCryptoAdminRequired
+	}
+	return verified, nil
 }
 
 // Serialize enrollment across processes so two setup/enable requests cannot

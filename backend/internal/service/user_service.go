@@ -33,6 +33,7 @@ var (
 	ErrPasswordIncorrect        = infraerrors.BadRequest("PASSWORD_INCORRECT", "current password is incorrect")
 	ErrBalanceNegative          = infraerrors.BadRequest("BALANCE_NEGATIVE", "balance cannot be negative")
 	ErrInsufficientPerms        = infraerrors.Forbidden("INSUFFICIENT_PERMISSIONS", "insufficient permissions")
+	ErrUserSecurityStateChanged = infraerrors.Conflict("USER_SECURITY_STATE_CHANGED", "user security state changed; refresh and retry")
 	ErrNotifyCodeUserRateLimit  = infraerrors.TooManyRequests("NOTIFY_CODE_USER_RATE_LIMIT", "too many verification codes requested, please try again later")
 	ErrAvatarInvalid            = infraerrors.BadRequest("AVATAR_INVALID", "avatar must be a valid image data URL or http(s) URL")
 	ErrAvatarTooLarge           = infraerrors.BadRequest("AVATAR_TOO_LARGE", "avatar image must be 100KB or smaller")
@@ -117,6 +118,20 @@ type UserUpdateFields struct {
 	AllowedGroups bool
 	// RestrictPublicGroups 覆盖 restrict_public_groups 列。
 	RestrictPublicGroups bool
+	// ExpectedRole is an atomic write precondition, not a persisted field.
+	ExpectedRole string
+}
+
+// TotpRoleConditionalDisabler binds the write to both the verified role and
+// secret, preventing delayed verification from disabling a new authenticator.
+type TotpRoleConditionalDisabler interface {
+	DisableTotpWithExpectedRole(ctx context.Context, userID int64, expectedRole string, expectedSecret *string) error
+}
+
+// TotpAtomicBinder commits the secret and enabled state together, only while
+// the account is active, not deleted, and has no enabled authenticator.
+type TotpAtomicBinder interface {
+	BindTotpIfDisabled(ctx context.Context, userID int64, encryptedSecret string) error
 }
 
 // BalanceChange 记录一次余额变更前后的值。
@@ -127,6 +142,7 @@ type BalanceChange struct {
 
 // IsEmpty 报告该次 Update 是否不写任何列（此时仓储直接返回，不产生写操作）。
 func (f UserUpdateFields) IsEmpty() bool {
+	f.ExpectedRole = ""
 	return f == UserUpdateFields{}
 }
 

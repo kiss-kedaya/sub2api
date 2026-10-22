@@ -2174,7 +2174,13 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 
 	// 使用默认错误映射，保留上游状态码与消息。
 	status, errType, errMsg := wrapUpstreamClientError(statusCode, responseBody)
-	status, errType, errMsg = exhaustedFailoverResponse(status, errType, errMsg)
+	if failoverErr.ClientStatusCode >= 400 && failoverErr.ClientStatusCode <= 599 &&
+		!service.IsUpstreamFinancialError(statusCode, responseBody) {
+		// 服务层已经确认的流内错误状态不能再次按账号凭据错误折成 502。
+		status = failoverErr.ClientStatusCode
+	} else {
+		status, errType, errMsg = exhaustedFailoverResponse(status, errType, errMsg)
+	}
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 

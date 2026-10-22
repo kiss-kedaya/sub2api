@@ -2445,7 +2445,7 @@ export interface TotpDisableRequest {
 }
 
 export interface TotpVerificationMethod {
-  method: 'email' | 'password'
+  method: 'email' | 'password' | 'totp'
 }
 
 export interface TotpLoginResponse {

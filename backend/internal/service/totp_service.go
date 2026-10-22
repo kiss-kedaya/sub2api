@@ -387,6 +387,13 @@ func (s *TotpService) completeSetup(ctx context.Context, userID int64, code, tok
 	if err != nil {
 		return ErrTotpUnavailable
 	}
+	// Commit the encrypted secret and enabled state together, conditional on
+	// there still being no authenticator. The distributed lock alone cannot
+	// protect against a delayed request after its lease expires.
+	binder, ok := s.userRepo.(TotpAtomicBinder)
+	if !ok {
+		return ErrUserSecurityStateChanged
+	}
 	// Delete before writing so a cache failure cannot enable enrollment.
 	if err := s.cache.DeleteSetupSession(ctx, userID); err != nil {
 		return ErrTotpUnavailable
@@ -394,17 +401,14 @@ func (s *TotpService) completeSetup(ctx context.Context, userID int64, code, tok
 	if err := s.cache.ClearVerifyAttempts(ctx, userID); err != nil {
 		return ErrTotpUnavailable
 	}
-	if err := s.userRepo.UpdateTotpSecret(ctx, userID, &encrypted); err != nil {
-		return fmt.Errorf("update totp secret: %w", err)
-	}
-	if err := s.userRepo.EnableTotp(ctx, userID); err != nil {
+	if err := binder.BindTotpIfDisabled(ctx, userID, encrypted); err != nil {
 		return fmt.Errorf("enable totp: %w", err)
 	}
 	return nil
 }
 
-// Disable disables TOTP for a user
-// If email verification is enabled, emailCode is required; otherwise password is required
+// Disable requires an administrator's current TOTP. Passwords, email codes and
+// earlier step-up grants cannot replace it. Regular users keep email/password.
 func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, password string, totpCodes ...string) error {
 	// Get user
 	user, err := s.userRepo.GetByID(ctx, userID)
@@ -422,23 +426,37 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 		if len(totpCodes) != 1 || !isSixDigitTotp(totpCodes[0]) {
 			return ErrCryptoTotpRequired
 		}
-		if s.cryptoSecurity == nil {
-			return ErrCryptoTotpUnavailable
+		var verifiedUser *User
+		if s.cryptoSecurity != nil {
+			unlock, err := s.cryptoSecurity.lockSetup(ctx, userID)
+			if err != nil {
+				return err
+			}
+			defer unlock()
+			verifiedUser, err = s.cryptoSecurity.verifyAdminRiskUser(ctx, userID, totpCodes[0])
+		} else {
+			// Sites without payment verification still support ordinary TOTP.
+			verifiedUser, err = s.verifyCode(ctx, userID, totpCodes[0], nil)
+			err = cryptoTotpError(err)
 		}
-		unlock, err := s.cryptoSecurity.lockSetup(ctx, userID)
 		if err != nil {
 			return err
 		}
-		defer unlock()
-		if err := s.cryptoSecurity.verifyAdminRisk(ctx, userID, totpCodes[0]); err != nil {
-			return err
+		if verifiedUser.Role != user.Role {
+			return ErrUserSecurityStateChanged
 		}
+		user = verifiedUser
 	} else if err := s.verifyIdentity(ctx, user, emailCode, password); err != nil {
 		return err
 	}
 
-	// Disable TOTP
-	if err := s.userRepo.DisableTotp(ctx, userID); err != nil {
+	// Bind the write to the exact role and secret that were verified. Concurrent
+	// promotion or re-enrollment must not turn a stale code into authorization.
+	disabler, ok := s.userRepo.(TotpRoleConditionalDisabler)
+	if !ok {
+		return ErrUserSecurityStateChanged
+	}
+	if err := disabler.DisableTotpWithExpectedRole(ctx, userID, user.Role, user.TotpSecretEncrypted); err != nil {
 		return fmt.Errorf("disable totp: %w", err)
 	}
 
@@ -484,27 +502,29 @@ func (s *TotpService) reserveVerifyAttempt(ctx context.Context, userID int64) er
 	return nil
 }
 
-func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string, consume func(int64) error) (int64, error) {
+// Return the exact account snapshot whose secret was verified so security
+// mutations can use it as an atomic write precondition.
+func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string, consume func(int64) error) (*User, error) {
 	if err := s.reserveVerifyAttempt(ctx, userID); err != nil {
-		return 0, err
+		return nil, err
 	}
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil || user == nil {
-		return 0, ErrTotpUnavailable
+		return nil, ErrTotpUnavailable
 	}
 	if !user.TotpEnabled || user.TotpSecretEncrypted == nil {
-		return 0, ErrTotpNotSetup
+		return nil, ErrTotpNotSetup
 	}
 	if s.encryptor == nil {
-		return 0, ErrTotpUnavailable
+		return nil, ErrTotpUnavailable
 	}
 	secret, err := s.encryptor.Decrypt(*user.TotpSecretEncrypted)
 	if err != nil {
-		return 0, ErrTotpUnavailable
+		return nil, ErrTotpUnavailable
 	}
 	counter, valid := validateTotpCode(code, secret, time.Now())
 	if !valid {
-		return 0, ErrTotpInvalidCode
+		return nil, ErrTotpInvalidCode
 	}
 	// Login and step-up must not provide reusable codes for payment operations,
 	// or reset the failure budget by replaying an already-consumed code.
@@ -513,13 +533,13 @@ func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string,
 	}
 	if consume != nil {
 		if err := consume(counter); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 	if err := s.cache.ClearVerifyAttempts(ctx, userID); err != nil {
-		return 0, ErrTotpUnavailable
+		return nil, ErrTotpUnavailable
 	}
-	return counter, nil
+	return user, nil
 }
 
 func isSixDigitTotp(code string) bool {
@@ -680,10 +700,13 @@ type VerificationMethod struct {
 
 // GetVerificationMethod returns the verification method for TOTP operations.
 // 与 verifyIdentity 保持同一判定：管理员一律返回 password。
-func (s *TotpService) GetVerificationMethod(ctx context.Context, userID int64) (*VerificationMethod, error) {
+func (s *TotpService) GetVerificationMethod(ctx context.Context, userID int64, operation ...string) (*VerificationMethod, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
+	}
+	if user.IsAdmin() && len(operation) > 0 && operation[0] == "disable" {
+		return &VerificationMethod{Method: "totp"}, nil
 	}
 	if s.usesEmailVerification(ctx, user) {
 		return &VerificationMethod{Method: "email"}, nil

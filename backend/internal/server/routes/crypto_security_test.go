@@ -44,11 +44,31 @@ func (r *cryptoRouteUserRepo) EnableTotp(context.Context, int64) error {
 	r.user.TotpEnabledAt = &now
 	return nil
 }
+
+func (r *cryptoRouteUserRepo) BindTotpIfDisabled(_ context.Context, _ int64, encrypted string) error {
+	if r.user.TotpEnabled || r.user.Status != service.StatusActive || r.user.DeletedAt != nil || encrypted == "" {
+		return service.ErrUserSecurityStateChanged
+	}
+	r.user.TotpSecretEncrypted = &encrypted
+	r.user.TotpEnabled = true
+	now := time.Now()
+	r.user.TotpEnabledAt = &now
+	return nil
+}
 func (r *cryptoRouteUserRepo) DisableTotp(context.Context, int64) error {
 	r.user.TotpEnabled = false
 	r.user.TotpSecretEncrypted = nil
 	r.user.TotpEnabledAt = nil
 	return nil
+}
+
+func (r *cryptoRouteUserRepo) DisableTotpWithExpectedRole(_ context.Context, _ int64, expectedRole string, expectedSecret *string) error {
+	if r.user.Role != expectedRole || r.user.Status != service.StatusActive || r.user.DeletedAt != nil || !r.user.TotpEnabled ||
+		(r.user.TotpSecretEncrypted == nil) != (expectedSecret == nil) ||
+		(expectedSecret != nil && *r.user.TotpSecretEncrypted != *expectedSecret) {
+		return service.ErrUserSecurityStateChanged
+	}
+	return r.DisableTotp(context.Background(), r.user.ID)
 }
 
 type cryptoRouteSettingsRepo struct {

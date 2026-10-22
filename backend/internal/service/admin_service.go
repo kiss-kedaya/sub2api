@@ -192,6 +192,8 @@ type UpdateUserInput struct {
 	GroupRates map[int64]*float64
 	// ActorAdminID 执行本次操作的管理员ID(来自JWT)，仅用于权限敏感操作的审计日志。
 	ActorAdminID int64
+	// Only the handler sets this after successful step-up; never bind from HTTP JSON.
+	TotpDemotionApproved bool `json:"-"`
 }
 
 type AdminBindAuthIdentityInput struct {
