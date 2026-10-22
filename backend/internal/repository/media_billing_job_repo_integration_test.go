@@ -244,6 +244,145 @@ func TestMediaBillingJobIntegration_ApplyFailureKeepsReadyAndHold(t *testing.T) 
 	assertMediaBillingOutboxDeltas(t, ctx, fixture.user.ID, []float64{-2})
 }
 
+func TestMediaBillingJobIntegration_ReconciliationKeepsHoldAndSettlesOnce(t *testing.T) {
+	ctx := context.Background()
+	fixture := newMediaBillingIntegrationFixture(t, 10)
+	job := fixture.videoJob("media-reconcile-settle-"+fmt.Sprint(time.Now().UnixNano()), 2)
+	_, err := fixture.repo.CreateMediaBillingJob(ctx, job)
+	require.NoError(t, err)
+	taskID := "upstream-" + job.ID
+	require.NoError(t, fixture.repo.SubmitMediaBillingJob(ctx, job.ID, taskID, []byte(`{"route":"grok"}`)))
+
+	require.NoError(t, fixture.repo.ReconcileMediaBillingJob(ctx, job.ID))
+	require.NoError(t, fixture.repo.ReconcileMediaBillingJob(ctx, job.ID))
+	// A late repeat of acceptance must not reopen automatic polling either.
+	require.NoError(t, fixture.repo.SubmitMediaBillingJob(ctx, job.ID, taskID, []byte(`{"route":"grok"}`)))
+	require.ErrorIs(t, fixture.repo.RetryMediaBillingJob(ctx, job.ID, time.Second), service.ErrUsageBillingRequestConflict)
+	persisted, err := fixture.repo.GetMediaBillingJobByID(ctx, job.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.MediaBillingReconciliation, persisted.Status)
+	require.Equal(t, 2.0, persisted.ReservedAmount)
+	require.Zero(t, persisted.Attempts)
+	assertMediaBillingWallet(t, ctx, fixture.user.ID, 8, 2)
+	assertMediaBillingOutboxDeltas(t, ctx, fixture.user.ID, []float64{-2})
+	leased, err := fixture.repo.ListMediaBillingJobs(ctx, 32)
+	require.NoError(t, err)
+	for _, active := range leased {
+		require.NotEqual(t, job.ID, active.ID, "reconciliation is not eligible for a worker lease")
+	}
+
+	_, err = fixture.repo.PrepareMediaBillingIntent(ctx, job.ID, fixture.intent("media-settle:"+job.ID, 1.25))
+	require.NoError(t, err)
+	result, err := fixture.repo.ApplyMediaBillingJob(ctx, job.ID)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	result, err = fixture.repo.ApplyMediaBillingJob(ctx, job.ID)
+	require.NoError(t, err)
+	require.False(t, result.Applied)
+	require.NoError(t, fixture.repo.CompleteMediaBillingJob(ctx, job.ID))
+	require.NoError(t, fixture.repo.ReconcileMediaBillingJob(ctx, job.ID))
+	persisted, err = fixture.repo.GetMediaBillingJobByID(ctx, job.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.MediaBillingDone, persisted.Status)
+	assertMediaBillingWallet(t, ctx, fixture.user.ID, 8.75, 0)
+	assertMediaBillingOutboxDeltas(t, ctx, fixture.user.ID, []float64{-2, 0.75})
+}
+
+func TestMediaBillingJobIntegration_ReconciliationCanReleaseConfirmedFailureOnce(t *testing.T) {
+	ctx := context.Background()
+	fixture := newMediaBillingIntegrationFixture(t, 10)
+	job := fixture.videoJob("media-reconcile-fail-"+fmt.Sprint(time.Now().UnixNano()), 2)
+	_, err := fixture.repo.CreateMediaBillingJob(ctx, job)
+	require.NoError(t, err)
+	require.NoError(t, fixture.repo.SubmitMediaBillingJob(ctx, job.ID, "upstream-"+job.ID, nil))
+	require.NoError(t, fixture.repo.ReconcileMediaBillingJob(ctx, job.ID))
+	result, err := fixture.repo.FailMediaBillingJob(ctx, job.ID)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	result, err = fixture.repo.FailMediaBillingJob(ctx, job.ID)
+	require.NoError(t, err)
+	require.False(t, result.Applied)
+	require.NoError(t, fixture.repo.ReconcileMediaBillingJob(ctx, job.ID))
+	persisted, err := fixture.repo.GetMediaBillingJobByID(ctx, job.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.MediaBillingFailed, persisted.Status)
+	assertMediaBillingWallet(t, ctx, fixture.user.ID, 10, 0)
+	assertMediaBillingOutboxDeltas(t, ctx, fixture.user.ID, []float64{-2, 2})
+}
+
+func TestMediaBillingJobIntegration_ReconciliationRetainsSubscriptionReservation(t *testing.T) {
+	ctx := context.Background()
+	fixture := newMediaBillingIntegrationFixture(t, 10)
+	_, err := integrationDB.ExecContext(ctx, `UPDATE groups SET daily_limit_usd = 3 WHERE id = $1`, fixture.group.ID)
+	require.NoError(t, err)
+	subscription := mustCreateSubscription(t, integrationEntClient, &service.UserSubscription{
+		UserID: fixture.user.ID, GroupID: fixture.group.ID,
+		StartsAt: time.Now().Add(-time.Hour), ExpiresAt: time.Now().Add(time.Hour),
+		Status: service.SubscriptionStatusActive,
+	})
+	job := fixture.videoJob("media-reconcile-sub-"+fmt.Sprint(time.Now().UnixNano()), 2)
+	job.SubscriptionID = &subscription.ID
+	_, err = fixture.repo.CreateMediaBillingJob(ctx, job)
+	require.NoError(t, err)
+	require.NoError(t, fixture.repo.SubmitMediaBillingJob(ctx, job.ID, "upstream-"+job.ID, nil))
+	require.NoError(t, fixture.repo.ReconcileMediaBillingJob(ctx, job.ID))
+
+	next := fixture.videoJob(job.ID+"-next", 2)
+	next.SubscriptionID = &subscription.ID
+	_, err = fixture.repo.CreateMediaBillingJob(ctx, next)
+	require.ErrorIs(t, err, service.ErrDailyLimitExceeded)
+	assertMediaBillingWallet(t, ctx, fixture.user.ID, 10, 0)
+	_, err = fixture.repo.FailMediaBillingJob(ctx, job.ID)
+	require.NoError(t, err)
+	_, err = fixture.repo.CreateMediaBillingJob(ctx, next)
+	require.NoError(t, err, "confirmed failure releases the subscription reservation")
+}
+
+func TestMediaBillingJobIntegration_ReconciliationCannotDowngradeConcurrentSettlement(t *testing.T) {
+	for _, action := range []string{"prepare", "fail"} {
+		t.Run(action, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			fixture := newMediaBillingIntegrationFixture(t, 10)
+			job := fixture.videoJob("media-reconcile-race-"+action+"-"+fmt.Sprint(time.Now().UnixNano()), 2)
+			_, err := fixture.repo.CreateMediaBillingJob(ctx, job)
+			require.NoError(t, err)
+			require.NoError(t, fixture.repo.SubmitMediaBillingJob(ctx, job.ID, "upstream-"+job.ID, nil))
+			start := make(chan struct{})
+			errs := make(chan error, 2)
+			go func() {
+				<-start
+				errs <- fixture.repo.ReconcileMediaBillingJob(ctx, job.ID)
+			}()
+			go func() {
+				<-start
+				var err error
+				if action == "prepare" {
+					_, err = fixture.repo.PrepareMediaBillingIntent(ctx, job.ID, fixture.intent("media-race:"+job.ID, 1.25))
+				} else {
+					_, err = fixture.repo.FailMediaBillingJob(ctx, job.ID)
+				}
+				errs <- err
+			}()
+			close(start)
+			require.NoError(t, <-errs)
+			require.NoError(t, <-errs)
+			require.NoError(t, fixture.repo.ReconcileMediaBillingJob(ctx, job.ID))
+			persisted, err := fixture.repo.GetMediaBillingJobByID(ctx, job.ID)
+			require.NoError(t, err)
+			if action == "prepare" {
+				require.Equal(t, service.MediaBillingReady, persisted.Status)
+				require.NotNil(t, persisted.Intent)
+				assertMediaBillingWallet(t, ctx, fixture.user.ID, 8, 2)
+			} else {
+				require.Equal(t, service.MediaBillingFailed, persisted.Status)
+				require.Nil(t, persisted.Intent)
+				assertMediaBillingWallet(t, ctx, fixture.user.ID, 10, 0)
+			}
+		})
+	}
+}
+
 func assertMediaBillingWallet(t *testing.T, ctx context.Context, userID int64, wantBalance, wantFrozen float64) {
 	t.Helper()
 	var balance, frozen float64
