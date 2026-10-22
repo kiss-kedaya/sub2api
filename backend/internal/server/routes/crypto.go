@@ -58,6 +58,7 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.POST("/sweep/run", cryptoHandler.AdminRunSweep)
 		crypto.GET("/sweep/records", cryptoHandler.AdminSweepRecords)
 		crypto.GET("/deposits", cryptoHandler.AdminListDeposits)
+		crypto.POST("/scan/run", cryptoHandler.AdminRunScan)
 		crypto.GET("/wallet/status", cryptoHandler.AdminWalletStatus)
 		crypto.POST("/wallet/initialize", cryptoHandler.AdminInitializeWallet)
 		crypto.POST("/wallet/export-mnemonics", cryptoHandler.AdminExportMnemonics)

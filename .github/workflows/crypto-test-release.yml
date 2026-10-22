@@ -251,6 +251,7 @@ jobs:
             ['POST', '/wallet/initialize'],
             ['POST', '/wallet/export-mnemonics'],
             ['POST', '/wallet/hot-mnemonic'],
+            ['POST', '/scan/run'],
           ]) assert(routes.includes(`crypto.${method}("${path}", cryptoHandler.`), `missing /admin/crypto${path}`)
           assert(!routes.includes('"/signer/'), 'standalone signer routes must be removed')
           for (const path of ['/wallet/unlock', '/wallet/lock', '/wallet/backup']) assert(!routes.includes(`crypto.POST("${path}"`), `obsolete wallet endpoint ${path}`)
