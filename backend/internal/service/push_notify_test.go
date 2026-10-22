@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -69,4 +71,50 @@ func TestCNBalancePushAdminsNilSafe(t *testing.T) {
 	svc := &CNProviderBalanceCheckService{cfg: &config.Config{}}
 	svc.pushAdmins(&Account{ID: 1, Platform: PlatformKimi}, &CNProviderBalanceResult{}, 1)
 	svc.pushAdmins(nil, nil, 0)
+}
+
+type concurrentAdminPush struct{ calls atomic.Int64 }
+
+func (p *concurrentAdminPush) PushToUser(context.Context, int64, string, string, string) error {
+	return nil
+}
+
+func (p *concurrentAdminPush) PushToAdmins(context.Context, string, string, string) error {
+	p.calls.Add(1)
+	return nil
+}
+
+// Startup wires notifications after the background checker has been started.
+// Reading the notifier must remain safe while that wiring is published.
+func TestCNBalancePushNotifierConcurrent(t *testing.T) {
+	svc := &CNProviderBalanceCheckService{}
+	push := &concurrentAdminPush{}
+	account := &Account{ID: 7, Platform: PlatformKimi}
+	result := &CNProviderBalanceResult{Balance: 1, Currency: "CNY"}
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 1000 {
+			svc.SetPushNotifier(push)
+			svc.SetPushNotifier(nil)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 1000 {
+			svc.pushAdmins(account, result, 5)
+		}
+	}()
+	close(start)
+	wg.Wait()
+	svc.SetPushNotifier(push)
+	before := push.calls.Load()
+	svc.pushAdmins(account, result, 5)
+	if push.calls.Load() != before+1 {
+		t.Fatal("configured notifier did not receive the alert")
+	}
 }
