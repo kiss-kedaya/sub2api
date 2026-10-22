@@ -64,10 +64,13 @@ const (
 
 // Redeem type constants
 const (
-	RedeemTypeBalance      = "balance"
-	RedeemTypeConcurrency  = "concurrency"
-	RedeemTypeSubscription = "subscription"
-	RedeemTypeInvitation   = "invitation"
+	RedeemTypeBalance = "balance"
+	// RedeemTypePaymentBalance is reserved for server-side payment fulfillment.
+	// Public redemption must never allow users to claim these deterministic codes.
+	RedeemTypePaymentBalance = "payment_balance"
+	RedeemTypeConcurrency    = "concurrency"
+	RedeemTypeSubscription   = "subscription"
+	RedeemTypeInvitation     = "invitation"
 )
 
 // PromoCode status constants

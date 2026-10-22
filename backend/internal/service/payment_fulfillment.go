@@ -357,7 +357,7 @@ func validatePaymentRedeemCode(o *dbent.PaymentOrder, code *RedeemCode) error {
 	if code.Code != o.RechargeCode {
 		return fmt.Errorf("payment redeem code mismatch for order %d", o.ID)
 	}
-	if code.Type != RedeemTypeBalance {
+	if code.Type != RedeemTypeBalance && code.Type != RedeemTypePaymentBalance {
 		return fmt.Errorf("payment redeem code type mismatch for order %d: got %s", o.ID, code.Type)
 	}
 	if math.IsNaN(code.Value) || math.IsInf(code.Value, 0) || math.Abs(code.Value-o.Amount) > 1e-8 {
@@ -399,7 +399,7 @@ func (s *PaymentService) doBalance(ctx context.Context, o *dbent.PaymentOrder, l
 		// Code already created and redeemed — just mark completed
 		return s.markCompleted(ctx, o, lease, "RECHARGE_SUCCESS")
 	case redeemActionCreate:
-		rc := &RedeemCode{Code: o.RechargeCode, Type: RedeemTypeBalance, Value: o.Amount, Status: StatusUnused}
+		rc := &RedeemCode{Code: o.RechargeCode, Type: RedeemTypePaymentBalance, Value: o.Amount, Status: StatusUnused}
 		if err := s.redeemService.CreateCode(ctx, rc); err != nil {
 			return fmt.Errorf("create redeem code: %w", err)
 		}
