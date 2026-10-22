@@ -510,12 +510,12 @@ func mediaBillingRecoveryDelay(job *MediaBillingJob, err error) time.Duration {
 	if err == nil {
 		return 15 * time.Second
 	}
+	if job == nil || job.Kind != MediaBillingKindGrokVideo || job.Status != MediaBillingSubmitted || job.Intent != nil {
+		return time.Minute
+	}
 	// Attempts counts all polls, including successful pending observations.
 	// Use it only to pace retries, never as evidence that a task failed.
-	attempts := 0
-	if job != nil {
-		attempts = job.Attempts
-	}
+	attempts := job.Attempts
 	delay := time.Minute
 	for attempts > 0 && delay < 15*time.Minute {
 		delay *= 2
