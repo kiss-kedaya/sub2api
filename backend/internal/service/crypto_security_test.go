@@ -365,6 +365,17 @@ func TestCryptoSecurityReplayedCodeCannotResetFailureBudget(t *testing.T) {
 	require.Equal(t, maxTotpAttempts, attempts)
 }
 
+func TestTotpDisableAdminReturnsCryptoVerificationFailureWithoutDisabling(t *testing.T) {
+	_, totpService, repo, _ := newCryptoSecurityTestServices(t, true)
+	invalidCode := "000000"
+	if invalidCode == cryptoSecurityTestCode(t, cryptoSecurityTestSecret) {
+		invalidCode = "000001"
+	}
+	require.ErrorIs(t, totpService.Disable(context.Background(), 7, "", "", invalidCode), ErrCryptoTotpRequired)
+	require.Zero(t, repo.writes)
+	require.True(t, repo.user.TotpEnabled)
+}
+
 func TestCryptoSecurityAdminLoginAndStepUpCodesCannotReplayForPayment(t *testing.T) {
 	for _, first := range []string{"login", "payment"} {
 		t.Run(first, func(t *testing.T) {
