@@ -279,7 +279,7 @@ func (r *usageBillingRepository) reserveMediaBillingSubscription(ctx context.Con
 		SELECT COALESCE(SUM(reserved_amount), 0)
 		FROM media_billing_jobs
 		WHERE subscription_id = $1
-			AND status IN ('creating', 'submitted', 'ready')
+			AND status IN ('creating', 'submitted', 'reconciliation', 'ready')
 	`, *job.SubscriptionID).Scan(&outstanding); err != nil {
 		return err
 	}
@@ -418,7 +418,8 @@ func (r *usageBillingRepository) PrepareMediaBillingIntent(ctx context.Context, 
 		tx = nil
 		return job.Intent, nil
 	}
-	if job.Status != service.MediaBillingSubmitted && job.Status != service.MediaBillingReady {
+	if job.Status != service.MediaBillingSubmitted && job.Status != service.MediaBillingReady &&
+		(job.Kind != service.MediaBillingKindGrokVideo || job.Status != service.MediaBillingReconciliation) {
 		return nil, service.ErrUsageBillingRequestConflict
 	}
 	if err := validateMediaBillingIntentOwner(job, &intent); err != nil {
@@ -614,7 +615,8 @@ func (r *usageBillingRepository) FailMediaBillingJob(ctx context.Context, id str
 		tx = nil
 		return &service.UsageBillingApplyResult{}, nil
 	}
-	if (job.Status != service.MediaBillingCreating && job.Status != service.MediaBillingSubmitted) || job.Intent != nil {
+	if (job.Status != service.MediaBillingCreating && job.Status != service.MediaBillingSubmitted &&
+		(job.Kind != service.MediaBillingKindGrokVideo || job.Status != service.MediaBillingReconciliation)) || job.Intent != nil {
 		return nil, service.ErrUsageBillingRequestConflict
 	}
 	result := &service.UsageBillingApplyResult{Applied: true}
@@ -634,8 +636,8 @@ func (r *usageBillingRepository) FailMediaBillingJob(ctx context.Context, id str
 	updated, err := tx.ExecContext(ctx, `
 		UPDATE media_billing_jobs
 		SET status = $2, updated_at = NOW()
-		WHERE id = $1 AND status IN ($3, $4) AND intent IS NULL
-	`, job.ID, service.MediaBillingFailed, service.MediaBillingCreating, service.MediaBillingSubmitted)
+		WHERE id = $1 AND status IN ($3, $4, $5) AND intent IS NULL
+	`, job.ID, service.MediaBillingFailed, service.MediaBillingCreating, service.MediaBillingSubmitted, service.MediaBillingReconciliation)
 	if err != nil {
 		return nil, err
 	}
@@ -647,6 +649,42 @@ func (r *usageBillingRepository) FailMediaBillingJob(ctx context.Context, id str
 	}
 	tx = nil
 	return result, nil
+}
+
+// ReconcileMediaBillingJob pauses unresolved video polling without moving any
+// money. The conditional UPDATE also protects against an in-flight completion
+// or failure: once another transaction changes status or freezes an intent,
+// reconciliation must never downgrade that result.
+func (r *usageBillingRepository) ReconcileMediaBillingJob(ctx context.Context, id string) error {
+	if err := r.validateMediaBillingRepository(); err != nil {
+		return err
+	}
+	id = strings.TrimSpace(id)
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE media_billing_jobs
+		SET status = $2, updated_at = NOW()
+		WHERE id = $1 AND kind = $3 AND status = $4 AND intent IS NULL
+	`, id, service.MediaBillingReconciliation, service.MediaBillingKindGrokVideo, service.MediaBillingSubmitted)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 1 {
+		return nil
+	}
+	// Retrying this operation, or losing a race to settlement, is a no-op. Only
+	// a missing job is an error; no existing state is reopened or downgraded.
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM media_billing_jobs WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return service.ErrMediaBillingJobNotFound
+	}
+	return nil
 }
 
 func (r *usageBillingRepository) CompleteMediaBillingJob(ctx context.Context, id string) error {

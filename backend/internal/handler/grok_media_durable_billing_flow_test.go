@@ -80,9 +80,16 @@ func (r *durableMediaHandlerRepo) SubmitMediaBillingJob(_ context.Context, id, t
 	if job == nil {
 		return service.ErrMediaBillingJobNotFound
 	}
-	job.UpstreamTaskID = taskID
-	job.Snapshot = append(json.RawMessage(nil), snapshot...)
-	job.Status = service.MediaBillingSubmitted
+	if (job.UpstreamTaskID != "" && job.UpstreamTaskID != taskID) || job.Status == service.MediaBillingFailed {
+		return service.ErrUsageBillingRequestConflict
+	}
+	if job.UpstreamTaskID == "" {
+		job.UpstreamTaskID = taskID
+		job.Snapshot = append(json.RawMessage(nil), snapshot...)
+	}
+	if job.Status == service.MediaBillingCreating {
+		job.Status = service.MediaBillingSubmitted
+	}
 	return nil
 }
 
@@ -114,6 +121,10 @@ func (r *durableMediaHandlerRepo) PrepareMediaBillingIntent(_ context.Context, i
 		return nil, service.ErrMediaBillingJobNotFound
 	}
 	if job.Intent == nil {
+		if job.Status != service.MediaBillingSubmitted && job.Status != service.MediaBillingReady &&
+			!(job.Kind == service.MediaBillingKindGrokVideo && job.Status == service.MediaBillingReconciliation) {
+			return nil, service.ErrUsageBillingRequestConflict
+		}
 		payload, _ := json.Marshal(intent)
 		var frozen service.MediaBillingIntent
 		_ = json.Unmarshal(payload, &frozen)
@@ -158,7 +169,8 @@ func (r *durableMediaHandlerRepo) FailMediaBillingJob(_ context.Context, id stri
 		balance := r.balance
 		return &service.UsageBillingApplyResult{Applied: false, NewBalance: &balance}, nil
 	}
-	if job.Intent != nil {
+	if job.Intent != nil || (job.Status != service.MediaBillingCreating && job.Status != service.MediaBillingSubmitted &&
+		!(job.Kind == service.MediaBillingKindGrokVideo && job.Status == service.MediaBillingReconciliation)) {
 		return nil, service.ErrUsageBillingRequestConflict
 	}
 	r.failCount++
@@ -192,6 +204,19 @@ func (r *durableMediaHandlerRepo) ListMediaBillingJobs(_ context.Context, _ int)
 }
 
 func (r *durableMediaHandlerRepo) RetryMediaBillingJob(context.Context, string, time.Duration) error {
+	return nil
+}
+
+func (r *durableMediaHandlerRepo) ReconcileMediaBillingJob(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job := r.jobs[id]
+	if job == nil {
+		return service.ErrMediaBillingJobNotFound
+	}
+	if job.Kind == service.MediaBillingKindGrokVideo && job.Status == service.MediaBillingSubmitted && job.Intent == nil {
+		job.Status = service.MediaBillingReconciliation
+	}
 	return nil
 }
 
@@ -303,6 +328,8 @@ type durableMediaUpstream struct {
 	contentCalls int
 	createStatus int
 	createErr    error
+	statusCode   int
+	statusBody   string
 	taskID       string
 	content      string
 }
@@ -336,7 +363,20 @@ func (u *durableMediaUpstream) Do(req *http.Request, _ string, accountID int64, 
 	}
 	u.statusCalls++
 	body := `{"request_id":"` + u.taskID + `","status":"done","model":"grok-imagine-video","video":{"url":"https://vidgen.x.ai/test.mp4","duration":6}}`
-	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	if u.statusBody != "" {
+		body = u.statusBody
+	}
+	status := u.statusCode
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+}
+
+func (u *durableMediaUpstream) setStatusResponse(status int, body string) {
+	u.mu.Lock()
+	u.statusCode, u.statusBody = status, body
+	u.mu.Unlock()
 }
 
 func (u *durableMediaUpstream) counts() (create, status, content int) {
@@ -538,6 +578,127 @@ func TestGrokVideoDurableHandlerSharedRepositoryChargesConcurrentPollOnce(t *tes
 	require.Zero(t, direct)
 	logs, _ := f.usage.snapshot()
 	require.Len(t, logs, 1)
+}
+
+func TestGrokVideoDurableHandlerReconciliationFailedStatusRefundsOnceBeforePublication(t *testing.T) {
+	for _, status := range []string{"failed", "expired", "cancelled", "canceled"} {
+		t.Run(status, func(t *testing.T) {
+			f := newDurableMediaHandlerFixture(t)
+			create := f.request(0, http.MethodPost, "create", nil)
+			require.Equal(t, http.StatusOK, create.Code, create.Body.String())
+			job, balance, applied, failed, direct := f.repo.snapshotByTask(f.taskID)
+			require.NotNil(t, job)
+			require.Equal(t, service.MediaBillingSubmitted, job.Status)
+			require.Zero(t, balance)
+			require.Zero(t, applied)
+			require.Zero(t, failed)
+			require.Zero(t, direct)
+			require.NoError(t, f.repo.ReconcileMediaBillingJob(context.Background(), job.ID))
+			f.reorderKey()
+			f.upstream.setStatusResponse(http.StatusOK, `{"request_id":"`+f.taskID+`","status":"`+status+`"}`)
+			clientStatus := status
+			if status == "expired" {
+				clientStatus = "failed"
+			}
+
+			for _, instance := range []int{1, 0, 1} {
+				var checked sync.Once
+				response := f.request(instance, http.MethodGet, "status", func() {
+					checked.Do(func() {
+						current, refunded, charges, refunds, legacy := f.repo.snapshotByTask(f.taskID)
+						require.Equal(t, service.MediaBillingFailed, current.Status)
+						require.Nil(t, current.Intent)
+						require.InDelta(t, f.initial, refunded, 1e-8, "hold must be refunded before publishing failure")
+						require.Zero(t, charges)
+						require.Equal(t, 1, refunds, "cross-instance repeat polls must refund once")
+						require.Zero(t, legacy)
+					})
+				})
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				var payload struct {
+					Status string `json:"status"`
+				}
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
+				require.Equal(t, clientStatus, payload.Status)
+			}
+			logs, writes := f.usage.snapshot()
+			require.Empty(t, logs, "failed generation must not create billable usage")
+			require.Zero(t, writes)
+		})
+	}
+}
+
+func TestGrokVideoDurableHandlerReconciliationVerifiedSuccessSettlesOnce(t *testing.T) {
+	f := newDurableMediaHandlerFixture(t)
+	create := f.request(0, http.MethodPost, "create", nil)
+	require.Equal(t, http.StatusOK, create.Code, create.Body.String())
+	job, _, _, _, _ := f.repo.snapshotByTask(f.taskID)
+	require.NotNil(t, job)
+	require.NoError(t, f.repo.ReconcileMediaBillingJob(context.Background(), job.ID))
+	f.reorderKey()
+
+	for _, instance := range []int{1, 0, 1} {
+		response := f.request(instance, http.MethodGet, "status", nil)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var payload struct {
+			Status string `json:"status"`
+		}
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
+		require.Equal(t, "completed", payload.Status)
+		current, balance, charges, refunds, direct := f.repo.snapshotByTask(f.taskID)
+		require.Equal(t, service.MediaBillingDone, current.Status)
+		require.NotNil(t, current.Intent)
+		require.Equal(t, int64(17), *current.Intent.Usage.GroupID)
+		require.InDelta(t, f.initial, current.Intent.Command.BalanceCost, 1e-8)
+		require.Zero(t, balance)
+		require.Equal(t, 1, charges, "late success must settle exactly once across instances")
+		require.Zero(t, refunds)
+		require.Zero(t, direct)
+	}
+	logs, _ := f.usage.snapshot()
+	require.Len(t, logs, 1)
+}
+
+func TestGrokVideoDurableHandlerReconciliationUnknownResultRetainsHold(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "pending", status: http.StatusOK, body: `{"status":"pending"}`},
+		{name: "done without video output", status: http.StatusOK, body: `{"status":"done","video":{}}`},
+		{name: "not found", status: http.StatusNotFound, body: `{"error":{"message":"video not found"}}`},
+		{name: "gone", status: http.StatusGone, body: `{"error":{"message":"video is no longer available"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDurableMediaHandlerFixture(t)
+			create := f.request(0, http.MethodPost, "create", nil)
+			require.Equal(t, http.StatusOK, create.Code, create.Body.String())
+			job, _, _, _, _ := f.repo.snapshotByTask(f.taskID)
+			require.NotNil(t, job)
+			require.NoError(t, f.repo.ReconcileMediaBillingJob(context.Background(), job.ID))
+			f.reorderKey()
+			f.upstream.setStatusResponse(tc.status, tc.body)
+
+			for _, instance := range []int{1, 0} {
+				response := f.request(instance, http.MethodGet, "status", nil)
+				require.Equal(t, tc.status, response.Code, response.Body.String())
+				current, balance, charges, refunds, direct := f.repo.snapshotByTask(f.taskID)
+				require.Equal(t, service.MediaBillingReconciliation, current.Status)
+				require.Nil(t, current.Intent)
+				require.Zero(t, balance, "unknown upstream outcome must retain the reserved amount")
+				require.Zero(t, charges)
+				require.Zero(t, refunds)
+				require.Zero(t, direct)
+			}
+			jobs, err := f.repo.ListMediaBillingJobs(context.Background(), 10)
+			require.NoError(t, err)
+			require.Empty(t, jobs, "client polling must not resume automatic worker polling")
+			logs, writes := f.usage.snapshot()
+			require.Empty(t, logs)
+			require.Zero(t, writes)
+		})
+	}
 }
 
 func TestGrokVideoDurableHandlerCreateFailureSemantics(t *testing.T) {

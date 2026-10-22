@@ -80,7 +80,7 @@
 ### 3.1 OpenSpec
 
 ```bash
-cd /Users/mt/code/mt-ai/sub2api/sub2api-mt
+cd <TARGET_REPO>
 openspec status --change add-openai-compatible-prompt-audit
 openspec validate add-openai-compatible-prompt-audit --type change --strict --no-interactive
 openspec show add-openai-compatible-prompt-audit
@@ -89,7 +89,7 @@ openspec show add-openai-compatible-prompt-audit
 ### 3.2 后端快速门禁
 
 ```bash
-cd /Users/mt/code/mt-ai/sub2api/sub2api-mt/backend
+cd <TARGET_REPO>/backend
 
 go test ./internal/securityaudit/... -count=1
 go test ./internal/handler/... ./internal/server/... -count=1
@@ -104,7 +104,7 @@ go test -race ./internal/securityaudit/... -count=1
 项目已有基于 Testcontainers 的 integration harness。实现时把 Prompt Audit migration/Repository/Redis 场景接入同一模式：
 
 ```bash
-cd /Users/mt/code/mt-ai/sub2api/sub2api-mt/backend
+cd <TARGET_REPO>/backend
 go test -tags=integration ./internal/repository ./internal/securityaudit/... -run 'PromptAudit|PromptGuard' -count=1
 go test -tags=integration -race ./internal/securityaudit/... -run 'MultiWorker|MultiInstance|Lease|ConfigInvalidation' -count=1
 ```
@@ -114,7 +114,7 @@ CI 中 Docker 不可用必须失败；本地跳过要在证据中明确写“未
 ### 3.4 前端
 
 ```bash
-cd /Users/mt/code/mt-ai/sub2api/sub2api-mt
+cd <TARGET_REPO>
 pnpm --dir frontend run lint:check
 pnpm --dir frontend run typecheck
 pnpm --dir frontend exec vitest run \
@@ -127,7 +127,7 @@ pnpm --dir frontend run build
 ### 3.5 全量
 
 ```bash
-cd /Users/mt/code/mt-ai/sub2api/sub2api-mt
+cd <TARGET_REPO>
 make test-backend
 make test-frontend
 make build
@@ -328,7 +328,7 @@ URL_QUERY_CANARY_<random>
 复现命令：
 
 ```bash
-cd /Users/mt/code/mt-ai/sub2api/sub2api-mt/backend
+cd <TARGET_REPO>/backend
 go test ./internal/securityaudit -run TestPromptAuditSyntheticAsyncBaseline -count=1 -v
 ```
 
@@ -486,7 +486,7 @@ go test ./internal/securityaudit -run TestPromptAuditSyntheticAsyncBaseline -cou
 
 ### 15.3 页面证据
 
-- 桌面：`/Users/mt/.codex/visualizations/2026/07/16/019f6a2c-ce90-7ae2-8eca-6a3a66b837f2/prompt-audit-desktop.png`
-- 390px 窄屏：`/Users/mt/.codex/visualizations/2026/07/16/019f6a2c-ce90-7ae2-8eca-6a3a66b837f2/prompt-audit-narrow.png`
+- 桌面：`<PRIVATE_REVIEW_ARTIFACTS>/prompt-audit-desktop.png`
+- 390px 窄屏：`<PRIVATE_REVIEW_ARTIFACTS>/prompt-audit-narrow.png`
 
 截图只包含默认关闭状态、空事件/空节点和测试管理员展示名；未配置节点 token、未产生 Prompt 事件，并已目视确认没有 canary、Authorization、完整 Prompt 或内部错误。截图完成后测试库已恢复 `risk_control_enabled=false`，Prompt Audit 保持默认 off。

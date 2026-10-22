@@ -361,7 +361,16 @@ func GrokVideoBillingJobPending(job *MediaBillingJob) (*GrokVideoPendingBilling,
 }
 
 func (s *OpenAIGatewayService) SettleGrokVideoBillingJob(ctx context.Context, job *MediaBillingJob, result *OpenAIForwardResult) error {
-	if job == nil || result == nil || result.VideoCount <= 0 {
+	if job == nil || result == nil {
+		return nil
+	}
+	if job.Intent == nil && (job.Status == MediaBillingSubmitted || job.Status == MediaBillingReconciliation) {
+		switch result.VideoStatus {
+		case "failed", "cancelled", "canceled":
+			return s.FailGrokVideoBillingJob(ctx, job)
+		}
+	}
+	if result.VideoCount <= 0 {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
@@ -466,6 +475,8 @@ func (s *OpenAIGatewayService) recoverMediaBillingJobs(ctx context.Context) {
 			workCtx, stop := context.WithTimeout(ctx, 30*time.Second)
 			if job.Intent != nil {
 				err = s.settleMediaBillingJob(workCtx, job, nil)
+			} else if grokVideoAutomaticPollExpired(job, time.Now()) {
+				err = s.reconcileGrokVideoBillingJob(workCtx, job, "automatic_poll_expired")
 			} else {
 				err = s.pollGrokVideoBillingJob(workCtx, job)
 			}
@@ -474,14 +485,54 @@ func (s *OpenAIGatewayService) recoverMediaBillingJobs(ctx context.Context) {
 				logger.L().Warn("media_billing.retry", zap.String("job_id", job.ID), zap.Error(err))
 			}
 			retryCtx, retryCancel := context.WithTimeout(ctx, 3*time.Second)
-			delay := 15 * time.Second
-			if err != nil {
-				delay = time.Minute
-			}
+			delay := mediaBillingRecoveryDelay(job, err)
 			_ = s.mediaBillingJobs.RetryMediaBillingJob(retryCtx, job.ID, delay)
 			retryCancel()
 		}
 	}
+}
+
+const (
+	// This is the gateway's automatic polling budget, not a guarantee about
+	// how long a provider retains a video. Unknown outcomes retain their hold
+	// until completion or failure is actually observed.
+	grokVideoAutomaticPollMaxAge = 24 * time.Hour
+	grokVideoMissingTaskGrace    = 5 * time.Minute
+)
+
+func grokVideoAutomaticPollExpired(job *MediaBillingJob, now time.Time) bool {
+	return job != nil && job.Kind == MediaBillingKindGrokVideo &&
+		job.Status == MediaBillingSubmitted && job.Intent == nil &&
+		(job.CreatedAt.IsZero() || !now.Before(job.CreatedAt.Add(grokVideoAutomaticPollMaxAge)))
+}
+
+func mediaBillingRecoveryDelay(job *MediaBillingJob, err error) time.Duration {
+	if err == nil {
+		return 15 * time.Second
+	}
+	// Attempts counts all polls, including successful pending observations.
+	// Use it only to pace retries, never as evidence that a task failed.
+	attempts := 0
+	if job != nil {
+		attempts = job.Attempts
+	}
+	delay := time.Minute
+	for attempts > 0 && delay < 15*time.Minute {
+		delay *= 2
+		attempts--
+	}
+	if delay > 15*time.Minute {
+		delay = 15 * time.Minute
+	}
+	return delay
+}
+
+func (s *OpenAIGatewayService) reconcileGrokVideoBillingJob(ctx context.Context, job *MediaBillingJob, reason string) error {
+	if err := s.mediaBillingJobs.ReconcileMediaBillingJob(ctx, job.ID); err != nil {
+		return err
+	}
+	logger.L().Warn("media_billing.reconciliation_required", zap.String("job_id", job.ID), zap.String("reason", reason))
+	return nil
 }
 
 type mediaStatusWriter struct {
@@ -516,6 +567,16 @@ func (s *OpenAIGatewayService) pollGrokVideoBillingJob(ctx context.Context, job 
 	}
 	result, err := s.ForwardGrokMedia(ctx, c, account, GrokMediaEndpointVideoStatus, job.UpstreamTaskID, nil, "")
 	if err != nil {
+		// The forwarding context carries the provider's status before any
+		// client error envelope or passthrough rule can rewrite it. A missing
+		// task may be briefly inconsistent after creation; do not quarantine
+		// it during that grace period, and never infer a refund from a 404.
+		status := c.GetInt(OpsUpstreamStatusCodeKey)
+		if job.Status == MediaBillingSubmitted && job.Intent == nil &&
+			(status == http.StatusNotFound || status == http.StatusGone) &&
+			!job.CreatedAt.IsZero() && time.Since(job.CreatedAt) >= grokVideoMissingTaskGrace {
+			return s.reconcileGrokVideoBillingJob(ctx, job, "upstream_task_missing")
+		}
 		return err
 	}
 	if result != nil && result.VideoCount > 0 {
