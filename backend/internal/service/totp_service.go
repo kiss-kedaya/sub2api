@@ -433,14 +433,18 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 				return err
 			}
 			defer unlock()
-			verifiedUser, err = s.cryptoSecurity.verifyAdminRiskUser(ctx, userID, totpCodes[0])
+			var verifyErr error
+			verifiedUser, verifyErr = s.cryptoSecurity.verifyAdminRiskUser(ctx, userID, totpCodes[0])
+			if verifyErr != nil {
+				return verifyErr
+			}
 		} else {
 			// Sites without payment verification still support ordinary TOTP.
-			verifiedUser, err = s.verifyCode(ctx, userID, totpCodes[0], nil)
-			err = cryptoTotpError(err)
-		}
-		if err != nil {
-			return err
+			var verifyErr error
+			verifiedUser, verifyErr = s.verifyCode(ctx, userID, totpCodes[0], nil)
+			if verifyErr != nil {
+				return cryptoTotpError(verifyErr)
+			}
 		}
 		if verifiedUser.Role != user.Role {
 			return ErrUserSecurityStateChanged
