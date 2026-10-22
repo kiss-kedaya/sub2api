@@ -221,7 +221,7 @@ func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64) (err error) 
 		err = errors.Join(err, fmt.Errorf("credited recheck: %w", recheckErr))
 	}
 	for _, chain := range w.chains {
-		if scanErr := w.scanChain(ctx, chain); scanErr != nil {
+		if scanErr := w.scanChainFrom(ctx, chain, fromBlock); scanErr != nil {
 			err = errors.Join(err, fmt.Errorf("scan %s: %w", chain.Chain, scanErr))
 		}
 	}
@@ -281,6 +281,10 @@ func (w *Worker) ScanOnce(ctx context.Context) error {
 }
 
 func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
+	return w.scanChainFrom(ctx, chain, 0)
+}
+
+func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFromBlock uint64) error {
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
@@ -308,7 +312,12 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 		slog.Warn("[cryptopay] cursor load failed", "chain", chain.Chain, "error", err)
 		return err
 	}
-	if last == 0 {
+	if manualFromBlock != 0 {
+		last = manualFromBlock - 1
+		if err := w.cursor.Save(ctx, chain.Chain, last); err != nil {
+			return err
+		}
+	} else if last == 0 {
 		// First run: start from a small lookback window instead of the exact
 		// head. Starting AT the head leaves nothing to scan, so the cursor
 		// never advances and deposits landing right after boot are missed.
