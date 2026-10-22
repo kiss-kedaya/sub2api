@@ -34,16 +34,6 @@
           </div>
 
           <form id="crypto-mnemonics-form" class="crypto-mnemonics__form" autocomplete="off" @submit.prevent="requestExport">
-            <label for="crypto-mnemonics-passphrase">{{ t('admin.crypto.vaultPassphrase') }}</label>
-            <input
-              id="crypto-mnemonics-passphrase"
-              v-model="passphrase"
-              type="password"
-              autocomplete="new-password"
-              class="input"
-              :disabled="busy"
-              required
-            />
             <label class="crypto-mnemonics__confirm">
               <input v-model="productionConfirmed" type="checkbox" :disabled="busy" />
               <span>{{ t('admin.crypto.mnemonicsProductionConfirm') }}</span>
@@ -229,7 +219,7 @@
     <template #footer>
       <div class="crypto-mnemonics__footer">
         <button type="button" class="btn btn-secondary" :disabled="busy" @click="close">{{ t('common.cancel') }}</button>
-        <button v-if="!hasMnemonics" form="crypto-mnemonics-form" type="submit" class="btn btn-danger" :disabled="busy || !passphrase || !productionConfirmed">
+        <button v-if="!hasMnemonics" form="crypto-mnemonics-form" type="submit" class="btn btn-danger" :disabled="busy || !productionConfirmed">
           <Icon v-if="!busy" name="lock" size="sm" />
           {{ busy ? t('common.processing') : t('admin.crypto.mnemonicsExportAction') }}
         </button>
@@ -256,7 +246,6 @@ const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
 const appStore = useAppStore()
 const securityDialog = ref<InstanceType<typeof CryptoSecurityDialog> | null>(null)
-const passphrase = ref('')
 const productionConfirmed = ref(false)
 const depositMnemonic = ref('')
 const hotMnemonic = ref('')
@@ -286,7 +275,6 @@ function clearCopyTimer() {
 function clearSecrets() {
   clearDisplayTimer()
   clearCopyTimer()
-  passphrase.value = ''
   depositMnemonic.value = ''
   hotMnemonic.value = ''
   depositVisible.value = false
@@ -396,17 +384,15 @@ async function copyMnemonic(kind: 'deposit' | 'hot', part: 1 | 2) {
 }
 
 async function requestExport() {
-  if (busy.value || !passphrase.value || !productionConfirmed.value) return
+  if (busy.value || !productionConfirmed.value) return
   busy.value = true
   copyNotice.value = ''
-  let exportPassphrase = passphrase.value
-  passphrase.value = ''
   const current = generation
   try {
     await securityDialog.value?.verify(t('admin.crypto.mnemonicsRiskOperation'), async (code) => {
       let result: Awaited<ReturnType<typeof exportWalletMnemonics>> | undefined
       try {
-        result = await exportWalletMnemonics(exportPassphrase, { totpCode: code })
+        result = await exportWalletMnemonics({ totpCode: code })
         if (current !== generation || !props.show) return
         if (!result.deposit_mnemonic?.trim() || !result.hot_mnemonic?.trim()) throw new Error(t('admin.crypto.mnemonicsInvalidResponse'))
         depositMnemonic.value = result.deposit_mnemonic.trim()
@@ -417,14 +403,11 @@ async function requestExport() {
           result.deposit_mnemonic = ''
           result.hot_mnemonic = ''
         }
-        exportPassphrase = ''
       }
     })
   } catch (error) {
     if (current === generation) appStore.showError(extractApiErrorMessage(error, t('common.error')))
   } finally {
-    exportPassphrase = ''
-    passphrase.value = ''
     if (current === generation) busy.value = false
   }
 }

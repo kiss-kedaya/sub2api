@@ -2,17 +2,12 @@ package wallet
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/sha256"
 	"database/sql/driver"
-	"encoding/base64"
 	"regexp"
-	"sync"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"golang.org/x/crypto/scrypt"
 )
 
 // Public BIP39 test vectors only. No environment, RPC, wallet files or live DB.
@@ -30,44 +25,16 @@ const (
 			ELSE chain END AS chain_family, derivation_index, address FROM deposit_addresses`
 )
 
-var legacyOnce sync.Once
-var legacyRaw string
-var legacyErr error
+const testMasterKey = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
 
-// Produce an independent ciphertext using the legacy byte layout and literal
-// JSON, without calling the new sealContents. The deterministic salt/nonce are
-// exclusively a compatibility fixture and are never used by implementation.
-func legacyVault(t *testing.T) string {
+func managedVault(t *testing.T) string {
 	t.Helper()
-	legacyOnce.Do(func() {
-		salt := []byte("legacy-test-salt")
-		nonce := []byte("legacy-nonce")
-		key, err := scrypt.Key([]byte(testPassphrase), salt, 1<<17, 8, 1, 32)
-		if err != nil {
-			legacyErr = err
-			return
-		}
-		defer clear(key)
-		block, err := aes.NewCipher(key)
-		if err != nil {
-			legacyErr = err
-			return
-		}
-		gcm, err := cipher.NewGCM(block)
-		if err != nil {
-			legacyErr = err
-			return
-		}
-		plaintext := []byte(`{"deposit":"` + testDeposit + `","hot":"` + testHot + `"}`)
-		defer clear(plaintext)
-		blob := append(append([]byte{}, salt...), nonce...)
-		blob = gcm.Seal(blob, nonce, plaintext, nil)
-		legacyRaw = base64.StdEncoding.EncodeToString(blob)
-	})
-	if legacyErr != nil {
-		t.Fatal(legacyErr)
+	m := New(nil, testMasterKey)
+	raw, err := m.sealContents(testDeposit, testHot)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return legacyRaw
+	return raw
 }
 
 func mockManager(t *testing.T) (*Manager, sqlmock.Sqlmock) {
@@ -85,7 +52,7 @@ func mockManager(t *testing.T) (*Manager, sqlmock.Sqlmock) {
 		}
 		_ = db.Close()
 	})
-	m := New(db)
+	m := New(db, testMasterKey)
 	if err := m.SetDestination(testDestination); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +62,7 @@ func mockManager(t *testing.T) (*Manager, sqlmock.Sqlmock) {
 func residentManager(t *testing.T) (*Manager, sqlmock.Sqlmock, string) {
 	t.Helper()
 	m, mock := mockManager(t)
-	raw := legacyVault(t)
+	raw := managedVault(t)
 	var err error
 	m.deposit, err = NewDeriver(testDeposit)
 	if err != nil {
@@ -106,7 +73,7 @@ func residentManager(t *testing.T) (*Manager, sqlmock.Sqlmock, string) {
 		t.Fatal(err)
 	}
 	m.vaultFingerprint = sha256.Sum256([]byte(raw))
-	t.Cleanup(m.Lock)
+	t.Cleanup(m.Close)
 	return m, mock, raw
 }
 
@@ -134,14 +101,6 @@ func expectAddresses(mock sqlmock.Sqlmock, rows *sqlmock.Rows) {
 		rows = sqlmock.NewRows([]string{"family", "index", "address"})
 	}
 	mock.ExpectQuery(regexp.QuoteMeta(addressQuery)).WillReturnRows(rows).RowsWillBeClosed()
-}
-
-func expectUnlock(mock sqlmock.Sqlmock, raw string) {
-	expectLock(mock, true)
-	expectRead(mock, raw, " FOR UPDATE")
-	expectAddresses(mock, nil)
-	auditOK(mock, "unlock", "ok")
-	mock.ExpectCommit()
 }
 
 // compile-time contract for the public address service, without importing sweeper.

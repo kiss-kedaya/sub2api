@@ -15,12 +15,12 @@ const config = () => ({ enabled: true, chains: ['bsc'], rpc: { bsc: 'https://one
   sweep_min_per_address: {}, gas_topup: {}, hot_wallet_evm: '0x1234567890123456789012345678901234567890', hot_wallet_solana: '', hot_index: 0,
   sweep_auto: false, confirmations: {}, scan_range: {}, credit_min_amount: 1, credit_max_amount: 10000, credit_multiplier: 1 })
 let serverConfig = config()
-let walletStatus = { ok: true, unlocked: false, signing_enabled: false }
+let walletStatus = { ok: true, configured: false, ready: false, enabled: false }
 
 beforeEach(() => {
   vi.resetAllMocks()
   serverConfig = config()
-  walletStatus = { ok: true, unlocked: false, signing_enabled: false }
+  walletStatus = { ok: true, configured: false, ready: false, enabled: false }
   mocks.get.mockImplementation(async (path: string) => {
     if (path.endsWith('/security/status')) return { data: { enabled: true, feature_enabled: true, can_setup: true } }
     let data: unknown = []
@@ -35,17 +35,17 @@ beforeEach(() => {
   })
   mocks.put.mockImplementation(async (_path: string, patch: Partial<ReturnType<typeof config>>) => {
     Object.assign(serverConfig, patch)
-    walletStatus.signing_enabled = walletStatus.unlocked && serverConfig.enabled && Boolean(serverConfig.hot_wallet_evm)
+    walletStatus.enabled = walletStatus.ready && serverConfig.enabled && Boolean(serverConfig.hot_wallet_evm)
     return { data: {}, status: 200 }
   })
   mocks.post.mockImplementation(async (path: string) => {
     if (path.endsWith('/export-mnemonics')) return { data: { deposit_mnemonic: 'test deposit words', hot_mnemonic: 'test gas words' }, status: 200 }
     if (path.endsWith('/backup')) return { data: new Blob(['encrypted'], { type: 'application/json' }), status: 200 }
     if (path.endsWith('/hot-mnemonic')) {
-      walletStatus = { ok: true, unlocked: false, signing_enabled: false }
+      walletStatus = { ok: true, configured: true, ready: true, enabled: true }
       return { data: { saved: true }, status: 200 }
     }
-    if (path.endsWith('/wallet/unlock')) walletStatus = { ok: true, unlocked: true, signing_enabled: true }
+    if (path.endsWith('/wallet/initialize')) walletStatus = { ok: true, configured: true, ready: true, enabled: true }
     return { data: { data: path.endsWith('/auto-pick') ? { picked: [], probed: 2 } : {} }, status: 200 }
   })
   vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn().mockReturnValue('blob:encrypted'), revokeObjectURL: vi.fn() }))
@@ -103,19 +103,13 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     }))
   })
 
-  it('explains the new vault passphrase minimum while preserving existing vault and seed scopes', () => {
-    expect(zh.crypto.unlockPassphraseHint).toContain('至少 12 个字符')
-    expect(zh.crypto.unlockPassphraseHint).toContain('旧口令仍兼容')
-    expect(zh.crypto.walletInitWarning).toContain('只校验非空')
-    expect(en.crypto.unlockPassphraseHint).toContain('at least 12 characters')
-    expect(en.crypto.walletInitWarning).toContain('original non-empty passphrase')
-    for (const locale of [zh, en]) {
-      expect(locale.crypto.mnemonicsDepositWarning).toMatch(/所有用户|every user/)
-      expect(locale.crypto.mnemonicsHotWarning).toContain('Gas')
-      expect(locale.crypto.mnemonicsHotWarning).toContain('deposit')
-      expect(locale.crypto.depositMnemonicImpact).toMatch(/所有用户|every user/)
-      expect(locale.crypto.hotMnemonicScope).toMatch(/只决定 Gas|only the Gas/)
-      expect(JSON.stringify(locale)).not.toMatch(/signer|签名服务|独立签名策略/i)
+  it('explains managed encryption and preserves the separate deposit and Gas seed risks', () => {
+    expect(zh.crypto.walletManagedHint).toContain('无需额外口令或手动解锁')
+    expect(en.crypto.walletManagedHint).toContain('No extra password or manual unlock')
+    for (const locale of [zh,en]) {
+      expect(locale.crypto.walletInitWarning).toMatch(/所有用户|every user/)
+      expect(locale.crypto.hotImportWarning).toContain('Gas')
+      expect(locale.crypto.walletInitWarning).not.toMatch(/12|passphrase|Vault/)
     }
   })
 
@@ -188,16 +182,16 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
   })
 
   it('opens plaintext export and shows both seeds only after TOTP confirmation', async () => {
+    walletStatus = { ok: true, configured: true, ready: true, enabled: true }
     const wrapper = await render()
     await configTab(wrapper)
     await button(wrapper, 'admin.crypto.mnemonicsExportAction').trigger('click')
-    await wrapper.get('#crypto-mnemonics-passphrase').setValue('vault-passphrase')
     await wrapper.get('input[type="checkbox"]').setValue(true)
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
     await flushPromises()
     expect(mocks.post).not.toHaveBeenCalled()
     await verify(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/export-mnemonics', { passphrase: 'vault-passphrase' }, expect.objectContaining({
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/export-mnemonics', {}, expect.objectContaining({
       headers: { 'X-Crypto-TOTP': '123456', 'Cache-Control': 'no-store', Pragma: 'no-cache' }
     }))
     await new Promise((resolve) => setTimeout(resolve, 200))
@@ -208,45 +202,40 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
   })
 
   it('imports only hot mnemonic, explains risks, clears it and requires wallet unlock', async () => {
-    walletStatus = { ok: true, unlocked: true, signing_enabled: true }
+    walletStatus = { ok: true, configured: true, ready: true, enabled: true }
     const wrapper = await render()
     await configTab(wrapper)
     await button(wrapper, 'admin.crypto.hotImportAction').trigger('click')
     expect(wrapper.text()).toContain('admin.crypto.hotImportWarning')
-    await wrapper.get('#crypto-wallet-passphrase').setValue('vault-passphrase')
     expect(wrapper.get('#crypto-hot-mnemonic').attributes('type')).toBe('password')
     await wrapper.get('#crypto-hot-mnemonic').setValue('hot words only')
     await wrapper.get('#crypto-wallet-form').trigger('submit')
     await verify(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/hot-mnemonic', { passphrase: 'vault-passphrase', hot_mnemonic: 'hot words only' }, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '123456' } }))
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/hot-mnemonic', { hot_mnemonic: 'hot words only' }, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '123456' } }))
     expect(mocks.showSuccess).toHaveBeenCalledWith('admin.crypto.hotImportDone')
-    expect(wrapper.find('#crypto-wallet-unlock-passphrase').exists()).toBe(true)
+    expect(wrapper.find('#crypto-wallet-unlock-passphrase').exists()).toBe(false)
     await button(wrapper, 'admin.crypto.hotImportAction').trigger('click')
     expect((wrapper.get('#crypto-hot-mnemonic').element as HTMLInputElement).value).toBe('')
   })
 
   it('closes pending verification on tab navigation before a wallet write is authorized', async () => {
-    const wrapper = await render()
-    await configTab(wrapper)
-    await button(wrapper, 'admin.crypto.backupAction').trigger('click')
-    await wrapper.get('#crypto-wallet-passphrase').setValue('vault-passphrase')
-    await wrapper.get('#crypto-wallet-form').trigger('submit')
-    await flushPromises()
-
+    walletStatus={ok:true,configured:true,ready:true,enabled:true}
+    const wrapper=await render(); await configTab(wrapper)
+    await button(wrapper,'admin.crypto.hotImportAction').trigger('click')
+    await wrapper.get('#crypto-hot-mnemonic').setValue('private words')
+    await wrapper.get('#crypto-wallet-form').trigger('submit'); await flushPromises()
     expect(wrapper.find('#crypto-security-form').exists()).toBe(true)
-    await wrapper.get('#crypto-tab-addresses').trigger('click')
-    await flushPromises()
+    await wrapper.get('#crypto-tab-addresses').trigger('click'); await flushPromises()
     expect(wrapper.find('#crypto-security-form').exists()).toBe(false)
-    expect(mocks.post.mock.calls.some(([path]) => path.endsWith('/backup'))).toBe(false)
-    expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled()
+    expect(mocks.post).not.toHaveBeenCalled()
   })
 
   it.each([
-    { ok: true, unlocked: false, signing_enabled: false, label: 'walletLocked', disabled: true },
-    { ok: true, unlocked: true, signing_enabled: true, label: 'walletReady', disabled: false },
-    { ok: true, unlocked: true, signing_enabled: false, label: 'walletNeedsConfig', disabled: false },
-    { ok: false, unlocked: true, signing_enabled: true, label: 'walletUnavailable', disabled: true }
-  ])('shows $label and gates address derivation for wallet state $ok/$unlocked/$signing_enabled', async (state) => {
+    { ok: true, configured: false, ready: false, enabled: false, label: 'walletNotConfigured', disabled: true },
+    { ok: true, configured: true, ready: true, enabled: true, label: 'walletReady', disabled: false },
+    { ok: true, configured: true, ready: true, enabled: false, label: 'walletNeedsConfig', disabled: false },
+    { ok: false, configured: true, ready: true, enabled: true, label: 'walletUnavailable', disabled: true }
+  ])('shows $label and gates address derivation for wallet state $ok/$ready/$enabled', async (state) => {
     walletStatus = state
     const wrapper = await render()
     await configTab(wrapper)
@@ -262,12 +251,12 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
       expect(wrapper.get('input[placeholder="0x…"]').element).toHaveProperty('value', '0xGAS')
     }
     await wrapper.get('#crypto-tab-sweep').trigger('click')
-    expect(button(wrapper, 'admin.crypto.sweepRun').attributes('disabled') !== undefined).toBe(!state.ok || !state.unlocked || !state.signing_enabled)
+    expect(button(wrapper, 'admin.crypto.sweepRun').attributes('disabled') !== undefined).toBe(!state.ok || !state.ready || !state.enabled)
   })
 
   it('can derive and save a destination on first setup before signing is enabled', async () => {
     serverConfig.hot_wallet_evm = ''
-    walletStatus = { ok: true, unlocked: true, signing_enabled: false }
+    walletStatus = { ok: true, configured: true, ready: true, enabled: false }
     const wrapper = await render()
     await configTab(wrapper)
     expect(wrapper.get('.crypto-view__lockstate').text()).toContain('admin.crypto.walletNeedsConfig')
@@ -283,17 +272,12 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(button(wrapper, 'admin.crypto.sweepRun').attributes('disabled')).toBeUndefined()
   })
 
-  it('allows an existing non-empty vault passphrase shorter than 12 characters', async () => {
-    const wrapper = await render()
-    await configTab(wrapper)
-    const input = wrapper.get('#crypto-wallet-unlock-passphrase')
-    expect(input.attributes('minlength')).toBeUndefined()
-    await input.setValue('old')
-    await button(wrapper, 'admin.crypto.walletUnlockAction').trigger('click')
-    await verify(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/unlock', {
-      passphrase: 'old', deposit_mnemonic: '', hot_mnemonic: ''
-    }, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '123456' } }))
+  it('has no manual wallet password, unlock or encrypted-backup controls', async () => {
+    const wrapper=await render(); await configTab(wrapper)
+    expect(wrapper.find('#crypto-wallet-unlock-passphrase').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('admin.crypto.backupAction')
+    expect(wrapper.text()).not.toContain('admin.crypto.walletUnlockAction')
+    expect(wrapper.find('#crypto-deposit-mnemonic').exists()).toBe(true)
   })
 
   it('shows unavailable status and prevents derivation when wallet status cannot be fetched', async () => {
@@ -321,46 +305,29 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     }, expect.anything())
   })
 
-  it('downloads the encrypted wallet backup only after fresh 2FA and clears the passphrase', async () => {
-    const wrapper = await render()
-    await configTab(wrapper)
-    await button(wrapper, 'admin.crypto.backupAction').trigger('click')
-    expect(wrapper.find('#crypto-hot-mnemonic').exists()).toBe(false)
-    await wrapper.get('#crypto-wallet-passphrase').setValue('vault-passphrase')
-    await wrapper.get('#crypto-wallet-form').trigger('submit')
-    await flushPromises()
+  it('clears a cancelled Gas seed without sending it or a password', async () => {
+    walletStatus={ok:true,configured:true,ready:true,enabled:true}
+    const wrapper=await render(); await configTab(wrapper)
+    await button(wrapper,'admin.crypto.hotImportAction').trigger('click')
+    await wrapper.get('#crypto-hot-mnemonic').setValue('private gas words')
+    await wrapper.get('#crypto-wallet-form').trigger('submit'); await flushPromises()
+    await wrapper.get('.crypto-security__actions .btn-secondary').trigger('click'); await flushPromises()
     expect(mocks.post).not.toHaveBeenCalled()
-    await verify(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/backup', { passphrase: 'vault-passphrase' }, expect.objectContaining({
-      headers: { 'X-Crypto-TOTP': '123456' }, responseType: 'blob', _retry: true
-    }))
-    expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(1)
-    expect(mocks.showSuccess).toHaveBeenCalledWith('admin.crypto.backupDone')
-    await button(wrapper, 'admin.crypto.backupAction').trigger('click')
-    expect(wrapper.get('#crypto-wallet-passphrase').element).toHaveProperty('value', '')
-    await wrapper.findAll('.btn-secondary').find(btn => btn.text() === 'common.cancel')!.trigger('click')
-    await flushPromises()
-    expect(mocks.post).toHaveBeenCalledTimes(1)
+    await button(wrapper,'admin.crypto.hotImportAction').trigger('click')
+    expect((wrapper.get('#crypto-hot-mnemonic').element as HTMLInputElement).value).toBe('')
   })
 
-  it('sends initialization seeds only with unlock and clears fields on cancellation', async () => {
-    const wrapper = await render()
-    await configTab(wrapper)
-    await wrapper.get('#crypto-wallet-unlock-passphrase').setValue('vault-passphrase')
+  it('imports initial seeds only after fresh 2FA and removes the form immediately', async () => {
+    const wrapper=await render(); await configTab(wrapper)
     await wrapper.get('#crypto-deposit-mnemonic').setValue('deposit words')
-    await wrapper.get('#crypto-initial-hot-mnemonic').setValue('hot words')
-    await button(wrapper, 'admin.crypto.walletUnlockAction').trigger('click')
-    await flushPromises()
-    await wrapper.findAll('.btn-secondary').find(btn => btn.text() === 'common.cancel')!.trigger('click')
-    await flushPromises()
+    await wrapper.get('#crypto-initial-hot-mnemonic').setValue('gas words')
+    await button(wrapper,'admin.crypto.walletInitializeAction').trigger('click'); await flushPromises()
     expect(mocks.post).not.toHaveBeenCalled()
-    expect((wrapper.get('#crypto-wallet-unlock-passphrase').element as HTMLInputElement).value).toBe('')
-    expect((wrapper.get('#crypto-deposit-mnemonic').element as HTMLInputElement).value).toBe('')
-    await wrapper.get('#crypto-wallet-unlock-passphrase').setValue('vault-passphrase')
-    await button(wrapper, 'admin.crypto.walletUnlockAction').trigger('click')
     await verify(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/unlock', { passphrase: 'vault-passphrase', deposit_mnemonic: '', hot_mnemonic: '' }, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '123456' } }))
-    expect(wrapper.get('.crypto-view__lockstate').text()).toContain('admin.crypto.walletReady')
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/initialize',{
+      deposit_mnemonic:'deposit words',hot_mnemonic:'gas words'
+    },expect.objectContaining({headers:{'X-Crypto-TOTP':'123456'}}))
+    expect(wrapper.find('#crypto-deposit-mnemonic').exists()).toBe(false)
     expect(wrapper.find('#crypto-wallet-unlock-passphrase').exists()).toBe(false)
   })
 

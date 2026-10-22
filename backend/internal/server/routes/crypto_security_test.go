@@ -272,7 +272,7 @@ func activeCryptoAdmin() *service.User {
 }
 
 func cryptoRouteRequest(router http.Handler, method, path, code string, headers map[string]string, peer, host string) *httptest.ResponseRecorder {
-	return cryptoRouteRequestBody(router, method, path, `{"passphrase":"test"}`, code, headers, peer, host)
+	return cryptoRouteRequestBody(router, method, path, `{}`, code, headers, peer, host)
 }
 
 func cryptoRouteRequestBody(router http.Handler, method, path, body, code string, headers map[string]string, peer, host string) *httptest.ResponseRecorder {
@@ -363,7 +363,7 @@ func TestCryptoAdminRegisteredRoutesEnforceLiveJWTAndTotp(t *testing.T) {
 func TestCryptoAdminRejectsUnauthenticatedAndAdminAPIKeyEvenWithCode(t *testing.T) {
 	for _, endpoint := range []string{
 		"/api/v1/admin/crypto/wallet/export-mnemonics",
-		"/api/v1/admin/crypto/wallet/backup",
+		"/api/v1/admin/crypto/wallet/initialize",
 	} {
 		for _, tc := range []struct {
 			name   string
@@ -384,12 +384,12 @@ func TestCryptoAdminRejectsUnauthenticatedAndAdminAPIKeyEvenWithCode(t *testing.
 	}
 }
 
-func TestCryptoAdminEncryptedVaultBackupRouteRequiresFreshTotp(t *testing.T) {
+func TestCryptoAdminWalletInitializationRequiresFreshTotp(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
 	h := newCryptoRouteHarness(t, activeCryptoAdmin())
-	path := "/api/v1/admin/crypto/wallet/backup"
-	body := `{"passphrase":"fixture-only"}`
+	path := "/api/v1/admin/crypto/wallet/initialize"
+	body := `{"deposit_mnemonic":"fixture-only","hot_mnemonic":"fixture-only-gas"}`
 
 	bad := cryptoRouteRequestBody(h.router, http.MethodPost, path, body, wrongCryptoRouteCode(t, 0), nil, "127.0.0.1:1234", "localhost")
 	requireCryptoReason(t, bad, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
@@ -485,8 +485,8 @@ func testCryptoAdminEveryRiskRouteRejectsInvalidTotp(t *testing.T) {
 		{http.MethodPut, "/api/v1/admin/crypto/config"},
 		{http.MethodPost, "/api/v1/admin/crypto/addresses/1/status"},
 		{http.MethodPost, "/api/v1/admin/crypto/sweep/run"},
-		{http.MethodPost, "/api/v1/admin/crypto/wallet/unlock"},
-		{http.MethodPost, "/api/v1/admin/crypto/wallet/backup"},
+		{http.MethodPost, "/api/v1/admin/crypto/wallet/initialize"},
+		{http.MethodPost, "/api/v1/admin/crypto/wallet/initialize"},
 		{http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics"},
 		{http.MethodPost, "/api/v1/admin/crypto/wallet/hot-mnemonic"},
 		{http.MethodPost, "/api/v1/admin/crypto/rpc/test"},
@@ -582,8 +582,8 @@ func TestCryptoAdminTestModeIsReadOnlyAndRequiresProductionTwoFactorEnrollment(t
 		{"config write", http.MethodPut, "/api/v1/admin/crypto/config"},
 		{"address status", http.MethodPost, "/api/v1/admin/crypto/addresses/1/status"},
 		{"manual sweep", http.MethodPost, "/api/v1/admin/crypto/sweep/run"},
-		{"wallet unlock", http.MethodPost, "/api/v1/admin/crypto/wallet/unlock"},
-		{"encrypted vault backup", http.MethodPost, "/api/v1/admin/crypto/wallet/backup"},
+		{"wallet unlock", http.MethodPost, "/api/v1/admin/crypto/wallet/initialize"},
+		{"encrypted vault backup", http.MethodPost, "/api/v1/admin/crypto/wallet/initialize"},
 		{"mnemonic export", http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics"},
 		{"hot mnemonic import", http.MethodPost, "/api/v1/admin/crypto/wallet/hot-mnemonic"},
 		{"rpc test", http.MethodPost, "/api/v1/admin/crypto/rpc/test"},
@@ -741,4 +741,13 @@ func TestCryptoUserRoutesRespectInstanceAndAdminTestGates(t *testing.T) {
 	response = cryptoRouteRequest(userRouter, http.MethodGet, "/api/v1/crypto/deposit-addresses", "", nil, "127.0.0.1:1", "localhost")
 	require.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
 	require.NotContains(t, response.Body.String(), "CRYPTO_TEST_MODE_READ_ONLY")
+}
+
+func TestRemovedWalletLockAndBackupEndpointsStayAbsent(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	h := newCryptoRouteHarness(t, activeCryptoAdmin())
+	for _, path := range []string{"unlock", "lock", "backup"} {
+		response := cryptoRouteRequestBody(h.router, http.MethodPost, "/api/v1/admin/crypto/wallet/"+path, `{}`, "", nil, "127.0.0.1:1234", "localhost")
+		require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
+	}
 }

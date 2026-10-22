@@ -47,7 +47,7 @@ func TestDerive500ConcurrentWithHotImportDoesNotReplaceActiveSeed(t *testing.T) 
 		t.Fatal("derive did not reach fingerprint check")
 	}
 	imported := make(chan error, 1)
-	go func() { imported <- m.ImportHotMnemonic(t.Context(), testPassphrase, testReplacement) }()
+	go func() { imported <- m.ImportHotMnemonic(t.Context(), testReplacement) }()
 	close(gate.release)
 	for _, done := range []chan error{derived, imported} {
 		select {
@@ -59,8 +59,7 @@ func TestDerive500ConcurrentWithHotImportDoesNotReplaceActiveSeed(t *testing.T) 
 			t.Fatal("derive/import deadlocked")
 		}
 	}
-	status, err := m.Status(t.Context())
-	if err != nil || status.Unlocked {
-		t.Fatal("import did not relock after batch finished", err)
+	if !m.ready() {
+		t.Fatal("import must become ready immediately")
 	}
 }

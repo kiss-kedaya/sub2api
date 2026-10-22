@@ -188,6 +188,7 @@ func TestCryptoMnemonicExportAuditOmitsBodyAndTotpValue(t *testing.T) {
 
 func TestCryptoRPCSecretsNeverEnterAuditBodies(t *testing.T) {
 	for _, endpoint := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/admin/crypto/wallet/initialize"},
 		{http.MethodPut, "/api/v1/admin/crypto/config"},
 		{http.MethodPost, "/api/v1/admin/crypto/rpc/test"},
 		{http.MethodPost, "/api/v1/admin/crypto/rpc/auto-pick"},

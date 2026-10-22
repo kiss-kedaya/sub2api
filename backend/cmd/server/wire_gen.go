@@ -338,7 +338,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	// Balance and upstream alerts reuse the same per-profile Bark keys.
 	pushAdapter := notify.NewPushAdapter(userBarkService)
 	balanceNotifyService.SetPushNotifier(pushAdapter)
-	cryptoService := cryptopay.NewService(db, settingService, cryptoDepositCreditor, cryptoAddressService)
+	cryptoService := cryptopay.NewService(db, settingService, cryptoDepositCreditor, cryptoAddressService, configConfig)
 	// Unmatched deposits (mistyped amounts, probes) alert the operators.
 	cryptoService.SetPushNotifier(pushAdapter)
 	paymentService.SetDepositAddressResolver(cryptoService)
