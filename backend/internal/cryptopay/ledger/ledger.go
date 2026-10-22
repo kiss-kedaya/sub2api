@@ -17,6 +17,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/scanner"
+	"github.com/shopspring/decimal"
 )
 
 // Creditor is the fulfillment surface the ledger needs. Implemented by an
@@ -161,12 +162,12 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 		return false, nil
 	}
 
-	amountDecimal := toDecimal(t.Amount, decimals)
-	if amountDecimal < l.minAmount {
+	amountDecimal := decimal.NewFromBigInt(t.Amount, -int32(decimals))
+	if amountDecimal.LessThan(decimal.NewFromFloat(l.minAmount)) {
 		reason := fmt.Sprintf("below the minimum credit amount (%g)", l.minAmount)
 		return false, l.ignore(ctx, t, decimals, ReasonBelowMin, reason)
 	}
-	if l.maxAmount > 0 && amountDecimal > l.maxAmount {
+	if l.maxAmount > 0 && amountDecimal.GreaterThan(decimal.NewFromFloat(l.maxAmount)) {
 		reason := fmt.Sprintf("above the per-deposit maximum (%g)", l.maxAmount)
 		return false, l.ignore(ctx, t, decimals, ReasonAboveMax, reason)
 	}
@@ -184,7 +185,8 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 		return false, l.ignore(ctx, t, decimals, ReasonUnassigned, "address is not assigned to a user")
 	}
 
-	creditUSDT := amountDecimal * l.multiplier
+	creditAmount := amountDecimal.Mul(decimal.NewFromFloat(l.multiplier)).Round(3)
+	creditUSDT, _ := creditAmount.Float64()
 
 	status, err := l.insertPending(ctx, t, decimals)
 	if err != nil {
@@ -396,9 +398,7 @@ func (l *Ledger) ignore(ctx context.Context, t scanner.Transfer, decimals int, c
 
 // toDecimal converts raw units to a float with the token's decimals.
 func toDecimal(raw *big.Int, decimals int) float64 {
-	value := new(big.Float).SetInt(raw)
-	divisor := new(big.Float).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil))
-	value.Quo(value, divisor)
+	value := decimal.NewFromBigInt(raw, -int32(decimals))
 	out, _ := value.Float64()
 	return out
 }

@@ -3,6 +3,8 @@ package ledger
 import (
 	"math/big"
 	"testing"
+
+	"github.com/shopspring/decimal"
 )
 
 func TestAmountStringRendering(t *testing.T) {
@@ -27,6 +29,14 @@ func TestAmountStringRendering(t *testing.T) {
 func TestToDecimal(t *testing.T) {
 	if got := toDecimal(big.NewInt(12_345_678), 6); got != 12.345678 {
 		t.Fatalf("toDecimal = %v, want 12.345678", got)
+	}
+}
+
+func TestCreditMultiplierRoundsUsingExactDecimal(t *testing.T) {
+	amount := decimal.NewFromBigInt(big.NewInt(15_000), -6)
+	credited := amount.Mul(decimal.NewFromFloat(6.7)).Round(3)
+	if got := credited.StringFixed(3); got != "0.101" {
+		t.Fatalf("credit amount = %s, want 0.101", got)
 	}
 }
 
