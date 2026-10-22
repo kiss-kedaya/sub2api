@@ -11,7 +11,7 @@ func TestManualScanRejectsReadOnlyBeforeDatabase(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
 	t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "false")
 	var s *Service
-	if err := s.RunScan(t.Context()); !errors.Is(err, mode.ErrReadOnly) {
+	if err := s.RunScan(t.Context(), 0); !errors.Is(err, mode.ErrReadOnly) {
 		t.Fatalf("read-only scan: %v", err)
 	}
 }
@@ -21,11 +21,11 @@ func TestManualScanKeepsSharedJobsDisabledAndSerializesConfig(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "true")
 	t.Setenv("SUB2API_DISABLE_BACKGROUND_JOBS", "true")
 	s := &Service{}
-	if err := s.RunScan(t.Context()); err == nil {
+	if err := s.RunScan(t.Context(), 0); err == nil {
 		t.Fatal("disabled channel scanned")
 	}
 	s.sweepMu.Lock()
-	err := s.RunScan(t.Context())
+	err := s.RunScan(t.Context(), 0)
 	s.sweepMu.Unlock()
 	if !errors.Is(err, ErrScanBusy) {
 		t.Fatalf("concurrent reload/sweep did not reject scan: %v", err)
