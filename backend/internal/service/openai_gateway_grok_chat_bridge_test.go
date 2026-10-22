@@ -625,6 +625,37 @@ func TestForwardGrokChatViaResponses429UsesGrokRateLimitPolicy(t *testing.T) {
 	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
+func TestForwardGrokChatViaResponsesBlacklistRequiresHTTP403(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"grok","messages":[{"role":"user","content":"hi"}],"stream":false}`)
+	for _, status := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, grokChatRawEndpoint, bytes.NewReader(body))
+			c.Set("api_key", &APIKey{ID: 7502})
+			account := grokChatBridgeTestAccount(7502)
+			repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
+				accountsByID: map[int64]*Account{account.ID: account},
+			}}
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: status,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"blocked by global ip blacklist"}}`)),
+			}}
+			svc := &OpenAIGatewayService{httpUpstream: upstream, grokTokenProvider: NewGrokTokenProvider(repo, nil), accountRepo: repo}
+			_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+			require.Error(t, err)
+			require.Equal(t, status == http.StatusForbidden, IsGlobalIPBlacklistRejectionMarked(c))
+			var failover *UpstreamFailoverError
+			if status == http.StatusTooManyRequests {
+				require.ErrorAs(t, err, &failover)
+				require.Equal(t, status, failover.StatusCode)
+			}
+		})
+	}
+}
+
 func TestForwardGrokRawChat429PreservesRetryAfter(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

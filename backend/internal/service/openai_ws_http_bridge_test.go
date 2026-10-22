@@ -974,6 +974,32 @@ func TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety(t *testing.T) {
 	}
 }
 
+func TestProxyOpenAIWSHTTPBridgeTurnGrokRefusalSurvivesClientWriteFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(`data: {"type":"error","error":{"status_code":403,"message":"I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}` + "\n\n")),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{ID: 999, Platform: PlatformGrok, Type: AccountTypeOAuth, Concurrency: 1,
+		Credentials: map[string]any{"base_url": xai.DefaultCLIBaseURL}}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	payload := []byte(`{"type":"response.create","model":"grok-4.5","stream":true,"input":"hi"}`)
+	writes := 0
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, account, "token", payload, len(payload),
+		"grok-4.5", "", "", "", "", 1, func([]byte) error {
+			writes++
+			return errors.New("downstream frame write failed")
+		})
+	require.Error(t, err)
+	require.NotNil(t, result, "preserve partial usage/result for settlement")
+	require.Equal(t, 1, writes)
+	require.True(t, IsGrokModerationRefusalFailure(PlatformGrok, nil, err), "failure hook must still recognize refusal and block/bill")
+}
+
 // 桥接转发 error / response.failed 给 WS 客户端前必须把容量降载码改写为可重试
 // 的 server_error：Codex 对 server_is_overloaded/slow_down 判致命并终止会话。
 // 账号状态判定使用改写前的原始事件，不受影响。

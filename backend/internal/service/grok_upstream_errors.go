@@ -19,15 +19,12 @@ func isGrokContentPolicyRejection(statusCode int, responseBody []byte) bool {
 	if statusCode != http.StatusForbidden || len(responseBody) == 0 {
 		return false
 	}
-	if grokAccountAccessMessage(string(responseBody)) {
+	if isGrokAccountAccessFailure(responseBody) {
 		return false
 	}
 
 	var payload any
 	if json.Unmarshal(responseBody, &payload) == nil {
-		if grokStructuredAccountAccessMarker(payload) {
-			return false
-		}
 		if grokStructuredContentPolicyMarker(payload) {
 			return true
 		}
@@ -37,6 +34,14 @@ func isGrokContentPolicyRejection(statusCode int, responseBody []byte) bool {
 	}
 
 	return grokContentPolicyMessage(string(responseBody))
+}
+
+func isGrokAccountAccessFailure(responseBody []byte) bool {
+	if grokAccountAccessMessage(string(responseBody)) {
+		return true
+	}
+	var payload any
+	return json.Unmarshal(responseBody, &payload) == nil && grokStructuredAccountAccessMarker(payload)
 }
 
 func grokStructuredAccountAccessMarker(value any) bool {
