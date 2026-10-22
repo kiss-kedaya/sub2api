@@ -164,6 +164,7 @@ const (
 // Redeem type constants
 const (
 	RedeemTypeBalance          = domain.RedeemTypeBalance
+	RedeemTypePaymentBalance   = domain.RedeemTypePaymentBalance
 	RedeemTypeConcurrency      = domain.RedeemTypeConcurrency
 	RedeemTypeSubscription     = domain.RedeemTypeSubscription
 	RedeemTypeInvitation       = domain.RedeemTypeInvitation
