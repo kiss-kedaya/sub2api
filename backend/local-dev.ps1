@@ -15,8 +15,8 @@ if (-not $pgUp) {
     Write-Host 'postgres already running'
 }
 
-# 2. sub2api (wallet starts locked; unlock in the crypto admin page with
-# a fresh 2FA code and the vault password, separate from the login password).
+# 2. sub2api (the built-in wallet loads from the persistent installation key;
+# wallet administration requires a fresh backend-verified 2FA code).
 if (-not (Get-Process -Name sub2api-local -ErrorAction SilentlyContinue)) {
     $env:DATA_DIR = $root
     Start-Process -FilePath "$root\bin\sub2api-local.exe" -WorkingDirectory $root `

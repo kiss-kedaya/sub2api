@@ -12,8 +12,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -22,6 +24,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/notify/bark"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
 type config struct {
@@ -147,7 +150,8 @@ func (w *watchdog) checkRPCs(ctx context.Context) {
 	}
 }
 
-// probeRPC issues eth_blockNumber and requires a non-empty result.
+// probeRPC requires a valid JSON-RPC block number. HTTP 200 alone can carry
+// a null result, an RPC error, or a proxy page, none of which proves health.
 func probeRPC(ctx context.Context, client *http.Client, endpoint string) error {
 	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
@@ -163,10 +167,25 @@ func probeRPC(ctx context.Context, client *http.Client, endpoint string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("http %d", resp.StatusCode)
 	}
-	buf := make([]byte, 512)
-	n, _ := resp.Body.Read(buf)
-	if !strings.Contains(string(buf[:n]), "result") {
-		return fmt.Errorf("no result in response")
+	var response struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      int             `json:"id"`
+		Result  *string         `json:"result"`
+		Error   json.RawMessage `json:"error"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 64<<10))
+	if err := decoder.Decode(&response); err != nil {
+		return fmt.Errorf("invalid RPC response")
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return fmt.Errorf("invalid RPC response trailer")
+	}
+	if response.JSONRPC != "2.0" || response.ID != 1 || response.Result == nil ||
+		(len(response.Error) > 0 && string(response.Error) != "null") {
+		return fmt.Errorf("RPC did not return a block number")
+	}
+	if _, err := hexutil.DecodeUint64(*response.Result); err != nil {
+		return fmt.Errorf("RPC returned an invalid block number")
 	}
 	return nil
 }
