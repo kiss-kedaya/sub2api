@@ -236,7 +236,7 @@ func TestAccountTestValidateUpstreamBaseURLRejectsPrivateTargets(t *testing.T) {
 	t.Cleanup(func() { SetAccountTestAllowPrivateTargetsForTest(true) })
 
 	cfg := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{
-		Enabled:           false, // 线上正是关着的
+		Enabled:           false, // 关闭 allowlist 时也必须拒绝私网目标
 		AllowInsecureHTTP: true,
 	}}}
 	svc := &AccountTestService{cfg: cfg}
@@ -246,7 +246,7 @@ func TestAccountTestValidateUpstreamBaseURLRejectsPrivateTargets(t *testing.T) {
 		"http://localhost:8080/v1",
 		"http://172.17.0.1:80",
 		"http://169.254.169.254/latest/meta-data",
-		"http://10.254.0.2:8318",
+		"http://192.168.50.25:8080",
 	} {
 		_, err := svc.validateUpstreamBaseURL(raw)
 		require.ErrorIs(t, err, errTestTargetNotAllowed, "target %s must be rejected", raw)

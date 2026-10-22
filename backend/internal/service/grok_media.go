@@ -1029,6 +1029,9 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		VideoResolution:      usage.VideoResolution,
 		VideoDurationSeconds: usage.VideoDurationSeconds,
 	}
+	if endpoint == GrokMediaEndpointVideoStatus || endpoint == GrokMediaEndpointVideoGenerationsStatus {
+		result.VideoStatus = strings.ToLower(strings.TrimSpace(gjson.GetBytes(respBody, "status").String()))
+	}
 	if err := runGrokMediaBeforePublish(ctx, result); err != nil {
 		return nil, err
 	}
