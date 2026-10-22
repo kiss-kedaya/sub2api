@@ -159,6 +159,18 @@ func expectObservationUpdate(mock sqlmock.Sqlmock, tr Transfer, oldStatus, oldRe
 		WithArgs(status, reason, tr.Chain, tr.TxHash, tr.LogIndex, oldStatus, oldReason)
 }
 
+func expectPendingReincludedRetirement(mock sqlmock.Sqlmock, tr Transfer, reason string) {
+	mock.ExpectExec(`(?s)UPDATE deposit_transactions SET status = 'reverted'.*order_id IS NULL`).
+		WithArgs(tr.Chain, tr.TxHash, tr.LogIndex, reason).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
+func expectPendingReincludedMove(mock sqlmock.Sqlmock, old Transfer, reason string, next Transfer) {
+	mock.ExpectExec(`(?s)UPDATE deposit_transactions SET log_index = \$1, block_number = \$2, block_hash = \$3.*status = 'pending'.*order_id IS NULL`).
+		WithArgs(next.LogIndex, next.BlockNumber, next.BlockHash, old.Chain, old.TxHash, old.LogIndex, reason).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
 func workerFixture(t *testing.T, f *rpcFixture) (*Worker, sqlmock.Sqlmock, *recordingHandler) {
 	t.Helper()
 	db, mock, err := sqlmock.New()
@@ -355,6 +367,18 @@ func TestPendingRejectsChangedOrNoncanonicalTransfer(t *testing.T) {
 			tt.change(fixture)
 			w, mock, handler := workerFixture(t, fixture)
 			expectObservation(mock, tr, "1", "")
+			if tt.name == "index" {
+				next := tr
+				next.LogIndex = 8
+				expectPendingReincludedMove(mock, tr, "", next)
+				if err := w.retryPending(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				if len(handler.processed) != 1 || handler.processed[0].LogIndex != next.LogIndex || handler.processed[0].Amount.Cmp(tr.Amount) != 0 {
+					t.Fatalf("re-included transfer not processed at new log index: %+v", handler.processed)
+				}
+				return
+			}
 			status := "pending"
 			if tt.reason != "" {
 				status = "reverted"
