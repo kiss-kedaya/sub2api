@@ -125,6 +125,26 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(mocks.post).not.toHaveBeenCalled()
   })
 
+  it('requires a fresh TOTP before reading hot-wallet RPC status', async () => {
+    walletStatus = { ok: true, configured: true, ready: true, enabled: true }
+    const wrapper = await render()
+    await configTab(wrapper)
+    const hotPath = '/admin/crypto/hot-wallet'
+    expect(mocks.get.mock.calls.some(([path]) => path === hotPath)).toBe(false)
+    const health = wrapper.findAll('details').find(item => item.text().includes('admin.crypto.healthTitle'))!
+    const refresh = health.findAll('.btn-secondary').find(btn => btn.text() === 'common.refresh')!
+    expect(refresh.attributes('disabled')).toBeUndefined()
+    await refresh.trigger('click')
+    await flushPromises()
+    expect(mocks.get.mock.calls.some(([path]) => path === hotPath)).toBe(false)
+    await wrapper.get('#crypto-security-code').setValue('654321')
+    await wrapper.get('#crypto-security-form').trigger('submit')
+    await flushPromises()
+    expect(mocks.get).toHaveBeenCalledWith(hotPath, expect.objectContaining({
+      headers: { 'X-Crypto-TOTP': '654321' }, _retry: true
+    }))
+  })
+
   it('protects config edits outside the old money-fields subset, preserving the patch', async () => {
     const wrapper = await render()
     await configTab(wrapper)
@@ -241,13 +261,17 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await configTab(wrapper)
     expect(wrapper.get('.crypto-view__lockstate').text()).toContain(`admin.crypto.${state.label}`)
     expect(button(wrapper, 'admin.crypto.hotAddressFill').attributes('disabled') !== undefined).toBe(state.disabled)
-    expect(mocks.get.mock.calls.some(([path]) => path === '/admin/crypto/hot-wallet')).toBe(!state.disabled)
+    if (state.disabled) {
+      expect(mocks.get.mock.calls.some(([path]) => path === '/admin/crypto/hot-wallet')).toBe(false)
+    }
     expect(wrapper.text()).not.toMatch(/signer|Approval|groupSigner|signerSocket/i)
     expect(wrapper.find('input[type="number"][name="hot_index"]').exists()).toBe(false)
     if (!state.disabled) {
       await button(wrapper, 'admin.crypto.hotAddressFill').trigger('click')
       await flushPromises()
-      expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/hot-wallet/address')
+      expect(mocks.get.mock.calls.some(([path]) => path === '/admin/crypto/hot-wallet/address')).toBe(false)
+      await verify(wrapper)
+      expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/hot-wallet/address', expect.objectContaining({ headers: { 'X-Crypto-TOTP': '123456' } }))
       expect(wrapper.get('input[placeholder="0x…"]').element).toHaveProperty('value', '0xGAS')
     }
     await wrapper.get('#crypto-tab-sweep').trigger('click')
@@ -263,6 +287,8 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(wrapper.text()).toContain('admin.crypto.walletNotReady')
     await button(wrapper, 'admin.crypto.hotAddressFill').trigger('click')
     await flushPromises()
+    expect(mocks.get.mock.calls.some(([path]) => path === '/admin/crypto/hot-wallet/address')).toBe(false)
+    await verify(wrapper)
     expect(wrapper.get('input[placeholder="0x…"]').element).toHaveProperty('value', '0xGAS')
     await wrapper.get('.crypto-view__save-bar button').trigger('click')
     await verify(wrapper)

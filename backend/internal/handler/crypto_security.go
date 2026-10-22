@@ -31,7 +31,9 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 	}
 	path := c.FullPath()
 	setup := c.Request.Method == http.MethodPost && (strings.HasSuffix(path, "/security/setup") || strings.HasSuffix(path, "/security/enable"))
-	risky := c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv") || strings.HasSuffix(path, "/config")
+	risky := c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv") ||
+		strings.HasSuffix(path, "/config") || strings.HasSuffix(path, "/hot-wallet") ||
+		strings.HasSuffix(path, "/hot-wallet/address")
 	if service.CryptoAdminTestReadOnly() && (c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv")) {
 		response.ErrorWithDetails(c, http.StatusForbidden, "crypto test instance is read-only", "CRYPTO_TEST_MODE_READ_ONLY", nil)
 		c.Abort()

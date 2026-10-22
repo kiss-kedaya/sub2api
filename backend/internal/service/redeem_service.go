@@ -557,7 +557,7 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}
-	if redeemCode.Type == RedeemTypeBalance && redeemCode.Value != 0 {
+	if isBalanceRedeemType(redeemCode.Type) && redeemCode.Value != 0 {
 		syncCommittedLiveBalanceAdjustment(
 			s.billingCacheService,
 			userID,
@@ -586,7 +586,7 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 // invalidateRedeemCaches 失效兑换相关的缓存
 func (s *RedeemService) invalidateRedeemCaches(ctx context.Context, userID int64, redeemCode *RedeemCode) {
 	switch redeemCode.Type {
-	case RedeemTypeBalance:
+	case RedeemTypeBalance, RedeemTypePaymentBalance:
 		if s.authCacheInvalidator != nil {
 			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
 		}
@@ -613,6 +613,10 @@ func (s *RedeemService) invalidateRedeemCaches(ctx context.Context, userID int64
 			}()
 		}
 	}
+}
+
+func isBalanceRedeemType(codeType string) bool {
+	return codeType == RedeemTypeBalance || codeType == RedeemTypePaymentBalance
 }
 
 func (s *RedeemService) tryAccrueAffiliateRebateForRedeem(ctx context.Context, userID int64, amount float64) {

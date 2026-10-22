@@ -186,6 +186,34 @@ func TestCryptoMnemonicExportAuditOmitsBodyAndTotpValue(t *testing.T) {
 	require.NotContains(t, capture.logs[0].RequestBody, "audit-secret-passphrase")
 }
 
+func TestUserBarkAuditOmitsDeviceKeyBody(t *testing.T) {
+	route := "PUT /api/v1/user/bark"
+	require.Contains(t, auditBodyOmittedRoutes, route)
+	capture := &auditCaptureRepository{}
+	audit := service.NewAuditLogService(capture, nil)
+	audit.Start()
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
+	const deviceKey = "audit-device-key-fixture"
+	router.PUT("/api/v1/user/bark", func(c *gin.Context) {
+		var body struct {
+			DeviceKey string `json:"device_key"`
+		}
+		require.NoError(t, c.ShouldBindJSON(&body))
+		require.Equal(t, deviceKey, body.DeviceKey)
+		c.Status(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bark", bytes.NewBufferString(`{"device_key":"`+deviceKey+`","notify_enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	audit.Stop()
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Len(t, capture.logs, 1)
+	require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
+	require.NotContains(t, capture.logs[0].RequestBody, deviceKey)
+}
+
 func TestCryptoRPCSecretsNeverEnterAuditBodies(t *testing.T) {
 	for _, endpoint := range []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/admin/crypto/wallet/initialize"},

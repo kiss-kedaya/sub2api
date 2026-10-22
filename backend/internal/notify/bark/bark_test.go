@@ -2,6 +2,7 @@ package bark
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,12 @@ import (
 	"strings"
 	"testing"
 )
+
+type fixtureFailingTransport struct{}
+
+func (fixtureFailingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("synthetic offline transport failure")
+}
 
 func TestSendPostsDocumentedFields(t *testing.T) {
 	var gotPath string
@@ -58,6 +65,19 @@ func TestSendRejectsNon200(t *testing.T) {
 	client.SetBaseURL(server.URL)
 	if err := client.Send(context.Background(), Notification{Title: "x"}); err == nil {
 		t.Fatal("expected error for http 500")
+	}
+}
+
+func TestSendTransportFailureDoesNotLeakDeviceKey(t *testing.T) {
+	const key = "bark-fixture-device-secret"
+	client := New(key)
+	client.http.Transport = fixtureFailingTransport{}
+	err := client.Send(context.Background(), Notification{Title: "fixture"})
+	if err == nil || strings.Contains(err.Error(), key) {
+		t.Fatalf("expected sanitized transport error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "transport failed") {
+		t.Fatalf("expected useful generic transport error, got %v", err)
 	}
 }
 

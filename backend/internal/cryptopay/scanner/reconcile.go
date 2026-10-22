@@ -2,7 +2,9 @@ package scanner
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
@@ -130,7 +132,7 @@ func findReincludedTransfer(receipt *ReceiptCheck, observation depositObservatio
 		}
 		index, indexErr := hexQuantity(log.LogIndex)
 		block, blockErr := hexQuantity(log.BlockNumber)
-		if indexErr != nil || blockErr != nil || int(index) == observation.logIndex || block != receipt.BlockNumber ||
+		if indexErr != nil || blockErr != nil || block != receipt.BlockNumber ||
 			!strings.EqualFold(log.BlockHash, receipt.BlockHash) || !strings.EqualFold(log.TxHash, receipt.TxHash) {
 			continue
 		}
@@ -149,6 +151,26 @@ func findReincludedTransfer(receipt *ReceiptCheck, observation depositObservatio
 }
 
 func (w *Worker) updateReincludedObservation(ctx context.Context, old depositObservation, transfer Transfer) (bool, error) {
+	if old.logIndex == transfer.LogIndex {
+		result, err := w.db.ExecContext(ctx, `UPDATE deposit_transactions SET block_number = $1, block_hash = $2, last_attempt_at = NOW() WHERE chain = $3 AND tx_hash = $4 AND log_index = $5 AND status = 'pending' AND reason = $6 AND order_id IS NULL`,
+			transfer.BlockNumber, transfer.BlockHash, old.chain, old.txHash, old.logIndex, old.reason)
+		if err != nil {
+			return false, fmt.Errorf("refresh pending observation at reincluded log: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		return affected == 1, err
+	}
+	// Refuse to relocate an unlinked pending deposit when a PAID order for
+	// its old deterministic identity already exists. Retrying that order via
+	// the generic payment endpoint could otherwise mint the amount twice.
+	oldTradeNo := depositOrderNo(old.chain, old.txHash, old.logIndex)
+	var oldOrderExists bool
+	if err := w.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM payment_orders WHERE out_trade_no = $1)`, oldTradeNo).Scan(&oldOrderExists); err != nil {
+		return false, fmt.Errorf("check prior order before moving pending log identity: %w", err)
+	}
+	if oldOrderExists {
+		return false, fmt.Errorf("pending reinclusion has a prior deterministic order; manual reconciliation required")
+	}
 	result, err := w.db.ExecContext(ctx, `UPDATE deposit_transactions SET log_index = $1, block_number = $2, block_hash = $3, last_attempt_at = NOW() WHERE chain = $4 AND tx_hash = $5 AND log_index = $6 AND status = 'pending' AND reason = $7 AND order_id IS NULL`, transfer.LogIndex, transfer.BlockNumber, transfer.BlockHash, old.chain, old.txHash, old.logIndex, old.reason)
 	if err != nil {
 		return false, fmt.Errorf("move pending observation to reincluded log: %w", err)
@@ -158,6 +180,11 @@ func (w *Worker) updateReincludedObservation(ctx context.Context, old depositObs
 		return false, err
 	}
 	return affected == 1, nil
+}
+
+func depositOrderNo(chain, txHash string, logIndex int) string {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d", chain, strings.ToLower(txHash), logIndex)))
+	return "crypto-" + hex.EncodeToString(digest[:20])
 }
 
 func watchedDecimals(chain ChainConfig, token string) (int, bool) {
