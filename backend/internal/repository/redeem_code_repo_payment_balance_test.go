@@ -28,7 +28,9 @@ func newRedeemCodePaymentBalanceRepo(t *testing.T) (*redeemCodeRepository, *dben
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
 
-	return NewRedeemCodeRepository(client).(*redeemCodeRepository), client
+	repo, ok := NewRedeemCodeRepository(client).(*redeemCodeRepository)
+	require.True(t, ok, "repository constructor must return concrete test repository")
+	return repo, client
 }
 
 func TestRedeemCodeRepositorySumPositiveBalanceByUserIncludesPaymentBalance(t *testing.T) {

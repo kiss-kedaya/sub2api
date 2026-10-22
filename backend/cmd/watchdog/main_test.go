@@ -30,7 +30,12 @@ func TestProbeRPCDoesNotTreatErrorOrProxyBodyAsHealthy(t *testing.T) {
 func TestProbeRPCAcceptsFragmentedBlockResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,`))
-		w.(http.Flusher).Flush()
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("recorder does not support streaming flush")
+			return
+		}
+		flusher.Flush()
 		_, _ = w.Write([]byte(`"result":"0x123"}`))
 	}))
 	defer server.Close()
