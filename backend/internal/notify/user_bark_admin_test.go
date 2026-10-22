@@ -37,6 +37,23 @@ func TestSendToAdminsSelectsOnlyEnabledAdminKeys(t *testing.T) {
 	}
 }
 
+func TestSendToAdminsQueryExcludesInactiveAndDeletedUsers(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	mock.ExpectQuery(`(?s)SELECT bark_device_key_encrypted FROM users.*role = \$1 AND bark_notify_enabled = TRUE.*status = 'active' AND deleted_at IS NULL.*bark_device_key_encrypted <> ''`).
+		WithArgs("admin").
+		WillReturnRows(sqlmock.NewRows([]string{"bark_device_key_encrypted"}))
+	if err := NewUserBarkService(db, passthroughEncryptor{}).SendToAdmins(context.Background(), bark.Notification{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A decrypt failure on one key must not abort the loop (firstErr is
 // reported once, every other admin still gets the push).
 func TestSendToAdminsContinuesAfterDecryptFailure(t *testing.T) {

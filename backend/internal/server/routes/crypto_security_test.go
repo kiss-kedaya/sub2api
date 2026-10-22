@@ -492,6 +492,8 @@ func testCryptoAdminEveryRiskRouteRejectsInvalidTotp(t *testing.T) {
 		{http.MethodPost, "/api/v1/admin/crypto/rpc/test"},
 		{http.MethodPost, "/api/v1/admin/crypto/rpc/auto-pick"},
 		{http.MethodGet, "/api/v1/admin/crypto/config"},
+		{http.MethodGet, "/api/v1/admin/crypto/hot-wallet"},
+		{http.MethodGet, "/api/v1/admin/crypto/hot-wallet/address"},
 		{http.MethodGet, "/api/v1/admin/crypto/deposits.csv"},
 	}
 	for _, tc := range cases {

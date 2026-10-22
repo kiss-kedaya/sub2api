@@ -259,8 +259,8 @@ export interface HotWalletAddress {
 }
 
 // getHotWalletAddress returns the address the hot seed actually derives to.
-export async function getHotWalletAddress(): Promise<HotWalletAddress> {
-  const { data } = await apiClient.get('/admin/crypto/hot-wallet/address')
+export async function getHotWalletAddress(verification: CryptoVerification): Promise<HotWalletAddress> {
+  const { data } = await apiClient.get('/admin/crypto/hot-wallet/address', cryptoRequestOptions(verification))
   return data.data
 }
 
@@ -337,8 +337,8 @@ export async function getPoolStatus(): Promise<PoolStatus> {
 }
 
 // getHotWalletStatus reports gas readiness per chain.
-export async function getHotWalletStatus(): Promise<HotWalletStatus[]> {
-  const { data } = await apiClient.get('/admin/crypto/hot-wallet')
+export async function getHotWalletStatus(verification: CryptoVerification): Promise<HotWalletStatus[]> {
+  const { data } = await apiClient.get('/admin/crypto/hot-wallet', cryptoRequestOptions(verification))
   return data.data ?? []
 }
 

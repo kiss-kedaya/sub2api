@@ -115,6 +115,7 @@ func (s *UserBarkService) SendToAdmins(ctx context.Context, n bark.Notification)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT bark_device_key_encrypted FROM users
 		  WHERE role = $1 AND bark_notify_enabled = TRUE
+		    AND status = 'active' AND deleted_at IS NULL
 		    AND bark_device_key_encrypted <> ''`, "admin")
 	if err != nil {
 		return fmt.Errorf("list admin bark keys: %w", err)

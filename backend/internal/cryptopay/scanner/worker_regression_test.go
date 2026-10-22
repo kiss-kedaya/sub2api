@@ -166,8 +166,17 @@ func expectPendingReincludedRetirement(mock sqlmock.Sqlmock, tr Transfer, reason
 }
 
 func expectPendingReincludedMove(mock sqlmock.Sqlmock, old Transfer, reason string, next Transfer) {
+	mock.ExpectQuery(`SELECT EXISTS \(SELECT 1 FROM payment_orders WHERE out_trade_no = \$1\)`).
+		WithArgs(depositOrderNo(old.Chain, old.TxHash, old.LogIndex)).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(`(?s)UPDATE deposit_transactions SET log_index = \$1, block_number = \$2, block_hash = \$3.*status = 'pending'.*order_id IS NULL`).
 		WithArgs(next.LogIndex, next.BlockNumber, next.BlockHash, old.Chain, old.TxHash, old.LogIndex, reason).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
+func expectPendingReincludedSameIndex(mock sqlmock.Sqlmock, old Transfer, reason string, next Transfer) {
+	mock.ExpectExec(`(?s)UPDATE deposit_transactions SET block_number = \$1, block_hash = \$2, last_attempt_at = NOW\(\).*status = 'pending'.*order_id IS NULL`).
+		WithArgs(next.BlockNumber, next.BlockHash, old.Chain, old.TxHash, old.LogIndex, reason).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
@@ -320,7 +329,7 @@ func TestPendingRejectsChangedOrNoncanonicalTransfer(t *testing.T) {
 		{"wrong tx", func(f *rpcFixture) { setFixtureMapValue(f.receipt, "transactionHash", "0x"+strings.Repeat("99", 32)) }, "", true},
 		{"canonical RPC down", func(f *rpcFixture) { f.fail = "canonical" }, "", true},
 	}
-	for _, field := range []string{"token", "from", "to", "amount", "index", "topic", "removed", "log block", "log tx"} {
+	for _, field := range []string{"token", "from", "to", "amount", "topic", "removed", "log block", "log tx"} {
 		field := field
 		tests = append(tests, struct {
 			name    string
@@ -367,18 +376,6 @@ func TestPendingRejectsChangedOrNoncanonicalTransfer(t *testing.T) {
 			tt.change(fixture)
 			w, mock, handler := workerFixture(t, fixture)
 			expectObservation(mock, tr, "1", "")
-			if tt.name == "index" {
-				next := tr
-				next.LogIndex = 8
-				expectPendingReincludedMove(mock, tr, "", next)
-				if err := w.retryPending(t.Context()); err != nil {
-					t.Fatal(err)
-				}
-				if len(handler.processed) != 1 || handler.processed[0].LogIndex != next.LogIndex || handler.processed[0].Amount.Cmp(tr.Amount) != 0 {
-					t.Fatalf("re-included transfer not processed at new log index: %+v", handler.processed)
-				}
-				return
-			}
 			status := "pending"
 			if tt.reason != "" {
 				status = "reverted"
@@ -392,6 +389,30 @@ func TestPendingRejectsChangedOrNoncanonicalTransfer(t *testing.T) {
 				t.Fatal("stale observation reached creditor")
 			}
 		})
+	}
+}
+
+func TestPendingReinclusionAtSameLogIndexRefreshesCanonicalObservation(t *testing.T) {
+	tr := testTransfer()
+	newBlockHash := "0x" + strings.Repeat("66", 32)
+	fixture := newRPCFixture(tr)
+	setFixtureMapValue(fixture.receipt, "blockNumber", "0x65")
+	setFixtureMapValue(fixture.receipt, "blockHash", newBlockHash)
+	setFixtureMapValue(fixture.canonical, "hash", newBlockHash)
+	logs := fixture.receipt.(map[string]any)["logs"].([]evmLog)
+	logs[0].BlockHash = newBlockHash
+
+	w, mock, handler := workerFixture(t, fixture)
+	expectObservation(mock, tr, "1", "")
+	next := tr
+	next.BlockNumber = 101
+	next.BlockHash = newBlockHash
+	expectPendingReincludedSameIndex(mock, tr, "", next)
+	if err := w.retryPending(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(handler.processed) != 1 || handler.processed[0].LogIndex != tr.LogIndex {
+		t.Fatalf("same-index reinclusion was not processed after canonical update: %+v", handler.processed)
 	}
 }
 

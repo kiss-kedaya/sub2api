@@ -82,12 +82,13 @@ func (c *Client) Send(ctx context.Context, n Notification) error {
 		c.baseURL+"/"+url.PathEscape(c.deviceKey),
 		strings.NewReader(form.Encode()))
 	if err != nil {
-		return fmt.Errorf("bark request: %w", err)
+		return fmt.Errorf("bark request could not be created")
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("bark send: %w", err)
+		// url.Error embeds the request URL, including the device-key path.
+		return fmt.Errorf("bark transport failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
