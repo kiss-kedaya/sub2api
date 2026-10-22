@@ -32,7 +32,7 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 	path := c.FullPath()
 	setup := c.Request.Method == http.MethodPost && (strings.HasSuffix(path, "/security/setup") || strings.HasSuffix(path, "/security/enable"))
 	risky := c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv") || strings.HasSuffix(path, "/config")
-	if service.CryptoAdminTestMode() && (c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv")) {
+	if service.CryptoAdminTestReadOnly() && (c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv")) {
 		response.ErrorWithDetails(c, http.StatusForbidden, "crypto test instance is read-only", "CRYPTO_TEST_MODE_READ_ONLY", nil)
 		c.Abort()
 		return
@@ -63,7 +63,7 @@ func (h *CryptoHandler) CryptoUserAccess(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	if service.CryptoAdminTestMode() {
+	if service.CryptoAdminTestReadOnly() {
 		response.ErrorWithDetails(c, http.StatusForbidden, "customer crypto routes are disabled on this test instance", "CRYPTO_TEST_MODE_READ_ONLY", nil)
 		c.Abort()
 		return
