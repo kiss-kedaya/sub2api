@@ -67,6 +67,7 @@ function click(button: HTMLElement, detail = 1) {
 describe('custom page open button', () => {
   beforeEach(() => {
     appStore.cachedPublicSettings.custom_menu_items = [{ id: 'docs', url: 'https://example.com/docs' }]
+    vi.stubEnv('VITE_EMBEDDED_TRUSTED_ORIGINS', '')
     vi.stubGlobal('ResizeObserver', class {
       constructor(callback: () => void) { notifyResize = callback }
       observe() {}
@@ -77,6 +78,7 @@ describe('custom page open button', () => {
   afterEach(() => {
     wrappers.splice(0).forEach(wrapper => wrapper.unmount())
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
   })
 
   it.each([undefined, false, true])('honors the per-menu hide button setting %s while keeping the iframe', (hidden) => {
@@ -90,7 +92,7 @@ describe('custom page open button', () => {
     const { wrapper, button } = mountEmbed()
     expect(button.href).toBe(wrapper.get('iframe').attributes('src'))
     expect(button.href).toContain('user_id=7')
-    expect(button.href).toContain('token=test-token')
+    expect(new URL(button.href).searchParams.has('token')).toBe(false)
     expect(button.target).toBe('_blank')
     expect(button.rel).toBe('noopener noreferrer')
     await pointer(button, 'pointerdown', 700, 24)
@@ -99,6 +101,18 @@ describe('custom page open button', () => {
     expect(button.style.left).toBe('')
     expect(click(button).defaultPrevented).toBe(false)
     expect(click(button, 0).defaultPrevented).toBe(false)
+  })
+
+  it('keeps credentials on same-origin embedded URLs and matching open links', () => {
+    appStore.cachedPublicSettings.custom_menu_items = [{ id: 'docs', url: `${window.location.origin}/docs` }]
+    const { wrapper, button } = mountEmbed()
+    const target = new URL(button.href)
+    expect(button.href).toBe(wrapper.get('iframe').attributes('src'))
+    expect(target.origin).toBe(window.location.origin)
+    expect(target.searchParams.get('user_id')).toBe('7')
+    expect(target.searchParams.get('token')).toBe('test-token')
+    expect(button.target).toBe('_blank')
+    expect(button.rel).toBe('noopener noreferrer')
   })
 
   it('captures the pointer across iframe content and suppresses only the click following a drag', async () => {
