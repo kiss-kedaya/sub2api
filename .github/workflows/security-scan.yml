@@ -72,7 +72,9 @@ jobs:
       - name: Run pnpm audit
         working-directory: frontend
         run: |
-          pnpm audit --prod --audit-level=high --json > audit.json || true
+          pnpm audit --prod --audit-level=high --registry=https://registry.npmjs.org --json > audit.json || true
+      - name: Test audit report validation
+        run: python -B -m unittest discover -s tools -p test_check_pnpm_audit_exceptions.py
       - name: Check audit exceptions
         run: |
           python tools/check_pnpm_audit_exceptions.py \
