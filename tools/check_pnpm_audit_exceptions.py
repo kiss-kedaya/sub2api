@@ -6,6 +6,7 @@ from datetime import date
 
 
 HIGH_SEVERITIES = {"high", "critical"}
+AUDIT_SEVERITIES = {"info", "low", "moderate", "high", "critical"}
 REQUIRED_FIELDS = {"package", "advisory", "severity", "mitigation", "expires_on"}
 
 
@@ -106,9 +107,70 @@ def iter_vulns(data: dict):
             elif isinstance(via, str):
                 advisories.append(via)
                 titles.append(via)
-            title = "; ".join([t for t in titles if t])
+            title = "; ".join(str(t) for t in titles if t)
             for advisory_id in [a for a in advisories if a]:
                 yield name, severity, advisory_id, title
+
+
+def validate_audit_report(data) -> None:
+    """Reject failed/incomplete audits before interpreting exception policy."""
+    if not isinstance(data, dict):
+        raise ValueError("audit report must be a JSON object")
+    if data.get("error") is not None or data.get("errors"):
+        raise ValueError("audit command returned an error")
+
+    metadata = data.get("metadata")
+    counts = metadata.get("vulnerabilities") if isinstance(metadata, dict) else None
+    if not isinstance(counts, dict):
+        raise ValueError("audit vulnerability metadata is missing")
+    for severity in AUDIT_SEVERITIES:
+        value = counts.get(severity)
+        if type(value) is not int or value < 0:
+            raise ValueError("audit vulnerability counts are incomplete or invalid")
+
+    formats = [key for key in ("advisories", "vulnerabilities") if key in data]
+    if not formats or any(not isinstance(data[key], dict) for key in formats):
+        raise ValueError("audit advisory records are missing or invalid")
+
+    for key in formats:
+        for name, record in data[key].items():
+            if not isinstance(record, dict):
+                raise ValueError("audit advisory entry is invalid")
+            package = (record.get("module_name") or record.get("name")) if key == "advisories" else name
+            if not isinstance(package, str) or not package.strip():
+                raise ValueError("audit advisory package is missing")
+            severity = record.get("severity")
+            if not isinstance(severity, str) or severity.lower() not in AUDIT_SEVERITIES:
+                raise ValueError("audit advisory severity is missing or invalid")
+            if key == "advisories":
+                cves = record.get("cves")
+                if cves is not None and (not isinstance(cves, list) or any(not isinstance(cve, str) for cve in cves)):
+                    raise ValueError("audit advisory CVE identifiers are invalid")
+                advisory_id = pick_advisory_id(record)
+                if not isinstance(advisory_id, (str, int)) or not str(advisory_id).strip():
+                    raise ValueError("audit advisory identifier is missing")
+            else:
+                via = record.get("via")
+                if isinstance(via, str):
+                    via = [via]
+                if not isinstance(via, list) or not via:
+                    raise ValueError("audit vulnerability sources are missing")
+                for item in via:
+                    if isinstance(item, str) and item.strip():
+                        continue
+                    if not isinstance(item, dict):
+                        raise ValueError("audit vulnerability source is invalid")
+                    identifier = (item.get("github_advisory_id") or item.get("url") or item.get("source")
+                                  or item.get("title") or item.get("name"))
+                    if not isinstance(identifier, (str, int)) or not str(identifier).strip():
+                        raise ValueError("audit vulnerability source identifier is missing")
+                    if any(value is not None and not isinstance(value, str)
+                           for value in (item.get("title"), item.get("url"), item.get("advisory"))):
+                        raise ValueError("audit vulnerability source text is invalid")
+
+    observed = {normalize_severity(severity) for _, severity, _, _ in iter_vulns(data)}
+    if any(counts[severity] > 0 and severity not in observed for severity in HIGH_SEVERITIES):
+        raise ValueError("audit high/critical counts have no corresponding advisory records")
 
 
 def normalize_severity(severity: str) -> str:
@@ -145,8 +207,15 @@ def main() -> int:
     parser.add_argument("--exceptions", required=True)
     args = parser.parse_args()
 
-    with open(args.audit, "r", encoding="utf-8") as handle:
-        audit = json.load(handle)
+    try:
+        with open(args.audit, "r", encoding="utf-8-sig") as handle:
+            audit = json.load(handle)
+        validate_audit_report(audit)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+        # Registry failures can contain sensitive URLs; never echo their body.
+        detail = str(error) if type(error) is ValueError else "unable to read valid audit JSON"
+        sys.stderr.write("Invalid audit report: " + detail + "\n")
+        return 1
 
     # 读取异常清单并建立索引，便于快速匹配包名 + advisory。
     exceptions = parse_exceptions(args.exceptions)
