@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -108,6 +109,57 @@ func (w *Worker) chainConfig(chain string) (ChainConfig, bool) {
 	return ChainConfig{}, false
 }
 
+func findReincludedTransfer(receipt *ReceiptCheck, observation depositObservation, decimals int) (Transfer, error) {
+	if receipt == nil || receipt.Status != 1 || len(receipt.Logs) == 0 {
+		return Transfer{}, ErrTransferMismatch
+	}
+	want, err := observation.transfer(decimals)
+	if err != nil {
+		return Transfer{}, err
+	}
+	var match *Transfer
+	for _, log := range receipt.Logs {
+		if log.Removed || len(log.Topics) != 3 || !strings.EqualFold(log.Address, want.Token) ||
+			!strings.EqualFold(log.Topics[0], transferTopic) || !validHex(log.Topics[1], 32) || !validHex(log.Topics[2], 32) ||
+			!strings.EqualFold(log.Topics[1], padTopic(want.From)) || !strings.EqualFold(log.Topics[2], padTopic(want.To)) || !validHex(log.Data, 32) {
+			continue
+		}
+		amount, ok := new(big.Int).SetString(log.Data[2:], 16)
+		if !ok || amount.Cmp(want.Amount) != 0 {
+			continue
+		}
+		index, indexErr := hexQuantity(log.LogIndex)
+		block, blockErr := hexQuantity(log.BlockNumber)
+		if indexErr != nil || blockErr != nil || int(index) == observation.logIndex || block != receipt.BlockNumber ||
+			!strings.EqualFold(log.BlockHash, receipt.BlockHash) || !strings.EqualFold(log.TxHash, receipt.TxHash) {
+			continue
+		}
+		candidate := Transfer{Chain: observation.chain, TxHash: strings.ToLower(receipt.TxHash), LogIndex: int(index),
+			From: want.From, To: want.To, Token: want.Token, Amount: new(big.Int).Set(want.Amount),
+			BlockNumber: receipt.BlockNumber, BlockHash: receipt.BlockHash}
+		if match != nil {
+			return Transfer{}, ErrTransferMismatch
+		}
+		match = &candidate
+	}
+	if match == nil {
+		return Transfer{}, ErrTransferMismatch
+	}
+	return *match, nil
+}
+
+func (w *Worker) updateReincludedObservation(ctx context.Context, old depositObservation, transfer Transfer) (bool, error) {
+	result, err := w.db.ExecContext(ctx, `UPDATE deposit_transactions SET log_index = $1, block_number = $2, block_hash = $3, last_attempt_at = NOW() WHERE chain = $4 AND tx_hash = $5 AND log_index = $6 AND status = 'pending' AND reason = $7 AND order_id IS NULL`, transfer.LogIndex, transfer.BlockNumber, transfer.BlockHash, old.chain, old.txHash, old.logIndex, old.reason)
+	if err != nil {
+		return false, fmt.Errorf("move pending observation to reincluded log: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected == 1, nil
+}
+
 func watchedDecimals(chain ChainConfig, token string) (int, bool) {
 	watched := false
 	for _, contract := range chain.Tokens {
@@ -160,6 +212,7 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 			continue
 		}
 		reason, status := p.reason, p.status
+		reincluded := false
 		// An RPC failure breaks a sequence of confirmed absences; it is never
 		// evidence of a reorg. Successful observations clear the suspicion too.
 		if strings.HasPrefix(reason, missingReceiptPrefix) {
@@ -206,19 +259,37 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 						verifyErr = verifyReceiptTransfer(transfer, receipt)
 					}
 					if errors.Is(verifyErr, ErrTransferMismatch) {
-						status, reason, verifyErr = "reverted", "reorg_transfer_changed", nil
-					} else if verifyErr == nil && p.status == "pending" {
+						if p.status == "pending" {
+							transfer, verifyErr = findReincludedTransfer(receipt, p, decimals)
+							if errors.Is(verifyErr, ErrTransferMismatch) {
+								status, reason, verifyErr = "reverted", "reorg_transfer_changed", nil
+							} else if verifyErr == nil {
+								reincluded = true
+							}
+						} else {
+							status, reason, verifyErr = "reverted", "reorg_transfer_changed", nil
+						}
+					}
+					if verifyErr == nil && p.status == "pending" {
 						final, err := transactionIsFinal(ctx, pool, receipt.BlockNumber, chain.Confirmations)
 						verifyErr = err
 						if err == nil && final {
-							// Persist the attempt before fulfillment. Failure keeps
-							// the deposit retryable and must never be hidden.
-							changed, err := w.updateObservation(ctx, p, status, reason)
+							var changed bool
+							if reincluded {
+								changed, err = w.updateReincludedObservation(ctx, p, transfer)
+							} else {
+								// Persist the attempt before fulfillment. Failure keeps
+								// the deposit retryable and must never be hidden.
+								changed, err = w.updateObservation(ctx, p, status, reason)
+							}
 							if err != nil {
 								errs = append(errs, err)
 								continue
 							}
 							if !changed {
+								continue
+							}
+							if !reincluded && status != "pending" {
 								continue
 							}
 							if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {
