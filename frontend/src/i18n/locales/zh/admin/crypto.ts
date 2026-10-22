@@ -155,7 +155,7 @@ export default {
     csvVerify: '导出当前筛选条件下的充值 CSV，包含充值地址与账目，请妥善保管。',
     walletInitTitle: '首次导入钱包种子',
     walletInitWarning: '高风险：充值种子决定所有用户充值地址，更换会改变全部充值地址。此处仅可首次导入两份有效且不同的助记词，已有种子禁止覆盖；Gas 种子独立用于手续费。服务器会验证当次 2FA。',
-    depositMnemonic: 'Deposit 助记词（仅首次初始化，可选）',
+    depositMnemonic: 'Deposit 助记词（首次初始化必填）',
     depositMnemonicImpact: '充值地址种子：决定所有用户的充值地址。更换后所有用户派生地址都会改变；已有地址仍可能收到转账。',
     hotMnemonicScope: 'Gas 种子：只决定 Gas 钱包地址，用于支付手续费，不会更换用户充值地址或归集目的地址。',
     hotMnemonic: 'Gas 钱包 hot 助记词',
