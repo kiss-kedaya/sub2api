@@ -440,4 +440,3 @@ export function cryptoSecurityErrorKey(error: unknown): string | undefined {
   if (/totp|2fa|verification.code/.test(reason)) return 'securityInvalid'
   return undefined
 }
-

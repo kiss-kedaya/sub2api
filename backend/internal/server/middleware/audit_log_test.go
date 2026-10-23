@@ -3,8 +3,10 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -238,6 +240,37 @@ func TestCryptoRPCSecretsNeverEnterAuditBodies(t *testing.T) {
 			require.Len(t, capture.logs, 1)
 			require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
 			require.NotContains(t, capture.logs[0].RequestBody, "canary")
+		})
+	}
+}
+
+func TestCryptoTestModeAuditsWritesOnlyWhenWriteEnabled(t *testing.T) {
+	for _, writable := range []bool{false, true} {
+		t.Run(fmt.Sprintf("write_enabled_%t", writable), func(t *testing.T) {
+			t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
+			t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", strconv.FormatBool(writable))
+			capture := &auditCaptureRepository{}
+			audit := service.NewAuditLogService(capture, nil)
+			audit.Start()
+			router := gin.New()
+			router.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
+			router.PUT("/api/v1/admin/crypto/config", func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+			request := httptest.NewRequest(http.MethodPut, "/api/v1/admin/crypto/config",
+				strings.NewReader(`{"rpc":{"bsc":"https://rpc.example/credential-fixture"}}`))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			audit.Stop()
+			require.Equal(t, http.StatusOK, recorder.Code)
+			if !writable {
+				require.Empty(t, capture.logs)
+				return
+			}
+			require.Len(t, capture.logs, 1)
+			require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
+			require.NotContains(t, capture.logs[0].RequestBody, "credential-fixture")
 		})
 	}
 }

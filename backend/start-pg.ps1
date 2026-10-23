@@ -3,9 +3,13 @@
 # pg_ctl then refuses to start ("another server might be running"), which
 # looks exactly like a crash. Clear the lock when no process owns it.
 $ErrorActionPreference = 'Stop'
-$dl  = 'E:\Users\34438\Downloads'
+$dl = if ($env:SUB2API_DEV_STATE_DIR) { $env:SUB2API_DEV_STATE_DIR } else {
+    Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'sub2api-dev'
+}
 $data = "$dl\pgdata-sub2api"
-$bin  = "$dl\pgsql-portable\bin"
+$bin = if ($env:SUB2API_DEV_POSTGRES_BIN) { $env:SUB2API_DEV_POSTGRES_BIN } else {
+    Join-Path $dl 'pgsql-portable\bin'
+}
 $log  = "$data\server.log"
 
 # Probe with an actual connection: Get-NetTCPConnection can report nothing

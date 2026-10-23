@@ -1,9 +1,14 @@
 # Starts the local crypto-deposit test stack: portable Postgres and the
 # sub2api server with its built-in wallet. Idempotent: safe to re-run.
 $ErrorActionPreference = 'Stop'
-$root = 'F:\GO\sub2-wt-crypto-deposit\backend'
-$dl = 'E:\Users\34438\Downloads'
-$pgbin = "$dl\pgsql-portable\bin"
+$root = $PSScriptRoot
+# Override these paths when using an existing portable development installation.
+$dl = if ($env:SUB2API_DEV_STATE_DIR) { $env:SUB2API_DEV_STATE_DIR } else {
+    Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'sub2api-dev'
+}
+$pgbin = if ($env:SUB2API_DEV_POSTGRES_BIN) { $env:SUB2API_DEV_POSTGRES_BIN } else {
+    Join-Path $dl 'pgsql-portable\bin'
+}
 
 # 1. Postgres
 $pgUp = (Test-NetConnection 127.0.0.1 -Port 5433 -InformationLevel Quiet -WarningAction SilentlyContinue)
@@ -30,4 +35,4 @@ if (-not (Get-Process -Name sub2api-local -ErrorAction SilentlyContinue)) {
 
 Write-Host ''
 Write-Host 'Website:  http://127.0.0.1:8090'
-Write-Host 'Admin:    admin@local.test / LocalAdmin123!'
+Write-Host 'Admin:    use the credentials configured for this local installation'

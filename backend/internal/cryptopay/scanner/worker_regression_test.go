@@ -57,6 +57,7 @@ type rpcFixture struct {
 	httpFail  string
 	mu        sync.Mutex
 	calls     map[string]int
+	logRanges []getLogsParams
 }
 
 func newRPCFixture(tr Transfer) *rpcFixture {
@@ -104,6 +105,14 @@ func (f *rpcFixture) pool(t *testing.T) *rpc.Pool {
 		}
 		f.mu.Lock()
 		f.calls[key]++
+		if key == "eth_getLogs" && len(request.Params) != 0 {
+			var filter getLogsParams
+			if err := json.Unmarshal(request.Params[0], &filter); err != nil {
+				t.Error(err)
+			} else {
+				f.logRanges = append(f.logRanges, filter)
+			}
+		}
 		f.mu.Unlock()
 		if key == f.httpFail {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -195,6 +204,52 @@ func workerFixture(t *testing.T, f *rpcFixture) (*Worker, sqlmock.Sqlmock, *reco
 		addresses: func(context.Context, string) ([]string, error) { return []string{tr.To}, nil },
 	}
 	return w, mock, handler
+}
+
+func TestManualScanNeverSkipsUnscannedBlocks(t *testing.T) {
+	for _, from := range []uint64{90, 103} {
+		for _, failCredit := range []bool{false, true} {
+			t.Run(fmt.Sprintf("from_%d/fail_credit_%t", from, failCredit), func(t *testing.T) {
+				tr := testTransfer() // A deposit in block 101, before manual start 103.
+				fixture := newRPCFixture(tr)
+				w, mock, handler := workerFixture(t, fixture)
+				problem := errors.New("credit unavailable")
+				if failCredit {
+					handler.processErr = problem
+				}
+				mock.ExpectQuery(`SELECT last_block`).WithArgs("bsc").
+					WillReturnRows(sqlmock.NewRows([]string{"last_block"}).AddRow(100))
+				if from < 101 {
+					mock.ExpectExec(`INSERT INTO crypto_scan_cursors`).WithArgs("bsc", int64(from-1)).
+						WillReturnResult(sqlmock.NewResult(0, 1))
+				}
+				if !failCredit {
+					mock.ExpectExec(`INSERT INTO crypto_scan_cursors`).WithArgs("bsc", int64(105)).
+						WillReturnResult(sqlmock.NewResult(0, 1))
+				}
+				err := w.scanChainFrom(t.Context(), w.chains[0], from)
+				if failCredit && !errors.Is(err, problem) {
+					t.Fatalf("credit error was hidden: %v", err)
+				}
+				if !failCredit && err != nil {
+					t.Fatal(err)
+				}
+				wantFrom := "0x65" // First unscanned block 101.
+				if from < 101 {
+					wantFrom = fmt.Sprintf("0x%x", from)
+				}
+				fixture.mu.Lock()
+				ranges := append([]getLogsParams(nil), fixture.logRanges...)
+				fixture.mu.Unlock()
+				if len(ranges) != 1 || ranges[0].FromBlock != wantFrom || ranges[0].ToBlock != "0x69" {
+					t.Fatalf("manual scan skipped or changed the unfinished range: %+v", ranges)
+				}
+				if len(handler.processed) != 1 || handler.processed[0].BlockNumber != tr.BlockNumber {
+					t.Fatalf("earlier deposit was not processed: %+v", handler.processed)
+				}
+			})
+		}
+	}
 }
 
 func TestScanChainStopsBeforeCursorWhenPendingCannotBePersisted(t *testing.T) {
