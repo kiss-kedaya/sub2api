@@ -228,12 +228,11 @@ function statusText(status: string): string {
 async function copyAddress() {
   if (!current.value) return
   copyError.value = false
-  try {
-    await navigator.clipboard.writeText(current.value.address)
+  if (await copyToClipboard(current.value.address)) {
     copied.value = true
     if (copyTimer) clearTimeout(copyTimer)
     copyTimer = setTimeout(() => (copied.value = false), 1800)
-  } catch {
+  } else {
     copyError.value = true
   }
 }

@@ -757,6 +757,7 @@ import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import { useAppStore } from '@/stores/app'
+import { useClipboard } from '@/composables/useClipboard'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { explorerTxURL } from '@/utils/cryptoExplorer'
 import {
@@ -797,6 +798,7 @@ import {
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const { copyToClipboard } = useClipboard()
 const securityDialog = ref<InstanceType<typeof CryptoSecurityDialog> | null>(null)
 const operationIntentError = ref('')
 
@@ -1339,16 +1341,11 @@ function gotoAddressPage(page: number) {
 }
 
 async function copyAddress(address: string) {
-  try {
-    await navigator.clipboard.writeText(address)
-    copiedAddress.value = address
-    window.setTimeout(() => {
-      if (copiedAddress.value === address) copiedAddress.value = ''
-    }, 1500)
-  } catch {
-    // Clipboard can be blocked (non-secure origin); the full value stays in
-    // the title attribute, so this is a convenience only.
-  }
+  if (!(await copyToClipboard(address))) return
+  copiedAddress.value = address
+  window.setTimeout(() => {
+    if (copiedAddress.value === address) copiedAddress.value = ''
+  }, 1500)
 }
 
 async function loadAddresses() {
