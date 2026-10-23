@@ -66,7 +66,7 @@ func TestGatewayIPNoticeQuotaSharedByIPAcrossKeysAndReplicas(t *testing.T) {
 	for n := range 100 {
 		response := request(n, "203.0.113.1")
 		require.Equal(t, 200, response.Code)
-		require.Equal(t, ipnotice.RenderNotice("test operator notice")+"original reply", gjson.Get(response.Body.String(), "choices.0.message.content").String())
+		require.Equal(t, ipnotice.WrapOutputText("original reply", "test operator notice"), gjson.Get(response.Body.String(), "choices.0.message.content").String())
 	}
 	limited := request(100, "203.0.113.1")
 	require.Equal(t, 400, limited.Code)
