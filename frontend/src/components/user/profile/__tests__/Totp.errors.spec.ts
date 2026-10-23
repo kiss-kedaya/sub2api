@@ -82,7 +82,7 @@ it('shows the reason a TOTP code was rejected', async () => {
   await wrapper.get('.btn-primary').trigger('click')
   await flushPromises()
   await wrapper.get('.btn-primary').trigger('click')
-  for (const input of wrapper.findAll('input[maxlength="1"]')) await input.setValue('1')
+  await wrapper.get('input[autocomplete="one-time-code"]').setValue('111111')
   await wrapper.get('form').trigger('submit')
   await flushPromises()
   expect(mocks.totpAPI.enable).toHaveBeenCalledWith({ totp_code: '111111', setup_token: 'setup-token' })
