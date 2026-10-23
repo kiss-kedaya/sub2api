@@ -22,11 +22,12 @@ func TestAdminAuthAccountPoolOwnerUsesStableID(t *testing.T) {
 		wantAll                   bool
 		wantStatus                int
 	}{
-		{"owner original email", "first@example.test", service.RoleAdmin, service.StatusActive, 7, 7, true, 200},
-		{"owner changed email", "renamed@example.test", service.RoleAdmin, service.StatusActive, 7, 7, true, 200},
-		{"other admin claims legacy email", "admin@sub2api.local", service.RoleAdmin, service.StatusActive, 8, 7, false, 200},
-		{"other admin", "other@example.test", service.RoleAdmin, service.StatusActive, 8, 7, false, 200},
-		{"unconfigured owner leaves scope untouched", "admin@sub2api.local", service.RoleAdmin, service.StatusActive, 7, 0, true, 200},
+		{"primary admin", "first@example.test", service.RoleAdmin, service.StatusActive, 1, 1, true, 200},
+		{"primary admin changed email", "renamed@example.test", service.RoleAdmin, service.StatusActive, 1, 7, true, 200},
+		{"configured legacy owner is now observer", "first@example.test", service.RoleAdmin, service.StatusActive, 7, 7, false, 403},
+		{"other admin claims legacy email", "admin@sub2api.local", service.RoleAdmin, service.StatusActive, 8, 7, false, 403},
+		{"other admin", "other@example.test", service.RoleAdmin, service.StatusActive, 8, 7, false, 403},
+		{"unconfigured owner is still observer", "admin@sub2api.local", service.RoleAdmin, service.StatusActive, 7, 0, false, 403},
 		{"configured non-admin", "user@example.test", service.RoleUser, service.StatusActive, 7, 7, false, 403},
 		{"disabled configured admin", "owner@example.test", service.RoleAdmin, service.StatusDisabled, 7, 7, false, 401},
 	} {

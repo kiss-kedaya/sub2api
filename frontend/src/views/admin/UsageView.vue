@@ -39,6 +39,7 @@
             :start-date="startDate"
             :end-date="endDate"
             :filters="breakdownFilters"
+            :enable-breakdown="!isObserver"
           />
           <GroupDistributionChart
             v-model:metric="groupDistributionMetric"
@@ -48,6 +49,7 @@
             :start-date="startDate"
             :end-date="endDate"
             :filters="breakdownFilters"
+            :enable-breakdown="!isObserver"
           />
         </div>
         <div class="usage-chart-grid">
@@ -64,6 +66,7 @@
             :start-date="startDate"
             :end-date="endDate"
             :filters="breakdownFilters"
+            :enable-breakdown="!isObserver"
           />
           <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" />
         </div>
@@ -89,7 +92,7 @@
           </button>
         </div>
 
-        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :observer="isObserver" :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
           <template #after-reset>
             <div v-if="activeTab !== 'ranking'" class="relative" ref="columnDropdownRef">
               <button
@@ -128,7 +131,7 @@
           </template>
         </UsageFilters>
 
-        <p v-if="activeTab === 'usage'" class="mb-3 text-xs text-gray-500 dark:text-gray-400">请求 ID / 上游 ID：默认片段搜索；=完整ID 精确查找；^前缀 查找。点击表格 ID 可精确筛选。短片段请限定在 24 小时内。</p>
+        <p v-if="activeTab === 'usage' && !isObserver" class="mb-3 text-xs text-gray-500 dark:text-gray-400">请求 ID / 上游 ID：默认片段搜索；=完整ID 精确查找；^前缀 查找。点击表格 ID 可精确筛选。短片段请限定在 24 小时内。</p>
         <div v-show="activeTab === 'usage'" class="usage-detail-content">
           <button type="button" class="mb-3 flex w-full items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-gray-800 hover:bg-gray-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-100 dark:hover:bg-dark-700" @click="toggleInflight">
             <Icon name="chevronDown" size="sm" :class="['text-gray-400 transition-transform', inflightOpen ? '' : '-rotate-90']" />
@@ -137,6 +140,7 @@
           </button>
           <UsageTable
             v-if="inflightOpen"
+            :observer="isObserver"
             flat
             class="mb-3"
             :data="inflightRows"
@@ -150,6 +154,7 @@
             {{ inflightLoading ? t('common.loading') : t('usage.inflightMore') }}
           </button>
           <UsageTable
+            :observer="isObserver"
             flat
             :data="usageLogs"
             :loading="loading"
@@ -195,6 +200,7 @@
   </AppLayout>
   <UsageExportProgress :show="exportProgress.show" :progress="exportProgress.progress" :current="exportProgress.current" :total="exportProgress.total" :estimated-time="exportProgress.estimatedTime" @cancel="cancelExport" />
   <UsageCleanupDialog
+    v-if="!isObserver"
     :show="cleanupDialogVisible"
     :filters="filters"
     :start-date="startDate"
@@ -203,6 +209,7 @@
   />
   <!-- Balance history modal triggered from usage table user click -->
   <UserBalanceHistoryModal
+    v-if="!isObserver"
     :show="showBalanceHistoryModal"
     :user="balanceHistoryUser"
     :hide-actions="true"
@@ -216,6 +223,7 @@ import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'; import { adminAPI } from '@/api/admin'; import { adminUsageAPI } from '@/api/admin/usage'
+import { useAuthStore } from '@/stores/auth'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
@@ -236,6 +244,8 @@ import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat,
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const authStore = useAuthStore()
+const isObserver = computed(() => authStore.isAdminObserver)
 type DistributionMetric = 'tokens' | 'actual_cost'
 type EndpointSource = 'inbound' | 'upstream' | 'path'
 type ModelDistributionSource = 'requested' | 'upstream' | 'mapping'
@@ -283,6 +293,7 @@ const modelNameOptions = computed(() =>
 )
 
 const handleUserClick = async (userId: number) => {
+  if (isObserver.value) return
   try {
     const user = await adminAPI.users.getById(userId, true)
     balanceHistoryUser.value = user
@@ -370,6 +381,10 @@ const applyRouteQueryFilters = () => {
 const loadRouteUserFilterLabel = async () => {
   const requestedUserId = filters.value.user_id
   if (!requestedUserId) return
+  if (isObserver.value) {
+    usageFiltersRef.value?.setUserKeyword?.(`#${requestedUserId}`)
+    return
+  }
   const userSearchRevision = usageFiltersRef.value?.getUserSearchRevision?.()
 
   const routeUserFilterIsCurrent = () => (
@@ -663,7 +678,7 @@ const handleIpGeoBatchFailed = () => {
   appStore.showError(t('usage.ipGeo.batchFailed'))
 }
 const cancelExport = () => exportAbortController?.abort()
-const openCleanupDialog = () => { cleanupDialogVisible.value = true }
+const openCleanupDialog = () => { if (!isObserver.value) cleanupDialogVisible.value = true }
 const getRequestTypeLabel = (log: AdminUsageLog): string => {
   const requestType = resolveUsageRequestType(log)
   if (requestType === 'cyber') return t('usage.cyber')
@@ -675,6 +690,7 @@ const getRequestTypeLabel = (log: AdminUsageLog): string => {
 }
 
 const exportToExcel = async () => {
+  if (isObserver.value) return
   if (exporting.value) return; exporting.value = true; exportProgress.show = true
   const c = new AbortController(); exportAbortController = c
   try {
@@ -744,6 +760,7 @@ const HIDDEN_COLUMNS_VERSION_KEY = 'usage-hidden-columns-version'
 const HIDDEN_COLUMNS_PREV_VERSION = 'request-id-hidden-by-default'
 const HIDDEN_COLUMNS_CURRENT_VERSION = 'upstream-request-id-hidden-by-default'
 
+const observerHiddenColumns = new Set(['endpoint', 'request_id', 'upstream_request_id', 'user_agent', 'ip_address'])
 const allColumns = computed(() => [
   { key: 'user', label: t('admin.usage.user'), sortable: false },
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
@@ -762,7 +779,7 @@ const allColumns = computed(() => [
   { key: 'upstream_request_id', label: t('admin.usage.upstreamRequestId'), sortable: false },
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false },
   { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false }
-])
+].filter(column => !isObserver.value || !observerHiddenColumns.has(column.key)))
 
 const hiddenColumns = reactive<Set<string>>(new Set())
 
@@ -896,13 +913,14 @@ const detailTabs = computed(() => [
   { key: 'usage' as const, label: t('usage.tabs.usage'), icon: 'document' as const },
   { key: 'errors' as const, label: t('usage.tabs.errors'), icon: 'exclamationTriangle' as const },
   { key: 'ranking' as const, label: t('usage.tabs.ranking'), icon: 'chart' as const },
-])
+].filter(tab => !isObserver.value || tab.key === 'usage'))
 const usageFiltersRef = ref<InstanceType<typeof UsageFilters> | null>(null)
 const rangeToolbarRef = ref<InstanceType<typeof DateRangePicker> | null>(null)
 const rankingMounted = ref(false)
 const rankingRef = ref<InstanceType<typeof UserTokenRanking> | null>(null)
 
 const switchTab = (tab: DetailTab) => {
+  if (isObserver.value && tab !== 'usage') return
   activeTab.value = tab
   if (tab === 'errors' && errRows.value.length === 0) loadAdminErrors()
   if (tab === 'ranking') rankingMounted.value = true
@@ -928,6 +946,7 @@ const toRFC3339 = (d: string | undefined, endOfRange = false): string | undefine
 }
 
 const loadAdminErrors = async () => {
+  if (isObserver.value) return
   errLoading.value = true
   try {
     const resp = await listErrorLogs({

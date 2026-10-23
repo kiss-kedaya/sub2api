@@ -78,6 +78,7 @@ func ticketRouteEnvironment(t *testing.T) (*gin.Engine, map[int64]string, *ticke
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	users := &ticketRouteUsers{users: map[int64]*service.User{
+		1: {ID: 1, Role: service.RoleAdmin, Status: service.StatusActive, TokenVersion: 1},
 		7: {ID: 7, Role: service.RoleUser, Status: service.StatusActive, TokenVersion: 1},
 		8: {ID: 8, Role: service.RoleUser, Status: service.StatusActive, TokenVersion: 1},
 		9: {ID: 9, Role: service.RoleAdmin, Status: service.StatusActive, TokenVersion: 1},
@@ -149,7 +150,7 @@ func TestTicketRoutesEnvelopesAndRequesterPrivacy(t *testing.T) {
 		user  int64
 		admin bool
 	}{
-		{"/api/v1/tickets", 7, false}, {"/api/v1/tickets/10", 7, false}, {"/api/v1/admin/tickets", 9, true}, {"/api/v1/admin/tickets/10", 9, true},
+		{"/api/v1/tickets", 7, false}, {"/api/v1/tickets/10", 7, false}, {"/api/v1/admin/tickets", 1, true}, {"/api/v1/admin/tickets/10", 1, true},
 	} {
 		w := ticketRouteRequest(r, "GET", tc.path, tokens[tc.user], "")
 		require.Equal(t, 200, w.Code, w.Body.String())
@@ -182,7 +183,7 @@ func TestTicketRoutesEnvelopesAndRequesterPrivacy(t *testing.T) {
 	require.Equal(t, 200, w.Code)
 	require.Contains(t, w.Body.String(), `"can_create":false`)
 	require.Contains(t, w.Body.String(), `"next_create_at":null`)
-	w = ticketRouteRequest(r, "GET", "/api/v1/admin/tickets?page=2&page_size=100&search=help&status=open&priority=urgent&category=billing&assigned_to=mine", tokens[9], "")
+	w = ticketRouteRequest(r, "GET", "/api/v1/admin/tickets?page=2&page_size=100&search=help&status=open&priority=urgent&category=billing&assigned_to=mine", tokens[1], "")
 	require.Equal(t, 200, w.Code)
 	require.Equal(t, 100, repo.filter.PageSize)
 	require.Equal(t, "mine", repo.filter.AssignedTo)
@@ -218,6 +219,17 @@ func TestTicketRoutesContactAndExplicitRead(t *testing.T) {
 	w = ticketRouteRequest(r, "POST", "/api/v1/tickets/10/read", tokens[7], `{"last_message_id":3}`)
 	require.Equal(t, 200, w.Code)
 	require.Equal(t, int64(3), repo.lastRead)
-	w = ticketRouteRequest(r, "PATCH", "/api/v1/admin/tickets/10", tokens[9], `{"status":"closed"}`)
+	w = ticketRouteRequest(r, "PATCH", "/api/v1/admin/tickets/10", tokens[1], `{"status":"closed"}`)
 	require.Equal(t, 200, w.Code, w.Body.String())
+}
+
+func TestObserverCannotReadRequesterDetailsOrReplyThroughAdminTickets(t *testing.T) {
+	r, tokens, _ := ticketRouteEnvironment(t)
+	for _, test := range []struct{ method, path string }{
+		{"GET", "/api/v1/admin/tickets"}, {"GET", "/api/v1/admin/tickets/10"}, {"PATCH", "/api/v1/admin/tickets/10"},
+	} {
+		w := ticketRouteRequest(r, test.method, test.path, tokens[9], `{"status":"closed"}`)
+		require.Equal(t, 403, w.Code)
+		require.NotContains(t, w.Body.String(), "requester@example.test")
+	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -84,6 +85,11 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 	includeModels := parseBoolQueryWithDefault(c.Query("include_model_stats"), true)
 	includeGroups := parseBoolQueryWithDefault(c.Query("include_group_stats"), false)
 	includeUsersTrend := parseBoolQueryWithDefault(c.Query("include_users_trend"), false)
+	// Observer responses must not retrieve identity-bearing user series or
+	// reuse the owner-only cache entry/ETag containing those series.
+	if middleware.IsAdminObserver(c) {
+		includeUsersTrend = false
+	}
 	usersTrendLimit := 12
 	if raw := strings.TrimSpace(c.Query("users_trend_limit")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 50 {

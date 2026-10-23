@@ -1,7 +1,7 @@
 <template>
   <div class="relative">
     <!-- Admin: Full version badge with dropdown -->
-    <template v-if="isAdmin">
+    <template v-if="canManageSystem">
       <button
         @click="toggleDropdown"
         class="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors"
@@ -695,7 +695,7 @@
       </transition>
     </template>
 
-    <!-- Non-admin: Simple static version text -->
+    <!-- Read-only users see the public version without system API requests. -->
     <span v-else-if="version" class="text-xs text-gray-500 dark:text-dark-400">
       {{ formatVersion(version) }}
     </span>
@@ -729,7 +729,7 @@ const props = defineProps<{
 const authStore = useAuthStore()
 const appStore = useAppStore()
 
-const isAdmin = computed(() => authStore.isAdmin)
+const canManageSystem = computed(() => authStore.isAdmin && !authStore.isAdminObserver)
 
 const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
@@ -820,7 +820,7 @@ function closeDropdown() {
 }
 
 async function refreshVersion(force = true) {
-  if (!isAdmin.value) return
+  if (!canManageSystem.value) return
 
   // Reset update states when refreshing
   updateError.value = ''
@@ -832,6 +832,7 @@ async function refreshVersion(force = true) {
 }
 
 async function handleUpdate() {
+  if (!canManageSystem.value) return
   if (updating.value) return
 
   updating.value = true
@@ -870,7 +871,7 @@ function resetRollbackState() {
 }
 
 async function toggleRollbackPanel() {
-  if (!isAdmin.value) return
+  if (!canManageSystem.value) return
   rollbackPanelOpen.value = !rollbackPanelOpen.value
   // Source builds only show a hint, no version list to fetch
   if (
@@ -884,7 +885,7 @@ async function toggleRollbackPanel() {
 }
 
 async function loadRollbackVersions() {
-  if (!isAdmin.value) return
+  if (!canManageSystem.value) return
   rollbackVersionsLoading.value = true
   rollbackVersionsError.value = ''
   try {
@@ -913,7 +914,7 @@ function formatPublishedAt(publishedAt: string): string {
 }
 
 async function handleRollback() {
-  if (!isAdmin.value) return
+  if (!canManageSystem.value) return
   if (rollingBack.value || !selectedRollbackVersion.value) return
 
   rollingBack.value = true
@@ -936,6 +937,7 @@ async function handleRollback() {
 }
 
 async function handleRestart() {
+  if (!canManageSystem.value) return
   if (restarting.value) return
 
   restarting.value = true
@@ -997,7 +999,7 @@ function handleClickOutside(event: MouseEvent) {
 }
 
 onMounted(() => {
-  if (isAdmin.value) {
+  if (canManageSystem.value) {
     // Use cached version if available, otherwise fetch
     appStore.fetchVersion(false)
   }

@@ -14,6 +14,7 @@ const authStore = vi.hoisted(() => ({
   checkAuth: vi.fn(),
   isAuthenticated: true,
   isAdmin: false,
+  isAdminObserver: false,
   isSimpleMode: false,
   hasPendingAuthSession: false,
 }))
@@ -113,10 +114,27 @@ describe('feature route guard', () => {
   beforeEach(() => {
     authStore.isAuthenticated = true
     authStore.isAdmin = false
+    authStore.isAdminObserver = false
     authStore.isSimpleMode = false
     appStore.publicSettingsLoaded = false
     appStore.cachedPublicSettings = null
     appStore.fetchPublicSettings.mockReset()
+  })
+
+  it.each(['/admin/users', '/admin/accounts', '/admin/settings', '/admin/orders', '/admin/dashboard'])('redirects observer away from %s to usage', async (path) => {
+    authStore.isAdmin = true
+    authStore.isAdminObserver = true
+    const { navigation, next } = runGuard({ requiresAdmin: true }, path)
+    await navigation
+    expect(next).toHaveBeenCalledWith('/admin/usage')
+  })
+
+  it('keeps usage reachable for an observer without the owner compliance workflow', async () => {
+    authStore.isAdmin = true
+    authStore.isAdminObserver = true
+    const { navigation, next } = runGuard({ requiresAdmin: true }, '/admin/usage')
+    await navigation
+    expect(next).toHaveBeenCalledWith()
   })
 
   it('waits for the first public-settings request before deciding payment access', async () => {

@@ -29,8 +29,7 @@ func NewChannelMonitorV2Handler(svc *service.ChannelMonitorV2Service, apiKeyServ
 // channelMonitorV2IsAdmin is true when the request already passed admin auth
 // (shared Dimensions/Errors handlers serve both user and admin route groups).
 func channelMonitorV2IsAdmin(c *gin.Context) bool {
-	role, ok := middleware.GetUserRoleFromContext(c)
-	return ok && role == service.RoleAdmin
+	return middleware.IsPrimaryAdmin(c)
 }
 
 func (h *ChannelMonitorV2Handler) GetConfig(c *gin.Context) {

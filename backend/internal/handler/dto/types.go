@@ -134,10 +134,7 @@ type Group struct {
 	WebSearchPricePerCall *float64 `json:"web_search_price_per_call"`
 	SearchPricePer1k      *float64 `json:"search_price_per_1k"`
 	// GrokModerationRefusalPrice Grok 安全拒绝单次扣费（USD/次）；nil 使用默认 0.1，0 表示不扣费。
-	GrokModerationRefusalPrice *float64 `json:"grok_moderation_refusal_price"`
-	// DeepSeek 搜索专用端点。只回显 URL 与"是否已配置 key"，key 本身永不返回。
-	SearchProviderBaseURL        *string  `json:"search_provider_base_url"`
-	SearchProviderAPIKeySet      bool     `json:"search_provider_api_key_set"`
+	GrokModerationRefusalPrice   *float64 `json:"grok_moderation_refusal_price"`
 	AudioRealtimePricePerMin     *float64 `json:"audio_realtime_price_per_min"`
 	AudioTtsPricePerMillionChars *float64 `json:"audio_tts_price_per_million_chars"`
 	AudioSttPricePerHour         *float64 `json:"audio_stt_price_per_hour"`
@@ -176,6 +173,10 @@ type Group struct {
 // 注意：普通用户接口不得返回 model_routing/account_count/account_groups 等内部信息。
 type AdminGroup struct {
 	Group
+	// 搜索上游配置仅供主管理员读取，普通分组及其嵌套 DTO 不携带。
+	// 密钥本身永不返回，只暴露是否已配置。
+	SearchProviderBaseURL   *string `json:"search_provider_base_url"`
+	SearchProviderAPIKeySet bool    `json:"search_provider_api_key_set"`
 	// ForceOpenAIFast 是管理端请求策略，用户侧分组 DTO 无需暴露。
 	ForceOpenAIFast bool `json:"force_openai_fast"`
 	// FreeOpenAIFast 是管理端计费策略，用户侧分组 DTO 无需暴露。

@@ -14,7 +14,7 @@
             @change="onDateRangeChange"
           />
         </div>
-        <div class="w-full sm:w-auto sm:min-w-[220px]">
+        <div v-if="!observer" class="w-full sm:w-auto sm:min-w-[220px]">
           <label class="input-label">{{ t('admin.usage.requestId') }}</label>
           <input
             v-model="filters.request_id"
@@ -25,8 +25,14 @@
             @keyup.enter="emitChange"
           />
         </div>
+        <template v-if="observer">
+          <div v-for="filter in observerIdFilters" :key="filter.key" class="w-full sm:w-36">
+            <label :for="`observer-${filter.key}`" class="input-label">{{ t(filter.label) }} ID</label>
+            <input :id="`observer-${filter.key}`" v-model.number="filters[filter.key]" type="number" min="1" step="1" class="input" @change="emitChange" />
+          </div>
+        </template>
         <!-- User Search -->
-        <div ref="userSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
+        <div v-if="!observer" ref="userSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
           <label class="input-label">{{ t('admin.usage.userFilter') }}</label>
           <input
             v-model="userKeyword"
@@ -63,7 +69,7 @@
         </div>
 
         <!-- API Key Search -->
-        <div ref="apiKeySearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
+        <div v-if="!observer" ref="apiKeySearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
           <label class="input-label">{{ t('usage.apiKeyFilter') }}</label>
           <input
             v-model="apiKeyKeyword"
@@ -106,7 +112,7 @@
         </div>
 
         <!-- Account Filter -->
-        <div ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
+        <div v-if="!observer" ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
           <label class="input-label">{{ t('admin.usage.account') }}</label>
           <input
             v-model="accountKeyword"
@@ -190,7 +196,7 @@
         </div>
 
         <!-- Group Filter -->
-        <div class="w-full sm:w-auto sm:min-w-[200px]">
+        <div v-if="!observer" class="w-full sm:w-auto sm:min-w-[200px]">
           <label class="input-label">{{ t('admin.usage.group') }}</label>
           <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
         </div>
@@ -206,7 +212,7 @@
           {{ t('common.reset') }}
         </button>
         <slot name="after-reset" />
-        <template v-if="mode === 'usage'">
+        <template v-if="mode === 'usage' && !observer">
           <button type="button" @click="$emit('cleanup')" class="btn btn-danger">
             {{ t('admin.usage.cleanup.button') }}
           </button>
@@ -245,12 +251,14 @@ interface Props {
   mode?: 'usage' | 'errors' | 'ranking'
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
+  observer?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   showActions: true,
   mode: 'usage',
-  flat: false
+  flat: false,
+  observer: false
 })
 const emit = defineEmits([
   'update:modelValue',
@@ -263,6 +271,13 @@ const emit = defineEmits([
   'export',
   'cleanup'
 ])
+
+const observerIdFilters = [
+  { key: 'user_id', label: 'admin.usage.user' },
+  { key: 'api_key_id', label: 'usage.apiKeyFilter' },
+  { key: 'account_id', label: 'admin.usage.account' },
+  { key: 'group_id', label: 'admin.usage.group' },
+]
 
 const { t } = useI18n()
 const filters = toRef(props, 'modelValue')
@@ -372,6 +387,7 @@ const clearPendingUserSearch = () => {
 }
 
 const debounceUserSearch = () => {
+  if (props.observer) return
   clearPendingUserSearch()
   const query = userKeyword.value.trim()
   if (!query) {
@@ -396,6 +412,7 @@ const debounceUserSearch = () => {
 }
 
 const debounceApiKeySearch = () => {
+  if (props.observer) return
   if (apiKeySearchTimeout) clearTimeout(apiKeySearchTimeout)
   apiKeySearchTimeout = setTimeout(async () => {
     try {
@@ -456,6 +473,7 @@ const onClearApiKey = () => {
 }
 
 const debounceAccountSearch = () => {
+  if (props.observer) return
   if (accountSearchTimeout) clearTimeout(accountSearchTimeout)
   accountSearchTimeout = setTimeout(async () => {
     if (!accountKeyword.value) {
@@ -556,6 +574,7 @@ watch(
 
 onMounted(async () => {
   document.addEventListener('click', onDocumentClick)
+  if (props.observer) return
   try {
     const groups = await fetchPaginatedItems(
       (page, size) => adminAPI.groups.list(page, size), 1000, 1000

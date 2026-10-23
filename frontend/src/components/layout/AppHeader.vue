@@ -15,7 +15,7 @@
         </button>
 
         <nav v-if="isConsoleSignal" class="signal-breadcrumb" :aria-label="pageTitle">
-          <router-link :to="authStore.isAdmin ? '/admin/dashboard' : '/dashboard'" class="signal-breadcrumb-home" :title="appStore.siteName">
+          <router-link :to="authStore.isAdminObserver ? '/admin/usage' : authStore.isAdmin ? '/admin/dashboard' : '/dashboard'" class="signal-breadcrumb-home" :title="appStore.siteName">
             {{ appStore.siteName }}
           </router-link>
           <Icon name="chevronRight" size="xs" aria-hidden="true" />
@@ -39,7 +39,7 @@
         <AnnouncementBell v-if="user" />
         <router-link
           v-if="user"
-          :to="authStore.isAdmin ? '/admin/tickets' : '/tickets'"
+          :to="authStore.isAdmin && !authStore.isAdminObserver ? '/admin/tickets' : '/tickets'"
           class="header-shortcut inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-gray-600 transition-colors hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800"
           :title="t('tickets.support')"
           :aria-label="t('tickets.support')"
