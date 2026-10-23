@@ -1,0 +1,6 @@
+#!/bin/sh
+# Inspect the actual proposed message, including commits with an empty index.
+python tools/check_sensitive.py --message-file "$1" || {
+    echo "commit rejected: sensitive or unreadable commit message."
+    exit 1
+}

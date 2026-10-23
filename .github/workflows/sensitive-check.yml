@@ -4,8 +4,8 @@ name: Sensitive Data Check
 # operator-private data (account ids, upstream relay hosts, credentials,
 # production IPs). The same script runs locally as a pre-commit hook.
 #
-# Scope: prose, config and release notes. Test fixtures are skipped on purpose;
-# a noisy gate gets bypassed with --no-verify and then protects nothing.
+# Credentials are checked in every file. Reviewed synthetic fixtures require an
+# exact content hash; infrastructure rules apply to prose and configuration.
 
 on:
   push:
@@ -17,15 +17,49 @@ permissions:
 
 jobs:
   scan:
+    if: github.event_name != 'push' || !github.event.deleted
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Scan tracked files
-        run: python tools/check_sensitive.py --all --metadata HEAD
+      - name: Scan tracked files and newly published commit metadata
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+
+          with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as stream:
+              event = json.load(stream)
+          event_name = os.environ['GITHUB_EVENT_NAME']
+          if event_name == 'pull_request':
+              base = event['pull_request']['base']['sha']
+              head = event['pull_request']['head']['sha']
+          elif event_name == 'push' and event.get('before', '').strip('0'):
+              base, head = event['before'], event['after']
+          else:
+              base = head = None
+
+          arguments = ['--metadata', 'HEAD']
+          if base is not None:
+              for sha in (base, head):
+                  if not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', sha):
+                      sys.exit('check_sensitive: invalid commit endpoint')
+                  probe = subprocess.run(['git', 'cat-file', '-e', sha + '^{commit}'], capture_output=True)
+                  if probe.returncode:
+                      fetched = subprocess.run(['git', 'fetch', '--no-tags', 'origin', sha], capture_output=True)
+                      if fetched.returncode:
+                          sys.exit('check_sensitive: unable to fetch commit endpoint')
+              arguments = ['--metadata-range', base + '..' + head]
+          sys.exit(subprocess.call([sys.executable, 'tools/check_sensitive.py', '--all', *arguments]))
+          PY
       - name: Verify privacy scanner diagnostics
         run: python -B -m unittest discover -s tools -p test_check_sensitive.py
