@@ -191,7 +191,7 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 // 未过认证的 401/403 不入库）；auth 组（登录/注册/刷新）无前置认证，天然记录失败尝试。
 func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddleware {
 	return AuditLogMiddleware(func(c *gin.Context) {
-		if service.CryptoAdminTestMode() {
+		if service.CryptoAdminTestReadOnly() {
 			c.Next()
 			return
 		}

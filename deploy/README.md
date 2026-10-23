@@ -655,6 +655,13 @@ gateway:
 
 ### Shared-database test instance
 
+The optional Windows helpers under `backend/` resolve executables relative to
+their script directory. Local state defaults to `%LOCALAPPDATA%\sub2api-dev`;
+set `SUB2API_DEV_STATE_DIR` to reuse an existing development state directory and
+`SUB2API_DEV_POSTGRES_BIN` to select a portable PostgreSQL `bin` directory.
+The helpers use the administrator credentials already configured by the local
+installation and do not create or print a default password.
+
 `CRYPTO_ADMIN_TEST_MODE=true` retains a separate instance JWT key, requires
 `DATABASE_MIGRATION_MODE=validate` and a persistent TOTP encryption key, suppresses
 startup data backfills, and disables proactive background jobs. By default it

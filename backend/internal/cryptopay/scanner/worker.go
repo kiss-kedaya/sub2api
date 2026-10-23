@@ -313,9 +313,14 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		return err
 	}
 	if manualFromBlock != 0 {
-		last = manualFromBlock - 1
-		if err := w.cursor.Save(ctx, chain.Chain, last); err != nil {
-			return err
+		// A manual start may rewind the cursor, but must never skip blocks
+		// that have not yet been scanned. Keep the earlier durable boundary
+		// until every intervening range has been processed successfully.
+		if last == 0 || manualFromBlock-1 < last {
+			last = manualFromBlock - 1
+			if err := w.cursor.Save(ctx, chain.Chain, last); err != nil {
+				return err
+			}
 		}
 	} else if last == 0 {
 		// First run: start from a small lookback window instead of the exact
