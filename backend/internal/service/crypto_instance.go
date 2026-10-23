@@ -20,6 +20,15 @@ func CryptoInstanceEnabled() bool {
 	return err == nil && enabled
 }
 
+// CryptoAdminAllowHTTP is an explicit local opt-in for installations without
+// TLS. It only relaxes the transport gate; administrator identity, fresh TOTP,
+// replay protection and wallet authorization remain mandatory. Invalid or
+// missing values keep the default HTTPS requirement.
+func CryptoAdminAllowHTTP() bool {
+	allowed, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("CRYPTO_ADMIN_ALLOW_HTTP")))
+	return err == nil && allowed
+}
+
 // CryptoAdminTestMode restricts the initial shared-database test to real admin
 // accounts. This is an instance setting, never a database-wide user policy.
 func CryptoAdminTestMode() bool {

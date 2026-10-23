@@ -49,7 +49,7 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	if !cryptoSecureTransport(c.Request, h.securityConfig) {
+	if !service.CryptoAdminAllowHTTP() && !cryptoSecureTransport(c.Request, h.securityConfig) {
 		response.ErrorWithDetails(c, 403, "HTTPS or a loopback tunnel is required", "CRYPTO_HTTPS_REQUIRED", nil)
 		c.Abort()
 		return
