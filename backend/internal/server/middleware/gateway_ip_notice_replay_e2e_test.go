@@ -197,7 +197,7 @@ func TestGatewayIPNoticeHTTPThreeTurnThinkingReplay(t *testing.T) {
 					case 1:
 						require.Equal(t, notice+"\n\nfirst question", gjson.GetBytes(trace.request, "messages.0.content").String())
 						require.Equal(t, "redacted_thinking", gjson.GetBytes(visible, "content.1.type").String())
-						require.Equal(t, gjson.GetBytes(trace.reply, "content.2.input").Raw, gjson.GetBytes(visible, "content.3.input").Raw)
+						require.Equal(t, gjson.GetBytes(trace.reply, "content.2.input").Raw, gjson.GetBytes(visible, "content.2.input").Raw)
 					case 2:
 						require.Equal(t, "unaltered tool output", gjson.GetBytes(trace.request, "messages.2.content.0.content").String())
 						require.Equal(t, notice, gjson.GetBytes(trace.request, "messages.2.content.1.text").String())
