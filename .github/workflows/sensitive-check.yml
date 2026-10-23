@@ -26,4 +26,6 @@ jobs:
         with:
           python-version: '3.12'
       - name: Scan tracked files
-        run: python tools/check_sensitive.py --all
+        run: python tools/check_sensitive.py --all --metadata HEAD
+      - name: Verify privacy scanner diagnostics
+        run: python -B -m unittest discover -s tools -p test_check_sensitive.py

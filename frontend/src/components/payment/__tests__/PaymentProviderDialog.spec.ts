@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import PaymentProviderDialog from '@/components/payment/PaymentProviderDialog.vue'
 import { STRIPE_SDK_API_VERSION } from '@/components/payment/providerConfig'
@@ -22,6 +22,9 @@ const messages: Record<string, string> = {
   'admin.settings.payment.stripeWebhookApiVersionHint': 'Use Stripe API version {version}.',
   'admin.settings.payment.airwallexWebhookHint': 'Select payment_intent.succeeded and use the latest stable API version.',
 }
+
+const storeMocks = vi.hoisted(() => ({ showError: vi.fn() }))
+vi.mock('@/stores', () => ({ useAppStore: () => storeMocks }))
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
@@ -64,12 +67,14 @@ function mountDialog(options: { editing?: ProviderInstance | null } = {}) {
         { value: 'alipay', label: 'Alipay' },
         { value: 'wxpay', label: 'WeChat Pay' },
         { value: 'stripe', label: 'Stripe' },
+        { value: 'epusdt', label: 'EPUSDT' },
         { value: 'airwallex', label: 'Airwallex' },
       ],
       enabledKeyOptions: [
         { value: 'easypay', label: 'EasyPay' },
         { value: 'alipay', label: 'Alipay' },
         { value: 'wxpay', label: 'WeChat Pay' },
+        { value: 'epusdt', label: 'EPUSDT' },
         { value: 'airwallex', label: 'Airwallex' },
       ],
       allPaymentTypes: [
@@ -96,6 +101,39 @@ function mountDialog(options: { editing?: ProviderInstance | null } = {}) {
 }
 
 describe('PaymentProviderDialog callback URLs', () => {
+  it('requires the EPUSDT deployment URL and sends the operator-selected endpoint', async () => {
+    storeMocks.showError.mockClear()
+    const wrapper = mountDialog()
+    ;(wrapper.vm as unknown as { reset: (providerKey: string) => void }).reset('epusdt')
+    await nextTick()
+    const findConfigInput = (label: string) => {
+      const fieldLabel = wrapper.findAll('label').find(element => element.text().replace('*', '').trim() === label)
+      if (!fieldLabel) throw new Error(`config label missing: ${label}`)
+      return fieldLabel.element.parentElement!.querySelector('input, textarea') as HTMLInputElement | HTMLTextAreaElement
+    }
+    await wrapper.get('input[required]').setValue('EPUSDT deployment')
+    const merchant = findConfigInput('PID')
+    merchant.value = 'fixture-merchant'
+    merchant.dispatchEvent(new Event('input', { bubbles: true }))
+    const secret = findConfigInput('admin.settings.payment.field_secretKey')
+    secret.value = 'fixture-only-payment-key'
+    secret.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    const endpoint = findConfigInput('admin.settings.payment.field_apiBase')
+    expect(endpoint.value).toBe('')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.emitted('save')).toBeUndefined()
+    expect(storeMocks.showError).toHaveBeenCalledWith('admin.settings.payment.validationFieldRequired')
+    endpoint.value = 'https://payments.example.test'
+    endpoint.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    await wrapper.get('form').trigger('submit')
+    const payload = wrapper.emitted('save')?.[0]?.[0] as { config: Record<string, string> }
+    expect(payload.config.apiBase).toBe('https://payments.example.test')
+    wrapper.unmount()
+  })
+
   it('preserves instance fee, multiplier, and EPUSDT redirect mode when normalizing callbacks', async () => {
     const provider = providerFactory({
       provider_key: 'epusdt', name: 'EPUSDT',

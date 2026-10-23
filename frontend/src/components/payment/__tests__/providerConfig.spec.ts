@@ -13,6 +13,15 @@ function findField(providerKey: string, key: string) {
   return fields.find(field => field.key === key)
 }
 
+describe('PROVIDER_CONFIG_FIELDS.epusdt', () => {
+  it('requires an explicitly configured deployment URL without a production default', () => {
+    const apiBase = findField('epusdt', 'apiBase')
+    expect(apiBase).toBeDefined()
+    expect(apiBase?.optional).toBeFalsy()
+    expect(apiBase?.defaultValue).toBeUndefined()
+  })
+})
+
 describe('PROVIDER_CONFIG_FIELDS.wxpay', () => {
   it('keeps admin form validation aligned with backend-required credentials', () => {
     expect(findField('wxpay', 'publicKeyId')?.optional).toBeFalsy()
