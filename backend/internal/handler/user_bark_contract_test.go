@@ -138,3 +138,40 @@ func TestBarkChangesRequireFreshTwoFactorBeforeAnyDatabaseWrite(t *testing.T) {
 		})
 	}
 }
+
+func TestBarkHTTPOptInStillVerifiesFreshTwoFactor(t *testing.T) {
+	for _, allowHTTP := range []string{"false", "true"} {
+		t.Run(allowHTTP, func(t *testing.T) {
+			t.Setenv("CRYPTO_ADMIN_ALLOW_HTTP", allowHTTP)
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+			h := NewUserBarkHandler(notify.NewUserBarkService(db, barkContractEncryptor{}), nil, nil)
+			verified := false
+			h.verifier = barkFreshVerifierFunc(func(_ context.Context, id int64, code string) error {
+				verified = true
+				require.Equal(t, int64(1), id)
+				require.Empty(t, code)
+				return service.ErrTotpInvalidCode
+			})
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
+				c.Next()
+			})
+			router.PUT("/user/bark", h.UpdateBarkSettings)
+			req := httptest.NewRequest(http.MethodPut, "http://gateway.example.test/user/bark", strings.NewReader(`{"enabled":false}`))
+			result := httptest.NewRecorder()
+			router.ServeHTTP(result, req)
+			require.GreaterOrEqual(t, result.Code, 400, result.Body.String())
+			require.Equal(t, allowHTTP == "true", verified)
+			if allowHTTP == "false" {
+				require.Contains(t, result.Body.String(), "BARK_HTTPS_REQUIRED")
+			} else {
+				require.NotContains(t, result.Body.String(), "BARK_HTTPS_REQUIRED")
+			}
+			require.Equal(t, "no-store", result.Header().Get("Cache-Control"))
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
