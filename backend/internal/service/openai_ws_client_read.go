@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
 	coderws "github.com/coder/websocket"
 )
 
@@ -18,7 +19,7 @@ type openAIWSClientReadResult struct {
 // their close frame, then closes the transport and joins that reader.
 func ReadOpenAIWSClientMessage(
 	controlCtx context.Context,
-	conn *coderws.Conn,
+	conn GatewayClientWebSocket,
 	timeout time.Duration,
 	timeoutStatus coderws.StatusCode,
 	timeoutReason string,
@@ -39,7 +40,7 @@ func ReadOpenAIWSClientMessage(
 // timeoutActive is nil, a positive timeout starts immediately.
 func readOpenAIWSClientMessageWithTimeoutStart(
 	controlCtx context.Context,
-	conn *coderws.Conn,
+	conn GatewayClientWebSocket,
 	timeout time.Duration,
 	timeoutStatus coderws.StatusCode,
 	timeoutReason string,
@@ -56,6 +57,9 @@ func readOpenAIWSClientMessageWithTimeoutStart(
 	readDone := make(chan openAIWSClientReadResult, 1)
 	go func() {
 		messageType, payload, err := conn.Read(context.Background())
+		if err == nil {
+			payload = ipnotice.NormalizeReplay(payload, ipnotice.Responses)
+		}
 		readDone <- openAIWSClientReadResult{messageType: messageType, payload: payload, err: err}
 	}()
 

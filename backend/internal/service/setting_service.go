@@ -271,6 +271,10 @@ type SettingService struct {
 	rectifierCache   atomic.Value // *cachedRectifierSettings
 	rectifierSF      singleflight.Group
 	rectifierRefresh settingRefreshBackoff
+
+	gatewayIPNoticeCache      atomic.Pointer[cachedGatewayIPNotice]
+	gatewayIPNoticeMu         sync.Mutex
+	gatewayIPNoticeRefreshing atomic.Bool
 }
 
 // settingRefreshBackoff gates stale-while-revalidate attempts.  It is kept

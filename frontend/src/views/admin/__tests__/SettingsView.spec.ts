@@ -9,6 +9,8 @@ import zhSettings from "@/i18n/locales/zh/admin/settings";
 import SettingsView from "../SettingsView.vue";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 
+vi.mock('@/views/admin/settings/GatewayIPNoticeSettings.vue', () => ({ default: { template: '<div />' } }));
+
 const {
   getSettings,
   updateSettings,
@@ -564,6 +566,7 @@ function mountView() {
         ProxySelector: true,
         ImageUpload: ImageUploadStub,
         BackupSettings: true,
+        GatewayIPNoticeSettings: true,
       },
     },
   });
@@ -1381,6 +1384,7 @@ describe("admin SettingsView payment visible method controls", () => {
           ProxySelector: true,
           ImageUpload: ImageUploadStub,
           BackupSettings: true,
+          GatewayIPNoticeSettings: true,
         },
       },
     });
@@ -1679,6 +1683,7 @@ describe("admin SettingsView payment visible method controls", () => {
           ProxySelector: true,
           ImageUpload: ImageUploadStub,
           BackupSettings: true,
+          GatewayIPNoticeSettings: true,
         },
       },
     });

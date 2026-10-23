@@ -1,5 +1,20 @@
 export default {
     settings: {
+      gatewayIPNotice: {
+        title: 'IP notices and rate limits',
+        description: 'Add conversation notices and independent request limits only for the listed source IPs.',
+        enabled: 'Enable IP policy',
+        ips: 'Source IP addresses',
+        ipHint: 'One public IPv4 or IPv6 address per line. Exact addresses only; CIDR ranges are not supported.',
+        message: 'Notice for inputs, outputs, and rate limit errors',
+        rpm: 'Requests per minute per IP',
+        rpmHint: 'Requests from the same IP share a counter. Exceeding it returns HTTP 400 with this notice. Unlisted IPs are unaffected.',
+        preview: 'Notice preview',
+        effectiveHint: 'New requests pick up saved settings in about 5 seconds. Existing WebSocket connections retain their initial policy; each new generation turn counts and excess turns receive an error frame with status 400.',
+        retry: 'Reload',
+        invalid: 'Enter IP addresses, a notice, and an integer RPM between 1 and 100000.',
+        saved: 'IP notice policy saved',
+      },
       title: 'System Settings',
       description: 'Manage registration, email verification, default values, and SMTP settings',
       tabs: {

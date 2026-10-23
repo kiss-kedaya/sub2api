@@ -1,5 +1,20 @@
 export default {
     settings: {
+      gatewayIPNotice: {
+        title: '指定 IP 提示与限流',
+        description: '仅对列表中的来源 IP 添加对话提示，并按 IP 独立限制请求频率。',
+        enabled: '启用指定 IP 规则',
+        ips: '来源 IP 列表',
+        ipHint: '每行一个公网 IPv4 或 IPv6 地址。精确匹配，不支持网段。',
+        message: '输入、输出及超限错误中的提示文案',
+        rpm: '每个 IP 每分钟请求数',
+        rpmHint: '同一 IP 的请求共用计数，超限返回 HTTP 400 和上方文案；未列出的 IP 不适用此规则。',
+        preview: '提示预览',
+        effectiveHint: '保存后新请求约 5 秒内生效。已建立的 WebSocket 连接沿用建立时的配置；每个新生成轮次均计数，超限返回含 400 状态的错误帧。',
+        retry: '重新加载',
+        invalid: '请填写有效的 IP 列表、提示文案和 1–100000 的整数 RPM。',
+        saved: '指定 IP 提示与限流已保存',
+      },
       title: '系统设置',
       description: '管理注册、邮箱验证、默认值和 SMTP 设置',
       tabs: {

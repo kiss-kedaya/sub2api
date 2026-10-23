@@ -93,7 +93,7 @@ type openAIWSFirstRefusalHarness struct {
 
 // Follow the passthrough cyber harness, with standard billing and an observable
 // Redis instance so a temporary ban cannot satisfy the permanent-block check.
-func newOpenAIWSFirstRefusalHarness(t *testing.T, platform, upstreamURL string, refusalPrice float64) *openAIWSFirstRefusalHarness {
+func newOpenAIWSFirstRefusalHarness(t *testing.T, platform, upstreamURL string, refusalPrice float64, noticeSettings ...*service.SettingService) *openAIWSFirstRefusalHarness {
 	t.Helper()
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
@@ -143,7 +143,7 @@ func newOpenAIWSFirstRefusalHarness(t *testing.T, platform, upstreamURL string, 
 	handler := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(concurrencyCache), billingCache,
 		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
 	apiKey := &service.APIKey{
-		ID: 1851, UserID: 1751, Key: "sk-ws-first-refusal-test", GroupID: &groupID,
+		ID: 1851, UserID: 1751, Key: "fixture-ws-first-refusal", GroupID: &groupID,
 		User: &service.User{ID: 1751, Status: service.StatusActive, Balance: 100},
 		Group: &service.Group{
 			ID: groupID, Platform: platform, Status: service.StatusActive, Hydrated: true,
@@ -155,8 +155,14 @@ func newOpenAIWSFirstRefusalHarness(t *testing.T, platform, upstreamURL string, 
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
+		if len(noticeSettings) > 0 {
+			c.Request = c.Request.WithContext(service.WithSessionBinding(c.Request.Context(), &service.SessionBinding{IP: "203.0.113.1"}))
+		}
 		c.Next()
 	})
+	if len(noticeSettings) > 0 {
+		router.Use(middleware.GatewayIPNotice(noticeSettings[0], redisClient))
+	}
 	router.GET("/openai/v1/responses", func(c *gin.Context) {
 		defer func() { handlerDone <- struct{}{} }()
 		handler.ResponsesWebSocket(c)

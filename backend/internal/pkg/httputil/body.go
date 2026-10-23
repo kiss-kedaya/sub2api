@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -63,7 +64,12 @@ func (p *PrereadBody) Bytes() []byte {
 // client used to compress the body (zstd, gzip, deflate).
 // 已由 PrereadBody 回填的请求体直接返回其完整切片（零拷贝），不检查内部
 // reader 是否已被消费——见 PrereadBody 的文档说明。
-func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
+func ReadRequestBodyWithPrealloc(req *http.Request) (body []byte, readErr error) {
+	defer func() {
+		if readErr == nil && req != nil && req.URL != nil {
+			body = ipnotice.NormalizeReplay(body, ipnotice.ReplayProtocolForPath(req.URL.Path))
+		}
+	}()
 	if req == nil || req.Body == nil {
 		return nil, nil
 	}
@@ -162,7 +168,14 @@ func ReadLenientJSONRequestBodyWithPrealloc(req *http.Request, maxNormalizedByte
 	if err != nil {
 		return nil, err
 	}
-	return NormalizeLenientJSONRequestBody(body, maxNormalizedBytes)
+	body, err = NormalizeLenientJSONRequestBody(body, maxNormalizedBytes)
+	if err != nil {
+		return nil, err
+	}
+	if req != nil && req.URL != nil {
+		body = ipnotice.NormalizeReplay(body, ipnotice.ReplayProtocolForPath(req.URL.Path))
+	}
+	return body, nil
 }
 
 func decompressRequestBody(encoding string, raw []byte) ([]byte, error) {
