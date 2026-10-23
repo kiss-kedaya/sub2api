@@ -283,6 +283,27 @@ func TestCryptoSecurityOrdinaryLoginTotpWithoutPaymentKey(t *testing.T) {
 	require.False(t, repo.user.TotpEnabled)
 }
 
+func TestCryptoSecurityUsesPersistentInstallationKeyWithoutPaymentKeyConfiguration(t *testing.T) {
+	security, svc, repo, _ := newCryptoSecurityTestServices(t, true)
+	cfg := &config.Config{Totp: config.TotpConfig{
+		EncryptionKey: strings.Repeat("ab", 32), EncryptionKeyPersistent: true,
+	}}
+	security = NewCryptoSecurityService(svc, cfg)
+	require.True(t, security.ready())
+	status, err := security.Status(t.Context(), repo.user.ID)
+	require.NoError(t, err)
+	require.True(t, status.FeatureEnabled)
+	require.True(t, NewSettingService(nil, cfg).IsTotpEncryptionKeyConfigured())
+	require.NoError(t, security.VerifyRisk(t.Context(), repo.user.ID, cryptoSecurityTestCode(t, cryptoSecurityTestSecret)))
+
+	_, svc, _, _ = newCryptoSecurityTestServices(t, true)
+	cfg.Totp.EncryptionKeyPersistent = false
+	security = NewCryptoSecurityService(svc, cfg)
+	require.False(t, security.ready(), "a process-local random key must never enable payment operations")
+	require.False(t, NewSettingService(nil, cfg).IsTotpEncryptionKeyConfigured())
+	require.ErrorIs(t, security.VerifyRisk(t.Context(), 7, cryptoSecurityTestCode(t, cryptoSecurityTestSecret)), ErrCryptoTotpUnavailable)
+}
+
 func TestCryptoSecurityEnrollmentNeedsNoPasswordAndCannotReplaceBoundSeed(t *testing.T) {
 	security, svc, repo, cache := newCryptoSecurityTestServices(t, false)
 	ctx := context.Background()

@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -90,11 +91,17 @@ func TestGetVerificationMethodRegularUserFollowsEmailVerifySetting(t *testing.T)
 	method, err := svcEmailOn.GetVerificationMethod(context.Background(), user.ID)
 	require.NoError(t, err)
 	require.Equal(t, "email", method.Method)
+	method, err = svcEmailOn.GetVerificationMethod(context.Background(), user.ID, "disable")
+	require.NoError(t, err)
+	require.Equal(t, "totp", method.Method)
 
 	svcEmailOff, _ := newTotpVMService(t, user, false)
 	method, err = svcEmailOff.GetVerificationMethod(context.Background(), user.ID)
 	require.NoError(t, err)
 	require.Equal(t, "password", method.Method)
+	method, err = svcEmailOff.GetVerificationMethod(context.Background(), user.ID, "disable")
+	require.NoError(t, err)
+	require.Equal(t, "totp", method.Method)
 }
 
 func TestTotpDisableAdminRequiresCurrentCodeAndNotPassword(t *testing.T) {
@@ -155,11 +162,25 @@ func (totpDisableTestEncryptor) Decrypt(value string) (string, error) {
 	return strings.TrimPrefix(value, "encrypted:"), nil
 }
 
-func TestTotpDisableRegularUserStillRequiresEmailCode(t *testing.T) {
-	user := &User{ID: 2, Email: "user@example.com", Role: RoleUser, TotpEnabled: true}
-	require.NoError(t, user.SetPassword("whatever"))
-	svc, _ := newTotpVMService(t, user, true)
-
-	err := svc.Disable(context.Background(), user.ID, "", "whatever")
-	require.ErrorIs(t, err, ErrVerifyCodeRequired)
+func TestTotpDisableRegularUserRequiresCurrentCodeInsteadOfIdentityCredentials(t *testing.T) {
+	for _, emailEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("email_enabled_%t", emailEnabled), func(t *testing.T) {
+			const secret = "JBSWY3DPEHPK3PXP"
+			encrypted := "encrypted:" + secret
+			user := &User{ID: 2, Email: "user@example.com", Role: RoleUser, Status: StatusActive, TotpEnabled: true, TotpSecretEncrypted: &encrypted}
+			require.NoError(t, user.SetPassword("correct-password"))
+			svc, repo := newTotpVMService(t, user, emailEnabled)
+			svc.encryptor, svc.cache = totpDisableTestEncryptor{}, &totpDisableTestCache{}
+			for _, credentials := range [][2]string{{"", "correct-password"}, {"123456", ""}, {"123456", "correct-password"}} {
+				require.ErrorIs(t, svc.Disable(t.Context(), user.ID, credentials[0], credentials[1]), ErrTotpInvalidCode)
+				require.False(t, repo.disableCalled)
+			}
+			require.ErrorIs(t, svc.Disable(t.Context(), user.ID, "123456", "correct-password", "invalid"), ErrTotpInvalidCode)
+			require.False(t, repo.disableCalled)
+			code, err := totp.GenerateCode(secret, time.Now())
+			require.NoError(t, err)
+			require.NoError(t, svc.Disable(t.Context(), user.ID, "", "", code))
+			require.True(t, repo.disableCalled)
+		})
+	}
 }

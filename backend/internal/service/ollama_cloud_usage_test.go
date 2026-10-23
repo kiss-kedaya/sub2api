@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
@@ -714,6 +715,42 @@ func TestOllamaCloudUsageSessionEncryptionFailClosedAndWriteOnlyState(t *testing
 	account.Extra[OllamaCloudUsageSessionExtraKey] = "plaintext-secret"
 	_, err = svc.Refresh(context.Background(), 7)
 	require.ErrorContains(t, err, "cannot be decrypted")
+}
+
+func TestOllamaCloudUsageInstallationKeyProviderPersistsAndReloadsSession(t *testing.T) {
+	t.Setenv(disableBackgroundJobsEnv, "true")
+	ctx := context.Background()
+	account := ollamaUsageAccount(7)
+	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{7: account}}}
+	settings := NewSettingService(&upstreamBillingProbeSettingRepo{}, nil)
+	cfg := &config.Config{Totp: config.TotpConfig{EncryptionKeyPersistent: true}}
+	first := ProvideOllamaCloudUsageService(repo, &ollamaUsageHTTPStub{}, settings, ollamaUsageTestEncryptor{}, cfg, nil, nil)
+	t.Cleanup(first.Stop)
+	state, err := first.SaveSession(ctx, 7, "wos-session=installation-web-session")
+	require.NoError(t, err)
+	require.True(t, state.EncryptionKeyConfigured)
+	require.True(t, state.Configured)
+	stored := account.Extra[OllamaCloudUsageSessionExtraKey]
+	require.Equal(t, "cipher:wos-session=installation-web-session", stored)
+
+	restarted := ProvideOllamaCloudUsageService(repo, &ollamaUsageHTTPStub{}, settings, ollamaUsageTestEncryptor{}, cfg, nil, nil)
+	t.Cleanup(restarted.Stop)
+	state, err = restarted.GetState(ctx, 7)
+	require.NoError(t, err)
+	require.True(t, state.EncryptionKeyConfigured)
+	require.True(t, state.Configured)
+	// Re-saving after restart must retain the durable-secret write gate too.
+	_, err = restarted.SaveSession(ctx, 7, "wos-session=replacement-web-session")
+	require.NoError(t, err)
+	raw, err := json.Marshal(state)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "installation-web-session")
+
+	unbootstrapped := ProvideOllamaCloudUsageService(repo, &ollamaUsageHTTPStub{}, settings, ollamaUsageTestEncryptor{}, &config.Config{}, nil, nil)
+	t.Cleanup(unbootstrapped.Stop)
+	_, err = unbootstrapped.SaveSession(ctx, 7, "wos-session=must-not-save")
+	require.ErrorIs(t, err, ErrOllamaCloudUsageEncryptionKey)
+	require.Equal(t, "cipher:wos-session=replacement-web-session", account.Extra[OllamaCloudUsageSessionExtraKey])
 }
 
 func TestOllamaCloudUsageGroupSharesAcrossPlatformsURLVariantsAndDynamicSiblings(t *testing.T) {

@@ -807,11 +807,11 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 
 	// TOTP 双因素认证参数验证
-	// 只有手动配置了加密密钥才允许启用 TOTP 功能
+	// 安装密钥由系统持久化，或由部署显式提供；临时密钥不能用于持久 2FA。
 	if req.TotpEnabled && !previousSettings.TotpEnabled {
-		// 尝试启用 TOTP，检查加密密钥是否已手动配置
+		// 尝试启用 TOTP，检查持久安装密钥是否可用
 		if !h.settingService.IsTotpEncryptionKeyConfigured() {
-			response.BadRequest(c, "Cannot enable TOTP: TOTP_ENCRYPTION_KEY environment variable must be configured first. Generate a key with 'openssl rand -hex 32' and set it in your environment.")
+			response.BadRequest(c, "Cannot enable TOTP: the persistent installation encryption key is unavailable. Check server initialization before retrying.")
 			return
 		}
 	}

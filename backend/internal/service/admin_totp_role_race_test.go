@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,17 +111,23 @@ func (r *totpDisableRoleRaceRepo) DisableTotpWithExpectedRole(_ context.Context,
 	return nil
 }
 
-func TestTotpDisablePasswordCannotRaceAdminPromotion(t *testing.T) {
+func TestTotpDisableCurrentCodeCannotRaceAdminPromotion(t *testing.T) {
 	for _, promoted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "regular_user", true: "promoted_after_read"}[promoted], func(t *testing.T) {
-			repo := &totpDisableRoleRaceRepo{user: User{ID: 42, Role: RoleUser, Status: StatusActive, TotpEnabled: true}, currentRole: RoleUser}
+			const secret = "JBSWY3DPEHPK3PXP"
+			encrypted := "encrypted:" + secret
+			repo := &totpDisableRoleRaceRepo{user: User{ID: 42, Role: RoleUser, Status: StatusActive, TotpEnabled: true, TotpSecretEncrypted: &encrypted}, currentRole: RoleUser}
 			require.NoError(t, repo.user.SetPassword("correct-password"))
 			if promoted {
 				repo.currentRole = RoleAdmin
 			}
 			settings := NewSettingService(&totpVMSettingRepoStub{values: map[string]string{}}, nil)
-			svc := NewTotpService(repo, nil, nil, settings, nil, nil)
-			err := svc.Disable(context.Background(), 42, "", "correct-password")
+			svc := NewTotpService(repo, totpDisableTestEncryptor{}, &totpDisableTestCache{}, settings, nil, nil)
+			require.ErrorIs(t, svc.Disable(t.Context(), 42, "", "correct-password"), ErrTotpInvalidCode)
+			require.Zero(t, repo.guardedCalls)
+			code, err := totp.GenerateCode(secret, time.Now())
+			require.NoError(t, err)
+			err = svc.Disable(context.Background(), 42, "", "", code)
 			if promoted {
 				require.ErrorIs(t, err, ErrUserSecurityStateChanged)
 				require.False(t, repo.disableApplied)

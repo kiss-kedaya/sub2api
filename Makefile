@@ -13,6 +13,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/utils/__tests__/accountModelTest.spec.ts \
 	src/i18n/__tests__/localeKeyCompleteness.spec.ts \
 	src/__tests__/xlsxWriteOnly.spec.ts \
+	src/__tests__/xlsxExportRoundTrip.spec.ts \
 	src/api/__tests__/client.spec.ts \
 	src/api/__tests__/tokenRefresh.spec.ts \
 	src/api/__tests__/channelMonitorV2.spec.ts \
@@ -52,6 +53,14 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/admin/payment/__tests__/AdminRefundDialog.balance.spec.ts \
 	src/components/admin/user/__tests__/UserPlatformQuotaModal.spec.ts \
 	src/components/user/profile/__tests__/Totp.errors.spec.ts \
+	src/components/user/profile/__tests__/TotpDisableDialog.required.spec.ts \
+	src/components/user/profile/__tests__/ProfileTotpCard.spec.ts \
+	src/components/user/profile/__tests__/TotpDisableVerification.spec.ts \
+	src/components/user/profile/__tests__/totp-timer-cleanup.spec.ts \
+	src/api/__tests__/adminCrypto.security.spec.ts \
+	src/views/admin/__tests__/CryptoView.security.spec.ts \
+	src/components/crypto/__tests__/CryptoSecurityDialog.spec.ts \
+	src/components/crypto/__tests__/CryptoMnemonicsDialog.spec.ts \
 	src/components/user/profile/__tests__/TotpSetupModal.inputs.spec.ts \
 	src/composables/__tests__/useClipboard.spec.ts \
 	src/stores/__tests__/announcements.markAll.spec.ts \

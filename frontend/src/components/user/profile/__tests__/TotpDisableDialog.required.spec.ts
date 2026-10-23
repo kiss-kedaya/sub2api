@@ -12,7 +12,7 @@ enableAutoUnmount(afterEach)
 beforeEach(() => { vi.clearAllMocks(); mocks.role = 'admin'; mocks.method = 'password'; mocks.disable.mockResolvedValue({ success: true }) })
 
 describe('Administrator TOTP disable UI protection', () => {
-  it('requires only an exactly six digit TOTP code for admins', async () => {
+  it('defaults to an exactly six digit TOTP code for admins', async () => {
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
     const input = wrapper.get('#disable-totp-code')
@@ -46,51 +46,91 @@ describe('Administrator TOTP disable UI protection', () => {
     expect(mocks.disable).toHaveBeenCalledWith({ totp_code: '123456' })
   })
 
-  it('preserves the old password-only request for non-admin users', async () => {
+  it('requires a current authenticator code for non-admin users even when the server returns password', async () => {
     mocks.role = 'user'
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
-    expect(wrapper.find('#disable-totp-code').exists()).toBe(false)
-    await wrapper.get('#password').setValue('login-password')
-    await wrapper.get('form').trigger('submit')
-    await flushPromises()
-    expect(mocks.disable).toHaveBeenCalledWith({ password: 'login-password' })
-  })
-
-  it('requires an authenticator code for admins when the server returns a legacy method', async () => {
-    mocks.method = 'password'
-    const wrapper = mount(TotpDisableDialog)
-    await flushPromises()
     expect(wrapper.find('#password').exists()).toBe(false)
-    const code = wrapper.get('[data-testid="totp-disable-code"]')
-    await code.setValue('123456')
+    await wrapper.get('#disable-totp-code').setValue('123456')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(mocks.disable).toHaveBeenCalledWith({ totp_code: '123456' })
   })
 
-  it('requires an authenticator code for administrators when the method response is legacy', async () => {
-    mocks.method = 'password'
+  it('offers server recovery only for administrators and sends only the chosen credential', async () => {
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
-    expect(wrapper.find('#password').exists()).toBe(false)
-    const code = wrapper.get('[data-testid="totp-disable-code"]')
-    await code.setValue('123456')
+    await wrapper.get('[data-testid="totp-disable-code"]').setValue('123456')
+    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    expect(wrapper.find('[data-testid="totp-disable-code"]').exists()).toBe(false)
+    const input = wrapper.get('[data-testid="totp-disable-server-code"]')
+    expect(input.attributes('type')).toBe('password')
+    expect(input.attributes('autocomplete')).toBe('off')
+    expect(wrapper.text()).toContain('profile.totp.disableServerAuthorizationHint')
+    for (const value of ['', '123456', 'a'.repeat(63), 'z'.repeat(64)]) {
+      await input.setValue(value)
+      await wrapper.get('form').trigger('submit')
+      expect(mocks.disable).not.toHaveBeenCalled()
+    }
+    const authorizationCode = 'a1'.repeat(32)
+    await input.setValue(authorizationCode)
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(mocks.disable).toHaveBeenCalledWith({ totp_code: '123456' })
+    expect(mocks.disable).toHaveBeenCalledOnce()
+    expect(mocks.disable).toHaveBeenCalledWith({ server_authorization_code: authorizationCode })
+    expect(input.element).toHaveProperty('value', '')
   })
 
-  it('preserves the old email-code request for non-admin users', async () => {
+  it('clears authenticator and recovery codes when switching methods', async () => {
+    const wrapper = mount(TotpDisableDialog)
+    await flushPromises()
+    await wrapper.get('[data-testid="totp-disable-code"]').setValue('123456')
+    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await wrapper.get('[data-testid="totp-disable-server-code"]').setValue('a'.repeat(64))
+    await wrapper.get('[data-testid="totp-disable-method-authenticator"]').setValue()
+    expect(wrapper.get('[data-testid="totp-disable-code"]').element).toHaveProperty('value', '')
+    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    expect(wrapper.get('[data-testid="totp-disable-server-code"]').element).toHaveProperty('value', '')
+    await wrapper.get('form').trigger('submit')
+    expect(mocks.disable).not.toHaveBeenCalled()
+  })
+
+  it('clears the rejected server authorization before retrying and does not disable 2FA', async () => {
+    mocks.disable.mockRejectedValueOnce({ message: 'Server authorization expired' })
+    const wrapper = mount(TotpDisableDialog)
+    await flushPromises()
+    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await wrapper.get('[data-testid="totp-disable-server-code"]').setValue('a'.repeat(64))
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.showError).toHaveBeenCalledWith('Server authorization expired')
+    expect(wrapper.get('[data-testid="totp-disable-server-code"]').element).toHaveProperty('value', '')
+    expect(wrapper.emitted('success')).toBeUndefined()
+  })
+
+  it('clears a server authorization immediately on cancel without submitting', async () => {
+    const wrapper = mount(TotpDisableDialog)
+    await flushPromises()
+    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await wrapper.get('[data-testid="totp-disable-server-code"]').setValue('a'.repeat(64))
+    await wrapper.get('.btn-secondary').trigger('click')
+    expect(wrapper.get('[data-testid="totp-disable-server-code"]').element).toHaveProperty('value', '')
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    expect(mocks.disable).not.toHaveBeenCalled()
+  })
+
+  it('requires a current authenticator code for non-admin users even when the server returns email', async () => {
     mocks.role = 'user'
     mocks.method = 'email'
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
+    expect(wrapper.find('[data-testid="totp-disable-method-server"]').exists()).toBe(false)
     expect(wrapper.find('#password').exists()).toBe(false)
-    await wrapper.get('input[placeholder="profile.totp.enterEmailCode"]').setValue('654321')
+    expect(wrapper.find('input[placeholder="profile.totp.enterEmailCode"]').exists()).toBe(false)
+    await wrapper.get('#disable-totp-code').setValue('654321')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(mocks.disable).toHaveBeenCalledWith({ email_code: '654321' })
+    expect(mocks.disable).toHaveBeenCalledWith({ totp_code: '654321' })
   })
 
   it('shows server rejection and removes the consumed input before retry', async () => {

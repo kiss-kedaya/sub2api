@@ -112,28 +112,28 @@ type rpcResponse struct {
 func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any) (json.RawMessage, error) {
 	body, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: 1, Method: method, Params: params})
 	if err != nil {
-		return nil, err
+		return nil, &Failure{Kind: "request"}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, &Failure{Kind: "request"}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, NewTransportFailure(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("rpc %s: http %d", endpoint, resp.StatusCode)
+		return nil, &Failure{Kind: "http", HTTPStatus: resp.StatusCode}
 	}
 	var decoded rpcResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&decoded); err != nil {
-		return nil, fmt.Errorf("rpc %s: decode: %w", endpoint, err)
+		return nil, &Failure{Kind: "response"}
 	}
 	if decoded.Error != nil {
-		return nil, fmt.Errorf("rpc %s: %s (%d)", endpoint, decoded.Error.Message, decoded.Error.Code)
+		return nil, &Failure{Kind: "remote", RPCCode: decoded.Error.Code}
 	}
 	return decoded.Result, nil
 }
@@ -146,11 +146,11 @@ func (p *Pool) BlockNumber(ctx context.Context) (uint64, error) {
 	}
 	var hex string
 	if err := json.Unmarshal(result, &hex); err != nil {
-		return 0, fmt.Errorf("block number decode: %w", err)
+		return 0, &Failure{Kind: "response"}
 	}
 	number, err := hexutil.DecodeUint64(hex)
 	if err != nil {
-		return 0, fmt.Errorf("block number parse %q: %w", hex, err)
+		return 0, &Failure{Kind: "response"}
 	}
 	return number, nil
 }
@@ -163,11 +163,11 @@ func (p *Pool) Balance(ctx context.Context, address string) (*big.Int, error) {
 	}
 	var hex string
 	if err := json.Unmarshal(result, &hex); err != nil {
-		return nil, fmt.Errorf("balance decode: %w", err)
+		return nil, &Failure{Kind: "response"}
 	}
 	value, err := hexutil.DecodeBig(hex)
 	if err != nil {
-		return nil, fmt.Errorf("balance parse %q", hex)
+		return nil, &Failure{Kind: "response"}
 	}
 	return value, nil
 }
@@ -181,11 +181,11 @@ func (p *Pool) Nonce(ctx context.Context, address string) (uint64, error) {
 	}
 	var hex string
 	if err := json.Unmarshal(result, &hex); err != nil {
-		return 0, fmt.Errorf("nonce decode: %w", err)
+		return 0, &Failure{Kind: "response"}
 	}
 	nonce, err := hexutil.DecodeUint64(hex)
 	if err != nil {
-		return 0, fmt.Errorf("nonce parse %q: %w", hex, err)
+		return 0, &Failure{Kind: "response"}
 	}
 	return nonce, nil
 }
@@ -198,11 +198,11 @@ func (p *Pool) GasPrice(ctx context.Context) (*big.Int, error) {
 	}
 	var hex string
 	if err := json.Unmarshal(result, &hex); err != nil {
-		return nil, fmt.Errorf("gas price decode: %w", err)
+		return nil, &Failure{Kind: "response"}
 	}
 	value, err := hexutil.DecodeBig(hex)
 	if err != nil || value.Sign() <= 0 {
-		return nil, fmt.Errorf("gas price parse %q", hex)
+		return nil, &Failure{Kind: "response"}
 	}
 	return value, nil
 }
@@ -217,7 +217,7 @@ func (p *Pool) SendRawTransaction(ctx context.Context, rawTx string) (string, er
 	}
 	var hash string
 	if err := json.Unmarshal(result, &hash); err != nil {
-		return "", fmt.Errorf("send raw decode: %w", err)
+		return "", &Failure{Kind: "response"}
 	}
 	if hash == "" {
 		return "", fmt.Errorf("empty transaction hash")

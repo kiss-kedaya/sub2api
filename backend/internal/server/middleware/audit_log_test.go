@@ -216,6 +216,26 @@ func TestUserBarkAuditOmitsDeviceKeyBody(t *testing.T) {
 	require.NotContains(t, capture.logs[0].RequestBody, deviceKey)
 }
 
+func TestTotpServerAuthorizationAuditOmitsCredentialBody(t *testing.T) {
+	capture := &auditCaptureRepository{}
+	audit := service.NewAuditLogService(capture, nil)
+	audit.Start()
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
+	router.POST("/api/v1/user/totp/disable", func(c *gin.Context) {
+		c.Status(http.StatusForbidden)
+	})
+	code := strings.Repeat("a", 64)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/user/totp/disable",
+		strings.NewReader(`{"server_authorization_code":"`+code+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), request)
+	audit.Stop()
+	require.Len(t, capture.logs, 1)
+	require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
+	require.NotContains(t, capture.logs[0].RequestBody, code)
+}
+
 func TestCryptoRPCSecretsNeverEnterAuditBodies(t *testing.T) {
 	for _, endpoint := range []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/admin/crypto/wallet/initialize"},

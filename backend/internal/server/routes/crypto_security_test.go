@@ -407,6 +407,31 @@ func TestCryptoAdminWalletInitializationRequiresFreshTotp(t *testing.T) {
 	}
 }
 
+func TestCryptoEnableAndInitializeRequireBoundAuthenticator(t *testing.T) {
+	for _, endpoint := range []struct{ method, path, body string }{
+		{http.MethodPut, "/api/v1/admin/crypto/config", `{"enabled":true}`},
+		{http.MethodPost, "/api/v1/admin/crypto/wallet/initialize", `{"deposit_mnemonic":"fixture-only","hot_mnemonic":"fixture-only-gas"}`},
+	} {
+		t.Run(endpoint.path, func(t *testing.T) {
+			t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+			t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
+			user := activeCryptoAdmin()
+			user.TotpEnabled, user.TotpSecretEncrypted = false, nil
+			h := newCryptoRouteHarness(t, user)
+			unbound := cryptoRouteRequestBody(h.router, endpoint.method, endpoint.path, endpoint.body, "123456", nil, "127.0.0.1:1234", "localhost")
+			requireCryptoReason(t, unbound, http.StatusForbidden, "CRYPTO_TOTP_NOT_SETUP")
+			secret := cryptoRouteTotpSecret
+			user.TotpEnabled, user.TotpSecretEncrypted = true, &secret
+			missing := cryptoRouteRequestBody(h.router, endpoint.method, endpoint.path, endpoint.body, "", nil, "127.0.0.1:1234", "localhost")
+			requireCryptoReason(t, missing, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
+			// A recovery authorization can remove an authenticator, never authorize
+			// starting payment or initializing a wallet in place of current TOTP.
+			serverCode := cryptoRouteRequestBody(h.router, endpoint.method, endpoint.path, endpoint.body, strings.Repeat("a", 64), nil, "127.0.0.1:1234", "localhost")
+			requireCryptoReason(t, serverCode, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
+		})
+	}
+}
+
 func TestCryptoAdminRiskRoutesConsumeOtpAndFailClosed(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")

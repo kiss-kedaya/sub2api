@@ -1,7 +1,7 @@
 <template>
-  <div class="fixed inset-0 z-50 overflow-y-auto" @click.self="$emit('close')">
+  <div class="fixed inset-0 z-50 overflow-y-auto" @click.self="handleClose">
     <div class="flex min-h-full items-center justify-center p-4">
-      <div class="fixed inset-0 bg-black/50 transition-opacity" @click="$emit('close')"></div>
+      <div class="fixed inset-0 bg-black/50 transition-opacity" @click="handleClose"></div>
 
       <div class="relative w-full max-w-md transform rounded-xl bg-white p-6 shadow-xl transition-all dark:bg-dark-800">
         <!-- Header -->
@@ -25,45 +25,38 @@
         </div>
 
         <form v-else @submit.prevent="handleDisable" class="space-y-4">
-          <!-- Email verification -->
-          <div v-if="!requiresTotp && verificationMethod === 'email'">
-            <label class="input-label">{{ t('profile.totp.emailCode') }}</label>
-            <div class="flex gap-2">
-              <input
-                v-model="form.emailCode"
-                type="text"
-                maxlength="6"
-                inputmode="numeric"
-                class="input flex-1"
-                :placeholder="t('profile.totp.enterEmailCode')"
-              />
-              <button
-                type="button"
-                class="btn btn-secondary whitespace-nowrap"
-                :disabled="sendingCode || codeCooldown > 0"
-                @click="handleSendCode"
-              >
-                {{ codeCooldown > 0 ? `${codeCooldown}s` : (sendingCode ? t('common.sending') : t('profile.totp.sendCode')) }}
-              </button>
-            </div>
-          </div>
-
-          <!-- Password verification -->
-          <div v-else-if="!requiresTotp && verificationMethod === 'password'">
-            <label for="password" class="input-label">
-              {{ t('profile.currentPassword') }}
+          <fieldset v-if="isAdmin" :disabled="loading" class="space-y-2">
+            <legend class="input-label">{{ t('profile.totp.disableVerificationMethod') }}</legend>
+            <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input v-model="adminVerificationMethod" type="radio" value="totp" name="disable-verification" data-testid="totp-disable-method-authenticator" />
+              {{ t('profile.totp.authenticatorCode') }}
             </label>
+            <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input v-model="adminVerificationMethod" type="radio" value="server" name="disable-verification" data-testid="totp-disable-method-server" />
+              {{ t('profile.totp.useServerAuthorization') }}
+            </label>
+          </fieldset>
+
+          <div v-if="usesServerAuthorization">
+            <label for="disable-server-authorization-code" class="input-label">{{ t('profile.totp.serverAuthorizationCode') }}</label>
             <input
-              id="password"
-              v-model="form.password"
+              id="disable-server-authorization-code"
+              v-model="form.serverAuthorizationCode"
               type="password"
-              autocomplete="current-password"
+              maxlength="64"
+              pattern="[a-fA-F0-9]{64}"
+              autocomplete="off"
+              spellcheck="false"
+              data-testid="totp-disable-server-code"
               class="input"
-              :placeholder="t('profile.totp.enterPassword')"
+              required
+              :disabled="loading"
+              aria-describedby="disable-server-authorization-hint"
             />
+            <p id="disable-server-authorization-hint" class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ t('profile.totp.disableServerAuthorizationHint') }}</p>
           </div>
 
-          <div v-if="requiresTotp">
+          <div v-else>
             <label for="disable-totp-code" class="input-label">{{ t('profile.totp.authenticatorCode') }}</label>
             <input
               id="disable-totp-code"
@@ -83,7 +76,7 @@
 
           <!-- Actions -->
           <div class="flex justify-end gap-3 pt-4">
-            <button type="button" class="btn btn-secondary" @click="$emit('close')">
+            <button type="button" class="btn btn-secondary" @click="handleClose">
               {{ t('common.cancel') }}
             </button>
             <button
@@ -106,7 +99,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { totpAPI } from '@/api'
-import type { TotpDisableRequest, TotpVerificationMethod } from '@/types'
+import type { TotpDisableRequest } from '@/types'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
 const emit = defineEmits<{
@@ -118,74 +111,51 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const isAdmin = computed(() => authStore.user?.role === 'admin')
-watch(isAdmin, (admin) => {
-  if (admin) {
-    form.value.password = ''
-    form.value.emailCode = ''
-  }
-})
 
 const methodLoading = ref(true)
-const verificationMethod = ref<TotpVerificationMethod['method'] | null>(null)
-const requiresTotp = computed(() => isAdmin.value || verificationMethod.value === 'totp')
+const adminVerificationMethod = ref<'totp' | 'server'>('totp')
+const usesServerAuthorization = computed(() => isAdmin.value && adminVerificationMethod.value === 'server')
 const loading = ref(false)
-const sendingCode = ref(false)
-const codeCooldown = ref(0)
-const cooldownTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const form = ref({
-  emailCode: '',
-  password: '',
-  totpCode: ''
+  totpCode: '',
+  serverAuthorizationCode: ''
+})
+
+watch(isAdmin, () => {
+  adminVerificationMethod.value = 'totp'
+  clearForm()
+})
+
+watch(adminVerificationMethod, () => {
+  form.value.totpCode = ''
+  form.value.serverAuthorizationCode = ''
 })
 
 const canSubmit = computed(() => {
   if (methodLoading.value) return false
-  if (requiresTotp.value) return /^[0-9]{6}$/.test(form.value.totpCode)
-  if (verificationMethod.value === 'email') {
-    return form.value.emailCode.length === 6
-  }
-  return verificationMethod.value === 'password' && form.value.password.length > 0
+  if (usesServerAuthorization.value) return /^[a-fA-F0-9]{64}$/.test(form.value.serverAuthorizationCode.trim())
+  return /^[0-9]{6}$/.test(form.value.totpCode)
 })
+
+function clearForm() {
+  form.value = { totpCode: '', serverAuthorizationCode: '' }
+}
+
+function handleClose() {
+  clearForm()
+  emit('close')
+}
 
 const loadVerificationMethod = async () => {
   methodLoading.value = true
   try {
     const method = await totpAPI.getVerificationMethod('disable')
     if (!['email', 'password', 'totp'].includes(method.method)) throw new Error(t('profile.totp.disableFailed'))
-    verificationMethod.value = method.method
   } catch (err: any) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
     emit('close')
   } finally {
     methodLoading.value = false
-  }
-}
-
-const handleSendCode = async () => {
-  if (requiresTotp.value || verificationMethod.value !== 'email') return
-  sendingCode.value = true
-  try {
-    await totpAPI.sendVerifyCode()
-    appStore.showSuccess(t('profile.totp.codeSent'))
-    // Start cooldown
-    codeCooldown.value = 60
-    if (cooldownTimer.value) {
-      clearInterval(cooldownTimer.value)
-      cooldownTimer.value = null
-    }
-    cooldownTimer.value = setInterval(() => {
-      codeCooldown.value--
-      if (codeCooldown.value <= 0) {
-        if (cooldownTimer.value) {
-          clearInterval(cooldownTimer.value)
-          cooldownTimer.value = null
-        }
-      }
-    }, 1000)
-  } catch (err: any) {
-    appStore.showError(extractApiErrorMessage(err, t('profile.totp.sendCodeFailed')))
-  } finally {
-    sendingCode.value = false
   }
 }
 
@@ -195,11 +165,9 @@ const handleDisable = async () => {
   loading.value = true
 
   try {
-    const request: TotpDisableRequest = requiresTotp.value
-      ? { totp_code: form.value.totpCode }
-      : verificationMethod.value === 'email'
-        ? { email_code: form.value.emailCode }
-        : { password: form.value.password }
+    const request: TotpDisableRequest = usesServerAuthorization.value
+      ? { server_authorization_code: form.value.serverAuthorizationCode.trim() }
+      : { totp_code: form.value.totpCode }
 
     await totpAPI.disable(request)
     appStore.showSuccess(t('profile.totp.disableSuccess'))
@@ -207,9 +175,7 @@ const handleDisable = async () => {
   } catch (err: any) {
     appStore.showError(extractApiErrorMessage(err, t('profile.totp.disableFailed')))
   } finally {
-    form.value.totpCode = ''
-    form.value.password = ''
-    form.value.emailCode = ''
+    clearForm()
     loading.value = false
   }
 }
@@ -219,10 +185,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  form.value = { emailCode: '', password: '', totpCode: '' }
-  if (cooldownTimer.value) {
-    clearInterval(cooldownTimer.value)
-    cooldownTimer.value = null
-  }
+  clearForm()
 })
 </script>

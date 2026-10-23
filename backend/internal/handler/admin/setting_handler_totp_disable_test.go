@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,31 +171,44 @@ func TestUpdateSettingsGlobalTotpDisableRequiresCurrentActorGrant(t *testing.T) 
 }
 
 func TestUpdateSettingsGlobalTotpEnableDoesNotRequireStepUpGrant(t *testing.T) {
-	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
-		service.SettingKeyTotpEnabled:   "false",
-		service.SettingKeyStepUpEnabled: "false",
-	})
-	h.settingService = service.NewSettingService(repo, &config.Config{
-		Default: config.DefaultConfig{UserConcurrency: 5},
-		Totp:    config.TotpConfig{EncryptionKeyConfigured: true},
-	})
+	for _, tc := range []struct {
+		name string
+		totp config.TotpConfig
+	}{
+		{name: "explicit_key", totp: config.TotpConfig{EncryptionKeyConfigured: true}},
+		{name: "persistent_installation_key", totp: config.TotpConfig{EncryptionKeyPersistent: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, repo := newStepUpSwitchTestHandler(t, map[string]string{
+				service.SettingKeyTotpEnabled:   "false",
+				service.SettingKeyStepUpEnabled: "false",
+			})
+			h.settingService = service.NewSettingService(repo, &config.Config{
+				Default: config.DefaultConfig{UserConcurrency: 5},
+				Totp:    tc.totp,
+			})
 
-	// No TOTP service or grant is supplied; existing deployment-key validation remains.
-	rec := doUpdateSettings(t, h, map[string]any{"totp_enabled": true}, prepareGlobalTotpActor)
+			// Enabling the feature needs a persistent key, but no recovery code or step-up grant.
+			rec := doUpdateSettings(t, h, map[string]any{"totp_enabled": true}, prepareGlobalTotpActor)
 
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Equal(t, "true", repo.lastUpdates[service.SettingKeyTotpEnabled])
-	require.NotContains(t, repo.lastUpdates, service.SettingKeyStepUpEnabled)
-	requireGlobalTotpResponse(t, rec.Body.Bytes(), true, false)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			require.Equal(t, "true", repo.lastUpdates[service.SettingKeyTotpEnabled])
+			require.NotContains(t, repo.lastUpdates, service.SettingKeyStepUpEnabled)
+			requireGlobalTotpResponse(t, rec.Body.Bytes(), true, false)
+		})
+	}
 }
 
 func TestUpdateSettingsGlobalTotpEnableRetainsEncryptionKeyPrecondition(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{service.SettingKeyTotpEnabled: "false"})
+	h.settingService = service.NewSettingService(repo, &config.Config{
+		Totp: config.TotpConfig{EncryptionKey: strings.Repeat("ab", 32)},
+	})
 
 	rec := doUpdateSettings(t, h, map[string]any{"totp_enabled": true}, prepareGlobalTotpActor)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), "TOTP_ENCRYPTION_KEY")
+	require.Contains(t, rec.Body.String(), "persistent installation encryption key is unavailable")
 	require.Empty(t, repo.lastUpdates)
 	require.Equal(t, "false", repo.values[service.SettingKeyTotpEnabled])
 }

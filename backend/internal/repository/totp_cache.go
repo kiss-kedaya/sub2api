@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	totpSetupKeyPrefix    = "totp:setup:"
-	totpLoginKeyPrefix    = "totp:login:"
-	totpAttemptsKeyPrefix = "totp:attempts:"
-	totpStepUpKeyPrefix   = "totp:stepup:"
-	totpAttemptsTTL       = 15 * time.Minute
+	totpSetupKeyPrefix        = "totp:setup:"
+	totpLoginKeyPrefix        = "totp:login:"
+	totpAttemptsKeyPrefix     = "totp:attempts:"
+	totpStepUpKeyPrefix       = "totp:stepup:"
+	admin2FAApprovalKeyPrefix = "totp:admin-approval:"
+	totpAttemptsTTL           = 15 * time.Minute
 )
 
 // TotpCache implements service.TotpCache using Redis
@@ -36,6 +37,23 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) 
 return 0
 `)
 )
+
+var _ service.Admin2FAApprovalStore = (*TotpCache)(nil)
+
+func (c *TotpCache) SetAdmin2FAApproval(ctx context.Context, userID int64, digest string, ttl time.Duration) error {
+	if userID <= 0 || digest == "" || ttl <= 0 {
+		return fmt.Errorf("invalid administrator two-factor authorization")
+	}
+	return c.rdb.Set(ctx, fmt.Sprintf("%s{%d}", admin2FAApprovalKeyPrefix, userID), digest, ttl).Err()
+}
+
+func (c *TotpCache) ConsumeAdmin2FAApproval(ctx context.Context, userID int64, digest string) (bool, error) {
+	if userID <= 0 || digest == "" {
+		return false, nil
+	}
+	consumed, err := cryptoTotpReleaseScript.Run(ctx, c.rdb, []string{fmt.Sprintf("%s{%d}", admin2FAApprovalKeyPrefix, userID)}, digest).Int()
+	return consumed == 1, err
+}
 
 // NewTotpCache creates a new TOTP cache
 func NewTotpCache(rdb *redis.Client) service.TotpCache {

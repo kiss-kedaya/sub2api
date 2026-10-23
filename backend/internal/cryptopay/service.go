@@ -212,7 +212,7 @@ func NewService(
 	appConfig *config.Config,
 ) *Service {
 	var masterKey string
-	if appConfig != nil && appConfig.Totp.EncryptionKeyConfigured {
+	if appConfig != nil && appConfig.Totp.HasPersistentEncryptionKey() {
 		masterKey = appConfig.Totp.EncryptionKey
 	}
 	s := &Service{
@@ -711,6 +711,7 @@ func (s *Service) ListSweepRecords(ctx context.Context, chain string, limit int)
 			return nil, err
 		}
 		r.Amount = trimDecimalZeros(r.Amount)
+		r.Error = rpc.SafeRecordedError(r.Error)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
 		out = append(out, r)
 	}

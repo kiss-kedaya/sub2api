@@ -55,7 +55,7 @@ func VerifyTransaction(ctx context.Context, pool *rpc.Pool, txHash string) (*Rec
 	}
 	status, err := hexQuantity(receipt.Status)
 	if err != nil || status > 1 {
-		return nil, fmt.Errorf("invalid receipt status %q", receipt.Status)
+		return nil, &rpc.Failure{Kind: "response"}
 	}
 	block, err := hexQuantity(receipt.BlockNumber)
 	if err != nil || !validHash(receipt.BlockHash) || !validHash(receipt.TxHash) || !strings.EqualFold(receipt.TxHash, txHash) {
@@ -231,9 +231,13 @@ func verifyReceiptTransfer(t Transfer, receipt *ReceiptCheck) error {
 
 func hexQuantity(value string) (uint64, error) {
 	if !strings.HasPrefix(value, "0x") || len(value) <= 2 {
-		return 0, fmt.Errorf("invalid hex quantity %q", value)
+		return 0, &rpc.Failure{Kind: "response"}
 	}
-	return strconv.ParseUint(value[2:], 16, 64)
+	quantity, err := strconv.ParseUint(value[2:], 16, 64)
+	if err != nil {
+		return 0, &rpc.Failure{Kind: "response"}
+	}
+	return quantity, nil
 }
 
 func validHex(value string, size int) bool {

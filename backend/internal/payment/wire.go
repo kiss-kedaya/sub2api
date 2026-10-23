@@ -29,10 +29,10 @@ func ProvideEncryptionKey(cfg *config.Config) (EncryptionKey, error) {
 		slog.Warn("payment encryption key not configured — encrypted payment config will be unavailable")
 		return nil, nil
 	}
-	// Reject auto-generated TOTP keys for payment signing.
-	// They change across restarts/instances and can silently break resume-token flows.
-	if !cfg.Totp.EncryptionKeyConfigured {
-		slog.Warn("payment encryption/signing key is not explicitly configured; set TOTP_ENCRYPTION_KEY to enable payment resume tokens")
+	// Process-local defaults change across restarts. Configured or bootstrapped
+	// persistent installation keys are shared by all instances.
+	if !cfg.Totp.HasPersistentEncryptionKey() {
+		slog.Warn("persistent installation key unavailable; payment encryption and resume signing are disabled")
 		return nil, nil
 	}
 	key, err := hex.DecodeString(keyHex)

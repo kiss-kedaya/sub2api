@@ -42,6 +42,11 @@ describe.each([
     mocks.totpAPI.sendVerifyCode.mockRejectedValue({ status: 429, message: 'Please wait before requesting another code' })
     const wrapper = mount(component)
     await flushPromises()
+    if (name === 'disable') {
+      expect(wrapper.findAll('button').some(button => button.text() === 'profile.totp.sendCode')).toBe(false)
+      expect(mocks.totpAPI.sendVerifyCode).not.toHaveBeenCalled()
+      return
+    }
     await wrapper.findAll('button').find(button => button.text() === 'profile.totp.sendCode')!.trigger('click')
     await flushPromises()
     expect(mocks.showError).toHaveBeenCalledWith('Please wait before requesting another code')

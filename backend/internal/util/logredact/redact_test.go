@@ -19,6 +19,22 @@ func TestRedactText_JSONLike(t *testing.T) {
 	}
 }
 
+func TestServerAuthorizationCodeIsRedactedInJSONAndText(t *testing.T) {
+	code := strings.Repeat("a", 64)
+	for _, input := range []string{
+		`{"server_authorization_code":"` + code + `","operation":"disable"}`,
+		"server_authorization_code=" + code,
+	} {
+		if output := RedactText(input); strings.Contains(output, code) {
+			t.Fatalf("server authorization code remained in text")
+		}
+	}
+	output := RedactJSON([]byte(`{"server_authorization_code":"` + code + `","operation":"disable"}`))
+	if strings.Contains(output, code) || !strings.Contains(output, "disable") {
+		t.Fatal("server authorization redaction lost its boundary")
+	}
+}
+
 func TestRedactText_QueryLike(t *testing.T) {
 	in := "access_token=ya29.a0AfH6SMDUMMY refresh_token=1//0gDUMMY"
 	out := RedactText(in)

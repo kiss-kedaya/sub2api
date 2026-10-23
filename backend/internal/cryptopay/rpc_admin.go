@@ -18,6 +18,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
 // chainlistIDs maps an internal chain id to the EIP-155 chain id used by
@@ -55,7 +56,7 @@ var rpcHTTPClient = rpc.NewPublicHTTPClient(20 * time.Second)
 // reports latency. It never mutates state.
 func ProbeRPCEndpoint(ctx context.Context, chain, endpoint string) *RPCTestResult {
 	endpoint = strings.TrimSpace(endpoint)
-	out := &RPCTestResult{Endpoint: endpoint}
+	out := &RPCTestResult{}
 	if endpoint == "" {
 		out.Error = "empty endpoint"
 		return out
@@ -80,26 +81,37 @@ func ProbeRPCEndpoint(ctx context.Context, chain, endpoint string) *RPCTestResul
 	start := time.Now()
 	chainID, err := rpcCallString(ctx, endpoint, "eth_chainId")
 	if err != nil {
-		out.Error = err.Error()
+		out.Error = rpc.SafeError(err)
 		out.LatencyMS = time.Since(start).Milliseconds()
 		return out
 	}
 	blockHex, err := rpcCallString(ctx, endpoint, "eth_blockNumber")
 	if err != nil {
-		out.Error = err.Error()
+		out.Error = rpc.SafeError(err)
 		out.LatencyMS = time.Since(start).Milliseconds()
 		return out
 	}
 	out.LatencyMS = time.Since(start).Milliseconds()
+	parsedChainID, chainErr := hexutil.DecodeUint64(chainID)
+	parsedBlock, blockErr := hexutil.DecodeUint64(blockHex)
+	if chainErr != nil || blockErr != nil {
+		out.Error = "RPC response is invalid"
+		return out
+	}
 	out.OK = true
-	out.ChainID = chainID
-	out.Block = parseHexUint64(blockHex)
+	out.ChainID = hexutil.EncodeUint64(parsedChainID)
+	out.Block = parsedBlock
 	// A wrong chain id is the classic copy-paste error; surface it loudly.
 	if want, known := chainlistIDs[chain]; known {
 		if got := parseHexUint64(chainID); got != uint64(want) {
 			out.OK = false
 			out.Error = fmt.Sprintf("chain id mismatch: got %d, want %d", got, want)
 		}
+	}
+	if out.OK {
+		// Successful candidates are configuration values the operator explicitly
+		// requested. Failure responses never echo their potentially secret URL.
+		out.Endpoint = endpoint
 	}
 	return out
 }
@@ -115,31 +127,32 @@ func rpcCallStringWithClient(ctx context.Context, client *http.Client, endpoint,
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", &rpc.Failure{Kind: "request"}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", rpc.NewTransportFailure(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("http %d", resp.StatusCode)
+		return "", &rpc.Failure{Kind: "http", HTTPStatus: resp.StatusCode}
 	}
 	var decoded struct {
 		Result string `json:"result"`
 		Error  *struct {
+			Code    int    `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&decoded); err != nil {
-		return "", fmt.Errorf("decode: %w", err)
+		return "", &rpc.Failure{Kind: "response"}
 	}
 	if decoded.Error != nil {
-		return "", fmt.Errorf("%s", decoded.Error.Message)
+		return "", &rpc.Failure{Kind: "remote", RPCCode: decoded.Error.Code}
 	}
 	if decoded.Result == "" {
-		return "", fmt.Errorf("empty result")
+		return "", &rpc.Failure{Kind: "response"}
 	}
 	return decoded.Result, nil
 }

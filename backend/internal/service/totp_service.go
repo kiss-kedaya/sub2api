@@ -407,9 +407,11 @@ func (s *TotpService) completeSetup(ctx context.Context, userID int64, code, tok
 	return nil
 }
 
-// Disable requires an administrator's current TOTP. Passwords, email codes and
-// earlier step-up grants cannot replace it. Regular users keep email/password.
-func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, password string, totpCodes ...string) error {
+// Disable verifies the current authenticator. Administrators may instead use
+// DisableWithServerAuthorization for a one-time, server-issued recovery code.
+// Passwords, email codes and earlier step-up grants cannot replace current TOTP
+// for any account. Legacy identity arguments remain accepted but are unused.
+func (s *TotpService) Disable(ctx context.Context, userID int64, _, _ string, totpCodes ...string) error {
 	// Get user
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -422,11 +424,14 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 		}
 		return ErrTotpNotSetup
 	}
-	if user.IsAdmin() {
-		if len(totpCodes) != 1 || !isSixDigitTotp(totpCodes[0]) {
+	if len(totpCodes) != 1 || !isSixDigitTotp(totpCodes[0]) {
+		if user.IsAdmin() {
 			return ErrCryptoTotpRequired
 		}
-		var verifiedUser *User
+		return ErrTotpInvalidCode
+	}
+	var verifiedUser *User
+	if user.IsAdmin() {
 		if s.cryptoSecurity != nil && s.cryptoSecurity.ready() {
 			unlock, err := s.cryptoSecurity.lockSetup(ctx, userID)
 			if err != nil {
@@ -446,13 +451,17 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 				return cryptoTotpError(verifyErr)
 			}
 		}
-		if verifiedUser.Role != user.Role {
-			return ErrUserSecurityStateChanged
+	} else {
+		var verifyErr error
+		verifiedUser, verifyErr = s.verifyCode(ctx, userID, totpCodes[0], nil)
+		if verifyErr != nil {
+			return verifyErr
 		}
-		user = verifiedUser
-	} else if err := s.verifyIdentity(ctx, user, emailCode, password); err != nil {
-		return err
 	}
+	if verifiedUser.Role != user.Role {
+		return ErrUserSecurityStateChanged
+	}
+	user = verifiedUser
 
 	// Bind the write to the exact role and secret that were verified. Concurrent
 	// promotion or re-enrollment must not turn a stale code into authorization.
@@ -464,6 +473,31 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 		return fmt.Errorf("disable totp: %w", err)
 	}
 
+	return nil
+}
+
+// DisableWithServerAuthorization recovers an administrator's authenticator
+// without knowing its current code. Only the server CLI can issue authorization;
+// the cached digest is consumed once and is bound to the exact current secret.
+func (s *TotpService) DisableWithServerAuthorization(ctx context.Context, userID int64, code string) error {
+	if s == nil || s.userRepo == nil {
+		return ErrAdmin2FAApprovalUnavailable
+	}
+	store, ok := s.cache.(Admin2FAApprovalStore)
+	if !ok {
+		return ErrAdmin2FAApprovalUnavailable
+	}
+	verified, err := NewAdmin2FAApprovalService(s.userRepo, store).Consume(ctx, userID, code)
+	if err != nil {
+		return err
+	}
+	disabler, ok := s.userRepo.(TotpRoleConditionalDisabler)
+	if !ok {
+		return ErrUserSecurityStateChanged
+	}
+	if err := disabler.DisableTotpWithExpectedRole(ctx, userID, verified.Role, verified.TotpSecretEncrypted); err != nil {
+		return fmt.Errorf("disable totp: %w", err)
+	}
 	return nil
 }
 
@@ -703,13 +737,14 @@ type VerificationMethod struct {
 }
 
 // GetVerificationMethod returns the verification method for TOTP operations.
-// 与 verifyIdentity 保持同一判定：管理员一律返回 password。
+// Disable always requires the current authenticator; enable retains the
+// existing email/password identity verification contract.
 func (s *TotpService) GetVerificationMethod(ctx context.Context, userID int64, operation ...string) (*VerificationMethod, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
 	}
-	if user.IsAdmin() && len(operation) > 0 && operation[0] == "disable" {
+	if len(operation) > 0 && operation[0] == "disable" {
 		return &VerificationMethod{Method: "totp"}, nil
 	}
 	if s.usesEmailVerification(ctx, user) {
