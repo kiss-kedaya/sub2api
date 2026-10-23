@@ -60,50 +60,6 @@ var (
 	ErrBarkNotConfigured = errors.New("wallet owner Bark notifications are not configured or enabled")
 )
 
-// SetDeviceKey stores (or clears) the user's Bark device key and toggle.
-// An empty key disables the channel.
-func (s *UserBarkService) SetDeviceKey(ctx context.Context, userID int64, deviceKey string, enabled bool) error {
-	deviceKey = strings.TrimSpace(deviceKey)
-	if len(deviceKey) > 256 || strings.ContainsAny(deviceKey, "\r\n\t /?#") {
-		return ErrBarkInvalidKey
-	}
-	encrypted := ""
-	if deviceKey != "" {
-		var err error
-		encrypted, err = s.encryptor.EncryptString(deviceKey)
-		if err != nil {
-			return fmt.Errorf("encrypt bark key: %w", err)
-		}
-	} else {
-		enabled = false
-	}
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET bark_device_key_encrypted = $1, bark_notify_enabled = $2 WHERE id = $3`,
-		encrypted, enabled, userID)
-	if err != nil {
-		return fmt.Errorf("save bark settings: %w", err)
-	}
-	return nil
-}
-
-// SetEnabled preserves the existing encrypted key. Clearing a key must be an
-// explicit request, never a side effect of toggling a configured channel.
-func (s *UserBarkService) SetEnabled(ctx context.Context, userID int64, enabled bool) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE users SET bark_notify_enabled = $1 WHERE id = $2
-		AND ($1 = FALSE OR COALESCE(bark_device_key_encrypted, '') <> '')`, enabled, userID)
-	if err != nil {
-		return fmt.Errorf("save bark settings: %w", err)
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count != 1 {
-		return ErrBarkKeyRequired
-	}
-	return nil
-}
-
 // SendToUserRequired is for security alerts. A missing recipient is an error,
 // so callers keep the durable alert pending instead of silently acknowledging it.
 func (s *UserBarkService) SendToUserRequired(ctx context.Context, userID int64, n bark.Notification) error {

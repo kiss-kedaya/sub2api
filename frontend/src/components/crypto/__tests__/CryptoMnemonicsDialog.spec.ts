@@ -15,7 +15,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   mocks.get.mockResolvedValue({ data: { enabled: true, feature_enabled: true, can_setup: true } })
   mocks.post.mockImplementation(async (path: string) => path.endsWith('/operation-intent')
-    ? { data: { notified: true } } : { data: { deposit_mnemonic: deposit, hot_mnemonic: hot } })
+    ? { data: { accepted: true } } : { data: { deposit_mnemonic: deposit, hot_mnemonic: hot } })
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
     value: { writeText: vi.fn().mockResolvedValue(undefined) }
@@ -105,7 +105,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
   it('splits 24-word seeds into ordered 12-word copy segments', async () => {
     const words24 = Array.from({ length: 24 }, (_, index) => `seed${index + 1}`)
     mocks.post.mockImplementation(async (path: string) => path.endsWith('/operation-intent')
-      ? { data: { notified: true } } : { data: { deposit_mnemonic: words24.join(' '), hot_mnemonic: hot } })
+      ? { data: { accepted: true } } : { data: { deposit_mnemonic: words24.join(' '), hot_mnemonic: hot } })
     const wrapper = render()
     await submitAndAuthorize(wrapper)
     const depositButtons = wrapper.findAll('[data-copy-part]').filter((button) => button.attributes('data-copy-part')?.startsWith('deposit-'))
@@ -137,7 +137,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
   it('wipes late plaintext export data when the dialog closes during the request', async () => {
     let resolveExport!: (value: { data: { deposit_mnemonic: string; hot_mnemonic: string } }) => void
     mocks.post.mockImplementation((path: string) => path.endsWith('/operation-intent')
-      ? Promise.resolve({ data: { notified: true } }) : new Promise((resolve) => { resolveExport = resolve }))
+      ? Promise.resolve({ data: { accepted: true } }) : new Promise((resolve) => { resolveExport = resolve }))
     const wrapper = render()
     await wrapper.get('input[type="checkbox"]').setValue(true)
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
@@ -178,7 +178,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
   it.each([false, 'failure'] as const)('blocks export before TOTP when notification is %s', async (result) => {
     mocks.post.mockImplementation(async () => {
       if (result === 'failure') throw new Error('Bark unavailable')
-      return { data: { notified: false } }
+      return { data: { accepted: false } }
     })
     const wrapper = render()
     await wrapper.get('input[type="checkbox"]').setValue(true)
@@ -199,7 +199,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
     await flushPromises()
     await wrapper.setProps({ show: false })
-    completeIntent({ data: { notified: true } })
+    completeIntent({ data: { accepted: true } })
     await flushPromises()
     expect(mocks.get).not.toHaveBeenCalled()
     expect(wrapper.find('#crypto-security-code').exists()).toBe(false)

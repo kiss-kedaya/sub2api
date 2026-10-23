@@ -109,6 +109,7 @@ func truncateAuditExtraString(value string, limit int) string {
 
 // auditSensitiveReads 需要审计的敏感 GET 读取（method+FullPath → 动作名）。
 var auditSensitiveReads = map[string]string{
+	"GET /api/v1/admin/crypto/config/private":     "admin.crypto.rpc_config.read",
 	"GET /api/v1/admin/crypto/deposits.csv":       "admin.crypto.deposits.export",
 	"GET /api/v1/admin/accounts/data":             "admin.accounts.export",
 	"GET /api/v1/admin/proxies/data":              "admin.proxies.export",
@@ -337,6 +338,9 @@ func (b *restoredBody) Close() error { return b.closer.Close() }
 
 // MaskedRequestCredential 提取请求头中的凭证并做首尾掩码。
 func MaskedRequestCredential(c *gin.Context) string {
+	if len(c.Request.Header.Values("X-Bark-TOTP")) > 0 {
+		return "x-bark-totp <redacted>"
+	}
 	if len(c.Request.Header.Values("X-Crypto-TOTP")) > 0 {
 		return "x-crypto-totp <redacted>"
 	}

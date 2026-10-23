@@ -15,7 +15,7 @@
         </svg>
       </div>
       <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
-        {{ t('stepUp.hint') }}
+        {{ hint || t('stepUp.hint') }}
       </p>
     </div>
 
@@ -55,6 +55,8 @@ import type { StepUpController } from '@/composables/useStepUp'
 
 const props = defineProps<{
   controller: StepUpController
+  verify?: (code: string) => Promise<void>
+  hint?: string
 }>()
 
 const { t } = useI18n()
@@ -79,7 +81,8 @@ async function submit(otp: string) {
   if (!props.controller.visible.value || verifying.value || !/^[0-9]{6}$/.test(otp)) return
   verifying.value = true
   try {
-    await totpAPI.stepUp(otp)
+    if (props.verify) await props.verify(otp)
+    else await totpAPI.stepUp(otp)
     verifying.value = false
     resetInputs()
     props.controller.onVerified()

@@ -35,7 +35,7 @@ func TestWalletOperationIntentNotifiesButDoesNotAuthorizeOrDiscloseSecrets(t *te
 			r.ServeHTTP(w, httptest.NewRequest("POST", "/intent", strings.NewReader(`{"action":"`+action+`"}`)))
 			require.Equal(t, 200, w.Code, w.Body.String())
 			require.Equal(t, 1, calls)
-			require.JSONEq(t, `{"code":0,"message":"success","data":{"notified":true}}`, w.Body.String())
+			require.JSONEq(t, `{"code":0,"message":"success","data":{"accepted":true}}`, w.Body.String())
 		})
 	}
 }
@@ -43,8 +43,9 @@ func TestWalletOperationIntentNotifiesButDoesNotAuthorizeOrDiscloseSecrets(t *te
 func TestWalletIntentAndDestinationChangesFailClosedOnNotificationFailure(t *testing.T) {
 	failed := operationNotificationFunc(func(context.Context, string, string) error { return errors.New("private transport diagnostic") })
 	store := &cryptoConfigStore{values: map[string]string{cryptopay.SettingKeyCryptoConfig: `{}`}}
-	h := &CryptoHandler{store: store, operationNotifier: failed}
+	h := &CryptoHandler{store: store, operationNotifier: failed, security: &cryptoConfigTestSecurity{}}
 	r := gin.New()
+	r.Use(cryptoConfigTestIdentity)
 	r.POST("/intent", h.AdminWalletOperationIntent)
 	r.PUT("/config", h.AdminUpdateConfig)
 	for _, tt := range []struct{ method, path, body string }{
@@ -52,7 +53,9 @@ func TestWalletIntentAndDestinationChangesFailClosedOnNotificationFailure(t *tes
 		{"PUT", "/config", `{"hot_wallet_evm":"0x2222222222222222222222222222222222222222"}`},
 	} {
 		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body)))
+		req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+		req.Header.Set("X-Crypto-TOTP", "123456")
+		r.ServeHTTP(w, req)
 		require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 		require.Contains(t, w.Body.String(), "CRYPTO_NOTIFICATION_UNAVAILABLE")
 		require.NotContains(t, w.Body.String(), "private transport")

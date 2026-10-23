@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -170,11 +171,13 @@ func TestCryptoOrderStillUsesInternalBalanceFulfillmentForLedgerRecovery(t *test
 	require.Equal(t, OrderStatusCompleted, reloaded.Status)
 }
 
+var cryptoRetryGuardSequence atomic.Uint64
+
 func createCryptoRetryGuardOrder(
 	t *testing.T, ctx context.Context, client *dbent.Client, status, paymentType, providerKey string, snapshot map[string]any,
 ) *dbent.PaymentOrder {
 	t.Helper()
-	sequence := strconv.FormatInt(time.Now().UnixNano(), 10) + "-" + strconv.FormatInt(time.Now().UnixMicro()%1000000, 10)
+	sequence := strconv.FormatUint(cryptoRetryGuardSequence.Add(1), 10)
 	user, err := client.User.Create().
 		SetEmail("retry-guard-" + sequence + "@example.invalid").
 		SetPasswordHash("test-only").

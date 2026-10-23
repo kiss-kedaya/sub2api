@@ -31,13 +31,13 @@ func (h *CryptoHandler) AdminWalletOperationIntent(c *gin.Context) {
 	if !h.notifyWalletAction(c, req.Action, "requested") {
 		return
 	}
-	response.Success(c, gin.H{"notified": true})
+	response.Success(c, gin.H{"accepted": true})
 }
 
 func (h *CryptoHandler) notifyWalletAction(c *gin.Context, action, phase string) bool {
 	if h.operationNotifier == nil || h.operationNotifier.NotifyWalletOperation(c.Request.Context(), action, phase) != nil {
 		response.ErrorWithDetails(c, http.StatusServiceUnavailable,
-			"钱包安全通知未送达，请在钱包页面配置并启用 Bark 后重试；本次操作未执行",
+			"钱包安全通知暂未送达，请检查 Bark 通道后重试；本次操作未执行",
 			"CRYPTO_NOTIFICATION_UNAVAILABLE", nil)
 		return false
 	}

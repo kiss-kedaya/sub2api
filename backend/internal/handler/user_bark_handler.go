@@ -1,14 +1,17 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/notify"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,11 +20,15 @@ import (
 // write-only from the client's perspective: reads return only whether a key
 // is configured, never the key itself.
 type UserBarkHandler struct {
-	service *notify.UserBarkService
+	service  *notify.UserBarkService
+	verifier interface {
+		VerifyFreshCode(context.Context, int64, string) error
+	}
+	config *config.Config
 }
 
-func NewUserBarkHandler(service *notify.UserBarkService) *UserBarkHandler {
-	return &UserBarkHandler{service: service}
+func NewUserBarkHandler(barkService *notify.UserBarkService, totpService *service.TotpService, cfg *config.Config) *UserBarkHandler {
+	return &UserBarkHandler{service: barkService, verifier: totpService, config: cfg}
 }
 
 // GetBarkSettings returns the configuration status.
@@ -63,15 +70,31 @@ func (h *UserBarkHandler) UpdateBarkSettings(c *gin.Context) {
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
-	var err error
-	if req.DeviceKey == nil {
-		err = h.service.SetEnabled(c.Request.Context(), subject.UserID, *req.Enabled)
-	} else {
-		err = h.service.SetDeviceKey(c.Request.Context(), subject.UserID, *req.DeviceKey, *req.Enabled)
+	if !cryptoSecureTransport(c.Request, h.config) {
+		response.ErrorWithDetails(c, http.StatusForbidden, "HTTPS is required to change notification settings", "BARK_HTTPS_REQUIRED", nil)
+		return
 	}
+	codes := c.Request.Header.Values("X-Bark-TOTP")
+	code := ""
+	if len(codes) == 1 {
+		code = codes[0]
+	}
+	if h.verifier == nil {
+		response.ErrorFrom(c, service.ErrTotpUnavailable)
+		return
+	}
+	if err := h.verifier.VerifyFreshCode(c.Request.Context(), subject.UserID, code); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	err := h.service.UpdateSettings(c.Request.Context(), subject.UserID, req.DeviceKey, *req.Enabled)
 	if err != nil {
 		if errors.Is(err, notify.ErrBarkKeyRequired) || errors.Is(err, notify.ErrBarkInvalidKey) {
 			response.BadRequest(c, err.Error())
+			return
+		}
+		if errors.Is(err, notify.ErrBarkOriginalNotificationFailed) {
+			response.ErrorWithDetails(c, http.StatusServiceUnavailable, "原 Bark 设备通知失败，配置未修改，请恢复原通知通道后重试", "BARK_ORIGINAL_NOTIFICATION_FAILED", nil)
 			return
 		}
 		response.ErrorFrom(c, err)

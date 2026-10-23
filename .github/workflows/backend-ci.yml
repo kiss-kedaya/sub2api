@@ -53,9 +53,9 @@ jobs:
       - name: Billing and media concurrency regression
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/handler ./internal/service ./internal/repository -run 'Test(CNBalancePushNotifierConcurrent|GrokVideoDurable|MediaBilling|AsyncImage|ImageTask|OpenAIResponsesWebSocket.*(Balance|Subscription|Settlement)|SmartBilling|.*Refund.*Pending)' -count=1
-      - name: Crypto notifier concurrency regression
+      - name: Wallet security concurrency regression
         working-directory: backend
-        run: go test -race -p 1 ./internal/cryptopay -run '^TestPushNotifier' -count=1
+        run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
 
   crypto-sweep-integration:
     runs-on: ubuntu-latest
@@ -109,6 +109,13 @@ jobs:
       - name: Verify production frontend build
         working-directory: frontend
         run: pnpm run build
+      - name: Upload frontend for embedded build
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-frontend-dist
+          path: backend/internal/web/dist/
+          if-no-files-found: error
+          retention-days: 7
       # 原先这里逐个 python3 执行 deploy/rollout/test_rollout329..336_guard.py。
       # 这些脚本从未被 git 跟踪（它们只存在于 .artifacts/，而 .artifacts/ 在
       # .gitignore 里），CI 的干净检出上根本不存在对应文件，于是这一步自 2026-09-27
@@ -116,6 +123,36 @@ jobs:
       # 其中 329~332、334~336 连本地 .artifacts/ 里都没有。
       # 需要这些守卫回归进 CI，先把脚本提交到未被忽略的目录（如 deploy/tests/），
       # 再在这里按实际路径调用。
+
+  build:
+    needs: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Download tested frontend
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-frontend-dist
+          path: backend/internal/web/dist/
+      - name: Verify embedded frontend
+        working-directory: backend
+        run: go test -tags=embed ./internal/web -count=1
+      - name: Build embedded Linux binary
+        working-directory: backend
+        run: make build
+      - name: Upload Linux binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-linux-amd64
+          path: backend/bin/server
+          if-no-files-found: error
+          retention-days: 7
 
   golangci-lint:
     runs-on: ubuntu-latest

@@ -7,6 +7,7 @@ export interface CryptoConfig {
   enabled: boolean
   chains: string[]
   rpc: Record<string, string>
+  rpc_configured?: string[]
   sweep_global_threshold: number
   sweep_min_per_address: Record<string, number>
   gas_topup: Record<string, number>
@@ -21,7 +22,7 @@ export interface CryptoConfig {
   credit_multiplier: number
 }
 
-export type CryptoConfigPatch = Partial<Omit<CryptoConfig, 'hot_index'>>
+export type CryptoConfigPatch = Partial<Omit<CryptoConfig, 'hot_index' | 'rpc_configured'>>
 
 export interface DepositAddress {
   id: number
@@ -93,8 +94,14 @@ export interface SweepSummary {
   entries: SweepEntry[]
 }
 
-export async function getCryptoConfig(totpCode?: string): Promise<CryptoConfig> {
-  const { data } = await apiClient.get('/admin/crypto/config', cryptoRequestOptions(totpCode ? { totpCode } : undefined))
+export async function getCryptoConfig(): Promise<CryptoConfig> {
+  const { data } = await apiClient.get('/admin/crypto/config', cryptoRequestOptions())
+  return data.data
+}
+
+// RPC credentials are read only after an explicit, fresh operator verification.
+export async function getCryptoConfigPrivate(totpCode: string): Promise<CryptoConfig> {
+  const { data } = await apiClient.get('/admin/crypto/config/private', cryptoRequestOptions({ totpCode }))
   return data.data
 }
 
@@ -291,8 +298,8 @@ export interface HotWalletAddress {
 }
 
 // getHotWalletAddress returns the address the hot seed actually derives to.
-export async function getHotWalletAddress(verification: CryptoVerification): Promise<HotWalletAddress> {
-  const { data } = await apiClient.get('/admin/crypto/hot-wallet/address', cryptoRequestOptions(verification))
+export async function getHotWalletAddress(): Promise<HotWalletAddress> {
+  const { data } = await apiClient.get('/admin/crypto/hot-wallet/address', cryptoRequestOptions())
   return data.data
 }
 
@@ -369,8 +376,8 @@ export async function getPoolStatus(): Promise<PoolStatus> {
 }
 
 // getHotWalletStatus reports gas readiness per chain.
-export async function getHotWalletStatus(verification: CryptoVerification): Promise<HotWalletStatus[]> {
-  const { data } = await apiClient.get('/admin/crypto/hot-wallet', cryptoRequestOptions(verification))
+export async function getHotWalletStatus(): Promise<HotWalletStatus[]> {
+  const { data } = await apiClient.get('/admin/crypto/hot-wallet', cryptoRequestOptions())
   return data.data ?? []
 }
 
@@ -443,11 +450,11 @@ export type WalletOperationAction = 'sweep' | 'destination_change' | 'export_mne
 // Intent notification precedes the fresh TOTP prompt. The server sends the
 // separate verified notification itself; the client cannot assert verification.
 export async function reportWalletOperationIntent(action: WalletOperationAction): Promise<void> {
-  const { data } = await apiClient.post<{ notified: boolean }>('/admin/crypto/security/operation-intent', { action }, {
+  const { data } = await apiClient.post<{ accepted: boolean }>('/admin/crypto/security/operation-intent', { action }, {
     ...cryptoRequestOptions(),
     headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
   })
-  if (data?.notified !== true) throw new Error('Wallet operation notification was not delivered')
+  if (data?.accepted !== true) throw new Error('Wallet operation intent was not accepted')
 }
 
 export interface CryptoMnemonicExport {

@@ -207,6 +207,7 @@ func TestUserBarkAuditOmitsDeviceKeyBody(t *testing.T) {
 	})
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bark", bytes.NewBufferString(`{"device_key":"`+deviceKey+`","notify_enabled":true}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Bark-TOTP", "654321")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	audit.Stop()
@@ -214,6 +215,7 @@ func TestUserBarkAuditOmitsDeviceKeyBody(t *testing.T) {
 	require.Len(t, capture.logs, 1)
 	require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
 	require.NotContains(t, capture.logs[0].RequestBody, deviceKey)
+	require.Equal(t, "x-bark-totp <redacted>", capture.logs[0].CredentialMasked)
 }
 
 func TestTotpServerAuthorizationAuditOmitsCredentialBody(t *testing.T) {

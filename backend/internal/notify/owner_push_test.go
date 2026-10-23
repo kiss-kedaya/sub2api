@@ -64,22 +64,3 @@ func TestWalletOwnerNotificationsRequireActualRecipientAndDelivery(t *testing.T)
 		})
 	}
 }
-
-func TestBarkTogglePreservesCiphertextAndRequiresKeyWhenEnabling(t *testing.T) {
-	for _, enabled := range []bool{false, true} {
-		t.Run(map[bool]string{false: "disable", true: "enable"}[enabled], func(t *testing.T) {
-			db, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			defer func() { _ = db.Close() }()
-			mock.ExpectExec(`(?s)UPDATE users SET bark_notify_enabled = \$1 WHERE id = \$2.*COALESCE\(bark_device_key_encrypted, ''\) <> ''`).WithArgs(enabled, int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
-			require.NoError(t, NewUserBarkService(db, passthroughEncryptor{}).SetEnabled(context.Background(), 1, enabled))
-			require.NoError(t, mock.ExpectationsWereMet())
-		})
-	}
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
-	mock.ExpectExec(`UPDATE users SET bark_notify_enabled`).WithArgs(true, int64(1)).WillReturnResult(sqlmock.NewResult(0, 0))
-	require.ErrorIs(t, NewUserBarkService(db, passthroughEncryptor{}).SetEnabled(context.Background(), 1, true), ErrBarkKeyRequired)
-	require.NoError(t, mock.ExpectationsWereMet())
-}

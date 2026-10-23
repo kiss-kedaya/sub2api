@@ -36,6 +36,17 @@ func (s *Service) NotifyWalletOperation(ctx context.Context, action, phase strin
 	if push == nil {
 		return errors.New("wallet security notifications are unavailable")
 	}
+	if optional, ok := push.(interface {
+		WalletOperationNotificationsEnabled(context.Context) (bool, error)
+	}); ok {
+		enabled, err := optional.WalletOperationNotificationsEnabled(ctx)
+		if err != nil {
+			return err
+		}
+		if !enabled {
+			return nil
+		}
+	}
 	notifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	return push.PushToAdmins(notifyCtx, "钱包敏感操作："+label,

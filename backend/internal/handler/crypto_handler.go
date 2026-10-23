@@ -12,6 +12,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +33,7 @@ type CryptoHandler struct {
 	addresses         *addresses.Service
 	store             cryptopay.SettingStore
 	service           *cryptopay.Service
-	security          *service.CryptoSecurityService
+	security          cryptoAdminSecurityVerifier
 	securityConfig    *config.Config
 	mnemonicExporter  cryptoMnemonicExporter
 	operationNotifier cryptoWalletOperationNotifier
@@ -93,12 +95,36 @@ func (h *CryptoHandler) GetDepositAddresses(c *gin.Context) {
 	}})
 }
 
-// AdminGetConfig returns the channel config (admin).
+// AdminGetConfig returns non-secret channel settings. RPC credentials are
+// available only from /config/private after fresh backend verification.
 // GET /api/v1/admin/crypto/config
 func (h *CryptoHandler) AdminGetConfig(c *gin.Context) {
 	cfg, err := cryptopay.LoadConfig(c.Request.Context(), h.store)
 	if err != nil {
 		response.ErrorFrom(c, err)
+		return
+	}
+	configured := make([]string, 0, len(cfg.RPC))
+	for chain, endpoints := range cfg.RPC {
+		if cryptopay.IsEVMChain(chain) && strings.TrimSpace(endpoints) != "" {
+			configured = append(configured, chain)
+		}
+	}
+	sort.Strings(configured)
+	cfg.RPC = map[string]string{}
+	cryptoNoStore(c)
+	c.JSON(http.StatusOK, gin.H{"data": struct {
+		cryptopay.CryptoConfig
+		RPCConfigured []string `json:"rpc_configured"`
+	}{CryptoConfig: cfg, RPCConfigured: configured}})
+}
+
+// AdminGetPrivateConfig is guarded by CryptoAdminSecurity's fresh-code check.
+// GET /api/v1/admin/crypto/config/private
+func (h *CryptoHandler) AdminGetPrivateConfig(c *gin.Context) {
+	cryptoNoStore(c)
+	cfg, err := cryptopay.LoadConfig(c.Request.Context(), h.store)
+	if response.ErrorFrom(c, err) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": cfg})
@@ -109,7 +135,7 @@ func (h *CryptoHandler) AdminGetConfig(c *gin.Context) {
 func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 	// Merge over the stored config: a payload that omits keys (an older
 	// console, a scripted PUT) must not silently wipe them to zero values.
-	existing, err := cryptopay.LoadConfig(c.Request.Context(), h.store)
+	existing, expected, err := cryptopay.LoadConfigForUpdate(c.Request.Context(), h.store)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -123,12 +149,23 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 		response.BadRequest(c, "Gas 钱包固定使用索引 0，不能通过配置改动钱包地址")
 		return
 	}
+	merged, err = cryptopay.NormalizeConfig(merged)
+	if err != nil {
+		response.BadRequest(c, "Invalid crypto configuration")
+		return
+	}
+	// The handler checks the actual persisted change, after applying defaults.
+	// Client-side field lists and already-established step-up grants do not
+	// authorize RPC, destination, enablement, or other sensitive changes.
+	if cryptoConfigRequiresRisk(existing, merged) && !h.requireCryptoRisk(c) {
+		return
+	}
 	if (!strings.EqualFold(strings.TrimSpace(existing.HotWalletEVM), strings.TrimSpace(merged.HotWalletEVM)) ||
 		strings.TrimSpace(existing.HotWalletSolana) != strings.TrimSpace(merged.HotWalletSolana)) &&
 		!h.notifyWalletAction(c, "destination_change", "verified") {
 		return
 	}
-	if err := cryptopay.SaveConfig(c.Request.Context(), h.store, merged); err != nil {
+	if err := cryptopay.SaveConfigIfUnchanged(c.Request.Context(), h.store, merged, expected); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -137,6 +174,21 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 		h.service.Reload(c.Request.Context())
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"saved": true}})
+}
+
+func cryptoConfigRequiresRisk(before, after cryptopay.CryptoConfig) bool {
+	// This explicit exemption keeps every future configuration field protected
+	// by default. Only these five operational thresholds need no fresh code.
+	after.SweepGlobalThreshold = before.SweepGlobalThreshold
+	after.SweepMinPerAddress = before.SweepMinPerAddress
+	after.ScanRange = before.ScanRange
+	after.CreditMinAmount = before.CreditMinAmount
+	after.CreditMaxAmount = before.CreditMaxAmount
+	before.HotWalletEVM = strings.ToLower(strings.TrimSpace(before.HotWalletEVM))
+	after.HotWalletEVM = strings.ToLower(strings.TrimSpace(after.HotWalletEVM))
+	before.HotWalletSolana = strings.TrimSpace(before.HotWalletSolana)
+	after.HotWalletSolana = strings.TrimSpace(after.HotWalletSolana)
+	return !reflect.DeepEqual(before, after)
 }
 
 // AdminWalletStatus reports managed seed configuration and readiness.
@@ -204,7 +256,7 @@ func (h *CryptoHandler) AdminHotWalletStatus(c *gin.Context) {
 	}
 	st, err := h.service.HotWalletStatuses(c.Request.Context())
 	if err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, "Gas wallet status unavailable")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": st})
@@ -221,7 +273,7 @@ func (h *CryptoHandler) AdminHotWalletAddress(c *gin.Context) {
 	}
 	st, err := h.service.HotAddresses(c.Request.Context())
 	if err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, "Gas wallet address unavailable")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": st})

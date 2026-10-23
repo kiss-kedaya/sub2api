@@ -344,7 +344,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	paymentService.SetDepositAddressResolver(cryptoService)
 	cryptoHandler := handler.NewCryptoHandler(cryptoAddressService, settingService, cryptoService, totpService, configConfig)
 	cryptoDepositHandler := handler.NewCryptoDepositHandler(cryptoService)
-	barkHandler := handler.NewUserBarkHandler(userBarkService)
+	barkHandler := handler.NewUserBarkHandler(userBarkService, totpService, configConfig)
 	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)
 	openAIQuotaAutoResetService := service.ProvideOpenAIQuotaAutoResetService(accountRepository, openAIQuotaService, rateLimitService, idempotencyCoordinator, auditLogService, settingService, leaderLockCache)
 	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, ticketHandler, channelMonitorUserHandler, channelMonitorV2Handler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, passkeyHandler, handlerPaymentHandler, paymentWebhookHandler, availableChannelHandler, modelPlazaHandler, asyncImageHandler, batchImageHandler, cryptoHandler, cryptoDepositHandler, barkHandler, idempotencyCoordinator, idempotencyCleanupService, openAIQuotaAutoResetService)
