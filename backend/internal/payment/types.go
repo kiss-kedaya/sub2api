@@ -19,6 +19,9 @@ const (
 	TypeEasyPay      PaymentType = "easypay"
 	TypeAirwallex    PaymentType = "airwallex"
 	TypeEpusdt       PaymentType = "epusdt"
+	// TypeCrypto is the built-in on-chain deposit channel (per-user HD
+	// addresses + scanning). Additive; disabled unless configured.
+	TypeCrypto PaymentType = "crypto"
 )
 
 // Order status constants shared across payment and service layers.
@@ -89,6 +92,8 @@ func GetBasePaymentType(t string) string {
 		return TypeAirwallex
 	case t == TypeEpusdt:
 		return TypeEpusdt
+	case t == TypeCrypto:
+		return TypeCrypto
 	case t == TypeStripe || t == TypeCard || t == TypeLink:
 		return TypeStripe
 	case len(t) >= len(TypeAlipay) && t[:len(TypeAlipay)] == TypeAlipay:
@@ -115,6 +120,9 @@ type CreatePaymentRequest struct {
 	// alipay.trade.precreate instead of alipay.trade.wap.pay.
 	AlipayMobilePrecreate bool
 	InstanceSubMethods    string // Comma-separated sub-methods from instance supported_types (for Stripe)
+	// DepositAddress carries the user's per-user on-chain deposit address
+	// for the built-in crypto channel; other providers ignore it.
+	DepositAddress string
 }
 
 // CreatePaymentResultType describes the shape of the create-payment result.

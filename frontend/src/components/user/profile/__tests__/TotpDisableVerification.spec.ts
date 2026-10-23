@@ -12,6 +12,7 @@ const { api, showError } = vi.hoisted(() => ({
 }))
 vi.mock('@/api', () => ({ totpAPI: api }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError, showSuccess: vi.fn() }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { role: 'user' } }) }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('qrcode', () => ({ default: { toDataURL: vi.fn() } }))
 

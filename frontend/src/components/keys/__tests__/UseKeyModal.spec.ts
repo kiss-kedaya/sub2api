@@ -604,7 +604,7 @@ describe('UseKeyModal', () => {
     expect(codeBlock.text()).not.toContain('"name": "GPT-5.4 Nano"')
   })
 
-  it('renders GPT-5.6 and GPT-6 Astra capabilities in OpenCode config', async () => {
+  it('hides Codex authentication controls in OpenCode and preserves the mode on return', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
         show: true,
@@ -624,27 +624,34 @@ describe('UseKeyModal', () => {
       }
     })
 
+    expect(wrapper.get('[data-testid="codex-auth-mode-legacy"]').attributes('aria-checked')).toBe('true')
+    await wrapper.get('[data-testid="codex-auth-mode-api-key"]').trigger('click')
+    expect(wrapper.get('[data-testid="codex-auth-mode-api-key"]').attributes('aria-checked')).toBe('true')
+
     const opencodeTab = wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.cliTabs.opencode')
+      button.text().trim() === 'keys.useKeyModal.cliTabs.opencode'
     )
     expect(opencodeTab).toBeDefined()
     await opencodeTab!.trigger('click')
-    await nextTick()
 
-    const parsed = JSON.parse(wrapper.find('pre code').text())
-    const models = parsed.provider.openai.models
-    await nextTick()
+    expect(wrapper.find('[data-testid="codex-auth-mode-legacy"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="codex-auth-mode-api-key"]').exists()).toBe(false)
+    const config = JSON.parse(wrapper.get('pre code').text())
+    expect(config.provider.openai.options).toEqual({
+      baseURL: 'https://example.com/v1',
+      apiKey: 'sk-test'
+    })
 
-    expect(wrapper.get('[data-testid="codex-auth-mode-legacy"]').attributes('aria-checked')).toBe('true')
-    expect(wrapper.findAll('pre code').map((code) => code.text()).join('\n')).toContain('requires_openai_auth = true')
+    const codexTab = wrapper.findAll('button').find((button) =>
+      button.text().trim() === 'keys.useKeyModal.cliTabs.codexCli'
+    )
+    expect(codexTab).toBeDefined()
+    await codexTab!.trigger('click')
 
-    await wrapper.get('[data-testid="codex-auth-mode-api-key"]').trigger('click')
-    await wrapper.setProps({ platform: 'gemini' })
-    await wrapper.setProps({ platform: 'openai' })
-    await nextTick()
-
-    expect(wrapper.get('[data-testid="codex-auth-mode-legacy"]').attributes('aria-checked')).toBe('true')
-    expect(wrapper.findAll('pre code').map((code) => code.text()).join('\n')).not.toContain('x-openai-actor-authorization')
+    expect(wrapper.get('[data-testid="codex-auth-mode-api-key"]').attributes('aria-checked')).toBe('true')
+    const codexConfig = wrapper.findAll('pre code').map((code) => code.text()).join('\n')
+    expect(codexConfig).toContain('requires_openai_auth = false')
+    expect(codexConfig).toContain('experimental_bearer_token = "sk-test"')
   })
 
   it('renders GPT-5.4 mini entry in OpenCode config', async () => {
@@ -711,7 +718,7 @@ describe('UseKeyModal', () => {
     const parsed = JSON.parse(wrapper.find('pre code').text())
     const models = parsed.provider.openai.models
     for (const model of ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna']) {
-      expect(models[model]).toBeDefined()
+      expect(models[model], `OpenCode catalog must include ${model}`).toBeDefined()
       expect(models[model].variants).toHaveProperty('max')
       expect(models[model].variants).toHaveProperty('xhigh')
     }
@@ -743,6 +750,7 @@ describe('UseKeyModal', () => {
     await tab!.trigger('click')
     await nextTick()
     const models = JSON.parse(wrapper.find('pre code').text()).provider.anthropic.models
+    expect(models, 'Anthropic OpenCode config must include the Claude 5.5 model descriptors').toBeDefined()
     expect(models['claude-opus-5-5'].limit).toEqual({ context: 1000000, output: 128000 })
     expect(models['claude-opus-5-5'].options).toEqual({ thinking: { type: 'adaptive' }, effort: 'medium' })
     expect(models['claude-opus-5-5'].variants.xhigh.effort).toBe('xhigh')
@@ -901,9 +909,11 @@ describe('UseKeyModal', () => {
     const windowsConfig = wrapper.findAll('pre code')
       .map((code) => code.text())
       .find((content) => content.includes('[model_providers.sub2api]'))
-    expect(windowsConfig).toContain(
-      'model_catalog_json = "%userprofile%\\\\.codex\\\\codex-models.json"'
-    )
+    // The displayed save location follows the OS; TOML uses the client's home-relative path.
+    expect(wrapper.get('[data-testid="codex-model-catalog"]').text())
+      .toContain('%userprofile%\\.codex\\codex-models.json')
+    expect(windowsConfig).toContain('model_catalog_json = "~/.codex/codex-models.json"')
+    expect(windowsConfig).not.toContain('model_catalog_url')
   })
 
   it.each(['anthropic', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go'] as const)(
@@ -994,19 +1004,22 @@ describe('UseKeyModal', () => {
   })
 
   it('derives OpenAI Codex reasoning effort from the selected catalog descriptor', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    const manifest = {
+      models: [
+        {
+          slug: 'glm-5.3',
+          default_reasoning_level: 'none',
+          supported_reasoning_levels: [{ effort: 'none' }]
+        }
+      ]
+    }
+    const readResponseText = vi.fn().mockResolvedValue(JSON.stringify(manifest))
+    const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({
-        models: [
-          {
-            slug: 'glm-5.3',
-            default_reasoning_level: 'none',
-            supported_reasoning_levels: [{ effort: 'none' }]
-          }
-        ]
-      })
-    }))
+      text: readResponseText
+    })
+    vi.stubGlobal('fetch', fetchMock)
 
     const wrapper = mount(UseKeyModal, {
       props: {
@@ -1030,10 +1043,20 @@ describe('UseKeyModal', () => {
     await wrapper.get('[data-testid="codex-model-catalog-fetch"]').trigger('click')
     await flushPromises()
 
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/v1/models?client_version=0.158.0',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer sk-openai-test' })
+      })
+    )
+    expect(readResponseText).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-testid="codex-model-catalog"]').text())
+      .toContain('keys.useKeyModal.codexModelCatalog.download')
     const configToml = wrapper.findAll('pre code')
       .map((code) => code.text())
       .find((content) => content.includes('model_provider = "OpenAI"'))
     expect(configToml).toContain('model = "glm-5.3"')
+    expect(configToml).toContain('review_model = "glm-5.3"')
     expect(configToml).not.toContain('model_reasoning_effort')
   })
 

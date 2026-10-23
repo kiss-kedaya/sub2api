@@ -111,6 +111,9 @@ func NewAuthCacheInvalidationWorker(repo AuthCacheInvalidationOutboxRepository, 
 }
 
 func (w *AuthCacheInvalidationWorker) Start() {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	if w == nil || w.repo == nil || w.cache == nil {
 		return
 	}
@@ -288,6 +291,6 @@ func (w *AuthCacheInvalidationWorker) Health(ctx context.Context) AuthCacheInval
 
 func ProvideAuthCacheInvalidationWorker(repo AuthCacheInvalidationOutboxRepository, cache APIKeyCache, apiKeyService *APIKeyService) *AuthCacheInvalidationWorker {
 	worker := NewAuthCacheInvalidationWorker(repo, cache, apiKeyService)
-	worker.Start()
+	startBackgroundJob(worker.Start)
 	return worker
 }

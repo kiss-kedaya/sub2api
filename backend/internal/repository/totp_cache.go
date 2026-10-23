@@ -24,6 +24,19 @@ type TotpCache struct {
 	rdb *redis.Client
 }
 
+var (
+	cryptoTotpAttemptScript = redis.NewScript(`
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
+if redis.call('PTTL', KEYS[1]) < 0 then return -1 end
+return n
+`)
+	cryptoTotpReleaseScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0
+`)
+)
+
 // NewTotpCache creates a new TOTP cache
 func NewTotpCache(rdb *redis.Client) service.TotpCache {
 	return &TotpCache{rdb: rdb}
@@ -147,6 +160,27 @@ func (c *TotpCache) GetVerifyAttempts(ctx context.Context, userID int64) (int, e
 func (c *TotpCache) ClearVerifyAttempts(ctx context.Context, userID int64) error {
 	key := fmt.Sprintf("%s%d", totpAttemptsKeyPrefix, userID)
 	return c.rdb.Del(ctx, key).Err()
+}
+
+func (c *TotpCache) IncrementCryptoAttempt(ctx context.Context, key string, ttl time.Duration) (int, error) {
+	count, err := cryptoTotpAttemptScript.Run(ctx, c.rdb, []string{key}, ttl.Milliseconds()).Int()
+	if err != nil {
+		return 0, fmt.Errorf("increment crypto TOTP attempts: %w", err)
+	}
+	return count, nil
+}
+
+func (c *TotpCache) SetCryptoValueIfAbsent(ctx context.Context, key, value string, ttl time.Duration) (bool, error) {
+	return c.rdb.SetNX(ctx, key, value, ttl).Result()
+}
+
+func (c *TotpCache) CryptoValueExists(ctx context.Context, key string) (bool, error) {
+	count, err := c.rdb.Exists(ctx, key).Result()
+	return count != 0, err
+}
+
+func (c *TotpCache) ReleaseCryptoValue(ctx context.Context, key, value string) error {
+	return cryptoTotpReleaseScript.Run(ctx, c.rdb, []string{key}, value).Err()
 }
 
 func totpStepUpKey(userID int64, sessionKey string) string {

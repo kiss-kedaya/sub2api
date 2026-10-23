@@ -34,6 +34,7 @@ type redeemRateLimitPolicy uint8
 const (
 	enforceRedeemRateLimit redeemRateLimitPolicy = iota
 	bypassRedeemRateLimit
+	paymentFulfillmentRedeem
 )
 
 type ctxKeySkipRedeemAffiliate struct{}
@@ -400,7 +401,7 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 // redeem failure counter. All code validation and transactional updates remain
 // identical to the public redemption path.
 func (s *RedeemService) redeemForPaymentFulfillment(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
-	return s.redeem(ContextSkipRedeemAffiliate(ctx), userID, code, bypassRedeemRateLimit)
+	return s.redeem(ContextSkipRedeemAffiliate(ctx), userID, code, paymentFulfillmentRedeem)
 }
 
 // RedeemForAdminFulfillment is restricted to trusted admin fulfillment.
@@ -449,10 +450,21 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 		}
 		return nil, ErrRedeemCodeUsed
 	}
+	// Crypto payment codes created by earlier builds had the ordinary balance
+	// type. Keep the public endpoint from exposing those legacy deterministic
+	// identities after the new dedicated payment type is introduced.
+	if rateLimitPolicy != paymentFulfillmentRedeem &&
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(redeemCode.Code)), "crypto-") {
+		return nil, ErrRedeemCodeUsed
+	}
 
 	// 验证兑换码类型的前置条件。邀请码属于注册流程，不能通过普通兑换接口使用。
 	switch redeemCode.Type {
 	case RedeemTypeBalance, RedeemTypeConcurrency:
+	case RedeemTypePaymentBalance:
+		if rateLimitPolicy != paymentFulfillmentRedeem {
+			return nil, ErrRedeemCodeUsed
+		}
 	case RedeemTypeSubscription:
 		if redeemCode.GroupID == nil {
 			return nil, infraerrors.BadRequest("REDEEM_CODE_INVALID", "invalid subscription redeem code: missing group_id")
@@ -488,7 +500,7 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 
 	// 执行兑换逻辑（兑换码已被锁定，此时可安全操作）
 	switch redeemCode.Type {
-	case RedeemTypeBalance:
+	case RedeemTypeBalance, RedeemTypePaymentBalance:
 		amount := redeemCode.Value
 		if amount < 0 {
 			if s.redeemUserRepo == nil {
@@ -545,7 +557,7 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}
-	if redeemCode.Type == RedeemTypeBalance && redeemCode.Value != 0 {
+	if isBalanceRedeemType(redeemCode.Type) && redeemCode.Value != 0 {
 		syncCommittedLiveBalanceAdjustment(
 			s.billingCacheService,
 			userID,
@@ -574,7 +586,7 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 // invalidateRedeemCaches 失效兑换相关的缓存
 func (s *RedeemService) invalidateRedeemCaches(ctx context.Context, userID int64, redeemCode *RedeemCode) {
 	switch redeemCode.Type {
-	case RedeemTypeBalance:
+	case RedeemTypeBalance, RedeemTypePaymentBalance:
 		if s.authCacheInvalidator != nil {
 			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
 		}
@@ -601,6 +613,10 @@ func (s *RedeemService) invalidateRedeemCaches(ctx context.Context, userID int64
 			}()
 		}
 	}
+}
+
+func isBalanceRedeemType(codeType string) bool {
+	return codeType == RedeemTypeBalance || codeType == RedeemTypePaymentBalance
 }
 
 func (s *RedeemService) tryAccrueAffiliateRebateForRedeem(ctx context.Context, userID int64, amount float64) {

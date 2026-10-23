@@ -1,0 +1,385 @@
+name: Crypto Test Release
+
+# Isolated test packages only. No production deployment or VERSION branch sync.
+on:
+  workflow_dispatch:
+  # The first matching feature-branch push also registers this new workflow;
+  # it does not need to be merged into main to bootstrap a test build.
+  push:
+    branches:
+      - feat/crypto-deposit
+    paths:
+      - '.github/workflows/crypto-test-release.yml'
+      - 'backend/cmd/server/main.go'
+      - 'backend/cmd/server/crypto*.go'
+      - 'backend/cmd/server/wire_gen.go'
+      - 'backend/cmd/server/VERSION'
+      - 'backend/go.mod'
+      - 'backend/go.sum'
+      - 'backend/ent/**'
+      - 'backend/internal/cryptopay/**'
+      - 'backend/internal/handler/crypto*.go'
+      - 'backend/internal/handler/admin/crypto*.go'
+      - 'backend/internal/handler/totp_handler.go'
+      - 'backend/internal/handler/wire.go'
+      - 'backend/internal/server/router.go'
+      - 'backend/internal/server/routes/crypto.go'
+      - 'backend/internal/server/routes/crypto_security_test.go'
+      - 'backend/internal/server/routes/admin.go'
+      - 'backend/internal/server/routes/user.go'
+      - 'backend/internal/server/middleware/audit_log.go'
+      - 'backend/internal/server/middleware/crypto*.go'
+      - 'backend/internal/server/middleware/audit_log_test.go'
+      - 'backend/internal/service/crypto*.go'
+      - 'backend/internal/service/totp*.go'
+      - 'backend/internal/service/background_jobs*.go'
+      - 'backend/internal/service/wire.go'
+      - 'backend/internal/service/payment*.go'
+      - 'backend/internal/service/setting*.go'
+      - 'backend/internal/repository/crypto*.go'
+      - 'backend/internal/repository/totp_cache.go'
+      - 'backend/internal/repository/ent.go'
+      - 'backend/internal/repository/migration_command.go'
+      - 'backend/internal/service/ticket_email.go'
+      - 'backend/internal/service/tls_fingerprint_profile_service.go'
+      - 'backend/internal/service/error_passthrough_service.go'
+      - 'backend/internal/service/ops_log_runtime.go'
+      - 'backend/internal/service/content_moderation.go'
+      - 'backend/internal/repository/crypto_totp_store_test.go'
+      - 'backend/internal/payment/crypto*.go'
+      - 'backend/internal/payment/types.go'
+      - 'backend/internal/payment/provider/factory.go'
+      - 'backend/internal/payment/provider/crypto.go'
+      - 'backend/migrations/*_crypto_*.sql'
+      - 'backend/migrations/262_user_bark_notify.sql'
+      - 'frontend/package.json'
+      - 'frontend/pnpm-lock.yaml'
+      - 'frontend/src/api/crypto.ts'
+      - 'frontend/src/api/admin/crypto.ts'
+      - 'frontend/src/api/user.ts'
+      - 'frontend/src/api/__tests__/adminCrypto.security.spec.ts'
+      - 'frontend/src/components/crypto/**'
+      - 'frontend/src/components/layout/AppSidebar.vue'
+      - 'frontend/src/components/user/profile/ProfileView.vue'
+      - 'frontend/src/components/user/profile/TotpDisableDialog.vue'
+      - 'frontend/src/components/user/profile/__tests__/Totp*.spec.ts'
+      - 'frontend/src/components/user/profile/__tests__/totp-*.spec.ts'
+      - 'frontend/src/i18n/locales/**/deposit.ts'
+      - 'frontend/src/i18n/locales/**/admin/crypto.ts'
+      - 'frontend/src/i18n/locales/**/admin/index.ts'
+      - 'frontend/src/i18n/locales/**/index.ts'
+      - 'frontend/src/router/index.ts'
+      - 'frontend/src/types/index.ts'
+      - 'frontend/src/views/admin/CryptoView.vue'
+      - 'frontend/src/views/admin/__tests__/CryptoView.security.spec.ts'
+      - 'frontend/src/views/user/DepositView.vue'
+      - 'frontend/src/views/user/ProfileView.vue'
+      - 'backend/local-dev.ps1'
+      - 'deploy/docker-compose*.yml'
+      - 'deploy/README.md'
+      - 'deploy/DOCKER.md'
+      - 'docs/PAYMENT_CN.md'
+permissions:
+  contents: read
+
+concurrency:
+  group: crypto-test-release-${{ github.sha }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      commit_sha: ${{ steps.metadata.outputs.commit_sha }}
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      archive: ${{ steps.metadata.outputs.archive }}
+      artifact: ${{ steps.metadata.outputs.artifact }}
+      build_date: ${{ steps.metadata.outputs.build_date }}
+    steps:
+      - name: Require the crypto feature branch
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/heads/feat/crypto-deposit || ( "$GITHUB_EVENT_NAME" != push && "$GITHUB_EVENT_NAME" != workflow_dispatch ) ]]; then
+            echo '::error::Run this workflow only on pushes to feat/crypto-deposit'
+            exit 1
+          fi
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+      - name: Checkout the immutable event commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Resolve test package metadata
+        id: metadata
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          base_version="$(tr -d '\r\n' < backend/cmd/server/VERSION)"
+          base_version="${base_version#v}"
+          if [[ ! "$base_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo '::error::backend/cmd/server/VERSION must contain a base semantic version'
+            exit 1
+          fi
+          short_sha="${GITHUB_SHA:0:12}"
+          version="${base_version}-crypto.${short_sha}"
+          {
+            printf 'commit_sha=%s\n' "$GITHUB_SHA"
+            printf 'version=%s\n' "$version"
+            printf 'tag=crypto-test-%s\n' "$short_sha"
+            printf 'archive=sub2api_%s_linux_amd64.tar.gz\n' "$version"
+            printf 'artifact=crypto-test-%s-linux-amd64\n' "$short_sha"
+            printf 'build_date=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CGO_ENABLED: '0'
+      GOFLAGS: -mod=readonly
+      COMMIT_SHA: ${{ needs.validate.outputs.commit_sha }}
+      TEST_VERSION: ${{ needs.validate.outputs.version }}
+      BUILD_DATE: ${{ needs.validate.outputs.build_date }}
+      ARCHIVE: ${{ needs.validate.outputs.archive }}
+      PACKAGE_DIR: ${{ github.workspace }}/.crypto-test-package
+      RELEASE_DIR: ${{ github.workspace }}/.crypto-test-release
+    steps:
+      - name: Checkout the validated commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Verify checkout SHA
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$COMMIT_SHA" ]]
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend into the embed directory
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          pnpm run build
+          test -s ../backend/internal/web/dist/index.html
+          test -d ../backend/internal/web/dist/assets
+
+      - name: Lint frontend and run crypto and TOTP security UI tests
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          pnpm run lint
+          pnpm exec vitest run \
+            src/api/__tests__/adminCrypto.security.spec.ts \
+            src/components/crypto/__tests__/CryptoMnemonicsDialog.spec.ts \
+            src/components/crypto/__tests__/CryptoSecurityDialog.spec.ts \
+            src/components/user/profile/__tests__/TotpDisableDialog.required.spec.ts \
+            src/components/user/profile/__tests__/TotpSetupModal.inputs.spec.ts \
+            src/components/user/profile/__tests__/Totp.errors.spec.ts \
+            src/components/user/profile/__tests__/totp-timer-cleanup.spec.ts \
+            src/components/keys/__tests__/UseKeyModal.spec.ts \
+            src/views/admin/__tests__/AccountsView.lite.spec.ts \
+            src/views/admin/__tests__/CryptoView.security.spec.ts
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache-dependency-path: backend/go.sum
+
+      - name: Test crypto packages without CGO
+        working-directory: backend
+        run: go test -count=1 -timeout=10m ./internal/cryptopay/...
+
+      - name: Check managed wallet concurrency with the race detector
+        working-directory: backend
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -p 1 -count=1 -timeout=10m ./internal/cryptopay ./internal/cryptopay/wallet ./internal/cryptopay/scanner ./internal/notify/...
+
+      - name: Test crypto handlers, security, routes, audit middleware and repositories
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          go test -tags=unit -count=1 -timeout=10m ./cmd/server ./internal/handler ./internal/service ./internal/repository -run '^Test((New)?Crypto|DisabledTicketOutbox)'
+          go test -tags=unit -count=1 -timeout=10m ./internal/service -run '^Test(RetryFulfillmentRejectsCryptoOrdersForEveryRetryableOrTerminalState|CryptoRetryGuardRecognizesLegacyAndCurrentOrderMarkers|RetryFulfillmentKeepsNonCryptoOrderBehavior|CryptoOrderStillUsesInternalBalanceFulfillmentForLedgerRecovery|PaymentBalanceRedeem.*|PaymentAndOrdinaryBalanceTypesShareBalanceInvalidation)$'
+          go test -count=1 -timeout=10m ./internal/repository -run '^TestRedeemCodeRepository(SumPositiveBalanceByUserIncludesPaymentBalance|ListByUserPaginatedPaymentBalanceFilter)$'
+          go test -count=1 -timeout=10m ./internal/server/routes ./internal/server/middleware
+
+      - name: Verify managed wallet routes and compile crypto routes
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          const fs = require('node:fs')
+          const assert = require('node:assert/strict')
+          const routes = fs.readFileSync('backend/internal/server/routes/crypto.go', 'utf8')
+          const adminRoutes = fs.readFileSync('backend/internal/server/routes/admin.go', 'utf8')
+          assert(adminRoutes.includes('admin := v1.Group("/admin")'))
+          assert(routes.includes('crypto := admin.Group("/crypto")'))
+          assert(routes.includes('authenticated.Use(cryptoHandler.CryptoUserAccess)'))
+          assert(routes.includes('crypto.Use(cryptoHandler.CryptoAdminSecurity)'))
+          for (const route of [
+            'authenticated.GET("/deposit-addresses", cryptoHandler.GetDepositAddresses)',
+            'authenticated.GET("/deposit-info", depositHandler.GetDepositInfo)',
+            'authenticated.GET("/deposit-history", depositHandler.GetDepositHistory)',
+            'crypto.GET("/security/status", cryptoHandler.AdminCryptoSecurityStatus)',
+            'crypto.POST("/security/setup", cryptoHandler.AdminCryptoSecuritySetup)',
+            'crypto.POST("/security/enable", cryptoHandler.AdminCryptoSecurityEnable)',
+          ]) assert(routes.includes(route), `missing crypto route: ${route}`)
+          for (const [method, path] of [
+            ['GET', '/wallet/status'],
+            ['POST', '/wallet/initialize'],
+            ['POST', '/wallet/export-mnemonics'],
+            ['POST', '/wallet/hot-mnemonic'],
+            ['POST', '/scan/run'],
+          ]) assert(routes.includes(`crypto.${method}("${path}", cryptoHandler.`), `missing /admin/crypto${path}`)
+          assert(!routes.includes('"/signer/'), 'standalone signer routes must be removed')
+          for (const path of ['/wallet/unlock', '/wallet/lock', '/wallet/backup']) assert(!routes.includes(`crypto.POST("${path}"`), `obsolete wallet endpoint ${path}`)
+          console.log('Crypto user/admin routes and access middleware verified')
+          NODE
+          (cd backend && go build ./internal/server/routes)
+
+      - name: Verify embedded frontend responses
+        working-directory: backend
+        run: go test -tags=embed -count=1 -timeout=5m ./internal/web -run '^Test(HasEmbeddedFrontend|ServeEmbeddedFrontend|NewFrontendServer)$'
+
+      - name: Build Linux amd64 embedded sub2api
+        working-directory: backend
+        env:
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          mkdir -p "$PACKAGE_DIR" "$RELEASE_DIR"
+          # Keep the same main.* linker variables as the official GoReleaser config.
+          go build -trimpath -buildvcs=true -tags=embed \
+            -ldflags="-s -w -X main.Version=${TEST_VERSION} -X main.Commit=${COMMIT_SHA} -X main.Date=${BUILD_DATE} -X main.BuildType=release" \
+            -o "$PACKAGE_DIR/sub2api" ./cmd/server
+
+      - name: Verify sub2api and package checksummed assets
+        run: |
+          set -euo pipefail
+          version_output="$("$PACKAGE_DIR/sub2api" -version 2>&1)"
+          printf '%s\n' "$version_output"
+          [[ "$version_output" == *"Sub2API ${TEST_VERSION} (commit: ${COMMIT_SHA}, built: ${BUILD_DATE})"* ]]
+          go version -m "$PACKAGE_DIR/sub2api" > "$PACKAGE_DIR/sub2api.buildinfo.txt"
+          grep -Fq 'CGO_ENABLED=0' "$PACKAGE_DIR/sub2api.buildinfo.txt"
+          grep -Fq 'GOOS=linux' "$PACKAGE_DIR/sub2api.buildinfo.txt"
+          grep -Fq 'GOARCH=amd64' "$PACKAGE_DIR/sub2api.buildinfo.txt"
+          grep -Eq -- '-tags[[:space:]]+embed$|-tags=embed$' "$PACKAGE_DIR/sub2api.buildinfo.txt"
+          grep -Fq "vcs.revision=${COMMIT_SHA}" "$PACKAGE_DIR/sub2api.buildinfo.txt"
+          file "$PACKAGE_DIR/sub2api" | grep -Fq 'statically linked'
+          printf '%s\n' "$TEST_VERSION" > "$PACKAGE_DIR/VERSION"
+          printf '%s\n' "$COMMIT_SHA" > "$PACKAGE_DIR/SHA"
+          {
+            printf 'package_version=%s\ncommit=%s\nbuilt_at=%s\n' "$TEST_VERSION" "$COMMIT_SHA" "$BUILD_DATE"
+            printf 'platform=linux/amd64\nsub2api_cgo_enabled=0\nfrontend=embedded\nwallet=builtin\n'
+          } > "$PACKAGE_DIR/BUILD_INFO.txt"
+          tar -czf "$RELEASE_DIR/$ARCHIVE" -C "$PACKAGE_DIR" \
+            sub2api VERSION SHA BUILD_INFO.txt sub2api.buildinfo.txt
+          cd "$RELEASE_DIR"
+          sha256sum "$ARCHIVE" > checksums.txt
+          sha256sum --check --strict checksums.txt
+          {
+            printf '### Crypto test package\n\nVersion: `%s`\n\nCommit: `%s`\n\n' "$TEST_VERSION" "$COMMIT_SHA"
+            printf 'Archive: `%s` and `checksums.txt` are in the workflow artifact.\n' "$ARCHIVE"
+            printf 'No deployment is performed.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.validate.outputs.artifact }}
+          path: |
+            ${{ env.RELEASE_DIR }}/${{ env.ARCHIVE }}
+            ${{ env.RELEASE_DIR }}/checksums.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/feat/crypto-deposit' }}
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      COMMIT_SHA: ${{ needs.validate.outputs.commit_sha }}
+      TEST_VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      ARCHIVE: ${{ needs.validate.outputs.archive }}
+    steps:
+      - name: Download verified build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.validate.outputs.artifact }}
+          path: ${{ runner.temp }}/crypto-test-release
+
+      - name: Publish isolated prerelease and verify downloaded assets
+        working-directory: ${{ runner.temp }}/crypto-test-release
+        run: |
+          set -euo pipefail
+          [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_TAG" == "crypto-test-${COMMIT_SHA:0:12}" ]]
+          [[ "$ARCHIVE" == "sub2api_${TEST_VERSION}_linux_amd64.tar.gz" ]]
+          sha256sum --check --strict checksums.txt
+          # Never reuse/move an existing tag or replace assets on a rerun.
+          existing_refs="$(gh api "repos/${GH_REPO}/git/matching-refs/tags/${RELEASE_TAG}" --jq 'length')"
+          if [[ "$existing_refs" != 0 ]]; then
+            echo '::error::Test tag already exists; refusing to replace it'
+            exit 1
+          fi
+          {
+            printf 'Crypto deposit test package %s\n\nCommit: %s\n\n' "$TEST_VERSION" "$COMMIT_SHA"
+            printf 'Linux amd64, one CGO-free sub2api binary with embedded frontend and built-in wallet.\n'
+            printf 'Test distribution only. This workflow does not deploy or sync VERSION to main.\n\n'
+            printf 'Download:\n\n'
+            printf 'gh release download %s --repo %s --pattern %s --pattern checksums.txt\n' "$RELEASE_TAG" "$GH_REPO" "$ARCHIVE"
+            printf 'sha256sum --check --strict checksums.txt\n'
+          } > "$RUNNER_TEMP/crypto-test-release-notes.txt"
+          # A crypto-test-* tag cannot match the official v* release guards.
+          gh release create "$RELEASE_TAG" "$ARCHIVE" checksums.txt \
+            --repo "$GH_REPO" --prerelease --latest=false --target "$COMMIT_SHA" \
+            --title "Crypto test ${TEST_VERSION}" --notes-file "$RUNNER_TEMP/crypto-test-release-notes.txt"
+          ref_object="$(gh api "repos/${GH_REPO}/git/ref/tags/${RELEASE_TAG}" --jq '[.object.type, .object.sha] | @tsv')"
+          read -r ref_type ref_sha <<< "$ref_object"
+          case "$ref_type" in
+            tag) ref_commit="$(gh api "repos/${GH_REPO}/git/tags/${ref_sha}" --jq '.object.sha')" ;;
+            commit) ref_commit="$ref_sha" ;;
+            *) echo '::error::Test release tag does not point to a commit'; exit 1 ;;
+          esac
+          [[ "$ref_commit" == "$COMMIT_SHA" ]]
+          verify_dir="$RUNNER_TEMP/crypto-test-release-download"
+          gh release download "$RELEASE_TAG" --repo "$GH_REPO" \
+            --pattern "$ARCHIVE" --pattern checksums.txt --dir "$verify_dir"
+          cd "$verify_dir"
+          sha256sum --check --strict checksums.txt
+          printf 'Prerelease: https://github.com/%s/releases/tag/%s\n' "$GH_REPO" "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"

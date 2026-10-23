@@ -53,6 +53,13 @@ func RegisterUserRoutes(
 				notifyEmail.PUT("/toggle", h.User.ToggleNotifyEmail)
 				notifyEmail.DELETE("", h.User.RemoveNotifyEmail)
 			}
+			if h.Bark != nil {
+				bark := user.Group("/bark")
+				{
+					bark.GET("", h.Bark.GetBarkSettings)
+					bark.PUT("", h.Bark.UpdateBarkSettings)
+				}
+			}
 
 			// TOTP 双因素认证
 			totp := user.Group("/totp")

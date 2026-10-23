@@ -430,6 +430,9 @@ func runGrokMediaBeforePublish(ctx context.Context, result *OpenAIForwardResult)
 }
 
 func (s *OpenAIGatewayService) StartMediaBillingWorker() {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	if !s.HasDurableMediaBilling() {
 		return
 	}

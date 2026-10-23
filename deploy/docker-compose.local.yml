@@ -126,6 +126,7 @@ services:
       # with 2FA).
       # Generate a secure key: openssl rand -hex 32
       - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:-}
+      - CRYPTO_ADMIN_USER_IDS=${CRYPTO_ADMIN_USER_IDS:-}
 
       # =======================================================================
       # Timezone Configuration

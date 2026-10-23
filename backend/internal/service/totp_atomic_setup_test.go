@@ -48,8 +48,22 @@ func (r *atomicTotpSetupRepo) BindTotpIfDisabled(_ context.Context, _ int64, sec
 
 type atomicTotpSetupCache struct {
 	TotpCache
-	session *TotpSetupSession
-	deleted atomic.Int64
+	session  *TotpSetupSession
+	deleted  atomic.Int64
+	attempts atomic.Int64
+}
+
+func (c *atomicTotpSetupCache) GetVerifyAttempts(context.Context, int64) (int, error) {
+	return int(c.attempts.Load()), nil
+}
+
+func (c *atomicTotpSetupCache) IncrementVerifyAttempts(context.Context, int64) (int, error) {
+	return int(c.attempts.Add(1)), nil
+}
+
+func (c *atomicTotpSetupCache) ClearVerifyAttempts(context.Context, int64) error {
+	c.attempts.Store(0)
+	return nil
 }
 
 func (c *atomicTotpSetupCache) GetSetupSession(context.Context, int64) (*TotpSetupSession, error) {
@@ -81,7 +95,7 @@ func (atomicTotpSetupEncryptor) Decrypt(string) (string, error) {
 
 func newAtomicTotpSetupService(repo UserRepository, encryptor SecretEncryptor) (*TotpService, *atomicTotpSetupCache, string) {
 	const secret = "JBSWY3DPEHPK3PXP"
-	cache := &atomicTotpSetupCache{session: &TotpSetupSession{Secret: secret, SetupToken: "setup-token"}}
+	cache := &atomicTotpSetupCache{session: &TotpSetupSession{Secret: secret, SetupToken: "setup-token", CreatedAt: time.Now()}}
 	settings := NewSettingService(&totpVMSettingRepoStub{values: map[string]string{SettingKeyTotpEnabled: "true"}}, nil)
 	return NewTotpService(repo, encryptor, cache, settings, nil, nil), cache, secret
 }
@@ -109,7 +123,9 @@ func TestTotpCompleteSetupConcurrentRequestsOnlyBindOnce(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, winners)
-	require.EqualValues(t, 1, cache.deleted.Load())
+	// Each verified request consumes the cached setup before writing; the DB
+	// precondition remains decisive when both already read that setup.
+	require.EqualValues(t, 2, cache.deleted.Load())
 	require.True(t, repo.user.TotpEnabled)
 	require.NotNil(t, repo.user.TotpSecretEncrypted)
 	require.Equal(t, "encrypted:"+secret, *repo.user.TotpSecretEncrypted)
@@ -121,21 +137,21 @@ func TestTotpCompleteSetupStaleSessionCannotReplaceEnabledAuthenticator(t *testi
 	svc, cache, secret := newAtomicTotpSetupService(repo, atomicTotpSetupEncryptor{})
 	code, err := totp.GenerateCode(secret, time.Now())
 	require.NoError(t, err)
-	require.ErrorIs(t, svc.CompleteSetup(context.Background(), 42, code, "setup-token"), ErrUserSecurityStateChanged)
+	require.ErrorIs(t, svc.CompleteSetup(context.Background(), 42, code, "setup-token"), ErrTotpAlreadyEnabled)
 	require.True(t, repo.user.TotpEnabled)
 	require.Equal(t, original, *repo.user.TotpSecretEncrypted)
 	require.Zero(t, cache.deleted.Load())
 }
 
 func TestTotpCompleteSetupFailsClosedWithoutAtomicBinder(t *testing.T) {
-	svc, cache, secret := newAtomicTotpSetupService(&totpVMUserRepoStub{}, atomicTotpSetupEncryptor{})
+	svc, cache, secret := newAtomicTotpSetupService(&totpVMUserRepoStub{user: &User{ID: 42, Role: RoleAdmin, Status: StatusActive}}, atomicTotpSetupEncryptor{})
 	code, err := totp.GenerateCode(secret, time.Now())
 	require.NoError(t, err)
 	require.ErrorIs(t, svc.CompleteSetup(context.Background(), 42, code, "setup-token"), ErrUserSecurityStateChanged)
 	require.Zero(t, cache.deleted.Load())
 }
 
-func TestTotpCompleteSetupDatabaseErrorDoesNotMarkBoundOrDeleteSetup(t *testing.T) {
+func TestTotpCompleteSetupDatabaseErrorDoesNotMarkBoundAndConsumesSetup(t *testing.T) {
 	writeError := errors.New("database write failed")
 	repo := &atomicTotpSetupRepo{user: User{ID: 42, Role: RoleAdmin, Status: StatusActive}, bindErr: writeError}
 	svc, cache, secret := newAtomicTotpSetupService(repo, atomicTotpSetupEncryptor{})
@@ -145,5 +161,6 @@ func TestTotpCompleteSetupDatabaseErrorDoesNotMarkBoundOrDeleteSetup(t *testing.
 	require.False(t, repo.user.TotpEnabled)
 	require.Nil(t, repo.user.TotpSecretEncrypted)
 	require.Nil(t, repo.user.TotpEnabledAt)
-	require.Zero(t, cache.deleted.Load())
+	// Fail closed: a setup capability is consumed before the database write.
+	require.EqualValues(t, 1, cache.deleted.Load())
 }

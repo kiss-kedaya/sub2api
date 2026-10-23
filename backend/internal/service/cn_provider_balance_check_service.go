@@ -36,6 +36,19 @@ type CNProviderBalanceCheckService struct {
 	stopCh         chan struct{}
 	stopOnce       sync.Once
 	wg             sync.WaitGroup
+	// push notifies admins on their phones when an upstream balance drops
+	// below the threshold. Optional; nil keeps the service silent.
+	pushMu sync.RWMutex
+	push   PushNotifier
+}
+
+// SetPushNotifier wires the optional admin push channel.
+func (s *CNProviderBalanceCheckService) SetPushNotifier(p PushNotifier) {
+	if s != nil {
+		s.pushMu.Lock()
+		s.push = p
+		s.pushMu.Unlock()
+	}
 }
 
 // NewCNProviderBalanceCheckService 构造周期余额/额度检测服务。
@@ -239,6 +252,7 @@ func (s *CNProviderBalanceCheckService) checkOne(ctx context.Context, account *A
 			return cnBalanceNoChange
 		}
 		log.Printf("[CNBalance] paused account %d (%s): balance=%.4g %s", account.ID, account.Platform, result.Balance, result.Currency)
+		s.pushAdmins(account, result, threshold)
 		return cnBalancePaused
 	}
 
@@ -256,6 +270,29 @@ func (s *CNProviderBalanceCheckService) checkOne(ctx context.Context, account *A
 
 func (s *CNProviderBalanceCheckService) platforms() []string {
 	return []string{PlatformKimi, PlatformDeepseek}
+}
+
+// pushAdmins alerts the operator that an upstream account ran out and was
+// paused. Fires once per pause, not once per probe: checkOne only reaches
+// here when the account was still schedulable.
+func (s *CNProviderBalanceCheckService) pushAdmins(account *Account, result *CNProviderBalanceResult, threshold float64) {
+	if s == nil || account == nil || result == nil {
+		return
+	}
+	s.pushMu.RLock()
+	push := s.push
+	s.pushMu.RUnlock()
+	if push == nil {
+		return
+	}
+	err := push.PushToAdmins(context.Background(),
+		"上游余额不足",
+		fmt.Sprintf("账号 #%d（%s）余额 %.4g %s 低于阈值 %.2f，已自动停调",
+			account.ID, account.Platform, result.Balance, result.Currency, threshold),
+		"upstream")
+	if err != nil {
+		log.Printf("[CNBalance] admin push failed: %v", err)
+	}
 }
 
 // allCNBalancesBelowThreshold 判断全部币种余额是否均低于阈值。

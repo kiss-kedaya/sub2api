@@ -34,6 +34,7 @@ type paymentFulfillmentRedeemCacheStub struct {
 type paymentFulfillmentRedeemRepo struct {
 	paymentOrderLifecycleRedeemRepo
 	createCalls int
+	afterCreate func(*RedeemCode)
 }
 
 func (r *paymentFulfillmentRedeemRepo) Create(_ context.Context, code *RedeemCode) error {
@@ -45,6 +46,9 @@ func (r *paymentFulfillmentRedeemRepo) Create(_ context.Context, code *RedeemCod
 	cloned.ID = int64(100 + r.createCalls)
 	code.ID = cloned.ID
 	r.codesByCode[cloned.Code] = &cloned
+	if r.afterCreate != nil {
+		r.afterCreate(&cloned)
+	}
 	return nil
 }
 
@@ -873,12 +877,65 @@ func TestExecuteBalanceFulfillmentBypassesUserRedeemRateLimit(t *testing.T) {
 	require.Len(t, redeemRepo.useCalls, 1)
 
 	usedCode := redeemRepo.codesByCode[order.RechargeCode]
+	require.Equal(t, RedeemTypePaymentBalance, usedCode.Type)
 	require.Equal(t, StatusUsed, usedCode.Status)
 	require.NotNil(t, usedCode.UsedBy)
 	require.Equal(t, order.UserID, *usedCode.UsedBy)
 	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
 	require.NoError(t, err)
 	require.Equal(t, OrderStatusCompleted, reloaded.Status)
+}
+
+func TestPaymentFulfillmentRedeemCodeCannotBeClaimedDuringCreateWindow(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	ensurePaymentAuditOrderActionUniqueIndex(t, ctx, client)
+	order := createPaymentFulfillmentSubscriptionOrder(t, ctx, client, OrderStatusPaid, time.Now())
+	order, err := client.PaymentOrder.UpdateOneID(order.ID).
+		SetOrderType(payment.OrderTypeBalance).ClearPlanID().ClearSubscriptionGroupID().ClearSubscriptionDays().Save(ctx)
+	require.NoError(t, err)
+
+	userRepo := &mockUserRepo{getByIDUser: &User{ID: order.UserID}}
+	userRepo.updateBalanceFn = func(context.Context, int64, float64) error { return nil }
+	redeemRepo := &paymentFulfillmentRedeemRepo{}
+	redeemService := NewRedeemService(redeemRepo, userRepo, nil, nil, nil, client, nil, nil)
+	var publicRedeemErr error
+	redeemRepo.afterCreate = func(code *RedeemCode) {
+		_, publicRedeemErr = redeemService.Redeem(ctx, order.UserID+1, code.Code)
+	}
+	svc := &PaymentService{entClient: client, redeemService: redeemService}
+
+	require.NoError(t, svc.ExecuteBalanceFulfillment(ctx, order.ID))
+	require.Error(t, publicRedeemErr, "public redemption must reject a payment code before trusted fulfillment consumes it")
+	redeemCode := redeemRepo.codesByCode[order.RechargeCode]
+	require.Equal(t, RedeemTypePaymentBalance, redeemCode.Type)
+	require.Equal(t, StatusUsed, redeemCode.Status)
+	require.Equal(t, order.UserID, *redeemCode.UsedBy)
+}
+
+func TestLegacyCryptoPaymentRedeemCodeCannotBeClaimedPublicly(t *testing.T) {
+	ctx := context.Background()
+	userRepo := &mockUserRepo{getByIDUser: &User{ID: 77}}
+	var balanceCredits int
+	userRepo.updateBalanceFn = func(context.Context, int64, float64) error {
+		balanceCredits++
+		return nil
+	}
+	legacyCode := &RedeemCode{
+		ID: 1, Code: "crypto-legacy-deterministic-code", Type: RedeemTypeBalance,
+		Value: 67, Status: StatusUnused,
+	}
+	redeemRepo := &paymentFulfillmentRedeemRepo{
+		paymentOrderLifecycleRedeemRepo: paymentOrderLifecycleRedeemRepo{
+			codesByCode: map[string]*RedeemCode{legacyCode.Code: legacyCode},
+		},
+	}
+	redeemService := NewRedeemService(redeemRepo, userRepo, nil, nil, nil, nil, nil, nil)
+
+	_, err := redeemService.Redeem(ctx, 77, legacyCode.Code)
+	require.ErrorIs(t, err, ErrRedeemCodeUsed)
+	require.Equal(t, StatusUnused, legacyCode.Status)
+	require.Zero(t, balanceCredits)
 }
 
 func TestExecuteBalanceFulfillmentRecoversAfterRedeemWithoutCreditingAgain(t *testing.T) {

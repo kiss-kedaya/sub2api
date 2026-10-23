@@ -301,6 +301,11 @@ func NewPricingService(cfg *config.Config, remoteClient PricingRemoteClient) *Pr
 
 // Initialize 初始化价格服务
 func (s *PricingService) Initialize() error {
+	if BackgroundJobsDisabled() {
+		// Keep request-time pricing available without startup network/file updates
+		// or overwriting a data file that may be shared with the production process.
+		return s.loadPricingData(s.cfg.Pricing.FallbackFile)
+	}
 	// 确保数据目录存在
 	if err := os.MkdirAll(s.cfg.Pricing.DataDir, 0755); err != nil {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to create data directory: %v", err)
@@ -331,6 +336,9 @@ func (s *PricingService) Stop() {
 // startUpdateScheduler 启动定时调度器：每个周期先做远程目录哈希同步（配置了 remote_url 时），
 // 再比对 fallback/override 文件指纹做本地热重载（配置了任一文件时）。两者都未配置则不启动。
 func (s *PricingService) startUpdateScheduler() {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	if s == nil || s.cfg == nil {
 		return
 	}

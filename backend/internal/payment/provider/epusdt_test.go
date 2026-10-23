@@ -55,7 +55,7 @@ func TestNewEPUSDTValidatesHTTPSConfig(t *testing.T) {
 }
 
 func TestEPUSDTCreatePaymentSignsPayloadAndReturnsRedirect(t *testing.T) {
-	var received map[string]interface{}
+	var received map[string]any
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, epusdtCreatePath, r.URL.Path)
 		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
@@ -89,7 +89,7 @@ func TestEPUSDTCreatePaymentSignsPayloadAndReturnsRedirect(t *testing.T) {
 }
 
 func TestEPUSDTCanonicalizesHTTPReturnURL(t *testing.T) {
-	var received map[string]interface{}
+	var received map[string]any
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
@@ -157,7 +157,7 @@ func TestEPUSDTVerifyNotificationBindsPIDAndSignature(t *testing.T) {
 	defer server.Close()
 	prov := newTestEPUSDT(t, server)
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"pid": "1000", "trade_id": "trade-123", "order_id": "order-123",
 		"amount": 12.34, "token": "USDT", "status": 2,
 		"block_transaction_id": "0xabc",
@@ -200,7 +200,7 @@ func TestEPUSDTRejectsUntrustedPaymentURLAndRefund(t *testing.T) {
 	require.ErrorContains(t, err, "not supported")
 }
 
-func expectedEPUSDTSignature(values map[string]interface{}, secret string) string {
+func expectedEPUSDTSignature(values map[string]any, secret string) string {
 	parts := make([]string, 0, len(values))
 	for key, value := range values {
 		if key == "signature" || value == nil {

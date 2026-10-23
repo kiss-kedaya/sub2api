@@ -51,7 +51,7 @@ func ProvideLiveBalanceAdjustmentOutboxWorker(
 	snapshotReader, _ := billingRepo.(balancePreauthorizationSnapshotReader)
 	applier := newRecoveringLiveBalanceAdjustmentApplier(cache, snapshotReader)
 	worker := newLiveBalanceAdjustmentOutboxWorker(repo, applier)
-	worker.Start()
+	startBackgroundJob(worker.Start)
 	return worker
 }
 
@@ -68,6 +68,9 @@ func newLiveBalanceAdjustmentOutboxWorker(
 }
 
 func (w *LiveBalanceAdjustmentOutboxWorker) Start() {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	if w == nil || w.repo == nil || w.applier == nil {
 		return
 	}

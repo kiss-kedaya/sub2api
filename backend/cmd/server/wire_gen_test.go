@@ -29,6 +29,9 @@ func TestShutdownTimeoutFromEnv(t *testing.T) {
 		{name: "default", raw: "", want: defaultShutdownTimeout},
 		{name: "configured seconds", raw: "45", want: 45 * time.Second},
 		{name: "too short", raw: "4", want: defaultShutdownTimeout},
+		// The ceiling is 6h (streaming requests can run long); 601s is a
+		// legitimate value, so only a value above the ceiling falls back.
+		{name: "within ceiling", raw: "601", want: 601 * time.Second},
 		{name: "too long", raw: "21601", want: defaultShutdownTimeout},
 		{name: "invalid", raw: "nope", want: defaultShutdownTimeout},
 	}

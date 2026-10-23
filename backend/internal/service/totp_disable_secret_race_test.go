@@ -47,7 +47,10 @@ func (r *totpSecretRaceRepo) DisableTotpWithExpectedRole(_ context.Context, _ in
 type totpSecretRaceCache struct{ TotpCache }
 
 func (totpSecretRaceCache) GetVerifyAttempts(context.Context, int64) (int, error) { return 0, nil }
-func (totpSecretRaceCache) ClearVerifyAttempts(context.Context, int64) error      { return nil }
+func (totpSecretRaceCache) IncrementVerifyAttempts(context.Context, int64) (int, error) {
+	return 1, nil
+}
+func (totpSecretRaceCache) ClearVerifyAttempts(context.Context, int64) error { return nil }
 
 type totpSecretRaceEncryptor struct{ onDecrypt func() }
 

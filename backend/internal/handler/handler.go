@@ -70,6 +70,9 @@ type Handlers struct {
 	ModelPlaza       *ModelPlazaHandler
 	AsyncImage       *AsyncImageHandler
 	BatchImage       *BatchImageHandler
+	Crypto           *CryptoHandler
+	CryptoDeposit    *CryptoDepositHandler
+	Bark             *UserBarkHandler
 }
 
 // BuildInfo contains build-time information

@@ -93,6 +93,18 @@ func TestIsGrokContentPolicyRejection(t *testing.T) {
 			want:   false,
 		},
 		{
+			name:   "account suspended text overrides refusal signature",
+			status: http.StatusForbidden,
+			body:   `{"error":{"message":"Your account has been suspended. I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}`,
+			want:   false,
+		},
+		{
+			name:   "account suspended code overrides refusal signature",
+			status: http.StatusForbidden,
+			body:   `{"error":{"code":"account_suspended","message":"I'm sorry, I can't help with that request. Failed check: SAFETY_CHECK_TYPE"}}`,
+			want:   false,
+		},
+		{
 			name:   "ambiguous policy violation code is not enough",
 			status: http.StatusForbidden,
 			body:   `{"error":{"code":"policy_violation","message":"policy violation"}}`,
