@@ -70,7 +70,7 @@ func (h *UserBarkHandler) UpdateBarkSettings(c *gin.Context) {
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
-	if !cryptoSecureTransport(c.Request, h.config) {
+	if !service.CryptoAdminAllowHTTP() && !cryptoSecureTransport(c.Request, h.config) {
 		response.ErrorWithDetails(c, http.StatusForbidden, "HTTPS is required to change notification settings", "BARK_HTTPS_REQUIRED", nil)
 		return
 	}
