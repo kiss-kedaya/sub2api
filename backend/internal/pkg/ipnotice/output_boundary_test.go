@@ -75,7 +75,7 @@ func TestGatewayIPNoticeResponsesDeltasAndEveryFinalSnapshotHaveBothBoundaries(t
 				case "response.output_text.delta":
 					require.Equal(t, "msg_real", gjson.GetBytes(frame, "item_id").String())
 					require.Equal(t, int64(0), gjson.GetBytes(frame, "output_index").Int())
-					stream.WriteString(gjson.GetBytes(frame, "delta").String())
+					_, _ = stream.WriteString(gjson.GetBytes(frame, "delta").String())
 				case "response.output_text.done":
 					finalTexts = append(finalTexts, gjson.GetBytes(frame, "text").String())
 				case "response.content_part.done":
@@ -112,7 +112,7 @@ func TestGatewayIPNoticeFooterArrivesBeforeChatFinishAndDoneSentinel(t *testing.
 					assertNoticeBoundary(t, visible.String(), "answer")
 					continue
 				}
-				visible.WriteString(gjson.GetBytes(frame, "choices.0.delta.content").String())
+				_, _ = visible.WriteString(gjson.GetBytes(frame, "choices.0.delta.content").String())
 			}
 		}
 	}
@@ -126,7 +126,7 @@ func TestGatewayIPNoticeAnthropicTextKeepsIndicesAndEndsBeforeBlockStop(t *testi
 		for _, frame := range transform.Transform([]byte(event)) {
 			if gjson.GetBytes(frame, "delta.type").String() == "text_delta" {
 				require.Equal(t, int64(1), gjson.GetBytes(frame, "index").Int())
-				visible.WriteString(gjson.GetBytes(frame, "delta.text").String())
+				_, _ = visible.WriteString(gjson.GetBytes(frame, "delta.text").String())
 			}
 			if gjson.GetBytes(frame, "type").String() == "content_block_stop" && gjson.GetBytes(frame, "index").Int() == 1 {
 				assertNoticeBoundary(t, visible.String(), "answer")
@@ -138,9 +138,10 @@ func TestGatewayIPNoticeAnthropicTextKeepsIndicesAndEndsBeforeBlockStop(t *testi
 func TestGatewayIPNoticeInlineFirstAndLastLinesAreRemovedFromReplay(t *testing.T) {
 	for _, protocol := range []Protocol{Chat, Anthropic, Responses, Gemini} {
 		field, content, role := "messages", "content", "assistant"
-		if protocol == Responses {
+		switch protocol {
+		case Responses:
 			field = "input"
-		} else if protocol == Gemini {
+		case Gemini:
 			field, content, role = "contents", "parts", "model"
 		}
 		text := map[string]any{"type": "text", "text": WrapOutputText("original answer", testNotice)}
