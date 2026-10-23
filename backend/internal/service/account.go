@@ -385,6 +385,20 @@ func (a *Account) IsGeminiOpenAIProtocol() bool {
 	}
 }
 
+// UsesNativeGeminiUpstream keeps native Gemini requests on the Google protocol.
+// Adaptive and unspecified protocols preserve the inbound protocol; only an
+// explicitly configured OpenAI compatibility mode opts into conversion.
+func (a *Account) UsesNativeGeminiUpstream() bool {
+	if a == nil {
+		return false
+	}
+	if !a.IsGeminiOpenAIProtocol() {
+		return true
+	}
+	protocol := strings.TrimSpace(a.GetCredential("api_protocol"))
+	return protocol == "" || protocol == APIProtocolAdaptive
+}
+
 func usesCustomGeminiOpenAICompatibleBaseURL(raw string) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -1128,13 +1142,20 @@ func (a *Account) GetBaseURL() string {
 // Antigravity 平台的 APIKey 账号自动拼接 /antigravity。
 func (a *Account) GetGeminiBaseURL(defaultBaseURL string) string {
 	baseURL := strings.TrimSpace(a.GetCredential("base_url"))
+	if a.Type == AccountTypeAPIKey {
+		if urls, ok := a.Credentials["api_base_urls"].(map[string]any); ok {
+			if native, ok := urls["gemini"].(string); ok && strings.TrimSpace(native) != "" {
+				baseURL = strings.TrimSpace(native)
+			}
+		}
+	}
 	if baseURL == "" {
 		return defaultBaseURL
 	}
 	if a.Platform == PlatformAntigravity && a.Type == AccountTypeAPIKey {
 		return strings.TrimRight(baseURL, "/") + "/antigravity"
 	}
-	return baseURL
+	return normalizeGeminiAIStudioBaseURL(baseURL)
 }
 
 func (a *Account) GetExtraString(key string) string {

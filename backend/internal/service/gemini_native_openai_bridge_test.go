@@ -70,7 +70,7 @@ func requireGeminiBridgeBilling(t *testing.T, result *ForwardResult, account *Ac
 }
 
 func TestGeminiBridgeProtocolUsageAndBilling(t *testing.T) {
-	for _, protocol := range []string{APIProtocolChatCompletions, APIProtocolResponses, APIProtocolAdaptive} {
+	for _, protocol := range []string{APIProtocolChatCompletions, APIProtocolResponses} {
 		for _, stream := range []bool{false, true} {
 			name := protocol + "/buffered"
 			if stream {
@@ -78,9 +78,6 @@ func TestGeminiBridgeProtocolUsageAndBilling(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				account := geminiBridgeAccount(protocol)
-				if protocol == APIProtocolAdaptive {
-					account.Credentials["api_base_urls"] = map[string]any{APIProtocolResponses: "https://responses.invalid/v1"}
-				}
 				calls := 0
 				upstream := &geminiBridgeUpstream{do: func(req *http.Request) (*http.Response, error) {
 					calls++
@@ -96,9 +93,6 @@ func TestGeminiBridgeProtocolUsageAndBilling(t *testing.T) {
 						return geminiBridgeResponse(`{"choices":[{"message":{"content":"hello"},"finish_reason":"length"}],"usage":` + geminiBridgeChatUsage + `}`), nil
 					}
 					require.Equal(t, "/v1/responses", req.URL.Path)
-					if protocol == APIProtocolAdaptive {
-						require.Equal(t, "responses.invalid", req.URL.Host)
-					}
 					require.True(t, gjson.GetBytes(body, "input").IsArray())
 					require.Equal(t, int64(64), gjson.GetBytes(body, "max_output_tokens").Int())
 					response := `{"id":"resp-local","model":"gemini-2.5-flash","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}],"usage":` + geminiBridgeResponsesUsage + `}`
