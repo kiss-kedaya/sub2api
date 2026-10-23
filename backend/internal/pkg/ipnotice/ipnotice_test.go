@@ -73,7 +73,7 @@ func TestGatewayIPNoticeJSONOutputs(t *testing.T) {
 		body, path string
 	}{
 		{Chat, `{"choices":[{"message":{"role":"assistant","content":"answer","tool_calls":[{"id":"call","function":{"arguments":"{}"}}]}}],"usage":{"total_tokens":10}}`, "choices.0.message.content"},
-		{Anthropic, `{"type":"message","content":[{"type":"tool_use","id":"call","input":{"x":1}}],"usage":{"output_tokens":7}}`, "content.0.text"},
+		{Anthropic, `{"type":"message","content":[{"type":"tool_use","id":"call","input":{"x":1}}],"usage":{"output_tokens":7}}`, "content.1.text"},
 		{Responses, `{"id":"resp1","output":[{"type":"function_call","call_id":"call","arguments":"{}"}],"usage":{"output_tokens":7}}`, "output.1.content.0.text"},
 		{Gemini, `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"exec","args":{"x":1}}}]}}],"usageMetadata":{"totalTokenCount":7}}`, "candidates.0.content.parts.0.text"},
 	} {
