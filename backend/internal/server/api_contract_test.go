@@ -383,8 +383,6 @@ func TestAPIContracts(t *testing.T) {
 						"web_search_price_per_call": null,
 						"search_price_per_1k": null,
 						"grok_moderation_refusal_price": null,
-						"search_provider_base_url": null,
-						"search_provider_api_key_set": false,
 						"audio_tts_price_per_million_chars": null,
 						"audio_stt_price_per_hour": null,
 						"audio_realtime_price_per_min": null,
