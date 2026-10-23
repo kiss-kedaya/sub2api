@@ -160,7 +160,7 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 	}
 
 	account, err := h.selectGeminiStudioAccount(c.Request.Context(), apiKey)
-	if err != nil || account == nil || account.IsGeminiOpenAIProtocol() {
+	if err != nil || account == nil || !account.UsesNativeGeminiUpstream() {
 		// 没有可选的 Gemini 原生账号，或账号走 OpenAI 兼容上游：两种情况都拿不到
 		// Google 格式目录，也没有上游响应可透传，只能回本地真实映射（空就是空）。
 		// 这里仍然返回 200 空目录而不是 503：Gemini SDK 在 generateContent 前会先
@@ -329,7 +329,7 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 		c.JSON(http.StatusOK, gemini.FallbackModel(modelName))
 		return
 	}
-	if account != nil && account.IsGeminiOpenAIProtocol() {
+	if account != nil && !account.UsesNativeGeminiUpstream() {
 		c.JSON(http.StatusOK, gemini.FallbackModel(modelName))
 		return
 	}

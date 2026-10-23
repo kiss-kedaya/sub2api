@@ -151,6 +151,27 @@ type geminiMappingFailureRepo struct {
 	geminiAllowlistAccountRepoStub
 }
 
+func TestGeminiNativeAdaptiveModelsPreservesUpstreamCatalog(t *testing.T) {
+	for _, protocol := range []string{"", service.APIProtocolAdaptive} {
+		t.Run(protocol, func(t *testing.T) {
+			id := int64(46)
+			repo := &geminiAllowlistAccountRepoStub{gatewayModelsAccountRepoStub: gatewayModelsAccountRepoStub{byGroup: map[int64][]service.Account{id: {
+				{ID: 1, Platform: service.PlatformGemini, Type: service.AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test", "base_url": "https://relay.example.com/v1", "api_protocol": protocol}},
+			}}}}
+			body := `{"models":[{"name":"models/gemini-native","inputTokenLimit":123}],"nextPageToken":"next"}`
+			upstream := &geminiMixedModelsUpstream{status: http.StatusOK, body: body}
+			h := &GatewayHandler{geminiCompatService: service.NewGeminiMessagesCompatService(repo, nil, nil, nil, nil, nil, upstream, nil, &config.Config{})}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1beta/models", nil)
+			c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{GroupID: &id, Group: &service.Group{ID: id, Platform: service.PlatformGemini}})
+			h.GeminiV1BetaListModels(c)
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.JSONEq(t, body, rec.Body.String())
+		})
+	}
+}
+
 func (r *geminiMappingFailureRepo) ListSchedulableByGroupIDAndPlatforms(_ context.Context, _ int64, _ []string) ([]service.Account, error) {
 	return nil, errors.New("catalog temporarily unavailable")
 }

@@ -22,6 +22,16 @@ func TestBuildGeminiAIStudioModelActionURL(t *testing.T) {
 	require.Equal(t, base+"/v1beta/models/gemini-2.5-pro:countTokens", got)
 }
 
+func TestGeminiNativeBaseURLProtocolSuffixes(t *testing.T) {
+	for _, suffix := range []string{"", "/", "/v1", "/v1/", "/v1beta", "/v1beta/", "/v1beta/models", "/v1/responses", "/v1/chat/completions"} {
+		t.Run(suffix, func(t *testing.T) {
+			got, err := buildGeminiAIStudioModelActionURL("https://relay.example.com/deployment"+suffix, "gemini-4-argon", "streamGenerateContent", true)
+			require.NoError(t, err)
+			require.Equal(t, "https://relay.example.com/deployment/v1beta/models/gemini-4-argon:streamGenerateContent?alt=sse", got)
+		})
+	}
+}
+
 // TestBuildGeminiAIStudioModelActionURLRejectsNonConformingModel 锁定不变式：
 // 模型名来自客户端（native 路由的 URL 片段 / compat 路由的请求体），
 // 只有合规的路径片段才允许拼进上游 URL。
