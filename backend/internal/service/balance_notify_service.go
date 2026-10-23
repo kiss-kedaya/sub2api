@@ -42,7 +42,7 @@ type AccountQuotaReader interface {
 type PushNotifier interface {
 	// PushToUser notifies one user; users without push configured are skipped.
 	PushToUser(ctx context.Context, userID int64, title, body, group string) error
-	// PushToAdmins notifies every admin who configured push on their profile.
+	// PushToAdmins sends private operational details to the primary administrator.
 	PushToAdmins(ctx context.Context, title, body, group string) error
 }
 

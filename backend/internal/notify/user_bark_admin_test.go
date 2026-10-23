@@ -14,10 +14,8 @@ type passthroughEncryptor struct{}
 func (passthroughEncryptor) EncryptString(s string) (string, error) { return "enc:" + s, nil }
 func (passthroughEncryptor) DecryptString(s string) (string, error) { return s, nil }
 
-// The admin fan-out must select only enabled admins with a stored key, and
-// must not stop at the first failing key: one broken device must not mute
-// the rest of the operators.
-func TestSendToAdminsSelectsOnlyEnabledAdminKeys(t *testing.T) {
+// Only the primary administrator can subscribe to private operational data.
+func TestSendToAdminsSelectsOnlyPrimaryAdminKey(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -25,7 +23,7 @@ func TestSendToAdminsSelectsOnlyEnabledAdminKeys(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(`SELECT bark_device_key_encrypted FROM users`).
-		WithArgs("admin").
+		WithArgs(int64(1), "admin").
 		WillReturnRows(sqlmock.NewRows([]string{"bark_device_key_encrypted"}))
 
 	svc := NewUserBarkService(db, passthroughEncryptor{})
@@ -43,8 +41,8 @@ func TestSendToAdminsQueryExcludesInactiveAndDeletedUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	mock.ExpectQuery(`(?s)SELECT bark_device_key_encrypted FROM users.*role = \$1 AND bark_notify_enabled = TRUE.*status = 'active' AND deleted_at IS NULL.*bark_device_key_encrypted <> ''`).
-		WithArgs("admin").
+	mock.ExpectQuery(`(?s)SELECT bark_device_key_encrypted FROM users.*id = \$1 AND role = \$2 AND bark_notify_enabled = TRUE.*status = 'active' AND deleted_at IS NULL.*bark_device_key_encrypted <> ''`).
+		WithArgs(int64(1), "admin").
 		WillReturnRows(sqlmock.NewRows([]string{"bark_device_key_encrypted"}))
 	if err := NewUserBarkService(db, passthroughEncryptor{}).SendToAdmins(context.Background(), bark.Notification{}); err != nil {
 		t.Fatal(err)
@@ -54,9 +52,8 @@ func TestSendToAdminsQueryExcludesInactiveAndDeletedUsers(t *testing.T) {
 	}
 }
 
-// A decrypt failure on one key must not abort the loop (firstErr is
-// reported once, every other admin still gets the push).
-func TestSendToAdminsContinuesAfterDecryptFailure(t *testing.T) {
+// An unreadable owner key must surface an error without another recipient.
+func TestSendToAdminsReportsOwnerDecryptFailure(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +61,7 @@ func TestSendToAdminsContinuesAfterDecryptFailure(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(`SELECT bark_device_key_encrypted FROM users`).
-		WithArgs("admin").
+		WithArgs(int64(1), "admin").
 		WillReturnRows(sqlmock.NewRows([]string{"bark_device_key_encrypted"}).
 			AddRow("bad-key"))
 
