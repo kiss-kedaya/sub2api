@@ -1,9 +1,11 @@
 """Canaries for scanner diagnostics; fixtures stay in captured child processes."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 import runpy
 
@@ -155,6 +157,98 @@ class SensitiveOutputCanaryTests(unittest.TestCase):
                 result = self.run_scanner(fixtures, mode)
                 self.assertEqual(result.returncode, 0)
                 self.assertTrue("check_sensitive: OK (2 files)" in result.stdout)
+                self.assertEqual(result.stderr, "")
+
+
+class EmptyCommitMetadataTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="sensitive-metadata-")
+        self.addCleanup(self.directory.cleanup)
+        self.repo = Path(self.directory.name)
+        self.environment = os.environ.copy()
+        # Keep the tests independent of the user's index, Git identity overrides,
+        # hooks and signing configuration. All values below are synthetic.
+        for name in tuple(self.environment):
+            if name.startswith(("GIT_", "EMAIL")):
+                self.environment.pop(name)
+        self.environment.update({
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_AUTHOR_NAME": "Canary Maintainer",
+            "GIT_AUTHOR_EMAIL": "maintainer@users.noreply.github.com",
+            "GIT_COMMITTER_NAME": "Canary Maintainer",
+            "GIT_COMMITTER_EMAIL": "maintainer@users.noreply.github.com",
+        })
+        self.run_git("init", "--quiet")
+        self.run_git("config", "core.hooksPath", str(self.repo / "no-hooks"))
+        self.run_git("config", "commit.gpgsign", "false")
+        self.run_git("commit", "--quiet", "--allow-empty", "-m", "safe initial commit")
+
+    def run_git(self, *arguments, environment=None):
+        result = subprocess.run(
+            ["git", *arguments], cwd=self.repo,
+            env=environment or self.environment,
+            capture_output=True, timeout=10, check=False,
+        )
+        self.assertEqual(result.returncode, 0, "isolated Git fixture failed")
+        return result
+
+    def run_cli(self, *arguments, environment=None):
+        return subprocess.run(
+            [sys.executable, "-B", str(SCANNER.resolve()), *arguments],
+            cwd=self.repo, env=environment or self.environment,
+            capture_output=True, text=True, encoding="utf-8",
+            timeout=10, check=False,
+        )
+
+    def assert_private_blocked(self, result, label, hidden):
+        self.assertEqual(result.returncode, 1, "empty commit must be blocked")
+        output = result.stdout + result.stderr
+        self.assertTrue("BLOCKED" in output, "missing blocked diagnostic")
+        self.assertTrue(label in output, "missing metadata rule")
+        self.assertTrue("[REDACTED]" in output, "missing redaction marker")
+        self.assertTrue(all(value not in output for value in hidden),
+                        "metadata diagnostic exposed synthetic private values")
+
+    def test_identity_checks_empty_index_with_effective_git_identity(self):
+        private_email = "987654321" + "@qq.com"
+        environment = self.environment | {"GIT_AUTHOR_EMAIL": private_email}
+        result = self.run_cli("--identity", environment=environment)
+        self.assert_private_blocked(result, "personal mailbox", (private_email,))
+
+    def test_metadata_checks_private_identity_on_empty_commit(self):
+        private_email = "987654321" + "@qq.com"
+        environment = self.environment | {"GIT_COMMITTER_EMAIL": private_email}
+        self.run_git("commit", "--quiet", "--allow-empty", "-m", "safe commit",
+                     environment=environment)
+        self.assert_private_blocked(self.run_cli("--metadata", "HEAD"),
+                                    "personal mailbox", (private_email,))
+
+    def test_metadata_checks_sensitive_message_on_empty_commit(self):
+        private_path = "C:/Users/private-canary-person/project"
+        self.run_git("commit", "--quiet", "--allow-empty", "-m",
+                     "fix: source " + private_path + " " + CANARY_CONTEXT)
+        self.assert_private_blocked(
+            self.run_cli("--metadata", "HEAD"),
+            "personal Windows profile path", (private_path, CANARY_CONTEXT),
+        )
+
+    def test_metadata_argument_errors_are_reported_with_empty_index(self):
+        for arguments in (("--metadata",), ("--metadata", "--identity"),
+                          ("--metadata", "missing-canary-reference")):
+            with self.subTest(arguments=arguments):
+                result = self.run_cli(*arguments)
+                self.assertEqual(result.returncode, 2, "bad metadata argument must fail")
+                self.assertTrue("check_sensitive:" in result.stdout)
+                self.assertEqual(result.stderr, "")
+
+    def test_clean_empty_index_and_public_metadata_succeed(self):
+        for arguments in ((), ("--all",), ("--identity",),
+                          ("--metadata", "HEAD"), ("--identity", "--metadata", "HEAD")):
+            with self.subTest(arguments=arguments):
+                result = self.run_cli(*arguments)
+                self.assertEqual(result.returncode, 0, "clean empty commit must succeed")
+                self.assertTrue("nothing to scan" in result.stdout)
                 self.assertEqual(result.stderr, "")
 
 

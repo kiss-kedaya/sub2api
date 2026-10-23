@@ -233,10 +233,6 @@ def scan(path, text):
 def main():
     scan_all = "--all" in sys.argv
     files = tracked_files() if scan_all else staged_files()
-    if not files:
-        print("check_sensitive: nothing to scan")
-        return 0
-
     binary_ext = (".png", ".jpg", ".jpeg", ".gif", ".zip", ".gz", ".pdf",
                   ".ico", ".woff", ".woff2", ".ttf", ".db", ".sqlite", ".svg")
     problems = []
@@ -244,7 +240,7 @@ def main():
         problems.extend(publishing_metadata())
     if "--metadata" in sys.argv:
         position = sys.argv.index("--metadata")
-        if position + 1 >= len(sys.argv):
+        if position + 1 >= len(sys.argv) or sys.argv[position + 1].startswith("-"):
             print("check_sensitive: --metadata requires a commit reference")
             return 2
         try:
@@ -252,6 +248,9 @@ def main():
         except ValueError:
             print("check_sensitive: unable to inspect commit metadata")
             return 2
+    if not files and not problems:
+        print("check_sensitive: nothing to scan")
+        return 0
     for path in files:
         if path.endswith(binary_ext) or skipped(path):
             continue
