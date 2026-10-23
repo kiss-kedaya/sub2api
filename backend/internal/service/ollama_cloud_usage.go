@@ -69,7 +69,7 @@ var (
 		"OLLAMA_CLOUD_USAGE_SESSION_REQUIRED", "an Ollama web session must be configured first",
 	)
 	ErrOllamaCloudUsageEncryptionKey = infraerrors.BadRequest(
-		"OLLAMA_CLOUD_USAGE_ENCRYPTION_KEY_NOT_CONFIGURED", "cannot store an Ollama web session without a fixed TOTP_ENCRYPTION_KEY",
+		"OLLAMA_CLOUD_USAGE_ENCRYPTION_KEY_NOT_CONFIGURED", "cannot store an Ollama web session before persistent installation encryption is initialized",
 	)
 	ErrOllamaCloudUsageIdentityChanged = infraerrors.Conflict(
 		"OLLAMA_CLOUD_USAGE_IDENTITY_CHANGED", "account identity or Ollama web session changed during refresh; retry",
@@ -426,7 +426,7 @@ func ProvideOllamaCloudUsageService(
 	lockCache LeaderLockCache,
 	db *sql.DB,
 ) *OllamaCloudUsageService {
-	keyConfigured := cfg != nil && cfg.Totp.EncryptionKeyConfigured
+	keyConfigured := cfg != nil && cfg.Totp.HasPersistentEncryptionKey()
 	svc := NewOllamaCloudUsageService(accountRepo, httpUpstream, settingService, encryptor, keyConfigured)
 	svc.lockCache = lockCache
 	svc.db = db

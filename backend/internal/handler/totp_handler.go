@@ -129,9 +129,10 @@ func (h *TotpHandler) Enable(c *gin.Context) {
 
 // TotpDisableRequest represents the request to disable TOTP
 type TotpDisableRequest struct {
-	EmailCode string `json:"email_code"`
-	Password  string `json:"password"`
-	TotpCode  string `json:"totp_code"`
+	EmailCode               string `json:"email_code"`
+	Password                string `json:"password"`
+	TotpCode                string `json:"totp_code"`
+	ServerAuthorizationCode string `json:"server_authorization_code"`
 }
 
 // Disable disables TOTP for the current user
@@ -145,12 +146,21 @@ func (h *TotpHandler) Disable(c *gin.Context) {
 	}
 
 	var req TotpDisableRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request: "+err.Error())
+	if !decodeCryptoRequest(c, &req, 4<<10, "Invalid two-factor disable request") {
 		return
 	}
 
-	if err := h.totpService.Disable(c.Request.Context(), subject.UserID, req.EmailCode, req.Password, req.TotpCode); err != nil {
+	var err error
+	if req.ServerAuthorizationCode != "" {
+		if req.TotpCode != "" || req.Password != "" || req.EmailCode != "" {
+			response.BadRequest(c, "Choose one two-factor disable verification method")
+			return
+		}
+		err = h.totpService.DisableWithServerAuthorization(c.Request.Context(), subject.UserID, req.ServerAuthorizationCode)
+	} else {
+		err = h.totpService.Disable(c.Request.Context(), subject.UserID, req.EmailCode, req.Password, req.TotpCode)
+	}
+	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}

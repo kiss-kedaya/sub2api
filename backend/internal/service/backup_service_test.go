@@ -289,8 +289,8 @@ func newTestBackupService(repo *mockSettingRepo, dumper DBDumper, store *mockObj
 	return NewBackupService(repo, cfg, &plainEncryptor{}, factory, dumper)
 }
 
-// newTestBackupServiceEphemeralKey mirrors a deployment that never set
-// TOTP_ENCRYPTION_KEY, so the secret encryption key is auto-generated.
+// newTestBackupServiceEphemeralKey models configuration before installation-key
+// bootstrap has persisted or loaded a stable encryption key.
 func newTestBackupServiceEphemeralKey(repo *mockSettingRepo) *BackupService {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{Host: "localhost", Port: 5432, User: "test", DBName: "testdb"},
@@ -376,7 +376,7 @@ func TestBackupService_UpdateS3Config_RejectsEphemeralKey(t *testing.T) {
 	repo := newMockSettingRepo()
 	svc := newTestBackupServiceEphemeralKey(repo)
 
-	// 提供新 secret 但密钥为自动生成 -> 必须拒绝，避免重启后无法解密（#4524）。
+	// 新 secret 配合尚未持久化的临时密钥必须拒绝（#4524）。
 	_, err := svc.UpdateS3Config(context.Background(), BackupS3Config{
 		Bucket:          "my-bucket",
 		AccessKeyID:     "AKID",
@@ -406,6 +406,32 @@ func TestBackupService_EncryptionKeyConfigured(t *testing.T) {
 	repo := newMockSettingRepo()
 	require.True(t, newTestBackupService(repo, &mockDumper{}, newMockObjectStore()).EncryptionKeyConfigured())
 	require.False(t, newTestBackupServiceEphemeralKey(repo).EncryptionKeyConfigured())
+}
+
+func TestBackupService_InstallationKeyPersistsS3SecretsAcrossServiceRestart(t *testing.T) {
+	ctx := context.Background()
+	repo := newMockSettingRepo()
+	cfg := &config.Config{Totp: config.TotpConfig{EncryptionKeyPersistent: true}}
+	first := NewBackupService(repo, cfg, &plainEncryptor{}, nil, &mockDumper{})
+	require.True(t, first.EncryptionKeyConfigured())
+	public, err := first.UpdateS3Config(ctx, BackupS3Config{
+		Bucket: "my-bucket", AccessKeyID: "AKID", SecretAccessKey: "installation-s3-secret",
+	})
+	require.NoError(t, err)
+	require.Empty(t, public.SecretAccessKey)
+	raw, err := repo.GetValue(ctx, settingKeyBackupS3Config)
+	require.NoError(t, err)
+	require.NotContains(t, raw, `"secret_access_key":"installation-s3-secret"`)
+
+	// Reconstructing the service must retain the persisted-key safety gate and
+	// decrypt the saved secret, including updates that preserve an existing one.
+	restarted := NewBackupService(repo, cfg, &plainEncryptor{}, nil, &mockDumper{})
+	_, err = restarted.UpdateS3Config(ctx, BackupS3Config{Bucket: "new-bucket", AccessKeyID: "AKID"})
+	require.NoError(t, err)
+	loaded, err := restarted.loadS3Config(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "installation-s3-secret", loaded.SecretAccessKey)
+	require.Equal(t, "new-bucket", loaded.Bucket)
 }
 
 func TestBackupService_SaveRecordConcurrency(t *testing.T) {

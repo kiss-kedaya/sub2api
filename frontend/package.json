@@ -19,7 +19,6 @@
   },
   "dependencies": {
     "@airwallex/components-sdk": "^1.30.2",
-    "@lobehub/icons": "^4.0.2",
     "@stripe/stripe-js": "^9.0.1",
     "@tanstack/vue-virtual": "^3.13.23",
     "@vueuse/core": "^10.7.0",
@@ -36,7 +35,7 @@
     "vue-draggable-plus": "^0.6.1",
     "vue-i18n": "^9.14.5",
     "vue-router": "^4.2.5",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@intlify/message-compiler": "9.14.5",

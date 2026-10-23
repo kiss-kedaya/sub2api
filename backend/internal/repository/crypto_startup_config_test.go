@@ -16,16 +16,12 @@ func TestCryptoReviewMigrationCommandRejectsWritesBeforeConnecting(t *testing.T)
 	}
 }
 
-func TestCryptoReviewRequiresPersistentTOTPKeyBeforeConnecting(t *testing.T) {
+func TestCryptoReviewRejectsMalformedExplicitTOTPKeyBeforeConnecting(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
 	cfg := &config.Config{Database: config.DatabaseConfig{MigrationMode: config.DatabaseMigrationModeValidate}}
-	_, _, err := InitEnt(cfg)
-	if err == nil || !strings.Contains(err.Error(), "persistent TOTP_ENCRYPTION_KEY") {
-		t.Fatalf("expected persistent key rejection before database access, got %v", err)
-	}
 	cfg.Totp.EncryptionKeyConfigured = true
 	cfg.Totp.EncryptionKey = "invalid"
-	_, _, err = InitEnt(cfg)
+	_, _, err := InitEnt(cfg)
 	if err == nil || !strings.Contains(err.Error(), "TOTP key") {
 		t.Fatalf("expected malformed key rejection before database access, got %v", err)
 	}

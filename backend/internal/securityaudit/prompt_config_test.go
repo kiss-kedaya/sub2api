@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/stretchr/testify/require"
 )
 
@@ -257,6 +258,42 @@ func TestBuildNextStorageRejectsNewTokenWithoutConfiguredEncryptionKey(t *testin
 	cleared, err := manager.buildNextStorage(current, clearedReq, 9)
 	require.NoError(t, err)
 	require.Empty(t, cleared.Endpoints[0].TokenCiphertext)
+}
+
+func TestInstallationKeyAllowsPromptAuditTokenPersistenceAndReload(t *testing.T) {
+	cfg := &config.Config{Totp: config.TotpConfig{EncryptionKey: strings.Repeat("ac", 32), EncryptionKeyPersistent: true}}
+	encryptor, err := repository.NewAESEncryptor(cfg)
+	require.NoError(t, err)
+	manager := NewConfigManager(nil, nil, nil, encryptor, cfg)
+	request := UpdateConfigRequest{
+		ExpectedConfigVersion: 1, Enabled: true, Strategy: "priority", WorkerCount: 1,
+		QueueCapacity: 10, Scanners: []string{"PII"}, AllGroups: true,
+		Endpoints: []UpdateEndpoint{{ID: "guard-1", Name: "Guard", Protocol: "openai_compatible",
+			BaseURL: "http://127.0.0.1:8080", Model: DefaultGuardModel, TimeoutMS: 1000, InputLimit: 1000,
+			Enabled: true, Token: "installation-prompt-token"}},
+	}
+	storage, err := manager.buildNextStorage(DefaultStorageConfig(), request, 9)
+	require.NoError(t, err)
+	raw, err := json.Marshal(storage)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "installation-prompt-token")
+
+	// A second AES instance models restart using the installation's saved key.
+	reloadedEncryptor, err := repository.NewAESEncryptor(cfg)
+	require.NoError(t, err)
+	restarted := NewConfigManager(nil, staticSettingRepository{values: map[string]string{
+		SettingKeyPromptAuditConfig: string(raw), SettingKeyRiskControl: "true",
+	}}, nil, reloadedEncryptor, cfg)
+	require.NoError(t, restarted.Reload(context.Background()))
+	active := restarted.snapshot.Load()
+	require.NotNil(t, active)
+	require.Equal(t, "installation-prompt-token", active.active.Endpoints[0].Token)
+	public, err := restarted.Public()
+	require.NoError(t, err)
+	require.True(t, public.Endpoints[0].HasToken)
+	publicRaw, err := json.Marshal(public)
+	require.NoError(t, err)
+	require.NotContains(t, string(publicRaw), "installation-prompt-token")
 }
 
 func TestEffectiveModeTruthTable(t *testing.T) {

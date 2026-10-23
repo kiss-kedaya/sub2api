@@ -219,7 +219,7 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 		}
 	}
 	if err != nil {
-		j.Error = fmt.Sprintf("broadcast/confirmation unresolved: %v", err)
+		j.Error = rpc.SafeError(err)
 		return false, joinErrors(err, e.saveJob(ctx, j))
 	}
 	if state == receiptReverted {

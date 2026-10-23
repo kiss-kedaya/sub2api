@@ -102,7 +102,7 @@ describe('TOTP 弹窗定时器清理', () => {
     expect(clearIntervalSpy).toHaveBeenCalledWith(timerId)
   })
 
-  it('TotpDisableDialog 卸载时清理倒计时定时器', async () => {
+  it('TotpDisableDialog 不再发送邮箱码或创建倒计时', async () => {
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
 
@@ -110,16 +110,13 @@ describe('TOTP 弹窗定时器清理', () => {
       .findAll('button')
       .find((button) => button.text().includes('profile.totp.sendCode'))
 
-    expect(sendButton).toBeTruthy()
-    await sendButton!.trigger('click')
-    await flushPromises()
-
-    expect(setIntervalSpy).toHaveBeenCalledTimes(1)
-    const timerId = setIntervalSpy.mock.results[0]?.value
+    expect(sendButton).toBeUndefined()
+    expect(wrapper.find('#disable-totp-code').exists()).toBe(true)
+    expect(setIntervalSpy).not.toHaveBeenCalled()
 
     wrapper.unmount()
 
-    expect(clearIntervalSpy).toHaveBeenCalledWith(timerId)
+    expect(mocks.sendVerifyCode).not.toHaveBeenCalled()
   })
 
   it('TotpSetupModal 失败时改用 toast 并不渲染内联错误', async () => {

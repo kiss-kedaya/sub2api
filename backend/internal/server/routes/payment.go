@@ -71,7 +71,7 @@ func RegisterPaymentRoutes(
 		webhook.POST("/airwallex", webhookHandler.AirwallexWebhook)
 		webhook.POST("/epusdt", webhookHandler.EPUSDTWebhook)
 		// Compatibility alias for existing EPUSDT deployments.
-		v1.POST("/payments/callback", webhookHandler.EPUSDTWebhook)
+		v1.POST("/payments/callback", panelRateLimiter.PublicIP(), webhookHandler.EPUSDTWebhook)
 	}
 
 	// --- Admin payment endpoints (admin auth) ---

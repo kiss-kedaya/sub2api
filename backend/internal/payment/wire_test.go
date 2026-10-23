@@ -45,6 +45,17 @@ func TestProvideEncryptionKeyUsesConfiguredTotpKey(t *testing.T) {
 	}
 }
 
+func TestProvideEncryptionKeyUsesPersistedInstallationKeyWithoutManualConfiguration(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Totp: config.TotpConfig{
+		EncryptionKey: strings.Repeat("ab", 32), EncryptionKeyPersistent: true,
+	}}
+	key, err := ProvideEncryptionKey(cfg)
+	if err != nil || len(key) != 32 {
+		t.Fatalf("persisted installation key must enable payment encryption, len=%d err=%v", len(key), err)
+	}
+}
+
 func TestProvideEncryptionKeyRejectsConfiguredInvalidLength(t *testing.T) {
 	t.Parallel()
 

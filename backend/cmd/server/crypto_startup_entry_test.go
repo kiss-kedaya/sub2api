@@ -18,6 +18,9 @@ func TestCryptoReviewStartupEntry(t *testing.T) {
 		if mode == "reset-admin-2fa" {
 			os.Args = append(os.Args, "-user-id", "1", "-confirm")
 		}
+		if mode == "issue-admin-2fa-code" {
+			os.Args = append(os.Args, "-user-id", "1")
+		}
 		main()
 		os.Exit(0)
 	}
@@ -25,7 +28,7 @@ func TestCryptoReviewStartupEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"setup", "migrate-only", "reset-admin-2fa", "missing-install"} {
+	for _, mode := range []string{"setup", "migrate-only", "reset-admin-2fa", "issue-admin-2fa-code", "missing-install"} {
 		t.Run(mode, func(t *testing.T) {
 			cmd := exec.Command(executable, "-test.run=^TestCryptoReviewStartupEntry$")
 			cmd.Env = append(os.Environ(), "CRYPTO_STARTUP_TEST_CHILD="+mode,

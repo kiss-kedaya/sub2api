@@ -55,15 +55,15 @@ type CryptoSecurityService struct {
 	operators map[int64]struct{}
 }
 
-// NewCryptoSecurityService never generates or changes an encryption key. Only an
-// explicitly configured, persistent TOTP key may enable payment verification.
+// NewCryptoSecurityService never generates or changes an encryption key. The
+// shared installation key must have been configured or persisted at bootstrap.
 func NewCryptoSecurityService(totp *TotpService, cfg *config.Config) *CryptoSecurityService {
 	s := &CryptoSecurityService{totp: totp, operators: cryptoOperatorIDs(os.Getenv("CRYPTO_ADMIN_USER_IDS"))}
 	if totp != nil {
 		totp.cryptoSecurity = s
 		s.store, _ = totp.cache.(CryptoTotpStore)
 	}
-	if cfg != nil && cfg.Totp.EncryptionKeyConfigured {
+	if cfg != nil && cfg.Totp.HasPersistentEncryptionKey() {
 		key, err := hex.DecodeString(cfg.Totp.EncryptionKey)
 		if err == nil && len(key) == 32 {
 			s.key = key

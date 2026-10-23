@@ -9,6 +9,8 @@ import (
 	"math/big"
 	"strconv"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
 
 type jobDB interface {
@@ -65,7 +67,7 @@ func (e *Executor) lock(ctx context.Context) (*sql.Conn, func() error, error) {
 
 type persistenceError struct{ cause error }
 
-func (e *persistenceError) Error() string { return "persist sweep job: " + e.cause.Error() }
+func (e *persistenceError) Error() string { return "persist sweep job: " + rpc.SafeError(e.cause) }
 func (e *persistenceError) Unwrap() error { return e.cause }
 
 func (e *Executor) queries() jobDB {
@@ -103,7 +105,7 @@ func (j *sweepJob) outcome() SweepEntry {
 		status = j.Status
 	}
 	return SweepEntry{Chain: j.Chain, Address: j.Address, Amount: amount,
-		GasTxHash: j.GasHash, SweepTxHash: j.SweepHash, Status: status, Error: j.Error}
+		GasTxHash: j.GasHash, SweepTxHash: j.SweepHash, Status: status, Error: rpc.SafeRecordedError(j.Error)}
 }
 
 // Legacy rows can contain duplicate attempts and inaccurate amounts. They
@@ -169,6 +171,7 @@ func (e *Executor) createJob(ctx context.Context, entry PlanEntry) (*sweepJob, e
 // Every state change checks its revision, including the final ledger write.
 // Immutable plan fields and amount are never rewritten.
 func (e *Executor) saveJob(ctx context.Context, j *sweepJob) error {
+	j.Error = rpc.SafeRecordedError(j.Error)
 	result, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET
 		status=$2, error=$3, confirmations_required=$4, gas_payer=$5, gas_amount=$6,
 		gas_nonce=$7, gas_raw_tx=$8, gas_tx_hash=$9, gas_confirmed=$10,
