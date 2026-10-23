@@ -51,6 +51,16 @@ const fakeAuthResponse = {
   user: { ...fakeUser },
 }
 
+describe('administrator observer access', () => {
+  it.each([[1, 'admin', false], [2, 'admin', true], [3, 'admin', true], [2, 'user', false]] as const)('classifies user %s with role %s', (id, role, observer) => {
+    setActivePinia(createPinia())
+    const store = useAuthStore()
+    store.user = { ...fakeUser, id, role }
+    expect(store.isAdmin).toBe(role === 'admin')
+    expect(store.isAdminObserver).toBe(observer)
+  })
+})
+
 describe('useAuthStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

@@ -945,7 +945,12 @@ router.beforeEach(async (to, _from, next) => {
     return
   }
 
-  if (requiresAdmin && authStore.isAdmin) {
+  if (requiresAdmin && authStore.isAdminObserver && to.path !== '/admin/usage') {
+    next('/admin/usage')
+    return
+  }
+
+  if (requiresAdmin && authStore.isAdmin && !authStore.isAdminObserver) {
     const adminComplianceStore = useAdminComplianceStore()
     if (!adminComplianceStore.initialized) {
       try {

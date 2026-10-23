@@ -150,6 +150,8 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 	}
 	out := &AdminGroup{
 		Group:                       groupFromServiceBase(g),
+		SearchProviderBaseURL:       g.SearchProviderBaseURL,
+		SearchProviderAPIKeySet:     g.SearchProviderAPIKey != nil && *g.SearchProviderAPIKey != "",
 		ForceOpenAIFast:             g.ForceOpenAIFast,
 		FreeOpenAIFast:              g.FreeOpenAIFast,
 		ProfitControlEnabled:        g.ProfitControlEnabled,
@@ -215,8 +217,6 @@ func groupFromServiceBase(g *service.Group) Group {
 		WebSearchPricePerCall:           g.WebSearchPricePerCall,
 		SearchPricePer1k:                g.SearchPricePer1k,
 		GrokModerationRefusalPrice:      g.GrokModerationRefusalPrice,
-		SearchProviderBaseURL:           g.SearchProviderBaseURL,
-		SearchProviderAPIKeySet:         g.SearchProviderAPIKey != nil && *g.SearchProviderAPIKey != "",
 		AudioRealtimePricePerMin:        g.AudioRealtimePricePerMin,
 		AudioTtsPricePerMillionChars:    g.AudioTTSPricePerMillionChars,
 		AudioSttPricePerHour:            g.AudioSTTPricePerHour,

@@ -19,7 +19,16 @@ type ownerKeyUserRepo struct {
 	admin *service.User
 }
 
-func (r *ownerKeyUserRepo) GetFirstAdmin(context.Context) (*service.User, error) { return r.admin, nil }
+func (r *ownerKeyUserRepo) GetByID(_ context.Context, id int64) (*service.User, error) {
+	if id != PrimaryAdminUserID {
+		panic("admin API key must resolve ID 1")
+	}
+	return r.admin, nil
+}
+
+func (r *ownerKeyUserRepo) GetUserAvatar(context.Context, int64) (*service.UserAvatar, error) {
+	return nil, nil
+}
 
 func TestAdminAPIKeyEstablishesOnlyVerifiedOwnerScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -31,9 +40,10 @@ func TestAdminAPIKeyEstablishesOnlyVerifiedOwnerScope(t *testing.T) {
 		status   int
 		fullPool bool
 	}{
-		{"renamed owner", &service.User{ID: 7, Email: "renamed@example.test", Role: service.RoleAdmin, Status: service.StatusActive}, 7, "test-admin-key", 200, true},
-		{"different configured owner", &service.User{ID: 7, Role: service.RoleAdmin, Status: service.StatusActive}, 8, "test-admin-key", 200, false},
-		{"unconfigured owner leaves scope untouched", &service.User{ID: 7, Role: service.RoleAdmin, Status: service.StatusActive}, 0, "test-admin-key", 200, true},
+		{"renamed primary owner", &service.User{ID: 1, Email: "renamed@example.test", Role: service.RoleAdmin, Status: service.StatusActive}, 7, "test-admin-key", 200, true},
+		{"different legacy owner cannot narrow primary admin", &service.User{ID: 1, Role: service.RoleAdmin, Status: service.StatusActive}, 8, "test-admin-key", 200, true},
+		{"primary owner with no configured scope", &service.User{ID: 1, Role: service.RoleAdmin, Status: service.StatusActive}, 0, "test-admin-key", 200, true},
+		{"non-primary administrator cannot represent owner key", &service.User{ID: 7, Role: service.RoleAdmin, Status: service.StatusActive}, 7, "test-admin-key", 403, false},
 		{"inactive admin", &service.User{ID: 7, Role: service.RoleAdmin, Status: service.StatusDisabled}, 7, "test-admin-key", 403, false},
 		{"non admin", &service.User{ID: 7, Role: service.RoleUser, Status: service.StatusActive}, 7, "test-admin-key", 403, false},
 		{"missing admin", nil, 7, "test-admin-key", 403, false},
@@ -50,7 +60,7 @@ func TestAdminAPIKeyEstablishesOnlyVerifiedOwnerScope(t *testing.T) {
 				called = true
 				// The middleware installs a scope only when an owner is configured.
 				id, fullPool, ok := service.AccountOwnerScopeDetail(c.Request.Context())
-				require.Equal(t, tc.owner > 0, ok)
+				require.True(t, ok)
 				if ok {
 					require.Equal(t, tc.user.ID, id)
 					require.Equal(t, tc.fullPool, fullPool)

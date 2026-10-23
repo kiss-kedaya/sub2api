@@ -241,8 +241,7 @@ func (h *PageHandler) checkSlugVisibility(c *gin.Context, slug string) bool {
 		return false
 	}
 	if visibility == "admin" {
-		role, _ := middleware2.GetUserRoleFromContext(c)
-		return role == "admin"
+		return middleware2.IsPrimaryAdmin(c)
 	}
 	return true
 }

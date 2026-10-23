@@ -62,6 +62,14 @@ type CreateUsageCleanupTaskRequest struct {
 // List handles listing all usage records with filters
 // GET /api/v1/admin/usage
 func (h *UsageHandler) List(c *gin.Context) {
+	if middleware.IsAdminObserver(c) {
+		for _, requestID := range c.QueryArray("request_id") {
+			if strings.TrimSpace(requestID) != "" {
+				response.Forbidden(c, "Request identity filters are unavailable for observers")
+				return
+			}
+		}
+	}
 	page, pageSize := response.ParsePagination(c)
 	exactTotal := false
 	if exactTotalRaw := strings.TrimSpace(c.Query("exact_total")); exactTotalRaw != "" {
@@ -249,7 +257,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 			out = append(head, out...)
 		}
 	}
-	response.Paginated(c, out, result.Total, page, pageSize)
+	writeAdminUsagePage(c, out, result.Total, page, pageSize)
 }
 
 func visibleAdminUsageInflight(ctx context.Context, filters usagestats.UsageLogFilters, finished map[string]struct{}) []service.UsageInflightSnapshot {
@@ -756,5 +764,17 @@ func writeAdminInflightOnly(c *gin.Context, filters usagestats.UsageLogFilters) 
 	for _, row := range pageRows {
 		out = append(out, dto.AdminUsageLogFromInflight(row, now))
 	}
-	response.Paginated(c, out, int64(total), page, 10)
+	writeAdminUsagePage(c, out, int64(total), page, 10)
+}
+
+func writeAdminUsagePage(c *gin.Context, records []dto.AdminUsageLog, total int64, page, pageSize int) {
+	if middleware.IsAdminObserver(c) {
+		out := make([]dto.ObserverUsageLog, 0, len(records))
+		for _, record := range records {
+			out = append(out, dto.UsageLogForObserver(record))
+		}
+		response.Paginated(c, out, total, page, pageSize)
+		return
+	}
+	response.Paginated(c, records, total, page, pageSize)
 }

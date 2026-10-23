@@ -29,6 +29,15 @@ func TestChannelMonitorV2QueryListSupportsRepeatedAndCommaValues(t *testing.T) {
 	require.Equal(t, []string{"openai", "grok", "anthropic"}, queryList(c, "platform"))
 }
 
+func TestObserverCannotUseUserMonitorEndpointAsFullAdmin(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set(string(middleware.ContextKeyUserRole), service.RoleAdmin)
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 2})
+	require.False(t, channelMonitorV2IsAdmin(c))
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
+	require.True(t, channelMonitorV2IsAdmin(c))
+}
+
 func TestChannelMonitorV2GroupByQueryDefaultsAndRejectsInvalid(t *testing.T) {
 	groupBy, err := service.ParseChannelMonitorV2GroupBy("")
 	require.NoError(t, err)

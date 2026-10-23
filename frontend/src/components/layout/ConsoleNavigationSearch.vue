@@ -49,6 +49,9 @@ const destinations = computed(() => {
     ...(!auth.isSimpleMode && isFeatureFlagEnabled(FeatureFlags.payment) ? [{ path: '/purchase', label: t('nav.buySubscription'), icon: 'creditCard' as const }] : []),
   ]
   if (auth.user?.role !== 'admin') return app.backendModeEnabled ? [] : personal
+  if (auth.isAdminObserver) {
+    return [{ path: '/admin/usage', label: t('admin.usage.title'), icon: 'chart' as const }, ...personal]
+  }
   const admin = [
     { path: '/admin/dashboard', label: t('admin.dashboard.title'), icon: 'chart' as const },
     { path: '/admin/accounts', label: t('admin.accounts.title'), icon: 'server' as const },

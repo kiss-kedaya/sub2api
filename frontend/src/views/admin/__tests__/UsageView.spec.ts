@@ -4,6 +4,10 @@ import { defineComponent, ref } from 'vue'
 
 import UsageView from '../UsageView.vue'
 
+const observerAuth = vi.hoisted(() => ({ isAdminObserver: false }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => observerAuth }))
+beforeEach(() => { observerAuth.isAdminObserver = false })
+
 const { list, exportList, getStats, getSnapshotV2, getById, getModelStats, listErrorLogs, routeQuery, aoaToSheet, sheetAddAoa, saveAs, xlsxWrite } = vi.hoisted(() => {
   vi.stubGlobal('localStorage', {
     getItem: vi.fn(() => null),
@@ -191,6 +195,32 @@ describe('admin UsageView route filters', () => {
   afterEach(() => {
     Object.keys(routeQuery).forEach((key) => delete routeQuery[key])
     vi.useRealTimers()
+  })
+
+  it('keeps observer usage available without identity lookups, privileged tabs or actions', async () => {
+    observerAuth.isAdminObserver = true
+    routeQuery.user_id = '42'
+    listErrorLogs.mockClear()
+    exportList.mockClear()
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 42 }), expect.anything())
+    expect(getById).not.toHaveBeenCalled()
+    expect(wrapper.findAll('[data-testid="usage-detail-tab"]')).toHaveLength(1)
+    expect(wrapper.findComponent({ name: 'UsageCleanupDialog' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'UserBalanceHistoryModal' }).exists()).toBe(false)
+    const vm = wrapper.vm as any
+    vm.switchTab('errors')
+    vm.handleUserClick(42)
+    vm.openCleanupDialog()
+    await vm.exportToExcel()
+    await flushPromises()
+    expect(listErrorLogs).not.toHaveBeenCalled()
+    expect(getById).not.toHaveBeenCalled()
+    expect(exportList).not.toHaveBeenCalled()
+    expect(vm.activeTab).toBe('usage')
+    expect(vm.visibleColumns.map((column: { key: string }) => column.key)).not.toEqual(expect.arrayContaining(['ip_address', 'endpoint', 'request_id']))
+    wrapper.unmount()
   })
 
   it('searches clicked IDs exactly and keeps the filter across pages', async () => {

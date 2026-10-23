@@ -60,6 +60,7 @@ function onVisibilityChange() {
 }
 
 function onAdminComplianceRequired(event: Event) {
+  if (authStore.isAdminObserver) return
   const detail = (event as CustomEvent<Record<string, string>>).detail || {}
   adminComplianceStore.requireAcknowledgement(detail)
 }
@@ -68,7 +69,7 @@ watch(
   () => authStore.isAuthenticated,
   (isAuthenticated, oldValue) => {
     if (isAuthenticated) {
-      if (authStore.isAdmin) {
+      if (authStore.isAdmin && !authStore.isAdminObserver) {
         adminComplianceStore.fetchStatus().catch((error) => {
           console.error('Failed to fetch admin compliance status:', error)
         })

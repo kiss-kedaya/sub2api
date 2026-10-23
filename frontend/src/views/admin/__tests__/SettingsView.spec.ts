@@ -551,6 +551,7 @@ function mountView() {
   return mount(SettingsView, {
     global: {
       stubs: {
+        teleport: true,
         AppLayout: AppLayoutStub,
         Select: SelectStub,
         Toggle: ToggleStub,

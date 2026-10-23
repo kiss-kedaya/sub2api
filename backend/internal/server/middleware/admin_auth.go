@@ -44,6 +44,9 @@ func adminAuth(
 				if !validateJWTForAdmin(c, token, authService, userService, settingService, auditService) {
 					return
 				}
+				if !enforceAdminObserverAccess(c) {
+					return
+				}
 				setAdminAccountOwnerScope(c, cfg)
 				c.Next()
 				return
@@ -54,6 +57,9 @@ func adminAuth(
 		apiKey := c.GetHeader("x-api-key")
 		if apiKey != "" {
 			if !validateAdminAPIKey(c, apiKey, settingService, userService) {
+				return
+			}
+			if !enforceAdminObserverAccess(c) {
 				return
 			}
 			setAdminAccountOwnerScope(c, cfg)
@@ -74,6 +80,9 @@ func adminAuth(
 				if !validateJWTForAdmin(c, token, authService, userService, settingService, auditService) {
 					return
 				}
+				if !enforceAdminObserverAccess(c) {
+					return
+				}
 				setAdminAccountOwnerScope(c, cfg)
 				c.Next()
 				return
@@ -86,12 +95,15 @@ func adminAuth(
 }
 
 // setAdminAccountOwnerScope is called only after administrator authentication.
-// Per-admin account-pool isolation is conditional: without a configured owner the
-// context keeps whole-pool visibility, so a deployment that never sets
-// security.account_pool_owner_user_id cannot lose access to its legacy accounts.
+// ID 1 always owns the full pool. The legacy owner scope cannot grant a
+// secondary administrator access past the observer boundary above.
 func setAdminAccountOwnerScope(c *gin.Context, cfg *config.Config) {
 	subject, ok := GetAuthSubjectFromContext(c)
 	if !ok || subject.UserID <= 0 {
+		return
+	}
+	if subject.UserID == PrimaryAdminUserID {
+		c.Request = c.Request.WithContext(service.WithAccountOwnerScope(c.Request.Context(), subject.UserID, PrimaryAdminUserID))
 		return
 	}
 	if cfg == nil || cfg.Security.AccountPoolOwnerUserID <= 0 {
@@ -158,12 +170,12 @@ func validateAdminAPIKey(
 	}
 
 	// 获取真实的管理员用户
-	admin, err := userService.GetFirstAdmin(c.Request.Context())
+	admin, err := userService.GetByID(c.Request.Context(), PrimaryAdminUserID)
 	if err != nil {
 		AbortWithError(c, 500, "INTERNAL_ERROR", "No admin user found")
 		return false
 	}
-	if admin == nil || !admin.IsActive() || !admin.IsAdmin() {
+	if admin == nil || admin.ID != PrimaryAdminUserID || !admin.IsActive() || !admin.IsAdmin() {
 		AbortWithError(c, 403, "FORBIDDEN", "Active admin access required")
 		return false
 	}

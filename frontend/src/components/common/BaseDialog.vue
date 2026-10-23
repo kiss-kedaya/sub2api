@@ -7,7 +7,9 @@
         :style="zIndexStyle"
         :aria-labelledby="dialogId"
         role="dialog"
-        aria-modal="true"
+        :aria-modal="isTopmost || undefined"
+        :aria-hidden="!isTopmost || undefined"
+        :inert="!isTopmost || undefined"
         @click.self="handleClose"
       >
         <!-- Modal panel -->
@@ -49,6 +51,7 @@ let dialogIdCounter = 0
 <script setup lang="ts">
 import { computed, watch, onMounted, onUnmounted, ref, nextTick } from 'vue'
 import Icon from '@/components/icons/Icon.vue'
+import { useDialogStack } from '@/composables/useDialogStack'
 
 // 生成唯一ID以避免多个对话框时ID冲突
 const dialogId = `modal-title-${++dialogIdCounter}`
@@ -84,10 +87,8 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<Emits>()
 
-// Custom z-index style (overrides the default z-50 from CSS)
-const zIndexStyle = computed(() => {
-  return props.zIndex !== 50 ? { zIndex: props.zIndex } : undefined
-})
+const { isTopmost, zIndex, open: openLayer, close: closeLayer } = useDialogStack(() => props.zIndex)
+const zIndexStyle = computed(() => ({ zIndex: zIndex.value }))
 
 const widthClasses = computed(() => {
   // Width guidance: narrow=confirm/short prompts, normal=standard forms,
@@ -104,14 +105,27 @@ const widthClasses = computed(() => {
 })
 
 const handleClose = () => {
-  if (props.closeOnClickOutside) {
+  if (isTopmost.value && props.closeOnClickOutside) {
     emit('close')
   }
 }
 
 const handleEscape = (event: KeyboardEvent) => {
-  if (props.show && props.closeOnEscape && event.key === 'Escape') {
+  if (!props.show || !isTopmost.value) return
+  if (props.closeOnEscape && event.key === 'Escape') {
+    event.preventDefault()
     emit('close')
+  }
+  if (event.key === 'Tab' && dialogRef.value) {
+    const focusable = Array.from(dialogRef.value.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(element => !element.hidden && element.getAttribute('aria-hidden') !== 'true')
+    const first = focusable[0]
+    const last = focusable.at(-1)
+    if (first && last && (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+      event.preventDefault()
+      ;(event.shiftKey ? last : first).focus()
+    }
   }
 }
 
@@ -123,23 +137,24 @@ watch(
       // 保存当前焦点元素
       previousActiveElement = document.activeElement as HTMLElement
       // 使用CSS类而不是直接操作style,更易于管理多个对话框
-      document.body.classList.add('modal-open')
+      openLayer()
 
       // 等待DOM更新后设置焦点到对话框
       await nextTick()
       if (modalBodyRef.value) {
         modalBodyRef.value.scrollTop = 0
       }
-      if (dialogRef.value) {
+      if (dialogRef.value && isTopmost.value) {
         const firstFocusable = dialogRef.value.querySelector<HTMLElement>(
           'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
         )
         firstFocusable?.focus()
       }
     } else {
-      document.body.classList.remove('modal-open')
+      const wasTopmost = isTopmost.value
+      closeLayer()
       // 恢复之前的焦点
-      if (previousActiveElement && typeof previousActiveElement.focus === 'function') {
+      if (wasTopmost && previousActiveElement?.isConnected && typeof previousActiveElement.focus === 'function') {
         previousActiveElement.focus()
       }
       previousActiveElement = null
@@ -155,6 +170,6 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('keydown', handleEscape)
   // 确保组件卸载时移除滚动锁定
-  document.body.classList.remove('modal-open')
+  closeLayer()
 })
 </script>

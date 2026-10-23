@@ -7,11 +7,11 @@ import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import ConsoleNavigationSearch from '../ConsoleNavigationSearch.vue'
 
-async function render(role: 'user' | 'admin', simpleMode = false) {
+async function render(role: 'user' | 'admin', simpleMode = false, userId = role === 'admin' ? 1 : 900001) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const auth = useAuthStore()
-  auth.user = { id: 900001, role } as NonNullable<typeof auth.user>
+  auth.user = { id: userId, role } as NonNullable<typeof auth.user>
   vi.spyOn(auth, 'isSimpleMode', 'get').mockReturnValue(simpleMode)
   const app = useAppStore()
   app.cachedPublicSettings = { payment_enabled: false, channel_monitor_enabled: false } as NonNullable<typeof app.cachedPublicSettings>
@@ -29,6 +29,18 @@ async function render(role: 'user' | 'admin', simpleMode = false) {
 }
 
 describe('console navigation search', () => {
+  it('limits secondary administrators to anonymous usage and personal navigation', async () => {
+    const { wrapper, push } = await render('admin', false, 2)
+    expect(wrapper.text()).toContain('admin.usage.title')
+    expect(wrapper.text()).not.toContain('admin.users.title')
+    expect(wrapper.text()).not.toContain('admin.accounts.title')
+    expect(wrapper.text()).not.toContain('admin.settings.title')
+    await wrapper.get('input').setValue('/admin/accounts')
+    await wrapper.get('input').trigger('keydown.enter')
+    expect(push).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('matches the sidebar by hiding users and retaining groups in simple admin mode', async () => {
     const { wrapper } = await render('admin', true)
     expect(wrapper.text()).not.toContain('admin.users.title')

@@ -122,6 +122,27 @@ function deferred<T>() {
 }
 
 describe('UsageFilters date range', () => {
+  it('lets observers filter anonymous IDs without loading identities or exposing cleanup/export', async () => {
+    vi.clearAllMocks()
+    const wrapper = mountFilters()
+    wrapper.unmount()
+    vi.clearAllMocks()
+    const observer = mount(UsageFilters, {
+      props: { modelValue: defaultFilters(), exporting: false, startDate: '2026-05-01', endDate: '2026-05-28', observer: true },
+      global: { stubs: { Select: true, Teleport: true } },
+    })
+    await flushPromises()
+    expect(mockGroupsList).not.toHaveBeenCalled()
+    expect(mockSearchUsers).not.toHaveBeenCalled()
+    expect(mockSearchApiKeys).not.toHaveBeenCalled()
+    expect(mockAccountsList).not.toHaveBeenCalled()
+    expect(observer.find('.usage-filter-dropdown').exists()).toBe(false)
+    expect(observer.findAll('button').some(button => ['Cleanup', 'Export'].includes(button.text()))).toBe(false)
+    await observer.get('#observer-user_id').setValue('42')
+    await observer.get('#observer-user_id').trigger('change')
+    expect(observer.emitted('change')).toBeDefined()
+    observer.unmount()
+  })
   it('reuses the shared picker and emits only the applied range', async () => {
     const wrapper = mountFilters()
     const picker = wrapper.findComponent(DateRangePicker)
