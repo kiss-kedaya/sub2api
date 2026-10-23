@@ -268,7 +268,7 @@ func TestCryptoSecurityGeneralEnrollmentCannotReplayCodeForPayment(t *testing.T)
 }
 
 func TestCryptoSecurityOrdinaryLoginTotpWithoutPaymentKey(t *testing.T) {
-	security, svc, _, _ := newCryptoSecurityTestServices(t, false)
+	security, svc, repo, _ := newCryptoSecurityTestServices(t, false)
 	security.key = nil
 	ctx := context.Background()
 	setup, err := svc.InitiateSetup(ctx, 7, "", "setup-password")
@@ -277,6 +277,10 @@ func TestCryptoSecurityOrdinaryLoginTotpWithoutPaymentKey(t *testing.T) {
 	require.NoError(t, svc.CompleteSetup(ctx, 7, code, setup.SetupToken))
 	require.NoError(t, svc.VerifyCode(ctx, 7, code))
 	require.ErrorIs(t, security.VerifyRisk(ctx, 7, code), ErrCryptoTotpUnavailable)
+	// Without payment verification configured, an administrator must still be
+	// able to remove ordinary login TOTP using the current authenticator code.
+	require.NoError(t, svc.Disable(ctx, 7, "", "", code))
+	require.False(t, repo.user.TotpEnabled)
 }
 
 func TestCryptoSecurityEnrollmentNeedsNoPasswordAndCannotReplaceBoundSeed(t *testing.T) {

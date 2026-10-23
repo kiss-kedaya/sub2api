@@ -427,7 +427,7 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, emailCode, pass
 			return ErrCryptoTotpRequired
 		}
 		var verifiedUser *User
-		if s.cryptoSecurity != nil {
+		if s.cryptoSecurity != nil && s.cryptoSecurity.ready() {
 			unlock, err := s.cryptoSecurity.lockSetup(ctx, userID)
 			if err != nil {
 				return err

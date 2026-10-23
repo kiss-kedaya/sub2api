@@ -57,6 +57,36 @@ jobs:
         working-directory: backend
         run: go test -race -p 1 ./internal/cryptopay -run '^TestPushNotifier' -count=1
 
+  crypto-sweep-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crypto_review
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:15439:5432
+        options: >-
+          --health-cmd "pg_isready -U crypto_review -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Durable sweep transactions against disposable PostgreSQL
+        working-directory: backend
+        env:
+          CRYPTO_SWEEP_TEST_DSN: postgres://crypto_review@127.0.0.1:15439/postgres?sslmode=disable
+        run: go test -tags=integration ./internal/cryptopay/sweeper -run '^TestPostgresSweep' -count=1
+
   frontend:
     runs-on: ubuntu-latest
     steps:

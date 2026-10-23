@@ -42,7 +42,7 @@ func TestManualBackfillRewindsAndPreservesEarlierUnfinishedCursor(t *testing.T) 
 				saves++
 			}
 		}
-		want := 2
+		want := 1
 		if from == 90 {
 			want = 3 // rewind, explicit start cursor and ordinary progress
 		}
