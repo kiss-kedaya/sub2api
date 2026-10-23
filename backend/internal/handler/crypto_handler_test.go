@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +33,7 @@ func TestCryptoConfigDestinationOnlyWritesChannelConfig(t *testing.T) {
 	store := &cryptoConfigStore{values: map[string]string{
 		cryptopay.SettingKeyCryptoConfig: `{}`,
 	}}
-	h := &CryptoHandler{store: store, operationNotifier: operationNotificationFunc(func(_ context.Context, action, phase string) error {
+	h := &CryptoHandler{store: store, security: &cryptoConfigTestSecurity{}, operationNotifier: operationNotificationFunc(func(_ context.Context, action, phase string) error {
 		require.Equal(t, "destination_change", action)
 		require.Equal(t, "verified", phase)
 		return nil
@@ -42,6 +43,8 @@ func TestCryptoConfigDestinationOnlyWritesChannelConfig(t *testing.T) {
 	c.Request = httptest.NewRequest("PUT", "/api/v1/admin/crypto/config", strings.NewReader(
 		`{"hot_wallet_evm":"0x2222222222222222222222222222222222222222"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Crypto-TOTP", "123456")
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
 	h.AdminUpdateConfig(c)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	require.Equal(t, []string{cryptopay.SettingKeyCryptoConfig}, store.writes)

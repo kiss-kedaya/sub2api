@@ -11,6 +11,17 @@ beforeEach(() => {
 })
 
 describe('Crypto request contract (not backend authorization)', () => {
+  it('reads public configuration metadata without a code, and keeps RPC credentials on the private endpoint', async () => {
+    const publicConfig = { enabled: true, rpc: {}, rpc_configured: ['bsc'] }
+    client.get.mockResolvedValueOnce({ data: { data: publicConfig } })
+    expect(await api.getCryptoConfig()).toEqual(publicConfig)
+    expect(client.get).toHaveBeenLastCalledWith('/admin/crypto/config', { headers: {}, _retry: true })
+    const privateConfig = { enabled: true, rpc: { bsc: 'https://rpc.example/fixture' } }
+    client.get.mockResolvedValueOnce({ data: { data: privateConfig } })
+    expect(await api.getCryptoConfigPrivate('012345')).toEqual(privateConfig)
+    expect(client.get).toHaveBeenLastCalledWith('/admin/crypto/config/private', { headers: { 'X-Crypto-TOTP': '012345' }, _retry: true })
+  })
+
   it('explains deployment-level payment authorization separately from a bad code', () => {
     expect(api.cryptoSecurityErrorKey({ reason: 'CRYPTO_OPERATOR_REQUIRED', status: 403 })).toBe('securityOperatorRequired')
   })
@@ -53,12 +64,14 @@ describe('Crypto request contract (not backend authorization)', () => {
     }
     expect(client.get.mock.calls[0][1].headers).toEqual({ 'X-Crypto-TOTP': '123456' })
     client.get.mockClear()
-    await api.getCryptoConfig('234567')
-    expect(client.get).toHaveBeenLastCalledWith('/admin/crypto/config', {
+    await api.getCryptoConfigPrivate('234567')
+    expect(client.get).toHaveBeenLastCalledWith('/admin/crypto/config/private', {
       headers: { 'X-Crypto-TOTP': '234567' }, _retry: true
     })
     client.get.mockClear()
+    await api.getCryptoConfig()
     await api.getHotWalletAddress()
+    await api.getHotWalletStatus()
     await api.getWalletStatus()
     await api.getCryptoSecurityStatus()
     for (const [, options] of client.get.mock.calls) expect(options?.headers?.['X-Crypto-TOTP']).toBeUndefined()

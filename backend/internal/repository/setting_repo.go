@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,6 +45,8 @@ type settingRepository struct {
 	version    uint64
 	loadSingle singleflight.Group
 }
+
+var _ service.AtomicSettingRepository = (*settingRepository)(nil)
 
 func NewSettingRepository(client *ent.Client) service.SettingRepository {
 	return &settingRepository{
@@ -208,6 +212,39 @@ func (r *settingRepository) Set(ctx context.Context, key, value string) error {
 		r.invalidateAllCache()
 	}
 	return err
+}
+
+// CompareAndSwapValue uses one conditional database write, so concurrent
+// replicas cannot replace changes made after the caller's uncached read.
+// For an absent key the unique constraint makes initialization atomic too.
+func (r *settingRepository) CompareAndSwapValue(ctx context.Context, key string, expected *string, value string) (bool, error) {
+	now := time.Now()
+	if expected == nil {
+		_, err := r.client.Setting.Create().SetKey(key).SetValue(value).SetUpdatedAt(now).
+			OnConflictColumns(setting.FieldKey).DoNothing().ID(ctx)
+		if errors.Is(err, sql.ErrNoRows) {
+			r.invalidateKeyCache(key)
+			r.invalidateAllCache()
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+	} else {
+		count, err := r.client.Setting.Update().Where(setting.KeyEQ(key), setting.ValueEQ(*expected)).
+			SetValue(value).SetUpdatedAt(now).Save(ctx)
+		if err != nil {
+			return false, err
+		}
+		if count != 1 {
+			r.invalidateKeyCache(key)
+			r.invalidateAllCache()
+			return false, nil
+		}
+	}
+	r.invalidateKeyCache(key)
+	r.invalidateAllCache()
+	return true, nil
 }
 
 func (r *settingRepository) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {

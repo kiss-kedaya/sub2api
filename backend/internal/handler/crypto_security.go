@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net"
@@ -14,6 +15,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type cryptoAdminSecurityVerifier interface {
+	CurrentOperator(context.Context, int64) (*service.User, error)
+	VerifyRisk(context.Context, int64, string) error
+	Status(context.Context, int64) (*service.CryptoSecurityStatus, error)
+	InitiateSetup(context.Context, int64, string) (*service.TotpSetupResponse, error)
+	Enable(context.Context, int64, string, string, string) error
+}
+
 // CryptoAdminSecurity protects the entire group, including future endpoints.
 // Enrollment is exempt only from the already-bound-code requirement.
 func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
@@ -25,16 +34,16 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	userID, ok := h.cryptoJWTAdmin(c)
+	_, ok := h.cryptoJWTAdmin(c)
 	if !ok {
 		return
 	}
 	path := c.FullPath()
 	setup := c.Request.Method == http.MethodPost && (strings.HasSuffix(path, "/security/setup") || strings.HasSuffix(path, "/security/enable"))
 	intent := c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/security/operation-intent")
+	configPatch := c.Request.Method == http.MethodPut && strings.HasSuffix(path, "/crypto/config")
 	risky := c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv") ||
-		strings.HasSuffix(path, "/config") || strings.HasSuffix(path, "/hot-wallet") ||
-		strings.HasSuffix(path, "/hot-wallet/address")
+		strings.HasSuffix(path, "/config/private")
 	if service.CryptoAdminTestReadOnly() && (c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv")) {
 		response.ErrorWithDetails(c, http.StatusForbidden, "crypto test instance is read-only", "CRYPTO_TEST_MODE_READ_ONLY", nil)
 		c.Abort()
@@ -45,14 +54,8 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	if risky && !setup && !intent {
-		codes := c.Request.Header.Values("X-Crypto-TOTP")
-		code := ""
-		if len(codes) == 1 {
-			code = codes[0]
-		}
-		if response.ErrorFrom(c, h.security.VerifyRisk(c.Request.Context(), userID, code)) {
-			c.Abort()
+	if risky && !setup && !intent && !configPatch {
+		if !h.requireCryptoRisk(c) {
 			return
 		}
 		if action := cryptoVerifiedOperation(c); action != "" && !h.notifyWalletAction(c, action, "verified") {
@@ -61,6 +64,33 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 		}
 	}
 	c.Next()
+}
+
+// requireCryptoRisk consumes one fresh backend code. PUT /config calls this
+// after inspecting the actual patch; other sensitive routes call it in their
+// group middleware. A missing verifier always fails closed.
+func (h *CryptoHandler) requireCryptoRisk(c *gin.Context) bool {
+	if h.security == nil {
+		response.ErrorFrom(c, service.ErrCryptoTotpUnavailable)
+		c.Abort()
+		return false
+	}
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		response.ErrorFrom(c, service.ErrCryptoAdminRequired)
+		c.Abort()
+		return false
+	}
+	codes := c.Request.Header.Values("X-Crypto-TOTP")
+	code := ""
+	if len(codes) == 1 {
+		code = codes[0]
+	}
+	if response.ErrorFrom(c, h.security.VerifyRisk(c.Request.Context(), subject.UserID, code)) {
+		c.Abort()
+		return false
+	}
+	return true
 }
 
 // CryptoUserAccess leaves ordinary JWT access unchanged outside admin test mode.
@@ -88,6 +118,11 @@ func (h *CryptoHandler) cryptoJWTAdmin(c *gin.Context) (int64, bool) {
 	subject, ok := middleware.GetAuthSubjectFromContext(c)
 	if !ok || subject.UserID <= 0 || cryptoSessionID(c) == "" {
 		response.ErrorWithDetails(c, 403, "an administrator JWT session is required", "CRYPTO_ADMIN_REQUIRED", nil)
+		c.Abort()
+		return 0, false
+	}
+	if h.security == nil {
+		response.ErrorFrom(c, service.ErrCryptoTotpUnavailable)
 		c.Abort()
 		return 0, false
 	}

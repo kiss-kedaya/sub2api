@@ -11,8 +11,11 @@
           <span class="crypto-view__badge" :class="walletReady ? 'crypto-view__badge--active' : 'crypto-view__badge--pending'">{{ t(walletStateLabel) }}</span>
         </div>
       </header>
-      <CryptoWalletSecurityPanel @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
-      <ProfileBarkCard class="crypto-view__bark" :title="t('admin.crypto.walletBarkTitle')" :description="t('admin.crypto.walletBarkDescription')" />
+      <CryptoWalletSecurityPanel class="crypto-view__security" @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
+      <details class="crypto-view__notifications">
+        <summary>{{ t('admin.crypto.walletNotificationSettings') }}<span>{{ t('admin.crypto.walletNotificationOptional') }}</span></summary>
+        <ProfileBarkCard class="crypto-view__bark" :title="t('admin.crypto.walletBarkTitle')" :description="t('admin.crypto.walletBarkDescription')" />
+      </details>
       <p v-if="operationIntentError" role="alert" class="crypto-view__approval-notice crypto-view__intent-error">{{ operationIntentError }}</p>
       <div class="card crypto-view__card">
         <div class="crypto-view__tabs" role="tablist" :aria-label="t('admin.crypto.title')">
@@ -41,8 +44,8 @@
           </div>
           <div v-else-if="!config" class="crypto-view__empty" role="status">
             <div class="space-y-3 text-center">
-              <p>{{ t('admin.crypto.securityConfigLocked') }}</p>
-              <button type="button" class="btn btn-primary" @click="loadConfig">{{ t('admin.crypto.securityConfigReadAction') }}</button>
+              <p>{{ configError || t('admin.crypto.configLoadFailed') }}</p>
+              <button type="button" class="btn btn-primary" @click="loadConfig">{{ t('common.refresh') }}</button>
             </div>
           </div>
           <template v-else>
@@ -77,7 +80,7 @@
             </details>
 
             <!-- Seeds are managed and encrypted by the main service, with fresh 2FA for changes. -->
-            <details class="crypto-view__group" open>
+            <details class="crypto-view__group" :open="!walletConfigured">
               <summary class="crypto-view__group-summary">
                 <span class="crypto-view__group-title">{{ t('admin.crypto.walletLockTitle') }}</span>
                 <span class="crypto-view__group-desc">{{ t('admin.crypto.walletLockDesc') }}</span>
@@ -123,15 +126,29 @@
             </details>
 
 
-            <details class="crypto-view__group crypto-view__group--wide">
+            <details id="crypto-rpc-settings" class="crypto-view__group crypto-view__group--wide">
               <summary class="crypto-view__group-summary">
                 <span class="crypto-view__group-title">{{ t('admin.crypto.groupRpc') }}</span>
                 <span class="crypto-view__group-desc">{{ t('admin.crypto.groupRpcDesc') }}</span>
                 <span class="crypto-view__group-chevron">›</span>
               </summary>
 
+              <div v-if="!rpcUnlocked" class="crypto-view__rpc-overview">
+                <p class="crypto-view__hint">{{ t('admin.crypto.rpcHiddenHint') }}</p>
+                <div class="crypto-view__rpc-statuses">
+                  <span v-for="chain in config.chains" :key="`rpc-status-${chain}`" class="crypto-view__badge" :data-testid="`rpc-configured-${chain}`">
+                    {{ chain }} · {{ t(configuredRPCChains.includes(chain) ? 'admin.crypto.rpcConfigured' : 'admin.crypto.rpcNotConfigured') }}
+                  </span>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm" :disabled="loadingPrivateRPC || savingConfig" @click="manageRPC">
+                  {{ loadingPrivateRPC ? t('common.loading') : t('admin.crypto.rpcManage') }}
+                </button>
+              </div>
+              <p v-if="rpcError" role="alert" class="crypto-view__warn">{{ rpcError }}</p>
+
               <!-- Per-chain endpoint table: add / test / remove, and pull
                    candidates from the public chainlist registry. -->
+              <template v-if="rpcUnlocked">
               <div class="crypto-view__rpc-chain" v-for="chain in config.chains" :key="`rpc-${chain}`">
                 <div class="crypto-view__rpc-head">
                   <span class="crypto-view__rpc-chain-name">{{ chain }}</span>
@@ -204,6 +221,7 @@
 
                 <p v-if="rpcFetchNotes[chain]" class="crypto-view__hint crypto-view__fetch-note">{{ rpcFetchNotes[chain] }}</p>
               </div>
+              </template>
             </details>
 
 
@@ -217,6 +235,7 @@
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.globalThreshold') }}</label>
                 <input
+                  data-testid="crypto-sweep-threshold"
                   v-model.number="config.sweep_global_threshold"
                   type="number"
                   step="1"
@@ -227,6 +246,7 @@
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.creditMin') }}</label>
                 <input
+                  data-testid="crypto-credit-min"
                   v-model.number="config.credit_min_amount"
                   type="number"
                   step="0.001"
@@ -238,6 +258,7 @@
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.creditMax') }}</label>
                 <input
+                  data-testid="crypto-credit-max"
                   v-model.number="config.credit_max_amount"
                   type="number"
                   step="1"
@@ -246,6 +267,16 @@
                 />
                 <p class="crypto-view__hint">{{ t('admin.crypto.creditMaxHint') }}</p>
               </div>
+              </div>
+              <div v-for="chain in config.chains" :key="`scan-limits-${chain}`" class="crypto-view__network-limits">
+                <label>
+                  <span class="crypto-view__label">{{ chain }} · {{ t('admin.crypto.sweepMinPerAddress') }}</span>
+                  <input v-model.number="config.sweep_min_per_address[chain]" :data-testid="`crypto-sweep-min-${chain}`" type="number" min="0" step="0.001" class="input" />
+                </label>
+                <label>
+                  <span class="crypto-view__label">{{ chain }} · {{ t('admin.crypto.scanRange') }}</span>
+                  <input v-model.number="config.scan_range[chain]" :data-testid="`crypto-scan-range-${chain}`" type="number" min="1" step="1" class="input" />
+                </label>
               </div>
               <div class="crypto-view__field">
                 <label class="crypto-view__label">{{ t('admin.crypto.hotWalletEvm') }}</label>
@@ -292,7 +323,7 @@
 
             <!-- Health: an empty pool blocks new deposits; a dry hot wallet
                  blocks sweeps. Both are silent failures without this. -->
-            <details class="crypto-view__group crypto-view__group--wide" open>
+            <details class="crypto-view__group crypto-view__group--wide">
               <summary class="crypto-view__group-summary">
                 <span class="crypto-view__group-title">{{ t('admin.crypto.healthTitle') }}</span>
                 <span class="crypto-view__group-desc">{{ t('admin.crypto.healthDesc') }}</span>
@@ -730,6 +761,7 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { explorerTxURL } from '@/utils/cryptoExplorer'
 import {
   getCryptoConfig,
+  getCryptoConfigPrivate,
   getHotWalletAddress,
   getHotWalletStatus,
   getPoolStatus,
@@ -805,6 +837,11 @@ const loadedSnapshot = ref<CryptoConfig | null>(null)
 const loadingConfig = ref(false)
 const savingConfig = ref(false)
 const configSaved = ref(false)
+const configError = ref('')
+const rpcUnlocked = ref(false)
+const configuredRPCChains = ref<string[]>([])
+const loadingPrivateRPC = ref(false)
+const rpcError = ref('')
 
 const addressUserId = ref<number | null>(null)
 const addresses = ref<DepositAddress[]>([])
@@ -1102,19 +1139,19 @@ function switchTab(id: string) {
 }
 
 async function loadConfig() {
+  if (loadingConfig.value) return
   loadingConfig.value = true
+  configError.value = ''
   try {
-    let loaded: CryptoConfig | undefined
-    const verified = await withCryptoVerification(t('admin.crypto.securityConfigRead'), async (code) => {
-      loaded = await getCryptoConfig(code)
-    })
-    if (!verified || !loaded) return
+    const loaded = await getCryptoConfig()
     // Earlier saves may predate some keys (rpc, chains); normalise here so a
     // legacy row cannot blank the whole page on a null index.
     config.value = {
       ...loaded,
       chains: loaded.chains ?? [],
-      rpc: loaded.rpc ?? {},
+      // Public reads contain only configured-chain metadata. Do not retain
+      // credentials even if an older server accidentally includes them here.
+      rpc: {},
       sweep_min_per_address: loaded.sweep_min_per_address ?? {},
       gas_topup: loaded.gas_topup ?? {},
       confirmations: loaded.confirmations ?? {},
@@ -1126,30 +1163,59 @@ async function loadConfig() {
       credit_max_amount: loaded.credit_max_amount ?? 10000,
       sweep_auto: loaded.sweep_auto ?? false
     }
+    configuredRPCChains.value = [...(loaded.rpc_configured ?? [])]
+    rpcUnlocked.value = false
+    rpcError.value = ''
     loadedSnapshot.value = JSON.parse(JSON.stringify(config.value))
     syncRPCRows()
+  } catch (err) {
+    configError.value = extractApiErrorMessage(err, t('admin.crypto.configLoadFailed'))
   } finally {
     loadingConfig.value = false
   }
 }
 
-// Fields whose change moves real money or changes who receives it. Editing
-// any of these must pass a confirmation that names the exact field.
+async function manageRPC() {
+  if (!config.value || loadingPrivateRPC.value || savingConfig.value) return
+  loadingPrivateRPC.value = true
+  rpcError.value = ''
+  try {
+    await withCryptoVerification(t('admin.crypto.securityConfigRead'), async (code) => {
+      const loaded = await getCryptoConfigPrivate(code)
+      if (!config.value || !loadedSnapshot.value || activeTab.value !== 'config') return
+      const rpc = { ...(loaded.rpc ?? {}) }
+      // Reading credentials changes neither the form's other edits nor the
+      // save diff. Only subsequent endpoint edits may submit the RPC map.
+      config.value.rpc = { ...rpc }
+      loadedSnapshot.value.rpc = { ...rpc }
+      configuredRPCChains.value = Object.keys(rpc).filter(chain => rpc[chain]?.trim())
+      rpcUnlocked.value = true
+      syncRPCRows()
+    })
+  } catch (err) {
+    rpcError.value = extractApiErrorMessage(err, t('admin.crypto.rpcLoadFailed'))
+  } finally {
+    loadingPrivateRPC.value = false
+  }
+}
+
+// Keep this strict allowlist aligned with the server. Any other changed field
+// requires a new code, including fields added to the config in the future.
+const LOW_RISK_CONFIG_FIELDS = new Set<keyof CryptoConfigPatch>([
+  'sweep_global_threshold', 'sweep_min_per_address', 'scan_range',
+  'credit_min_amount', 'credit_max_amount'
+])
+
 const RISKY_FIELDS: Array<{ key: keyof CryptoConfig; label: string }> = [
   { key: 'enabled', label: 'admin.crypto.enabled' },
   { key: 'hot_wallet_evm', label: 'admin.crypto.hotWalletEvm' },
   { key: 'hot_wallet_solana', label: 'admin.crypto.hotWalletSolana' },
   { key: 'sweep_auto', label: 'admin.crypto.sweepAuto' },
-  { key: 'sweep_global_threshold', label: 'admin.crypto.globalThreshold' },
-  { key: 'credit_min_amount', label: 'admin.crypto.creditMin' },
-  { key: 'credit_max_amount', label: 'admin.crypto.creditMax' },
   { key: 'credit_multiplier', label: 'admin.crypto.creditMultiplier' },
   { key: 'chains', label: 'admin.crypto.chains' },
   { key: 'rpc', label: 'admin.crypto.rpc' },
-  { key: 'sweep_min_per_address', label: 'admin.crypto.sweepMinPerAddress' },
   { key: 'gas_topup', label: 'admin.crypto.gasTopup' },
-  { key: 'confirmations', label: 'admin.crypto.confirmations' },
-  { key: 'scan_range', label: 'admin.crypto.scanRange' }
+  { key: 'confirmations', label: 'admin.crypto.confirmations' }
 ]
 
 // riskyChanges lists the dangerous edits between the loaded snapshot and the
@@ -1163,6 +1229,10 @@ const riskyChanges = computed<string[]>(() => {
     const a = before[field.key]
     const b = after[field.key]
     if (JSON.stringify(a) === JSON.stringify(b)) continue
+    if (field.key === 'rpc') {
+      out.push(t('admin.crypto.rpcChanged'))
+      continue
+    }
     out.push(`${t(field.label)}: ${formatChange(a)} → ${formatChange(b)}`)
   }
   return out
@@ -1175,8 +1245,6 @@ function formatChange(value: unknown): string {
   return String(value)
 }
 
-// saveConfig is the raw write; it is only reachable after the confirmation
-// when risky fields changed.
 async function saveConfig() {
   if (!config.value || savingConfig.value) return
   const patch = JSON.parse(JSON.stringify(buildConfigPatch())) as CryptoConfigPatch
@@ -1193,12 +1261,18 @@ async function saveConfig() {
     // pointers onto the stored config, so posting the whole object used to
     // rewrite maps the UI never renders (rpc, gas_topup, confirmations,
     // scan_range, per-chain thresholds) — a null map could blank them.
-    await withCryptoVerification(label, async (code) => {
-      await updateCryptoConfig(patch, { totpCode: code })
+    const save = async (code?: string) => {
+      await updateCryptoConfig(patch, code ? { totpCode: code } : undefined)
       loadedSnapshot.value = snapshot
+      if (rpcUnlocked.value) configuredRPCChains.value = Object.keys(snapshot.rpc).filter(chain => snapshot.rpc[chain]?.trim())
       configSaved.value = true
       await loadWalletStatus()
-    })
+    }
+    const requiresVerification = Object.keys(patch).some(key => !LOW_RISK_CONFIG_FIELDS.has(key as keyof CryptoConfigPatch))
+    if (requiresVerification) await withCryptoVerification(label, save)
+    else await save()
+  } catch (err) {
+    appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
     savingConfig.value = false
   }
@@ -1212,8 +1286,9 @@ function buildConfigPatch(): CryptoConfigPatch {
   if (!before || !after) return {}
   const patch: Record<string, unknown> = {}
   for (const key of Object.keys(after) as Array<keyof CryptoConfig>) {
-    // The Gas wallet always derives index 0; it is not an editable setting.
-    if (key === 'hot_index') continue
+    // Metadata is read-only; a hidden public RPC placeholder cannot erase
+    // configured endpoints when another setting is saved.
+    if (key === 'hot_index' || key === 'rpc_configured' || (key === 'rpc' && !rpcUnlocked.value)) continue
     if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
       patch[key] = after[key]
     }
@@ -1390,10 +1465,7 @@ async function loadHealth() {
     const pool = await getPoolStatus()
     let hot: HotWalletStatus[] = []
     if (walletCanDerive.value) {
-      const completed = await withCryptoVerification(t('admin.crypto.healthTitle'), async (code) => {
-        hot = await getHotWalletStatus({ totpCode: code })
-      })
-      if (!completed) return
+      hot = await getHotWalletStatus()
     }
     poolStatus.value = pool
     hotWallets.value = hot
@@ -1468,13 +1540,11 @@ async function fillHotWalletAddresses() {
   loadingHotAddress.value = true
   hotAddressNote.value = ''
   try {
-    await withCryptoVerification(t('admin.crypto.hotAddressFill'), async (code) => {
-      const addr = await getHotWalletAddress({ totpCode: code })
-      if (!config.value) return
-      config.value.hot_wallet_evm = addr.evm
-      config.value.hot_wallet_solana = addr.solana
-      hotAddressNote.value = t('admin.crypto.hotAddressFilled', { index: addr.index })
-    })
+    const addr = await getHotWalletAddress()
+    if (!config.value) return
+    config.value.hot_wallet_evm = addr.evm
+    config.value.hot_wallet_solana = addr.solana
+    hotAddressNote.value = t('admin.crypto.hotAddressFilled', { index: addr.index })
   } catch (e) {
     hotAddressNote.value = extractApiErrorMessage(e)
   } finally {
@@ -1576,7 +1646,19 @@ onMounted(() => {
 .crypto-view__wallet-form { display: grid; gap: .75rem; font-size: .875rem; line-height: 1.7; }
 .crypto-view__wallet-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1rem; }
 .crypto-view__wallet-actions p { flex-basis: 100%; }
-.crypto-view__bark { margin-bottom: 1.25rem; }
+.crypto-view__security { margin-bottom: .625rem; padding: .875rem 1rem; }
+.crypto-view__security :deep(.wallet-security__hint) { margin-top: .25rem; font-size: .75rem; }
+.crypto-view__security :deep(.wallet-security__badges) { margin-top: .5rem; }
+.crypto-view__notifications { margin-bottom: 1rem; border: 1px solid var(--signal-line, #64748b30); border-radius: .75rem; }
+.crypto-view__notifications > summary { padding: .75rem 1rem; cursor: pointer; font-size: .8125rem; font-weight: 600; }
+.crypto-view__notifications > summary > span { margin-inline-start: .75rem; font-size: .75rem; font-weight: 400; color: var(--signal-muted, #64748b); }
+.crypto-view__bark { margin: 0; border: 0; box-shadow: none; }
+.crypto-view__bark :deep(.px-6) { padding: .875rem 1rem; }
+.crypto-view__bark :deep(.space-y-6 > :not([hidden]) ~ :not([hidden])) { margin-top: .875rem; }
+.crypto-view__rpc-overview { padding: 0 1rem 1rem; }
+.crypto-view__rpc-statuses { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+.crypto-view__network-limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: 0 1.25rem 1rem; }
+.crypto-view__network-limits label { display: grid; gap: .5rem; min-width: 0; }
 .crypto-view__intent-error { margin-bottom: 1.25rem; color: #dc2626; }
 .crypto-view {
   width: 100%;

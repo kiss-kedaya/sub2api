@@ -21,6 +21,8 @@ type ServiceSettingStore struct {
 	settings *service.SettingService
 }
 
+var _ AtomicSettingStore = (*ServiceSettingStore)(nil)
+
 func NewServiceSettingStore(settings *service.SettingService) *ServiceSettingStore {
 	return &ServiceSettingStore{settings: settings}
 }
@@ -36,4 +38,15 @@ func (s *ServiceSettingStore) SetCryptoSetting(ctx context.Context, key, value s
 		return err
 	}
 	return s.settings.SetRawSetting(ctx, key, value)
+}
+
+func (s *ServiceSettingStore) GetCryptoSettingUncached(ctx context.Context, key string) (string, error) {
+	return s.settings.GetRawSettingUncached(ctx, key)
+}
+
+func (s *ServiceSettingStore) CompareAndSwapCryptoSetting(ctx context.Context, key string, expected *string, value string) (bool, error) {
+	if err := mode.CheckWritable(); err != nil {
+		return false, err
+	}
+	return s.settings.CompareAndSwapRawSetting(ctx, key, expected, value)
 }

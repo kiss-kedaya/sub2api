@@ -7,6 +7,7 @@ import en from '@/i18n/locales/en/admin/crypto'
 const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), showSuccess: vi.fn(), showError: vi.fn() }))
 vi.mock('@/api/client', () => ({ apiClient: mocks }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError }) }))
+vi.mock('@/stores', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError }) }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => key + (params ? JSON.stringify(params) : '') }) }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div><slot /></div>' } }))
 vi.mock('@/components/crypto/CryptoWalletSecurityPanel.vue', () => ({ default: { name: 'CryptoWalletSecurityPanel', emits: ['change', 'recovered'], template: '<div />' } }))
@@ -26,7 +27,8 @@ beforeEach(() => {
     if (path === '/user/bark') return { data: { data: { configured: true, enabled: true } } }
     if (path.endsWith('/security/status')) return { data: { enabled: true, feature_enabled: true, can_setup: true } }
     let data: unknown = []
-    if (path.endsWith('/config')) data = serverConfig
+    if (path.endsWith('/config')) data = JSON.parse(JSON.stringify({ ...serverConfig, rpc: {}, rpc_configured: Object.keys(serverConfig.rpc) }))
+    if (path.endsWith('/config/private')) data = JSON.parse(JSON.stringify(serverConfig))
     if (path.endsWith('/addresses')) data = { items: [{ id: 8, user_id: 2, address: '0xDEPOSIT', family: 'evm', status: 'active' }], total: 1, summary: { address_count: 1, deposit_count: 0, credited_total: 0, swept_total: 0 } }
     if (path.endsWith('/wallet/status')) data = { ...walletStatus }
     if (path.endsWith('/pool')) data = { free: { evm: 10 }, low_watermark: 2 }
@@ -41,7 +43,7 @@ beforeEach(() => {
     return { data: {}, status: 200 }
   })
   mocks.post.mockImplementation(async (path: string) => {
-    if (path.endsWith('/operation-intent')) return { data: { notified: true }, status: 200 }
+    if (path.endsWith('/operation-intent')) return { data: { accepted: true }, status: 200 }
     if (path.endsWith('/export-mnemonics')) return { data: { deposit_mnemonic: 'test deposit words', hot_mnemonic: 'test gas words' }, status: 200 }
     if (path.endsWith('/backup')) return { data: new Blob(['encrypted'], { type: 'application/json' }), status: 200 }
     if (path.endsWith('/hot-mnemonic')) {
@@ -61,10 +63,9 @@ function button(wrapper: VueWrapper, key: string) {
   if (!found) throw new Error(`Missing button: ${key}`)
   return found
 }
-async function render(verifyConfig = true) {
+async function render() {
   const wrapper = mount(CryptoView, { global: { stubs: { teleport: true } } })
   await flushPromises()
-  if (verifyConfig) await verify(wrapper, '111111')
   return wrapper
 }
 async function configTab(wrapper: VueWrapper) {
@@ -77,6 +78,10 @@ async function verify(wrapper: VueWrapper, code = '123456') {
   await wrapper.get('#crypto-security-form').trigger('submit')
   await flushPromises()
 }
+async function manageRPC(wrapper: VueWrapper) {
+  await button(wrapper, 'admin.crypto.rpcManage').trigger('click')
+  await verify(wrapper, '111111')
+}
 
 describe('Crypto page operation wiring (mocked UI contract only)', () => {
   it('keeps the channel paused after security recovery without discarding edits or opening another TOTP prompt', async () => {
@@ -84,6 +89,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     const wrapper = await render()
     await configTab(wrapper)
     expect(wrapper.get('.crypto-view__header-status').text()).toContain('admin.crypto.channelActive')
+    await manageRPC(wrapper)
     const rpc = wrapper.findAll('input').find(input => (input.element as HTMLInputElement).value === 'https://one.example')!
     await rpc.setValue('https://edited.example')
     await rpc.trigger('change')
@@ -114,7 +120,8 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
       await option.setValue(true)
     }
     expect(wrapper.find('[data-testid="crypto-chain-solana"]').exists()).toBe(false)
-    expect(wrapper.findAll('.crypto-view__rpc-chain')).toHaveLength(6)
+    expect(wrapper.findAll('[data-testid^="rpc-configured-"]')).toHaveLength(6)
+    expect(wrapper.find('.crypto-view__rpc-input').exists()).toBe(false)
     await wrapper.get('.crypto-view__save-bar button').trigger('click')
     await flushPromises()
     expect(mocks.put).not.toHaveBeenCalled()
@@ -127,31 +134,121 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(patch).not.toHaveProperty('rpc')
   })
 
-  it('requires a fresh code before loading RPC credentials into the page', async () => {
-    const wrapper = await render(false)
-    expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
-    expect(mocks.get.mock.calls.some(([path]) => path.endsWith('/config'))).toBe(false)
+  it('loads ordinary configuration without a prompt and reads private RPC only after explicit fresh verification', async () => {
+    const wrapper = await render()
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/config', { headers: {}, _retry: true })
+    expect(mocks.get.mock.calls.some(([path]) => path.endsWith('/security/status'))).toBe(false)
+    await configTab(wrapper)
+    expect(wrapper.find('.crypto-view__rpc-input').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="rpc-configured-bsc"]').text()).toContain('admin.crypto.rpcConfigured')
+    await button(wrapper, 'admin.crypto.rpcManage').trigger('click')
+    await flushPromises()
+    expect(mocks.get.mock.calls.some(([path]) => path.endsWith('/config/private'))).toBe(false)
     await verify(wrapper, '111111')
-    expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/config', expect.objectContaining({
+    expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/config/private', expect.objectContaining({
       headers: { 'X-Crypto-TOTP': '111111' }, _retry: true
     }))
+    expect(wrapper.findAll('.crypto-view__rpc-input')).toHaveLength(2)
+    await wrapper.get('.crypto-view__save-bar button').trigger('click')
+    expect(mocks.put).not.toHaveBeenCalled()
   })
 
   it('does not reopen an enabled 2FA prompt after config verification is cancelled', async () => {
-    const wrapper = await render(false)
+    const wrapper = await render()
+    await configTab(wrapper)
+    await button(wrapper, 'admin.crypto.rpcManage').trigger('click')
+    await flushPromises()
     expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
     await wrapper.get('.crypto-security__actions .btn-secondary').trigger('click')
     await flushPromises()
     expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
     expect(mocks.get.mock.calls.filter(([path]) => path.endsWith('/security/status'))).toHaveLength(1)
-    await configTab(wrapper)
-    await button(wrapper, 'admin.crypto.securityConfigReadAction').trigger('click')
+    expect(wrapper.find('.crypto-view__rpc-input').exists()).toBe(false)
+    await button(wrapper, 'admin.crypto.rpcManage').trigger('click')
     await flushPromises()
     expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
     await verify(wrapper, '222222')
-    expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/config', expect.objectContaining({
+    expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/config/private', expect.objectContaining({
       headers: { 'X-Crypto-TOTP': '222222' }, _retry: true
     }))
+  })
+
+  it.each([
+    { id: 'crypto-sweep-threshold', value: 200, key: 'sweep_global_threshold', expected: 200 },
+    { id: 'crypto-credit-min', value: 2, key: 'credit_min_amount', expected: 2 },
+    { id: 'crypto-credit-max', value: 9000, key: 'credit_max_amount', expected: 9000 },
+    { id: 'crypto-sweep-min-bsc', value: 5, key: 'sweep_min_per_address', expected: { bsc: 5 } },
+    { id: 'crypto-scan-range-bsc', value: 100, key: 'scan_range', expected: { bsc: 100 } }
+  ])('saves ordinary parameter $id without 2FA and preserves hidden RPC credentials', async ({ id, value, key, expected }) => {
+    const wrapper = await render()
+    await configTab(wrapper)
+    await wrapper.get(`[data-testid="${id}"]`).setValue(value)
+    await wrapper.get('.crypto-view__save-bar button').trigger('click')
+    await flushPromises()
+    expect(mocks.put).toHaveBeenCalledOnce()
+    expect(mocks.put).toHaveBeenCalledWith('/admin/crypto/config', { [key]: expected }, { headers: {}, _retry: true })
+    expect(mocks.put.mock.calls[0][1]).not.toHaveProperty('rpc')
+    expect(mocks.put.mock.calls[0][1]).not.toHaveProperty('rpc_configured')
+    expect(serverConfig.rpc).toEqual({ bsc: 'https://one.example,https://two.example' })
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.get.mock.calls.some(([path]) => path.endsWith('/config/private') || path.endsWith('/security/status'))).toBe(false)
+  })
+
+  it('retains an unsaved ordinary edit when private RPC credentials are loaded', async () => {
+    const wrapper = await render()
+    await configTab(wrapper)
+    await wrapper.get('[data-testid="crypto-sweep-threshold"]').setValue(250)
+    await manageRPC(wrapper)
+    expect(wrapper.get('[data-testid="crypto-sweep-threshold"]').element).toHaveProperty('value', '250')
+    await wrapper.get('.crypto-view__save-bar button').trigger('click')
+    await flushPromises()
+    expect(mocks.put).toHaveBeenCalledWith('/admin/crypto/config', { sweep_global_threshold: 250 }, { headers: {}, _retry: true })
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+  })
+
+  it('requires fresh verification for mixed ordinary and sensitive edits while leaving hidden RPC untouched', async () => {
+    const wrapper = await render()
+    await configTab(wrapper)
+    await wrapper.get('[data-testid="crypto-credit-min"]').setValue(2)
+    await wrapper.get('[data-testid="crypto-chain-base"]').setValue(true)
+    await wrapper.get('.crypto-view__save-bar button').trigger('click')
+    await flushPromises()
+    expect(mocks.put).not.toHaveBeenCalled()
+    await verify(wrapper, '234567')
+    expect(mocks.put).toHaveBeenCalledWith('/admin/crypto/config', { chains: ['bsc', 'base'], credit_min_amount: 2 }, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '234567' } }))
+    expect(serverConfig.rpc).toEqual({ bsc: 'https://one.example,https://two.example' })
+  })
+
+  it('shows a public read failure with a plain retry instead of opening a verification dialog', async () => {
+    const normalGet = mocks.get.getMockImplementation()!
+    let unavailable = true
+    mocks.get.mockImplementation((path: string) => path.endsWith('/config') && unavailable
+      ? Promise.reject(new Error('Read unavailable')) : normalGet(path))
+    const wrapper = await render()
+    await configTab(wrapper)
+    expect(wrapper.text()).toContain('Read unavailable')
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    unavailable = false
+    const refresh = wrapper.findAll('button').find(item => item.text() === 'common.refresh')!
+    await refresh.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="crypto-sweep-threshold"]').exists()).toBe(true)
+    expect(mocks.get.mock.calls.some(([path]) => path.endsWith('/security/status'))).toBe(false)
+  })
+
+  it('does not expose RPC returned accidentally by an older public endpoint', async () => {
+    const normalGet = mocks.get.getMockImplementation()!
+    mocks.get.mockImplementation((path: string) => path.endsWith('/config')
+      ? Promise.resolve({ data: { data: JSON.parse(JSON.stringify(serverConfig)) } }) : normalGet(path))
+    const wrapper = await render()
+    await configTab(wrapper)
+    expect(wrapper.find('.crypto-view__rpc-input').exists()).toBe(false)
+    expect(wrapper.html()).not.toContain('https://one.example')
+    await wrapper.get('[data-testid="crypto-sweep-threshold"]').setValue(250)
+    await wrapper.get('.crypto-view__save-bar button').trigger('click')
+    await flushPromises()
+    expect(mocks.put.mock.calls[0][1]).not.toHaveProperty('rpc')
   })
 
   it('explains managed encryption and preserves the separate deposit and Gas seed risks', () => {
@@ -176,7 +273,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(mocks.post).not.toHaveBeenCalled()
   })
 
-  it('requires a fresh TOTP before reading hot-wallet RPC status', async () => {
+  it('reads public gas-wallet balance without a TOTP prompt', async () => {
     walletStatus = { ok: true, configured: true, ready: true, enabled: true }
     const wrapper = await render()
     await configTab(wrapper)
@@ -187,18 +284,16 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(refresh.attributes('disabled')).toBeUndefined()
     await refresh.trigger('click')
     await flushPromises()
-    expect(mocks.get.mock.calls.some(([path]) => path === hotPath)).toBe(false)
-    await wrapper.get('#crypto-security-code').setValue('654321')
-    await wrapper.get('#crypto-security-form').trigger('submit')
-    await flushPromises()
     expect(mocks.get).toHaveBeenCalledWith(hotPath, expect.objectContaining({
-      headers: { 'X-Crypto-TOTP': '654321' }, _retry: true
+      headers: {}, _retry: true
     }))
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
   })
 
   it('protects config edits outside the old money-fields subset, preserving the patch', async () => {
     const wrapper = await render()
     await configTab(wrapper)
+    await manageRPC(wrapper)
     const rpc = wrapper.findAll('input').find(input => (input.element as HTMLInputElement).value === 'https://one.example')!
     await rpc.setValue('https://changed.example')
     await rpc.trigger('change')
@@ -228,6 +323,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
   it('requires a separate prompt for every RPC test, and cancellation stops Test all', async () => {
     const wrapper = await render()
     await configTab(wrapper)
+    await manageRPC(wrapper)
     await button(wrapper, 'admin.crypto.rpcTestAll').trigger('click')
     await verify(wrapper)
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/rpc/test'))).toHaveLength(1)
@@ -321,9 +417,8 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     if (!state.disabled) {
       await button(wrapper, 'admin.crypto.hotAddressFill').trigger('click')
       await flushPromises()
-      expect(mocks.get.mock.calls.some(([path]) => path === '/admin/crypto/hot-wallet/address')).toBe(false)
-      await verify(wrapper)
-      expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/hot-wallet/address', expect.objectContaining({ headers: { 'X-Crypto-TOTP': '123456' } }))
+      expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/hot-wallet/address', expect.objectContaining({ headers: {} }))
+      expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
       expect(wrapper.get('input[placeholder="0x…"]').element).toHaveProperty('value', '0xGAS')
     }
     await wrapper.get('#crypto-tab-sweep').trigger('click')
@@ -339,8 +434,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(wrapper.text()).toContain('admin.crypto.walletNotReady')
     await button(wrapper, 'admin.crypto.hotAddressFill').trigger('click')
     await flushPromises()
-    expect(mocks.get.mock.calls.some(([path]) => path === '/admin/crypto/hot-wallet/address')).toBe(false)
-    await verify(wrapper)
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
     expect(wrapper.get('input[placeholder="0x…"]').element).toHaveProperty('value', '0xGAS')
     await wrapper.get('.crypto-view__save-bar button').trigger('click')
     await verify(wrapper)
@@ -373,6 +467,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     const wrapper = await render()
     await configTab(wrapper)
     expect(wrapper.text()).toContain('admin.crypto.hotIndexHint')
+    await manageRPC(wrapper)
     const rpc = wrapper.findAll('input').find(input => (input.element as HTMLInputElement).value === 'https://one.example')!
     await rpc.setValue('https://changed.example')
     await rpc.trigger('change')
@@ -421,6 +516,8 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
 
   it('shows the shared private Bark configuration on the wallet page', async () => {
     const wrapper = await render()
+    expect(wrapper.get('.crypto-view__notifications').attributes('open')).toBeUndefined()
+    expect(wrapper.findComponent({ name: 'CryptoWalletSecurityPanel' }).element.closest('details')).toBeNull()
     expect(wrapper.get('.crypto-view__bark h2').text()).toBe('admin.crypto.walletBarkTitle')
     expect(wrapper.get('.crypto-view__bark').text()).toContain('admin.crypto.walletBarkDescription')
     expect((wrapper.get('#bark-device-key').element as HTMLInputElement).value).toBe('')
@@ -489,7 +586,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
     await flushPromises()
     await wrapper.get('#crypto-tab-addresses').trigger('click')
-    completeIntent({ data: { notified: true } })
+    completeIntent({ data: { accepted: true } })
     await flushPromises()
     expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/sweep/run'))).toHaveLength(0)

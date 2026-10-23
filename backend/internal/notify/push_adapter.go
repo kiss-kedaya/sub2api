@@ -53,3 +53,10 @@ func (a *OwnerPushAdapter) PushToAdmins(ctx context.Context, title, body, group 
 		Title: title, Body: body, Group: group, Level: "timeSensitive",
 	})
 }
+
+func (a *OwnerPushAdapter) WalletOperationNotificationsEnabled(ctx context.Context) (bool, error) {
+	if a == nil || a.svc == nil || a.ownerID <= 0 {
+		return false, ErrBarkNotConfigured
+	}
+	return a.svc.WalletOperationNotificationsEnabled(ctx, a.ownerID)
+}

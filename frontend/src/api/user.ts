@@ -233,8 +233,12 @@ export async function getBarkSettings(): Promise<BarkSettings> {
 /**
  * Omit the key to retain the existing ciphertext; an empty key clears it.
  */
-export async function updateBarkSettings(deviceKey: string | undefined, enabled: boolean): Promise<void> {
-  await apiClient.put('/user/bark', { ...(deviceKey === undefined ? {} : { device_key: deviceKey }), enabled })
+export async function updateBarkSettings(deviceKey: string | undefined, enabled: boolean, totpCode: string): Promise<void> {
+  const request = {
+    headers: { 'X-Bark-TOTP': totpCode, 'Cache-Control': 'no-store', Pragma: 'no-cache' },
+    _retry: true
+  }
+  await apiClient.put('/user/bark', { ...(deviceKey === undefined ? {} : { device_key: deviceKey }), enabled }, request)
 }
 
 export const userAPI = {

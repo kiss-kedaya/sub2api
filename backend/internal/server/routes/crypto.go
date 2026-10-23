@@ -52,6 +52,7 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.POST("/security/setup", cryptoHandler.AdminCryptoSecuritySetup)
 		crypto.POST("/security/enable", cryptoHandler.AdminCryptoSecurityEnable)
 		crypto.GET("/config", cryptoHandler.AdminGetConfig)
+		crypto.GET("/config/private", cryptoHandler.AdminGetPrivateConfig)
 		crypto.PUT("/config", cryptoHandler.AdminUpdateConfig)
 		crypto.GET("/addresses", cryptoHandler.AdminListAddresses)
 		crypto.POST("/addresses/:id/status", cryptoHandler.AdminSetAddressStatus)
