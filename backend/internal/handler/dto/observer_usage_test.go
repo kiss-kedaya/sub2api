@@ -34,7 +34,11 @@ func TestObserverUsageCannotSerializeCustomerOrUpstreamSecrets(t *testing.T) {
 	if result["actual_cost"] != 1.25 || result["input_tokens"] != float64(123) {
 		t.Fatal("usage metrics were changed")
 	}
-	if result["api_key"].(map[string]any)["key"] != nil {
+	apiKey, ok := result["api_key"].(map[string]any)
+	if !ok {
+		t.Fatal("anonymized API key summary is missing")
+	}
+	if apiKey["key"] != nil {
 		t.Fatal("API key secret is serialized")
 	}
 	if log.User.Email != secret || log.APIKey.Key != secret || log.Account.Name != secret {

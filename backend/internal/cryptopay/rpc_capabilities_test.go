@@ -25,7 +25,8 @@ func TestPaymentRPCProbeRequiresLogsAndBSCFinalized(t *testing.T) {
 				}
 				calls = append(calls, req.Method)
 				var result any = []any{}
-				if req.Method == "eth_getLogs" {
+				switch req.Method {
+				case "eth_getLogs":
 					if scenario == "logs rejected" {
 						_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": -32005, "message": "fixture-private-message"}})
 						return
@@ -37,7 +38,7 @@ func TestPaymentRPCProbeRequiresLogsAndBSCFinalized(t *testing.T) {
 					if len(req.Params) != 1 || json.Unmarshal(req.Params[0], &filter) != nil || string(filter["fromBlock"]) != `"0x64"` || string(filter["toBlock"]) != `"0x64"` || !strings.Contains(string(filter["topics"]), "null") {
 						t.Error("probe did not use a bounded recipient-filtered scan")
 					}
-				} else if req.Method == "eth_getBlockByNumber" {
+				case "eth_getBlockByNumber":
 					if string(req.Params[0]) != `"finalized"` {
 						t.Error("BSC probe used a weaker block tag")
 					}
@@ -52,7 +53,7 @@ func TestPaymentRPCProbeRequiresLogsAndBSCFinalized(t *testing.T) {
 					if scenario == "safe only" {
 						result = nil
 					}
-				} else if req.Method == "eth_blockNumber" {
+				case "eth_blockNumber":
 					result = "0x66"
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{"result": result})
