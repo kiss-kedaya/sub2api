@@ -92,13 +92,26 @@
           <p v-if="historyError" class="deposit-view__history-error" role="alert">{{ t('deposit.historyFailed') }}</p>
           <div v-if="history.length" class="deposit-view__table-wrap">
             <table class="deposit-view__table">
-              <thead><tr><th>{{ t('deposit.chain') }}</th><th>{{ t('deposit.amount') }}</th><th>{{ t('deposit.credited') }}</th><th>{{ t('common.status') }}</th><th>{{ t('deposit.time') }}</th></tr></thead>
+              <thead><tr><th>{{ t('deposit.chain') }}</th><th>{{ t('deposit.amount') }}</th><th>{{ t('deposit.credited') }}</th><th>{{ t('common.status') }}</th><th>{{ t('deposit.txHash') }}</th><th>{{ t('deposit.time') }}</th></tr></thead>
               <tbody>
                 <tr v-for="(row, i) in history" :key="row.tx_hash + '-' + i">
                   <td :data-label="t('deposit.chain')">{{ chainLabel(row.chain) }}</td>
                   <td :data-label="t('deposit.amount')" class="deposit-view__number">{{ row.amount }} <span class="deposit-view__muted">{{ row.token }}</span></td>
                   <td :data-label="t('deposit.credited')" class="deposit-view__number">{{ row.status === 'credited' ? fmtCredited(row.credited) : '—' }}</td>
                   <td :data-label="t('common.status')"><span class="deposit-view__badge" :class="'deposit-view__badge--' + row.status">{{ statusText(row.status) }}</span><span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason) }}</span></td>
+                  <td :data-label="t('deposit.txHash')" class="deposit-view__transaction">
+                    <div v-if="row.tx_hash" class="deposit-view__hash-row">
+                      <a v-if="explorerTxURL(row.chain, row.tx_hash)" :href="explorerTxURL(row.chain, row.tx_hash)"
+                        target="_blank" rel="noopener noreferrer" class="deposit-view__hash"
+                        :aria-label="t('deposit.viewTransaction', { hash: row.tx_hash })">{{ row.tx_hash }}</a>
+                      <code v-else class="deposit-view__hash">{{ row.tx_hash }}</code>
+                      <button type="button" class="deposit-view__hash-copy" :aria-label="t('deposit.copyTxHash')"
+                        :title="t('deposit.copyTxHash')" @click="copyToClipboard(row.tx_hash)">
+                        <Icon name="copy" size="sm" />
+                      </button>
+                    </div>
+                    <span v-else class="deposit-view__muted">—</span>
+                  </td>
                   <td :data-label="t('deposit.time')" class="deposit-view__time">{{ formatTime(row.created_at) }}</td>
                 </tr>
               </tbody>
@@ -119,8 +132,11 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { getDepositHistory, getDepositInfo, type DepositInfo, type DepositRecord } from '@/api/crypto'
+import { useClipboard } from '@/composables/useClipboard'
+import { explorerTxURL } from '@/utils/cryptoExplorer'
 
 const { t } = useI18n()
+const { copyToClipboard } = useClipboard()
 
 const info = ref<DepositInfo | null>(null)
 const history = ref<DepositRecord[]>([])
@@ -325,6 +341,12 @@ onUnmounted(() => {
 .deposit-view__confirmation strong { font-size: .8125rem; font-weight: 600; }
 .deposit-view__confirmation p { margin-top: .4rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.7; }
 .deposit-view__history { margin-top: 1.25rem; }
+.deposit-view__transaction { min-width: 14rem; max-width: 24rem; }
+.deposit-view__hash-row { display: flex; align-items: flex-start; gap: .5rem; }
+.deposit-view__hash { min-width: 0; word-break: break-all; white-space: normal; font: .75rem/1.6 ui-monospace, monospace; }
+a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: underline; text-underline-offset: .15rem; }
+.deposit-view__hash-copy { flex: 0 0 auto; padding: .25rem; border-radius: .25rem; color: var(--signal-muted, #64748b); }
+.deposit-view__hash-copy:hover, .deposit-view__hash-copy:focus-visible { color: var(--signal-accent, #0891b2); outline: 2px solid currentColor; outline-offset: 2px; }
 .deposit-view__history-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
 .deposit-view__table-wrap { max-width: 100%; overflow-x: auto; }
 .deposit-view__table { width: 100%; border-collapse: collapse; text-align: left; }
@@ -364,6 +386,7 @@ onUnmounted(() => {
   .deposit-view__table td::before { content: attr(data-label); display: block; margin-bottom: .35rem; color: var(--signal-muted, #8c99a6); font-size: .6875rem; }
   .deposit-view__table td:first-child, .deposit-view__table td:last-child { grid-column: 1 / -1; }
   .deposit-view__table td:nth-child(4) { grid-column: 1 / -1; }
+  .deposit-view__table td.deposit-view__transaction { grid-column: 1 / -1; min-width: 0; max-width: none; }
 }
 @media (prefers-reduced-motion: reduce) { .deposit-view__chain { transition: none; } }
 </style>

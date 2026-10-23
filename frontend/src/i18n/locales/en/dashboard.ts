@@ -1020,6 +1020,8 @@ export default {
       deviceKey: 'Bark device key',
       deviceKeyPlaceholder: 'Copy from the Bark app home screen, e.g. xxxxxxxx',
       deviceKeyHint: 'The key is stored encrypted and never shown again after saving',
+      keepKeyHint: 'The saved key is never shown. Leave this field blank to update only the toggle, or enter a new key to replace it. Use Clear to remove it.',
+      loadFailed: 'Bark settings could not be loaded. Refresh successfully before making changes.',
       configured: 'Configured',
       notConfigured: 'Not configured',
       enabled: 'Enable push',

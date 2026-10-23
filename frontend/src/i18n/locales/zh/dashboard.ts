@@ -1024,6 +1024,8 @@ export default {
       deviceKey: 'Bark 设备 Key',
       deviceKeyPlaceholder: '在 Bark App 首页复制，形如 xxxxxxxx',
       deviceKeyHint: 'Key 会加密存储，保存后不再显示明文',
+      keepKeyHint: '已保存的 Key 不会回显。留空保存仅更新推送开关；填写新 Key 才会替换，清除请使用“清除”按钮。',
+      loadFailed: 'Bark 配置读取失败，刷新成功后才能修改。',
       configured: '已配置',
       notConfigured: '未配置',
       enabled: '启用推送',

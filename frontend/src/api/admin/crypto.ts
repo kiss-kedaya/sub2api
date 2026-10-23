@@ -219,6 +219,38 @@ export interface WalletStatus {
   configured: boolean
   ready: boolean
   enabled: boolean
+  security?: WalletSecurityStatus
+}
+
+export interface WalletSecurityStatus {
+  enabled: boolean
+  initialized: boolean
+  locked: boolean
+  deposits_paused: boolean
+  reason?: string
+  locked_at?: string
+  alert_pending: boolean
+}
+
+// These security endpoints use the standard envelope, unwrapped by apiClient.
+export async function getWalletSecurity(): Promise<WalletSecurityStatus> {
+  const { data } = await apiClient.get<WalletSecurityStatus>('/admin/crypto/wallet/security', {
+    headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+  })
+  return data
+}
+
+// Recovery validates the full trusted snapshot server-side. It never changes
+// the channel's configured enabled flag, and the TOTP is per request only.
+export async function recoverWalletSecurity(verification: CryptoVerification): Promise<WalletSecurityStatus> {
+  const request = cryptoRequestOptions(verification)
+  const { data } = await apiClient.post<WalletSecurityStatus>('/admin/crypto/wallet/security/recover', {
+    confirmation: 'RECOVER'
+  }, {
+    ...request,
+    headers: { ...request.headers, 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+  })
+  return data
 }
 
 // The main service automatically loads its encrypted, configured seeds.
@@ -404,6 +436,18 @@ async function checkedDownload(response: { data: Blob; status: number }): Promis
   let detail: Record<string, unknown> = {}
   try { detail = JSON.parse(await response.data.text()) } catch { /* Non-JSON error. */ }
   throw { ...detail, status: response.status }
+}
+
+export type WalletOperationAction = 'sweep' | 'destination_change' | 'export_mnemonics'
+
+// Intent notification precedes the fresh TOTP prompt. The server sends the
+// separate verified notification itself; the client cannot assert verification.
+export async function reportWalletOperationIntent(action: WalletOperationAction): Promise<void> {
+  const { data } = await apiClient.post<{ notified: boolean }>('/admin/crypto/security/operation-intent', { action }, {
+    ...cryptoRequestOptions(),
+    headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+  })
+  if (data?.notified !== true) throw new Error('Wallet operation notification was not delivered')
 }
 
 export interface CryptoMnemonicExport {

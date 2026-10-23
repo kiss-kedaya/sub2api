@@ -61,7 +61,15 @@ type Worker struct {
 	done      chan struct{}
 	// onReorg reports a credited deposit whose block was reorged away. The
 	// money already moved in our ledger, so a human must reconcile it.
-	onReorg func(chain, txHash string)
+	onReorg       func(chain, txHash string)
+	beforePass    func(context.Context) error
+	securityRange func(context.Context, *EVMScanner, *rpc.Pool, ChainConfig, uint64, uint64) error
+}
+
+// Security hooks precede pending credit as well as every live/backfill range.
+// They return failures before a cursor can move past unchecked outflows.
+func (w *Worker) SetSecurityGuards(before func(context.Context) error, scan func(context.Context, *EVMScanner, *rpc.Pool, ChainConfig, uint64, uint64) error) {
+	w.beforePass, w.securityRange = before, scan
 }
 
 // SetReorgNotifier wires the alert for reorged credited deposits.
@@ -178,6 +186,11 @@ func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64) (err error) 
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
+	if w != nil && w.beforePass != nil {
+		if err := w.beforePass(ctx); err != nil {
+			return err
+		}
+	}
 	release, err := w.tryScanLock(ctx)
 	if err != nil {
 		return err
@@ -279,12 +292,38 @@ func (w *Worker) tryScanLock(ctx context.Context) (func() error, error) {
 
 // ScanOnce runs one full pass; exposed for tests and manual triggering.
 func (w *Worker) ScanOnce(ctx context.Context) (err error) {
+	if w.beforePass != nil {
+		if err := w.beforePass(ctx); err != nil {
+			return err
+		}
+	}
 	for _, chain := range w.chains {
 		if scanErr := w.scanChain(ctx, chain); scanErr != nil {
 			err = errors.Join(err, fmt.Errorf("scan %s: %w", chain.Chain, scanErr))
 		}
 	}
 	return err
+}
+
+// RunGuardScan reuses the global scanner lock but never retries or credits
+// pending deposits. A caller with no recipients and a security range hook can
+// keep watching existing wallet funds while the recharge channel is disabled.
+func (w *Worker) RunGuardScan(ctx context.Context) (err error) {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
+	if w == nil || w.handler != nil || w.securityRange == nil {
+		return errors.New("security scan requires only a security range guard and no deposit handler")
+	}
+	release, err := w.tryScanLock(ctx)
+	if err != nil {
+		return err
+	}
+	if release == nil {
+		return ErrScanBusy
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	return w.ScanOnce(ctx)
 }
 
 func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
@@ -311,6 +350,21 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		return err
 	}
 	slog.Info("[cryptopay] scan tick", "chain", chain.Chain, "head", head, "confirmations", chain.Confirmations)
+	if w.securityRange != nil && head > 0 {
+		// Security incidents do not wait for deposit finality. Examine a
+		// bounded head window even when the credited-deposit cursor is caught
+		// up or confirmations intentionally lag the latest mined block.
+		span := uint64(evmFirstRunLookback)
+		if chain.MaxRange > 0 {
+			span = min(span, chain.MaxRange)
+		} else if w.maxRange > 0 {
+			span = min(span, w.maxRange)
+		}
+		span = min(span, head)
+		if err := w.securityRange(ctx, NewEVMScanner(pool), pool, chain, head-span+1, head); err != nil {
+			return err
+		}
+	}
 	if head <= chain.Confirmations {
 		return nil
 	}
@@ -352,7 +406,7 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 	if err != nil {
 		return err
 	}
-	if len(recipients) == 0 {
+	if len(recipients) == 0 && w.securityRange == nil {
 		// Nothing to watch: advance the cursor so we do not rescan forever.
 		return w.cursor.Save(ctx, chain.Chain, confirmed)
 	}
@@ -398,6 +452,11 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 // and persistence check. Only the caller decides whether a successful range
 // is contiguous with the durable cursor and can advance it.
 func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool *rpc.Pool, chain ChainConfig, from, to uint64, recipients []string) error {
+	if w.securityRange != nil {
+		if err := w.securityRange(ctx, scanner, pool, chain, from, to); err != nil {
+			return err
+		}
+	}
 	transfers, err := scanner.ScanRange(ctx, chain.Chain, from, to, chain.Tokens, recipients)
 	if err != nil {
 		return err

@@ -28,12 +28,13 @@ import (
 
 // CryptoHandler serves the built-in crypto deposit channel.
 type CryptoHandler struct {
-	addresses        *addresses.Service
-	store            cryptopay.SettingStore
-	service          *cryptopay.Service
-	security         *service.CryptoSecurityService
-	securityConfig   *config.Config
-	mnemonicExporter cryptoMnemonicExporter
+	addresses         *addresses.Service
+	store             cryptopay.SettingStore
+	service           *cryptopay.Service
+	security          *service.CryptoSecurityService
+	securityConfig    *config.Config
+	mnemonicExporter  cryptoMnemonicExporter
+	operationNotifier cryptoWalletOperationNotifier
 }
 
 func NewCryptoHandler(addressService *addresses.Service, settings *service.SettingService, cryptoSvc *cryptopay.Service, totpService *service.TotpService, cfg *config.Config) *CryptoHandler {
@@ -42,12 +43,13 @@ func NewCryptoHandler(addressService *addresses.Service, settings *service.Setti
 		mnemonicExporter = cryptoSvc
 	}
 	return &CryptoHandler{
-		addresses:        addressService,
-		store:            cryptopay.NewServiceSettingStore(settings),
-		service:          cryptoSvc,
-		security:         service.NewCryptoSecurityService(totpService, cfg),
-		securityConfig:   cfg,
-		mnemonicExporter: mnemonicExporter,
+		addresses:         addressService,
+		store:             cryptopay.NewServiceSettingStore(settings),
+		service:           cryptoSvc,
+		security:          service.NewCryptoSecurityService(totpService, cfg),
+		securityConfig:    cfg,
+		operationNotifier: cryptoSvc,
+		mnemonicExporter:  mnemonicExporter,
 	}
 }
 
@@ -119,6 +121,11 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 	merged := patch.Apply(existing)
 	if merged.HotIndex != 0 {
 		response.BadRequest(c, "Gas 钱包固定使用索引 0，不能通过配置改动钱包地址")
+		return
+	}
+	if (!strings.EqualFold(strings.TrimSpace(existing.HotWalletEVM), strings.TrimSpace(merged.HotWalletEVM)) ||
+		strings.TrimSpace(existing.HotWalletSolana) != strings.TrimSpace(merged.HotWalletSolana)) &&
+		!h.notifyWalletAction(c, "destination_change", "verified") {
 		return
 	}
 	if err := cryptopay.SaveConfig(c.Request.Context(), h.store, merged); err != nil {

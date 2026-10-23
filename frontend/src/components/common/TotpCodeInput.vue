@@ -50,7 +50,10 @@ const props = withDefaults(defineProps<{
   autofocus?: boolean
 }>(), { disabled: false, invalid: false, autofocus: true })
 
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: string]
+  complete: [value: string]
+}>()
 const input = ref<HTMLInputElement | null>(null)
 const focused = ref(false)
 const activeIndex = ref(0)
@@ -79,6 +82,9 @@ function update(value: string) {
   const next = normalized.length <= 6 ? normalized : ''
   if (input.value) input.value.value = next
   emit('update:modelValue', next)
+  // Completion comes from an actual edit/autofill/paste, not a retained or
+  // programmatically supplied code. The parent v-model is updated first.
+  if (next.length === 6 && next !== props.modelValue) emit('complete', next)
   nextTick(syncSelection)
 }
 

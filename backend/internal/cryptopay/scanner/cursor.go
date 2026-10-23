@@ -11,7 +11,14 @@ import (
 
 // CursorStore persists per-chain scan progress.
 type CursorStore struct {
-	db *sql.DB
+	db     *sql.DB
+	prefix string
+}
+
+// NewNamespacedCursorStore keeps security-only scans separate from payment
+// ingestion without requiring a second table or moving the payment cursor.
+func NewNamespacedCursorStore(db *sql.DB, prefix string) *CursorStore {
+	return &CursorStore{db: db, prefix: prefix}
 }
 
 func NewCursorStore(db *sql.DB) *CursorStore {
@@ -20,6 +27,7 @@ func NewCursorStore(db *sql.DB) *CursorStore {
 
 // Load returns the stored last block for a chain (0 when absent).
 func (s *CursorStore) Load(ctx context.Context, chain string) (uint64, error) {
+	chain = s.prefix + chain
 	var last sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT last_block FROM crypto_scan_cursors WHERE chain = $1`, chain).Scan(&last)
@@ -37,6 +45,7 @@ func (s *CursorStore) Load(ctx context.Context, chain string) (uint64, error) {
 
 // Save upserts the cursor after a committed batch.
 func (s *CursorStore) Save(ctx context.Context, chain string, lastBlock uint64) error {
+	chain = s.prefix + chain
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}

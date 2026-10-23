@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import CryptoMnemonicsDialog from '../CryptoMnemonicsDialog.vue'
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
+const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), showError: vi.fn() }))
 vi.mock('@/api/client', () => ({ apiClient: mocks }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn() }) }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: mocks.showError, showSuccess: vi.fn() }) }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 enableAutoUnmount(afterEach)
 
@@ -14,7 +14,8 @@ const hot = 'hot november oscar papa quebec romeo sierra tango uniform victor wh
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.get.mockResolvedValue({ data: { enabled: true, feature_enabled: true, can_setup: true } })
-  mocks.post.mockResolvedValue({ data: { deposit_mnemonic: deposit, hot_mnemonic: hot } })
+  mocks.post.mockImplementation(async (path: string) => path.endsWith('/operation-intent')
+    ? { data: { notified: true } } : { data: { deposit_mnemonic: deposit, hot_mnemonic: hot } })
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
     value: { writeText: vi.fn().mockResolvedValue(undefined) }
@@ -30,7 +31,10 @@ async function submitAndAuthorize(wrapper: ReturnType<typeof render>, waitForTra
   await wrapper.get('input[type="checkbox"]').setValue(true)
   await wrapper.get('#crypto-mnemonics-form').trigger('submit')
   await flushPromises()
-  expect(mocks.post).not.toHaveBeenCalled()
+  expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/export-mnemonics'))).toHaveLength(0)
+  expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/security/operation-intent', { action: 'export_mnemonics' }, {
+    _retry: true, headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+  })
   await wrapper.get('#crypto-security-code').setValue('234567')
   await wrapper.get('#crypto-security-form').trigger('submit')
   await flushPromises()
@@ -100,7 +104,8 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
 
   it('splits 24-word seeds into ordered 12-word copy segments', async () => {
     const words24 = Array.from({ length: 24 }, (_, index) => `seed${index + 1}`)
-    mocks.post.mockResolvedValueOnce({ data: { deposit_mnemonic: words24.join(' '), hot_mnemonic: hot } })
+    mocks.post.mockImplementation(async (path: string) => path.endsWith('/operation-intent')
+      ? { data: { notified: true } } : { data: { deposit_mnemonic: words24.join(' '), hot_mnemonic: hot } })
     const wrapper = render()
     await submitAndAuthorize(wrapper)
     const depositButtons = wrapper.findAll('[data-copy-part]').filter((button) => button.attributes('data-copy-part')?.startsWith('deposit-'))
@@ -131,7 +136,8 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
 
   it('wipes late plaintext export data when the dialog closes during the request', async () => {
     let resolveExport!: (value: { data: { deposit_mnemonic: string; hot_mnemonic: string } }) => void
-    mocks.post.mockImplementationOnce(() => new Promise((resolve) => { resolveExport = resolve }))
+    mocks.post.mockImplementation((path: string) => path.endsWith('/operation-intent')
+      ? Promise.resolve({ data: { notified: true } }) : new Promise((resolve) => { resolveExport = resolve }))
     const wrapper = render()
     await wrapper.get('input[type="checkbox"]').setValue(true)
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
@@ -141,7 +147,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
     await Promise.resolve()
 
     const lateResponse = { deposit_mnemonic: deposit, hot_mnemonic: hot }
-    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.post).toHaveBeenCalledTimes(2)
     await wrapper.setProps({ show: false })
     resolveExport({ data: lateResponse })
     await flushPromises()
@@ -167,5 +173,36 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
     expect(wrapper.text()).not.toContain(hot)
     expect(wrapper.findAll('.crypto-mnemonics__seed')).toHaveLength(0)
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
+  })
+
+  it.each([false, 'failure'] as const)('blocks export before TOTP when notification is %s', async (result) => {
+    mocks.post.mockImplementation(async () => {
+      if (result === 'failure') throw new Error('Bark unavailable')
+      return { data: { notified: false } }
+    })
+    const wrapper = render()
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await wrapper.get('#crypto-mnemonics-form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toBe('admin.crypto.walletOperationNotifyFailed')
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.get).not.toHaveBeenCalled()
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/export-mnemonics'))).toHaveLength(0)
+    expect(mocks.showError).toHaveBeenCalledWith('admin.crypto.walletOperationNotifyFailed')
+  })
+
+  it('ignores a late notification when the export dialog has closed', async () => {
+    let completeIntent!: (value: unknown) => void
+    mocks.post.mockImplementation(() => new Promise(resolve => { completeIntent = resolve }))
+    const wrapper = render()
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await wrapper.get('#crypto-mnemonics-form').trigger('submit')
+    await flushPromises()
+    await wrapper.setProps({ show: false })
+    completeIntent({ data: { notified: true } })
+    await flushPromises()
+    expect(mocks.get).not.toHaveBeenCalled()
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/export-mnemonics'))).toHaveLength(0)
   })
 })

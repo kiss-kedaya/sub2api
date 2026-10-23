@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -210,7 +211,7 @@ type cryptoRouteIdentity struct {
 	sessionID     string
 }
 
-func newCryptoRouteHarness(t *testing.T, user *service.User) *cryptoRouteHarness {
+func newCryptoRouteHarness(t *testing.T, user *service.User, notifiers ...cryptopay.PushNotifier) *cryptoRouteHarness {
 	t.Helper()
 	t.Setenv("CRYPTO_ADMIN_USER_IDS", "41,75,94")
 	gin.SetMode(gin.TestMode)
@@ -228,7 +229,12 @@ func newCryptoRouteHarness(t *testing.T, user *service.User) *cryptoRouteHarness
 		EncryptionKey:           strings.Repeat("a", 64),
 		EncryptionKeyConfigured: true,
 	}}
-	cryptoHandler := handler.NewCryptoHandler(nil, settings, nil, totpService, cfg)
+	var cryptoService *cryptopay.Service
+	if len(notifiers) > 0 {
+		cryptoService = &cryptopay.Service{}
+		cryptoService.SetPushNotifier(notifiers[0])
+	}
+	cryptoHandler := handler.NewCryptoHandler(nil, settings, cryptoService, totpService, cfg)
 
 	router := gin.New()
 	identity := &cryptoRouteIdentity{authenticated: true, method: service.AuditAuthMethodJWT, claimRole: service.RoleAdmin, sessionID: "route-test-session"}
@@ -514,6 +520,7 @@ func testCryptoAdminEveryRiskRouteRejectsInvalidTotp(t *testing.T) {
 		{http.MethodPost, "/api/v1/admin/crypto/wallet/initialize"},
 		{http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics"},
 		{http.MethodPost, "/api/v1/admin/crypto/wallet/hot-mnemonic"},
+		{http.MethodPost, "/api/v1/admin/crypto/wallet/security/recover"},
 		{http.MethodPost, "/api/v1/admin/crypto/rpc/test"},
 		{http.MethodPost, "/api/v1/admin/crypto/rpc/auto-pick"},
 		{http.MethodGet, "/api/v1/admin/crypto/config"},

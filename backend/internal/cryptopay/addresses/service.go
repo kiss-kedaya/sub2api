@@ -31,11 +31,22 @@ type PoolStore interface {
 
 // Service coordinates pool top-up and lazy assignment.
 type Service struct {
-	poolMu       sync.Mutex // serialize top-up and deriver replacement
-	repo         PoolStore
-	deriver      Deriver
-	topUpBatch   int
-	lowWatermark int64
+	poolMu             sync.Mutex // serialize top-up and deriver replacement
+	guardMu            sync.RWMutex
+	beforeAssign       func(context.Context) error
+	validateAssignment func(context.Context, Assignment) error
+	repo               PoolStore
+	deriver            Deriver
+	topUpBatch         int
+	lowWatermark       int64
+}
+
+// Guards are attached by the wallet facade, including for the direct address
+// HTTP endpoint. Every assignment is checked before its public address leaves.
+func (s *Service) SetSecurityGuards(before func(context.Context) error, validate func(context.Context, Assignment) error) {
+	s.guardMu.Lock()
+	defer s.guardMu.Unlock()
+	s.beforeAssign, s.validateAssignment = before, validate
 }
 
 // NewService wires the address service. topUpBatch is derived per request;
@@ -56,6 +67,14 @@ func (s *Service) GetOrAssign(ctx context.Context, userID int64) (map[string]str
 	if err := mode.CheckWritable(); err != nil {
 		return nil, err
 	}
+	s.guardMu.RLock()
+	before, validate := s.beforeAssign, s.validateAssignment
+	s.guardMu.RUnlock()
+	if before != nil {
+		if err := before(ctx); err != nil {
+			return nil, err
+		}
+	}
 	out := map[string]string{}
 	for _, family := range []string{FamilyEVM, FamilySolana} {
 		existing, err := s.repo.ExistingAssignment(ctx, userID, family)
@@ -63,6 +82,11 @@ func (s *Service) GetOrAssign(ctx context.Context, userID int64) (map[string]str
 			return nil, err
 		}
 		if existing != nil {
+			if validate != nil {
+				if err := validate(ctx, *existing); err != nil {
+					return nil, err
+				}
+			}
 			// A disabled address must not be handed out again: the scanner
 			// stops watching it, so a deposit would vanish without a record.
 			if existing.Status != "active" {
@@ -85,6 +109,11 @@ func (s *Service) GetOrAssign(ctx context.Context, userID int64) (map[string]str
 			}
 			if assignment == nil {
 				return nil, fmt.Errorf("address pool exhausted for %s", family)
+			}
+		}
+		if validate != nil {
+			if err := validate(ctx, *assignment); err != nil {
+				return nil, err
 			}
 		}
 		out[family] = assignment.Address

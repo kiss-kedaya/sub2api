@@ -32,7 +32,11 @@ func TestCryptoConfigDestinationOnlyWritesChannelConfig(t *testing.T) {
 	store := &cryptoConfigStore{values: map[string]string{
 		cryptopay.SettingKeyCryptoConfig: `{}`,
 	}}
-	h := &CryptoHandler{store: store}
+	h := &CryptoHandler{store: store, operationNotifier: operationNotificationFunc(func(_ context.Context, action, phase string) error {
+		require.Equal(t, "destination_change", action)
+		require.Equal(t, "verified", phase)
+		return nil
+	})}
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("PUT", "/api/v1/admin/crypto/config", strings.NewReader(

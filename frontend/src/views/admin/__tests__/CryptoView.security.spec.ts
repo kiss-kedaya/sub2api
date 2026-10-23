@@ -4,11 +4,12 @@ import CryptoView from '../CryptoView.vue'
 import zh from '@/i18n/locales/zh/admin/crypto'
 import en from '@/i18n/locales/en/admin/crypto'
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), showSuccess: vi.fn() }))
+const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), showSuccess: vi.fn(), showError: vi.fn() }))
 vi.mock('@/api/client', () => ({ apiClient: mocks }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess }) }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError }) }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => key + (params ? JSON.stringify(params) : '') }) }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div><slot /></div>' } }))
+vi.mock('@/components/crypto/CryptoWalletSecurityPanel.vue', () => ({ default: { name: 'CryptoWalletSecurityPanel', emits: ['change', 'recovered'], template: '<div />' } }))
 enableAutoUnmount(afterEach)
 
 const config = () => ({ enabled: true, chains: ['bsc'], rpc: { bsc: 'https://one.example,https://two.example' }, sweep_global_threshold: 100,
@@ -22,6 +23,7 @@ beforeEach(() => {
   serverConfig = config()
   walletStatus = { ok: true, configured: false, ready: false, enabled: false }
   mocks.get.mockImplementation(async (path: string) => {
+    if (path === '/user/bark') return { data: { data: { configured: true, enabled: true } } }
     if (path.endsWith('/security/status')) return { data: { enabled: true, feature_enabled: true, can_setup: true } }
     let data: unknown = []
     if (path.endsWith('/config')) data = serverConfig
@@ -39,6 +41,7 @@ beforeEach(() => {
     return { data: {}, status: 200 }
   })
   mocks.post.mockImplementation(async (path: string) => {
+    if (path.endsWith('/operation-intent')) return { data: { notified: true }, status: 200 }
     if (path.endsWith('/export-mnemonics')) return { data: { deposit_mnemonic: 'test deposit words', hot_mnemonic: 'test gas words' }, status: 200 }
     if (path.endsWith('/backup')) return { data: new Blob(['encrypted'], { type: 'application/json' }), status: 200 }
     if (path.endsWith('/hot-mnemonic')) {
@@ -76,6 +79,32 @@ async function verify(wrapper: VueWrapper, code = '123456') {
 }
 
 describe('Crypto page operation wiring (mocked UI contract only)', () => {
+  it('keeps the channel paused after security recovery without discarding edits or opening another TOTP prompt', async () => {
+    walletStatus = { ok: true, configured: true, ready: true, enabled: true }
+    const wrapper = await render()
+    await configTab(wrapper)
+    expect(wrapper.get('.crypto-view__header-status').text()).toContain('admin.crypto.channelActive')
+    const rpc = wrapper.findAll('input').find(input => (input.element as HTMLInputElement).value === 'https://one.example')!
+    await rpc.setValue('https://edited.example')
+    await rpc.trigger('change')
+    const configReads = mocks.get.mock.calls.filter(([path]) => path.endsWith('/config')).length
+    const panel = wrapper.findComponent({ name: 'CryptoWalletSecurityPanel' })
+    panel.vm.$emit('change', { enabled: true, initialized: true, locked: true, deposits_paused: true, alert_pending: true })
+    await flushPromises()
+    expect(wrapper.get('.crypto-view__header-status').text()).toContain('admin.crypto.channelPaused')
+    serverConfig.enabled = false
+    walletStatus.enabled = false
+    panel.vm.$emit('change', { enabled: true, initialized: true, locked: false, deposits_paused: false, alert_pending: false })
+    panel.vm.$emit('recovered')
+    await flushPromises()
+    expect(wrapper.get('.crypto-view__header-status').text()).toContain('admin.crypto.channelPaused')
+    expect((rpc.element as HTMLInputElement).value).toBe('https://edited.example')
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.get.mock.calls.filter(([path]) => path.endsWith('/config'))).toHaveLength(configReads)
+    expect(mocks.put).not.toHaveBeenCalled()
+    expect(mocks.post).not.toHaveBeenCalled()
+  })
+
   it('selects supported networks and saves them only after fresh 2FA without changing pricing', async () => {
     const wrapper = await render()
     await configTab(wrapper)
@@ -176,7 +205,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await wrapper.get('.crypto-view__save-bar button').trigger('click')
     await flushPromises()
     expect(mocks.put).not.toHaveBeenCalled()
-    await wrapper.get('#crypto-security-code').setValue('123456')
+    await wrapper.get('#crypto-security-code').setValue('12345')
     await wrapper.findAll('.btn-secondary').find(btn => btn.text() === 'common.cancel')!.trigger('click')
     expect(mocks.put).not.toHaveBeenCalled()
     await flushPromises()
@@ -231,7 +260,8 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await wrapper.get('#crypto-mnemonics-form input[type="checkbox"]').setValue(true)
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
     await flushPromises()
-    expect(mocks.post).not.toHaveBeenCalled()
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/export-mnemonics'))).toHaveLength(0)
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/security/operation-intent', { action: 'export_mnemonics' }, expect.objectContaining({ _retry: true }))
     await verify(wrapper)
     expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/export-mnemonics', {}, expect.objectContaining({
       headers: { 'X-Crypto-TOTP': '123456', 'Cache-Control': 'no-store', Pragma: 'no-cache' }
@@ -386,5 +416,82 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await button(wrapper, 'admin.crypto.sweepDryRun').trigger('click')
     await verify(wrapper)
     expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/sweep/run', null, expect.objectContaining({ params: { dry_run: '1' }, headers: { 'X-Crypto-TOTP': '123456' } }))
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/operation-intent'))).toHaveLength(0)
+  })
+
+  it('shows the shared private Bark configuration on the wallet page', async () => {
+    const wrapper = await render()
+    expect(wrapper.get('.crypto-view__bark h2').text()).toBe('admin.crypto.walletBarkTitle')
+    expect(wrapper.get('.crypto-view__bark').text()).toContain('admin.crypto.walletBarkDescription')
+    expect((wrapper.get('#bark-device-key').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.get('#bark-device-key').attributes('type')).toBe('password')
+  })
+
+  it.each(['sweep', 'destination_change'] as const)('notifies %s intent before fresh verification without executing early', async (action) => {
+    walletStatus = { ok: true, configured: true, ready: true, enabled: true }
+    const wrapper = await render()
+    if (action === 'sweep') {
+      await wrapper.get('#crypto-tab-sweep').trigger('click')
+      await flushPromises()
+      await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
+    } else {
+      await configTab(wrapper)
+      await wrapper.get('input[placeholder="0x…"]').setValue('0x8888888888888888888888888888888888888888')
+      await wrapper.get('.crypto-view__save-bar button').trigger('click')
+    }
+    await flushPromises()
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/security/operation-intent', { action }, {
+      _retry: true, headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+    })
+    expect(mocks.put).not.toHaveBeenCalled()
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/sweep/run'))).toHaveLength(0)
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
+    await verify(wrapper, '345678')
+    if (action === 'sweep') {
+      expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/sweep/run', null, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '345678' } }))
+    } else {
+      expect(mocks.put).toHaveBeenCalledWith('/admin/crypto/config', { hot_wallet_evm: '0x8888888888888888888888888888888888888888' }, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '345678' } }))
+    }
+  })
+
+  it.each(['sweep', 'destination_change'] as const)('blocks %s when the intent notification fails', async (action) => {
+    walletStatus = { ok: true, configured: true, ready: true, enabled: true }
+    const normalPost = mocks.post.getMockImplementation()!
+    mocks.post.mockImplementation((path: string, ...args: unknown[]) => path.endsWith('/operation-intent')
+      ? Promise.reject(new Error('Notification unavailable')) : normalPost(path, ...args))
+    const wrapper = await render()
+    if (action === 'sweep') {
+      await wrapper.get('#crypto-tab-sweep').trigger('click')
+      await flushPromises()
+      await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
+    } else {
+      await configTab(wrapper)
+      await wrapper.get('input[placeholder="0x…"]').setValue('0x8888888888888888888888888888888888888888')
+      await wrapper.get('.crypto-view__save-bar button').trigger('click')
+    }
+    await flushPromises()
+    expect(wrapper.get('.crypto-view__intent-error').text()).toBe('admin.crypto.walletOperationNotifyFailed')
+    expect(mocks.showError).toHaveBeenCalledWith('admin.crypto.walletOperationNotifyFailed')
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.put).not.toHaveBeenCalled()
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/sweep/run'))).toHaveLength(0)
+  })
+
+  it('does not open a delayed sweep verification after switching away', async () => {
+    walletStatus = { ok: true, configured: true, ready: true, enabled: true }
+    let completeIntent!: (value: unknown) => void
+    const normalPost = mocks.post.getMockImplementation()!
+    mocks.post.mockImplementation((path: string, ...args: unknown[]) => path.endsWith('/operation-intent')
+      ? new Promise(resolve => { completeIntent = resolve }) : normalPost(path, ...args))
+    const wrapper = await render()
+    await wrapper.get('#crypto-tab-sweep').trigger('click')
+    await flushPromises()
+    await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
+    await flushPromises()
+    await wrapper.get('#crypto-tab-addresses').trigger('click')
+    completeIntent({ data: { notified: true } })
+    await flushPromises()
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/sweep/run'))).toHaveLength(0)
   })
 })

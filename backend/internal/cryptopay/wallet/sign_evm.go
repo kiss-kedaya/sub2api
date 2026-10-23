@@ -48,6 +48,18 @@ func (m *Manager) SignEVM(ctx context.Context, req EVMSignRequest) (string, erro
 	// Roll back BEFORE recording a denial via db. This also works with a
 	// one-connection pool, avoiding pool starvation and self-deadlocks.
 	deny = func(err error) (string, error) { _ = storeTx.Rollback(); return "", m.denied(op, err) }
+	if err := m.checkSecurityInTx(ctx, storeTx); err != nil {
+		return deny(err)
+	}
+	if m.securityEnabled {
+		var enabled bool
+		if err := storeTx.QueryRowContext(ctx, `SELECT COALESCE((value::jsonb->>'enabled')::boolean,false) FROM settings WHERE key=$1 FOR SHARE`, "crypto.config").Scan(&enabled); err != nil || !enabled {
+			return deny(ErrSigningDisabled)
+		}
+		if !m.validSigningGrant(ctx) {
+			return deny(ErrSigningAuthorizationRequired)
+		}
+	}
 	deriver := m.deposit
 	if req.Kind == "gas" {
 		if !isEVMNative(req.Token) || req.GasIndex == nil || *req.GasIndex >= 1<<31 {
@@ -95,8 +107,12 @@ func (m *Manager) SignEVM(ctx context.Context, req EVMSignRequest) (string, erro
 	if err != nil {
 		return deny(errors.New("wallet transaction encoding failed"))
 	}
+	authorization := ""
+	if m.securityEnabled {
+		authorization = m.signatureAuthorizationReason(req.ChainID, signed.Hash().Hex())
+	}
 	if err := writeAudit(ctx, storeTx, auditEntry{op: op, kind: req.Kind, index: req.Index, chainID: req.ChainID,
-		to: req.To, token: req.Token, amount: req.Amount, result: "ok"}); err != nil {
+		to: req.To, token: req.Token, amount: req.Amount, result: "ok", reason: authorization}); err != nil {
 		return "", err
 	}
 	if err := storeTx.Commit(); err != nil {
@@ -132,7 +148,7 @@ func validateEVMRequest(req EVMSignRequest) (*big.Int, *big.Int, error) {
 	// Match the six networks supported by the deposit/sweep catalog. This
 	// is a transaction invariant, not the removed independent approval policy.
 	switch req.ChainID {
-	case 56, 137, 9745, 42161, 8453, 196:
+	case 1, 56, 137, 9745, 42161, 8453, 196:
 	default:
 		return nil, nil, errors.New("unsupported EVM chain id")
 	}

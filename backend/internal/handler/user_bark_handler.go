@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/Wei-Shaw/sub2api/internal/notify"
@@ -24,6 +27,7 @@ func NewUserBarkHandler(service *notify.UserBarkService) *UserBarkHandler {
 // GetBarkSettings returns the configuration status.
 // GET /api/v1/user/bark
 func (h *UserBarkHandler) GetBarkSettings(c *gin.Context) {
+	cryptoNoStore(c)
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
@@ -43,20 +47,33 @@ func (h *UserBarkHandler) GetBarkSettings(c *gin.Context) {
 // UpdateBarkSettings stores or clears the device key.
 // PUT /api/v1/user/bark
 func (h *UserBarkHandler) UpdateBarkSettings(c *gin.Context) {
+	cryptoNoStore(c)
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 	var req struct {
-		DeviceKey string `json:"device_key"`
-		Enabled   bool   `json:"enabled"`
+		DeviceKey *string `json:"device_key"`
+		Enabled   *bool   `json:"enabled"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 4<<10))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&req) != nil || decoder.Decode(new(any)) != io.EOF || req.Enabled == nil {
 		response.BadRequest(c, "Invalid request payload")
 		return
 	}
-	if err := h.service.SetDeviceKey(c.Request.Context(), subject.UserID, req.DeviceKey, req.Enabled); err != nil {
+	var err error
+	if req.DeviceKey == nil {
+		err = h.service.SetEnabled(c.Request.Context(), subject.UserID, *req.Enabled)
+	} else {
+		err = h.service.SetDeviceKey(c.Request.Context(), subject.UserID, *req.DeviceKey, *req.Enabled)
+	}
+	if err != nil {
+		if errors.Is(err, notify.ErrBarkKeyRequired) || errors.Is(err, notify.ErrBarkInvalidKey) {
+			response.BadRequest(c, err.Error())
+			return
+		}
 		response.ErrorFrom(c, err)
 		return
 	}

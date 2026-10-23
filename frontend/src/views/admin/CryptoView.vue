@@ -7,10 +7,13 @@
           <p class="crypto-view__desc">{{ t('admin.crypto.description') }}</p>
         </div>
         <div v-if="loadedSnapshot" class="crypto-view__header-status">
-          <span class="crypto-view__badge" :class="loadedSnapshot.enabled ? 'crypto-view__badge--active' : 'crypto-view__badge--disabled'">{{ t(loadedSnapshot.enabled ? 'admin.crypto.channelActive' : 'admin.crypto.channelPaused') }}</span>
+          <span class="crypto-view__badge" :class="loadedSnapshot.enabled && !walletSecurityLocked ? 'crypto-view__badge--active' : 'crypto-view__badge--disabled'">{{ t(loadedSnapshot.enabled && !walletSecurityLocked ? 'admin.crypto.channelActive' : 'admin.crypto.channelPaused') }}</span>
           <span class="crypto-view__badge" :class="walletReady ? 'crypto-view__badge--active' : 'crypto-view__badge--pending'">{{ t(walletStateLabel) }}</span>
         </div>
       </header>
+      <CryptoWalletSecurityPanel @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
+      <ProfileBarkCard class="crypto-view__bark" :title="t('admin.crypto.walletBarkTitle')" :description="t('admin.crypto.walletBarkDescription')" />
+      <p v-if="operationIntentError" role="alert" class="crypto-view__approval-notice crypto-view__intent-error">{{ operationIntentError }}</p>
       <div class="card crypto-view__card">
         <div class="crypto-view__tabs" role="tablist" :aria-label="t('admin.crypto.title')">
           <button
@@ -718,10 +721,13 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import CryptoSecurityDialog from '@/components/crypto/CryptoSecurityDialog.vue'
 import CryptoMnemonicsDialog from '@/components/crypto/CryptoMnemonicsDialog.vue'
+import CryptoWalletSecurityPanel from '@/components/crypto/CryptoWalletSecurityPanel.vue'
+import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { explorerTxURL } from '@/utils/cryptoExplorer'
 import {
   getCryptoConfig,
   getHotWalletAddress,
@@ -740,6 +746,7 @@ import {
   testRPCEndpoint,
   autoPickRPC,
   importHotMnemonic,
+  reportWalletOperationIntent,
   type AddressSortKey,
   type AdminAddressSummary,
   type CryptoConfig,
@@ -751,12 +758,27 @@ import {
   type PoolStatus,
   type SweepPlan,
   type SweepRecord,
-  type SweepSummary
+  type SweepSummary,
+  type WalletSecurityStatus,
+  type WalletOperationAction
 } from '@/api/admin/crypto'
 
 const { t } = useI18n()
 const appStore = useAppStore()
 const securityDialog = ref<InstanceType<typeof CryptoSecurityDialog> | null>(null)
+const operationIntentError = ref('')
+
+async function notifyOperationIntent(action: WalletOperationAction): Promise<boolean> {
+  operationIntentError.value = ''
+  try {
+    await reportWalletOperationIntent(action)
+    return true
+  } catch {
+    operationIntentError.value = t('admin.crypto.walletOperationNotifyFailed')
+    appStore.showError(operationIntentError.value)
+    return false
+  }
+}
 
 async function withCryptoVerification(label: string, callback: (code: string) => Promise<unknown>): Promise<boolean> {
   const operationTab = activeTab.value
@@ -847,9 +869,11 @@ const walletConfigured = ref(false)
 const walletLoaded = ref(false)
 const walletChannelEnabled = ref(false)
 const walletOk = ref(false)
-const walletCanDerive = computed(() => walletOk.value && walletLoaded.value)
+const walletSecurityLocked = ref(false)
+const walletCanDerive = computed(() => walletOk.value && walletLoaded.value && !walletSecurityLocked.value)
 const walletReady = computed(() => walletCanDerive.value && walletChannelEnabled.value)
-const walletStateLabel = computed(() => !walletOk.value ? 'admin.crypto.walletUnavailable'
+const walletStateLabel = computed(() => walletSecurityLocked.value ? 'admin.crypto.walletSecurityLocked'
+  : !walletOk.value ? 'admin.crypto.walletUnavailable'
   : !walletConfigured.value ? 'admin.crypto.walletNotConfigured'
     : !walletLoaded.value ? 'admin.crypto.walletUnavailable'
     : walletReady.value ? 'admin.crypto.walletReady' : 'admin.crypto.walletNeedsConfig')
@@ -1161,7 +1185,10 @@ async function saveConfig() {
   const label = `${t('admin.crypto.saveConfirmMessage', { count: riskyChanges.value.length })}\n${riskyChanges.value.join('\n')}`
   savingConfig.value = true
   configSaved.value = false
+  const operationTab = activeTab.value
   try {
+    if (('hot_wallet_evm' in patch || 'hot_wallet_solana' in patch) && !await notifyOperationIntent('destination_change')) return
+    if (activeTab.value !== operationTab) return
     // Send only the fields that actually changed. The backend patch applies
     // pointers onto the stored config, so posting the whole object used to
     // rewrite maps the UI never renders (rpc, gas_topup, confirmations,
@@ -1279,6 +1306,10 @@ async function toggleAddress(row: DepositAddress) {
 }
 
 function confirmChannelToggle(value: boolean) {
+  if (value && walletSecurityLocked.value) {
+    appStore.showError(t('admin.crypto.walletSecurityRecoveryHint'))
+    return
+  }
   pendingChannelEnabled.value = value
   channelConfirmOpen.value = true
 }
@@ -1307,7 +1338,10 @@ async function loadSweepPlan() {
 async function doSweep(dryRun: boolean) {
   if (sweeping.value) return
   sweeping.value = true
+  const operationTab = activeTab.value
   try {
+    if (!dryRun && !await notifyOperationIntent('sweep')) return
+    if (activeTab.value !== operationTab) return
     const label = dryRun ? t('admin.crypto.sweepDryRun') : sweepConfirmMessage.value
     const completed = await withCryptoVerification(label, async (code) => {
       sweepSummary.value = await runSweep(dryRun, { totpCode: code })
@@ -1328,25 +1362,6 @@ function requestSweep() {
 
 async function loadSweepRecords() {
   sweepRecords.value = await listSweepRecords()
-}
-
-// Block explorer links let the operator verify a deposit on-chain instead of
-// trusting our own ledger.
-const explorerBases: Record<string, string> = {
-  ethereum: 'https://etherscan.io/tx/',
-  bsc: 'https://bscscan.com/tx/',
-  polygon: 'https://polygonscan.com/tx/',
-  plasma: 'https://plasmascan.to/tx/',
-  arbitrum: 'https://arbiscan.io/tx/',
-  base: 'https://basescan.org/tx/',
-  xlayer: 'https://web3.okx.com/explorer/xlayer/tx/',
-  solana: 'https://solscan.io/tx/'
-}
-
-function explorerTxURL(chain: string, txHash: string): string {
-  const base = explorerBases[chain]
-  if (!base || !txHash) return ''
-  return base + txHash
 }
 
 function fmtTime(value: string): string {
@@ -1417,6 +1432,7 @@ async function loadWalletStatus() {
     walletConfigured.value = st.configured === true
     walletLoaded.value = st.ready === true
     walletChannelEnabled.value = st.enabled === true
+    if (st.security) updateWalletSecurityState(st.security)
   } catch {
     // Reflect unavailable state in the wallet badge without breaking the page.
     walletOk.value = false
@@ -1425,6 +1441,25 @@ async function loadWalletStatus() {
   } finally {
     loadingWallet.value = false
   }
+}
+
+function updateWalletSecurityState(state: WalletSecurityStatus) {
+  walletSecurityLocked.value = state.locked || state.deposits_paused
+  if (walletSecurityLocked.value) reflectSecurityChannelPause()
+}
+
+function reflectSecurityChannelPause() {
+  walletChannelEnabled.value = false
+  // The security guard pauses the channel, and recovery deliberately keeps it
+  // disabled. Preserve other unsaved edits and never reread RPC credentials
+  // with a second TOTP prompt just to update the public on/off indicator.
+  if (config.value) config.value.enabled = false
+  if (loadedSnapshot.value) loadedSnapshot.value.enabled = false
+}
+
+async function onWalletSecurityRecovered() {
+  reflectSecurityChannelPause()
+  await loadWalletStatus()
 }
 
 // Derive the Gas wallet addresses in the main service and fill the destination.
@@ -1541,6 +1576,8 @@ onMounted(() => {
 .crypto-view__wallet-form { display: grid; gap: .75rem; font-size: .875rem; line-height: 1.7; }
 .crypto-view__wallet-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1rem; }
 .crypto-view__wallet-actions p { flex-basis: 100%; }
+.crypto-view__bark { margin-bottom: 1.25rem; }
+.crypto-view__intent-error { margin-bottom: 1.25rem; color: #dc2626; }
 .crypto-view {
   width: 100%;
   max-width: 90rem;

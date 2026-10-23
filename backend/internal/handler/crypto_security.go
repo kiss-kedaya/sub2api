@@ -31,6 +31,7 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 	}
 	path := c.FullPath()
 	setup := c.Request.Method == http.MethodPost && (strings.HasSuffix(path, "/security/setup") || strings.HasSuffix(path, "/security/enable"))
+	intent := c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/security/operation-intent")
 	risky := c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv") ||
 		strings.HasSuffix(path, "/config") || strings.HasSuffix(path, "/hot-wallet") ||
 		strings.HasSuffix(path, "/hot-wallet/address")
@@ -44,13 +45,17 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	if risky && !setup {
+	if risky && !setup && !intent {
 		codes := c.Request.Header.Values("X-Crypto-TOTP")
 		code := ""
 		if len(codes) == 1 {
 			code = codes[0]
 		}
 		if response.ErrorFrom(c, h.security.VerifyRisk(c.Request.Context(), userID, code)) {
+			c.Abort()
+			return
+		}
+		if action := cryptoVerifiedOperation(c); action != "" && !h.notifyWalletAction(c, action, "verified") {
 			c.Abort()
 			return
 		}

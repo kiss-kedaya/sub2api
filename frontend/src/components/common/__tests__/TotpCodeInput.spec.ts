@@ -69,4 +69,27 @@ describe('shared six-cell authenticator input', () => {
     await flushPromises()
     expect(document.activeElement).toBe(wrapper.get('input').element)
   })
+
+  it('emits completion only for a full new entry, including autofill and paste', async () => {
+    const wrapper = render()
+    const control = wrapper.getComponent(TotpCodeInput)
+    const input = wrapper.get('input')
+    for (const code of ['0', '01', '012', '0123', '01234']) await input.setValue(code)
+    expect(control.emitted('complete')).toBeUndefined()
+    await input.setValue('012345')
+    expect(control.emitted('complete')).toEqual([['012345']])
+    await input.trigger('input')
+    expect(control.emitted('complete')).toHaveLength(1)
+    wrapper.vm.code = ''
+    await flushPromises()
+    await input.trigger('paste', { clipboardData: { getData: () => '０１２ ３４５' } })
+    expect(control.emitted('complete')).toEqual([['012345'], ['012345']])
+    wrapper.vm.code = '654321'
+    await flushPromises()
+    expect(control.emitted('complete')).toHaveLength(2)
+    wrapper.vm.disabled = true
+    await flushPromises()
+    await input.trigger('paste', { clipboardData: { getData: () => '111111' } })
+    expect(control.emitted('complete')).toHaveLength(2)
+  })
 })

@@ -229,7 +229,7 @@ func TestSigningAuditFailureWithholdsSignedBytes(t *testing.T) {
 
 func TestBasicTransactionValidationRejectsMalformedIntegersAndBounds(t *testing.T) {
 	mutations := map[string]func(*EVMSignRequest){
-		"unsupported chain":     func(r *EVMSignRequest) { r.ChainID = 1 },
+		"unsupported chain":     func(r *EVMSignRequest) { r.ChainID = 999 },
 		"wrong sweep gas":       func(r *EVMSignRequest) { r.GasLimit = 21000 },
 		"wrong gas topup limit": func(r *EVMSignRequest) { r.Kind = "gas"; r.GasLimit = 65000 },
 		"chain":                 func(r *EVMSignRequest) { r.ChainID = 0 },

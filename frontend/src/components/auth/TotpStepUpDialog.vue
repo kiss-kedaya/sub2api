@@ -25,6 +25,7 @@
         v-model="code"
         :label="t('profile.totp.enterCode')"
         :disabled="verifying"
+        @complete="submit"
       />
       <div v-if="verifying" class="mt-3 flex items-center justify-center gap-2 text-sm text-gray-500">
         <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-500"></div>
@@ -74,17 +75,8 @@ watch(
   }
 )
 
-// Auto-submit once 6 digits are entered.
-watch(
-  code,
-  (newCode) => {
-    if (newCode.length === 6 && !verifying.value) {
-      submit(newCode)
-    }
-  }
-)
-
 async function submit(otp: string) {
+  if (!props.controller.visible.value || verifying.value || !/^[0-9]{6}$/.test(otp)) return
   verifying.value = true
   try {
     await totpAPI.stepUp(otp)

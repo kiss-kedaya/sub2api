@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import UserCreateModal from '@/components/admin/user/UserCreateModal.vue'
+import TotpStepUpDialog from '../TotpStepUpDialog.vue'
+import TotpCodeInput from '@/components/common/TotpCodeInput.vue'
+import { useStepUp } from '@/composables/useStepUp'
 
 const mocks = vi.hoisted(() => ({ create: vi.fn(), stepUp: vi.fn(), showError: vi.fn(), showSuccess: vi.fn() }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
@@ -42,5 +45,33 @@ describe('step-up above the initiating user dialog', () => {
     expect(mocks.create).toHaveBeenCalledTimes(2)
     expect(mocks.create.mock.calls[0][0]).toEqual(mocks.create.mock.calls[1][0])
     expect(wrapper.emitted('success')).toHaveLength(1)
+  })
+
+  it('auto-submits once, rejects concurrent completions, and retries after clearing a rejected code', async () => {
+    let reject!: (reason: unknown) => void
+    mocks.stepUp.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail }))
+      .mockResolvedValueOnce({ verified: true })
+    const controller = useStepUp()
+    controller.visible.value = true
+    const wrapper = mount(TotpStepUpDialog, { props: { controller }, global: { stubs: { teleport: true } } })
+    await flushPromises()
+    let input = wrapper.get('input[autocomplete="one-time-code"]')
+    await input.setValue('01234')
+    expect(mocks.stepUp).not.toHaveBeenCalled()
+    await input.setValue('012345')
+    expect(mocks.stepUp).toHaveBeenCalledOnce()
+    expect(mocks.stepUp).toHaveBeenCalledWith('012345')
+    await wrapper.getComponent(TotpCodeInput).vm.$emit('complete', '654321')
+    expect(mocks.stepUp).toHaveBeenCalledOnce()
+    reject({ message: 'Expired code' })
+    await flushPromises()
+    expect(mocks.showError).toHaveBeenCalledWith('Expired code')
+    input = wrapper.get('input[autocomplete="one-time-code"]')
+    expect(input.element).toHaveProperty('value', '')
+    expect(controller.visible.value).toBe(true)
+    await input.trigger('paste', { clipboardData: { getData: () => '012345' } })
+    await flushPromises()
+    expect(mocks.stepUp).toHaveBeenCalledTimes(2)
+    expect(controller.visible.value).toBe(false)
   })
 })

@@ -231,10 +231,10 @@ export async function getBarkSettings(): Promise<BarkSettings> {
 }
 
 /**
- * Store (or clear, with an empty key) the Bark device key.
+ * Omit the key to retain the existing ciphertext; an empty key clears it.
  */
-export async function updateBarkSettings(deviceKey: string, enabled: boolean): Promise<void> {
-  await apiClient.put('/user/bark', { device_key: deviceKey, enabled })
+export async function updateBarkSettings(deviceKey: string | undefined, enabled: boolean): Promise<void> {
+  await apiClient.put('/user/bark', { ...(deviceKey === undefined ? {} : { device_key: deviceKey }), enabled })
 }
 
 export const userAPI = {

@@ -20,7 +20,7 @@ const (
 	testToken       = "0x2222222222222222222222222222222222222222"
 	addressQuery    = `SELECT chain_family, derivation_index, address FROM crypto_address_pool
 		UNION SELECT CASE
-			WHEN chain IN ('bsc','polygon','plasma','arbitrum','base','xlayer') THEN 'evm'
+			WHEN chain IN ('ethereum','bsc','polygon','plasma','arbitrum','base','xlayer') THEN 'evm'
 			WHEN chain = 'solana' THEN 'solana'
 			ELSE chain END AS chain_family, derivation_index, address FROM deposit_addresses`
 )
