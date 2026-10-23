@@ -89,11 +89,11 @@ func TestGatewayIPNoticeWebSocketEveryTurnAndRateLimit(t *testing.T) {
 			}
 			if kind == "response.output_text.delta" {
 				visible++
-				require.Equal(t, ipnotice.RenderNotice(session.Message), gjson.GetBytes(frame, "delta").String())
+				require.Equal(t, ipnotice.WrapOutputText("", session.Message), gjson.GetBytes(frame, "delta").String())
 			}
 			if kind == "response.completed" {
 				require.Equal(t, 1, visible)
-				require.Equal(t, ipnotice.RenderNotice(session.Message), gjson.GetBytes(frame, "response.output.0.content.0.text").String())
+				require.Equal(t, ipnotice.WrapOutputText("", session.Message), gjson.GetBytes(frame, "response.output.0.content.0.text").String())
 				break
 			}
 		}

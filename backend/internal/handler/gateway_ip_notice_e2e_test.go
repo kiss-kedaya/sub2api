@@ -105,9 +105,10 @@ func TestGatewayIPNoticeRealHandlerThreeTurnConversation(t *testing.T) {
 				text += gjson.GetBytes(body, "delta").String()
 			}
 			if gjson.GetBytes(body, "type").String() == "response.completed" {
-				require.Equal(t, ipnotice.RenderNotice(notice)+fmt.Sprintf("answer %d", turn), text)
-				require.Equal(t, ipnotice.RenderNotice(notice), gjson.GetBytes(body, "response.output.0.content.0.text").String())
-				require.Equal(t, fmt.Sprintf("answer %d", turn), gjson.GetBytes(body, "response.output.1.content.0.text").String())
+				require.Equal(t, ipnotice.WrapOutputText(fmt.Sprintf("answer %d", turn), notice), text)
+				require.Equal(t, text, gjson.GetBytes(body, "response.output.0.content.0.text").String())
+				require.Equal(t, fmt.Sprintf("msg_%d", turn), gjson.GetBytes(body, "response.output.0.id").String())
+				require.Len(t, gjson.GetBytes(body, "response.output").Array(), 1)
 				break
 			}
 		}

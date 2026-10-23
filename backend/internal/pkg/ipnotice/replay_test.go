@@ -27,7 +27,7 @@ func TestNoticeReplayRestoresAnthropicThinkingPrefixAcrossThreeTurns(t *testing.
 	answer := []byte(`{"type":"message","role":"assistant","content":[{"type":"thinking","thinking":"reasoning","signature":"signed-prefix-1"},{"type":"tool_use","id":"call-1","name":"exec","input":{"command":"unaltered"}}]}`)
 	visible := TransformJSON(answer, Anthropic, testNotice)
 	require.Equal(t, "thinking", gjson.GetBytes(visible, "content.0.type").String())
-	require.Equal(t, RenderNotice(testNotice), gjson.GetBytes(visible, "content.1.text").String())
+	require.Equal(t, WrapOutputText("", testNotice), gjson.GetBytes(visible, "content.2.text").String())
 	toolResult := []byte(`{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-1","content":"tool output"}]}`)
 	second := replayWithItems(t, first, "messages", visible, toolResult)
 	secondSent, err := InjectRequest(second, Anthropic, testNotice)
@@ -155,7 +155,7 @@ func TestNoticeAnthropicThinkingOnlySuccessAndError(t *testing.T) {
 	answer := []byte(`{"type":"message","role":"assistant","content":[{"type":"thinking","thinking":"reasoning","signature":"original"}]}`)
 	visible := TransformJSON(answer, Anthropic, testNotice)
 	require.Equal(t, gjson.GetBytes(answer, "content.0").Raw, gjson.GetBytes(visible, "content.0").Raw)
-	require.Equal(t, RenderNotice(testNotice), gjson.GetBytes(visible, "content.1.text").String())
+	require.Equal(t, WrapOutputText("", testNotice), gjson.GetBytes(visible, "content.1.text").String())
 	for _, fail := range []bool{false, true} {
 		transform := NewEventTransformer(Anthropic, testNotice)
 		transform.Transform([]byte(`{"type":"message_start","message":{"id":"m"}}`))
@@ -169,7 +169,7 @@ func TestNoticeAnthropicThinkingOnlySuccessAndError(t *testing.T) {
 		frames := transform.Transform([]byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`))
 		require.Len(t, frames, 4)
 		require.Equal(t, int64(1), gjson.GetBytes(frames[0], "index").Int())
-		require.Equal(t, RenderNotice(testNotice), gjson.GetBytes(frames[1], "delta.text").String())
+		require.Equal(t, WrapOutputText("", testNotice), gjson.GetBytes(frames[1], "delta.text").String())
 		require.Len(t, transform.Transform([]byte(`{"type":"message_stop"}`)), 1)
 	}
 }

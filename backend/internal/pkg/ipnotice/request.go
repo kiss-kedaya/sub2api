@@ -15,6 +15,16 @@ const noticeFence = "\u2063\u2063"
 // metadata. The plain configured notice remains the visible content.
 func RenderNotice(notice string) string { return noticeFence + notice + noticeFence + "\n\n" }
 
+// RenderNoticeSuffix closes the same reversible boundary at the end of the
+// visible answer. Both boundaries live in the actual text, so clients that use
+// final message snapshots see the same notice as streaming clients.
+func RenderNoticeSuffix(notice string) string { return "\n\n" + noticeFence + notice + noticeFence }
+
+// WrapOutputText puts the configured text on the first and last visible lines.
+func WrapOutputText(text, notice string) string {
+	return RenderNotice(notice) + text + RenderNoticeSuffix(notice)
+}
+
 func takeNotice(text string) (notice, rest string, ok bool) {
 	if !strings.HasPrefix(text, noticeFence) {
 		return "", text, false
@@ -28,6 +38,18 @@ func takeNotice(text string) (notice, rest string, ok bool) {
 		return "", text, false
 	}
 	return text[len(noticeFence):end], text[end+len(noticeFence)+2:], true
+}
+
+func takeNoticeSuffix(text string) (notice, rest string, ok bool) {
+	if !strings.HasSuffix(text, noticeFence) {
+		return "", text, false
+	}
+	end := len(text) - len(noticeFence)
+	start := strings.LastIndex(text[:end], noticeFence)
+	if start < 2 || text[start-2:start] != "\n\n" || start+len(noticeFence) == end {
+		return "", text, false
+	}
+	return text[start+len(noticeFence) : end], text[:start-2], true
 }
 
 // ReplayProtocolForPath includes control/tokenization aliases, where generated
@@ -172,16 +194,34 @@ func NormalizeReplay(body []byte, protocol Protocol) []byte {
 		for _, notice := range notices {
 			// Input injection touches only the final message or appends one.
 			// Rebuild that tail, avoiding a quadratic scan of long histories.
-			tail := len(projected)
+			responseStart := len(projected)
+			if protocol == Responses {
+				// A real Responses text message can follow reasoning or tool-call
+				// items from the same response. Rebuild its preceding INPUT tail,
+				// leaving those output items in their original order.
+				for responseStart > 0 {
+					prior := gjson.ParseBytes(projected[responseStart-1])
+					kind := prior.Get("type").String()
+					role := prior.Get("role").String()
+					if role == "assistant" || kind == "reasoning" || (strings.HasSuffix(kind, "_call") && !strings.HasSuffix(kind, "_call_output")) {
+						responseStart--
+						continue
+					}
+					break
+				}
+			}
+			tail := responseStart
 			if tail > 0 {
 				tail--
 			}
-			prefixBody := set([]byte(`{}`), field, projected[tail:])
+			prefixBody := set([]byte(`{}`), field, projected[tail:responseStart])
 			if injected, err := InjectRequest(prefixBody, protocol, notice); err == nil {
+				responseItems := append([]json.RawMessage(nil), projected[responseStart:]...)
 				projected = projected[:tail]
 				for _, prior := range gjson.GetBytes(injected, field).Array() {
 					projected = append(projected, json.RawMessage(prior.Raw))
 				}
+				projected = append(projected, responseItems...)
 			}
 		}
 		if protocol == Responses && strings.HasPrefix(item.Get("id").String(), "msg_gateway_notice_") {
@@ -194,14 +234,33 @@ func NormalizeReplay(body []byte, protocol Protocol) []byte {
 
 func cleanAssistantNotice(body []byte, protocol Protocol) ([]byte, []string) {
 	var notices []string
+	cleanText := func(text string) (string, bool) {
+		changed := false
+		remember := func(notice string) {
+			for _, prior := range notices {
+				if prior == notice {
+					return
+				}
+			}
+			notices = append(notices, notice)
+		}
+		if notice, rest, ok := takeNotice(text); ok {
+			remember(notice)
+			text, changed = rest, true
+		}
+		if notice, rest, ok := takeNoticeSuffix(text); ok {
+			remember(notice)
+			text, changed = rest, true
+		}
+		return text, changed
+	}
 	field, textField := "content", "text"
 	if protocol == Gemini {
 		field = "parts"
 	}
 	content := gjson.GetBytes(body, field)
 	if content.Type == gjson.String {
-		if notice, rest, ok := takeNotice(content.String()); ok {
-			notices = append(notices, notice)
+		if rest, ok := cleanText(content.String()); ok {
 			return set(body, field, rest), notices
 		}
 		return body, nil
@@ -220,8 +279,7 @@ func cleanAssistantNotice(body []byte, protocol Protocol) ([]byte, []string) {
 			parts = append(parts, json.RawMessage(part.Raw))
 			continue
 		}
-		if notice, rest, ok := takeNotice(part.Get(textField).String()); ok {
-			notices = append(notices, notice)
+		if rest, ok := cleanText(part.Get(textField).String()); ok {
 			if rest != "" {
 				parts = append(parts, json.RawMessage(set([]byte(part.Raw), textField, rest)))
 			}

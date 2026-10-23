@@ -74,7 +74,7 @@ func TestGatewayIPNoticeJSONOutputs(t *testing.T) {
 	}{
 		{Chat, `{"choices":[{"message":{"role":"assistant","content":"answer","tool_calls":[{"id":"call","function":{"arguments":"{}"}}]}}],"usage":{"total_tokens":10}}`, "choices.0.message.content"},
 		{Anthropic, `{"type":"message","content":[{"type":"tool_use","id":"call","input":{"x":1}}],"usage":{"output_tokens":7}}`, "content.0.text"},
-		{Responses, `{"id":"resp1","output":[{"type":"function_call","call_id":"call","arguments":"{}"}],"usage":{"output_tokens":7}}`, "output.0.content.0.text"},
+		{Responses, `{"id":"resp1","output":[{"type":"function_call","call_id":"call","arguments":"{}"}],"usage":{"output_tokens":7}}`, "output.1.content.0.text"},
 		{Gemini, `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"exec","args":{"x":1}}}]}}],"usageMetadata":{"totalTokenCount":7}}`, "candidates.0.content.parts.0.text"},
 	} {
 		t.Run(string(tt.protocol), func(t *testing.T) {
@@ -92,24 +92,27 @@ func TestGatewayIPNoticeJSONOutputs(t *testing.T) {
 func TestGatewayIPNoticeResponsesEventsAndSnapshotsAgree(t *testing.T) {
 	transform := NewEventTransformer(Responses, testNotice)
 	created := transform.Transform([]byte(`{"type":"response.created","sequence_number":0,"response":{"id":"resp1","output":[]}}`))
-	require.Len(t, created, 7)
-	require.Equal(t, RenderNotice(testNotice), gjson.GetBytes(created[3], "delta").String())
-	for i, frame := range created {
-		require.Equal(t, int64(i), gjson.GetBytes(frame, "sequence_number").Int())
-	}
+	require.Len(t, created, 1)
 	tool := []byte(`{"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"function_call","arguments":"{\"x\":1}"}}`)
 	modified := transform.Transform(tool)[0]
-	require.Equal(t, int64(1), gjson.GetBytes(modified, "output_index").Int())
-	require.Equal(t, int64(7), gjson.GetBytes(modified, "sequence_number").Int())
+	require.Equal(t, int64(0), gjson.GetBytes(modified, "output_index").Int())
+	require.Equal(t, int64(1), gjson.GetBytes(modified, "sequence_number").Int())
 	require.Equal(t, gjson.GetBytes(tool, "item").Raw, gjson.GetBytes(modified, "item").Raw)
-	final := transform.Transform([]byte(`{"type":"response.completed","sequence_number":2,"response":{"output":[{"type":"function_call","call_id":"x"}],"usage":{"output_tokens":5}}}`))[0]
-	require.Equal(t, RenderNotice(testNotice), gjson.GetBytes(final, "response.output.0.content.0.text").String())
-	require.Equal(t, "x", gjson.GetBytes(final, "response.output.1.call_id").String())
+	frames := transform.Transform([]byte(`{"type":"response.completed","sequence_number":2,"response":{"output":[{"type":"function_call","call_id":"x"}],"usage":{"output_tokens":5}}}`))
+	require.Len(t, frames, 7)
+	final := frames[len(frames)-1]
+	require.Equal(t, WrapOutputText("", testNotice), gjson.GetBytes(final, "response.output.1.content.0.text").String())
+	require.Equal(t, "x", gjson.GetBytes(final, "response.output.0.call_id").String())
 	require.Equal(t, int64(5), gjson.GetBytes(final, "response.usage.output_tokens").Int())
+	for i, frame := range frames {
+		require.Equal(t, int64(i+2), gjson.GetBytes(frame, "sequence_number").Int())
+	}
 	errFrame := []byte(`{"type":"error","error":{"status_code":403,"message":"refused"}}`)
 	require.Equal(t, errFrame, transform.Transform(errFrame)[0])
 	second := transform.Transform([]byte(`{"type":"response.created","sequence_number":0,"response":{"id":"resp2"}}`))
-	require.Contains(t, string(second[1]), "msg_gateway_notice_resp2")
+	require.Len(t, second, 1)
+	second = transform.Transform([]byte(`{"type":"response.completed","sequence_number":1,"response":{"output":[]}}`))
+	require.Contains(t, string(second[0]), "msg_gateway_notice_resp2")
 }
 
 func TestGatewayIPNoticeAnthropicThinkingToolIndices(t *testing.T) {
@@ -123,9 +126,7 @@ func TestGatewayIPNoticeAnthropicThinkingToolIndices(t *testing.T) {
 	require.Equal(t, gjson.GetBytes(body, "delta").Raw, gjson.GetBytes(out, "delta").Raw)
 	tool := []byte(`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call","input":{"x":1}}}`)
 	frames := transform.Transform(tool)
-	require.Len(t, frames, 4)
+	require.Len(t, frames, 1)
 	require.Equal(t, int64(1), gjson.GetBytes(frames[0], "index").Int())
-	require.Equal(t, RenderNotice(testNotice), gjson.GetBytes(frames[1], "delta.text").String())
-	require.Equal(t, int64(2), gjson.GetBytes(frames[3], "index").Int())
-	require.Equal(t, gjson.GetBytes(tool, "content_block").Raw, gjson.GetBytes(frames[3], "content_block").Raw)
+	require.Equal(t, gjson.GetBytes(tool, "content_block").Raw, gjson.GetBytes(frames[0], "content_block").Raw)
 }
