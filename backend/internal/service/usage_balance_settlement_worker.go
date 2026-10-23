@@ -32,11 +32,14 @@ func NewUsageBalanceSettlementWorker(
 	repo UsageBalanceSettlementRepository,
 ) *UsageBalanceSettlementWorker {
 	worker := &UsageBalanceSettlementWorker{repo: repo}
-	worker.Start()
+	startBackgroundJob(worker.Start)
 	return worker
 }
 
 func (w *UsageBalanceSettlementWorker) Start() {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	if w == nil || w.repo == nil || w.cancel != nil {
 		return
 	}

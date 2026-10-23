@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 )
 
@@ -16,6 +17,9 @@ import (
 func RunConfiguredMigrations(ctx context.Context, cfg *config.Config, validateOnly bool) error {
 	if cfg == nil {
 		return errors.New("nil config")
+	}
+	if service.CryptoAdminTestMode() && !validateOnly {
+		return errors.New("read-only crypto test mode forbids migration writes")
 	}
 	connector, err := pq.NewConnector(cfg.Database.DSNWithTimezone(cfg.Timezone))
 	if err != nil {

@@ -611,11 +611,11 @@ func NewContentModerationService(
 		asyncQueue:           make(chan contentModerationTask, maxContentModerationQueueSize),
 		keyHealth:            make(map[string]*contentModerationKeyHealth),
 	}
-	if settingRepo != nil && repo != nil {
+	if settingRepo != nil && repo != nil && !BackgroundJobsDisabled() {
 		for i := 0; i < svc.workerCount; i++ {
 			go svc.worker(i)
 		}
-		go svc.cleanupWorker()
+		startBackgroundJob(func() { go svc.cleanupWorker() })
 	}
 	return svc
 }

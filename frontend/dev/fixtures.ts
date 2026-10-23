@@ -673,7 +673,7 @@ export const settings: PublicSettings = {
   invitation_code_enabled: false, turnstile_enabled: false, turnstile_site_key: '',
   site_name: 'kedaya.ai', site_logo: '', site_subtitle: PREVIEW_LABEL, api_base_url: '',
   contact_info: '', doc_url: '', home_content: '', compact_home_enabled: true,
-  hide_ccs_import_button: true, payment_enabled: true, risk_control_enabled: false,
+  hide_ccs_import_button: true, payment_enabled: true, risk_control_enabled: false, crypto_enabled: false,
   table_default_page_size: 10, table_page_size_options: [10, 20, 50, 100],
   custom_menu_items: [], custom_endpoints: [], linuxdo_oauth_enabled: false,
   wechat_oauth_enabled: false, oidc_oauth_enabled: false, oidc_oauth_provider_name: '',

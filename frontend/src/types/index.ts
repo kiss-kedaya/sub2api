@@ -270,6 +270,7 @@ export interface PublicSettings {
   purchase_subscription_enabled?: boolean
   purchase_subscription_url?: string
   payment_enabled: boolean
+  crypto_enabled: boolean
   risk_control_enabled: boolean
   table_default_page_size: number
   table_page_size_options: number[]

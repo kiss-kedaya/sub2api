@@ -370,14 +370,24 @@ func (r *redeemCodeRepository) ListByUser(ctx context.Context, userID int64, lim
 }
 
 // ListByUserPaginated returns paginated balance/concurrency history for a user.
-// Supports optional type filter (e.g. "balance", "admin_balance", "concurrency", "admin_concurrency", "subscription").
+// Supports optional type filter (e.g. "balance", "payment_balance", "admin_balance", "concurrency", "admin_concurrency", "subscription").
 func (r *redeemCodeRepository) ListByUserPaginated(ctx context.Context, userID int64, params pagination.PaginationParams, codeType string) ([]service.RedeemCode, *pagination.PaginationResult, error) {
 	q := r.client.RedeemCode.Query().
 		Where(redeemcode.UsedByEQ(userID))
 
 	// Optional type filter
 	if codeType != "" {
-		q = q.Where(redeemcode.TypeEQ(codeType))
+		if codeType == service.RedeemTypeBalance {
+			// The payment-specific type is still a balance recharge. Keep the
+			// existing balance filter inclusive while retaining exact filtering
+			// for callers that explicitly request payment_balance.
+			q = q.Where(redeemcode.Or(
+				redeemcode.TypeEQ(service.RedeemTypeBalance),
+				redeemcode.TypeEQ(service.RedeemTypePaymentBalance),
+			))
+		} else {
+			q = q.Where(redeemcode.TypeEQ(codeType))
+		}
 	}
 
 	total, err := q.Count(ctx)
@@ -398,7 +408,7 @@ func (r *redeemCodeRepository) ListByUserPaginated(ctx context.Context, userID i
 	return redeemCodeEntitiesToService(codes), paginationResultFromTotal(int64(total), params), nil
 }
 
-// SumPositiveBalanceByUser returns total recharged amount (sum of value > 0 where type is balance/admin_balance).
+// SumPositiveBalanceByUser returns total recharged amount from positive balance, admin balance, and payment balance records.
 func (r *redeemCodeRepository) SumPositiveBalanceByUser(ctx context.Context, userID int64) (float64, error) {
 	var result []struct {
 		Sum float64 `json:"sum"`
@@ -407,7 +417,7 @@ func (r *redeemCodeRepository) SumPositiveBalanceByUser(ctx context.Context, use
 		Where(
 			redeemcode.UsedByEQ(userID),
 			redeemcode.ValueGT(0),
-			redeemcode.TypeIn("balance", "admin_balance"),
+			redeemcode.TypeIn(service.RedeemTypeBalance, service.AdjustmentTypeAdminBalance, service.RedeemTypePaymentBalance),
 		).
 		Aggregate(dbent.As(dbent.Sum(redeemcode.FieldValue), "sum")).
 		Scan(ctx, &result)

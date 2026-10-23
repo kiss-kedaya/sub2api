@@ -28,6 +28,7 @@ var (
 	errAdmin2FAResetIdentity  = errors.New("administrator TOTP recovery refused: no active administrator matched the requested user ID")
 	errAdmin2FAResetCommit    = errors.New("administrator TOTP recovery commit could not be confirmed; verify account state before retrying")
 	errAdmin2FAResetOutput    = errors.New("administrator TOTP recovery completed, but its result could not be written")
+	errAdmin2FAResetReadOnly  = errors.New("read-only crypto test mode forbids administrator TOTP recovery")
 )
 
 const admin2FAResetSQL = `UPDATE users
@@ -67,6 +68,9 @@ func dispatchAdmin2FAReset(fs *flag.FlagSet, enabled bool, userID int64, confirm
 }
 
 func runAdmin2FAResetCommand(userID int64) error {
+	if service.CryptoAdminTestMode() {
+		return errAdmin2FAResetReadOnly
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return executeAdmin2FAReset(ctx, userID, os.Stdout, config.LoadForBootstrap, openAdmin2FAResetDatabase, clearAdmin2FAResetSessions)
@@ -101,6 +105,9 @@ func executeAdmin2FAReset(
 	openDatabase func(*config.Config) (*sql.DB, error),
 	clearSessions func(context.Context, *config.Config, int64) error,
 ) error {
+	if service.CryptoAdminTestMode() {
+		return errAdmin2FAResetReadOnly
+	}
 	if userID <= 0 {
 		return errAdmin2FAResetArguments
 	}

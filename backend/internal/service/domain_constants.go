@@ -164,6 +164,7 @@ const (
 // Redeem type constants
 const (
 	RedeemTypeBalance          = domain.RedeemTypeBalance
+	RedeemTypePaymentBalance   = domain.RedeemTypePaymentBalance
 	RedeemTypeConcurrency      = domain.RedeemTypeConcurrency
 	RedeemTypeSubscription     = domain.RedeemTypeSubscription
 	RedeemTypeInvitation       = domain.RedeemTypeInvitation
@@ -526,6 +527,12 @@ const (
 	// user-facing aggregate view. When false: user endpoint returns an empty list and the
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
+
+	// SettingKeyCryptoConfig holds the built-in crypto deposit channel's JSON
+	// config. The service package reads only its enabled flag for public
+	// settings; the cryptopay package owns the full schema. Duplicated as a
+	// literal because cryptopay imports service, not the other way around.
+	SettingKeyCryptoConfig = "crypto.config"
 
 	// SettingKeyModelPlazaEnabled is a DB-backed soft switch for the Model Plaza page
 	// (public group/model pricing showcase). When false: the plaza endpoint returns 404

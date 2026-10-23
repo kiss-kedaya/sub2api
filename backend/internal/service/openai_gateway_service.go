@@ -614,9 +614,9 @@ func NewOpenAIGatewayService(
 		openAITokenProvider.SetAccountRuntimeBlocker(svc)
 	}
 	svc.logOpenAIWSModeBootstrap()
-	svc.StartOpenAICodexTicketHarvester()
+	startBackgroundJob(svc.StartOpenAICodexTicketHarvester)
 	svc.mediaBillingJobs, _ = usageBillingRepo.(MediaBillingJobRepository)
-	svc.StartMediaBillingWorker()
+	startBackgroundJob(svc.StartMediaBillingWorker)
 	return svc
 }
 

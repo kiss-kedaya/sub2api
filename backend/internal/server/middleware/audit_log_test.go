@@ -3,8 +3,11 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -150,6 +153,126 @@ func TestPasskeyLoginAuditUsesCanonicalLoginActionAndOmitsCredentialBody(t *test
 	route := "POST /api/v1/auth/passkey/login/finish"
 	require.Equal(t, service.AuditActionLogin, auditActionOverrides[route])
 	require.Contains(t, auditBodyOmittedRoutes, route)
+}
+
+func TestCryptoMnemonicExportAuditOmitsBodyAndTotpValue(t *testing.T) {
+	route := "POST /api/v1/admin/crypto/wallet/export-mnemonics"
+	require.Equal(t, "admin.crypto.wallet.mnemonics.export", auditActionOverrides[route])
+	require.Contains(t, auditBodyOmittedRoutes, route)
+	require.Equal(t, "admin.crypto.deposits.export", auditSensitiveReads["GET /api/v1/admin/crypto/deposits.csv"])
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	capture := &auditCaptureRepository{}
+	audit := service.NewAuditLogService(capture, nil)
+	audit.Start()
+	router.Use(func(c *gin.Context) {
+		c.Set("auth_method", service.AuditAuthMethodJWT)
+		c.Set(string(ContextKeyUser), AuthSubject{UserID: 88})
+		c.Set(string(ContextKeyUserRole), service.RoleAdmin)
+		c.Next()
+	})
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
+	router.POST("/api/v1/admin/crypto/wallet/export-mnemonics", func(c *gin.Context) {
+		c.Status(http.StatusServiceUnavailable)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics", bytes.NewBufferString(`{"passphrase":"audit-secret-passphrase"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Crypto-TOTP", "654321")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	audit.Stop()
+	require.Len(t, capture.logs, 1)
+	require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
+	require.NotContains(t, capture.logs[0].CredentialMasked, "654321")
+	require.NotContains(t, capture.logs[0].RequestBody, "audit-secret-passphrase")
+}
+
+func TestUserBarkAuditOmitsDeviceKeyBody(t *testing.T) {
+	route := "PUT /api/v1/user/bark"
+	require.Contains(t, auditBodyOmittedRoutes, route)
+	capture := &auditCaptureRepository{}
+	audit := service.NewAuditLogService(capture, nil)
+	audit.Start()
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
+	const deviceKey = "audit-device-key-fixture"
+	router.PUT("/api/v1/user/bark", func(c *gin.Context) {
+		var body struct {
+			DeviceKey string `json:"device_key"`
+		}
+		require.NoError(t, c.ShouldBindJSON(&body))
+		require.Equal(t, deviceKey, body.DeviceKey)
+		c.Status(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bark", bytes.NewBufferString(`{"device_key":"`+deviceKey+`","notify_enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	audit.Stop()
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Len(t, capture.logs, 1)
+	require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
+	require.NotContains(t, capture.logs[0].RequestBody, deviceKey)
+}
+
+func TestCryptoRPCSecretsNeverEnterAuditBodies(t *testing.T) {
+	for _, endpoint := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/admin/crypto/wallet/initialize"},
+		{http.MethodPut, "/api/v1/admin/crypto/config"},
+		{http.MethodPost, "/api/v1/admin/crypto/rpc/test"},
+		{http.MethodPost, "/api/v1/admin/crypto/rpc/auto-pick"},
+	} {
+		t.Run(endpoint.path, func(t *testing.T) {
+			capture := &auditCaptureRepository{}
+			audit := service.NewAuditLogService(capture, nil)
+			audit.Start()
+			router := gin.New()
+			router.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
+			router.Handle(endpoint.method, endpoint.path, func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+			body := `{"rpc":{"bsc":"https://provider.example/secret-canary?apiKey=audit-canary"}}`
+			req := httptest.NewRequest(endpoint.method, endpoint.path, strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(httptest.NewRecorder(), req)
+			audit.Stop()
+			require.Len(t, capture.logs, 1)
+			require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
+			require.NotContains(t, capture.logs[0].RequestBody, "canary")
+		})
+	}
+}
+
+func TestCryptoTestModeAuditsWritesOnlyWhenWriteEnabled(t *testing.T) {
+	for _, writable := range []bool{false, true} {
+		t.Run(fmt.Sprintf("write_enabled_%t", writable), func(t *testing.T) {
+			t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
+			t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", strconv.FormatBool(writable))
+			capture := &auditCaptureRepository{}
+			audit := service.NewAuditLogService(capture, nil)
+			audit.Start()
+			router := gin.New()
+			router.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
+			router.PUT("/api/v1/admin/crypto/config", func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+			request := httptest.NewRequest(http.MethodPut, "/api/v1/admin/crypto/config",
+				strings.NewReader(`{"rpc":{"bsc":"https://rpc.example/credential-fixture"}}`))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			audit.Stop()
+			require.Equal(t, http.StatusOK, recorder.Code)
+			if !writable {
+				require.Empty(t, capture.logs)
+				return
+			}
+			require.Len(t, capture.logs, 1)
+			require.Equal(t, "<credential-bearing body omitted>", capture.logs[0].RequestBody)
+			require.NotContains(t, capture.logs[0].RequestBody, "credential-fixture")
+		})
+	}
 }
 
 // Ollama 会话保存的请求体整体就是浏览器 Cookie 明文，键级脱敏清单曾漏掉裸键

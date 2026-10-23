@@ -247,6 +247,9 @@ func (s *UserMessageQueueService) CalculateRPMAwareDelay(ctx context.Context, ac
 // StartCleanupWorker 启动孤儿锁清理 worker。
 // worker 只处理锁索引中的到期候选，真正删除前由 cache 层再次校验锁 PTTL。
 func (s *UserMessageQueueService) StartCleanupWorker(interval time.Duration) {
+	if BackgroundJobsDisabled() {
+		return
+	}
 	if s == nil || s.cache == nil || interval <= 0 {
 		return
 	}

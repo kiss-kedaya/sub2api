@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/securitysecret"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 const (
@@ -30,6 +31,9 @@ func ensureBootstrapSecrets(ctx context.Context, client *ent.Client, cfg *config
 	}
 	if cfg == nil {
 		return fmt.Errorf("nil config")
+	}
+	if readOnlyBootstrapSecrets() {
+		return loadIsolatedTestJWTSecret(cfg)
 	}
 
 	cfg.JWT.Secret = strings.TrimSpace(cfg.JWT.Secret)
@@ -54,6 +58,19 @@ func ensureBootstrapSecrets(ctx context.Context, client *ent.Client, cfg *config
 	if created {
 		log.Println("Warning: JWT secret auto-generated and persisted to database. Consider rotating to a managed secret for production.")
 	}
+	return nil
+}
+
+func readOnlyBootstrapSecrets() bool {
+	return service.CryptoAdminTestMode()
+}
+
+func loadIsolatedTestJWTSecret(cfg *config.Config) error {
+	secret := strings.TrimSpace(cfg.JWT.Secret)
+	if len([]byte(secret)) < 32 {
+		return fmt.Errorf("a separate JWT_SECRET of at least 32 bytes is required in read-only test mode")
+	}
+	cfg.JWT.Secret = secret
 	return nil
 }
 

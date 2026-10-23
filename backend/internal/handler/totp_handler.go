@@ -84,7 +84,7 @@ func (h *TotpHandler) InitiateSetup(c *gin.Context) {
 		req = TotpSetupRequest{}
 	}
 
-	result, err := h.totpService.InitiateSetup(c.Request.Context(), subject.UserID, req.EmailCode, req.Password)
+	result, err := h.totpService.InitiateSetupForSession(c.Request.Context(), subject.UserID, req.EmailCode, req.Password, cryptoSessionID(c))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -119,7 +119,7 @@ func (h *TotpHandler) Enable(c *gin.Context) {
 		return
 	}
 
-	if err := h.totpService.CompleteSetup(c.Request.Context(), subject.UserID, req.TotpCode, req.SetupToken); err != nil {
+	if err := h.totpService.CompleteSetupForSession(c.Request.Context(), subject.UserID, req.TotpCode, req.SetupToken, cryptoSessionID(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -137,6 +137,7 @@ type TotpDisableRequest struct {
 // Disable disables TOTP for the current user
 // POST /api/v1/user/totp/disable
 func (h *TotpHandler) Disable(c *gin.Context) {
+	cryptoNoStore(c)
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")

@@ -591,6 +591,29 @@ func (s *SettingService) SetOnUpdateCallback(callback func()) {
 	s.onUpdate = callback
 }
 
+// GetRawSetting reads one settings value by key. Used by feature packages
+// (e.g. cryptopay) that own their own config namespaces.
+func (s *SettingService) GetRawSetting(ctx context.Context, key string) (string, error) {
+	if s == nil || s.settingRepo == nil {
+		return "", nil
+	}
+	return s.settingRepo.GetValue(ctx, key)
+}
+
+// SetRawSetting writes one settings value by key and refreshes caches.
+func (s *SettingService) SetRawSetting(ctx context.Context, key, value string) error {
+	if s == nil || s.settingRepo == nil {
+		return fmt.Errorf("setting service unavailable")
+	}
+	if err := s.settingRepo.Set(ctx, key, value); err != nil {
+		return err
+	}
+	if s.onUpdate != nil {
+		s.onUpdate()
+	}
+	return nil
+}
+
 // SubscribeChannelMonitorRuntime registers a listener that is invoked after
 // settings are successfully persisted (and process caches refreshed).
 // Used by ChannelMonitorRunner / ChannelMonitorV2Aggregator for immediate

@@ -253,6 +253,19 @@ func TestExecuteAdmin2FAResetRejectsInvalidIDAndRedactsConfigOrConnectionErrors(
 	}
 }
 
+func TestExecuteAdmin2FAResetIsDisabledInReadOnlyCryptoTestMode(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
+	loadCalls, openCalls, cleanupCalls := 0, 0, 0
+	err := executeAdmin2FAReset(context.Background(), 41, io.Discard,
+		func() (*config.Config, error) { loadCalls++; return &config.Config{}, nil },
+		func(*config.Config) (*sql.DB, error) { openCalls++; return nil, nil },
+		func(context.Context, *config.Config, int64) error { cleanupCalls++; return nil })
+	require.ErrorIs(t, err, errAdmin2FAResetReadOnly)
+	require.Zero(t, loadCalls)
+	require.Zero(t, openCalls)
+	require.Zero(t, cleanupCalls)
+}
+
 func TestAdmin2FAResetSessionCleanupOnlyTouchesTargetUserIndexedSessions(t *testing.T) {
 	server := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: server.Addr()})

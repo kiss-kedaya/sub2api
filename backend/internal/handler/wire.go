@@ -206,6 +206,9 @@ func ProvideHandlers(
 	modelPlazaHandler *ModelPlazaHandler,
 	asyncImageHandler *AsyncImageHandler,
 	batchImageHandler *BatchImageHandler,
+	cryptoHandler *CryptoHandler,
+	cryptoDepositHandler *CryptoDepositHandler,
+	barkHandler *UserBarkHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 	_ *service.OpenAIQuotaAutoResetService,
@@ -233,6 +236,9 @@ func ProvideHandlers(
 		ModelPlaza:       modelPlazaHandler,
 		AsyncImage:       asyncImageHandler,
 		BatchImage:       batchImageHandler,
+		Crypto:           cryptoHandler,
+		CryptoDeposit:    cryptoDepositHandler,
+		Bark:             barkHandler,
 	}
 }
 
@@ -256,6 +262,7 @@ var ProviderSet = wire.NewSet(
 	ProvideSettingHandler,
 	NewPaymentHandler,
 	NewPaymentWebhookHandler,
+	NewCryptoHandler,
 	NewAvailableChannelHandler,
 	NewModelPlazaHandler,
 	NewAsyncImageHandler,

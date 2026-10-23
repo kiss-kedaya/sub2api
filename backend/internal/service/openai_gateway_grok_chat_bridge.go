@@ -618,7 +618,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 		if upstreamMsg == "" {
 			upstreamMsg = fmt.Sprintf("xAI upstream returned status %d", resp.StatusCode)
 		}
-		if IsGlobalIPBlacklistResponse(respBody) {
+		if resp.StatusCode == http.StatusForbidden && IsGlobalIPBlacklistResponse(respBody) {
 			MarkGlobalIPBlacklistRejection(c)
 			setOpsUpstreamError(c, resp.StatusCode, GlobalIPBlacklistSessionBlockedMessage(), "")
 			return nil, newGlobalIPBlacklistFailoverError(resp.StatusCode, resp.Header, respBody)

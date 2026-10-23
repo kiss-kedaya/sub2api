@@ -29,6 +29,11 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if normalized := NormalizeVisibleMethod(req.PaymentType); normalized != "" {
 		req.PaymentType = normalized
 	}
+	// Address deposits have no checkout-order association. Do not create an
+	// order that can never settle (especially a subscription order).
+	if strings.EqualFold(strings.TrimSpace(req.PaymentType), payment.TypeCrypto) {
+		return nil, infraerrors.BadRequest("CRYPTO_DIRECT_DEPOSIT_ONLY", "请使用链上充值页面，到账后直接增加余额；订阅请使用其他支付方式")
+	}
 	cfg, err := s.configService.GetPaymentConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get payment config: %w", err)
@@ -79,6 +84,9 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	}
 	if err := s.validateSelectedCreateOrderInstance(ctx, req, sel); err != nil {
 		return nil, err
+	}
+	if sel != nil && sel.ProviderKey == payment.TypeCrypto {
+		return nil, infraerrors.BadRequest("CRYPTO_DIRECT_DEPOSIT_ONLY", "请使用链上充值页面，到账后直接增加余额")
 	}
 	feeRate, multiplier := resolveInstanceRechargeTerms(cfg, sel)
 	if plan == nil && req.OrderType == payment.OrderTypeBalance {
@@ -462,6 +470,18 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 		ReturnURL:   providerReturnURL,
 	}, sel, outTradeNo, payAmountStr, subject)
 	providerReq.AlipayMobilePrecreate = shouldUseAlipayMobilePrecreate(req, cfg, sel)
+	// The built-in crypto channel needs the payer's per-user deposit
+	// address; every other provider ignores this field.
+	if sel != nil && sel.ProviderKey == payment.TypeCrypto && s.depositAddressResolver != nil {
+		address, resolveErr := s.depositAddressResolver.ResolveDepositAddress(ctx, req.UserID)
+		if resolveErr != nil {
+			return nil, infraerrors.ServiceUnavailable(
+				"CRYPTO_ADDRESS_UNAVAILABLE",
+				"deposit address unavailable, please retry",
+			)
+		}
+		providerReq.DepositAddress = address
+	}
 	finishProviderCall := servertiming.ObserveDependency(ctx, "payment")
 	pr, err := prov.CreatePayment(ctx, providerReq)
 	finishProviderCall()

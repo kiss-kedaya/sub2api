@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +29,13 @@ import (
 // retrying forever (e.g. when a foreign environment's webhook endpoint is
 // misconfigured to point at us, or when our orders table has been wiped).
 var ErrOrderNotFound = errors.New("payment order not found")
+
+// ErrCryptoRetryRequiresLedger prevents the generic admin retry endpoint from
+// bypassing crypto's protected ledger reconciliation and fresh-2FA boundary.
+var ErrCryptoRetryRequiresLedger = infraerrors.Forbidden(
+	"CRYPTO_RETRY_REQUIRES_LEDGER",
+	"Crypto deposits must be recovered by the protected on-chain ledger",
+)
 
 const paymentFulfillmentLeaseDuration = 5 * time.Minute
 
@@ -357,7 +366,7 @@ func validatePaymentRedeemCode(o *dbent.PaymentOrder, code *RedeemCode) error {
 	if code.Code != o.RechargeCode {
 		return fmt.Errorf("payment redeem code mismatch for order %d", o.ID)
 	}
-	if code.Type != RedeemTypeBalance {
+	if code.Type != RedeemTypeBalance && code.Type != RedeemTypePaymentBalance {
 		return fmt.Errorf("payment redeem code type mismatch for order %d: got %s", o.ID, code.Type)
 	}
 	if math.IsNaN(code.Value) || math.IsInf(code.Value, 0) || math.Abs(code.Value-o.Amount) > 1e-8 {
@@ -399,7 +408,7 @@ func (s *PaymentService) doBalance(ctx context.Context, o *dbent.PaymentOrder, l
 		// Code already created and redeemed — just mark completed
 		return s.markCompleted(ctx, o, lease, "RECHARGE_SUCCESS")
 	case redeemActionCreate:
-		rc := &RedeemCode{Code: o.RechargeCode, Type: RedeemTypeBalance, Value: o.Amount, Status: StatusUnused}
+		rc := &RedeemCode{Code: o.RechargeCode, Type: RedeemTypePaymentBalance, Value: o.Amount, Status: StatusUnused}
 		if err := s.redeemService.CreateCode(ctx, rc); err != nil {
 			return fmt.Errorf("create redeem code: %w", err)
 		}
@@ -887,6 +896,9 @@ func (s *PaymentService) RetryFulfillment(ctx context.Context, oid int64) error 
 	if err != nil {
 		return infraerrors.NotFound("NOT_FOUND", "order not found")
 	}
+	if isCryptoDepositOrder(o) {
+		return ErrCryptoRetryRequiresLedger
+	}
 	if o.PaidAt == nil {
 		return infraerrors.BadRequest("INVALID_STATUS", "order is not paid")
 	}
@@ -901,4 +913,116 @@ func (s *PaymentService) RetryFulfillment(ctx context.Context, oid int64) error 
 	}
 	s.writeAuditLog(ctx, oid, "RECHARGE_RETRY", "admin", map[string]any{"detail": "admin manual retry"})
 	return s.executeFulfillment(ctx, oid)
+}
+
+// isCryptoDepositOrder recognizes current and legacy persisted crypto markers.
+// Crypto deposits are settled only by the protected chain scanner/ledger; the
+// generic admin payment retry endpoint has neither its fresh 2FA boundary nor
+// the chain-observation checks required before issuing balance credit.
+func isCryptoDepositOrder(order *dbent.PaymentOrder) bool {
+	if order == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(order.PaymentType), payment.TypeCrypto) ||
+		strings.EqualFold(strings.TrimSpace(psStringValue(order.ProviderKey)), payment.TypeCrypto) {
+		return true
+	}
+	if snapshot := psOrderProviderSnapshot(order); snapshot != nil && strings.EqualFold(snapshot.ProviderKey, payment.TypeCrypto) {
+		return true
+	}
+	return order.OrderType == payment.OrderTypeBalance &&
+		strings.EqualFold(strings.TrimSpace(order.PaymentTradeNo), psSnapshotStringValue(order.ProviderSnapshot["tx"])) &&
+		isLegacyCryptoDepositSnapshot(order.ProviderSnapshot)
+}
+
+// Earlier crypto deposit orders may have no provider_key column/snapshot marker.
+// Their immutable chain transfer payload distinguishes them from old RPC payment
+// orders. Require the full, structurally valid EVM transfer tuple written by the
+// deposit creditor instead of guessing from a trade number or partial metadata.
+func isLegacyCryptoDepositSnapshot(snapshot map[string]any) bool {
+	if snapshot == nil {
+		return false
+	}
+	chain := strings.ToLower(psSnapshotStringValue(snapshot["chain"]))
+	switch chain {
+	case "bsc", "polygon", "plasma", "arbitrum", "base", "xlayer":
+	default:
+		return false
+	}
+	for _, key := range []string{"token", "tx", "raw_amount", "from", "to"} {
+		if psSnapshotStringValue(snapshot[key]) == "" {
+			return false
+		}
+	}
+	if !isCryptoSnapshotHex(snapshot["token"], 20) || !isCryptoSnapshotHex(snapshot["tx"], 32) ||
+		!isCryptoSnapshotHex(snapshot["from"], 20) || !isCryptoSnapshotHex(snapshot["to"], 20) {
+		return false
+	}
+	rawAmount := psSnapshotStringValue(snapshot["raw_amount"])
+	amount, ok := new(big.Int).SetString(rawAmount, 10)
+	if !ok || amount.Sign() <= 0 || amount.String() != rawAmount {
+		return false
+	}
+	logIndex, hasLogIndex := snapshot["log_index"]
+	blockNumber, hasBlock := snapshot["block"]
+	decimals, hasDecimals := snapshot["decimals"]
+	if !hasLogIndex || !hasBlock || !hasDecimals {
+		return false
+	}
+	if _, ok := cryptoSnapshotUint(logIndex, uint64(^uint(0)>>1)); !ok {
+		return false
+	}
+	if _, ok := cryptoSnapshotUint(blockNumber, ^uint64(0)); !ok {
+		return false
+	}
+	if _, ok := cryptoSnapshotUint(decimals, 255); !ok {
+		return false
+	}
+	return true
+}
+
+func cryptoSnapshotUint(value any, max uint64) (uint64, bool) {
+	switch number := value.(type) {
+	case int:
+		if number < 0 {
+			return 0, false
+		}
+		return cryptoSnapshotUint(uint64(number), max)
+	case int32:
+		if number < 0 {
+			return 0, false
+		}
+		return cryptoSnapshotUint(uint64(number), max)
+	case int64:
+		if number < 0 {
+			return 0, false
+		}
+		return cryptoSnapshotUint(uint64(number), max)
+	case uint:
+		return cryptoSnapshotUint(uint64(number), max)
+	case uint32:
+		return cryptoSnapshotUint(uint64(number), max)
+	case uint64:
+		return number, number <= max
+	case float64:
+		if math.IsNaN(number) || math.IsInf(number, 0) || number < 0 || math.Trunc(number) != number {
+			return 0, false
+		}
+		integer, _ := new(big.Float).SetFloat64(number).Int(nil)
+		if integer.Sign() < 0 || integer.BitLen() > 64 || integer.Cmp(new(big.Int).SetUint64(max)) > 0 {
+			return 0, false
+		}
+		return integer.Uint64(), true
+	default:
+		return 0, false
+	}
+}
+
+func isCryptoSnapshotHex(value any, byteLength int) bool {
+	text := psSnapshotStringValue(value)
+	if len(text) != 2+byteLength*2 || !strings.HasPrefix(strings.ToLower(text), "0x") {
+		return false
+	}
+	_, err := hex.DecodeString(text[2:])
+	return err == nil
 }
