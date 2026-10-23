@@ -98,11 +98,12 @@ func (f *rpcFixture) pool(t *testing.T) *rpc.Pool {
 				t.Error("missing block tag")
 				return
 			}
-			if tag == "safe" {
+			switch tag {
+			case "safe":
 				key = "safe"
-			} else if tag == "finalized" {
+			case "finalized":
 				key = "finalized"
-			} else {
+			default:
 				key = "canonical"
 			}
 		}
