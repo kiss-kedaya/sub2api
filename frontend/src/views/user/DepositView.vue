@@ -143,6 +143,8 @@ function chainLabel(chain: string): string {
   switch (chain) {
     case 'bsc':
       return 'BSC (BEP20)'
+    case 'ethereum':
+      return 'Ethereum (ERC20)'
     case 'polygon':
       return 'Polygon (PoS)'
     case 'plasma':

@@ -62,6 +62,8 @@ func chainDisplayName(chain string) string {
 	switch chain {
 	case ChainBSC:
 		return "BSC"
+	case ChainEthereum:
+		return "Ethereum"
 	case ChainPolygon:
 		return "Polygon"
 	case ChainPlasma:
@@ -119,11 +121,14 @@ func toDisplayAmount(raw *big.Int, decimals int) string {
 // watchedTokens maps chain -> token contracts with decimals. Kept in code
 // (not settings) because a wrong contract would credit the wrong asset;
 // changing it should require a code review. Every contract below was
-// verified on-chain (symbol + decimals) against the upstream bepusdt
-// constant table on 2026-10-14; all addresses are lowercase to match the
-// scanner's log decoding. Only canonical issuers are listed: Tether's
-// bridged variants and third-party look-alikes are deliberately excluded.
+// EVM contracts are lowercase. Native
+// USDC addresses follow developers.circle.com/stablecoins/usdc-contract-addresses.
+// The previously accepted X Layer bridge remains explicit as USDC.e.
 var watchedTokens = map[string][]TokenConfig{
+	ChainEthereum: {
+		{Contract: "0xdac17f958d2ee523a2206206994597c13d831ec7", Decimals: 6, Symbol: "USDT"},
+		{Contract: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", Decimals: 6, Symbol: "USDC"},
+	},
 	ChainBSC: {
 		{Contract: "0x55d398326f99059ff775485246999027b3197955", Decimals: 18, Symbol: "USDT"}, // BSC-USD (Tether)
 		{Contract: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", Decimals: 18, Symbol: "USDC"}, // USD Coin (Circle)
@@ -134,6 +139,7 @@ var watchedTokens = map[string][]TokenConfig{
 	},
 	ChainPlasma: {
 		{Contract: "0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb", Decimals: 6, Symbol: "USDT"}, // USDT0 on Plasma
+		{Contract: "0x2d661c89d812261039af9764eceaaee884f5f67f", Decimals: 6, Symbol: "USDC"}, // Circle-issued native USDC
 	},
 	ChainArbitrum: {
 		{Contract: "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", Decimals: 6, Symbol: "USDT"}, // Tether USD (Arbitrum One)
@@ -143,8 +149,9 @@ var watchedTokens = map[string][]TokenConfig{
 		{Contract: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", Decimals: 6, Symbol: "USDC"}, // USD Coin (Base)
 	},
 	ChainXLayer: {
-		{Contract: "0x779ded0c9e1022225f8e0630b35a9b54be713736", Decimals: 6, Symbol: "USDT"}, // USDT0 on X Layer
-		{Contract: "0x74b7f16337b8972027f6196a17a631ac6de26d22", Decimals: 6, Symbol: "USDC"}, // USD Coin (X Layer)
+		{Contract: "0x779ded0c9e1022225f8e0630b35a9b54be713736", Decimals: 6, Symbol: "USDT"},   // USDT0 on X Layer
+		{Contract: "0xb6ceceab302e2e4948951ee7843fc24e92933061", Decimals: 6, Symbol: "USDC"},   // Circle-issued native USDC
+		{Contract: "0x74b7f16337b8972027f6196a17a631ac6de26d22", Decimals: 6, Symbol: "USDC.e"}, // Existing bridged token remains accepted
 	},
 }
 
@@ -296,10 +303,10 @@ func (s *Service) reload(ctx context.Context) {
 	}
 	s.pools = pools
 
-	// EVM chains only in this build; Solana scanning lands separately.
+	// EVM networks use the same ledger and shared scan lock.
 	var chainConfigs []scanner.ChainConfig
 	for _, chain := range cfg.Chains {
-		if chain == ChainSolana {
+		if !IsEVMChain(chain) {
 			continue
 		}
 		tokens := watchedTokens[chain]
@@ -565,6 +572,8 @@ func nativeSymbol(chain string) string {
 	switch chain {
 	case ChainBSC:
 		return "BNB"
+	case ChainEthereum:
+		return "ETH"
 	case ChainPolygon:
 		return "POL"
 	case ChainPlasma:

@@ -111,11 +111,44 @@ func transactionIsFinal(ctx context.Context, pool *rpc.Pool, blockNumber, confir
 	return head >= blockNumber && head-blockNumber >= confirmations, nil
 }
 
+// BSC's safe tag is only its justified head. Its economic finality is exposed
+// by finalized, and an unavailable or malformed tag must never become an
+// implicit depth-only approval. Other networks retain their existing policy.
+func transactionIsFinalForChain(ctx context.Context, pool *rpc.Pool, chain string, blockNumber, confirmations uint64) (bool, error) {
+	if chain != "bsc" {
+		return transactionIsFinal(ctx, pool, blockNumber, confirmations)
+	}
+	raw, err := pool.Call(ctx, "eth_getBlockByNumber", []any{"finalized", false})
+	if err != nil {
+		return false, fmt.Errorf("BSC finalized block: %w", err)
+	}
+	var block struct {
+		Number string `json:"number"`
+	}
+	if err := json.Unmarshal(raw, &block); err != nil {
+		return false, fmt.Errorf("decode BSC finalized block: %w", err)
+	}
+	finalized, err := hexQuantity(block.Number)
+	if err != nil {
+		return false, fmt.Errorf("BSC finalized block unavailable: %w", err)
+	}
+	if finalized < blockNumber {
+		return false, nil
+	}
+	head, err := pool.BlockNumber(ctx)
+	if err != nil {
+		return false, fmt.Errorf("BSC finality head: %w", err)
+	}
+	return head >= blockNumber && head-blockNumber >= confirmations, nil
+}
+
 // Bind a pool to the configured EIP-155 chain. A valid receipt from another
 // EVM chain must never resolve a pending deposit.
 func verifyChain(ctx context.Context, pool *rpc.Pool, chain string) error {
 	var want uint64
 	switch chain {
+	case "ethereum":
+		want = 1
 	case "bsc":
 		want = 56
 	case "polygon":

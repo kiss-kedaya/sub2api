@@ -28,6 +28,7 @@ const (
 // Chain identifiers supported for deposits. EVM chains share one address.
 const (
 	ChainBSC      = "bsc"
+	ChainEthereum = "ethereum"
 	ChainPolygon  = "polygon"
 	ChainPlasma   = "plasma"
 	ChainArbitrum = "arbitrum"
@@ -36,7 +37,7 @@ const (
 	ChainSolana   = "solana"
 )
 
-var evmChains = []string{ChainBSC, ChainPolygon, ChainPlasma, ChainArbitrum, ChainBase, ChainXLayer}
+var evmChains = []string{ChainBSC, ChainEthereum, ChainPolygon, ChainPlasma, ChainArbitrum, ChainBase, ChainXLayer}
 
 // IsEVMChain reports whether chain uses the shared EVM address.
 func IsEVMChain(chain string) bool {
@@ -97,23 +98,23 @@ func DefaultCryptoConfig() CryptoConfig {
 		RPC:                  map[string]string{},
 		SweepGlobalThreshold: 1000,
 		SweepMinPerAddress: map[string]float64{
-			ChainBSC: 3, ChainPolygon: 3, ChainPlasma: 3,
+			ChainBSC: 3, ChainEthereum: 3, ChainPolygon: 3, ChainPlasma: 3,
 			ChainArbitrum: 3, ChainBase: 3, ChainXLayer: 3,
 			ChainSolana: 1,
 		},
 		GasTopUp: map[string]float64{
-			ChainBSC: 0.002, ChainPolygon: 0.5, ChainPlasma: 0.002,
+			ChainBSC: 0.002, ChainEthereum: 0.002, ChainPolygon: 0.5, ChainPlasma: 0.002,
 			ChainArbitrum: 0.0002, ChainBase: 0.0002, ChainXLayer: 0.002,
 		},
 		Confirmations: map[string]int{
-			ChainBSC: 5, ChainPolygon: 5, ChainPlasma: 5,
+			ChainBSC: 3, ChainEthereum: 64, ChainPolygon: 5, ChainPlasma: 5,
 			ChainArbitrum: 5, ChainBase: 5, ChainXLayer: 5,
 			ChainSolana: 1,
 		},
 		// Conservative spans that every known public endpoint accepts:
 		// X Layer's public RPC rejects anything over 100 blocks.
 		ScanRange: map[string]int{
-			ChainBSC: 2000, ChainPolygon: 2000, ChainPlasma: 2000,
+			ChainBSC: 2000, ChainEthereum: 2000, ChainPolygon: 2000, ChainPlasma: 2000,
 			ChainArbitrum: 2000, ChainBase: 2000, ChainXLayer: 100,
 		},
 		// 0.001 keeps probe deposits creditable; 10000 caps one transfer so a
@@ -145,11 +146,18 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	if cfg.RPC == nil {
 		cfg.RPC = map[string]string{}
 	}
+	seen := make(map[string]bool, len(cfg.Chains))
+	chains := make([]string, 0, len(cfg.Chains))
 	for _, chain := range cfg.Chains {
 		if !IsEVMChain(chain) {
 			return cfg, fmt.Errorf("crypto config: deposits are not implemented for chain %q", chain)
 		}
+		if !seen[chain] {
+			chains = append(chains, chain)
+			seen[chain] = true
+		}
 	}
+	cfg.Chains = chains
 	if cfg.SweepGlobalThreshold <= 0 {
 		cfg.SweepGlobalThreshold = def.SweepGlobalThreshold
 	}
@@ -166,6 +174,12 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 		cfg.ScanRange = def.ScanRange
 	}
 	for _, chain := range cfg.Chains {
+		if _, ok := cfg.SweepMinPerAddress[chain]; !ok {
+			cfg.SweepMinPerAddress[chain] = def.SweepMinPerAddress[chain]
+		}
+		if _, ok := cfg.GasTopUp[chain]; !ok && IsEVMChain(chain) {
+			cfg.GasTopUp[chain] = def.GasTopUp[chain]
+		}
 		if _, ok := cfg.Confirmations[chain]; !ok {
 			cfg.Confirmations[chain] = def.Confirmations[chain]
 		}

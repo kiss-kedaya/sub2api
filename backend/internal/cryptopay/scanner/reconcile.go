@@ -89,7 +89,8 @@ func (w *Worker) retryPending(ctx context.Context) error {
 		       amount::text, block_number, block_hash, reason
 		  FROM deposit_transactions
 		 WHERE status = 'pending'
-		   AND (last_attempt_at IS NULL OR last_attempt_at < NOW() - INTERVAL '1 minute')
+		   AND (last_attempt_at IS NULL OR last_attempt_at < NOW() -
+		       CASE WHEN chain = 'bsc' THEN INTERVAL '5 seconds' ELSE INTERVAL '1 minute' END)
 		 ORDER BY COALESCE(last_attempt_at, created_at), id
 		 LIMIT 50`)
 	if err != nil {
@@ -298,7 +299,7 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 						}
 					}
 					if verifyErr == nil && p.status == "pending" {
-						final, err := transactionIsFinal(ctx, pool, receipt.BlockNumber, chain.Confirmations)
+						final, err := transactionIsFinalForChain(ctx, pool, chain.Chain, receipt.BlockNumber, chain.Confirmations)
 						verifyErr = err
 						if err == nil && final {
 							var changed bool

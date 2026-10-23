@@ -18,6 +18,12 @@ import (
 // Shared by every scanner instance; distinct from the sweeper's CRYPTOSW key.
 const scanLockKey int64 = 0x43525950544f5343
 
+// A lagging chain yields between bounded batches so other chains and other
+// instances get regular turns. Durable progress always ends at a completed
+// batch; the next pass starts at precisely the next unscanned block.
+const maxScanBatchesPerChain = 4
+const maxScanTimePerChain = 30 * time.Second
+
 var ErrScanBusy = errors.New("another payment scan is running")
 
 // ChainConfig describes one chain's scan parameters.
@@ -142,6 +148,7 @@ func (w *Worker) run(ctx context.Context) {
 	defer close(w.done)
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
+	w.scanAll(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -271,13 +278,13 @@ func (w *Worker) tryScanLock(ctx context.Context) (func() error, error) {
 }
 
 // ScanOnce runs one full pass; exposed for tests and manual triggering.
-func (w *Worker) ScanOnce(ctx context.Context) error {
+func (w *Worker) ScanOnce(ctx context.Context) (err error) {
 	for _, chain := range w.chains {
-		if err := w.scanChain(ctx, chain); err != nil {
-			return err
+		if scanErr := w.scanChain(ctx, chain); scanErr != nil {
+			err = errors.Join(err, fmt.Errorf("scan %s: %w", chain.Chain, scanErr))
 		}
 	}
-	return nil
+	return err
 }
 
 func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
@@ -288,6 +295,8 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(ctx, maxScanTimePerChain)
+	defer cancel()
 	pool := w.pools[chain.Chain]
 	if pool == nil {
 		slog.Debug("[cryptopay] scan skipped: no pool", "chain", chain.Chain)
@@ -356,60 +365,79 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 	if chain.MaxRange > 0 {
 		maxRange = chain.MaxRange
 	}
-	for from := last + 1; from <= confirmed; {
-		to := from + maxRange - 1
-		if to > confirmed {
-			to = confirmed
+	if maxRange == 0 {
+		maxRange = 2000
+	}
+	var liveErr error
+	if (confirmed-last-1)/maxRange >= maxScanBatchesPerChain {
+		// Do not make a new payment wait behind hours of historical catch-up.
+		// This overlapping live window never changes the historical cursor;
+		// the ledger's transfer identity handles replay when catch-up arrives.
+		span := min(uint64(evmFirstRunLookback), maxRange)
+		if err := w.processScanRange(ctx, scanner, pool, chain, confirmed-span+1, confirmed, recipients); err != nil {
+			liveErr = fmt.Errorf("live window %s: %w", chain.Chain, err)
 		}
-		transfers, err := scanner.ScanRange(ctx, chain.Chain, from, to, chain.Tokens, recipients)
-		if err != nil {
-			return err
+	}
+	for from, batches := last+1, 0; from <= confirmed && batches < maxScanBatchesPerChain; batches++ {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(liveErr, err)
 		}
-		for _, transfer := range transfers {
-			// Decimals must come from the chain config up front: the pending
-			// path stores and later rebuilds the raw amount from it, and a
-			// wrong exponent (the old hardcoded 6) inflated 18-decimal
-			// deposits by 1e12 on the retry pass.
-			decimals, watched := watchedDecimals(chain, transfer.Token)
-			// A token outside the watched set must never be credited: a
-			// misconfigured or hostile RPC can return any log it likes.
-			if !watched {
-				slog.Warn("[cryptopay] ignored transfer for unwatched token",
-					"chain", transfer.Chain, "tx", transfer.TxHash, "token", transfer.Token)
-				continue
-			}
-			// Every observation is either fully verified and processed, or
-			// durably pending before the batch cursor may advance.
-			receipt, verifyErr := VerifyTransaction(ctx, pool, transfer.TxHash)
-			if verifyErr == nil {
-				verifyErr = verifyCanonicalBlock(ctx, pool, receipt)
-			}
-			if verifyErr == nil {
-				verifyErr = verifyReceiptTransfer(transfer, receipt)
-			}
-			final := false
-			if verifyErr == nil {
-				final, verifyErr = transactionIsFinal(ctx, pool, receipt.BlockNumber, chain.Confirmations)
-			}
-			if verifyErr != nil || !final {
-				if err := w.handler.ProcessPending(ctx, transfer, decimals); err != nil {
-					return fmt.Errorf("persist pending %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, err)
-				}
-				slog.Info("[cryptopay] deferred transfer", "chain", transfer.Chain, "tx", transfer.TxHash, "reason", verifyErr)
-				continue
-			}
-			if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {
-				slog.Warn("[cryptopay] credit failed", "chain", transfer.Chain, "tx", transfer.TxHash, "error", err)
-				// Do not advance the cursor past a transfer we failed to
-				// persist: the next pass would never see it again and the
-				// deposit would be lost silently.
-				return err
-			}
+		to := from + min(maxRange-1, confirmed-from)
+		if err := w.processScanRange(ctx, scanner, pool, chain, from, to, recipients); err != nil {
+			return errors.Join(liveErr, err)
 		}
 		if err := w.cursor.Save(ctx, chain.Chain, to); err != nil {
-			return err
+			return errors.Join(liveErr, err)
 		}
 		from = to + 1
+	}
+	return liveErr
+}
+
+// The live window and historical batches deliberately share every validation
+// and persistence check. Only the caller decides whether a successful range
+// is contiguous with the durable cursor and can advance it.
+func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool *rpc.Pool, chain ChainConfig, from, to uint64, recipients []string) error {
+	transfers, err := scanner.ScanRange(ctx, chain.Chain, from, to, chain.Tokens, recipients)
+	if err != nil {
+		return err
+	}
+	for _, transfer := range transfers {
+		// Ignore out-of-range results even if a faulty endpoint returns them.
+		if transfer.BlockNumber < from || transfer.BlockNumber > to {
+			continue
+		}
+		// Decimals come from the allowlist before either ledger path; a wrong
+		// exponent could inflate an 18-decimal token by twelve orders.
+		decimals, watched := watchedDecimals(chain, transfer.Token)
+		if !watched {
+			slog.Warn("[cryptopay] ignored transfer for unwatched token",
+				"chain", transfer.Chain, "tx", transfer.TxHash, "token", transfer.Token)
+			continue
+		}
+		receipt, verifyErr := VerifyTransaction(ctx, pool, transfer.TxHash)
+		if verifyErr == nil {
+			verifyErr = verifyCanonicalBlock(ctx, pool, receipt)
+		}
+		if verifyErr == nil {
+			verifyErr = verifyReceiptTransfer(transfer, receipt)
+		}
+		final := false
+		if verifyErr == nil {
+			final, verifyErr = transactionIsFinalForChain(ctx, pool, chain.Chain, receipt.BlockNumber, chain.Confirmations)
+		}
+		if verifyErr != nil || !final {
+			if err := w.handler.ProcessPending(ctx, transfer, decimals); err != nil {
+				return fmt.Errorf("persist pending %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, err)
+			}
+			slog.Info("[cryptopay] deferred transfer", "chain", transfer.Chain, "tx", transfer.TxHash, "reason", verifyErr)
+			continue
+		}
+		if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {
+			slog.Warn("[cryptopay] credit failed", "chain", transfer.Chain, "tx", transfer.TxHash, "error", err)
+			// No caller can advance past a transfer not durably persisted.
+			return err
+		}
 	}
 	return nil
 }

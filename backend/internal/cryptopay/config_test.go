@@ -20,8 +20,8 @@ func TestNormalizeConfigDefaults(t *testing.T) {
 	if cfg.CreditMultiplier != 6.7 {
 		t.Fatalf("multiplier = %v, want 6.7", cfg.CreditMultiplier)
 	}
-	if cfg.Confirmations[ChainBSC] != 5 {
-		t.Fatalf("bsc confirmations = %d, want 5", cfg.Confirmations[ChainBSC])
+	if cfg.Confirmations[ChainBSC] != 3 {
+		t.Fatalf("bsc confirmations = %d, want 3", cfg.Confirmations[ChainBSC])
 	}
 }
 
@@ -117,7 +117,7 @@ func TestNormalizeConfigRejectsMalformedHotWallet(t *testing.T) {
 }
 
 func TestIsEVMChain(t *testing.T) {
-	for _, chain := range []string{ChainBSC, ChainPolygon, ChainPlasma} {
+	for _, chain := range []string{ChainBSC, ChainEthereum, ChainPolygon, ChainPlasma, ChainArbitrum, ChainBase, ChainXLayer} {
 		if !IsEVMChain(chain) {
 			t.Fatalf("%s should be EVM", chain)
 		}
@@ -125,15 +125,34 @@ func TestIsEVMChain(t *testing.T) {
 	if IsEVMChain(ChainSolana) {
 		t.Fatal("solana must not be EVM")
 	}
-	if KnownChain("tron") || KnownChain("ethereum") {
-		t.Fatal("tron/ethereum must not be supported")
+	if KnownChain("tron") || !KnownChain(ChainEthereum) || !KnownChain(ChainSolana) {
+		t.Fatal("supported deposit networks are inconsistent")
 	}
 }
 
-func TestNormalizeConfigRejectsUnimplementedSolanaDeposits(t *testing.T) {
-	_, err := NormalizeConfig(CryptoConfig{Enabled: true, Chains: []string{ChainSolana}})
-	if err == nil {
-		t.Fatal("an unimplemented deposit scanner must not be enabled")
+func TestNormalizeConfigSupportsAllRequestedNetworks(t *testing.T) {
+	chains := []string{ChainEthereum, ChainPolygon, ChainPlasma, ChainBase, ChainXLayer, ChainEthereum}
+	cfg, err := NormalizeConfig(CryptoConfig{Enabled: true, Chains: chains,
+		Confirmations: map[string]int{}, ScanRange: map[string]int{}, GasTopUp: map[string]float64{}, SweepMinPerAddress: map[string]float64{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Chains) != 5 {
+		t.Fatal("duplicate chain was retained")
+	}
+	for _, chain := range cfg.Chains {
+		if cfg.Confirmations[chain] <= 0 || cfg.ScanRange[chain] <= 0 || cfg.SweepMinPerAddress[chain] <= 0 {
+			t.Fatalf("%s is missing operational defaults", chain)
+		}
+	}
+	if cfg.GasTopUp[ChainEthereum] <= 0 || cfg.Confirmations[ChainEthereum] < 64 {
+		t.Fatal("Ethereum requires its own gas and confirmation settings")
+	}
+}
+
+func TestNormalizeConfigKeepsSolanaDepositsDisabled(t *testing.T) {
+	if _, err := NormalizeConfig(CryptoConfig{Enabled: true, Chains: []string{ChainSolana}}); err == nil {
+		t.Fatal("Solana deposits remain unavailable")
 	}
 }
 
@@ -143,7 +162,7 @@ func TestConfigSnapshotsDoNotShareMutableMaps(t *testing.T) {
 	snapshot := s.Config()
 	snapshot.Confirmations[ChainBSC] = 100
 	snapshot.Chains[0] = ChainBase
-	if s.Config().Confirmations[ChainBSC] != 5 || s.Config().Chains[0] != ChainBSC {
+	if s.Config().Confirmations[ChainBSC] != 3 || s.Config().Chains[0] != ChainBSC {
 		t.Fatal("a config reader changed the live config")
 	}
 	_, err := NormalizeConfig(CryptoConfig{Chains: []string{ChainBSC}, Confirmations: base.Confirmations})

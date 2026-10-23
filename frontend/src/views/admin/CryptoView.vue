@@ -57,13 +57,18 @@
                 <Toggle :model-value="config.enabled" @update:model-value="confirmChannelToggle" />
               </div>
               <div class="crypto-view__field">
-                <label class="crypto-view__label">{{ t('admin.crypto.chains') }}</label>
-                <input
-                  :value="config.chains.join(',')"
-                  class="input"
-                  placeholder="bsc,polygon,plasma,arbitrum,base,xlayer"
-                  @change="(e) => (config!.chains = splitList((e.target as HTMLInputElement).value))"
-                />
+                <fieldset>
+                  <legend class="crypto-view__label mb-2">{{ t('admin.crypto.chains') }}</legend>
+                  <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    <label v-for="network in depositNetworks" :key="network.id" class="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+                      <input v-model="config.chains" type="checkbox" :value="network.id" :data-testid="`crypto-chain-${network.id}`" class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" @change="syncRPCRows" />
+                      <span class="min-w-0">
+                        <span class="block text-sm font-medium">{{ network.label }}</span>
+                        <span class="block text-xs text-gray-500 dark:text-gray-400">{{ network.tokens }}</span>
+                      </span>
+                    </label>
+                  </div>
+                </fieldset>
                 <p class="crypto-view__hint">{{ t('admin.crypto.chainsHint') }}</p>
               </div>
             </details>
@@ -899,12 +904,15 @@ function statusLabel(status: string): string {
   return labels[status] ? t(labels[status]) : status
 }
 
-function splitList(value: string): string[] {
-  return value
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-}
+const depositNetworks = [
+  { id: 'bsc', label: 'BSC (BEP20)', tokens: 'USDT / USDC' },
+  { id: 'ethereum', label: 'Ethereum (ERC20)', tokens: 'USDT / USDC' },
+  { id: 'polygon', label: 'Polygon (PoS)', tokens: 'USDT / USDC' },
+  { id: 'plasma', label: 'Plasma', tokens: 'USDT / USDC' },
+  { id: 'arbitrum', label: 'Arbitrum One', tokens: 'USDT / USDC' },
+  { id: 'base', label: 'Base', tokens: 'USDC' },
+  { id: 'xlayer', label: 'X Layer', tokens: 'USDT / USDC / USDC.e' },
+]
 
 // --- RPC endpoint table -------------------------------------------------
 // config.rpc stores a comma-separated string per chain; the table edits it
@@ -1325,6 +1333,7 @@ async function loadSweepRecords() {
 // Block explorer links let the operator verify a deposit on-chain instead of
 // trusting our own ledger.
 const explorerBases: Record<string, string> = {
+  ethereum: 'https://etherscan.io/tx/',
   bsc: 'https://bscscan.com/tx/',
   polygon: 'https://polygonscan.com/tx/',
   plasma: 'https://plasmascan.to/tx/',

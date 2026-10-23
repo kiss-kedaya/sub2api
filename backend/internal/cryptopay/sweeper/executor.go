@@ -16,7 +16,8 @@ import (
 )
 
 var ChainIDs = map[string]int64{
-	"bsc": 56, "polygon": 137, "plasma": 9745,
+	"ethereum": 1,
+	"bsc":      56, "polygon": 137, "plasma": 9745,
 	"arbitrum": 42161, "base": 8453, "xlayer": 196,
 }
 
