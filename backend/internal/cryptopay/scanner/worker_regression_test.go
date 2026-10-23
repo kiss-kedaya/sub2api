@@ -50,6 +50,7 @@ type rpcFixture struct {
 	receipt   any
 	canonical any
 	safe      any
+	finalized any
 	head      any
 	chainID   string
 	logs      []evmLog
@@ -65,7 +66,7 @@ func newRPCFixture(tr Transfer) *rpcFixture {
 		receipt: map[string]any{"status": "0x1", "blockNumber": fmt.Sprintf("0x%x", tr.BlockNumber),
 			"blockHash": tr.BlockHash, "transactionHash": tr.TxHash, "logs": []evmLog{logFor(tr)}},
 		canonical: map[string]any{"number": fmt.Sprintf("0x%x", tr.BlockNumber), "hash": tr.BlockHash},
-		safe:      map[string]any{"number": "0x6e"}, head: "0x6e", chainID: "0x38", logs: []evmLog{logFor(tr)},
+		safe:      map[string]any{"number": "0x6e"}, finalized: map[string]any{"number": "0x6e"}, head: "0x6e", chainID: "0x38", logs: []evmLog{logFor(tr)},
 		calls: make(map[string]int),
 	}
 }
@@ -99,6 +100,8 @@ func (f *rpcFixture) pool(t *testing.T) *rpc.Pool {
 			}
 			if tag == "safe" {
 				key = "safe"
+			} else if tag == "finalized" {
+				key = "finalized"
 			} else {
 				key = "canonical"
 			}
@@ -136,6 +139,8 @@ func (f *rpcFixture) pool(t *testing.T) *rpc.Pool {
 			result = f.receipt
 		case "safe":
 			result = f.safe
+		case "finalized":
+			result = f.finalized
 		case "canonical":
 			result = f.canonical
 		default:
@@ -263,7 +268,7 @@ func TestScanChainStopsBeforeCursorWhenPendingCannotBePersisted(t *testing.T) {
 			case "RPC error":
 				fixture.fail = "eth_getTransactionReceipt"
 			case "unsafe block":
-				fixture.safe = map[string]any{"number": "0x64"}
+				fixture.finalized = map[string]any{"number": "0x64"}
 			case "canonical error":
 				fixture.fail = "canonical"
 			case "changed observation":
@@ -340,6 +345,13 @@ func TestLiveAndPendingUseSameFinalityPolicy(t *testing.T) {
 			fixture := newRPCFixture(tr)
 			fixture.safe, fixture.fail, fixture.head = tt.safe, tt.fail, tt.head
 			w, mock, handler := workerFixture(t, fixture)
+			// This regression pins the existing non-BSC fallback policy. BSC
+			// now has its own finalized-only integration matrix below.
+			tr.Chain = "polygon"
+			fixture.chainID = "0x89"
+			w.pools["polygon"] = w.pools["bsc"]
+			delete(w.pools, "bsc")
+			w.chains[0].Chain = "polygon"
 			w.chains[0].Confirmations = tt.confirmations
 			expectObservation(mock, tr, "1", "")
 			expectObservationUpdate(mock, tr, "pending", "", "pending", "").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -352,7 +364,7 @@ func TestLiveAndPendingUseSameFinalityPolicy(t *testing.T) {
 			}
 			// This is the same function the live scan calls, with the same
 			// block/config. Pin the fallback and fail-closed result directly.
-			final, err := transactionIsFinal(t.Context(), w.pools["bsc"], tr.BlockNumber, tt.confirmations)
+			final, err := transactionIsFinalForChain(t.Context(), w.pools["polygon"], "polygon", tr.BlockNumber, tt.confirmations)
 			if final != tt.credit || (err != nil) != tt.wantErr {
 				t.Fatalf("shared finality=%v, err=%v", final, err)
 			}

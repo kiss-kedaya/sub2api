@@ -22,9 +22,11 @@ import (
 )
 
 // chainlistIDs maps an internal chain id to the EIP-155 chain id used by
-// chainlist.org. Chains absent here cannot be fetched (plasma is not listed).
+// chainlist.org. Chains absent here cannot be fetched.
 var chainlistIDs = map[string]int64{
+	ChainEthereum: 1,
 	ChainBSC:      56,
+	ChainPlasma:   9745,
 	ChainPolygon:  137,
 	ChainArbitrum: 42161,
 	ChainBase:     8453,
@@ -52,8 +54,8 @@ type ChainlistCandidate struct {
 // payload is ~2.3 MB, so the timeout must cover a slow international link.
 var rpcHTTPClient = rpc.NewPublicHTTPClient(20 * time.Second)
 
-// ProbeRPCEndpoint calls eth_chainId + eth_blockNumber on one endpoint and
-// reports latency. It never mutates state.
+// ProbeRPCEndpoint checks the methods deposits actually need. A node that
+// serves the chain head but rejects logs is not a usable payment scanner.
 func ProbeRPCEndpoint(ctx context.Context, chain, endpoint string) *RPCTestResult {
 	endpoint = strings.TrimSpace(endpoint)
 	out := &RPCTestResult{}
@@ -79,6 +81,10 @@ func ProbeRPCEndpoint(ctx context.Context, chain, endpoint string) *RPCTestResul
 	}
 	endpoint = validated
 	start := time.Now()
+	if !IsEVMChain(chain) {
+		out.Error = "unsupported chain"
+		return out
+	}
 	chainID, err := rpcCallString(ctx, endpoint, "eth_chainId")
 	if err != nil {
 		out.Error = rpc.SafeError(err)
@@ -98,7 +104,6 @@ func ProbeRPCEndpoint(ctx context.Context, chain, endpoint string) *RPCTestResul
 		out.Error = "RPC response is invalid"
 		return out
 	}
-	out.OK = true
 	out.ChainID = hexutil.EncodeUint64(parsedChainID)
 	out.Block = parsedBlock
 	// A wrong chain id is the classic copy-paste error; surface it loudly.
@@ -106,14 +111,78 @@ func ProbeRPCEndpoint(ctx context.Context, chain, endpoint string) *RPCTestResul
 		if got := parseHexUint64(chainID); got != uint64(want) {
 			out.OK = false
 			out.Error = fmt.Sprintf("chain id mismatch: got %d, want %d", got, want)
+			return out
 		}
 	}
+	pool := rpc.NewPoolWithHTTPClient(endpoint, rpcHTTPClient)
+	if err := probeDepositCapabilities(ctx, pool, chain, parsedBlock); err != nil {
+		out.Error = rpc.SafeError(err)
+		out.LatencyMS = time.Since(start).Milliseconds()
+		return out
+	}
+	out.OK = true
+	out.LatencyMS = time.Since(start).Milliseconds()
 	if out.OK {
 		// Successful candidates are configuration values the operator explicitly
 		// requested. Failure responses never echo their potentially secret URL.
 		out.Endpoint = endpoint
 	}
 	return out
+}
+
+func probeDepositCapabilities(ctx context.Context, pool *rpc.Pool, chain string, head uint64) error {
+	tokens := watchedTokens[chain]
+	if len(tokens) == 0 {
+		return &rpc.Failure{Kind: "request"}
+	}
+	contracts := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		contracts = append(contracts, token.Contract)
+	}
+	// A known token contract cannot legitimately receive its own ordinary
+	// customer deposits. Narrowing the recipient avoids large unfiltered logs
+	// while exercising the exact token-array/topic-array filter the scanner uses.
+	block := hexutil.EncodeUint64(head)
+	filter := map[string]any{"fromBlock": block, "toBlock": block, "address": contracts,
+		"topics": []any{[]string{"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"}, nil,
+			[]string{"0x" + strings.Repeat("0", 24) + strings.TrimPrefix(strings.ToLower(contracts[0]), "0x")}}}
+	logs, err := pool.Call(ctx, "eth_getLogs", []any{filter})
+	if err != nil {
+		return err
+	}
+	var decoded []json.RawMessage
+	if !bytes.HasPrefix(bytes.TrimSpace(logs), []byte("[")) || json.Unmarshal(logs, &decoded) != nil {
+		return &rpc.Failure{Kind: "response"}
+	}
+	if chain == ChainBSC {
+		finalized, err := pool.Call(ctx, "eth_getBlockByNumber", []any{"finalized", false})
+		if err != nil {
+			return err
+		}
+		var block struct {
+			Number string `json:"number"`
+			Hash   string `json:"hash"`
+		}
+		if json.Unmarshal(finalized, &block) != nil {
+			return &rpc.Failure{Kind: "response"}
+		}
+		number, err := hexutil.DecodeUint64(block.Number)
+		if err != nil || len(block.Hash) != 66 {
+			return &rpc.Failure{Kind: "response"}
+		}
+		// On fast chains the finalized head can move beyond the head read
+		// before the log probe. Refresh once before calling the node invalid.
+		if number > head {
+			current, err := pool.BlockNumber(ctx)
+			if err != nil {
+				return err
+			}
+			if number > current {
+				return &rpc.Failure{Kind: "response"}
+			}
+		}
+	}
+	return nil
 }
 
 // rpcCallString runs one JSON-RPC method against a raw endpoint.
@@ -224,7 +293,7 @@ func FetchChainlistCandidates(ctx context.Context, chain string) ([]ChainlistCan
 }
 
 // ProbeBestRPCEndpoints probes candidates in parallel and returns the
-// fastest healthy ones (chain id must match, head must answer). It skips
+// fastest healthy ones (chain id, head and deposit scan methods must work). It skips
 // endpoints already present in `exclude` so a re-run never re-adds a node
 // the operator already has. Bounded fan-out keeps the registry list
 // (40-60 entries) from opening that many sockets at once.

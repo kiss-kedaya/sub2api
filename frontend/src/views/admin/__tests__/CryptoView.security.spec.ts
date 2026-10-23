@@ -76,6 +76,28 @@ async function verify(wrapper: VueWrapper, code = '123456') {
 }
 
 describe('Crypto page operation wiring (mocked UI contract only)', () => {
+  it('selects supported networks and saves them only after fresh 2FA without changing pricing', async () => {
+    const wrapper = await render()
+    await configTab(wrapper)
+    for (const chain of ['ethereum', 'polygon', 'plasma', 'base', 'xlayer']) {
+      const option = wrapper.get(`[data-testid="crypto-chain-${chain}"]`)
+      expect((option.element as HTMLInputElement).checked).toBe(false)
+      await option.setValue(true)
+    }
+    expect(wrapper.find('[data-testid="crypto-chain-solana"]').exists()).toBe(false)
+    expect(wrapper.findAll('.crypto-view__rpc-chain')).toHaveLength(6)
+    await wrapper.get('.crypto-view__save-bar button').trigger('click')
+    await flushPromises()
+    expect(mocks.put).not.toHaveBeenCalled()
+    await verify(wrapper, '234567')
+    expect(mocks.put).toHaveBeenCalledOnce()
+    const patch = mocks.put.mock.calls[0][1]
+    expect(patch.chains).toEqual(['bsc', 'ethereum', 'polygon', 'plasma', 'base', 'xlayer'])
+    expect(patch).not.toHaveProperty('credit_multiplier')
+    expect(patch).not.toHaveProperty('enabled')
+    expect(patch).not.toHaveProperty('rpc')
+  })
+
   it('requires a fresh code before loading RPC credentials into the page', async () => {
     const wrapper = await render(false)
     expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
@@ -206,7 +228,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     const wrapper = await render()
     await configTab(wrapper)
     await button(wrapper, 'admin.crypto.mnemonicsExportAction').trigger('click')
-    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await wrapper.get('#crypto-mnemonics-form input[type="checkbox"]').setValue(true)
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
     await flushPromises()
     expect(mocks.post).not.toHaveBeenCalled()
