@@ -601,6 +601,40 @@ func TestCryptoSensitiveAdminReadsRequireSecureTransport(t *testing.T) {
 	}
 }
 
+func TestCryptoHTTPOptInRequiresExplicitDeploymentSetting(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	for _, value := range []string{"", "false", "invalid", "1false"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("CRYPTO_ADMIN_ALLOW_HTTP", value)
+			h := newCryptoRouteHarness(t, activeCryptoAdmin())
+			response := cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config", "", nil, "203.0.113.9:1234", "gateway.example.test")
+			requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_HTTPS_REQUIRED")
+		})
+	}
+}
+
+func TestCryptoHTTPOptInPreservesIdentityAndFreshTOTP(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	t.Setenv("CRYPTO_ADMIN_ALLOW_HTTP", "true")
+	h := newCryptoRouteHarness(t, activeCryptoAdmin())
+	response := cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config", "", nil, "203.0.113.9:1234", "gateway.example.test")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	for _, path := range []string{"/api/v1/admin/crypto/config/private", "/api/v1/admin/crypto/deposits.csv"} {
+		response = cryptoRouteRequest(h.router, http.MethodGet, path, "", nil, "203.0.113.9:1234", "gateway.example.test")
+		requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
+	}
+	response = cryptoRouteRequest(h.router, http.MethodPost, "/api/v1/admin/crypto/wallet/export-mnemonics", "", nil, "203.0.113.9:1234", "gateway.example.test")
+	requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
+	h.identity.authenticated = false
+	response = cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config", "", nil, "203.0.113.9:1234", "gateway.example.test")
+	requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_ADMIN_REQUIRED")
+	h.identity.authenticated = true
+	h.user.ID = 42
+	response = cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config", "", nil, "203.0.113.9:1234", "gateway.example.test")
+	requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_OPERATOR_REQUIRED")
+}
+
 func TestCryptoAdminTestModeIsReadOnlyAndRequiresProductionTwoFactorEnrollment(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
