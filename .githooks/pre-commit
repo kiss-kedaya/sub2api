@@ -6,7 +6,7 @@
 #
 # Bypass is possible (--no-verify) but must never be used for a real leak.
 
-python tools/check_sensitive.py || {
+python tools/check_sensitive.py --identity || {
     echo ""
     echo "commit rejected: sensitive data detected."
     echo "fix the lines above; do not use --no-verify to push a real secret."

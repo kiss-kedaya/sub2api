@@ -158,7 +158,7 @@ export const PROVIDER_CONFIG_FIELDS: Record<string, ConfigFieldDef[]> = {
   epusdt: [
     { key: 'pid', label: 'PID', sensitive: false },
     { key: 'secretKey', label: '', sensitive: true },
-    { key: 'apiBase', label: '', sensitive: false, defaultValue: 'https://payments.example.com' },
+    { key: 'apiBase', label: '', sensitive: false },
     { key: 'token', label: '', sensitive: false, defaultValue: 'USDT' },
     { key: 'network', label: '', sensitive: false, defaultValue: 'bsc' },
     { key: 'currency', label: '', sensitive: false, defaultValue: 'CNY', hintKey: 'admin.settings.payment.field_paymentCurrencyHint', options: PAYMENT_CURRENCY_OPTIONS },

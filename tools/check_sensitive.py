@@ -41,6 +41,9 @@ INFRA_PATTERNS = [
     ("account id reference", re.compile(r"(?:account|acct|\u8d26\u53f7)\s*#?\s*\d{4,6}\b", re.I)),
     ("ssh host alias", re.compile(r"\bkedaya-(?:old|new|friend|small|pay)\b", re.I)),
     ("ssh alias path", re.compile(r"\.ssh/kedaya-ops")),
+    ("personal mailbox", re.compile(r"\b[1-9][0-9]{4,}@(qq|163|126)\.com\b", re.I)),
+    ("personal Windows profile path", re.compile(
+        r"\b[A-Z]:[\\/](?:Users|用户)[\\/](?!Public\b|Default\b|<|\$|example\b|your[-_]?user\b)[A-Za-z0-9_.@-]+", re.I)),
 ]
 
 IPV4_RE = re.compile(r"(?<![\w./-])(?:\d{1,3}\.){3}\d{1,3}(?!\w)(?!/\d)")
@@ -174,6 +177,30 @@ def skipped(path):
     return any(part in p for part in SKIP_PATHS)
 
 
+def metadata_privacy_problems(identity, message):
+    """Check our publishing identity and commit prose without printing values."""
+    problems = []
+    for label, pattern in INFRA_PATTERNS:
+        if label == "personal mailbox" and pattern.search(identity):
+            problems.append(("<commit-identity>", 1, label, "", ""))
+    problems.extend(scan("<commit-message>.md", message))
+    return problems
+
+
+def publishing_metadata():
+    # New commits use the effective Git identity, including environment overrides.
+    identity = _git(["git", "var", "GIT_AUTHOR_IDENT"]) + _git(["git", "var", "GIT_COMMITTER_IDENT"])
+    return metadata_privacy_problems(identity, "")
+
+
+def commit_metadata(ref):
+    raw = _git(["git", "show", "-s", "--format=%ae%n%ce%n%B", ref])
+    lines = raw.splitlines()
+    if len(lines) < 2:
+        raise ValueError("unable to read commit metadata")
+    return metadata_privacy_problems("\n".join(lines[:2]), "\n".join(lines[2:]))
+
+
 def scan(path, text):
     problems = []
     prose = is_prose(path)
@@ -213,6 +240,18 @@ def main():
     binary_ext = (".png", ".jpg", ".jpeg", ".gif", ".zip", ".gz", ".pdf",
                   ".ico", ".woff", ".woff2", ".ttf", ".db", ".sqlite", ".svg")
     problems = []
+    if "--identity" in sys.argv:
+        problems.extend(publishing_metadata())
+    if "--metadata" in sys.argv:
+        position = sys.argv.index("--metadata")
+        if position + 1 >= len(sys.argv):
+            print("check_sensitive: --metadata requires a commit reference")
+            return 2
+        try:
+            problems.extend(commit_metadata(sys.argv[position + 1]))
+        except ValueError:
+            print("check_sensitive: unable to inspect commit metadata")
+            return 2
     for path in files:
         if path.endswith(binary_ext) or skipped(path):
             continue

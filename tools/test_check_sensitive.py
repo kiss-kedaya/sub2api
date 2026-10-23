@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+import runpy
 
 
 SCANNER = Path(__file__).with_name("check_sensitive.py")
@@ -107,6 +108,34 @@ class SensitiveOutputCanaryTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0)
                 self.assertTrue("check_sensitive: OK (1 files)" in result.stdout)
                 self.assertEqual(result.stderr, "")
+
+    def test_personal_mailbox_and_profile_paths_are_redacted(self):
+        values = (
+            ("987654321" + "@qq.com", "personal mailbox"),
+            ("E:" + chr(92) + "Users" + chr(92) + "private-person" + chr(92) + "Downloads", "personal Windows profile path"),
+        )
+        for mode in ("staged", "all"):
+            for value, label in values:
+                with self.subTest(mode=mode, rule=label):
+                    self.assert_redacted(
+                        self.run_scanner({"docs/canary.md": "heading\n" + value}, mode),
+                        (value,), (label,),
+                    )
+
+    def test_public_identity_and_documentation_profile_placeholders_are_allowed(self):
+        for value in (
+            "12345+maintainer@users.noreply.github.com", "user@example.com",
+            "C:/Users/<username>/project", "C:/Users/Public/project", "C:/Users/example/project",
+        ):
+            result = self.run_scanner({"docs/canary.md": value}, "all")
+            self.assertEqual(result.returncode, 0, "public or placeholder identity was incorrectly rejected")
+
+    def test_commit_metadata_checks_private_identity_and_message(self):
+        runtime = runpy.run_path(str(SCANNER))
+        check = runtime["metadata_privacy_problems"]
+        self.assertTrue(check("987654321" + "@qq.com", "safe commit"))
+        self.assertTrue(check("maintainer@users.noreply.github.com", "reference C:/Users/private-person/project"))
+        self.assertFalse(check("maintainer@users.noreply.github.com", "fix: enforce authenticator checks"))
 
     def test_empty_input_still_succeeds(self):
         for mode in ("staged", "all"):

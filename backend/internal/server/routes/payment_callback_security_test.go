@@ -49,6 +49,7 @@ func newPaymentCallbackSecurityRouter(t *testing.T, rpm int) (*gin.Engine, *dben
 		"returnUrl": "https://merchant.example.com/purchase", "token": "USDT", "network": "bsc", "currency": "USD",
 	})
 	require.NoError(t, err)
+	//nolint:staticcheck // Verify callbacks against historical encrypted provider configurations.
 	ciphertext, err := payment.Encrypt(string(providerConfig), key)
 	require.NoError(t, err)
 	_, err = client.PaymentProviderInstance.Create().SetProviderKey(payment.TypeEpusdt).
