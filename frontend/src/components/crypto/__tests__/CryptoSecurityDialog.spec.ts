@@ -78,6 +78,24 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     expect(await next).toBe(false)
   })
 
+  it('pastes a complete code into the six cells and waits for explicit payment confirmation', async () => {
+    const wrapper = render()
+    const action = vi.fn().mockResolvedValue(undefined)
+    const result = wrapper.vm.verify('Save configuration', action)
+    await flushPromises()
+    const input = wrapper.get('#crypto-security-code')
+    expect(input.attributes('autocomplete')).toBe('one-time-code')
+    expect(wrapper.findAll('.totp-code-input span')).toHaveLength(6)
+    await input.trigger('paste', { clipboardData: { getData: () => '012 345' } })
+    expect(input.element).toHaveProperty('value', '012345')
+    expect(action).not.toHaveBeenCalled()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(action).toHaveBeenCalledOnce()
+    expect(action).toHaveBeenCalledWith('012345')
+    expect(await result).toBe(true)
+  })
+
   it.each([
     ['CRYPTO_TOTP_NOT_CONFIGURED', 403, 'securityNotConfigured'],
     ['CRYPTO_TOTP_EXPIRED', 403, 'securityExpired'],

@@ -24,21 +24,17 @@
           <p role="timer">{{ t('admin.crypto.securityCountdown', { seconds: countdown }) }}</p>
         </template>
         <label for="crypto-security-code">{{ t('admin.crypto.securityCode') }}</label>
-        <input
+        <TotpCodeInput
           id="crypto-security-code"
           ref="codeInput"
           v-model="code"
-          class="input crypto-security__code"
-          type="text"
-          inputmode="numeric"
-          pattern="[0-9]{6}"
-          maxlength="6"
-          autocomplete="off"
-          spellcheck="false"
+          :label="t('admin.crypto.securityCode')"
+          :invalid="!!errorMessage"
+          aria-describedby="crypto-security-code-hint"
           :disabled="busy"
           required
         />
-        <p class="crypto-security__hint">{{ t('admin.crypto.securityFreshCode') }}</p>
+        <p id="crypto-security-code-hint" class="crypto-security__hint">{{ t('admin.crypto.securityFreshCode') }}</p>
       </form>
       <p v-else-if="stage === 'done'" role="status">{{ t('admin.crypto.securityBound') }}</p>
       <p v-else-if="stage === 'read-only'" role="alert">{{ t('admin.crypto.securityReadOnly') }}</p>
@@ -65,6 +61,7 @@ import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import TotpCodeInput from '@/components/common/TotpCodeInput.vue'
 import { cryptoSecurityErrorKey, enableCryptoSecurity, getCryptoSecurityStatus, setupCryptoSecurity } from '@/api/admin/crypto'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
@@ -79,7 +76,7 @@ const qrImage = ref('')
 const qrFailed = ref(false)
 const countdown = ref(0)
 const code = ref('')
-const codeInput = ref<HTMLInputElement | null>(null)
+const codeInput = ref<InstanceType<typeof TotpCodeInput> | null>(null)
 const errorMessage = ref('')
 const validCode = computed(() => /^[0-9]{6}$/.test(code.value))
 let callback: ((code: string) => Promise<unknown>) | undefined
@@ -198,6 +195,10 @@ async function setup() {
     qrCodeUrl = ''
     image = ''
     if (current === generation) busy.value = false
+    if (current === generation && stage.value === 'setup') {
+      await nextTick()
+      codeInput.value?.focus()
+    }
   }
 }
 
@@ -231,6 +232,10 @@ async function submitCode() {
     submittedCode = ''
     code.value = ''
     if (current === generation) busy.value = false
+    if (current === generation && show.value && (stage.value === 'setup' || stage.value === 'verify')) {
+      await nextTick()
+      codeInput.value?.focus()
+    }
   }
 }
 
@@ -244,8 +249,7 @@ defineExpose({ verify, cancel, forceClose })
 .crypto-security__operation { white-space: pre-line; overflow-wrap: anywhere; font-weight: 600; }
 .crypto-security__hint { color: var(--signal-muted, #6b7280); font-size: .8125rem; }
 .crypto-security__qr { justify-self: center; border-radius: .5rem; }
-.crypto-security__key, .crypto-security__code { font-family: ui-monospace, monospace; }
-.crypto-security__code { letter-spacing: .35em; font-size: 1.25rem; }
+.crypto-security__key { font-family: ui-monospace, monospace; }
 .crypto-security__error { color: #dc2626; }
 .crypto-security__actions { display: flex; justify-content: flex-end; gap: .75rem; }
 </style>

@@ -58,20 +58,17 @@
 
           <div v-else>
             <label for="disable-totp-code" class="input-label">{{ t('profile.totp.authenticatorCode') }}</label>
-            <input
+            <TotpCodeInput
               id="disable-totp-code"
+              ref="codeInput"
               v-model="form.totpCode"
-              type="text"
-              inputmode="numeric"
-              pattern="[0-9]{6}"
-              maxlength="6"
-              autocomplete="one-time-code"
+              :label="t('profile.totp.authenticatorCode')"
+              aria-describedby="disable-totp-hint"
               data-testid="totp-disable-code"
-              class="input"
               required
-              :disabled="loading"
+              :disabled="loading || methodLoading"
             />
-            <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ t('profile.totp.disableTotpHint') }}</p>
+            <p id="disable-totp-hint" class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ t('profile.totp.disableTotpHint') }}</p>
           </div>
 
           <!-- Actions -->
@@ -94,13 +91,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { totpAPI } from '@/api'
 import type { TotpDisableRequest } from '@/types'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import TotpCodeInput from '@/components/common/TotpCodeInput.vue'
 
 const emit = defineEmits<{
   close: []
@@ -116,6 +114,7 @@ const methodLoading = ref(true)
 const adminVerificationMethod = ref<'totp' | 'server'>('totp')
 const usesServerAuthorization = computed(() => isAdmin.value && adminVerificationMethod.value === 'server')
 const loading = ref(false)
+const codeInput = ref<InstanceType<typeof TotpCodeInput> | null>(null)
 const form = ref({
   totpCode: '',
   serverAuthorizationCode: ''
@@ -126,9 +125,13 @@ watch(isAdmin, () => {
   clearForm()
 })
 
-watch(adminVerificationMethod, () => {
+watch(adminVerificationMethod, async () => {
   form.value.totpCode = ''
   form.value.serverAuthorizationCode = ''
+  if (!usesServerAuthorization.value) {
+    await nextTick()
+    codeInput.value?.focus()
+  }
 })
 
 const canSubmit = computed(() => {
@@ -177,6 +180,8 @@ const handleDisable = async () => {
   } finally {
     clearForm()
     loading.value = false
+    await nextTick()
+    codeInput.value?.focus()
   }
 }
 
