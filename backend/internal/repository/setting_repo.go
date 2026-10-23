@@ -120,6 +120,19 @@ func (r *settingRepository) loadSetting(ctx context.Context, key string) (*servi
 	}, true, nil
 }
 
+// GetValueUncached is used by bounded background refreshes of time-sensitive
+// gateway policies. It respects the caller's timeout and skips local caches.
+func (r *settingRepository) GetValueUncached(ctx context.Context, key string) (string, error) {
+	value, found, err := r.loadSetting(ctx, key)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", service.ErrSettingNotFound
+	}
+	return value.Value, nil
+}
+
 func settingLoadContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	base := context.WithoutCancel(ctx)
 	return context.WithTimeout(base, settingQueryTimeout)

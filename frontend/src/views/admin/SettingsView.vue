@@ -46,6 +46,7 @@
 
         <!-- Tab: Security — Admin API Key -->
         <div v-show="activeTab === 'security'" class="space-y-6">
+          <GatewayIPNoticeSettings />
           <!-- Admin API Key Settings -->
           <div class="card">
             <div
@@ -9046,6 +9047,7 @@ import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
+import GatewayIPNoticeSettings from "@/views/admin/settings/GatewayIPNoticeSettings.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
 import { useClipboard } from "@/composables/useClipboard";
 import {
