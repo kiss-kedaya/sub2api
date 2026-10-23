@@ -88,7 +88,9 @@ func (m *Manager) importHotMnemonic(ctx context.Context, mnemonic string) error 
 	if err := validateDepositAddresses(ctx, tx, deposit); err != nil {
 		return err
 	}
-	sealed, err := m.sealContents(contents.Deposit, mnemonic)
+	// Preserve the authenticated security-registration marker read from the
+	// current vault, even when this instance has never warmed its seed cache.
+	sealed, err := m.sealVaultContents(vaultContents{Deposit: contents.Deposit, Hot: mnemonic, SecurityVersion: contents.SecurityVersion})
 	if err != nil {
 		return ErrVaultUnavailable
 	}
@@ -108,5 +110,6 @@ func (m *Manager) importHotMnemonic(ctx context.Context, mnemonic string) error 
 		m.clearSeeds()
 		return errors.New("wallet update commit unconfirmed; check wallet status before retrying")
 	}
+	m.revokeSigningGrants()
 	return m.refreshContents(sealed)
 }

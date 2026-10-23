@@ -68,6 +68,16 @@ type evmLog struct {
 // Recipients are the addresses being watched (lowercased); tokens are the
 // contract addresses to filter on.
 func (s *EVMScanner) ScanRange(ctx context.Context, chain string, fromBlock, toBlock uint64, tokens []string, recipients []string) ([]Transfer, error) {
+	return s.scanRange(ctx, chain, fromBlock, toBlock, tokens, recipients, false)
+}
+
+// ScanOutgoingRange watches the sender topic. A to-address-only scan misses
+// unauthorized transfers out of deposit and gas wallets entirely.
+func (s *EVMScanner) ScanOutgoingRange(ctx context.Context, chain string, fromBlock, toBlock uint64, tokens, senders []string) ([]Transfer, error) {
+	return s.scanRange(ctx, chain, fromBlock, toBlock, tokens, senders, true)
+}
+
+func (s *EVMScanner) scanRange(ctx context.Context, chain string, fromBlock, toBlock uint64, tokens []string, recipients []string, outgoing bool) ([]Transfer, error) {
 	if len(recipients) == 0 || len(tokens) == 0 || toBlock < fromBlock {
 		return nil, nil
 	}
@@ -93,6 +103,9 @@ func (s *EVMScanner) ScanRange(ctx context.Context, chain string, fromBlock, toB
 			Address:   tokens,
 			Topics:    [][]any{{transferTopic}, nil, toTopic},
 		}
+		if outgoing {
+			params.Topics = [][]any{{transferTopic}, toTopic}
+		}
 		raw, err := s.pool.Call(ctx, "eth_getLogs", []any{params})
 		if err != nil {
 			return nil, fmt.Errorf("getLogs %s %d-%d: %w", chain, fromBlock, toBlock, err)
@@ -106,10 +119,14 @@ func (s *EVMScanner) ScanRange(ctx context.Context, chain string, fromBlock, toB
 				continue
 			}
 			to := topicToAddress(log.Topics[2])
-			if _, ok := recipientSet[strings.ToLower(to)]; !ok {
+			from := topicToAddress(log.Topics[1])
+			watchedAddress := to
+			if outgoing {
+				watchedAddress = from
+			}
+			if _, ok := recipientSet[strings.ToLower(watchedAddress)]; !ok {
 				continue
 			}
-			from := topicToAddress(log.Topics[1])
 			amount, ok := new(big.Int).SetString(strings.TrimPrefix(log.Data, "0x"), 16)
 			if !ok {
 				continue

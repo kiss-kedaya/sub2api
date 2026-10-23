@@ -6,10 +6,11 @@ import "errors"
 
 // Status describes managed seed configuration and channel readiness.
 type Status struct {
-	OK         bool `json:"ok"`
-	Configured bool `json:"configured"`
-	Ready      bool `json:"ready"`
-	Enabled    bool `json:"enabled"`
+	OK         bool            `json:"ok"`
+	Configured bool            `json:"configured"`
+	Ready      bool            `json:"ready"`
+	Enabled    bool            `json:"enabled"`
+	Security   *SecurityStatus `json:"security,omitempty"`
 }
 
 // HotAddress contains the public gas wallet addresses at the fixed index zero.

@@ -262,6 +262,19 @@ func verifyReceiptTransfer(t Transfer, receipt *ReceiptCheck) error {
 	return nil
 }
 
+// VerifyObservedTransfer authenticates the exact mined transfer against a
+// successful receipt and canonical block, without waiting to stop signing.
+func VerifyObservedTransfer(ctx context.Context, pool *rpc.Pool, t Transfer) error {
+	receipt, err := VerifyTransaction(ctx, pool, t.TxHash)
+	if err != nil {
+		return err
+	}
+	if err := verifyCanonicalBlock(ctx, pool, receipt); err != nil {
+		return err
+	}
+	return verifyReceiptTransfer(t, receipt)
+}
+
 func hexQuantity(value string) (uint64, error) {
 	if !strings.HasPrefix(value, "0x") || len(value) <= 2 {
 		return 0, &rpc.Failure{Kind: "response"}

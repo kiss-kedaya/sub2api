@@ -19,22 +19,31 @@ import (
 // Callers must not hold the sweep advisory lock when initializing or importing seeds.
 // No method re-enters mu, and no DB connection is retained between operations.
 type Manager struct {
-	db               *sql.DB
-	mu               sync.Mutex
-	deposit, hot     *Deriver
-	destination      string
-	enabled          bool
-	vaultFingerprint [32]byte
-	cipher           cipher.AEAD
-	configured       bool
+	db                 *sql.DB
+	mu                 sync.Mutex
+	deposit, hot       *Deriver
+	destination        string
+	enabled            bool
+	vaultFingerprint   [32]byte
+	securityKey        []byte
+	securityEnabled    bool
+	securityRegistered bool
+	securityStatus     SecurityStatus
+	securityIncident   *securityIncident
+	signingAuthority   []byte
+	signingGrants      map[[32]byte]bool
+	cipher             cipher.AEAD
+	configured         bool
 }
 
 // New uses only the supplied persistent installation key. A missing or invalid
 // key fails closed; random process-local fallback keys are never generated.
 func New(db *sql.DB, masterKey ...string) *Manager {
 	m := &Manager{db: db, enabled: true}
+	m.initializeSigningAuthority()
 	if len(masterKey) == 1 {
 		m.cipher = newSeedCipher(masterKey[0])
+		m.securityKey = newSecurityKey(masterKey[0])
 	}
 	return m
 }
@@ -44,6 +53,7 @@ func New(db *sql.DB, masterKey ...string) *Manager {
 func (m *Manager) SetDestination(address string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.revokeSigningGrants()
 	m.destination = ""
 	address = strings.TrimSpace(address)
 	if address == "" {
@@ -61,6 +71,9 @@ func (m *Manager) SetEnabled(enabled bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.enabled = enabled
+	if !enabled {
+		m.revokeSigningGrants()
+	}
 }
 
 // Close erases resident key material during service teardown. It is not a
@@ -69,6 +82,9 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.clearSeeds()
+	m.revokeSigningGrants()
+	clear(m.signingAuthority)
+	m.signingAuthority = nil
 }
 
 func (m *Manager) clearSeeds() {
@@ -107,6 +123,29 @@ func (m *Manager) Status(ctx context.Context) (*Status, error) {
 		st.Ready = m.refreshContents(raw) == nil
 	} else {
 		m.clearSeeds()
+	}
+	if m.securityEnabled {
+		status := m.securityStatus
+		if raw != "" && !st.Ready {
+			status = unavailableSecurityStatus("vault_unavailable")
+		}
+		if m.db != nil && st.Ready {
+			var securityRaw string
+			if err := m.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key=$1`, settingSecurity).Scan(&securityRaw); err == nil {
+				if state, err := m.decodeSecurity(securityRaw); err == nil {
+					status = securityView(state)
+				} else {
+					status = unavailableSecurityStatus("security_snapshot_authentication_failed")
+				}
+			} else {
+				status = unavailableSecurityStatus("security_snapshot_missing")
+			}
+		}
+		if m.securityIncident != nil {
+			status = m.securityStatus
+		}
+		st.Security = &status
+		st.Enabled = st.Enabled && status.Initialized && !status.Locked
 	}
 	return st, nil
 }
@@ -187,6 +226,10 @@ func (m *Manager) Derive(ctx context.Context, start, count uint32) ([]addresses.
 		return nil, m.denied("derive", err)
 	}
 	defer func() { _ = storeTx.Rollback() }()
+	if err := m.checkSecurityInTx(ctx, storeTx); err != nil {
+		_ = storeTx.Rollback()
+		return nil, m.denied("derive", err)
+	}
 	out := make([]addresses.Derived, 0, count)
 	for i := uint32(0); i < count; i++ {
 		if err := ctx.Err(); err != nil {
@@ -297,6 +340,7 @@ func (m *Manager) refreshContents(raw string) error {
 	m.deposit, m.hot = deposit, hot
 	m.vaultFingerprint = sha256.Sum256([]byte(raw))
 	m.configured = true
+	m.securityRegistered = contents.SecurityVersion >= 1
 	return nil
 }
 

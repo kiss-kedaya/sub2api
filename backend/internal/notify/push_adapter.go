@@ -33,3 +33,23 @@ func (a *PushAdapter) PushToAdmins(ctx context.Context, title, body, group strin
 		Title: title, Body: body, Group: group, Level: "timeSensitive",
 	})
 }
+
+// OwnerPushAdapter routes private wallet alerts exclusively to the primary
+// administrator and requires a real delivery attempt to succeed.
+type OwnerPushAdapter struct {
+	svc     *UserBarkService
+	ownerID int64
+}
+
+func NewOwnerPushAdapter(svc *UserBarkService, ownerID int64) *OwnerPushAdapter {
+	return &OwnerPushAdapter{svc: svc, ownerID: ownerID}
+}
+
+func (a *OwnerPushAdapter) PushToAdmins(ctx context.Context, title, body, group string) error {
+	if a == nil || a.svc == nil || a.ownerID <= 0 {
+		return ErrBarkNotConfigured
+	}
+	return a.svc.SendToUserRequired(ctx, a.ownerID, bark.Notification{
+		Title: title, Body: body, Group: group, Level: "timeSensitive",
+	})
+}

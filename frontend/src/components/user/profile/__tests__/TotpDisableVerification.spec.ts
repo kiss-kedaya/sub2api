@@ -68,7 +68,7 @@ describe('personal TOTP disable', () => {
 
   it('closes without disabling when cancelled', async () => {
     const wrapper = await open()
-    await wrapper.get('[data-testid="totp-disable-code"]').setValue('654321')
+    await wrapper.get('[data-testid="totp-disable-code"]').setValue('65432')
     await wrapper.findAll('button').find(button => button.text() === 'common.cancel')!.trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
     expect(api.disable).not.toHaveBeenCalled()

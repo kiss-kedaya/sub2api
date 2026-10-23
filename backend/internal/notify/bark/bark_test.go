@@ -25,6 +25,7 @@ func TestSendPostsDocumentedFields(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		gotForm, _ = url.ParseQuery(string(body))
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"code":200,"message":"success"}`))
 	}))
 	defer server.Close()
 
@@ -65,6 +66,22 @@ func TestSendRejectsNon200(t *testing.T) {
 	client.SetBaseURL(server.URL)
 	if err := client.Send(context.Background(), Notification{Title: "x"}); err == nil {
 		t.Fatal("expected error for http 500")
+	}
+}
+
+func TestSendRequiresBarkSuccessCode(t *testing.T) {
+	for _, body := range []string{"", `{"code":400,"message":"invalid key"}`, `{"code":500}`, `not-json`, `{}`} {
+		t.Run(body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			client := New("fixture")
+			client.SetBaseURL(server.URL)
+			if err := client.Send(context.Background(), Notification{Title: "security"}); err == nil {
+				t.Fatal("a security alert must not acknowledge an unconfirmed delivery")
+			}
+		})
 	}
 }
 

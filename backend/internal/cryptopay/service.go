@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -199,7 +200,9 @@ type Service struct {
 	addresses *addresses.Service
 
 	// maintCancel stops the pool top-up / scheduled sweep loop.
-	maintCancel context.CancelFunc
+	maintCancel    context.CancelFunc
+	securityCancel context.CancelFunc
+	securityPaused atomic.Bool
 	// push delivers operator alerts (unmatched deposits). Optional.
 	// Keep its lock separate: reload holds mu while waiting for worker.Stop,
 	// and the worker can still deliver an alert before it exits.
@@ -230,7 +233,16 @@ func NewService(
 		wallet:    wallet.New(db, masterKey),
 		addresses: addressSvc,
 	}
+	s.wallet.EnableSecurityMonitoring()
+	if addressSvc != nil {
+		addressSvc.SetSecurityGuards(s.checkWalletActivity, s.validateWalletAssignment)
+	}
 	s.reload(context.Background())
+	if masterKey != "" && cryptoWorkersAllowed() && service.CryptoInstanceEnabled() {
+		securityCtx, cancel := context.WithCancel(context.Background())
+		s.securityCancel = cancel
+		go s.securityMonitor(securityCtx)
+	}
 	return s
 }
 
@@ -246,6 +258,15 @@ func (s *Service) reload(ctx context.Context) {
 	}
 	// A shared config must never start scans on an explicitly excluded host.
 	cfg.Enabled = cfg.Enabled && service.CryptoInstanceEnabled()
+	if cfg.Enabled && !mode.ReadOnly() {
+		guardCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		guardErr := s.checkWalletSecurity(guardCtx)
+		cancel()
+		if guardErr != nil {
+			cfg.Enabled = false
+			slog.Warn("[cryptopay] channel paused by wallet security guard")
+		}
+	}
 
 	// A queued run must not retain an executor built from obsolete config.
 	s.sweepMu.Lock()
@@ -253,6 +274,9 @@ func (s *Service) reload(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.config = cfg
+	if cfg.Enabled {
+		s.securityPaused.Store(false)
+	}
 	// Vault administration must remain available while deposits are paused.
 	// The same in-process wallet survives configuration reloads. Persisted seeds load automatically when used.
 	if err := s.wallet.SetDestination(cfg.HotWalletEVM); err != nil {
@@ -362,6 +386,7 @@ func (s *Service) reload(ctx context.Context) {
 	// 5s poll: finality is decided by the chain's safe tag, so a tighter
 	// interval only shortens detection latency, not safety.
 	s.worker = scanner.NewWorker(s.db, pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
+	s.worker.SetSecurityGuards(s.checkWalletActivity, s.scanWalletOutflows)
 	// A reorged credited deposit means we paid out on a block that no longer
 	// exists: the operator must reconcile it by hand.
 	s.worker.SetReorgNotifier(func(chain, txHash string) {
@@ -483,6 +508,12 @@ func (s *Service) Config() CryptoConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	cfg := s.config
+	if s.securityPaused.Load() {
+		cfg.Enabled = false
+	}
+	if s.wallet != nil && s.wallet.SecurityLocked() {
+		cfg.Enabled = false
+	}
 	cfg.Chains = slices.Clone(cfg.Chains)
 	cfg.RPC = maps.Clone(cfg.RPC)
 	cfg.Confirmations = maps.Clone(cfg.Confirmations)
@@ -653,7 +684,10 @@ func (s *Service) InitializeWallet(ctx context.Context, depositMnemonic, hotMnem
 	if wallet == nil {
 		return fmt.Errorf("cryptopay is disabled")
 	}
-	return wallet.Initialize(ctx, depositMnemonic, hotMnemonic)
+	if err := wallet.Initialize(ctx, depositMnemonic, hotMnemonic); err != nil {
+		return err
+	}
+	return s.checkWalletSecurity(ctx)
 }
 
 // RunSweep executes the sweep (or a dry-run) and returns the summary.
@@ -662,6 +696,11 @@ func (s *Service) RunSweep(ctx context.Context, dryRun bool) (*sweeper.Summary, 
 	if !dryRun {
 		if err := mode.CheckWritable(); err != nil {
 			return nil, err
+		}
+		if s.wallet != nil {
+			if err := s.checkWalletActivity(ctx); err != nil {
+				return nil, err
+			}
 		}
 	}
 	s.sweepMu.Lock()
@@ -674,6 +713,14 @@ func (s *Service) RunSweep(ctx context.Context, dryRun bool) (*sweeper.Summary, 
 	}
 	// One run at a time: the manual trigger and the scheduler would
 	// otherwise both read the same balances and double-send.
+	if !dryRun && s.wallet != nil {
+		authorized, revoke, err := s.wallet.AuthorizeSweep(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer revoke()
+		ctx = authorized
+	}
 	return exec.Run(ctx, dryRun)
 }
 

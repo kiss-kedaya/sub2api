@@ -1,12 +1,34 @@
 package cryptopay
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestUserDepositHistoryReturnsFullTransactionHashForCaller(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	hash := "0x" + strings.Repeat("ab", 32)
+	mock.ExpectQuery(`(?s)SELECT d.chain, d.tx_hash,.*WHERE a.user_id = \$1.*ORDER BY d.id DESC LIMIT \$2`).
+		WithArgs(int64(42), 50).
+		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id"}).
+			AddRow("bsc", hash, "0xtoken", "10", "credited", "", time.Now(), 67, 2, 10))
+	s := &Service{db: db}
+	rows, err := s.UserDepositHistory(t.Context(), 42, 50)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, hash, rows[0].TxHash)
+	encoded, err := json.Marshal(rows)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"tx_hash":"`+hash+`"`)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
 func TestDepositHistoryKeepsActualOrderAmountAfterRateChange(t *testing.T) {
 	db, mock, err := sqlmock.New()

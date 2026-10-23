@@ -10,6 +10,7 @@ import (
 )
 
 func TestWalletUsesPersistentInstallationKeyWithoutDedicatedPaymentKey(t *testing.T) {
+	t.Setenv("SUB2API_DISABLE_BACKGROUND_JOBS", "true")
 	for _, persistent := range []bool{false, true} {
 		t.Run(map[bool]string{false: "process-local", true: "persisted"}[persistent], func(t *testing.T) {
 			db, mock, err := sqlmock.New()

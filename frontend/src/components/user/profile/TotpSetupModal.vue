@@ -135,11 +135,12 @@
                 v-model="code"
                 :label="t('profile.totp.enterCode')"
                 :disabled="verifying"
+                @complete="handleVerify"
               />
             </div>
 
             <div class="flex justify-end gap-3">
-              <button type="button" class="btn btn-secondary" @click="step = 1">
+              <button type="button" class="btn btn-secondary" :disabled="verifying" @click="step = 1">
                 {{ t('common.back') }}
               </button>
               <button
@@ -309,7 +310,7 @@ const handleVerifyAndSetup = async () => {
 
 const handleVerify = async () => {
   const totpCode = code.value
-  if (totpCode.length !== 6 || !setupData.value) return
+  if (verifying.value || step.value !== 2 || !/^[0-9]{6}$/.test(totpCode) || !setupData.value) return
 
   verifying.value = true
 
@@ -327,6 +328,7 @@ const handleVerify = async () => {
       codeInput.value?.focus()
     })
   } finally {
+    code.value = ''
     verifying.value = false
   }
 }

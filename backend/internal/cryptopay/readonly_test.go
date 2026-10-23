@@ -98,7 +98,7 @@ func TestAdminTestModeStartupWithSharedEnabledConfigDoesNotStartWorkers(t *testi
 	}
 }
 
-func TestWritableReviewKeepsWalletManualAndNeverStartsSharedWorkers(t *testing.T) {
+func TestWritableReviewWithoutPersistentKeyFailsClosedAndNeverStartsSharedWorkers(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
 	t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "true")
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
@@ -118,13 +118,13 @@ func TestWritableReviewKeepsWalletManualAndNeverStartsSharedWorkers(t *testing.T
 	settings := service.NewSettingService(readOnlyConfigRepository{raw: string(raw)}, nil)
 	s := NewService(db, settings, nil, NewAddressService(db, settings), nil)
 	s.Reload(t.Context())
-	if s.maintCancel != nil || cryptoWorkersAllowed() || mode.ReadOnly() || s.executor == nil {
-		t.Fatal("writable review must allow manual work without automatic workers")
+	if s.maintCancel != nil || cryptoWorkersAllowed() || mode.ReadOnly() || s.executor != nil {
+		t.Fatal("review without a persistent encryption key must suspend signing without automatic workers")
 	}
 	mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}))
 	status, err := s.WalletStatus(t.Context())
-	if err != nil || status.Ready || !status.Enabled {
-		t.Fatalf("manual signing unavailable or wallet initialized at startup: %+v %v", status, err)
+	if err != nil || status.Ready || status.Enabled {
+		t.Fatalf("unconfigured review wallet must fail closed: %+v %v", status, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

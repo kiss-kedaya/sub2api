@@ -48,6 +48,7 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 	crypto.Use(cryptoHandler.CryptoAdminSecurity)
 	{
 		crypto.GET("/security/status", cryptoHandler.AdminCryptoSecurityStatus)
+		crypto.POST("/security/operation-intent", cryptoHandler.AdminWalletOperationIntent)
 		crypto.POST("/security/setup", cryptoHandler.AdminCryptoSecuritySetup)
 		crypto.POST("/security/enable", cryptoHandler.AdminCryptoSecurityEnable)
 		crypto.GET("/config", cryptoHandler.AdminGetConfig)
@@ -60,6 +61,8 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.GET("/deposits", cryptoHandler.AdminListDeposits)
 		crypto.POST("/scan/run", cryptoHandler.AdminRunScan)
 		crypto.GET("/wallet/status", cryptoHandler.AdminWalletStatus)
+		crypto.GET("/wallet/security", cryptoHandler.AdminWalletSecurity)
+		crypto.POST("/wallet/security/recover", cryptoHandler.AdminRecoverWalletSecurity)
 		crypto.POST("/wallet/initialize", cryptoHandler.AdminInitializeWallet)
 		crypto.POST("/wallet/export-mnemonics", cryptoHandler.AdminExportMnemonics)
 		crypto.POST("/wallet/hot-mnemonic", cryptoHandler.AdminImportHotMnemonic)

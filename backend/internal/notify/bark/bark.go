@@ -4,6 +4,7 @@ package bark
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -91,9 +92,14 @@ func (c *Client) Send(ctx context.Context, n Notification) error {
 		return fmt.Errorf("bark transport failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bark send: http %d", resp.StatusCode)
+	}
+	var result struct {
+		Code int `json:"code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&result); err != nil || result.Code != http.StatusOK {
+		return fmt.Errorf("bark server did not confirm notification delivery")
 	}
 	return nil
 }

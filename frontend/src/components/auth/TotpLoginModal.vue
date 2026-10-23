@@ -29,6 +29,7 @@
             v-model="code"
             :label="t('profile.totp.enterCode')"
             :disabled="verifying"
+            @complete="submit"
           />
           <!-- Loading indicator -->
           <div v-if="verifying" class="mt-3 flex items-center justify-center gap-2 text-sm text-gray-500">
@@ -52,7 +53,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores'
 import TotpCodeInput from '@/components/common/TotpCodeInput.vue'
@@ -74,19 +75,16 @@ const verifying = ref(false)
 const code = ref('')
 const codeInput = ref<InstanceType<typeof TotpCodeInput> | null>(null)
 
-// Watch for code changes and auto-submit when 6 digits are entered
-watch(
-  code,
-  (newCode) => {
-    if (newCode.length === 6 && !verifying.value) {
-      emit('verify', newCode)
-    }
-  }
-)
+function submit(otp: string) {
+  if (verifying.value || !/^[0-9]{6}$/.test(otp)) return
+  verifying.value = true
+  emit('verify', otp)
+}
 
 defineExpose({
   setVerifying: (value: boolean) => { verifying.value = value },
   setError: (message: string) => {
+    verifying.value = false
     if (message) {
       appStore.showError(message)
     }

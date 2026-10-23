@@ -32,6 +32,7 @@
           :invalid="!!errorMessage"
           aria-describedby="crypto-security-code-hint"
           :disabled="busy"
+          @complete="submitCode"
           required
         />
         <p id="crypto-security-code-hint" class="crypto-security__hint">{{ t('admin.crypto.securityFreshCode') }}</p>

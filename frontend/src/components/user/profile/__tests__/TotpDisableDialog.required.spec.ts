@@ -60,7 +60,7 @@ describe('Administrator TOTP disable UI protection', () => {
   it('offers server recovery only for administrators and sends only the chosen credential', async () => {
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
-    await wrapper.get('[data-testid="totp-disable-code"]').setValue('123456')
+    await wrapper.get('[data-testid="totp-disable-code"]').setValue('12345')
     await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
     expect(wrapper.find('[data-testid="totp-disable-code"]').exists()).toBe(false)
     const input = wrapper.get('[data-testid="totp-disable-server-code"]')
@@ -84,7 +84,7 @@ describe('Administrator TOTP disable UI protection', () => {
   it('clears authenticator and recovery codes when switching methods', async () => {
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
-    await wrapper.get('[data-testid="totp-disable-code"]').setValue('123456')
+    await wrapper.get('[data-testid="totp-disable-code"]').setValue('12345')
     await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
     await wrapper.get('[data-testid="totp-disable-server-code"]').setValue('a'.repeat(64))
     await wrapper.get('[data-testid="totp-disable-method-authenticator"]').setValue()

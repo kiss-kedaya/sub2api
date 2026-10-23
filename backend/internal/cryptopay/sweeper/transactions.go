@@ -210,7 +210,18 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 	state, err := checkReceipt(ctx, pool, hash, required)
 	if err == nil && state == receiptAbsent {
 		var returned string
-		returned, err = pool.SendRawTransaction(ctx, raw)
+		if guard, ok := e.wallet.(interface {
+			GuardSweepBroadcast(context.Context, func() (string, error)) (string, error)
+		}); ok {
+			returned, err = guard.GuardSweepBroadcast(ctx, func() (string, error) { return pool.SendRawTransaction(ctx, raw) })
+		} else {
+			if guard, ok := e.wallet.(interface{ ValidateSweepAuthorization(context.Context) error }); ok {
+				if guardErr := guard.ValidateSweepAuthorization(ctx); guardErr != nil {
+					return false, guardErr
+				}
+			}
+			returned, err = pool.SendRawTransaction(ctx, raw)
+		}
 		if err == nil && !strings.EqualFold(returned, hash) {
 			err = fmt.Errorf("broadcast returned a different transaction hash; outcome unknown")
 		}

@@ -16,14 +16,14 @@ beforeEach(() => {
   api.enable.mockResolvedValue({ success: true })
 })
 
-async function openCodeStep() {
+async function openCodeStep(code = '123456') {
   const wrapper = mount(TotpSetupModal, { attachTo: document.body })
   await flushPromises()
   await wrapper.get('input[type="password"]').setValue('password')
   await wrapper.get('.btn-primary').trigger('click')
   await flushPromises()
   await wrapper.get('.btn-primary').trigger('click')
-  await wrapper.get('input[autocomplete="one-time-code"]').setValue('123456')
+  await wrapper.get('input[autocomplete="one-time-code"]').setValue(code)
   return wrapper
 }
 
@@ -45,22 +45,24 @@ describe('TOTP setup input synchronization', () => {
     expect(wrapper.emitted('success')).toHaveLength(1)
   })
 
-  it('displays retained digits when returning from the QR-code step', async () => {
-    const wrapper = await openCodeStep()
+  it('retains partial input when returning from the QR-code step and submits on completion', async () => {
+    const wrapper = await openCodeStep('1234')
     await wrapper.findAll('button').find(button => button.text() === 'common.back')!.trigger('click')
     await wrapper.get('.btn-primary').trigger('click')
-    expect(wrapper.get('input[autocomplete="one-time-code"]').element).toHaveProperty('value', '123456')
-    expect(wrapper.findAll('.totp-code-input span').map(cell => cell.text())).toEqual(['1', '2', '3', '4', '5', '6'])
-    await wrapper.get('form').trigger('submit')
+    expect(wrapper.get('input[autocomplete="one-time-code"]').element).toHaveProperty('value', '1234')
+    expect(wrapper.findAll('.totp-code-input span').slice(0, 4).map(cell => cell.text())).toEqual(['1', '2', '3', '4'])
+    expect(api.enable).not.toHaveBeenCalled()
+    await wrapper.get('input[autocomplete="one-time-code"]').setValue('123456')
     await flushPromises()
     expect(api.enable).toHaveBeenCalledWith({ totp_code: '123456', setup_token: 'setup-token' })
   })
 
-  it('submits normally entered digits', async () => {
+  it('automatically submits normally entered digits and clears them after success', async () => {
     const wrapper = await openCodeStep()
-    await wrapper.get('form').trigger('submit')
     await flushPromises()
+    expect(api.enable).toHaveBeenCalledOnce()
     expect(api.enable).toHaveBeenCalledWith({ totp_code: '123456', setup_token: 'setup-token' })
     expect(wrapper.emitted('success')).toHaveLength(1)
+    expect(wrapper.get('input[autocomplete="one-time-code"]').element).toHaveProperty('value', '')
   })
 })

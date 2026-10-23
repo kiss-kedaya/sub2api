@@ -18,8 +18,9 @@ const managedVaultPrefix = "sub2api-wallet:v2:"
 const walletKeyContext = "sub2api/crypto-wallet/seed-encryption/v2"
 
 type vaultContents struct {
-	Deposit string `json:"deposit"`
-	Hot     string `json:"hot"`
+	Deposit         string `json:"deposit"`
+	Hot             string `json:"hot"`
+	SecurityVersion int    `json:"security_version,omitempty"`
 }
 
 func newSeedCipher(masterHex string) cipher.AEAD {
@@ -46,10 +47,18 @@ func newSeedCipher(masterHex string) cipher.AEAD {
 }
 
 func (m *Manager) sealContents(deposit, hot string) (string, error) {
+	contents := vaultContents{Deposit: deposit, Hot: hot}
+	if m.securityRegistered {
+		contents.SecurityVersion = 1
+	}
+	return m.sealVaultContents(contents)
+}
+
+func (m *Manager) sealVaultContents(contents vaultContents) (string, error) {
 	if m.cipher == nil {
 		return "", ErrVaultUnavailable
 	}
-	plaintext, err := json.Marshal(vaultContents{Deposit: deposit, Hot: hot})
+	plaintext, err := json.Marshal(contents)
 	if err != nil {
 		return "", ErrVaultUnavailable
 	}

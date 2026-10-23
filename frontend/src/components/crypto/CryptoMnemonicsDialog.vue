@@ -34,6 +34,7 @@
           </div>
 
           <form id="crypto-mnemonics-form" class="crypto-mnemonics__form" autocomplete="off" @submit.prevent="requestExport">
+            <p v-if="operationIntentError" role="alert" class="text-red-600 dark:text-red-400">{{ operationIntentError }}</p>
             <label class="crypto-mnemonics__confirm">
               <input v-model="productionConfirmed" type="checkbox" :disabled="busy" />
               <span>{{ t('admin.crypto.mnemonicsProductionConfirm') }}</span>
@@ -236,7 +237,7 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import CryptoSecurityDialog from './CryptoSecurityDialog.vue'
-import { exportWalletMnemonics } from '@/api/admin/crypto'
+import { exportWalletMnemonics, reportWalletOperationIntent } from '@/api/admin/crypto'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { useAppStore } from '@/stores/app'
 
@@ -257,6 +258,7 @@ const copiedParts = ref<Set<string>>(new Set())
 const remainingSeconds = ref(0)
 const expiredNotice = ref(false)
 const busy = ref(false)
+const operationIntentError = ref('')
 const hasMnemonics = computed(() => Boolean(depositMnemonic.value && hotMnemonic.value))
 let generation = 0
 let displayTimer: ReturnType<typeof setInterval> | undefined
@@ -285,6 +287,7 @@ function clearSecrets() {
   copiedParts.value = new Set()
   remainingSeconds.value = 0
   expiredNotice.value = false
+  operationIntentError.value = ''
 }
 
 function expireDisplayedSeeds() {
@@ -389,6 +392,17 @@ async function requestExport() {
   copyNotice.value = ''
   const current = generation
   try {
+    operationIntentError.value = ''
+    try {
+      await reportWalletOperationIntent('export_mnemonics')
+    } catch {
+      if (current === generation && props.show) {
+        operationIntentError.value = t('admin.crypto.walletOperationNotifyFailed')
+        appStore.showError(operationIntentError.value)
+      }
+      return
+    }
+    if (current !== generation || !props.show) return
     await securityDialog.value?.verify(t('admin.crypto.mnemonicsRiskOperation'), async (code) => {
       let result: Awaited<ReturnType<typeof exportWalletMnemonics>> | undefined
       try {

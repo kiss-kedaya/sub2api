@@ -67,13 +67,14 @@
               data-testid="totp-disable-code"
               required
               :disabled="loading || methodLoading"
+              @complete="handleDisable"
             />
             <p id="disable-totp-hint" class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ t('profile.totp.disableTotpHint') }}</p>
           </div>
 
           <!-- Actions -->
           <div class="flex justify-end gap-3 pt-4">
-            <button type="button" class="btn btn-secondary" @click="handleClose">
+            <button type="button" class="btn btn-secondary" :disabled="loading" @click="handleClose">
               {{ t('common.cancel') }}
             </button>
             <button
@@ -145,6 +146,7 @@ function clearForm() {
 }
 
 function handleClose() {
+  if (loading.value) return
   clearForm()
   emit('close')
 }
