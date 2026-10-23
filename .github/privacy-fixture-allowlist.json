@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "description": "Audited synthetic credential fixtures. Exceptions require both exact path and SHA-256 of the complete file bytes; any file change requires review.",
+  "fixtures": [
+    {
+      "path": "backend/internal/handler/openai_ws_first_refusal_test.go",
+      "sha256": "c2f41a21a806c218982ffdcb7c7ca02b7c6bb994f7e264e3fdd7cbf2bad39b8f",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/payment/provider/wxpay_test.go",
+      "sha256": "813bdea42e6e3c30a263400751b6ef3b701fb1a5e48cc950fe32e17f0be9b38d",
+      "reason": "Audited incomplete PEM text for formatter assertions; no usable private key."
+    },
+    {
+      "path": "backend/internal/repository/api_key_repo_integration_test.go",
+      "sha256": "de5faeb328146a470e12b200855f6d8b04982f5a99649e622606d29bce3c5eb5",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/repository/api_key_repo_last_used_unit_test.go",
+      "sha256": "06e29f7f5c6820acf2c0aad9564070305ab544563b74f6f7468b61458d0b817c",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/repository/api_key_repo_lost_update_integration_test.go",
+      "sha256": "79f73f5a3556e2fef0fca2ac2bcd24bad6e5bbcff48f6542f89ada80557e8e52",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/repository/api_key_repo_messages_dispatch_unit_test.go",
+      "sha256": "1c486e8db91c0608dfa5e3a999e97884ca8198fd70deccdae408556b82e37152",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/repository/api_key_repo_model_allowlist_projection_integration_test.go",
+      "sha256": "92da1442e6831cfe3c289f3c8537dea2f300a73e4aa3f13601e6d7c8022927b6",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/repository/auth_cache_invalidation_outbox_repo_test.go",
+      "sha256": "20a639dbb614249bf93b15d4b31a77553e788343106e800cb9e9c7e9573c5f18",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/repository/usage_billing_repo_integration_test.go",
+      "sha256": "2bb60fe119a928ae95c678856d73c78306e0e901ecefaca308c27e83f71e6014",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/repository/usage_log_repo_integration_test.go",
+      "sha256": "84103d561fa0c615d15c6798911d0d696d0171a3f6d9336a1d295f12a4efe795",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/server/middleware/jwt_auth_test.go",
+      "sha256": "65792e715f8238056070d04664243ca75fd5a3bf69b9e013cea7ecd78ea96dae",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/service/api_key_auth_cache_codex_manifest_test.go",
+      "sha256": "fba7fa4c628fdc7c545b631d2c46709fe2f7b63e36f7bb3a538c037e2cbde3dc",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/service/api_key_service_create_limit_test.go",
+      "sha256": "54099acac127530e14c088564e9483cfab634f7d2d37b68db55ddefe0a96c003",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/service/audit_log_test.go",
+      "sha256": "bd942e34a6abb56d31f36e6c153f62489feaa7643ea44c3f37bc4940a187647e",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/service/batch_image_provider_vertex_test.go",
+      "sha256": "fdf84c8cb55825bee1c554b3669d26626025543c29b52b9caeeaaba036f92103",
+      "reason": "Audited incomplete PEM text for service-account error-redaction assertions."
+    },
+    {
+      "path": "backend/internal/service/content_moderation_test.go",
+      "sha256": "5e459ddfbe396b19ab1c5b9a8c7e8f1b74f1a359cc25a92387c1654a3257f618",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/service/custom_usage_test.go",
+      "sha256": "91677d19d1485a43c812f259cc0a41537e683dea3aa3cddc1660aecfede371ad",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/service/group_quality_chanshui_summary_test.go",
+      "sha256": "76ec1aee43edde816101f72182be7848cd6c76224fd22f1c4ae86f1746e7d9a4",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/service/openai_agent_identity_compat_test.go",
+      "sha256": "3fba7b490e0f537e57a5591e6d62e51abd692735d2c4002410e896be32674764",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/service/openai_oauth_passthrough_test.go",
+      "sha256": "8368d07ce39e8292ecb5a55995d6ba7c1727cf87b42ba88db2a7b4c92c16fe42",
+      "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
+    },
+    {
+      "path": "backend/internal/service/vertex_service_account_test.go",
+      "sha256": "d1d02f5d0cf490e08f8495438cd03b1b683a02c3337f573b35f7eabaf6e403cc",
+      "reason": "Audited incomplete PEM text for service-account validation assertions."
+    },
+    {
+      "path": "frontend/src/components/account/__tests__/EditAccountModal.spec.ts",
+      "sha256": "c68cddd2c97f91f021c4b0649f59932ccbbcc14e3de357bf7729c1888ecff6e8",
+      "reason": "Audited incomplete PEM text for mocked account-form parsing."
+    },
+    {
+      "path": "openspec/changes/add-openai-compatible-prompt-audit/source-freeze/aicodex-prompt-audit-tracked.patch",
+      "sha256": "f751a13cce3f3a73cd60cae3aececcef6e1e76dcec8c551a7a4747f032234d2b",
+      "reason": "Audited archived patch containing synthetic HTTP request fixtures."
+    }
+  ]
+}

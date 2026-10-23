@@ -4,17 +4,22 @@
 This repository is public. Docs, release notes and code must never reveal which
 upstream providers, accounts, keys or hosts the operator actually runs.
 
-Design: high-confidence only. A noisy check gets bypassed with --no-verify and
-stops protecting anything. Credentials are scanned everywhere; infrastructure
-identifiers (hosts, IPs, relay domains) are scanned in prose/config, not in
-test fixtures which are full of fake values by construction.
+Design: high-confidence only. Credentials are scanned everywhere. Audited
+synthetic fixtures require exact path and content hashes; infrastructure
+identifiers (hosts, IPs, relay domains) are checked in prose/config.
 
 Usage:
     python tools/check_sensitive.py          # staged changes (pre-commit)
     python tools/check_sensitive.py --all    # every tracked file
+    python tools/check_sensitive.py --message-file PATH  # commit-msg hook
+    python tools/check_sensitive.py --metadata-range BASE..HEAD  # new commits
 """
 
 import io
+import argparse
+import hashlib
+import json
+from pathlib import PurePosixPath
 import re
 import subprocess
 import sys
@@ -54,9 +59,10 @@ ALLOWED_IPS = {"8.8.8.8", "8.8.4.4", "1.1.1.1", "9.9.9.9", "4.4.4.4",
 
 DOC_IP_PREFIXES = ("192.0.2.", "198.51.100.", "203.0.113.", "1.2.3.4")
 
-# Files that legitimately contain infrastructure detail, or are fixtures.
+# Infrastructure details in fixtures are not operator deployment evidence.
+# These exclusions NEVER skip credentials; exact audited content hashes below
+# are the only fixture exceptions to credential findings.
 SKIP_PATHS = (
-    "tools/check_sensitive.py",
     ".golangci.yml",
     "_test.go",
     "/testdata/",
@@ -67,6 +73,8 @@ SKIP_PATHS = (
     "frontend/dev/",
     ".patch",
 )
+
+FIXTURE_ALLOWLIST_PATH = ".github/privacy-fixture-allowlist.json"
 
 # Documentation may quote public vendor endpoints; these are the vendors the
 # product genuinely supports.
@@ -147,8 +155,18 @@ def is_placeholder_secret(value):
     return bool(tail) and set(tail) <= {"x", "0", "-", "_"}
 
 
+def _git_bytes(args):
+    # Never turn a failed Git read into a successful empty scan, or expose its
+    # stderr (which may contain a private path, ref, or commit message).
+    try:
+        result = subprocess.run(args, capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError("unable to read Git data") from exc
+    return result.stdout
+
+
 def _git(args):
-    return subprocess.run(args, capture_output=True).stdout.decode("utf-8", "replace")
+    return _git_bytes(args).decode("utf-8", "replace")
 
 
 def staged_files():
@@ -161,15 +179,15 @@ def tracked_files():
 
 
 def staged_content(path):
-    return _git(["git", "show", ":" + path])
+    return _git_bytes(["git", "show", ":" + path])
 
 
 def disk_content(path):
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        with open(path, "rb") as fh:
             return fh.read()
-    except OSError:
-        return ""
+    except OSError as exc:
+        raise ValueError("unable to read tracked content") from exc
 
 
 def skipped(path):
@@ -177,13 +195,49 @@ def skipped(path):
     return any(part in p for part in SKIP_PATHS)
 
 
-def metadata_privacy_problems(identity, message):
+def fixture_baseline(scan_all):
+    # Read the same snapshot as the scanned files. Unstaged allowlist edits
+    # cannot authorize index content, or invalidate a staged content hash.
+    if scan_all:
+        try:
+            with open(FIXTURE_ALLOWLIST_PATH, "rb") as fh:
+                raw = fh.read()
+        except FileNotFoundError:
+            return {}
+        except OSError as exc:
+            raise ValueError("unable to read fixture baseline") from exc
+    else:
+        tracked = _git(["git", "ls-files", "--", FIXTURE_ALLOWLIST_PATH]).splitlines()
+        if FIXTURE_ALLOWLIST_PATH not in tracked:
+            return {}
+        raw = staged_content(FIXTURE_ALLOWLIST_PATH)
+    try:
+        baseline = json.loads(raw)
+        if baseline["version"] != 1 or not isinstance(baseline["fixtures"], list):
+            raise ValueError("invalid fixture baseline")
+        allowed = {}
+        for entry in baseline["fixtures"]:
+            path, digest, reason = entry["path"], entry["sha256"], entry["reason"]
+            if (not isinstance(path, str) or not skipped(path)
+                    or PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts
+                    or "\\" in path or path != str(PurePosixPath(path))
+                    or path in allowed or not isinstance(digest, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    or not isinstance(reason, str) or not reason.strip()):
+                raise ValueError("invalid fixture baseline entry")
+            allowed[path] = digest
+        return allowed
+    except (KeyError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid fixture baseline") from exc
+
+
+def metadata_privacy_problems(identity, message, source="commit"):
     """Check our publishing identity and commit prose without printing values."""
     problems = []
     for label, pattern in INFRA_PATTERNS:
         if label == "personal mailbox" and pattern.search(identity):
-            problems.append(("<commit-identity>", 1, label, "", ""))
-    problems.extend(scan("<commit-message>.md", message))
+            problems.append(("<{}-identity>".format(source), 1, label, "", ""))
+    problems.extend(scan("<{}-message>.md".format(source), message))
     return problems
 
 
@@ -193,17 +247,68 @@ def publishing_metadata():
     return metadata_privacy_problems(identity, "")
 
 
+def resolve_commit(ref):
+    sha = _git(["git", "rev-parse", "--verify", "--end-of-options", ref + "^{commit}"]).strip()
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", sha):
+        raise ValueError("unable to resolve commit")
+    return sha
+
+
 def commit_metadata(ref):
-    raw = _git(["git", "show", "-s", "--format=%ae%n%ce%n%B", ref])
-    lines = raw.splitlines()
-    if len(lines) < 2:
+    sha = resolve_commit(ref)
+    raw = _git(["git", "show", "-s", "--format=%ae%x00%ce%x00%B", sha, "--"])
+    fields = raw.split("\x00", 2)
+    if len(fields) != 3:
         raise ValueError("unable to read commit metadata")
-    return metadata_privacy_problems("\n".join(lines[:2]), "\n".join(lines[2:]))
+    return metadata_privacy_problems("\n".join(fields[:2]), fields[2], sha)
+
+
+def range_metadata(revision_range):
+    # Require both endpoints. A bare revision would walk upstream history and
+    # turn unrelated historical metadata into false positives.
+    if revision_range.count("..") != 1 or "..." in revision_range:
+        raise ValueError("metadata range requires BASE..HEAD")
+    base, head = revision_range.split("..")
+    if not base or not head:
+        raise ValueError("metadata range requires BASE..HEAD")
+    base_sha, head_sha = resolve_commit(base), resolve_commit(head)
+    commits = _git(["git", "rev-list", "--reverse", base_sha + ".." + head_sha, "--"]).splitlines()
+    problems = []
+    for sha in commits:
+        problems.extend(commit_metadata(sha))
+    return problems
+
+
+def message_file_metadata(path):
+    # commit-msg runs even for --allow-empty commits. Missing, unreadable or
+    # malformed message files must reject the commit instead of skipping it.
+    try:
+        with open(path, encoding="utf-8") as fh:
+            message = fh.read()
+    except (OSError, UnicodeError) as exc:
+        raise ValueError("unable to read proposed commit message") from exc
+    return metadata_privacy_problems("", message)
+
+
+class SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        # argparse normally echoes arguments; never print a private input.
+        raise ValueError("invalid scanner arguments")
+
+
+def parse_args():
+    parser = SafeArgumentParser(description=__doc__)
+    parser.add_argument("--all", action="store_true")
+    parser.add_argument("--identity", action="store_true")
+    parser.add_argument("--metadata", metavar="COMMIT")
+    parser.add_argument("--metadata-range", metavar="BASE..HEAD")
+    parser.add_argument("--message-file", metavar="PATH")
+    return parser.parse_args()
 
 
 def scan(path, text):
     problems = []
-    prose = is_prose(path)
+    prose = is_prose(path) and not skipped(path)
     for lineno, line in enumerate(text.splitlines(), 1):
         for label, pattern in SECRET_PATTERNS:
             for m in pattern.finditer(line):
@@ -231,33 +336,44 @@ def scan(path, text):
 
 
 def main():
-    scan_all = "--all" in sys.argv
+    try:
+        args = parse_args()
+        return inspect(args)
+    except ValueError:
+        print("check_sensitive: unable to inspect requested files or metadata")
+        return 2
+
+
+def inspect(args):
+    scan_all = args.all
     files = tracked_files() if scan_all else staged_files()
-    binary_ext = (".png", ".jpg", ".jpeg", ".gif", ".zip", ".gz", ".pdf",
-                  ".ico", ".woff", ".woff2", ".ttf", ".db", ".sqlite", ".svg")
     problems = []
-    if "--identity" in sys.argv:
+    if args.identity:
         problems.extend(publishing_metadata())
-    if "--metadata" in sys.argv:
-        position = sys.argv.index("--metadata")
-        if position + 1 >= len(sys.argv) or sys.argv[position + 1].startswith("-"):
-            print("check_sensitive: --metadata requires a commit reference")
-            return 2
-        try:
-            problems.extend(commit_metadata(sys.argv[position + 1]))
-        except ValueError:
-            print("check_sensitive: unable to inspect commit metadata")
-            return 2
+    if args.metadata is not None:
+        problems.extend(commit_metadata(args.metadata))
+    if args.metadata_range is not None:
+        problems.extend(range_metadata(args.metadata_range))
+    if args.message_file is not None:
+        problems.extend(message_file_metadata(args.message_file))
     if not files and not problems:
         print("check_sensitive: nothing to scan")
         return 0
+    baseline = fixture_baseline(scan_all)
+    secret_labels = {label for label, _pattern in SECRET_PATTERNS}
     for path in files:
-        if path.endswith(binary_ext) or skipped(path):
+        # Scanner source necessarily contains its own regex examples. The
+        # exception is exact; another test/source filename cannot inherit it.
+        if path.replace("\\", "/") == "tools/check_sensitive.py":
             continue
-        text = disk_content(path) if scan_all else staged_content(path)
-        if not text:
+        content = disk_content(path) if scan_all else staged_content(path)
+        if not content:
             continue
-        problems.extend(scan(path, text))
+        raw = content.encode("utf-8") if isinstance(content, str) else content
+        findings = scan(path, raw.decode("utf-8", "replace"))
+        if baseline.get(path) == hashlib.sha256(raw).hexdigest():
+            findings = [finding for finding in findings if finding[2] not in secret_labels]
+        problems.extend(findings)
 
     if not problems:
         print("check_sensitive: OK ({} files)".format(len(files)))

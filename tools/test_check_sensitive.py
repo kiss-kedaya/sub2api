@@ -1,13 +1,16 @@
 """Canaries for scanner diagnostics; fixtures stay in captured child processes."""
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 import runpy
+import shutil
 
 
 SCANNER = Path(__file__).with_name("check_sensitive.py")
@@ -26,6 +29,7 @@ main = runpy.run_path(scanner_path)["main"]
 runtime = main.__globals__
 runtime["staged_files"] = runtime["tracked_files"] = lambda: list(fixtures)
 runtime["staged_content"] = runtime["disk_content"] = fixtures.__getitem__
+runtime["fixture_baseline"] = lambda _scan_all: {}
 sys.argv = [scanner_path] + (["--all"] if mode == "all" else [])
 raise SystemExit(main())
 """
@@ -147,17 +151,34 @@ class SensitiveOutputCanaryTests(unittest.TestCase):
                 self.assertTrue("nothing to scan" in result.stdout)
                 self.assertEqual(result.stderr, "")
 
-    def test_existing_placeholder_and_path_exclusions_are_preserved(self):
-        fixtures = {
-            "docs/canary.md": "sk-" + "placeholder" * 4,
-            "backend/canary_test.go": "sk-" + "A1b2C3d4" * 4,
-        }
+    def test_placeholders_remain_allowed_but_test_paths_do_not_exempt_credentials(self):
+        key = "sk-" + "A1b2C3d4" * 4
         for mode in ("staged", "all"):
             with self.subTest(mode=mode):
-                result = self.run_scanner(fixtures, mode)
+                result = self.run_scanner({"docs/canary.md": "sk-" + "placeholder" * 4}, mode)
                 self.assertEqual(result.returncode, 0)
-                self.assertTrue("check_sensitive: OK (2 files)" in result.stdout)
                 self.assertEqual(result.stderr, "")
+                result = self.run_scanner({"backend/canary_test.go": key}, mode)
+                self.assertEqual(result.returncode, 1, "test files must scan credentials")
+                self.assertTrue("api key" in result.stdout)
+                self.assertTrue(key not in result.stdout + result.stderr)
+
+    def test_fixture_infrastructure_exclusion_does_not_skip_secrets(self):
+        key = "sk-" + "A1b2C3d4" * 4
+        for mode in ("staged", "all"):
+            with self.subTest(mode=mode):
+                path = "backend/testdata/config.json"
+                result = self.run_scanner({path: "base_url=https://fixture-relay.invalid"}, mode)
+                self.assertEqual(result.returncode, 0)
+                result = self.run_scanner({path: key}, mode)
+                self.assertEqual(result.returncode, 1, "fixture secret must not be skipped")
+                self.assertTrue(key not in result.stdout + result.stderr)
+
+    def test_binary_extension_does_not_skip_credential_text(self):
+        key = "sk-" + "A1b2C3d4" * 4
+        result = self.run_scanner({"assets/canary.svg": "<svg>" + key + "</svg>"}, "all")
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(key not in result.stdout + result.stderr)
 
 
 class EmptyCommitMetadataTests(unittest.TestCase):
@@ -249,6 +270,229 @@ class EmptyCommitMetadataTests(unittest.TestCase):
                 result = self.run_cli(*arguments)
                 self.assertEqual(result.returncode, 0, "clean empty commit must succeed")
                 self.assertTrue("nothing to scan" in result.stdout)
+                self.assertEqual(result.stderr, "")
+
+    def test_range_checks_sensitive_middle_message_after_safe_head(self):
+        base = self.run_git("rev-parse", "HEAD").stdout.decode().strip()
+        private_path = "C:/Users/private-middle-canary/project"
+        self.run_git("commit", "--quiet", "--allow-empty", "-m",
+                     "fix: source " + private_path + " " + CANARY_CONTEXT)
+        leaked_sha = self.run_git("rev-parse", "HEAD").stdout.decode().strip()
+        self.run_git("commit", "--quiet", "--allow-empty", "-m", "fix: safe final commit")
+        safe_sha = self.run_git("rev-parse", "HEAD").stdout.decode().strip()
+        self.assertEqual(self.run_cli("--metadata", "HEAD").returncode, 0)
+        result = self.run_cli("--metadata-range", base + "..HEAD")
+        self.assert_private_blocked(result, "personal Windows profile path",
+                                    (private_path, CANARY_CONTEXT))
+        self.assertIn(leaked_sha, result.stdout, "missing offending commit SHA")
+        self.assertNotIn(safe_sha, result.stdout, "safe head should not be flagged")
+
+    def test_range_checks_middle_commit_identity(self):
+        base = self.run_git("rev-parse", "HEAD").stdout.decode().strip()
+        private_email = "987654321" + "@qq.com"
+        environment = self.environment | {"GIT_AUTHOR_EMAIL": private_email}
+        self.run_git("commit", "--quiet", "--allow-empty", "-m", "fix: safe prose",
+                     environment=environment)
+        self.run_git("commit", "--quiet", "--allow-empty", "-m", "fix: safe head")
+        self.assertEqual(self.run_cli("--metadata", "HEAD").returncode, 0)
+        self.assert_private_blocked(self.run_cli("--metadata-range", base + "..HEAD"),
+                                    "personal mailbox", (private_email,))
+
+    def test_range_excludes_existing_ancestor_metadata(self):
+        private_path = "C:/Users/private-existing-canary/project"
+        self.run_git("commit", "--quiet", "--allow-empty", "-m", "old prose " + private_path)
+        base = self.run_git("rev-parse", "HEAD").stdout.decode().strip()
+        self.run_git("commit", "--quiet", "--allow-empty", "-m", "fix: safe new commit")
+        result = self.run_cli("--metadata-range", base + "..HEAD")
+        self.assertEqual(result.returncode, 0, "range must not walk unrelated ancestor history")
+        self.assertNotIn(private_path, result.stdout + result.stderr)
+
+    def test_range_argument_and_git_read_failures_fail_closed_without_values(self):
+        private_ref = "C:/Users/private-invalid-canary/project"
+        for value in ("", "HEAD", "..HEAD", "HEAD..", "HEAD...HEAD", "HEAD..HEAD..HEAD",
+                      private_ref + "..HEAD"):
+            with self.subTest(case="invalid range"):
+                result = self.run_cli("--metadata-range=" + value)
+                self.assertEqual(result.returncode, 2, "invalid range must fail closed")
+                self.assertNotIn(private_ref, result.stdout + result.stderr)
+                self.assertEqual(result.stderr, "")
+        result = self.run_cli("--metadata-range", "HEAD..HEAD")
+        self.assertEqual(result.returncode, 0, "empty explicit range is valid")
+
+    def test_message_file_checks_proposed_body_with_empty_index(self):
+        private_path = "C:/Users/private-message-canary/project"
+        message = self.repo / "proposed-message"
+        message.write_text("fix: safe subject\n\n" + private_path + " " + CANARY_CONTEXT,
+                           encoding="utf-8")
+        self.assert_private_blocked(self.run_cli("--message-file", str(message)),
+                                    "personal Windows profile path", (private_path, CANARY_CONTEXT))
+        message.write_text("fix: safe subject\n\nsafe body", encoding="utf-8")
+        self.assertEqual(self.run_cli("--message-file", str(message)).returncode, 0)
+
+    def test_message_file_io_and_decoding_failures_fail_closed(self):
+        invalid = self.repo / "invalid-message"
+        invalid.write_bytes(b"\xff\xfe")
+        missing = self.repo / "private-missing-message"
+        for value in ("", str(missing), str(self.repo), str(invalid)):
+            with self.subTest(case="unreadable message"):
+                result = self.run_cli("--message-file=" + value)
+                self.assertEqual(result.returncode, 2, "unreadable message must fail closed")
+                self.assertNotIn(str(self.repo), result.stdout + result.stderr)
+                self.assertEqual(result.stderr, "")
+
+    def test_git_io_failure_is_not_treated_as_empty_scan(self):
+        environment = self.environment | {"GIT_DIR": str(self.repo / "missing-git-private-path")}
+        result = self.run_cli("--identity", environment=environment)
+        self.assertEqual(result.returncode, 2, "Git read failure must fail closed")
+        self.assertNotIn("missing-git-private-path", result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_real_commit_message_hook_rejects_sensitive_empty_commit(self):
+        (self.repo / "tools").mkdir()
+        shutil.copyfile(SCANNER, self.repo / "tools" / "check_sensitive.py")
+        hooks = self.repo / "hooks"
+        hooks.mkdir()
+        hook = hooks / "commit-msg"
+        shutil.copyfile(SCANNER.parent.parent / ".githooks" / "commit-msg", hook)
+        hook.chmod(0o755)
+        self.run_git("config", "core.hooksPath", str(hooks))
+        before = self.run_git("rev-parse", "HEAD").stdout
+        private_path = "C:/Users/private-hook-canary/project"
+        environment = self.environment | {
+            "PATH": str(Path(sys.executable).parent) + os.pathsep + self.environment.get("PATH", ""),
+        }
+        result = subprocess.run(
+            ["git", "commit", "--quiet", "--allow-empty", "-m", "fix: safe subject",
+             "-m", private_path + " " + CANARY_CONTEXT],
+            cwd=self.repo, env=environment, capture_output=True, text=True,
+            encoding="utf-8", timeout=10, check=False,
+        )
+        self.assert_private_blocked(result, "personal Windows profile path",
+                                    (private_path, CANARY_CONTEXT))
+        self.assertEqual(before, self.run_git("rev-parse", "HEAD").stdout,
+                         "rejected hook must not create a commit")
+        self.run_git("commit", "--quiet", "--allow-empty", "-m", "fix: safe allowed commit",
+                     environment=environment)
+
+    def test_workflow_uses_event_range_without_scanning_old_history(self):
+        # Execute the actual embedded workflow runner against real commits,
+        # rather than mirroring its event-selection conditions in this test.
+        workflow = (SCANNER.parent.parent / ".github" / "workflows" / "sensitive-check.yml").read_text()
+        runner = textwrap.dedent(workflow.split("python - <<'PY'\n", 1)[1].split("\n          PY", 1)[0])
+        (self.repo / "tools").mkdir()
+        shutil.copyfile(SCANNER, self.repo / "tools" / "check_sensitive.py")
+        base = self.run_git("rev-parse", "HEAD").stdout.decode().strip()
+        private_path = "C:/Users/private-workflow-canary/project"
+        self.run_git("commit", "--quiet", "--allow-empty", "-m", "old source " + private_path)
+        self.run_git("commit", "--quiet", "--allow-empty", "-m", "fix: safe final commit")
+        head = self.run_git("rev-parse", "HEAD").stdout.decode().strip()
+        cases = (
+            ("push", {"before": base, "after": head}, 1),
+            ("pull_request", {"pull_request": {"base": {"sha": base}, "head": {"sha": head}}}, 1),
+            ("push", {"before": "0" * 40, "after": head}, 0),
+            ("workflow_dispatch", {}, 0),
+        )
+        for event_name, event, expected in cases:
+            with self.subTest(event_name=event_name, expected=expected):
+                event_path = self.repo / "workflow-event.json"
+                event_path.write_text(json.dumps(event), encoding="utf-8")
+                environment = self.environment | {
+                    "GITHUB_EVENT_PATH": str(event_path), "GITHUB_EVENT_NAME": event_name,
+                }
+                result = subprocess.run(
+                    [sys.executable, "-B", "-c", runner], cwd=self.repo, env=environment,
+                    capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
+                )
+                self.assertEqual(result.returncode, expected, "wrong metadata scan scope")
+                self.assertNotIn(private_path, result.stdout + result.stderr)
+
+    def install_audited_fixture(self, path="backend/internal/service/audit_log_test.go"):
+        baseline = json.loads((SCANNER.parent.parent / ".github" / "privacy-fixture-allowlist.json").read_text())
+        entry = next(item for item in baseline["fixtures"] if item["path"] == path)
+        source = SCANNER.parent.parent / path
+        self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), entry["sha256"],
+                         "audited fixture changed and needs baseline review")
+        fixture = self.repo / path
+        fixture.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, fixture)
+        baseline_path = self.repo / ".github" / "privacy-fixture-allowlist.json"
+        baseline_path.parent.mkdir(exist_ok=True)
+        baseline_path.write_text(json.dumps({"version": 1, "fixtures": [entry]}), encoding="utf-8")
+        self.run_git("add", "--", path, ".github/privacy-fixture-allowlist.json")
+        return fixture, baseline_path
+
+    def test_audited_fixture_exact_hash_passes_disk_and_staged_scans(self):
+        self.install_audited_fixture()
+        for arguments in ((), ("--all",)):
+            with self.subTest(arguments=arguments):
+                result = self.run_cli(*arguments)
+                self.assertEqual(result.returncode, 0, "reviewed exact fixture should pass")
+                self.assertEqual(result.stderr, "")
+
+    def test_modified_fixture_invalidates_baseline_for_even_safe_byte_change(self):
+        fixture, _baseline_path = self.install_audited_fixture()
+        fixture.write_bytes(fixture.read_bytes() + b"\n// harmless change still requires review\n")
+        result = self.run_cli("--all")
+        self.assertEqual(result.returncode, 1, "any change must invalidate fixture allowance")
+        self.assertEqual(self.run_cli().returncode, 0, "staged original bytes should retain allowance")
+        self.run_git("add", "--", str(fixture.relative_to(self.repo)))
+        self.assertEqual(self.run_cli().returncode, 1, "changed index bytes need fresh audit")
+
+    def test_injected_token_in_existing_fixture_is_blocked_in_both_snapshots(self):
+        fixture, baseline_path = self.install_audited_fixture()
+        token = "Bearer " + "A1b2C3d4" * 5
+        fixture.write_bytes(fixture.read_bytes() + ("\n// " + token + "\n").encode())
+        result = self.run_cli("--all")
+        self.assert_private_blocked(result, "bearer token", (token, token[-12:]))
+        self.assertEqual(self.run_cli().returncode, 0, "unstaged file cannot change index scan")
+        self.run_git("add", "--", str(fixture.relative_to(self.repo)))
+        self.assert_private_blocked(self.run_cli(), "bearer token", (token, token[-12:]))
+        # An unstaged forged allowlist must not grant the staged file an exception.
+        baseline = json.loads(baseline_path.read_text())
+        baseline["fixtures"][0]["sha256"] = hashlib.sha256(fixture.read_bytes()).hexdigest()
+        baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+        self.assert_private_blocked(self.run_cli(), "bearer token", (token, token[-12:]))
+
+    def test_new_test_file_with_same_audited_bytes_is_not_allowed(self):
+        fixture, _baseline_path = self.install_audited_fixture()
+        new_file = fixture.with_name("new_unreviewed_test.go")
+        shutil.copyfile(fixture, new_file)
+        self.run_git("add", "--", str(new_file.relative_to(self.repo)))
+        for arguments in ((), ("--all",)):
+            with self.subTest(arguments=arguments):
+                result = self.run_cli(*arguments)
+                self.assertEqual(result.returncode, 1, "path and hash must both match audit")
+                self.assertTrue("api key" in result.stdout)
+
+    def test_new_test_file_with_random_shaped_key_is_blocked(self):
+        fixture, _baseline_path = self.install_audited_fixture()
+        new_file = fixture.with_name("new_credential_test.go")
+        key = "sk-" + "Q7r8S9t0U1v2W3z4" * 3
+        new_file.write_text('package service\nvar credential = "' + key + '"\n', encoding="utf-8")
+        self.run_git("add", "--", str(new_file.relative_to(self.repo)))
+        for arguments in ((), ("--all",)):
+            with self.subTest(arguments=arguments):
+                self.assert_private_blocked(self.run_cli(*arguments), "api key", (key, key[-12:]))
+
+    def test_new_test_file_cannot_use_an_audited_private_key_marker(self):
+        fixture, _baseline_path = self.install_audited_fixture(
+            "backend/internal/payment/provider/wxpay_test.go")
+        new_file = fixture.with_name("new_private_key_test.go")
+        marker = "-----BEGIN " + "PRIVATE KEY-----"
+        new_file.write_text("package provider\n// " + marker, encoding="utf-8")
+        self.run_git("add", "--", str(new_file.relative_to(self.repo)))
+        for arguments in ((), ("--all",)):
+            with self.subTest(arguments=arguments):
+                self.assert_private_blocked(self.run_cli(*arguments), "private key", (marker,))
+
+    def test_fixture_baseline_io_and_schema_errors_fail_closed(self):
+        _fixture, baseline_path = self.install_audited_fixture()
+        for content in ("not json", "[]", '{"version":2,"fixtures":[]}',
+                        '{"version":1,"fixtures":[{"path":"backend/canary_test.go"}]}'):
+            with self.subTest(case="invalid fixture audit"):
+                baseline_path.write_text(content, encoding="utf-8")
+                result = self.run_cli("--all")
+                self.assertEqual(result.returncode, 2, "broken audit must fail closed")
                 self.assertEqual(result.stderr, "")
 
 
