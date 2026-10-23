@@ -119,16 +119,15 @@ func (s *UserBarkService) SendToUser(ctx context.Context, userID int64, n bark.N
 	return bark.New(key).Send(ctx, n)
 }
 
-// SendToAdmins delivers a push to every admin who configured Bark on their
-// own profile. Operational alerts (upstream balance, watchdog) reuse the
-// same per-user keys the profile card writes, so there is no second place
-// to configure notifications.
+// SendToAdmins delivers operational details only to the primary admin.
+// Observer administrators cannot receive upstream account information through
+// notification subscriptions. Personal notifications use SendToUser instead.
 func (s *UserBarkService) SendToAdmins(ctx context.Context, n bark.Notification) error {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT bark_device_key_encrypted FROM users
-		  WHERE role = $1 AND bark_notify_enabled = TRUE
+		  WHERE id = $1 AND role = $2 AND bark_notify_enabled = TRUE
 		    AND status = 'active' AND deleted_at IS NULL
-		    AND bark_device_key_encrypted <> ''`, "admin")
+		    AND bark_device_key_encrypted <> ''`, int64(1), "admin")
 	if err != nil {
 		return fmt.Errorf("list admin bark keys: %w", err)
 	}
