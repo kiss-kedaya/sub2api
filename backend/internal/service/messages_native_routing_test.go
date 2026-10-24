@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -74,7 +75,8 @@ func TestNativeMessagesPassthroughPreservesBodyAndRecordsEndpoint(t *testing.T) 
 			require.Equal(t, "http://native.example/v1/messages", upstream.lastReq.URL.String())
 			require.Equal(t, "/v1/messages", GetActualOpenAIUpstreamEndpoint(c))
 			require.Equal(t, "native-test-client", getHeaderRaw(upstream.lastReq.Header, "user-agent"))
-			require.Equal(t, "client-beta", getHeaderRaw(upstream.lastReq.Header, "anthropic-beta"))
+			require.Contains(t, getHeaderRaw(upstream.lastReq.Header, "anthropic-beta"), "client-beta")
+			require.Contains(t, getHeaderRaw(upstream.lastReq.Header, "anthropic-beta"), claude.BetaExtendedCacheTTL)
 		})
 	}
 }
