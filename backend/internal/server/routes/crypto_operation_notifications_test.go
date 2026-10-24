@@ -32,7 +32,7 @@ func TestCryptoWalletClicksAndBackendVerificationHaveSeparateNotifications(t *te
 	intent := cryptoRouteRequestBody(h.router, "POST", "/api/v1/admin/crypto/security/operation-intent", `{"action":"export_mnemonics"}`, "", nil, "127.0.0.1:1234", "localhost")
 	require.Equal(t, 200, intent.Code, intent.Body.String())
 	require.Len(t, push.messages, 1)
-	require.Contains(t, push.messages[0], "尚未完成 2FA")
+	require.Contains(t, push.messages[0], "等待服务器检查支付授权")
 	path := "/api/v1/admin/crypto/wallet/export-mnemonics"
 	wrong := cryptoRouteRequest(h.router, http.MethodPost, path, wrongCryptoRouteCode(t, 0), nil, "127.0.0.1:1234", "localhost")
 	require.Equal(t, 403, wrong.Code, wrong.Body.String())
@@ -44,7 +44,7 @@ func TestCryptoWalletClicksAndBackendVerificationHaveSeparateNotifications(t *te
 	// BEFORE any attempt to decrypt. No frontend "verified" event is trusted.
 	require.Equal(t, 503, verified.Code, verified.Body.String())
 	require.Len(t, push.messages, 2)
-	require.Contains(t, push.messages[1], "新鲜 2FA 验证已通过")
+	require.Contains(t, push.messages[1], "服务器已验证当前支付授权")
 	replay := cryptoRouteRequest(h.router, http.MethodPost, path, code, nil, "127.0.0.1:1234", "localhost")
 	require.Equal(t, 409, replay.Code, replay.Body.String())
 	require.Len(t, push.messages, 2)

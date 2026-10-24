@@ -12,10 +12,14 @@ import (
 )
 
 func TestVerifiedChainPoolIsolatesStalledAndWrongChainEndpoints(t *testing.T) {
+	release := make(chan struct{})
 	stalled := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-		<-request.Context().Done()
+		select {
+		case <-request.Context().Done():
+		case <-release:
+		}
 	}))
-	defer stalled.Close()
+	defer func() { close(release); stalled.Close() }()
 	wrong := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(writer).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": "0x1"})
 	}))
