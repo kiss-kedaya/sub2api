@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,19 @@ import (
 )
 
 type replayStateArgument struct{ want recentReplayState }
+
+func TestZeroValueTransferDoesNotConsumeVerificationBudget(t *testing.T) {
+	fixture := newRPCFixture(testTransfer())
+	worker, _, handler := workerFixture(t, fixture)
+	transfer := testTransfer()
+	transfer.Amount = big.NewInt(0)
+	if err := worker.processTransfer(t.Context(), worker.pools["bsc"], worker.chains[0], transfer, 6); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.callCount("eth_getTransactionReceipt") != 0 || len(handler.processed)+len(handler.pending) != 0 {
+		t.Fatal("a zero-value event consumed payment verification or persistence work")
+	}
+}
 
 func (a replayStateArgument) Match(value driver.Value) bool {
 	encoded, ok := value.(string)
