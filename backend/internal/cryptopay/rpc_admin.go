@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"golang.org/x/sync/singleflight"
 )
 
 // chainlistIDs maps an internal chain id to the EIP-155 chain id used by
@@ -182,6 +183,19 @@ func probeDepositCapabilities(ctx context.Context, pool *rpc.Pool, chain string,
 			}
 		}
 	}
+	if _, err := pool.Balance(ctx, contracts[0]); err != nil {
+		return err
+	}
+	// A missing receipt is a valid result, but an unavailable method is not.
+	// The all-zero transaction hash never represents a real payment and avoids
+	// relying on unrelated customer history just to validate an RPC provider.
+	receipt, err := pool.Call(ctx, "eth_getTransactionReceipt", []any{"0x" + strings.Repeat("0", 64)})
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(bytes.TrimSpace(receipt), []byte("null")) {
+		return &rpc.Failure{Kind: "response"}
+	}
 	return nil
 }
 
@@ -247,30 +261,9 @@ func FetchChainlistCandidates(ctx context.Context, chain string) ([]ChainlistCan
 	if !ok {
 		return nil, fmt.Errorf("chain %q has no chainlist mapping", chain)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://chainlist.org/rpcs.json", nil)
+	registry, err := cachedChainlistRegistry(ctx)
 	if err != nil {
 		return nil, err
-	}
-	resp, err := rpcHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch chainlist: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("chainlist: http %d", resp.StatusCode)
-	}
-	var registry []struct {
-		ChainID int64  `json:"chainId"`
-		Name    string `json:"name"`
-		RPC     []struct {
-			URL      string `json:"url"`
-			Tracking string `json:"tracking"`
-		} `json:"rpc"`
-	}
-	// The registry is ~2.3 MB; 16 MB of headroom keeps a growth spurt safe.
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&registry); err != nil {
-		return nil, fmt.Errorf("decode chainlist: %w", err)
 	}
 	for _, entry := range registry {
 		if entry.ChainID != chainID {
@@ -290,6 +283,91 @@ func FetchChainlistCandidates(ctx context.Context, chain string) ([]ChainlistCan
 		return out, nil
 	}
 	return nil, fmt.Errorf("chain %d not present in the registry", chainID)
+}
+
+type chainlistRecord struct {
+	ChainID int64  `json:"chainId"`
+	Name    string `json:"name"`
+	RPC     []struct {
+		URL      string `json:"url"`
+		Tracking string `json:"tracking"`
+	} `json:"rpc"`
+}
+
+var chainlistRegistry struct {
+	sync.Mutex
+	entries     []chainlistRecord
+	expires     time.Time
+	failedUntil time.Time
+	flight      singleflight.Group
+}
+
+func cachedChainlistRegistry(ctx context.Context) ([]chainlistRecord, error) {
+	chainlistRegistry.Lock()
+	if len(chainlistRegistry.entries) > 0 && time.Now().Before(chainlistRegistry.expires) {
+		entries := chainlistRegistry.entries
+		chainlistRegistry.Unlock()
+		return entries, nil
+	}
+	if time.Now().Before(chainlistRegistry.failedUntil) {
+		chainlistRegistry.Unlock()
+		return nil, fmt.Errorf("chainlist request is backing off")
+	}
+	chainlistRegistry.Unlock()
+	result := chainlistRegistry.flight.DoChan("registry", func() (value any, err error) {
+		chainlistRegistry.Lock()
+		if len(chainlistRegistry.entries) > 0 && time.Now().Before(chainlistRegistry.expires) {
+			entries := chainlistRegistry.entries
+			chainlistRegistry.Unlock()
+			return entries, nil
+		}
+		if time.Now().Before(chainlistRegistry.failedUntil) {
+			chainlistRegistry.Unlock()
+			return nil, fmt.Errorf("chainlist request is backing off")
+		}
+		chainlistRegistry.Unlock()
+		defer func() {
+			if err != nil {
+				chainlistRegistry.Lock()
+				chainlistRegistry.failedUntil = time.Now().Add(rpcDiscoveryBackoff)
+				chainlistRegistry.Unlock()
+			}
+		}()
+		fetchCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, "https://chainlist.org/rpcs.json", nil)
+		if err != nil {
+			return nil, fmt.Errorf("chainlist request unavailable")
+		}
+		resp, err := rpcHTTPClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("chainlist request failed")
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("chainlist: http %d", resp.StatusCode)
+		}
+		var registry []chainlistRecord
+		// The registry is shared across chains and remains immutable after
+		// publication. Growth and malformed responses stay strictly bounded.
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&registry); err != nil || len(registry) == 0 {
+			return nil, fmt.Errorf("chainlist response is invalid")
+		}
+		chainlistRegistry.Lock()
+		chainlistRegistry.entries, chainlistRegistry.expires = registry, time.Now().Add(30*time.Minute)
+		chainlistRegistry.failedUntil = time.Time{}
+		chainlistRegistry.Unlock()
+		return registry, nil
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case out := <-result:
+		if out.Err != nil {
+			return nil, out.Err
+		}
+		return out.Val.([]chainlistRecord), nil
+	}
 }
 
 // ProbeBestRPCEndpoints probes candidates in parallel and returns the

@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
@@ -218,6 +219,11 @@ func (p depositObservation) transfer(decimals int) (Transfer, error) {
 }
 
 func (w *Worker) reconcile(ctx context.Context, observations []depositObservation) error {
+	// A backlog of slow receipt/reorg checks must not monopolize the shared
+	// scanner lock and keep newly mined deposits waiting. Completed attempts
+	// rotate durably; the remaining rows get the next bounded pass.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	var errs []error
 	type poolCheck struct {
 		pool *rpc.Pool

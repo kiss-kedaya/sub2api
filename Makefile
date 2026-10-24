@@ -71,6 +71,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/utils/__tests__/cryptoExplorer.spec.ts \
 	src/views/admin/settings/__tests__/GatewayIPNoticeSettings.spec.ts \
 	src/composables/__tests__/useClipboard.spec.ts \
+	src/composables/__tests__/cryptoGrant.spec.ts \
 	src/stores/__tests__/announcements.markAll.spec.ts \
 	src/stores/__tests__/payment.config.spec.ts \
 	src/stores/__tests__/subscriptions.clear.spec.ts \

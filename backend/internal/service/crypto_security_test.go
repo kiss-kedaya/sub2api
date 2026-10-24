@@ -105,6 +105,15 @@ func (c *cryptoSecurityTestCache) CryptoValueExists(_ context.Context, key strin
 	return exists, nil
 }
 
+func (c *cryptoSecurityTestCache) CryptoGrantRevocationTimes(context.Context, int64, string) (int64, int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.fail {
+		return 0, 0, errors.New("store unavailable")
+	}
+	return 0, 0, nil
+}
+
 func (c *cryptoSecurityTestCache) ReleaseCryptoValue(_ context.Context, key, value string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -9,6 +9,7 @@
         <div v-if="loadedSnapshot" class="crypto-view__header-status">
           <span class="crypto-view__badge" :class="loadedSnapshot.enabled && !walletSecurityLocked ? 'crypto-view__badge--active' : 'crypto-view__badge--disabled'">{{ t(loadedSnapshot.enabled && !walletSecurityLocked ? 'admin.crypto.channelActive' : 'admin.crypto.channelPaused') }}</span>
           <span class="crypto-view__badge" :class="walletReady ? 'crypto-view__badge--active' : 'crypto-view__badge--pending'">{{ t(walletStateLabel) }}</span>
+          <CryptoGrantStatus />
         </div>
       </header>
       <CryptoWalletSecurityPanel class="crypto-view__security" @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
@@ -353,8 +354,9 @@
                     {{ t('admin.crypto.hotGasWallet') }} · {{ short(hw.address) }}
                   </span>
                   <span class="crypto-view__stat-value">
-                    {{ hw.error ? t('admin.crypto.hotWalletUnreachable') : hw.balance }}
+                    {{ hw.error ? t(hw.error_code === 'RPC_DISCOVERY_PENDING' ? 'admin.crypto.rpcDiscovering' : 'admin.crypto.hotWalletUnreachable') : hw.balance }}
                   </span>
+                  <span v-if="hw.rpc_source === 'chainlist'" class="crypto-view__stat-sub">{{ t('admin.crypto.rpcAutoSource') }}</span>
                 </div>
               </div>
               <div class="crypto-view__actions">
@@ -751,6 +753,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import CryptoSecurityDialog from '@/components/crypto/CryptoSecurityDialog.vue'
+import CryptoGrantStatus from '@/components/crypto/CryptoGrantStatus.vue'
 import CryptoMnemonicsDialog from '@/components/crypto/CryptoMnemonicsDialog.vue'
 import CryptoWalletSecurityPanel from '@/components/crypto/CryptoWalletSecurityPanel.vue'
 import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
@@ -793,7 +796,8 @@ import {
   type SweepRecord,
   type SweepSummary,
   type WalletSecurityStatus,
-  type WalletOperationAction
+  type WalletOperationAction,
+  type CryptoVerification
 } from '@/api/admin/crypto'
 
 const { t } = useI18n()
@@ -814,11 +818,11 @@ async function notifyOperationIntent(action: WalletOperationAction): Promise<boo
   }
 }
 
-async function withCryptoVerification(label: string, callback: (code: string) => Promise<unknown>): Promise<boolean> {
+async function withCryptoVerification(label: string, callback: (verification: CryptoVerification) => Promise<unknown>): Promise<boolean> {
   const operationTab = activeTab.value
-  return await securityDialog.value?.verify(label, async (code) => {
+  return await securityDialog.value?.verify(label, async (verification) => {
     if (activeTab.value !== operationTab) return
-    await callback(code)
+    await callback(verification)
   }) ?? false
 }
 
@@ -1044,8 +1048,8 @@ async function testEndpoint(chain: string, idx: number) {
   const endpoint = row.url.trim()
   row.testing = true
   try {
-    return await withCryptoVerification(t('admin.crypto.rpcVerify', { chain, endpoint }), async (code) => {
-      const result = await testRPCEndpoint(chain, endpoint, { totpCode: code })
+    return await withCryptoVerification(t('admin.crypto.rpcVerify', { chain, endpoint }), async (verification) => {
+      const result = await testRPCEndpoint(chain, endpoint, verification)
       row.status = true
       row.ok = result.ok
       row.latency_ms = result.latency_ms
@@ -1078,8 +1082,8 @@ async function autoFillRPC(chain: string) {
   try {
     const exclude = (rpcRows.value[chain] ?? []).map((r) => r.url.trim()).filter(Boolean)
     const want = Math.max(1, RPC_AUTO_FILL_COUNT)
-    await withCryptoVerification(t('admin.crypto.rpcAutoVerify', { chain }), async (code) => {
-    const { picked, probed } = await autoPickRPC(chain, exclude, want, { totpCode: code })
+    await withCryptoVerification(t('admin.crypto.rpcAutoVerify', { chain }), async (verification) => {
+    const { picked, probed } = await autoPickRPC(chain, exclude, want, verification)
     if (!picked.length) {
       rpcFetchNotes.value[chain] = t('admin.crypto.rpcFetchEmpty', { probed })
       return
@@ -1182,8 +1186,8 @@ async function manageRPC() {
   loadingPrivateRPC.value = true
   rpcError.value = ''
   try {
-    await withCryptoVerification(t('admin.crypto.securityConfigRead'), async (code) => {
-      const loaded = await getCryptoConfigPrivate(code)
+    await withCryptoVerification(t('admin.crypto.securityConfigRead'), async (verification) => {
+      const loaded = await getCryptoConfigPrivate(verification)
       if (!config.value || !loadedSnapshot.value || activeTab.value !== 'config') return
       const rpc = { ...(loaded.rpc ?? {}) }
       // Reading credentials changes neither the form's other edits nor the
@@ -1202,7 +1206,7 @@ async function manageRPC() {
 }
 
 // Keep this strict allowlist aligned with the server. Any other changed field
-// requires a new code, including fields added to the config in the future.
+// requires payment verification, including fields added in the future.
 const LOW_RISK_CONFIG_FIELDS = new Set<keyof CryptoConfigPatch>([
   'sweep_global_threshold', 'sweep_min_per_address', 'scan_range',
   'credit_min_amount', 'credit_max_amount'
@@ -1263,8 +1267,8 @@ async function saveConfig() {
     // pointers onto the stored config, so posting the whole object used to
     // rewrite maps the UI never renders (rpc, gas_topup, confirmations,
     // scan_range, per-chain thresholds) — a null map could blank them.
-    const save = async (code?: string) => {
-      await updateCryptoConfig(patch, code ? { totpCode: code } : undefined)
+    const save = async (verification?: CryptoVerification) => {
+      await updateCryptoConfig(patch, verification)
       loadedSnapshot.value = snapshot
       if (rpcUnlocked.value) configuredRPCChains.value = Object.keys(snapshot.rpc).filter(chain => snapshot.rpc[chain]?.trim())
       configSaved.value = true
@@ -1372,8 +1376,8 @@ async function toggleAddress(row: DepositAddress) {
     address: row.address,
     action: t(next === 'disabled' ? 'admin.crypto.disable' : 'admin.crypto.enable')
   })
-  await withCryptoVerification(label, async (code) => {
-    await setAddressStatus(row.id, next, { totpCode: code })
+  await withCryptoVerification(label, async (verification) => {
+    await setAddressStatus(row.id, next, verification)
   }) && await loadAddresses()
 }
 
@@ -1415,8 +1419,8 @@ async function doSweep(dryRun: boolean) {
     if (!dryRun && !await notifyOperationIntent('sweep')) return
     if (activeTab.value !== operationTab) return
     const label = dryRun ? t('admin.crypto.sweepDryRun') : sweepConfirmMessage.value
-    const completed = await withCryptoVerification(label, async (code) => {
-      sweepSummary.value = await runSweep(dryRun, { totpCode: code })
+    const completed = await withCryptoVerification(label, async (verification) => {
+      sweepSummary.value = await runSweep(dryRun, verification)
     })
     if (completed) await loadSweepRecords()
   } finally {
@@ -1483,8 +1487,8 @@ async function downloadCSV() {
     const chain = depositChain.value
     const status = depositStatus.value
     const operationTab = activeTab.value
-    await withCryptoVerification(t('admin.crypto.csvVerify'), async (code) => {
-      const blob = await exportDepositsCSV(chain, status, { totpCode: code })
+    await withCryptoVerification(t('admin.crypto.csvVerify'), async (verification) => {
+      const blob = await exportDepositsCSV(chain, status, verification)
       if (operationTab !== activeTab.value) return
       downloadBlob(blob, 'crypto-deposits.csv')
     })
@@ -1554,9 +1558,9 @@ async function submitInitialize() {
   initializing.value = true
   const operationTab = activeTab.value
   try {
-    const completed = await withCryptoVerification(t('admin.crypto.walletInitWarning'), async (code) => {
+    const completed = await withCryptoVerification(t('admin.crypto.walletInitWarning'), async (verification) => {
       if (operationTab !== activeTab.value) return
-      await initializeWallet(depositMnemonic.value.trim(), initialHotMnemonic.value.trim(), { totpCode: code })
+      await initializeWallet(depositMnemonic.value.trim(), initialHotMnemonic.value.trim(), verification)
     })
     if (completed && operationTab === activeTab.value) {
       await loadWalletStatus()
@@ -1594,9 +1598,9 @@ async function submitWallet() {
   let mnemonic = hotMnemonic.value.trim()
   walletDialog.value = null
   try {
-    const completed = await withCryptoVerification(t('admin.crypto.hotImportWarning'), async (code) => {
+    const completed = await withCryptoVerification(t('admin.crypto.hotImportWarning'), async (verification) => {
       if (operationTab !== activeTab.value) return
-      const result = await importHotMnemonic(mnemonic, { totpCode: code })
+      const result = await importHotMnemonic(mnemonic, verification)
       if (!result.saved) throw new Error(t('common.error'))
     })
     if (completed && operationTab === activeTab.value) {

@@ -11,6 +11,19 @@ beforeEach(() => {
 })
 
 describe('Crypto request contract (not backend authorization)', () => {
+  it('exchanges a one-time code for a server credential and sends only that credential to payment operations', async () => {
+    const grant = { credential: 'server-opaque-payment-credential-32-bytes', expires_at: new Date(Date.now() + 300000).toISOString(), expires_in: 300 }
+    client.post.mockResolvedValueOnce({ data: { data: grant } })
+    expect(await api.verifyCryptoSecurity('012345')).toEqual(grant)
+    expect(client.post).toHaveBeenLastCalledWith('/admin/crypto/security/verify', { totp_code: '012345' }, {
+      _retry: true, headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+    })
+    await api.runSweep(false, { credential: grant.credential })
+    expect(client.post).toHaveBeenLastCalledWith('/admin/crypto/sweep/run', null, {
+      _retry: true, headers: { 'X-Crypto-Grant': grant.credential }, params: { dry_run: '0' }
+    })
+  })
+
   it('reads public configuration metadata without a code, and keeps RPC credentials on the private endpoint', async () => {
     const publicConfig = { enabled: true, rpc: {}, rpc_configured: ['bsc'] }
     client.get.mockResolvedValueOnce({ data: { data: publicConfig } })
@@ -18,7 +31,7 @@ describe('Crypto request contract (not backend authorization)', () => {
     expect(client.get).toHaveBeenLastCalledWith('/admin/crypto/config', { headers: {}, _retry: true })
     const privateConfig = { enabled: true, rpc: { bsc: 'https://rpc.example/fixture' } }
     client.get.mockResolvedValueOnce({ data: { data: privateConfig } })
-    expect(await api.getCryptoConfigPrivate('012345')).toEqual(privateConfig)
+    expect(await api.getCryptoConfigPrivate({ totpCode: '012345' })).toEqual(privateConfig)
     expect(client.get).toHaveBeenLastCalledWith('/admin/crypto/config/private', { headers: { 'X-Crypto-TOTP': '012345' }, _retry: true })
   })
 
@@ -64,7 +77,7 @@ describe('Crypto request contract (not backend authorization)', () => {
     }
     expect(client.get.mock.calls[0][1].headers).toEqual({ 'X-Crypto-TOTP': '123456' })
     client.get.mockClear()
-    await api.getCryptoConfigPrivate('234567')
+    await api.getCryptoConfigPrivate({ totpCode: '234567' })
     expect(client.get).toHaveBeenLastCalledWith('/admin/crypto/config/private', {
       headers: { 'X-Crypto-TOTP': '234567' }, _retry: true
     })

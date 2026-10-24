@@ -403,10 +403,10 @@ async function requestExport() {
       return
     }
     if (current !== generation || !props.show) return
-    await securityDialog.value?.verify(t('admin.crypto.mnemonicsRiskOperation'), async (code) => {
+    await securityDialog.value?.verify(t('admin.crypto.mnemonicsRiskOperation'), async (verification) => {
       let result: Awaited<ReturnType<typeof exportWalletMnemonics>> | undefined
       try {
-        result = await exportWalletMnemonics({ totpCode: code })
+        result = await exportWalletMnemonics(verification)
         if (current !== generation || !props.show) return
         if (!result.deposit_mnemonic?.trim() || !result.hot_mnemonic?.trim()) throw new Error(t('admin.crypto.mnemonicsInvalidResponse'))
         depositMnemonic.value = result.deposit_mnemonic.trim()

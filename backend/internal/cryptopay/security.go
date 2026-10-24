@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"time"
 
@@ -44,6 +45,7 @@ func (s *Service) securityMonitor(ctx context.Context) {
 func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
 	s.mu.RLock()
 	active := s.worker != nil && s.config.Enabled && !s.securityPaused.Load()
+	runtimePools := maps.Clone(s.pools)
 	activeChains := map[string]bool{}
 	if active {
 		for _, chain := range s.config.Chains {
@@ -64,10 +66,13 @@ func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
 		if activeChains[chain] {
 			continue
 		}
-		if strings.TrimSpace(cfg.RPC[chain]) == "" {
+		if strings.TrimSpace(cfg.RPC[chain]) != "" {
+			pools[chain] = rpc.NewPool(cfg.RPC[chain])
+		} else if pool := runtimePools[chain]; pool != nil && len(pool.Endpoints()) > 0 {
+			pools[chain] = pool.WithEndpoints(strings.Join(pool.Endpoints(), ","))
+		} else {
 			continue
 		}
-		pools[chain] = rpc.NewPool(cfg.RPC[chain])
 		tokens := make([]string, 0, len(watchedTokens[chain]))
 		for _, token := range watchedTokens[chain] {
 			tokens = append(tokens, token.Contract)
@@ -259,6 +264,10 @@ func (s *Service) Close() {
 		return
 	}
 	s.mu.Lock()
+	if s.discoveryCancel != nil {
+		s.discoveryCancel()
+		s.discoveryCancel = nil
+	}
 	if s.securityCancel != nil {
 		s.securityCancel()
 		s.securityCancel = nil

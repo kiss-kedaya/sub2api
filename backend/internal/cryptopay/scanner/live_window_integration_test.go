@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/ledger"
@@ -52,11 +53,15 @@ func TestLiveWindowCreditsThroughLedgerBeforeHistoricalCatchup(t *testing.T) {
 	for _, scenario := range []struct {
 		name, finality     string
 		historyUnavailable bool
+		recentReplay       bool
 	}{
-		{"finalized", "finalized", false},
-		{"finalized behind", "behind", false},
-		{"finalized unavailable", "unavailable", false},
-		{"history RPC failure cannot delay latest deposit", "finalized", true},
+		{"finalized", "finalized", false, false},
+		{"finalized behind", "behind", false, false},
+		{"finalized unavailable", "unavailable", false, false},
+		{"history RPC failure cannot delay latest deposit", "finalized", true, false},
+		{"late indexed logs below advanced cursor", "finalized", false, true},
+		{"recent replay still requires finalized block", "behind", false, true},
+		{"recent replay cannot bypass unavailable finality", "unavailable", false, true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			db, err := sql.Open("sqlite", ":memory:")
@@ -151,11 +156,17 @@ func TestLiveWindowCreditsThroughLedgerBeforeHistoricalCatchup(t *testing.T) {
 				func(context.Context, string) ([]string, error) { return []string{to}, nil }, 0, 100)
 			for pass := 0; pass < 2; pass++ {
 				start := int64(100 + pass*400)
+				if scenario.recentReplay {
+					start = 115107 // Caught up, but the provider indexed this deposit late.
+					// A second live instance must not credit the overlapping transfer twice.
+					worker = scanner.NewWorker(cursorDB, map[string]*rpc.Pool{"bsc": rpc.NewPoolWithHTTPClient(server.URL, server.Client())}, []scanner.ChainConfig{chain}, scanner.NewCursorStore(cursorDB), handler,
+						func(context.Context, string) ([]string, error) { return []string{to}, nil }, 5*time.Second, 100)
+				}
 				if scenario.historyUnavailable {
 					start = 100
 				}
 				mock.ExpectQuery(`SELECT last_block`).WithArgs("bsc").WillReturnRows(sqlmock.NewRows([]string{"last_block"}).AddRow(start))
-				if !scenario.historyUnavailable {
+				if !scenario.historyUnavailable && !scenario.recentReplay {
 					for batch := int64(1); batch <= 4; batch++ {
 						mock.ExpectExec(`INSERT INTO crypto_scan_cursors`).WithArgs("bsc", start+batch*100).WillReturnResult(sqlmock.NewResult(0, 1))
 					}

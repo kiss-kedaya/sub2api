@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { clearCryptoGrant } from '@/composables/cryptoGrant'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import CryptoWalletSecurityPanel from '../CryptoWalletSecurityPanel.vue'
 import type { WalletSecurityStatus } from '@/api/admin/crypto'
@@ -9,10 +10,16 @@ vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSu
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 
 enableAutoUnmount(afterEach)
+afterEach(() => { clearCryptoGrant() })
+
+const grantCredential = 'test-payment-grant-credential-32-bytes-minimum'
+const grantResponse = () => ({ data: { data: { credential: grantCredential, expires_at: new Date(Date.now() + 300000).toISOString(), expires_in: 300 } } })
 
 let state: WalletSecurityStatus
 beforeEach(() => {
   vi.resetAllMocks()
+  clearCryptoGrant()
+  localStorage.setItem('auth_token', 'test-administrator-jwt-session')
   state = { enabled: true, initialized: true, locked: true, deposits_paused: true,
     reason: 'unauthorized_token_outflow', locked_at: '2026-01-02T03:04:05Z', alert_pending: true }
   mocks.get.mockImplementation(async (path: string) => ({
@@ -20,7 +27,7 @@ beforeEach(() => {
       ? { enabled: true, feature_enabled: true, can_setup: true, read_only: false }
       : { ...state }
   }))
-  mocks.post.mockImplementation(async () => ({ data: { ...state, locked: false, deposits_paused: false, alert_pending: false } }))
+  mocks.post.mockImplementation(async (path: string) => path.endsWith('/security/verify') ? grantResponse() : ({ data: { ...state, locked: false, deposits_paused: false, alert_pending: false } }))
 })
 
 function render() {
@@ -62,9 +69,9 @@ describe('wallet security panel and recovery', () => {
     expect(mocks.post).not.toHaveBeenCalled()
     await wrapper.get('#crypto-security-code').setValue('123456')
     await flushPromises()
-    expect(mocks.post).toHaveBeenCalledOnce()
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/recover'))).toHaveLength(1)
     expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/security/recover', { confirmation: 'RECOVER' }, {
-      headers: { 'X-Crypto-TOTP': '123456', 'Cache-Control': 'no-store', Pragma: 'no-cache' }, _retry: true
+      headers: { 'X-Crypto-Grant': grantCredential, 'Cache-Control': 'no-store', Pragma: 'no-cache' }, _retry: true
     })
     expect(mocks.put).not.toHaveBeenCalled()
     expect(wrapper.emitted('recovered')).toHaveLength(1)

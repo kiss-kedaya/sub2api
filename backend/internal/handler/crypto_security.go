@@ -40,6 +40,7 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 	}
 	path := c.FullPath()
 	setup := c.Request.Method == http.MethodPost && (strings.HasSuffix(path, "/security/setup") || strings.HasSuffix(path, "/security/enable"))
+	verify := c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/security/verify")
 	intent := c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/security/operation-intent")
 	configPatch := c.Request.Method == http.MethodPut && strings.HasSuffix(path, "/crypto/config")
 	risky := c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv") ||
@@ -54,7 +55,7 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	if risky && !setup && !intent && !configPatch {
+	if risky && !setup && !verify && !intent && !configPatch {
 		if !h.requireCryptoRisk(c) {
 			return
 		}
@@ -66,7 +67,7 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 	c.Next()
 }
 
-// requireCryptoRisk consumes one fresh backend code. PUT /config calls this
+// requireCryptoRisk verifies a session-bound grant or a fresh backend code. PUT /config calls this
 // after inspecting the actual patch; other sensitive routes call it in their
 // group middleware. A missing verifier always fails closed.
 func (h *CryptoHandler) requireCryptoRisk(c *gin.Context) bool {
@@ -82,6 +83,25 @@ func (h *CryptoHandler) requireCryptoRisk(c *gin.Context) bool {
 		return false
 	}
 	codes := c.Request.Header.Values("X-Crypto-TOTP")
+	grants := c.Request.Header.Values("X-Crypto-Grant")
+	if len(grants) != 0 {
+		if len(grants) != 1 || len(codes) != 0 {
+			response.ErrorFrom(c, service.ErrCryptoGrantRequired)
+			c.Abort()
+			return false
+		}
+		verifier, ok := h.security.(cryptoGrantSecurityVerifier)
+		if !ok {
+			response.ErrorFrom(c, service.ErrCryptoTotpUnavailable)
+			c.Abort()
+			return false
+		}
+		if response.ErrorFrom(c, verifier.VerifyRiskGrant(c.Request.Context(), subject.UserID, cryptoSessionID(c), grants[0])) {
+			c.Abort()
+			return false
+		}
+		return true
+	}
 	code := ""
 	if len(codes) == 1 {
 		code = codes[0]

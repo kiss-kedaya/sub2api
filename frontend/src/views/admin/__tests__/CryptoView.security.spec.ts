@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { clearCryptoGrant } from '@/composables/cryptoGrant'
 import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import CryptoView from '../CryptoView.vue'
 import zh from '@/i18n/locales/zh/admin/crypto'
@@ -14,6 +15,9 @@ vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div
 vi.mock('@/components/crypto/CryptoWalletSecurityPanel.vue', () => ({ default: { name: 'CryptoWalletSecurityPanel', emits: ['change', 'recovered'], template: '<div />' } }))
 enableAutoUnmount(afterEach)
 
+const grantCredential = 'test-payment-grant-credential-32-bytes-minimum'
+const grantResponse = () => ({ data: { data: { credential: grantCredential, expires_at: new Date(Date.now() + 300000).toISOString(), expires_in: 300 } } })
+
 const config = () => ({ enabled: true, chains: ['bsc'], rpc: { bsc: 'https://one.example,https://two.example' }, sweep_global_threshold: 100,
   sweep_min_per_address: {}, gas_topup: {}, hot_wallet_evm: '0x1234567890123456789012345678901234567890', hot_wallet_solana: '', hot_index: 0,
   sweep_auto: false, confirmations: {}, scan_range: {}, credit_min_amount: 1, credit_max_amount: 10000, credit_multiplier: 1 })
@@ -22,6 +26,8 @@ let walletStatus = { ok: true, configured: false, ready: false, enabled: false }
 
 beforeEach(() => {
   vi.resetAllMocks()
+  clearCryptoGrant()
+  localStorage.setItem('auth_token', 'test-administrator-jwt-session')
   serverConfig = config()
   walletStatus = { ok: true, configured: false, ready: false, enabled: false }
   mocks.get.mockImplementation(async (path: string) => {
@@ -44,6 +50,7 @@ beforeEach(() => {
     return { data: {}, status: 200 }
   })
   mocks.post.mockImplementation(async (path: string) => {
+    if (path.endsWith('/security/verify')) return grantResponse()
     if (path.endsWith('/operation-intent')) return { data: { accepted: true }, status: 200 }
     if (path.endsWith('/export-mnemonics')) return { data: { deposit_mnemonic: 'test deposit words', hot_mnemonic: 'test gas words' }, status: 200 }
     if (path.endsWith('/backup')) return { data: new Blob(['encrypted'], { type: 'application/json' }), status: 200 }
@@ -57,7 +64,7 @@ beforeEach(() => {
   vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn().mockReturnValue('blob:encrypted'), revokeObjectURL: vi.fn() }))
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 })
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
+afterEach(() => { clearCryptoGrant(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 function button(wrapper: VueWrapper, key: string) {
   const found = wrapper.findAll('button').find(item => item.text() === key)
@@ -75,6 +82,7 @@ async function configTab(wrapper: VueWrapper) {
 }
 async function verify(wrapper: VueWrapper, code = '123456') {
   await flushPromises()
+  if (!wrapper.find('#crypto-security-code').exists()) return
   await wrapper.get('#crypto-security-code').setValue(code)
   await wrapper.get('#crypto-security-form').trigger('submit')
   await flushPromises()
@@ -85,6 +93,21 @@ async function manageRPC(wrapper: VueWrapper) {
 }
 
 describe('Crypto page operation wiring (mocked UI contract only)', () => {
+  it('keeps a confirmation and Bark intent for every sweep even while verification is cached', async () => {
+    walletStatus = { ok: true, configured: true, ready: true, enabled: true }
+    const wrapper = await render()
+    await wrapper.get('#crypto-tab-sweep').trigger('click')
+    await flushPromises()
+    await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
+    await verify(wrapper)
+    await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/security/verify'))).toHaveLength(1)
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/operation-intent'))).toHaveLength(2)
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/sweep/run'))).toHaveLength(2)
+  })
+
   it('keeps the channel paused after security recovery without discarding edits or opening another TOTP prompt', async () => {
     walletStatus = { ok: true, configured: true, ready: true, enabled: true }
     const wrapper = await render()
@@ -109,7 +132,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
     expect(mocks.get.mock.calls.filter(([path]) => path.endsWith('/config'))).toHaveLength(configReads)
     expect(mocks.put).not.toHaveBeenCalled()
-    expect(mocks.post).not.toHaveBeenCalled()
+    expect(mocks.post.mock.calls.filter(([path]) => !path.endsWith('/security/verify'))).toHaveLength(0)
   })
 
   it('selects supported networks and saves them only after fresh 2FA without changing pricing', async () => {
@@ -148,7 +171,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(mocks.get.mock.calls.some(([path]) => path.endsWith('/config/private'))).toBe(false)
     await verify(wrapper, '111111')
     expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/config/private', expect.objectContaining({
-      headers: { 'X-Crypto-TOTP': '111111' }, _retry: true
+      headers: { 'X-Crypto-Grant': grantCredential }, _retry: true
     }))
     expect(wrapper.findAll('.crypto-view__rpc-input')).toHaveLength(2)
     await wrapper.get('.crypto-view__save-bar button').trigger('click')
@@ -171,7 +194,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
     await verify(wrapper, '222222')
     expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/config/private', expect.objectContaining({
-      headers: { 'X-Crypto-TOTP': '222222' }, _retry: true
+      headers: { 'X-Crypto-Grant': grantCredential }, _retry: true
     }))
   })
 
@@ -217,7 +240,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await flushPromises()
     expect(mocks.put).not.toHaveBeenCalled()
     await verify(wrapper, '234567')
-    expect(mocks.put).toHaveBeenCalledWith('/admin/crypto/config', { chains: ['bsc', 'base'], credit_min_amount: 2 }, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '234567' } }))
+    expect(mocks.put).toHaveBeenCalledWith('/admin/crypto/config', { chains: ['bsc', 'base'], credit_min_amount: 2 }, expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential } }))
     expect(serverConfig.rpc).toEqual({ bsc: 'https://one.example,https://two.example' })
   })
 
@@ -291,7 +314,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
   })
 
-  it('protects config edits outside the old money-fields subset, preserving the patch', async () => {
+  it('reuses the verified payment credential for RPC edits while preserving the patch', async () => {
     const wrapper = await render()
     await configTab(wrapper)
     await manageRPC(wrapper)
@@ -300,15 +323,10 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await rpc.trigger('change')
     await wrapper.get('.crypto-view__save-bar button').trigger('click')
     await flushPromises()
-    expect(mocks.put).not.toHaveBeenCalled()
-    await wrapper.get('#crypto-security-code').setValue('12345')
-    await wrapper.findAll('.btn-secondary').find(btn => btn.text() === 'common.cancel')!.trigger('click')
-    expect(mocks.put).not.toHaveBeenCalled()
-    await flushPromises()
-    await wrapper.get('.crypto-view__save-bar button').trigger('click')
-    await verify(wrapper, '234567')
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/security/verify'))).toHaveLength(1)
     expect(mocks.put).toHaveBeenCalledTimes(1)
-    expect(mocks.put).toHaveBeenLastCalledWith('/admin/crypto/config', { rpc: { bsc: 'https://changed.example,https://two.example' } }, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '234567' } }))
+    expect(mocks.put).toHaveBeenLastCalledWith('/admin/crypto/config', { rpc: { bsc: 'https://changed.example,https://two.example' } }, expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential } }))
   })
 
   it('protects disabling and enabling an address', async () => {
@@ -318,23 +336,21 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(wrapper.text()).toContain('0xDEPOSIT')
     expect(mocks.post).not.toHaveBeenCalled()
     await verify(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/addresses/8/status', { status: 'disabled' }, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '123456' } }))
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/addresses/8/status', { status: 'disabled' }, expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential } }))
   })
 
-  it('requires a separate prompt for every RPC test, and cancellation stops Test all', async () => {
+  it('reuses the same fixed payment credential for a batch of RPC tests and discovery', async () => {
     const wrapper = await render()
     await configTab(wrapper)
     await manageRPC(wrapper)
     await button(wrapper, 'admin.crypto.rpcTestAll').trigger('click')
-    await verify(wrapper)
-    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/rpc/test'))).toHaveLength(1)
-    expect((wrapper.get('#crypto-security-code').element as HTMLInputElement).value).toBe('')
-    await wrapper.findAll('.btn-secondary').find(btn => btn.text() === 'common.cancel')!.trigger('click')
     await flushPromises()
-    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/rpc/test'))).toHaveLength(1)
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/rpc/test'))).toHaveLength(2)
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
     await button(wrapper, 'admin.crypto.rpcFetch').trigger('click')
     await verify(wrapper, '234567')
-    expect(mocks.post).toHaveBeenLastCalledWith('/admin/crypto/rpc/auto-pick', expect.objectContaining({ chain: 'bsc' }), expect.objectContaining({ headers: { 'X-Crypto-TOTP': '234567' } }))
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/security/verify'))).toHaveLength(1)
+    expect(mocks.post).toHaveBeenLastCalledWith('/admin/crypto/rpc/auto-pick', expect.objectContaining({ chain: 'bsc' }), expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential } }))
   })
 
   it('protects CSV GET downloads and only downloads after confirmation', async () => {
@@ -345,7 +361,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await flushPromises()
     expect(mocks.get.mock.calls.some(([path]) => path.endsWith('.csv'))).toBe(false)
     await verify(wrapper)
-    expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/deposits.csv', expect.objectContaining({ headers: { 'X-Crypto-TOTP': '123456' }, responseType: 'blob' }))
+    expect(mocks.get).toHaveBeenCalledWith('/admin/crypto/deposits.csv', expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential }, responseType: 'blob' }))
     expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(1)
   })
 
@@ -361,7 +377,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/security/operation-intent', { action: 'export_mnemonics' }, expect.objectContaining({ _retry: true }))
     await verify(wrapper)
     expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/export-mnemonics', {}, expect.objectContaining({
-      headers: { 'X-Crypto-TOTP': '123456', 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+      headers: { 'X-Crypto-Grant': grantCredential, 'Cache-Control': 'no-store', Pragma: 'no-cache' }
     }))
     await new Promise((resolve) => setTimeout(resolve, 200))
     expect(wrapper.findAll('.crypto-mnemonics__seed')).toHaveLength(2)
@@ -380,7 +396,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await wrapper.get('#crypto-hot-mnemonic').setValue('hot words only')
     await wrapper.get('#crypto-wallet-form').trigger('submit')
     await verify(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/hot-mnemonic', { hot_mnemonic: 'hot words only' }, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '123456' } }))
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/hot-mnemonic', { hot_mnemonic: 'hot words only' }, expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential } }))
     expect(mocks.showSuccess).toHaveBeenCalledWith('admin.crypto.hotImportDone')
     expect(wrapper.find('#crypto-wallet-unlock-passphrase').exists()).toBe(false)
     await button(wrapper, 'admin.crypto.hotImportAction').trigger('click')
@@ -500,7 +516,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await verify(wrapper)
     expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/initialize',{
       deposit_mnemonic:'deposit words',hot_mnemonic:'gas words'
-    },expect.objectContaining({headers:{'X-Crypto-TOTP':'123456'}}))
+    },expect.objectContaining({headers:{'X-Crypto-Grant':grantCredential}}))
     expect(wrapper.find('#crypto-deposit-mnemonic').exists()).toBe(false)
     expect(wrapper.find('#crypto-wallet-unlock-passphrase').exists()).toBe(false)
   })
@@ -511,7 +527,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await flushPromises()
     await button(wrapper, 'admin.crypto.sweepDryRun').trigger('click')
     await verify(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/sweep/run', null, expect.objectContaining({ params: { dry_run: '1' }, headers: { 'X-Crypto-TOTP': '123456' } }))
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/sweep/run', null, expect.objectContaining({ params: { dry_run: '1' }, headers: { 'X-Crypto-Grant': grantCredential } }))
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/operation-intent'))).toHaveLength(0)
   })
 
@@ -546,9 +562,9 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
     await verify(wrapper, '345678')
     if (action === 'sweep') {
-      expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/sweep/run', null, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '345678' } }))
+      expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/sweep/run', null, expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential } }))
     } else {
-      expect(mocks.put).toHaveBeenCalledWith('/admin/crypto/config', { hot_wallet_evm: '0x8888888888888888888888888888888888888888' }, expect.objectContaining({ headers: { 'X-Crypto-TOTP': '345678' } }))
+      expect(mocks.put).toHaveBeenCalledWith('/admin/crypto/config', { hot_wallet_evm: '0x8888888888888888888888888888888888888888' }, expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential } }))
     }
   })
 

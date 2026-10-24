@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { clearCryptoGrant } from '@/composables/cryptoGrant'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import CryptoSecurityDialog from '../CryptoSecurityDialog.vue'
@@ -9,24 +10,87 @@ vi.mock('qrcode', () => ({ default: { toDataURL: mocks.toDataURL } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 enableAutoUnmount(afterEach)
 
+const grantCredential = 'test-payment-grant-credential-32-bytes-minimum'
+const grantResponse = () => ({ data: { data: { credential: grantCredential, expires_at: new Date(Date.now() + 300000).toISOString(), expires_in: 300 } } })
+
 beforeEach(() => {
   vi.resetAllMocks()
+  clearCryptoGrant()
+  localStorage.setItem('auth_token', 'test-administrator-jwt-session')
   mocks.get.mockResolvedValue({ data: { enabled: true, feature_enabled: true, can_setup: true } })
-  mocks.post.mockResolvedValue({ data: { success: true } })
+  mocks.post.mockImplementation(async (path: string) => path.endsWith('/security/verify') ? grantResponse() : { data: { success: true } })
   mocks.toDataURL.mockResolvedValue('data:image/png;base64,local-qr')
 })
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
+afterEach(() => { clearCryptoGrant(); vi.useRealTimers(); vi.restoreAllMocks() })
 
 function render() {
   return mount(CryptoSecurityDialog, { global: { stubs: { teleport: true } } })
 }
 
 describe('Crypto verification UI (server authorization is tested separately)', () => {
+  it('reuses a server credential across operations and re-prompts at a fixed five-minute expiry', async () => {
+    vi.useFakeTimers()
+    const wrapper = render()
+    const first = vi.fn().mockResolvedValue(undefined)
+    const initial = wrapper.vm.verify('Read RPC configuration', first)
+    await flushPromises()
+    await wrapper.get('#crypto-security-code').setValue('012345')
+    await flushPromises()
+    expect(await initial).toBe(true)
+    const second = vi.fn().mockResolvedValue(undefined)
+    expect(await wrapper.vm.verify('Export wallet', second)).toBe(true)
+    expect(second).toHaveBeenCalledWith({ credential: grantCredential })
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/security/verify'))).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(300000)
+    const expired = wrapper.vm.verify('Another operation', vi.fn())
+    await flushPromises()
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
+    wrapper.vm.cancel()
+    expect(await expired).toBe(false)
+  })
+
+  it('re-prompts for a pre-handler credential refusal, but never replays an uncertain mutation failure', async () => {
+    const wrapper = render()
+    const initial = wrapper.vm.verify('Read RPC', vi.fn().mockResolvedValue(undefined))
+    await flushPromises()
+    await wrapper.get('#crypto-security-code').setValue('012345')
+    await flushPromises()
+    expect(await initial).toBe(true)
+    const uncertain = vi.fn().mockRejectedValue({ status: 503, message: 'Request outcome unknown' })
+    expect(await wrapper.vm.verify('Sweep', uncertain)).toBe(false)
+    expect(uncertain).toHaveBeenCalledOnce()
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(wrapper.get('[role="alert"]').text()).toContain('Request outcome unknown')
+    wrapper.vm.cancel()
+    const rejected = vi.fn().mockRejectedValueOnce({ status: 403, reason: 'CRYPTO_GRANT_REQUIRED' }).mockResolvedValueOnce(undefined)
+    const retry = wrapper.vm.verify('Read RPC', rejected)
+    await flushPromises()
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
+    expect(rejected).toHaveBeenCalledOnce()
+    await wrapper.get('#crypto-security-code').setValue('234567')
+    await flushPromises()
+    expect(await retry).toBe(true)
+    expect(rejected).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not allow a second code submission to replay a mutation with an unknown outcome', async () => {
+    const wrapper = render()
+    const action = vi.fn().mockRejectedValue({ status: 503, message: 'Transfer status is unknown' })
+    const result = wrapper.vm.verify('Sweep', action)
+    await flushPromises()
+    await wrapper.get('#crypto-security-code').setValue('123456')
+    await flushPromises()
+    expect(await result).toBe(false)
+    expect(action).toHaveBeenCalledOnce()
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(wrapper.get('[role="alert"]').text()).toContain('Transfer status is unknown')
+  })
+
   it('binds without a backend password using a local QR, then asks for a fresh code', async () => {
     mocks.get.mockResolvedValueOnce({ data: { enabled: false, feature_enabled: true, can_setup: true } })
     mocks.post.mockImplementation(async (path: string) => ({ data: path.endsWith('/setup') ? {
       secret: 'LOCALSETUPKEY', qr_code_url: 'otpauth://totp/test?secret=LOCALSETUPKEY', setup_token: 'one-setup-token', countdown: 120
-    } : { success: true } }))
+    } : path.endsWith('/security/verify') ? grantResponse().data : { success: true } }))
     const localWrite = vi.spyOn(localStorage, 'setItem')
     const sessionWrite = vi.spyOn(sessionStorage, 'setItem')
     const wrapper = render()
@@ -55,7 +119,7 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     await flushPromises()
     expect(await second).toBe(true)
     expect(action).toHaveBeenCalledTimes(1)
-    expect(action).toHaveBeenLastCalledWith('234567')
+    expect(action).toHaveBeenLastCalledWith({ credential: grantCredential })
     expect(localWrite).not.toHaveBeenCalled()
     expect(sessionWrite).not.toHaveBeenCalled()
   })
@@ -89,14 +153,16 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     await input.trigger('paste', { clipboardData: { getData: () => '012 345' } })
     await flushPromises()
     expect(action).toHaveBeenCalledOnce()
-    expect(action).toHaveBeenCalledWith('012345')
+    expect(action).toHaveBeenCalledWith({ credential: grantCredential })
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/security/verify', { totp_code: '012345' }, expect.objectContaining({ _retry: true }))
     expect(await result).toBe(true)
   })
 
   it('does not submit twice while pending and accepts a fresh retry after rejection', async () => {
     let reject!: (reason: unknown) => void
-    const action = vi.fn().mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail }))
-      .mockResolvedValueOnce(undefined)
+    const action = vi.fn().mockResolvedValue(undefined)
+    mocks.post.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail }))
+      .mockImplementationOnce(async () => grantResponse())
     const wrapper = render()
     const result = wrapper.vm.verify('Export wallet', action)
     await flushPromises()
@@ -104,13 +170,13 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     for (const value of ['0', '01', '012', '0123', '01234']) await input.setValue(value)
     expect(action).not.toHaveBeenCalled()
     await input.setValue('012345')
-    expect(action).toHaveBeenCalledOnce()
+    expect(action).not.toHaveBeenCalled()
     await nextTick()
     input = wrapper.get('#crypto-security-code')
     expect(input.attributes('disabled')).toBeDefined()
     await input.trigger('paste', { clipboardData: { getData: () => '654321' } })
     await wrapper.get('form').trigger('submit')
-    expect(action).toHaveBeenCalledOnce()
+    expect(action).not.toHaveBeenCalled()
     reject({ reason: 'CRYPTO_TOTP_EXPIRED', status: 403 })
     await flushPromises()
     input = wrapper.get('#crypto-security-code')
@@ -118,8 +184,8 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     expect(input.attributes('disabled')).toBeUndefined()
     await input.trigger('paste', { clipboardData: { getData: () => '012345' } })
     await flushPromises()
-    expect(action).toHaveBeenCalledTimes(2)
-    expect(action).toHaveBeenLastCalledWith('012345')
+    expect(action).toHaveBeenCalledTimes(1)
+    expect(action).toHaveBeenLastCalledWith({ credential: grantCredential })
     expect(await result).toBe(true)
   })
 
@@ -130,7 +196,8 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     ['CRYPTO_TOTP_RATE_LIMITED', 429, 'securityRateLimit']
   ])('shows server rejection %s and clears the submitted code', async (reason, status, key) => {
     const wrapper = render()
-    const action = vi.fn().mockRejectedValue({ reason, status })
+    const action = vi.fn()
+    mocks.post.mockRejectedValueOnce({ reason, status })
     const result = wrapper.vm.verify('Change address', action)
     await flushPromises()
     await wrapper.get('#crypto-security-code').setValue('123456')
@@ -138,7 +205,7 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     await flushPromises()
     expect(wrapper.get('[role="alert"]').text()).toBe(`admin.crypto.${key}`)
     expect((wrapper.get('#crypto-security-code').element as HTMLInputElement).value).toBe('')
-    expect(action).toHaveBeenCalledTimes(1)
+    expect(action).not.toHaveBeenCalled()
     await wrapper.get('.btn-secondary').trigger('click')
     expect(await result).toBe(false)
   })

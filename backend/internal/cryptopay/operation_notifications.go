@@ -23,9 +23,9 @@ func (s *Service) NotifyWalletOperation(ctx context.Context, action, phase strin
 	stage := ""
 	switch phase {
 	case "requested":
-		stage = "已点击操作按钮，尚未完成 2FA 验证；此通知不代表操作已执行"
+		stage = "已点击操作按钮，等待服务器检查支付授权；此通知不代表操作已执行"
 	case "verified":
-		stage = "新鲜 2FA 验证已通过，即将执行操作；此通知不代表操作已完成"
+		stage = "服务器已验证当前支付授权，即将执行操作；此通知不代表操作已完成"
 	default:
 		return errors.New("invalid wallet notification phase")
 	}

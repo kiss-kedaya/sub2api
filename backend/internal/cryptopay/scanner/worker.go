@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
@@ -64,6 +65,12 @@ type Worker struct {
 	onReorg       func(chain, txHash string)
 	beforePass    func(context.Context) error
 	securityRange func(context.Context, *EVMScanner, *rpc.Pool, ChainConfig, uint64, uint64) error
+	// Live workers replay a bounded recent range to recover late RPC log
+	// indexing and recipient assignments racing the ordinary cursor snapshot.
+	recentReplay bool
+	replayMu     sync.Mutex
+	replayedAt   map[string]time.Time
+	failureAt    time.Time
 }
 
 // Security hooks precede pending credit as well as every live/backfill range.
@@ -91,6 +98,7 @@ func NewWorker(
 	interval time.Duration,
 	maxRange uint64,
 ) *Worker {
+	recentReplay := interval > 0
 	if interval <= 0 {
 		interval = 15 * time.Second
 	}
@@ -101,7 +109,8 @@ func NewWorker(
 		db:    db,
 		pools: pools, chains: chains, cursor: cursor, handler: handler,
 		addresses: addresses, interval: interval, maxRange: maxRange,
-		done: make(chan struct{}),
+		done:         make(chan struct{}),
+		recentReplay: recentReplay,
 	}
 }
 
@@ -168,8 +177,21 @@ func (w *Worker) run(ctx context.Context) {
 }
 
 func (w *Worker) scanAll(ctx context.Context) {
+	if w == nil {
+		return
+	}
 	if err := w.RunOnce(ctx); err != nil && !errors.Is(err, ErrScanBusy) && !errors.Is(err, mode.ErrReadOnly) {
-		slog.Warn("[cryptopay] scan pass failed", "error", err)
+		// Production can run at error-only logging. Keep failures visible while
+		// limiting repeated reports and excluding RPC URLs or node messages.
+		w.replayMu.Lock()
+		report := time.Since(w.failureAt) >= time.Minute
+		if report {
+			w.failureAt = time.Now()
+		}
+		w.replayMu.Unlock()
+		if report && ctx.Err() == nil {
+			slog.Error("[cryptopay] payment scan incomplete; retrying without skipping blocks", "cause", rpc.SafeError(err))
+		}
 	}
 }
 
@@ -234,16 +256,18 @@ func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64) (err error) 
 			}
 		}
 	}
+	// Discover new payments before rotating historical receipt/reorg checks.
+	// Maintenance has its own bounded budget and must not delay fresh deposits.
+	for _, chain := range w.chains {
+		if scanErr := w.scanChainFrom(ctx, chain, fromBlock); scanErr != nil {
+			err = errors.Join(err, fmt.Errorf("scan %s: %w", chain.Chain, scanErr))
+		}
+	}
 	if pendingErr := w.retryPending(ctx); pendingErr != nil {
 		err = errors.Join(err, fmt.Errorf("pending retry: %w", pendingErr))
 	}
 	if recheckErr := w.recheckCredited(ctx); recheckErr != nil {
 		err = errors.Join(err, fmt.Errorf("credited recheck: %w", recheckErr))
-	}
-	for _, chain := range w.chains {
-		if scanErr := w.scanChainFrom(ctx, chain, fromBlock); scanErr != nil {
-			err = errors.Join(err, fmt.Errorf("scan %s: %w", chain.Chain, scanErr))
-		}
 	}
 	return err
 }
@@ -375,6 +399,7 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		slog.Warn("[cryptopay] cursor load failed", "chain", chain.Chain, "error", err)
 		return err
 	}
+	hadCursor := last != 0
 	if manualFromBlock != 0 {
 		// A manual start may rewind the cursor, but must never skip blocks
 		// that have not yet been scanned. Keep the earlier durable boundary
@@ -398,7 +423,7 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 			return err
 		}
 	}
-	if last >= confirmed {
+	if last >= confirmed && (!w.recentReplay || manualFromBlock != 0 || w.handler == nil) {
 		return nil
 	}
 
@@ -423,13 +448,19 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		maxRange = 2000
 	}
 	var liveErr error
+	if w.recentReplay && manualFromBlock == 0 && hadCursor && w.handler != nil {
+		liveErr = w.replayRecentRange(ctx, scanner, pool, chain, min(last, confirmed), maxRange, recipients)
+	}
+	if last >= confirmed {
+		return liveErr
+	}
 	if (confirmed-last-1)/maxRange >= maxScanBatchesPerChain {
 		// Do not make a new payment wait behind hours of historical catch-up.
 		// This overlapping live window never changes the historical cursor;
 		// the ledger's transfer identity handles replay when catch-up arrives.
 		span := min(uint64(evmFirstRunLookback), maxRange)
 		if err := w.processScanRange(ctx, scanner, pool, chain, confirmed-span+1, confirmed, recipients); err != nil {
-			liveErr = fmt.Errorf("live window %s: %w", chain.Chain, err)
+			liveErr = errors.Join(liveErr, fmt.Errorf("live window %s: %w", chain.Chain, err))
 		}
 	}
 	for from, batches := last+1, 0; from <= confirmed && batches < maxScanBatchesPerChain; batches++ {
