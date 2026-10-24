@@ -180,3 +180,29 @@ func TestChatAnthropicCacheControlSpecificToolCallTakesPrecedence(t *testing.T) 
 	require.Len(t, blocks, 1)
 	require.Equal(t, "5m", blocks[0].CacheControl.TTL)
 }
+
+func TestChatAnthropicCacheControlToolResultPartsUseOuterMarker(t *testing.T) {
+	t.Parallel()
+	for _, outer := range []bool{false, true} {
+		t.Run(map[bool]string{false: "part only", true: "explicit result wins"}[outer], func(t *testing.T) {
+			var req ChatCompletionsRequest
+			require.NoError(t, json.Unmarshal([]byte(`{"model":"claude-opus-4-8","messages":[{"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"result","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}`), &req))
+			if outer {
+				req.Messages[1].CacheControl = &AnthropicCacheControl{Type: "ephemeral", TTL: "5m"}
+			}
+			out, err := ChatCompletionsToAnthropicRequest(&req)
+			require.NoError(t, err)
+			require.Len(t, out.Messages, 2)
+			results := parseContentBlocks(out.Messages[1].Content)
+			require.Len(t, results, 1)
+			require.NotNil(t, results[0].CacheControl)
+			want := "1h"
+			if outer {
+				want = "5m"
+			}
+			require.Equal(t, want, results[0].CacheControl.TTL)
+			require.Equal(t, "result", gjson.GetBytes(results[0].Content, "0.text").String())
+			require.False(t, gjson.GetBytes(results[0].Content, "0.cache_control").Exists())
+		})
+	}
+}

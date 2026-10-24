@@ -185,6 +185,7 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 				ToolUseID:    fromResponsesCallIDToAnthropic(item.CallID),
 				Content:      contentJSON,
 			}
+			normalizeAnthropicToolResultCacheControl(&block)
 			blockJSON, _ := json.Marshal([]AnthropicContentBlock{block})
 			messages = append(messages, AnthropicMessage{
 				Role:    "user",
@@ -362,6 +363,35 @@ func responsesFunctionOutputToAnthropicContent(item ResponsesInputItem) json.Raw
 	return content
 }
 
+// Tool-result caching belongs to the enclosing tool_result block. Chat clients
+// may mark its text/image parts instead; lift the last such marker to this same
+// result (an explicit result/message marker takes precedence). This keeps TTL,
+// breakpoint budgets and beta detection on the native, supported block path.
+func normalizeAnthropicToolResultCacheControl(result *AnthropicContentBlock) {
+	var parts []AnthropicContentBlock
+	if json.Unmarshal(result.Content, &parts) != nil {
+		return
+	}
+	var last *AnthropicCacheControl
+	for i := range parts {
+		if parts[i].CacheControl != nil {
+			last = parts[i].CacheControl
+			parts[i].CacheControl = nil
+		}
+	}
+	if last == nil {
+		return
+	}
+	content, err := json.Marshal(parts)
+	if err != nil {
+		return
+	}
+	result.Content = content
+	if result.CacheControl == nil {
+		result.CacheControl = last
+	}
+}
+
 // normalizeAnthropicToolPairing rebuilds the message sequence so it satisfies
 // Anthropic's tool_use/tool_result invariants, which the naive item-by-item
 // conversion violates whenever the Responses history interleaves anything
@@ -477,29 +507,6 @@ func normalizeAnthropicToolPairing(messages []AnthropicMessage) []AnthropicMessa
 func anthropicMessageFromBlocks(role string, blocks []AnthropicContentBlock) AnthropicMessage {
 	content, _ := json.Marshal(blocks)
 	return AnthropicMessage{Role: role, Content: content}
-}
-
-// extractTextFromContent extracts text from a content field that may be a
-// plain string or an array of content parts.
-func extractTextFromContent(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
-	}
-	var parts []ResponsesContentPart
-	if err := json.Unmarshal(raw, &parts); err == nil {
-		var texts []string
-		for _, p := range parts {
-			if (p.Type == "input_text" || p.Type == "output_text" || p.Type == "text") && p.Text != "" {
-				texts = append(texts, p.Text)
-			}
-		}
-		return strings.Join(texts, "\n\n")
-	}
-	return ""
 }
 
 // convertResponsesUserToAnthropicContent converts a Responses user message
