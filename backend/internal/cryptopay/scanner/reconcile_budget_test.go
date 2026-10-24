@@ -180,10 +180,14 @@ func TestReconcileChainProbeKeepsHealthyPeerDespiteStalledEndpoint(t *testing.T)
 	transfer := testTransfer()
 	fixture := newRPCFixture(transfer)
 	worker, mock, handler := workerFixture(t, fixture)
+	release := make(chan struct{})
 	stalled := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-		<-request.Context().Done()
+		select {
+		case <-request.Context().Done():
+		case <-release:
+		}
 	}))
-	t.Cleanup(stalled.Close)
+	t.Cleanup(func() { close(release); stalled.Close() })
 	healthy := worker.pools["bsc"]
 	worker.pools["bsc"] = healthy.WithEndpoints(stalled.URL + "," + strings.Join(healthy.Endpoints(), ","))
 	expectObservation(mock, transfer, "1", "")
