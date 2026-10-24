@@ -186,9 +186,8 @@ func poolsForConfig(cfg CryptoConfig, previous map[string]*rpc.Pool) map[string]
 		pool := previous[chain]
 		if pool == nil {
 			pool = rpc.NewPool(endpoints)
-		} else {
-			pool.SetEndpoints(endpoints)
 		}
+		configureRPCEndpoints(pool, chain, endpoints, strings.TrimSpace(cfg.RPC[chain]) == "")
 		pools[chain] = pool
 	}
 	return pools
@@ -248,7 +247,7 @@ func (s *Service) refreshAutomaticRPC(ctx context.Context) {
 		// A delayed background result can never override a manually saved node.
 		if ctx.Err() == nil && s.pools[chain] == pool &&
 			slices.Contains(s.config.Chains, chain) && strings.TrimSpace(s.config.RPC[chain]) == "" {
-			pool.SetEndpoints(strings.Join(endpoints, ","))
+			configureRPCEndpoints(pool, chain, strings.Join(endpoints, ","), true)
 		}
 		s.mu.Unlock()
 	}

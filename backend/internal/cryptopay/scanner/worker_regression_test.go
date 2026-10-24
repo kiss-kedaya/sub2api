@@ -136,6 +136,10 @@ func (f *rpcFixture) pool(t *testing.T) *rpc.Pool {
 			result = f.head
 		case "eth_getLogs":
 			result = f.logs
+			if f.logs == nil {
+				// A successful empty eth_getLogs response is [], never null.
+				result = []evmLog{}
+			}
 		case "eth_getTransactionReceipt":
 			result = f.receipt
 		case "safe":

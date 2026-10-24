@@ -65,7 +65,9 @@ type Summary struct {
 }
 
 type SweepEntry struct {
+	JobID       int64  `json:"job_id,omitempty"`
 	Chain       string `json:"chain"`
+	Token       string `json:"token,omitempty"`
 	Address     string `json:"address"`
 	Amount      string `json:"amount"`
 	GasTxHash   string `json:"gas_tx_hash"`
@@ -186,7 +188,7 @@ func (e *Executor) validateEntry(entry PlanEntry) (TokenSpec, *rpc.Pool, error) 
 }
 
 func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (SweepEntry, error) {
-	out := SweepEntry{Chain: entry.Chain, Address: entry.Address, Status: "failed"}
+	out := SweepEntry{Chain: entry.Chain, Token: entry.Token, Address: entry.Address, Status: "failed"}
 	if entry.RawAmount != nil {
 		entry.RawAmount = new(big.Int).Set(entry.RawAmount)
 		out.Amount = entry.RawAmount.String()
