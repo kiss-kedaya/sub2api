@@ -18,6 +18,8 @@ import (
 
 const missingReceiptPrefix = "reorg_missing_receipt:"
 const missingReceiptThreshold = 3
+const reconcileRPCBudget = 2 * time.Second
+const reconcilePersistenceReserve = 500 * time.Millisecond
 
 type depositObservation struct {
 	chain, txHash, from, to, token, amount, blockHash string
@@ -245,6 +247,13 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 			}
 			continue
 		}
+		// A slow receipt must leave time to persist this row's check clock.
+		// Using the same expiring context for RPC and UPDATE otherwise leaves
+		// the oldest row first forever, starving every pending row behind it.
+		deadline, _ := ctx.Deadline() // The pass always has a ten-second cap.
+		if time.Until(deadline) <= reconcilePersistenceReserve {
+			return errors.Join(append(errs, context.DeadlineExceeded)...)
+		}
 		reason, status := p.reason, p.status
 		reincluded := false
 		// An RPC failure breaks a sequence of confirmed absences; it is never
@@ -254,12 +263,23 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 		}
 		check, checked := verified[p.chain]
 		if !checked {
-			check.pool, check.err = verifiedChainPool(ctx, pool, p.chain)
-			verified[p.chain] = check
+			// Chain probing isolates stalled endpoints for up to three seconds.
+			// Keep that once-per-chain budget separate from receipt work, or a
+			// two-second parent would discard healthy results with a slow peer.
+			poolCtx, cancelPool := context.WithDeadline(ctx, deadline.Add(-reconcilePersistenceReserve))
+			check.pool, check.err = verifiedChainPool(poolCtx, pool, p.chain)
+			cancelPool()
+			// A per-row timeout is inconclusive. The next row gets a fresh
+			// attempt rather than inheriting an exhausted verification budget.
+			if !errors.Is(check.err, context.DeadlineExceeded) && !errors.Is(check.err, context.Canceled) {
+				verified[p.chain] = check
+			}
 		}
+		budget := min(reconcileRPCBudget, time.Until(deadline)-reconcilePersistenceReserve)
+		rpcCtx, cancelObservation := context.WithTimeout(ctx, max(0, budget))
 		pool, verifyErr := check.pool, check.err
 		if verifyErr == nil {
-			receipt, receiptErr := VerifyTransaction(ctx, pool, p.txHash)
+			receipt, receiptErr := VerifyTransaction(rpcCtx, pool, p.txHash)
 			switch {
 			case errors.Is(receiptErr, ErrReceiptNotFound):
 				if p.status == "pending" {
@@ -281,7 +301,7 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 			case receiptErr != nil && !errors.Is(receiptErr, ErrTransactionReverted):
 				verifyErr = receiptErr
 			default:
-				verifyErr = verifyCanonicalBlock(ctx, pool, receipt)
+				verifyErr = verifyCanonicalBlock(rpcCtx, pool, receipt)
 				if errors.Is(verifyErr, ErrNonCanonicalBlock) {
 					status, reason, verifyErr = "reverted", "reorg_noncanonical_block", nil
 				} else if verifyErr == nil && errors.Is(receiptErr, ErrTransactionReverted) {
@@ -305,9 +325,10 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 						}
 					}
 					if verifyErr == nil && p.status == "pending" {
-						final, err := transactionIsFinalForChain(ctx, pool, chain.Chain, receipt.BlockNumber, chain.Confirmations)
+						final, err := transactionIsFinalForChain(rpcCtx, pool, chain.Chain, receipt.BlockNumber, chain.Confirmations)
 						verifyErr = err
 						if err == nil && final {
+							cancelObservation()
 							var changed bool
 							if reincluded {
 								changed, err = w.updateReincludedObservation(ctx, p, transfer)
@@ -335,6 +356,7 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 				}
 			}
 		}
+		cancelObservation()
 		if verifyErr != nil {
 			if strings.HasPrefix(p.reason, missingReceiptPrefix) {
 				reason = missingReceiptPrefix + "0"

@@ -59,6 +59,9 @@ func SafeError(err error) string {
 	if errors.As(err, &failure) {
 		return failure.Error()
 	}
+	if errors.Is(err, ErrIndependentEvidence) {
+		return ErrIndependentEvidence.Error()
+	}
 	if errors.Is(err, context.Canceled) {
 		return "Payment operation canceled; reconcile transaction status before retrying"
 	}
@@ -81,6 +84,8 @@ func SafeRecordedError(message string) string {
 		return message
 	}
 	switch message {
+	case "independent RPC confirmation is unavailable or disagrees":
+		return message
 	case "RPC request is invalid", "RPC response is invalid", "RPC connection failed", "RPC request failed",
 		"awaiting canonical receipt and required confirmations",
 		"confirmed transaction reverted; automatic replacement/funding refused",
