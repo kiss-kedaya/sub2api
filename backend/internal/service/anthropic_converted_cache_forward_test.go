@@ -116,7 +116,7 @@ func TestNativeAnthropicCachePolicyAtBuilder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	body := []byte(`{"tools":[{"name":"read","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}`)
+	body := []byte(`{"cache_control":{"type":"ephemeral","ttl":"5m"},"tools":[{"name":"read","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}`)
 	svc := &OpenAIGatewayService{}
 	account := newAnthropicAPIKeyAccountForTest()
 	req, out, err := svc.buildNativeAnthropicUpstreamRequest(context.Background(), c, account, body, "test-key", "https://api.anthropic.com/v1/messages")
@@ -124,5 +124,26 @@ func TestNativeAnthropicCachePolicyAtBuilder(t *testing.T) {
 	defer func() { require.NoError(t, req.Body.Close()) }()
 	assertNoTTLOrderViolation(t, out)
 	require.Equal(t, "1h", gjson.GetBytes(out, "tools.0.cache_control.ttl").String())
+	require.Equal(t, "1h", gjson.GetBytes(out, "cache_control.ttl").String())
 	require.Contains(t, strings.Join(anthropicBetaHeaderValues(req.Header), ","), claude.BetaExtendedCacheTTL)
+}
+
+func TestConvertedAnthropicAutomaticCacheTTLConflict(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		body string
+		ttl  string
+	}{
+		{"final explicit marker", `{"cache_control":{"type":"ephemeral","ttl":"5m"},"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}`, "1h"},
+		{"skip thinking", `{"cache_control":{"type":"ephemeral"},"messages":[{"role":"assistant","content":[{"type":"text","text":"answer","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"thinking","thinking":"internal"}]}]}`, "1h"},
+		{"plain last message", `{"cache_control":{"type":"ephemeral","ttl":"5m"},"system":[{"type":"text","text":"system","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[{"role":"user","content":"hi"}]}`, "5m"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := normalizeCacheControlTTLOrder([]byte(tc.body))
+			require.Equal(t, tc.ttl, gjson.GetBytes(out, "cache_control.ttl").String())
+			assertNoTTLOrderViolation(t, out)
+			require.Equal(t, string(out), string(normalizeCacheControlTTLOrder(out)))
+		})
+	}
 }
