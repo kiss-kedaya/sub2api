@@ -35,6 +35,13 @@ func (s *Service) securityMonitor(ctx context.Context) {
 			if err != nil && !errors.Is(err, wallet.ErrWalletNotConfigured) && !errors.Is(err, wallet.ErrSecurityLocked) {
 				slog.Warn("[cryptopay] wallet security check failed")
 			}
+			// Retry after the security checks, with a separate budget so Bark
+			// latency cannot consume the wallet guard's time allowance.
+			alertCtx, alertCancel := context.WithTimeout(ctx, 10*time.Second)
+			if err := s.deliverSweepFailureAlerts(alertCtx); err != nil {
+				slog.Warn("[cryptopay] sweep failure notification pending")
+			}
+			alertCancel()
 		}
 	}
 }
@@ -69,7 +76,7 @@ func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
 		if strings.TrimSpace(cfg.RPC[chain]) != "" {
 			pools[chain] = rpc.NewPool(cfg.RPC[chain])
 		} else if pool := runtimePools[chain]; pool != nil && len(pool.Endpoints()) > 0 {
-			pools[chain] = pool.WithEndpoints(strings.Join(pool.Endpoints(), ","))
+			pools[chain] = pool.Snapshot()
 		} else {
 			continue
 		}

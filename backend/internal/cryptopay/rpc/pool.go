@@ -21,10 +21,11 @@ import (
 
 // Pool rotates through a chain's endpoints, preferring the last healthy one.
 type Pool struct {
-	mu        sync.RWMutex
-	endpoints []string
-	next      atomic.Uint64
-	client    *http.Client
+	mu           sync.RWMutex
+	endpoints    []string
+	next         atomic.Uint64
+	client       *http.Client
+	verification *verificationPolicy
 }
 
 // NewPool builds a pool from a comma-separated endpoint list.
@@ -45,10 +46,25 @@ func NewPoolWithHTTPClient(endpoints string, client *http.Client) *Pool {
 	return p
 }
 
+// Snapshot atomically captures endpoints and their verification provenance.
+// In-flight work cannot combine an automatic list with a newer manual policy.
+func (p *Pool) Snapshot() *Pool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	snapshot := NewPoolWithHTTPClient(strings.Join(p.endpoints, ","), p.client)
+	snapshot.verification = p.verification
+	return snapshot
+}
+
 // WithEndpoints takes an independent endpoint snapshot while retaining the
 // original transport, including public-address validation and DNS pinning.
 func (p *Pool) WithEndpoints(endpoints string) *Pool {
-	return NewPoolWithHTTPClient(endpoints, p.client)
+	p.mu.RLock()
+	policy := p.verification
+	p.mu.RUnlock()
+	snapshot := NewPoolWithHTTPClient(endpoints, p.client)
+	snapshot.verification = policy // immutable policy, including for single-node verification
+	return snapshot
 }
 
 // SetEndpoints replaces the endpoint list (admin config change).
@@ -71,12 +87,13 @@ func (p *Pool) Endpoints() []string {
 	return append([]string(nil), p.endpoints...)
 }
 
-// Call runs one JSON-RPC method, rotating endpoints on transport failure.
-// The first successful HTTP exchange wins even when the RPC itself returns
-// an error object (that is a valid protocol response).
+// Call runs one JSON-RPC method, rotating endpoints on transport, RPC, or
+// response-contract failure. A successful HTTP exchange alone does not prove
+// that the endpoint supplied usable data for the requested method.
 func (p *Pool) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	p.mu.RLock()
 	endpoints := append([]string(nil), p.endpoints...)
+	policy := p.verification
 	p.mu.RUnlock()
 	if len(endpoints) == 0 {
 		return nil, fmt.Errorf("no rpc endpoints configured")
@@ -86,6 +103,9 @@ func (p *Pool) Call(ctx context.Context, method string, params any) (json.RawMes
 	for i := 0; i < len(endpoints); i++ {
 		endpoint := endpoints[(start+i)%len(endpoints)]
 		result, err := p.callOne(ctx, endpoint, method, params)
+		if err == nil && policy != nil && needsIndependentEvidence(method) {
+			result, err = p.verifyIndependentEvidence(ctx, policy, endpoint, method, params, result)
+		}
 		if err == nil {
 			return result, nil
 		}
@@ -135,7 +155,67 @@ func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any)
 	if decoded.Error != nil {
 		return nil, &Failure{Kind: "remote", RPCCode: decoded.Error.Code}
 	}
+	if method == "eth_getLogs" && !validLogsResult(decoded.Result) {
+		return nil, &Failure{Kind: "response"}
+	}
 	return decoded.Result, nil
+}
+
+// eth_getLogs must return an array, including [] when no logs match. In
+// particular, JSON null decodes into a nil Go slice without error and must not
+// be mistaken for a successful empty scan. Validate before Call returns so an
+// unhealthy endpoint cannot prevent failover to the next configured endpoint.
+func validLogsResult(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return false
+	}
+	var logs []map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &logs); err != nil || logs == nil {
+		return false
+	}
+	for _, log := range logs {
+		if log == nil {
+			return false
+		}
+		for _, field := range []string{"address", "data", "blockNumber", "blockHash", "transactionHash", "logIndex"} {
+			var value string
+			if json.Unmarshal(log[field], &value) != nil || value == "" {
+				return false
+			}
+			switch field {
+			case "address":
+				decoded, err := hexutil.Decode(value)
+				if err != nil || len(decoded) != 20 {
+					return false
+				}
+			case "blockHash", "transactionHash":
+				decoded, err := hexutil.Decode(value)
+				if err != nil || len(decoded) != 32 {
+					return false
+				}
+			case "blockNumber", "logIndex":
+				if _, err := hexutil.DecodeUint64(value); err != nil {
+					return false
+				}
+			case "data":
+				if _, err := hexutil.Decode(value); err != nil {
+					return false
+				}
+			}
+		}
+		var topics []string
+		if json.Unmarshal(log["topics"], &topics) != nil || topics == nil || len(topics) > 4 {
+			return false
+		}
+		for _, topic := range topics {
+			decoded, err := hexutil.Decode(topic)
+			if err != nil || len(decoded) != 32 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // BlockNumber returns the latest block number (EVM chains).

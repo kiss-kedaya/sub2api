@@ -95,6 +95,9 @@ func BlockIsFinal(ctx context.Context, pool *rpc.Pool, blockNumber uint64) (bool
 // not. Subtraction avoids overflow on blockNumber+confirmations.
 func transactionIsFinal(ctx context.Context, pool *rpc.Pool, blockNumber, confirmations uint64) (bool, error) {
 	safe, safeErr := BlockIsFinal(ctx, pool, blockNumber)
+	if safeErr != nil && pool.RequiresIndependentVerification() {
+		return false, fmt.Errorf("independent safe block: %w", safeErr)
+	}
 	if safeErr == nil && !safe {
 		return false, nil
 	}
@@ -189,6 +192,7 @@ func verifyChain(ctx context.Context, pool *rpc.Pool, chain string) error {
 // Build an isolated pool containing only endpoints verified for this chain;
 // never mutate the shared configured pool.
 func verifiedChainPool(ctx context.Context, pool *rpc.Pool, chain string) (*rpc.Pool, error) {
+	pool = pool.Snapshot()
 	configured := pool.Endpoints()
 	verified := make([]bool, len(configured))
 	errs := make([]error, len(configured))

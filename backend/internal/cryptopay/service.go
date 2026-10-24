@@ -691,7 +691,13 @@ func (s *Service) InitializeWallet(ctx context.Context, depositMnemonic, hotMnem
 
 // RunSweep executes the sweep (or a dry-run) and returns the summary.
 // Serialised by the caller via the admin route; sweeps are operator-driven.
-func (s *Service) RunSweep(ctx context.Context, dryRun bool) (*sweeper.Summary, error) {
+func (s *Service) RunSweep(ctx context.Context, dryRun bool) (summary *sweeper.Summary, err error) {
+	if !dryRun {
+		// Notify on the common result path: manual runs, scheduled sweeps and
+		// resumption of already-signed jobs must report the same failures.
+		// Notification errors never replace the actual transaction outcome.
+		defer func() { s.reportSweepFailure(ctx, summary, err) }()
+	}
 	if !dryRun {
 		if err := mode.CheckWritable(); err != nil {
 			return nil, err
