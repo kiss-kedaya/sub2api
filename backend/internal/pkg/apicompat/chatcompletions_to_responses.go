@@ -18,10 +18,25 @@ type chatMessageContent struct {
 // true. store is always false and reasoning.encrypted_content is always
 // included so that the response translator has full context.
 func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest, error) {
+	return chatCompletionsToResponses(req, false)
+}
+
+// ChatCompletionsToAnthropicRequest reuses the Responses conversion chain while
+// retaining Anthropic cache extensions. Ordinary Responses upstreams must not
+// receive these extensions, so ChatCompletionsToResponses leaves them out.
+func ChatCompletionsToAnthropicRequest(req *ChatCompletionsRequest) (*AnthropicRequest, error) {
+	responses, err := chatCompletionsToResponses(req, true)
+	if err != nil {
+		return nil, err
+	}
+	return ResponsesToAnthropicRequest(responses)
+}
+
+func chatCompletionsToResponses(req *ChatCompletionsRequest, anthropic bool) (*ResponsesRequest, error) {
 	if err := openai.ValidateGPT61SolReasoningEffort(req.Model, req.ReasoningEffort); err != nil {
 		return nil, err
 	}
-	input, err := convertChatMessagesToResponsesInput(req.Messages)
+	input, err := convertChatMessagesToResponsesInputWithCache(req.Messages, anthropic)
 	if err != nil {
 		return nil, err
 	}
@@ -32,6 +47,7 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 	}
 
 	out := &ResponsesRequest{
+		CacheControl:       cacheControlForAnthropic(req.CacheControl, anthropic),
 		Model:              req.Model,
 		Instructions:       req.Instructions,
 		Input:              inputJSON,
@@ -85,7 +101,7 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 
 	// tools[] and legacy functions[] → ResponsesTool[]
 	if len(req.Tools) > 0 || len(req.Functions) > 0 {
-		out.Tools = convertChatToolsToResponses(req.Tools, req.Functions)
+		out.Tools = convertChatToolsToResponses(req.Tools, req.Functions, anthropic)
 	}
 
 	// Named choices and allowed-tool policies use different wire formats.
@@ -108,6 +124,10 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 // convertChatMessagesToResponsesInput converts the Chat Completions messages
 // array into a Responses API input items array.
 func convertChatMessagesToResponsesInput(msgs []ChatMessage) ([]ResponsesInputItem, error) {
+	return convertChatMessagesToResponsesInputWithCache(msgs, false)
+}
+
+func convertChatMessagesToResponsesInputWithCache(msgs []ChatMessage, anthropic bool) ([]ResponsesInputItem, error) {
 	var out []ResponsesInputItem
 	legacyIDs := legacyFunctionCallIDs{msgs: msgs}
 	for _, m := range msgs {
@@ -121,9 +141,14 @@ func convertChatMessagesToResponsesInput(msgs []ChatMessage) ([]ResponsesInputIt
 		case m.Role == "function" && m.ToolCallID == "":
 			m.ToolCallID = legacyIDs.claim(m.Name)
 		}
-		items, err := chatMessageToResponsesItems(m)
+		items, err := chatMessageToResponsesItems(m, anthropic)
 		if err != nil {
 			return nil, err
+		}
+		// Message-level extensions describe the end of this message, including
+		// its tool calls. Do not move a marker from a discarded/empty message.
+		if anthropic && m.CacheControl != nil && len(items) > 0 && items[len(items)-1].Type != "reasoning" {
+			items[len(items)-1].CacheControl = m.CacheControl
 		}
 		out = append(out, items...)
 	}
@@ -176,30 +201,30 @@ func (ids *legacyFunctionCallIDs) claim(name string) string {
 
 // chatMessageToResponsesItems converts a single ChatMessage into one or more
 // ResponsesInputItem values.
-func chatMessageToResponsesItems(m ChatMessage) ([]ResponsesInputItem, error) {
+func chatMessageToResponsesItems(m ChatMessage, anthropic bool) ([]ResponsesInputItem, error) {
 	switch m.Role {
 	case "system", "developer":
-		return chatSystemToResponses(m)
+		return chatSystemToResponses(m, anthropic)
 	case "user":
-		return chatUserToResponses(m)
+		return chatUserToResponses(m, anthropic)
 	case "assistant":
-		return chatAssistantToResponses(m)
+		return chatAssistantToResponses(m, anthropic)
 	case "tool":
-		return chatToolToResponses(m)
+		return chatToolToResponses(m, anthropic)
 	case "function":
-		return chatFunctionToResponses(m)
+		return chatFunctionToResponses(m, anthropic)
 	default:
-		return chatUserToResponses(m)
+		return chatUserToResponses(m, anthropic)
 	}
 }
 
 // chatSystemToResponses preserves system and developer instruction roles.
-func chatSystemToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
+func chatSystemToResponses(m ChatMessage, anthropic bool) ([]ResponsesInputItem, error) {
 	parsed, err := parseChatMessageContent(m.Content)
 	if err != nil {
 		return nil, err
 	}
-	content, err := marshalChatInputContent(parsed)
+	content, err := marshalChatInputContent(parsed, anthropic)
 	if err != nil {
 		return nil, err
 	}
@@ -208,12 +233,12 @@ func chatSystemToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 
 // chatUserToResponses converts a user message, handling both plain strings and
 // multi-modal content arrays.
-func chatUserToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
+func chatUserToResponses(m ChatMessage, anthropic bool) ([]ResponsesInputItem, error) {
 	parsed, err := parseChatMessageContent(m.Content)
 	if err != nil {
 		return nil, fmt.Errorf("parse user content: %w", err)
 	}
-	content, err := marshalChatInputContent(parsed)
+	content, err := marshalChatInputContent(parsed, anthropic)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +249,7 @@ func chatUserToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 // text content and tool_calls, the text is emitted as an assistant message
 // first, then each tool_call becomes a function_call item. If the content is
 // empty/nil and there are tool_calls, only function_call items are emitted.
-func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
+func chatAssistantToResponses(m ChatMessage, anthropic bool) ([]ResponsesInputItem, error) {
 	var items []ResponsesInputItem
 	text := ""
 	thinking := strings.TrimSpace(m.ReasoningContent)
@@ -252,6 +277,17 @@ func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 
 	if text != "" {
 		parts := []ResponsesContentPart{{Type: "output_text", Text: text}}
+		if anthropic {
+			var original []ChatContentPart
+			if json.Unmarshal(m.Content, &original) == nil {
+				parts = nil
+				for _, part := range original {
+					if part.Type != "thinking" && part.Type != "reasoning" && part.Text != "" {
+						parts = append(parts, ResponsesContentPart{Type: "output_text", Text: part.Text, CacheControl: part.CacheControl})
+					}
+				}
+			}
+		}
 		partsJSON, err := json.Marshal(parts)
 		if err != nil {
 			return nil, err
@@ -266,10 +302,11 @@ func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 			args = "{}"
 		}
 		items = append(items, ResponsesInputItem{
-			Type:      "function_call",
-			CallID:    tc.ID,
-			Name:      tc.Function.Name,
-			Arguments: args,
+			CacheControl: cacheControlForAnthropic(tc.CacheControl, anthropic),
+			Type:         "function_call",
+			CallID:       tc.ID,
+			Name:         tc.Function.Name,
+			Arguments:    args,
 		})
 	}
 
@@ -323,7 +360,7 @@ func parseAssistantContent(raw json.RawMessage) (string, string, error) {
 
 // chatToolToResponses converts a tool result message (role=tool) into a
 // function_call_output item.
-func chatToolToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
+func chatToolToResponses(m ChatMessage, anthropic bool) ([]ResponsesInputItem, error) {
 	output, err := parseChatContent(m.Content)
 	if err != nil {
 		return nil, err
@@ -331,33 +368,31 @@ func chatToolToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	if output == "" {
 		output = "(empty)"
 	}
-	return []ResponsesInputItem{{
+	item := ResponsesInputItem{
 		Type:   "function_call_output",
 		CallID: m.ToolCallID,
 		Output: output,
-	}}, nil
+	}
+	if anthropic {
+		var parts []ChatContentPart
+		if json.Unmarshal(m.Content, &parts) == nil {
+			item.outputRaw, err = json.Marshal(convertChatContentPartsToResponses(parts, true))
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return []ResponsesInputItem{item}, nil
 }
 
 // chatFunctionToResponses converts a legacy function result message
 // (role=function) into a function_call_output item. The Name field is used as
 // call_id since legacy function calls do not carry a separate call_id.
-func chatFunctionToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
-	output, err := parseChatContent(m.Content)
-	if err != nil {
-		return nil, err
+func chatFunctionToResponses(m ChatMessage, anthropic bool) ([]ResponsesInputItem, error) {
+	if m.ToolCallID == "" {
+		m.ToolCallID = m.Name
 	}
-	if output == "" {
-		output = "(empty)"
-	}
-	callID := m.ToolCallID
-	if callID == "" {
-		callID = m.Name
-	}
-	return []ResponsesInputItem{{
-		Type:   "function_call_output",
-		CallID: callID,
-		Output: output,
-	}}, nil
+	return chatToolToResponses(m, anthropic)
 }
 
 // parseChatContent returns the string value of a ChatMessage Content field.
@@ -392,11 +427,11 @@ func parseChatMessageContent(raw json.RawMessage) (chatMessageContent, error) {
 	return chatMessageContent{}, fmt.Errorf("parse content as string or parts array")
 }
 
-func marshalChatInputContent(content chatMessageContent) (json.RawMessage, error) {
+func marshalChatInputContent(content chatMessageContent, anthropic bool) (json.RawMessage, error) {
 	if content.Text != nil {
 		return json.Marshal(*content.Text)
 	}
-	parts := convertChatContentPartsToResponses(content.Parts)
+	parts := convertChatContentPartsToResponses(content.Parts, anthropic)
 	if len(parts) == 0 {
 		// A nil slice marshals to JSON null, which the upstream Responses API
 		// rejects ("expected an array of objects or string, but got null").
@@ -406,13 +441,14 @@ func marshalChatInputContent(content chatMessageContent) (json.RawMessage, error
 	return json.Marshal(parts)
 }
 
-func convertChatContentPartsToResponses(parts []ChatContentPart) []ResponsesContentPart {
+func convertChatContentPartsToResponses(parts []ChatContentPart, anthropic bool) []ResponsesContentPart {
 	var responseParts []ResponsesContentPart
 	for _, p := range parts {
 		switch p.Type {
 		case "text":
 			if p.Text != "" {
 				responseParts = append(responseParts, ResponsesContentPart{
+					CacheControl:          cacheControlForAnthropic(p.CacheControl, anthropic),
 					PromptCacheBreakpoint: p.PromptCacheBreakpoint,
 					Type:                  "input_text",
 					Text:                  p.Text,
@@ -421,6 +457,7 @@ func convertChatContentPartsToResponses(parts []ChatContentPart) []ResponsesCont
 		case "image_url":
 			if p.ImageURL != nil && p.ImageURL.URL != "" && !isEmptyBase64DataURI(p.ImageURL.URL) {
 				responseParts = append(responseParts, ResponsesContentPart{
+					CacheControl:          cacheControlForAnthropic(p.CacheControl, anthropic),
 					PromptCacheBreakpoint: p.PromptCacheBreakpoint,
 					Type:                  "input_image",
 					ImageURL:              p.ImageURL.URL,
@@ -429,6 +466,7 @@ func convertChatContentPartsToResponses(parts []ChatContentPart) []ResponsesCont
 		case "file":
 			if p.File != nil && (p.File.FileData != "" || p.File.FileID != "") {
 				responseParts = append(responseParts, ResponsesContentPart{
+					CacheControl:          cacheControlForAnthropic(p.CacheControl, anthropic),
 					PromptCacheBreakpoint: p.PromptCacheBreakpoint,
 					Type:                  "input_file",
 					Filename:              p.File.Filename,
@@ -473,13 +511,14 @@ func stringPtr(s string) *string {
 
 // convertChatToolsToResponses maps Chat Completions tool definitions and legacy
 // function definitions to Responses API tool definitions.
-func convertChatToolsToResponses(tools []ChatTool, functions []ChatFunction) []ResponsesTool {
+func convertChatToolsToResponses(tools []ChatTool, functions []ChatFunction, anthropic bool) []ResponsesTool {
 	var out []ResponsesTool
 
 	for _, t := range tools {
 		toolType := strings.ToLower(strings.TrimSpace(t.Type))
 		if toolType == "x_search" {
 			out = append(out, ResponsesTool{
+				CacheControl:             cacheControlForAnthropic(t.CacheControl, anthropic),
 				Type:                     "x_search",
 				AllowedXHandles:          t.AllowedXHandles,
 				ExcludedXHandles:         t.ExcludedXHandles,
@@ -491,18 +530,22 @@ func convertChatToolsToResponses(tools []ChatTool, functions []ChatFunction) []R
 			continue
 		}
 		if toolType == "web_search" || toolType == "code_execution" {
-			out = append(out, ResponsesTool{Type: toolType})
+			out = append(out, ResponsesTool{Type: toolType, CacheControl: cacheControlForAnthropic(t.CacheControl, anthropic)})
 			continue
 		}
 		if t.Type != "function" || t.Function == nil {
 			continue
 		}
 		rt := ResponsesTool{
-			Type:        "function",
-			Name:        t.Function.Name,
-			Description: t.Function.Description,
-			Parameters:  t.Function.Parameters,
-			Strict:      defaultStrictFalse(t.Function.Strict),
+			CacheControl: cacheControlForAnthropic(t.CacheControl, anthropic),
+			Type:         "function",
+			Name:         t.Function.Name,
+			Description:  t.Function.Description,
+			Parameters:   t.Function.Parameters,
+			Strict:       defaultStrictFalse(t.Function.Strict),
+		}
+		if anthropic && rt.CacheControl == nil {
+			rt.CacheControl = t.Function.CacheControl
 		}
 		out = append(out, rt)
 	}
@@ -510,16 +553,24 @@ func convertChatToolsToResponses(tools []ChatTool, functions []ChatFunction) []R
 	// Legacy functions[] are treated as function-type tools.
 	for _, f := range functions {
 		rt := ResponsesTool{
-			Type:        "function",
-			Name:        f.Name,
-			Description: f.Description,
-			Parameters:  f.Parameters,
-			Strict:      defaultStrictFalse(f.Strict),
+			CacheControl: cacheControlForAnthropic(f.CacheControl, anthropic),
+			Type:         "function",
+			Name:         f.Name,
+			Description:  f.Description,
+			Parameters:   f.Parameters,
+			Strict:       defaultStrictFalse(f.Strict),
 		}
 		out = append(out, rt)
 	}
 
 	return out
+}
+
+func cacheControlForAnthropic(cc *AnthropicCacheControl, anthropic bool) *AnthropicCacheControl {
+	if anthropic {
+		return cc
+	}
+	return nil
 }
 
 func convertChatToolChoiceToResponses(raw json.RawMessage) (json.RawMessage, error) {

@@ -123,6 +123,11 @@ func (s *GatewayService) ForwardAsResponses(
 		anthropicBody = s.applyClaudeCodeOAuthMimicryToBody(ctx, c, account, anthropicBody, anthropicReq.System, mappedModel)
 	}
 
+	// Apply the same key/global TTL policy as native Messages requests.
+	if ttlMode, applyTTL := s.resolveAnthropicCacheTTLMode(ctx, c, account); applyTTL {
+		anthropicBody = forceEphemeralCacheControlTTL(anthropicBody, ttlMode)
+	}
+
 	// 7. Enforce cache_control block limit
 	anthropicBody = enforceCacheControlLimit(anthropicBody)
 
