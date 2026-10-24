@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -475,14 +476,25 @@ func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
 	return 0, err
 }
 
+// ErrGrokVideoSourceUnavailable means a known task's original account has been
+// removed or no longer supports Grok. It is distinct from a missing task and
+// from a temporary failure reading the account repository.
+var ErrGrokVideoSourceUnavailable = errors.New("grok video source account is unavailable")
+
 func (s *OpenAIGatewayService) GetGrokMediaBoundAccount(ctx context.Context, accountID int64) (*Account, error) {
 	if accountID <= 0 {
 		return nil, fmt.Errorf("bound grok media account is invalid")
 	}
-	if account := recallGrokVideoAccountByID(accountID); account != nil {
-		return account, nil
-	}
 	if s == nil {
+		return nil, fmt.Errorf("account repository is unavailable")
+	}
+	// A warm process must honor the same deletion/credential changes as a cold
+	// one. The local create-time pointer is only a fallback for services without
+	// an authoritative account source (for example standalone fixtures).
+	if s.schedulerSnapshot == nil && s.accountRepo == nil {
+		if account := recallGrokVideoAccountByID(accountID); account != nil && account.Platform == PlatformGrok {
+			return account, nil
+		}
 		return nil, fmt.Errorf("account repository is unavailable")
 	}
 	var account *Account
@@ -496,11 +508,14 @@ func (s *OpenAIGatewayService) GetGrokMediaBoundAccount(ctx context.Context, acc
 	if account == nil && s.accountRepo != nil {
 		account, err = s.accountRepo.GetByID(ctx, accountID)
 		if err != nil {
+			if errors.Is(err, ErrAccountNotFound) {
+				return nil, fmt.Errorf("%w: %w", ErrGrokVideoSourceUnavailable, err)
+			}
 			return nil, err
 		}
 	}
 	if account == nil || account.Platform != PlatformGrok {
-		return nil, fmt.Errorf("bound grok media account is unavailable")
+		return nil, ErrGrokVideoSourceUnavailable
 	}
 	return account, nil
 }

@@ -166,7 +166,12 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			apiKey, subscription, videoPending, err = h.restoreGrokVideoBillingRoute(c, apiKey, subscription, requestID, subject.UserID)
 		}
 		if err != nil {
+			if errors.Is(err, service.ErrStickySessionNotFound) {
+				h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
+				return
+			}
 			reqLog.Error("grok_media.video_billing_route_unavailable", zap.String("request_id", requestID), zap.Error(err))
+			c.Header("Retry-After", "2")
 			h.errorResponse(c, http.StatusServiceUnavailable, "billing_error", "Video billing information is temporarily unavailable")
 			return
 		}
@@ -225,11 +230,20 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				c.Request.Context(), bindingGroupID, requestID, subject.UserID, apiKey.ID,
 			)
 		}
-		if err != nil || boundLookupAccountID <= 0 {
+		if err != nil && !errors.Is(err, service.ErrStickySessionNotFound) {
+			reqLog.Warn("grok_media.video_lookup_owner_binding_unavailable", zap.Error(err))
+			c.Header("Retry-After", "2")
+			h.errorResponse(c, http.StatusServiceUnavailable, "video_task_lookup_unavailable", "Video task information is temporarily unavailable; retry shortly")
+			return
+		}
+		if boundLookupAccountID <= 0 {
 			reqLog.Warn("grok_media.video_lookup_owner_binding_missing", zap.Error(err))
 			h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
 			return
 		}
+		// Ownership has already been checked against the durable job or scoped
+		// binding. Keep the original account attribution even if it was removed.
+		setOpsSelectedAccount(c, boundLookupAccountID, service.PlatformGrok)
 	}
 	// 预扣：仅同步图片生成/编辑在选号前按“张数 × 尺寸档单价”精确预留余额；
 	// 结算走 RecordUsage → applyUsageBilling 的 guard.Finalize 退实际差额，兜底
@@ -307,7 +321,12 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			boundAccount, boundErr := h.gatewayService.GetGrokMediaBoundAccount(requestCtx, boundLookupAccountID)
 			if boundErr != nil || boundAccount == nil {
 				reqLog.Info("grok_media.video_lookup_bound_account_missing", zap.Error(boundErr))
-				h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
+				if errors.Is(boundErr, service.ErrGrokVideoSourceUnavailable) {
+					h.errorResponse(c, http.StatusGone, "video_task_unavailable", "Video task is no longer available because its source account was removed or changed; stop polling this task")
+				} else {
+					c.Header("Retry-After", "2")
+					h.errorResponse(c, http.StatusServiceUnavailable, "video_task_lookup_unavailable", "Video task information is temporarily unavailable; retry shortly")
+				}
 				return
 			}
 			maxConcurrency := boundAccount.Concurrency
@@ -748,6 +767,15 @@ func (h *OpenAIGatewayHandler) restoreGrokVideoBillingRoute(
 			return apiKey, subscription, pending, nil
 		}
 		if pending == nil {
+			// A missing snapshot is a billing fault only for a known task.
+			// Unknown owners must receive the same 404 on smart-route keys.
+			accountID, lookupErr := h.gatewayService.ResolveGrokMediaVideoRequestAccount(c.Request.Context(), apiKey.GroupID, requestID, userID, apiKey.ID)
+			if lookupErr != nil && !errors.Is(lookupErr, service.ErrStickySessionNotFound) {
+				return nil, nil, nil, lookupErr
+			}
+			if accountID <= 0 {
+				return nil, nil, nil, service.ErrStickySessionNotFound
+			}
 			return nil, nil, nil, errors.New("smart-route video task is missing its billing snapshot")
 		}
 		// Old tasks have no billing group. Recover only an unambiguous match
