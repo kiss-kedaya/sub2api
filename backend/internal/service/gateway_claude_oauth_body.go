@@ -1074,8 +1074,15 @@ func enforceCacheControlLimit(body []byte) []byte {
 		logger.LegacyPrintf("service.gateway", "%s", item.log)
 	}
 
+	// Top-level automatic caching also needs a breakpoint slot. Reserve it
+	// before retaining explicit markers, otherwise four markers plus automatic
+	// caching can turn an otherwise valid converted request into an upstream 400.
+	limit := maxCacheControlBlocks
+	if gjson.GetBytes(body, "cache_control").IsObject() {
+		limit--
+	}
 	count := len(messagePaths) + len(toolPaths) + len(systemPaths)
-	if count <= maxCacheControlBlocks {
+	if count <= limit {
 		if modified {
 			return out
 		}
@@ -1083,7 +1090,7 @@ func enforceCacheControlLimit(body []byte) []byte {
 	}
 
 	// 超限：优先从 tools 中移除，再从 messages 中移除，最后才从 system 中移除。
-	remaining := count - maxCacheControlBlocks
+	remaining := count - limit
 	for i := len(toolPaths) - 1; i >= 0 && remaining > 0; i-- {
 		path := toolPaths[i]
 		if !gjson.GetBytes(out, path).Exists() {
@@ -1150,13 +1157,23 @@ func enforceCacheControlLimit(body []byte) []byte {
 //
 // 取「最后一个 1h」而不是「第一个 1h」：tools 5m / system 1h / messages 5m /
 // messages 再有 1h 这种形态，只提升到第一个 1h 之后仍然违规。
-// 顶层 cache_control 不是 Messages API 的标准字段、处理位置不明，按**最后**一位处理——
-// 放最后可以保证无论上游把它当第一个还是最后一个块，提升完的顺序都合法。
+// 顶层 cache_control 启用自动缓存，断点作用于最后一个可缓存块，按最后一位处理。
 //
 // 没有任何 1h 的请求原样返回（先做一次字节扫描），常见路径零开销、也零行为变化。
 func normalizeCacheControlTTLOrder(body []byte) []byte {
 	if len(body) == 0 || !bytes.Contains(body, []byte(`"`+cacheTTLTarget1h+`"`)) {
 		return body
+	}
+	// Automatic caching targets the final eligible block. A final explicit 1h
+	// marker and a top-level default/5m marker conflict even though their order
+	// is valid. Preserve the requested 1h duration instead of sending a 400.
+	if automatic := gjson.GetBytes(body, "cache_control"); automatic.Get("type").String() == "ephemeral" && automatic.Get("ttl").String() != cacheTTLTarget1h {
+		last := lastAnthropicCacheableBlock(body).Get("cache_control")
+		if last.Get("type").String() == "ephemeral" && last.Get("ttl").String() == cacheTTLTarget1h {
+			if next, err := sjson.SetBytes(body, "cache_control.ttl", cacheTTLTarget1h); err == nil {
+				body = next
+			}
+		}
 	}
 
 	type cacheControlEntry struct {
@@ -1248,6 +1265,41 @@ func normalizeCacheControlTTLOrder(body []byte) []byte {
 		}
 	}
 	return out
+}
+
+// lastAnthropicCacheableBlock resolves the target of top-level automatic
+// caching. A non-empty string message is a target without a block-level marker;
+// do not accidentally substitute an earlier system/tool marker in that case.
+func lastAnthropicCacheableBlock(body []byte) gjson.Result {
+	find := func(content gjson.Result) (gjson.Result, bool) {
+		if content.Type == gjson.String {
+			return content, strings.TrimSpace(content.String()) != ""
+		}
+		blocks := content.Array()
+		for i := len(blocks) - 1; i >= 0; i-- {
+			switch blocks[i].Get("type").String() {
+			case "text", "image", "document", "tool_use", "tool_result", "server_tool_use", "web_search_tool_result":
+				if blocks[i].Get("type").String() != "text" || strings.TrimSpace(blocks[i].Get("text").String()) != "" {
+					return blocks[i], true
+				}
+			}
+		}
+		return gjson.Result{}, false
+	}
+	messages := gjson.GetBytes(body, "messages").Array()
+	for i := len(messages) - 1; i >= 0; i-- {
+		if block, ok := find(messages[i].Get("content")); ok {
+			return block
+		}
+	}
+	if block, ok := find(gjson.GetBytes(body, "system")); ok {
+		return block
+	}
+	tools := gjson.GetBytes(body, "tools").Array()
+	if len(tools) > 0 {
+		return tools[len(tools)-1]
+	}
+	return gjson.Result{}
 }
 
 // injectAnthropicCacheControlTTL1h 将已有 ephemeral cache_control 块的 ttl 强制写为 1h。

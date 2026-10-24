@@ -194,6 +194,8 @@ func (s *OpenAIGatewayService) buildNativeAnthropicUpstreamRequest(
 	// 的 base 取值同源（GetAnthropicProtocolBaseURL，adaptive 时是 Anthropic 协议
 	// 地址而非 CC/Responses 地址），详见 helper 注释。
 	body = clampOllamaCloudAnthropicMessagesMaxTokens(account, account.GetAnthropicProtocolBaseURL(), body)
+	body = enforceCacheControlLimit(body)
+	body = normalizeCacheControlTTLOrder(body)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -228,6 +230,8 @@ func (s *OpenAIGatewayService) buildNativeAnthropicUpstreamRequest(
 	if getHeaderRaw(req.Header, "anthropic-version") == "" {
 		setHeaderRaw(req.Header, "anthropic-version", "2023-06-01")
 	}
+
+	applyExtendedCacheTTLBetaHeader(req.Header, body)
 
 	// 账号级请求头覆写（最终生效，覆盖上面所有来源的同名头）
 	account.ApplyHeaderOverrides(req.Header)

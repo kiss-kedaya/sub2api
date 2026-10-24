@@ -57,15 +57,10 @@ func (s *OpenAIGatewayService) forwardChatCompletionsViaNativeAnthropic(
 	includeUsage := ccReq.StreamOptions != nil && ccReq.StreamOptions.IncludeUsage
 
 	// 2. Convert CC → Responses → Anthropic (chained conversion)
-	responsesReq, err := apicompat.ChatCompletionsToResponses(&ccReq)
+	anthropicReq, err := apicompat.ChatCompletionsToAnthropicRequest(&ccReq)
 	if err != nil {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", "Failed to convert request")
-		return nil, fmt.Errorf("convert chat completions to responses: %w", err)
-	}
-	anthropicReq, err := apicompat.ResponsesToAnthropicRequest(responsesReq)
-	if err != nil {
-		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", "Failed to convert request")
-		return nil, fmt.Errorf("convert responses to anthropic: %w", err)
+		return nil, fmt.Errorf("convert chat completions to anthropic: %w", err)
 	}
 
 	// 3. Model mapping（OpenAI 网关统一入口的映射语义）
@@ -94,7 +89,6 @@ func (s *OpenAIGatewayService) forwardChatCompletionsViaNativeAnthropic(
 	// 与 /v1/messages 直通路径相同的 pre-filter。
 	anthropicBody = StripEmptyTextBlocks(anthropicBody)
 	anthropicBody = FilterWebSearchHistoryBlocks(anthropicBody, upstreamModel)
-	anthropicBody = enforceCacheControlLimit(anthropicBody)
 	// Claude 5.x 只认 adaptive thinking；CC→Responses→Anthropic 的合成会把
 	// reasoning.effort 落成 enabled+budget_tokens，出站前按模型名修正。
 	anthropicBody = sanitizeAnthropicThinkingForModel(anthropicBody, upstreamModel)
