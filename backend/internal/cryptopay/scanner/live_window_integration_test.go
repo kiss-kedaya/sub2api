@@ -166,6 +166,22 @@ func TestLiveWindowCreditsThroughLedgerBeforeHistoricalCatchup(t *testing.T) {
 					start = 100
 				}
 				mock.ExpectQuery(`SELECT last_block`).WithArgs("bsc").WillReturnRows(sqlmock.NewRows([]string{"last_block"}).AddRow(start))
+				if scenario.recentReplay {
+					checkpointRows := sqlmock.NewRows([]string{"last_signature", "updated_at"})
+					if pass > 0 {
+						// Completion is durable across the second live instance;
+						// it must honor the same short replay throttle.
+						checkpointRows.AddRow(`{"through":115107,"next":115108,"after":-1}`, time.Now())
+					}
+					mock.ExpectQuery(`SELECT last_signature, updated_at`).WithArgs("recent-replay:bsc").WillReturnRows(checkpointRows)
+					if pass == 0 {
+						// Initial fixed boundary, first empty 50-block batch,
+						// per-transfer checkpoint, and completed final batch.
+						for _, checkpoint := range []int64{115007, 115057, 115099, 115107} {
+							mock.ExpectExec(`INSERT INTO crypto_scan_cursors`).WithArgs("recent-replay:bsc", checkpoint, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+						}
+					}
+				}
 				if !scenario.historyUnavailable && !scenario.recentReplay {
 					for batch := int64(1); batch <= 4; batch++ {
 						mock.ExpectExec(`INSERT INTO crypto_scan_cursors`).WithArgs("bsc", start+batch*100).WillReturnResult(sqlmock.NewResult(0, 1))

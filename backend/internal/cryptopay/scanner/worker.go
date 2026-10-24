@@ -355,10 +355,11 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 	return w.scanChainFrom(ctx, chain, 0)
 }
 
-func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFromBlock uint64) error {
+func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFromBlock uint64) (scanErr error) {
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, maxScanTimePerChain)
 	defer cancel()
 	pool := w.pools[chain.Chain]
@@ -448,14 +449,22 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 	if maxRange == 0 {
 		maxRange = 2000
 	}
-	var liveErr error
 	if w.recentReplay && manualFromBlock == 0 && hadCursor && w.handler != nil {
-		if err := w.replayRecentRange(ctx, scanner, pool, chain, min(last, confirmed), maxRange, recipients); err != nil {
-			// Moving the cursor would also move the next overlap window and
-			// could strand a late transfer whose persistence just failed.
+		state, err := w.prepareRecentReplay(ctx, chain.Chain, min(last, confirmed), maxRange, recipients)
+		if err != nil {
+			// The overlap boundary must be durable BEFORE the forward cursor
+			// moves. Once saved, failures cannot move that independent boundary.
 			return err
 		}
+		if state != nil {
+			defer func() {
+				// A slow or dense overlap has its own budget and checkpoint. It
+				// neither steals the forward budget nor blocks new deposits.
+				scanErr = errors.Join(scanErr, w.replayRecentRange(parent, scanner, pool, chain, state, maxRange, recipients))
+			}()
+		}
 	}
+	var liveErr error
 	if last >= confirmed {
 		return liveErr
 	}
@@ -510,29 +519,63 @@ func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool
 				"chain", transfer.Chain, "tx", transfer.TxHash, "token", transfer.Token)
 			continue
 		}
-		receipt, verifyErr := VerifyTransaction(ctx, pool, transfer.TxHash)
-		if verifyErr == nil {
-			verifyErr = verifyCanonicalBlock(ctx, pool, receipt)
-		}
-		if verifyErr == nil {
-			verifyErr = verifyReceiptTransfer(transfer, receipt)
-		}
-		final := false
-		if verifyErr == nil {
-			final, verifyErr = transactionIsFinalForChain(ctx, pool, chain.Chain, receipt.BlockNumber, chain.Confirmations)
-		}
-		if verifyErr != nil || !final {
-			if err := w.handler.ProcessPending(ctx, transfer, decimals); err != nil {
-				return fmt.Errorf("persist pending %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, err)
-			}
-			slog.Info("[cryptopay] deferred transfer", "chain", transfer.Chain, "tx", transfer.TxHash, "reason", verifyErr)
-			continue
-		}
-		if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {
-			slog.Warn("[cryptopay] credit failed", "chain", transfer.Chain, "tx", transfer.TxHash, "error", err)
-			// No caller can advance past a transfer not durably persisted.
+		if err := w.processTransfer(ctx, pool, chain, transfer, decimals); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// An already durable observation is handled by the rotating pending/reorg
+// queues. Compare its complete identity, including block hash and amount,
+// before avoiding repeated network checks in an overlapping range.
+type recordedTransferHandler interface {
+	HasRecordedTransfer(context.Context, Transfer, int) (bool, error)
+}
+
+func (w *Worker) processTransfer(ctx context.Context, pool *rpc.Pool, chain ChainConfig, transfer Transfer, decimals int) error {
+	if transfer.Amount == nil || transfer.Amount.Sign() <= 0 {
+		// ERC20 permits zero-value events. They cannot create a deposit and
+		// must not turn inexpensive dust into repeated receipt/finality RPCs.
+		return nil
+	}
+	if recorded, ok := w.handler.(recordedTransferHandler); ok {
+		known, err := recorded.HasRecordedTransfer(ctx, transfer, decimals)
+		if err != nil {
+			return err
+		}
+		if known {
+			return nil
+		}
+	}
+	verifyCtx := ctx
+	if deadline, ok := ctx.Deadline(); ok {
+		// Preserve time to durably queue an inconclusive transfer. Expiring
+		// the RPC and persistence contexts together cannot make progress.
+		var cancel context.CancelFunc
+		verifyCtx, cancel = context.WithDeadline(ctx, deadline.Add(-500*time.Millisecond))
+		defer cancel()
+	}
+	receipt, verifyErr := VerifyTransaction(verifyCtx, pool, transfer.TxHash)
+	if verifyErr == nil {
+		verifyErr = verifyCanonicalBlock(verifyCtx, pool, receipt)
+	}
+	if verifyErr == nil {
+		verifyErr = verifyReceiptTransfer(transfer, receipt)
+	}
+	final := false
+	if verifyErr == nil {
+		final, verifyErr = transactionIsFinalForChain(verifyCtx, pool, chain.Chain, receipt.BlockNumber, chain.Confirmations)
+	}
+	if verifyErr != nil || !final {
+		if err := w.handler.ProcessPending(ctx, transfer, decimals); err != nil {
+			return fmt.Errorf("persist pending %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, err)
+		}
+		slog.Info("[cryptopay] deferred transfer", "chain", transfer.Chain, "tx", transfer.TxHash, "cause", rpc.SafeError(verifyErr))
+		return nil
+	}
+	if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {
+		return fmt.Errorf("persist deposit %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, err)
 	}
 	return nil
 }

@@ -50,6 +50,7 @@
             </div>
           </div>
           <template v-else>
+            <CryptoGasWalletPanel class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
             <details class="crypto-view__group" open>
               <summary class="crypto-view__group-summary">
                 <span class="crypto-view__group-title">{{ t('admin.crypto.groupChannel') }}</span>
@@ -492,6 +493,7 @@
 
         <!-- Sweep -->
         <div v-if="activeTab === 'sweep'" id="crypto-panel-sweep" role="tabpanel" aria-labelledby="crypto-tab-sweep" class="crypto-view__panel">
+          <CryptoGasWalletPanel class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
           <div class="crypto-view__filters">
             <button class="btn btn-secondary" @click="loadSweepPlan">
               {{ t('admin.crypto.loadPlan') }}
@@ -756,6 +758,7 @@ import CryptoSecurityDialog from '@/components/crypto/CryptoSecurityDialog.vue'
 import CryptoGrantStatus from '@/components/crypto/CryptoGrantStatus.vue'
 import CryptoMnemonicsDialog from '@/components/crypto/CryptoMnemonicsDialog.vue'
 import CryptoWalletSecurityPanel from '@/components/crypto/CryptoWalletSecurityPanel.vue'
+import CryptoGasWalletPanel from '@/components/crypto/CryptoGasWalletPanel.vue'
 import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Toggle from '@/components/common/Toggle.vue'
@@ -921,6 +924,7 @@ const walletStateLabel = computed(() => walletSecurityLocked.value ? 'admin.cryp
     : !walletLoaded.value ? 'admin.crypto.walletUnavailable'
     : walletReady.value ? 'admin.crypto.walletReady' : 'admin.crypto.walletNeedsConfig')
 const loadingHotAddress = ref(false)
+const gasWalletRevision = ref(0)
 const hotAddressNote = ref('')
 const loadingWallet = ref(false)
 const initializing = ref(false)
@@ -1605,6 +1609,7 @@ async function submitWallet() {
     })
     if (completed && operationTab === activeTab.value) {
       hotAddressNote.value = ''
+      gasWalletRevision.value++
       await loadWalletStatus()
       appStore.showSuccess(t('admin.crypto.hotImportDone'))
     }
@@ -1644,6 +1649,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.crypto-view__gas-funding { grid-column: 1 / -1; margin-bottom: 1rem; }
 .crypto-view__wallet-form { display: grid; gap: .75rem; font-size: .875rem; line-height: 1.7; }
 .crypto-view__wallet-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1rem; }
 .crypto-view__wallet-actions p { flex-basis: 100%; }

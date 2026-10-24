@@ -302,7 +302,9 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     const wrapper = await render()
     await configTab(wrapper)
     const hotPath = '/admin/crypto/hot-wallet'
-    expect(mocks.get.mock.calls.some(([path]) => path === hotPath)).toBe(false)
+    // Funding information loads on entry instead of hiding behind Health.
+    expect(mocks.get.mock.calls.some(([path]) => path === hotPath)).toBe(true)
+    expect(wrapper.find('[data-testid="crypto-gas-wallet"]').exists()).toBe(true)
     const health = wrapper.findAll('details').find(item => item.text().includes('admin.crypto.healthTitle'))!
     const refresh = health.findAll('.btn-secondary').find(btn => btn.text() === 'common.refresh')!
     expect(refresh.attributes('disabled')).toBeUndefined()
